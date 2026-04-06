@@ -3,6 +3,12 @@
 import os
 from collections.abc import Iterator
 
+import pandera as pa
+
+# pandera >=0.20 renamed SchemaModel to DataFrameModel; shim for compat
+if not hasattr(pa, "SchemaModel") and hasattr(pa, "DataFrameModel"):
+    pa.SchemaModel = pa.DataFrameModel  # type: ignore[attr-defined]
+
 import pandas as pd
 import pytest
 from _pytest.config import Config

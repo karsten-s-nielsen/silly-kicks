@@ -90,7 +90,7 @@ def gamestates(actions: Actions, nb_prev_actions: int = 3) -> GameStates:
     states = [actions]
     for i in range(1, nb_prev_actions):
         prev_actions = actions.groupby(["game_id", "period_id"], sort=False, as_index=False).apply(
-            lambda x: x.shift(i, fill_value=float("nan")).fillna(x.iloc[0])  # noqa: B023
+            lambda x: x.shift(i, fill_value=float("nan")).fillna(x.iloc[0]) if len(x) > 0 else x  # noqa: B023
         )
         prev_actions.index = actions.index.copy()
         states.append(prev_actions)  # type: ignore
@@ -162,6 +162,33 @@ def simple(actionfn: Callable) -> FeatureTransfomer:
 # SIMPLE FEATURES
 
 
+def _actiontype(actions: Actions, _spadl_cfg: Any = None) -> Features:
+    """Get the type of each action (inner implementation).
+
+    Parameters
+    ----------
+    actions : Actions
+        The actions of a game.
+    _spadl_cfg : module, optional
+        The SPADL config module to use. Defaults to ``spadlcfg``.
+
+    Returns
+    -------
+    Features
+        The 'type_id' of each action.
+    """
+    if _spadl_cfg is None:
+        _spadl_cfg = spadlcfg
+    X = pd.DataFrame(index=actions.index)
+    categories = list(dict.fromkeys(_spadl_cfg.actiontypes))  # dedupe, preserve order
+    X["actiontype"] = pd.Categorical(
+        actions["type_id"].replace(_spadl_cfg.actiontypes_df().type_name.to_dict()),
+        categories=categories,
+        ordered=False,
+    )
+    return X
+
+
 @simple
 def actiontype(actions: Actions) -> Features:
     """Get the type of each action.
@@ -176,13 +203,7 @@ def actiontype(actions: Actions) -> Features:
     Features
         The 'type_id' of each action.
     """
-    X = pd.DataFrame(index=actions.index)
-    X["actiontype"] = pd.Categorical(
-        actions["type_id"].replace(spadlcfg.actiontypes_df().type_name.to_dict()),
-        categories=spadlcfg.actiontypes,
-        ordered=False,
-    )
-    return X
+    return _actiontype(actions)
 
 
 @simple

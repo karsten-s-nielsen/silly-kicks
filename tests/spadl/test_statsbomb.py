@@ -1,18 +1,29 @@
-"""StatsBomb SPADL converter tests.
+"""StatsBomb SPADL converter tests."""
 
-Every test in this module requires StatsBomb event fixtures loaded via
-the removed ``silly_kicks.data.statsbomb.StatsBombLoader``.  The fixture
-files (``tests/datasets/statsbomb/raw/events/*.json``) are not committed
-to the repository.
-
-The entire module is marked ``e2e`` and skipped in normal CI runs.
-"""
+import inspect
 
 import pytest
 
-pytestmark = pytest.mark.e2e
+from silly_kicks.spadl import statsbomb
 
 
+# ---------------------------------------------------------------------------
+# Tests that use inline data (no external fixtures required)
+# ---------------------------------------------------------------------------
+
+
+def test_statsbomb_no_inplace_fillna() -> None:
+    """Bug #946: fillna must not use inplace=True (pandas 3.0 compat)."""
+    source = inspect.getsource(statsbomb.convert_to_actions)
+    assert "inplace=True" not in source, "inplace=True is deprecated in pandas 2.x"
+
+
+# ---------------------------------------------------------------------------
+# Tests below require StatsBomb event fixtures and are marked e2e.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
 class TestSpadlConvertor:
     """End-to-end SPADL converter tests that need StatsBomb fixture files.
 

@@ -10,7 +10,7 @@ import silly_kicks.atomic.spadl.config as atomicspadl
 from silly_kicks.atomic.spadl import AtomicSPADLSchema
 from silly_kicks.spadl import SPADLSchema
 from silly_kicks.vaep.features import (
-    actiontype,
+    _actiontype,
     bodypart,
     bodypart_detailed,
     bodypart_detailed_onehot,
@@ -50,6 +50,12 @@ Actions = Union[DataFrame[SPADLSchema], DataFrame[AtomicSPADLSchema]]
 GameStates = list[Actions]
 Features = DataFrame[Any]
 FeatureTransfomer = Callable[[GameStates], Features]
+
+
+@simple
+def actiontype(actions: Actions) -> Features:
+    """Actiontype feature using atomic SPADL config (33 action types)."""
+    return _actiontype(actions, _spadl_cfg=atomicspadl)
 
 
 def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) -> list[str]:

@@ -132,7 +132,15 @@ def _extra_from_shots(actions: pd.DataFrame) -> pd.DataFrame:
             _atomicspadl.actiontype_id["goalkick"],
         ]
     )
-    out = shot & next_corner_goalkick & samegame & sameperiod
+    next_type = next_actions.type_id
+    keeper_types = {
+        _spadl.actiontype_id["keeper_save"],
+        _spadl.actiontype_id["keeper_claim"],
+        _spadl.actiontype_id["keeper_punch"],
+        _spadl.actiontype_id["keeper_pick_up"],
+    }
+    next_keeper = next_type.isin(keeper_types)
+    out = shot & (next_corner_goalkick | next_keeper) & samegame & sameperiod
 
     extra_idx = goal | owngoal | out
     prev = actions[extra_idx]

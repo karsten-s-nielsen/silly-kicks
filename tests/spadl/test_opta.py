@@ -74,6 +74,22 @@ def test_convert_own_goal() -> None:
     assert action["result_id"] == spadlcfg.results.index("owngoal")
 
 
+def test_opta_card_events_mapped() -> None:
+    """Bug #784: Card events should be mapped, not dropped."""
+    from silly_kicks.spadl.opta import _get_type_id, _get_result_id
+
+    # Yellow card (no qualifier 32)
+    type_id = _get_type_id(("card", True, {}))
+    assert type_id == spadlcfg.actiontype_id["foul"]
+
+    result_id = _get_result_id(("card", True, {}))
+    assert result_id == spadlcfg.result_id["yellow_card"]
+
+    # Red card (qualifier 32 present)
+    result_id_red = _get_result_id(("card", True, {32: True}))
+    assert result_id_red == spadlcfg.result_id["red_card"]
+
+
 # ---------------------------------------------------------------------------
 # Tests below require Opta XML fixtures in tests/datasets/opta/ and the
 # removed silly_kicks.data.opta loader.  They are marked e2e so they are

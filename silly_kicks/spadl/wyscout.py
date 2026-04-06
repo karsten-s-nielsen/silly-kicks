@@ -55,6 +55,10 @@ _WS_SUBTYPE_HEAD_PASS_BP: int = 82  # headed pass (bodypart context)
 _WS_SUBTYPE_SIMPLE_PASS: int = 85
 _WS_SUBTYPE_LAUNCH: int = 90
 _WS_SUBTYPE_HIGH_PASS: int = 91
+_WS_SUBTYPE_GK_REFLEXES: int = 90
+_WS_SUBTYPE_GK_SAVE: int = 91
+_WS_SUBTYPE_GK_CLAIM: int = 92
+_WS_SUBTYPE_GK_PUNCH: int = 93
 _WS_SUBTYPE_SHOT_ON_TARGET: int = 100
 
 # ---------------------------------------------------------------------------
@@ -712,7 +716,13 @@ def _determine_type_id(event: pd.DataFrame) -> int:  # noqa: C901
     elif event["subtype_id"] == _WS_SUBTYPE_FK_SHOT:
         action_type = "shot_freekick"
     elif event["type_id"] == _WS_TYPE_GK:
-        action_type = "keeper_save"
+        subtype = event["subtype_id"]
+        if subtype == _WS_SUBTYPE_GK_CLAIM:
+            action_type = "keeper_claim"
+        elif subtype == _WS_SUBTYPE_GK_PUNCH:
+            action_type = "keeper_punch"
+        else:
+            action_type = "keeper_save"
     elif event["subtype_id"] == _WS_SUBTYPE_CLEARANCE:
         action_type = "clearance"
     elif event["subtype_id"] == _WS_SUBTYPE_TOUCH and event["not_accurate"]:

@@ -1,3 +1,4 @@
+import pandas as pd
 import silly_kicks.spadl as spadl
 import silly_kicks.spadl as spadlcfg
 from pandas import testing as tm
@@ -130,3 +131,20 @@ def test_time_delta(spadl_actions: DataFrame[SPADLSchema]) -> None:
     assert out.loc[200, "time_delta_2"] == 0.0
     assert out.loc[201, "time_delta_1"] == 1.32
     assert out.loc[201, "time_delta_2"] == 1.32
+
+
+def test_gamestates_empty_dataframe() -> None:
+    """Bug #507: gamestates should not crash on empty input."""
+    empty_actions = pd.DataFrame(
+        columns=[
+            "game_id", "period_id", "action_id", "time_seconds",
+            "team_id", "player_id",
+            "start_x", "start_y", "end_x", "end_y",
+            "type_id", "result_id", "bodypart_id",
+            "type_name", "result_name", "bodypart_name",
+        ]
+    )
+    result = fs.gamestates(empty_actions, nb_prev_actions=3)
+    assert len(result) == 3
+    for gs in result:
+        assert len(gs) == 0

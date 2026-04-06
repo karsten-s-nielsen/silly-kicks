@@ -103,6 +103,11 @@ def _get_result_id(args: tuple[str, bool, dict[int, Any]]) -> int:
     e, outcome, q = args
     if e == "offside pass":
         r = "offside"  # offside
+    elif e == "card":
+        if 32 in q:
+            r = "red_card"
+        else:
+            r = "yellow_card"
     elif e == "foul":
         r = "fail"
     elif e in ["attempt saved", "miss", "post"]:
@@ -175,6 +180,8 @@ def _get_type_id(args: tuple[str, bool, dict[int, Any]]) -> int:  # noqa: C901
         a = "keeper_pick_up"
     elif eventname == "clearance":
         a = "clearance"
+    elif eventname == "card":
+        a = "foul"
     elif eventname == "ball touch" and outcome is False:
         a = "bad_touch"
     else:

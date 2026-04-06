@@ -195,6 +195,45 @@ def test_convert_simulations() -> None:
     assert actions.at[2, "result_id"] == spadl.results.index("fail")
 
 
+def test_wyscout_keeper_claim() -> None:
+    """Bug #37/D44: Wyscout GK claim events must map to keeper_claim."""
+    from silly_kicks.spadl.wyscout import _determine_type_id
+
+    event = pd.Series({
+        "type_id": 9, "subtype_id": 92,
+        "fairplay": False, "own_goal": False, "high": False,
+        "take_on_left": False, "take_on_right": False,
+        "sliding_tackle": False, "interception": False,
+    })
+    assert _determine_type_id(event) == spadl.actiontype_id["keeper_claim"]
+
+
+def test_wyscout_keeper_punch() -> None:
+    """Bug #37/D44: Wyscout GK punch events must map to keeper_punch."""
+    from silly_kicks.spadl.wyscout import _determine_type_id
+
+    event = pd.Series({
+        "type_id": 9, "subtype_id": 93,
+        "fairplay": False, "own_goal": False, "high": False,
+        "take_on_left": False, "take_on_right": False,
+        "sliding_tackle": False, "interception": False,
+    })
+    assert _determine_type_id(event) == spadl.actiontype_id["keeper_punch"]
+
+
+def test_wyscout_keeper_save_default() -> None:
+    """Bug #37/D44: Wyscout GK reflexes/save events still map to keeper_save."""
+    from silly_kicks.spadl.wyscout import _determine_type_id
+
+    event = pd.Series({
+        "type_id": 9, "subtype_id": 90,
+        "fairplay": False, "own_goal": False, "high": False,
+        "take_on_left": False, "take_on_right": False,
+        "sliding_tackle": False, "interception": False,
+    })
+    assert _determine_type_id(event) == spadl.actiontype_id["keeper_save"]
+
+
 # ---------------------------------------------------------------------------
 # Tests below require Wyscout fixture files in tests/datasets/wyscout_public/
 # and the removed silly_kicks.data.wyscout loader.  They are marked e2e so
