@@ -52,7 +52,7 @@ def _make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
     events["end_x"] = pd.Series([p.get("x") for p in end_pos], index=events.index, dtype=float)
     events["end_y"] = pd.Series([p.get("y") for p in end_pos], index=events.index, dtype=float)
 
-    events = events.drop("positions", axis=1)
+    events = events.drop("positions", axis=1)  # type: ignore[reportAssignmentType]
     return events
 
 
@@ -233,7 +233,7 @@ def _convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events = df_events[df_events["type_id"] != _WS_TYPE_DUEL]  # type: ignore[reportAssignmentType]
 
     # Reset the index
-    df_events = df_events.reset_index(drop=True)
+    df_events = df_events.reset_index(drop=True)  # type: ignore[reportAssignmentType]
 
     return df_events
 
@@ -275,7 +275,7 @@ def _insert_interceptions(df_events: pd.DataFrame) -> pd.DataFrame:
 
         df_events = pd.concat([df_events_interceptions, df_events], ignore_index=True)
         df_events = df_events.sort_values(["period_id", "milliseconds"], kind="mergesort")
-        df_events = df_events.reset_index(drop=True)
+        df_events = df_events.reset_index(drop=True)  # type: ignore[reportAssignmentType]
 
     return df_events
 
@@ -312,7 +312,7 @@ def _add_offside_variable(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events = df_events[df_events["type_id"] != _WS_TYPE_OFFSIDE]  # type: ignore[reportAssignmentType]
 
     # Reset index
-    df_events = df_events.reset_index(drop=True)
+    df_events = df_events.reset_index(drop=True)  # type: ignore[reportAssignmentType]
 
     return df_events
 
@@ -354,7 +354,7 @@ def _convert_simulations(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events = df_events[~(selector_simulation & selector_previous_is_failed_take_on)]  # type: ignore[reportAssignmentType]
 
     # Reset index
-    df_events = df_events.reset_index(drop=True)
+    df_events = df_events.reset_index(drop=True)  # type: ignore[reportAssignmentType]
 
     return df_events
 
@@ -540,8 +540,8 @@ def _remove_keeper_goal_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     goals = shot_goals | penalty_goals | freekick_goals
     keeper_save = df_actions["type_id"] == spadlconfig.actiontype_id["keeper_save"]
     goals_keepers_idx = same_phase & goals & keeper_save
-    df_actions = df_actions.drop(df_actions.index[goals_keepers_idx])
-    df_actions = df_actions.reset_index(drop=True)
+    df_actions = df_actions.drop(df_actions.index[goals_keepers_idx])  # type: ignore[reportAssignmentType]
+    df_actions = df_actions.reset_index(drop=True)  # type: ignore[reportAssignmentType]
 
     return df_actions
 

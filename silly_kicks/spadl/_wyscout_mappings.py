@@ -296,5 +296,5 @@ def _remove_non_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     """
     df_actions = df_actions[df_actions["type_id"] != spadlconfig.actiontype_id["non_action"]]  # type: ignore[reportAssignmentType]
     # remove remaining ball out of field, whistle and goalkeeper from line
-    df_actions = df_actions.reset_index(drop=True)
+    df_actions = df_actions.reset_index(drop=True)  # type: ignore[reportAssignmentType]
     return df_actions

@@ -11,7 +11,7 @@
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do NOT open a public issue**
-2. Email: [create a GitHub Security Advisory](https://github.com/karsten-s-nielsen/silly-kicks/security/advisories/new)
+2. [Create a GitHub Security Advisory](https://github.com/karsten-s-nielsen/silly-kicks/security/advisories/new)
 3. Include: description, reproduction steps, and potential impact
 
 We aim to acknowledge reports within 48 hours and provide a fix timeline within 7 days.

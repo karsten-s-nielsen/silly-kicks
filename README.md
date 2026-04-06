@@ -1,4 +1,4 @@
-# silly-kicks
+# silly kicks
 
 ![The Modern SPADL Analyst vs The Chief SPADL Evaluator & Classifier](assets/silly-kicks.jpg)
 <sup>Comic by NanoBanana &mdash; inspired by Monty Python's <em>Ministry of Silly Walks</em></sup>
@@ -43,7 +43,7 @@ pip install "silly-kicks[kloppy,xgboost]"
 import silly_kicks.spadl as spadl
 
 # Convert StatsBomb events to SPADL actions
-actions = spadl.statsbomb.convert_to_actions(events, home_team_id=123)
+actions, report = spadl.statsbomb.convert_to_actions(events, home_team_id=123)
 
 # Add human-readable names
 actions = spadl.add_names(actions)

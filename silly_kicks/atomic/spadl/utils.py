@@ -22,7 +22,7 @@ def add_names(actions: pd.DataFrame) -> pd.DataFrame:
     """
     return (
         actions.drop(columns=["type_name", "bodypart_name"], errors="ignore")
-        .merge(spadlconfig.actiontypes_df(), how="left")
+        .merge(spadlconfig.actiontypes_df(), how="left")  # type: ignore[reportOptionalMemberAccess]
         .merge(spadlconfig.bodyparts_df(), how="left")
         .set_index(actions.index)
     )

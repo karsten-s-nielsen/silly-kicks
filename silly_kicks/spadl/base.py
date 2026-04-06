@@ -36,7 +36,7 @@ max_dribble_duration: float = 10.0
 
 
 def _add_dribbles(actions: pd.DataFrame) -> pd.DataFrame:
-    next_actions = actions.shift(-1, fill_value=0)
+    next_actions = actions.shift(-1)
 
     same_team = actions.team_id == next_actions.team_id
     # not_clearance = actions.type_id != actiontypes.index("clearance")

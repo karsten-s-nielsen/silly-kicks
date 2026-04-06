@@ -12,9 +12,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
 
-            spadl = container "silly_kicks.spadl" "SPADL conversion layer: 23 action types, provider converters, coordinate normalization" "Python" "Library"
-            vaep = container "silly_kicks.vaep" "VAEP framework: feature extraction, label generation, model training, action valuation" "Python" "Library"
-            atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous action representation with extended action types" "Python" "Library"
+            spadl = container "silly_kicks.spadl" "SPADL conversion layer: 23 action types, 4 provider converters, vectorized np.select dispatch, ConversionReport audit trail" "Python" "Library"
+            vaep = container "silly_kicks.vaep" "VAEP framework: feature extraction, label generation (binary + xG), model training, action valuation. Includes HybridVAEP (result-leakage-free)" "Python" "Library"
+            atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous action representation with 33 extended action types and deferred single-sort conversion" "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat model: pitch grid value surface via dynamic programming" "Python" "Library"
         }
 
@@ -25,8 +25,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         sillyKicks -> mlLibs "Trains and predicts with" "Python API"
 
         // --- Relationships: Container level ---
-        analyst -> spadl "Converts raw events to SPADL actions via" "convert_to_actions()"
-        analyst -> vaep "Values actions via" "VAEP.fit() / VAEP.rate()"
+        analyst -> spadl "Converts raw events to SPADL actions via" "convert_to_actions() -> (DataFrame, ConversionReport)"
+        analyst -> vaep "Values actions via" "VAEP.fit() / VAEP.rate() / HybridVAEP"
         analyst -> xthreat "Computes pitch value surface via" "ExpectedThreat.fit()"
 
         pipeline -> spadl "Passes per-game DataFrames to" "lazy import inside UDF"
@@ -34,8 +34,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
 
         spadl -> kloppy "Accepts kloppy EventDataset in kloppy converter" "kloppy bridge"
 
-        vaep -> spadl "Reads SPADL config, schema, and action names from" "Python import"
-        vaep -> mlLibs "Delegates model training to" "fit() dispatch"
+        vaep -> spadl "Reads SPADL config, schema constants, and action names from" "Python import"
+        vaep -> mlLibs "Delegates model training to" "fit() dispatch via _LEARNER_REGISTRY"
         atomic -> spadl "Extends SPADL with atomic action types via" "Python import"
         atomic -> vaep "Inherits VAEP pipeline via AtomicVAEP subclass" "Python import"
         xthreat -> spadl "Reads SPADL config and schema from" "Python import"
