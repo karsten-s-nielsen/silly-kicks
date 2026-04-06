@@ -4,6 +4,7 @@ import warnings
 from collections import Counter
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from . import config as spadlconfig
@@ -82,13 +83,14 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
     for col in ["start_y", "end_y"]:
         actions[col] = events[col].clip(0, 100) / 100 * spadlconfig.field_width
 
-    actions["type_id"] = events[["type_name", "outcome", "qualifiers"]].apply(_get_type_id, axis=1)
-    actions["result_id"] = events[["type_name", "outcome", "qualifiers"]].apply(
-        _get_result_id, axis=1
-    )
-    actions["bodypart_id"] = events[["type_name", "outcome", "qualifiers"]].apply(
-        _get_bodypart_id, axis=1
-    )
+    # Pre-explode qualifier flags for vectorized lookups
+    _USED_QUALIFIER_IDS = [1, 2, 3, 5, 6, 9, 15, 20, 21, 26, 28, 32, 72, 107, 124, 155, 168, 238]
+    for qid in _USED_QUALIFIER_IDS:
+        events[f"q_{qid}"] = events["qualifiers"].apply(lambda q, k=qid: k in q)
+
+    actions["type_id"] = _vectorized_type_id(events)
+    actions["result_id"] = _vectorized_result_id(events)
+    actions["bodypart_id"] = _vectorized_bodypart_id(events)
 
     actions = _fix_recoveries(actions, events.type_name)
     actions = _fix_unintentional_ball_touches(actions, events.type_name, events.outcome)
@@ -130,6 +132,117 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
         unrecognized_counts=unrecognized_counts,
     )
     return actions, report
+
+
+def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
+    """Vectorized replacement for row-wise _get_type_id."""
+    tn = events["type_name"]
+    outcome = events["outcome"]
+    aid = spadlconfig.actiontype_id
+    is_pass = tn.isin(["pass", "offside pass"])
+    is_shot = tn.isin(["miss", "post", "attempt saved", "goal"])
+
+    conditions = [
+        events["q_238"],  # fairplay → non_action
+        is_pass & events["q_107"],  # throw_in
+        is_pass & events["q_5"] & (events["q_2"] | events["q_1"] | events["q_155"]),  # freekick_crossed
+        is_pass & events["q_5"],  # freekick_short
+        is_pass & events["q_6"] & events["q_2"],  # corner_crossed
+        is_pass & events["q_6"],  # corner_short
+        is_pass & events["q_2"],  # cross
+        is_pass & events["q_124"],  # goalkick
+        is_pass,  # pass (default for pass events)
+        tn == "take on",  # take_on
+        (tn == "foul") & (outcome == False),  # foul  # noqa: E712
+        tn == "tackle",  # tackle
+        tn.isin(["interception", "blocked pass"]),  # interception
+        is_shot & events["q_9"],  # shot_penalty
+        is_shot & events["q_26"],  # shot_freekick
+        is_shot,  # shot
+        tn == "save",  # keeper_save
+        tn == "claim",  # keeper_claim
+        tn == "punch",  # keeper_punch
+        tn == "keeper pick-up",  # keeper_pick_up
+        tn == "clearance",  # clearance
+        tn == "card",  # foul (card events are mapped to foul)
+        (tn == "ball touch") & (outcome == False),  # bad_touch  # noqa: E712
+    ]
+    choices = [
+        aid["non_action"], aid["throw_in"], aid["freekick_crossed"], aid["freekick_short"],
+        aid["corner_crossed"], aid["corner_short"], aid["cross"], aid["goalkick"], aid["pass"],
+        aid["take_on"], aid["foul"], aid["tackle"], aid["interception"],
+        aid["shot_penalty"], aid["shot_freekick"], aid["shot"],
+        aid["keeper_save"], aid["keeper_claim"], aid["keeper_punch"], aid["keeper_pick_up"],
+        aid["clearance"], aid["foul"], aid["bad_touch"],
+    ]
+    return pd.Series(
+        np.select(conditions, choices, default=aid["non_action"]),
+        index=events.index,
+        dtype="int64",
+    )
+
+
+def _vectorized_result_id(events: pd.DataFrame) -> pd.Series:
+    """Vectorized replacement for row-wise _get_result_id."""
+    tn = events["type_name"]
+    outcome = events["outcome"]
+    rid = spadlconfig.result_id
+
+    conditions = [
+        tn == "offside pass",  # offside
+        (tn == "card") & events["q_32"],  # red_card
+        tn == "card",  # yellow_card (no q_32)
+        tn == "foul",  # fail
+        tn.isin(["attempt saved", "miss", "post"]),  # fail
+        (tn == "goal") & events["q_28"],  # owngoal
+        tn == "goal",  # success
+        tn == "ball touch",  # fail
+        outcome == True,  # success  # noqa: E712
+    ]
+    choices = [
+        rid["offside"],
+        rid["red_card"],
+        rid["yellow_card"],
+        rid["fail"],
+        rid["fail"],
+        rid["owngoal"],
+        rid["success"],
+        rid["fail"],
+        rid["success"],
+    ]
+    return pd.Series(
+        np.select(conditions, choices, default=rid["fail"]),
+        index=events.index,
+        dtype="int64",
+    )
+
+
+def _vectorized_bodypart_id(events: pd.DataFrame) -> pd.Series:
+    """Vectorized replacement for row-wise _get_bodypart_id."""
+    tn = events["type_name"]
+    bid = spadlconfig.bodypart_id
+
+    conditions = [
+        events["q_15"] | events["q_3"] | events["q_168"],  # head
+        events["q_21"],  # other
+        events["q_20"],  # foot_right
+        events["q_72"],  # foot_left
+        events["q_107"],  # other (throw-in)
+        tn.isin(["save", "claim", "punch", "keeper pick-up"]),  # other
+    ]
+    choices = [
+        bid["head"],
+        bid["other"],
+        bid["foot_right"],
+        bid["foot_left"],
+        bid["other"],
+        bid["other"],
+    ]
+    return pd.Series(
+        np.select(conditions, choices, default=bid["foot"]),
+        index=events.index,
+        dtype="int64",
+    )
 
 
 def _get_bodypart_id(args: tuple[str, bool, dict[int, Any]]) -> int:

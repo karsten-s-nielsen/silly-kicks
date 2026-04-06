@@ -80,3 +80,18 @@ def test_conversion_report_is_frozen():
     )
     with pytest.raises(AttributeError):
         report.provider = "other"
+
+
+def test_config_df_caching():
+    """O-15: Config DataFrame factories should return cached instances."""
+    import silly_kicks.spadl.config as spadlcfg
+    assert spadlcfg.actiontypes_df() is spadlcfg.actiontypes_df()
+    assert spadlcfg.results_df() is spadlcfg.results_df()
+    assert spadlcfg.bodyparts_df() is spadlcfg.bodyparts_df()
+
+
+def test_atomic_config_df_caching():
+    """O-15: Atomic config DataFrame factories should return cached instances."""
+    import silly_kicks.atomic.spadl.config as atomicconfig
+    assert atomicconfig.actiontypes_df() is atomicconfig.actiontypes_df()
+    assert atomicconfig.bodyparts_df() is atomicconfig.bodyparts_df()

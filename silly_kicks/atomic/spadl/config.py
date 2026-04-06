@@ -13,6 +13,8 @@ actiontypes : list(str)
 
 """
 
+import functools
+
 import pandas as pd
 
 import silly_kicks.spadl.config as _spadl
@@ -42,6 +44,7 @@ result_id: dict[str, int] = _spadl.result_id
 bodypart_id: dict[str, int] = _spadl.bodypart_id
 
 
+@functools.lru_cache(maxsize=None)
 def actiontypes_df() -> pd.DataFrame:
     """Return a dataframe with the type id and type name of each Atomic-SPADL action type.
 

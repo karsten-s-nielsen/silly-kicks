@@ -2,7 +2,7 @@
 
 import warnings
 from collections import Counter
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -35,6 +35,40 @@ _EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset({
     "Shield", "Camera On", "Camera off",
     "Bad Behaviour", "Ball Recovery",
 })
+
+
+def _flatten_extra(events: pd.DataFrame) -> pd.DataFrame:
+    """Extract nested extra dict fields into flat columns for vectorized dispatch."""
+    extra = events["extra"]
+
+    def _deep_get(series: pd.Series, *keys: str) -> pd.Series:
+        """Chain .str.get() calls for nested dict access."""
+        result = series
+        for key in keys:
+            result = result.str.get(key)
+        return result
+
+    events["_pass_type"] = _deep_get(extra, "pass", "type", "name")
+    events["_pass_height"] = _deep_get(extra, "pass", "height", "name")
+    events["_pass_cross"] = _deep_get(extra, "pass", "cross")
+    events["_pass_outcome"] = _deep_get(extra, "pass", "outcome", "name")
+    events["_pass_body_part"] = _deep_get(extra, "pass", "body_part", "name")
+    events["_pass_end_location"] = _deep_get(extra, "pass", "end_location")
+    events["_shot_type"] = _deep_get(extra, "shot", "type", "name")
+    events["_shot_outcome"] = _deep_get(extra, "shot", "outcome", "name")
+    events["_shot_body_part"] = _deep_get(extra, "shot", "body_part", "name")
+    events["_shot_end_location"] = _deep_get(extra, "shot", "end_location")
+    events["_dribble_outcome"] = _deep_get(extra, "dribble", "outcome", "name")
+    events["_gk_type"] = _deep_get(extra, "goalkeeper", "type", "name")
+    events["_gk_outcome"] = _deep_get(extra, "goalkeeper", "outcome", "name")
+    events["_gk_body_part"] = _deep_get(extra, "goalkeeper", "body_part", "name")
+    events["_foul_card"] = _deep_get(extra, "foul_committed", "card", "name")
+    events["_duel_type"] = _deep_get(extra, "duel", "type", "name")
+    events["_duel_outcome"] = _deep_get(extra, "duel", "outcome", "name")
+    events["_interception_outcome"] = _deep_get(extra, "interception", "outcome", "name")
+    events["_clearance_body_part"] = _deep_get(extra, "clearance", "body_part", "name")
+    events["_carry_end_location"] = _deep_get(extra, "carry", "end_location")
+    return events
 
 
 def convert_to_actions(
@@ -107,6 +141,7 @@ def convert_to_actions(
     events = events.copy()
     events = _insert_interception_passes(events)
     events["extra"] = events["extra"].fillna({})
+    events = _flatten_extra(events)
 
     actions["game_id"] = events.game_id
     actions["original_event_id"] = events.event_id.astype(str)
@@ -116,7 +151,13 @@ def convert_to_actions(
     actions["player_id"] = events.player_id
 
     # split (end)location column into x and y columns
-    end_location = events[["location", "extra"]].apply(_get_end_location, axis=1)
+    end_location = events["_pass_end_location"].fillna(
+        events["_shot_end_location"]
+    ).fillna(
+        events["_carry_end_location"]
+    ).fillna(
+        events["location"]
+    )
     # convert StatsBomb coordinates to spadl coordinates
     actions.loc[events.type_name == "Shot", ["start_x", "start_y"]] = _convert_locations(
         events.loc[events.type_name == "Shot", "location"],
@@ -135,9 +176,9 @@ def convert_to_actions(
         shot_fidelity_version,
     )
 
-    actions[["type_id", "result_id", "bodypart_id"]] = events[["type_name", "extra"]].apply(
-        _parse_event, axis=1, result_type="expand"
-    )
+    actions["type_id"] = _vectorized_type_id(events)
+    actions["result_id"] = _vectorized_result_id(events)
+    actions["bodypart_id"] = _vectorized_bodypart_id(events)
 
     actions = (
         actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]
@@ -178,9 +219,6 @@ def convert_to_actions(
     return actions, report
 
 
-Location = tuple[float, float]
-
-
 def _insert_interception_passes(df_events: pd.DataFrame) -> pd.DataFrame:
     """Insert interception actions before passes.
 
@@ -199,11 +237,11 @@ def _insert_interception_passes(df_events: pd.DataFrame) -> pd.DataFrame:
         StatsBomb event dataframe in which passes that were also denoted as
         interceptions in the StatsBomb notation are transformed into two events.
     """
+    extra = df_events["extra"].fillna({})
+    pass_type = extra.str.get("pass").str.get("type").str.get("name")
+    mask = pass_type == "Interception"
 
-    def is_interception_pass(x: dict) -> bool:  # type: ignore
-        return x.get("extra", {}).get("pass", {}).get("type", {}).get("name") == "Interception"
-
-    df_events_interceptions = df_events[df_events.apply(is_interception_pass, axis=1)].copy()
+    df_events_interceptions = df_events[mask].copy()
 
     if not df_events_interceptions.empty:
         df_events_interceptions["type_name"] = "Interception"
@@ -222,16 +260,21 @@ def _infer_xy_fidelity_versions(events: pd.DataFrame) -> tuple[int, int]:
     """Find out if x and y are integers disguised as floats."""
     mask_shot = events.type_name == "Shot"
     mask_other = events.type_name != "Shot"
-    locations = events.location.apply(pd.Series)
+    valid_locs = events.location.dropna()
+    if len(valid_locs) == 0:
+        return 1, 1
+    locations = pd.DataFrame(valid_locs.tolist(), index=valid_locs.index)
     mask_valid_location = locations.notna().any(axis=1)
-    high_fidelity_shots = (locations.loc[mask_valid_location & mask_shot] % 1 != 0).any(axis=None)
-    high_fidelity_other = (locations.loc[mask_valid_location & mask_other] % 1 != 0).any(axis=None)
+    shot_mask = mask_valid_location & mask_shot.reindex(locations.index, fill_value=False)
+    other_mask = mask_valid_location & mask_other.reindex(locations.index, fill_value=False)
+    high_fidelity_shots = (locations.loc[shot_mask] % 1 != 0).any(axis=None)
+    high_fidelity_other = (locations.loc[other_mask] % 1 != 0).any(axis=None)
     xy_fidelity_version = 2 if high_fidelity_other else 1
     shot_fidelity_version = 2 if high_fidelity_shots else xy_fidelity_version
     return shot_fidelity_version, xy_fidelity_version
 
 
-def _convert_locations(locations: pd.Series, fidelity_version: int) -> npt.NDArray[np.float32]:
+def _convert_locations(locations: pd.Series, fidelity_version: int) -> npt.NDArray[np.float64]:
     """Convert StatsBomb locations to spadl coordinates.
 
     StatsBomb coordinates are cell-based, using a 120x80 grid, so 1,1 is the
@@ -248,295 +291,293 @@ def _convert_locations(locations: pd.Series, fidelity_version: int) -> npt.NDArr
     # +-----+------+
     # | 1,2 | 2,2  |
     # +-----+------+
+    n = len(locations)
+    if n == 0:
+        return np.empty((0, 2), dtype=float)
     cell_side = 0.1 if fidelity_version == 2 else 1.0
-    cell_relative_center = cell_side / 2
-    coordinates = np.empty((len(locations), 2), dtype=float)
-    for i, loc in enumerate(locations):
-        if isinstance(loc, list) and len(loc) == 2:
-            coordinates[i, 0] = (loc[0] - cell_relative_center) / _SB_FIELD_LENGTH * spadlconfig.field_length
-            coordinates[i, 1] = (
-                spadlconfig.field_width
-                - (loc[1] - cell_relative_center) / _SB_FIELD_WIDTH * spadlconfig.field_width
-            )
-        elif isinstance(loc, list) and len(loc) == 3:
-            # A coordinate in the goal frame, only used for the end location of
-            # Shot events. The y-coordinates and z-coordinates are always detailed
-            # to a tenth of a yard.
-            coordinates[i, 0] = (loc[0] - cell_relative_center) / _SB_FIELD_LENGTH * spadlconfig.field_length
-            coordinates[i, 1] = (
-                spadlconfig.field_width - (loc[1] - 0.05) / _SB_FIELD_WIDTH * spadlconfig.field_width
-            )
+    crc = cell_side / 2
+    loc_list = locations.tolist()
+    xy_raw = np.array(
+        [loc[:2] if isinstance(loc, list) and len(loc) >= 2 else [np.nan, np.nan] for loc in loc_list],
+        dtype=float,
+    )
+    is_three = np.array([isinstance(loc, list) and len(loc) == 3 for loc in loc_list])
+    y_offset = np.where(is_three, 0.05, crc)
+    coordinates = np.empty((n, 2), dtype=float)
+    coordinates[:, 0] = (xy_raw[:, 0] - crc) / _SB_FIELD_LENGTH * spadlconfig.field_length
+    coordinates[:, 1] = spadlconfig.field_width - (xy_raw[:, 1] - y_offset) / _SB_FIELD_WIDTH * spadlconfig.field_width
     coordinates[:, 0] = np.clip(coordinates[:, 0], 0, spadlconfig.field_length)
     coordinates[:, 1] = np.clip(coordinates[:, 1], 0, spadlconfig.field_width)
     return coordinates
 
 
-def _get_end_location(q: tuple[Location, dict[str, Any]]) -> Location:
-    start_location, extra = q
-    for event in ["pass", "shot", "carry"]:
-        if event in extra and "end_location" in extra[event]:
-            return extra[event]["end_location"]
-    return start_location
+def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
+    """Compute SPADL type_id for all events using vectorized np.select."""
+    t = events["type_name"]
+    _at = spadlconfig.actiontype_id
+    non_action = _at["non_action"]
+
+    # Pre-fetch flattened columns
+    pass_type = events["_pass_type"]
+    pass_height = events["_pass_height"]
+    pass_cross = events["_pass_cross"]
+    pass_outcome = events["_pass_outcome"]
+    duel_type = events["_duel_type"]
+    shot_type = events["_shot_type"]
+    gk_type = events["_gk_type"]
+
+    is_pass = t == "Pass"
+    high_or_cross = (pass_height == "High Pass") | (pass_cross == True)  # noqa: E712
+
+    # Pass sub-types — order matters (first match wins in np.select)
+    conditions = [
+        # Pass with outcome "Injury Clearance" or "Unknown" → non_action
+        is_pass & pass_outcome.isin(["Injury Clearance", "Unknown"]),
+        # Free Kick pass: crossed or short
+        is_pass & (pass_type == "Free Kick") & high_or_cross,
+        is_pass & (pass_type == "Free Kick") & ~high_or_cross,
+        # Corner: crossed or short
+        is_pass & (pass_type == "Corner") & high_or_cross,
+        is_pass & (pass_type == "Corner") & ~high_or_cross,
+        # Goal Kick
+        is_pass & (pass_type == "Goal Kick"),
+        # Throw-in
+        is_pass & (pass_type == "Throw-in"),
+        # Cross (not a set piece)
+        is_pass & (pass_cross == True) & ~pass_type.isin(["Free Kick", "Corner", "Goal Kick", "Throw-in"]),  # noqa: E712
+        # Regular pass (fallthrough for all other passes)
+        is_pass,
+        # Dribble (StatsBomb) → take_on
+        t == "Dribble",
+        # Carry → dribble
+        t == "Carry",
+        # Foul Committed
+        t == "Foul Committed",
+        # Duel — Tackle
+        (t == "Duel") & (duel_type == "Tackle"),
+        # Duel — non-tackle → non_action
+        (t == "Duel") & (duel_type != "Tackle"),
+        # Interception
+        t == "Interception",
+        # Shot sub-types
+        (t == "Shot") & (shot_type == "Free Kick"),
+        (t == "Shot") & (shot_type == "Penalty"),
+        t == "Shot",
+        # Own Goal Against
+        t == "Own Goal Against",
+        # Goalkeeper sub-types
+        (t == "Goal Keeper") & (gk_type == "Shot Saved"),
+        (t == "Goal Keeper") & gk_type.isin(["Collected", "Keeper Sweeper"]),
+        (t == "Goal Keeper") & (gk_type == "Punch"),
+        t == "Goal Keeper",  # fallthrough → non_action
+        # Clearance
+        t == "Clearance",
+        # Miscontrol
+        t == "Miscontrol",
+    ]
+
+    choices = [
+        non_action,                    # Pass Injury Clearance/Unknown
+        _at["freekick_crossed"],
+        _at["freekick_short"],
+        _at["corner_crossed"],
+        _at["corner_short"],
+        _at["goalkick"],
+        _at["throw_in"],
+        _at["cross"],
+        _at["pass"],
+        _at["take_on"],
+        _at["dribble"],
+        _at["foul"],
+        _at["tackle"],
+        non_action,                    # Duel non-tackle
+        _at["interception"],
+        _at["shot_freekick"],
+        _at["shot_penalty"],
+        _at["shot"],
+        _at["bad_touch"],              # Own Goal Against
+        _at["keeper_save"],
+        _at["keeper_claim"],
+        _at["keeper_punch"],
+        non_action,                    # Goal Keeper fallthrough
+        _at["clearance"],
+        _at["bad_touch"],              # Miscontrol
+    ]
+
+    return pd.Series(np.select(conditions, choices, default=non_action), index=events.index)
 
 
-def _parse_event(q: tuple[str, dict[str, Any]]) -> tuple[int, int, int]:
-    t, x = q
-    events = {
-        "Pass": _parse_pass_event,
-        "Dribble": _parse_dribble_event,
-        "Carry": _parse_carry_event,
-        "Foul Committed": _parse_foul_event,
-        "Duel": _parse_duel_event,
-        "Interception": _parse_interception_event,
-        "Shot": _parse_shot_event,
-        "Own Goal Against": _parse_own_goal_event,
-        "Goal Keeper": _parse_goalkeeper_event,
-        "Clearance": _parse_clearance_event,
-        "Miscontrol": _parse_miscontrol_event,
-    }
-    parser = events.get(t, _parse_event_as_non_action)
-    a, r, b = parser(x)
-    actiontype = spadlconfig.actiontype_id[a]
-    result = spadlconfig.result_id[r]
-    bodypart = spadlconfig.bodypart_id[b]
-    return actiontype, result, bodypart
+def _vectorized_result_id(events: pd.DataFrame) -> pd.Series:
+    """Compute SPADL result_id for all events using vectorized np.select."""
+    t = events["type_name"]
+    _r = spadlconfig.result_id
+
+    pass_outcome = events["_pass_outcome"]
+    dribble_outcome = events["_dribble_outcome"]
+    duel_type = events["_duel_type"]
+    duel_outcome = events["_duel_outcome"]
+    interception_outcome = events["_interception_outcome"]
+    shot_outcome = events["_shot_outcome"]
+    foul_card = events["_foul_card"].fillna("")
+    gk_outcome = events["_gk_outcome"].fillna("x")
+
+    is_pass = t == "Pass"
+
+    conditions = [
+        # Pass results
+        is_pass & pass_outcome.isin(["Incomplete", "Out"]),
+        is_pass & (pass_outcome == "Pass Offside"),
+        is_pass & pass_outcome.isin(["Injury Clearance", "Unknown"]),
+        is_pass,
+        # Dribble
+        (t == "Dribble") & (dribble_outcome == "Incomplete"),
+        t == "Dribble",
+        # Carry
+        t == "Carry",
+        # Foul Committed
+        (t == "Foul Committed") & foul_card.str.contains("Yellow", na=False),
+        (t == "Foul Committed") & foul_card.str.contains("Red", na=False),
+        t == "Foul Committed",
+        # Duel — Tackle
+        (t == "Duel") & (duel_type == "Tackle") & duel_outcome.isin(["Lost In Play", "Lost Out"]),
+        (t == "Duel") & (duel_type == "Tackle"),
+        # Duel — non-tackle → non_action result (success)
+        t == "Duel",
+        # Interception
+        (t == "Interception") & interception_outcome.isin(["Lost In Play", "Lost Out"]),
+        t == "Interception",
+        # Shot
+        (t == "Shot") & (shot_outcome == "Goal"),
+        t == "Shot",
+        # Own Goal Against
+        t == "Own Goal Against",
+        # Goal Keeper
+        (t == "Goal Keeper") & gk_outcome.isin(["In Play Danger", "No Touch"]),
+        t == "Goal Keeper",
+        # Clearance
+        t == "Clearance",
+        # Miscontrol
+        t == "Miscontrol",
+    ]
+
+    choices = [
+        _r["fail"],                    # Pass Incomplete/Out
+        _r["offside"],                 # Pass Offside
+        _r["success"],                 # Pass Injury Clearance/Unknown (non_action)
+        _r["success"],                 # Pass default
+        _r["fail"],                    # Dribble Incomplete
+        _r["success"],                 # Dribble default
+        _r["success"],                 # Carry
+        _r["yellow_card"],             # Foul Yellow
+        _r["red_card"],                # Foul Red
+        _r["fail"],                    # Foul default
+        _r["fail"],                    # Tackle Lost
+        _r["success"],                 # Tackle default
+        _r["success"],                 # Duel non-tackle → non_action success
+        _r["fail"],                    # Interception Lost
+        _r["success"],                 # Interception default
+        _r["success"],                 # Shot Goal
+        _r["fail"],                    # Shot default (not Goal)
+        _r["owngoal"],                 # Own Goal Against
+        _r["fail"],                    # GK In Play Danger / No Touch
+        _r["success"],                 # GK default
+        _r["success"],                 # Clearance
+        _r["fail"],                    # Miscontrol
+    ]
+
+    return pd.Series(np.select(conditions, choices, default=_r["success"]), index=events.index)
 
 
-def _parse_event_as_non_action(_extra: dict[str, Any]) -> tuple[str, str, str]:
-    a = "non_action"
-    r = "success"
-    b = "foot"
-    return a, r, b
+def _vectorized_bodypart_id(events: pd.DataFrame) -> pd.Series:
+    """Compute SPADL bodypart_id for all events using vectorized np.select."""
+    t = events["type_name"]
+    _b = spadlconfig.bodypart_id
 
+    pass_bp = events["_pass_body_part"].fillna("")
+    shot_bp = events["_shot_body_part"].fillna("")
+    gk_bp = events["_gk_body_part"].fillna("")
+    clearance_bp = events["_clearance_body_part"].fillna("")
+    pass_type = events["_pass_type"]
 
-def _parse_pass_event(extra: dict[str, Any]) -> tuple[str, str, str]:  # noqa: C901
-    a = "pass"  # default
-    b = "foot"  # default
-    p = extra.get("pass", {})
-    ptype = p.get("type", {}).get("name")
-    height = p.get("height", {}).get("name")
-    cross = p.get("cross")
-    if ptype == "Free Kick":
-        if height == "High Pass" or cross:
-            a = "freekick_crossed"
-        else:
-            a = "freekick_short"
-    elif ptype == "Corner":
-        if height == "High Pass" or cross:
-            a = "corner_crossed"
-        else:
-            a = "corner_short"
-    elif ptype == "Goal Kick":
-        a = "goalkick"
-    elif ptype == "Throw-in":
-        a = "throw_in"
-        b = "other"
-    elif cross:
-        a = "cross"
-    else:
-        a = "pass"
+    # Helper: body part resolution for pass
+    # Default is "foot", unless type is "Throw-in" → "other"
+    # Then overridden if _pass_body_part is not None (not "")
+    is_pass = t == "Pass"
+    pass_bp_notna = events["_pass_body_part"].notna()
 
-    pass_outcome = extra.get("pass", {}).get("outcome", {}).get("name")
-    if pass_outcome in ["Incomplete", "Out"]:
-        r = "fail"
-    elif pass_outcome == "Pass Offside":
-        r = "offside"
-    elif pass_outcome in ["Injury Clearance", "Unknown"]:
-        # discard passes that are not part of the play
-        a = "non_action"
-        r = "success"
-    else:
-        r = "success"
+    # Helper: body part resolution for shot (default "foot", override if not None)
+    is_shot = t == "Shot"
+    shot_bp_notna = events["_shot_body_part"].notna()
 
-    bp = extra.get("pass", {}).get("body_part", {}).get("name")
-    if bp is not None:
-        if "Head" in bp:
-            b = "head"
-        elif bp == "Left Foot":
-            b = "foot_left"
-        elif bp == "Right Foot":
-            b = "foot_right"
-        elif "Foot" in bp or bp == "Drop Kick":
-            b = "foot"
-        else:
-            b = "other"
+    # Helper: body part resolution for goalkeeper (default "other", override if not None)
+    is_gk = t == "Goal Keeper"
+    gk_bp_notna = events["_gk_body_part"].notna()
 
-    return a, r, b
+    # Helper: body part resolution for clearance (default "foot", override if not None)
+    is_clearance = t == "Clearance"
+    clearance_bp_notna = events["_clearance_body_part"].notna()
 
+    conditions = [
+        # Pass with body part specified
+        is_pass & pass_bp_notna & pass_bp.str.contains("Head", na=False),
+        is_pass & pass_bp_notna & (pass_bp == "Left Foot"),
+        is_pass & pass_bp_notna & (pass_bp == "Right Foot"),
+        is_pass & pass_bp_notna & (pass_bp.str.contains("Foot", na=False) | (pass_bp == "Drop Kick")),
+        is_pass & pass_bp_notna,  # other body part
+        # Pass without body part: Throw-in → other, else foot
+        is_pass & (pass_type == "Throw-in"),
+        is_pass,
+        # Shot with body part specified
+        is_shot & shot_bp_notna & shot_bp.str.contains("Head", na=False),
+        is_shot & shot_bp_notna & (shot_bp == "Left Foot"),
+        is_shot & shot_bp_notna & (shot_bp == "Right Foot"),
+        is_shot & shot_bp_notna & shot_bp.str.contains("Foot", na=False),
+        is_shot & shot_bp_notna,  # other
+        is_shot,  # default foot
+        # Goalkeeper with body part specified
+        is_gk & gk_bp_notna & gk_bp.str.contains("Head", na=False),
+        is_gk & gk_bp_notna & (gk_bp == "Left Foot"),
+        is_gk & gk_bp_notna & (gk_bp == "Right Foot"),
+        is_gk & gk_bp_notna & (gk_bp.str.contains("Foot", na=False) | (gk_bp == "Drop Kick")),
+        is_gk & gk_bp_notna,  # other
+        is_gk,  # default other
+        # Clearance with body part specified
+        is_clearance & clearance_bp_notna & clearance_bp.str.contains("Head", na=False),
+        is_clearance & clearance_bp_notna & (clearance_bp == "Left Foot"),
+        is_clearance & clearance_bp_notna & (clearance_bp == "Right Foot"),
+        is_clearance & clearance_bp_notna & clearance_bp.str.contains("Foot", na=False),
+        is_clearance & clearance_bp_notna,  # other
+        is_clearance,  # default foot
+    ]
 
-def _parse_dribble_event(extra: dict[str, Any]) -> tuple[str, str, str]:
-    a = "take_on"
+    choices = [
+        _b["head"],
+        _b["foot_left"],
+        _b["foot_right"],
+        _b["foot"],
+        _b["other"],
+        _b["other"],       # Throw-in default
+        _b["foot"],        # Pass default
+        _b["head"],
+        _b["foot_left"],
+        _b["foot_right"],
+        _b["foot"],
+        _b["other"],
+        _b["foot"],        # Shot default
+        _b["head"],
+        _b["foot_left"],
+        _b["foot_right"],
+        _b["foot"],
+        _b["other"],
+        _b["other"],       # GK default
+        _b["head"],
+        _b["foot_left"],
+        _b["foot_right"],
+        _b["foot"],
+        _b["other"],
+        _b["foot"],        # Clearance default
+    ]
 
-    dribble_outcome = extra.get("dribble", {}).get("outcome", {}).get("name")
-    if dribble_outcome == "Incomplete":
-        r = "fail"
-    elif dribble_outcome == "Complete":
-        r = "success"
-    else:
-        r = "success"
-
-    b = "foot"
-
-    return a, r, b
-
-
-def _parse_carry_event(_extra: dict[str, Any]) -> tuple[str, str, str]:
-    a = "dribble"
-    r = "success"
-    b = "foot"
-    return a, r, b
-
-
-def _parse_foul_event(extra: dict[str, Any]) -> tuple[str, str, str]:
-    a = "foul"
-
-    foul_card = extra.get("foul_committed", {}).get("card", {}).get("name", "")
-    if "Yellow" in foul_card:
-        r = "yellow_card"
-    elif "Red" in foul_card:
-        r = "red_card"
-    else:
-        r = "fail"
-
-    b = "foot"
-
-    return a, r, b
-
-
-def _parse_duel_event(extra: dict[str, Any]) -> tuple[str, str, str]:
-    if extra.get("duel", {}).get("type", {}).get("name") == "Tackle":
-        a = "tackle"
-        duel_outcome = extra.get("duel", {}).get("outcome", {}).get("name")
-        if duel_outcome in ["Lost In Play", "Lost Out"]:
-            r = "fail"
-        elif duel_outcome in ["Success in Play", "Won"]:
-            r = "success"
-        else:
-            r = "success"
-
-        b = "foot"
-        return a, r, b
-    return _parse_event_as_non_action(extra)
-
-
-def _parse_interception_event(extra: dict[str, Any]) -> tuple[str, str, str]:
-    a = "interception"
-    interception_outcome = extra.get("interception", {}).get("outcome", {}).get("name")
-    if interception_outcome in ["Lost In Play", "Lost Out"]:
-        r = "fail"
-    elif interception_outcome == "Won":
-        r = "success"
-    else:
-        r = "success"
-    b = "foot"
-    return a, r, b
-
-
-def _parse_shot_event(extra: dict[str, Any]) -> tuple[str, str, str]:
-    extra_type = extra.get("shot", {}).get("type", {}).get("name")
-    if extra_type == "Free Kick":
-        a = "shot_freekick"
-    elif extra_type == "Penalty":
-        a = "shot_penalty"
-    else:
-        a = "shot"
-
-    shot_outcome = extra.get("shot", {}).get("outcome", {}).get("name")
-    if shot_outcome == "Goal":
-        r = "success"
-    elif shot_outcome in ["Blocked", "Off T", "Post", "Saved", "Wayward"]:
-        r = "fail"
-    else:
-        r = "fail"
-
-    bp = extra.get("shot", {}).get("body_part", {}).get("name")
-    if bp is None:
-        b = "foot"
-    elif "Head" in bp:
-        b = "head"
-    elif bp == "Left Foot":
-        b = "foot_left"
-    elif bp == "Right Foot":
-        b = "foot_right"
-    elif "Foot" in bp:
-        b = "foot"
-    else:
-        b = "other"
-
-    return a, r, b
-
-
-def _parse_own_goal_event(_extra: dict[str, Any]) -> tuple[str, str, str]:
-    a = "bad_touch"
-    r = "owngoal"
-    b = "foot"
-    return a, r, b
-
-
-def _parse_goalkeeper_event(extra: dict[str, Any]) -> tuple[str, str, str]:  # noqa: C901
-    extra_type = extra.get("goalkeeper", {}).get("type", {}).get("name")
-    if extra_type == "Shot Saved":
-        a = "keeper_save"
-    elif extra_type in ("Collected", "Keeper Sweeper"):
-        a = "keeper_claim"
-    elif extra_type == "Punch":
-        a = "keeper_punch"
-    else:
-        a = "non_action"
-
-    goalkeeper_outcome = extra.get("goalkeeper", {}).get("outcome", {}).get("name", "x")
-    if goalkeeper_outcome in [
-        "Claim",
-        "Clear",
-        "Collected Twice",
-        "In Play Safe",
-        "Success",
-        "Touched Out",
-    ]:
-        r = "success"
-    elif goalkeeper_outcome in ["In Play Danger", "No Touch"]:
-        r = "fail"
-    else:
-        r = "success"
-
-    bp = extra.get("goalkeeper", {}).get("body_part", {}).get("name")
-    if bp is None:
-        b = "other"
-    elif "Head" in bp:
-        b = "head"
-    elif bp == "Left Foot":
-        b = "foot_left"
-    elif bp == "Right Foot":
-        b = "foot_right"
-    elif "Foot" in bp or bp == "Drop Kick":
-        b = "foot"
-    else:
-        b = "other"
-
-    return a, r, b
-
-
-def _parse_clearance_event(extra: dict[str, Any]) -> tuple[str, str, str]:
-    a = "clearance"
-    r = "success"
-    bp = extra.get("clearance", {}).get("body_part", {}).get("name")
-    if bp is None:
-        b = "foot"
-    elif "Head" in bp:
-        b = "head"
-    elif bp == "Left Foot":
-        b = "foot_left"
-    elif bp == "Right Foot":
-        b = "foot_right"
-    elif "Foot" in bp:
-        b = "foot"
-    else:
-        b = "other"
-    return a, r, b
-
-
-def _parse_miscontrol_event(_extra: dict[str, Any]) -> tuple[str, str, str]:
-    a = "bad_touch"
-    r = "fail"
-    b = "foot"
-    return a, r, b
+    # Default: foot for all other event types (Dribble, Carry, Foul, Duel,
+    # Interception, Own Goal Against, Miscontrol, and non_action)
+    return pd.Series(np.select(conditions, choices, default=_b["foot"]), index=events.index)

@@ -24,16 +24,29 @@ def convert_to_atomic(actions: pd.DataFrame) -> pd.DataFrame:
         The Atomic-SPADL dataframe.
     """
     atomic_actions = actions.copy()
-    atomic_actions = _extra_from_passes(atomic_actions)
+    # Compute all extras from the original actions
+    pass_extras = _compute_pass_extras(atomic_actions)
+    shot_extras = _compute_shot_extras(atomic_actions)
+    foul_extras = _compute_foul_extras(atomic_actions)
+    # Single concat + sort + renumber
+    atomic_actions = pd.concat(
+        [atomic_actions, pass_extras, shot_extras, foul_extras],
+        ignore_index=True,
+        sort=False,
+    )
+    atomic_actions = atomic_actions.sort_values(
+        ["game_id", "period_id", "action_id"]
+    ).reset_index(drop=True)
+    atomic_actions["action_id"] = range(len(atomic_actions))
+    # Add dribbles (needs correct order)
     atomic_actions = _add_dribbles(atomic_actions)
-    atomic_actions = _extra_from_shots(atomic_actions)
-    atomic_actions = _extra_from_fouls(atomic_actions)
     atomic_actions = _convert_columns(atomic_actions)
     atomic_actions = _simplify(atomic_actions)
     return _finalize_output(atomic_actions, ATOMIC_SPADL_COLUMNS)
 
 
-def _extra_from_passes(actions: pd.DataFrame) -> pd.DataFrame:
+def _compute_pass_extras(actions: pd.DataFrame) -> pd.DataFrame:
+    """Compute receival/interception/out/offside extras for pass-like actions."""
     next_actions = actions.shift(-1)
     same_team = actions.team_id == next_actions.team_id
 
@@ -104,13 +117,11 @@ def _extra_from_passes(actions: pd.DataFrame) -> pd.DataFrame:
         prev.player_id.dtype
     )
 
-    actions = pd.concat([actions, extra], ignore_index=True, sort=False)
-    actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)
-    actions["action_id"] = range(len(actions))
-    return actions
+    return extra
 
 
-def _extra_from_shots(actions: pd.DataFrame) -> pd.DataFrame:
+def _compute_shot_extras(actions: pd.DataFrame) -> pd.DataFrame:
+    """Compute goal/owngoal/out extras for shot-like actions."""
     next_actions = actions.shift(-1)
 
     shotlike = ["shot", "shot_freekick", "shot_penalty"]
@@ -141,7 +152,6 @@ def _extra_from_shots(actions: pd.DataFrame) -> pd.DataFrame:
 
     extra_idx = goal | owngoal | out
     prev = actions[extra_idx]
-    # nex = next_actions[extra_idx]
 
     extra = pd.DataFrame()
     extra["game_id"] = prev.game_id
@@ -165,13 +175,12 @@ def _extra_from_shots(actions: pd.DataFrame) -> pd.DataFrame:
         .mask(goal, ar["goal"])
         .mask(owngoal, ar["owngoal"])
     )
-    actions = pd.concat([actions, extra], ignore_index=True, sort=False)
-    actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)
-    actions["action_id"] = range(len(actions))
-    return actions
+
+    return extra
 
 
-def _extra_from_fouls(actions: pd.DataFrame) -> pd.DataFrame:
+def _compute_foul_extras(actions: pd.DataFrame) -> pd.DataFrame:
+    """Compute yellow_card/red_card extras for foul actions."""
     yellow = actions.result_id == _spadl.result_id["yellow_card"]
     red = actions.result_id == _spadl.result_id["red_card"]
 
@@ -196,10 +205,8 @@ def _extra_from_fouls(actions: pd.DataFrame) -> pd.DataFrame:
     extra["type_id"] = extra.type_id.mask(yellow, ar["yellow_card"]).mask(
         red, ar["red_card"]
     )
-    actions = pd.concat([actions, extra], ignore_index=True, sort=False)
-    actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)
-    actions["action_id"] = range(len(actions))
-    return actions
+
+    return extra
 
 
 def _convert_columns(actions: pd.DataFrame) -> pd.DataFrame:

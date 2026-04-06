@@ -85,12 +85,24 @@ def gamestates(actions: Actions, nb_prev_actions: int = 3) -> GameStates:
     if nb_prev_actions < 1:
         raise ValueError("The game state should include at least one preceding action.")
     states = [actions]
+    group_keys = ["game_id", "period_id"]
+    # Precompute group-first values once for boundary filling (excludes groupby keys)
+    first_in_group = actions.groupby(group_keys, sort=False).transform("first")
     for i in range(1, nb_prev_actions):
-        prev_actions = actions.groupby(["game_id", "period_id"], sort=False, as_index=False).apply(
-            lambda x: x.shift(i, fill_value=float("nan")).fillna(x.iloc[0]) if len(x) > 0 else x  # noqa: B023
+        prev = actions.shift(i)
+        # Detect period/game boundaries: where shifted row crosses a group
+        boundary = (
+            (actions["game_id"] != actions["game_id"].shift(i))
+            | (actions["period_id"] != actions["period_id"].shift(i))
         )
-        prev_actions.index = actions.index.copy()
-        states.append(prev_actions)  # type: ignore
+        # At boundaries, fill groupby-key columns with current row values
+        for col in group_keys:
+            prev.loc[boundary, col] = actions.loc[boundary, col]
+        # At boundaries, fill remaining columns with the first row of the current group
+        for col in first_in_group.columns:
+            prev.loc[boundary, col] = first_in_group.loc[boundary, col]
+        prev.index = actions.index.copy()
+        states.append(prev)
     return states
 
 

@@ -3,6 +3,21 @@
 Items identified during Phase 2 audits that are intentionally deferred. Each has a rationale
 for why it's deferred and a trigger for when to revisit.
 
+## Phase 3c: Converter Rewrite (2026-04-06)
+
+- **O-2** (Wyscout 3x apply): RESOLVED — replaced with np.select
+- **O-2b** (StatsBomb apply): RESOLVED — replaced with np.select
+- **O-2c** (Opta 3x apply): RESOLVED — replaced with np.select
+- **O-3** (Wyscout position extraction): RESOLVED — vectorized list indexing
+- **O-4** (Wyscout 55x tag apply): RESOLVED — batch DataFrame constructor
+- **O-5b** (StatsBomb dispatch dict per row): RESOLVED — module-level np.select
+- **O-6** (StatsBomb coordinate for-loop): RESOLVED — numpy vectorized
+- **O-8** (gamestates groupby.apply): RESOLVED — vectorized shift + boundary detection
+- **O-12** (kloppy dispatch): RECLASSIFIED — kloppy EventDataset API, not actionable
+- **O-13** (atomic 3x concat+sort): RESOLVED — single deferred sort
+- **O-15** (config DataFrame caching): RESOLVED — @lru_cache
+- **A1** (Wyscout god module): RESOLVED — split into 3 files
+
 ## Phase 3b: I/O Contract (2026-04-06)
 
 - **A14** (pandera dependency): RESOLVED — replaced with plain schema constants (`SPADL_COLUMNS`, `ATOMIC_SPADL_COLUMNS`)
