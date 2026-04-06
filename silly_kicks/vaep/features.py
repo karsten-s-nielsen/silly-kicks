@@ -296,11 +296,59 @@ def actiontype_result_onehot(actions: Actions) -> Features:
     """
     res = result_onehot.__wrapped__(actions)  # type: ignore
     tys = actiontype_onehot.__wrapped__(actions)  # type: ignore
-    df = {}
-    for tyscol in list(tys.columns):
-        for rescol in list(res.columns):
-            df[tyscol + "_" + rescol] = tys[tyscol] & res[rescol]
-    return pd.DataFrame(df, index=actions.index)
+    cross = tys.values[:, :, np.newaxis] & res.values[:, np.newaxis, :]
+    cols = [f"{tc}_{rc}" for tc in tys.columns for rc in res.columns]
+    return pd.DataFrame(cross.reshape(len(actions), -1), columns=cols, index=actions.index)
+
+
+def result_onehot_prev_only(gamestates: GameStates) -> Features:
+    """Result one-hot encoding for previous actions only (a1, a2, ...).
+
+    Excludes a0 to prevent result leakage in Hybrid-VAEP mode.
+
+    Parameters
+    ----------
+    gamestates : GameStates
+        The game states of a game.
+
+    Returns
+    -------
+    Features
+        The one-hot encoding of each previous action's result, excluding a0.
+    """
+    dfs = []
+    for i, actions in enumerate(gamestates):
+        if i == 0:
+            continue
+        result_df = result_onehot.__wrapped__(actions)  # type: ignore
+        result_df.columns = [c + "_a" + str(i) for c in result_df.columns]
+        dfs.append(result_df)
+    return pd.concat(dfs, axis=1)
+
+
+def actiontype_result_onehot_prev_only(gamestates: GameStates) -> Features:
+    """Action type x result cross-product for previous actions only (a1, a2, ...).
+
+    Excludes a0 to prevent result leakage in Hybrid-VAEP mode.
+
+    Parameters
+    ----------
+    gamestates : GameStates
+        The game states of a game.
+
+    Returns
+    -------
+    Features
+        The one-hot encoding of each previous action's type-result cross, excluding a0.
+    """
+    dfs = []
+    for i, actions in enumerate(gamestates):
+        if i == 0:
+            continue
+        cross_df = actiontype_result_onehot.__wrapped__(actions)  # type: ignore
+        cross_df.columns = [c + "_a" + str(i) for c in cross_df.columns]
+        dfs.append(cross_df)
+    return pd.concat(dfs, axis=1)
 
 
 @simple

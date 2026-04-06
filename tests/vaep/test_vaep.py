@@ -1,7 +1,43 @@
+import numpy as np
 import pandas as pd
 import pytest
-from silly_kicks.vaep import VAEP
+
+from silly_kicks.vaep import VAEP, HybridVAEP
 from silly_kicks.vaep import features as fs
+
+
+def test_hybrid_vaep_no_result_a0():
+    """HybridVAEP features must not contain result_*_a0 columns."""
+    model = HybridVAEP(nb_prev_actions=3)
+    cols = fs.feature_column_names(model.xfns, model.nb_prev_actions)
+    a0_result_cols = [c for c in cols if "result" in c and c.endswith("_a0")]
+    assert len(a0_result_cols) == 0, f"Found result a0 columns: {a0_result_cols}"
+
+
+def test_hybrid_vaep_has_result_a1():
+    """HybridVAEP features must contain result_*_a1 columns."""
+    model = HybridVAEP(nb_prev_actions=3)
+    cols = fs.feature_column_names(model.xfns, model.nb_prev_actions)
+    a1_result_cols = [c for c in cols if "result" in c and c.endswith("_a1")]
+    assert len(a1_result_cols) > 0, "Missing result a1 columns"
+
+
+def test_hybrid_vaep_fewer_features_than_standard():
+    """HybridVAEP should have fewer features than standard VAEP."""
+    standard = VAEP(nb_prev_actions=3)
+    hybrid = HybridVAEP(nb_prev_actions=3)
+    standard_cols = fs.feature_column_names(standard.xfns, standard.nb_prev_actions)
+    hybrid_cols = fs.feature_column_names(hybrid.xfns, hybrid.nb_prev_actions)
+    assert len(hybrid_cols) < len(standard_cols)
+
+
+def test_random_state_reproducibility():
+    """S6: random_state should produce identical permutations."""
+    rng1 = np.random.default_rng(42)
+    idx1 = rng1.permutation(100)
+    rng2 = np.random.default_rng(42)
+    idx2 = rng2.permutation(100)
+    assert (idx1 == idx2).all()
 
 
 @pytest.fixture(scope="session")

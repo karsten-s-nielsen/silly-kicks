@@ -8,7 +8,7 @@ xfns_default : list(callable)
 """
 
 import math
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -21,7 +21,6 @@ from . import features as fs
 from . import formula as vaep
 from . import labels as lab
 from .learners import _LEARNER_REGISTRY
-
 
 xfns_default = [
     fs.actiontype_onehot,
@@ -76,12 +75,21 @@ class VAEP:
     def __init__(
         self,
         xfns: Optional[list[fs.FeatureTransfomer]] = None,
+        yfns: Optional[list[Callable]] = None,
         nb_prev_actions: int = 3,
     ) -> None:
         self.__models: dict[str, Any] = {}
         self.xfns = xfns_default if xfns is None else xfns
-        self.yfns = [self._lab.scores, self._lab.concedes]
+        self.yfns = yfns if yfns is not None else [self._lab.scores, self._lab.concedes]
         self.nb_prev_actions = nb_prev_actions
+
+    def _feature_columns(self) -> list[str]:
+        """Return cached feature column names."""
+        if not hasattr(self, "_cached_feature_cols"):
+            self._cached_feature_cols = self._fs.feature_column_names(
+                self.xfns, self.nb_prev_actions
+            )
+        return self._cached_feature_cols
 
     def compute_features(self, game: pd.Series, game_actions: fs.Actions) -> pd.DataFrame:
         """
@@ -135,6 +143,7 @@ class VAEP:
         val_size: float = 0.25,
         tree_params: Optional[dict[str, Any]] = None,
         fit_params: Optional[dict[str, Any]] = None,
+        random_state: int | None = None,
     ) -> "VAEP":
         """
         Fit the model according to the given training data.
@@ -168,14 +177,15 @@ class VAEP:
 
         """
         nb_states = len(X)
-        idx = np.random.permutation(nb_states)
+        rng = np.random.default_rng(random_state)
+        idx = rng.permutation(nb_states)
         # fmt: off
         train_idx = idx[:math.floor(nb_states * (1 - val_size))]
         val_idx = idx[(math.floor(nb_states * (1 - val_size)) + 1):]
         # fmt: on
 
         # filter feature columns
-        cols = self._fs.feature_column_names(self.xfns, self.nb_prev_actions)
+        cols = self._feature_columns()
         if not set(cols).issubset(set(X.columns)):
             missing_cols = " and ".join(set(cols).difference(X.columns))
             raise ValueError(f"{missing_cols} are not available in the features dataframe")
@@ -197,7 +207,7 @@ class VAEP:
 
     def _estimate_probabilities(self, X: pd.DataFrame) -> pd.DataFrame:
         # filter feature columns
-        cols = self._fs.feature_column_names(self.xfns, self.nb_prev_actions)
+        cols = self._feature_columns()
         if not set(cols).issubset(set(X.columns)):
             missing_cols = " and ".join(set(cols).difference(X.columns))
             raise ValueError(f"{missing_cols} are not available in the features dataframe")
@@ -245,7 +255,7 @@ class VAEP:
             game_states = self.compute_features(game, game_actions)
 
         y_hat = self._estimate_probabilities(game_states)
-        p_scores, p_concedes = y_hat.scores, y_hat.concedes
+        p_scores, p_concedes = y_hat.iloc[:, 0], y_hat.iloc[:, 1]
         vaep_values = self._vaep.value(game_actions_with_names, p_scores, p_concedes)
         return vaep_values
 

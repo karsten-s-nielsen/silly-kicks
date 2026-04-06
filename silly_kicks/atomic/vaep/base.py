@@ -7,7 +7,7 @@ xfns_default : list(callable)
 
 """
 
-from typing import Optional
+from typing import Callable, Optional
 
 from silly_kicks.atomic.spadl.utils import add_names
 from silly_kicks.vaep.base import VAEP
@@ -74,7 +74,8 @@ class AtomicVAEP(VAEP):
     def __init__(
         self,
         xfns: Optional[list[fs.FeatureTransfomer]] = None,
+        yfns: Optional[list[Callable]] = None,
         nb_prev_actions: int = 3,
     ) -> None:
         xfns = xfns_default if xfns is None else xfns
-        super().__init__(xfns, nb_prev_actions)
+        super().__init__(xfns, yfns, nb_prev_actions)

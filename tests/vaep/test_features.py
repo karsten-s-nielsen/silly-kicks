@@ -1,7 +1,9 @@
 import pandas as pd
+from pandas import testing as tm
+
 import silly_kicks.spadl as spadl
 import silly_kicks.spadl as spadlcfg
-from pandas import testing as tm
+import silly_kicks.spadl.utils as spu
 from silly_kicks.vaep import features as fs
 
 xfns = [
@@ -146,3 +148,34 @@ def test_gamestates_empty_dataframe() -> None:
     assert len(result) == 3
     for gs in result:
         assert len(gs) == 0
+
+
+def test_result_onehot_prev_only(spadl_actions: pd.DataFrame) -> None:
+    spadl_actions = spu.add_names(spadl_actions)
+    gamestates = fs.gamestates(spadl_actions, nb_prev_actions=3)
+    gamestates = fs.play_left_to_right(gamestates, spadl_actions.iloc[0].team_id)
+    result = fs.result_onehot_prev_only(gamestates)
+    a0_cols = [c for c in result.columns if c.endswith("_a0")]
+    a1_cols = [c for c in result.columns if c.endswith("_a1")]
+    assert len(a0_cols) == 0, f"Found a0 columns: {a0_cols}"
+    assert len(a1_cols) > 0
+
+
+def test_actiontype_result_onehot_prev_only(spadl_actions: pd.DataFrame) -> None:
+    spadl_actions = spu.add_names(spadl_actions)
+    gamestates = fs.gamestates(spadl_actions, nb_prev_actions=3)
+    gamestates = fs.play_left_to_right(gamestates, spadl_actions.iloc[0].team_id)
+    result = fs.actiontype_result_onehot_prev_only(gamestates)
+    a0_cols = [c for c in result.columns if c.endswith("_a0")]
+    a1_cols = [c for c in result.columns if c.endswith("_a1")]
+    assert len(a0_cols) == 0
+    assert len(a1_cols) > 0
+
+
+def test_actiontype_result_onehot_vectorized(spadl_actions: pd.DataFrame) -> None:
+    spadl_actions = spu.add_names(spadl_actions)
+    gamestates = fs.gamestates(spadl_actions, nb_prev_actions=2)
+    gamestates = fs.play_left_to_right(gamestates, spadl_actions.iloc[0].team_id)
+    result = fs.actiontype_result_onehot(gamestates)
+    assert any("actiontype_pass_result_success" in c for c in result.columns)
+    assert result.shape[0] == len(spadl_actions)

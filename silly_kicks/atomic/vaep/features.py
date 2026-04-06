@@ -22,25 +22,25 @@ from silly_kicks.vaep.features import (
 )
 
 __all__ = [
-    "feature_column_names",
-    "play_left_to_right",
-    "gamestates",
     "actiontype",
     "actiontype_onehot",
     "bodypart",
     "bodypart_detailed",
-    "bodypart_onehot",
     "bodypart_detailed_onehot",
+    "bodypart_onehot",
+    "direction",
+    "feature_column_names",
+    "gamestates",
+    "goalscore",
+    "location",
+    "movement_polar",
+    "play_left_to_right",
+    "player_possession_time",
+    "polar",
+    "speed",
     "team",
     "time",
     "time_delta",
-    "speed",
-    "location",
-    "polar",
-    "movement_polar",
-    "direction",
-    "goalscore",
-    "player_possession_time",
 ]
 
 Actions = pd.DataFrame
