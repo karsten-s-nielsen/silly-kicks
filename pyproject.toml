@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "silly-kicks"
+version = "0.1.0"
+description = "Classify and value on-ball football actions using SPADL and VAEP"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Karsten S. Nielsen" },
+]
+keywords = ["soccer", "football", "analytics", "SPADL", "VAEP", "actions"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "pandas>=2.1.1",
+    "numpy>=1.26.0,<2.0",  # pandera 0.17-0.19 uses np.string_ removed in numpy 2.0
+    "scikit-learn>=1.3.1",
+    "lxml>=4.9.3",
+    # DEPENDENCY CHAIN: pandera 0.17.x uses pa.SchemaModel (renamed to DataFrameModel in 0.20).
+    # pandera 0.17.2 -> multimethod <2.0 (multimethod 2.0 removed the 'overload' API).
+    # Phase 2 will evaluate migrating to pandera >=0.20 or dropping pandera entirely.
+    "pandera>=0.17.2,<0.20",
+    "multimethod<2.0",
+]
+
+[project.optional-dependencies]
+statsbomb = ["statsbombpy>=1.11.0"]
+kloppy = ["kloppy>=3.15.0"]
+xgboost = ["xgboost>=2.0.0"]
+hdf = ["tables>=3.8.0"]
+test = [
+    "pytest>=7.4.2",
+    "pytest-mock>=3.11.1",
+    "pytest-cov>=4.1.0",
+]
+dev = [
+    "ruff>=0.8.0",
+    "pyright>=1.1.380",
+]
+
+[project.urls]
+Homepage = "https://github.com/karsten-s-nielsen/silly-kicks"
+Repository = "https://github.com/karsten-s-nielsen/silly-kicks"
+
+[tool.hatch.build.targets.wheel]
+packages = ["silly_kicks"]
+
+# --- Ruff ---
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["silly_kicks"]
+
+# --- Pyright ---
+[tool.pyright]
+include = ["silly_kicks"]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+
+# --- Pytest ---
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests requiring downloaded datasets",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:pandera",
+]
