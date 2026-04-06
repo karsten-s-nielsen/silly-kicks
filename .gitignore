@@ -27,6 +27,13 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Secrets and credentials
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+
 # Downloaded test datasets (not committed)
 tests/datasets/statsbomb/
 tests/datasets/wyscout_public/

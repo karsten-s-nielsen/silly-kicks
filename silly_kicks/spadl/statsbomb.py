@@ -59,7 +59,8 @@ def convert_to_actions(
             + " using the xy_fidelity_version argument"
         )
     else:
-        assert xy_fidelity_version in [1, 2], "xy_fidelity_version must be 1 or 2"
+        if xy_fidelity_version not in (1, 2):
+            raise ValueError("xy_fidelity_version must be 1 or 2")
     if shot_fidelity_version is None:
         if xy_fidelity_version == 2:
             shot_fidelity_version = 2
@@ -71,7 +72,8 @@ def convert_to_actions(
                 + " using the shot_fidelity_version argument"
             )
     else:
-        assert shot_fidelity_version in [1, 2], "shot_fidelity_version must be 1 or 2"
+        if shot_fidelity_version not in (1, 2):
+            raise ValueError("shot_fidelity_version must be 1 or 2")
 
     events = events.copy()
     events = _insert_interception_passes(events)
