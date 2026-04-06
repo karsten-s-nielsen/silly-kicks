@@ -9,7 +9,7 @@ xfns_default : list(callable)
 
 from typing import Optional
 
-import silly_kicks.atomic.spadl as spadlcfg
+from silly_kicks.atomic.spadl.utils import add_names
 from silly_kicks.vaep.base import VAEP
 
 from . import features as fs
@@ -66,7 +66,7 @@ class AtomicVAEP(VAEP):
         May 2020.
     """
 
-    _spadlcfg = spadlcfg
+    _add_names = staticmethod(add_names)
     _lab = lab
     _fs = fs
     _vaep = vaep

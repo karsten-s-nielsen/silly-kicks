@@ -1,6 +1,3 @@
-import json
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -55,50 +52,6 @@ class TestGridCount:
         y = Series[float]([0, field_width / 2 + 1, field_width, field_width + 10])
         cnt = xt._count(x, y, self.N, self.M)
         np.testing.assert_array_equal(cnt, [[1, 2], [1, 0]])
-
-
-class TestModelPersistency:
-    def test_save_model(self, tmp_path: Path) -> None:
-        """It should save a trained xT grid to a JSON file."""
-        p = tmp_path / "xt_model.json"
-        model = xt.ExpectedThreat()
-        model.xT = np.ones((model.w, model.l))
-        model.save_model(str(p))
-        assert p.read_text() == json.dumps(model.xT.tolist())
-
-    def test_save_model_not_fitted(self, tmp_path: Path) -> None:
-        """It should raise an exception when saving an unfitted model."""
-        p = tmp_path / "xt_model.json"
-        model = xt.ExpectedThreat()
-        with pytest.raises(NotFittedError):
-            model.save_model(str(p))
-        model.xT = np.zeros((model.w, model.l))
-        with pytest.raises(NotFittedError):
-            model.save_model(str(p))
-
-    def test_save_model_file_exists(self, tmp_path: Path) -> None:
-        """It should raise an exception when the file exists."""
-        p = tmp_path / "xt_model.json"
-        p.write_text("create file")
-        model = xt.ExpectedThreat()
-        model.xT = np.ones((model.w, model.l))
-        with pytest.raises(ValueError):
-            model.save_model(str(p), overwrite=False)
-        model.save_model(str(p), overwrite=True)
-
-    def test_load_model(self, tmp_path: Path) -> None:
-        """It should load a saved xT grid from a JSON file."""
-        # xT grid
-        gridv = [[0.1, 0.2], [0.1, 0.0]]
-        # write to file
-        p = tmp_path / "xt_model.json"
-        p.write_text(json.dumps(gridv))
-        # load model
-        model = xt.load_model(str(p))
-        # verify
-        assert model.w == 2
-        assert model.l == 2
-        np.testing.assert_array_equal(model.xT, gridv)
 
 
 def test_get_move_actions(spadl_actions: DataFrame[SPADLSchema]) -> None:

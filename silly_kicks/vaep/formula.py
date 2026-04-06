@@ -12,7 +12,9 @@ def _prev(x: pd.Series) -> pd.Series:
     return prev_x
 
 
-_samephase_nb: int = 10
+_SAMEPHASE_NB: int = 10  # number of subsequent actions considered same phase
+_PENALTY_SCORING_PROB: float = 0.792453  # empirical penalty conversion rate
+_CORNER_SCORING_PROB: float = 0.046500  # empirical corner scoring rate
 
 
 def offensive_value(
@@ -49,7 +51,7 @@ def offensive_value(
     prev_scores = (_prev(scores) * sameteam + _prev(concedes) * (~sameteam)).astype(float)
 
     # if the previous action was too long ago, the odds of scoring are now 0
-    toolong_idx = abs(actions.time_seconds - _prev(actions.time_seconds)) > _samephase_nb
+    toolong_idx = abs(actions.time_seconds - _prev(actions.time_seconds)) > _SAMEPHASE_NB
     prev_scores[toolong_idx] = 0.0
 
     # if the previous action was a goal, the odds of scoring are now 0
@@ -60,11 +62,11 @@ def offensive_value(
 
     # fixed odds of scoring when penalty
     penalty_idx = actions.type_name == "shot_penalty"
-    prev_scores[penalty_idx] = 0.792453
+    prev_scores[penalty_idx] = _PENALTY_SCORING_PROB
 
     # fixed odds of scoring when corner
     corner_idx = actions.type_name.isin(["corner_crossed", "corner_short"])
-    prev_scores[corner_idx] = 0.046500
+    prev_scores[corner_idx] = _CORNER_SCORING_PROB
 
     return scores - prev_scores
 
@@ -102,7 +104,7 @@ def defensive_value(
     sameteam = _prev(actions.team_id) == actions.team_id
     prev_concedes = (_prev(concedes) * sameteam + _prev(scores) * (~sameteam)).astype(float)
 
-    toolong_idx = abs(actions.time_seconds - _prev(actions.time_seconds)) > _samephase_nb
+    toolong_idx = abs(actions.time_seconds - _prev(actions.time_seconds)) > _SAMEPHASE_NB
     prev_concedes[toolong_idx] = 0.0
 
     # if the previous action was a goal, the odds of conceding are now 0

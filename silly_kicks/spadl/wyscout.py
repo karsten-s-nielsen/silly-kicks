@@ -14,6 +14,56 @@ from .base import (
 )
 from .schema import SPADLSchema
 
+# ---------------------------------------------------------------------------
+# Wyscout event type IDs
+# ---------------------------------------------------------------------------
+_WS_TYPE_TAKE_ON: int = 0       # synthetic type assigned to take-ons / tackles
+_WS_TYPE_DUEL: int = 1
+_WS_TYPE_FOUL: int = 2
+_WS_TYPE_OFFSIDE: int = 6
+_WS_TYPE_PASS: int = 8
+_WS_TYPE_GK: int = 9
+_WS_TYPE_SHOT: int = 10
+
+# ---------------------------------------------------------------------------
+# Wyscout event subtype IDs
+# ---------------------------------------------------------------------------
+_WS_SUBTYPE_AIR_DUEL: int = 10
+_WS_SUBTYPE_GROUND_ATT_DUEL: int = 11
+_WS_SUBTYPE_GROUND_DEF_DUEL: int = 12
+_WS_SUBTYPE_GROUND_LOOSE_BALL: int = 13
+_WS_SUBTYPE_HEAD_PASS: int = 21
+_WS_SUBTYPE_HAND_FOUL: int = 22
+_WS_SUBTYPE_LATE_CARD_FOUL: int = 23
+_WS_SUBTYPE_OUT_OF_GAME_FOUL: int = 24
+_WS_SUBTYPE_SIMULATION: int = 25
+_WS_SUBTYPE_VIOLENT_FOUL: int = 26
+_WS_SUBTYPE_CORNER: int = 30
+_WS_SUBTYPE_FK_SHORT: int = 31
+_WS_SUBTYPE_FK_CROSSED: int = 32
+_WS_SUBTYPE_FK_SHOT: int = 33
+_WS_SUBTYPE_GOALKICK: int = 34
+_WS_SUBTYPE_PENALTY: int = 35
+_WS_SUBTYPE_THROW_IN: int = 36
+_WS_SUBTYPE_BALL_OUT_OF_FIELD: int = 50
+_WS_SUBTYPE_ACCELERATION: int = 70
+_WS_SUBTYPE_CLEARANCE: int = 71
+_WS_SUBTYPE_TOUCH: int = 72
+_WS_SUBTYPE_CROSS: int = 80
+_WS_SUBTYPE_THROW_IN_BP: int = 81  # throw-in (bodypart context)
+_WS_SUBTYPE_HEAD_PASS_BP: int = 82  # headed pass (bodypart context)
+_WS_SUBTYPE_SIMPLE_PASS: int = 85
+_WS_SUBTYPE_LAUNCH: int = 90
+_WS_SUBTYPE_HIGH_PASS: int = 91
+_WS_SUBTYPE_SHOT_ON_TARGET: int = 100
+
+# ---------------------------------------------------------------------------
+# Wyscout tag IDs referenced as column names
+# (tag_id -> column mappings live in wyscout_tags list below)
+# ---------------------------------------------------------------------------
+_WS_TAG_FAIRPLAY: int = 1001
+_WS_TAG_OWN_GOAL: int = 102
+
 ###################################
 # WARNING: HERE BE DRAGONS
 # This code for converting wyscout data was organically grown over a long period of time.
@@ -39,11 +89,11 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
         DataFrame with corresponding SPADL actions.
 
     """
-    events = pd.concat([events, get_tagsdf(events)], axis=1)
-    events = make_new_positions(events)
-    events = fix_wyscout_events(events)
-    actions = create_df_actions(events)
-    actions = fix_actions(actions)
+    events = pd.concat([events, _get_tagsdf(events)], axis=1)
+    events = _make_new_positions(events)
+    events = _fix_wyscout_events(events)
+    actions = _create_df_actions(events)
+    actions = _fix_actions(actions)
     actions = _fix_direction_of_play(actions, home_team_id)
     actions = _fix_clearances(actions)
     actions["action_id"] = range(len(actions))
@@ -56,7 +106,7 @@ def _get_tag_set(tags: list[dict[str, Any]]) -> set[int]:
     return {tag["id"] for tag in tags}
 
 
-def get_tagsdf(events: pd.DataFrame) -> pd.DataFrame:
+def _get_tagsdf(events: pd.DataFrame) -> pd.DataFrame:
     """Represent Wyscout tags as a boolean dataframe.
 
     Parameters
@@ -158,7 +208,7 @@ def _make_position_vars(event_id: int, positions: list[dict[str, Optional[float]
     return pd.Series([event_id, start_x, start_y, end_x, end_y])
 
 
-def make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
+def _make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
     """Extract the start and end coordinates for each action.
 
     Parameters
@@ -182,7 +232,7 @@ def make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
     return events
 
 
-def fix_wyscout_events(df_events: pd.DataFrame) -> pd.DataFrame:
+def _fix_wyscout_events(df_events: pd.DataFrame) -> pd.DataFrame:
     """Perform some fixes on the Wyscout events such that the spadl action dataframe can be built.
 
     Parameters
@@ -195,16 +245,16 @@ def fix_wyscout_events(df_events: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Wyscout event dataframe with an extra column 'offside'
     """
-    df_events = create_shot_coordinates(df_events)
-    df_events = convert_duels(df_events)
-    df_events = insert_interceptions(df_events)
-    df_events = add_offside_variable(df_events)
-    df_events = convert_touches(df_events)
-    df_events = convert_simulations(df_events)
+    df_events = _create_shot_coordinates(df_events)
+    df_events = _convert_duels(df_events)
+    df_events = _insert_interceptions(df_events)
+    df_events = _add_offside_variable(df_events)
+    df_events = _convert_touches(df_events)
+    df_events = _convert_simulations(df_events)
     return df_events
 
 
-def create_shot_coordinates(df_events: pd.DataFrame) -> pd.DataFrame:
+def _create_shot_coordinates(df_events: pd.DataFrame) -> pd.DataFrame:
     """Create shot coordinates (estimates) from the Wyscout tags.
 
     Parameters
@@ -217,8 +267,8 @@ def create_shot_coordinates(df_events: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Wyscout event dataframe with end coordinates for shots
     """
-    shot = df_events.subtype_id.isin([33, 100])
-    pas = df_events.type_id == 8
+    shot = df_events.subtype_id.isin([_WS_SUBTYPE_FK_SHOT, _WS_SUBTYPE_SHOT_ON_TARGET])
+    pas = df_events.type_id == _WS_TYPE_PASS
 
     goal_center_idx = (
         df_events["position_goal_low_center"]
@@ -287,7 +337,7 @@ def create_shot_coordinates(df_events: pd.DataFrame) -> pd.DataFrame:
     return df_events
 
 
-def convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
+def _convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
     """Convert duel events.
 
     This function converts Wyscout duels that end with the ball out of field
@@ -315,9 +365,9 @@ def convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
 
     # Define selector for duels that are followed by an 'out of field' event
     selector_duel_out_of_field = (
-        (df_events["type_id"] == 1)
-        & (df_events1["type_id"] == 1)
-        & (df_events2["subtype_id"] == 50)
+        (df_events["type_id"] == _WS_TYPE_DUEL)
+        & (df_events1["type_id"] == _WS_TYPE_DUEL)
+        & (df_events2["subtype_id"] == _WS_SUBTYPE_BALL_OUT_OF_FIELD)
         & selector_same_period
     )
 
@@ -325,15 +375,15 @@ def convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
     selector0_duel_won = selector_duel_out_of_field & (
         df_events["team_id"] != df_events2["team_id"]
     )
-    selector0_duel_won_air = selector0_duel_won & (df_events["subtype_id"] == 10)
-    selector0_duel_won_not_air = selector0_duel_won & (df_events["subtype_id"] != 10)
+    selector0_duel_won_air = selector0_duel_won & (df_events["subtype_id"] == _WS_SUBTYPE_AIR_DUEL)
+    selector0_duel_won_not_air = selector0_duel_won & (df_events["subtype_id"] != _WS_SUBTYPE_AIR_DUEL)
 
     # Define selectors for next time step
     selector1_duel_won = selector_duel_out_of_field & (
         df_events1["team_id"] != df_events2["team_id"]
     )
-    selector1_duel_won_air = selector1_duel_won & (df_events1["subtype_id"] == 10)
-    selector1_duel_won_not_air = selector1_duel_won & (df_events1["subtype_id"] != 10)
+    selector1_duel_won_air = selector1_duel_won & (df_events1["subtype_id"] == _WS_SUBTYPE_AIR_DUEL)
+    selector1_duel_won_not_air = selector1_duel_won & (df_events1["subtype_id"] != _WS_SUBTYPE_AIR_DUEL)
 
     # Aggregate selectors
     selector_duel_won = selector0_duel_won | selector1_duel_won
@@ -341,9 +391,9 @@ def convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
     selector_duel_won_not_air = selector0_duel_won_not_air | selector1_duel_won_not_air
 
     # Set types and subtypes
-    df_events.loc[selector_duel_won, "type_id"] = 8
-    df_events.loc[selector_duel_won_air, "subtype_id"] = 82
-    df_events.loc[selector_duel_won_not_air, "subtype_id"] = 85
+    df_events.loc[selector_duel_won, "type_id"] = _WS_TYPE_PASS
+    df_events.loc[selector_duel_won_air, "subtype_id"] = _WS_SUBTYPE_HEAD_PASS_BP
+    df_events.loc[selector_duel_won_not_air, "subtype_id"] = _WS_SUBTYPE_SIMPLE_PASS
 
     # set end location equal to ball out of field location
     df_events.loc[selector_duel_won, "accurate"] = False
@@ -355,18 +405,18 @@ def convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
     # df_events.loc[selector_duel_won, 'end_y'] = df_events2.loc[selector_duel_won, 'start_y']
 
     # Define selector for ground attacking duels with take on
-    selector_attacking_duel = df_events["subtype_id"] == 11
+    selector_attacking_duel = df_events["subtype_id"] == _WS_SUBTYPE_GROUND_ATT_DUEL
     selector_take_on = (df_events["take_on_left"]) | (df_events["take_on_right"])
     selector_att_duel_take_on = selector_attacking_duel & selector_take_on
 
     # Set take ons type to 0
-    df_events.loc[selector_att_duel_take_on, "type_id"] = 0
+    df_events.loc[selector_att_duel_take_on, "type_id"] = _WS_TYPE_TAKE_ON
 
     # Set sliding tackles type to 0
-    df_events.loc[df_events["sliding_tackle"], "type_id"] = 0
+    df_events.loc[df_events["sliding_tackle"], "type_id"] = _WS_TYPE_TAKE_ON
 
     # Remove the remaining duels
-    df_events = df_events[df_events["type_id"] != 1]
+    df_events = df_events[df_events["type_id"] != _WS_TYPE_DUEL]
 
     # Reset the index
     df_events = df_events.reset_index(drop=True)
@@ -374,7 +424,7 @@ def convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
     return df_events
 
 
-def insert_interceptions(df_events: pd.DataFrame) -> pd.DataFrame:
+def _insert_interceptions(df_events: pd.DataFrame) -> pd.DataFrame:
     """Insert interception actions before passes, clearances and dribbles.
 
     This function converts passes (type_id 8), clearances (subtype_id 71) and
@@ -396,17 +446,17 @@ def insert_interceptions(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events_interceptions = df_events[
         df_events["interception"]
         & (
-            (df_events["type_id"] == 8)
-            | (df_events["subtype_id"] == 70)
-            | (df_events["subtype_id"] == 71)
+            (df_events["type_id"] == _WS_TYPE_PASS)
+            | (df_events["subtype_id"] == _WS_SUBTYPE_ACCELERATION)
+            | (df_events["subtype_id"] == _WS_SUBTYPE_CLEARANCE)
         )
     ].copy()
 
     if not df_events_interceptions.empty:
         df_events_interceptions.loc[:, [t[1] for t in wyscout_tags]] = False
         df_events_interceptions["interception"] = True
-        df_events_interceptions["type_id"] = 0
-        df_events_interceptions["subtype_id"] = 0
+        df_events_interceptions["type_id"] = _WS_TYPE_TAKE_ON
+        df_events_interceptions["subtype_id"] = _WS_TYPE_TAKE_ON
         df_events_interceptions[["end_x", "end_y"]] = df_events_interceptions[
             ["start_x", "start_y"]
         ]
@@ -418,7 +468,7 @@ def insert_interceptions(df_events: pd.DataFrame) -> pd.DataFrame:
     return df_events
 
 
-def add_offside_variable(df_events: pd.DataFrame) -> pd.DataFrame:
+def _add_offside_variable(df_events: pd.DataFrame) -> pd.DataFrame:
     """Attach offside events to the previous action.
 
     This function removes the offside events in the Wyscout event data and adds
@@ -441,13 +491,13 @@ def add_offside_variable(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events1 = df_events.shift(-1)
 
     # Select offside passes
-    selector_offside = (df_events1["type_id"] == 6) & (df_events["type_id"] == 8)
+    selector_offside = (df_events1["type_id"] == _WS_TYPE_OFFSIDE) & (df_events["type_id"] == _WS_TYPE_PASS)
 
     # Set variable 'offside' to 1 for all offside passes
     df_events.loc[selector_offside, "offside"] = 1
 
     # Remove offside events
-    df_events = df_events[df_events["type_id"] != 6]
+    df_events = df_events[df_events["type_id"] != _WS_TYPE_OFFSIDE]
 
     # Reset index
     df_events = df_events.reset_index(drop=True)
@@ -455,7 +505,7 @@ def add_offside_variable(df_events: pd.DataFrame) -> pd.DataFrame:
     return df_events
 
 
-def convert_simulations(df_events: pd.DataFrame) -> pd.DataFrame:
+def _convert_simulations(df_events: pd.DataFrame) -> pd.DataFrame:
     """Convert simulations to failed take-ons.
 
     Parameters
@@ -473,7 +523,7 @@ def convert_simulations(df_events: pd.DataFrame) -> pd.DataFrame:
     prev_events = df_events.shift(1)
 
     # Select simulations
-    selector_simulation = df_events["subtype_id"] == 25
+    selector_simulation = df_events["subtype_id"] == _WS_SUBTYPE_SIMULATION
 
     # Select actions preceded by a failed take-on
     selector_previous_is_failed_take_on = (
@@ -482,8 +532,8 @@ def convert_simulations(df_events: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Transform simulations not preceded by a failed take-on to a failed take-on
-    df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "type_id"] = 0
-    df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "subtype_id"] = 0
+    df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "type_id"] = _WS_TYPE_TAKE_ON
+    df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "subtype_id"] = _WS_TYPE_TAKE_ON
     df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "accurate"] = False
     df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "not_accurate"] = (
         True
@@ -502,7 +552,7 @@ def convert_simulations(df_events: pd.DataFrame) -> pd.DataFrame:
     return df_events
 
 
-def convert_touches(df_events: pd.DataFrame) -> pd.DataFrame:
+def _convert_touches(df_events: pd.DataFrame) -> pd.DataFrame:
     """Convert touch events to dribbles or passes.
 
     This function converts the Wyscout 'touch' event (sub_type_id 72) into either
@@ -521,7 +571,7 @@ def convert_touches(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events1 = df_events.shift(-1)
 
     selector_touch = (
-        (df_events["subtype_id"] == 72) & ~df_events["interception"] & ~df_events["missed_ball"]
+        (df_events["subtype_id"] == _WS_SUBTYPE_TOUCH) & ~df_events["interception"] & ~df_events["missed_ball"]
     )
 
     selector_same_player = df_events["player_id"] == df_events1["player_id"]
@@ -539,20 +589,20 @@ def convert_touches(df_events: pd.DataFrame) -> pd.DataFrame:
     # df_events.loc[selector_touch_same_player & same_loc, 'accurate'] = True
     # df_events.loc[selector_touch_same_player & same_loc, 'not_accurate'] = False
 
-    df_events.loc[selector_touch_same_team & same_loc, "type_id"] = 8
-    df_events.loc[selector_touch_same_team & same_loc, "subtype_id"] = 85
+    df_events.loc[selector_touch_same_team & same_loc, "type_id"] = _WS_TYPE_PASS
+    df_events.loc[selector_touch_same_team & same_loc, "subtype_id"] = _WS_SUBTYPE_SIMPLE_PASS
     df_events.loc[selector_touch_same_team & same_loc, "accurate"] = True
     df_events.loc[selector_touch_same_team & same_loc, "not_accurate"] = False
 
-    df_events.loc[selector_touch_other & same_loc, "type_id"] = 8
-    df_events.loc[selector_touch_other & same_loc, "subtype_id"] = 85
+    df_events.loc[selector_touch_other & same_loc, "type_id"] = _WS_TYPE_PASS
+    df_events.loc[selector_touch_other & same_loc, "subtype_id"] = _WS_SUBTYPE_SIMPLE_PASS
     df_events.loc[selector_touch_other & same_loc, "accurate"] = False
     df_events.loc[selector_touch_other & same_loc, "not_accurate"] = True
 
     return df_events
 
 
-def create_df_actions(df_events: pd.DataFrame) -> pd.DataFrame:
+def _create_df_actions(df_events: pd.DataFrame) -> pd.DataFrame:
     """Create the SciSports action dataframe.
 
     Parameters
@@ -580,16 +630,16 @@ def create_df_actions(df_events: pd.DataFrame) -> pd.DataFrame:
         ]
     ].copy()
     df_actions["original_event_id"] = df_events["event_id"].astype(object)
-    df_actions["bodypart_id"] = df_events.apply(determine_bodypart_id, axis=1)
-    df_actions["type_id"] = df_events.apply(determine_type_id, axis=1)
-    df_actions["result_id"] = df_events.apply(determine_result_id, axis=1)
+    df_actions["bodypart_id"] = df_events.apply(_determine_bodypart_id, axis=1)
+    df_actions["type_id"] = df_events.apply(_determine_type_id, axis=1)
+    df_actions["result_id"] = df_events.apply(_determine_result_id, axis=1)
 
-    df_actions = remove_non_actions(df_actions)  # remove all non-actions left
+    df_actions = _remove_non_actions(df_actions)  # remove all non-actions left
 
     return df_actions
 
 
-def determine_bodypart_id(event: pd.DataFrame) -> int:
+def _determine_bodypart_id(event: pd.DataFrame) -> int:
     """Determint eht body part for each action.
 
     Parameters
@@ -602,11 +652,14 @@ def determine_bodypart_id(event: pd.DataFrame) -> int:
     int
         id of the body part used for the action
     """
-    if event["subtype_id"] in [81, 36, 21, 90, 91]:
+    if event["subtype_id"] in [
+        _WS_SUBTYPE_THROW_IN_BP, _WS_SUBTYPE_THROW_IN, _WS_SUBTYPE_HEAD_PASS,
+        _WS_SUBTYPE_LAUNCH, _WS_SUBTYPE_HIGH_PASS,
+    ]:
         body_part = "other"
-    elif event["subtype_id"] == 82:
+    elif event["subtype_id"] == _WS_SUBTYPE_HEAD_PASS_BP:
         body_part = "head"
-    elif event["type_id"] == 10 and event["head/body"]:
+    elif event["type_id"] == _WS_TYPE_SHOT and event["head/body"]:
         body_part = "head/other"
     elif event["left_foot"]:
         body_part = "foot_left"
@@ -617,7 +670,7 @@ def determine_bodypart_id(event: pd.DataFrame) -> int:
     return spadlconfig.bodyparts.index(body_part)
 
 
-def determine_type_id(event: pd.DataFrame) -> int:  # noqa: C901
+def _determine_type_id(event: pd.DataFrame) -> int:  # noqa: C901
     """Determine the type of each action.
 
     This function transforms the Wyscout events, sub_events and tags
@@ -637,52 +690,58 @@ def determine_type_id(event: pd.DataFrame) -> int:  # noqa: C901
         action_type = "non_action"
     elif event["own_goal"]:
         action_type = "bad_touch"
-    elif event["type_id"] == 8:
-        if event["subtype_id"] == 80:
+    elif event["type_id"] == _WS_TYPE_PASS:
+        if event["subtype_id"] == _WS_SUBTYPE_CROSS:
             action_type = "cross"
         else:
             action_type = "pass"
-    elif event["subtype_id"] == 36:
+    elif event["subtype_id"] == _WS_SUBTYPE_THROW_IN:
         action_type = "throw_in"
-    elif event["subtype_id"] == 30:
+    elif event["subtype_id"] == _WS_SUBTYPE_CORNER:
         if event["high"]:
             action_type = "corner_crossed"
         else:
             action_type = "corner_short"
-    elif event["subtype_id"] == 32:
+    elif event["subtype_id"] == _WS_SUBTYPE_FK_CROSSED:
         action_type = "freekick_crossed"
-    elif event["subtype_id"] == 31:
+    elif event["subtype_id"] == _WS_SUBTYPE_FK_SHORT:
         action_type = "freekick_short"
-    elif event["subtype_id"] == 34:
+    elif event["subtype_id"] == _WS_SUBTYPE_GOALKICK:
         action_type = "goalkick"
-    elif event["type_id"] == 2 and (event["subtype_id"] not in [22, 23, 24, 26]):
+    elif event["type_id"] == _WS_TYPE_FOUL and (event["subtype_id"] not in [
+        _WS_SUBTYPE_HAND_FOUL, _WS_SUBTYPE_LATE_CARD_FOUL,
+        _WS_SUBTYPE_OUT_OF_GAME_FOUL, _WS_SUBTYPE_VIOLENT_FOUL,
+    ]):
         action_type = "foul"
-    elif event["type_id"] == 10:
+    elif event["type_id"] == _WS_TYPE_SHOT:
         action_type = "shot"
-    elif event["subtype_id"] == 35:
+    elif event["subtype_id"] == _WS_SUBTYPE_PENALTY:
         action_type = "shot_penalty"
-    elif event["subtype_id"] == 33:
+    elif event["subtype_id"] == _WS_SUBTYPE_FK_SHOT:
         action_type = "shot_freekick"
-    elif event["type_id"] == 9:
+    elif event["type_id"] == _WS_TYPE_GK:
         action_type = "keeper_save"
-    elif event["subtype_id"] == 71:
+    elif event["subtype_id"] == _WS_SUBTYPE_CLEARANCE:
         action_type = "clearance"
-    elif event["subtype_id"] == 72 and event["not_accurate"]:
+    elif event["subtype_id"] == _WS_SUBTYPE_TOUCH and event["not_accurate"]:
         action_type = "bad_touch"
-    elif event["subtype_id"] == 70:
+    elif event["subtype_id"] == _WS_SUBTYPE_ACCELERATION:
         action_type = "dribble"
     elif event["take_on_left"] or event["take_on_right"]:
         action_type = "take_on"
     elif event["sliding_tackle"]:
         action_type = "tackle"
-    elif event["interception"] and (event["subtype_id"] in [0, 10, 11, 12, 13, 72]):
+    elif event["interception"] and (event["subtype_id"] in [
+        _WS_TYPE_TAKE_ON, _WS_SUBTYPE_AIR_DUEL, _WS_SUBTYPE_GROUND_ATT_DUEL,
+        _WS_SUBTYPE_GROUND_DEF_DUEL, _WS_SUBTYPE_GROUND_LOOSE_BALL, _WS_SUBTYPE_TOUCH,
+    ]):
         action_type = "interception"
     else:
         action_type = "non_action"
     return spadlconfig.actiontypes.index(action_type)
 
 
-def determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
+def _determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
     """Determine the result of each event.
 
     Parameters
@@ -696,34 +755,34 @@ def determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
         result of the action
     """
     if event["offside"] == 1:
-        return 2
-    if event["type_id"] == 2:  # foul
+        return spadlconfig.results.index("offside")
+    if event["type_id"] == _WS_TYPE_FOUL:
         if event["yellow_card"]:
-            return 4
+            return spadlconfig.results.index("yellow_card")
         elif event["second_yellow_card"] or event["red_card"]:
-            return 5
-        return 0
-    if event["goal"]:  # goal
-        return 1
-    if event["own_goal"]:  # own goal
-        return 3
-    if event["subtype_id"] in [100, 33, 35]:  # no goal, so 0
-        return 0
+            return spadlconfig.results.index("red_card")
+        return spadlconfig.results.index("fail")
+    if event["goal"]:
+        return spadlconfig.results.index("success")
+    if event["own_goal"]:
+        return spadlconfig.results.index("owngoal")
+    if event["subtype_id"] in [_WS_SUBTYPE_SHOT_ON_TARGET, _WS_SUBTYPE_FK_SHOT, _WS_SUBTYPE_PENALTY]:
+        return spadlconfig.results.index("fail")
     if event["accurate"]:
-        return 1
+        return spadlconfig.results.index("success")
     if event["not_accurate"]:
-        return 0
+        return spadlconfig.results.index("fail")
     if (
-        event["interception"] or event["clearance"] or event["subtype_id"] == 71
+        event["interception"] or event["clearance"] or event["subtype_id"] == _WS_SUBTYPE_CLEARANCE
     ):  # interception or clearance always success
-        return 1
-    if event["type_id"] == 9:  # keeper save always success
-        return 1
+        return spadlconfig.results.index("success")
+    if event["type_id"] == _WS_TYPE_GK:  # keeper save always success
+        return spadlconfig.results.index("success")
     # no idea, assume it was successful
-    return 1
+    return spadlconfig.results.index("success")
 
 
-def remove_non_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
+def _remove_non_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     """Remove the remaining non_actions from the action dataframe.
 
     Parameters
@@ -742,7 +801,7 @@ def remove_non_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     return df_actions
 
 
-def fix_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
+def _fix_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     """Fix the generated actions.
 
     Parameters
@@ -769,17 +828,17 @@ def fix_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
         (100 - df_actions["end_y"]) * spadlconfig.field_width / 100
         # y is from top to bottom in Wyscout
     ).clip(0, spadlconfig.field_width)
-    df_actions = fix_goalkick_coordinates(df_actions)
-    df_actions = adjust_goalkick_result(df_actions)
-    df_actions = fix_foul_coordinates(df_actions)
-    df_actions = fix_keeper_save_coordinates(df_actions)
-    df_actions = remove_keeper_goal_actions(df_actions)
+    df_actions = _fix_goalkick_coordinates(df_actions)
+    df_actions = _adjust_goalkick_result(df_actions)
+    df_actions = _fix_foul_coordinates(df_actions)
+    df_actions = _fix_keeper_save_coordinates(df_actions)
+    df_actions = _remove_keeper_goal_actions(df_actions)
     df_actions.reset_index(drop=True, inplace=True)
 
     return df_actions
 
 
-def fix_goalkick_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
+def _fix_goalkick_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     """Fix goalkick coordinates.
 
     This function sets the goalkick start coordinates to (5,34)
@@ -802,7 +861,7 @@ def fix_goalkick_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     return df_actions
 
 
-def fix_foul_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
+def _fix_foul_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     """Fix fould coordinates.
 
     This function sets foul end coordinates equal to the foul start coordinates
@@ -824,7 +883,7 @@ def fix_foul_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     return df_actions
 
 
-def fix_keeper_save_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
+def _fix_keeper_save_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     """Fix keeper save coordinates.
 
     This function sets keeper_save start coordinates equal to
@@ -855,7 +914,7 @@ def fix_keeper_save_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     return df_actions
 
 
-def remove_keeper_goal_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
+def _remove_keeper_goal_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     """Remove keeper goal-saving actions.
 
     This function removes keeper_save actions that appear directly after a goal
@@ -890,7 +949,7 @@ def remove_keeper_goal_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     return df_actions
 
 
-def adjust_goalkick_result(df_actions: pd.DataFrame) -> pd.DataFrame:
+def _adjust_goalkick_result(df_actions: pd.DataFrame) -> pd.DataFrame:
     """Adjust goalkick results.
 
     This function adjusts goalkick results depending on whether

@@ -1,7 +1,5 @@
 """Implements the xT framework."""
 
-import json
-import os
 from typing import Callable, Optional
 
 import numpy as np
@@ -317,8 +315,6 @@ class ExpectedThreat:
             self.heatmaps.append(self.xT.copy())
             it += 1
 
-        print("# iterations: ", it)
-
     def fit(self, actions: DataFrame[SPADLSchema]) -> "ExpectedThreat":
         """Fits the xT model with the given actions.
 
@@ -436,66 +432,3 @@ class ExpectedThreat:
         ratings[move_actions.index] = xT_end - xT_start
         return ratings
 
-    def save_model(self, filepath: str, overwrite: bool = True) -> None:
-        """Save the xT value surface in JSON format.
-
-        This stores only the xT value surface, which is all you need to compute
-        xT values for new data. The value surface can be loaded back with the
-        :func:`silly_kicks.xthreat.load_model` function.
-
-        Pickle the `ExpectedThreat` instance to store the entire model and to
-        retain the transition, shot probability, move probability and scoring
-        probability matrices.
-
-        Raises
-        ------
-        NotFittedError
-            If the model has not been fitted yet.
-        ValueError
-            If the specified output file already exists and "overwrite" is set
-            to False.
-
-        Parameters
-        ----------
-        filepath : str
-            Path to the file to save the value surface to.
-        overwrite : bool
-            Whether to silently overwrite any existing file at the target
-            location.
-        """
-        if not np.any(self.xT):
-            raise NotFittedError()
-
-        # If file exists and should not be overwritten:
-        if not overwrite and os.path.isfile(filepath):
-            raise ValueError(
-                'save_xt got overwrite="False", but a file '
-                f"({filepath}) exists already. No data was saved."
-            )
-        with open(filepath, "w") as f:
-            json.dump(self.xT.tolist(), f)
-
-
-def load_model(path: str) -> ExpectedThreat:
-    """Create a model from a pre-computed xT value surface.
-
-    The value surface should be provided as a JSON file containing a 2D
-    matrix. Karun Singh provides such a grid at the follwing url:
-    https://karun.in/blog/data/open_xt_12x8_v1.json
-
-    Parameters
-    ----------
-    path : str
-        Any valid string path is acceptable. The string could be a URL. Valid
-        URL schemes include http, ftp, s3, and file.
-
-    Returns
-    -------
-    ExpectedThreat
-        An xT model that uses the given value surface to value actions.
-    """
-    grid = pd.read_json(path)
-    model = ExpectedThreat()
-    model.xT = grid.values
-    model.w, model.l = model.xT.shape
-    return model

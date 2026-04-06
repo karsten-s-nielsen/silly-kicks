@@ -1,18 +1,17 @@
 """Implements the feature tranformers of the VAEP framework."""
 
 from functools import wraps
-from typing import Any, Callable, Union, no_type_check
+from typing import Any, Callable, no_type_check
 
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 from pandera.typing import DataFrame
 
 import silly_kicks.spadl.config as spadlcfg
-from silly_kicks.atomic.spadl import AtomicSPADLSchema
 from silly_kicks.spadl.schema import SPADLSchema
 
 SPADLActions = DataFrame[SPADLSchema]
-Actions = Union[DataFrame[SPADLSchema], DataFrame[AtomicSPADLSchema]]
+Actions = DataFrame[SPADLSchema]
 GameStates = list[Actions]
 Features = DataFrame[Any]
 FeatureTransfomer = Callable[[GameStates], Features]
@@ -487,10 +486,6 @@ def endlocation(actions: SPADLActions) -> Features:
     return actions[["end_x", "end_y"]]
 
 
-_goal_x: float = spadlcfg.field_length
-_goal_y: float = spadlcfg.field_width / 2
-
-
 @simple
 def startpolar(actions: SPADLActions) -> Features:
     """Get the polar coordinates of each action's start location.
@@ -508,8 +503,8 @@ def startpolar(actions: SPADLActions) -> Features:
         The 'start_dist_to_goal' and 'start_angle_to_goal' of each action.
     """
     polardf = pd.DataFrame(index=actions.index)
-    dx = (_goal_x - actions["start_x"]).abs().values
-    dy = (_goal_y - actions["start_y"]).abs().values
+    dx = (spadlcfg.field_length - actions["start_x"]).abs().values
+    dy = (spadlcfg.field_width / 2 - actions["start_y"]).abs().values
     polardf["start_dist_to_goal"] = np.sqrt(dx**2 + dy**2)
     with np.errstate(divide="ignore", invalid="ignore"):
         polardf["start_angle_to_goal"] = np.nan_to_num(np.arctan(dy / dx))
@@ -533,8 +528,8 @@ def endpolar(actions: SPADLActions) -> Features:
         The 'end_dist_to_goal' and 'end_angle_to_goal' of each action.
     """
     polardf = pd.DataFrame(index=actions.index)
-    dx = (_goal_x - actions["end_x"]).abs().values
-    dy = (_goal_y - actions["end_y"]).abs().values
+    dx = (spadlcfg.field_length - actions["end_x"]).abs().values
+    dy = (spadlcfg.field_width / 2 - actions["end_y"]).abs().values
     polardf["end_dist_to_goal"] = np.sqrt(dx**2 + dy**2)
     with np.errstate(divide="ignore", invalid="ignore"):
         polardf["end_angle_to_goal"] = np.nan_to_num(np.arctan(dy / dx))

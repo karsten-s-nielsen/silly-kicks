@@ -12,6 +12,9 @@ from . import config as spadlconfig
 from .base import _add_dribbles, _fix_clearances, _fix_direction_of_play
 from .schema import SPADLSchema
 
+_SB_FIELD_LENGTH: int = 120  # StatsBomb internal grid length
+_SB_FIELD_WIDTH: int = 80    # StatsBomb internal grid width
+
 
 def convert_to_actions(
     events: pd.DataFrame,
@@ -194,18 +197,18 @@ def _convert_locations(locations: pd.Series, fidelity_version: int) -> npt.NDArr
     coordinates = np.empty((len(locations), 2), dtype=float)
     for i, loc in enumerate(locations):
         if isinstance(loc, list) and len(loc) == 2:
-            coordinates[i, 0] = (loc[0] - cell_relative_center) / 120 * spadlconfig.field_length
+            coordinates[i, 0] = (loc[0] - cell_relative_center) / _SB_FIELD_LENGTH * spadlconfig.field_length
             coordinates[i, 1] = (
                 spadlconfig.field_width
-                - (loc[1] - cell_relative_center) / 80 * spadlconfig.field_width
+                - (loc[1] - cell_relative_center) / _SB_FIELD_WIDTH * spadlconfig.field_width
             )
         elif isinstance(loc, list) and len(loc) == 3:
             # A coordinate in the goal frame, only used for the end location of
             # Shot events. The y-coordinates and z-coordinates are always detailed
             # to a tenth of a yard.
-            coordinates[i, 0] = (loc[0] - cell_relative_center) / 120 * spadlconfig.field_length
+            coordinates[i, 0] = (loc[0] - cell_relative_center) / _SB_FIELD_LENGTH * spadlconfig.field_length
             coordinates[i, 1] = (
-                spadlconfig.field_width - (loc[1] - 0.05) / 80 * spadlconfig.field_width
+                spadlconfig.field_width - (loc[1] - 0.05) / _SB_FIELD_WIDTH * spadlconfig.field_width
             )
     coordinates[:, 0] = np.clip(coordinates[:, 0], 0, spadlconfig.field_length)
     coordinates[:, 1] = np.clip(coordinates[:, 1], 0, spadlconfig.field_width)
