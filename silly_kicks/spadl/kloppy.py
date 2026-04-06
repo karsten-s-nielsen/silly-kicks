@@ -403,9 +403,6 @@ def _parse_goalkeeper_event(event: GoalkeeperEvent) -> tuple[str, str, str]:
     if GoalkeeperActionType.SAVE in qualifiers:
         a = "keeper_save"
         r = "success"
-    # if GoalkeeperActionType.SAVE_ATTEMPT in qualifiers:
-    #     a = "keeper_save"
-    #     r = "fail"
     if GoalkeeperActionType.CLAIM in qualifiers:
         a = "keeper_claim"
     if GoalkeeperActionType.SMOTHER in qualifiers:

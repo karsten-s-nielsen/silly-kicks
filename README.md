@@ -49,6 +49,10 @@ actions = spadl.statsbomb.convert_to_actions(events, home_team_id=123)
 actions = spadl.add_names(actions)
 ```
 
+## Architecture
+
+Open [`docs/c4/architecture.html`](docs/c4/architecture.html) in a browser to explore the C4 architecture diagrams (System Context, Containers).
+
 ## Attribution
 
 This project builds on the foundational research by the KU Leuven Machine
