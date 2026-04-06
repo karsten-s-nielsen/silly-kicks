@@ -1,9 +1,10 @@
 """Opta event stream data to SPADL converter."""
 
-from typing import Any, cast
+import warnings
+from collections import Counter
+from typing import Any
 
-import pandas as pd  # type: ignore
-from pandera.typing import DataFrame
+import pandas as pd
 
 from . import config as spadlconfig
 from .base import (
@@ -12,10 +13,34 @@ from .base import (
     _fix_direction_of_play,
     min_dribble_length,
 )
-from .schema import SPADLSchema
+from .schema import ConversionReport
+from .utils import _finalize_output, _validate_input_columns
+
+EXPECTED_INPUT_COLUMNS: set[str] = {
+    "game_id", "event_id", "period_id", "minute", "second",
+    "team_id", "player_id", "type_name", "outcome",
+    "start_x", "start_y", "end_x", "end_y", "qualifiers",
+}
+
+_MAPPED_EVENT_TYPES: frozenset[str] = frozenset({
+    "pass", "offside pass", "take on", "foul", "tackle",
+    "interception", "blocked pass", "miss", "post",
+    "attempt saved", "goal", "save", "claim", "punch",
+    "keeper pick-up", "clearance", "card", "ball touch",
+    "ball recovery",
+})
+
+_EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset({
+    "end", "start", "formation change", "resume", "deleted event",
+    "shield ball opp", "offside provoked", "player off",
+    "player on", "player retired", "chance missed",
+    "attendance", "referee stop", "referee drop ball",
+    "50/50", "cross not claimed",
+    "goalkeeper position",
+})
 
 
-def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPADLSchema]:
+def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert Opta events to SPADL actions.
 
@@ -32,6 +57,9 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
         DataFrame with corresponding SPADL actions.
 
     """
+    _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Opta")
+    _event_type_counts = Counter(events["type_name"])
+
     actions = pd.DataFrame()
 
     actions["game_id"] = events.game_id
@@ -76,7 +104,32 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 
-    return cast(DataFrame[SPADLSchema], actions)
+    actions = _finalize_output(actions)
+
+    mapped_counts: dict[str, int] = {}
+    excluded_counts: dict[str, int] = {}
+    unrecognized_counts: dict[str, int] = {}
+    for etype, count in _event_type_counts.items():
+        if etype in _MAPPED_EVENT_TYPES:
+            mapped_counts[etype] = count
+        elif etype in _EXCLUDED_EVENT_TYPES:
+            excluded_counts[etype] = count
+        else:
+            unrecognized_counts[etype] = count
+    if unrecognized_counts:
+        warnings.warn(
+            f"Opta: {sum(unrecognized_counts.values())} unrecognized event types "
+            f"dropped: {dict(unrecognized_counts)}"
+        )
+    report = ConversionReport(
+        provider="Opta",
+        total_events=sum(_event_type_counts.values()),
+        total_actions=len(actions),
+        mapped_counts=mapped_counts,
+        excluded_counts=excluded_counts,
+        unrecognized_counts=unrecognized_counts,
+    )
+    return actions, report
 
 
 def _get_bodypart_id(args: tuple[str, bool, dict[int, Any]]) -> int:

@@ -1,7 +1,8 @@
 """Kloppy EventDataset to SPADL converter."""
 
 import warnings
-from typing import Optional, Union, cast
+from collections import Counter
+from typing import Optional, Union
 
 import kloppy
 import pandas as pd  # type: ignore
@@ -41,11 +42,11 @@ from kloppy.domain import (
     VerticalOrientation,
 )
 from packaging import version
-from pandera.typing import DataFrame
 
 from . import config as spadlconfig
 from .base import _add_dribbles, _fix_clearances
-from .schema import SPADLSchema
+from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
+from .utils import _finalize_output
 
 _KLOPPY_VERSION = version.parse(kloppy.__version__)
 _SUPPORTED_PROVIDERS = {
@@ -53,10 +54,34 @@ _SUPPORTED_PROVIDERS = {
     # Provider.OPTA: version.parse("3.15.0"),
 }
 
+_MAPPED_EVENT_TYPES: frozenset[EventType] = frozenset({
+    EventType.PASS,
+    EventType.SHOT,
+    EventType.TAKE_ON,
+    EventType.CARRY,
+    EventType.FOUL_COMMITTED,
+    EventType.DUEL,
+    EventType.CLEARANCE,
+    EventType.MISCONTROL,
+    EventType.GOALKEEPER,
+    EventType.INTERCEPTION,
+})
+
+_EXCLUDED_EVENT_TYPES: frozenset[EventType] = frozenset({
+    EventType.GENERIC,
+    EventType.RECOVERY,
+    EventType.SUBSTITUTION,
+    EventType.CARD,
+    EventType.PLAYER_ON,
+    EventType.PLAYER_OFF,
+    EventType.BALL_OUT,
+    EventType.FORMATION_CHANGE,
+})
+
 
 def convert_to_actions(
     dataset: EventDataset, game_id: Optional[Union[str, int]] = None
-) -> DataFrame[SPADLSchema]:
+) -> tuple[pd.DataFrame, ConversionReport]:
     """Convert a Kloppy event data set to SPADL actions.
 
     Parameters
@@ -97,8 +122,10 @@ def convert_to_actions(
     )
 
     # Convert the events to SPADL actions
+    _event_type_counts: Counter[EventType] = Counter()
     actions = []
     for event in new_dataset.events:
+        _event_type_counts[event.event_type] += 1
         action = dict(
             game_id=game_id,
             original_event_id=event.event_id,
@@ -126,7 +153,33 @@ def convert_to_actions(
     df_actions["action_id"] = range(len(df_actions))
     df_actions = _add_dribbles(df_actions)
 
-    return cast(DataFrame[SPADLSchema], df_actions)
+    df_actions = _finalize_output(df_actions, KLOPPY_SPADL_COLUMNS)
+
+    mapped_counts: dict[str, int] = {}
+    excluded_counts: dict[str, int] = {}
+    unrecognized_counts: dict[str, int] = {}
+    for etype, count in _event_type_counts.items():
+        label = etype.value if hasattr(etype, "value") else str(etype)
+        if etype in _MAPPED_EVENT_TYPES:
+            mapped_counts[label] = count
+        elif etype in _EXCLUDED_EVENT_TYPES:
+            excluded_counts[label] = count
+        else:
+            unrecognized_counts[label] = count
+    if unrecognized_counts:
+        warnings.warn(
+            f"Kloppy: {sum(unrecognized_counts.values())} unrecognized event types "
+            f"dropped: {dict(unrecognized_counts)}"
+        )
+    report = ConversionReport(
+        provider="Kloppy",
+        total_events=sum(_event_type_counts.values()),
+        total_actions=len(df_actions),
+        mapped_counts=mapped_counts,
+        excluded_counts=excluded_counts,
+        unrecognized_counts=unrecognized_counts,
+    )
+    return df_actions, report
 
 
 class _SoccerActionCoordinateSystem(CoordinateSystem):

@@ -1,15 +1,14 @@
 """Utility functions for working with Atomic-SPADL dataframes."""
 
-from typing import cast
-
-from pandera.typing import DataFrame
+import pandas as pd
 
 from . import config as spadlconfig
-from .schema import AtomicSPADLSchema
 
 
-def add_names(actions: DataFrame[AtomicSPADLSchema]) -> DataFrame[AtomicSPADLSchema]:
-    """Add the type name, result name and bodypart name to an Atomic-SPADL dataframe.
+def add_names(actions: pd.DataFrame) -> pd.DataFrame:
+    """Add the type name and bodypart name to an Atomic-SPADL dataframe.
+
+    All columns not in the Atomic-SPADL schema are preserved unchanged.
 
     Parameters
     ----------
@@ -19,21 +18,17 @@ def add_names(actions: DataFrame[AtomicSPADLSchema]) -> DataFrame[AtomicSPADLSch
     Returns
     -------
     pd.DataFrame
-        The original dataframe with a 'type_name', 'result_name' and
-        'bodypart_name' appended.
+        The original dataframe with 'type_name' and 'bodypart_name' appended.
     """
-    return cast(
-        DataFrame[AtomicSPADLSchema],
+    return (
         actions.drop(columns=["type_name", "bodypart_name"], errors="ignore")
         .merge(spadlconfig.actiontypes_df(), how="left")
         .merge(spadlconfig.bodyparts_df(), how="left")
-        .set_index(actions.index),
+        .set_index(actions.index)
     )
 
 
-def play_left_to_right(
-    actions: DataFrame[AtomicSPADLSchema], home_team_id: int
-) -> DataFrame[AtomicSPADLSchema]:
+def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame:
     """Perform all action in the same playing direction.
 
     This changes the location of each action, such that all actions

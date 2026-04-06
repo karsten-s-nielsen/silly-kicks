@@ -1,9 +1,10 @@
 """Wyscout event stream data to SPADL converter."""
 
-from typing import Any, Optional, cast
+import warnings
+from collections import Counter
+from typing import Any, Optional
 
-import pandas as pd  # type: ignore
-from pandera.typing import DataFrame
+import pandas as pd
 
 from . import config as spadlconfig
 from .base import (
@@ -12,7 +13,8 @@ from .base import (
     _fix_direction_of_play,
     min_dribble_length,
 )
-from .schema import SPADLSchema
+from .schema import ConversionReport
+from .utils import _finalize_output, _validate_input_columns
 
 # ---------------------------------------------------------------------------
 # Wyscout event type IDs
@@ -68,7 +70,31 @@ _WS_SUBTYPE_SHOT_ON_TARGET: int = 100
 _WS_TAG_FAIRPLAY: int = 1001
 _WS_TAG_OWN_GOAL: int = 102
 
-def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPADLSchema]:
+EXPECTED_INPUT_COLUMNS: set[str] = {
+    "game_id", "event_id", "period_id", "milliseconds",
+    "team_id", "player_id", "type_id", "subtype_id",
+    "positions", "tags",
+}
+
+_MAPPED_WS_TYPE_IDS: frozenset[int] = frozenset({
+    _WS_TYPE_TAKE_ON,        # 0
+    _WS_TYPE_DUEL,           # 1
+    _WS_TYPE_FOUL,           # 2
+    7,                        # Others on the ball
+    _WS_TYPE_PASS,           # 8
+    _WS_TYPE_GK,             # 9
+    _WS_TYPE_SHOT,           # 10
+})
+
+_EXCLUDED_WS_TYPE_IDS: frozenset[int] = frozenset({
+    3,   # Free kick
+    4,   # Goal kick
+    5,   # Interruption
+    _WS_TYPE_OFFSIDE,  # 6
+})
+
+
+def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert Wyscout events to SPADL actions.
 
@@ -85,6 +111,9 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
         DataFrame with corresponding SPADL actions.
 
     """
+    _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Wyscout")
+    _event_type_counts = Counter(events["type_id"])
+
     events = pd.concat([events, _get_tagsdf(events)], axis=1)
     events = _make_new_positions(events)
     events = _fix_wyscout_events(events)
@@ -95,7 +124,33 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 
-    return cast(DataFrame[SPADLSchema], actions)
+    actions = _finalize_output(actions)
+
+    mapped_counts: dict[str, int] = {}
+    excluded_counts: dict[str, int] = {}
+    unrecognized_counts: dict[str, int] = {}
+    for ws_type_id, count in _event_type_counts.items():
+        label = str(ws_type_id)
+        if ws_type_id in _MAPPED_WS_TYPE_IDS:
+            mapped_counts[label] = count
+        elif ws_type_id in _EXCLUDED_WS_TYPE_IDS:
+            excluded_counts[label] = count
+        else:
+            unrecognized_counts[label] = count
+    if unrecognized_counts:
+        warnings.warn(
+            f"Wyscout: {sum(unrecognized_counts.values())} unrecognized event type_ids "
+            f"dropped: {dict(unrecognized_counts)}"
+        )
+    report = ConversionReport(
+        provider="Wyscout",
+        total_events=sum(_event_type_counts.values()),
+        total_actions=len(actions),
+        mapped_counts=mapped_counts,
+        excluded_counts=excluded_counts,
+        unrecognized_counts=unrecognized_counts,
+    )
+    return actions, report
 
 
 def _get_tag_set(tags: list[dict[str, Any]]) -> set[int]:

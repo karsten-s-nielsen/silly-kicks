@@ -1,19 +1,16 @@
 """Implements a converter for regular SPADL actions to atomic actions."""
 
-from typing import cast
-
 import pandas as pd
-from pandera.typing import DataFrame
 
 import silly_kicks.spadl.config as _spadl
 from silly_kicks.spadl.base import _add_dribbles
-from silly_kicks.spadl.schema import SPADLSchema
+from silly_kicks.spadl.utils import _finalize_output
 
 from . import config as _atomicspadl
-from .schema import AtomicSPADLSchema
+from .schema import ATOMIC_SPADL_COLUMNS
 
 
-def convert_to_atomic(actions: DataFrame[SPADLSchema]) -> DataFrame[AtomicSPADLSchema]:
+def convert_to_atomic(actions: pd.DataFrame) -> pd.DataFrame:
     """Convert regular SPADL actions to atomic actions.
 
     Parameters
@@ -26,14 +23,14 @@ def convert_to_atomic(actions: DataFrame[SPADLSchema]) -> DataFrame[AtomicSPADLS
     pd.DataFrame
         The Atomic-SPADL dataframe.
     """
-    atomic_actions = cast(pd.DataFrame, actions.copy())
+    atomic_actions = actions.copy()
     atomic_actions = _extra_from_passes(atomic_actions)
-    atomic_actions = _add_dribbles(atomic_actions)  # for some reason this adds more dribbles
+    atomic_actions = _add_dribbles(atomic_actions)
     atomic_actions = _extra_from_shots(atomic_actions)
     atomic_actions = _extra_from_fouls(atomic_actions)
     atomic_actions = _convert_columns(atomic_actions)
     atomic_actions = _simplify(atomic_actions)
-    return cast(DataFrame[AtomicSPADLSchema], atomic_actions)
+    return _finalize_output(atomic_actions, ATOMIC_SPADL_COLUMNS)
 
 
 def _extra_from_passes(actions: pd.DataFrame) -> pd.DataFrame:

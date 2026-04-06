@@ -1,9 +1,6 @@
 """Implements the formula of the Atomic-VAEP framework."""
 
 import pandas as pd
-from pandera.typing import DataFrame, Series
-
-from silly_kicks.atomic.spadl import AtomicSPADLSchema
 
 
 def _prev(x: pd.Series) -> pd.Series:
@@ -13,8 +10,8 @@ def _prev(x: pd.Series) -> pd.Series:
 
 
 def offensive_value(
-    actions: DataFrame[AtomicSPADLSchema], scores: Series[float], concedes: Series[float]
-) -> Series[float]:
+    actions: pd.DataFrame, scores: pd.Series, concedes: pd.Series
+) -> pd.Series:
     r"""Compute the offensive value of each action.
 
     VAEP defines the *offensive value* of an action as the change in scoring
@@ -59,8 +56,8 @@ def offensive_value(
 
 
 def defensive_value(
-    actions: DataFrame[AtomicSPADLSchema], scores: Series[float], concedes: Series[float]
-) -> Series[float]:
+    actions: pd.DataFrame, scores: pd.Series, concedes: pd.Series
+) -> pd.Series:
     r"""Compute the defensive value of each action.
 
     VAEP defines the *defensive value* of an action as the change in conceding
@@ -105,7 +102,7 @@ def defensive_value(
 
 
 def value(
-    actions: DataFrame[AtomicSPADLSchema], Pscores: Series[float], Pconcedes: Series[float]
+    actions: pd.DataFrame, Pscores: pd.Series, Pconcedes: pd.Series
 ) -> pd.DataFrame:
     r"""Compute the offensive, defensive and VAEP value of each action.
 

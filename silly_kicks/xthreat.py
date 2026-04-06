@@ -5,11 +5,9 @@ from typing import Callable, Optional
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-from pandera.typing import DataFrame, Series
 from sklearn.exceptions import NotFittedError
 
 import silly_kicks.spadl.config as spadlconfig
-from silly_kicks.spadl.schema import SPADLSchema
 
 try:
     from scipy.interpolate import interp2d  # type: ignore
@@ -21,8 +19,8 @@ N: int = 16
 
 
 def _get_cell_indexes(
-    x: Series[float], y: Series[float], l: int = N, w: int = M
-) -> tuple[Series[int], Series[int]]:
+    x: pd.Series, y: pd.Series, l: int = N, w: int = M
+) -> tuple[pd.Series, pd.Series]:
     xi = x.divide(spadlconfig.field_length).multiply(l)
     yj = y.divide(spadlconfig.field_width).multiply(w)
     xi = xi.astype("int64").clip(0, l - 1)
@@ -30,12 +28,12 @@ def _get_cell_indexes(
     return xi, yj
 
 
-def _get_flat_indexes(x: Series[float], y: Series[float], l: int = N, w: int = M) -> Series[int]:
+def _get_flat_indexes(x: pd.Series, y: pd.Series, l: int = N, w: int = M) -> pd.Series:
     xi, yj = _get_cell_indexes(x, y, l, w)
     return yj.rsub(w - 1).mul(l).add(xi)
 
 
-def _count(x: Series[float], y: Series[float], l: int = N, w: int = M) -> npt.NDArray[np.int_]:
+def _count(x: pd.Series, y: pd.Series, l: int = N, w: int = M) -> npt.NDArray[np.int_]:
     """Count the number of actions occurring in each cell of the grid.
 
     Parameters
@@ -70,7 +68,7 @@ def _safe_divide(a: npt.ArrayLike, b: npt.ArrayLike) -> npt.NDArray[np.float64]:
 
 
 def scoring_prob(
-    actions: DataFrame[SPADLSchema], l: int = N, w: int = M
+    actions: pd.DataFrame, l: int = N, w: int = M
 ) -> npt.NDArray[np.float64]:
     """Compute the probability of scoring when taking a shot for each cell.
 
@@ -96,7 +94,7 @@ def scoring_prob(
     return _safe_divide(goalmatrix, shotmatrix)
 
 
-def get_move_actions(actions: DataFrame[SPADLSchema]) -> DataFrame[SPADLSchema]:
+def get_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     """Get all ball-progressing actions.
 
     These include passes, dribbles and crosses. Take-ons are ignored because
@@ -120,7 +118,7 @@ def get_move_actions(actions: DataFrame[SPADLSchema]) -> DataFrame[SPADLSchema]:
     ]
 
 
-def get_successful_move_actions(actions: DataFrame[SPADLSchema]) -> DataFrame[SPADLSchema]:
+def get_successful_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     """Get all successful ball-progressing actions.
 
     These include successful passes, dribbles and crosses.
@@ -140,7 +138,7 @@ def get_successful_move_actions(actions: DataFrame[SPADLSchema]) -> DataFrame[SP
 
 
 def action_prob(
-    actions: DataFrame[SPADLSchema], l: int = N, w: int = M
+    actions: pd.DataFrame, l: int = N, w: int = M
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """Compute the probability of taking an action in each cell of the grid.
 
@@ -173,7 +171,7 @@ def action_prob(
 
 
 def move_transition_matrix(
-    actions: DataFrame[SPADLSchema], l: int = N, w: int = M
+    actions: pd.DataFrame, l: int = N, w: int = M
 ) -> npt.NDArray[np.float64]:
     """Compute the move transition matrix from the given actions.
 
@@ -307,7 +305,7 @@ class ExpectedThreat:
             self.heatmaps.append(self.xT.copy())
             it += 1
 
-    def fit(self, actions: DataFrame[SPADLSchema]) -> "ExpectedThreat":
+    def fit(self, actions: pd.DataFrame) -> "ExpectedThreat":
         """Fits the xT model with the given actions.
 
         Parameters
@@ -367,7 +365,7 @@ class ExpectedThreat:
         return interp2d(x=x, y=y, z=self.xT, kind=kind, bounds_error=False)
 
     def rate(
-        self, actions: DataFrame[SPADLSchema], use_interpolation: bool = False
+        self, actions: pd.DataFrame, use_interpolation: bool = False
     ) -> npt.NDArray[np.float64]:
         """Compute the xT values for the given actions.
 
@@ -412,7 +410,7 @@ class ExpectedThreat:
             grid = interp(xs, ys)
 
         ratings = np.empty(len(actions))
-        ratings[:] = np.NaN
+        ratings[:] = np.nan
 
         move_actions = get_successful_move_actions(actions.reset_index())
 

@@ -1,8 +1,9 @@
 import pandas as pd
 import pytest
+
 import silly_kicks.spadl.config as spadlcfg
-from silly_kicks.spadl import SPADLSchema
 from silly_kicks.spadl import opta as opta
+from silly_kicks.spadl.schema import SPADL_COLUMNS, ConversionReport
 
 # ---------------------------------------------------------------------------
 # Tests that use inline DataFrames (no external fixtures required)
@@ -40,7 +41,8 @@ def test_convert_goalkick() -> None:
             }
         ]
     )
-    action = opta.convert_to_actions(event, 0).iloc[0]
+    actions, _ = opta.convert_to_actions(event, 0)
+    action = actions.iloc[0]
     assert action["type_id"] == spadlcfg.actiontypes.index("goalkick")
 
 
@@ -69,14 +71,15 @@ def test_convert_own_goal() -> None:
             }
         ]
     )
-    action = opta.convert_to_actions(event, 0).iloc[0]
+    actions, _ = opta.convert_to_actions(event, 0)
+    action = actions.iloc[0]
     assert action["type_id"] == spadlcfg.actiontypes.index("bad_touch")
     assert action["result_id"] == spadlcfg.results.index("owngoal")
 
 
 def test_opta_card_events_mapped() -> None:
     """Bug #784: Card events should be mapped, not dropped."""
-    from silly_kicks.spadl.opta import _get_type_id, _get_result_id
+    from silly_kicks.spadl.opta import _get_result_id, _get_type_id
 
     # Yellow card (no qualifier 32)
     type_id = _get_type_id(("card", True, {}))
@@ -88,6 +91,42 @@ def test_opta_card_events_mapped() -> None:
     # Red card (qualifier 32 present)
     result_id_red = _get_result_id(("card", True, {32: True}))
     assert result_id_red == spadlcfg.result_id["red_card"]
+
+
+def test_opta_returns_tuple():
+    event = pd.DataFrame([{
+        "game_id": 1, "event_id": 100, "type_id": 1, "period_id": 1,
+        "minute": 1, "second": 0, "team_id": 10, "player_id": 20,
+        "outcome": False, "start_x": 50.0, "start_y": 50.0,
+        "end_x": 60.0, "end_y": 50.0,
+        "qualifiers": {124: True}, "type_name": "pass",
+    }])
+    result = opta.convert_to_actions(event, home_team_id=10)
+    assert isinstance(result, tuple)
+    actions, report = result
+    assert isinstance(actions, pd.DataFrame)
+    assert isinstance(report, ConversionReport)
+    assert report.provider == "Opta"
+
+
+def test_opta_output_columns():
+    event = pd.DataFrame([{
+        "game_id": 1, "event_id": 100, "type_id": 1, "period_id": 1,
+        "minute": 1, "second": 0, "team_id": 10, "player_id": 20,
+        "outcome": True, "start_x": 50.0, "start_y": 50.0,
+        "end_x": 60.0, "end_y": 50.0,
+        "qualifiers": {124: True}, "type_name": "pass",
+    }])
+    actions, _ = opta.convert_to_actions(event, home_team_id=10)
+    assert list(actions.columns) == list(SPADL_COLUMNS.keys())
+    for col, dtype in SPADL_COLUMNS.items():
+        assert str(actions[col].dtype) == dtype, f"{col}: expected {dtype}, got {actions[col].dtype}"
+
+
+def test_opta_input_validation():
+    df = pd.DataFrame({"game_id": [1]})
+    with pytest.raises(ValueError, match="Opta"):
+        opta.convert_to_actions(df, home_team_id=10)
 
 
 # ---------------------------------------------------------------------------

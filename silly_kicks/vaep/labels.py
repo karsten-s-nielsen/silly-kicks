@@ -1,13 +1,11 @@
 """Implements the label tranformers of the VAEP framework."""
 
-import pandas as pd  # type: ignore
-from pandera.typing import DataFrame
+import pandas as pd
 
 import silly_kicks.spadl.config as spadl
-from silly_kicks.spadl.schema import SPADLSchema
 
 
-def scores(actions: DataFrame[SPADLSchema], nr_actions: int = 10) -> pd.DataFrame:
+def scores(actions: pd.DataFrame, nr_actions: int = 10) -> pd.DataFrame:
     """Determine whether the team possessing the ball scored a goal within the next x actions.
 
     Parameters
@@ -51,7 +49,7 @@ def scores(actions: DataFrame[SPADLSchema], nr_actions: int = 10) -> pd.DataFram
     return pd.DataFrame(res, columns=["scores"])
 
 
-def concedes(actions: DataFrame[SPADLSchema], nr_actions: int = 10) -> pd.DataFrame:
+def concedes(actions: pd.DataFrame, nr_actions: int = 10) -> pd.DataFrame:
     """Determine whether the team possessing the ball conceded a goal within the next x actions.
 
     Parameters
@@ -94,7 +92,7 @@ def concedes(actions: DataFrame[SPADLSchema], nr_actions: int = 10) -> pd.DataFr
     return pd.DataFrame(res, columns=["concedes"])
 
 
-def goal_from_shot(actions: DataFrame[SPADLSchema]) -> pd.DataFrame:
+def goal_from_shot(actions: pd.DataFrame) -> pd.DataFrame:
     """Determine whether a goal was scored from the current action.
 
     This label can be use to train an xG model.

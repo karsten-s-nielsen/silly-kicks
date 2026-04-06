@@ -5,15 +5,12 @@ from typing import Any, Callable, no_type_check
 
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
-from pandera.typing import DataFrame
 
 import silly_kicks.spadl.config as spadlcfg
-from silly_kicks.spadl.schema import SPADLSchema
 
-SPADLActions = DataFrame[SPADLSchema]
-Actions = DataFrame[SPADLSchema]
-GameStates = list[Actions]
-Features = DataFrame[Any]
+Actions = pd.DataFrame
+GameStates = list[pd.DataFrame]
+Features = pd.DataFrame
 FeatureTransfomer = Callable[[GameStates], Features]
 
 
@@ -207,12 +204,12 @@ def actiontype(actions: Actions) -> Features:
 
 
 @simple
-def actiontype_onehot(actions: SPADLActions) -> Features:
+def actiontype_onehot(actions: Actions) -> Features:
     """Get the one-hot-encoded type of each action.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -228,12 +225,12 @@ def actiontype_onehot(actions: SPADLActions) -> Features:
 
 
 @simple
-def result(actions: SPADLActions) -> Features:
+def result(actions: Actions) -> Features:
     """Get the result of each action.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -251,12 +248,12 @@ def result(actions: SPADLActions) -> Features:
 
 
 @simple
-def result_onehot(actions: SPADLActions) -> Features:
+def result_onehot(actions: Actions) -> Features:
     """Get the one-hot-encode result of each action.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -272,12 +269,12 @@ def result_onehot(actions: SPADLActions) -> Features:
 
 
 @simple
-def actiontype_result_onehot(actions: SPADLActions) -> Features:
+def actiontype_result_onehot(actions: Actions) -> Features:
     """Get a one-hot encoding of the combination between the type and result of each action.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -474,12 +471,12 @@ def time(actions: Actions) -> Features:
 
 
 @simple
-def startlocation(actions: SPADLActions) -> Features:
+def startlocation(actions: Actions) -> Features:
     """Get the location where each action started.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -491,12 +488,12 @@ def startlocation(actions: SPADLActions) -> Features:
 
 
 @simple
-def endlocation(actions: SPADLActions) -> Features:
+def endlocation(actions: Actions) -> Features:
     """Get the location where each action ended.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -508,14 +505,14 @@ def endlocation(actions: SPADLActions) -> Features:
 
 
 @simple
-def startpolar(actions: SPADLActions) -> Features:
+def startpolar(actions: Actions) -> Features:
     """Get the polar coordinates of each action's start location.
 
     The center of the opponent's goal is used as the origin.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -533,14 +530,14 @@ def startpolar(actions: SPADLActions) -> Features:
 
 
 @simple
-def endpolar(actions: SPADLActions) -> Features:
+def endpolar(actions: Actions) -> Features:
     """Get the polar coordinates of each action's end location.
 
     The center of the opponent's goal is used as the origin.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -558,12 +555,12 @@ def endpolar(actions: SPADLActions) -> Features:
 
 
 @simple
-def movement(actions: SPADLActions) -> Features:
+def movement(actions: Actions) -> Features:
     """Get the distance covered by each action.
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns
@@ -580,7 +577,7 @@ def movement(actions: SPADLActions) -> Features:
 
 
 @simple
-def player_possession_time(actions: SPADLActions) -> Features:
+def player_possession_time(actions: Actions) -> Features:
     """Get the time (sec) a player was in ball possession before attempting the action.
 
     We only look at the dribble preceding the action and reset the possession
@@ -588,7 +585,7 @@ def player_possession_time(actions: SPADLActions) -> Features:
 
     Parameters
     ----------
-    actions : SPADLActions
+    actions : Actions
         The actions of a game.
 
     Returns

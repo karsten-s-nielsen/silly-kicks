@@ -1,7 +1,9 @@
 import pandas as pd
 import pytest
+
 from silly_kicks.spadl import config as spadl
 from silly_kicks.spadl import wyscout as wy
+from silly_kicks.spadl.schema import SPADL_COLUMNS, ConversionReport
 
 # ---------------------------------------------------------------------------
 # Tests that use inline DataFrames (no external fixtures required)
@@ -27,7 +29,7 @@ def test_insert_interception_passes() -> None:
             }
         ]
     )
-    actions = wy.convert_to_actions(event, 1610)
+    actions, _ = wy.convert_to_actions(event, 1610)
     assert len(actions) == 2
     assert actions.at[0, "type_id"] == spadl.actiontypes.index("interception")
     assert actions.at[1, "type_id"] == spadl.actiontypes.index("bad_touch")
@@ -90,7 +92,7 @@ def test_convert_own_goal_touches() -> None:
             },
         ]
     )
-    actions = wy.convert_to_actions(event, 1639)
+    actions, _ = wy.convert_to_actions(event, 1639)
     # FIXME: It adds a dribble between the bad touch of the goalkeeper and
     # his attempt to save the ball before crossing the line. Not sure
     # whether that is ideal.
@@ -133,7 +135,7 @@ def test_convert_simulations_precede_by_take_on() -> None:
         ]
     )
 
-    actions = wy.convert_to_actions(events, 3158)
+    actions, _ = wy.convert_to_actions(events, 3158)
 
     assert len(actions) == 1
     assert actions.at[0, "type_id"] == spadl.actiontypes.index("take_on")
@@ -188,7 +190,7 @@ def test_convert_simulations() -> None:
         ]
     )
 
-    actions = wy.convert_to_actions(events, 3157)
+    actions, _ = wy.convert_to_actions(events, 3157)
 
     assert len(actions) == 3
     assert actions.at[2, "type_id"] == spadl.actiontypes.index("take_on")
@@ -232,6 +234,39 @@ def test_wyscout_keeper_save_default() -> None:
         "sliding_tackle": False, "interception": False,
     })
     assert _determine_type_id(event) == spadl.actiontype_id["keeper_save"]
+
+
+def test_wyscout_returns_tuple():
+    event = pd.DataFrame([{
+        "type_id": 8, "subtype_name": "Simple pass", "subtype_id": 85,
+        "tags": [{"id": 1801}],
+        "player_id": 1, "positions": [{"y": 50, "x": 50}, {"y": 60, "x": 60}],
+        "game_id": 1, "type_name": "Pass", "team_id": 100,
+        "period_id": 1, "milliseconds": 1000.0, "event_id": 1,
+    }])
+    result = wy.convert_to_actions(event, 100)
+    assert isinstance(result, tuple)
+    _actions, report = result
+    assert isinstance(report, ConversionReport)
+    assert report.provider == "Wyscout"
+
+
+def test_wyscout_output_columns():
+    event = pd.DataFrame([{
+        "type_id": 8, "subtype_name": "Simple pass", "subtype_id": 85,
+        "tags": [{"id": 1801}],
+        "player_id": 1, "positions": [{"y": 50, "x": 50}, {"y": 60, "x": 60}],
+        "game_id": 1, "type_name": "Pass", "team_id": 100,
+        "period_id": 1, "milliseconds": 1000.0, "event_id": 1,
+    }])
+    actions, _ = wy.convert_to_actions(event, 100)
+    assert list(actions.columns) == list(SPADL_COLUMNS.keys())
+
+
+def test_wyscout_input_validation():
+    df = pd.DataFrame({"game_id": [1]})
+    with pytest.raises(ValueError, match="Wyscout"):
+        wy.convert_to_actions(df, home_team_id=100)
 
 
 # ---------------------------------------------------------------------------

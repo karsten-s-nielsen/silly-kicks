@@ -1,13 +1,11 @@
 """Implements the label tranformers of the Atomic-VAEP framework."""
 
 import pandas as pd
-from pandera.typing import DataFrame
 
 import silly_kicks.atomic.spadl.config as atomicspadl
-from silly_kicks.atomic.spadl import AtomicSPADLSchema
 
 
-def scores(actions: DataFrame[AtomicSPADLSchema], nr_actions: int = 10) -> pd.DataFrame:
+def scores(actions: pd.DataFrame, nr_actions: int = 10) -> pd.DataFrame:
     """Determine whether the team possessing the ball scored a goal within the next x actions.
 
     Parameters
@@ -46,7 +44,7 @@ def scores(actions: DataFrame[AtomicSPADLSchema], nr_actions: int = 10) -> pd.Da
     return pd.DataFrame(res, columns=["scores"])
 
 
-def concedes(actions: DataFrame[AtomicSPADLSchema], nr_actions: int = 10) -> pd.DataFrame:
+def concedes(actions: pd.DataFrame, nr_actions: int = 10) -> pd.DataFrame:
     """Determine whether the team possessing the ball conceded a goal within the next x actions.
 
     Parameters
@@ -85,7 +83,7 @@ def concedes(actions: DataFrame[AtomicSPADLSchema], nr_actions: int = 10) -> pd.
     return pd.DataFrame(res, columns=["concedes"])
 
 
-def goal_from_shot(actions: DataFrame[AtomicSPADLSchema]) -> pd.DataFrame:
+def goal_from_shot(actions: pd.DataFrame) -> pd.DataFrame:
     """Determine whether a goal was scored from the current action.
 
     This label can be use to train an xG model.

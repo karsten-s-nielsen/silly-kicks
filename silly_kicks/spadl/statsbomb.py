@@ -1,19 +1,40 @@
 """StatsBomb event stream data to SPADL converter."""
 
 import warnings
-from typing import Any, Optional, cast
+from collections import Counter
+from typing import Any, Optional
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd  # type: ignore
-from pandera.typing import DataFrame
+import pandas as pd
 
 from . import config as spadlconfig
 from .base import _add_dribbles, _fix_clearances, _fix_direction_of_play
-from .schema import SPADLSchema
+from .schema import ConversionReport
+from .utils import _finalize_output, _validate_input_columns
 
 _SB_FIELD_LENGTH: int = 120  # StatsBomb internal grid length
 _SB_FIELD_WIDTH: int = 80    # StatsBomb internal grid width
+
+EXPECTED_INPUT_COLUMNS: set[str] = {
+    "game_id", "event_id", "period_id", "timestamp",
+    "team_id", "player_id", "type_name", "location", "extra",
+}
+
+_MAPPED_EVENT_TYPES: frozenset[str] = frozenset({
+    "Pass", "Dribble", "Carry", "Foul Committed", "Duel",
+    "Interception", "Shot", "Own Goal Against", "Goal Keeper",
+    "Clearance", "Miscontrol",
+})
+
+_EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset({
+    "Pressure", "Ball Receipt*", "Block", "50/50",
+    "Substitution", "Starting XI", "Tactical Shift",
+    "Referee Ball-Drop", "Half Start", "Half End",
+    "Injury Stoppage", "Player On", "Player Off", "Error",
+    "Shield", "Camera On", "Camera off",
+    "Bad Behaviour", "Ball Recovery",
+})
 
 
 def convert_to_actions(
@@ -21,7 +42,7 @@ def convert_to_actions(
     home_team_id: int,
     xy_fidelity_version: Optional[int] = None,
     shot_fidelity_version: Optional[int] = None,
-) -> DataFrame[SPADLSchema]:
+) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert StatsBomb events to SPADL actions.
 
@@ -50,6 +71,9 @@ def convert_to_actions(
         If ``xy_fidelity_version`` or ``shot_fidelity_version`` is not 1 or 2.
 
     """
+    _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="StatsBomb")
+    _event_type_counts = Counter(events["type_name"])
+
     actions = pd.DataFrame()
 
     # Determine xy_fidelity_version and shot_fidelity_version
@@ -85,7 +109,7 @@ def convert_to_actions(
     events["extra"] = events["extra"].fillna({})
 
     actions["game_id"] = events.game_id
-    actions["original_event_id"] = events.event_id
+    actions["original_event_id"] = events.event_id.astype(str)
     actions["period_id"] = events.period_id
     actions["time_seconds"] = pd.to_timedelta(events.timestamp).dt.total_seconds()
     actions["team_id"] = events.team_id
@@ -126,7 +150,32 @@ def convert_to_actions(
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 
-    return cast(DataFrame[SPADLSchema], actions)
+    actions = _finalize_output(actions)
+
+    mapped_counts: dict[str, int] = {}
+    excluded_counts: dict[str, int] = {}
+    unrecognized_counts: dict[str, int] = {}
+    for etype, count in _event_type_counts.items():
+        if etype in _MAPPED_EVENT_TYPES:
+            mapped_counts[etype] = count
+        elif etype in _EXCLUDED_EVENT_TYPES:
+            excluded_counts[etype] = count
+        else:
+            unrecognized_counts[etype] = count
+    if unrecognized_counts:
+        warnings.warn(
+            f"StatsBomb: {sum(unrecognized_counts.values())} unrecognized event types "
+            f"dropped: {dict(unrecognized_counts)}"
+        )
+    report = ConversionReport(
+        provider="StatsBomb",
+        total_events=sum(_event_type_counts.values()),
+        total_actions=len(actions),
+        mapped_counts=mapped_counts,
+        excluded_counts=excluded_counts,
+        unrecognized_counts=unrecognized_counts,
+    )
+    return actions, report
 
 
 Location = tuple[float, float]

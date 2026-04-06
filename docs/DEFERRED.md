@@ -3,17 +3,24 @@
 Items identified during Phase 2 audits that are intentionally deferred. Each has a rationale
 for why it's deferred and a trigger for when to revisit.
 
+## Phase 3b: I/O Contract (2026-04-06)
+
+- **A14** (pandera dependency): RESOLVED — replaced with plain schema constants (`SPADL_COLUMNS`, `ATOMIC_SPADL_COLUMNS`)
+- **A18** (frozen schema validators): RESOLVED — no longer applicable (pandera removed)
+- numpy upper bound removed (was `<2.0` due to pandera `np.string_` usage)
+- `multimethod<2.0` dependency removed (was pandera transitive)
+
 ## Architecture Audit (2026-04-06)
 
 | # | Sev | Finding | Rationale | Revisit When |
 |---|-----|---------|-----------|-------------|
 | A1 | Med | `wyscout.py` still ~900 lines (god module size) | Internals fixed (underscores, magic ints, config lookup). Structural decomposition belongs in Phase 3 — the "Nothing Left Behind" mapping registry will naturally restructure this file | Phase 3 |
 | A9 | Med | `atomic/vaep/features.py` imports 12 names from `vaep.features` | Legitimate delegation — atomic features reuse standard ones. Tight but correct coupling | Only if atomic module is restructured |
-| A14 | Med | `pandera` pervasive in all domain function signatures | Biggest deferred item. Dropping pandera changes public API, unblocks `numpy>=2.0`, removes `multimethod<2.0` pin. Tracked as TODO in `pyproject.toml` | Standalone decision — after all audits complete |
+| A14 | Med | ~~`pandera` pervasive in all domain function signatures~~ | **RESOLVED in Phase 3b** — pandera removed, replaced with plain schema constants | ~~Standalone decision~~ |
 | A15 | Med | kloppy converter signature differs from others (LSP) | By design — kloppy uses `EventDataset`, not `pd.DataFrame`. Low ROI to change | Only if a Protocol for converters is introduced |
 | A16 | Med | No plugin registry for converters (OCP) | YAGNI — 4 converters that change rarely | Only if >6 converters exist |
 | A17 | Med | 3 `_fit_*` functions still tightly coupled to VAEP (SRP partial) | Dispatch fixed (registry), implementations extracted to `learners.py`. Could further decouple but diminishing returns | Phase 3 API evolution |
-| A18 | Med | Schema validators frozen at class-definition time | Pandera-specific — resolves naturally if/when pandera is dropped (A14) | With A14 |
+| A18 | Med | ~~Schema validators frozen at class-definition time~~ | **RESOLVED in Phase 3b** — pandera removed, no more class-time validation | ~~With A14~~ |
 | A19 | Low | Default hyperparameters scattered across 3 learner functions | Extracted to named constants in `learners.py`. Could centralize further but low impact | Phase 3 API evolution |
 
 ## Security Audit (2026-04-06)

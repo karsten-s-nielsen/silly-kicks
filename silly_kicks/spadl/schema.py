@@ -1,34 +1,65 @@
-"""Schema for SPADL actions."""
+"""SPADL output schema — plain Python constants.
 
-from typing import Any, Optional
+These constants define the guaranteed output contract of convert_to_actions().
+They replace the pandera DataFrameModel that previously served this role.
+"""
 
-import pandera as pa
-from pandera.typing import Series
-
-from . import config as spadlconfig
+import dataclasses
 
 
-class SPADLSchema(pa.SchemaModel):
-    """Definition of a SPADL dataframe."""
+SPADL_COLUMNS: dict[str, str] = {
+    "game_id": "int64",
+    "original_event_id": "object",
+    "action_id": "int64",
+    "period_id": "int64",
+    "time_seconds": "float64",
+    "team_id": "int64",
+    "player_id": "int64",
+    "start_x": "float64",
+    "start_y": "float64",
+    "end_x": "float64",
+    "end_y": "float64",
+    "type_id": "int64",
+    "result_id": "int64",
+    "bodypart_id": "int64",
+}
 
-    game_id: Series[Any] = pa.Field()
-    original_event_id: Series[Any] = pa.Field(nullable=True)
-    action_id: Series[int] = pa.Field()
-    period_id: Series[int] = pa.Field(ge=1, le=5)
-    time_seconds: Series[float] = pa.Field(ge=0)
-    team_id: Series[Any] = pa.Field()
-    player_id: Series[Any] = pa.Field()
-    start_x: Series[float] = pa.Field(ge=0, le=spadlconfig.field_length)
-    start_y: Series[float] = pa.Field(ge=0, le=spadlconfig.field_width)
-    end_x: Series[float] = pa.Field(ge=0, le=spadlconfig.field_length)
-    end_y: Series[float] = pa.Field(ge=0, le=spadlconfig.field_width)
-    bodypart_id: Series[int] = pa.Field(isin=spadlconfig.bodyparts_df().bodypart_id)
-    bodypart_name: Optional[Series[str]] = pa.Field(isin=spadlconfig.bodyparts_df().bodypart_name)
-    type_id: Series[int] = pa.Field(isin=spadlconfig.actiontypes_df().type_id)
-    type_name: Optional[Series[str]] = pa.Field(isin=spadlconfig.actiontypes_df().type_name)
-    result_id: Series[int] = pa.Field(isin=spadlconfig.results_df().result_id)
-    result_name: Optional[Series[str]] = pa.Field(isin=spadlconfig.results_df().result_name)
+SPADL_NAME_COLUMNS: dict[str, str] = {
+    "type_name": "object",
+    "result_name": "object",
+    "bodypart_name": "object",
+}
 
-    class Config:  # noqa: D106
-        strict = True
-        coerce = True
+SPADL_CONSTRAINTS: dict[str, tuple[float, float]] = {
+    "period_id": (1, 5),
+    "time_seconds": (0, float("inf")),
+    "start_x": (0, 105.0),
+    "start_y": (0, 68.0),
+    "end_x": (0, 105.0),
+    "end_y": (0, 68.0),
+}
+
+KLOPPY_SPADL_COLUMNS: dict[str, str] = {
+    **SPADL_COLUMNS,
+    "game_id": "object",
+    "team_id": "object",
+    "player_id": "object",
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class ConversionReport:
+    """Audit trail for convert_to_actions()."""
+
+    provider: str
+    total_events: int
+    total_actions: int
+    mapped_counts: dict[str, int]
+    excluded_counts: dict[str, int]
+    unrecognized_counts: dict[str, int]
+
+    @property
+    def has_unrecognized(self) -> bool:
+        """Return True if any unrecognized event types were encountered."""
+        return len(self.unrecognized_counts) > 0
+

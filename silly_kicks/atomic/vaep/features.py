@@ -1,14 +1,11 @@
 """Implements the feature tranformers of the VAEP framework."""
 
-from typing import Any, Callable, Union
+from typing import Callable
 
 import numpy as np
 import pandas as pd
-from pandera.typing import DataFrame
 
 import silly_kicks.atomic.spadl.config as atomicspadl
-from silly_kicks.atomic.spadl import AtomicSPADLSchema
-from silly_kicks.spadl import SPADLSchema
 from silly_kicks.vaep.features import (
     _actiontype,
     bodypart,
@@ -46,9 +43,9 @@ __all__ = [
     "player_possession_time",
 ]
 
-Actions = Union[DataFrame[SPADLSchema], DataFrame[AtomicSPADLSchema]]
-GameStates = list[Actions]
-Features = DataFrame[Any]
+Actions = pd.DataFrame
+GameStates = list[pd.DataFrame]
+Features = pd.DataFrame
 FeatureTransfomer = Callable[[GameStates], Features]
 
 

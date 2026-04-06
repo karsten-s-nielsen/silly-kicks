@@ -3,10 +3,8 @@ import pandas as pd
 import pytest
 import silly_kicks.spadl as spadl
 import silly_kicks.xthreat as xt
-from pandera.typing import DataFrame, Series
 from pytest_mock import MockerFixture
 from sklearn.exceptions import NotFittedError
-from silly_kicks.spadl import SPADLSchema
 from silly_kicks.spadl.config import field_length, field_width
 
 
@@ -25,36 +23,36 @@ class TestGridCount:
 
     def test_get_cell_indexes(self) -> None:
         """It should map pitch coordinates to a 2D cell index."""
-        x = Series[float]([0, field_length / 2 - 1, field_length])
-        y = Series[float]([0, field_width / 2 + 1, field_width])
+        x = pd.Series([0, field_length / 2 - 1, field_length])
+        y = pd.Series([0, field_width / 2 + 1, field_width])
         xi, yi = xt._get_cell_indexes(x, y, self.N, self.M)
         pd.testing.assert_series_equal(xi, pd.Series([0, 0, 1]))
         pd.testing.assert_series_equal(yi, pd.Series([0, 1, 1]))
 
     def test_get_cell_indexes_out_of_bounds(self) -> None:
         """It should map out-of-bounds coordinates to the nearest cell index."""
-        x = Series[float]([-10, field_length + 10])
-        y = Series[float]([-10, field_width + 10])
+        x = pd.Series([-10, field_length + 10])
+        y = pd.Series([-10, field_width + 10])
         xi, yi = xt._get_cell_indexes(x, y, self.N, self.M)
         pd.testing.assert_series_equal(xi, pd.Series([0, 1]))
         pd.testing.assert_series_equal(yi, pd.Series([0, 1]))
 
     def test_get_flat_indexes(self) -> None:
         """It should map pitch coordinates to a flat index."""
-        x = Series[float]([0, field_length / 2 - 1, field_length / 2 + 1, field_length])
-        y = Series[float]([0, field_width / 2 + 1, field_width / 2 - 1, field_width])
+        x = pd.Series([0, field_length / 2 - 1, field_length / 2 + 1, field_length])
+        y = pd.Series([0, field_width / 2 + 1, field_width / 2 - 1, field_width])
         idx = xt._get_flat_indexes(x, y, self.N, self.M)
         pd.testing.assert_series_equal(idx, pd.Series([2, 0, 3, 1]))
 
     def test_count(self) -> None:
         """It should return the number of occurences in each grid cell."""
-        x = Series[float]([0, field_length / 2 - 1, field_length, field_length + 10])
-        y = Series[float]([0, field_width / 2 + 1, field_width, field_width + 10])
+        x = pd.Series([0, field_length / 2 - 1, field_length, field_length + 10])
+        y = pd.Series([0, field_width / 2 + 1, field_width, field_width + 10])
         cnt = xt._count(x, y, self.N, self.M)
         np.testing.assert_array_equal(cnt, [[1, 2], [1, 0]])
 
 
-def test_get_move_actions(spadl_actions: DataFrame[SPADLSchema]) -> None:
+def test_get_move_actions(spadl_actions: pd.DataFrame) -> None:
     """It should filter passes, dribbles and crosses."""
     move_actions = xt.get_move_actions(spadl_actions)
     assert move_actions.type_id.isin(
@@ -66,7 +64,7 @@ def test_get_move_actions(spadl_actions: DataFrame[SPADLSchema]) -> None:
     ).all()
 
 
-def test_get_successful_move_actions(spadl_actions: DataFrame[SPADLSchema]) -> None:
+def test_get_successful_move_actions(spadl_actions: pd.DataFrame) -> None:
     """It should filter successful passes, dribbles and crosses."""
     move_actions = xt.get_successful_move_actions(spadl_actions)
     assert move_actions.type_id.isin(
@@ -79,7 +77,7 @@ def test_get_successful_move_actions(spadl_actions: DataFrame[SPADLSchema]) -> N
     assert (move_actions.result_id == spadl.config.results.index("success")).all()
 
 
-def test_action_prob(spadl_actions: DataFrame[SPADLSchema]) -> None:
+def test_action_prob(spadl_actions: pd.DataFrame) -> None:
     """It should return the proportion of shots and moves for each cell."""
     shot_prob, move_prob = xt.action_prob(spadl_actions, 10, 5)
     assert shot_prob.shape == (5, 10)
@@ -89,7 +87,7 @@ def test_action_prob(spadl_actions: DataFrame[SPADLSchema]) -> None:
     assert np.all(((move_prob + shot_prob) == 1) | ((move_prob + shot_prob) == 0))
 
 
-def test_scoring_prob(spadl_actions: DataFrame[SPADLSchema]) -> None:
+def test_scoring_prob(spadl_actions: pd.DataFrame) -> None:
     """It should return the proportion of successful shots for each cell."""
     shots = spadl_actions.type_id == spadl.config.actiontypes.index("shot")
     goals = shots & (spadl_actions.result_id == spadl.config.results.index("success"))
@@ -102,7 +100,7 @@ def test_move_transition_matrix() -> None:
     """It should return the move transition matrix."""
     pass_id = spadl.config.actiontypes.index("pass")
     success_id = spadl.config.results.index("success")
-    spadl_actions = DataFrame[SPADLSchema](
+    spadl_actions = pd.DataFrame(
         [
             {
                 "game_id": 1,
@@ -160,7 +158,7 @@ def test_xt_model_init() -> None:
     assert len(xTModel.heatmaps) == 0
 
 
-def test_xt_model_fit(spadl_actions: DataFrame[SPADLSchema]) -> None:
+def test_xt_model_fit(spadl_actions: pd.DataFrame) -> None:
     """It should update all instance variables."""
     xTModel = xt.ExpectedThreat()
     xTModel.fit(spadl_actions)
@@ -172,14 +170,14 @@ def test_xt_model_fit(spadl_actions: DataFrame[SPADLSchema]) -> None:
     assert np.sum(xTModel.xT) > 0
 
 
-def test_xt_model_rate_not_fitted(spadl_actions: DataFrame[SPADLSchema]) -> None:
+def test_xt_model_rate_not_fitted(spadl_actions: pd.DataFrame) -> None:
     """It should raise a NotFittedError."""
     xTModel = xt.ExpectedThreat()
     with pytest.raises(NotFittedError):
         xTModel.rate(spadl_actions)
 
 
-def test_xt_model_rate(spadl_actions: DataFrame[SPADLSchema]) -> None:
+def test_xt_model_rate(spadl_actions: pd.DataFrame) -> None:
     """It should rate all successful move actions and assign all other actions NaN."""
     xTModel = xt.ExpectedThreat()
     xTModel.fit(spadl_actions)
@@ -211,7 +209,7 @@ def xt_model(sb_worldcup_data: pd.HDFStore) -> xt.ExpectedThreat:
             )
             for game_id, game in df_games.iterrows()
         ]
-    ).pipe(DataFrame[SPADLSchema])
+    ).pipe(pd.DataFrame)
     # 3. Train xT model
     xTModel = xt.ExpectedThreat(l=16, w=12)
     xTModel.fit(actions_ltr)

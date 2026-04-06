@@ -2,8 +2,6 @@ import pandas as pd
 import silly_kicks.atomic.spadl as spadlcfg
 import silly_kicks.atomic.spadl.config as atomicspadl
 from pandas import testing as tm
-from pandera.typing import DataFrame
-from silly_kicks.atomic.spadl import AtomicSPADLSchema
 from silly_kicks.atomic.vaep import features as fs
 
 xfns = [
@@ -41,7 +39,7 @@ def test_actiontype_includes_atomic_types() -> None:
     assert result["actiontype_a0"].iloc[0] == "receival"
 
 
-def test_same_index(atomic_spadl_actions: DataFrame[AtomicSPADLSchema]) -> None:
+def test_same_index(atomic_spadl_actions: pd.DataFrame) -> None:
     """The feature generators should not change the index of the input dataframe."""
     atomic_spadl_actions.index += 10
     game_actions_with_names = spadlcfg.add_names(atomic_spadl_actions)
