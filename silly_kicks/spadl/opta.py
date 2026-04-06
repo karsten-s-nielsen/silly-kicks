@@ -65,7 +65,7 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPA
     actions = _fix_recoveries(actions, events.type_name)
     actions = _fix_unintentional_ball_touches(actions, events.type_name, events.outcome)
     actions = (
-        actions[actions.type_id != spadlconfig.actiontypes.index("non_action")]
+        actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]
         .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")
         .reset_index(drop=True)
     )
@@ -96,7 +96,7 @@ def _get_bodypart_id(args: tuple[str, bool, dict[int, Any]]) -> int:
             b = "other"
         else:
             b = "foot"
-    return spadlconfig.bodyparts.index(b)
+    return spadlconfig.bodypart_id[b]
 
 
 def _get_result_id(args: tuple[str, bool, dict[int, Any]]) -> int:
@@ -118,7 +118,7 @@ def _get_result_id(args: tuple[str, bool, dict[int, Any]]) -> int:
         r = "success"
     else:
         r = "fail"
-    return spadlconfig.results.index(r)
+    return spadlconfig.result_id[r]
 
 
 def _get_type_id(args: tuple[str, bool, dict[int, Any]]) -> int:  # noqa: C901
@@ -179,12 +179,12 @@ def _get_type_id(args: tuple[str, bool, dict[int, Any]]) -> int:  # noqa: C901
         a = "bad_touch"
     else:
         a = "non_action"
-    return spadlconfig.actiontypes.index(a)
+    return spadlconfig.actiontype_id[a]
 
 
 def _fix_owngoals(actions: pd.DataFrame) -> pd.DataFrame:
-    owngoals_idx = (actions.result_id == spadlconfig.results.index("owngoal")) & (
-        actions.type_id == spadlconfig.actiontypes.index("shot")
+    owngoals_idx = (actions.result_id == spadlconfig.result_id["owngoal"]) & (
+        actions.type_id == spadlconfig.actiontype_id["shot"]
     )
     actions.loc[owngoals_idx, "end_x"] = (
         spadlconfig.field_length - actions[owngoals_idx].end_x.values
@@ -192,7 +192,7 @@ def _fix_owngoals(actions: pd.DataFrame) -> pd.DataFrame:
     actions.loc[owngoals_idx, "end_y"] = (
         spadlconfig.field_width - actions[owngoals_idx].end_y.values
     )
-    actions.loc[owngoals_idx, "type_id"] = spadlconfig.actiontypes.index("bad_touch")
+    actions.loc[owngoals_idx, "type_id"] = spadlconfig.actiontype_id["bad_touch"]
     return actions
 
 
@@ -216,7 +216,7 @@ def _fix_recoveries(df_actions: pd.DataFrame, opta_types: pd.Series) -> pd.DataF
     """
     df_actions_next = df_actions.shift(-1)
     df_actions_next = df_actions_next.mask(
-        df_actions_next.type_id == spadlconfig.actiontypes.index("non_action")
+        df_actions_next.type_id == spadlconfig.actiontype_id["non_action"]
     ).bfill()
 
     selector_recovery = opta_types == "ball recovery"
@@ -225,12 +225,12 @@ def _fix_recoveries(df_actions: pd.DataFrame, opta_types: pd.Series) -> pd.DataF
     same_y = abs(df_actions["end_y"] - df_actions_next["start_y"]) < min_dribble_length
     same_loc = same_x & same_y
 
-    df_actions.loc[selector_recovery & ~same_loc, "type_id"] = spadlconfig.actiontypes.index(
+    df_actions.loc[selector_recovery & ~same_loc, "type_id"] = spadlconfig.actiontype_id[
         "dribble"
-    )
-    df_actions.loc[selector_recovery & same_loc, "type_id"] = spadlconfig.actiontypes.index(
+    ]
+    df_actions.loc[selector_recovery & same_loc, "type_id"] = spadlconfig.actiontype_id[
         "non_action"
-    )
+    ]
     df_actions.loc[selector_recovery, ["end_x", "end_y"]] = df_actions_next.loc[
         selector_recovery, ["start_x", "start_y"]
     ].values
@@ -251,9 +251,9 @@ def _fix_interceptions(df_actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Opta event dataframe without any ball recovery events
     """
-    mask_interception = df_actions.type_id == spadlconfig.actiontypes.index("interception")
+    mask_interception = df_actions.type_id == spadlconfig.actiontype_id["interception"]
     same_team = df_actions.team_id == df_actions.shift(-1).team_id
-    df_actions.loc[mask_interception & ~same_team, "result_id"] = spadlconfig.results.index("fail")
+    df_actions.loc[mask_interception & ~same_team, "result_id"] = spadlconfig.result_id["fail"]
     return df_actions
 
 
@@ -281,13 +281,13 @@ def _fix_unintentional_ball_touches(
         Opta event dataframe without any unintentional ball touches.
     """
     df_actions_next = df_actions.shift(-2)
-    selector_pass = df_actions["type_id"] == spadlconfig.actiontypes.index("pass")
+    selector_pass = df_actions["type_id"] == spadlconfig.actiontype_id["pass"]
     selector_deflected = (opta_type.shift(-1) == "ball touch") & (opta_outcome.shift(-1))
     selector_same_team = df_actions["team_id"] == df_actions_next["team_id"]
     df_actions.loc[selector_deflected, ["end_x", "end_y"]] = df_actions_next.loc[
         selector_deflected, ["start_x", "start_y"]
     ].values
     df_actions.loc[selector_pass & selector_deflected & selector_same_team, "result_id"] = (
-        spadlconfig.results.index("success")
+        spadlconfig.result_id["success"]
     )
     return df_actions

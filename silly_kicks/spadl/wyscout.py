@@ -667,7 +667,7 @@ def _determine_bodypart_id(event: pd.DataFrame) -> int:
         body_part = "foot_right"
     else:  # all other cases
         body_part = "foot"
-    return spadlconfig.bodyparts.index(body_part)
+    return spadlconfig.bodypart_id[body_part]
 
 
 def _determine_type_id(event: pd.DataFrame) -> int:  # noqa: C901
@@ -738,7 +738,7 @@ def _determine_type_id(event: pd.DataFrame) -> int:  # noqa: C901
         action_type = "interception"
     else:
         action_type = "non_action"
-    return spadlconfig.actiontypes.index(action_type)
+    return spadlconfig.actiontype_id[action_type]
 
 
 def _determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
@@ -755,31 +755,31 @@ def _determine_result_id(event: pd.DataFrame) -> int:  # noqa: C901
         result of the action
     """
     if event["offside"] == 1:
-        return spadlconfig.results.index("offside")
+        return spadlconfig.result_id["offside"]
     if event["type_id"] == _WS_TYPE_FOUL:
         if event["yellow_card"]:
-            return spadlconfig.results.index("yellow_card")
+            return spadlconfig.result_id["yellow_card"]
         elif event["second_yellow_card"] or event["red_card"]:
-            return spadlconfig.results.index("red_card")
-        return spadlconfig.results.index("fail")
+            return spadlconfig.result_id["red_card"]
+        return spadlconfig.result_id["fail"]
     if event["goal"]:
-        return spadlconfig.results.index("success")
+        return spadlconfig.result_id["success"]
     if event["own_goal"]:
-        return spadlconfig.results.index("owngoal")
+        return spadlconfig.result_id["owngoal"]
     if event["subtype_id"] in [_WS_SUBTYPE_SHOT_ON_TARGET, _WS_SUBTYPE_FK_SHOT, _WS_SUBTYPE_PENALTY]:
-        return spadlconfig.results.index("fail")
+        return spadlconfig.result_id["fail"]
     if event["accurate"]:
-        return spadlconfig.results.index("success")
+        return spadlconfig.result_id["success"]
     if event["not_accurate"]:
-        return spadlconfig.results.index("fail")
+        return spadlconfig.result_id["fail"]
     if (
         event["interception"] or event["clearance"] or event["subtype_id"] == _WS_SUBTYPE_CLEARANCE
     ):  # interception or clearance always success
-        return spadlconfig.results.index("success")
+        return spadlconfig.result_id["success"]
     if event["type_id"] == _WS_TYPE_GK:  # keeper save always success
-        return spadlconfig.results.index("success")
+        return spadlconfig.result_id["success"]
     # no idea, assume it was successful
-    return spadlconfig.results.index("success")
+    return spadlconfig.result_id["success"]
 
 
 def _remove_non_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
@@ -795,7 +795,7 @@ def _remove_non_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         SciSports action dataframe without non-actions
     """
-    df_actions = df_actions[df_actions["type_id"] != spadlconfig.actiontypes.index("non_action")]
+    df_actions = df_actions[df_actions["type_id"] != spadlconfig.actiontype_id["non_action"]]
     # remove remaining ball out of field, whistle and goalkeeper from line
     df_actions = df_actions.reset_index(drop=True)
     return df_actions
@@ -854,7 +854,7 @@ def _fix_goalkick_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         SciSports action dataframe including start coordinates for goalkicks
     """
-    goalkicks_idx = df_actions["type_id"] == spadlconfig.actiontypes.index("goalkick")
+    goalkicks_idx = df_actions["type_id"] == spadlconfig.actiontype_id["goalkick"]
     df_actions.loc[goalkicks_idx, "start_x"] = 5.0
     df_actions.loc[goalkicks_idx, "start_y"] = 34.0
 
@@ -876,7 +876,7 @@ def _fix_foul_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         SciSports action dataframe including start coordinates for goalkicks
     """
-    fouls_idx = df_actions["type_id"] == spadlconfig.actiontypes.index("foul")
+    fouls_idx = df_actions["type_id"] == spadlconfig.actiontype_id["foul"]
     df_actions.loc[fouls_idx, "end_x"] = df_actions.loc[fouls_idx, "start_x"]
     df_actions.loc[fouls_idx, "end_y"] = df_actions.loc[fouls_idx, "start_y"]
 
@@ -899,7 +899,7 @@ def _fix_keeper_save_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         SciSports action dataframe with correct keeper_save coordinates
     """
-    saves_idx = df_actions["type_id"] == spadlconfig.actiontypes.index("keeper_save")
+    saves_idx = df_actions["type_id"] == spadlconfig.actiontype_id["keeper_save"]
     # invert the coordinates
     df_actions.loc[saves_idx, "end_x"] = (
         spadlconfig.field_length - df_actions.loc[saves_idx, "end_x"]
@@ -931,17 +931,17 @@ def _remove_keeper_goal_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     """
     prev_actions = df_actions.shift(1)
     same_phase = prev_actions.time_seconds + 10 > df_actions.time_seconds
-    shot_goals = (prev_actions.type_id == spadlconfig.actiontypes.index("shot")) & (
+    shot_goals = (prev_actions.type_id == spadlconfig.actiontype_id["shot"]) & (
         prev_actions.result_id == 1
     )
-    penalty_goals = (prev_actions.type_id == spadlconfig.actiontypes.index("shot_penalty")) & (
+    penalty_goals = (prev_actions.type_id == spadlconfig.actiontype_id["shot_penalty"]) & (
         prev_actions.result_id == 1
     )
-    freekick_goals = (prev_actions.type_id == spadlconfig.actiontypes.index("shot_freekick")) & (
+    freekick_goals = (prev_actions.type_id == spadlconfig.actiontype_id["shot_freekick"]) & (
         prev_actions.result_id == 1
     )
     goals = shot_goals | penalty_goals | freekick_goals
-    keeper_save = df_actions["type_id"] == spadlconfig.actiontypes.index("keeper_save")
+    keeper_save = df_actions["type_id"] == spadlconfig.actiontype_id["keeper_save"]
     goals_keepers_idx = same_phase & goals & keeper_save
     df_actions = df_actions.drop(df_actions.index[goals_keepers_idx])
     df_actions = df_actions.reset_index(drop=True)
@@ -966,7 +966,7 @@ def _adjust_goalkick_result(df_actions: pd.DataFrame) -> pd.DataFrame:
         SciSports action dataframe with correct goalkick results
     """
     nex_actions = df_actions.shift(-1)
-    goalkicks = df_actions["type_id"] == spadlconfig.actiontypes.index("goalkick")
+    goalkicks = df_actions["type_id"] == spadlconfig.actiontype_id["goalkick"]
     same_team = df_actions["team_id"] == nex_actions["team_id"]
     accurate = same_team & goalkicks
     not_accurate = ~same_team & goalkicks

@@ -204,7 +204,7 @@ class VAEP:
 
         Y_hat = pd.DataFrame()
         for col in self.__models:
-            Y_hat[col] = [p[1] for p in self.__models[col].predict_proba(X[cols])]
+            Y_hat[col] = self.__models[col].predict_proba(X[cols])[:, 1]
         return Y_hat
 
     def rate(

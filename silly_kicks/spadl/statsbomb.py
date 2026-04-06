@@ -111,7 +111,7 @@ def convert_to_actions(
     )
 
     actions = (
-        actions[actions.type_id != spadlconfig.actiontypes.index("non_action")]
+        actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]
         .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")
         .reset_index(drop=True)
     )
@@ -242,9 +242,9 @@ def _parse_event(q: tuple[str, dict[str, Any]]) -> tuple[int, int, int]:
     }
     parser = events.get(t, _parse_event_as_non_action)
     a, r, b = parser(x)
-    actiontype = spadlconfig.actiontypes.index(a)
-    result = spadlconfig.results.index(r)
-    bodypart = spadlconfig.bodyparts.index(b)
+    actiontype = spadlconfig.actiontype_id[a]
+    result = spadlconfig.result_id[r]
+    bodypart = spadlconfig.bodypart_id[b]
     return actiontype, result, bodypart
 
 

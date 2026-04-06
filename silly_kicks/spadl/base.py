@@ -13,7 +13,7 @@ from . import config as spadlconfig
 def _fix_clearances(actions: pd.DataFrame) -> pd.DataFrame:
     next_actions = actions.shift(-1)
     next_actions[-1:] = actions[-1:]
-    clearance_idx = actions.type_id == spadlconfig.actiontypes.index("clearance")
+    clearance_idx = actions.type_id == spadlconfig.actiontype_id["clearance"]
     actions.loc[clearance_idx, "end_x"] = next_actions[clearance_idx].start_x.values
     actions.loc[clearance_idx, "end_y"] = next_actions[clearance_idx].start_y.values
 
@@ -41,10 +41,10 @@ def _add_dribbles(actions: pd.DataFrame) -> pd.DataFrame:
     same_team = actions.team_id == next_actions.team_id
     # not_clearance = actions.type_id != actiontypes.index("clearance")
     not_offensive_foul = same_team & (
-        next_actions.type_id != spadlconfig.actiontypes.index("foul")
+        next_actions.type_id != spadlconfig.actiontype_id["foul"]
     )
-    not_headed_shot = (next_actions.type_id != spadlconfig.actiontypes.index("shot")) & (
-        next_actions.bodypart_id != spadlconfig.bodyparts.index("head")
+    not_headed_shot = (next_actions.type_id != spadlconfig.actiontype_id["shot"]) & (
+        next_actions.bodypart_id != spadlconfig.bodypart_id["head"]
     )
 
     dx = actions.end_x - next_actions.start_x
@@ -81,9 +81,9 @@ def _add_dribbles(actions: pd.DataFrame) -> pd.DataFrame:
     dribbles["start_y"] = prev.end_y
     dribbles["end_x"] = nex.start_x
     dribbles["end_y"] = nex.start_y
-    dribbles["bodypart_id"] = spadlconfig.bodyparts.index("foot")
-    dribbles["type_id"] = spadlconfig.actiontypes.index("dribble")
-    dribbles["result_id"] = spadlconfig.results.index("success")
+    dribbles["bodypart_id"] = spadlconfig.bodypart_id["foot"]
+    dribbles["type_id"] = spadlconfig.actiontype_id["dribble"]
+    dribbles["result_id"] = spadlconfig.result_id["success"]
 
     actions = pd.concat([actions, dribbles], ignore_index=True, sort=False)
     actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)

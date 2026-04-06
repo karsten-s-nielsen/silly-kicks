@@ -295,9 +295,9 @@ def bodypart(actions: Actions) -> Features:
         An alternative version that splits between the left and right foot.
     """
     X = pd.DataFrame(index=actions.index)
-    foot_id = spadlcfg.bodyparts.index("foot")
-    left_foot_id = spadlcfg.bodyparts.index("foot_left")
-    right_foot_id = spadlcfg.bodyparts.index("foot_right")
+    foot_id = spadlcfg.bodypart_id["foot"]
+    left_foot_id = spadlcfg.bodypart_id["foot_left"]
+    right_foot_id = spadlcfg.bodypart_id["foot_right"]
     X["bodypart"] = pd.Categorical(
         actions["bodypart_id"]
         .replace([left_foot_id, right_foot_id], foot_id)
@@ -366,14 +366,14 @@ def bodypart_onehot(actions: Actions) -> Features:
             continue
         col = "bodypart_" + bodypart_name
         if bodypart_name == "foot":
-            foot_id = spadlcfg.bodyparts.index("foot")
-            left_foot_id = spadlcfg.bodyparts.index("foot_left")
-            right_foot_id = spadlcfg.bodyparts.index("foot_right")
+            foot_id = spadlcfg.bodypart_id["foot"]
+            left_foot_id = spadlcfg.bodypart_id["foot_left"]
+            right_foot_id = spadlcfg.bodypart_id["foot_right"]
             X[col] = actions["bodypart_id"].isin([foot_id, left_foot_id, right_foot_id])
         elif bodypart_name == "head/other":
-            head_id = spadlcfg.bodyparts.index("head")
-            other_id = spadlcfg.bodyparts.index("other")
-            head_other_id = spadlcfg.bodyparts.index("head/other")
+            head_id = spadlcfg.bodypart_id["head"]
+            other_id = spadlcfg.bodypart_id["other"]
+            head_other_id = spadlcfg.bodypart_id["head/other"]
             X[col] = actions["bodypart_id"].isin([head_id, other_id, head_other_id])
         else:
             X[col] = actions["bodypart_id"] == bodypart_id
@@ -406,14 +406,14 @@ def bodypart_detailed_onehot(actions: Actions) -> Features:
     for bodypart_id, bodypart_name in enumerate(spadlcfg.bodyparts):
         col = "bodypart_" + bodypart_name
         if bodypart_name == "foot":
-            foot_id = spadlcfg.bodyparts.index("foot")
-            left_foot_id = spadlcfg.bodyparts.index("foot_left")
-            right_foot_id = spadlcfg.bodyparts.index("foot_right")
+            foot_id = spadlcfg.bodypart_id["foot"]
+            left_foot_id = spadlcfg.bodypart_id["foot_left"]
+            right_foot_id = spadlcfg.bodypart_id["foot_right"]
             X[col] = actions["bodypart_id"].isin([foot_id, left_foot_id, right_foot_id])
         elif bodypart_name == "head/other":
-            head_id = spadlcfg.bodyparts.index("head")
-            other_id = spadlcfg.bodyparts.index("other")
-            head_other_id = spadlcfg.bodyparts.index("head/other")
+            head_id = spadlcfg.bodypart_id["head"]
+            other_id = spadlcfg.bodypart_id["other"]
+            head_other_id = spadlcfg.bodypart_id["head/other"]
             X[col] = actions["bodypart_id"].isin([head_id, other_id, head_other_id])
         else:
             X[col] = actions["bodypart_id"] == bodypart_id
@@ -576,11 +576,11 @@ def player_possession_time(actions: SPADLActions) -> Features:
         The 'player_possession_time' of each action.
     """
     cur_action = actions[["period_id", "time_seconds", "player_id", "type_id"]]
-    prev_action = actions.copy().shift(1)[["period_id", "time_seconds", "player_id", "type_id"]]
+    prev_action = actions[["period_id", "time_seconds", "player_id", "type_id"]].shift(1)
     df = cur_action.join(prev_action, rsuffix="_prev")
     same_player = df.player_id == df.player_id_prev
     same_period = df.period_id == df.period_id_prev
-    prev_dribble = df.type_id_prev == spadlcfg.actiontypes.index("dribble")
+    prev_dribble = df.type_id_prev == spadlcfg.actiontype_id["dribble"]
     mask = same_period & same_player & prev_dribble
     df.loc[mask, "player_possession_time"] = (
         df.loc[mask, "time_seconds"] - df.loc[mask, "time_seconds_prev"]
@@ -712,10 +712,10 @@ def goalscore(gamestates: GameStates) -> Features:
     actions = gamestates[0]
     teamA = actions["team_id"].values[0]
     goals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadlcfg.results.index("success")
+        actions["result_id"] == spadlcfg.result_id["success"]
     )
     owngoals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadlcfg.results.index("owngoal")
+        actions["result_id"] == spadlcfg.result_id["owngoal"]
     )
     teamisA = actions["team_id"] == teamA
     teamisB = ~teamisA

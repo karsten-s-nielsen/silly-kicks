@@ -25,8 +25,8 @@ def scores(actions: DataFrame[AtomicSPADLSchema], nr_actions: int = 10) -> pd.Da
         next x actions; otherwise False.
     """
     # merging goals, owngoals and team_ids
-    goals = actions["type_id"] == atomicspadl.actiontypes.index("goal")
-    owngoals = actions["type_id"] == atomicspadl.actiontypes.index("owngoal")
+    goals = actions["type_id"] == atomicspadl.actiontype_id["goal"]
+    owngoals = actions["type_id"] == atomicspadl.actiontype_id["owngoal"]
     y = pd.concat([goals, owngoals, actions["team_id"]], axis=1)
     y.columns = ["goal", "owngoal", "team_id"]
 
@@ -64,8 +64,8 @@ def concedes(actions: DataFrame[AtomicSPADLSchema], nr_actions: int = 10) -> pd.
         next x actions; otherwise False.
     """
     # merging goals, owngoals and team_ids
-    goals = actions["type_id"] == atomicspadl.actiontypes.index("goal")
-    owngoals = actions["type_id"] == atomicspadl.actiontypes.index("owngoal")
+    goals = actions["type_id"] == atomicspadl.actiontype_id["goal"]
+    owngoals = actions["type_id"] == atomicspadl.actiontype_id["owngoal"]
     y = pd.concat([goals, owngoals, actions["team_id"]], axis=1)
     y.columns = ["goal", "owngoal", "team_id"]
 
@@ -101,8 +101,8 @@ def goal_from_shot(actions: DataFrame[AtomicSPADLSchema]) -> pd.DataFrame:
         A dataframe with a column 'goal' and a row for each action set to
         True if a goal was scored from the current action; otherwise False.
     """
-    goals = (actions["type_id"] == atomicspadl.actiontypes.index("shot")) & (
-        actions["type_id"].shift(-1) == atomicspadl.actiontypes.index("goal")
+    goals = (actions["type_id"] == atomicspadl.actiontype_id["shot"]) & (
+        actions["type_id"].shift(-1) == atomicspadl.actiontype_id["goal"]
     )
 
     return pd.DataFrame(goals.rename("goal"))

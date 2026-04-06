@@ -27,10 +27,10 @@ def scores(actions: DataFrame[SPADLSchema], nr_actions: int = 10) -> pd.DataFram
     # merging goals, owngoals and team_ids
 
     goals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadl.results.index("success")
+        actions["result_id"] == spadl.result_id["success"]
     )
     owngoals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadl.results.index("owngoal")
+        actions["result_id"] == spadl.result_id["owngoal"]
     )
     y = pd.concat([goals, owngoals, actions["team_id"]], axis=1)
     y.columns = ["goal", "owngoal", "team_id"]
@@ -70,10 +70,10 @@ def concedes(actions: DataFrame[SPADLSchema], nr_actions: int = 10) -> pd.DataFr
     """
     # merging goals,owngoals and team_ids
     goals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadl.results.index("success")
+        actions["result_id"] == spadl.result_id["success"]
     )
     owngoals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadl.results.index("owngoal")
+        actions["result_id"] == spadl.result_id["owngoal"]
     )
     y = pd.concat([goals, owngoals, actions["team_id"]], axis=1)
     y.columns = ["goal", "owngoal", "team_id"]
@@ -111,7 +111,7 @@ def goal_from_shot(actions: DataFrame[SPADLSchema]) -> pd.DataFrame:
         True if a goal was scored from the current action; otherwise False.
     """
     goals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadl.results.index("success")
+        actions["result_id"] == spadl.result_id["success"]
     )
 
     return pd.DataFrame(goals, columns=["goal_from_shot"])

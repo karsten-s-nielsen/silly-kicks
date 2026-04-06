@@ -119,7 +119,7 @@ def convert_to_actions(
         .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")
         .reset_index(drop=True)
     )
-    df_actions = df_actions[df_actions.type_id != spadlconfig.actiontypes.index("non_action")]
+    df_actions = df_actions[df_actions.type_id != spadlconfig.actiontype_id["non_action"]]
 
     df_actions = _fix_clearances(df_actions)
 
@@ -202,9 +202,9 @@ def _parse_event(event: Event) -> dict[str, int]:
     parser = events.get(event.event_type, _parse_event_as_non_action)
     a, r, b = parser(event)
     return {
-        "type_id": spadlconfig.actiontypes.index(a),
-        "result_id": spadlconfig.results.index(r),
-        "bodypart_id": spadlconfig.bodyparts.index(b),
+        "type_id": spadlconfig.actiontype_id[a],
+        "result_id": spadlconfig.result_id[r],
+        "bodypart_id": spadlconfig.bodypart_id[b],
     }
 
 

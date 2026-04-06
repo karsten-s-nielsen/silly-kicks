@@ -51,7 +51,7 @@ def _extra_from_passes(actions: pd.DataFrame) -> pd.DataFrame:
         "clearance",
         "goalkick",
     ]
-    pass_ids = [_spadl.actiontypes.index(ty) for ty in passlike]
+    pass_ids = [_spadl.actiontype_id[ty] for ty in passlike]
 
     interceptionlike = [
         "interception",
@@ -61,7 +61,7 @@ def _extra_from_passes(actions: pd.DataFrame) -> pd.DataFrame:
         "keeper_claim",
         "keeper_pick_up",
     ]
-    interception_ids = [_spadl.actiontypes.index(ty) for ty in interceptionlike]
+    interception_ids = [_spadl.actiontype_id[ty] for ty in interceptionlike]
 
     samegame = actions.game_id == next_actions.game_id
     sameperiod = actions.period_id == next_actions.period_id
@@ -86,22 +86,22 @@ def _extra_from_passes(actions: pd.DataFrame) -> pd.DataFrame:
     extra["start_y"] = prev.end_y
     extra["end_x"] = prev.end_x
     extra["end_y"] = prev.end_y
-    extra["bodypart_id"] = _atomicspadl.bodyparts.index("foot")
+    extra["bodypart_id"] = _atomicspadl.bodypart_id["foot"]
     extra["result_id"] = -1
 
-    offside = prev.result_id == _spadl.results.index("offside")
-    out = ((nex.type_id == _atomicspadl.actiontypes.index("goalkick")) & (~same_team)) | (
-        nex.type_id == _atomicspadl.actiontypes.index("throw_in")
+    offside = prev.result_id == _spadl.result_id["offside"]
+    out = ((nex.type_id == _atomicspadl.actiontype_id["goalkick"]) & (~same_team)) | (
+        nex.type_id == _atomicspadl.actiontype_id["throw_in"]
     )
-    ar = _atomicspadl.actiontypes
+    ar = _atomicspadl.actiontype_id
     extra["type_id"] = -1
     extra["type_id"] = (
-        extra.type_id.mask(same_team, ar.index("receival"))
-        .mask(~same_team, ar.index("interception"))
-        .mask(out, ar.index("out"))
-        .mask(offside, ar.index("offside"))
+        extra.type_id.mask(same_team, ar["receival"])
+        .mask(~same_team, ar["interception"])
+        .mask(out, ar["out"])
+        .mask(offside, ar["offside"])
     )
-    is_interception = extra["type_id"] == ar.index("interception")
+    is_interception = extra["type_id"] == ar["interception"]
     extra["team_id"] = prev.team_id.mask(is_interception, nex.team_id)
     extra["player_id"] = nex.player_id.mask(out | offside, prev.player_id).astype(
         prev.player_id.dtype
@@ -117,19 +117,19 @@ def _extra_from_shots(actions: pd.DataFrame) -> pd.DataFrame:
     next_actions = actions.shift(-1)
 
     shotlike = ["shot", "shot_freekick", "shot_penalty"]
-    shot_ids = [_spadl.actiontypes.index(ty) for ty in shotlike]
+    shot_ids = [_spadl.actiontype_id[ty] for ty in shotlike]
 
     samegame = actions.game_id == next_actions.game_id
     sameperiod = actions.period_id == next_actions.period_id
 
     shot = actions.type_id.isin(shot_ids)
-    goal = shot & (actions.result_id == _spadl.results.index("success"))
-    owngoal = actions.result_id == _spadl.results.index("owngoal")
+    goal = shot & (actions.result_id == _spadl.result_id["success"])
+    owngoal = actions.result_id == _spadl.result_id["owngoal"]
     next_corner_goalkick = next_actions.type_id.isin(
         [
-            _atomicspadl.actiontypes.index("corner_crossed"),
-            _atomicspadl.actiontypes.index("corner_short"),
-            _atomicspadl.actiontypes.index("goalkick"),
+            _atomicspadl.actiontype_id["corner_crossed"],
+            _atomicspadl.actiontype_id["corner_short"],
+            _atomicspadl.actiontype_id["goalkick"],
         ]
     )
     out = shot & next_corner_goalkick & samegame & sameperiod
@@ -153,12 +153,12 @@ def _extra_from_shots(actions: pd.DataFrame) -> pd.DataFrame:
     extra["team_id"] = prev.team_id
     extra["player_id"] = prev.player_id
 
-    ar = _atomicspadl.actiontypes
+    ar = _atomicspadl.actiontype_id
     extra["type_id"] = -1
     extra["type_id"] = (
-        extra.type_id.mask(out, ar.index("out"))
-        .mask(goal, ar.index("goal"))
-        .mask(owngoal, ar.index("owngoal"))
+        extra.type_id.mask(out, ar["out"])
+        .mask(goal, ar["goal"])
+        .mask(owngoal, ar["owngoal"])
     )
     actions = pd.concat([actions, extra], ignore_index=True, sort=False)
     actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)
@@ -167,8 +167,8 @@ def _extra_from_shots(actions: pd.DataFrame) -> pd.DataFrame:
 
 
 def _extra_from_fouls(actions: pd.DataFrame) -> pd.DataFrame:
-    yellow = actions.result_id == _spadl.results.index("yellow_card")
-    red = actions.result_id == _spadl.results.index("red_card")
+    yellow = actions.result_id == _spadl.result_id["yellow_card"]
+    red = actions.result_id == _spadl.result_id["red_card"]
 
     prev = actions[yellow | red]
     extra = pd.DataFrame()
@@ -186,10 +186,10 @@ def _extra_from_fouls(actions: pd.DataFrame) -> pd.DataFrame:
     extra["team_id"] = prev.team_id
     extra["player_id"] = prev.player_id
 
-    ar = _atomicspadl.actiontypes
+    ar = _atomicspadl.actiontype_id
     extra["type_id"] = -1
-    extra["type_id"] = extra.type_id.mask(yellow, ar.index("yellow_card")).mask(
-        red, ar.index("red_card")
+    extra["type_id"] = extra.type_id.mask(yellow, ar["yellow_card"]).mask(
+        red, ar["red_card"]
     )
     actions = pd.concat([actions, extra], ignore_index=True, sort=False)
     actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)
@@ -223,14 +223,14 @@ def _convert_columns(actions: pd.DataFrame) -> pd.DataFrame:
 
 def _simplify(actions: pd.DataFrame) -> pd.DataFrame:
     a = actions
-    ar = _atomicspadl.actiontypes
+    ar = _atomicspadl.actiontype_id
 
     cornerlike = ["corner_crossed", "corner_short"]
-    corner_ids = [_spadl.actiontypes.index(ty) for ty in cornerlike]
+    corner_ids = [_spadl.actiontype_id[ty] for ty in cornerlike]
 
     freekicklike = ["freekick_crossed", "freekick_short", "shot_freekick"]
-    freekick_ids = [_spadl.actiontypes.index(ty) for ty in freekicklike]
+    freekick_ids = [_spadl.actiontype_id[ty] for ty in freekicklike]
 
-    a["type_id"] = a.type_id.mask(a.type_id.isin(corner_ids), ar.index("corner"))
-    a["type_id"] = a.type_id.mask(a.type_id.isin(freekick_ids), ar.index("freekick"))
+    a["type_id"] = a.type_id.mask(a.type_id.isin(corner_ids), ar["corner"])
+    a["type_id"] = a.type_id.mask(a.type_id.isin(freekick_ids), ar["freekick"])
     return a

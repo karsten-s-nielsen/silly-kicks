@@ -55,6 +55,11 @@ actiontypes: list[str] = [
     "goalkick",
 ]
 
+# Precomputed lookups — O(1) vs O(k) list.index() scans
+actiontype_id: dict[str, int] = {name: i for i, name in enumerate(actiontypes)}
+result_id: dict[str, int] = {name: i for i, name in enumerate(results)}
+bodypart_id: dict[str, int] = {name: i for i, name in enumerate(bodyparts)}
+
 
 def actiontypes_df() -> pd.DataFrame:
     """Return a dataframe with the type id and type name of each SPADL action type.

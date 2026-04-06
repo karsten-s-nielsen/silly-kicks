@@ -55,8 +55,8 @@ def _count(x: Series[float], y: Series[float], l: int = N, w: int = M) -> npt.ND
         A matrix, denoting the amount of actions occurring in each cell. The
         top-left corner is the origin.
     """
-    x = x[~np.isnan(x) & ~np.isnan(y)]
-    y = y[~np.isnan(x) & ~np.isnan(y)]
+    mask = ~np.isnan(x) & ~np.isnan(y)
+    x, y = x[mask], y[mask]
 
     flat_indexes = _get_flat_indexes(x, y, l, w)
     vc = flat_indexes.value_counts(sort=False)
@@ -88,8 +88,8 @@ def scoring_prob(
     np.ndarray
         A matrix, denoting the probability of scoring for each cell.
     """
-    shot_actions = actions[(actions.type_id == spadlconfig.actiontypes.index("shot"))]
-    goals = shot_actions[(shot_actions.result_id == spadlconfig.results.index("success"))]
+    shot_actions = actions[(actions.type_id == spadlconfig.actiontype_id["shot"])]
+    goals = shot_actions[(shot_actions.result_id == spadlconfig.result_id["success"])]
 
     shotmatrix = _count(shot_actions.start_x, shot_actions.start_y, l, w)
     goalmatrix = _count(goals.start_x, goals.start_y, l, w)
@@ -114,9 +114,9 @@ def get_move_actions(actions: DataFrame[SPADLSchema]) -> DataFrame[SPADLSchema]:
         All ball-progressing actions in the input dataframe.
     """
     return actions[
-        (actions.type_id == spadlconfig.actiontypes.index("pass"))
-        | (actions.type_id == spadlconfig.actiontypes.index("dribble"))
-        | (actions.type_id == spadlconfig.actiontypes.index("cross"))
+        (actions.type_id == spadlconfig.actiontype_id["pass"])
+        | (actions.type_id == spadlconfig.actiontype_id["dribble"])
+        | (actions.type_id == spadlconfig.actiontype_id["cross"])
     ]
 
 
@@ -136,7 +136,7 @@ def get_successful_move_actions(actions: DataFrame[SPADLSchema]) -> DataFrame[SP
         All ball-progressing actions in the input dataframe.
     """
     move_actions = get_move_actions(actions)
-    return move_actions[(move_actions.result_id == spadlconfig.results.index("success"))]
+    return move_actions[(move_actions.result_id == spadlconfig.result_id["success"])]
 
 
 def action_prob(
@@ -163,7 +163,7 @@ def action_prob(
         For each cell the probability of choosing to move.
     """
     move_actions = get_move_actions(actions)
-    shot_actions = actions[(actions.type_id == spadlconfig.actiontypes.index("shot"))]
+    shot_actions = actions[(actions.type_id == spadlconfig.actiontype_id["shot"])]
 
     movematrix = _count(move_actions.start_x, move_actions.start_y, l, w)
     shotmatrix = _count(shot_actions.start_x, shot_actions.start_y, l, w)
@@ -209,7 +209,7 @@ def move_transition_matrix(
 
     for i in range(0, w * l):
         vc2 = X[
-            ((X.start_cell == i) & (X.result_id == spadlconfig.results.index("success")))
+            ((X.start_cell == i) & (X.result_id == spadlconfig.result_id["success"]))
         ].end_cell.value_counts(sort=False)
         transition_matrix[i, vc2.index] = vc2 / start_counts[i]
 
@@ -299,15 +299,7 @@ class ExpectedThreat:
         self.heatmaps.append(self.xT.copy())
 
         while np.any(diff > self.eps):
-            total_payoff = np.zeros((self.w, self.l), dtype=np.float64)
-
-            for y in range(0, self.w):
-                for x in range(0, self.l):
-                    for q in range(0, self.w):
-                        for z in range(0, self.l):
-                            total_payoff[y, x] += (
-                                transition_matrix[self.l * y + x, self.l * q + z] * self.xT[q, z]
-                            )
+            total_payoff = (transition_matrix @ self.xT.ravel()).reshape(self.w, self.l)
 
             newxT = gs + (p_move * total_payoff)
             diff = newxT - self.xT
@@ -328,6 +320,7 @@ class ExpectedThreat:
         self
             Fitted xT model.
         """
+        self.heatmaps = []
         self.scoring_prob_matrix = scoring_prob(actions, self.l, self.w)
         self.shot_prob_matrix, self.move_prob_matrix = action_prob(actions, self.l, self.w)
         self.transition_matrix = move_transition_matrix(actions, self.l, self.w)

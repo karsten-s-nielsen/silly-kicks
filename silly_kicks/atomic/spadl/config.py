@@ -36,6 +36,11 @@ actiontypes = _spadl.actiontypes + [
     "freekick",
 ]
 
+# Precomputed lookups — O(1) vs O(k) list.index() scans
+actiontype_id: dict[str, int] = {name: i for i, name in enumerate(actiontypes)}
+result_id: dict[str, int] = _spadl.result_id
+bodypart_id: dict[str, int] = _spadl.bodypart_id
+
 
 def actiontypes_df() -> pd.DataFrame:
     """Return a dataframe with the type id and type name of each Atomic-SPADL action type.
