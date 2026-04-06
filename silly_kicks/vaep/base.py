@@ -224,7 +224,7 @@ class VAEP:
             The actions performed during `game` in the SPADL representation.
         game_states : pd.DataFrame, default=None
             DataFrame with the game state representation of each action. If
-            `None`, these will be computed on-th-fly.
+            `None`, these will be computed on-the-fly.
 
         Raises
         ------

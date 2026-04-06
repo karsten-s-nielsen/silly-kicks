@@ -3,6 +3,8 @@
 ![The Modern SPADL Analyst vs The Chief SPADL Evaluator & Classifier](assets/silly-kicks.jpg)
 <sup>Comic by NanoBanana &mdash; inspired by Monty Python's <em>Ministry of Silly Walks</em></sup>
 
+[![CI](https://github.com/karsten-s-nielsen/silly-kicks/actions/workflows/ci.yml/badge.svg)](https://github.com/karsten-s-nielsen/silly-kicks/actions/workflows/ci.yml)
+
 *The Ministry requires that all football actions be properly classified and valued.*
 
 **silly-kicks** is a Python library for objectively quantifying the impact of
@@ -27,10 +29,12 @@ MIT license with full attribution preserved.
 pip install silly-kicks
 ```
 
+Requires Python 3.10 or later.
+
 With optional provider support:
 
 ```bash
-pip install "silly-kicks[statsbomb,kloppy,xgboost]"
+pip install "silly-kicks[kloppy,xgboost]"
 ```
 
 ## Quick Start

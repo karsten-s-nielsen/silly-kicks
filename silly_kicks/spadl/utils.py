@@ -35,7 +35,7 @@ def add_names(actions: DataFrame[SPADLSchema]) -> DataFrame[SPADLSchema]:
 def play_left_to_right(
     actions: DataFrame[SPADLSchema], home_team_id: int
 ) -> DataFrame[SPADLSchema]:
-    """Perform all action in the same playing direction.
+    """Perform all actions in the same playing direction.
 
     This changes the start and end location of each action, such that all actions
     are performed as if the team that executes the action plays from left to
@@ -44,13 +44,13 @@ def play_left_to_right(
     Parameters
     ----------
     actions : pd.DataFrame
-        The SPADL actins of a game.
+        The SPADL actions of a game.
     home_team_id : int
         The ID of the home team.
 
     Returns
     -------
-    list(pd.DataFrame)
+    pd.DataFrame
         All actions performed left to right.
 
     See Also

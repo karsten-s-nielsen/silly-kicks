@@ -64,14 +64,6 @@ _WS_SUBTYPE_SHOT_ON_TARGET: int = 100
 _WS_TAG_FAIRPLAY: int = 1001
 _WS_TAG_OWN_GOAL: int = 102
 
-###################################
-# WARNING: HERE BE DRAGONS
-# This code for converting wyscout data was organically grown over a long period of time.
-# It works for now, but needs to be cleaned up in the future.
-# Enter at your own risk.
-###################################
-
-
 def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> DataFrame[SPADLSchema]:
     """
     Convert Wyscout events to SPADL actions.

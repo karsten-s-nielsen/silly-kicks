@@ -118,7 +118,7 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
 
     See Also
     --------
-    silly_kicks.vaep.features.play_left_to_right : For transforming actions.
+    silly_kicks.spadl.play_left_to_right : For transforming actions.
     """
     a0 = gamestates[0]
     away_idx = a0.team_id != home_team_id

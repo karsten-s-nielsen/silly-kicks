@@ -59,3 +59,24 @@ rewritten anyway for the "Nothing Left Behind" mapping registry.
 | O-16 | Low | 138-iteration loop for type×result onehot cross-product | `vaep/features.py:270-273` | Phase 3 |
 | O-M1 | Low | Full `events.copy()` at top of StatsBomb convert_to_actions | `spadl/statsbomb.py:78` | Phase 3 converter rewrite |
 | O-M6 | Low | Temporary n×3 DataFrame for StatsBomb fidelity version check | `spadl/statsbomb.py:171` | Phase 3 converter rewrite |
+
+## Documentation Audit (2026-04-06)
+
+### Repository governance (Phase 3 territory — project maturity)
+
+| # | Sev | Finding | Rationale | Revisit When |
+|---|-----|---------|-----------|-------------|
+| D-1 | Med | Missing CONTRIBUTING.md | Not needed until community contributors arrive. Write before making repo public | Before public release |
+| D-2 | Med | Missing SECURITY.md | No vulnerability disclosure process. Write before making repo public | Before public release |
+| D-3 | Low | Missing CODE_OF_CONDUCT.md | Standard community file | Before public release |
+| D-4 | Med | Missing CHANGELOG.md | Not needed until first PyPI release | Before v0.1.0 PyPI publish |
+| D-5 | Low | Missing GitHub issue/PR templates | Nice-to-have for structured contributions | Before public release |
+
+### Documentation content (Phase 3 territory — API may evolve)
+
+| # | Sev | Finding | Rationale | Revisit When |
+|---|-----|---------|-----------|-------------|
+| D-6 | High | README missing VAEP workflow example | The "V" in the library's value proposition is undemonstrated. Deferred because API may change in Phase 3 | After Phase 3 API stabilizes |
+| D-7 | Med | README missing multi-provider examples (Wyscout, Opta, kloppy) | Listed in Features but never shown | After Phase 3 |
+| D-8 | Low | No docstring `Examples` sections on any public function | Systematic gap — 49 functions, zero examples. Valuable for Sphinx/doctest but not blocking | After Phase 3 API stabilizes |
+| D-9 | Low | 5 xthreat module-level functions not underscore-prefixed but not re-exported | `scoring_prob`, `get_move_actions`, etc. are implementation helpers but technically public | Phase 3 API cleanup |

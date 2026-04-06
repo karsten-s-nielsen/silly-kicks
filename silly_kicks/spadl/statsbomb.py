@@ -44,6 +44,11 @@ def convert_to_actions(
     actions : pd.DataFrame
         DataFrame with corresponding SPADL actions.
 
+    Raises
+    ------
+    ValueError
+        If ``xy_fidelity_version`` or ``shot_fidelity_version`` is not 1 or 2.
+
     """
     actions = pd.DataFrame()
 
