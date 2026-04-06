@@ -15,36 +15,38 @@ from silly_kicks.spadl.schema import SPADL_COLUMNS, ConversionReport
 
 def _make_statsbomb_events() -> pd.DataFrame:
     """Minimal StatsBomb event DataFrame for testing."""
-    return pd.DataFrame([
-        {
-            "game_id": 1,
-            "event_id": "abc-123",
-            "period_id": 1,
-            "timestamp": "00:00:01.000",
-            "team_id": 100,
-            "player_id": 200,
-            "type_name": "Pass",
-            "location": [60.0, 40.0],
-            "extra": {
-                "pass": {
-                    "end_location": [70.0, 40.0],
-                    "outcome": {"name": "Complete"},
-                    "height": {"name": "Ground Pass"},
-                }
+    return pd.DataFrame(
+        [
+            {
+                "game_id": 1,
+                "event_id": "abc-123",
+                "period_id": 1,
+                "timestamp": "00:00:01.000",
+                "team_id": 100,
+                "player_id": 200,
+                "type_name": "Pass",
+                "location": [60.0, 40.0],
+                "extra": {
+                    "pass": {
+                        "end_location": [70.0, 40.0],
+                        "outcome": {"name": "Complete"},
+                        "height": {"name": "Ground Pass"},
+                    }
+                },
             },
-        },
-        {
-            "game_id": 1,
-            "event_id": "abc-456",
-            "period_id": 1,
-            "timestamp": "00:00:05.000",
-            "team_id": 100,
-            "player_id": 201,
-            "type_name": "Pressure",
-            "location": [50.0, 30.0],
-            "extra": {},
-        },
-    ])
+            {
+                "game_id": 1,
+                "event_id": "abc-456",
+                "period_id": 1,
+                "timestamp": "00:00:05.000",
+                "team_id": 100,
+                "player_id": 201,
+                "type_name": "Pressure",
+                "location": [50.0, 30.0],
+                "extra": {},
+            },
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -82,18 +84,29 @@ def test_statsbomb_conversion_report():
 
 def test_statsbomb_unrecognized_event_warning():
     events = _make_statsbomb_events()
-    events = pd.concat([events, pd.DataFrame([{
-        "game_id": 1,
-        "event_id": "abc-789",
-        "period_id": 1,
-        "timestamp": "00:00:10.000",
-        "team_id": 100,
-        "player_id": 202,
-        "type_name": "FutureEventType",
-        "location": [50.0, 30.0],
-        "extra": {},
-    }])], ignore_index=True)
+    events = pd.concat(
+        [
+            events,
+            pd.DataFrame(
+                [
+                    {
+                        "game_id": 1,
+                        "event_id": "abc-789",
+                        "period_id": 1,
+                        "timestamp": "00:00:10.000",
+                        "team_id": 100,
+                        "player_id": 202,
+                        "type_name": "FutureEventType",
+                        "location": [50.0, 30.0],
+                        "extra": {},
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
     import warnings as w_mod
+
     with w_mod.catch_warnings(record=True) as w:
         w_mod.simplefilter("always")
         _actions, report = statsbomb.convert_to_actions(

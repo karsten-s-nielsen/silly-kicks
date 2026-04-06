@@ -137,11 +137,22 @@ def test_gamestates_empty_dataframe() -> None:
     """Bug #507: gamestates should not crash on empty input."""
     empty_actions = pd.DataFrame(
         columns=[
-            "game_id", "period_id", "action_id", "time_seconds",
-            "team_id", "player_id",
-            "start_x", "start_y", "end_x", "end_y",
-            "type_id", "result_id", "bodypart_id",
-            "type_name", "result_name", "bodypart_name",
+            "game_id",
+            "period_id",
+            "action_id",
+            "time_seconds",
+            "team_id",
+            "player_id",
+            "start_x",
+            "start_y",
+            "end_x",
+            "end_y",
+            "type_id",
+            "result_id",
+            "bodypart_id",
+            "type_name",
+            "result_name",
+            "bodypart_name",
         ]
     )
     result = fs.gamestates(empty_actions, nb_prev_actions=3)

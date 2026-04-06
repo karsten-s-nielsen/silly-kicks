@@ -8,7 +8,8 @@ xfns_default : list(callable)
 """
 
 import math
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -74,21 +75,19 @@ class VAEP:
 
     def __init__(
         self,
-        xfns: Optional[list[fs.FeatureTransfomer]] = None,
-        yfns: Optional[list[Callable]] = None,
+        xfns: list[fs.FeatureTransfomer] | None = None,
+        yfns: list[Callable] | None = None,
         nb_prev_actions: int = 3,
     ) -> None:
         self.__models: dict[str, Any] = {}
-        self.xfns = xfns_default if xfns is None else xfns
+        self.xfns = list(xfns_default) if xfns is None else xfns
         self.yfns = yfns if yfns is not None else [self._lab.scores, self._lab.concedes]
         self.nb_prev_actions = nb_prev_actions
 
     def _feature_columns(self) -> list[str]:
         """Return cached feature column names."""
         if not hasattr(self, "_cached_feature_cols"):
-            self._cached_feature_cols = self._fs.feature_column_names(
-                self.xfns, self.nb_prev_actions
-            )
+            self._cached_feature_cols = self._fs.feature_column_names(self.xfns, self.nb_prev_actions)
         return self._cached_feature_cols
 
     def compute_features(self, game: pd.Series, game_actions: fs.Actions) -> pd.DataFrame:
@@ -141,8 +140,8 @@ class VAEP:
         y: pd.DataFrame,
         learner: str = "xgboost",
         val_size: float = 0.25,
-        tree_params: Optional[dict[str, Any]] = None,
-        fit_params: Optional[dict[str, Any]] = None,
+        tree_params: dict[str, Any] | None = None,
+        fit_params: dict[str, Any] | None = None,
         random_state: int | None = None,
     ) -> "VAEP":
         """
@@ -197,9 +196,7 @@ class VAEP:
         # train classifiers F(X) = Y
         fit_fn = _LEARNER_REGISTRY.get(learner)
         if fit_fn is None:
-            raise ValueError(
-                f"Unsupported learner: {learner!r}. Available: {list(_LEARNER_REGISTRY)}"
-            )
+            raise ValueError(f"Unsupported learner: {learner!r}. Available: {list(_LEARNER_REGISTRY)}")
         for col in list(y.columns):
             eval_set = [(X_val, y_val[col])] if val_size > 0 else None
             self.__models[col] = fit_fn(X_train, y_train[col], eval_set, tree_params, fit_params)
@@ -221,7 +218,7 @@ class VAEP:
         self,
         game: pd.Series,
         game_actions: fs.Actions,
-        game_states: Optional[fs.Features] = None,
+        game_states: fs.Features | None = None,
     ) -> pd.DataFrame:
         """
         Compute the VAEP rating for the given game states.
@@ -288,6 +285,6 @@ class VAEP:
         for col in self.__models:
             scores[col] = {}
             scores[col]["brier"] = brier_score_loss(y[col], y_hat[col])
-            scores[col]["auroc"] = roc_auc_score(y[col], y_hat[col])
+            scores[col]["auroc"] = roc_auc_score(y[col], y_hat[col])  # type: ignore[reportArgumentType]
 
         return scores

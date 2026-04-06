@@ -1,6 +1,6 @@
 """Implements the feature tranformers of the VAEP framework."""
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -116,10 +116,10 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
     a0 = gamestates[0]
     away_idx = a0.team_id != home_team_id
     for actions in gamestates:
-        actions.loc[away_idx, "x"] = atomicspadl.field_length - actions[away_idx]["x"].values
-        actions.loc[away_idx, "y"] = atomicspadl.field_width - actions[away_idx]["y"].values
-        actions.loc[away_idx, "dx"] = -actions[away_idx]["dx"].values
-        actions.loc[away_idx, "dy"] = -actions[away_idx]["dy"].values
+        actions.loc[away_idx, "x"] = atomicspadl.field_length - actions[away_idx]["x"].values  # type: ignore[reportAttributeAccessIssue]
+        actions.loc[away_idx, "y"] = atomicspadl.field_width - actions[away_idx]["y"].values  # type: ignore[reportAttributeAccessIssue]
+        actions.loc[away_idx, "dx"] = -actions[away_idx]["dx"].values  # type: ignore[reportAttributeAccessIssue]
+        actions.loc[away_idx, "dy"] = -actions[away_idx]["dy"].values  # type: ignore[reportAttributeAccessIssue]
     return gamestates
 
 
@@ -158,7 +158,7 @@ def location(actions: Actions) -> Features:
     Features
         The 'x' and 'y' location of each action.
     """
-    return actions[["x", "y"]]
+    return actions[["x", "y"]]  # type: ignore[reportReturnType]
 
 
 _goal_x = atomicspadl.field_length

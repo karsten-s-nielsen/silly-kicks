@@ -23,9 +23,9 @@ def _fix_clearances(actions: pd.DataFrame) -> pd.DataFrame:
 def _fix_direction_of_play(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame:
     away_idx = (actions.team_id != home_team_id).values
     for col in ["start_x", "end_x"]:
-        actions.loc[away_idx, col] = spadlconfig.field_length - actions[away_idx][col].values
+        actions.loc[away_idx, col] = spadlconfig.field_length - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
     for col in ["start_y", "end_y"]:
-        actions.loc[away_idx, col] = spadlconfig.field_width - actions[away_idx][col].values
+        actions.loc[away_idx, col] = spadlconfig.field_width - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
 
     return actions
 
@@ -40,9 +40,7 @@ def _add_dribbles(actions: pd.DataFrame) -> pd.DataFrame:
 
     same_team = actions.team_id == next_actions.team_id
     # not_clearance = actions.type_id != actiontypes.index("clearance")
-    not_offensive_foul = same_team & (
-        next_actions.type_id != spadlconfig.actiontype_id["foul"]
-    )
+    not_offensive_foul = same_team & (next_actions.type_id != spadlconfig.actiontype_id["foul"])
     not_headed_shot = (next_actions.type_id != spadlconfig.actiontype_id["shot"]) & (
         next_actions.bodypart_id != spadlconfig.bodypart_id["head"]
     )
@@ -56,15 +54,7 @@ def _add_dribbles(actions: pd.DataFrame) -> pd.DataFrame:
     same_phase = dt < max_dribble_duration
     same_period = actions.period_id == next_actions.period_id
 
-    dribble_idx = (
-        same_team
-        & far_enough
-        & not_too_far
-        & same_phase
-        & same_period
-        & not_offensive_foul
-        & not_headed_shot
-    )
+    dribble_idx = same_team & far_enough & not_too_far & same_phase & same_period & not_offensive_foul & not_headed_shot
 
     dribbles = pd.DataFrame()
     prev = actions[dribble_idx]

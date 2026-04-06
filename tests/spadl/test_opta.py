@@ -94,13 +94,27 @@ def test_opta_card_events_mapped() -> None:
 
 
 def test_opta_returns_tuple():
-    event = pd.DataFrame([{
-        "game_id": 1, "event_id": 100, "type_id": 1, "period_id": 1,
-        "minute": 1, "second": 0, "team_id": 10, "player_id": 20,
-        "outcome": False, "start_x": 50.0, "start_y": 50.0,
-        "end_x": 60.0, "end_y": 50.0,
-        "qualifiers": {124: True}, "type_name": "pass",
-    }])
+    event = pd.DataFrame(
+        [
+            {
+                "game_id": 1,
+                "event_id": 100,
+                "type_id": 1,
+                "period_id": 1,
+                "minute": 1,
+                "second": 0,
+                "team_id": 10,
+                "player_id": 20,
+                "outcome": False,
+                "start_x": 50.0,
+                "start_y": 50.0,
+                "end_x": 60.0,
+                "end_y": 50.0,
+                "qualifiers": {124: True},
+                "type_name": "pass",
+            }
+        ]
+    )
     result = opta.convert_to_actions(event, home_team_id=10)
     assert isinstance(result, tuple)
     actions, report = result
@@ -110,13 +124,27 @@ def test_opta_returns_tuple():
 
 
 def test_opta_output_columns():
-    event = pd.DataFrame([{
-        "game_id": 1, "event_id": 100, "type_id": 1, "period_id": 1,
-        "minute": 1, "second": 0, "team_id": 10, "player_id": 20,
-        "outcome": True, "start_x": 50.0, "start_y": 50.0,
-        "end_x": 60.0, "end_y": 50.0,
-        "qualifiers": {124: True}, "type_name": "pass",
-    }])
+    event = pd.DataFrame(
+        [
+            {
+                "game_id": 1,
+                "event_id": 100,
+                "type_id": 1,
+                "period_id": 1,
+                "minute": 1,
+                "second": 0,
+                "team_id": 10,
+                "player_id": 20,
+                "outcome": True,
+                "start_x": 50.0,
+                "start_y": 50.0,
+                "end_x": 60.0,
+                "end_y": 50.0,
+                "qualifiers": {124: True},
+                "type_name": "pass",
+            }
+        ]
+    )
     actions, _ = opta.convert_to_actions(event, home_team_id=10)
     assert list(actions.columns) == list(SPADL_COLUMNS.keys())
     for col, dtype in SPADL_COLUMNS.items():

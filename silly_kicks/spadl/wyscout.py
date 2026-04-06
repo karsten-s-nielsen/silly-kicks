@@ -2,8 +2,8 @@
 
 import warnings
 from collections import Counter
-from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from .base import (
@@ -17,7 +17,7 @@ from .utils import _finalize_output, _validate_input_columns
 # ---------------------------------------------------------------------------
 # Wyscout event type IDs
 # ---------------------------------------------------------------------------
-_WS_TYPE_TAKE_ON: int = 0       # synthetic type assigned to take-ons / tackles
+_WS_TYPE_TAKE_ON: int = 0  # synthetic type assigned to take-ons / tackles
 _WS_TYPE_DUEL: int = 1
 _WS_TYPE_FOUL: int = 2
 _WS_TYPE_OFFSIDE: int = 6
@@ -69,27 +69,38 @@ _WS_TAG_FAIRPLAY: int = 1001
 _WS_TAG_OWN_GOAL: int = 102
 
 EXPECTED_INPUT_COLUMNS: set[str] = {
-    "game_id", "event_id", "period_id", "milliseconds",
-    "team_id", "player_id", "type_id", "subtype_id",
-    "positions", "tags",
+    "game_id",
+    "event_id",
+    "period_id",
+    "milliseconds",
+    "team_id",
+    "player_id",
+    "type_id",
+    "subtype_id",
+    "positions",
+    "tags",
 }
 
-_MAPPED_WS_TYPE_IDS: frozenset[int] = frozenset({
-    _WS_TYPE_TAKE_ON,        # 0
-    _WS_TYPE_DUEL,           # 1
-    _WS_TYPE_FOUL,           # 2
-    7,                        # Others on the ball
-    _WS_TYPE_PASS,           # 8
-    _WS_TYPE_GK,             # 9
-    _WS_TYPE_SHOT,           # 10
-})
+_MAPPED_WS_TYPE_IDS: frozenset[int] = frozenset(
+    {
+        _WS_TYPE_TAKE_ON,  # 0
+        _WS_TYPE_DUEL,  # 1
+        _WS_TYPE_FOUL,  # 2
+        7,  # Others on the ball
+        _WS_TYPE_PASS,  # 8
+        _WS_TYPE_GK,  # 9
+        _WS_TYPE_SHOT,  # 10
+    }
+)
 
-_EXCLUDED_WS_TYPE_IDS: frozenset[int] = frozenset({
-    3,   # Free kick
-    4,   # Goal kick
-    5,   # Interruption
-    _WS_TYPE_OFFSIDE,  # 6
-})
+_EXCLUDED_WS_TYPE_IDS: frozenset[int] = frozenset(
+    {
+        3,  # Free kick
+        4,  # Goal kick
+        5,  # Interruption
+        _WS_TYPE_OFFSIDE,  # 6
+    }
+)
 
 
 wyscout_tags = [
@@ -159,23 +170,22 @@ wyscout_tags = [
 # Lazy imports from submodules (avoids circular import at module level)
 # ---------------------------------------------------------------------------
 
+
 def _lazy_import_events():
     from ._wyscout_events import _fix_actions, _fix_wyscout_events, _make_new_positions
+
     return _fix_wyscout_events, _make_new_positions, _fix_actions
 
 
 def _lazy_import_mappings():
     from ._wyscout_mappings import _create_df_actions
+
     return (_create_df_actions,)
 
 
 # ---------------------------------------------------------------------------
 # Tag extraction (optimized batch constructor)
 # ---------------------------------------------------------------------------
-
-
-def _get_tag_set(tags: list[dict[str, Any]]) -> set[int]:
-    return {tag["id"] for tag in tags}
 
 
 def _get_tagsdf(events: pd.DataFrame) -> pd.DataFrame:
@@ -191,11 +201,12 @@ def _get_tagsdf(events: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         A dataframe with a column for each tag.
     """
-    tag_sets = events.tags.apply(_get_tag_set)
-    tagsdf = pd.DataFrame(
-        {column: tag_sets.apply(lambda s, t=tag_id: t in s) for tag_id, column in wyscout_tags}
-    )
-    return tagsdf
+    tag_ids = [tid for tid, _ in wyscout_tags]
+    tag_names = [name for _, name in wyscout_tags]
+    # Single pass: convert each row's tag list to a set, then build boolean matrix
+    tag_set_list = [{tag["id"] for tag in tags} for tags in events.tags]
+    data = np.array([[tid in ts for tid in tag_ids] for ts in tag_set_list], dtype=bool)
+    return pd.DataFrame(data, columns=tag_names, index=events.index)
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +263,8 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
     if unrecognized_counts:
         warnings.warn(
             f"Wyscout: {sum(unrecognized_counts.values())} unrecognized event type_ids "
-            f"dropped: {dict(unrecognized_counts)}"
+            f"dropped: {dict(unrecognized_counts)}",
+            stacklevel=2,
         )
     report = ConversionReport(
         provider="Wyscout",

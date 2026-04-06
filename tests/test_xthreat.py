@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
 import pytest
-import silly_kicks.spadl as spadl
-import silly_kicks.xthreat as xt
 from pytest_mock import MockerFixture
 from sklearn.exceptions import NotFittedError
+
+import silly_kicks.spadl as spadl
+import silly_kicks.xthreat as xt
 from silly_kicks.spadl.config import field_length, field_width
 
 
@@ -192,7 +193,7 @@ def test_interpolate_xt_grid_no_scipy(mocker: MockerFixture) -> None:
     """It should raise an ImportError if scipy is not installed."""
     mocker.patch.object(xt, "interp2d", None)
     xTModel = xt.ExpectedThreat()
-    with pytest.raises(ImportError, match="Interpolation requires scipy to be installed."):
+    with pytest.raises(ImportError, match=r"Interpolation requires scipy to be installed\."):
         xTModel.interpolator()
 
 
@@ -204,9 +205,7 @@ def xt_model(sb_worldcup_data: pd.HDFStore) -> xt.ExpectedThreat:
     # 2. Convert direction of play
     actions_ltr = pd.concat(
         [
-            spadl.play_left_to_right(
-                sb_worldcup_data[f"actions/game_{game_id}"], game.home_team_id
-            )
+            spadl.play_left_to_right(sb_worldcup_data[f"actions/game_{game_id}"], game.home_team_id)
             for game_id, game in df_games.iterrows()
         ]
     ).pipe(pd.DataFrame)
@@ -227,9 +226,7 @@ def test_predict(sb_worldcup_data: pd.HDFStore, xt_model: xt.ExpectedThreat) -> 
 
 
 @pytest.mark.e2e
-def test_predict_with_interpolation(
-    sb_worldcup_data: pd.HDFStore, xt_model: xt.ExpectedThreat
-) -> None:
+def test_predict_with_interpolation(sb_worldcup_data: pd.HDFStore, xt_model: xt.ExpectedThreat) -> None:
     games = sb_worldcup_data["games"]
     game = games.iloc[-1]
     actions = sb_worldcup_data[f"actions/game_{game.game_id}"]

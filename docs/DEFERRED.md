@@ -16,7 +16,7 @@ for why it's deferred and a trigger for when to revisit.
 - **O-2b** (StatsBomb apply): RESOLVED — replaced with np.select
 - **O-2c** (Opta 3x apply): RESOLVED — replaced with np.select
 - **O-3** (Wyscout position extraction): RESOLVED — vectorized list indexing
-- **O-4** (Wyscout 55x tag apply): RESOLVED — batch DataFrame constructor
+- **O-4** (Wyscout 55x tag apply): RESOLVED — single-pass numpy boolean matrix
 - **O-5b** (StatsBomb dispatch dict per row): RESOLVED — module-level np.select
 - **O-6** (StatsBomb coordinate for-loop): RESOLVED — numpy vectorized
 - **O-8** (gamestates groupby.apply): RESOLVED — vectorized shift + boundary detection
@@ -95,17 +95,17 @@ rewritten anyway for the "Nothing Left Behind" mapping registry.
 
 | # | Sev | Finding | Rationale | Revisit When |
 |---|-----|---------|-----------|-------------|
-| D-1 | Med | Missing CONTRIBUTING.md | Not needed until community contributors arrive. Write before making repo public | Before public release |
-| D-2 | Med | Missing SECURITY.md | No vulnerability disclosure process. Write before making repo public | Before public release |
+| D-1 | Med | ~~Missing CONTRIBUTING.md~~ | **RESOLVED** — CONTRIBUTING.md created | ~~Before public release~~ |
+| D-2 | Med | ~~Missing SECURITY.md~~ | **RESOLVED** — SECURITY.md created | ~~Before public release~~ |
 | D-3 | Low | Missing CODE_OF_CONDUCT.md | Standard community file | Before public release |
-| D-4 | Med | Missing CHANGELOG.md | Not needed until first PyPI release | Before v0.1.0 PyPI publish |
+| D-4 | Med | ~~Missing CHANGELOG.md~~ | **RESOLVED** — CHANGELOG.md created | ~~Before v0.1.0 PyPI publish~~ |
 | D-5 | Low | Missing GitHub issue/PR templates | Nice-to-have for structured contributions | Before public release |
 
 ### Documentation content (Phase 3 territory — API may evolve)
 
 | # | Sev | Finding | Rationale | Revisit When |
 |---|-----|---------|-----------|-------------|
-| D-6 | High | README missing VAEP workflow example | The "V" in the library's value proposition is undemonstrated. Deferred because API may change in Phase 3 | After Phase 3 API stabilizes |
-| D-7 | Med | README missing multi-provider examples (Wyscout, Opta, kloppy) | Listed in Features but never shown | After Phase 3 |
+| D-6 | High | ~~README missing VAEP workflow example~~ | **RESOLVED** — VAEP workflow section added to README.md | ~~After Phase 3 API stabilizes~~ |
+| D-7 | Med | ~~README missing multi-provider examples (Wyscout, Opta, kloppy)~~ | **RESOLVED** — Multi-provider examples added to README.md | ~~After Phase 3~~ |
 | D-8 | Low | No docstring `Examples` sections on any public function | Systematic gap — 49 functions, zero examples. Valuable for Sphinx/doctest but not blocking | After Phase 3 API stabilizes |
 | D-9 | Low | 5 xthreat module-level functions not underscore-prefixed but not re-exported | `scoring_prob`, `get_move_actions`, etc. are implementation helpers but technically public | Phase 3 API cleanup |

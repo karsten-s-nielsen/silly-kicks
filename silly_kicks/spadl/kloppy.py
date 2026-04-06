@@ -2,7 +2,6 @@
 
 import warnings
 from collections import Counter
-from typing import Optional, Union
 
 import kloppy
 import pandas as pd  # type: ignore
@@ -54,33 +53,37 @@ _SUPPORTED_PROVIDERS = {
     # Provider.OPTA: version.parse("3.15.0"),
 }
 
-_MAPPED_EVENT_TYPES: frozenset[EventType] = frozenset({
-    EventType.PASS,
-    EventType.SHOT,
-    EventType.TAKE_ON,
-    EventType.CARRY,
-    EventType.FOUL_COMMITTED,
-    EventType.DUEL,
-    EventType.CLEARANCE,
-    EventType.MISCONTROL,
-    EventType.GOALKEEPER,
-    EventType.INTERCEPTION,
-})
+_MAPPED_EVENT_TYPES: frozenset[EventType] = frozenset(
+    {
+        EventType.PASS,
+        EventType.SHOT,
+        EventType.TAKE_ON,
+        EventType.CARRY,
+        EventType.FOUL_COMMITTED,
+        EventType.DUEL,
+        EventType.CLEARANCE,
+        EventType.MISCONTROL,
+        EventType.GOALKEEPER,
+        EventType.INTERCEPTION,
+    }
+)
 
-_EXCLUDED_EVENT_TYPES: frozenset[EventType] = frozenset({
-    EventType.GENERIC,
-    EventType.RECOVERY,
-    EventType.SUBSTITUTION,
-    EventType.CARD,
-    EventType.PLAYER_ON,
-    EventType.PLAYER_OFF,
-    EventType.BALL_OUT,
-    EventType.FORMATION_CHANGE,
-})
+_EXCLUDED_EVENT_TYPES: frozenset[EventType] = frozenset(
+    {
+        EventType.GENERIC,
+        EventType.RECOVERY,
+        EventType.SUBSTITUTION,
+        EventType.CARD,
+        EventType.PLAYER_ON,
+        EventType.PLAYER_OFF,
+        EventType.BALL_OUT,
+        EventType.FORMATION_CHANGE,
+    }
+)
 
 
 def convert_to_actions(
-    dataset: EventDataset, game_id: Optional[Union[str, int]] = None
+    dataset: EventDataset, game_id: str | int | None = None
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """Convert a Kloppy event data set to SPADL actions.
 
@@ -103,28 +106,30 @@ def convert_to_actions(
         warnings.warn(
             f"Converting {dataset.metadata.provider} data is not yet supported. "
             f"The result may be incorrect or incomplete. "
-            f"Supported providers are: {', '.join([p.value for p in _SUPPORTED_PROVIDERS.keys()])}"
+            f"Supported providers are: {', '.join([p.value for p in _SUPPORTED_PROVIDERS.keys()])}",
+            stacklevel=2,
         )
     elif _KLOPPY_VERSION < _SUPPORTED_PROVIDERS[dataset.metadata.provider]:
         warnings.warn(
             f"Converting {dataset.metadata.provider} data is only supported from "
             f"Kloppy version {_SUPPORTED_PROVIDERS[dataset.metadata.provider]} (you have {_KLOPPY_VERSION}). "
-            f"The result may be incorrect or incomplete."
+            f"The result may be incorrect or incomplete.",
+            stacklevel=2,
         )
 
     # Convert the dataset to the SPADL coordinate system
-    new_dataset = dataset.transform(
+    new_dataset = dataset.transform(  # kloppy API varies by version
         to_orientation=Orientation.HOME_AWAY,
         to_coordinate_system=_SoccerActionCoordinateSystem(
-            pitch_length=dataset.metadata.coordinate_system.pitch_length,
-            pitch_width=dataset.metadata.coordinate_system.pitch_width,
+            pitch_length=dataset.metadata.coordinate_system.pitch_length,  # type: ignore[reportCallIssue]
+            pitch_width=dataset.metadata.coordinate_system.pitch_width,  # type: ignore[reportCallIssue]
         ),
     )
 
     # Convert the events to SPADL actions
     _event_type_counts: Counter[EventType] = Counter()
     actions = []
-    for event in new_dataset.events:
+    for event in new_dataset.events:  # type: ignore[reportAttributeAccessIssue]  # kloppy API varies by version
         _event_type_counts[event.event_type] += 1
         action = dict(
             game_id=game_id,
@@ -148,7 +153,7 @@ def convert_to_actions(
     )
     df_actions = df_actions[df_actions.type_id != spadlconfig.actiontype_id["non_action"]]
 
-    df_actions = _fix_clearances(df_actions)
+    df_actions = _fix_clearances(df_actions)  # type: ignore[reportArgumentType]  # kloppy API varies by version
 
     df_actions["action_id"] = range(len(df_actions))
     df_actions = _add_dribbles(df_actions)
@@ -169,7 +174,8 @@ def convert_to_actions(
     if unrecognized_counts:
         warnings.warn(
             f"Kloppy: {sum(unrecognized_counts.values())} unrecognized event types "
-            f"dropped: {dict(unrecognized_counts)}"
+            f"dropped: {dict(unrecognized_counts)}",
+            stacklevel=2,
         )
     report = ConversionReport(
         provider="Kloppy",
@@ -185,7 +191,7 @@ def convert_to_actions(
 class _SoccerActionCoordinateSystem(CoordinateSystem):
     @property
     def provider(self) -> Provider:
-        return "SoccerAction"
+        return "SoccerAction"  # type: ignore[reportReturnType]  # kloppy API varies by version
 
     @property
     def origin(self) -> Origin:
@@ -206,7 +212,7 @@ class _SoccerActionCoordinateSystem(CoordinateSystem):
         )
 
 
-def _get_end_location(event: Event) -> dict[str, Optional[float]]:
+def _get_end_location(event: Event) -> dict[str, float | None]:
     if isinstance(event, PassEvent):
         if event.receiver_coordinates:
             return {
@@ -262,8 +268,8 @@ def _parse_event(event: Event) -> dict[str, int]:
 
 
 def _qualifiers(event: Event) -> list[Qualifier]:
-    if event.qualifiers:
-        return [q.value for q in event.qualifiers]
+    if event.qualifiers:  # type: ignore[reportAttributeAccessIssue]  # kloppy API varies by version
+        return [q.value for q in event.qualifiers]  # type: ignore[reportAttributeAccessIssue]  # kloppy API varies by version
     return []
 
 
@@ -290,7 +296,7 @@ def _parse_event_as_non_action(event: Event) -> tuple[str, str, str]:
     return a, r, b
 
 
-def _parse_pass_event(event: PassEvent) -> tuple[str, str, str]:  # noqa: C901
+def _parse_pass_event(event: PassEvent) -> tuple[str, str, str]:
     qualifiers = _qualifiers(event)
     b = _parse_bodypart(qualifiers)
 

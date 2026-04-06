@@ -1,7 +1,5 @@
 """Wyscout event-fixing pipeline: position extraction, duel/interception/touch transforms."""
 
-from typing import Optional
-
 import pandas as pd
 
 from . import config as spadlconfig
@@ -44,7 +42,7 @@ def _make_new_positions(events: pd.DataFrame) -> pd.DataFrame:
         Wyscout event dataframe with start and end coordinates for each action.
     """
     pos_list = events["positions"].tolist()
-    empty_pos: dict[str, Optional[float]] = {"x": None, "y": None}
+    empty_pos: dict[str, float | None] = {"x": None, "y": None}
 
     start_pos = [p[0] if len(p) >= 1 else empty_pos for p in pos_list]
     end_pos = [p[1] if len(p) >= 2 else (p[0] if len(p) >= 1 else empty_pos) for p in pos_list]
@@ -118,9 +116,7 @@ def _create_shot_coordinates(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events.loc[shot & goal_right_idx, "end_y"] = 55.0
 
     goal_left_idx = (
-        df_events["position_goal_mid_left"]
-        | df_events["position_goal_low_left"]
-        | df_events["position_goal_high_left"]
+        df_events["position_goal_mid_left"] | df_events["position_goal_low_left"] | df_events["position_goal_high_left"]
     )
     df_events.loc[shot & goal_left_idx, "end_x"] = 100.0
     df_events.loc[shot & goal_left_idx, "end_y"] = 45.0
@@ -130,25 +126,19 @@ def _create_shot_coordinates(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events.loc[shot & out_center_idx, "end_y"] = 50.0
 
     out_right_idx = (
-        df_events["position_out_low_right"]
-        | df_events["position_out_mid_right"]
-        | df_events["position_out_high_right"]
+        df_events["position_out_low_right"] | df_events["position_out_mid_right"] | df_events["position_out_high_right"]
     )
     df_events.loc[shot & out_right_idx, "end_x"] = 100.0
     df_events.loc[shot & out_right_idx, "end_y"] = 60.0
 
     out_left_idx = (
-        df_events["position_out_mid_left"]
-        | df_events["position_out_low_left"]
-        | df_events["position_out_high_left"]
+        df_events["position_out_mid_left"] | df_events["position_out_low_left"] | df_events["position_out_high_left"]
     )
     df_events.loc[shot & out_left_idx, "end_x"] = 100.0
     df_events.loc[shot & out_left_idx, "end_y"] = 40.0
 
     post_left_idx = (
-        df_events["position_post_mid_left"]
-        | df_events["position_post_low_left"]
-        | df_events["position_post_high_left"]
+        df_events["position_post_mid_left"] | df_events["position_post_low_left"] | df_events["position_post_high_left"]
     )
     df_events.loc[shot & post_left_idx, "end_x"] = 100.0
     df_events.loc[shot & post_left_idx, "end_y"] = 55.38
@@ -203,16 +193,12 @@ def _convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Define selectors for current time step
-    selector0_duel_won = selector_duel_out_of_field & (
-        df_events["team_id"] != df_events2["team_id"]
-    )
+    selector0_duel_won = selector_duel_out_of_field & (df_events["team_id"] != df_events2["team_id"])
     selector0_duel_won_air = selector0_duel_won & (df_events["subtype_id"] == _WS_SUBTYPE_AIR_DUEL)
     selector0_duel_won_not_air = selector0_duel_won & (df_events["subtype_id"] != _WS_SUBTYPE_AIR_DUEL)
 
     # Define selectors for next time step
-    selector1_duel_won = selector_duel_out_of_field & (
-        df_events1["team_id"] != df_events2["team_id"]
-    )
+    selector1_duel_won = selector_duel_out_of_field & (df_events1["team_id"] != df_events2["team_id"])
     selector1_duel_won_air = selector1_duel_won & (df_events1["subtype_id"] == _WS_SUBTYPE_AIR_DUEL)
     selector1_duel_won_not_air = selector1_duel_won & (df_events1["subtype_id"] != _WS_SUBTYPE_AIR_DUEL)
 
@@ -244,7 +230,7 @@ def _convert_duels(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events.loc[df_events["sliding_tackle"], "type_id"] = _WS_TYPE_TAKE_ON
 
     # Remove the remaining duels
-    df_events = df_events[df_events["type_id"] != _WS_TYPE_DUEL]
+    df_events = df_events[df_events["type_id"] != _WS_TYPE_DUEL]  # type: ignore[reportAssignmentType]
 
     # Reset the index
     df_events = df_events.reset_index(drop=True)
@@ -285,9 +271,7 @@ def _insert_interceptions(df_events: pd.DataFrame) -> pd.DataFrame:
         df_events_interceptions["interception"] = True
         df_events_interceptions["type_id"] = _WS_TYPE_TAKE_ON
         df_events_interceptions["subtype_id"] = _WS_TYPE_TAKE_ON
-        df_events_interceptions[["end_x", "end_y"]] = df_events_interceptions[
-            ["start_x", "start_y"]
-        ]
+        df_events_interceptions[["end_x", "end_y"]] = df_events_interceptions[["start_x", "start_y"]]
 
         df_events = pd.concat([df_events_interceptions, df_events], ignore_index=True)
         df_events = df_events.sort_values(["period_id", "milliseconds"], kind="mergesort")
@@ -325,7 +309,7 @@ def _add_offside_variable(df_events: pd.DataFrame) -> pd.DataFrame:
     df_events.loc[selector_offside, "offside"] = 1
 
     # Remove offside events
-    df_events = df_events[df_events["type_id"] != _WS_TYPE_OFFSIDE]
+    df_events = df_events[df_events["type_id"] != _WS_TYPE_OFFSIDE]  # type: ignore[reportAssignmentType]
 
     # Reset index
     df_events = df_events.reset_index(drop=True)
@@ -355,24 +339,19 @@ def _convert_simulations(df_events: pd.DataFrame) -> pd.DataFrame:
 
     # Select actions preceded by a failed take-on
     selector_previous_is_failed_take_on = (
-        (prev_events["take_on_left"])
-        | (prev_events["take_on_right"]) & prev_events["not_accurate"]
+        (prev_events["take_on_left"]) | (prev_events["take_on_right"]) & prev_events["not_accurate"]
     )
 
     # Transform simulations not preceded by a failed take-on to a failed take-on
     df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "type_id"] = _WS_TYPE_TAKE_ON
     df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "subtype_id"] = _WS_TYPE_TAKE_ON
     df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "accurate"] = False
-    df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "not_accurate"] = (
-        True
-    )
+    df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "not_accurate"] = True
     # Set take_on_left or take_on_right to True
-    df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "take_on_left"] = (
-        True
-    )
+    df_events.loc[selector_simulation & ~selector_previous_is_failed_take_on, "take_on_left"] = True
 
     # Remove simulation events which are preceded by a failed take-on
-    df_events = df_events[~(selector_simulation & selector_previous_is_failed_take_on)]
+    df_events = df_events[~(selector_simulation & selector_previous_is_failed_take_on)]  # type: ignore[reportAssignmentType]
 
     # Reset index
     df_events = df_events.reset_index(drop=True)
@@ -444,16 +423,12 @@ def _fix_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         SpADL actions dataframe with end coordinates for shots
     """
-    df_actions["start_x"] = (df_actions["start_x"] * spadlconfig.field_length / 100).clip(
-        0, spadlconfig.field_length
-    )
+    df_actions["start_x"] = (df_actions["start_x"] * spadlconfig.field_length / 100).clip(0, spadlconfig.field_length)
     df_actions["start_y"] = (
         (100 - df_actions["start_y"]) * spadlconfig.field_width / 100
         # y is from top to bottom in Wyscout
     ).clip(0, spadlconfig.field_width)
-    df_actions["end_x"] = (df_actions["end_x"] * spadlconfig.field_length / 100).clip(
-        0, spadlconfig.field_length
-    )
+    df_actions["end_x"] = (df_actions["end_x"] * spadlconfig.field_length / 100).clip(0, spadlconfig.field_length)
     df_actions["end_y"] = (
         (100 - df_actions["end_y"]) * spadlconfig.field_width / 100
         # y is from top to bottom in Wyscout
@@ -531,12 +506,8 @@ def _fix_keeper_save_coordinates(df_actions: pd.DataFrame) -> pd.DataFrame:
     """
     saves_idx = df_actions["type_id"] == spadlconfig.actiontype_id["keeper_save"]
     # invert the coordinates
-    df_actions.loc[saves_idx, "end_x"] = (
-        spadlconfig.field_length - df_actions.loc[saves_idx, "end_x"]
-    )
-    df_actions.loc[saves_idx, "end_y"] = (
-        spadlconfig.field_width - df_actions.loc[saves_idx, "end_y"]
-    )
+    df_actions.loc[saves_idx, "end_x"] = spadlconfig.field_length - df_actions.loc[saves_idx, "end_x"]
+    df_actions.loc[saves_idx, "end_y"] = spadlconfig.field_width - df_actions.loc[saves_idx, "end_y"]
     # set start coordinates equal to start coordinates
     df_actions.loc[saves_idx, "start_x"] = df_actions.loc[saves_idx, "end_x"]
     df_actions.loc[saves_idx, "start_y"] = df_actions.loc[saves_idx, "end_y"]
@@ -561,12 +532,8 @@ def _remove_keeper_goal_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     """
     prev_actions = df_actions.shift(1)
     same_phase = prev_actions.time_seconds + 10 > df_actions.time_seconds
-    shot_goals = (prev_actions.type_id == spadlconfig.actiontype_id["shot"]) & (
-        prev_actions.result_id == 1
-    )
-    penalty_goals = (prev_actions.type_id == spadlconfig.actiontype_id["shot_penalty"]) & (
-        prev_actions.result_id == 1
-    )
+    shot_goals = (prev_actions.type_id == spadlconfig.actiontype_id["shot"]) & (prev_actions.result_id == 1)
+    penalty_goals = (prev_actions.type_id == spadlconfig.actiontype_id["shot_penalty"]) & (prev_actions.result_id == 1)
     freekick_goals = (prev_actions.type_id == spadlconfig.actiontype_id["shot_freekick"]) & (
         prev_actions.result_id == 1
     )

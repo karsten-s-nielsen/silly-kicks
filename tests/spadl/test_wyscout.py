@@ -201,12 +201,19 @@ def test_wyscout_keeper_claim() -> None:
     """Bug #37/D44: Wyscout GK claim events must map to keeper_claim."""
     from silly_kicks.spadl.wyscout import _determine_type_id
 
-    event = pd.Series({
-        "type_id": 9, "subtype_id": 92,
-        "fairplay": False, "own_goal": False, "high": False,
-        "take_on_left": False, "take_on_right": False,
-        "sliding_tackle": False, "interception": False,
-    })
+    event = pd.Series(
+        {
+            "type_id": 9,
+            "subtype_id": 92,
+            "fairplay": False,
+            "own_goal": False,
+            "high": False,
+            "take_on_left": False,
+            "take_on_right": False,
+            "sliding_tackle": False,
+            "interception": False,
+        }
+    )
     assert _determine_type_id(event) == spadl.actiontype_id["keeper_claim"]
 
 
@@ -214,12 +221,19 @@ def test_wyscout_keeper_punch() -> None:
     """Bug #37/D44: Wyscout GK punch events must map to keeper_punch."""
     from silly_kicks.spadl.wyscout import _determine_type_id
 
-    event = pd.Series({
-        "type_id": 9, "subtype_id": 93,
-        "fairplay": False, "own_goal": False, "high": False,
-        "take_on_left": False, "take_on_right": False,
-        "sliding_tackle": False, "interception": False,
-    })
+    event = pd.Series(
+        {
+            "type_id": 9,
+            "subtype_id": 93,
+            "fairplay": False,
+            "own_goal": False,
+            "high": False,
+            "take_on_left": False,
+            "take_on_right": False,
+            "sliding_tackle": False,
+            "interception": False,
+        }
+    )
     assert _determine_type_id(event) == spadl.actiontype_id["keeper_punch"]
 
 
@@ -227,23 +241,41 @@ def test_wyscout_keeper_save_default() -> None:
     """Bug #37/D44: Wyscout GK reflexes/save events still map to keeper_save."""
     from silly_kicks.spadl.wyscout import _determine_type_id
 
-    event = pd.Series({
-        "type_id": 9, "subtype_id": 90,
-        "fairplay": False, "own_goal": False, "high": False,
-        "take_on_left": False, "take_on_right": False,
-        "sliding_tackle": False, "interception": False,
-    })
+    event = pd.Series(
+        {
+            "type_id": 9,
+            "subtype_id": 90,
+            "fairplay": False,
+            "own_goal": False,
+            "high": False,
+            "take_on_left": False,
+            "take_on_right": False,
+            "sliding_tackle": False,
+            "interception": False,
+        }
+    )
     assert _determine_type_id(event) == spadl.actiontype_id["keeper_save"]
 
 
 def test_wyscout_returns_tuple():
-    event = pd.DataFrame([{
-        "type_id": 8, "subtype_name": "Simple pass", "subtype_id": 85,
-        "tags": [{"id": 1801}],
-        "player_id": 1, "positions": [{"y": 50, "x": 50}, {"y": 60, "x": 60}],
-        "game_id": 1, "type_name": "Pass", "team_id": 100,
-        "period_id": 1, "milliseconds": 1000.0, "event_id": 1,
-    }])
+    event = pd.DataFrame(
+        [
+            {
+                "type_id": 8,
+                "subtype_name": "Simple pass",
+                "subtype_id": 85,
+                "tags": [{"id": 1801}],
+                "player_id": 1,
+                "positions": [{"y": 50, "x": 50}, {"y": 60, "x": 60}],
+                "game_id": 1,
+                "type_name": "Pass",
+                "team_id": 100,
+                "period_id": 1,
+                "milliseconds": 1000.0,
+                "event_id": 1,
+            }
+        ]
+    )
     result = wy.convert_to_actions(event, 100)
     assert isinstance(result, tuple)
     _actions, report = result
@@ -252,13 +284,24 @@ def test_wyscout_returns_tuple():
 
 
 def test_wyscout_output_columns():
-    event = pd.DataFrame([{
-        "type_id": 8, "subtype_name": "Simple pass", "subtype_id": 85,
-        "tags": [{"id": 1801}],
-        "player_id": 1, "positions": [{"y": 50, "x": 50}, {"y": 60, "x": 60}],
-        "game_id": 1, "type_name": "Pass", "team_id": 100,
-        "period_id": 1, "milliseconds": 1000.0, "event_id": 1,
-    }])
+    event = pd.DataFrame(
+        [
+            {
+                "type_id": 8,
+                "subtype_name": "Simple pass",
+                "subtype_id": 85,
+                "tags": [{"id": 1801}],
+                "player_id": 1,
+                "positions": [{"y": 50, "x": 50}, {"y": 60, "x": 60}],
+                "game_id": 1,
+                "type_name": "Pass",
+                "team_id": 100,
+                "period_id": 1,
+                "milliseconds": 1000.0,
+                "event_id": 1,
+            }
+        ]
+    )
     actions, _ = wy.convert_to_actions(event, 100)
     assert list(actions.columns) == list(SPADL_COLUMNS.keys())
 

@@ -49,6 +49,58 @@ actions = spadl.statsbomb.convert_to_actions(events, home_team_id=123)
 actions = spadl.add_names(actions)
 ```
 
+## VAEP Workflow
+
+The full pipeline: convert provider events to SPADL, train a VAEP model, and
+rate individual actions.
+
+```python
+from silly_kicks.spadl import statsbomb
+from silly_kicks.vaep import VAEP
+
+# 1. Convert provider events to SPADL
+actions, report = statsbomb.convert_to_actions(
+    events_df, home_team_id=home_team_id,
+    xy_fidelity_version=2, shot_fidelity_version=2,
+)
+
+# 2. Train a VAEP model
+model = VAEP(nb_prev_actions=3)
+features = model.compute_features(game, actions)
+labels = model.compute_labels(game, actions)
+model.fit(features, labels, learner="xgboost", random_state=42)
+
+# 3. Rate actions
+ratings = model.rate(game, actions)
+# Returns DataFrame with offensive_value, defensive_value, vaep_value
+```
+
+### Hybrid-VAEP
+
+Standard VAEP includes the action's result (success/fail) as a feature, which
+creates information leakage. HybridVAEP removes result information from the
+current action while preserving it for previous actions.
+
+```python
+from silly_kicks.vaep import HybridVAEP
+
+# HybridVAEP removes result leakage from current-action features
+model = HybridVAEP(nb_prev_actions=3)
+# Same fit/rate API as standard VAEP
+```
+
+### Multi-Provider Support
+
+All converters share the same output schema, so downstream code works
+identically regardless of the data provider.
+
+```python
+from silly_kicks.spadl import opta, wyscout
+
+actions_opta, _ = opta.convert_to_actions(opta_events, home_team_id)
+actions_wyscout, _ = wyscout.convert_to_actions(wyscout_events, home_team_id)
+```
+
 ## Architecture
 
 Open [`docs/c4/architecture.html`](docs/c4/architecture.html) in a browser to explore the C4 architecture diagrams (System Context, Containers).

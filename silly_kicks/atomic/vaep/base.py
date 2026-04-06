@@ -7,7 +7,7 @@ xfns_default : list(callable)
 
 """
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from silly_kicks.atomic.spadl.utils import add_names
 from silly_kicks.vaep.base import VAEP
@@ -62,7 +62,8 @@ class AtomicVAEP(VAEP):
         Discovery & Data Mining, pp. 1851-1861. 2019.
     .. [2] Tom Decroos, Pieter Robberechts and Jesse Davis.
         "Introducing Atomic-SPADL: A New Way to Represent Event Stream Data".
-        DTAI Sports Analytics Blog. https://dtai.cs.kuleuven.be/sports/blog/introducing-atomic-spadl:-a-new-way-to-represent-event-stream-data  # noqa
+        DTAI Sports Analytics Blog.
+        https://dtai.cs.kuleuven.be/sports/blog/introducing-atomic-spadl:-a-new-way-to-represent-event-stream-data
         May 2020.
     """
 
@@ -73,9 +74,9 @@ class AtomicVAEP(VAEP):
 
     def __init__(
         self,
-        xfns: Optional[list[fs.FeatureTransfomer]] = None,
-        yfns: Optional[list[Callable]] = None,
+        xfns: list[fs.FeatureTransfomer] | None = None,
+        yfns: list[Callable] | None = None,
         nb_prev_actions: int = 3,
     ) -> None:
-        xfns = xfns_default if xfns is None else xfns
+        xfns = list(xfns_default) if xfns is None else xfns
         super().__init__(xfns, yfns, nb_prev_actions)

@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 import silly_kicks.atomic.spadl.utils as aspu
@@ -25,7 +26,7 @@ def test_atomic_scores(atomic_spadl_actions: pd.DataFrame) -> None:
     scores = alab.scores(atomic_spadl_actions, 10)
     assert len(scores) == len(atomic_spadl_actions)
     assert scores.columns.tolist() == ["scores"]
-    assert scores.dtypes["scores"] == bool
+    assert scores.dtypes["scores"] is np.dtype(bool)
 
 
 def test_atomic_concedes(atomic_spadl_actions: pd.DataFrame) -> None:
@@ -38,13 +39,13 @@ def test_atomic_concedes(atomic_spadl_actions: pd.DataFrame) -> None:
 def test_scores_dtype(spadl_actions: pd.DataFrame) -> None:
     spadl_actions = spu.add_names(spadl_actions)
     scores = lab.scores(spadl_actions, 10)
-    assert scores.dtypes["scores"] == bool
+    assert scores.dtypes["scores"] is np.dtype(bool)
 
 
 def test_concedes_dtype(spadl_actions: pd.DataFrame) -> None:
     spadl_actions = spu.add_names(spadl_actions)
     concedes = lab.concedes(spadl_actions, 10)
-    assert concedes.dtypes["concedes"] == bool
+    assert concedes.dtypes["concedes"] is np.dtype(bool)
 
 
 def test_scores_xg(spadl_actions: pd.DataFrame) -> None:

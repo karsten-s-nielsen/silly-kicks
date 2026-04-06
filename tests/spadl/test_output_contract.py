@@ -16,22 +16,24 @@ from silly_kicks.spadl.utils import (
 
 def _make_valid_spadl_df(n: int = 3) -> pd.DataFrame:
     """Create a minimal valid SPADL DataFrame for testing."""
-    return pd.DataFrame({
-        "game_id": [1] * n,
-        "original_event_id": ["ev1", "ev2", "ev3"][:n],
-        "action_id": list(range(n)),
-        "period_id": [1] * n,
-        "time_seconds": [0.0, 1.0, 2.0][:n],
-        "team_id": [100] * n,
-        "player_id": [200] * n,
-        "start_x": [50.0] * n,
-        "start_y": [34.0] * n,
-        "end_x": [60.0] * n,
-        "end_y": [34.0] * n,
-        "type_id": [spadlcfg.actiontype_id["pass"]] * n,
-        "result_id": [spadlcfg.result_id["success"]] * n,
-        "bodypart_id": [spadlcfg.bodypart_id["foot"]] * n,
-    })
+    return pd.DataFrame(
+        {
+            "game_id": [1] * n,
+            "original_event_id": ["ev1", "ev2", "ev3"][:n],
+            "action_id": list(range(n)),
+            "period_id": [1] * n,
+            "time_seconds": [0.0, 1.0, 2.0][:n],
+            "team_id": [100] * n,
+            "player_id": [200] * n,
+            "start_x": [50.0] * n,
+            "start_y": [34.0] * n,
+            "end_x": [60.0] * n,
+            "end_y": [34.0] * n,
+            "type_id": [spadlcfg.actiontype_id["pass"]] * n,
+            "result_id": [spadlcfg.result_id["success"]] * n,
+            "bodypart_id": [spadlcfg.bodypart_id["foot"]] * n,
+        }
+    )
 
 
 class TestFinalizeOutput:
@@ -102,6 +104,7 @@ class TestValidateSpadl:
 class TestAddNamesPreservesExtraColumns:
     def test_extra_columns_preserved(self):
         from silly_kicks.spadl.utils import add_names
+
         df = _make_valid_spadl_df()
         df["my_custom_col"] = [10, 20, 30]
         result = add_names(df)
@@ -110,6 +113,7 @@ class TestAddNamesPreservesExtraColumns:
 
     def test_name_columns_added(self):
         from silly_kicks.spadl.utils import add_names
+
         df = _make_valid_spadl_df()
         result = add_names(df)
         assert "type_name" in result.columns
@@ -119,22 +123,25 @@ class TestAddNamesPreservesExtraColumns:
     def test_atomic_add_names_preserves_extra_columns(self):
         import silly_kicks.atomic.spadl.config as atomicconfig
         from silly_kicks.atomic.spadl.utils import add_names as atomic_add_names
-        df = pd.DataFrame({
-            "game_id": [1],
-            "original_event_id": ["ev1"],
-            "action_id": [0],
-            "period_id": [1],
-            "time_seconds": [0.0],
-            "team_id": [100],
-            "player_id": [200],
-            "x": [50.0],
-            "y": [34.0],
-            "dx": [10.0],
-            "dy": [0.0],
-            "type_id": [atomicconfig.actiontype_id["pass"]],
-            "bodypart_id": [atomicconfig.bodypart_id["foot"]],
-            "my_custom_col": [42],
-        })
+
+        df = pd.DataFrame(
+            {
+                "game_id": [1],
+                "original_event_id": ["ev1"],
+                "action_id": [0],
+                "period_id": [1],
+                "time_seconds": [0.0],
+                "team_id": [100],
+                "player_id": [200],
+                "x": [50.0],
+                "y": [34.0],
+                "dx": [10.0],
+                "dy": [0.0],
+                "type_id": [atomicconfig.actiontype_id["pass"]],
+                "bodypart_id": [atomicconfig.bodypart_id["foot"]],
+                "my_custom_col": [42],
+            }
+        )
         result = atomic_add_names(df)
         assert "my_custom_col" in result.columns
         assert result["my_custom_col"].iloc[0] == 42

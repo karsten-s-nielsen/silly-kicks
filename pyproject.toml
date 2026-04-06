@@ -60,7 +60,14 @@ target-version = "py310"
 select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101"]
+"tests/**/*.py" = ["S101", "N806"]
+# ML convention: uppercase X, Y, Pscores, Pconcedes are standard in ML/stats code
+"silly_kicks/vaep/**/*.py" = ["N803", "N806"]
+"silly_kicks/atomic/vaep/**/*.py" = ["N803", "N806"]
+"silly_kicks/xthreat.py" = ["N803", "N806", "E741"]
+# False positive: ruff S105 flags string literals like "Free Kick" as "hardcoded passwords"
+# because they're compared to variables named pass_type, shot_type, etc.
+"silly_kicks/spadl/statsbomb.py" = ["S105"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["silly_kicks"]

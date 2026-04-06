@@ -10,7 +10,7 @@ to include result information only for previous actions (a1, a2) where the
 result is already known, not for the current action (a0).
 """
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from silly_kicks.vaep.base import VAEP
 
@@ -54,9 +54,9 @@ class HybridVAEP(VAEP):
 
     def __init__(
         self,
-        xfns: Optional[list[fs.FeatureTransfomer]] = None,
-        yfns: Optional[list[Callable]] = None,
+        xfns: list[fs.FeatureTransfomer] | None = None,
+        yfns: list[Callable] | None = None,
         nb_prev_actions: int = 3,
     ) -> None:
-        xfns = hybrid_xfns_default if xfns is None else xfns
+        xfns = list(hybrid_xfns_default) if xfns is None else xfns
         super().__init__(xfns, yfns, nb_prev_actions)

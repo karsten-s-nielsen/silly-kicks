@@ -5,21 +5,22 @@ Default hyperparameters are exposed as module-level constants so callers can
 inspect or override them.
 """
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 try:
-    import xgboost
+    import xgboost  # type: ignore[reportMissingImports]
 except ImportError:
     xgboost = None  # type: ignore
 try:
-    import catboost
+    import catboost  # type: ignore[reportMissingImports]
 except ImportError:
     catboost = None  # type: ignore
 try:
-    import lightgbm
+    import lightgbm  # type: ignore[reportMissingImports]
 except ImportError:
     lightgbm = None  # type: ignore
 
@@ -47,10 +48,10 @@ _LIGHTGBM_DEFAULTS: dict[str, object] = {
 def _fit_xgboost(
     X: pd.DataFrame,
     y: pd.Series,
-    eval_set: Optional[list[tuple[pd.DataFrame, pd.Series]]] = None,
-    tree_params: Optional[dict[str, Any]] = None,
-    fit_params: Optional[dict[str, Any]] = None,
-) -> "xgboost.XGBClassifier":
+    eval_set: list[tuple[pd.DataFrame, pd.Series]] | None = None,
+    tree_params: dict[str, Any] | None = None,
+    fit_params: dict[str, Any] | None = None,
+) -> "xgboost.XGBClassifier":  # type: ignore[reportInvalidTypeForm]
     """Train an XGBoost classifier.
 
     Parameters
@@ -86,10 +87,10 @@ def _fit_xgboost(
 def _fit_catboost(
     X: pd.DataFrame,
     y: pd.Series,
-    eval_set: Optional[list[tuple[pd.DataFrame, pd.Series]]] = None,
-    tree_params: Optional[dict[str, Any]] = None,
-    fit_params: Optional[dict[str, Any]] = None,
-) -> "catboost.CatBoostClassifier":
+    eval_set: list[tuple[pd.DataFrame, pd.Series]] | None = None,
+    tree_params: dict[str, Any] | None = None,
+    fit_params: dict[str, Any] | None = None,
+) -> "catboost.CatBoostClassifier":  # type: ignore[reportInvalidTypeForm]
     """Train a CatBoost classifier.
 
     Parameters
@@ -117,7 +118,7 @@ def _fit_catboost(
     if fit_params is None:
         is_cat_feature = [c.dtype.name == "category" for (_, c) in X.items()]
         fit_params = {
-            "cat_features": np.nonzero(is_cat_feature)[0].tolist(),
+            "cat_features": np.nonzero(is_cat_feature)[0].tolist(),  # type: ignore[reportArgumentType]
             "verbose": True,
         }
     if eval_set is not None:
@@ -129,10 +130,10 @@ def _fit_catboost(
 def _fit_lightgbm(
     X: pd.DataFrame,
     y: pd.Series,
-    eval_set: Optional[list[tuple[pd.DataFrame, pd.Series]]] = None,
-    tree_params: Optional[dict[str, Any]] = None,
-    fit_params: Optional[dict[str, Any]] = None,
-) -> "lightgbm.LGBMClassifier":
+    eval_set: list[tuple[pd.DataFrame, pd.Series]] | None = None,
+    tree_params: dict[str, Any] | None = None,
+    fit_params: dict[str, Any] | None = None,
+) -> "lightgbm.LGBMClassifier":  # type: ignore[reportInvalidTypeForm]
     """Train a LightGBM classifier.
 
     Parameters

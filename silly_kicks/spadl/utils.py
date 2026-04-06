@@ -5,7 +5,7 @@ import warnings
 import pandas as pd
 
 from . import config as spadlconfig
-from .schema import SPADL_COLUMNS, SPADL_CONSTRAINTS
+from .schema import SPADL_COLUMNS
 
 
 def add_names(actions: pd.DataFrame) -> pd.DataFrame:
@@ -59,9 +59,9 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame
     ltr_actions = actions.copy()
     away_idx = actions.team_id != home_team_id
     for col in ["start_x", "end_x"]:
-        ltr_actions.loc[away_idx, col] = spadlconfig.field_length - actions[away_idx][col].values
+        ltr_actions.loc[away_idx, col] = spadlconfig.field_length - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
     for col in ["start_y", "end_y"]:
-        ltr_actions.loc[away_idx, col] = spadlconfig.field_width - actions[away_idx][col].values
+        ltr_actions.loc[away_idx, col] = spadlconfig.field_width - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
     return ltr_actions
 
 
@@ -115,8 +115,7 @@ def _validate_input_columns(
     missing = expected - set(df.columns)
     if missing:
         raise ValueError(
-            f"{provider} convert_to_actions: missing required columns: "
-            f"{sorted(missing)}. Got: {sorted(df.columns)}"
+            f"{provider} convert_to_actions: missing required columns: {sorted(missing)}. Got: {sorted(df.columns)}"
         )
 
 

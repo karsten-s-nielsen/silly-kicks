@@ -25,7 +25,8 @@ field_width = _spadl.field_width
 bodyparts = _spadl.bodyparts
 bodyparts_df = _spadl.bodyparts_df
 
-actiontypes = _spadl.actiontypes + [
+actiontypes = [
+    *_spadl.actiontypes,
     "receival",
     "interception",
     "out",
@@ -44,7 +45,7 @@ result_id: dict[str, int] = _spadl.result_id
 bodypart_id: dict[str, int] = _spadl.bodypart_id
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def actiontypes_df() -> pd.DataFrame:
     """Return a dataframe with the type id and type name of each Atomic-SPADL action type.
 

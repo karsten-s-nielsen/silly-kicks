@@ -62,10 +62,15 @@ def _vectorized_bodypart_id(df_events: pd.DataFrame) -> pd.Series:
     tid = df_events["type_id"]
 
     conditions = [
-        sid.isin([
-            _WS_SUBTYPE_THROW_IN_BP, _WS_SUBTYPE_THROW_IN,
-            _WS_SUBTYPE_HEAD_PASS, _WS_SUBTYPE_LAUNCH, _WS_SUBTYPE_HIGH_PASS,
-        ]),
+        sid.isin(
+            [
+                _WS_SUBTYPE_THROW_IN_BP,
+                _WS_SUBTYPE_THROW_IN,
+                _WS_SUBTYPE_HEAD_PASS,
+                _WS_SUBTYPE_LAUNCH,
+                _WS_SUBTYPE_HIGH_PASS,
+            ]
+        ),
         sid == _WS_SUBTYPE_HEAD_PASS_BP,
         (tid == _WS_TYPE_SHOT) & df_events["head/body"],
         df_events["left_foot"],
@@ -117,10 +122,15 @@ def _vectorized_type_id(df_events: pd.DataFrame) -> pd.Series:
         sid == _WS_SUBTYPE_FK_CROSSED,
         sid == _WS_SUBTYPE_FK_SHORT,
         sid == _WS_SUBTYPE_GOALKICK,
-        (tid == _WS_TYPE_FOUL) & ~sid.isin([
-            _WS_SUBTYPE_HAND_FOUL, _WS_SUBTYPE_LATE_CARD_FOUL,
-            _WS_SUBTYPE_OUT_OF_GAME_FOUL, _WS_SUBTYPE_VIOLENT_FOUL,
-        ]),
+        (tid == _WS_TYPE_FOUL)
+        & ~sid.isin(
+            [
+                _WS_SUBTYPE_HAND_FOUL,
+                _WS_SUBTYPE_LATE_CARD_FOUL,
+                _WS_SUBTYPE_OUT_OF_GAME_FOUL,
+                _WS_SUBTYPE_VIOLENT_FOUL,
+            ]
+        ),
         tid == _WS_TYPE_SHOT,
         sid == _WS_SUBTYPE_PENALTY,
         sid == _WS_SUBTYPE_FK_SHOT,
@@ -132,11 +142,17 @@ def _vectorized_type_id(df_events: pd.DataFrame) -> pd.Series:
         sid == _WS_SUBTYPE_ACCELERATION,
         df_events["take_on_left"] | df_events["take_on_right"],
         df_events["sliding_tackle"],
-        df_events["interception"] & sid.isin([
-            _WS_TYPE_TAKE_ON, _WS_SUBTYPE_AIR_DUEL,
-            _WS_SUBTYPE_GROUND_ATT_DUEL, _WS_SUBTYPE_GROUND_DEF_DUEL,
-            _WS_SUBTYPE_GROUND_LOOSE_BALL, _WS_SUBTYPE_TOUCH,
-        ]),
+        df_events["interception"]
+        & sid.isin(
+            [
+                _WS_TYPE_TAKE_ON,
+                _WS_SUBTYPE_AIR_DUEL,
+                _WS_SUBTYPE_GROUND_ATT_DUEL,
+                _WS_SUBTYPE_GROUND_DEF_DUEL,
+                _WS_SUBTYPE_GROUND_LOOSE_BALL,
+                _WS_SUBTYPE_TOUCH,
+            ]
+        ),
     ]
     choices = [
         aid["non_action"],
@@ -278,7 +294,7 @@ def _remove_non_actions(df_actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         SciSports action dataframe without non-actions
     """
-    df_actions = df_actions[df_actions["type_id"] != spadlconfig.actiontype_id["non_action"]]
+    df_actions = df_actions[df_actions["type_id"] != spadlconfig.actiontype_id["non_action"]]  # type: ignore[reportAssignmentType]
     # remove remaining ball out of field, whistle and goalkeeper from line
     df_actions = df_actions.reset_index(drop=True)
     return df_actions

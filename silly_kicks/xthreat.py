@@ -1,6 +1,6 @@
 """Implements the xT framework."""
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import numpy as np
 import numpy.typing as npt
@@ -18,9 +18,7 @@ M: int = 12
 N: int = 16
 
 
-def _get_cell_indexes(
-    x: pd.Series, y: pd.Series, l: int = N, w: int = M
-) -> tuple[pd.Series, pd.Series]:
+def _get_cell_indexes(x: pd.Series, y: pd.Series, l: int = N, w: int = M) -> tuple[pd.Series, pd.Series]:
     xi = x.divide(spadlconfig.field_length).multiply(l)
     yj = y.divide(spadlconfig.field_width).multiply(w)
     xi = xi.astype("int64").clip(0, l - 1)
@@ -54,7 +52,7 @@ def _count(x: pd.Series, y: pd.Series, l: int = N, w: int = M) -> npt.NDArray[np
         top-left corner is the origin.
     """
     mask = ~np.isnan(x) & ~np.isnan(y)
-    x, y = x[mask], y[mask]
+    x, y = x[mask], y[mask]  # type: ignore[reportAssignmentType]
 
     flat_indexes = _get_flat_indexes(x, y, l, w)
     vc = flat_indexes.value_counts(sort=False)
@@ -67,9 +65,7 @@ def _safe_divide(a: npt.ArrayLike, b: npt.ArrayLike) -> npt.NDArray[np.float64]:
     return np.divide(a, b, out=np.zeros_like(a, dtype="float64"), where=b != 0, casting="unsafe")
 
 
-def scoring_prob(
-    actions: pd.DataFrame, l: int = N, w: int = M
-) -> npt.NDArray[np.float64]:
+def scoring_prob(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.float64]:
     """Compute the probability of scoring when taking a shot for each cell.
 
     Parameters
@@ -90,7 +86,7 @@ def scoring_prob(
     goals = shot_actions[(shot_actions.result_id == spadlconfig.result_id["success"])]
 
     shotmatrix = _count(shot_actions.start_x, shot_actions.start_y, l, w)
-    goalmatrix = _count(goals.start_x, goals.start_y, l, w)
+    goalmatrix = _count(goals.start_x, goals.start_y, l, w)  # type: ignore[reportAttributeAccessIssue]
     return _safe_divide(goalmatrix, shotmatrix)
 
 
@@ -111,7 +107,7 @@ def get_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         All ball-progressing actions in the input dataframe.
     """
-    return actions[
+    return actions[  # type: ignore[reportReturnType]
         (actions.type_id == spadlconfig.actiontype_id["pass"])
         | (actions.type_id == spadlconfig.actiontype_id["dribble"])
         | (actions.type_id == spadlconfig.actiontype_id["cross"])
@@ -134,7 +130,7 @@ def get_successful_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
         All ball-progressing actions in the input dataframe.
     """
     move_actions = get_move_actions(actions)
-    return move_actions[(move_actions.result_id == spadlconfig.result_id["success"])]
+    return move_actions[(move_actions.result_id == spadlconfig.result_id["success"])]  # type: ignore[reportReturnType]
 
 
 def action_prob(
@@ -170,9 +166,7 @@ def action_prob(
     return _safe_divide(shotmatrix, totalmatrix), _safe_divide(movematrix, totalmatrix)
 
 
-def move_transition_matrix(
-    actions: pd.DataFrame, l: int = N, w: int = M
-) -> npt.NDArray[np.float64]:
+def move_transition_matrix(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.float64]:
     """Compute the move transition matrix from the given actions.
 
     This is, when a player chooses to move, the probability that he will
@@ -206,9 +200,9 @@ def move_transition_matrix(
     transition_matrix = np.zeros((w * l, w * l))
 
     for i in range(0, w * l):
-        vc2 = X[
-            ((X.start_cell == i) & (X.result_id == spadlconfig.result_id["success"]))
-        ].end_cell.value_counts(sort=False)
+        vc2 = X[((X.start_cell == i) & (X.result_id == spadlconfig.result_id["success"]))].end_cell.value_counts(
+            sort=False
+        )
         transition_matrix[i, vc2.index] = vc2 / start_counts[i]
 
     return transition_matrix
@@ -266,10 +260,10 @@ class ExpectedThreat:
         self.eps = eps
         self.heatmaps: list[npt.NDArray[np.float64]] = []
         self.xT: npt.NDArray[np.float64] = np.zeros((self.w, self.l))
-        self.scoring_prob_matrix: Optional[npt.NDArray[np.float64]] = None
-        self.shot_prob_matrix: Optional[npt.NDArray[np.float64]] = None
-        self.move_prob_matrix: Optional[npt.NDArray[np.float64]] = None
-        self.transition_matrix: Optional[npt.NDArray[np.float64]] = None
+        self.scoring_prob_matrix: npt.NDArray[np.float64] | None = None
+        self.shot_prob_matrix: npt.NDArray[np.float64] | None = None
+        self.move_prob_matrix: npt.NDArray[np.float64] | None = None
+        self.transition_matrix: npt.NDArray[np.float64] | None = None
 
     def __solve(
         self,
@@ -341,7 +335,7 @@ class ExpectedThreat:
         Parameters
         ----------
         kind : {'linear', 'cubic', 'quintic'}  # noqa: DAR103
-            The kind of spline interpolation to use. Default is ‘linear’.
+            The kind of spline interpolation to use. Default is 'linear'.
 
         Raises
         ------
@@ -362,11 +356,9 @@ class ExpectedThreat:
         x = np.arange(0.0, spadlconfig.field_length, cell_length) + 0.5 * cell_length
         y = np.arange(0.0, spadlconfig.field_width, cell_width) + 0.5 * cell_width
 
-        return interp2d(x=x, y=y, z=self.xT, kind=kind, bounds_error=False)
+        return interp2d(x=x, y=y, z=self.xT, kind=kind, bounds_error=False)  # type: ignore[reportReturnType]
 
-    def rate(
-        self, actions: pd.DataFrame, use_interpolation: bool = False
-    ) -> npt.NDArray[np.float64]:
+    def rate(self, actions: pd.DataFrame, use_interpolation: bool = False) -> npt.NDArray[np.float64]:
         """Compute the xT values for the given actions.
 
         xT should only be used to value actions that move the ball and also
@@ -422,4 +414,3 @@ class ExpectedThreat:
 
         ratings[move_actions.index] = xT_end - xT_start
         return ratings
-

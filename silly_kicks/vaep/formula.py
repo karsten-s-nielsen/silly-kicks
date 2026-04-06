@@ -6,7 +6,7 @@ import pandas as pd
 def _prev(x: pd.Series) -> pd.Series:
     prev_x = x.shift(1)
     prev_x[:1] = x.values[0]
-    return prev_x
+    return prev_x  # type: ignore[reportReturnType]
 
 
 _SAMEPHASE_NB: int = 10  # number of subsequent actions considered same phase
@@ -14,9 +14,7 @@ _PENALTY_SCORING_PROB: float = 0.792453  # empirical penalty conversion rate
 _CORNER_SCORING_PROB: float = 0.046500  # empirical corner scoring rate
 
 
-def offensive_value(
-    actions: pd.DataFrame, scores: pd.Series, concedes: pd.Series
-) -> pd.Series:
+def offensive_value(actions: pd.DataFrame, scores: pd.Series, concedes: pd.Series) -> pd.Series:
     r"""Compute the offensive value of each action.
 
     VAEP defines the *offensive value* of an action as the change in scoring
@@ -68,9 +66,7 @@ def offensive_value(
     return scores - prev_scores
 
 
-def defensive_value(
-    actions: pd.DataFrame, scores: pd.Series, concedes: pd.Series
-) -> pd.Series:
+def defensive_value(actions: pd.DataFrame, scores: pd.Series, concedes: pd.Series) -> pd.Series:
     r"""Compute the defensive value of each action.
 
     VAEP defines the *defensive value* of an action as the change in conceding
@@ -113,9 +109,7 @@ def defensive_value(
     return -(concedes - prev_concedes)
 
 
-def value(
-    actions: pd.DataFrame, Pscores: pd.Series, Pconcedes: pd.Series
-) -> pd.DataFrame:
+def value(actions: pd.DataFrame, Pscores: pd.Series, Pconcedes: pd.Series) -> pd.DataFrame:
     r"""Compute the offensive, defensive and VAEP value of each action.
 
     The total VAEP value of an action is the difference between that action's

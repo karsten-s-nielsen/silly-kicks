@@ -63,7 +63,7 @@ result_id: dict[str, int] = {name: i for i, name in enumerate(results)}
 bodypart_id: dict[str, int] = {name: i for i, name in enumerate(bodyparts)}
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def actiontypes_df() -> pd.DataFrame:
     """Return a dataframe with the type id and type name of each SPADL action type.
 
@@ -75,7 +75,7 @@ def actiontypes_df() -> pd.DataFrame:
     return pd.DataFrame(list(enumerate(actiontypes)), columns=["type_id", "type_name"])
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def results_df() -> pd.DataFrame:
     """Return a dataframe with the result id and result name of each SPADL action type.
 
@@ -87,7 +87,7 @@ def results_df() -> pd.DataFrame:
     return pd.DataFrame(list(enumerate(results)), columns=["result_id", "result_name"])
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def bodyparts_df() -> pd.DataFrame:
     """Return a dataframe with the bodypart id and bodypart name of each SPADL action type.
 

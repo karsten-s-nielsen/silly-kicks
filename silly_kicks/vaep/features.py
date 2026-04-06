@@ -1,7 +1,8 @@
 """Implements the feature tranformers of the VAEP framework."""
 
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, no_type_check
+from typing import Any, no_type_check
 
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
@@ -91,9 +92,8 @@ def gamestates(actions: Actions, nb_prev_actions: int = 3) -> GameStates:
     for i in range(1, nb_prev_actions):
         prev = actions.shift(i)
         # Detect period/game boundaries: where shifted row crosses a group
-        boundary = (
-            (actions["game_id"] != actions["game_id"].shift(i))
-            | (actions["period_id"] != actions["period_id"].shift(i))
+        boundary = (actions["game_id"] != actions["game_id"].shift(i)) | (
+            actions["period_id"] != actions["period_id"].shift(i)
         )
         # At boundaries, fill groupby-key columns with current row values
         for col in group_keys:
@@ -133,9 +133,9 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
     away_idx = a0.team_id != home_team_id
     for actions in gamestates:
         for col in ["start_x", "end_x"]:
-            actions.loc[away_idx, col] = spadlcfg.field_length - actions[away_idx][col].values
+            actions.loc[away_idx, col] = spadlcfg.field_length - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
         for col in ["start_y", "end_y"]:
-            actions.loc[away_idx, col] = spadlcfg.field_width - actions[away_idx][col].values
+            actions.loc[away_idx, col] = spadlcfg.field_width - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
     return gamestates
 
 
@@ -524,9 +524,7 @@ def time(actions: Actions) -> Features:
     """
     match_time_at_period_start = {1: 0, 2: 45, 3: 90, 4: 105, 5: 120}
     timedf = actions[["period_id", "time_seconds"]].copy()
-    timedf["time_seconds_overall"] = (
-        timedf.period_id.map(match_time_at_period_start) * 60
-    ) + timedf.time_seconds
+    timedf["time_seconds_overall"] = (timedf.period_id.map(match_time_at_period_start) * 60) + timedf.time_seconds
     return timedf
 
 
@@ -544,7 +542,7 @@ def startlocation(actions: Actions) -> Features:
     Features
         The 'start_x' and 'start_y' location of each action.
     """
-    return actions[["start_x", "start_y"]]
+    return actions[["start_x", "start_y"]]  # type: ignore[reportReturnType]
 
 
 @simple
@@ -561,7 +559,7 @@ def endlocation(actions: Actions) -> Features:
     Features
         The 'end_x' and 'end_y' location of each action.
     """
-    return actions[["end_x", "end_y"]]
+    return actions[["end_x", "end_y"]]  # type: ignore[reportReturnType]
 
 
 @simple
@@ -660,9 +658,7 @@ def player_possession_time(actions: Actions) -> Features:
     same_period = df.period_id == df.period_id_prev
     prev_dribble = df.type_id_prev == spadlcfg.actiontype_id["dribble"]
     mask = same_period & same_player & prev_dribble
-    df.loc[mask, "player_possession_time"] = (
-        df.loc[mask, "time_seconds"] - df.loc[mask, "time_seconds_prev"]
-    )
+    df.loc[mask, "player_possession_time"] = df.loc[mask, "time_seconds"] - df.loc[mask, "time_seconds_prev"]
     return df[["player_possession_time"]].fillna(0.0)
 
 
@@ -789,12 +785,8 @@ def goalscore(gamestates: GameStates) -> Features:
     """
     actions = gamestates[0]
     teamA = actions["team_id"].values[0]
-    goals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadlcfg.result_id["success"]
-    )
-    owngoals = actions["type_name"].str.contains("shot") & (
-        actions["result_id"] == spadlcfg.result_id["owngoal"]
-    )
+    goals = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadlcfg.result_id["success"])
+    owngoals = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadlcfg.result_id["owngoal"])
     teamisA = actions["team_id"] == teamA
     teamisB = ~teamisA
     goalsteamA = (goals & teamisA) | (owngoals & teamisB)

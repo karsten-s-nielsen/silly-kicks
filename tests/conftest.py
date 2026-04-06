@@ -15,9 +15,7 @@ def pytest_configure(config: Config) -> None:
 
 @pytest.fixture(scope="session")
 def sb_worldcup_data() -> Iterator[pd.HDFStore]:
-    hdf_file = os.path.join(
-        os.path.dirname(__file__), "datasets", "statsbomb", "spadl-WorldCup-2018.h5"
-    )
+    hdf_file = os.path.join(os.path.dirname(__file__), "datasets", "statsbomb", "spadl-WorldCup-2018.h5")
     store = pd.HDFStore(hdf_file, mode="r")
     yield store
     store.close()

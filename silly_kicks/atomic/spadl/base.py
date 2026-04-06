@@ -34,9 +34,7 @@ def convert_to_atomic(actions: pd.DataFrame) -> pd.DataFrame:
         ignore_index=True,
         sort=False,
     )
-    atomic_actions = atomic_actions.sort_values(
-        ["game_id", "period_id", "action_id"]
-    ).reset_index(drop=True)
+    atomic_actions = atomic_actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)
     atomic_actions["action_id"] = range(len(atomic_actions))
     # Add dribbles (needs correct order)
     atomic_actions = _add_dribbles(atomic_actions)
@@ -113,9 +111,7 @@ def _compute_pass_extras(actions: pd.DataFrame) -> pd.DataFrame:
     )
     is_interception = extra["type_id"] == ar["interception"]
     extra["team_id"] = prev.team_id.mask(is_interception, nex.team_id)
-    extra["player_id"] = nex.player_id.mask(out | offside, prev.player_id).astype(
-        prev.player_id.dtype
-    )
+    extra["player_id"] = nex.player_id.mask(out | offside, prev.player_id).astype(prev.player_id.dtype)
 
     return extra
 
@@ -170,11 +166,7 @@ def _compute_shot_extras(actions: pd.DataFrame) -> pd.DataFrame:
 
     ar = _atomicspadl.actiontype_id
     extra["type_id"] = -1
-    extra["type_id"] = (
-        extra.type_id.mask(out, ar["out"])
-        .mask(goal, ar["goal"])
-        .mask(owngoal, ar["owngoal"])
-    )
+    extra["type_id"] = extra.type_id.mask(out, ar["out"]).mask(goal, ar["goal"]).mask(owngoal, ar["owngoal"])
 
     return extra
 
@@ -202,9 +194,7 @@ def _compute_foul_extras(actions: pd.DataFrame) -> pd.DataFrame:
 
     ar = _atomicspadl.actiontype_id
     extra["type_id"] = -1
-    extra["type_id"] = extra.type_id.mask(yellow, ar["yellow_card"]).mask(
-        red, ar["red_card"]
-    )
+    extra["type_id"] = extra.type_id.mask(yellow, ar["yellow_card"]).mask(red, ar["red_card"])
 
     return extra
 
@@ -214,7 +204,7 @@ def _convert_columns(actions: pd.DataFrame) -> pd.DataFrame:
     actions["y"] = actions.start_y
     actions["dx"] = actions.end_x - actions.start_x
     actions["dy"] = actions.end_y - actions.start_y
-    return actions[
+    return actions[  # type: ignore[reportReturnType]
         [
             "game_id",
             "original_event_id",

@@ -18,27 +18,67 @@ from .schema import ConversionReport
 from .utils import _finalize_output, _validate_input_columns
 
 EXPECTED_INPUT_COLUMNS: set[str] = {
-    "game_id", "event_id", "period_id", "minute", "second",
-    "team_id", "player_id", "type_name", "outcome",
-    "start_x", "start_y", "end_x", "end_y", "qualifiers",
+    "game_id",
+    "event_id",
+    "period_id",
+    "minute",
+    "second",
+    "team_id",
+    "player_id",
+    "type_name",
+    "outcome",
+    "start_x",
+    "start_y",
+    "end_x",
+    "end_y",
+    "qualifiers",
 }
 
-_MAPPED_EVENT_TYPES: frozenset[str] = frozenset({
-    "pass", "offside pass", "take on", "foul", "tackle",
-    "interception", "blocked pass", "miss", "post",
-    "attempt saved", "goal", "save", "claim", "punch",
-    "keeper pick-up", "clearance", "card", "ball touch",
-    "ball recovery",
-})
+_MAPPED_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "pass",
+        "offside pass",
+        "take on",
+        "foul",
+        "tackle",
+        "interception",
+        "blocked pass",
+        "miss",
+        "post",
+        "attempt saved",
+        "goal",
+        "save",
+        "claim",
+        "punch",
+        "keeper pick-up",
+        "clearance",
+        "card",
+        "ball touch",
+        "ball recovery",
+    }
+)
 
-_EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset({
-    "end", "start", "formation change", "resume", "deleted event",
-    "shield ball opp", "offside provoked", "player off",
-    "player on", "player retired", "chance missed",
-    "attendance", "referee stop", "referee drop ball",
-    "50/50", "cross not claimed",
-    "goalkeeper position",
-})
+_EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "end",
+        "start",
+        "formation change",
+        "resume",
+        "deleted event",
+        "shield ball opp",
+        "offside provoked",
+        "player off",
+        "player on",
+        "player retired",
+        "chance missed",
+        "attendance",
+        "referee stop",
+        "referee drop ball",
+        "50/50",
+        "cross not claimed",
+        "goalkeeper position",
+    }
+)
 
 
 def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.DataFrame, ConversionReport]:
@@ -84,9 +124,12 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
         actions[col] = events[col].clip(0, 100) / 100 * spadlconfig.field_width
 
     # Pre-explode qualifier flags for vectorized lookups
-    _USED_QUALIFIER_IDS = [1, 2, 3, 5, 6, 9, 15, 20, 21, 26, 28, 32, 72, 107, 124, 155, 168, 238]
-    for qid in _USED_QUALIFIER_IDS:
-        events[f"q_{qid}"] = events["qualifiers"].apply(lambda q, k=qid: k in q)
+    _used_qualifier_ids = [1, 2, 3, 5, 6, 9, 15, 20, 21, 26, 28, 32, 72, 107, 124, 155, 168, 238]
+    qual_sets = [set(q.keys()) if isinstance(q, dict) else set() for q in events["qualifiers"]]
+    qual_data = np.array([[qid in qs for qid in _used_qualifier_ids] for qs in qual_sets], dtype=bool)
+    qual_df = pd.DataFrame(qual_data, columns=[f"q_{qid}" for qid in _used_qualifier_ids], index=events.index)
+    for col in qual_df.columns:
+        events[col] = qual_df[col]
 
     actions["type_id"] = _vectorized_type_id(events)
     actions["result_id"] = _vectorized_result_id(events)
@@ -96,7 +139,7 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
     actions = _fix_unintentional_ball_touches(actions, events.type_name, events.outcome)
     actions = (
         actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]
-        .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")
+        .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")  # type: ignore[reportCallIssue]
         .reset_index(drop=True)
     )
     actions = _fix_owngoals(actions)
@@ -120,8 +163,8 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
             unrecognized_counts[etype] = count
     if unrecognized_counts:
         warnings.warn(
-            f"Opta: {sum(unrecognized_counts.values())} unrecognized event types "
-            f"dropped: {dict(unrecognized_counts)}"
+            f"Opta: {sum(unrecognized_counts.values())} unrecognized event types dropped: {dict(unrecognized_counts)}",
+            stacklevel=2,
         )
     report = ConversionReport(
         provider="Opta",
@@ -168,12 +211,29 @@ def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
         (tn == "ball touch") & (outcome == False),  # bad_touch  # noqa: E712
     ]
     choices = [
-        aid["non_action"], aid["throw_in"], aid["freekick_crossed"], aid["freekick_short"],
-        aid["corner_crossed"], aid["corner_short"], aid["cross"], aid["goalkick"], aid["pass"],
-        aid["take_on"], aid["foul"], aid["tackle"], aid["interception"],
-        aid["shot_penalty"], aid["shot_freekick"], aid["shot"],
-        aid["keeper_save"], aid["keeper_claim"], aid["keeper_punch"], aid["keeper_pick_up"],
-        aid["clearance"], aid["foul"], aid["bad_touch"],
+        aid["non_action"],
+        aid["throw_in"],
+        aid["freekick_crossed"],
+        aid["freekick_short"],
+        aid["corner_crossed"],
+        aid["corner_short"],
+        aid["cross"],
+        aid["goalkick"],
+        aid["pass"],
+        aid["take_on"],
+        aid["foul"],
+        aid["tackle"],
+        aid["interception"],
+        aid["shot_penalty"],
+        aid["shot_freekick"],
+        aid["shot"],
+        aid["keeper_save"],
+        aid["keeper_claim"],
+        aid["keeper_punch"],
+        aid["keeper_pick_up"],
+        aid["clearance"],
+        aid["foul"],
+        aid["bad_touch"],
     ]
     return pd.Series(
         np.select(conditions, choices, default=aid["non_action"]),
@@ -246,7 +306,7 @@ def _vectorized_bodypart_id(events: pd.DataFrame) -> pd.Series:
 
 
 def _get_bodypart_id(args: tuple[str, bool, dict[int, Any]]) -> int:
-    e, outcome, q = args
+    e, _outcome, q = args
     if 15 in q or 3 in q or 168 in q:
         b = "head"
     elif 21 in q:
@@ -292,7 +352,7 @@ def _get_result_id(args: tuple[str, bool, dict[int, Any]]) -> int:
     return spadlconfig.result_id[r]
 
 
-def _get_type_id(args: tuple[str, bool, dict[int, Any]]) -> int:  # noqa: C901
+def _get_type_id(args: tuple[str, bool, dict[int, Any]]) -> int:
     eventname, outcome, q = args
     fairplay = 238 in q
     if fairplay:
@@ -359,12 +419,8 @@ def _fix_owngoals(actions: pd.DataFrame) -> pd.DataFrame:
     owngoals_idx = (actions.result_id == spadlconfig.result_id["owngoal"]) & (
         actions.type_id == spadlconfig.actiontype_id["shot"]
     )
-    actions.loc[owngoals_idx, "end_x"] = (
-        spadlconfig.field_length - actions[owngoals_idx].end_x.values
-    )
-    actions.loc[owngoals_idx, "end_y"] = (
-        spadlconfig.field_width - actions[owngoals_idx].end_y.values
-    )
+    actions.loc[owngoals_idx, "end_x"] = spadlconfig.field_length - actions[owngoals_idx].end_x.values
+    actions.loc[owngoals_idx, "end_y"] = spadlconfig.field_width - actions[owngoals_idx].end_y.values
     actions.loc[owngoals_idx, "type_id"] = spadlconfig.actiontype_id["bad_touch"]
     return actions
 
@@ -388,9 +444,7 @@ def _fix_recoveries(df_actions: pd.DataFrame, opta_types: pd.Series) -> pd.DataF
         Opta event dataframe without any ball recovery events
     """
     df_actions_next = df_actions.shift(-1)
-    df_actions_next = df_actions_next.mask(
-        df_actions_next.type_id == spadlconfig.actiontype_id["non_action"]
-    ).bfill()
+    df_actions_next = df_actions_next.mask(df_actions_next.type_id == spadlconfig.actiontype_id["non_action"]).bfill()
 
     selector_recovery = opta_types == "ball recovery"
 
@@ -398,12 +452,8 @@ def _fix_recoveries(df_actions: pd.DataFrame, opta_types: pd.Series) -> pd.DataF
     same_y = abs(df_actions["end_y"] - df_actions_next["start_y"]) < min_dribble_length
     same_loc = same_x & same_y
 
-    df_actions.loc[selector_recovery & ~same_loc, "type_id"] = spadlconfig.actiontype_id[
-        "dribble"
-    ]
-    df_actions.loc[selector_recovery & same_loc, "type_id"] = spadlconfig.actiontype_id[
-        "non_action"
-    ]
+    df_actions.loc[selector_recovery & ~same_loc, "type_id"] = spadlconfig.actiontype_id["dribble"]
+    df_actions.loc[selector_recovery & same_loc, "type_id"] = spadlconfig.actiontype_id["non_action"]
     df_actions.loc[selector_recovery, ["end_x", "end_y"]] = df_actions_next.loc[
         selector_recovery, ["start_x", "start_y"]
     ].values
@@ -460,7 +510,7 @@ def _fix_unintentional_ball_touches(
     df_actions.loc[selector_deflected, ["end_x", "end_y"]] = df_actions_next.loc[
         selector_deflected, ["start_x", "start_y"]
     ].values
-    df_actions.loc[selector_pass & selector_deflected & selector_same_team, "result_id"] = (
-        spadlconfig.result_id["success"]
-    )
+    df_actions.loc[selector_pass & selector_deflected & selector_same_team, "result_id"] = spadlconfig.result_id[
+        "success"
+    ]
     return df_actions

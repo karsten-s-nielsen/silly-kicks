@@ -1,7 +1,8 @@
 import pandas as pd
+from pandas import testing as tm
+
 import silly_kicks.atomic.spadl as spadlcfg
 import silly_kicks.atomic.spadl.config as atomicspadl
-from pandas import testing as tm
 from silly_kicks.atomic.vaep import features as fs
 
 xfns = [
@@ -27,12 +28,14 @@ def test_actiontype_includes_atomic_types() -> None:
     from silly_kicks.atomic.vaep.features import actiontype
 
     receival_id = atomicspadl.actiontype_id["receival"]
-    actions = pd.DataFrame({
-        "game_id": [1],
-        "period_id": [1],
-        "action_id": [0],
-        "type_id": [receival_id],
-    })
+    actions = pd.DataFrame(
+        {
+            "game_id": [1],
+            "period_id": [1],
+            "action_id": [0],
+            "type_id": [receival_id],
+        }
+    )
     result = actiontype(actions)
     # @simple wraps the column name as "actiontype_a0"
     assert "actiontype_a0" in result.columns

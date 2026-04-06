@@ -53,8 +53,8 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame
     """
     ltr_actions = actions.copy()
     away_idx = actions.team_id != home_team_id
-    ltr_actions.loc[away_idx, "x"] = spadlconfig.field_length - actions[away_idx]["x"].values
-    ltr_actions.loc[away_idx, "y"] = spadlconfig.field_width - actions[away_idx]["y"].values
-    ltr_actions.loc[away_idx, "dx"] = -actions[away_idx]["dx"].values
-    ltr_actions.loc[away_idx, "dy"] = -actions[away_idx]["dy"].values
+    ltr_actions.loc[away_idx, "x"] = spadlconfig.field_length - actions[away_idx]["x"].values  # type: ignore[reportAttributeAccessIssue]
+    ltr_actions.loc[away_idx, "y"] = spadlconfig.field_width - actions[away_idx]["y"].values  # type: ignore[reportAttributeAccessIssue]
+    ltr_actions.loc[away_idx, "dx"] = -actions[away_idx]["dx"].values  # type: ignore[reportAttributeAccessIssue]
+    ltr_actions.loc[away_idx, "dy"] = -actions[away_idx]["dy"].values  # type: ignore[reportAttributeAccessIssue]
     return ltr_actions

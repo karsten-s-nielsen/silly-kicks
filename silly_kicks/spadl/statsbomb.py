@@ -2,7 +2,6 @@
 
 import warnings
 from collections import Counter
-from typing import Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -14,27 +13,59 @@ from .schema import ConversionReport
 from .utils import _finalize_output, _validate_input_columns
 
 _SB_FIELD_LENGTH: int = 120  # StatsBomb internal grid length
-_SB_FIELD_WIDTH: int = 80    # StatsBomb internal grid width
+_SB_FIELD_WIDTH: int = 80  # StatsBomb internal grid width
 
 EXPECTED_INPUT_COLUMNS: set[str] = {
-    "game_id", "event_id", "period_id", "timestamp",
-    "team_id", "player_id", "type_name", "location", "extra",
+    "game_id",
+    "event_id",
+    "period_id",
+    "timestamp",
+    "team_id",
+    "player_id",
+    "type_name",
+    "location",
+    "extra",
 }
 
-_MAPPED_EVENT_TYPES: frozenset[str] = frozenset({
-    "Pass", "Dribble", "Carry", "Foul Committed", "Duel",
-    "Interception", "Shot", "Own Goal Against", "Goal Keeper",
-    "Clearance", "Miscontrol",
-})
+_MAPPED_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "Pass",
+        "Dribble",
+        "Carry",
+        "Foul Committed",
+        "Duel",
+        "Interception",
+        "Shot",
+        "Own Goal Against",
+        "Goal Keeper",
+        "Clearance",
+        "Miscontrol",
+    }
+)
 
-_EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset({
-    "Pressure", "Ball Receipt*", "Block", "50/50",
-    "Substitution", "Starting XI", "Tactical Shift",
-    "Referee Ball-Drop", "Half Start", "Half End",
-    "Injury Stoppage", "Player On", "Player Off", "Error",
-    "Shield", "Camera On", "Camera off",
-    "Bad Behaviour", "Ball Recovery",
-})
+_EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "Pressure",
+        "Ball Receipt*",
+        "Block",
+        "50/50",
+        "Substitution",
+        "Starting XI",
+        "Tactical Shift",
+        "Referee Ball-Drop",
+        "Half Start",
+        "Half End",
+        "Injury Stoppage",
+        "Player On",
+        "Player Off",
+        "Error",
+        "Shield",
+        "Camera On",
+        "Camera off",
+        "Bad Behaviour",
+        "Ball Recovery",
+    }
+)
 
 
 def _flatten_extra(events: pd.DataFrame) -> pd.DataFrame:
@@ -74,8 +105,8 @@ def _flatten_extra(events: pd.DataFrame) -> pd.DataFrame:
 def convert_to_actions(
     events: pd.DataFrame,
     home_team_id: int,
-    xy_fidelity_version: Optional[int] = None,
-    shot_fidelity_version: Optional[int] = None,
+    xy_fidelity_version: int | None = None,
+    shot_fidelity_version: int | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert StatsBomb events to SPADL actions.
@@ -111,15 +142,14 @@ def convert_to_actions(
     actions = pd.DataFrame()
 
     # Determine xy_fidelity_version and shot_fidelity_version
-    infered_xy_fidelity_version, infered_shot_fidelity_version = _infer_xy_fidelity_versions(
-        events
-    )
+    infered_xy_fidelity_version, infered_shot_fidelity_version = _infer_xy_fidelity_versions(events)
     if xy_fidelity_version is None:
         xy_fidelity_version = infered_xy_fidelity_version
         warnings.warn(
             f"Inferred xy_fidelity_version={infered_xy_fidelity_version}."
             + " If this is incorrect, please specify the correct version"
-            + " using the xy_fidelity_version argument"
+            + " using the xy_fidelity_version argument",
+            stacklevel=2,
         )
     else:
         if xy_fidelity_version not in (1, 2):
@@ -132,7 +162,8 @@ def convert_to_actions(
             warnings.warn(
                 f"Inferred shot_fidelity_version={infered_shot_fidelity_version}."
                 + " If this is incorrect, please specify the correct version"
-                + " using the shot_fidelity_version argument"
+                + " using the shot_fidelity_version argument",
+                stacklevel=2,
             )
     else:
         if shot_fidelity_version not in (1, 2):
@@ -151,12 +182,11 @@ def convert_to_actions(
     actions["player_id"] = events.player_id
 
     # split (end)location column into x and y columns
-    end_location = events["_pass_end_location"].fillna(
-        events["_shot_end_location"]
-    ).fillna(
-        events["_carry_end_location"]
-    ).fillna(
-        events["location"]
+    end_location = (
+        events["_pass_end_location"]
+        .fillna(events["_shot_end_location"])
+        .fillna(events["_carry_end_location"])
+        .fillna(events["location"])
     )
     # convert StatsBomb coordinates to spadl coordinates
     actions.loc[events.type_name == "Shot", ["start_x", "start_y"]] = _convert_locations(
@@ -182,7 +212,7 @@ def convert_to_actions(
 
     actions = (
         actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]
-        .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")
+        .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")  # type: ignore[reportCallIssue]
         .reset_index(drop=True)
     )
     actions = _fix_direction_of_play(actions, home_team_id)
@@ -206,7 +236,8 @@ def convert_to_actions(
     if unrecognized_counts:
         warnings.warn(
             f"StatsBomb: {sum(unrecognized_counts.values())} unrecognized event types "
-            f"dropped: {dict(unrecognized_counts)}"
+            f"dropped: {dict(unrecognized_counts)}",
+            stacklevel=2,
         )
     report = ConversionReport(
         provider="StatsBomb",
@@ -245,9 +276,9 @@ def _insert_interception_passes(df_events: pd.DataFrame) -> pd.DataFrame:
 
     if not df_events_interceptions.empty:
         df_events_interceptions["type_name"] = "Interception"
-        df_events_interceptions["extra"] = [
-            {"interception": {"outcome": {"id": 16, "name": "Success In Play"}}}
-        ] * len(df_events_interceptions)
+        df_events_interceptions["extra"] = [{"interception": {"outcome": {"id": 16, "name": "Success In Play"}}}] * len(
+            df_events_interceptions
+        )
 
         df_events = pd.concat([df_events_interceptions, df_events], ignore_index=True)
         df_events = df_events.sort_values(["timestamp"], kind="mergesort")
@@ -377,7 +408,7 @@ def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
     ]
 
     choices = [
-        non_action,                    # Pass Injury Clearance/Unknown
+        non_action,  # Pass Injury Clearance/Unknown
         _at["freekick_crossed"],
         _at["freekick_short"],
         _at["corner_crossed"],
@@ -390,18 +421,18 @@ def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
         _at["dribble"],
         _at["foul"],
         _at["tackle"],
-        non_action,                    # Duel non-tackle
+        non_action,  # Duel non-tackle
         _at["interception"],
         _at["shot_freekick"],
         _at["shot_penalty"],
         _at["shot"],
-        _at["bad_touch"],              # Own Goal Against
+        _at["bad_touch"],  # Own Goal Against
         _at["keeper_save"],
         _at["keeper_claim"],
         _at["keeper_punch"],
-        non_action,                    # Goal Keeper fallthrough
+        non_action,  # Goal Keeper fallthrough
         _at["clearance"],
-        _at["bad_touch"],              # Miscontrol
+        _at["bad_touch"],  # Miscontrol
     ]
 
     return pd.Series(np.select(conditions, choices, default=non_action), index=events.index)
@@ -461,28 +492,28 @@ def _vectorized_result_id(events: pd.DataFrame) -> pd.Series:
     ]
 
     choices = [
-        _r["fail"],                    # Pass Incomplete/Out
-        _r["offside"],                 # Pass Offside
-        _r["success"],                 # Pass Injury Clearance/Unknown (non_action)
-        _r["success"],                 # Pass default
-        _r["fail"],                    # Dribble Incomplete
-        _r["success"],                 # Dribble default
-        _r["success"],                 # Carry
-        _r["yellow_card"],             # Foul Yellow
-        _r["red_card"],                # Foul Red
-        _r["fail"],                    # Foul default
-        _r["fail"],                    # Tackle Lost
-        _r["success"],                 # Tackle default
-        _r["success"],                 # Duel non-tackle → non_action success
-        _r["fail"],                    # Interception Lost
-        _r["success"],                 # Interception default
-        _r["success"],                 # Shot Goal
-        _r["fail"],                    # Shot default (not Goal)
-        _r["owngoal"],                 # Own Goal Against
-        _r["fail"],                    # GK In Play Danger / No Touch
-        _r["success"],                 # GK default
-        _r["success"],                 # Clearance
-        _r["fail"],                    # Miscontrol
+        _r["fail"],  # Pass Incomplete/Out
+        _r["offside"],  # Pass Offside
+        _r["success"],  # Pass Injury Clearance/Unknown (non_action)
+        _r["success"],  # Pass default
+        _r["fail"],  # Dribble Incomplete
+        _r["success"],  # Dribble default
+        _r["success"],  # Carry
+        _r["yellow_card"],  # Foul Yellow
+        _r["red_card"],  # Foul Red
+        _r["fail"],  # Foul default
+        _r["fail"],  # Tackle Lost
+        _r["success"],  # Tackle default
+        _r["success"],  # Duel non-tackle → non_action success
+        _r["fail"],  # Interception Lost
+        _r["success"],  # Interception default
+        _r["success"],  # Shot Goal
+        _r["fail"],  # Shot default (not Goal)
+        _r["owngoal"],  # Own Goal Against
+        _r["fail"],  # GK In Play Danger / No Touch
+        _r["success"],  # GK default
+        _r["success"],  # Clearance
+        _r["fail"],  # Miscontrol
     ]
 
     return pd.Series(np.select(conditions, choices, default=_r["success"]), index=events.index)
@@ -556,26 +587,26 @@ def _vectorized_bodypart_id(events: pd.DataFrame) -> pd.Series:
         _b["foot_right"],
         _b["foot"],
         _b["other"],
-        _b["other"],       # Throw-in default
-        _b["foot"],        # Pass default
+        _b["other"],  # Throw-in default
+        _b["foot"],  # Pass default
         _b["head"],
         _b["foot_left"],
         _b["foot_right"],
         _b["foot"],
         _b["other"],
-        _b["foot"],        # Shot default
+        _b["foot"],  # Shot default
         _b["head"],
         _b["foot_left"],
         _b["foot_right"],
         _b["foot"],
         _b["other"],
-        _b["other"],       # GK default
+        _b["other"],  # GK default
         _b["head"],
         _b["foot_left"],
         _b["foot_right"],
         _b["foot"],
         _b["other"],
-        _b["foot"],        # Clearance default
+        _b["foot"],  # Clearance default
     ]
 
     # Default: foot for all other event types (Dribble, Carry, Foul, Duel,

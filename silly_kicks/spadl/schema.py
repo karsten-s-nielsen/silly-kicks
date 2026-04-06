@@ -6,7 +6,6 @@ They replace the pandera DataFrameModel that previously served this role.
 
 import dataclasses
 
-
 SPADL_COLUMNS: dict[str, str] = {
     "game_id": "int64",
     "original_event_id": "object",
@@ -62,4 +61,3 @@ class ConversionReport:
     def has_unrecognized(self) -> bool:
         """Return True if any unrecognized event types were encountered."""
         return len(self.unrecognized_counts) > 0
-
