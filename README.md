@@ -1,6 +1,6 @@
 # silly kicks
 
-![The Modern SPADL Analyst vs The Chief SPADL Evaluator & Classifier](assets/silly-kicks.jpg)
+![The Modern SPADL Analyst vs The Chief SPADL Evaluator & Classifier](https://raw.githubusercontent.com/karsten-s-nielsen/silly-kicks/main/assets/silly-kicks.jpg)
 <sup>Comic by NanoBanana &mdash; inspired by Monty Python's <em>Ministry of Silly Walks</em></sup>
 
 [![CI](https://github.com/karsten-s-nielsen/silly-kicks/actions/workflows/ci.yml/badge.svg)](https://github.com/karsten-s-nielsen/silly-kicks/actions/workflows/ci.yml)
