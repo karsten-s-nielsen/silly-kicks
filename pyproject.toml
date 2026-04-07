@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "1.0.1"
+version = "1.0.2"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
