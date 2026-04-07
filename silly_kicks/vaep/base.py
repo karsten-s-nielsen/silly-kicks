@@ -109,7 +109,7 @@ class VAEP:
         game_actions_with_names = self._add_names(game_actions)  # type: ignore
         gamestates = self._fs.gamestates(game_actions_with_names, self.nb_prev_actions)
         gamestates = self._fs.play_left_to_right(gamestates, game.home_team_id)
-        return pd.concat([fn(gamestates) for fn in self.xfns], axis=1)
+        return pd.concat([fn(gamestates) for fn in self.xfns], axis=1)  # type: ignore[reportReturnType]
 
     def compute_labels(
         self,
@@ -132,7 +132,7 @@ class VAEP:
             Returns the labels of each game state in the game.
         """
         game_actions_with_names = self._add_names(game_actions)  # type: ignore
-        return pd.concat([fn(game_actions_with_names) for fn in self.yfns], axis=1)
+        return pd.concat([fn(game_actions_with_names) for fn in self.yfns], axis=1)  # type: ignore[reportReturnType]
 
     def fit(
         self,

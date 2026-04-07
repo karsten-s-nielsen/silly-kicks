@@ -237,7 +237,7 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
     _fix_wyscout_events, _make_new_positions, _fix_actions = _lazy_import_events()
     (_create_df_actions,) = _lazy_import_mappings()
 
-    events = pd.concat([events, _get_tagsdf(events)], axis=1)
+    events = pd.concat([events, _get_tagsdf(events)], axis=1)  # type: ignore[reportAssignmentType]
     events = _make_new_positions(events)
     events = _fix_wyscout_events(events)
     actions = _create_df_actions(events)

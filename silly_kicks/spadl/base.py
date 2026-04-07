@@ -76,6 +76,6 @@ def _add_dribbles(actions: pd.DataFrame) -> pd.DataFrame:
     dribbles["result_id"] = spadlconfig.result_id["success"]
 
     actions = pd.concat([actions, dribbles], ignore_index=True, sort=False)
-    actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)
+    actions = actions.sort_values(["game_id", "period_id", "action_id"]).reset_index(drop=True)  # type: ignore[reportAssignmentType]
     actions["action_id"] = range(len(actions))
     return actions

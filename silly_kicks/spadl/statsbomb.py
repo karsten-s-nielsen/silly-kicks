@@ -282,7 +282,7 @@ def _insert_interception_passes(df_events: pd.DataFrame) -> pd.DataFrame:
 
         df_events = pd.concat([df_events_interceptions, df_events], ignore_index=True)
         df_events = df_events.sort_values(["timestamp"], kind="mergesort")
-        df_events = df_events.reset_index(drop=True)
+        df_events = df_events.reset_index(drop=True)  # type: ignore[reportAssignmentType]
 
     return df_events
 

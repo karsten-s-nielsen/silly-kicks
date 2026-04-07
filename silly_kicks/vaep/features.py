@@ -163,7 +163,7 @@ def simple(actionfn: Callable) -> FeatureTransfomer:
             Xi = actionfn(a)
             Xi.columns = [c + "_a" + str(i) for c in Xi.columns]
             X.append(Xi)
-        return pd.concat(X, axis=1)
+        return pd.concat(X, axis=1)  # type: ignore[reportReturnType]
 
     return _wrapper
 
@@ -323,7 +323,7 @@ def result_onehot_prev_only(gamestates: GameStates) -> Features:
         result_df = result_onehot.__wrapped__(actions)  # type: ignore
         result_df.columns = [c + "_a" + str(i) for c in result_df.columns]
         dfs.append(result_df)
-    return pd.concat(dfs, axis=1)
+    return pd.concat(dfs, axis=1)  # type: ignore[reportReturnType]
 
 
 def actiontype_result_onehot_prev_only(gamestates: GameStates) -> Features:
@@ -348,7 +348,7 @@ def actiontype_result_onehot_prev_only(gamestates: GameStates) -> Features:
         cross_df = actiontype_result_onehot.__wrapped__(actions)  # type: ignore
         cross_df.columns = [c + "_a" + str(i) for c in cross_df.columns]
         dfs.append(cross_df)
-    return pd.concat(dfs, axis=1)
+    return pd.concat(dfs, axis=1)  # type: ignore[reportReturnType]
 
 
 @simple

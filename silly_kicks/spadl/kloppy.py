@@ -5,7 +5,7 @@ from collections import Counter
 
 import kloppy
 import pandas as pd  # type: ignore
-from kloppy.domain import (
+from kloppy.domain import (  # type: ignore[reportMissingImports]
     BodyPart,
     CardType,
     CarryEvent,
@@ -47,7 +47,7 @@ from .base import _add_dribbles, _fix_clearances
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output
 
-_KLOPPY_VERSION = version.parse(kloppy.__version__)
+_KLOPPY_VERSION = version.parse(kloppy.__version__)  # type: ignore[reportAttributeAccessIssue]
 _SUPPORTED_PROVIDERS = {
     Provider.STATSBOMB: version.parse("3.15.0"),
     # Provider.OPTA: version.parse("3.15.0"),
@@ -151,7 +151,7 @@ def convert_to_actions(
         .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")
         .reset_index(drop=True)
     )
-    df_actions = df_actions[df_actions.type_id != spadlconfig.actiontype_id["non_action"]]
+    df_actions = df_actions[df_actions.type_id != spadlconfig.actiontype_id["non_action"]]  # type: ignore[reportOptionalSubscript, reportOptionalMemberAccess]
 
     df_actions = _fix_clearances(df_actions)  # type: ignore[reportArgumentType]  # kloppy API varies by version
 
