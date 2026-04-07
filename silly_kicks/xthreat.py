@@ -65,7 +65,7 @@ def _safe_divide(a: npt.ArrayLike, b: npt.ArrayLike) -> npt.NDArray[np.float64]:
     return np.divide(a, b, out=np.zeros_like(a, dtype="float64"), where=b != 0, casting="unsafe")
 
 
-def scoring_prob(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.float64]:
+def _scoring_prob(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.float64]:
     """Compute the probability of scoring when taking a shot for each cell.
 
     Parameters
@@ -90,7 +90,7 @@ def scoring_prob(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[n
     return _safe_divide(goalmatrix, shotmatrix)
 
 
-def get_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
+def _get_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     """Get all ball-progressing actions.
 
     These include passes, dribbles and crosses. Take-ons are ignored because
@@ -114,7 +114,7 @@ def get_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     ]
 
 
-def get_successful_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
+def _get_successful_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     """Get all successful ball-progressing actions.
 
     These include successful passes, dribbles and crosses.
@@ -129,11 +129,11 @@ def get_successful_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         All ball-progressing actions in the input dataframe.
     """
-    move_actions = get_move_actions(actions)
+    move_actions = _get_move_actions(actions)
     return move_actions[(move_actions.result_id == spadlconfig.result_id["success"])]  # type: ignore[reportReturnType]
 
 
-def action_prob(
+def _action_prob(
     actions: pd.DataFrame, l: int = N, w: int = M
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """Compute the probability of taking an action in each cell of the grid.
@@ -156,7 +156,7 @@ def action_prob(
     movematrix : np.ndarray
         For each cell the probability of choosing to move.
     """
-    move_actions = get_move_actions(actions)
+    move_actions = _get_move_actions(actions)
     shot_actions = actions[(actions.type_id == spadlconfig.actiontype_id["shot"])]
 
     movematrix = _count(move_actions.start_x, move_actions.start_y, l, w)
@@ -166,7 +166,7 @@ def action_prob(
     return _safe_divide(shotmatrix, totalmatrix), _safe_divide(movematrix, totalmatrix)
 
 
-def move_transition_matrix(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.float64]:
+def _move_transition_matrix(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.float64]:
     """Compute the move transition matrix from the given actions.
 
     This is, when a player chooses to move, the probability that he will
@@ -186,7 +186,7 @@ def move_transition_matrix(actions: pd.DataFrame, l: int = N, w: int = M) -> npt
     np.ndarray
         The transition matrix.
     """
-    move_actions = get_move_actions(actions)
+    move_actions = _get_move_actions(actions)
 
     X = pd.DataFrame()
     X["start_cell"] = _get_flat_indexes(move_actions.start_x, move_actions.start_y, l, w)
@@ -313,9 +313,9 @@ class ExpectedThreat:
             Fitted xT model.
         """
         self.heatmaps = []
-        self.scoring_prob_matrix = scoring_prob(actions, self.l, self.w)
-        self.shot_prob_matrix, self.move_prob_matrix = action_prob(actions, self.l, self.w)
-        self.transition_matrix = move_transition_matrix(actions, self.l, self.w)
+        self.scoring_prob_matrix = _scoring_prob(actions, self.l, self.w)
+        self.shot_prob_matrix, self.move_prob_matrix = _action_prob(actions, self.l, self.w)
+        self.transition_matrix = _move_transition_matrix(actions, self.l, self.w)
         self.xT = np.zeros((self.w, self.l))
         self.__solve(
             self.scoring_prob_matrix,
@@ -404,7 +404,7 @@ class ExpectedThreat:
         ratings = np.empty(len(actions))
         ratings[:] = np.nan
 
-        move_actions = get_successful_move_actions(actions.reset_index())  # type: ignore[reportArgumentType]
+        move_actions = _get_successful_move_actions(actions.reset_index())  # type: ignore[reportArgumentType]
 
         startxc, startyc = _get_cell_indexes(move_actions.start_x, move_actions.start_y, l, w)
         endxc, endyc = _get_cell_indexes(move_actions.end_x, move_actions.end_y, l, w)

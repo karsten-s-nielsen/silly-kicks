@@ -25,6 +25,10 @@ python -m pytest tests/ -m "not e2e" -v --tb=short
 
 e2e tests require dataset fixtures not committed to the repo.
 
+## Open Items
+
+See [TODO.md](TODO.md) for tracked work. Audit history in [docs/DEFERRED.md](docs/DEFERRED.md).
+
 ## Dependencies
 
 - Runtime: pandas, numpy, scikit-learn (no pandera, no multimethod)

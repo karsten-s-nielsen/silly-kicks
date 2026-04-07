@@ -1,7 +1,10 @@
-# Deferred Findings
+# Deferred Findings (Archive)
 
-Items identified during Phase 2 audits that are intentionally deferred. Each has a rationale
-for why it's deferred and a trigger for when to revisit.
+> **This file is historical.** Open items are tracked in [TODO.md](../TODO.md).
+> This file preserves the audit trail from Phases 2-3d for reference.
+
+Items identified during Phase 2 audits that were intentionally deferred. Each had a rationale
+for why it was deferred and a trigger for when to revisit.
 
 ## Post-Audit Remediation (2026-04-06)
 

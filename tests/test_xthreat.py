@@ -55,7 +55,7 @@ class TestGridCount:
 
 def test_get_move_actions(spadl_actions: pd.DataFrame) -> None:
     """It should filter passes, dribbles and crosses."""
-    move_actions = xt.get_move_actions(spadl_actions)
+    move_actions = xt._get_move_actions(spadl_actions)
     assert move_actions.type_id.isin(
         [
             spadl.config.actiontypes.index("pass"),
@@ -67,7 +67,7 @@ def test_get_move_actions(spadl_actions: pd.DataFrame) -> None:
 
 def test_get_successful_move_actions(spadl_actions: pd.DataFrame) -> None:
     """It should filter successful passes, dribbles and crosses."""
-    move_actions = xt.get_successful_move_actions(spadl_actions)
+    move_actions = xt._get_successful_move_actions(spadl_actions)
     assert move_actions.type_id.isin(
         [
             spadl.config.actiontypes.index("pass"),
@@ -80,7 +80,7 @@ def test_get_successful_move_actions(spadl_actions: pd.DataFrame) -> None:
 
 def test_action_prob(spadl_actions: pd.DataFrame) -> None:
     """It should return the proportion of shots and moves for each cell."""
-    shot_prob, move_prob = xt.action_prob(spadl_actions, 10, 5)
+    shot_prob, move_prob = xt._action_prob(spadl_actions, 10, 5)
     assert shot_prob.shape == (5, 10)
     assert move_prob.shape == (5, 10)
     assert np.any(shot_prob > 0)
@@ -92,7 +92,7 @@ def test_scoring_prob(spadl_actions: pd.DataFrame) -> None:
     """It should return the proportion of successful shots for each cell."""
     shots = spadl_actions.type_id == spadl.config.actiontypes.index("shot")
     goals = shots & (spadl_actions.result_id == spadl.config.results.index("success"))
-    scoring_prob = xt.scoring_prob(spadl_actions, 1, 1)
+    scoring_prob = xt._scoring_prob(spadl_actions, 1, 1)
     assert scoring_prob.shape == (1, 1)
     assert sum(goals) / sum(shots) == scoring_prob[0]
 
@@ -137,7 +137,7 @@ def test_move_transition_matrix() -> None:
             },
         ]
     )
-    move_mat = xt.move_transition_matrix(spadl_actions, 2, 2)
+    move_mat = xt._move_transition_matrix(spadl_actions, 2, 2)
     assert np.sum(move_mat) == 1
     assert move_mat.shape == (4, 4)
     # (10, 10) is mapped to flat index 2 in a 2x2 grid
@@ -182,7 +182,7 @@ def test_xt_model_rate(spadl_actions: pd.DataFrame) -> None:
     """It should rate all successful move actions and assign all other actions NaN."""
     xTModel = xt.ExpectedThreat()
     xTModel.fit(spadl_actions)
-    successful_move_actions_idx = xt.get_successful_move_actions(spadl_actions).index
+    successful_move_actions_idx = xt._get_successful_move_actions(spadl_actions).index
     ratings = xTModel.rate(spadl_actions)
     assert ratings.shape == (len(spadl_actions),)
     assert np.all(~np.isnan(ratings[successful_move_actions_idx]))

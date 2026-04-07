@@ -131,6 +131,11 @@ the original papers:
 }
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards,
+and PR process. Open items and planned work are tracked in [TODO.md](TODO.md).
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
