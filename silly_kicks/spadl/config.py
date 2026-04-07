@@ -12,6 +12,12 @@ results : list(str)
     The action results used in the SPADL language.
 actiontypes : list(str)
     The action types used in the SPADL language.
+actiontype_id : dict[str, int]
+    Reverse lookup: action type name to integer ID.
+result_id : dict[str, int]
+    Reverse lookup: result name to integer ID.
+bodypart_id : dict[str, int]
+    Reverse lookup: body part name to integer ID.
 
 """
 

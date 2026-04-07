@@ -230,12 +230,15 @@ def convert_to_actions(
         ID of the home team in the corresponding game.
     goalkeeper_ids : set[int] or None, default=None
         If provided, aerial duels by these player IDs are mapped to
-        ``keeper_claim`` instead of the default duel dispatch.
+        ``keeper_claim`` instead of the default duel dispatch.  An empty
+        set is equivalent to ``None`` (no reclassification).
 
     Returns
     -------
     actions : pd.DataFrame
-        DataFrame with corresponding SPADL actions.
+        SPADL actions with guaranteed columns and dtypes.
+    report : ConversionReport
+        Audit trail with event counts, mapped/excluded/unrecognized breakdowns.
 
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Wyscout")

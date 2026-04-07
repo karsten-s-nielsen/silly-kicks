@@ -37,3 +37,6 @@ credentials.json
 # Downloaded test datasets (not committed)
 tests/datasets/statsbomb/
 tests/datasets/wyscout_public/
+
+# Claude Code
+.claude/

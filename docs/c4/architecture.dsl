@@ -3,7 +3,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
     model {
         // --- Actors ---
         analyst = person "Soccer Analytics Practitioner" "Data scientist or analyst who classifies and values football actions"
-        pipeline = person "Downstream Pipeline" "Production data pipeline (e.g., luxury-lakehouse) that calls silly-kicks inside Spark UDFs"
+        pipeline = person "Downstream Pipeline" "Production data pipeline that calls silly-kicks inside Spark UDFs"
 
         // --- External Systems ---
         kloppy = softwareSystem "kloppy" "PySport event data normalization library" "External"

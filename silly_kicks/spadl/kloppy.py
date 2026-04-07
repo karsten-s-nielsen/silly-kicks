@@ -1,5 +1,6 @@
 """Kloppy EventDataset to SPADL converter."""
 
+import logging
 import warnings
 from collections import Counter
 
@@ -46,6 +47,8 @@ from . import config as spadlconfig
 from .base import _add_dribbles, _fix_clearances
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output
+
+logger = logging.getLogger(__name__)
 
 _KLOPPY_VERSION = version.parse(kloppy.__version__)  # type: ignore[reportAttributeAccessIssue]
 _SUPPORTED_PROVIDERS = {
@@ -435,6 +438,9 @@ def _parse_duel_event(event: DuelEvent) -> tuple[str, str, str]:
     else:
         r = "success"
 
+    if a == "non_action":
+        logger.debug("Duel event %s dropped (qualifiers: %s)", event.event_id, qualifiers)
+
     return a, r, b
 
 
@@ -472,5 +478,8 @@ def _parse_goalkeeper_event(event: GoalkeeperEvent) -> tuple[str, str, str]:
         a = "keeper_pick_up"
     if GoalkeeperActionType.REFLEX in qualifiers:
         pass
+
+    if a == "non_action":
+        logger.debug("Goalkeeper event %s dropped (qualifiers: %s)", event.event_id, qualifiers)
 
     return a, r, b

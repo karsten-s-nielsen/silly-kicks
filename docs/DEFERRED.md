@@ -15,6 +15,11 @@ for why it was deferred and a trigger for when to revisit.
 - **Cross zone feature** (Gelade 2017): RESOLVED — `cross_zone()` feature transformer
 - **Assist type feature** (Carpenter): RESOLVED — `assist_type()` feature transformer
 
+## Fully Resolved (2026-04-07)
+
+- **D-3** (CODE_OF_CONDUCT.md): RESOLVED — CODE_OF_CONDUCT.md created
+- **D-5** (GitHub issue/PR templates): RESOLVED — `.github/ISSUE_TEMPLATE/` and `.github/pull_request_template.md` created
+
 ## Phase 3d: VAEP Evolution (2026-04-06)
 
 - **S6** (unseeded np.random.permutation): RESOLVED — random_state parameter on VAEP.fit()
@@ -109,9 +114,7 @@ rewritten anyway for the "Nothing Left Behind" mapping registry.
 |---|-----|---------|-----------|-------------|
 | D-1 | Med | ~~Missing CONTRIBUTING.md~~ | **RESOLVED** — CONTRIBUTING.md created | ~~Before public release~~ |
 | D-2 | Med | ~~Missing SECURITY.md~~ | **RESOLVED** — SECURITY.md created | ~~Before public release~~ |
-| D-3 | Low | Missing CODE_OF_CONDUCT.md | Standard community file | Before public release |
 | D-4 | Med | ~~Missing CHANGELOG.md~~ | **RESOLVED** — CHANGELOG.md created | ~~Before v0.1.0 PyPI publish~~ |
-| D-5 | Low | Missing GitHub issue/PR templates | Nice-to-have for structured contributions | Before public release |
 
 ### Documentation content (Phase 3 territory — API may evolve)
 

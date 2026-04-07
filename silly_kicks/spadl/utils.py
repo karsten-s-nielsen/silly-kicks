@@ -23,6 +23,11 @@ def add_names(actions: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         The original dataframe with 'type_name', 'result_name' and
         'bodypart_name' appended.
+
+    .. note::
+        All caller-added columns (e.g. ``match_id``, ``competition_id``,
+        ``data_source``) are preserved in the returned DataFrame alongside
+        the three appended name columns.
     """
     return (
         actions.drop(columns=["type_name", "result_name", "bodypart_name"], errors="ignore")
@@ -82,6 +87,10 @@ def _finalize_output(
     -------
     pd.DataFrame
         DataFrame with exactly the declared columns and dtypes.
+
+    The returned DataFrame is guaranteed to contain exactly the columns
+    in *schema* with the specified dtypes.  Callers do not need defensive
+    column-existence checks after calling a converter.
     """
     if schema is None:
         schema = SPADL_COLUMNS

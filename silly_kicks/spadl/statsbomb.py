@@ -90,9 +90,12 @@ def _flatten_extra(events: pd.DataFrame) -> pd.DataFrame:
     events["_shot_body_part"] = _deep_get(extra, "shot", "body_part", "name")
     events["_shot_end_location"] = _deep_get(extra, "shot", "end_location")
     events["_dribble_outcome"] = _deep_get(extra, "dribble", "outcome", "name")
-    events["_gk_type"] = _deep_get(extra, "goalkeeper", "type", "name")
-    events["_gk_outcome"] = _deep_get(extra, "goalkeeper", "outcome", "name")
-    events["_gk_body_part"] = _deep_get(extra, "goalkeeper", "body_part", "name")
+    # Accept both "goalkeeper" (raw StatsBomb JSON key) and "goal_keeper"
+    # (snake_cased variant produced by adapters that normalise the type name).
+    _gk = extra.str.get("goalkeeper").fillna(extra.str.get("goal_keeper"))
+    events["_gk_type"] = _gk.str.get("type").str.get("name")
+    events["_gk_outcome"] = _gk.str.get("outcome").str.get("name")
+    events["_gk_body_part"] = _gk.str.get("body_part").str.get("name")
     events["_foul_card"] = _deep_get(extra, "foul_committed", "card", "name")
     events["_duel_type"] = _deep_get(extra, "duel", "type", "name")
     events["_duel_outcome"] = _deep_get(extra, "duel", "outcome", "name")
