@@ -16,8 +16,3 @@ Open items tracked for future work. Closed items live in
 | A9 | Medium | Reduce `atomic/vaep/features.py` coupling to `vaep/features` (12 imports) | Legitimate delegation today, but tight coupling will fight if atomic features need to diverge independently |
 | — | Medium | Decompose `vaep/features.py` (809 lines) | Natural split: spatial features, temporal features, categorical features. Do when next adding features to this file |
 
-## Observability
-
-| # | Size | Item | Context |
-|---|------|------|---------|
-| — | Small | Log kloppy intra-type silent drops at DEBUG level | Aerial duels and unrecognized GK subtypes silently disappear inside "mapped" event types. ConversionReport counts the event type but individual sub-events vanish without trace |

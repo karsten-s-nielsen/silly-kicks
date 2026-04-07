@@ -132,6 +132,40 @@ def test_statsbomb_input_validation():
         statsbomb.convert_to_actions(df, home_team_id=100)
 
 
+def test_statsbomb_goal_keeper_key_fallback():
+    """extra["goal_keeper"] (snake_cased) should work the same as extra["goalkeeper"]."""
+    events = pd.DataFrame(
+        [
+            {
+                "game_id": 1,
+                "event_id": "gk-1",
+                "period_id": 1,
+                "timestamp": "00:00:30.000",
+                "team_id": 100,
+                "player_id": 300,
+                "type_name": "Goal Keeper",
+                "location": [10.0, 34.0],
+                "extra": {
+                    "goal_keeper": {
+                        "type": {"name": "Shot Saved"},
+                        "outcome": {"name": "Success"},
+                        "body_part": {"name": "Right Hand"},
+                    }
+                },
+            },
+        ]
+    )
+    actions, _report = statsbomb.convert_to_actions(events, home_team_id=100, xy_fidelity_version=1)
+    # The keeper action should be produced (not dropped as non_action)
+    assert len(actions) >= 1
+    from silly_kicks.spadl.config import actiontype_id
+
+    keeper_types = {actiontype_id["keeper_save"], actiontype_id["keeper_claim"], actiontype_id["keeper_punch"]}
+    assert any(actions["type_id"].isin(keeper_types)), (
+        f"Expected a keeper action, got type_ids: {actions['type_id'].tolist()}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests below require StatsBomb event fixtures and are marked e2e.
 # ---------------------------------------------------------------------------

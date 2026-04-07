@@ -48,7 +48,29 @@ KLOPPY_SPADL_COLUMNS: dict[str, str] = {
 
 @dataclasses.dataclass(frozen=True)
 class ConversionReport:
-    """Audit trail for convert_to_actions()."""
+    """Audit trail for convert_to_actions().
+
+    Every converter returns this alongside the actions DataFrame, enabling
+    callers to detect silent event drops and new event types.
+
+    Attributes:
+        provider: Name of the data provider (e.g. "StatsBomb", "Wyscout").
+        total_events: Number of input events before conversion.
+        total_actions: Number of output SPADL actions produced.
+        mapped_counts: Per-type counts of events successfully mapped to SPADL.
+        excluded_counts: Per-type counts of events intentionally excluded
+            (e.g. "Half Start", "Referee Ball-Drop").
+        unrecognized_counts: Per-type counts of events not in the mapped or
+            excluded registries.  Keys are provider-specific: ``str`` for
+            StatsBomb (event type names), ``int`` for Wyscout (type IDs).
+
+    Example::
+
+        actions, report = statsbomb.convert_to_actions(events, home_team_id=100)
+        if report.has_unrecognized:
+            logger.warning("Unrecognized events: %s", report.unrecognized_counts)
+        logger.info("Converted %d events -> %d actions", report.total_events, report.total_actions)
+    """
 
     provider: str
     total_events: int

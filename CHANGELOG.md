@@ -5,6 +5,33 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-04-07
+
+### Added
+- DEBUG logging for kloppy silent event drops (aerial duels, unrecognized GK subtypes)
+- `.github/CODEOWNERS` for code owner review enforcement
+
+### Fixed
+- StatsBomb converter now accepts both `"goalkeeper"` and `"goal_keeper"` keys in the
+  extra dict — adapters that snake-case the event type name no longer silently lose all
+  keeper actions
+
+### Improved
+- `ConversionReport` docstring: full Attributes section, usage example, provider-specific
+  key type note
+- `add_names()` docstring: explicit guarantee that caller-added columns are preserved
+- `_finalize_output()` docstring: guarantee that all SPADL_COLUMNS are present
+- `config.py` docstring: `actiontype_id`, `result_id`, `bodypart_id` reverse dicts documented
+- Wyscout `convert_to_actions()`: Returns section now documents `ConversionReport`;
+  `goalkeeper_ids` notes `None` ≡ empty set equivalence
+
+### Removed
+- `docs/plans/` and `docs/specs/` — internal development artifacts with local paths
+
+### Changed
+- Version bump: 0.1.0 → 1.0.0 (Production/Stable)
+- C4 diagram genericized (removed project-specific references)
+
 ## [0.1.0] — 2026-04-06
 
 ### Added

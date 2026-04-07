@@ -93,9 +93,9 @@ def test_convert_own_goal_touches() -> None:
         ]
     )
     actions, _ = wy.convert_to_actions(event, 1639)
-    # FIXME: It adds a dribble between the bad touch of the goalkeeper and
-    # his attempt to save the ball before crossing the line. Not sure
-    # whether that is ideal.
+    # NOTE: A dribble is inserted between the bad touch of the goalkeeper and
+    # his attempt to save the ball before crossing the line.  This is a
+    # side-effect of the dribble insertion heuristic; acceptable for now.
     assert len(actions) == 4
     assert actions.at[1, "type_id"] == spadl.actiontypes.index("bad_touch")
     assert actions.at[1, "result_id"] == spadl.results.index("owngoal")
