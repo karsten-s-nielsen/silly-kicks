@@ -3,6 +3,15 @@
 Items identified during Phase 2 audits that are intentionally deferred. Each has a rationale
 for why it's deferred and a trigger for when to revisit.
 
+## Post-Audit Remediation (2026-04-06)
+
+- **#37** (GK aerial duel routing): RESOLVED — `goalkeeper_ids` parameter on Wyscout converter
+- **#948** (WhoScored dict parser): WON'T IMPLEMENT — WhoScored uses Opta data; niche scraping use case
+- **xS** (Expected Saves label): RESOLVED — `save_from_shot()` in both vaep and atomic labels
+- **xC** (Expected Claims label): RESOLVED — `claim_from_cross()` in both vaep and atomic labels
+- **Cross zone feature** (Gelade 2017): RESOLVED — `cross_zone()` feature transformer
+- **Assist type feature** (Carpenter): RESOLVED — `assist_type()` feature transformer
+
 ## Phase 3d: VAEP Evolution (2026-04-06)
 
 - **S6** (unseeded np.random.permutation): RESOLVED — random_state parameter on VAEP.fit()

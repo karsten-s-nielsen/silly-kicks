@@ -144,3 +144,43 @@ def goal_from_shot(actions: pd.DataFrame) -> pd.DataFrame:
     )
 
     return pd.DataFrame(goals.rename("goal"))
+
+
+def save_from_shot(actions: pd.DataFrame) -> pd.DataFrame:
+    """Determine whether the goalkeeper saved the current shot.
+
+    This label can be used to train an Expected Saves (xS) model.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        The actions of a game.
+
+    Returns
+    -------
+    pd.DataFrame
+        A dataframe with a column 'save_from_shot' and a row for each action
+        set to True if the action is a keeper save; otherwise False.
+    """
+    saves = actions["type_id"] == atomicspadl.actiontype_id["keeper_save"]
+    return pd.DataFrame(saves.rename("save_from_shot"))
+
+
+def claim_from_cross(actions: pd.DataFrame) -> pd.DataFrame:
+    """Determine whether the goalkeeper claimed the current cross.
+
+    This label can be used to train an Expected Claims (xC) model.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        The actions of a game.
+
+    Returns
+    -------
+    pd.DataFrame
+        A dataframe with a column 'claim_from_cross' and a row for each action
+        set to True if the action is a keeper claim; otherwise False.
+    """
+    claims = actions["type_id"] == atomicspadl.actiontype_id["keeper_claim"]
+    return pd.DataFrame(claims.rename("claim_from_cross"))

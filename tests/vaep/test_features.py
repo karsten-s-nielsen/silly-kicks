@@ -183,6 +183,27 @@ def test_actiontype_result_onehot_prev_only(spadl_actions: pd.DataFrame) -> None
     assert len(a1_cols) > 0
 
 
+def test_cross_zone(spadl_actions: pd.DataFrame):
+    spadl_actions = spu.add_names(spadl_actions)
+    gamestates = fs.gamestates(spadl_actions, nb_prev_actions=2)
+    gamestates = fs.play_left_to_right(gamestates, spadl_actions.iloc[0].team_id)
+    result = fs.cross_zone(gamestates)
+    assert result.shape[0] == len(spadl_actions)
+    # Should have 4 zone columns per gamestate
+    zone_cols = [c for c in result.columns if "cross_zone" in c]
+    assert len(zone_cols) >= 4
+
+
+def test_assist_type(spadl_actions: pd.DataFrame):
+    spadl_actions = spu.add_names(spadl_actions)
+    gamestates = fs.gamestates(spadl_actions, nb_prev_actions=3)
+    gamestates = fs.play_left_to_right(gamestates, spadl_actions.iloc[0].team_id)
+    result = fs.assist_type(gamestates)
+    assert result.shape[0] == len(spadl_actions)
+    assist_cols = [c for c in result.columns if "assist_" in c]
+    assert len(assist_cols) == 6
+
+
 def test_actiontype_result_onehot_vectorized(spadl_actions: pd.DataFrame) -> None:
     spadl_actions = spu.add_names(spadl_actions)
     gamestates = fs.gamestates(spadl_actions, nb_prev_actions=2)

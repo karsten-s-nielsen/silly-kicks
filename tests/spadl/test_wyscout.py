@@ -306,6 +306,56 @@ def test_wyscout_output_columns():
     assert list(actions.columns) == list(SPADL_COLUMNS.keys())
 
 
+def test_wyscout_gk_aerial_duel_with_goalkeeper_ids():
+    """#37: Aerial duels by known GK should become keeper_claim."""
+    event = pd.DataFrame(
+        [
+            {
+                "type_id": 1,
+                "subtype_name": "Air duel",
+                "subtype_id": 10,
+                "tags": [{"id": 703}],  # won
+                "player_id": 999,
+                "positions": [{"y": 50, "x": 5}, {"y": 50, "x": 10}],
+                "game_id": 1,
+                "type_name": "Duel",
+                "team_id": 100,
+                "period_id": 1,
+                "milliseconds": 5000.0,
+                "event_id": 42,
+            }
+        ]
+    )
+    actions, _ = wy.convert_to_actions(event, 100, goalkeeper_ids={999})
+    assert actions.at[0, "type_id"] == spadl.actiontype_id["keeper_claim"]
+
+
+def test_wyscout_gk_aerial_duel_without_goalkeeper_ids():
+    """Without goalkeeper_ids, aerial duels are not keeper_claim."""
+    event = pd.DataFrame(
+        [
+            {
+                "type_id": 1,
+                "subtype_name": "Air duel",
+                "subtype_id": 10,
+                "tags": [{"id": 703}],
+                "player_id": 999,
+                "positions": [{"y": 50, "x": 5}, {"y": 50, "x": 10}],
+                "game_id": 1,
+                "type_name": "Duel",
+                "team_id": 100,
+                "period_id": 1,
+                "milliseconds": 5000.0,
+                "event_id": 42,
+            }
+        ]
+    )
+    actions, _ = wy.convert_to_actions(event, 100)
+    # Without goalkeeper_ids, air duels stay as non_action (default duel behavior)
+    # or whatever the existing dispatch produces — just NOT keeper_claim
+    assert actions.empty or actions.at[0, "type_id"] != spadl.actiontype_id["keeper_claim"]
+
+
 def test_wyscout_input_validation():
     df = pd.DataFrame({"game_id": [1]})
     with pytest.raises(ValueError, match="Wyscout"):

@@ -11,9 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release as maintained successor to socceraction v1.5.3
 - SPADL converters: StatsBomb, Opta, Wyscout, Kloppy
 - VAEP and Atomic-VAEP frameworks
-- xThreat (Expected Threat) framework
 - HybridVAEP — result-leakage-free action valuation
 - xG-targeted labels via `xg_column` parameter
+- Expected Saves (xS) label via `save_from_shot()`
+- Expected Claims (xC) label via `claim_from_cross()`
+- Cross zone feature (Gelade 2017 four-zone classification)
+- Assist type feature (through ball, cutback, cross, set piece, progressive pass)
+- Wyscout `goalkeeper_ids` parameter for GK aerial duel routing (#37)
 - `ConversionReport` audit trail for every conversion
 - `validate_spadl()` utility for DataFrame validation
 - Input validation with clear error messages per provider

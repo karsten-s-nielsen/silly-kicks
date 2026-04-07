@@ -214,7 +214,11 @@ def _get_tagsdf(events: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.DataFrame, ConversionReport]:
+def convert_to_actions(
+    events: pd.DataFrame,
+    home_team_id: int,
+    goalkeeper_ids: set[int] | None = None,
+) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert Wyscout events to SPADL actions.
 
@@ -224,6 +228,9 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
         DataFrame containing Wyscout events from a single game.
     home_team_id : int
         ID of the home team in the corresponding game.
+    goalkeeper_ids : set[int] or None, default=None
+        If provided, aerial duels by these player IDs are mapped to
+        ``keeper_claim`` instead of the default duel dispatch.
 
     Returns
     -------
@@ -239,6 +246,18 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
 
     events = pd.concat([events, _get_tagsdf(events)], axis=1)  # type: ignore[reportAssignmentType]
     events = _make_new_positions(events)
+
+    # Reclassify aerial duels by known goalkeepers as GK claims before
+    # _fix_wyscout_events removes unmatched duels.
+    if goalkeeper_ids:
+        gk_aerial_mask = (
+            (events["type_id"] == _WS_TYPE_DUEL)
+            & (events["subtype_id"] == _WS_SUBTYPE_AIR_DUEL)
+            & events["player_id"].isin(goalkeeper_ids)
+        )
+        events.loc[gk_aerial_mask, "type_id"] = _WS_TYPE_GK
+        events.loc[gk_aerial_mask, "subtype_id"] = _WS_SUBTYPE_GK_CLAIM
+
     events = _fix_wyscout_events(events)
     actions = _create_df_actions(events)
     actions = _fix_actions(actions)

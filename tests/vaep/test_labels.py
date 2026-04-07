@@ -60,6 +60,20 @@ def test_scores_xg(spadl_actions: pd.DataFrame) -> None:
     assert scores["scores"].dtype == float
 
 
+def test_save_from_shot(spadl_actions: pd.DataFrame) -> None:
+    spadl_actions = spu.add_names(spadl_actions)
+    result = lab.save_from_shot(spadl_actions)
+    assert len(result) == len(spadl_actions)
+    assert result.columns.tolist() == ["save_from_shot"]
+
+
+def test_claim_from_cross(spadl_actions: pd.DataFrame) -> None:
+    spadl_actions = spu.add_names(spadl_actions)
+    result = lab.claim_from_cross(spadl_actions)
+    assert len(result) == len(spadl_actions)
+    assert result.columns.tolist() == ["claim_from_cross"]
+
+
 def test_scores_backward_compat(spadl_actions: pd.DataFrame) -> None:
     """scores() without xg_column should produce binary labels."""
     spadl_actions = spu.add_names(spadl_actions)
