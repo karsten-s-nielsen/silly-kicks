@@ -579,8 +579,8 @@ def startpolar(actions: Actions) -> Features:
         The 'start_dist_to_goal' and 'start_angle_to_goal' of each action.
     """
     polardf = pd.DataFrame(index=actions.index)
-    dx = (spadlcfg.field_length - actions["start_x"]).abs().values
-    dy = (spadlcfg.field_width / 2 - actions["start_y"]).abs().values
+    dx = (spadlcfg.field_length - actions["start_x"]).abs().to_numpy()
+    dy = (spadlcfg.field_width / 2 - actions["start_y"]).abs().to_numpy()
     polardf["start_dist_to_goal"] = np.sqrt(dx**2 + dy**2)
     with np.errstate(divide="ignore", invalid="ignore"):
         polardf["start_angle_to_goal"] = np.nan_to_num(np.arctan(dy / dx))
@@ -604,8 +604,8 @@ def endpolar(actions: Actions) -> Features:
         The 'end_dist_to_goal' and 'end_angle_to_goal' of each action.
     """
     polardf = pd.DataFrame(index=actions.index)
-    dx = (spadlcfg.field_length - actions["end_x"]).abs().values
-    dy = (spadlcfg.field_width / 2 - actions["end_y"]).abs().values
+    dx = (spadlcfg.field_length - actions["end_x"]).abs().to_numpy()
+    dy = (spadlcfg.field_width / 2 - actions["end_y"]).abs().to_numpy()
     polardf["end_dist_to_goal"] = np.sqrt(dx**2 + dy**2)
     with np.errstate(divide="ignore", invalid="ignore"):
         polardf["end_angle_to_goal"] = np.nan_to_num(np.arctan(dy / dx))

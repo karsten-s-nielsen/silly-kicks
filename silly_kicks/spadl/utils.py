@@ -1,7 +1,7 @@
 """Utility functions for working with SPADL dataframes."""
 
 import warnings
-from typing import Final, cast
+from typing import Final
 
 import numpy as np
 import pandas as pd
@@ -109,14 +109,7 @@ def add_possessions(
         raise ValueError(f"add_possessions: max_gap_seconds must be >= 0, got {max_gap_seconds}")
 
     # Sort by canonical SPADL order. Stable sort preserves original-row order on ties.
-    # ``cast`` narrows ``sort_values()``'s ``DataFrame | None`` return (the second arm only
-    # surfaces with ``inplace=True``, which we never pass) so pyright's bundled pandas stubs
-    # don't cascade Optional access errors through the rest of the function. Removable when
-    # ``pandas-stubs`` is added as a dev dep (planned: silly-kicks pyright hardening cycle).
-    sorted_actions = cast(
-        pd.DataFrame,
-        actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True),
-    )
+    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
 
     n = len(sorted_actions)
     if n == 0:
@@ -172,9 +165,7 @@ def add_possessions(
     sorted_actions["possession_id"] = (
         sorted_actions.groupby("game_id", sort=False)["_new_possession"].cumsum() - 1
     ).astype(np.int64)
-    # Same ``cast`` rationale as the sort_values chain above: ``drop()`` returns
-    # ``DataFrame | None`` (None branch is ``inplace=True``, never used here).
-    sorted_actions = cast(pd.DataFrame, sorted_actions.drop(columns=["_new_possession"]))
+    sorted_actions = sorted_actions.drop(columns=["_new_possession"])
 
     return sorted_actions
 
@@ -303,7 +294,9 @@ def _finalize_output(
     cols = [*schema.keys(), *extras]
     result = df[cols].copy()
     for col, dtype in schema.items():
-        result[col] = result[col].astype(dtype)
+        # ``np.dtype(dtype)`` narrows the schema's str dtype name to a typed
+        # ``DtypeObj`` so pandas-stubs's ``astype`` overload set accepts it.
+        result[col] = result[col].astype(np.dtype(dtype))
     return result
 
 
