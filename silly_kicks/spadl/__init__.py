@@ -5,6 +5,7 @@ __all__ = [
     "ConversionReport",
     "actiontypes_df",
     "add_names",
+    "add_possessions",
     "bodyparts_df",
     "config",
     "kloppy",
@@ -19,7 +20,7 @@ __all__ = [
 from . import config, opta, statsbomb, wyscout
 from .config import actiontypes_df, bodyparts_df, results_df
 from .schema import SPADL_COLUMNS, ConversionReport
-from .utils import add_names, play_left_to_right, validate_spadl
+from .utils import add_names, add_possessions, play_left_to_right, validate_spadl
 
 try:
     from . import kloppy

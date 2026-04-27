@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-04-27
+
+### Added
+- `silly_kicks.spadl.utils.add_possessions(actions, *, max_gap_seconds=5.0,
+  retain_on_set_pieces=True)` — provider-agnostic possession-sequence
+  reconstruction for any SPADL action stream. Adds a `possession_id: int64`
+  column via a team-change-with-carve-outs heuristic: boundaries on team
+  change, period change (within a game), or time gap >= `max_gap_seconds`,
+  with a foul→opposing-team-set-piece carve-out that retains the previous
+  possession (the team that won the foul resumes its sequence). Counter
+  resets to 0 at each new `game_id`. Mirrors the public-enrichment shape
+  of `add_names()` (post-conversion, returns a copy with the new column).
+  Vectorised on numpy/pandas; ~1ms per 1500-action match, sub-3ms on 10k.
+- Performance benchmarks for `add_possessions` (1500-action and 10k-action
+  scenarios) added to `tests/test_benchmark.py` with hard CI bounds
+  (200ms / 2s respectively) catching accidental quadratic regressions.
+- e2e-marked boundary-F1 validation test against StatsBomb's native
+  `possession` field (using `preserve_native=['possession']` from 1.1.0
+  to surface the native truth alongside the heuristic). Skips when the
+  raw StatsBomb fixture is absent; documents the validation procedure
+  for downstream consumers wanting to re-measure the agreement rate
+  against their own data.
+
+### Notes
+- Atomic-SPADL parity for `add_possessions` is deferred (TODO under
+  `## Architecture`). Apply the same passthrough mechanism when there's
+  a concrete consumer asking for it.
+
 ## [1.1.0] — 2026-04-27
 
 ### Added
