@@ -12,7 +12,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
 
-            spadl = container "silly_kicks.spadl" "SPADL conversion layer: 23 action types, 4 provider converters, vectorized np.select dispatch, ConversionReport audit trail" "Python" "Library"
+            spadl = container "silly_kicks.spadl" "SPADL conversion + post-conversion enrichments: 23 action types, 4 provider converters with preserve_native passthrough, ConversionReport audit; public enrichment helpers (add_names, add_possessions, GK analytics suite — gk_role / distribution_metrics / pre_shot_gk_context)" "Python" "Library"
             vaep = container "silly_kicks.vaep" "VAEP framework: feature extraction, label generation (binary + xG), model training, action valuation. Includes HybridVAEP (result-leakage-free)" "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous action representation with 33 extended action types and deferred single-sort conversion" "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat model: pitch grid value surface via dynamic programming" "Python" "Library"
@@ -25,7 +25,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         sillyKicks -> mlLibs "Trains and predicts with" "Python API"
 
         // --- Relationships: Container level ---
-        analyst -> spadl "Converts raw events to SPADL actions via" "convert_to_actions() -> (DataFrame, ConversionReport)"
+        analyst -> spadl "Converts raw events to SPADL actions and enriches via" "convert_to_actions() + add_*() helper family"
         analyst -> vaep "Values actions via" "VAEP.fit() / VAEP.rate() / HybridVAEP"
         analyst -> xthreat "Computes pitch value surface via" "ExpectedThreat.fit()"
 

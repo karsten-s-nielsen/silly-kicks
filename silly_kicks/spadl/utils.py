@@ -25,6 +25,529 @@ _ADD_POSSESSIONS_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
     "type_id",
 )
 
+_ADD_GK_ROLE_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
+    "game_id",
+    "period_id",
+    "action_id",
+    "team_id",
+    "player_id",
+    "type_id",
+    "start_x",
+)
+
+_GK_ROLE_CATEGORIES: Final[tuple[str, ...]] = (
+    "shot_stopping",
+    "cross_collection",
+    "sweeping",
+    "pick_up",
+    "distribution",
+)
+
+
+def add_gk_role(
+    actions: pd.DataFrame,
+    *,
+    penalty_area_x_threshold: float = 16.5,
+    distribution_lookback_actions: int = 1,
+) -> pd.DataFrame:
+    """Tag each action with the goalkeeper's role context.
+
+    Adds a ``gk_role`` categorical column with five categories
+    (``shot_stopping`` / ``cross_collection`` / ``sweeping`` / ``pick_up`` /
+    ``distribution``) plus null for non-GK actions. Provider-agnostic
+    enrichment that mirrors the post-conversion shape of
+    :func:`add_possessions` and :func:`add_names`.
+
+    Categorisation rules
+    --------------------
+    For each row, ``gk_role`` is assigned by precedence (first match wins):
+
+    1. ``sweeping`` — any ``keeper_*`` action with
+       ``start_x > penalty_area_x_threshold``. Overrides the type-specific
+       role: a ``keeper_save`` taken at ``start_x = 20`` (a sweeper-style
+       rush-out save) is tagged ``sweeping``, not ``shot_stopping``.
+
+       .. note::
+
+           ``keeper_claim`` / ``keeper_punch`` / ``keeper_pick_up`` outside
+           the penalty area are illegal handball offences in regulation
+           football and effectively non-existent in clean event data; if
+           one appears, treating it as ``sweeping`` is a pragmatic
+           position-based tag rather than a semantically rigorous
+           classification.
+    2. ``shot_stopping`` — ``keeper_save`` inside the box.
+    3. ``cross_collection`` — ``keeper_claim`` or ``keeper_punch`` inside the box.
+    4. ``pick_up`` — ``keeper_pick_up`` inside the box.
+    5. ``distribution`` — non-keeper action by the same player whose
+       previous action (within ``distribution_lookback_actions`` steps in
+       the same game) was a keeper action.
+    6. ``None`` — everything else.
+
+    GK identity is inferred from ``keeper_*`` action history; canonical SPADL
+    has no ``position_group`` flag, so consumers who want to filter by
+    registered GK position must do so via their own ``dim_players`` join.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL action stream. Must contain ``game_id``, ``period_id``,
+        ``action_id``, ``team_id``, ``player_id``, ``type_id``, ``start_x``.
+        Other columns are preserved unchanged.
+    penalty_area_x_threshold : float, default 16.5
+        SPADL x-coordinate (metres from own goal line) above which a
+        keeper action is classified as ``sweeping`` rather than the
+        type-specific role. Default matches the regulation 16.5m
+        penalty-area depth.
+    distribution_lookback_actions : int, default 1
+        Number of preceding actions to consider when detecting a
+        non-keeper action by the same player as ``distribution``. Default
+        of 1 (immediately-preceding action only) avoids false positives
+        from ball-possession returns; larger values widen the window.
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of ``actions`` sorted by ``(game_id, period_id, action_id)``
+        with an additional ``gk_role`` Categorical column.
+
+    Raises
+    ------
+    ValueError
+        If a required column is missing, ``penalty_area_x_threshold`` is
+        negative, or ``distribution_lookback_actions < 1``.
+
+    References
+    ----------
+    Yam, "A Data-Driven Goalkeeper Evaluation Framework"
+    (MIT Sloan Sports Analytics Conference). Four-pillar GK taxonomy
+    (shot stopping / cross collection / distribution / defensive activity)
+    inspires the categories used here.
+
+    Examples
+    --------
+    Tag GK roles after conversion::
+
+        actions, _ = statsbomb.convert_to_actions(events, home_team_id=100)
+        actions = add_gk_role(actions)
+        # Filter to distribution-from-the-back passes:
+        gk_distribution = actions[actions["gk_role"] == "distribution"]
+    """
+    missing = [c for c in _ADD_GK_ROLE_REQUIRED_COLUMNS if c not in actions.columns]
+    if missing:
+        raise ValueError(
+            f"add_gk_role: actions missing required columns: {sorted(missing)}. Got: {sorted(actions.columns)}"
+        )
+    if penalty_area_x_threshold < 0:
+        raise ValueError(f"add_gk_role: penalty_area_x_threshold must be >= 0, got {penalty_area_x_threshold}")
+    if distribution_lookback_actions < 1:
+        raise ValueError(
+            f"add_gk_role: distribution_lookback_actions must be >= 1, got {distribution_lookback_actions}"
+        )
+
+    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+
+    n = len(sorted_actions)
+    if n == 0:
+        sorted_actions["gk_role"] = pd.Categorical([], categories=list(_GK_ROLE_CATEGORIES))
+        return sorted_actions
+
+    type_id = sorted_actions["type_id"].to_numpy()
+    start_x = sorted_actions["start_x"].to_numpy(dtype=np.float64)
+    player_id = sorted_actions["player_id"]
+    game_id = sorted_actions["game_id"]
+
+    # Resolve keeper action type IDs at fit time (defensive against out-of-spec configs).
+    save_id = spadlconfig.actiontype_id["keeper_save"]
+    claim_id = spadlconfig.actiontype_id["keeper_claim"]
+    punch_id = spadlconfig.actiontype_id["keeper_punch"]
+    pickup_id = spadlconfig.actiontype_id["keeper_pick_up"]
+
+    is_save = type_id == save_id
+    is_claim = type_id == claim_id
+    is_punch = type_id == punch_id
+    is_pickup = type_id == pickup_id
+    is_keeper = is_save | is_claim | is_punch | is_pickup
+    is_outside_box = start_x > penalty_area_x_threshold
+    is_sweeping = is_keeper & is_outside_box
+
+    # Distribution detection: vectorised k-step lookback. For each k in
+    # [1..distribution_lookback_actions], OR in a (prev_is_keeper & same_player & same_game) mask.
+    # ``shift(fill_value=...)`` avoids the object-dtype downcast warning emitted by
+    # pandas 2.x when chaining shift().fillna() on bool series.
+    prev_keeper_within_k = np.zeros(n, dtype=bool)
+    is_keeper_series = pd.Series(is_keeper)
+    for k in range(1, distribution_lookback_actions + 1):
+        shifted_keeper = is_keeper_series.shift(k, fill_value=False).to_numpy(dtype=bool)
+        shifted_player = player_id.shift(k).to_numpy()
+        shifted_game = game_id.shift(k).to_numpy()
+        same_player = player_id.to_numpy() == shifted_player
+        same_game = game_id.to_numpy() == shifted_game
+        prev_keeper_within_k |= shifted_keeper & same_player & same_game
+
+    is_distribution = (~is_keeper) & prev_keeper_within_k
+
+    # Assign roles by precedence — sweeping overrides type-specific role.
+    role = np.full(n, None, dtype=object)
+    role[is_save & ~is_sweeping] = "shot_stopping"
+    role[(is_claim | is_punch) & ~is_sweeping] = "cross_collection"
+    role[is_pickup & ~is_sweeping] = "pick_up"
+    role[is_sweeping] = "sweeping"
+    role[is_distribution] = "distribution"
+
+    sorted_actions["gk_role"] = pd.Categorical(role, categories=list(_GK_ROLE_CATEGORIES))
+    return sorted_actions
+
+
+_ADD_GK_DISTRIBUTION_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
+    "game_id",
+    "period_id",
+    "action_id",
+    "team_id",
+    "player_id",
+    "type_id",
+    "result_id",
+    "start_x",
+    "start_y",
+    "end_x",
+    "end_y",
+)
+
+_GK_LAUNCH_PASS_TYPE_NAMES: Final[frozenset[str]] = frozenset(
+    {"pass", "goalkick", "freekick_short", "freekick_crossed"}
+)
+"""Action types that qualify as GK launches when the distance exceeds
+``long_threshold``. Excludes ``clearance`` (not deliberate distribution per
+Lamberts GVM) and ``throw_in`` / ``cross`` (rarely taken by GKs)."""
+
+_GK_PASS_LENGTH_CATEGORIES: Final[tuple[str, ...]] = ("short", "medium", "long")
+
+_PITCH_LENGTH_M: Final[float] = 105.0
+_PITCH_WIDTH_M: Final[float] = 68.0
+
+
+def add_gk_distribution_metrics(
+    actions: pd.DataFrame,
+    *,
+    xt_grid: np.ndarray | None = None,
+    short_threshold: float = 32.0,
+    long_threshold: float = 60.0,
+    require_gk_role: bool = True,
+) -> pd.DataFrame:
+    """Add length classification + optional xT delta to GK distribution actions.
+
+    Operates only on rows where ``gk_role == "distribution"`` (per
+    :func:`add_gk_role`). Adds four columns:
+
+    - ``gk_pass_length_m`` — Euclidean ``(start, end)`` distance in metres
+      (NaN on non-distribution rows).
+    - ``gk_pass_length_class`` — Categorical ``{"short", "medium", "long"}``
+      keyed off ``short_threshold`` / ``long_threshold``.
+    - ``is_launch`` — bool. True iff length > ``long_threshold`` AND action
+      is a deliberate-distribution pass type (``pass``, ``goalkick``,
+      ``freekick_short``, ``freekick_crossed``). False everywhere else.
+    - ``gk_xt_delta`` — float xT-grid delta from start zone to end zone,
+      computed only when ``xt_grid`` is provided AND the pass succeeded
+      (``result_id == "success"``). NaN otherwise.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL action stream. Required columns: ``game_id``, ``period_id``,
+        ``action_id``, ``team_id``, ``player_id``, ``type_id``, ``result_id``,
+        ``start_x``, ``start_y``, ``end_x``, ``end_y``. ``gk_role`` is
+        either present (used directly) or computed via :func:`add_gk_role`.
+    xt_grid : np.ndarray, optional
+        12x8 Expected Threat grid (SPADL coordinate system, rows = x-bins,
+        cols = y-bins). When omitted, ``gk_xt_delta`` is NaN for all rows.
+    short_threshold : float, default 32.0
+        Pass length (metres) strictly below which a distribution is "short".
+    long_threshold : float, default 60.0
+        Pass length (metres) strictly above which a distribution is "long".
+    require_gk_role : bool, default True
+        When True (default) and ``gk_role`` column is absent, calls
+        :func:`add_gk_role` internally with default kwargs. When False,
+        skips distribution detection if ``gk_role`` is absent (all four
+        added columns will be NaN/False).
+
+    Returns
+    -------
+    pd.DataFrame
+        Sorted copy of ``actions`` with the four columns appended. ``gk_role``
+        is also present in output (either pre-existing or added internally).
+
+    Raises
+    ------
+    ValueError
+        If a required column is missing, ``short_threshold`` or
+        ``long_threshold`` is negative, ``short_threshold >= long_threshold``,
+        or ``xt_grid`` shape is not ``(12, 8)``.
+
+    References
+    ----------
+    Lamberts (2025), "Introducing the Goalkeeper Value Model (GVM)" —
+    short / medium / long distribution categorisation and launch-pass
+    distinction.
+
+    Examples
+    --------
+    Compute GK distribution metrics with xT valuation::
+
+        from silly_kicks import xthreat
+        actions, _ = statsbomb.convert_to_actions(events, home_team_id=100)
+        xt = xthreat.fit(actions)  # produces 12x8 grid
+        actions = add_gk_distribution_metrics(actions, xt_grid=xt.value_grid)
+        # Filter to launches:
+        launches = actions[actions["is_launch"]]
+    """
+    missing = [c for c in _ADD_GK_DISTRIBUTION_REQUIRED_COLUMNS if c not in actions.columns]
+    if missing:
+        raise ValueError(
+            f"add_gk_distribution_metrics: actions missing required columns: {sorted(missing)}. "
+            f"Got: {sorted(actions.columns)}"
+        )
+    if short_threshold < 0:
+        raise ValueError(f"add_gk_distribution_metrics: short_threshold must be >= 0, got {short_threshold}")
+    if long_threshold < 0:
+        raise ValueError(f"add_gk_distribution_metrics: long_threshold must be >= 0, got {long_threshold}")
+    if short_threshold >= long_threshold:
+        raise ValueError(
+            f"add_gk_distribution_metrics: short_threshold ({short_threshold}) must be strictly less "
+            f"than long_threshold ({long_threshold})"
+        )
+    if xt_grid is not None and xt_grid.shape != (12, 8):
+        raise ValueError(f"add_gk_distribution_metrics: xt_grid must have shape (12, 8), got {xt_grid.shape}")
+
+    # Apply gk_role internally if needed.
+    if "gk_role" not in actions.columns:
+        if require_gk_role:
+            actions = add_gk_role(actions)
+        else:
+            actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(
+                drop=True
+            )
+            actions["gk_role"] = pd.Categorical([None] * len(actions), categories=list(_GK_ROLE_CATEGORIES))
+
+    n = len(actions)
+    if n == 0:
+        actions["gk_pass_length_m"] = pd.Series([], dtype=np.float64)
+        actions["gk_pass_length_class"] = pd.Categorical([], categories=list(_GK_PASS_LENGTH_CATEGORIES))
+        actions["is_launch"] = pd.Series([], dtype=bool)
+        actions["gk_xt_delta"] = pd.Series([], dtype=np.float64)
+        return actions
+
+    # Identify distribution rows.
+    is_distribution = (actions["gk_role"] == "distribution").to_numpy()
+
+    # Vectorised length computation (defined for all rows; masked to NaN where not distribution).
+    start_x = actions["start_x"].to_numpy(dtype=np.float64)
+    start_y = actions["start_y"].to_numpy(dtype=np.float64)
+    end_x = actions["end_x"].to_numpy(dtype=np.float64)
+    end_y = actions["end_y"].to_numpy(dtype=np.float64)
+    dx = end_x - start_x
+    dy = end_y - start_y
+    raw_length = np.sqrt(dx * dx + dy * dy)
+    length_m = np.where(is_distribution, raw_length, np.nan)
+
+    # Length classification.
+    short_mask = is_distribution & (raw_length < short_threshold)
+    long_mask = is_distribution & (raw_length > long_threshold)
+    medium_mask = is_distribution & ~short_mask & ~long_mask
+
+    length_class = np.full(n, None, dtype=object)
+    length_class[short_mask] = "short"
+    length_class[medium_mask] = "medium"
+    length_class[long_mask] = "long"
+
+    # is_launch — pass-type AND length > long_threshold.
+    type_id = actions["type_id"].to_numpy()
+    launch_type_ids = {spadlconfig.actiontype_id[name] for name in _GK_LAUNCH_PASS_TYPE_NAMES}
+    is_launch_type = np.isin(type_id, list(launch_type_ids))
+    is_launch = is_distribution & is_launch_type & (raw_length > long_threshold)
+
+    # xT delta — only on successful distributions when grid provided.
+    xt_delta = np.full(n, np.nan, dtype=np.float64)
+    if xt_grid is not None:
+        success_id = spadlconfig.result_id["success"]
+        result_id_arr = actions["result_id"].to_numpy()
+        eligible = is_distribution & (result_id_arr == success_id)
+        if eligible.any():
+            zone_x_start = np.clip((start_x[eligible] / (_PITCH_LENGTH_M / 12.0)).astype(int), 0, 11)
+            zone_y_start = np.clip((start_y[eligible] / (_PITCH_WIDTH_M / 8.0)).astype(int), 0, 7)
+            zone_x_end = np.clip((end_x[eligible] / (_PITCH_LENGTH_M / 12.0)).astype(int), 0, 11)
+            zone_y_end = np.clip((end_y[eligible] / (_PITCH_WIDTH_M / 8.0)).astype(int), 0, 7)
+            xt_delta[eligible] = xt_grid[zone_x_end, zone_y_end] - xt_grid[zone_x_start, zone_y_start]
+
+    actions["gk_pass_length_m"] = length_m
+    actions["gk_pass_length_class"] = pd.Categorical(length_class, categories=list(_GK_PASS_LENGTH_CATEGORIES))
+    actions["is_launch"] = is_launch
+    actions["gk_xt_delta"] = xt_delta
+    return actions
+
+
+_ADD_PRE_SHOT_GK_CONTEXT_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
+    "game_id",
+    "period_id",
+    "action_id",
+    "team_id",
+    "player_id",
+    "type_id",
+    "time_seconds",
+)
+
+_GK_SHOT_TYPE_NAMES: Final[frozenset[str]] = frozenset({"shot", "shot_freekick", "shot_penalty"})
+_GK_KEEPER_TYPE_NAMES: Final[frozenset[str]] = frozenset(
+    {"keeper_save", "keeper_claim", "keeper_punch", "keeper_pick_up"}
+)
+
+
+def add_pre_shot_gk_context(
+    actions: pd.DataFrame,
+    *,
+    lookback_seconds: float = 10.0,
+    lookback_actions: int = 5,
+) -> pd.DataFrame:
+    """Tag each shot with the defending goalkeeper's recent activity.
+
+    For every shot row (``action_type`` in ``{"shot", "shot_freekick",
+    "shot_penalty"}``), looks back up to ``lookback_actions`` rows OR up
+    to ``lookback_seconds`` seconds in the same ``(game_id, period_id)``
+    — whichever is smaller — to identify the defending GK and characterise
+    their recent activity.
+
+    Adds four columns:
+
+    - ``gk_was_distributing`` (bool) — True iff the defending GK had a
+      non-keeper action in the lookback window.
+    - ``gk_was_engaged`` (bool) — True iff the defending GK had a
+      ``keeper_*`` action in the lookback window.
+    - ``gk_actions_in_possession`` (int) — count of ``keeper_*`` actions
+      by the defending GK in the lookback window.
+    - ``defending_gk_player_id`` (float, NaN-coded int) — ``player_id`` of
+      the most recent defending-team ``keeper_*`` action in the window.
+      NaN when no defending GK is identifiable.
+
+    Non-shot rows receive default values (False / 0 / NaN). The defending
+    GK is identified as the ``player_id`` of the most recent ``keeper_*``
+    action by a team OTHER than the shooter's team; this is approximate
+    but works on canonical SPADL streams without external GK metadata.
+
+    .. note::
+
+        This helper is genuinely novel — no published OSS / academic
+        equivalent surfaces a goalkeeper's pre-shot activity context as
+        explicit per-shot features. It is intended as feature input to
+        downstream PSxG / xGOT models that may benefit from knowing the
+        defending GK's recent engagement state. Validate empirically
+        before drawing causal conclusions.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL action stream. Required columns: ``game_id``, ``period_id``,
+        ``action_id``, ``team_id``, ``player_id``, ``type_id``,
+        ``time_seconds``.
+    lookback_seconds : float, default 10.0
+        Time window (seconds) before each shot in which to consider
+        defending-GK actions.
+    lookback_actions : int, default 5
+        Action-count window before each shot. The smaller of the two
+        bounds wins.
+
+    Returns
+    -------
+    pd.DataFrame
+        Sorted copy of ``actions`` with the four context columns appended.
+
+    Raises
+    ------
+    ValueError
+        If a required column is missing, ``lookback_seconds`` is negative,
+        or ``lookback_actions < 1``.
+
+    References
+    ----------
+    Related work:
+
+    - Butcher et al. (2025), "An Expected Goals On Target (xGOT) Model"
+      (MDPI) — focuses on the shot moment; does not surface pre-shot GK
+      engagement state.
+    """
+    missing = [c for c in _ADD_PRE_SHOT_GK_CONTEXT_REQUIRED_COLUMNS if c not in actions.columns]
+    if missing:
+        raise ValueError(
+            f"add_pre_shot_gk_context: actions missing required columns: {sorted(missing)}. "
+            f"Got: {sorted(actions.columns)}"
+        )
+    if lookback_seconds < 0:
+        raise ValueError(f"add_pre_shot_gk_context: lookback_seconds must be >= 0, got {lookback_seconds}")
+    if lookback_actions < 1:
+        raise ValueError(f"add_pre_shot_gk_context: lookback_actions must be >= 1, got {lookback_actions}")
+
+    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+
+    n = len(sorted_actions)
+    gk_was_distributing = np.zeros(n, dtype=bool)
+    gk_was_engaged = np.zeros(n, dtype=bool)
+    gk_actions_in_possession = np.zeros(n, dtype=np.int64)
+    defending_gk_player_id = np.full(n, np.nan, dtype=np.float64)
+
+    if n == 0:
+        sorted_actions["gk_was_distributing"] = gk_was_distributing
+        sorted_actions["gk_was_engaged"] = gk_was_engaged
+        sorted_actions["gk_actions_in_possession"] = gk_actions_in_possession
+        sorted_actions["defending_gk_player_id"] = defending_gk_player_id
+        return sorted_actions
+
+    type_id = sorted_actions["type_id"].to_numpy()
+    team_id = sorted_actions["team_id"].to_numpy()
+    player_id = sorted_actions["player_id"].to_numpy()
+    time_seconds_arr = sorted_actions["time_seconds"].to_numpy(dtype=np.float64)
+    game_id = sorted_actions["game_id"].to_numpy()
+    period_id = sorted_actions["period_id"].to_numpy()
+
+    shot_type_ids = {spadlconfig.actiontype_id[name] for name in _GK_SHOT_TYPE_NAMES}
+    keeper_type_ids = {spadlconfig.actiontype_id[name] for name in _GK_KEEPER_TYPE_NAMES}
+    is_shot = np.isin(type_id, list(shot_type_ids))
+    is_keeper = np.isin(type_id, list(keeper_type_ids))
+
+    shot_indices = np.where(is_shot)[0]
+    for shot_idx in shot_indices:
+        shooter_team = team_id[shot_idx]
+        shot_time = time_seconds_arr[shot_idx]
+        shot_game = game_id[shot_idx]
+        shot_period = period_id[shot_idx]
+
+        window_start = max(0, shot_idx - lookback_actions)
+        win = slice(window_start, shot_idx)
+
+        same_game_period = (game_id[win] == shot_game) & (period_id[win] == shot_period)
+        within_time = (shot_time - time_seconds_arr[win]) <= lookback_seconds
+        in_window = same_game_period & within_time
+        defending_in_window = in_window & (team_id[win] != shooter_team)
+
+        defending_keeper_in_window = defending_in_window & is_keeper[win]
+        if not defending_keeper_in_window.any():
+            continue
+
+        # Most recent defending-keeper action's player_id defines the defending GK.
+        relative_indices = np.where(defending_keeper_in_window)[0]
+        gk_id = int(player_id[window_start + relative_indices[-1]])
+
+        same_gk_in_window = defending_in_window & (player_id[win] == gk_id)
+        gk_keeper_actions_count = int((same_gk_in_window & is_keeper[win]).sum())
+        gk_was_distributing_in_window = bool((same_gk_in_window & ~is_keeper[win]).any())
+
+        gk_was_engaged[shot_idx] = True
+        gk_was_distributing[shot_idx] = gk_was_distributing_in_window
+        gk_actions_in_possession[shot_idx] = gk_keeper_actions_count
+        defending_gk_player_id[shot_idx] = float(gk_id)
+
+    sorted_actions["gk_was_distributing"] = gk_was_distributing
+    sorted_actions["gk_was_engaged"] = gk_was_engaged
+    sorted_actions["gk_actions_in_possession"] = gk_actions_in_possession
+    sorted_actions["defending_gk_player_id"] = defending_gk_player_id
+    return sorted_actions
+
 
 def add_possessions(
     actions: pd.DataFrame,
