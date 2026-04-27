@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
-      - run: pip install ruff==0.15.7 pyright==1.1.395
+      - run: pip install ruff==0.15.7 pyright==1.1.395 pandas-stubs==2.3.3.260113
       - run: ruff check silly_kicks/ tests/
       - run: ruff format --check silly_kicks/ tests/
       - run: pip install -e ".[test]"

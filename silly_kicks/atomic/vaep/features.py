@@ -182,8 +182,8 @@ def polar(actions: Actions) -> Features:
         The 'dist_to_goal' and 'angle_to_goal' of each action.
     """
     polardf = pd.DataFrame(index=actions.index)
-    dx = (_goal_x - actions["x"]).abs().values
-    dy = (_goal_y - actions["y"]).abs().values
+    dx = (_goal_x - actions["x"]).abs().to_numpy()
+    dy = (_goal_y - actions["y"]).abs().to_numpy()
     polardf["dist_to_goal"] = np.sqrt(dx**2 + dy**2)
     with np.errstate(divide="ignore", invalid="ignore"):
         polardf["angle_to_goal"] = np.nan_to_num(np.arctan(dy / dx))

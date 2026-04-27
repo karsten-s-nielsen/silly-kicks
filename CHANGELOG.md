@@ -5,6 +5,37 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-04-27
+
+### Added
+- `pandas-stubs>=2.2.0` pinned in the `[dev]` extras and the CI lint job.
+  Without `pandas-stubs`, pyright's bundled pandas typings under-report
+  Series / DataFrame types (e.g. arithmetic on ``.values`` collapses to
+  the union ``np_1darray | ExtensionArray | Categorical``), masking real
+  type issues in CI while spuriously failing locally on certain method
+  chains. With `pandas-stubs` in the dev path, pyright reports a
+  consistent set of issues across all environments.
+
+### Fixed
+- 15 type errors that surfaced once `pandas-stubs` was installed:
+  - `vaep/features.py` and `atomic/vaep/features.py` — replaced
+    `Series.values` with `Series.to_numpy()` in polar-coordinate
+    arithmetic so the return type is `np.ndarray` instead of the
+    ``np_1darray | ExtensionArray | Categorical`` union (which doesn't
+    support `**` / `/` / `-`).
+  - `spadl/opta.py` — same `.values` → `.to_numpy()` swap in
+    ``_fix_owngoals`` arithmetic.
+  - `spadl/statsbomb.py` — synthetic interception-event `extra` payload
+    now built as an explicit ``pd.Series([..], dtype=object)`` instead
+    of `[dict] * n`, matching pandas-stubs's accepted setitem value types.
+  - `spadl/utils.py` `_finalize_output()` — schema dtype string passed
+    through `np.dtype(...)` so it narrows to ``DtypeObj`` for the
+    `astype` overload set.
+- Removed two `cast(pd.DataFrame, ...)` workarounds in
+  `add_possessions` (introduced in 1.2.0). With `pandas-stubs`,
+  non-inplace ``sort_values()`` / ``drop()`` correctly return
+  `DataFrame`, making the casts redundant.
+
 ## [1.2.0] — 2026-04-27
 
 ### Added

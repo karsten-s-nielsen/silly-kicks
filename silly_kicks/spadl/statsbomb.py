@@ -309,8 +309,15 @@ def _insert_interception_passes(df_events: pd.DataFrame) -> pd.DataFrame:
 
     if not df_events_interceptions.empty:
         df_events_interceptions["type_name"] = "Interception"
-        df_events_interceptions["extra"] = [{"interception": {"outcome": {"id": 16, "name": "Success In Play"}}}] * len(
-            df_events_interceptions
+        # Build the synthetic ``extra`` payload as an explicit object Series so
+        # pandas-stubs accepts the assignment (the older ``[dict] * n`` shape
+        # produces a list[dict[...]] which doesn't match pandas-stubs's
+        # accepted setitem value types).
+        _interception_extra: dict[str, object] = {"interception": {"outcome": {"id": 16, "name": "Success In Play"}}}
+        df_events_interceptions["extra"] = pd.Series(
+            [_interception_extra] * len(df_events_interceptions),
+            index=df_events_interceptions.index,
+            dtype=object,
         )
 
         df_events = pd.concat([df_events_interceptions, df_events], ignore_index=True)

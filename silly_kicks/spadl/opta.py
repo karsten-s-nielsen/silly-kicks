@@ -446,8 +446,8 @@ def _fix_owngoals(actions: pd.DataFrame) -> pd.DataFrame:
     owngoals_idx = (actions.result_id == spadlconfig.result_id["owngoal"]) & (
         actions.type_id == spadlconfig.actiontype_id["shot"]
     )
-    actions.loc[owngoals_idx, "end_x"] = spadlconfig.field_length - actions[owngoals_idx].end_x.values
-    actions.loc[owngoals_idx, "end_y"] = spadlconfig.field_width - actions[owngoals_idx].end_y.values
+    actions.loc[owngoals_idx, "end_x"] = spadlconfig.field_length - actions[owngoals_idx].end_x.to_numpy()
+    actions.loc[owngoals_idx, "end_y"] = spadlconfig.field_width - actions[owngoals_idx].end_y.to_numpy()
     actions.loc[owngoals_idx, "type_id"] = spadlconfig.actiontype_id["bad_touch"]
     return actions
 
