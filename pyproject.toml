@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "1.3.0"
+version = "1.4.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -62,7 +62,7 @@ target-version = "py310"
 select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "N806"]
+"tests/**/*.py" = ["S101", "N806", "S106", "S107"]
 # ML convention: uppercase X, Y, Pscores, Pconcedes are standard in ML/stats code
 "silly_kicks/vaep/**/*.py" = ["N803", "N806"]
 "silly_kicks/atomic/vaep/**/*.py" = ["N803", "N806"]

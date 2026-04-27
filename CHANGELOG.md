@@ -5,6 +5,43 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-04-27
+
+### Added
+- **GK analytics suite v1** — three composable post-conversion enrichments
+  for SPADL action streams, mirroring the public-helper shape of
+  `add_names()` and `add_possessions()`:
+  - `add_gk_role(actions)` — tags each action with the goalkeeper's role
+    context: `shot_stopping` / `cross_collection` / `sweeping` / `pick_up` /
+    `distribution` (or `None` for non-GK actions). Sweeping is a
+    position-based override for `keeper_*` actions taken outside the
+    penalty area; in clean event data only `keeper_save` realistically
+    appears outside the box (sweeper-style rush-out save). The other
+    three keeper types outside the box are illegal handball offences and
+    effectively non-existent in regulation play.
+  - `add_gk_distribution_metrics(actions, xt_grid=None)` — adds
+    `gk_pass_length_m`, `gk_pass_length_class` (short/medium/long),
+    `is_launch`, and `gk_xt_delta` to GK distribution actions. Auto-calls
+    `add_gk_role` when `gk_role` column is absent. xT delta only computed
+    for successful distributions when an xT grid is provided. `is_launch`
+    requires both length > `long_threshold` and a deliberate-distribution
+    pass type (`pass`, `goalkick`, `freekick_short`, `freekick_crossed`).
+  - `add_pre_shot_gk_context(actions)` — for every shot, looks back up to
+    `lookback_actions` rows or `lookback_seconds` seconds (smaller wins)
+    in the same `(game_id, period_id)` and tags the defending GK's recent
+    activity: `gk_was_distributing`, `gk_was_engaged`,
+    `gk_actions_in_possession`, `defending_gk_player_id`. Genuinely novel
+    — no published OSS / academic equivalent surfaces a goalkeeper's
+    pre-shot activity context as explicit per-shot features.
+
+  All three are vectorised on numpy/pandas; sub-50ms per 1500-action match.
+  References cited in docstrings: Yam (MIT Sloan), Lamberts GVM (2025),
+  Butcher et al. xGOT (2025).
+
+### Notes
+- Atomic-SPADL parity for the GK analytics suite is deferred (TODO under
+  `## Architecture`). Same disposition as `add_possessions`.
+
 ## [1.3.0] — 2026-04-27
 
 ### Added

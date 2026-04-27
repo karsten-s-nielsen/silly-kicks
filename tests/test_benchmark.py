@@ -80,3 +80,72 @@ def test_add_possessions_sublinear_scaling_10k(benchmark: "BenchmarkFixture") ->
     assert "possession_id" in result.columns
     assert elapsed < 2.0, f"add_possessions(10k) took {elapsed * 1000:.2f}ms, hard CI budget 2000ms"
     benchmark(spu.add_possessions, actions)
+
+
+def _make_spadl_actions_with_gk(n: int = 1500) -> pd.DataFrame:
+    """1500-action match with ~5% keeper actions and ~5% shots — realistic mix
+    for benchmarking the GK helpers under near-production load.
+    """
+    actions = _make_spadl_actions(n)
+    # Inject ~75 keeper actions (every 20th action) by team 100, player 999.
+    keeper_idx = list(range(0, n, 20))
+    for i in keeper_idx:
+        actions.loc[i, "team_id"] = 100
+        actions.loc[i, "player_id"] = 999
+        actions.loc[i, "type_id"] = spadlcfg.actiontype_id["keeper_save"]
+        actions.loc[i, "start_x"] = 5.0
+        actions.loc[i, "start_y"] = 34.0
+    # Inject ~75 shots (every 20th action offset by 10) by team 200, attacker 700.
+    shot_idx = list(range(10, n, 20))
+    for i in shot_idx:
+        actions.loc[i, "team_id"] = 200
+        actions.loc[i, "player_id"] = 700
+        actions.loc[i, "type_id"] = spadlcfg.actiontype_id["shot"]
+        actions.loc[i, "start_x"] = 95.0
+    return actions
+
+
+def test_add_gk_role_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
+    """``add_gk_role`` on a 1500-action match (Q8 budget < 50ms median; CI hard 200ms)."""
+    import time as _time
+
+    actions = _make_spadl_actions_with_gk(1500)
+    spu.add_gk_role(actions)  # warmup
+    start = _time.perf_counter()
+    result = spu.add_gk_role(actions)
+    elapsed = _time.perf_counter() - start
+    assert "gk_role" in result.columns
+    assert elapsed < 0.2, f"add_gk_role(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
+    benchmark(spu.add_gk_role, actions)
+
+
+def test_add_gk_distribution_metrics_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
+    """``add_gk_distribution_metrics`` (without xT grid) on 1500 actions (CI hard 200ms)."""
+    import time as _time
+
+    actions = _make_spadl_actions_with_gk(1500)
+    spu.add_gk_distribution_metrics(actions)  # warmup
+    start = _time.perf_counter()
+    result = spu.add_gk_distribution_metrics(actions)
+    elapsed = _time.perf_counter() - start
+    assert "gk_pass_length_m" in result.columns
+    assert elapsed < 0.2, f"add_gk_distribution_metrics(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
+    benchmark(spu.add_gk_distribution_metrics, actions)
+
+
+def test_add_pre_shot_gk_context_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
+    """``add_pre_shot_gk_context`` on 1500 actions with ~75 shots (CI hard 200ms).
+
+    Per-shot lookback is O(K) Python-loop work; the budget allows for the
+    ~75-shot per-match overhead of the loop.
+    """
+    import time as _time
+
+    actions = _make_spadl_actions_with_gk(1500)
+    spu.add_pre_shot_gk_context(actions)  # warmup
+    start = _time.perf_counter()
+    result = spu.add_pre_shot_gk_context(actions)
+    elapsed = _time.perf_counter() - start
+    assert "gk_was_engaged" in result.columns
+    assert elapsed < 0.2, f"add_pre_shot_gk_context(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
+    benchmark(spu.add_pre_shot_gk_context, actions)
