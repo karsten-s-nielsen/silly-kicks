@@ -10,7 +10,7 @@ import pandas as pd
 from . import config as spadlconfig
 from .base import _add_dribbles, _fix_clearances, _fix_direction_of_play
 from .schema import ConversionReport
-from .utils import _finalize_output, _validate_input_columns
+from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
 _SB_FIELD_LENGTH: int = 120  # StatsBomb internal grid length
 _SB_FIELD_WIDTH: int = 80  # StatsBomb internal grid width
@@ -110,6 +110,8 @@ def convert_to_actions(
     home_team_id: int,
     xy_fidelity_version: int | None = None,
     shot_fidelity_version: int | None = None,
+    *,
+    preserve_native: list[str] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert StatsBomb events to SPADL actions.
@@ -128,18 +130,39 @@ def convert_to_actions(
         for shots. If not specified, the fidelity version is inferred from the
         data.
 
+    preserve_native : list[str], optional
+        Provider-native event fields to preserve alongside the canonical SPADL
+        output as extra columns (e.g. ``["possession", "possession_team"]`` for
+        StatsBomb's possession-sequence metadata). Each field must be present
+        on the input ``events`` DataFrame and must not overlap with the SPADL
+        schema. Synthetic actions inserted by ``_add_dribbles`` get NaN.
+
     Returns
     -------
     actions : pd.DataFrame
-        DataFrame with corresponding SPADL actions.
+        DataFrame with corresponding SPADL actions, plus any ``preserve_native``
+        columns appended.
 
     Raises
     ------
     ValueError
-        If ``xy_fidelity_version`` or ``shot_fidelity_version`` is not 1 or 2.
+        If ``xy_fidelity_version`` or ``shot_fidelity_version`` is not 1 or 2,
+        or if any ``preserve_native`` field is missing from ``events`` or
+        overlaps with the SPADL schema.
+
+    Examples
+    --------
+    Preserve StatsBomb's native possession sequence number alongside the
+    SPADL output, e.g. for downstream possession-aware analytics::
+
+        actions, report = convert_to_actions(
+            events, home_team_id=100, preserve_native=["possession"]
+        )
+        # "possession" now appears as an extra column on actions.
 
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="StatsBomb")
+    _validate_preserve_native(events, preserve_native, provider="StatsBomb")
     _event_type_counts = Counter(events["type_name"])
 
     actions = pd.DataFrame()
@@ -184,6 +207,13 @@ def convert_to_actions(
     actions["team_id"] = events.team_id
     actions["player_id"] = events.player_id
 
+    # Provider-native passthroughs (per preserve_native): copy alongside the
+    # canonical source-to-action columns so they survive filter/sort/dribble
+    # insertion. Synthetic dribbles produced downstream by _add_dribbles get
+    # NaN in these columns automatically (no source event to inherit from).
+    for _col in preserve_native or []:
+        actions[_col] = events[_col].values
+
     # split (end)location column into x and y columns
     end_location = (
         events["_pass_end_location"]
@@ -224,7 +254,7 @@ def convert_to_actions(
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 
-    actions = _finalize_output(actions)
+    actions = _finalize_output(actions, extra_columns=preserve_native)
 
     mapped_counts: dict[str, int] = {}
     excluded_counts: dict[str, int] = {}

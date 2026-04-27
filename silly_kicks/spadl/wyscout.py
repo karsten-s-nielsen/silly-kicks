@@ -12,7 +12,7 @@ from .base import (
     _fix_direction_of_play,
 )
 from .schema import ConversionReport
-from .utils import _finalize_output, _validate_input_columns
+from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
 # ---------------------------------------------------------------------------
 # Wyscout event type IDs
@@ -218,6 +218,8 @@ def convert_to_actions(
     events: pd.DataFrame,
     home_team_id: int,
     goalkeeper_ids: set[int] | None = None,
+    *,
+    preserve_native: list[str] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert Wyscout events to SPADL actions.
@@ -232,16 +234,32 @@ def convert_to_actions(
         If provided, aerial duels by these player IDs are mapped to
         ``keeper_claim`` instead of the default duel dispatch.  An empty
         set is equivalent to ``None`` (no reclassification).
+    preserve_native : list[str], optional
+        Provider-native event fields to preserve alongside the canonical SPADL
+        output as extra columns. Each field must be present on the input
+        ``events`` DataFrame and must not overlap with the SPADL schema.
+        Synthetic actions inserted by ``_add_dribbles`` get NaN.
 
     Returns
     -------
     actions : pd.DataFrame
-        SPADL actions with guaranteed columns and dtypes.
+        SPADL actions with guaranteed columns and dtypes, plus any
+        ``preserve_native`` columns appended.
     report : ConversionReport
         Audit trail with event counts, mapped/excluded/unrecognized breakdowns.
 
+    Examples
+    --------
+    Preserve a bronze-passthrough field (e.g. ``competition_name``) alongside
+    the SPADL output::
+
+        actions, report = convert_to_actions(
+            events, home_team_id=100, preserve_native=["competition_name"]
+        )
+
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Wyscout")
+    _validate_preserve_native(events, preserve_native, provider="Wyscout")
     _event_type_counts = Counter(events["type_id"])
 
     _fix_wyscout_events, _make_new_positions, _fix_actions = _lazy_import_events()
@@ -262,14 +280,14 @@ def convert_to_actions(
         events.loc[gk_aerial_mask, "subtype_id"] = _WS_SUBTYPE_GK_CLAIM
 
     events = _fix_wyscout_events(events)
-    actions = _create_df_actions(events)
+    actions = _create_df_actions(events, preserve_native=preserve_native)
     actions = _fix_actions(actions)
     actions = _fix_direction_of_play(actions, home_team_id)
     actions = _fix_clearances(actions)
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 
-    actions = _finalize_output(actions)
+    actions = _finalize_output(actions, extra_columns=preserve_native)
 
     mapped_counts: dict[str, int] = {}
     excluded_counts: dict[str, int] = {}

@@ -86,7 +86,10 @@ _EXCLUDED_EVENT_TYPES: frozenset[EventType] = frozenset(
 
 
 def convert_to_actions(
-    dataset: EventDataset, game_id: str | int | None = None
+    dataset: EventDataset,
+    game_id: str | int | None = None,
+    *,
+    preserve_native: list[str] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """Convert a Kloppy event data set to SPADL actions.
 
@@ -97,13 +100,52 @@ def convert_to_actions(
     game_id : str or int, optional
         The identifier of the game. If not provided, the game id will not be
         set in the SPADL DataFrame.
+    preserve_native : list[str], optional
+        Provider-native fields to preserve from each event's
+        ``event.raw_event`` dict onto the output actions df. Each field
+        becomes an extra column alongside the canonical SPADL columns.
+        Synthetic actions inserted by ``_add_dribbles`` get NaN.
+
+        Requires kloppy >= 3.15 with raw-event preservation enabled
+        (the kloppy default for that version range; see kloppy docs if
+        you parse with ``raw_event=False``).
 
     Returns
     -------
     actions : pd.DataFrame
         DataFrame with corresponding SPADL actions.
 
+    Raises
+    ------
+    ValueError
+        If any ``preserve_native`` field overlaps with the canonical
+        ``KLOPPY_SPADL_COLUMNS`` schema, or is missing from the first
+        event's ``raw_event`` dict, or if ``raw_event`` is not a dict.
     """
+    # Validate preserve_native upfront (before transform, so we fail fast).
+    if preserve_native:
+        overlap = [c for c in preserve_native if c in KLOPPY_SPADL_COLUMNS]
+        if overlap:
+            raise ValueError(
+                f"Kloppy convert_to_actions: preserve_native fields overlap with the SPADL schema: "
+                f"{sorted(overlap)}. These are already canonical SPADL columns; remove them from preserve_native."
+            )
+        sample = next(iter(dataset.events), None)
+        if sample is not None:
+            raw = getattr(sample, "raw_event", None)
+            if not isinstance(raw, dict):
+                raise ValueError(
+                    f"Kloppy convert_to_actions: preserve_native requires event.raw_event to be a dict "
+                    f"(kloppy >= 3.15 with raw-event preservation). First event raw_event was "
+                    f"{type(raw).__name__}."
+                )
+            missing = [c for c in preserve_native if c not in raw]
+            if missing:
+                raise ValueError(
+                    f"Kloppy convert_to_actions: preserve_native fields missing from event.raw_event: "
+                    f"{sorted(missing)}. Available raw_event keys: {sorted(raw.keys())}."
+                )
+
     # Check if Kloppy is installed and if the version is supported
     if dataset.metadata.provider not in _SUPPORTED_PROVIDERS:
         warnings.warn(
@@ -146,6 +188,11 @@ def convert_to_actions(
             **_get_end_location(event),
             **_parse_event(event),
         )
+        if preserve_native:
+            raw = getattr(event, "raw_event", None)
+            raw_dict = raw if isinstance(raw, dict) else {}
+            for _col in preserve_native:
+                action[_col] = raw_dict.get(_col)
         actions.append(action)
 
     # Create the SPADL actions DataFrame
@@ -161,7 +208,7 @@ def convert_to_actions(
     df_actions["action_id"] = range(len(df_actions))
     df_actions = _add_dribbles(df_actions)
 
-    df_actions = _finalize_output(df_actions, KLOPPY_SPADL_COLUMNS)
+    df_actions = _finalize_output(df_actions, KLOPPY_SPADL_COLUMNS, extra_columns=preserve_native)
 
     mapped_counts: dict[str, int] = {}
     excluded_counts: dict[str, int] = {}

@@ -244,13 +244,20 @@ def _vectorized_result_id(df_events: pd.DataFrame) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
-def _create_df_actions(df_events: pd.DataFrame) -> pd.DataFrame:
+def _create_df_actions(
+    df_events: pd.DataFrame,
+    preserve_native: list[str] | None = None,
+) -> pd.DataFrame:
     """Create the SciSports action dataframe.
 
     Parameters
     ----------
     df_events : pd.DataFrame
         Wyscout event dataframe
+    preserve_native : list[str], optional
+        Provider-native fields to copy from ``df_events`` onto the output
+        actions df alongside the canonical SPADL columns. Used by the
+        public ``convert_to_actions(preserve_native=...)`` parameter.
 
     Returns
     -------
@@ -258,19 +265,19 @@ def _create_df_actions(df_events: pd.DataFrame) -> pd.DataFrame:
         SciSports action dataframe
     """
     df_events["time_seconds"] = df_events["milliseconds"] / 1000
-    df_actions = df_events[
-        [
-            "game_id",
-            "period_id",
-            "time_seconds",
-            "team_id",
-            "player_id",
-            "start_x",
-            "start_y",
-            "end_x",
-            "end_y",
-        ]
-    ].copy()
+    base_cols = [
+        "game_id",
+        "period_id",
+        "time_seconds",
+        "team_id",
+        "player_id",
+        "start_x",
+        "start_y",
+        "end_x",
+        "end_y",
+    ]
+    extras = list(preserve_native) if preserve_native else []
+    df_actions = df_events[[*base_cols, *extras]].copy()
     df_actions["original_event_id"] = df_events["event_id"].astype(object)
     df_actions["bodypart_id"] = _vectorized_bodypart_id(df_events)
     df_actions["type_id"] = _vectorized_type_id(df_events)

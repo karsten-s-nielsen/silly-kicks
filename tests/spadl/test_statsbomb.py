@@ -166,6 +166,199 @@ def test_statsbomb_goal_keeper_key_fallback():
     )
 
 
+class TestStatsbombPreserveNative:
+    """Tests for the ``preserve_native`` kwarg added in 1.1.0.
+
+    Surfaces provider-native fields (e.g. StatsBomb's top-level ``possession``
+    sequence number, ``possession_team``, ``play_pattern``) through conversion
+    as extra columns alongside the canonical SPADL output.
+    """
+
+    @staticmethod
+    def _events_with_possession() -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "game_id": 1,
+                    "event_id": "ev-1",
+                    "period_id": 1,
+                    "timestamp": "00:00:01.000",
+                    "team_id": 100,
+                    "player_id": 200,
+                    "type_name": "Pass",
+                    "location": [60.0, 40.0],
+                    "extra": {
+                        "pass": {
+                            "end_location": [70.0, 40.0],
+                            "outcome": {"name": "Complete"},
+                            "height": {"name": "Ground Pass"},
+                        }
+                    },
+                    "possession": 1,
+                    "possession_team": {"id": 100, "name": "Home"},
+                },
+                {
+                    "game_id": 1,
+                    "event_id": "ev-2",
+                    "period_id": 1,
+                    "timestamp": "00:00:05.000",
+                    "team_id": 100,
+                    "player_id": 201,
+                    "type_name": "Pass",
+                    "location": [65.0, 42.0],
+                    "extra": {
+                        "pass": {
+                            "end_location": [75.0, 42.0],
+                            "outcome": {"name": "Complete"},
+                            "height": {"name": "Ground Pass"},
+                        }
+                    },
+                    "possession": 1,
+                    "possession_team": {"id": 100, "name": "Home"},
+                },
+                {
+                    "game_id": 1,
+                    "event_id": "ev-3",
+                    "period_id": 1,
+                    "timestamp": "00:00:10.000",
+                    "team_id": 200,
+                    "player_id": 300,
+                    "type_name": "Pass",
+                    "location": [60.0, 40.0],
+                    "extra": {
+                        "pass": {
+                            "end_location": [50.0, 40.0],
+                            "outcome": {"name": "Complete"},
+                            "height": {"name": "Ground Pass"},
+                        }
+                    },
+                    "possession": 2,
+                    "possession_team": {"id": 200, "name": "Away"},
+                },
+            ]
+        )
+
+    def test_default_none_unchanged(self):
+        events = self._events_with_possession()
+        actions, _ = statsbomb.convert_to_actions(
+            events, home_team_id=100, xy_fidelity_version=1, shot_fidelity_version=1
+        )
+        assert "possession" not in actions.columns
+        assert list(actions.columns) == list(SPADL_COLUMNS.keys())
+
+    def test_empty_list_unchanged(self):
+        events = self._events_with_possession()
+        actions, _ = statsbomb.convert_to_actions(
+            events, home_team_id=100, xy_fidelity_version=1, shot_fidelity_version=1, preserve_native=[]
+        )
+        assert list(actions.columns) == list(SPADL_COLUMNS.keys())
+
+    def test_single_field_preserved(self):
+        events = self._events_with_possession()
+        actions, _ = statsbomb.convert_to_actions(
+            events,
+            home_team_id=100,
+            xy_fidelity_version=1,
+            shot_fidelity_version=1,
+            preserve_native=["possession"],
+        )
+        assert "possession" in actions.columns
+        # Map original_event_id → preserved possession value (skipping synthetic dribbles which have NaN).
+        non_synthetic = actions[actions["original_event_id"].notna() & (actions["original_event_id"] != "")]
+        possession_for = dict(zip(non_synthetic["original_event_id"], non_synthetic["possession"], strict=True))
+        assert possession_for.get("ev-1") == 1
+        assert possession_for.get("ev-2") == 1
+        assert possession_for.get("ev-3") == 2
+
+    def test_multiple_fields_preserved(self):
+        events = self._events_with_possession()
+        actions, _ = statsbomb.convert_to_actions(
+            events,
+            home_team_id=100,
+            xy_fidelity_version=1,
+            shot_fidelity_version=1,
+            preserve_native=["possession", "possession_team"],
+        )
+        assert "possession" in actions.columns
+        assert "possession_team" in actions.columns
+
+    def test_missing_field_raises(self):
+        events = self._events_with_possession()
+        with pytest.raises(ValueError, match="preserve_native"):
+            statsbomb.convert_to_actions(
+                events,
+                home_team_id=100,
+                xy_fidelity_version=1,
+                shot_fidelity_version=1,
+                preserve_native=["does_not_exist"],
+            )
+
+    def test_overlap_with_schema_raises(self):
+        events = self._events_with_possession()
+        with pytest.raises(ValueError, match=r"overlap|already"):
+            statsbomb.convert_to_actions(
+                events,
+                home_team_id=100,
+                xy_fidelity_version=1,
+                shot_fidelity_version=1,
+                preserve_native=["team_id"],
+            )
+
+    def test_synthetic_dribbles_get_nan(self):
+        # Two same-team passes with sufficient gap to trigger _add_dribbles.
+        events = pd.DataFrame(
+            [
+                {
+                    "game_id": 1,
+                    "event_id": "ev-A",
+                    "period_id": 1,
+                    "timestamp": "00:00:01.000",
+                    "team_id": 100,
+                    "player_id": 200,
+                    "type_name": "Pass",
+                    "location": [10.0, 40.0],
+                    "extra": {
+                        "pass": {
+                            "end_location": [30.0, 40.0],
+                            "outcome": {"name": "Complete"},
+                            "height": {"name": "Ground Pass"},
+                        }
+                    },
+                    "possession": 1,
+                },
+                {
+                    "game_id": 1,
+                    "event_id": "ev-B",
+                    "period_id": 1,
+                    "timestamp": "00:00:03.000",
+                    "team_id": 100,
+                    "player_id": 200,
+                    "type_name": "Pass",
+                    "location": [50.0, 40.0],
+                    "extra": {
+                        "pass": {
+                            "end_location": [70.0, 40.0],
+                            "outcome": {"name": "Complete"},
+                            "height": {"name": "Ground Pass"},
+                        }
+                    },
+                    "possession": 1,
+                },
+            ]
+        )
+        actions, _ = statsbomb.convert_to_actions(
+            events,
+            home_team_id=100,
+            xy_fidelity_version=1,
+            shot_fidelity_version=1,
+            preserve_native=["possession"],
+        )
+        # Synthetic dribble has NULL original_event_id (per CHANGELOG).
+        synthetic = actions[actions["original_event_id"].isna()]
+        if len(synthetic) > 0:
+            assert synthetic["possession"].isna().all()
+
+
 # ---------------------------------------------------------------------------
 # Tests below require StatsBomb event fixtures and are marked e2e.
 # ---------------------------------------------------------------------------
