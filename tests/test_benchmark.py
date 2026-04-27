@@ -43,3 +43,40 @@ def test_feature_column_names_benchmark(benchmark: "BenchmarkFixture") -> None: 
     from silly_kicks.vaep.base import xfns_default
 
     benchmark(fs.feature_column_names, xfns_default, 3)
+
+
+def test_add_possessions_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
+    """Benchmark ``add_possessions`` on a 1500-action match (typical SPADL match size).
+
+    Design budget per spec: median < 50ms on local dev hardware. Hard CI bound is
+    looser (200ms) to absorb shared-runner variance; the catch-quadratic-blowup
+    safeguard is the sublinear scaling test below.
+    """
+    import time as _time
+
+    actions = _make_spadl_actions(1500)
+    spu.add_possessions(actions)  # warmup
+    start = _time.perf_counter()
+    result = spu.add_possessions(actions)
+    elapsed = _time.perf_counter() - start
+    assert "possession_id" in result.columns
+    assert elapsed < 0.2, f"add_possessions(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
+    benchmark(spu.add_possessions, actions)
+
+
+def test_add_possessions_sublinear_scaling_10k(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
+    """``add_possessions`` on 10k actions must stay sublinear (<2s hard CI bound).
+
+    The vectorised pandas/numpy implementation is O(n); a regression to a
+    Python-level row loop would push this benchmark into multi-second territory.
+    """
+    import time as _time
+
+    actions = _make_spadl_actions(10_000)
+    spu.add_possessions(actions)  # warmup
+    start = _time.perf_counter()
+    result = spu.add_possessions(actions)
+    elapsed = _time.perf_counter() - start
+    assert "possession_id" in result.columns
+    assert elapsed < 2.0, f"add_possessions(10k) took {elapsed * 1000:.2f}ms, hard CI budget 2000ms"
+    benchmark(spu.add_possessions, actions)
