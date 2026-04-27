@@ -10,6 +10,69 @@ from silly_kicks.spadl.schema import SPADL_COLUMNS, ConversionReport
 # ---------------------------------------------------------------------------
 
 
+class TestOptaPreserveNative:
+    """Tests for the ``preserve_native`` kwarg added in 1.1.0."""
+
+    @staticmethod
+    def _events_with_extras() -> pd.DataFrame:
+        base = {
+            "game_id": 318175,
+            "type_id": 1,
+            "period_id": 1,
+            "minute": 2,
+            "second": 14,
+            "timestamp": "2010-01-27 19:47:14",
+            "player_id": 8786,
+            "team_id": 157,
+            "outcome": True,
+            "start_x": 50.0,
+            "start_y": 50.0,
+            "end_x": 60.0,
+            "end_y": 50.0,
+            "assist": False,
+            "keypass": False,
+            "qualifiers": {1: True},
+            "type_name": "pass",
+        }
+        return pd.DataFrame(
+            [
+                {**base, "event_id": 100001, "competition_id": "EPL", "match_phase": "open"},
+                {**base, "event_id": 100002, "competition_id": "EPL", "match_phase": "open"},
+            ]
+        )
+
+    def test_default_none_unchanged(self):
+        events = self._events_with_extras()
+        actions, _ = opta.convert_to_actions(events, home_team_id=157)
+        assert "competition_id" not in actions.columns
+        assert list(actions.columns) == list(SPADL_COLUMNS.keys())
+
+    def test_single_field_preserved(self):
+        events = self._events_with_extras()
+        actions, _ = opta.convert_to_actions(events, home_team_id=157, preserve_native=["competition_id"])
+        assert "competition_id" in actions.columns
+        non_synthetic = actions[actions["original_event_id"].notna()]
+        assert all(v == "EPL" for v in non_synthetic["competition_id"])
+
+    def test_multiple_fields_preserved(self):
+        events = self._events_with_extras()
+        actions, _ = opta.convert_to_actions(
+            events, home_team_id=157, preserve_native=["competition_id", "match_phase"]
+        )
+        assert "competition_id" in actions.columns
+        assert "match_phase" in actions.columns
+
+    def test_missing_field_raises(self):
+        events = self._events_with_extras()
+        with pytest.raises(ValueError, match="preserve_native"):
+            opta.convert_to_actions(events, home_team_id=157, preserve_native=["does_not_exist"])
+
+    def test_overlap_with_schema_raises(self):
+        events = self._events_with_extras()
+        with pytest.raises(ValueError, match=r"overlap|already"):
+            opta.convert_to_actions(events, home_team_id=157, preserve_native=["team_id"])
+
+
 def test_convert_goalkick() -> None:
     event = pd.DataFrame(
         [

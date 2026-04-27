@@ -56,6 +56,92 @@ class TestFinalizeOutput:
         assert result["original_event_id"].dtype == object
 
 
+class TestFinalizeOutputExtraColumns:
+    """Tests for the ``extra_columns`` kwarg added in 1.1.0.
+
+    Powers the public ``preserve_native`` parameter on ``convert_to_actions``
+    in each provider module. When ``extra_columns`` is supplied, the named
+    columns are appended to the projected schema columns (preserving their
+    input order and dtype) rather than being dropped.
+    """
+
+    def test_default_none_preserves_existing_behavior(self):
+        df = _make_valid_spadl_df()
+        df["extra_col"] = "should_be_dropped"
+        result = _finalize_output(df)  # extra_columns defaults to None
+        assert list(result.columns) == list(SPADL_COLUMNS.keys())
+        assert "extra_col" not in result.columns
+
+    def test_empty_list_preserves_existing_behavior(self):
+        df = _make_valid_spadl_df()
+        df["extra_col"] = "should_be_dropped"
+        result = _finalize_output(df, extra_columns=[])
+        assert list(result.columns) == list(SPADL_COLUMNS.keys())
+        assert "extra_col" not in result.columns
+
+    def test_single_extra_column_preserved(self):
+        df = _make_valid_spadl_df()
+        df["my_extra"] = ["a", "b", "c"]
+        result = _finalize_output(df, extra_columns=["my_extra"])
+        assert "my_extra" in result.columns
+        assert list(result["my_extra"]) == ["a", "b", "c"]
+
+    def test_multiple_extra_columns_preserved(self):
+        df = _make_valid_spadl_df()
+        df["int_extra"] = [1, 2, 3]
+        df["str_extra"] = ["x", "y", "z"]
+        result = _finalize_output(df, extra_columns=["int_extra", "str_extra"])
+        assert "int_extra" in result.columns
+        assert "str_extra" in result.columns
+        assert list(result["int_extra"]) == [1, 2, 3]
+        assert list(result["str_extra"]) == ["x", "y", "z"]
+
+    def test_missing_extra_column_raises(self):
+        df = _make_valid_spadl_df()
+        with pytest.raises(ValueError, match="extra_columns"):
+            _finalize_output(df, extra_columns=["does_not_exist"])
+
+    def test_extra_columns_overlapping_schema_raises(self):
+        df = _make_valid_spadl_df()
+        with pytest.raises(ValueError, match=r"overlap|already"):
+            _finalize_output(df, extra_columns=["team_id"])
+
+    def test_extras_appended_after_schema_columns(self):
+        df = _make_valid_spadl_df()
+        df["alpha"] = [1, 2, 3]
+        df["beta"] = ["a", "b", "c"]
+        result = _finalize_output(df, extra_columns=["alpha", "beta"])
+        assert list(result.columns) == [*SPADL_COLUMNS.keys(), "alpha", "beta"]
+
+    def test_extras_order_matches_argument_order(self):
+        df = _make_valid_spadl_df()
+        df["alpha"] = [1, 2, 3]
+        df["beta"] = [4, 5, 6]
+        df["gamma"] = [7, 8, 9]
+        # Specified out of alphabetical order — output must follow argument order.
+        result = _finalize_output(df, extra_columns=["gamma", "alpha", "beta"])
+        assert list(result.columns)[-3:] == ["gamma", "alpha", "beta"]
+
+    def test_extras_keep_input_dtype(self):
+        df = _make_valid_spadl_df()
+        df["int_extra"] = pd.Series([1, 2, 3], dtype="int32")
+        df["float_extra"] = pd.Series([1.5, 2.5, 3.5], dtype="float64")
+        df["str_extra"] = pd.Series(["a", "b", "c"], dtype=object)
+        result = _finalize_output(df, extra_columns=["int_extra", "float_extra", "str_extra"])
+        # extras keep their input dtype; only schema columns get astype-coerced.
+        assert result["int_extra"].dtype == "int32"
+        assert result["float_extra"].dtype == "float64"
+        assert result["str_extra"].dtype == object
+
+    def test_schema_columns_still_dtype_coerced_with_extras(self):
+        df = _make_valid_spadl_df()
+        df["game_id"] = df["game_id"].astype(float)  # wrong dtype on schema column
+        df["my_extra"] = ["a", "b", "c"]
+        result = _finalize_output(df, extra_columns=["my_extra"])
+        # Schema dtype still enforced even when extras are present.
+        assert result["game_id"].dtype == "int64"
+
+
 class TestValidateInputColumns:
     def test_missing_column_raises(self):
         df = pd.DataFrame({"game_id": [1], "event_id": [1]})

@@ -15,7 +15,7 @@ from .base import (
     min_dribble_length,
 )
 from .schema import ConversionReport
-from .utils import _finalize_output, _validate_input_columns
+from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
 EXPECTED_INPUT_COLUMNS: set[str] = {
     "game_id",
@@ -81,7 +81,12 @@ _EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 
-def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.DataFrame, ConversionReport]:
+def convert_to_actions(
+    events: pd.DataFrame,
+    home_team_id: int,
+    *,
+    preserve_native: list[str] | None = None,
+) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert Opta events to SPADL actions.
 
@@ -91,14 +96,29 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
         DataFrame containing Opta events from a single game.
     home_team_id : int
         ID of the home team in the corresponding game.
+    preserve_native : list[str], optional
+        Provider-native event fields to preserve alongside the canonical SPADL
+        output as extra columns. Each field must be present on the input
+        ``events`` DataFrame and must not overlap with the SPADL schema.
+        Synthetic actions inserted by ``_add_dribbles`` get NaN.
 
     Returns
     -------
     actions : pd.DataFrame
-        DataFrame with corresponding SPADL actions.
+        DataFrame with corresponding SPADL actions, plus any
+        ``preserve_native`` columns appended.
+
+    Examples
+    --------
+    Preserve a top-level Opta field alongside the SPADL output::
+
+        actions, report = convert_to_actions(
+            events, home_team_id=157, preserve_native=["competition_id"]
+        )
 
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Opta")
+    _validate_preserve_native(events, preserve_native, provider="Opta")
     _event_type_counts = Counter(events["type_name"])
 
     actions = pd.DataFrame()
@@ -122,6 +142,13 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
         actions[col] = events[col].clip(0, 100) / 100 * spadlconfig.field_length
     for col in ["start_y", "end_y"]:
         actions[col] = events[col].clip(0, 100) / 100 * spadlconfig.field_width
+
+    # Provider-native passthroughs (per preserve_native): copy alongside the
+    # canonical source-to-action columns so they survive filter/sort/dribble
+    # insertion. Synthetic dribbles produced downstream by _add_dribbles get
+    # NaN in these columns automatically.
+    for _col in preserve_native or []:
+        actions[_col] = events[_col].values
 
     # Pre-explode qualifier flags for vectorized lookups
     _used_qualifier_ids = [1, 2, 3, 5, 6, 9, 15, 20, 21, 26, 28, 32, 72, 107, 124, 155, 168, 238]
@@ -149,7 +176,7 @@ def convert_to_actions(events: pd.DataFrame, home_team_id: int) -> tuple[pd.Data
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 
-    actions = _finalize_output(actions)
+    actions = _finalize_output(actions, extra_columns=preserve_native)
 
     mapped_counts: dict[str, int] = {}
     excluded_counts: dict[str, int] = {}

@@ -5,6 +5,27 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-04-27
+
+### Added
+- `preserve_native` parameter on `convert_to_actions` for all four SPADL
+  converters (`statsbomb`, `wyscout`, `opta`, `kloppy`). Surfaces provider-
+  native event fields alongside the canonical SPADL output as extra columns
+  on the returned DataFrame — useful for surfacing fields that the canonical
+  SPADL schema doesn't carry (e.g. StatsBomb's native `possession` sequence
+  number, `possession_team`, `play_pattern`; Wyscout bronze passthroughs;
+  Opta competition metadata). Each `preserve_native` field must be present
+  on the input and must not overlap with the SPADL schema; both conditions
+  raise `ValueError` early. Synthetic actions inserted by `_add_dribbles`
+  get NaN in preserved columns (no source event to inherit from).
+- `extra_columns` parameter on internal `silly_kicks.spadl.utils._finalize_output()`
+  that powers the public `preserve_native` feature.
+- `_validate_preserve_native()` helper in `silly_kicks.spadl.utils` for
+  shared upfront validation across providers (input-column presence +
+  schema-overlap check).
+- Kloppy `preserve_native` requires kloppy >= 3.15 with raw-event
+  preservation. Each preserved field is read from `event.raw_event[field]`.
+
 ## [1.0.0] — 2026-04-07
 
 ### Added

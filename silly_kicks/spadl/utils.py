@@ -73,8 +73,10 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame
 def _finalize_output(
     df: pd.DataFrame,
     schema: dict[str, str] | None = None,
+    *,
+    extra_columns: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Project to declared columns and enforce dtypes.
+    """Project to declared columns and enforce dtypes, optionally preserving extras.
 
     Parameters
     ----------
@@ -82,22 +84,109 @@ def _finalize_output(
         The raw converter output DataFrame.
     schema : dict[str, str], optional
         Column name to dtype mapping. Defaults to SPADL_COLUMNS.
+    extra_columns : list[str], optional
+        Additional columns to preserve in the output, appended after the
+        schema columns in the order specified. Each must be present in
+        *df* and must NOT overlap with *schema*. Their existing dtypes
+        are preserved (no coercion).
+
+        Powers the public ``preserve_native`` parameter on each provider's
+        ``convert_to_actions`` for surfacing provider-native fields (e.g.
+        StatsBomb ``possession``) alongside the canonical SPADL columns.
 
     Returns
     -------
     pd.DataFrame
-        DataFrame with exactly the declared columns and dtypes.
+        DataFrame with exactly the declared schema columns (with enforced
+        dtypes) plus any *extra_columns* (with their input dtypes), in
+        ``[*schema, *extra_columns]`` order.
+
+    Raises
+    ------
+    ValueError
+        If any *extra_columns* entry is missing from *df* or overlaps with
+        *schema*.
 
     The returned DataFrame is guaranteed to contain exactly the columns
-    in *schema* with the specified dtypes.  Callers do not need defensive
-    column-existence checks after calling a converter.
+    in *schema* with the specified dtypes plus *extra_columns* with their
+    input dtypes. Callers do not need defensive column-existence checks
+    after calling a converter.
     """
     if schema is None:
         schema = SPADL_COLUMNS
-    result = df[list(schema.keys())].copy()
+    extras = list(extra_columns) if extra_columns else []
+
+    if extras:
+        missing = [c for c in extras if c not in df.columns]
+        if missing:
+            raise ValueError(
+                f"_finalize_output: extra_columns missing from df: {sorted(missing)}. Available: {sorted(df.columns)}"
+            )
+        overlap = [c for c in extras if c in schema]
+        if overlap:
+            raise ValueError(
+                f"_finalize_output: extra_columns overlap with schema: {sorted(overlap)}. "
+                f"These names are already part of the canonical schema; remove them from extra_columns."
+            )
+
+    cols = [*schema.keys(), *extras]
+    result = df[cols].copy()
     for col, dtype in schema.items():
         result[col] = result[col].astype(dtype)
     return result
+
+
+def _validate_preserve_native(
+    df: pd.DataFrame,
+    preserve_native: list[str] | None,
+    provider: str,
+    *,
+    schema: dict[str, str] | None = None,
+) -> None:
+    """Validate that ``preserve_native`` fields are present in the input df
+    AND do not overlap with the canonical output schema.
+
+    Powers the public ``preserve_native`` parameter on each provider's
+    ``convert_to_actions``. Raises early — before the conversion pipeline
+    starts — so callers see a clear error rather than a deep-stack
+    duplicate-column failure later in the pipeline.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input event DataFrame.
+    preserve_native : list[str] or None
+        Provider-native fields the caller wants to preserve through
+        conversion. ``None`` or empty list is a no-op.
+    provider : str
+        Provider name for error messages.
+    schema : dict[str, str], optional
+        Output schema to check against for overlap. Defaults to
+        ``SPADL_COLUMNS``. Pass a different schema (e.g.
+        ``KLOPPY_SPADL_COLUMNS``) when relevant.
+
+    Raises
+    ------
+    ValueError
+        If any field in ``preserve_native`` is missing from ``df``, OR
+        if any field overlaps with ``schema``'s column names.
+    """
+    if not preserve_native:
+        return
+    if schema is None:
+        schema = SPADL_COLUMNS
+    missing = [c for c in preserve_native if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"{provider} convert_to_actions: preserve_native fields missing from events: "
+            f"{sorted(missing)}. Available columns: {sorted(df.columns)}"
+        )
+    overlap = [c for c in preserve_native if c in schema]
+    if overlap:
+        raise ValueError(
+            f"{provider} convert_to_actions: preserve_native fields overlap with the SPADL schema: "
+            f"{sorted(overlap)}. These are already canonical SPADL columns; remove them from preserve_native."
+        )
 
 
 def _validate_input_columns(

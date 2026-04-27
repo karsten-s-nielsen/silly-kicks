@@ -5,9 +5,88 @@ from silly_kicks.spadl import config as spadl
 from silly_kicks.spadl import wyscout as wy
 from silly_kicks.spadl.schema import SPADL_COLUMNS, ConversionReport
 
+
+def _make_pass_event(*, event_id: int, milliseconds: float, **extras: object) -> dict[str, object]:
+    """A minimal valid Wyscout pass event with optional extra fields."""
+    base: dict[str, object] = {
+        "type_id": 8,
+        "subtype_name": "Simple pass",
+        "tags": [{"id": 1801}],
+        "player_id": 200,
+        "positions": [{"y": 50, "x": 50}, {"y": 40, "x": 60}],
+        "game_id": 1,
+        "type_name": "Pass",
+        "team_id": 100,
+        "period_id": 1,
+        "milliseconds": milliseconds,
+        "subtype_id": 85,
+        "event_id": event_id,
+    }
+    base.update(extras)
+    return base
+
+
 # ---------------------------------------------------------------------------
 # Tests that use inline DataFrames (no external fixtures required)
 # ---------------------------------------------------------------------------
+
+
+class TestWyscoutPreserveNative:
+    """Tests for the ``preserve_native`` kwarg added in 1.1.0.
+
+    Surfaces provider-native fields (e.g. Wyscout's ``subtype_name`` or any
+    bronze passthrough such as ``competition_name``) through conversion as
+    extra columns alongside the canonical SPADL output.
+    """
+
+    @staticmethod
+    def _events_with_extras() -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                _make_pass_event(
+                    event_id=10001, milliseconds=1000.0, competition_name="Test League", phase="open_play"
+                ),
+                _make_pass_event(
+                    event_id=10002, milliseconds=2000.0, competition_name="Test League", phase="open_play"
+                ),
+                _make_pass_event(event_id=10003, milliseconds=3000.0, competition_name="Test League", phase="counter"),
+            ]
+        )
+
+    def test_default_none_unchanged(self):
+        events = self._events_with_extras()
+        actions, _ = wy.convert_to_actions(events, home_team_id=100)
+        assert "competition_name" not in actions.columns
+        assert "phase" not in actions.columns
+        assert list(actions.columns) == list(SPADL_COLUMNS.keys())
+
+    def test_empty_list_unchanged(self):
+        events = self._events_with_extras()
+        actions, _ = wy.convert_to_actions(events, home_team_id=100, preserve_native=[])
+        assert list(actions.columns) == list(SPADL_COLUMNS.keys())
+
+    def test_single_field_preserved(self):
+        events = self._events_with_extras()
+        actions, _ = wy.convert_to_actions(events, home_team_id=100, preserve_native=["competition_name"])
+        assert "competition_name" in actions.columns
+        non_synthetic = actions[actions["original_event_id"].notna()]
+        assert all(v == "Test League" for v in non_synthetic["competition_name"])
+
+    def test_multiple_fields_preserved(self):
+        events = self._events_with_extras()
+        actions, _ = wy.convert_to_actions(events, home_team_id=100, preserve_native=["competition_name", "phase"])
+        assert "competition_name" in actions.columns
+        assert "phase" in actions.columns
+
+    def test_missing_field_raises(self):
+        events = self._events_with_extras()
+        with pytest.raises(ValueError, match="preserve_native"):
+            wy.convert_to_actions(events, home_team_id=100, preserve_native=["does_not_exist"])
+
+    def test_overlap_with_schema_raises(self):
+        events = self._events_with_extras()
+        with pytest.raises(ValueError, match=r"overlap|already"):
+            wy.convert_to_actions(events, home_team_id=100, preserve_native=["team_id"])
 
 
 def test_insert_interception_passes() -> None:
