@@ -5,6 +5,50 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-04-28
+
+### Added
+- **Kloppy converter: Sportec and Metrica support.** `Provider.SPORTEC`
+  (Sportec Solutions / IDSSE Bundesliga event format) and `Provider.METRICA`
+  (Metrica Sports) are now first-class whitelisted providers in
+  `silly_kicks.spadl.kloppy.convert_to_actions`. Empirical verification on
+  real fixture data confirms zero new event-type mappings are required —
+  both providers' kloppy serializers emit only event types already covered
+  by the existing `_MAPPED_EVENT_TYPES` ∪ `_EXCLUDED_EVENT_TYPES` sets.
+  `preserve_native` works transparently for both (their `raw_event` is a
+  `dict`).
+- Real-fixture end-to-end test suites for Sportec and Metrica under
+  `tests/spadl/test_kloppy.py`, plus a parametrized coordinate-clamping
+  test and a per-provider `ConversionReport` shape test. Test fixtures
+  vendored from kloppy's BSD-3-Clause-licensed test files into
+  `tests/datasets/kloppy/`.
+
+### Fixed
+- **`_SoccerActionCoordinateSystem` was unusable on real datasets.** The
+  class definition omitted `__init__`, but `convert_to_actions()`
+  instantiated it with `pitch_length=` / `pitch_width=` kwargs. On any
+  kloppy version with the current `CoordinateSystem` ABC signature
+  (kloppy 3.15+), this raised `TypeError` the moment a real
+  `EventDataset` reached `dataset.transform()`. Latent since 1.0.0
+  because pre-existing `tests/spadl/test_kloppy.py` was pure mocks
+  that never reached the transform call. Affected **all** kloppy-based
+  conversion including the previously-whitelisted StatsBomb path.
+- 2 pyright errors in `silly_kicks/xthreat.py:402` surfaced by newer
+  pandas-stubs / numpy-stubs versions: explicit `dtype=np.float64` added
+  to two `np.linspace` calls so the inferred `NDArray[float64]` matches
+  the `interp(...)` callable signature.
+
+### Changed
+- **Kloppy converter now clamps output coordinates to
+  `[0, field_length] × [0, field_width]` (105 × 68 m).** This aligns the
+  kloppy converter with the established silly-kicks convention — StatsBomb
+  / Wyscout / Opta converters all clamp; kloppy was the lone outlier.
+  Empirically Metrica events emit slight off-pitch coords (observed
+  `x ∈ [-1.62, 104.63]` on the sample game) within source-recording-noise
+  tolerance. Downstream consumers depending on raw off-pitch coordinates
+  from the kloppy path specifically should re-verify (no such consumer
+  documented).
+
 ## [1.5.0] — 2026-04-27
 
 ### Added
