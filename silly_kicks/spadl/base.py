@@ -20,7 +20,7 @@ def _fix_clearances(actions: pd.DataFrame) -> pd.DataFrame:
     return actions
 
 
-def _fix_direction_of_play(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame:
+def _fix_direction_of_play(actions: pd.DataFrame, home_team_id: int | str) -> pd.DataFrame:
     away_idx = (actions.team_id != home_team_id).values
     for col in ["start_x", "end_x"]:
         actions.loc[away_idx, col] = spadlconfig.field_length - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]

@@ -44,7 +44,7 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
 from packaging import version
 
 from . import config as spadlconfig
-from .base import _add_dribbles, _fix_clearances
+from .base import _add_dribbles, _fix_clearances, _fix_direction_of_play
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output
 
@@ -209,6 +209,13 @@ def convert_to_actions(
 
     df_actions["action_id"] = range(len(df_actions))
     df_actions = _add_dribbles(df_actions)
+
+    # Apply direction-of-play unification: flip away-team coords so all actions
+    # are emitted as if the team is attacking left-to-right (canonical SPADL
+    # convention). Aligns this converter with the established statsbomb /
+    # wyscout / opta / sportec / metrica behavior. silly-kicks 1.7.0.
+    home_team_id = dataset.metadata.teams[0].team_id  # Orientation.HOME_AWAY puts home first
+    df_actions = _fix_direction_of_play(df_actions, home_team_id)
 
     # Clamp output coords to the SPADL pitch frame, matching the convention
     # established by the StatsBomb, Wyscout, and Opta converters. Source data
