@@ -380,3 +380,42 @@ class TestSpadlConvertor:
 
     def test_placeholder(self) -> None:
         pytest.skip("StatsBomb fixture data and data loaders are not available")
+
+
+# ---------------------------------------------------------------------------
+# goalkeeper_ids — accepted as no-op for cross-provider API symmetry (1.10.0)
+# StatsBomb's source events natively mark GK actions, so the parameter has
+# no effect on output. Asserting byte-for-byte equivalence catches drift.
+# ---------------------------------------------------------------------------
+
+
+class TestStatsBombGoalkeeperIdsNoOp:
+    @staticmethod
+    def _events() -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "game_id": [1, 1],
+                "event_id": ["e1", "e2"],
+                "period_id": [1, 1],
+                "timestamp": ["00:00:01.000", "00:00:02.000"],
+                "team_id": [100, 100],
+                "player_id": [200, 201],
+                "type_name": ["Pass", "Pass"],
+                "location": [[60.0, 40.0], [70.0, 40.0]],
+                "extra": [{}, {}],
+            }
+        )
+
+    def test_goalkeeper_ids_parameter_is_accepted(self):
+        actions, _ = statsbomb.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids={200, 300})
+        assert isinstance(actions, pd.DataFrame)
+
+    def test_goalkeeper_ids_output_identical_with_and_without(self):
+        a_none, _ = statsbomb.convert_to_actions(self._events(), home_team_id=100)
+        a_set, _ = statsbomb.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids={200})
+        pd.testing.assert_frame_equal(a_none, a_set, check_dtype=True)
+
+    def test_empty_goalkeeper_ids_set_equivalent_to_none(self):
+        a_empty, _ = statsbomb.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids=set())
+        a_none, _ = statsbomb.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids=None)
+        pd.testing.assert_frame_equal(a_empty, a_none, check_dtype=True)

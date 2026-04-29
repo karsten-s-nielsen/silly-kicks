@@ -366,3 +366,141 @@ class TestMetricaCrossPathConsistency:
         assert len(actions_kloppy) > 0
         assert len(actions_dedicated) > 0
         assert list(actions_kloppy.columns) == list(actions_dedicated.columns)
+
+
+# ---------------------------------------------------------------------------
+# Bug 3 — Metrica lacks native GK markers; goalkeeper_ids enables coverage
+# (1.10.0; supersedes pre-1.10.0 where Metrica emitted zero keeper_* actions
+# and the lakehouse adapter had no way to surface GK actions)
+# ---------------------------------------------------------------------------
+
+
+def _df_metrica_pass_by_gk() -> pd.DataFrame:
+    df = _df_minimal_pass()
+    df["player"] = ["GK_HOME"]
+    df["team"] = ["Home"]
+    return df
+
+
+def _df_metrica_recovery_by_gk() -> pd.DataFrame:
+    df = _df_metrica("RECOVERY", None)
+    df["player"] = ["GK_HOME"]
+    return df
+
+
+def _df_metrica_aerial_won_by_gk() -> pd.DataFrame:
+    df = _df_metrica("CHALLENGE", "AERIAL-WON")
+    df["player"] = ["GK_HOME"]
+    return df
+
+
+def _df_metrica_aerial_lost_by_gk() -> pd.DataFrame:
+    df = _df_metrica("CHALLENGE", "AERIAL-LOST")
+    df["player"] = ["GK_HOME"]
+    return df
+
+
+class TestMetricaGoalkeeperIdsRouting:
+    """Without goalkeeper_ids: zero keeper_* actions (1.9.0 default preserved).
+    With goalkeeper_ids: PASS by GK → synth, RECOVERY by GK → keeper_pick_up,
+    CHALLENGE-AERIAL-WON by GK → keeper_claim. Other events unchanged.
+    """
+
+    def test_no_goalkeeper_ids_pass_remains_pass(self):
+        actions, _ = metrica_mod.convert_to_actions(_df_metrica_pass_by_gk(), home_team_id="Home")
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
+
+    def test_no_goalkeeper_ids_recovery_remains_interception(self):
+        actions, _ = metrica_mod.convert_to_actions(_df_metrica_recovery_by_gk(), home_team_id="Home")
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["interception"]
+
+    def test_no_goalkeeper_ids_emits_zero_keeper_actions(self):
+        # Bundle 4 events, all by GK_HOME. Without goalkeeper_ids,
+        # output has zero keeper_* actions — preserves 1.9.0 behavior.
+        events = pd.concat(
+            [
+                _df_metrica_pass_by_gk(),
+                _df_metrica_recovery_by_gk(),
+                _df_metrica_aerial_won_by_gk(),
+                _df_metrica_aerial_lost_by_gk(),
+            ],
+            ignore_index=True,
+        )
+        events["event_id"] = list(range(len(events)))
+        events["start_time_s"] = [10.0, 20.0, 30.0, 40.0]
+        events["end_time_s"] = [10.5, 20.5, 30.5, 40.5]
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        keeper_ids = {
+            spadlconfig.actiontype_id[t] for t in ("keeper_save", "keeper_claim", "keeper_punch", "keeper_pick_up")
+        }
+        keeper_count = actions["type_id"].isin(keeper_ids).sum()
+        assert keeper_count == 0
+
+    def test_pass_by_gk_synthesizes_two_actions(self):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica_pass_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+        )
+        assert len(actions) == 2
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
+        assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["pass"]
+
+    def test_recovery_by_gk_maps_to_keeper_pick_up(self):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica_recovery_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+        )
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
+
+    def test_aerial_won_by_gk_maps_to_keeper_claim(self):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica_aerial_won_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+        )
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_claim"]
+
+    def test_aerial_lost_by_gk_unchanged(self):
+        # AERIAL-LOST → CHALLENGE not WON → dropped by default Metrica dispatch.
+        # Adding goalkeeper_ids does NOT promote it to keeper_claim.
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica_aerial_lost_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+        )
+        assert len(actions) == 0
+
+    def test_pass_by_non_gk_player_unchanged_with_goalkeeper_ids(self):
+        df = _df_minimal_pass()
+        df["player"] = ["NOT_GK"]
+        actions, _ = metrica_mod.convert_to_actions(df, home_team_id="Home", goalkeeper_ids={"GK_HOME"})
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
+
+    def test_empty_goalkeeper_ids_set_equivalent_to_none(self):
+        df = _df_metrica_pass_by_gk()
+        actions_empty, _ = metrica_mod.convert_to_actions(df, home_team_id="Home", goalkeeper_ids=set())
+        actions_none, _ = metrica_mod.convert_to_actions(df, home_team_id="Home", goalkeeper_ids=None)
+        assert len(actions_empty) == len(actions_none) == 1
+
+    def test_set_piece_freekick_by_gk_unchanged(self):
+        df = _df_metrica("SET PIECE", "FREE KICK")
+        df["player"] = ["GK_HOME"]
+        actions, _ = metrica_mod.convert_to_actions(df, home_team_id="Home", goalkeeper_ids={"GK_HOME"})
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_short"]
+
+    def test_pass_by_gk_synthetic_pass_has_other_bodypart(self):
+        # The synthesized pass uses bodypart=other (matching sportec throwOut shape).
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica_pass_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+        )
+        # Action 1 (the synth pass) — bodypart = other
+        assert actions["bodypart_id"].iloc[1] == spadlconfig.bodypart_id["other"]
+
+    def test_preserve_native_propagates_to_synthesized_actions(self):
+        df = _df_metrica_pass_by_gk()
+        df["my_extra"] = ["custom"]
+        actions, _ = metrica_mod.convert_to_actions(
+            df,
+            home_team_id="Home",
+            goalkeeper_ids={"GK_HOME"},
+            preserve_native=["my_extra"],
+        )
+        assert actions["my_extra"].iloc[0] == "custom"
+        assert actions["my_extra"].iloc[1] == "custom"

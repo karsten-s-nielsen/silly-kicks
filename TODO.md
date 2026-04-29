@@ -20,7 +20,7 @@ Open items tracked for future work. Closed items live in
 
 | # | Size | Item | Context |
 |---|------|------|---------|
-| PR-S10 | Medium-Large | `add_possessions` algorithmic precision improvement | Close the precision gap from ~42% toward 60-70% via brief-opposing-action merge rule, defensive-action class, and/or spatial continuity check. Plus re-measure `max_gap_seconds` parameter sweep using the new `boundary_metrics` utility before changing the default. New parameters likely: `merge_brief_opposing_actions`, `brief_action_window_seconds`. Atomic-SPADL counterpart must mirror any semantic change. The 64-match WorldCup HDF5 from PR-S9 is now available for parameter sweeping (vs PR-S8's 3-match set). |
+| PR-S11 | Medium-Large | `add_possessions` algorithmic precision improvement | Close the precision gap from ~42% toward 60-70% via brief-opposing-action merge rule, defensive-action class, and/or spatial continuity check. Plus re-measure `max_gap_seconds` parameter sweep using the `boundary_metrics` utility before changing the default. New parameters likely: `merge_brief_opposing_actions`, `brief_action_window_seconds`. Atomic-SPADL counterpart must mirror any semantic change. The 64-match WorldCup HDF5 from PR-S9 is available for parameter sweeping (vs PR-S8's 3-match set). Re-numbered from PR-S10 (which became the GK converter coverage parity work, shipped in silly-kicks 1.10.0). |
 
 ## Tech Debt
 
@@ -30,4 +30,5 @@ Open items tracked for future work. Closed items live in
 | D-9 | Low | 5 xthreat module-level functions (`scoring_prob`, `get_move_actions`, etc.) not underscore-prefixed but not re-exported | Implementation helpers technically public API. Audit-source: DEFERRED.md (migrated 1.9.0). |
 | O-M1 | Low | Full `events.copy()` at top of StatsBomb `convert_to_actions` (`spadl/statsbomb.py:78`) | Defensive copy — could shrink on demand. Audit-source: DEFERRED.md (migrated 1.9.0). |
 | O-M6 | Low | Temporary n×3 DataFrame for StatsBomb fidelity version check (`spadl/statsbomb.py:171`) | Audit-source: DEFERRED.md (migrated 1.9.0). |
+| C-1 | Low | Atomic-SPADL `coverage_metrics` parity | Atomic-SPADL has its own action vocabulary (33 types vs standard's 23). `silly_kicks.atomic.spadl.coverage_metrics` would mirror the standard utility added in 1.10.0. Defer until a concrete consumer ask — same disposition as `add_possessions` atomic parity that took 4 cycles to materialize. |
 

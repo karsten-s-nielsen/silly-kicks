@@ -86,6 +86,7 @@ def convert_to_actions(
     home_team_id: int,
     *,
     preserve_native: list[str] | None = None,
+    goalkeeper_ids: set[int] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert Opta events to SPADL actions.
@@ -101,6 +102,14 @@ def convert_to_actions(
         output as extra columns. Each field must be present on the input
         ``events`` DataFrame and must not overlap with the SPADL schema.
         Synthetic actions inserted by ``_add_dribbles`` get NaN.
+    goalkeeper_ids : set[int] or None, default ``None``
+        Accepted for cross-provider API symmetry with the
+        ``sportec`` / ``metrica`` converters (silly-kicks 1.10.0+); has
+        no effect on Opta output because Opta's source events natively
+        mark GK actions via the dedicated ``save`` / ``claim`` /
+        ``punch`` / ``keeper pick-up`` event types. The parameter is
+        silently accepted; the output is byte-for-byte identical with
+        and without it. Empty set ≡ ``None``.
 
     Returns
     -------
@@ -119,6 +128,9 @@ def convert_to_actions(
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Opta")
     _validate_preserve_native(events, preserve_native, provider="Opta")
+    # goalkeeper_ids: accepted for cross-provider API symmetry; no-op for
+    # Opta because source events natively mark GK actions.
+    _ = goalkeeper_ids
     _event_type_counts = Counter(events["type_name"])
 
     actions = pd.DataFrame()

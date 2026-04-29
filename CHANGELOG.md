@@ -5,6 +5,103 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-04-29
+
+### Added
+- **Public `silly_kicks.spadl.coverage_metrics(*, actions, expected_action_types)` utility**
+  for computing per-action-type coverage on a SPADL action stream. Returns
+  a `CoverageMetrics` TypedDict (also re-exported from `silly_kicks.spadl`).
+  Keyword-only arguments. Resolves `type_id` to action-type name via
+  `spadlconfig.actiontypes_df`; reports any expected action types that
+  produced zero rows under `missing`. Out-of-vocab `type_id` values are
+  reported as `"unknown"` rather than raising. Mirrors the PR-S8
+  `boundary_metrics` shape and discipline.
+- **`goalkeeper_ids: set[str] | None = None` parameter on
+  `silly_kicks.spadl.sportec.convert_to_actions`** as a supplementary
+  signal: when provided, Play events whose `player_id` is in the set
+  AND which have NO explicit `play_goal_keeper_action` qualifier are
+  routed to the keeper_pick_up + pass 2-action synthesis. The
+  qualifier-driven mapping remains the primary contract.
+- **`goalkeeper_ids: set[str] | None = None` parameter on
+  `silly_kicks.spadl.metrica.convert_to_actions`** as the PRIMARY
+  mechanism for surfacing GK actions. Metrica's source format lacks
+  native GK markers; with `goalkeeper_ids`, conservative routing applies
+  (PASS by GK → synth, RECOVERY by GK → keeper_pick_up, CHALLENGE
+  AERIAL-WON by GK → keeper_claim). Without it: 0 keeper_* actions
+  (1.9.0 default behaviour preserved — no breaking change).
+- **`goalkeeper_ids` no-op acceptance on `statsbomb.convert_to_actions`
+  and `opta.convert_to_actions`** for cross-provider API symmetry. Both
+  source formats natively mark GK actions; the parameter is silently
+  accepted with byte-for-byte identical output.
+- **DFL distribution qualifiers `throwOut` and `punt` now produce SPADL
+  actions** (sportec converter). Each source row synthesizes TWO
+  actions: `keeper_pick_up + pass` (bodypart=other) for `throwOut`,
+  `keeper_pick_up + goalkick` (bodypart=foot) for `punt`. Both rows
+  inherit the source's `(player_id, team, period, time, x, y)`.
+  `preserve_native` columns propagate to both. Action_ids renumbered
+  dense after synthesis.
+- **Production-shape vendored fixtures** under
+  `tests/datasets/idsse/sample_match.parquet` (~166 KB; 308-row subset
+  of `soccer_analytics.bronze.idsse_events` match `idsse_J03WMX`,
+  includes throwOut + punt rows) and
+  `tests/datasets/metrica/sample_match.parquet` (~20 KB; 300-event
+  subset of Metrica Sample Game 2). Build script at
+  `scripts/extract_provider_fixtures.py` (Databricks pull for IDSSE,
+  offline kloppy-fixture subset for Metrica). Attribution READMEs
+  alongside.
+- **Cross-provider parity meta-test** at
+  `tests/spadl/test_cross_provider_parity.py`. Parametrized over all 5
+  DataFrame converters (statsbomb, opta, wyscout, sportec, metrica);
+  asserts each emits at least one `keeper_*` action when given a
+  fixture exercising GK paths. This is the regression gate that would
+  have caught Bugs 1-3 in 1.7.0 if it had existed.
+- **`pyarrow>=14.0.0` added to `[test]` extras** to back parquet I/O
+  for the new fixtures (`pd.read_parquet` / `pd.DataFrame.to_parquet`).
+
+### Fixed
+- **Sportec converter no longer drops all DFL `Play` events to
+  non_action.** The pre-1.10.0 dispatch checked `et == "Pass"` for
+  pass-class events, but DFL bronze never emits `"Pass"` — the actual
+  event_type is `"Play"`. Net effect since 1.7.0: all IDSSE matches in
+  production lost ~60-80% of their actions (every pass, cross, and head
+  pass) to silent non_action drop. Fix restructures the dispatch so
+  `Play` events with no GK qualifier route to `pass` / `cross` (with
+  optional head bodypart) and `Play` events with a recognized GK
+  qualifier route to `keeper_*` actions. Defensive: `Play` events with
+  an unrecognized non-empty qualifier still drop to `non_action`.
+  ``"Pass"`` is removed from the recognized event-type vocabulary so
+  legacy callers (if any) surface in `unrecognized_counts` (loud)
+  rather than silently mapping to non_action.
+- **Sportec converter no longer drops `throwOut` and `punt` GK
+  distribution events to non_action.** These DFL qualifier values
+  represent GK distribution actions (throwing or kicking the ball to
+  a teammate); pre-1.10.0 they were unmapped. Fix synthesizes 2
+  SPADL actions per source event (see Added section).
+- **Metrica converter now produces non-zero GK coverage when
+  `goalkeeper_ids` is supplied.** Pre-1.10.0 the converter had no
+  mechanism to surface GK actions, leaving downstream `add_gk_role` /
+  `add_pre_shot_gk_context` enrichments at 100% NULL on every Metrica
+  match in production.
+
+### Notes
+- This release closes the upstream gap that surfaced during
+  luxury-lakehouse PR-LL2 production deploy (2026-04-29): post-deploy
+  validation found 100% NULL `gk_role` and `defending_gk_player_id` on
+  IDSSE (2,522 rows) and Metrica (5,839 rows) sources. With silly-kicks
+  1.10.0, downstream lakehouse can re-run `apply_spadl_enrichments`
+  against IDSSE + Metrica with non-NULL GK coverage (handled by
+  separate lakehouse PR-LL3).
+- Behaviour change for IDSSE consumers: bronze.spadl_actions row count
+  per IDSSE match will increase materially (every Play event now
+  surfaces as a SPADL pass, plus throwOut/punt rows now produce 2
+  actions each). This is the intended fix; downstream aggregation may
+  need to re-baseline.
+- Wyscout converter unchanged — `goalkeeper_ids` was already present
+  from 1.0.0.
+- Atomic-SPADL `coverage_metrics` parity is queued as tech debt
+  (atomic uses 33 action types vs standard's 23; deferred until a
+  consumer asks). Tracked in `TODO.md ## Tech Debt`.
+
 ## [1.9.0] — 2026-04-29
 
 ### Added

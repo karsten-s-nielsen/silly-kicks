@@ -243,3 +243,45 @@ class TestSpadlConvertorE2E:
 
     def test_placeholder(self) -> None:
         pytest.skip("Opta fixture data and data loaders are not available")
+
+
+# ---------------------------------------------------------------------------
+# goalkeeper_ids — accepted as no-op for cross-provider API symmetry (1.10.0)
+# ---------------------------------------------------------------------------
+
+
+class TestOptaGoalkeeperIdsNoOp:
+    @staticmethod
+    def _events() -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "game_id": [1, 1],
+                "event_id": ["e1", "e2"],
+                "period_id": [1, 1],
+                "minute": [0, 0],
+                "second": [1, 2],
+                "team_id": [100, 100],
+                "player_id": [200, 201],
+                "type_name": ["pass", "pass"],
+                "outcome": [True, True],
+                "start_x": [50.0, 60.0],
+                "start_y": [50.0, 50.0],
+                "end_x": [60.0, 70.0],
+                "end_y": [50.0, 50.0],
+                "qualifiers": [{}, {}],
+            }
+        )
+
+    def test_goalkeeper_ids_parameter_is_accepted(self):
+        actions, _ = opta.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids={200})
+        assert isinstance(actions, pd.DataFrame)
+
+    def test_goalkeeper_ids_output_identical_with_and_without(self):
+        a_none, _ = opta.convert_to_actions(self._events(), home_team_id=100)
+        a_set, _ = opta.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids={200})
+        pd.testing.assert_frame_equal(a_none, a_set, check_dtype=True)
+
+    def test_empty_goalkeeper_ids_set_equivalent_to_none(self):
+        a_empty, _ = opta.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids=set())
+        a_none, _ = opta.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids=None)
+        pd.testing.assert_frame_equal(a_empty, a_none, check_dtype=True)

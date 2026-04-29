@@ -5,6 +5,59 @@ Metrica's open-data CSV / EPTS-JSON formats) to SPADL actions.
 
 Consumers with raw Metrica files should use ``silly_kicks.spadl.kloppy`` after
 ``kloppy.metrica.load_event(...)``.
+
+Metrica ``type`` / ``subtype`` vocabulary
+-----------------------------------------
+
+Recognized event types (case-sensitive ``UPPER``):
+
+==================== =====================================================
+``type``             SPADL mapping
+==================== =====================================================
+``PASS``             ``pass`` (default) / ``cross`` / ``goalkick`` /
+                     ``keeper_pick_up + pass`` (when by GK and goalkeeper_ids)
+``SHOT``             ``shot`` (with set-piece composition for FREE KICK)
+``RECOVERY``         ``interception`` (default) / ``keeper_pick_up`` (when by GK)
+``CHALLENGE``        ``tackle`` (when WON) / ``keeper_claim`` (AERIAL-WON by GK) /
+                     dropped (LOST / other AERIAL variants)
+``BALL LOST``        ``bad_touch`` (fail)
+``FAULT``            ``foul`` (with CARD pairing for cards)
+``SET PIECE``        ``freekick_short`` / ``corner_short`` / ``throw_in`` / ``goalkick``
+==================== =====================================================
+
+Goalkeeper coverage contract
+----------------------------
+
+Metrica's source format does NOT natively mark GK actions in any event
+subtype — the taxonomy is purely positional/contextual (PASS / CARRY /
+CHALLENGE / etc.). To surface ``keeper_*`` SPADL actions, callers must
+pass ``goalkeeper_ids`` from match metadata (squad records or
+``dim_players`` join on the registered position group).
+
+Without ``goalkeeper_ids``, the output contains zero ``keeper_*`` actions
+(preserves 1.9.0 default behaviour).
+
+With ``goalkeeper_ids``, conservative routing applies:
+
+- ``PASS`` (any subtype) by GK → synthesize ``keeper_pick_up + pass``
+- ``RECOVERY`` (any subtype) by GK → ``keeper_pick_up``
+- ``CHALLENGE`` ``AERIAL-WON`` by GK → ``keeper_claim``
+- All other event types unchanged (a GK taking a free kick is still
+  ``freekick_short``, not a keeper action — set pieces are positional
+  acts, not GK acts in the SPADL vocabulary)
+
+Bug history
+-----------
+
+Pre-1.10.0: silly-kicks Metrica converter emitted zero ``keeper_*`` actions
+on every match (no source GK markers, no parameter to disambiguate).
+``add_gk_role`` and ``add_pre_shot_gk_context`` correctly emitted NULL on
+the resulting SPADL — but the upstream gap meant lakehouse production had
+zero GK coverage on Metrica. Fixed in 1.10.0 by adding the
+``goalkeeper_ids: set[str] | None`` parameter.
+
+See ``docs/superpowers/specs/2026-04-29-gk-converter-coverage-parity-design.md``
+for the full design rationale.
 """
 
 import warnings
@@ -61,14 +114,41 @@ def convert_to_actions(
     home_team_id: str,
     *,
     preserve_native: list[str] | None = None,
+    goalkeeper_ids: set[str] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
-    """Convert normalized Metrica event DataFrame to SPADL actions."""
+    """Convert normalized Metrica event DataFrame to SPADL actions.
+
+    Parameters
+    ----------
+    events : pd.DataFrame
+        Normalized Metrica event data.
+    home_team_id : str
+        Home-team identifier (used to flip away-team coords).
+    preserve_native : list[str] or None, default ``None``
+        Caller-attached columns to preserve through to the output.
+    goalkeeper_ids : set[str] or None, default ``None``
+        Optional set of player_ids known to be goalkeepers in this match.
+        Metrica's source format does not natively mark GK actions in any
+        event subtype; without this parameter the output contains zero
+        ``keeper_*`` actions (preserved as 1.9.0 default behaviour, no
+        breaking change). When provided, applies conservative routing:
+
+        - ``PASS`` (any subtype) by GK → synth ``keeper_pick_up + pass``
+          (GK had ball, then distributed).
+        - ``RECOVERY`` (any subtype) by GK → ``keeper_pick_up``.
+        - ``CHALLENGE`` with subtype ``"AERIAL-WON"`` by GK → ``keeper_claim``.
+
+        Other event types and other CHALLENGE subtypes (including
+        ``"AERIAL-LOST"``) are unchanged. An empty set is equivalent to
+        ``None``. Pass goalkeeper_ids from match metadata (squad records
+        / dim_players join) to enable GK coverage on Metrica data.
+    """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Metrica")
     _validate_preserve_native(events, preserve_native, provider="Metrica", schema=KLOPPY_SPADL_COLUMNS)
 
     event_type_counts = Counter(events["type"])
 
-    raw_actions = _build_raw_actions(events, preserve_native)
+    raw_actions = _build_raw_actions(events, preserve_native, goalkeeper_ids=goalkeeper_ids)
 
     if len(raw_actions) > 0:
         actions = _fix_clearances(raw_actions)
@@ -151,6 +231,8 @@ def _apply_card_pairs(actions: pd.DataFrame, events: pd.DataFrame) -> pd.DataFra
 def _build_raw_actions(
     events: pd.DataFrame,
     preserve_native: list[str] | None,
+    *,
+    goalkeeper_ids: set[str] | None = None,
 ) -> pd.DataFrame:
     """Build raw SPADL actions from Metrica event rows.
 
@@ -172,6 +254,13 @@ def _build_raw_actions(
     typ = rows["type"].to_numpy()
     sub_raw = rows["subtype"].fillna("").astype(str).str.upper().to_numpy()
 
+    # Goalkeeper routing (Bug 3 fix, 1.10.0). Metrica has no native GK
+    # markers; this is the only mechanism that surfaces GK actions.
+    is_gk_player = np.zeros(n, dtype=bool)
+    if goalkeeper_ids:
+        gk_str_set = {str(g) for g in goalkeeper_ids}
+        is_gk_player = rows["player"].astype(str).isin(gk_str_set).to_numpy()
+
     # --- PASS ---
     is_pass = typ == "PASS"
     is_pass_cross = is_pass & (sub_raw == "CROSS")
@@ -183,15 +272,34 @@ def _build_raw_actions(
     type_ids[is_pass_goalkick] = spadlconfig.actiontype_id["goalkick"]
     bodypart_ids[is_pass_head] = spadlconfig.bodypart_id["head"]
 
-    # --- RECOVERY -> interception ---
-    is_recovery = typ == "RECOVERY"
-    type_ids[is_recovery] = spadlconfig.actiontype_id["interception"]
+    # GK distribution (Bug 3 fix): PASS by GK → keeper_pick_up; the
+    # synthesized pass second-action is added below in the synthesis block.
+    # Force end coords to match start coords for the keeper_pick_up so
+    # _add_dribbles doesn't inject a spurious dribble between the pickup
+    # and the synthetic pass that follows (the pickup is stationary —
+    # the GK gathered the ball at start_x/start_y and held it before
+    # distributing).
+    is_pass_gk_distribution = is_pass & is_gk_player
+    type_ids[is_pass_gk_distribution] = spadlconfig.actiontype_id["keeper_pick_up"]
+    bodypart_ids[is_pass_gk_distribution] = spadlconfig.bodypart_id["other"]
 
-    # --- CHALLENGE WON -> tackle; LOST/AERIAL-* -> drop ---
+    # --- RECOVERY -> interception (or keeper_pick_up if by known GK) ---
+    is_recovery = typ == "RECOVERY"
+    is_recovery_gk = is_recovery & is_gk_player
+    type_ids[is_recovery & ~is_gk_player] = spadlconfig.actiontype_id["interception"]
+    type_ids[is_recovery_gk] = spadlconfig.actiontype_id["keeper_pick_up"]
+    bodypart_ids[is_recovery_gk] = spadlconfig.bodypart_id["other"]
+
+    # --- CHALLENGE: WON -> tackle; AERIAL-WON-by-GK -> keeper_claim;
+    # other LOST/AERIAL-LOST/etc -> drop ---
     is_challenge = typ == "CHALLENGE"
     is_challenge_won = is_challenge & (sub_raw == "WON")
+    is_challenge_aerial_won = is_challenge & (sub_raw == "AERIAL-WON")
+    is_challenge_aerial_won_gk = is_challenge_aerial_won & is_gk_player
     type_ids[is_challenge_won] = spadlconfig.actiontype_id["tackle"]
-    is_challenge_dropped = is_challenge & ~is_challenge_won
+    type_ids[is_challenge_aerial_won_gk] = spadlconfig.actiontype_id["keeper_claim"]
+    bodypart_ids[is_challenge_aerial_won_gk] = spadlconfig.bodypart_id["other"]
+    is_challenge_dropped = is_challenge & ~is_challenge_won & ~is_challenge_aerial_won_gk
     type_ids[is_challenge_dropped] = spadlconfig.actiontype_id["non_action"]
 
     # --- BALL LOST -> bad_touch fail ---
@@ -243,6 +351,21 @@ def _build_raw_actions(
                 type_ids[i + 1] = spadlconfig.actiontype_id["shot_freekick"]
                 drop_mask[i] = True
 
+    # Stationary keeper_pick_up: for PASS-by-GK rows, override end coords
+    # to match start coords so _add_dribbles does not inject a spurious
+    # dribble between the pickup and the synthetic pass that follows
+    # (the pickup is semantically stationary — the GK gathered the ball
+    # at start_x / start_y and held it before distributing). Apply the
+    # override at the numpy-array level BEFORE building the DataFrame to
+    # keep the column types narrow for pandas-stubs.
+    start_x_arr = rows["start_x"].astype(np.float64).to_numpy()
+    start_y_arr = rows["start_y"].astype(np.float64).to_numpy()
+    end_x_arr = rows["end_x"].astype(np.float64).to_numpy()
+    end_y_arr = rows["end_y"].astype(np.float64).to_numpy()
+    if is_pass_gk_distribution.any():
+        end_x_arr = np.where(is_pass_gk_distribution, start_x_arr, end_x_arr)
+        end_y_arr = np.where(is_pass_gk_distribution, start_y_arr, end_y_arr)
+
     actions = pd.DataFrame(
         {
             "game_id": rows["match_id"].astype("object"),
@@ -251,17 +374,48 @@ def _build_raw_actions(
             "time_seconds": rows["start_time_s"].astype(np.float64),
             "team_id": rows["team"].astype("object"),
             "player_id": rows["player"].astype("object"),
-            "start_x": rows["start_x"].astype(np.float64),
-            "start_y": rows["start_y"].astype(np.float64),
-            "end_x": rows["end_x"].astype(np.float64),
-            "end_y": rows["end_y"].astype(np.float64),
+            "start_x": start_x_arr,
+            "start_y": start_y_arr,
+            "end_x": end_x_arr,
+            "end_y": end_y_arr,
             "type_id": type_ids,
             "result_id": result_ids,
             "bodypart_id": bodypart_ids,
         }
     )
 
-    actions = actions.loc[~drop_mask]
+    # Carry preserve_native onto main actions BEFORE drop / synthesis
+    # interleave so the indices stay aligned.
+    if preserve_native:
+        for col in preserve_native:
+            if col in rows.columns:
+                actions[col] = rows[col].to_numpy()
+            else:
+                actions[col] = np.nan
+
+    # Tag main rows with _row_order = source_index*2 (so synth rows can
+    # interleave at source_index*2 + 1 immediately after).
+    actions["_row_order"] = np.arange(len(actions), dtype=np.int64) * 2
+
+    # Apply drop_mask (set-piece-then-shot composition: FREE KICK rows
+    # composed into a following SHOT). drop_mask only fires on SET PIECE
+    # rows — never on PASS-by-GK rows — so removing them BEFORE synthesis
+    # cannot orphan synthetic rows.
+    actions = actions.loc[~drop_mask].reset_index(drop=True)
+
+    # Synthesize keeper-distribution pass rows (Bug 3 fix). PASS-by-GK
+    # rows already have type_id = keeper_pick_up; the synth DataFrame
+    # adds a second "pass" action immediately after.
+    synth_mask = is_pass & is_gk_player & ~drop_mask
+    synth = _synthesize_metrica_gk_pass(rows, synth_mask, preserve_native)
+    if len(synth) > 0:
+        combined = pd.concat([actions, synth], ignore_index=True, sort=False)
+        actions = (
+            combined.sort_values("_row_order", kind="mergesort").drop(columns=["_row_order"]).reset_index(drop=True)
+        )
+    else:
+        actions = actions.drop(columns=["_row_order"])
+
     actions = actions[actions["type_id"] != spadlconfig.actiontype_id["non_action"]].reset_index(drop=True)
 
     # If post-filter all rows dropped, return canonical empty schema so downstream
@@ -269,13 +423,57 @@ def _build_raw_actions(
     if len(actions) == 0:
         return _empty_raw_actions(preserve_native, events)
 
-    if preserve_native:
-        for col in preserve_native:
-            if col in rows.columns:
-                actions[col] = rows.loc[actions.index, col].to_numpy()
-            else:
-                actions[col] = np.nan
-
     actions = _apply_card_pairs(actions, events)
 
     return actions
+
+
+def _synthesize_metrica_gk_pass(
+    rows: pd.DataFrame,
+    is_pass_gk_distribution: np.ndarray,
+    preserve_native: list[str] | None,
+) -> pd.DataFrame:
+    """Build synthetic pass rows for PASS-by-GK events (Bug 3 fix, 1.10.0).
+
+    Each source row matching ``is_pass_gk_distribution`` already had its
+    type_id set to keeper_pick_up by the caller. This helper emits the
+    second half (a synthesized SPADL pass with bodypart=other) immediately
+    after, mirroring the sportec throwOut shape.
+
+    Returned DataFrame includes a ``_row_order`` column for interleaving.
+    Empty DataFrame returned when no qualifying rows exist.
+    """
+    if not is_pass_gk_distribution.any():
+        return pd.DataFrame()
+
+    src_indices = np.where(is_pass_gk_distribution)[0]
+    src = rows.iloc[src_indices].copy().reset_index(drop=True)
+    n_synth = len(src)
+
+    synth = pd.DataFrame(
+        {
+            "game_id": src["match_id"].astype("object"),
+            "original_event_id": (src["event_id"].astype(str) + "_synth_pass").astype("object"),
+            "period_id": src["period"].astype(np.int64),
+            "time_seconds": src["start_time_s"].astype(np.float64),
+            "team_id": src["team"].astype("object"),
+            "player_id": src["player"].astype("object"),
+            "start_x": src["start_x"].astype(np.float64),
+            "start_y": src["start_y"].astype(np.float64),
+            "end_x": src["end_x"].astype(np.float64),
+            "end_y": src["end_y"].astype(np.float64),
+            "type_id": np.full(n_synth, spadlconfig.actiontype_id["pass"], dtype=np.int64),
+            "result_id": np.full(n_synth, spadlconfig.result_id["success"], dtype=np.int64),
+            "bodypart_id": np.full(n_synth, spadlconfig.bodypart_id["other"], dtype=np.int64),
+        }
+    )
+    synth["_row_order"] = src_indices.astype(np.int64) * 2 + 1
+
+    if preserve_native:
+        for col in preserve_native:
+            if col in src.columns:
+                synth[col] = src[col].to_numpy()
+            else:
+                synth[col] = np.nan
+
+    return synth

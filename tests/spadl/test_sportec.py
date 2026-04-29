@@ -30,7 +30,7 @@ def _df_minimal_pass() -> pd.DataFrame:
         {
             "match_id": ["J03WMX"],
             "event_id": ["e1"],
-            "event_type": ["Pass"],
+            "event_type": ["Play"],
             "period": [1],
             "timestamp_seconds": [10.5],
             "player_id": ["DFL-OBJ-0001"],
@@ -95,7 +95,7 @@ def _df_pass_default() -> pd.DataFrame:
         {
             "match_id": ["M1"],
             "event_id": ["e1"],
-            "event_type": ["Pass"],
+            "event_type": ["Play"],
             "period": [1],
             "timestamp_seconds": [10.0],
             "player_id": ["P1"],
@@ -410,7 +410,7 @@ class TestSportecDirectionOfPlay:
             {
                 "match_id": ["M1", "M1"],
                 "event_id": ["e1", "e2"],
-                "event_type": ["Pass", "Pass"],
+                "event_type": ["Play", "Play"],
                 "period": [1, 1],
                 "timestamp_seconds": [10.0, 20.0],
                 "player_id": ["P1", "P2"],
@@ -452,7 +452,7 @@ class TestSportecActionId:
             {
                 "match_id": ["M1"] * 3,
                 "event_id": ["e1", "e2", "e3"],
-                "event_type": ["Pass", "Pass", "ShotAtGoal"],
+                "event_type": ["Play", "Play", "ShotAtGoal"],
                 "period": [1, 1, 1],
                 "timestamp_seconds": [10.0, 20.0, 30.0],
                 "player_id": ["P1", "P2", "P3"],
@@ -473,7 +473,7 @@ class TestSportecAddDribbles:
             {
                 "match_id": ["M1", "M1"],
                 "event_id": ["e1", "e2"],
-                "event_type": ["Pass", "Pass"],
+                "event_type": ["Play", "Play"],
                 "period": [1, 1],
                 "timestamp_seconds": [10.0, 12.0],
                 "player_id": ["P1", "P2"],
@@ -519,7 +519,7 @@ class TestSportecPreserveNative:
 # the bridge helper can produce a bronze-shaped DataFrame from a kloppy
 # EventDataset, enabling apples-to-apples comparison of resulting SPADL.
 _KLOPPY_EVENT_TYPE_TO_DFL_NAME = {
-    "PASS": "Pass",
+    "PASS": "Play",
     "SHOT": "ShotAtGoal",
     "DUEL": "TacklingGame",
     "FOUL_COMMITTED": "Foul",
@@ -582,3 +582,285 @@ class TestSportecCrossPathConsistency:
         assert len(actions_kloppy) > 0
         assert len(actions_dedicated) > 0
         assert list(actions_kloppy.columns) == list(actions_dedicated.columns)
+
+
+# ---------------------------------------------------------------------------
+# Bug 1 — DFL "Play" event_type maps to pass-class actions
+# (1.10.0; supersedes pre-1.10.0 dispatch where `is_pass = et == "Pass"`
+# silently dropped all DFL Play events to non_action)
+# ---------------------------------------------------------------------------
+
+
+def _df_play_default() -> pd.DataFrame:
+    """A bare DFL Play event with no GK qualifier — should map to "pass"."""
+    return pd.DataFrame(
+        {
+            "match_id": ["M1"],
+            "event_id": ["e1"],
+            "event_type": ["Play"],
+            "period": [1],
+            "timestamp_seconds": [10.0],
+            "player_id": ["P1"],
+            "team": ["T-HOME"],
+            "x": [50.0],
+            "y": [34.0],
+        }
+    )
+
+
+def _df_play_cross() -> pd.DataFrame:
+    df = _df_play_default()
+    df["play_height"] = ["cross"]
+    return df
+
+
+def _df_play_head() -> pd.DataFrame:
+    df = _df_play_default()
+    df["play_height"] = ["head"]
+    return df
+
+
+class TestSportecPlayEventRecognition:
+    """DFL "Play" event_type is the pass-class event in the DFL vocabulary
+    (verified empirically against bronze.idsse_events). The pre-1.10.0
+    converter checked ``et == "Pass"`` — silently dropping ALL pass-class
+    events to non_action across all IDSSE matches in production.
+    """
+
+    def test_play_default_maps_to_pass(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_default(), home_team_id="T-HOME")
+        assert len(actions) == 1, "DFL Play events without GK qualifier should produce a SPADL action"
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
+
+    def test_play_cross_maps_to_cross(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_cross(), home_team_id="T-HOME")
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+
+    def test_play_head_uses_head_bodypart(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_head(), home_team_id="T-HOME")
+        assert actions["bodypart_id"].iloc[0] == spadlconfig.bodypart_id["head"]
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
+
+    def test_play_with_recognized_gk_qualifier_keeps_keeper_action_mapping(self):
+        df = _df_play_default()
+        df["play_goal_keeper_action"] = ["save"]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_save"]
+
+    def test_play_with_unrecognized_gk_qualifier_drops_to_non_action(self):
+        # Defensive: a Play row with a non-empty but unknown GK qualifier
+        # remains conservatively non_action (not silently mapped to pass).
+        df = _df_play_default()
+        df["play_goal_keeper_action"] = ["someUnknownValue"]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert len(actions) == 0
+
+    def test_play_with_empty_gk_qualifier_falls_through_to_pass(self):
+        # Empty string in the qualifier column ≡ no qualifier ≡ pass-class.
+        df = _df_play_default()
+        df["play_goal_keeper_action"] = [""]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
+
+    def test_legacy_Pass_event_type_no_longer_recognized(self):
+        # Hyrum's Law check: zero current consumers passed event_type="Pass"
+        # (per spec § 4.3 brainstorming). Post-1.10.0, "Pass" is removed
+        # from _MAPPED_EVENT_TYPES so it's filtered upfront — the row
+        # never enters the SPADL dispatch and the conversion report logs
+        # it under unrecognized_counts.
+        events = pd.DataFrame(
+            {
+                "match_id": ["M1"],
+                "event_id": ["e1"],
+                "event_type": ["Pass"],
+                "period": [1],
+                "timestamp_seconds": [10.0],
+                "player_id": ["P1"],
+                "team": ["T-HOME"],
+                "x": [50.0],
+                "y": [34.0],
+            }
+        )
+        # Suppress the unrecognized-event-type warning the converter emits.
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            actions, report = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        assert len(actions) == 0
+        assert "Pass" in report.unrecognized_counts
+
+
+# ---------------------------------------------------------------------------
+# Bug 2 — DFL play_goal_keeper_action throwOut / punt → 2-action synthesis
+# (1.10.0; supersedes pre-1.10.0 dispatch where throwOut + punt were silent
+# non_action drops despite being legitimate GK distribution events)
+# ---------------------------------------------------------------------------
+
+
+def _df_play_gk(qualifier: str, **overrides) -> pd.DataFrame:
+    base = pd.DataFrame(
+        {
+            "match_id": ["M1"],
+            "event_id": ["e1"],
+            "event_type": ["Play"],
+            "period": [1],
+            "timestamp_seconds": [60.0],
+            "player_id": ["P-GK"],
+            "team": ["T-AWAY"],
+            "x": [3.0],
+            "y": [34.0],
+            "play_goal_keeper_action": [qualifier],
+        }
+    )
+    for k, v in overrides.items():
+        base[k] = [v]
+    return base
+
+
+class TestSportecGKQualifierSynthesis:
+    """DFL distribution qualifiers (throwOut, punt) emit TWO SPADL actions:
+    keeper_pick_up + pass for throwOut, keeper_pick_up + goalkick for punt.
+    Each action inherits the source's (player_id, team, period, time, x, y).
+    """
+
+    def test_throwout_synthesizes_two_actions(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("throwOut"), home_team_id="T-HOME")
+        assert len(actions) == 2
+
+    def test_throwout_first_action_is_keeper_pick_up(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("throwOut"), home_team_id="T-HOME")
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
+
+    def test_throwout_second_action_is_pass_with_other_bodypart(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("throwOut"), home_team_id="T-HOME")
+        assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["pass"]
+        assert actions["bodypart_id"].iloc[1] == spadlconfig.bodypart_id["other"]
+
+    def test_punt_first_action_is_keeper_pick_up(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("punt"), home_team_id="T-HOME")
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
+
+    def test_punt_second_action_is_goalkick_with_foot_bodypart(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("punt"), home_team_id="T-HOME")
+        assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["goalkick"]
+        assert actions["bodypart_id"].iloc[1] == spadlconfig.bodypart_id["foot"]
+
+    def test_both_synthesized_actions_share_source_player_team_time(self):
+        df = _df_play_gk("throwOut")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["player_id"].iloc[0] == actions["player_id"].iloc[1] == "P-GK"
+        assert actions["team_id"].iloc[0] == actions["team_id"].iloc[1] == "T-AWAY"
+        assert actions["period_id"].iloc[0] == actions["period_id"].iloc[1] == 1
+        assert actions["time_seconds"].iloc[0] == actions["time_seconds"].iloc[1] == 60.0
+
+    def test_action_ids_renumbered_dense_zero_indexed(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("throwOut"), home_team_id="T-HOME")
+        assert actions["action_id"].tolist() == [0, 1]
+
+    def test_multiple_throwouts_all_synthesized(self):
+        events = pd.DataFrame(
+            {
+                "match_id": ["M1"] * 3,
+                "event_id": ["e1", "e2", "e3"],
+                "event_type": ["Play"] * 3,
+                "period": [1, 1, 1],
+                "timestamp_seconds": [10.0, 20.0, 30.0],
+                "player_id": ["P-GK"] * 3,
+                "team": ["T-AWAY"] * 3,
+                "x": [3.0, 3.0, 3.0],
+                "y": [34.0, 34.0, 34.0],
+                "play_goal_keeper_action": ["throwOut"] * 3,
+            }
+        )
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        assert len(actions) == 6
+        kp_count = (actions["type_id"] == spadlconfig.actiontype_id["keeper_pick_up"]).sum()
+        pass_count = (actions["type_id"] == spadlconfig.actiontype_id["pass"]).sum()
+        assert kp_count == 3
+        assert pass_count == 3
+
+    def test_mixed_distribution_and_shot_stopping_qualifiers(self):
+        events = pd.DataFrame(
+            {
+                "match_id": ["M1"] * 3,
+                "event_id": ["e1", "e2", "e3"],
+                "event_type": ["Play"] * 3,
+                "period": [1, 1, 1],
+                "timestamp_seconds": [10.0, 20.0, 30.0],
+                "player_id": ["P-GK"] * 3,
+                "team": ["T-AWAY"] * 3,
+                "x": [3.0] * 3,
+                "y": [34.0] * 3,
+                "play_goal_keeper_action": ["save", "throwOut", "punt"],
+            }
+        )
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        # save → 1 keeper_save; throwOut → 2 (pickup + pass); punt → 2 (pickup + goalkick)
+        assert len(actions) == 5
+        type_set = list(actions["type_id"])
+        assert type_set.count(spadlconfig.actiontype_id["keeper_save"]) == 1
+        assert type_set.count(spadlconfig.actiontype_id["keeper_pick_up"]) == 2
+        assert type_set.count(spadlconfig.actiontype_id["pass"]) == 1
+        assert type_set.count(spadlconfig.actiontype_id["goalkick"]) == 1
+
+    def test_preserve_native_propagates_to_both_synthetic_actions(self):
+        df = _df_play_gk("throwOut")
+        df["my_extra"] = ["custom_val"]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", preserve_native=["my_extra"])
+        assert actions["my_extra"].iloc[0] == "custom_val"
+        assert actions["my_extra"].iloc[1] == "custom_val"
+
+
+# ---------------------------------------------------------------------------
+# goalkeeper_ids supplementary signal — fires only when a Play event has
+# player_id in the supplied set AND no native GK qualifier
+# ---------------------------------------------------------------------------
+
+
+class TestSportecGoalkeeperIdsSupplementary:
+    """When DFL doesn't annotate a Play event with play_goal_keeper_action
+    but the player_id is known to be a goalkeeper, route the event to the
+    keeper_pick_up + pass synthesis (treats it as a throwOut equivalent).
+    """
+
+    def test_no_goalkeeper_ids_keeps_default_pass_class_behavior(self):
+        df = _df_play_default()
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
+
+    def test_player_in_goalkeeper_ids_with_no_qualifier_synthesizes(self):
+        df = _df_play_default()
+        df["player_id"] = ["P-GK"]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"})
+        assert len(actions) == 2
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
+        assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["pass"]
+
+    def test_player_not_in_goalkeeper_ids_unchanged(self):
+        df = _df_play_default()
+        df["player_id"] = ["P-NOT-GK"]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"})
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
+
+    def test_player_in_goalkeeper_ids_with_throwout_qualifier_uses_qualifier_path(self):
+        df = _df_play_gk("throwOut")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"})
+        assert len(actions) == 2
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
+        assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["pass"]
+
+    def test_player_in_goalkeeper_ids_with_save_qualifier_keeps_save(self):
+        df = _df_play_gk("save")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"})
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_save"]
+
+    def test_empty_goalkeeper_ids_set_equivalent_to_none(self):
+        df = _df_play_default()
+        actions_empty, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids=set())
+        actions_none, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids=None)
+        assert len(actions_empty) == len(actions_none) == 1
+        assert actions_empty["type_id"].iloc[0] == actions_none["type_id"].iloc[0]

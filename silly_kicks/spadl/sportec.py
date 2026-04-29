@@ -5,6 +5,67 @@ Converts already-normalized DFL event DataFrames (e.g., luxury-lakehouse
 
 Consumers with raw DFL XML files should use ``silly_kicks.spadl.kloppy`` after
 ``kloppy.sportec.load_event(...)``.
+
+DFL ``event_type`` vocabulary (recognized as input)
+---------------------------------------------------
+
+The dispatch consumes the following DFL event_type values (case-sensitive):
+
+================== ======================================================
+``event_type``     SPADL mapping
+================== ======================================================
+``Play``           Pass-class by default; refined by qualifier (see below)
+``ShotAtGoal``     ``shot`` / ``shot_freekick`` / ``shot_penalty``
+``TacklingGame``   ``tackle``
+``Foul``           ``foul`` (with optional ``Caution`` pairing for cards)
+``FreeKick``       ``freekick_short`` / ``freekick_crossed``
+``Corner``         ``corner_short`` / ``corner_crossed``
+``ThrowIn``        ``throw_in``
+``GoalKick``       ``goalkick``
+================== ======================================================
+
+DFL ``play_goal_keeper_action`` qualifier vocabulary
+----------------------------------------------------
+
+For ``Play`` events, the ``play_goal_keeper_action`` qualifier disambiguates
+between pass-class and GK-class semantics:
+
+================== ============================== ============================
+Qualifier value    SPADL mapping                  Notes
+================== ============================== ============================
+``""`` (empty)     ``pass`` / ``cross``           Pass-class default
+``save``           ``keeper_save``
+``claim``          ``keeper_claim``
+``punch``          ``keeper_punch``
+``pickUp``         ``keeper_pick_up``
+``throwOut``       ``keeper_pick_up`` + ``pass``  GK distribution by hand
+``punt``           ``keeper_pick_up`` + ``goalkick``  GK distribution by foot
+unrecognized       ``non_action`` (filtered)      Defensive
+================== ============================== ============================
+
+The ``throwOut`` and ``punt`` rows synthesize TWO SPADL actions per source
+event: a ``keeper_pick_up`` representing the GK's reception of the ball,
+followed by a ``pass`` (for ``throwOut``) or ``goalkick`` (for ``punt``)
+representing the GK's distribution. Action_ids are renumbered dense after
+synthesis. ``preserve_native`` columns propagate to both rows.
+
+Bug history
+-----------
+
+Pre-1.10.0:
+
+- ``is_pass = et == "Pass"`` silently dropped ALL DFL ``Play`` events
+  (the actual pass-class event_type) to ``non_action``. Net effect: all
+  IDSSE matches in production lost ALL pass-class events for ~3 release
+  cycles. Fixed in 1.10.0 by restructuring the dispatch around
+  ``et == "Play"``.
+- ``play_goal_keeper_action`` qualifier vocabulary was incomplete (only
+  ``save`` / ``claim`` / ``punch`` / ``pickUp``); ``throwOut`` and ``punt``
+  silently dropped to ``non_action``. Fixed in 1.10.0 by adding the
+  2-action synthesis.
+
+See ``docs/superpowers/specs/2026-04-29-gk-converter-coverage-parity-design.md``
+for the full design rationale.
 """
 
 import warnings
@@ -38,7 +99,10 @@ EXPECTED_INPUT_COLUMNS: set[str] = {
 # ---------------------------------------------------------------------------
 _MAPPED_EVENT_TYPES: frozenset[str] = frozenset(
     {
-        "Pass",
+        # NOTE: "Pass" was in this set pre-1.10.0 but DFL bronze never emits
+        # it — the actual pass-class event_type is "Play". Removing "Pass"
+        # makes legacy callers' rows surface in unrecognized_counts (loud)
+        # rather than silently mapping to non_action.
         "ShotAtGoal",
         "TacklingGame",
         "Foul",
@@ -347,6 +411,7 @@ def convert_to_actions(
     home_team_id: str,
     *,
     preserve_native: list[str] | None = None,
+    goalkeeper_ids: set[str] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """Convert normalized Sportec/DFL event DataFrame to SPADL actions.
 
@@ -361,6 +426,16 @@ def convert_to_actions(
     preserve_native : list[str], optional
         Caller-attached columns to preserve through to the output. Synthetic
         dribble rows get NaN in preserved columns.
+    goalkeeper_ids : set[str] or None, default ``None``
+        Optional set of DFL player_ids known to be goalkeepers. When
+        provided, Play events whose ``player_id`` is in this set and which
+        have NO explicit ``play_goal_keeper_action`` qualifier are routed
+        to the keeper_pick_up + pass 2-action synthesis (matching the
+        ``throwOut`` qualifier shape). Use this to surface GK distribution
+        events that DFL didn't natively annotate. The qualifier-driven
+        mapping (save / claim / punch / pickUp / throwOut / punt) remains
+        the primary contract and takes precedence when both signals are
+        present. An empty set is equivalent to ``None``.
 
     Returns
     -------
@@ -374,7 +449,7 @@ def convert_to_actions(
 
     event_type_counts = Counter(events["event_type"])
 
-    raw_actions = _build_raw_actions(events, preserve_native)
+    raw_actions = _build_raw_actions(events, preserve_native, goalkeeper_ids=goalkeeper_ids)
 
     if len(raw_actions) > 0:
         actions = _fix_clearances(raw_actions)
@@ -463,6 +538,8 @@ def _find_caution_pairs(
 def _build_raw_actions(
     events: pd.DataFrame,
     preserve_native: list[str] | None,
+    *,
+    goalkeeper_ids: set[str] | None = None,
 ) -> pd.DataFrame:
     """Build raw SPADL actions DataFrame from DFL event rows.
 
@@ -491,8 +568,41 @@ def _build_raw_actions(
             return rows[col]
         return pd.Series([default] * n, index=rows.index)
 
-    # --- Pass / Cross detection ---
-    is_pass = et == "Pass"
+    # --- DFL "Play" events: pass-class by default; GK action when qualifier present ---
+    # DFL bronze never emits "Pass" — the event_type for pass-class events is "Play".
+    # Pre-1.10.0 the dispatch checked et == "Pass", silently dropping every IDSSE
+    # pass to non_action. Post-1.10.0:
+    #   - Play with empty/null qualifier   → pass-class (pass / cross / head bodypart)
+    #   - Play with save/claim/punch/pickUp → keeper_save / keeper_claim / keeper_punch / keeper_pick_up
+    #   - Play with throwOut → keeper_pick_up + synthesized "pass"  (distribution by hand)
+    #   - Play with punt → keeper_pick_up + synthesized "goalkick"  (distribution by foot)
+    #   - Play with unrecognized non-empty qualifier → non_action (defensive)
+    is_play = et == "Play"
+    play_gk = _opt("play_goal_keeper_action", "").fillna("").astype(str).to_numpy()
+    play_gk_save = is_play & (play_gk == "save")
+    play_gk_claim = is_play & (play_gk == "claim")
+    play_gk_punch = is_play & (play_gk == "punch")
+    play_gk_pickup = is_play & (play_gk == "pickUp")
+    play_gk_throwout = is_play & (play_gk == "throwOut")
+    play_gk_punt = is_play & (play_gk == "punt")
+    play_gk_distribution = play_gk_throwout | play_gk_punt
+    is_play_known_qualifier = play_gk_save | play_gk_claim | play_gk_punch | play_gk_pickup | play_gk_distribution
+
+    # Supplementary signal: when goalkeeper_ids is provided, Play events
+    # with player_id in the set AND no native GK qualifier route to the
+    # keeper_pick_up + pass synthesis. The qualifier-driven path takes
+    # precedence (no overlap by construction — supplementary fires only
+    # when play_gk == "").
+    play_gk_supplementary = np.zeros(n, dtype=bool)
+    if goalkeeper_ids:
+        gk_str_set = {str(g) for g in goalkeeper_ids}
+        is_known_gk_player = rows["player_id"].astype(str).isin(gk_str_set).to_numpy()
+        play_gk_supplementary = is_play & (play_gk == "") & is_known_gk_player
+
+    is_play_gk_any = is_play_known_qualifier | play_gk_supplementary
+
+    # Pass-class: Play with empty qualifier AND not in supplementary path.
+    is_pass = is_play & (play_gk == "") & ~play_gk_supplementary
     is_cross_by_height = is_pass & _opt("play_height", None).eq("cross").to_numpy()
     is_cross_by_flag = is_pass & _opt("play_flat_cross", False).fillna(False).astype(bool).to_numpy()
     is_cross = is_cross_by_height | is_cross_by_flag
@@ -579,23 +689,27 @@ def _build_raw_actions(
             elif paired_color in ("red", "directRed"):
                 result_ids[idx] = spadlconfig.result_id["red_card"]
 
-    # --- Play with goalkeeper_action ---
-    is_play = et == "Play"
-    play_gk = _opt("play_goal_keeper_action", "").fillna("").astype(str).to_numpy()
-    play_gk_save = is_play & (play_gk == "save")
-    play_gk_claim = is_play & (play_gk == "claim")
-    play_gk_punch = is_play & (play_gk == "punch")
-    play_gk_pickup = is_play & (play_gk == "pickUp")
+    # --- GK action assignment (Play events with recognized qualifier) ---
+    # is_play / play_gk / play_gk_* masks computed in the consolidated Play
+    # dispatch block above. Distribution rows (throwOut/punt) and the
+    # supplementary path get keeper_pick_up here; the synthesis helper
+    # below adds their second half (pass / goalkick).
     type_ids[play_gk_save] = spadlconfig.actiontype_id["keeper_save"]
     type_ids[play_gk_claim] = spadlconfig.actiontype_id["keeper_claim"]
     type_ids[play_gk_punch] = spadlconfig.actiontype_id["keeper_punch"]
     type_ids[play_gk_pickup] = spadlconfig.actiontype_id["keeper_pick_up"]
-    result_ids[is_play] = spadlconfig.result_id["success"]
+    type_ids[play_gk_distribution] = spadlconfig.actiontype_id["keeper_pick_up"]
+    type_ids[play_gk_supplementary] = spadlconfig.actiontype_id["keeper_pick_up"]
+    bodypart_ids[is_play_gk_any] = spadlconfig.bodypart_id["other"]
+    result_ids[is_play_gk_any] = spadlconfig.result_id["success"]
 
-    is_play_no_action = is_play & ~(play_gk_save | play_gk_claim | play_gk_punch | play_gk_pickup)
-    type_ids[is_play_no_action] = spadlconfig.actiontype_id["non_action"]
+    # Play events with UNRECOGNIZED non-empty qualifier value → non_action
+    # (defensive: avoids silently emitting pass for future qualifier values
+    # we haven't analyzed). Empty-qualifier rows are pass-class above.
+    is_play_unrecognized_gk = is_play & (play_gk != "") & ~is_play_known_qualifier
+    type_ids[is_play_unrecognized_gk] = spadlconfig.actiontype_id["non_action"]
 
-    # Assemble actions DataFrame.
+    # Assemble main actions DataFrame (1:1 with rows).
     actions = pd.DataFrame(
         {
             "game_id": rows["match_id"].astype("object"),
@@ -614,20 +728,119 @@ def _build_raw_actions(
         }
     )
 
-    # Drop non_action rows.
-    actions = actions[actions["type_id"] != spadlconfig.actiontype_id["non_action"]].reset_index(drop=True)
-
-    # If post-filter all rows dropped, return canonical empty schema so downstream
-    # _finalize_output can assemble action_id and other schema-required columns.
-    if len(actions) == 0:
-        return _empty_raw_actions(preserve_native, events)
-
-    # Carry preserve_native columns through.
+    # Carry preserve_native columns onto main actions BEFORE synthesis so
+    # synthetic rows can pick them up via the helper.
     if preserve_native:
         for col in preserve_native:
             if col in rows.columns:
-                actions[col] = rows.loc[actions.index, col].to_numpy()
+                actions[col] = rows[col].to_numpy()
             else:
                 actions[col] = np.nan
 
+    # Synthesize keeper-distribution second-action rows (throwOut/punt
+    # and supplementary goalkeeper_ids path; the latter is zeros until
+    # Task 5 lights it up).
+    synth = _synthesize_gk_distribution_actions(
+        rows,
+        play_gk_throwout=play_gk_throwout,
+        play_gk_punt=play_gk_punt,
+        play_gk_supplementary=play_gk_supplementary,
+        preserve_native=preserve_native,
+    )
+    if len(synth) > 0:
+        actions["_row_order"] = np.arange(len(actions), dtype=np.int64) * 2
+        combined = pd.concat([actions, synth], ignore_index=True, sort=False)
+        actions = (
+            combined.sort_values("_row_order", kind="mergesort").drop(columns=["_row_order"]).reset_index(drop=True)
+        )
+
+    # Drop non_action rows.
+    actions = actions[actions["type_id"] != spadlconfig.actiontype_id["non_action"]].reset_index(drop=True)
+
+    if len(actions) == 0:
+        return _empty_raw_actions(preserve_native, events)
+
     return actions
+
+
+def _synthesize_gk_distribution_actions(
+    rows: pd.DataFrame,
+    play_gk_throwout: np.ndarray,
+    play_gk_punt: np.ndarray,
+    play_gk_supplementary: np.ndarray,
+    preserve_native: list[str] | None,
+) -> pd.DataFrame:
+    """Build the synthetic second-action DataFrame for GK distribution events.
+
+    For each row in ``rows`` matching one of the distribution masks, emit a
+    synthetic SPADL action immediately after the corresponding keeper_pick_up
+    row (which is assigned in the main ``_build_raw_actions`` dispatch).
+
+    Routing:
+
+    - ``throwOut`` qualifier → ``pass`` (bodypart=other; GK distributed by hand)
+    - ``punt`` qualifier → ``goalkick`` (bodypart=foot; GK distributed by foot)
+    - ``goalkeeper_ids`` supplementary path (no native qualifier present
+      but player_id is a known GK): → ``pass`` (bodypart=other; defaults
+      to the throwOut shape)
+
+    All synthetic rows inherit the source row's ``(match_id, event_id,
+    period, timestamp_seconds, player_id, team, x, y)``. ``original_event_id``
+    is the source's ``event_id`` suffixed with ``"_synth_pass"`` /
+    ``"_synth_goalkick"`` to keep IDs unique.
+
+    Returns an empty DataFrame when no distribution / supplementary rows
+    exist; otherwise returns a synthetic-rows DataFrame with a ``_row_order``
+    column used by the caller to interleave synthetic rows after their
+    source rows.
+    """
+    is_distribution = play_gk_throwout | play_gk_punt | play_gk_supplementary
+    if not is_distribution.any():
+        return pd.DataFrame()
+
+    src_indices = np.where(is_distribution)[0]
+    src = rows.iloc[src_indices].copy().reset_index(drop=True)
+
+    n_synth = len(src)
+    type_ids_synth = np.full(n_synth, spadlconfig.actiontype_id["pass"], dtype=np.int64)
+    bodypart_ids_synth = np.full(n_synth, spadlconfig.bodypart_id["other"], dtype=np.int64)
+    suffix = np.full(n_synth, "_synth_pass", dtype=object)
+
+    # punt → goalkick + foot
+    is_punt_synth = play_gk_punt[src_indices]
+    type_ids_synth[is_punt_synth] = spadlconfig.actiontype_id["goalkick"]
+    bodypart_ids_synth[is_punt_synth] = spadlconfig.bodypart_id["foot"]
+    suffix[is_punt_synth] = "_synth_goalkick"
+
+    synth = pd.DataFrame(
+        {
+            "game_id": src["match_id"].astype("object"),
+            "original_event_id": (
+                src["event_id"].astype(str) + pd.Series(suffix, index=src.index, dtype="object")
+            ).astype("object"),
+            "period_id": src["period"].astype(np.int64),
+            "time_seconds": src["timestamp_seconds"].astype(np.float64),
+            "team_id": src["team"].astype("object"),
+            "player_id": src["player_id"].astype("object"),
+            "start_x": src["x"].astype(np.float64),
+            "start_y": src["y"].astype(np.float64),
+            "end_x": src["x"].astype(np.float64),
+            "end_y": src["y"].astype(np.float64),
+            "type_id": type_ids_synth,
+            "result_id": np.full(n_synth, spadlconfig.result_id["success"], dtype=np.int64),
+            "bodypart_id": bodypart_ids_synth,
+        }
+    )
+
+    # _row_order: interleave key. Source rows get index*2; synth rows
+    # get the source's index*2 + 1 so synth sorts immediately after.
+    synth["_row_order"] = src_indices.astype(np.int64) * 2 + 1
+
+    if preserve_native:
+        for col in preserve_native:
+            if col in src.columns:
+                synth[col] = src[col].to_numpy()
+            else:
+                synth[col] = np.nan
+
+    return synth
