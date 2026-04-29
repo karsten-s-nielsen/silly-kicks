@@ -818,6 +818,110 @@ def boundary_metrics(
     return BoundaryMetrics(precision=precision, recall=recall, f1=f1)
 
 
+class CoverageMetrics(TypedDict):
+    """Per-action-type coverage statistics for a SPADL action stream.
+
+    Returned by :func:`coverage_metrics` for downstream coverage validation
+    and silly-kicks's own cross-provider parity regression gate.
+
+    Attributes
+    ----------
+    counts : dict[str, int]
+        Maps action-type name to row count. Action-type names are resolved
+        from ``type_id`` via :func:`silly_kicks.spadl.config.actiontypes_df`.
+        ``type_id`` values not found in the canonical spadlconfig vocabulary
+        are reported under the name ``"unknown"`` (no exception raised).
+    missing : list[str]
+        Action types that the caller passed via ``expected_action_types`` but
+        which produced zero rows in ``actions``. Returned sorted (so test
+        assertions are stable). Empty list when ``expected_action_types`` is
+        ``None`` or every expected type was present.
+    total_actions : int
+        Row count of the input ``actions`` DataFrame.
+    """
+
+    counts: dict[str, int]
+    missing: list[str]
+    total_actions: int
+
+
+def coverage_metrics(
+    *,
+    actions: pd.DataFrame,
+    expected_action_types: set[str] | None = None,
+) -> CoverageMetrics:
+    """Compute SPADL action-type coverage for an action DataFrame.
+
+    Resolves ``type_id`` to action-type name via
+    :func:`silly_kicks.spadl.config.actiontypes_df` and counts each action
+    type present. When ``expected_action_types`` is provided, returns any
+    of those types with zero rows under ``missing``.
+
+    Use cases:
+
+    1. Test discipline — assert converter X emits action types Y on a
+       fixture (used by silly-kicks 1.10.0's cross-provider parity
+       regression gate).
+    2. Downstream validation — consumers calling silly-kicks-converted
+       bronze data can verify expected coverage before downstream
+       aggregation.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL action stream. Must contain ``type_id``.
+    expected_action_types : set[str] or None, default ``None``
+        Action type names expected to be present. Returned (sorted) as
+        ``missing`` if absent. ``None`` skips the expectation check; an
+        empty list is then returned for ``missing``.
+
+    Returns
+    -------
+    CoverageMetrics
+        ``{"counts": {...}, "missing": [...], "total_actions": N}``.
+
+    Raises
+    ------
+    ValueError
+        If the ``type_id`` column is missing.
+
+    Examples
+    --------
+    Validate IDSSE bronze→SPADL output covers all expected action types::
+
+        from silly_kicks.spadl import sportec, coverage_metrics
+        actions, _ = sportec.convert_to_actions(
+            events, home_team_id="HOME", goalkeeper_ids={"DFL-OBJ-..."}
+        )
+        m = coverage_metrics(
+            actions=actions,
+            expected_action_types={"pass", "shot", "tackle", "keeper_pick_up"},
+        )
+        assert not m["missing"], f"Missing action types: {m['missing']}"
+    """
+    if "type_id" not in actions.columns:
+        raise ValueError(f"coverage_metrics: actions missing required 'type_id' column. Got: {sorted(actions.columns)}")
+
+    n = len(actions)
+    counts: dict[str, int] = {}
+    if n > 0:
+        # Reverse map: id -> name. Built from spadlconfig.actiontypes (single
+        # source of truth). Out-of-vocab ids report as "unknown".
+        id_to_name = {i: name for i, name in enumerate(spadlconfig.actiontypes)}
+        type_id_arr = actions["type_id"].to_numpy()
+        # Tally with deterministic insertion order (numpy iteration order on
+        # the input array). Equivalent to pd.value_counts but preserves
+        # first-seen ordering for stable user-facing output.
+        for tid in type_id_arr:
+            name = id_to_name.get(int(tid), "unknown")
+            counts[name] = counts.get(name, 0) + 1
+
+    expected = set(expected_action_types) if expected_action_types else set()
+    missing = sorted(expected - set(counts.keys())) if expected else []
+
+    return CoverageMetrics(counts=counts, missing=missing, total_actions=n)
+
+
 def add_names(actions: pd.DataFrame) -> pd.DataFrame:
     """Add the type name, result name and bodypart name to a SPADL dataframe.
 

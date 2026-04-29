@@ -112,6 +112,7 @@ def convert_to_actions(
     shot_fidelity_version: int | None = None,
     *,
     preserve_native: list[str] | None = None,
+    goalkeeper_ids: set[int] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
     """
     Convert StatsBomb events to SPADL actions.
@@ -136,6 +137,13 @@ def convert_to_actions(
         StatsBomb's possession-sequence metadata). Each field must be present
         on the input ``events`` DataFrame and must not overlap with the SPADL
         schema. Synthetic actions inserted by ``_add_dribbles`` get NaN.
+    goalkeeper_ids : set[int] or None, default ``None``
+        Accepted for cross-provider API symmetry with the
+        ``sportec`` / ``metrica`` converters (silly-kicks 1.10.0+); has
+        no effect on StatsBomb output because StatsBomb's source events
+        natively mark GK actions via the ``Goal Keeper`` event type. The
+        parameter is silently accepted; the output is byte-for-byte
+        identical with and without it. Empty set ≡ ``None``.
 
     Returns
     -------
@@ -163,6 +171,9 @@ def convert_to_actions(
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="StatsBomb")
     _validate_preserve_native(events, preserve_native, provider="StatsBomb")
+    # goalkeeper_ids: accepted for cross-provider API symmetry; no-op for
+    # StatsBomb because source events natively mark GK actions.
+    _ = goalkeeper_ids
     _event_type_counts = Counter(events["type_name"])
 
     actions = pd.DataFrame()
