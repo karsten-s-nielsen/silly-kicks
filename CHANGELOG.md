@@ -5,6 +5,122 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] — 2026-04-29
+
+### ⚠️ Breaking
+
+- **`silly_kicks.spadl.sportec.convert_to_actions` no longer overrides
+  `team_id` / `player_id` from DFL `tackle_winner` / `tackle_winner_team`
+  qualifiers.** Per ADR-001
+  (`docs/superpowers/adrs/ADR-001-converter-identifier-conventions.md`),
+  the SPADL converter contract is "caller's identifier conventions are
+  sacred — never overridden from qualifiers." Caller-supplied `team` /
+  `player_id` values mirror verbatim into the output. Pre-2.0.0 behavior
+  silently rewrote ~56% of tackle rows on consumers using a
+  caller-normalized `team` convention (see luxury-lakehouse PR-LL2
+  close-out report).
+- **Sportec output schema changes from `KLOPPY_SPADL_COLUMNS` to
+  `SPORTEC_SPADL_COLUMNS`** — 14 + 4 = 18 columns. The 4 new columns
+  surface DFL qualifier values: `tackle_winner_player_id`,
+  `tackle_winner_team_id`, `tackle_loser_player_id`,
+  `tackle_loser_team_id`. NaN on non-tackle rows; NaN when the qualifier
+  is absent. Sportec consumers asserting against `KLOPPY_SPADL_COLUMNS`
+  must switch to `SPORTEC_SPADL_COLUMNS`.
+
+### Migration
+
+If your pre-2.0.0 sportec consumer relied on the tackle-winner override
+AND your upstream `team` / `player_id` columns are in the same
+identifier convention as DFL's `tackle_winner_team` / `tackle_winner`
+qualifiers (raw `DFL-CLU-...` / `DFL-OBJ-...`), call the new helper
+post-conversion:
+
+```python
+from silly_kicks.spadl import sportec, use_tackle_winner_as_actor
+actions, _ = sportec.convert_to_actions(events, home_team_id="DFL-CLU-XXX")
+actions = use_tackle_winner_as_actor(actions)
+```
+
+If your `team` / `player_id` columns use any other convention, the
+post-1.10.0 behavior already preserved your conventions correctly — no
+migration needed; the bug fix is automatic on upgrade.
+
+### Added
+
+- **First silly-kicks ADR.** `docs/superpowers/adrs/ADR-001-converter-identifier-conventions.md`
+  + `docs/superpowers/adrs/ADR-TEMPLATE.md` (vendored verbatim from
+  luxury-lakehouse) establish the silly-kicks ADR pattern. Future
+  decisions that add an exception to project-wide conventions, change
+  schema ownership, or hardcode a workaround for a platform constraint
+  get an ADR.
+- **`silly_kicks.spadl.SPORTEC_SPADL_COLUMNS`** schema constant (18-key
+  dict) — extends `KLOPPY_SPADL_COLUMNS` with the 4 tackle qualifier
+  passthrough columns. Re-exported from `silly_kicks.spadl`.
+- **`silly_kicks.spadl.use_tackle_winner_as_actor(actions) -> pd.DataFrame`**
+  — pure post-conversion enrichment that restores pre-2.0.0 sportec
+  SPADL "actor = winner" semantic for callers whose upstream identifier
+  convention matches DFL's qualifier format. Raises `ValueError` early
+  on missing required columns. Mirrors the `add_*` helper family pattern.
+- **Cross-provider parity regression gate**
+  (`tests/spadl/test_cross_provider_parity.py::test_team_id_mirrors_input_team`).
+  Parametrized over all 5 DataFrame converters; asserts each output's
+  `team_id` values are a subset of the input `team` values. Locks the
+  ADR-001 contract per-provider going forward; would have caught the
+  1.7.0 sportec bug.
+- **e2e on the IDSSE production fixture**
+  (`TestSportecAdrContractOnProductionFixture`, 5 tests). Verifies the
+  contract works on production-shape data: caller's labels survive
+  through the converter; the 4 new columns are populated for qualifier
+  rows; the migration helper round-trips correctly; 1.10.0 keeper
+  coverage is preserved.
+
+### Changed
+
+- **CLAUDE.md "Key conventions" section** gains one rule citing ADR-001:
+  "Converter identifier conventions are sacred. SPADL DataFrame
+  converters never override the caller's `team_id` / `player_id`
+  columns from provider-specific qualifiers..."
+- **Sportec module docstring** documents the 4 tackle qualifier
+  passthrough columns + the `SPORTEC_SPADL_COLUMNS` schema + the
+  migration helper. References ADR-001.
+
+### Removed
+
+- **`silly_kicks.spadl.sportec` tackle override block** at the previous
+  `sportec.py:559-565`. The 6-line override that silently rewrote
+  `team_id` / `player_id` from raw DFL qualifier values is gone.
+- **`tests/spadl/test_sportec.py::TestSportecActionMappingShotsTacklesFoulsGK::test_tackle_uses_winner_as_actor`**
+  — was asserting the now-removed override. Covered by the new
+  `TestSportecTackleNoOverride` + `TestSportecTackleWinnerColumns`
+  classes.
+
+### Audit findings
+
+Manual cross-converter review (this cycle) confirmed sportec.tackle
+was the unique violator of the ADR-001 contract:
+
+| Converter | Override `player_id` / `team_id`? | Notes |
+|---|---|---|
+| `silly_kicks.spadl.sportec` | YES (removed) | The bug. |
+| `silly_kicks.spadl.metrica` | NO | 1.10.0 GK routing only changes `type_id` / `bodypart_id`. |
+| `silly_kicks.spadl.wyscout` | NO | 1.0.0 aerial-duel reclassification only changes `type_id` / `subtype_id`. |
+| `silly_kicks.spadl.statsbomb` | NO | No qualifier-driven overrides. |
+| `silly_kicks.spadl.opta` | NO | No qualifier-driven overrides. |
+| `silly_kicks.spadl.kloppy` | NO | Gateway path. |
+
+The 2.0.0 change is surgical (one converter), but the parity gate locks
+the contract for all future converter additions.
+
+### Notes
+
+- silly-kicks 2.0.0 is the project's first semver-major release. The
+  library is ~3 weeks old (0.1.0 shipped 2026-04-06); major versions
+  aren't precious — bumping locks the contract before more downstream
+  consumers pin against pre-2.0.0 behavior.
+- luxury-lakehouse can bump `silly-kicks>=2.0.0,<3.0` and (optionally)
+  drop their `_team_label_to_dfl_id` shim from PR-LL2 close-out, OR
+  keep it as a documented winner-attribution post-conversion pattern.
+
 ## [1.10.0] — 2026-04-29
 
 ### Added

@@ -197,7 +197,184 @@ def test_converter_emits_at_least_one_keeper_action(provider: str):
 
 @pytest.mark.parametrize("provider", list(_PROVIDER_LOADERS.keys()))
 def test_converter_returns_canonical_spadl_columns(provider: str):
-    """Sanity check: every converter returns a DataFrame with type_id present."""
+    """Sanity check: every converter returns a DataFrame with type_id present.
+    Sportec output uses SPORTEC_SPADL_COLUMNS (ADR-001); other providers use
+    KLOPPY_SPADL_COLUMNS or SPADL_COLUMNS.
+    """
     actions = _PROVIDER_LOADERS[provider]()
     assert "type_id" in actions.columns
     assert len(actions) > 0
+
+    if provider == "sportec":
+        # Post-2.0.0: sportec output includes the 4 tackle_*_*_id columns.
+        for col in (
+            "tackle_winner_player_id",
+            "tackle_winner_team_id",
+            "tackle_loser_player_id",
+            "tackle_loser_team_id",
+        ):
+            assert col in actions.columns, f"sportec output missing ADR-001 column {col!r}"
+
+
+# ---------------------------------------------------------------------------
+# ADR-001: caller's team_id mirrors input — never overridden from qualifiers
+# (2.0.0; locks the converter contract per-provider as a regression gate)
+# ---------------------------------------------------------------------------
+
+
+def _input_team_values_for(provider: str) -> set[str]:
+    """Capture the unique team values from each provider's input fixture.
+
+    Returns the set of team identifiers the caller passed in. ADR-001 says
+    output team_id values must be a subset of this set.
+    """
+    if provider == "sportec":
+        parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
+        events = pd.read_parquet(parquet_path)
+        return set(events["team"].dropna().astype(str).tolist())
+    if provider == "metrica":
+        parquet_path = _REPO_ROOT / "tests" / "datasets" / "metrica" / "sample_match.parquet"
+        events = pd.read_parquet(parquet_path)
+        return set(events["team"].dropna().astype(str).tolist())
+    if provider == "statsbomb":
+        fixture_path = _REPO_ROOT / "tests" / "datasets" / "statsbomb" / "raw" / "events" / "7298.json"
+        with open(fixture_path, encoding="utf-8") as f:
+            events_raw = json.load(f)
+        return {str((e.get("team") or {}).get("id")) for e in events_raw if (e.get("team") or {}).get("id") is not None}
+    if provider == "opta":
+        # Synthetic fixture (see _load_opta_fixture); team_ids are 100, 200.
+        return {"100", "200"}
+    if provider == "wyscout":
+        # Synthetic fixture (see _load_wyscout_fixture); team_id is 100.
+        return {"100"}
+    raise ValueError(f"unknown provider {provider!r}")
+
+
+@pytest.mark.parametrize("provider", list(_PROVIDER_LOADERS.keys()))
+def test_team_id_mirrors_input_team(provider: str):
+    """ADR-001 contract: every converter's output team_id values must be a
+    subset of the input team values. Locks the no-override contract
+    per-provider as a regression gate going forward.
+
+    Pre-2.0.0 sportec failed this gate: tackle rows had raw DFL CLU ids
+    (e.g., 'DFL-CLU-000005') in team_id when the caller passed 'home' /
+    'away' in the input team column.
+    """
+    actions = _PROVIDER_LOADERS[provider]()
+    expected = _input_team_values_for(provider)
+
+    # Cast output team_id to str for comparison (some providers use int,
+    # but membership comparison via str is robust across dtypes).
+    actual = set(actions["team_id"].dropna().astype(str).tolist())
+
+    leaked = actual - expected
+    assert not leaked, (
+        f"Provider {provider!r} emitted team_id values not present in input: {sorted(leaked)}. "
+        f"Expected subset of input team values: {sorted(expected)[:10]}{'...' if len(expected) > 10 else ''}. "
+        f"This is the ADR-001 violation pattern (cf. silly-kicks pre-2.0.0 sportec tackle override)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# ADR-001 e2e on the IDSSE production fixture
+# (Verifies the contract works on production-shape data — 308 rows from
+# soccer_analytics.bronze.idsse_events match J03WMX, vendored 1.10.0)
+# ---------------------------------------------------------------------------
+
+
+class TestSportecAdrContractOnProductionFixture:
+    """ADR-001 verification on production-shape IDSSE data."""
+
+    @staticmethod
+    def _load_actions():
+        from silly_kicks.spadl import sportec
+
+        parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
+        events = pd.read_parquet(parquet_path)
+
+        # Pretend the caller normalized team to home/away labels (the
+        # luxury-lakehouse adapter pattern) — overwrite events["team"]
+        # using the first non-null team value as "home" and others as "away".
+        first_team = events["team"].dropna().iloc[0]
+        events["team"] = events["team"].apply(lambda t: "home" if t == first_team else ("away" if pd.notna(t) else t))
+
+        actions, _ = sportec.convert_to_actions(events, home_team_id="home")
+        return actions, events
+
+    def test_no_dfl_clu_strings_leak_into_team_id(self):
+        """The PR-LL2 bug: caller passed 'home'/'away' but team_id rows had
+        raw 'DFL-CLU-...' strings. ADR-001 makes this impossible."""
+        actions, _ = self._load_actions()
+        leaked = actions["team_id"].dropna().astype(str)
+        dfl_leakage = leaked[leaked.str.startswith("DFL-CLU-")]
+        assert len(dfl_leakage) == 0, (
+            f"DFL-CLU-... strings leaked into team_id ({len(dfl_leakage)} rows). "
+            f"This is the ADR-001 violation pattern. Sample leaks: {dfl_leakage.head(3).tolist()}"
+        )
+
+    def test_team_id_only_contains_home_or_away(self):
+        actions, _ = self._load_actions()
+        unique_team_ids = set(actions["team_id"].dropna().astype(str).tolist())
+        # The caller normalized to {home, away}. Synthetic dribble rows
+        # inherit prior action's team_id (which is also home/away).
+        assert unique_team_ids <= {"home", "away"}, (
+            f"team_id contains values outside {{home, away}}: {sorted(unique_team_ids)}"
+        )
+
+    def test_tackle_winner_team_id_populated_for_qualifier_rows(self):
+        """Some tackle rows in the fixture have tackle_winner_team qualifier
+        populated (DFL-CLU-... values). The new column surfaces those verbatim."""
+        actions, events = self._load_actions()
+
+        if "tackle_winner_team" not in events.columns:
+            pytest.skip("IDSSE fixture lacks tackle_winner_team column entirely")
+        input_winner_rows = events[events["tackle_winner_team"].notna()]
+        if len(input_winner_rows) == 0:
+            pytest.skip("IDSSE fixture has no tackle rows with tackle_winner_team qualifier")
+
+        output_winner_rows = actions[actions["tackle_winner_team_id"].notna()]
+        assert len(output_winner_rows) > 0, (
+            "Sportec output has zero rows with tackle_winner_team_id populated, "
+            "but input has rows with the tackle_winner_team qualifier."
+        )
+
+    def test_use_tackle_winner_as_actor_round_trips(self):
+        """The migration helper restores pre-2.0.0 'actor = winner' semantic."""
+        from silly_kicks.spadl import use_tackle_winner_as_actor
+
+        actions, _ = self._load_actions()
+
+        n_winner_rows = int(actions["tackle_winner_team_id"].notna().sum())
+        if n_winner_rows == 0:
+            pytest.skip("IDSSE fixture has no rows with tackle_winner_team_id; helper has nothing to swap")
+
+        rotated = use_tackle_winner_as_actor(actions)
+
+        # On rows with non-null winner cols, team_id is now the winner team
+        # id (not 'home'/'away').
+        rotated_winner_rows = rotated[actions["tackle_winner_team_id"].notna()]
+        assert (rotated_winner_rows["team_id"] == rotated_winner_rows["tackle_winner_team_id"]).all(), (
+            "use_tackle_winner_as_actor failed to overwrite team_id on rows with non-null winner cols"
+        )
+
+    def test_keeper_coverage_preserved_from_1_10_0(self):
+        """ADR-001 changes don't regress the 1.10.0 keeper coverage fix."""
+        from silly_kicks.spadl import coverage_metrics
+
+        actions, _ = self._load_actions()
+        m = coverage_metrics(
+            actions=actions,
+            expected_action_types={
+                "keeper_save",
+                "keeper_claim",
+                "keeper_punch",
+                "keeper_pick_up",
+            },
+        )
+        keeper_total = sum(
+            m["counts"].get(t, 0) for t in ("keeper_save", "keeper_claim", "keeper_punch", "keeper_pick_up")
+        )
+        # IDSSE fixture has 7 throwOut + 1 punt qualifier rows from PR-S10;
+        # each produces a keeper_pick_up. Plus possibly save/claim/punch rows.
+        # Assert at least 1 (the 1.10.0 floor); typical is ~8.
+        assert keeper_total > 0, f"1.10.0 keeper coverage regressed under ADR-001 changes. counts={m['counts']}"

@@ -45,6 +45,19 @@ KLOPPY_SPADL_COLUMNS: dict[str, str] = {
     "player_id": "object",
 }
 
+SPORTEC_SPADL_COLUMNS: dict[str, str] = {
+    **KLOPPY_SPADL_COLUMNS,
+    "tackle_winner_player_id": "object",
+    "tackle_winner_team_id": "object",
+    "tackle_loser_player_id": "object",
+    "tackle_loser_team_id": "object",
+}
+"""Sportec SPADL output schema: KLOPPY_SPADL_COLUMNS + 4 sportec-specific
+qualifier passthrough columns surfacing DFL ``tackle_winner`` /
+``tackle_winner_team`` / ``tackle_loser`` / ``tackle_loser_team`` qualifier
+values verbatim. NaN on rows where the qualifier is absent in the source;
+always NaN on non-tackle rows. See ADR-001 for the contract rationale."""
+
 
 @dataclasses.dataclass(frozen=True)
 class ConversionReport:

@@ -16,6 +16,7 @@ Maintained fork of socceraction — SPADL event conversion + VAEP action valuati
 - Vectorized dispatch: converters use `np.select` over pre-flattened columns, not `apply(axis=1)`.
 - All `warnings.warn()` calls include `stacklevel=2`.
 - ML naming conventions (uppercase `X`, `Y`, `Pscores`) are allowed in `vaep/` and `xthreat.py` per ruff per-file-ignores.
+- **Converter identifier conventions are sacred.** SPADL DataFrame converters never override the caller's `team_id` / `player_id` columns from provider-specific qualifiers. Qualifier-derived facts surface as dedicated output columns (see `tackle_winner_*` / `tackle_loser_*` on sportec). Decision: ADR-001.
 
 ## Testing
 
