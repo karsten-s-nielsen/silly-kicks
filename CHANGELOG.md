@@ -5,6 +5,71 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-04-29
+
+### Added
+- **Public `silly_kicks.spadl.boundary_metrics(*, heuristic, native)` utility**
+  for computing precision / recall / F1 between two possession-id sequences.
+  Returns a `BoundaryMetrics` TypedDict (also re-exported from
+  `silly_kicks.spadl`). Keyword-only arguments — the metric is asymmetric
+  (precision and recall swap when inputs swap), so positional usage is a
+  silent footgun the API surface eliminates. Returns `0.0` for any metric
+  whose denominator is zero (empty / single-row / constant sequences).
+  Length-mismatched inputs raise `ValueError`.
+- 3 vendored StatsBomb open-data fixtures under
+  `tests/datasets/statsbomb/raw/events/` (matches 7298, 7584, 3754058 —
+  Women's World Cup, Champions League, Premier League; ~9 MB total).
+  License attribution in `tests/datasets/statsbomb/README.md`. Used by
+  the new parametrized regression gate.
+
+### Changed
+- **`add_possessions` docstring is now honest about empirical performance.**
+  The previous "boundary-F1 ~0.90" claim was 30+ percentage points above
+  the actual measurement on StatsBomb open-data. New text reports
+  recall ~0.93, precision ~0.42, F1 ~0.58 (peak ~0.605 at
+  `max_gap_seconds=10.0`) and explains why precision is the way it is
+  (intrinsic to the team-change-with-carve-outs algorithm class, not a
+  defect — StatsBomb's proprietary annotation merges brief opposing-
+  team actions back into the containing possession; the heuristic
+  cannot replicate that structurally).
+- **e2e validation gate replaces F1 ≥ 0.80 with recall ≥ 0.85 AND
+  precision ≥ 0.30 per match.** Recall enforces the helper's primary
+  contract (catching every real boundary). Precision floor catches the
+  "boundary cardinality halved or doubled" regression class that affects
+  per-possession aggregation downstream. F1 stays in the assert message
+  for diagnostics only — gating on F1 would re-introduce the
+  misrepresentation problem this PR is fixing.
+- **Test class renamed** `TestBoundaryF1AgainstStatsBombNative` →
+  `TestBoundaryAgainstStatsBombNative`. Parametrized over the 3 vendored
+  fixtures with per-match independent gates.
+
+### Fixed
+- **e2e regression coverage now actually runs in CI.** The previous
+  `TestBoundaryF1AgainstStatsBombNative::test_boundary_f1_against_native_possession_id`
+  was `@pytest.mark.e2e` and silently skipped on every CI run since
+  1.2.0 because the fixture wasn't committed. It was also skipping
+  locally (the fixture was never on the user's only development
+  machine). Net: ~6 release cycles of zero coverage on this test. PR-S8
+  vendors the fixtures and drops the marker so the test runs on every
+  PR + push.
+
+### Notes
+- Empirical baselines verified locally on the committed fixtures:
+  recall {0.9425, 0.9268, 0.9259}, precision {0.4484, 0.4306, 0.3855},
+  F1 {0.6077, 0.5880, 0.5443} for matches 7298 / 7584 / 3754058
+  respectively. All comfortably above the gate thresholds; tightest
+  margin is precision on 3754058 (8.55pp above floor).
+- The 5 `test_predict*` cases in `tests/vaep/`, `tests/test_xthreat.py`,
+  and `tests/atomic/` continue to skip in CI (and locally) because they
+  depend on the un-committed `tests/datasets/statsbomb/spadl-WorldCup-2018.h5`
+  fixture. Closing that gap is queued as PR-S9 (generate the HDF5 from
+  open-data raw events; commit + drop e2e markers). Tracked in
+  `TODO.md`.
+- Algorithmic precision improvement for `add_possessions` is queued as
+  PR-S10 (look-ahead merge rules for brief opposing-team actions;
+  re-measure `max_gap_seconds` defaults using the new
+  `boundary_metrics` utility).
+
 ## [1.7.0] — 2026-04-29
 
 ### Added

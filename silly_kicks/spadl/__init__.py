@@ -2,6 +2,7 @@
 
 __all__ = [
     "SPADL_COLUMNS",
+    "BoundaryMetrics",
     "ConversionReport",
     "actiontypes_df",
     "add_gk_distribution_metrics",
@@ -10,6 +11,7 @@ __all__ = [
     "add_possessions",
     "add_pre_shot_gk_context",
     "bodyparts_df",
+    "boundary_metrics",
     "config",
     "kloppy",
     "opta",
@@ -24,11 +26,13 @@ from . import config, opta, statsbomb, wyscout
 from .config import actiontypes_df, bodyparts_df, results_df
 from .schema import SPADL_COLUMNS, ConversionReport
 from .utils import (
+    BoundaryMetrics,
     add_gk_distribution_metrics,
     add_gk_role,
     add_names,
     add_possessions,
     add_pre_shot_gk_context,
+    boundary_metrics,
     play_left_to_right,
     validate_spadl,
 )

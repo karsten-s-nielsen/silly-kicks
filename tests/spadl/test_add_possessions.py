@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.spadl import config as spadlconfig
-from silly_kicks.spadl.utils import add_possessions
+from silly_kicks.spadl.utils import add_possessions, boundary_metrics
 
 # ---------------------------------------------------------------------------
 # Test fixture builder
@@ -489,70 +489,47 @@ class TestErrors:
 
 
 # ---------------------------------------------------------------------------
-# Helpers — boundary-F1 metric for end-to-end validation
+# End-to-end: add_possessions vs StatsBomb native possession_id
 # ---------------------------------------------------------------------------
 
 
-def _boundary_f1(heuristic: pd.Series, native: pd.Series) -> float:
-    """F1 score on possession boundaries (where the id changes between consecutive rows).
+class TestBoundaryAgainstStatsBombNative:
+    """Validate add_possessions against StatsBomb's native possession_id.
 
-    Boundaries are invariant under counter relabeling, so the heuristic's
-    possession_id (0-indexed) and the provider's native possession_id
-    (whatever offset) compare directly on where they emit a boundary.
+    Empirically against StatsBomb open-data, this heuristic achieves
+    boundary recall ~0.93 and boundary F1 ~0.58. The precision gap is
+    intrinsic to the team-change-with-carve-outs algorithm class. The
+    CI gate below tests recall AND precision because both are observable
+    behaviors that downstream consumers can develop dependencies on —
+    F1 conflates two signals with very different magnitudes and is
+    recorded for diagnostics only.
 
-    Returns 0.0 when no boundaries exist in either series (degenerate input).
-    """
-    h_changes = heuristic.ne(heuristic.shift(1)).iloc[1:].to_numpy()
-    n_changes = native.ne(native.shift(1)).iloc[1:].to_numpy()
+    Fixtures (committed under ``tests/datasets/statsbomb/raw/events/``)
+    are 3 diverse matches measured during the luxury-lakehouse PR-LL2
+    boundary-metrics campaign:
 
-    tp = int((h_changes & n_changes).sum())
-    fp = int((h_changes & ~n_changes).sum())
-    fn = int((~h_changes & n_changes).sum())
+    - 7298  — Women's World Cup
+    - 7584  — Champions League
+    - 3754058 — Premier League
 
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    if precision + recall == 0:
-        return 0.0
-    return 2 * precision * recall / (precision + recall)
-
-
-# ---------------------------------------------------------------------------
-# End-to-end: heuristic vs StatsBomb native possession_id (requires fixtures)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.e2e
-class TestBoundaryF1AgainstStatsBombNative:
-    """Validate the heuristic against StatsBomb's native possession_id.
-
-    Requires raw StatsBomb event JSON committed at
-    ``tests/datasets/statsbomb/raw/events/<MATCH_ID>.json`` — these are
-    e2e fixtures not committed to the repo. Skips when absent.
-
-    Procedure (also useful as documentation for downstream consumers
-    running this validation against their own StatsBomb data):
-
-    1. Load raw StatsBomb events with the top-level ``possession`` field.
-    2. Convert via ``statsbomb.convert_to_actions(events, ...,
-       preserve_native=['possession'])``.
-    3. Run ``add_possessions(actions)`` to produce the heuristic
-       ``possession_id`` column alongside the native ``possession``.
-    4. Compute boundary-F1 between the two on the same action stream.
-
-    Published heuristic baselines for similar team-change-with-carve-outs
-    approaches sit in the 0.85-0.95 boundary-F1 range vs StatsBomb's
-    proprietary possession assignment.
+    Per-match independent gates: any single match falling below
+    ``recall >= 0.85 AND precision >= 0.30`` fires the regression.
     """
 
-    def test_boundary_f1_against_native_possession_id(self):
+    @pytest.mark.parametrize("match_id", [7298, 7584, 3754058])
+    def test_boundary_metrics_against_native_possession_id(self, match_id: int):
         import json
         import os
 
         fixture_path = os.path.join(
-            os.path.dirname(__file__), "..", "datasets", "statsbomb", "raw", "events", "7584.json"
+            os.path.dirname(__file__), "..", "datasets", "statsbomb", "raw", "events", f"{match_id}.json"
         )
         if not os.path.exists(fixture_path):
-            pytest.skip(f"Raw StatsBomb fixture not found at {fixture_path}")
+            pytest.fail(
+                f"StatsBomb fixture not found at {fixture_path}. "
+                f"This test requires committed fixtures under tests/datasets/statsbomb/raw/events/ — "
+                f"see tests/datasets/statsbomb/README.md for vendoring details."
+            )
 
         from silly_kicks.spadl import statsbomb
 
@@ -564,7 +541,7 @@ class TestBoundaryF1AgainstStatsBombNative:
         adapted = pd.DataFrame(
             [
                 {
-                    "game_id": 7584,
+                    "game_id": match_id,
                     "event_id": e.get("id"),
                     "period_id": e.get("period"),
                     "timestamp": e.get("timestamp"),
@@ -582,15 +559,146 @@ class TestBoundaryF1AgainstStatsBombNative:
 
         actions, _report = statsbomb.convert_to_actions(
             adapted,
-            home_team_id=int(adapted["team_id"].iloc[0]),
+            home_team_id=int(adapted["team_id"].dropna().iloc[0]),
             preserve_native=["possession"],
         )
 
-        # Drop synthetic dribbles (NaN original_event_id → no native possession to compare against).
+        # Keep only non-synthetic rows. Synthetic dribbles inserted by
+        # _add_dribbles have possession=NaN (no source event to inherit
+        # from); we want to compare heuristic vs native only where both
+        # are defined. .copy() avoids SettingWithCopyWarning on the
+        # subsequent add_possessions call.
         non_synthetic = actions[actions["possession"].notna()].copy()
         non_synthetic = add_possessions(non_synthetic)
 
-        f1 = _boundary_f1(non_synthetic["possession_id"], non_synthetic["possession"].astype(np.int64))
-        # Defensible baseline from published team-change-with-carve-outs literature.
-        # Refine threshold to (observed - 0.02) once measured locally on this fixture.
-        assert f1 >= 0.80, f"boundary-F1 {f1:.4f} below 0.80 baseline"
+        m = boundary_metrics(
+            heuristic=non_synthetic["possession_id"],
+            native=non_synthetic["possession"].astype(np.int64),
+        )
+
+        # Per-match independent gates.
+        # Recall floor: 0.85 — 8pp below the worst observed (~0.93).
+        # Precision floor: 0.30 — 9pp below the worst observed (~0.39 on match 3754058).
+        # F1 in message only — F1 conflates two signals; gating on it
+        # would re-introduce the misrepresentation problem the docstring
+        # rewrite is fixing.
+        assert m["recall"] >= 0.85 and m["precision"] >= 0.30, (
+            f"match {match_id}: recall={m['recall']:.4f} "
+            f"precision={m['precision']:.4f} f1={m['f1']:.4f}; "
+            f"thresholds: recall>=0.85 precision>=0.30"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for the public boundary_metrics utility (added in 1.8.0)
+# ---------------------------------------------------------------------------
+
+
+class TestBoundaryMetricsContract:
+    def test_returns_dict_with_required_keys(self):
+        m = boundary_metrics(
+            heuristic=pd.Series([0, 0, 1, 1]),
+            native=pd.Series([0, 0, 1, 1]),
+        )
+        assert set(m.keys()) == {"precision", "recall", "f1"}
+
+    def test_all_metric_values_are_floats(self):
+        m = boundary_metrics(
+            heuristic=pd.Series([0, 0, 1, 1]),
+            native=pd.Series([0, 0, 1, 1]),
+        )
+        assert isinstance(m["precision"], float)
+        assert isinstance(m["recall"], float)
+        assert isinstance(m["f1"], float)
+
+    def test_keyword_only_args_required(self):
+        # Positional invocation must raise TypeError. The args are asymmetric
+        # (swapping inputs swaps precision and recall), so positional usage is
+        # a silent footgun we eliminate at the API surface.
+        with pytest.raises(TypeError):
+            boundary_metrics(pd.Series([0, 0, 1]), pd.Series([0, 0, 1]))  # type: ignore[misc]
+
+
+class TestBoundaryMetricsCorrectness:
+    def test_identical_sequences_all_metrics_one(self):
+        s = pd.Series([0, 0, 1, 1, 2, 2])
+        m = boundary_metrics(heuristic=s, native=s)
+        assert m["precision"] == 1.0
+        assert m["recall"] == 1.0
+        assert m["f1"] == 1.0
+
+    def test_relabeled_identical_sequences_all_metrics_one(self):
+        # Boundaries are invariant under counter-relabeling: [0,0,1,1] and
+        # [5,5,7,7] emit boundaries at the same row. Both should report
+        # perfect agreement.
+        h = pd.Series([0, 0, 1, 1, 2, 2])
+        n = pd.Series([5, 5, 7, 7, 9, 9])
+        m = boundary_metrics(heuristic=h, native=n)
+        assert m["precision"] == 1.0
+        assert m["recall"] == 1.0
+        assert m["f1"] == 1.0
+
+    def test_completely_disjoint_boundaries_all_zero(self):
+        # Heuristic emits boundary at idx 2; native emits at idx 1.
+        # No overlap → TP=0, FP=1, FN=1 → precision=recall=f1=0.
+        h = pd.Series([0, 0, 1, 1])
+        n = pd.Series([0, 1, 1, 1])
+        m = boundary_metrics(heuristic=h, native=n)
+        assert m["precision"] == 0.0
+        assert m["recall"] == 0.0
+        assert m["f1"] == 0.0
+
+    def test_partial_overlap_hand_computed(self):
+        # Heuristic boundaries at idx 1, 2, 4 (3 total)
+        # Native boundaries at idx 1, 4 (2 total)
+        # Shared boundaries at idx 1, 4 → TP=2, FP=1 (idx 2), FN=0
+        # precision = 2/(2+1) = 2/3 ≈ 0.6667
+        # recall = 2/(2+0) = 1.0
+        # f1 = 2 * 0.6667 * 1.0 / (0.6667 + 1.0) = 0.8
+        h = pd.Series([0, 1, 2, 2, 3])
+        n = pd.Series([0, 1, 1, 1, 2])
+        m = boundary_metrics(heuristic=h, native=n)
+        assert abs(m["precision"] - 2 / 3) < 1e-9
+        assert m["recall"] == 1.0
+        assert abs(m["f1"] - 0.8) < 1e-9
+
+
+class TestBoundaryMetricsDegenerate:
+    def test_empty_sequences_returns_zeros(self):
+        m = boundary_metrics(
+            heuristic=pd.Series([], dtype=np.int64),
+            native=pd.Series([], dtype=np.int64),
+        )
+        assert m["precision"] == 0.0
+        assert m["recall"] == 0.0
+        assert m["f1"] == 0.0
+
+    def test_single_row_returns_zeros(self):
+        # Single-row sequences have no consecutive pairs → no boundaries
+        # detectable in either series → degenerate → all zeros.
+        m = boundary_metrics(
+            heuristic=pd.Series([0]),
+            native=pd.Series([0]),
+        )
+        assert m["precision"] == 0.0
+        assert m["recall"] == 0.0
+        assert m["f1"] == 0.0
+
+    def test_constant_sequences_returns_zeros(self):
+        # All-constant sequences have zero boundaries → degenerate → all zeros.
+        m = boundary_metrics(
+            heuristic=pd.Series([0, 0, 0, 0, 0]),
+            native=pd.Series([7, 7, 7, 7, 7]),
+        )
+        assert m["precision"] == 0.0
+        assert m["recall"] == 0.0
+        assert m["f1"] == 0.0
+
+
+class TestBoundaryMetricsErrors:
+    def test_length_mismatch_raises_value_error(self):
+        with pytest.raises(ValueError, match=r"length"):
+            boundary_metrics(
+                heuristic=pd.Series([0, 0, 1, 1]),
+                native=pd.Series([0, 0, 1]),
+            )

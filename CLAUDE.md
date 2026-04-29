@@ -23,7 +23,9 @@ Maintained fork of socceraction — SPADL event conversion + VAEP action valuati
 python -m pytest tests/ -m "not e2e" -v --tb=short
 ```
 
-e2e tests require dataset fixtures not committed to the repo.
+e2e tests require dataset fixtures not committed to the repo. Tests with
+fixtures committed to the repo should not be marked e2e — they run in
+the regular suite.
 
 ## Open Items
 
