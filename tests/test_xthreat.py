@@ -191,7 +191,7 @@ def test_xt_model_rate(spadl_actions: pd.DataFrame) -> None:
 
 def test_interpolate_xt_grid_no_scipy(mocker: MockerFixture) -> None:
     """It should raise an ImportError if scipy is not installed."""
-    mocker.patch.object(xt, "interp2d", None)
+    mocker.patch.object(xt, "RectBivariateSpline", None)
     xTModel = xt.ExpectedThreat()
     with pytest.raises(ImportError, match=r"Interpolation requires scipy to be installed\."):
         xTModel.interpolator()
@@ -215,7 +215,6 @@ def xt_model(sb_worldcup_data: pd.HDFStore) -> xt.ExpectedThreat:
     return xTModel
 
 
-@pytest.mark.e2e
 def test_predict(sb_worldcup_data: pd.HDFStore, xt_model: xt.ExpectedThreat) -> None:
     games = sb_worldcup_data["games"]
     game = games.iloc[-1]
@@ -225,7 +224,6 @@ def test_predict(sb_worldcup_data: pd.HDFStore, xt_model: xt.ExpectedThreat) -> 
     assert len(ratings) == len(actions)
 
 
-@pytest.mark.e2e
 def test_predict_with_interpolation(sb_worldcup_data: pd.HDFStore, xt_model: xt.ExpectedThreat) -> None:
     games = sb_worldcup_data["games"]
     game = games.iloc[-1]

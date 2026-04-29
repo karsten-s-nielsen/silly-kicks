@@ -17,9 +17,11 @@ def pytest_configure(config: Config) -> None:
 def sb_worldcup_data() -> Iterator[pd.HDFStore]:
     hdf_file = os.path.join(os.path.dirname(__file__), "datasets", "statsbomb", "spadl-WorldCup-2018.h5")
     if not os.path.exists(hdf_file):
-        pytest.skip(
-            f"e2e dataset {hdf_file!r} not present — download required to run e2e-marked tests "
-            f"(StatsBomb WorldCup-2018 SPADL fixture)."
+        pytest.fail(
+            f"WorldCup-2018 SPADL fixture not found at {hdf_file!r}. "
+            f"This fixture is committed to the repo as of silly-kicks 1.9.0. "
+            f"If absent, regenerate via: python scripts/build_worldcup_fixture.py "
+            f"(or check for accidental .gitignore exclusion)."
         )
     store = pd.HDFStore(hdf_file, mode="r")
     yield store

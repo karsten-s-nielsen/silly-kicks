@@ -17,8 +17,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff==0.15.7 pyright==1.1.395 pandas-stubs==2.3.3.260113
-      - run: ruff check silly_kicks/ tests/
-      - run: ruff format --check silly_kicks/ tests/
+      - run: ruff check silly_kicks/ tests/ scripts/
+      - run: ruff format --check silly_kicks/ tests/ scripts/
       - run: pip install -e ".[test]"
       - run: pyright silly_kicks/
 

@@ -5,6 +5,87 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-04-29
+
+### Added
+- **Vendored `tests/datasets/statsbomb/spadl-WorldCup-2018.h5`** — committed
+  HDF5 fixture for the FIFA World Cup 2018 (64 matches, 128,484 SPADL
+  actions, 5.9 MB on disk with zlib compression). All 5 prediction
+  pipeline tests in `tests/vaep/`, `tests/test_xthreat.py`, and
+  `tests/atomic/` now run on every PR + push. Pre-1.9.0 these tests
+  silently skipped in CI and locally because the fixture was never
+  committed. Net: ~9 release cycles of zero coverage on the prediction
+  pipeline (VAEP fit/rate, xT fit/rate, atomic VAEP fit/rate) is now
+  closed.
+- **`scripts/build_worldcup_fixture.py`** — reproducible HDF5 generator.
+  Downloads StatsBomb open-data WorldCup-2018 raw events (cached at
+  `tests/datasets/statsbomb/raw/.cache/`, gitignored), converts each via
+  `silly_kicks.spadl.statsbomb.convert_to_actions`, writes the multi-key
+  HDFStore. CLI: `--output`, `--cache-dir`, `--no-cache`, `--verbose`,
+  `--quiet`. Cold-cache run on broadband: ~30-60 sec. Warm-cache re-run:
+  ~5 sec. No new dependencies (stdlib + pandas + already-present
+  pytables).
+- **`scripts/` is now linted in CI** — `.github/workflows/ci.yml` runs
+  `ruff check` and `ruff format --check` on `silly_kicks/`, `tests/`,
+  AND `scripts/`. Pyright include stays `silly_kicks/` only — build
+  scripts aren't worth full type-checking.
+
+### Changed
+- **`tests/conftest.py::sb_worldcup_data` calls `pytest.fail` instead of
+  `pytest.skip` when the HDF5 is absent.** Matches the PR-S8 pattern for
+  committed fixtures: once a fixture is committed, "missing" is a
+  packaging error worth surfacing prominently — not a silent skip that
+  lets CI quietly regress. Failure message points at the build script
+  for regeneration.
+- The 5 `test_predict*` cases (`tests/vaep/test_vaep.py::test_predict`,
+  `tests/vaep/test_vaep.py::test_predict_with_missing_features`,
+  `tests/test_xthreat.py::test_predict`,
+  `tests/test_xthreat.py::test_predict_with_interpolation`,
+  `tests/atomic/test_atomic_vaep.py::test_predict`) no longer carry the
+  `@pytest.mark.e2e` marker. They run in the regular suite on every CI
+  matrix slot (4 slots, ~5-15 sec overhead per slot — negligible).
+
+### Fixed
+- **`silly_kicks.xthreat.ExpectedThreat.interpolator()` is no longer
+  broken on SciPy 1.14+.** The wrapper used `scipy.interpolate.interp2d`
+  which was removed in SciPy 1.14.0 (the import succeeds but the call
+  raises `NotImplementedError`). The bug was latent since 1.0.0 because
+  `tests/test_xthreat.py::test_predict_with_interpolation` was the only
+  consumer and it was `@pytest.mark.e2e`-marked + skipping silently.
+  Surfaced precisely when this PR dropped the marker. Replaced with
+  `scipy.interpolate.RectBivariateSpline` — the SciPy-recommended
+  bug-for-bug compatible replacement for regular grids — wrapped to
+  preserve the legacy `interp(xs, ys) -> (W, L)` calling convention so
+  callers downstream of `interpolator()` need no changes. Output shape
+  and indexing semantics unchanged.
+- The `test_interpolate_xt_grid_no_scipy` regression test that mocks
+  the missing-scipy path now mocks `RectBivariateSpline` instead of the
+  removed `interp2d`.
+
+### Documentation
+- **`docs/DEFERRED.md` deleted; live items migrated to a new `## Tech
+  Debt` section in `TODO.md`.** Per the National Park Principle —
+  bundle the cleanup of the rotting parallel doc into this cycle since
+  we're already touching `TODO.md` anyway. Audit history preserved in
+  `git log -- docs/DEFERRED.md`. Migrated items: A19 (default
+  hyperparameters scattered), D-9 (5 xthreat module-level functions
+  naming), O-M1 (StatsBomb `events.copy()`), O-M6 (StatsBomb fidelity
+  version check temporary DataFrame). Items judged "by design / accept"
+  and not migrated: A15 (kloppy LSP differs by design), A16 (no plugin
+  registry — YAGNI for 4 converters), A17 (`_fit_*` coupling — partial
+  refactor done, diminishing returns), S5 (optional ML deps no upper
+  bounds — librarian convention).
+- `CLAUDE.md` no longer references `docs/DEFERRED.md` (file removed).
+
+### Notes
+- WorldCup HDF5 file size: 5.9 MB on disk (well under GitHub's 50 MB soft
+  warn / 100 MB hard reject thresholds — no Git LFS needed). Total wheel
+  size unchanged (test fixtures live under `tests/`, excluded from
+  `[tool.hatch.build.targets.wheel] packages = ["silly_kicks"]`).
+- The `tests/datasets/statsbomb/raw/.cache/` directory is gitignored —
+  raw event JSONs (~192 MB total) are downloaded on demand by the build
+  script and never committed.
+
 ## [1.8.0] — 2026-04-29
 
 ### Added
