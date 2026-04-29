@@ -20,7 +20,7 @@ Open items tracked for future work. Closed items live in
 
 | # | Size | Item | Context |
 |---|------|------|---------|
-| PR-S11 | Medium-Large | `add_possessions` algorithmic precision improvement | Close the precision gap from ~42% toward 60-70% via brief-opposing-action merge rule, defensive-action class, and/or spatial continuity check. Plus re-measure `max_gap_seconds` parameter sweep using the `boundary_metrics` utility before changing the default. New parameters likely: `merge_brief_opposing_actions`, `brief_action_window_seconds`. Atomic-SPADL counterpart must mirror any semantic change. The 64-match WorldCup HDF5 from PR-S9 is available for parameter sweeping (vs PR-S8's 3-match set). Re-numbered from PR-S10 (which became the GK converter coverage parity work, shipped in silly-kicks 1.10.0). |
+| PR-S12 | Medium-Large | `add_possessions` algorithmic precision improvement | Close the precision gap from ~42% toward 60-70% via brief-opposing-action merge rule, defensive-action class, and/or spatial continuity check. Plus re-measure `max_gap_seconds` parameter sweep using the `boundary_metrics` utility before changing the default. New parameters likely: `merge_brief_opposing_actions`, `brief_action_window_seconds`. Atomic-SPADL counterpart must mirror any semantic change. The 64-match WorldCup HDF5 from PR-S9 is available for parameter sweeping. Re-numbered from PR-S11 (which became the converter identifier conventions / sportec tackle override removal work, shipped in silly-kicks 2.0.0). Original numbering: was PR-S10 in PR-S8 era. |
 
 ## Tech Debt
 

@@ -7,7 +7,7 @@ import pytest
 
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.spadl import sportec as sportec_mod
-from silly_kicks.spadl.schema import KLOPPY_SPADL_COLUMNS
+from silly_kicks.spadl.schema import SPORTEC_SPADL_COLUMNS
 
 _KLOPPY_FIXTURES_DIR = Path(__file__).parent.parent / "datasets" / "kloppy"
 
@@ -52,22 +52,22 @@ class TestSportecContract:
         assert isinstance(actions, pd.DataFrame)
         assert report.provider == "Sportec"
 
-    def test_output_schema_matches_kloppy_spadl_columns(self):
+    def test_output_schema_matches_sportec_spadl_columns(self):
         events = _df_minimal_pass()
         actions, _ = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
-        assert list(actions.columns) == list(KLOPPY_SPADL_COLUMNS.keys())
+        assert list(actions.columns) == list(SPORTEC_SPADL_COLUMNS.keys())
 
     def test_dtypes_match_schema(self):
         events = _df_minimal_pass()
         actions, _ = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
-        for col, expected in KLOPPY_SPADL_COLUMNS.items():
+        for col, expected in SPORTEC_SPADL_COLUMNS.items():
             assert str(actions[col].dtype) == expected, f"{col}: got {actions[col].dtype}, expected {expected}"
 
     def test_empty_input_returns_empty_actions_with_schema(self):
         events = pd.DataFrame({c: [] for c in _REQUIRED_COLS})
         actions, report = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
         assert len(actions) == 0
-        assert list(actions.columns) == list(KLOPPY_SPADL_COLUMNS.keys())
+        assert list(actions.columns) == list(SPORTEC_SPADL_COLUMNS.keys())
         assert report.total_events == 0
         assert report.total_actions == 0
 
@@ -280,26 +280,6 @@ def _df_shot_goal() -> pd.DataFrame:
     return df
 
 
-def _df_tackle_winner() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "match_id": ["M1"],
-            "event_id": ["e1"],
-            "event_type": ["TacklingGame"],
-            "period": [1],
-            "timestamp_seconds": [10.0],
-            "player_id": ["P-LOSER"],
-            "team": ["T-AWAY"],
-            "x": [50.0],
-            "y": [34.0],
-            "tackle_winner": ["P-WINNER"],
-            "tackle_winner_team": ["T-HOME"],
-            "tackle_loser": ["P-LOSER"],
-            "tackle_loser_team": ["T-AWAY"],
-        }
-    )
-
-
 def _df_foul() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -369,11 +349,12 @@ class TestSportecActionMappingShotsTacklesFoulsGK:
         actions, _ = sportec_mod.convert_to_actions(_df_shot_goal(), home_team_id="T-HOME")
         assert actions["result_id"].iloc[0] == spadlconfig.result_id["success"]
 
-    def test_tackle_uses_winner_as_actor(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_tackle_winner(), home_team_id="T-HOME")
-        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["tackle"]
-        assert actions["player_id"].iloc[0] == "P-WINNER"
-        assert actions["team_id"].iloc[0] == "T-HOME"
+    # NOTE: pre-2.0.0 test_tackle_uses_winner_as_actor deleted per ADR-001.
+    # The override behavior it asserted (sportec rewriting team_id /
+    # player_id from DFL tackle_winner_team / tackle_winner qualifiers) is
+    # gone in 2.0.0. New contract is covered by TestSportecTackleNoOverride
+    # + TestSportecTackleWinnerColumns + TestSportecTackleLoserColumns
+    # below.
 
     def test_foul_default_maps_to_foul_fail(self):
         actions, _ = sportec_mod.convert_to_actions(_df_foul(), home_team_id="T-HOME")
@@ -581,7 +562,12 @@ class TestSportecCrossPathConsistency:
 
         assert len(actions_kloppy) > 0
         assert len(actions_dedicated) > 0
-        assert list(actions_kloppy.columns) == list(actions_dedicated.columns)
+        # Post-2.0.0 (ADR-001): dedicated path emits SPORTEC_SPADL_COLUMNS
+        # (18 cols including 4 tackle_*_*_id passthrough columns); kloppy
+        # gateway emits KLOPPY_SPADL_COLUMNS (14 cols). The kloppy columns
+        # must be a strict subset of the dedicated columns — the dedicated
+        # path is a superset by design.
+        assert set(actions_kloppy.columns) <= set(actions_dedicated.columns)
 
 
 # ---------------------------------------------------------------------------
@@ -864,3 +850,236 @@ class TestSportecGoalkeeperIdsSupplementary:
         actions_none, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids=None)
         assert len(actions_empty) == len(actions_none) == 1
         assert actions_empty["type_id"].iloc[0] == actions_none["type_id"].iloc[0]
+
+
+# ---------------------------------------------------------------------------
+# ADR-001: tackle override removal — caller's team_id / player_id are sacred
+# (2.0.0; supersedes pre-2.0.0 sportec.py:559-565 override that silently
+# rewrote 56% of tackle rows on consumers using a normalized team convention)
+# ---------------------------------------------------------------------------
+
+
+def _df_tackle_with_qualifiers() -> pd.DataFrame:
+    """One TacklingGame event with all 4 DFL qualifier columns populated."""
+    return pd.DataFrame(
+        {
+            "match_id": ["M1"],
+            "event_id": ["e1"],
+            "event_type": ["TacklingGame"],
+            "period": [1],
+            "timestamp_seconds": [10.0],
+            "player_id": ["P-LOSER"],
+            "team": ["T-AWAY"],
+            "x": [50.0],
+            "y": [34.0],
+            "tackle_winner": ["P-WINNER"],
+            "tackle_winner_team": ["DFL-CLU-WINNER"],
+            "tackle_loser": ["P-LOSER"],
+            "tackle_loser_team": ["DFL-CLU-LOSER"],
+        }
+    )
+
+
+def _df_tackle_no_qualifiers() -> pd.DataFrame:
+    """One TacklingGame event with no winner/loser qualifiers (DFL records 50/50 duels this way)."""
+    return pd.DataFrame(
+        {
+            "match_id": ["M1"],
+            "event_id": ["e1"],
+            "event_type": ["TacklingGame"],
+            "period": [1],
+            "timestamp_seconds": [10.0],
+            "player_id": ["P1"],
+            "team": ["T-HOME"],
+            "x": [50.0],
+            "y": [34.0],
+        }
+    )
+
+
+class TestSportecTackleNoOverride:
+    """ADR-001: caller's team_id / player_id mirror input verbatim — never
+    overridden from tackle_winner / tackle_winner_team qualifiers.
+    """
+
+    def test_tackle_team_id_mirrors_input_team(self):
+        df = _df_tackle_with_qualifiers()
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["team_id"].iloc[0] == "T-AWAY", (
+            f"team_id should mirror input 'T-AWAY', got {actions['team_id'].iloc[0]!r}"
+        )
+
+    def test_tackle_player_id_mirrors_input_player_id(self):
+        df = _df_tackle_with_qualifiers()
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["player_id"].iloc[0] == "P-LOSER"
+
+    def test_legacy_home_label_survives(self):
+        df = _df_tackle_with_qualifiers()
+        df["team"] = ["home"]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home")
+        assert actions["team_id"].iloc[0] == "home"
+
+    def test_legacy_away_label_survives(self):
+        df = _df_tackle_with_qualifiers()
+        df["team"] = ["away"]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home")
+        assert actions["team_id"].iloc[0] == "away"
+
+    def test_mixed_tackle_rows_preserve_per_row_labels(self):
+        df = pd.DataFrame(
+            {
+                "match_id": ["M1"] * 2,
+                "event_id": ["e1", "e2"],
+                "event_type": ["TacklingGame"] * 2,
+                "period": [1, 1],
+                "timestamp_seconds": [10.0, 20.0],
+                "player_id": ["P1", "P2"],
+                "team": ["home", "away"],
+                "x": [50.0, 60.0],
+                "y": [34.0, 34.0],
+                "tackle_winner": ["P-W1", "P-W2"],
+                "tackle_winner_team": ["DFL-CLU-A", "DFL-CLU-B"],
+            }
+        )
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home")
+        tackle_rows = actions[actions["type_id"] == spadlconfig.actiontype_id["tackle"]].reset_index(drop=True)
+        assert tackle_rows["team_id"].tolist() == ["home", "away"]
+
+    def test_tackle_with_no_qualifier_unchanged(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        assert actions["team_id"].iloc[0] == "T-HOME"
+        assert actions["player_id"].iloc[0] == "P1"
+
+
+class TestSportecTackleWinnerColumns:
+    """The 4 new DFL qualifier passthrough columns: populated verbatim
+    when present in input; NaN otherwise; always NaN on non-tackle rows."""
+
+    def test_tackle_winner_player_id_populated_from_qualifier(self):
+        df = _df_tackle_with_qualifiers()
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["tackle_winner_player_id"].iloc[0] == "P-WINNER"
+
+    def test_tackle_winner_team_id_populated_from_qualifier(self):
+        df = _df_tackle_with_qualifiers()
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["tackle_winner_team_id"].iloc[0] == "DFL-CLU-WINNER"
+
+    def test_winner_columns_nan_when_qualifier_absent(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        assert pd.isna(actions["tackle_winner_player_id"].iloc[0])
+        assert pd.isna(actions["tackle_winner_team_id"].iloc[0])
+
+    def test_winner_columns_nan_on_non_tackle_rows(self):
+        df = pd.DataFrame(
+            {
+                "match_id": ["M1"] * 2,
+                "event_id": ["e1", "e2"],
+                "event_type": ["TacklingGame", "Play"],
+                "period": [1, 1],
+                "timestamp_seconds": [10.0, 20.0],
+                "player_id": ["P1", "P2"],
+                "team": ["T-HOME", "T-HOME"],
+                "x": [50.0, 60.0],
+                "y": [34.0, 34.0],
+                "tackle_winner": ["P-WIN", None],
+                "tackle_winner_team": ["DFL-CLU-X", None],
+            }
+        )
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        pass_row = actions[actions["type_id"] == spadlconfig.actiontype_id["pass"]].iloc[0]
+        assert pd.isna(pass_row["tackle_winner_player_id"])
+        assert pd.isna(pass_row["tackle_winner_team_id"])
+
+    def test_winner_columns_unaffected_by_extraneous_input_columns(self):
+        df = pd.DataFrame(
+            {
+                "match_id": ["M1"],
+                "event_id": ["e1"],
+                "event_type": ["Play"],
+                "period": [1],
+                "timestamp_seconds": [10.0],
+                "player_id": ["P1"],
+                "team": ["T-HOME"],
+                "x": [50.0],
+                "y": [34.0],
+                "tackle_winner": ["P-WIN"],
+                "tackle_winner_team": ["DFL-CLU-X"],
+            }
+        )
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert pd.isna(actions["tackle_winner_player_id"].iloc[0])
+        assert pd.isna(actions["tackle_winner_team_id"].iloc[0])
+
+    def test_winner_columns_present_in_output_schema(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        for col in ("tackle_winner_player_id", "tackle_winner_team_id"):
+            assert col in actions.columns
+
+
+class TestSportecTackleLoserColumns:
+    """Symmetric to winner: tackle_loser_* qualifiers also surface verbatim."""
+
+    def test_tackle_loser_player_id_populated_from_qualifier(self):
+        df = _df_tackle_with_qualifiers()
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["tackle_loser_player_id"].iloc[0] == "P-LOSER"
+
+    def test_tackle_loser_team_id_populated_from_qualifier(self):
+        df = _df_tackle_with_qualifiers()
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert actions["tackle_loser_team_id"].iloc[0] == "DFL-CLU-LOSER"
+
+    def test_loser_columns_nan_when_qualifier_absent(self):
+        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        assert pd.isna(actions["tackle_loser_player_id"].iloc[0])
+        assert pd.isna(actions["tackle_loser_team_id"].iloc[0])
+
+    def test_loser_columns_nan_on_non_tackle_rows(self):
+        df = _df_pass_default()
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        assert pd.isna(actions["tackle_loser_player_id"].iloc[0])
+        assert pd.isna(actions["tackle_loser_team_id"].iloc[0])
+
+
+class TestSportecOutputSchema:
+    """Sportec output now uses SPORTEC_SPADL_COLUMNS (= KLOPPY_SPADL_COLUMNS + 4)."""
+
+    def test_output_columns_match_sportec_spadl_columns_keys(self):
+        from silly_kicks.spadl.schema import SPORTEC_SPADL_COLUMNS
+
+        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        assert list(actions.columns) == list(SPORTEC_SPADL_COLUMNS.keys())
+
+    def test_output_dtypes_match_sportec_spadl_columns(self):
+        from silly_kicks.spadl.schema import SPORTEC_SPADL_COLUMNS
+
+        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        for col, expected in SPORTEC_SPADL_COLUMNS.items():
+            assert str(actions[col].dtype) == expected, f"{col}: got {actions[col].dtype}, expected {expected}"
+
+    def test_synthetic_dribble_rows_have_nan_in_tackle_columns(self):
+        events = pd.DataFrame(
+            {
+                "match_id": ["M1"] * 2,
+                "event_id": ["e1", "e2"],
+                "event_type": ["Play", "Play"],
+                "period": [1, 1],
+                "timestamp_seconds": [10.0, 12.0],
+                "player_id": ["P1", "P2"],
+                "team": ["T-HOME"] * 2,
+                "x": [30.0, 60.0],
+                "y": [34.0, 34.0],
+            }
+        )
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        dribble_rows = actions[actions["type_id"] == spadlconfig.actiontype_id["dribble"]]
+        assert len(dribble_rows) >= 1
+        for col in (
+            "tackle_winner_player_id",
+            "tackle_winner_team_id",
+            "tackle_loser_player_id",
+            "tackle_loser_team_id",
+        ):
+            assert dribble_rows[col].isna().all(), f"{col} should be NaN on synthetic dribble rows"

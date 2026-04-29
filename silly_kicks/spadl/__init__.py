@@ -2,6 +2,7 @@
 
 __all__ = [
     "SPADL_COLUMNS",
+    "SPORTEC_SPADL_COLUMNS",
     "BoundaryMetrics",
     "ConversionReport",
     "CoverageMetrics",
@@ -20,13 +21,15 @@ __all__ = [
     "play_left_to_right",
     "results_df",
     "statsbomb",
+    "use_tackle_winner_as_actor",
     "validate_spadl",
     "wyscout",
 ]
 
 from . import config, opta, statsbomb, wyscout
 from .config import actiontypes_df, bodyparts_df, results_df
-from .schema import SPADL_COLUMNS, ConversionReport
+from .schema import SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
+from .sportec import use_tackle_winner_as_actor
 from .utils import (
     BoundaryMetrics,
     CoverageMetrics,

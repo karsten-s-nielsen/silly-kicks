@@ -66,6 +66,44 @@ Pre-1.10.0:
 
 See ``docs/superpowers/specs/2026-04-29-gk-converter-coverage-parity-design.md``
 for the full design rationale.
+
+ADR-001: identifier conventions are sacred (silly-kicks 2.0.0)
+---------------------------------------------------------------
+
+The converter never overrides ``team_id`` / ``player_id`` from DFL
+qualifier columns. Caller-supplied ``team`` / ``player_id`` values
+mirror verbatim into the output. DFL ``tackle_winner`` /
+``tackle_winner_team`` / ``tackle_loser`` / ``tackle_loser_team``
+qualifier values surface via dedicated output columns:
+
+==========================  ============================  ============================
+Output column               DFL qualifier source          NaN when
+==========================  ============================  ============================
+``tackle_winner_player_id`` ``tackle_winner``             qualifier absent OR non-tackle row
+``tackle_winner_team_id``   ``tackle_winner_team``        qualifier absent OR non-tackle row
+``tackle_loser_player_id``  ``tackle_loser``              qualifier absent OR non-tackle row
+``tackle_loser_team_id``    ``tackle_loser_team``         qualifier absent OR non-tackle row
+==========================  ============================  ============================
+
+The output schema is :data:`silly_kicks.spadl.SPORTEC_SPADL_COLUMNS`
+(extends :data:`silly_kicks.spadl.KLOPPY_SPADL_COLUMNS` with the 4
+tackle columns).
+
+Pre-2.0.0 callers relying on the SPADL "tackle.actor = winner" semantic —
+specifically those whose upstream-supplied ``team`` / ``player_id``
+columns happened to be in the same identifier convention as DFL's
+``tackle_winner_team`` / ``tackle_winner`` qualifiers (raw
+``DFL-CLU-...`` / ``DFL-OBJ-...``) — restore the prior behavior with the
+:func:`silly_kicks.spadl.use_tackle_winner_as_actor` helper:
+
+.. code-block:: python
+
+    from silly_kicks.spadl import sportec, use_tackle_winner_as_actor
+    actions, _ = sportec.convert_to_actions(events, home_team_id="DFL-CLU-XXX")
+    actions = use_tackle_winner_as_actor(actions)
+
+See ``docs/superpowers/adrs/ADR-001-converter-identifier-conventions.md``
+for the contract rationale and audit findings.
 """
 
 import warnings
@@ -76,7 +114,7 @@ import pandas as pd
 
 from . import config as spadlconfig
 from .base import _add_dribbles, _fix_clearances, _fix_direction_of_play
-from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
+from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
 # ---------------------------------------------------------------------------
@@ -466,7 +504,7 @@ def convert_to_actions(
         actions = raw_actions
 
     extras = list(preserve_native) if preserve_native else None
-    actions = _finalize_output(actions, schema=KLOPPY_SPADL_COLUMNS, extra_columns=extras)
+    actions = _finalize_output(actions, schema=SPORTEC_SPADL_COLUMNS, extra_columns=extras)
 
     mapped_counts: dict[str, int] = {}
     excluded_counts: dict[str, int] = {}
@@ -498,7 +536,7 @@ def convert_to_actions(
 
 def _empty_raw_actions(preserve_native: list[str] | None, events: pd.DataFrame) -> pd.DataFrame:
     """Return an empty DataFrame with the canonical SPADL schema plus extras."""
-    cols = {col: pd.Series(dtype=dtype) for col, dtype in KLOPPY_SPADL_COLUMNS.items()}
+    cols = {col: pd.Series(dtype=dtype) for col, dtype in SPORTEC_SPADL_COLUMNS.items()}
     if preserve_native:
         for col in preserve_native:
             cols[col] = pd.Series(dtype=events[col].dtype if col in events.columns else "object")
@@ -662,17 +700,15 @@ def _build_raw_actions(
     type_ids[is_owngoal] = spadlconfig.actiontype_id["bad_touch"]
     result_ids[is_owngoal] = spadlconfig.result_id["owngoal"]
 
-    # --- TacklingGame: actor = tackle_winner if present, else generic player_id/team ---
+    # --- TacklingGame ---
+    # Per ADR-001: caller's team / player_id mirror verbatim; the converter
+    # never overrides them from DFL qualifier columns. Winner / loser ids
+    # surface as dedicated tackle_*_player_id / tackle_*_team_id output
+    # columns below. Callers wanting the SPADL-canonical "actor = winner"
+    # semantic apply silly_kicks.spadl.use_tackle_winner_as_actor() post-conversion.
     is_tackle = et == "TacklingGame"
     type_ids[is_tackle] = spadlconfig.actiontype_id["tackle"]
     result_ids[is_tackle] = spadlconfig.result_id["success"]
-    if is_tackle.any():
-        winner_p = _opt("tackle_winner", None)
-        winner_t = _opt("tackle_winner_team", None)
-        override_mask = is_tackle & winner_p.notna().to_numpy()
-        if override_mask.any():
-            rows.loc[override_mask, "player_id"] = winner_p[override_mask].values
-            rows.loc[override_mask, "team"] = winner_t[override_mask].values
 
     # --- Foul (with Caution pairing for card upgrade) ---
     is_foul = et == "Foul"
@@ -709,6 +745,24 @@ def _build_raw_actions(
     is_play_unrecognized_gk = is_play & (play_gk != "") & ~is_play_known_qualifier
     type_ids[is_play_unrecognized_gk] = spadlconfig.actiontype_id["non_action"]
 
+    # --- ADR-001 qualifier passthrough columns for TacklingGame rows ---
+    # Surface DFL tackle_winner / tackle_winner_team / tackle_loser /
+    # tackle_loser_team verbatim, NaN on non-tackle rows. The np.where
+    # masks out qualifier values from non-tackle rows defensively (in
+    # case caller leaves these columns populated on unrelated events).
+    tackle_winner_player_arr = np.where(is_tackle, _opt("tackle_winner", np.nan).to_numpy(dtype=object), np.nan).astype(
+        object
+    )
+    tackle_winner_team_arr = np.where(
+        is_tackle, _opt("tackle_winner_team", np.nan).to_numpy(dtype=object), np.nan
+    ).astype(object)
+    tackle_loser_player_arr = np.where(is_tackle, _opt("tackle_loser", np.nan).to_numpy(dtype=object), np.nan).astype(
+        object
+    )
+    tackle_loser_team_arr = np.where(
+        is_tackle, _opt("tackle_loser_team", np.nan).to_numpy(dtype=object), np.nan
+    ).astype(object)
+
     # Assemble main actions DataFrame (1:1 with rows).
     actions = pd.DataFrame(
         {
@@ -725,6 +779,10 @@ def _build_raw_actions(
             "type_id": type_ids,
             "result_id": result_ids,
             "bodypart_id": bodypart_ids,
+            "tackle_winner_player_id": tackle_winner_player_arr,
+            "tackle_winner_team_id": tackle_winner_team_arr,
+            "tackle_loser_player_id": tackle_loser_player_arr,
+            "tackle_loser_team_id": tackle_loser_team_arr,
         }
     )
 
@@ -844,3 +902,80 @@ def _synthesize_gk_distribution_actions(
                 synth[col] = np.nan
 
     return synth
+
+
+_USE_TACKLE_WINNER_AS_ACTOR_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "team_id",
+    "player_id",
+    "tackle_winner_player_id",
+    "tackle_winner_team_id",
+)
+
+
+def use_tackle_winner_as_actor(actions: pd.DataFrame) -> pd.DataFrame:
+    """Re-attribute SPADL tackle rows to the winning duelist (pre-2.0.0 semantic).
+
+    Sportec converter output emits ``team_id`` / ``player_id`` mirroring the
+    caller's input verbatim per ADR-001. For tackle rows where DFL recorded
+    a winner via ``tackle_winner`` / ``tackle_winner_team`` qualifiers, the
+    winner ids are surfaced as ``tackle_winner_player_id`` /
+    ``tackle_winner_team_id`` columns alongside.
+
+    This helper applies the SPADL-canonical "tackle.actor = winner" semantic
+    by overwriting ``player_id`` / ``team_id`` from the winner columns where
+    those columns are non-null. Pre-2.0.0 sportec consumers can call it
+    post-conversion to restore the prior behavior — but ONLY if their
+    upstream-supplied ``team`` column is already in the same identifier
+    convention as DFL's ``tackle_winner_team`` qualifier (raw
+    ``DFL-CLU-...``). Mismatched conventions are the bug ADR-001 fixes;
+    this helper does NOT resolve identifier formats.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        Sportec converter output. Must contain ``team_id``, ``player_id``,
+        ``tackle_winner_player_id``, ``tackle_winner_team_id``.
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of ``actions`` with ``team_id`` and ``player_id`` overwritten
+        from the winner columns on rows where those columns are non-null.
+        All other columns unchanged.
+
+    Raises
+    ------
+    ValueError
+        If a required column is missing.
+
+    Examples
+    --------
+    Restore SPADL "actor = winner" semantic on sportec output::
+
+        from silly_kicks.spadl import sportec, use_tackle_winner_as_actor
+        actions, _ = sportec.convert_to_actions(events, home_team_id="DFL-CLU-XXX")
+        actions = use_tackle_winner_as_actor(actions)
+    """
+    missing = [c for c in _USE_TACKLE_WINNER_AS_ACTOR_REQUIRED_COLUMNS if c not in actions.columns]
+    if missing:
+        raise ValueError(
+            f"use_tackle_winner_as_actor: actions missing required columns: {sorted(missing)}. "
+            f"Got: {sorted(actions.columns)}"
+        )
+
+    result = actions.copy()
+    if len(result) == 0:
+        return result
+
+    winner_player = result["tackle_winner_player_id"]
+    winner_team = result["tackle_winner_team_id"]
+    # Atomic per-row: only overwrite when BOTH winner columns are non-null
+    # (matches DFL's qualifier pairing — both populated together or both
+    # absent). Rows with mismatched NaN status (a possibility only with
+    # pathological hand-crafted fixtures) are conservatively left unchanged.
+    overwrite_mask = winner_player.notna() & winner_team.notna()
+    if overwrite_mask.any():
+        result.loc[overwrite_mask, "player_id"] = winner_player[overwrite_mask].to_numpy()
+        result.loc[overwrite_mask, "team_id"] = winner_team[overwrite_mask].to_numpy()
+
+    return result
