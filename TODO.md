@@ -20,6 +20,14 @@ Open items tracked for future work. Closed items live in
 
 | # | Size | Item | Context |
 |---|------|------|---------|
-| PR-S9 | Medium | e2e prediction tests in CI via WorldCup HDF5 generation | Generate `tests/datasets/statsbomb/spadl-WorldCup-2018.h5` from open-data raw events (~64 matches × ~3 MB). Output structure: `games` table + `actions/game_<id>` per match (see `tests/vaep/test_vaep.py:48` for shape contract). Drop `@pytest.mark.e2e` on the 5 `test_predict*` cases (`tests/vaep/test_vaep.py:72,82`, `tests/test_xthreat.py:219,229`, `tests/atomic/test_atomic_vaep.py:24`). Conversion script committed at `scripts/build_worldcup_fixture.py`. Estimated 1-2 hours. See `docs/superpowers/specs/2026-04-29-recall-based-add-possessions-validation-design.md` § 10 for design notes. |
-| PR-S10 | Medium-Large | `add_possessions` algorithmic precision improvement | Close the precision gap from ~42% toward 60-70% via brief-opposing-action merge rule, defensive-action class, and/or spatial continuity check. Plus re-measure `max_gap_seconds` parameter sweep using the new `boundary_metrics` utility before changing the default. New parameters likely: `merge_brief_opposing_actions`, `brief_action_window_seconds`. Atomic-SPADL counterpart must mirror any semantic change. Best done AFTER PR-S9 — 64-match WorldCup fixture is more reliable than PR-S8's 3-match set for parameter-tuning. |
+| PR-S10 | Medium-Large | `add_possessions` algorithmic precision improvement | Close the precision gap from ~42% toward 60-70% via brief-opposing-action merge rule, defensive-action class, and/or spatial continuity check. Plus re-measure `max_gap_seconds` parameter sweep using the new `boundary_metrics` utility before changing the default. New parameters likely: `merge_brief_opposing_actions`, `brief_action_window_seconds`. Atomic-SPADL counterpart must mirror any semantic change. The 64-match WorldCup HDF5 from PR-S9 is now available for parameter sweeping (vs PR-S8's 3-match set). |
+
+## Tech Debt
+
+| # | Sev | Item | Context |
+|---|-----|------|---------|
+| A19 | Low | Default hyperparameters scattered across 3 learner functions | Extracted to named constants in `learners.py`; could centralize further but low impact. Audit-source: DEFERRED.md (Phase 2 architecture audit, migrated 1.9.0). |
+| D-9 | Low | 5 xthreat module-level functions (`scoring_prob`, `get_move_actions`, etc.) not underscore-prefixed but not re-exported | Implementation helpers technically public API. Audit-source: DEFERRED.md (migrated 1.9.0). |
+| O-M1 | Low | Full `events.copy()` at top of StatsBomb `convert_to_actions` (`spadl/statsbomb.py:78`) | Defensive copy — could shrink on demand. Audit-source: DEFERRED.md (migrated 1.9.0). |
+| O-M6 | Low | Temporary n×3 DataFrame for StatsBomb fidelity version check (`spadl/statsbomb.py:171`) | Audit-source: DEFERRED.md (migrated 1.9.0). |
 

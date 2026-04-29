@@ -37,5 +37,8 @@ credentials.json
 # Downloaded test datasets (not committed)
 tests/datasets/wyscout_public/
 
+# StatsBomb open-data raw events cache for scripts/build_worldcup_fixture.py
+tests/datasets/statsbomb/raw/.cache/
+
 # Claude Code
 .claude/

@@ -29,7 +29,7 @@ the regular suite.
 
 ## Open Items
 
-See [TODO.md](TODO.md) for tracked work. Audit history in [docs/DEFERRED.md](docs/DEFERRED.md).
+See [TODO.md](TODO.md) for tracked work.
 
 ## Dependencies
 

@@ -68,7 +68,6 @@ def vaep_model(sb_worldcup_data: pd.HDFStore) -> VAEP:
     return model
 
 
-@pytest.mark.e2e
 def test_predict(sb_worldcup_data: pd.HDFStore, vaep_model: VAEP) -> None:
     games = sb_worldcup_data["games"]
     game = games.iloc[-1]
@@ -78,7 +77,6 @@ def test_predict(sb_worldcup_data: pd.HDFStore, vaep_model: VAEP) -> None:
     assert set(ratings.columns) == expected_rating_columns
 
 
-@pytest.mark.e2e
 def test_predict_with_missing_features(sb_worldcup_data: pd.HDFStore, vaep_model: VAEP) -> None:
     games = sb_worldcup_data["games"]
     game = games.iloc[-1]

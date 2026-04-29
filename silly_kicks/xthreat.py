@@ -10,9 +10,9 @@ from sklearn.exceptions import NotFittedError
 import silly_kicks.spadl.config as spadlconfig
 
 try:
-    from scipy.interpolate import interp2d  # type: ignore
+    from scipy.interpolate import RectBivariateSpline  # type: ignore[reportMissingImports]
 except ImportError:  # pragma: no cover
-    interp2d = None
+    RectBivariateSpline = None
 
 M: int = 12
 N: int = 16
@@ -330,12 +330,18 @@ class ExpectedThreat:
     ) -> Callable[[npt.NDArray[np.float64], npt.NDArray[np.float64]], npt.NDArray[np.float64]]:
         """Interpolate over the pitch.
 
-        This is a wrapper around :func:`scipy.interpolate.interp2d`.
+        Wraps :class:`scipy.interpolate.RectBivariateSpline` (the SciPy-recommended
+        bug-for-bug compatible replacement for the legacy ``interp2d``, removed in
+        SciPy 1.14.0). Preserves the legacy ``interp(xs, ys)`` calling convention
+        that returns a ``(len(ys), len(xs))`` array — y on the first axis, x on
+        the second — matching how callers index the result via
+        ``grid[y_indices, x_indices]``.
 
         Parameters
         ----------
         kind : {'linear', 'cubic', 'quintic'}  # noqa: DAR103
             The kind of spline interpolation to use. Default is 'linear'.
+            Maps to ``RectBivariateSpline(kx=ky=k)`` with k=1/3/5 respectively.
 
         Raises
         ------
@@ -345,9 +351,12 @@ class ExpectedThreat:
         Returns
         -------
         callable
-            A function that interpolates xT values over the pitch.
+            A function ``interp(xs, ys) -> grid`` that interpolates xT values
+            over the pitch. ``xs`` has shape ``(L,)``, ``ys`` has shape ``(W,)``,
+            and the returned grid has shape ``(W, L)`` — y-major, matching the
+            xT grid's row-major orientation.
         """
-        if interp2d is None:
+        if RectBivariateSpline is None:
             raise ImportError("Interpolation requires scipy to be installed.")
 
         cell_length = spadlconfig.field_length / self.l
@@ -356,7 +365,18 @@ class ExpectedThreat:
         x = np.arange(0.0, spadlconfig.field_length, cell_length) + 0.5 * cell_length
         y = np.arange(0.0, spadlconfig.field_width, cell_width) + 0.5 * cell_width
 
-        return interp2d(x=x, y=y, z=self.xT, kind=kind, bounds_error=False)  # type: ignore[reportReturnType]
+        # self.xT has shape (w, l) = (y, x). RectBivariateSpline expects z with
+        # shape (len(x), len(y)), so transpose the input grid to (l, w) = (x, y).
+        k = {"linear": 1, "cubic": 3, "quintic": 5}[kind]
+        spline = RectBivariateSpline(x, y, self.xT.T, kx=k, ky=k)
+
+        def _interp(xs: npt.NDArray[np.float64], ys: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+            # spline(xs, ys) returns shape (len(xs), len(ys)) — RectBivariateSpline
+            # convention. Transpose to (len(ys), len(xs)) to match the legacy
+            # interp2d output shape that downstream callers depend on.
+            return np.asarray(spline(xs, ys)).T
+
+        return _interp
 
     def rate(self, actions: pd.DataFrame, use_interpolation: bool = False) -> npt.NDArray[np.float64]:
         """Compute the xT values for the given actions.
