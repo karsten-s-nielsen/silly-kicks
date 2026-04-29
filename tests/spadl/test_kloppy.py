@@ -114,28 +114,6 @@ class TestKloppyCoordinateSystemFix:
         assert len(actions) > 0
 
 
-@pytest.fixture(scope="module")
-def sportec_dataset():
-    """Module-scoped: parse the Sportec fixture once per test module."""
-    from kloppy import sportec
-
-    return sportec.load_event(
-        event_data=str(_KLOPPY_FIXTURES_DIR / "sportec_events.xml"),
-        meta_data=str(_KLOPPY_FIXTURES_DIR / "sportec_meta.xml"),
-    )
-
-
-@pytest.fixture(scope="module")
-def metrica_dataset():
-    """Module-scoped: parse the Metrica fixture once per test module."""
-    from kloppy import metrica
-
-    return metrica.load_event(
-        event_data=str(_KLOPPY_FIXTURES_DIR / "metrica_events.json"),
-        meta_data=str(_KLOPPY_FIXTURES_DIR / "epts_metrica_metadata.xml"),
-    )
-
-
 class TestKloppySportec:
     """End-to-end conversion tests for the Sportec (IDSSE) provider."""
 
@@ -312,6 +290,42 @@ class TestKloppyConversionReport:
         assert mapped & excluded == set()
         assert mapped & unrecognized == set()
         assert excluded & unrecognized == set()
+
+
+class TestKloppyDirectionOfPlay:
+    """The kloppy converter must apply _fix_direction_of_play (silly-kicks 1.7.0).
+
+    Pre-1.7.0, the kloppy converter stayed in kloppy's HOME_AWAY orientation
+    (home plays LTR, away plays RTL) while StatsBomb / Wyscout / Opta all
+    flipped away-team coords for canonical "all-actions-LTR" SPADL convention.
+    1.7.0 unifies the convention across all paths.
+    """
+
+    def test_away_team_actions_have_flipped_coordinates(self, sportec_dataset):
+        """Per-event flip detection: known away-team Sportec event has source
+        kloppy-normalized x=0.5641, which without flip projects to ~59.3 in
+        SPADL coords and post-flip projects to ~45.7. Asserting the post-flip
+        value (within 1m tolerance for kloppy's coord-transform rounding)."""
+        actions, _ = kloppy_mod.convert_to_actions(sportec_dataset, game_id="dop_test")
+
+        home_team_id = sportec_dataset.metadata.teams[0].team_id
+        away_actions = actions[actions["team_id"] != home_team_id]
+        assert len(away_actions) > 0
+
+        # All coords must lie in the SPADL frame after clamp.
+        assert 0 <= away_actions["start_x"].min()
+        assert away_actions["start_x"].max() <= spadlconfig.field_length
+
+        # Find the canonical away-team event by event_id (deterministic in fixture).
+        target = actions[actions["original_event_id"] == "17364900000006"]
+        assert len(target) == 1, "expected one action for known Sportec away event"
+        # Source kloppy x = 0.5641 (normalized [0,1]) on 100m DFL pitch ≈ 59.3 in SPADL.
+        # Post-flip: 105 - 59.3 ≈ 45.7. Pre-flip: 59.3. Tolerance: ±2m.
+        post_flip_x = target["start_x"].iloc[0]
+        assert 43.5 < post_flip_x < 47.5, (
+            f"start_x={post_flip_x} — expected ~45.7 (post-flip). "
+            f"If you see ~59.3, _fix_direction_of_play was NOT applied."
+        )
 
 
 # ---------------------------------------------------------------------------

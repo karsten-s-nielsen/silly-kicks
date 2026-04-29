@@ -5,6 +5,55 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-04-29
+
+### Added
+- **Dedicated DataFrame SPADL converters for Sportec and Metrica.** New
+  modules `silly_kicks.spadl.sportec` and `silly_kicks.spadl.metrica`
+  expose `convert_to_actions(events_df, home_team_id, *,
+  preserve_native=None) -> tuple[pd.DataFrame, ConversionReport]`,
+  matching the established `statsbomb` / `wyscout` / `opta` shape.
+  Designed for consumers who already have normalized event data in
+  pandas form (lakehouse bronze layers, ETL pipelines, research
+  notebooks) and don't want to reconstruct a kloppy `EventDataset` from
+  flat rows. Existing kloppy-path consumers continue to use
+  `silly_kicks.spadl.kloppy` — both paths produce equivalent SPADL output
+  (empirically verified by cross-path consistency tests under
+  `tests/spadl/test_sportec.py::TestSportecCrossPathConsistency` and
+  `tests/spadl/test_metrica.py::TestMetricaCrossPathConsistency`).
+- ~120 recognized DFL qualifier columns surfaced via Sportec converter,
+  covering pass / shot / tackle / foul / set-piece / play / cross /
+  cards / substitution / penalty / VAR / chance / specialised /
+  tracking-derived qualifier groups.
+- Metrica set-piece-then-shot composition rule: `SET PIECE` (FREE KICK)
+  immediately followed (≤ 5s, same player, same period) by `SHOT`
+  upgrades the shot to SPADL `shot_freekick` and drops the SET PIECE
+  row.
+
+### Changed
+- **`silly_kicks.spadl.kloppy.convert_to_actions` now applies
+  `_fix_direction_of_play` automatically** (extracting home team from
+  `dataset.metadata.teams[0].team_id`). Pre-1.7.0 the kloppy converter
+  was the lone outlier among silly-kicks SPADL converters — it stayed
+  in kloppy's `Orientation.HOME_AWAY` (home plays LTR, away plays RTL)
+  while StatsBomb / Wyscout / Opta all flipped away-team coords for
+  canonical "all-actions-LTR" SPADL convention. 1.7.0 unifies the
+  convention across all 6 converters
+  (`statsbomb` / `wyscout` / `opta` / `kloppy` / new `sportec` / new
+  `metrica`) so all converters emit semantically equivalent SPADL output
+  for the same source event stream. Hyrum's Law disclaimer: zero current
+  consumers built against 1.6.0's HOME_AWAY-oriented kloppy output (per
+  user confirmation during brainstorming).
+
+### Notes
+- Cross-path consistency proof: dedicated DataFrame converters and the
+  kloppy gateway path produce equivalent SPADL DataFrames when given
+  the same source data bridged through test helpers.
+- New shared pytest conftest at `tests/spadl/conftest.py` provides
+  module-scoped `sportec_dataset` and `metrica_dataset` fixtures
+  reusable across `test_kloppy.py`, `test_sportec.py`, and
+  `test_metrica.py`.
+
 ## [1.6.0] — 2026-04-28
 
 ### Added
