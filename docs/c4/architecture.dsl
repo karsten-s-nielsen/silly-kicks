@@ -12,7 +12,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
 
-            spadl = container "silly_kicks.spadl" "SPADL conversion + post-conversion enrichments: 23 action types, 4 provider converters with preserve_native passthrough, ConversionReport audit; public enrichment helpers (add_names, add_possessions, GK analytics suite — gk_role / distribution_metrics / pre_shot_gk_context)" "Python" "Library"
+            spadl = container "silly_kicks.spadl" "SPADL conversion + post-conversion enrichments: 23 action types, 4 provider converters with preserve_native passthrough (StatsBomb, Opta, Wyscout dedicated; kloppy gateway covering StatsBomb, Sportec, Metrica), output coords clamped to [0, 105] x [0, 68], ConversionReport audit; public enrichment helpers (add_names, add_possessions, GK analytics suite — gk_role / distribution_metrics / pre_shot_gk_context)" "Python" "Library"
             vaep = container "silly_kicks.vaep" "VAEP framework: feature extraction, label generation (binary + xG), model training, action valuation. Includes HybridVAEP (result-leakage-free)" "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous action representation with 33 extended action types, deferred single-sort conversion, full parity for the post-conversion enrichment helper family (preserve_native, add_possessions, GK analytics suite, validate_atomic_spadl)" "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat model: pitch grid value surface via dynamic programming" "Python" "Library"

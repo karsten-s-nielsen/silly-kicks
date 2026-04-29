@@ -53,7 +53,9 @@ logger = logging.getLogger(__name__)
 _KLOPPY_VERSION = version.parse(kloppy.__version__)  # type: ignore[reportAttributeAccessIssue]
 _SUPPORTED_PROVIDERS = {
     Provider.STATSBOMB: version.parse("3.15.0"),
-    # Provider.OPTA: version.parse("3.15.0"),
+    Provider.SPORTEC: version.parse("3.15.0"),
+    Provider.METRICA: version.parse("3.15.0"),
+    # Provider.OPTA: version.parse("3.15.0"),  # has its own dedicated converter in spadl/opta.py
 }
 
 _MAPPED_EVENT_TYPES: frozenset[EventType] = frozenset(
@@ -208,6 +210,16 @@ def convert_to_actions(
     df_actions["action_id"] = range(len(df_actions))
     df_actions = _add_dribbles(df_actions)
 
+    # Clamp output coords to the SPADL pitch frame, matching the convention
+    # established by the StatsBomb, Wyscout, and Opta converters. Source data
+    # may emit slightly off-pitch coordinates (recording-noise tolerance);
+    # downstream silly-kicks consumers (VAEP, xT, possession, GK enrichments)
+    # assume bounded coords.
+    df_actions["start_x"] = df_actions["start_x"].clip(0, spadlconfig.field_length)
+    df_actions["start_y"] = df_actions["start_y"].clip(0, spadlconfig.field_width)
+    df_actions["end_x"] = df_actions["end_x"].clip(0, spadlconfig.field_length)
+    df_actions["end_y"] = df_actions["end_y"].clip(0, spadlconfig.field_width)
+
     df_actions = _finalize_output(df_actions, KLOPPY_SPADL_COLUMNS, extra_columns=preserve_native)
 
     mapped_counts: dict[str, int] = {}
@@ -239,6 +251,10 @@ def convert_to_actions(
 
 
 class _SoccerActionCoordinateSystem(CoordinateSystem):
+    def __init__(self, *, pitch_length: float, pitch_width: float) -> None:
+        self._pitch_length = pitch_length
+        self._pitch_width = pitch_width
+
     @property
     def provider(self) -> Provider:
         return "SoccerAction"  # type: ignore[reportReturnType]  # kloppy API varies by version
@@ -252,12 +268,20 @@ class _SoccerActionCoordinateSystem(CoordinateSystem):
         return VerticalOrientation.BOTTOM_TO_TOP
 
     @property
+    def pitch_length(self) -> float:  # type: ignore[override]
+        return self._pitch_length
+
+    @property
+    def pitch_width(self) -> float:  # type: ignore[override]
+        return self._pitch_width
+
+    @property
     def pitch_dimensions(self) -> PitchDimensions:
         return MetricPitchDimensions(
             x_dim=Dimension(0, spadlconfig.field_length),
             y_dim=Dimension(0, spadlconfig.field_width),
-            pitch_length=self.pitch_length,
-            pitch_width=self.pitch_width,
+            pitch_length=self._pitch_length,
+            pitch_width=self._pitch_width,
             standardized=True,
         )
 

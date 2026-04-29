@@ -397,8 +397,8 @@ class ExpectedThreat:
             interp = self.interpolator()
             l = int(spadlconfig.field_length * 10)
             w = int(spadlconfig.field_width * 10)
-            xs = np.linspace(0, spadlconfig.field_length, l)
-            ys = np.linspace(0, spadlconfig.field_width, w)
+            xs = np.linspace(0, spadlconfig.field_length, l, dtype=np.float64)
+            ys = np.linspace(0, spadlconfig.field_width, w, dtype=np.float64)
             grid = interp(xs, ys)
 
         ratings = np.empty(len(actions))
