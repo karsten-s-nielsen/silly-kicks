@@ -36,6 +36,17 @@ def offensive_value(actions: pd.DataFrame, scores: pd.Series, concedes: pd.Serie
     -------
     pd.Series
         The offensive value of each action.
+
+    Examples
+    --------
+    Compute the offensive component of Atomic-VAEP from probabilities::
+
+        from silly_kicks.atomic.spadl import add_names, convert_to_atomic
+        from silly_kicks.atomic.vaep.formula import offensive_value
+
+        atomic = add_names(convert_to_atomic(actions))
+        # p_scores, p_concedes: pd.Series, one row per atomic action.
+        ov = offensive_value(atomic, p_scores, p_concedes)
     """
     sameteam = _prev(actions.team_id) == actions.team_id
     prev_scores = _prev(scores) * sameteam + _prev(concedes) * (~sameteam)
@@ -80,6 +91,16 @@ def defensive_value(actions: pd.DataFrame, scores: pd.Series, concedes: pd.Serie
     -------
     pd.Series
         The defensive value of each action.
+
+    Examples
+    --------
+    Compute the defensive component of Atomic-VAEP from probabilities::
+
+        from silly_kicks.atomic.spadl import add_names, convert_to_atomic
+        from silly_kicks.atomic.vaep.formula import defensive_value
+
+        atomic = add_names(convert_to_atomic(actions))
+        dv = defensive_value(atomic, p_scores, p_concedes)
     """
     sameteam = _prev(actions.team_id) == actions.team_id
     prev_concedes = _prev(concedes) * sameteam + _prev(scores) * (~sameteam)
@@ -125,6 +146,17 @@ def value(actions: pd.DataFrame, Pscores: pd.Series, Pconcedes: pd.Series) -> pd
     --------
     :func:`~silly_kicks.vaep.formula.offensive_value`: The offensive value
     :func:`~silly_kicks.vaep.formula.defensive_value`: The defensive value
+
+    Examples
+    --------
+    Compute per-action Atomic-VAEP value DataFrame from probabilities::
+
+        from silly_kicks.atomic.spadl import add_names, convert_to_atomic
+        from silly_kicks.atomic.vaep.formula import value
+
+        atomic = add_names(convert_to_atomic(actions))
+        v = value(atomic, p_scores, p_concedes)
+        # v has columns 'offensive_value', 'defensive_value', 'vaep_value'.
     """
     v = pd.DataFrame()
     v["offensive_value"] = offensive_value(actions, Pscores, Pconcedes)

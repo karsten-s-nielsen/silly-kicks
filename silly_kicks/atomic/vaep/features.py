@@ -51,7 +51,18 @@ FeatureTransfomer = Callable[[GameStates], Features]
 
 @simple
 def actiontype(actions: Actions) -> Features:
-    """Actiontype feature using atomic SPADL config (33 action types)."""
+    """Actiontype feature using atomic SPADL config (33 action types).
+
+    Examples
+    --------
+    Extract the atomic action-type integer feature per gamestate slot::
+
+        from silly_kicks.atomic.vaep.features import actiontype, gamestates
+
+        states = gamestates(atomic, nb_prev_actions=3)
+        feats = actiontype(states)
+        # feats has columns 'type_id_a0', 'type_id_a1', 'type_id_a2'.
+    """
     return _actiontype(actions, _spadl_cfg=atomicspadl)
 
 
@@ -69,6 +80,18 @@ def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) 
     -------
     list(str)
         The name of each generated feature.
+
+    Examples
+    --------
+    Enumerate the column names a feature stack will produce, without
+    actually computing features on real data::
+
+        from silly_kicks.atomic.vaep.features import (
+            actiontype_onehot, location, feature_column_names,
+        )
+
+        names = feature_column_names([actiontype_onehot, location], nb_prev_actions=3)
+        # names is e.g. ['actiontype_pass_a0', ..., 'x_a0', 'y_a0', ...].
     """
     spadlcolumns = [
         "game_id",
@@ -112,6 +135,16 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
     -------
     list(pd.DataFrame)
         The game states with all actions performed left to right.
+
+    Examples
+    --------
+    Mirror gamestates so all actions are performed left-to-right (per home team)::
+
+        from silly_kicks.atomic.vaep.features import gamestates, play_left_to_right
+
+        states = gamestates(atomic, nb_prev_actions=3)
+        states = play_left_to_right(states, home_team_id=100)
+        # All away-team rows in each slot now have flipped (x, y) and (dx, dy).
     """
     a0 = gamestates[0]
     away_idx = a0.team_id != home_team_id
@@ -136,6 +169,16 @@ def actiontype_onehot(actions: Actions) -> Features:
     -------
     Features
         A one-hot encoding of each action's type.
+
+    Examples
+    --------
+    One-hot encode atomic action types per gamestate slot::
+
+        from silly_kicks.atomic.vaep.features import actiontype_onehot, gamestates
+
+        states = gamestates(atomic, nb_prev_actions=3)
+        feats = actiontype_onehot(states)
+        # feats has 33 boolean columns per slot (one per atomic action type).
     """
     X = {}
     for type_id, type_name in enumerate(atomicspadl.actiontypes):
@@ -157,6 +200,16 @@ def location(actions: Actions) -> Features:
     -------
     Features
         The 'x' and 'y' location of each action.
+
+    Examples
+    --------
+    Extract atomic location features per gamestate slot::
+
+        from silly_kicks.atomic.vaep.features import gamestates, location
+
+        states = gamestates(atomic, nb_prev_actions=3)
+        feats = location(states)
+        # feats has columns 'x_a0', 'y_a0', 'x_a1', 'y_a1', 'x_a2', 'y_a2'.
     """
     return actions[["x", "y"]]  # type: ignore[reportReturnType]
 
@@ -180,6 +233,16 @@ def polar(actions: Actions) -> Features:
     -------
     Features
         The 'dist_to_goal' and 'angle_to_goal' of each action.
+
+    Examples
+    --------
+    Compute polar features (distance + angle to opponent goal) per slot::
+
+        from silly_kicks.atomic.vaep.features import gamestates, polar
+
+        states = gamestates(atomic, nb_prev_actions=3)
+        feats = polar(states)
+        # feats has columns 'dist_to_goal_a0', 'angle_to_goal_a0', etc.
     """
     polardf = pd.DataFrame(index=actions.index)
     dx = (_goal_x - actions["x"]).abs().to_numpy()
@@ -203,6 +266,16 @@ def movement_polar(actions: Actions) -> Features:
     -------
     Features
         The distance covered ('mov_d') and direction ('mov_angle') of each action.
+
+    Examples
+    --------
+    Compute per-action movement magnitude + angle features per slot::
+
+        from silly_kicks.atomic.vaep.features import gamestates, movement_polar
+
+        states = gamestates(atomic, nb_prev_actions=3)
+        feats = movement_polar(states)
+        # feats has 'mov_d_a0' (metres) and 'mov_angle_a0' (radians) per slot.
     """
     mov = pd.DataFrame(index=actions.index)
     mov["mov_d"] = np.sqrt(actions.dx**2 + actions.dy**2)
@@ -226,6 +299,16 @@ def direction(actions: Actions) -> Features:
     Features
         The x-component ('dx') and y-compoment ('mov_angle') of the unit
         vector of each action.
+
+    Examples
+    --------
+    Compute per-action unit-direction vector features per slot::
+
+        from silly_kicks.atomic.vaep.features import direction, gamestates
+
+        states = gamestates(atomic, nb_prev_actions=3)
+        feats = direction(states)
+        # feats has 'dx_a0' and 'dy_a0' (unit-length components, 0 if static).
     """
     mov = pd.DataFrame(index=actions.index)
     totald = np.sqrt(actions.dx**2 + actions.dy**2)
@@ -252,6 +335,16 @@ def goalscore(gamestates: GameStates) -> Features:
         The number of goals scored by the team performing the last action of the
         game state ('goalscore_team'), by the opponent ('goalscore_opponent'),
         and the goal difference between both teams ('goalscore_diff').
+
+    Examples
+    --------
+    Compute the cumulative-goalscore context feature on a gamestate sequence::
+
+        from silly_kicks.atomic.vaep.features import gamestates, goalscore
+
+        states = gamestates(atomic, nb_prev_actions=3)
+        feats = goalscore(states)
+        # feats has 'goalscore_team', 'goalscore_opponent', 'goalscore_diff'.
     """
     actions = gamestates[0]
     teamA = actions["team_id"].values[0]

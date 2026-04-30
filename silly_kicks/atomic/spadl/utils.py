@@ -6,6 +6,8 @@ from typing import Final
 import numpy as np
 import pandas as pd
 
+from silly_kicks.spadl.utils import CoverageMetrics
+
 from . import config as spadlconfig
 from .schema import ATOMIC_SPADL_COLUMNS
 
@@ -960,3 +962,81 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame
     ltr_actions.loc[away_idx, "dx"] = -actions[away_idx]["dx"].values  # type: ignore[reportAttributeAccessIssue]
     ltr_actions.loc[away_idx, "dy"] = -actions[away_idx]["dy"].values  # type: ignore[reportAttributeAccessIssue]
     return ltr_actions
+
+
+def coverage_metrics(
+    *,
+    actions: pd.DataFrame,
+    expected_action_types: set[str] | None = None,
+) -> CoverageMetrics:
+    """Compute Atomic-SPADL action-type coverage for an atomic action DataFrame.
+
+    Atomic-SPADL counterpart to :func:`silly_kicks.spadl.utils.coverage_metrics`.
+    Resolves ``type_id`` to action-type name via the **atomic** vocabulary
+    (:func:`silly_kicks.atomic.spadl.config.actiontypes_df` — 33 types) and
+    counts each action type present. When ``expected_action_types`` is
+    provided, returns any of those types with zero rows under ``missing``.
+
+    The return type is the standard :class:`silly_kicks.spadl.utils.CoverageMetrics`
+    TypedDict — single source of truth across standard and atomic.
+
+    Use cases:
+
+    1. Test discipline — assert atomic converter X emits action types Y on a
+       fixture (parity with standard's cross-provider coverage gate).
+    2. Downstream validation — consumers calling silly-kicks-converted bronze
+       atomic data can verify expected coverage before downstream aggregation.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        Atomic-SPADL action stream. Must contain ``type_id``.
+    expected_action_types : set[str] or None, default ``None``
+        Action type names expected to be present. Returned (sorted) as
+        ``missing`` if absent. ``None`` skips the expectation check; an empty
+        list is then returned for ``missing``. Atomic vocabulary differs from
+        standard on collapsed names — pass ``"corner"`` (not ``"corner_short"``)
+        and ``"freekick"`` (not ``"freekick_short"``).
+
+    Returns
+    -------
+    CoverageMetrics
+        ``{"counts": {...}, "missing": [...], "total_actions": N}`` — the
+        standard TypedDict from ``silly_kicks.spadl.utils``.
+
+    Raises
+    ------
+    ValueError
+        If the ``type_id`` column is missing.
+
+    Examples
+    --------
+    Validate an atomic converter's output covers all expected action types::
+
+        from silly_kicks.atomic.spadl import convert_to_atomic, coverage_metrics
+
+        atomic = convert_to_atomic(actions)
+        m = coverage_metrics(
+            actions=atomic,
+            expected_action_types={"pass", "shot", "receival", "interception"},
+        )
+        assert not m["missing"], f"Missing atomic action types: {m['missing']}"
+    """
+    if "type_id" not in actions.columns:
+        raise ValueError(f"coverage_metrics: actions missing required 'type_id' column. Got: {sorted(actions.columns)}")
+
+    n = len(actions)
+    counts: dict[str, int] = {}
+    if n > 0:
+        # Reverse map: id -> name. Built from atomic actiontypes (single source
+        # of truth for atomic). Out-of-vocab ids report as "unknown".
+        id_to_name = {i: name for i, name in enumerate(spadlconfig.actiontypes)}
+        type_id_arr = actions["type_id"].to_numpy()
+        for tid in type_id_arr:
+            name = id_to_name.get(int(tid), "unknown")
+            counts[name] = counts.get(name, 0) + 1
+
+    expected = set(expected_action_types) if expected_action_types else set()
+    missing = sorted(expected - set(counts.keys())) if expected else []
+
+    return CoverageMetrics(counts=counts, missing=missing, total_actions=n)

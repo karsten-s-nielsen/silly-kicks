@@ -41,6 +41,19 @@ def offensive_value(actions: pd.DataFrame, scores: pd.Series, concedes: pd.Serie
     -------
     pd.Series
         The offensive value of each action.
+
+    Examples
+    --------
+    Compute the offensive component of VAEP from estimated probabilities::
+
+        from silly_kicks.spadl import add_names
+        from silly_kicks.vaep.formula import offensive_value
+
+        actions_with_names = add_names(actions)
+        # p_scores, p_concedes: pd.Series, one row per action, e.g. from
+        # VAEP._estimate_probabilities or any binary classifier of choice.
+        ov = offensive_value(actions_with_names, p_scores, p_concedes)
+        # Returns a pd.Series of per-action offensive values.
     """
     sameteam = _prev(actions.team_id) == actions.team_id
     prev_scores = (_prev(scores) * sameteam + _prev(concedes) * (~sameteam)).astype(float)
@@ -93,6 +106,19 @@ def defensive_value(actions: pd.DataFrame, scores: pd.Series, concedes: pd.Serie
     -------
     pd.Series
         The defensive value of each action.
+
+    Examples
+    --------
+    Compute the defensive component of VAEP from estimated probabilities::
+
+        from silly_kicks.spadl import add_names
+        from silly_kicks.vaep.formula import defensive_value
+
+        actions_with_names = add_names(actions)
+        dv = defensive_value(actions_with_names, p_scores, p_concedes)
+        # Returns a pd.Series of per-action defensive values (sign convention:
+        # a successful defensive action that lowers conceding probability is
+        # positive).
     """
     sameteam = _prev(actions.team_id) == actions.team_id
     prev_concedes = (_prev(concedes) * sameteam + _prev(scores) * (~sameteam)).astype(float)
@@ -137,6 +163,19 @@ def value(actions: pd.DataFrame, Pscores: pd.Series, Pconcedes: pd.Series) -> pd
     --------
     :func:`~silly_kicks.vaep.formula.offensive_value`: The offensive value
     :func:`~silly_kicks.vaep.formula.defensive_value`: The defensive value
+
+    Examples
+    --------
+    Compute per-action VAEP values directly from probabilities (without going
+    through ``VAEP.rate()``)::
+
+        from silly_kicks.spadl import add_names
+        from silly_kicks.vaep.formula import value
+
+        actions_with_names = add_names(actions)
+        v = value(actions_with_names, p_scores, p_concedes)
+        # v has columns 'offensive_value', 'defensive_value', 'vaep_value';
+        # vaep_value = offensive_value + defensive_value per row.
     """
     v = pd.DataFrame()
     v["offensive_value"] = offensive_value(actions, Pscores, Pconcedes)

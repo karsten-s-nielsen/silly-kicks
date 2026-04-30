@@ -30,6 +30,11 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/vaep/features.py",
     "silly_kicks/atomic/vaep/base.py",
     "silly_kicks/xthreat.py",
+    "silly_kicks/vaep/labels.py",
+    "silly_kicks/vaep/formula.py",
+    "silly_kicks/atomic/vaep/features.py",
+    "silly_kicks/atomic/vaep/labels.py",
+    "silly_kicks/atomic/vaep/formula.py",
 )
 
 # Pure-type symbols that don't fit the illustrative-example pattern.
