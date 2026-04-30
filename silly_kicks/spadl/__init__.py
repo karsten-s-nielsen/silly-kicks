@@ -1,6 +1,7 @@
 """Implementation of the SPADL language."""
 
 __all__ = [
+    "PFF_SPADL_COLUMNS",
     "SPADL_COLUMNS",
     "SPORTEC_SPADL_COLUMNS",
     "BoundaryMetrics",
@@ -18,6 +19,7 @@ __all__ = [
     "coverage_metrics",
     "kloppy",
     "opta",
+    "pff",
     "play_left_to_right",
     "results_df",
     "statsbomb",
@@ -26,9 +28,9 @@ __all__ = [
     "wyscout",
 ]
 
-from . import config, opta, statsbomb, wyscout
+from . import config, opta, pff, statsbomb, wyscout
 from .config import actiontypes_df, bodyparts_df, results_df
-from .schema import SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
+from .schema import PFF_SPADL_COLUMNS, SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
 from .sportec import use_tackle_winner_as_actor
 from .utils import (
     BoundaryMetrics,

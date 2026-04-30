@@ -58,6 +58,25 @@ qualifier passthrough columns surfacing DFL ``tackle_winner`` /
 values verbatim. NaN on rows where the qualifier is absent in the source;
 always NaN on non-tackle rows. See ADR-001 for the contract rationale."""
 
+PFF_SPADL_COLUMNS: dict[str, str] = {
+    **SPADL_COLUMNS,
+    "tackle_winner_player_id": "Int64",
+    "tackle_winner_team_id": "Int64",
+    "tackle_loser_player_id": "Int64",
+    "tackle_loser_team_id": "Int64",
+}
+"""PFF SPADL output schema: SPADL_COLUMNS + 4 nullable Int64 tackle-actor
+passthrough columns. NaN on rows where no challenge winner/loser is
+identifiable (i.e., everywhere except CH events).
+
+Identifier-conventions rationale (ADR-001) shared with SPORTEC_SPADL_COLUMNS.
+
+Dtype departure from SPORTEC_SPADL_COLUMNS (which uses ``object`` strings):
+PFF native player/team identifiers are integers, whereas kloppy hands sportec
+strings. Using ``Int64`` (pandas nullable) preserves int-ness while allowing
+NaN on non-tackle rows. Long-term unification of the two extended schemas
+under a common name is a follow-up TODO."""
+
 
 @dataclasses.dataclass(frozen=True)
 class ConversionReport:

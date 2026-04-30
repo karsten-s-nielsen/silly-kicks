@@ -5,6 +5,71 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] — 2026-04-30
+
+### Added
+
+- **`silly_kicks.spadl.pff`** — first-class PFF FC / Gradient Sports
+  events-data converter. Hexagonal pure-function contract (events
+  DataFrame in, SPADL DataFrame + ConversionReport out, zero I/O).
+  Mirrors the sportec / metrica converter shape. Dispatch table covers
+  PFF's hierarchical event vocabulary (`gameEvents` × `possessionEvents`
+  + `set_piece_type`): pass / cross / shot / clearance / dribble (BC) /
+  tackle (CH) / keeper_save+keeper_pick_up (RE) / bad_touch (TC) +
+  set-piece compositions (kickoff / open play / corner / free kick /
+  throw-in / goal kick / penalty) + foul row synthesis with card
+  result mapping. Excludes `OUT` / `SUB` / period-boundary / `OTB+IT`
+  rows with full ConversionReport audit trail.
+- **`silly_kicks.spadl.PFF_SPADL_COLUMNS`** — extended output schema:
+  `SPADL_COLUMNS` + four nullable `Int64` tackle-passthrough columns
+  (`tackle_winner_player_id`, `tackle_winner_team_id`,
+  `tackle_loser_player_id`, `tackle_loser_team_id`) per ADR-001.
+  `Int64` (pandas nullable) is a deliberate dtype departure from
+  `SPORTEC_SPADL_COLUMNS`'s `object` dtype: PFF identifiers are integers
+  whereas kloppy hands sportec strings.
+- **Per-period direction-of-play normalization** — first silly-kicks
+  converter requiring perspective-real coordinate handling. Two new
+  parameters (`home_team_start_left`, `home_team_start_left_extratime`)
+  carry the metadata-derived flip information per period.
+- **`tests/datasets/pff/`** — synthetic match fixture
+  (`synthetic_match.json`) plus deterministic generator
+  (`_generate_synthetic_match.py`). Synthetic-only test policy until
+  PFF licensing for redistributable real-data slices is confirmed.
+- **`docs/examples/pff_wc2022_walkthrough.py`** — end-to-end pipeline
+  demonstration (documentation, not test). Reads from a user-supplied
+  PFF directory and walks events → SPADL → Atomic-SPADL → coverage /
+  boundary metrics → VAEP labels.
+- **`TODO.md` Tracking namespace entry** — captures the deferred
+  `silly_kicks.tracking.*` design with verified luxury-lakehouse prior
+  art (3 providers / 20 matches / ~38M player-frames in
+  `soccer_analytics.dev_gold.fct_tracking_frames` as of 2026-04-30) and
+  library-native architectural rules.
+
+### Changed
+
+- **`silly_kicks.spadl._finalize_output`** recognizes pandas extension
+  dtypes (`Int64`, `Float64`, `boolean`, `string`, etc.) on schema
+  entries — small surface-area generalization, fully backwards-
+  compatible with existing object/int64 dtype handling. Required for
+  `PFF_SPADL_COLUMNS` `Int64` tackle columns.
+- **`tests/spadl/test_cross_provider_parity.py`** — PFF added as a
+  parametrize entry; participates in the keeper-action emission gate,
+  schema-shape gate, and ADR-001 team_id-mirror gate alongside the five
+  pre-existing converters.
+- **Pre-release empirical validation** — converter validated against the
+  full WC 2022 dataset (64 matches, 144,541 events → 91,931 SPADL actions,
+  zero conversion failures, zero unrecognized vocabulary). The sweep
+  surfaced 6 vocabulary patterns the hand-authored synthetic-fixture suite
+  missed (OFF / ON / G / THIRDKICKOFF / FOURTHKICKOFF game_event_types and
+  OTB+empty initialNonEvent markers); all are now in the converter's
+  excluded vocabulary, exercised by the synthetic fixture, and asserted by
+  test_pff.py. Also surfaced a real-data schema detail: PFF stores
+  ``fouls`` as a single dict per event (not a JSON array, contrary to
+  initial fixture authoring); fixture + loaders updated. Standalone
+  ``FOUL`` gameEventType events with ``possessionEventType="FO"`` now
+  convert in-place to the canonical foul SPADL row (no phantom non_action
+  parent).
+
 ## [2.5.0] — 2026-04-30
 
 ### Added
