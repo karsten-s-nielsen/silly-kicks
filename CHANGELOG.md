@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] — 2026-04-30
+
+### Added
+
+- **`silly_kicks.atomic.spadl.coverage_metrics`** — Atomic-SPADL counterpart to
+  the standard `silly_kicks.spadl.coverage_metrics` utility (added in 1.10.0).
+  Resolves `type_id` against the atomic 33-type vocabulary
+  (`silly_kicks.atomic.spadl.config.actiontypes`) including atomic-only types
+  (`receival`, `interception`, `out`, etc.) and post-collapse names (`corner`,
+  `freekick`). Reuses the standard `CoverageMetrics` TypedDict from
+  `silly_kicks.spadl.utils` as the single source of truth — both standard and
+  atomic surfaces import the same type. Closes TODO C-1 (deferred from 1.10.0).
+- **Examples sections on 25 previously-uncovered public-API surfaces** across
+  `silly_kicks/vaep/labels.py` (5), `silly_kicks/vaep/formula.py` (3),
+  `silly_kicks/atomic/vaep/features.py` (9), `silly_kicks/atomic/vaep/labels.py` (5),
+  and `silly_kicks/atomic/vaep/formula.py` (3). Closes the PR-S13 documentation
+  coverage gap.
+
+### Changed
+
+- **CI guardrail (`tests/test_public_api_examples.py`) widened from 14 → 19
+  module files.** The gate now mechanically enforces Examples coverage across
+  the entire public API surface; future PRs that add a public function
+  without an Example fail CI.
+
+No API breakage. New public symbols (`coverage_metrics`, `CoverageMetrics`
+re-export) are additive only.
+
 ## [2.1.1] — 2026-04-30
 
 ### Added
