@@ -159,6 +159,9 @@ def _adapt_events_to_silly_kicks_input(events: list[dict[str, Any]], match_id: i
                 "type_name": (e.get("type") or {}).get("name"),
                 "location": e.get("location"),
                 "extra": {k: v for k, v in e.items() if k not in _TOP_LEVEL_KEYS},
+                # PR-S12 (silly-kicks 2.1.0): preserve native possession sequence
+                # for downstream regression validation against add_possessions.
+                "possession": e.get("possession"),
             }
             for e in events
         ]
@@ -203,7 +206,7 @@ def _convert_match(
 
     events = _fetch_raw_events(match_id, cache_dir, no_cache=no_cache, verbose=verbose, quiet=quiet)
     adapted = _adapt_events_to_silly_kicks_input(events, match_id)
-    actions, _report = statsbomb.convert_to_actions(adapted, home_team_id=home_team_id, preserve_native=None)
+    actions, _report = statsbomb.convert_to_actions(adapted, home_team_id=home_team_id, preserve_native=["possession"])
     return match_id, actions
 
 

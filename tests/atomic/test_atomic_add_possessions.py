@@ -412,3 +412,224 @@ class TestErrors:
         actions = _df([_make_atomic_action(action_id=0)])
         with pytest.raises(ValueError, match="max_gap_seconds"):
             add_possessions(actions, max_gap_seconds=-1.0)
+
+
+# ---------------------------------------------------------------------------
+# Rule 1: brief-opposing-action merge — added in 2.1.0 (atomic mirror)
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicBriefOpposingMerge:
+    """Atomic-SPADL counterpart of TestBriefOpposingMerge.
+
+    ``merge_brief_opposing_actions`` + ``brief_window_seconds`` pair —
+    both must be > 0 to enable; both 0 to disable.
+    """
+
+    def test_aba_within_window_suppresses_boundary(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_atomic_action(action_id=1, team_id=200, time_seconds=1.0),
+                _make_atomic_action(action_id=2, team_id=100, time_seconds=2.0),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=2.0)
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0
+        assert result["possession_id"].iloc[2] == 0
+
+    def test_aba_outside_window_keeps_boundary(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_atomic_action(action_id=1, team_id=200, time_seconds=1.0),
+                _make_atomic_action(action_id=2, team_id=100, time_seconds=3.0),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=1.5)
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 1
+        assert result["possession_id"].iloc[2] == 2
+
+    def test_abba_within_window_with_n_eq_2_suppresses(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_atomic_action(action_id=1, team_id=200, time_seconds=0.5),
+                _make_atomic_action(action_id=2, team_id=200, time_seconds=1.0),
+                _make_atomic_action(action_id=3, team_id=100, time_seconds=1.5),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=2, brief_window_seconds=2.0)
+        assert result["possession_id"].nunique() == 1
+
+    def test_disabled_when_both_zero(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_atomic_action(action_id=1, team_id=200, time_seconds=1.0),
+                _make_atomic_action(action_id=2, team_id=100, time_seconds=2.0),
+            ]
+        )
+        with_rule_off = add_possessions(actions, merge_brief_opposing_actions=0, brief_window_seconds=0.0)
+        baseline = add_possessions(actions)
+        assert (with_rule_off["possession_id"] == baseline["possession_id"]).all()
+
+    def test_partial_config_actions_only_raises(self):
+        actions = _df([_make_atomic_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"both"):
+            add_possessions(actions, merge_brief_opposing_actions=2, brief_window_seconds=0.0)
+
+    def test_partial_config_seconds_only_raises(self):
+        actions = _df([_make_atomic_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"both"):
+            add_possessions(actions, merge_brief_opposing_actions=0, brief_window_seconds=2.0)
+
+    def test_negative_actions_raises(self):
+        actions = _df([_make_atomic_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"merge_brief_opposing_actions"):
+            add_possessions(actions, merge_brief_opposing_actions=-1, brief_window_seconds=2.0)
+
+    def test_negative_seconds_raises(self):
+        actions = _df([_make_atomic_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"brief_window_seconds"):
+            add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=-0.5)
+
+    def test_works_through_card_transparency(self):
+        # Atomic-only test: cards between A and B must not interfere with
+        # brief-merge look-ahead. A pass at t=0, yellow_card at t=0.5 (transparent),
+        # B pass at t=1.0, A pass at t=2.0. With N=1 T=2.0 the rule should still
+        # merge A→B→A across the (transparent) card row.
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0, type_name="pass"),
+                _make_atomic_card(action_id=1, card="yellow_card", team_id=100, time_seconds=0.5),
+                _make_atomic_action(action_id=2, team_id=200, time_seconds=1.0, type_name="pass"),
+                _make_atomic_action(action_id=3, team_id=100, time_seconds=2.0, type_name="pass"),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=2.0)
+        # The card is transparent; the non-card subset is [pass A, pass B, pass A]
+        # which is the canonical ABA brief-merge case. All non-card rows merge to 0;
+        # the card inherits via forward-fill.
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0  # card inherits
+        assert result["possession_id"].iloc[2] == 0
+        assert result["possession_id"].iloc[3] == 0
+
+
+# ---------------------------------------------------------------------------
+# Rule 2: defensive transitions — added in 2.1.0 (atomic mirror)
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicDefensiveTransitions:
+    """Atomic-SPADL counterpart of TestDefensiveTransitions.
+
+    Action types in ``defensive_transition_types`` do NOT trigger team-change
+    boundaries on their own. Atomic action vocabulary differs slightly from
+    standard (e.g. ``corner`` instead of ``corner_short``), but the canonical
+    defensive types (``interception``, ``clearance``, ``tackle``, ``bad_touch``)
+    exist in both vocabularies.
+    """
+
+    def test_interception_does_not_trigger_boundary(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0, type_name="pass"),
+                _make_atomic_action(action_id=1, team_id=200, time_seconds=1.0, type_name="interception"),
+                _make_atomic_action(action_id=2, team_id=200, time_seconds=2.0, type_name="pass"),
+            ]
+        )
+        result = add_possessions(actions, defensive_transition_types=("interception",))
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0
+        assert result["possession_id"].iloc[2] == 0
+
+    def test_pass_after_interception_keeps_separate_possession_when_recovered(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0, type_name="pass"),
+                _make_atomic_action(action_id=1, team_id=200, time_seconds=1.0, type_name="interception"),
+                _make_atomic_action(action_id=2, team_id=100, time_seconds=2.0, type_name="pass"),
+            ]
+        )
+        result = add_possessions(actions, defensive_transition_types=("interception",))
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0
+        assert result["possession_id"].iloc[2] == 1
+
+    def test_unknown_type_raises_value_error(self):
+        actions = _df([_make_atomic_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"unknown action types"):
+            add_possessions(actions, defensive_transition_types=("not_a_type",))
+
+    def test_empty_tuple_no_op(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_atomic_action(action_id=1, team_id=200, time_seconds=1.0),
+            ]
+        )
+        with_rule = add_possessions(actions, defensive_transition_types=())
+        baseline = add_possessions(actions)
+        assert (with_rule["possession_id"] == baseline["possession_id"]).all()
+
+    def test_multi_type_tuple(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0, type_name="pass"),
+                _make_atomic_action(action_id=1, team_id=200, time_seconds=1.0, type_name="clearance"),
+                _make_atomic_action(action_id=2, team_id=200, time_seconds=2.0, type_name="pass"),
+            ]
+        )
+        result = add_possessions(actions, defensive_transition_types=("interception", "clearance"))
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0
+        assert result["possession_id"].iloc[2] == 0
+
+
+# ---------------------------------------------------------------------------
+# max_gap_seconds default change 5.0 → 7.0 — added in 2.1.0 (atomic mirror)
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicMaxGapDefaultIs7Seconds:
+    """Atomic ``max_gap_seconds`` default is 7.0 in 2.1.0 (was 5.0)."""
+
+    def test_default_value_is_7(self):
+        import inspect
+
+        sig = inspect.signature(add_possessions)
+        assert sig.parameters["max_gap_seconds"].default == 7.0
+
+    def test_5_to_6s_gap_no_boundary_at_default(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_atomic_action(action_id=1, team_id=100, time_seconds=6.0),
+            ]
+        )
+        result = add_possessions(actions)
+        assert result["possession_id"].iloc[0] == result["possession_id"].iloc[1]
+
+    def test_7_to_8s_gap_boundary_at_default(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_atomic_action(action_id=1, team_id=100, time_seconds=7.5),
+            ]
+        )
+        result = add_possessions(actions)
+        assert result["possession_id"].iloc[0] != result["possession_id"].iloc[1]
+
+    def test_explicit_5_0_still_works(self):
+        actions = _df(
+            [
+                _make_atomic_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_atomic_action(action_id=1, team_id=100, time_seconds=6.0),
+            ]
+        )
+        result = add_possessions(actions, max_gap_seconds=5.0)
+        assert result["possession_id"].iloc[0] != result["possession_id"].iloc[1]

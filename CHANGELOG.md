@@ -5,6 +5,82 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] — 2026-04-29
+
+### ⚠️ Breaking
+
+- **`add_possessions` default for `max_gap_seconds` changed from 5.0 to 7.0**
+  in both `silly_kicks.spadl.add_possessions` and
+  `silly_kicks.atomic.spadl.add_possessions`. Empirically Pareto-optimal at
+  the per-match recall floor on 64 StatsBomb WorldCup-2018 matches (full
+  campaign data:
+  `docs/superpowers/specs/2026-04-29-add-possessions-precision-improvement-design.md`).
+  Same input DataFrame produces different `possession_id` values for any
+  pair of actions where the time gap is in `[5, 7)` seconds AND the team
+  did not change.
+
+  **Opt-out:** explicit `add_possessions(actions, max_gap_seconds=5.0)`.
+
+  This default change is shipped as a minor bump under pragmatic semver
+  (luxury-lakehouse is the only known consumer; one-line opt-out preserves
+  prior behavior). Strict semver would call this 3.0.0.
+
+### Added
+
+- **`silly_kicks.spadl.add_possessions` (and atomic counterpart)** new
+  opt-in keyword-only parameters for precision-improvement rules:
+
+  - `merge_brief_opposing_actions: int = 0` + `brief_window_seconds: float = 0.0`
+    (paired) — brief-opposing-action merge rule. Suppresses team-change
+    boundaries when team B has 1..N consecutive actions sandwiched between
+    team A actions within the time window. Both must be > 0 to enable;
+    both 0 to disable; exactly one > 0 raises `ValueError`.
+  - `defensive_transition_types: tuple[str, ...] = ()` — defensive-transition
+    rule. Listed action types do not trigger team-change boundaries on
+    their own. Recommended: `("interception", "clearance")`.
+
+  All defaults disable the rules, preserving 2.0.x algorithmic behavior
+  except for the `max_gap_seconds` default change above.
+
+- **`tests/datasets/statsbomb/spadl-WorldCup-2018.h5`** regenerated with
+  `preserve_native=["possession"]` — the 64-match HDF5 fixture is now a
+  reusable regression corpus for `add_possessions`. New file size ~6 MB
+  (one extra `possession` column on ~128K rows under zlib compression).
+
+- **`tests/spadl/test_add_possessions.py::TestBoundaryAgainstStatsBomb64Match`**
+  64-match parametrized regression gate complementing the existing 3-fixture
+  cross-competition gate. Each match independently gated at
+  `recall >= 0.83 AND precision >= 0.30`.
+
+### Changed
+
+- **`silly_kicks/spadl/utils.py`** boundary-detection logic refactored
+  into a private `_compute_possession_boundaries` helper, mirroring the
+  atomic-side `_compute_possessions` factoring. Public API unchanged;
+  internal seam for the new opt-in rules.
+
+- **`tests/spadl/test_add_possessions.py::TestBoundaryAgainstStatsBombNative`**
+  per-match recall threshold lowered from 0.85 to 0.83. Absorbs the
+  slightly reduced recall margin at the new `max_gap_seconds=7.0` default
+  (worst observed across 64 matches: R_min=0.854) plus pandas/numpy
+  version-drift safety margin.
+
+### Behavior baselines
+
+`add_possessions` empirical performance at the new default (no opt-in
+rules, 64 WC-2018 matches):
+
+| Metric | Mean | sd | Min |
+|---|---|---|---|
+| Precision | 0.439 | 0.035 | 0.350 |
+| Recall | 0.939 | 0.023 | 0.854 |
+| F1 | 0.597 | — | — |
+
+(Compare to 2.0.x at `max_gap_seconds=5.0`: P=0.412, R=0.950, F1=0.574.)
+
+Recommended opt-in settings: see `add_possessions` docstring and
+`docs/superpowers/specs/2026-04-29-add-possessions-precision-improvement-design.md`.
+
 ## [2.0.0] — 2026-04-29
 
 ### ⚠️ Breaking
