@@ -17,6 +17,7 @@ Maintained fork of socceraction — SPADL event conversion + VAEP action valuati
 - All `warnings.warn()` calls include `stacklevel=2`.
 - ML naming conventions (uppercase `X`, `Y`, `Pscores`) are allowed in `vaep/` and `xthreat.py` per ruff per-file-ignores.
 - **Converter identifier conventions are sacred.** SPADL DataFrame converters never override the caller's `team_id` / `player_id` columns from provider-specific qualifiers. Qualifier-derived facts surface as dedicated output columns (see `tackle_winner_*` / `tackle_loser_*` on sportec). Decision: ADR-001.
+- **Public enrichment helpers (post-conversion `add_*` family) tolerate NaN in caller-supplied identifier columns.** NaN identifiers route to the documented per-row default (typically NaN-output / False / 0); helpers never crash on NaN input. Decoration with `@nan_safe_enrichment` from `silly_kicks._nan_safety` is the formal opt-in; the CI gate at `tests/test_enrichment_nan_safety.py` auto-discovers decorated helpers. Decision: ADR-003.
 
 ## Testing
 
