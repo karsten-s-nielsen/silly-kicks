@@ -489,6 +489,276 @@ class TestErrors:
 
 
 # ---------------------------------------------------------------------------
+# Rule 1: brief-opposing-action merge — added in 2.1.0
+# ---------------------------------------------------------------------------
+
+
+class TestBriefOpposingMerge:
+    """``merge_brief_opposing_actions`` + ``brief_window_seconds`` pair.
+
+    Suppresses team-change boundaries when team B has 1..N consecutive
+    actions sandwiched between team A actions within ``brief_window_seconds``.
+    Both kwargs must be > 0 to enable; both 0 to disable.
+    """
+
+    def test_aba_within_window_suppresses_boundary(self):
+        # A (team 100) at t=0, B (team 200) at t=1.0, A (team 100) at t=2.0.
+        # Window measured from first B-action (t=1.0) to next A-action (t=2.0):
+        # 1.0s <= 2.0s threshold. With N=1, T=2.0: detect 1 sandwiched B,
+        # suppress both team-change boundaries.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=200, time_seconds=1.0),
+                _make_action(action_id=2, team_id=100, time_seconds=2.0),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=2.0)
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0, "B at t=1 should be merged"
+        assert result["possession_id"].iloc[2] == 0, "A at t=2 should be merged"
+
+    def test_aba_outside_window_keeps_boundary(self):
+        # Same A B A pattern but B's window exceeded — boundaries stand.
+        # Window measured from first B (t=1.0) to A (t=3.0) = 2.0s, but threshold
+        # is 1.5 — so 2.0 > 1.5 → no merge.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=200, time_seconds=1.0),
+                _make_action(action_id=2, team_id=100, time_seconds=3.0),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=1.5)
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 1
+        assert result["possession_id"].iloc[2] == 2
+
+    def test_abba_within_window_with_n_eq_2_suppresses(self):
+        # A, B, B, A within window — 2 consecutive B's, N=2 covers it.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=200, time_seconds=0.5),
+                _make_action(action_id=2, team_id=200, time_seconds=1.0),
+                _make_action(action_id=3, team_id=100, time_seconds=1.5),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=2, brief_window_seconds=2.0)
+        assert result["possession_id"].nunique() == 1, "all merged into one possession"
+
+    def test_abbba_with_n_eq_2_keeps_boundary(self):
+        # A, B, B, B, A — 3 consecutive B's. With N=2 the rule looks ahead at
+        # most 2 rows; row 1's lookahead k=1 sees B (no), k=2 sees B (no);
+        # no match → boundary at row 1 stands. Row 4 (B→A) has no further
+        # lookahead → boundary stands.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=200, time_seconds=0.5),
+                _make_action(action_id=2, team_id=200, time_seconds=1.0),
+                _make_action(action_id=3, team_id=200, time_seconds=1.5),
+                _make_action(action_id=4, team_id=100, time_seconds=2.0),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=2, brief_window_seconds=3.0)
+        # Three distinct possessions: A, B, A
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 1
+        assert result["possession_id"].iloc[4] == 2
+
+    def test_disabled_when_both_zero(self):
+        # Default values (both 0) → identical to no-rule baseline.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=200, time_seconds=1.0),
+                _make_action(action_id=2, team_id=100, time_seconds=2.0),
+            ]
+        )
+        with_rule_off = add_possessions(actions, merge_brief_opposing_actions=0, brief_window_seconds=0.0)
+        baseline = add_possessions(actions)
+        assert (with_rule_off["possession_id"] == baseline["possession_id"]).all()
+
+    def test_partial_config_actions_only_raises(self):
+        actions = _df([_make_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"both"):
+            add_possessions(actions, merge_brief_opposing_actions=2, brief_window_seconds=0.0)
+
+    def test_partial_config_seconds_only_raises(self):
+        actions = _df([_make_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"both"):
+            add_possessions(actions, merge_brief_opposing_actions=0, brief_window_seconds=2.0)
+
+    def test_negative_actions_raises(self):
+        actions = _df([_make_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"merge_brief_opposing_actions"):
+            add_possessions(actions, merge_brief_opposing_actions=-1, brief_window_seconds=2.0)
+
+    def test_negative_seconds_raises(self):
+        actions = _df([_make_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"brief_window_seconds"):
+            add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=-0.5)
+
+    def test_game_boundary_blocks_lookahead(self):
+        # Brief-merge must not cross game_id boundaries.
+        actions = _df(
+            [
+                _make_action(action_id=0, game_id=1, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, game_id=1, team_id=200, time_seconds=1.0),
+                _make_action(action_id=0, game_id=2, team_id=100, time_seconds=0.0),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=2.0)
+        # Game 1 has 2 distinct possessions (A then B). Game 2 has 1 possession (resets to 0).
+        assert result["possession_id"].iloc[0] == 0  # game 1 first possession
+        assert result["possession_id"].iloc[1] == 1  # game 1 second possession (no merge across game)
+        assert result["possession_id"].iloc[2] == 0  # game 2 starts fresh
+
+    def test_period_boundary_blocks_lookahead(self):
+        # Same intent across period boundary.
+        actions = _df(
+            [
+                _make_action(action_id=0, period_id=1, team_id=100, time_seconds=2700.0),
+                _make_action(action_id=1, period_id=1, team_id=200, time_seconds=2700.5),
+                _make_action(action_id=2, period_id=2, team_id=100, time_seconds=0.0),
+            ]
+        )
+        result = add_possessions(actions, merge_brief_opposing_actions=1, brief_window_seconds=2.0)
+        # Period change forces boundary regardless of brief-merge.
+        assert result["possession_id"].iloc[2] == 2
+
+
+# ---------------------------------------------------------------------------
+# Rule 2: defensive transitions — added in 2.1.0
+# ---------------------------------------------------------------------------
+
+
+class TestDefensiveTransitions:
+    """``defensive_transition_types`` rule.
+
+    Action types listed do NOT trigger team-change boundaries on their own.
+    Recommended types per measurement: ``interception``, ``clearance``.
+    """
+
+    def test_interception_does_not_trigger_boundary(self):
+        # A passes, B intercepts, B passes → expected to merge into one possession.
+        # With defensive=("interception",): the team-change boundary at the intercept
+        # is suppressed; the next row (B-pass) has no team_change vs the intercept,
+        # so no boundary fires there either. Result: all rows in possession 0.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0, type_name="pass"),
+                _make_action(action_id=1, team_id=200, time_seconds=1.0, type_name="interception"),
+                _make_action(action_id=2, team_id=200, time_seconds=2.0, type_name="pass"),
+            ]
+        )
+        result = add_possessions(actions, defensive_transition_types=("interception",))
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0
+        assert result["possession_id"].iloc[2] == 0
+
+    def test_pass_after_interception_keeps_separate_possession_when_recovered(self):
+        # A pass, B intercept, A pass. Intercept's team-change boundary is
+        # suppressed by the rule, but the A-pass at row 2 IS a team change vs
+        # the intercept (B→A) and is NOT itself defensive — boundary fires.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0, type_name="pass"),
+                _make_action(action_id=1, team_id=200, time_seconds=1.0, type_name="interception"),
+                _make_action(action_id=2, team_id=100, time_seconds=2.0, type_name="pass"),
+            ]
+        )
+        result = add_possessions(actions, defensive_transition_types=("interception",))
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0  # intercept boundary suppressed
+        assert result["possession_id"].iloc[2] == 1  # A pass after B intercept = new possession
+
+    def test_unknown_type_raises_value_error(self):
+        actions = _df([_make_action(action_id=0)])
+        with pytest.raises(ValueError, match=r"unknown action types"):
+            add_possessions(actions, defensive_transition_types=("not_a_type",))
+
+    def test_empty_tuple_no_op(self):
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=200, time_seconds=1.0),
+            ]
+        )
+        with_rule = add_possessions(actions, defensive_transition_types=())
+        baseline = add_possessions(actions)
+        assert (with_rule["possession_id"] == baseline["possession_id"]).all()
+
+    def test_multi_type_tuple(self):
+        # ("interception", "clearance") → both types suppress team-change boundary.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0, type_name="pass"),
+                _make_action(action_id=1, team_id=200, time_seconds=1.0, type_name="clearance"),
+                _make_action(action_id=2, team_id=200, time_seconds=2.0, type_name="pass"),
+            ]
+        )
+        result = add_possessions(actions, defensive_transition_types=("interception", "clearance"))
+        assert result["possession_id"].iloc[0] == 0
+        assert result["possession_id"].iloc[1] == 0
+        assert result["possession_id"].iloc[2] == 0
+
+
+# ---------------------------------------------------------------------------
+# max_gap_seconds default change 5.0 → 7.0 — added in 2.1.0
+# ---------------------------------------------------------------------------
+
+
+class TestMaxGapDefaultIs7Seconds:
+    """The ``max_gap_seconds`` default changed from 5.0 to 7.0 in 2.1.0.
+
+    Behavior break: same-team actions with time gap in [5, 7) seconds are
+    now in the same possession (previously a new possession at gap >= 5).
+    """
+
+    def test_default_value_is_7(self):
+        import inspect
+
+        sig = inspect.signature(add_possessions)
+        assert sig.parameters["max_gap_seconds"].default == 7.0
+
+    def test_5_to_6s_gap_no_boundary_at_default(self):
+        # Same team, gap = 6.0s. Under 5.0 default this would be new possession;
+        # under 7.0 default this is same possession.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=100, time_seconds=6.0),
+            ]
+        )
+        result = add_possessions(actions)
+        assert result["possession_id"].iloc[0] == result["possession_id"].iloc[1]
+
+    def test_7_to_8s_gap_boundary_at_default(self):
+        # Same team, gap = 7.5s — new possession under 7.0 default (>= 7.0).
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=100, time_seconds=7.5),
+            ]
+        )
+        result = add_possessions(actions)
+        assert result["possession_id"].iloc[0] != result["possession_id"].iloc[1]
+
+    def test_explicit_5_0_still_works(self):
+        # Opt-out path: explicitly set max_gap_seconds=5.0.
+        actions = _df(
+            [
+                _make_action(action_id=0, team_id=100, time_seconds=0.0),
+                _make_action(action_id=1, team_id=100, time_seconds=6.0),
+            ]
+        )
+        result = add_possessions(actions, max_gap_seconds=5.0)
+        assert result["possession_id"].iloc[0] != result["possession_id"].iloc[1]
+
+
+# ---------------------------------------------------------------------------
 # End-to-end: add_possessions vs StatsBomb native possession_id
 # ---------------------------------------------------------------------------
 
@@ -496,13 +766,14 @@ class TestErrors:
 class TestBoundaryAgainstStatsBombNative:
     """Validate add_possessions against StatsBomb's native possession_id.
 
-    Empirically against StatsBomb open-data, this heuristic achieves
-    boundary recall ~0.93 and boundary F1 ~0.58. The precision gap is
-    intrinsic to the team-change-with-carve-outs algorithm class. The
-    CI gate below tests recall AND precision because both are observable
-    behaviors that downstream consumers can develop dependencies on —
-    F1 conflates two signals with very different magnitudes and is
-    recorded for diagnostics only.
+    PR-S12 (silly-kicks 2.1.0) updated the empirical baselines to the
+    new ``max_gap_seconds=7.0`` default: per-match boundary recall ~0.94
+    and boundary F1 ~0.60. The precision gap remains intrinsic to the
+    team-change-with-carve-outs algorithm class. The CI gate below tests
+    recall AND precision because both are observable behaviors that
+    downstream consumers can develop dependencies on — F1 conflates two
+    signals with very different magnitudes and is recorded for diagnostics
+    only.
 
     Fixtures (committed under ``tests/datasets/statsbomb/raw/events/``)
     are 3 diverse matches measured during the luxury-lakehouse PR-LL2
@@ -513,7 +784,12 @@ class TestBoundaryAgainstStatsBombNative:
     - 3754058 — Premier League
 
     Per-match independent gates: any single match falling below
-    ``recall >= 0.85 AND precision >= 0.30`` fires the regression.
+    ``recall >= 0.83 AND precision >= 0.30`` fires the regression.
+
+    Companion test: :class:`TestBoundaryAgainstStatsBomb64Match` runs the
+    same gate across 64 FIFA WorldCup-2018 matches via the committed
+    HDF5 fixture. Cross-competition coverage here; within-competition
+    variance there.
     """
 
     @pytest.mark.parametrize("match_id", [7298, 7584, 3754058])
@@ -576,16 +852,138 @@ class TestBoundaryAgainstStatsBombNative:
             native=non_synthetic["possession"].astype(np.int64),
         )
 
-        # Per-match independent gates.
-        # Recall floor: 0.85 — 8pp below the worst observed (~0.93).
-        # Precision floor: 0.30 — 9pp below the worst observed (~0.39 on match 3754058).
-        # F1 in message only — F1 conflates two signals; gating on it
-        # would re-introduce the misrepresentation problem the docstring
-        # rewrite is fixing.
-        assert m["recall"] >= 0.85 and m["precision"] >= 0.30, (
+        # Per-match independent gates (PR-S12, silly-kicks 2.1.0).
+        # Recall floor: 0.83 — 4pp below worst observed (R_min=0.854 at gap=7.0
+        # across 64 WC-2018 matches; 3 committed JSON fixtures have higher
+        # R_min). Loosened from 0.85 in 2.1.0 alongside the max_gap_seconds
+        # default change 5.0→7.0.
+        # Precision floor: 0.30 — 5pp below worst observed (P_min=0.350 at gap=7.0).
+        # F1 in message only — gating on it conflates two independent signals.
+        assert m["recall"] >= 0.83 and m["precision"] >= 0.30, (
             f"match {match_id}: recall={m['recall']:.4f} "
             f"precision={m['precision']:.4f} f1={m['f1']:.4f}; "
-            f"thresholds: recall>=0.85 precision>=0.30"
+            f"thresholds: recall>=0.83 precision>=0.30"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Within-competition variance: 64 WC-2018 matches via committed HDF5 fixture
+# ---------------------------------------------------------------------------
+
+
+class TestBoundaryAgainstStatsBomb64Match:
+    """Validate add_possessions against StatsBomb native across 64 WC-2018 matches.
+
+    Reads the committed HDF5 fixture
+    ``tests/datasets/statsbomb/spadl-WorldCup-2018.h5`` (regenerated in
+    silly-kicks 2.1.0 to preserve the StatsBomb ``possession`` column).
+    Each match is gated independently at ``recall >= 0.83 AND
+    precision >= 0.30`` per the same per-match contract as
+    :class:`TestBoundaryAgainstStatsBombNative`.
+
+    Within-competition variance complement to the cross-competition
+    3-fixture test. ~1-2s additional CI runtime after HDFStore cold-load.
+    """
+
+    def test_fixture_has_possession_column(self, sb_worldcup_data: pd.HDFStore):
+        # Sentinel: if the HDF5 was built without preserve_native=["possession"],
+        # the entire test class will fail at this guard. Clear failure mode
+        # vs 64 cryptic per-match KeyErrors.
+        keys = [k for k in sb_worldcup_data.keys() if k.startswith("/actions/game_")]
+        assert keys, "no actions/game_<id> keys in HDF5 fixture"
+        first = sb_worldcup_data.get(keys[0])
+        assert "possession" in first.columns, (
+            "HDF5 fixture missing `possession` column. Regenerate with "
+            "`uv run python scripts/build_worldcup_fixture.py --verbose`."
+        )
+
+    @pytest.mark.parametrize(
+        "match_id",
+        # The 64 FIFA WorldCup-2018 match IDs — hardcoded from the manifest
+        # because pytest.parametrize cannot defer to a fixture for IDs. If the
+        # manifest changes upstream, regenerate this list from
+        # tests/datasets/statsbomb/raw/.cache/events/*.json filenames.
+        [
+            7525,
+            7529,
+            7530,
+            7531,
+            7532,
+            7533,
+            7534,
+            7535,
+            7536,
+            7537,
+            7538,
+            7539,
+            7540,
+            7541,
+            7542,
+            7543,
+            7544,
+            7545,
+            7546,
+            7547,
+            7548,
+            7549,
+            7550,
+            7551,
+            7552,
+            7553,
+            7554,
+            7555,
+            7556,
+            7557,
+            7558,
+            7559,
+            7560,
+            7561,
+            7562,
+            7563,
+            7564,
+            7565,
+            7566,
+            7567,
+            7568,
+            7569,
+            7570,
+            7571,
+            7572,
+            7576,
+            7577,
+            7578,
+            7579,
+            7580,
+            7581,
+            7582,
+            7583,
+            7584,
+            7585,
+            7586,
+            8649,
+            8650,
+            8651,
+            8652,
+            8655,
+            8656,
+            8657,
+            8658,
+        ],
+    )
+    def test_boundary_metrics_against_native_per_match(self, sb_worldcup_data: pd.HDFStore, match_id: int):
+        actions = sb_worldcup_data.get(f"actions/game_{match_id}")
+        non_synth = actions[actions["possession"].notna()].copy()
+        non_synth = add_possessions(non_synth)
+
+        m = boundary_metrics(
+            heuristic=non_synth["possession_id"],
+            native=non_synth["possession"].astype(np.int64),
+        )
+
+        assert m["recall"] >= 0.83 and m["precision"] >= 0.30, (
+            f"match {match_id}: recall={m['recall']:.4f} "
+            f"precision={m['precision']:.4f} f1={m['f1']:.4f}; "
+            f"thresholds: recall>=0.83 precision>=0.30"
         )
 
 

@@ -549,11 +549,136 @@ def add_pre_shot_gk_context(
     return sorted_actions
 
 
+def _compute_possession_boundaries(
+    sorted_actions: pd.DataFrame,
+    *,
+    max_gap_seconds: float,
+    retain_on_set_pieces: bool,
+    defensive_transition_types: tuple[str, ...] = (),
+    merge_brief_opposing_actions: int = 0,
+    brief_window_seconds: float = 0.0,
+) -> np.ndarray:
+    """Return a boolean mask: ``True`` at rows that start a new possession.
+
+    Operates on a pre-sorted ``(game_id, period_id, action_id)`` DataFrame.
+    Vectorized; no row-level Python iteration. Shared logic for
+    :func:`add_possessions` and any future variants.
+
+    Parameters
+    ----------
+    sorted_actions : pd.DataFrame
+        SPADL action stream, already sorted. Must contain ``game_id``,
+        ``period_id``, ``team_id``, ``time_seconds``, ``type_id``.
+    max_gap_seconds : float
+        Time-gap threshold (seconds) above which a new possession starts
+        regardless of team.
+    retain_on_set_pieces : bool
+        Whether to apply the foul-then-set-piece carve-out.
+
+    Returns
+    -------
+    np.ndarray
+        Shape ``(n,)`` boolean array. ``True`` at rows that begin a new
+        possession (game change, period change, gap timeout, or team change
+        without carve-out).
+    """
+    n = len(sorted_actions)
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+
+    game_id = sorted_actions["game_id"].to_numpy()
+    period_id = sorted_actions["period_id"].to_numpy()
+    team_id = sorted_actions["team_id"].to_numpy()
+    time_seconds = sorted_actions["time_seconds"].to_numpy()
+    type_id = sorted_actions["type_id"].to_numpy()
+
+    prev_period = np.empty(n, dtype=period_id.dtype)
+    prev_team = np.empty(n, dtype=team_id.dtype)
+    prev_time = np.empty(n, dtype=time_seconds.dtype)
+    prev_type = np.empty(n, dtype=type_id.dtype)
+    prev_period[0] = period_id[0]
+    prev_team[0] = team_id[0]
+    prev_time[0] = time_seconds[0]
+    prev_type[0] = type_id[0]
+    prev_period[1:] = period_id[:-1]
+    prev_team[1:] = team_id[:-1]
+    prev_time[1:] = time_seconds[:-1]
+    prev_type[1:] = type_id[:-1]
+
+    game_change = np.empty(n, dtype=bool)
+    game_change[0] = True
+    game_change[1:] = game_id[1:] != game_id[:-1]
+
+    period_change_within_game = (~game_change) & (period_id != prev_period)
+    gap_timeout = (~game_change) & (~period_change_within_game) & ((time_seconds - prev_time) >= max_gap_seconds)
+    team_change = (~game_change) & (team_id != prev_team)
+
+    set_piece_ids = {spadlconfig.actiontype_id[name] for name in _SET_PIECE_RESTART_TYPE_NAMES}
+    foul_id = spadlconfig.actiontype_id["foul"]
+    is_set_piece = np.isin(type_id, list(set_piece_ids))
+    prev_is_foul = prev_type == foul_id
+    set_piece_carve_out = retain_on_set_pieces & team_change & is_set_piece & prev_is_foul
+
+    boundary = team_change & ~set_piece_carve_out
+
+    # Rule 2 (PR-S12, 2.1.0): defensive_transition_types — listed types do
+    # not trigger team-change boundaries on their own.
+    if defensive_transition_types:
+        defensive_ids = {spadlconfig.actiontype_id[name] for name in defensive_transition_types}
+        is_defensive = np.isin(type_id, list(defensive_ids))
+        boundary = boundary & ~is_defensive
+
+    # Rule 1 (PR-S12, 2.1.0): brief-opposing-action merge. For each surviving
+    # team-change boundary at row i, look ahead k=1..N rows; if any row i+k
+    # has team_id == prev_team[i] (the original team has come back) within
+    # the time window AND same game_id/period_id, suppress both the boundary
+    # at i AND the boundary at i+k (the team-flip-back).
+    if merge_brief_opposing_actions > 0 and brief_window_seconds > 0:
+        suppress_at_i = np.zeros(n, dtype=bool)
+        suppress_at_k = np.zeros(n, dtype=bool)
+        for k in range(1, merge_brief_opposing_actions + 1):
+            # Aligned look-ahead: index i sees row i+k; sentinels for last k positions.
+            team_at_k = np.empty(n, dtype=team_id.dtype)
+            time_at_k = np.empty(n, dtype=time_seconds.dtype)
+            game_at_k = np.empty(n, dtype=game_id.dtype)
+            period_at_k = np.empty(n, dtype=period_id.dtype)
+            if n > k:
+                team_at_k[: n - k] = team_id[k:]
+                time_at_k[: n - k] = time_seconds[k:]
+                game_at_k[: n - k] = game_id[k:]
+                period_at_k[: n - k] = period_id[k:]
+            # Sentinels for last k positions: time=+inf forces window check to fail;
+            # game/period sentinels also fail the same-game-period check.
+            team_at_k[n - k :] = team_id[-1]  # arbitrary; never used due to sentinels below
+            time_at_k[n - k :] = np.inf
+            game_at_k[n - k :] = -1
+            period_at_k[n - k :] = -1
+
+            same_game_period = (game_at_k == game_id) & (period_at_k == period_id)
+            within_time = (time_at_k - time_seconds) <= brief_window_seconds
+            team_back = team_at_k == prev_team
+            match = boundary & same_game_period & within_time & team_back
+
+            suppress_at_i |= match
+            # Shift match by k positions to mark the team-flip-back boundary for suppression.
+            shifted = np.zeros(n, dtype=bool)
+            if n > k:
+                shifted[k:] = match[: n - k]
+            suppress_at_k |= shifted
+
+        boundary = boundary & ~suppress_at_i & ~suppress_at_k
+
+    return game_change | period_change_within_game | gap_timeout | boundary
+
+
 def add_possessions(
     actions: pd.DataFrame,
     *,
-    max_gap_seconds: float = 5.0,
+    max_gap_seconds: float = 7.0,
     retain_on_set_pieces: bool = True,
+    merge_brief_opposing_actions: int = 0,
+    brief_window_seconds: float = 0.0,
+    defensive_transition_types: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     """Assign a per-match possession-sequence integer to each SPADL action.
 
@@ -579,14 +704,13 @@ def add_possessions(
 
     The carve-out is approximate (StatsBomb's proprietary possession rules
     capture additional context like merging brief opposing-team actions
-    back into the containing possession). Empirically against StatsBomb
-    open-data the heuristic achieves:
+    back into the containing possession). At the default
+    ``max_gap_seconds=7.0`` (PR-S12, 2.1.0) and all opt-in rules disabled,
+    the heuristic empirically achieves on 64 StatsBomb WorldCup-2018 matches:
 
-        - Boundary recall: ~0.93 — every real possession boundary is detected.
-        - Boundary precision: ~0.42 — the heuristic emits ~2x more boundaries
-          than StatsBomb's native annotation, since it can't replicate the
-          "merge brief opposing actions" rule structurally.
-        - Boundary F1: ~0.58 (peak ~0.605 at max_gap_seconds=10.0).
+        - Boundary recall: ~0.94 (worst-match 0.85).
+        - Boundary precision: ~0.44 (worst-match 0.35).
+        - Boundary F1: ~0.60.
 
     Recall is the meaningful metric for downstream consumers — possessions
     detected by the heuristic correspond to real possession changes. The
@@ -595,11 +719,27 @@ def add_possessions(
     possession_id where available; the heuristic is a possession proxy
     for sources without one (Wyscout, Sportec, Metrica, etc.).
 
-    Published "0.85-0.95 F1" baselines exist for related heuristic methods
-    in the literature, but use looser boundary-matching criteria or
-    different ground-truth annotations than StatsBomb's open-data
-    possession_id. See :func:`boundary_metrics` for downstream
-    measurement.
+    Opt-in precision-improvement rules (PR-S12, 2.1.0)
+    --------------------------------------------------
+    Three opt-in keyword-only parameters trade precision for recall on the
+    same algorithm class. Measured on 64 WC-2018 matches:
+
+    +--------------------------------------------------+--------+--------+------+--------+
+    | Setting                                          | P_mean | R_mean | F1   | R_min  |
+    +==================================================+========+========+======+========+
+    | (default, all rules off)                         | 0.44   | 0.94   | 0.60 | 0.85   |
+    +--------------------------------------------------+--------+--------+------+--------+
+    | ``defensive_transition_types=("interception",    | 0.46   | 0.92   | 0.61 | 0.85   |
+    |   "clearance")``                                 |        |        |      |        |
+    +--------------------------------------------------+--------+--------+------+--------+
+    | ``merge_brief_opposing_actions=2,                | 0.48   | 0.91   | 0.63 | 0.84   |
+    |   brief_window_seconds=2.0``                     |        |        |      |        |
+    +--------------------------------------------------+--------+--------+------+--------+
+    | ``merge_brief_opposing_actions=3,                | 0.53   | 0.88   | 0.66 | 0.81   |
+    |   brief_window_seconds=3.0`` (R_min < 0.85)      |        |        |      |        |
+    +--------------------------------------------------+--------+--------+------+--------+
+
+    See :func:`boundary_metrics` for downstream measurement.
 
     Parameters
     ----------
@@ -607,11 +747,35 @@ def add_possessions(
         SPADL action stream. Must contain ``game_id``, ``period_id``,
         ``action_id``, ``time_seconds``, ``team_id``, ``type_id``. Other
         columns are preserved unchanged.
-    max_gap_seconds : float, default 5.0
+    max_gap_seconds : float, default 7.0
         Time-gap threshold (seconds) above which a new possession starts
         even if the team hasn't changed. Set to ``float("inf")`` to disable.
+
+        .. versionchanged:: 2.1.0
+            Default changed from 5.0 to 7.0 — empirically Pareto-optimal at
+            the per-match recall floor on 64 WC-2018 matches. To restore
+            1.x-2.0.x behavior, pass ``max_gap_seconds=5.0`` explicitly.
     retain_on_set_pieces : bool, default True
         Whether to apply the foul-then-set-piece carve-out (see Algorithm).
+    merge_brief_opposing_actions : int, default 0
+        Maximum number of consecutive opposing-team actions to merge back
+        into the containing possession. Both this AND ``brief_window_seconds``
+        must be > 0 to enable; both 0 disables. Recommended:
+        ``merge_brief_opposing_actions=2, brief_window_seconds=2.0``.
+
+        .. versionadded:: 2.1.0
+    brief_window_seconds : float, default 0.0
+        Time window (seconds) for the brief-opposing-action merge rule.
+        See ``merge_brief_opposing_actions`` for activation pairing.
+
+        .. versionadded:: 2.1.0
+    defensive_transition_types : tuple[str, ...], default ()
+        Action type names that should NOT trigger team-change boundaries
+        on their own. Must be a subset of
+        :attr:`silly_kicks.spadl.config.actiontypes`. Empty tuple disables.
+        Recommended: ``("interception", "clearance")``.
+
+        .. versionadded:: 2.1.0
 
     Returns
     -------
@@ -650,6 +814,25 @@ def add_possessions(
         )
     if max_gap_seconds < 0:
         raise ValueError(f"add_possessions: max_gap_seconds must be >= 0, got {max_gap_seconds}")
+    if merge_brief_opposing_actions < 0:
+        raise ValueError(
+            f"add_possessions: merge_brief_opposing_actions must be >= 0, got {merge_brief_opposing_actions}"
+        )
+    if brief_window_seconds < 0:
+        raise ValueError(f"add_possessions: brief_window_seconds must be >= 0, got {brief_window_seconds}")
+    if (merge_brief_opposing_actions > 0) != (brief_window_seconds > 0):
+        raise ValueError(
+            "add_possessions: merge_brief_opposing_actions and brief_window_seconds must "
+            "both be > 0 to enable the brief-opposing-merge rule, or both 0 to disable. "
+            f"Got merge_brief_opposing_actions={merge_brief_opposing_actions}, "
+            f"brief_window_seconds={brief_window_seconds}."
+        )
+    invalid_defensive = [t for t in defensive_transition_types if t not in spadlconfig.actiontype_id]
+    if invalid_defensive:
+        raise ValueError(
+            f"add_possessions: defensive_transition_types contains unknown action types: "
+            f"{sorted(invalid_defensive)}. Valid types: {sorted(spadlconfig.actiontype_id.keys())}"
+        )
 
     # Sort by canonical SPADL order. Stable sort preserves original-row order on ties.
     sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
@@ -659,48 +842,14 @@ def add_possessions(
         sorted_actions["possession_id"] = pd.Series([], dtype=np.int64)
         return sorted_actions
 
-    # Vectorised boundary detection.
-    game_id = sorted_actions["game_id"].to_numpy()
-    period_id = sorted_actions["period_id"].to_numpy()
-    team_id = sorted_actions["team_id"].to_numpy()
-    time_seconds = sorted_actions["time_seconds"].to_numpy()
-    type_id = sorted_actions["type_id"].to_numpy()
-
-    prev_game = np.empty(n, dtype=game_id.dtype)
-    prev_period = np.empty(n, dtype=period_id.dtype)
-    prev_team = np.empty(n, dtype=team_id.dtype)
-    prev_time = np.empty(n, dtype=time_seconds.dtype)
-    prev_type = np.empty(n, dtype=type_id.dtype)
-    # Sentinel values for the first row; the game_change check on row 0 hits regardless
-    # because we explicitly mark row 0 as a game_change boundary below.
-    prev_game[0] = game_id[0]
-    prev_period[0] = period_id[0]
-    prev_team[0] = team_id[0]
-    prev_time[0] = time_seconds[0]
-    prev_type[0] = type_id[0]
-    prev_game[1:] = game_id[:-1]
-    prev_period[1:] = period_id[:-1]
-    prev_team[1:] = team_id[:-1]
-    prev_time[1:] = time_seconds[:-1]
-    prev_type[1:] = type_id[:-1]
-
-    game_change = np.empty(n, dtype=bool)
-    game_change[0] = True  # first row is always the start of a possession in its game.
-    game_change[1:] = game_id[1:] != game_id[:-1]
-
-    period_change_within_game = (~game_change) & (period_id != prev_period)
-    gap_timeout = (~game_change) & (~period_change_within_game) & ((time_seconds - prev_time) >= max_gap_seconds)
-    team_change = (~game_change) & (team_id != prev_team)
-
-    # Set-piece carve-out: current is a set-piece restart AND previous was a foul by other team.
-    # Carve-out only matters when the team has changed (otherwise no team change → no boundary anyway).
-    set_piece_ids = {spadlconfig.actiontype_id[name] for name in _SET_PIECE_RESTART_TYPE_NAMES}
-    foul_id = spadlconfig.actiontype_id["foul"]
-    is_set_piece = np.isin(type_id, list(set_piece_ids))
-    prev_is_foul = prev_type == foul_id
-    set_piece_carve_out = retain_on_set_pieces & team_change & is_set_piece & prev_is_foul
-
-    new_possession_mask = game_change | period_change_within_game | gap_timeout | (team_change & ~set_piece_carve_out)
+    new_possession_mask = _compute_possession_boundaries(
+        sorted_actions,
+        max_gap_seconds=max_gap_seconds,
+        retain_on_set_pieces=retain_on_set_pieces,
+        defensive_transition_types=defensive_transition_types,
+        merge_brief_opposing_actions=merge_brief_opposing_actions,
+        brief_window_seconds=brief_window_seconds,
+    )
 
     # Per-game cumulative count of new-possession events; subtract 1 so the first row of each
     # game is possession_id=0 (game_change is True there → cumsum starts at 1 → -1 = 0).

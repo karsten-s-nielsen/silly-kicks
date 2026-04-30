@@ -157,10 +157,18 @@ class TestAddPossessionsCrossValidation:
             assert atomic_pid[ev_id] == std_pid[ev_id]
 
     def test_long_gap_creates_new_possession_in_both(self):
+        # Gap = 20s. ``convert_to_atomic`` interleaves a synthetic receival
+        # at midpoint (t=10) and a dribble at 3/4 (t=15) between the two
+        # passes. With max_gap_seconds=7.0 (silly-kicks 2.1.0 default), the
+        # receival's 10s gap from the first pass triggers a boundary on
+        # the atomic side; the originals at t=0 and t=20 land in distinct
+        # possessions. Smaller gaps like 10s could leave intermediate
+        # atomic rows below the threshold and break the cross-pipeline
+        # parity invariant this test guards.
         spadl = _spadl_df(
             [
                 _spadl_row(action_id=0, team_id=100, time_seconds=0.0, type_name="pass"),
-                _spadl_row(action_id=1, team_id=100, time_seconds=10.0, type_name="pass"),
+                _spadl_row(action_id=1, team_id=100, time_seconds=20.0, type_name="pass"),
             ]
         )
         std = standard_add_possessions(spadl)

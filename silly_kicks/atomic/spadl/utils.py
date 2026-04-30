@@ -173,8 +173,11 @@ def add_gk_role(
 def add_possessions(
     actions: pd.DataFrame,
     *,
-    max_gap_seconds: float = 5.0,
+    max_gap_seconds: float = 7.0,
     retain_on_set_pieces: bool = True,
+    merge_brief_opposing_actions: int = 0,
+    brief_window_seconds: float = 0.0,
+    defensive_transition_types: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     """Assign a per-match possession-sequence integer to each Atomic-SPADL action.
 
@@ -208,17 +211,57 @@ def add_possessions(
     Card rows (yellow_card / red_card) inherit their possession_id from the
     surrounding non-card context via forward-fill within ``game_id``.
 
+    Empirical baselines on 64 StatsBomb WorldCup-2018 matches at default
+    ``max_gap_seconds=7.0`` (rules off): boundary recall ~0.94, precision
+    ~0.44, F1 ~0.60. Same algorithm class as the standard counterpart;
+    expected behavior parity (atomic card transparency aside).
+
+    Opt-in precision-improvement rules (PR-S12, 2.1.0) follow the same
+    semantics as the standard counterpart's. Recommended settings carry
+    over: ``defensive_transition_types=("interception", "clearance")`` for
+    the +5pp-precision conservative case;
+    ``merge_brief_opposing_actions=2, brief_window_seconds=2.0`` for the
+    +7pp-precision moderate case (see standard ``add_possessions``
+    docstring's tradeoff table).
+
     Parameters
     ----------
     actions : pd.DataFrame
         Atomic-SPADL action stream. Must contain ``game_id``, ``period_id``,
         ``action_id``, ``time_seconds``, ``team_id``, ``type_id``. Other
         columns are preserved unchanged.
-    max_gap_seconds : float, default 5.0
+    max_gap_seconds : float, default 7.0
         Time-gap threshold (seconds) above which a new possession starts
         even if the team hasn't changed. Set to ``float("inf")`` to disable.
+
+        .. versionchanged:: 2.1.0
+            Default changed from 5.0 to 7.0 — mirrors the standard
+            ``add_possessions`` change. To restore 1.x-2.0.x behavior,
+            pass ``max_gap_seconds=5.0`` explicitly.
     retain_on_set_pieces : bool, default True
         Whether to apply the foul-then-set-piece carve-out (see Algorithm).
+    merge_brief_opposing_actions : int, default 0
+        Maximum number of consecutive opposing-team actions to merge back
+        into the containing possession. Both this AND ``brief_window_seconds``
+        must be > 0 to enable; both 0 disables. Atomic action vocabulary
+        is used for type checks. Card rows (yellow/red) are transparent
+        to the look-ahead — they inherit possession context.
+
+        .. versionadded:: 2.1.0
+    brief_window_seconds : float, default 0.0
+        Time window (seconds) for the brief-opposing-action merge rule.
+        See ``merge_brief_opposing_actions`` for activation pairing.
+
+        .. versionadded:: 2.1.0
+    defensive_transition_types : tuple[str, ...], default ()
+        Action type names that should NOT trigger team-change boundaries
+        on their own. Must be a subset of
+        :attr:`silly_kicks.atomic.spadl.config.actiontypes` (atomic
+        vocabulary; differs from standard SPADL on collapsed set-piece
+        names but retains ``interception`` / ``clearance`` / ``tackle`` /
+        ``bad_touch``).
+
+        .. versionadded:: 2.1.0
 
     Returns
     -------
@@ -252,6 +295,25 @@ def add_possessions(
         )
     if max_gap_seconds < 0:
         raise ValueError(f"add_possessions: max_gap_seconds must be >= 0, got {max_gap_seconds}")
+    if merge_brief_opposing_actions < 0:
+        raise ValueError(
+            f"add_possessions: merge_brief_opposing_actions must be >= 0, got {merge_brief_opposing_actions}"
+        )
+    if brief_window_seconds < 0:
+        raise ValueError(f"add_possessions: brief_window_seconds must be >= 0, got {brief_window_seconds}")
+    if (merge_brief_opposing_actions > 0) != (brief_window_seconds > 0):
+        raise ValueError(
+            "add_possessions: merge_brief_opposing_actions and brief_window_seconds must "
+            "both be > 0 to enable the brief-opposing-merge rule, or both 0 to disable. "
+            f"Got merge_brief_opposing_actions={merge_brief_opposing_actions}, "
+            f"brief_window_seconds={brief_window_seconds}."
+        )
+    invalid_defensive = [t for t in defensive_transition_types if t not in spadlconfig.actiontype_id]
+    if invalid_defensive:
+        raise ValueError(
+            f"add_possessions: defensive_transition_types contains unknown action types: "
+            f"{sorted(invalid_defensive)}. Valid types: {sorted(spadlconfig.actiontype_id.keys())}"
+        )
 
     sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
 
@@ -266,13 +328,27 @@ def add_possessions(
 
     if not is_card.any():
         # Fast path: no cards → identical algorithm to standard SPADL.
-        return _compute_possessions(sorted_actions, max_gap_seconds, retain_on_set_pieces)
+        return _compute_possessions(
+            sorted_actions,
+            max_gap_seconds,
+            retain_on_set_pieces,
+            merge_brief_opposing_actions=merge_brief_opposing_actions,
+            brief_window_seconds=brief_window_seconds,
+            defensive_transition_types=defensive_transition_types,
+        )
 
     # Slow path: drop cards, compute boundaries on the reduced subset,
     # then forward-fill card rows within game.
     non_card_idx = np.where(~is_card)[0]
     non_card_subset = sorted_actions.iloc[non_card_idx].reset_index(drop=True)
-    non_card_with_pids = _compute_possessions(non_card_subset, max_gap_seconds, retain_on_set_pieces)
+    non_card_with_pids = _compute_possessions(
+        non_card_subset,
+        max_gap_seconds,
+        retain_on_set_pieces,
+        merge_brief_opposing_actions=merge_brief_opposing_actions,
+        brief_window_seconds=brief_window_seconds,
+        defensive_transition_types=defensive_transition_types,
+    )
 
     pids_full = pd.array([pd.NA] * n, dtype="Int64")
     pids_full[non_card_idx] = non_card_with_pids["possession_id"].to_numpy()
@@ -289,11 +365,16 @@ def _compute_possessions(
     sorted_actions: pd.DataFrame,
     max_gap_seconds: float,
     retain_on_set_pieces: bool,
+    *,
+    merge_brief_opposing_actions: int = 0,
+    brief_window_seconds: float = 0.0,
+    defensive_transition_types: tuple[str, ...] = (),
 ) -> pd.DataFrame:
     """Compute possession_id on a card-free, pre-sorted Atomic-SPADL frame.
 
     Mirrors the boundary logic of :func:`silly_kicks.spadl.utils.add_possessions`,
-    using atomic-collapsed set-piece names. Mutates and returns *sorted_actions*.
+    using atomic-collapsed set-piece names + atomic action vocabulary for the
+    PR-S12 opt-in rules. Mutates and returns *sorted_actions*.
     """
     n = len(sorted_actions)
     game_id = sorted_actions["game_id"].to_numpy()
@@ -329,7 +410,48 @@ def _compute_possessions(
     prev_is_foul = prev_type == foul_id
     set_piece_carve_out = retain_on_set_pieces & team_change & is_set_piece & prev_is_foul
 
-    new_possession_mask = game_change | period_change_within_game | gap_timeout | (team_change & ~set_piece_carve_out)
+    boundary = team_change & ~set_piece_carve_out
+
+    # Rule 2 (PR-S12, 2.1.0): defensive_transition_types — listed types do
+    # not trigger team-change boundaries on their own.
+    if defensive_transition_types:
+        defensive_ids = {spadlconfig.actiontype_id[name] for name in defensive_transition_types}
+        is_defensive = np.isin(type_id, list(defensive_ids))
+        boundary = boundary & ~is_defensive
+
+    # Rule 1 (PR-S12, 2.1.0): brief-opposing-action merge. Vectorized look-ahead.
+    if merge_brief_opposing_actions > 0 and brief_window_seconds > 0:
+        suppress_at_i = np.zeros(n, dtype=bool)
+        suppress_at_k = np.zeros(n, dtype=bool)
+        for k in range(1, merge_brief_opposing_actions + 1):
+            team_at_k = np.empty(n, dtype=team_id.dtype)
+            time_at_k = np.empty(n, dtype=time_seconds.dtype)
+            game_at_k = np.empty(n, dtype=game_id.dtype)
+            period_at_k = np.empty(n, dtype=period_id.dtype)
+            if n > k:
+                team_at_k[: n - k] = team_id[k:]
+                time_at_k[: n - k] = time_seconds[k:]
+                game_at_k[: n - k] = game_id[k:]
+                period_at_k[: n - k] = period_id[k:]
+            team_at_k[n - k :] = team_id[-1]
+            time_at_k[n - k :] = np.inf
+            game_at_k[n - k :] = -1
+            period_at_k[n - k :] = -1
+
+            same_game_period = (game_at_k == game_id) & (period_at_k == period_id)
+            within_time = (time_at_k - time_seconds) <= brief_window_seconds
+            team_back = team_at_k == prev_team
+            match = boundary & same_game_period & within_time & team_back
+
+            suppress_at_i |= match
+            shifted = np.zeros(n, dtype=bool)
+            if n > k:
+                shifted[k:] = match[: n - k]
+            suppress_at_k |= shifted
+
+        boundary = boundary & ~suppress_at_i & ~suppress_at_k
+
+    new_possession_mask = game_change | period_change_within_game | gap_timeout | boundary
 
     sorted_actions["_new_possession"] = new_possession_mask.astype(np.int64)
     sorted_actions["possession_id"] = (
