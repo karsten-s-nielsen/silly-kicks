@@ -231,3 +231,22 @@ class TestAddNamesPreservesExtraColumns:
         result = atomic_add_names(df)
         assert "my_custom_col" in result.columns
         assert result["my_custom_col"].iloc[0] == 42
+
+
+def test_finalize_output_supports_int64_extension_dtype():
+    """_finalize_output handles pandas nullable Int64 schema entries.
+
+    Required for PFF_SPADL_COLUMNS which uses Int64 on the four
+    tackle-passthrough columns (NaN-bearing integer ids).
+    """
+    import pandas as pd
+
+    from silly_kicks.spadl.utils import _finalize_output
+
+    schema = {"a": "int64", "b": "Int64"}
+    df = pd.DataFrame({"a": [1, 2, 3], "b": [10, pd.NA, 30]})
+
+    out = _finalize_output(df, schema=schema)
+    assert str(out["a"].dtype) == "int64"
+    assert str(out["b"].dtype) == "Int64"
+    assert out["b"].isna().tolist() == [False, True, False]

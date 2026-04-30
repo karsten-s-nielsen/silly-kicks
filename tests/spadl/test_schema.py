@@ -97,3 +97,40 @@ def test_atomic_config_df_caching():
 
     assert atomicconfig.actiontypes_df() is atomicconfig.actiontypes_df()
     assert atomicconfig.bodyparts_df() is atomicconfig.bodyparts_df()
+
+
+def test_pff_spadl_columns_extends_spadl_columns():
+    """PFF_SPADL_COLUMNS is SPADL_COLUMNS + 4 tackle-passthrough columns."""
+    from silly_kicks.spadl.schema import PFF_SPADL_COLUMNS, SPADL_COLUMNS
+
+    expected_extras = {
+        "tackle_winner_player_id": "Int64",
+        "tackle_winner_team_id": "Int64",
+        "tackle_loser_player_id": "Int64",
+        "tackle_loser_team_id": "Int64",
+    }
+    # SPADL_COLUMNS appears verbatim, in order, at the front
+    assert list(PFF_SPADL_COLUMNS.keys())[: len(SPADL_COLUMNS)] == list(SPADL_COLUMNS.keys())
+    # 4 extras follow, in declared order
+    extras_part = {k: PFF_SPADL_COLUMNS[k] for k in list(PFF_SPADL_COLUMNS.keys())[len(SPADL_COLUMNS) :]}
+    assert extras_part == expected_extras
+
+
+def test_pff_spadl_columns_uses_int64_extension_dtype():
+    """The 4 tackle-passthrough columns use pandas nullable Int64 (capital I)."""
+    from silly_kicks.spadl.schema import PFF_SPADL_COLUMNS
+
+    for col in (
+        "tackle_winner_player_id",
+        "tackle_winner_team_id",
+        "tackle_loser_player_id",
+        "tackle_loser_team_id",
+    ):
+        assert PFF_SPADL_COLUMNS[col] == "Int64"
+
+
+def test_pff_spadl_columns_exported_from_top_level():
+    """PFF_SPADL_COLUMNS is reachable from `silly_kicks.spadl`."""
+    from silly_kicks.spadl import PFF_SPADL_COLUMNS
+
+    assert "tackle_winner_player_id" in PFF_SPADL_COLUMNS

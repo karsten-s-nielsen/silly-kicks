@@ -5,7 +5,7 @@ Maintained fork of socceraction — SPADL event conversion + VAEP action valuati
 ## Architecture
 
 - **Hexagonal**: All core functions are pure (pandas in, pandas out). Zero I/O, zero global state mutation.
-- **Converters** (`spadl/`): Each provider (StatsBomb, Opta, Wyscout, Kloppy) has its own module. All return `tuple[pd.DataFrame, ConversionReport]` with guaranteed columns/dtypes via `_finalize_output()`.
+- **Converters** (`spadl/`): Each provider (StatsBomb, Opta, Wyscout, Sportec, Metrica, PFF, plus the Kloppy gateway) has its own module. All return `tuple[pd.DataFrame, ConversionReport]` with guaranteed columns/dtypes via `_finalize_output()`.
 - **VAEP** (`vaep/`): Feature engineering + gradient boosting binary classifiers. `HybridVAEP` removes result leakage from a0 features. xG-targeted labels available via `xg_column` parameter.
 - **Atomic-SPADL** (`atomic/`): Variant where actions are decomposed into atomic sub-actions (receival, interception, out, etc.).
 

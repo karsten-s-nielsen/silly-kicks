@@ -23,6 +23,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/spadl/sportec.py",
     "silly_kicks/spadl/metrica.py",
     "silly_kicks/spadl/kloppy.py",
+    "silly_kicks/spadl/pff.py",
     "silly_kicks/atomic/spadl/utils.py",
     "silly_kicks/atomic/spadl/base.py",
     "silly_kicks/vaep/base.py",

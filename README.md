@@ -19,8 +19,8 @@ MIT license with full attribution preserved.
 
 - **SPADL** -- Soccer Player Action Description Language: a unified schema for
   on-ball actions with dedicated DataFrame converters for StatsBomb, Wyscout,
-  Opta, Sportec / IDSSE Bundesliga, and Metrica Sports — plus a kloppy gateway
-  for raw-provider-data consumers (StatsBomb, Sportec, Metrica)
+  Opta, Sportec / IDSSE Bundesliga, Metrica Sports, and PFF FC — plus a kloppy
+  gateway for raw-provider-data consumers (StatsBomb, Sportec, Metrica)
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions
 - **Atomic SPADL** -- continuous (non-discretized) action representation

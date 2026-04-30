@@ -18,6 +18,27 @@ _SET_PIECE_RESTART_TYPE_NAMES: Final[frozenset[str]] = frozenset(
 that won possession (or had possession before the stoppage). Recognised by
 ``add_possessions`` for the set-piece carve-out."""
 
+_PANDAS_EXTENSION_DTYPES: Final[frozenset[str]] = frozenset(
+    {
+        "Int64",
+        "Int32",
+        "Int16",
+        "Int8",
+        "UInt64",
+        "UInt32",
+        "UInt16",
+        "UInt8",
+        "Float64",
+        "Float32",
+        "boolean",
+        "string",
+    }
+)
+"""Pandas extension dtypes that must be passed as string names to ``astype``
+rather than wrapped in ``np.dtype(...)``. Used by :func:`_finalize_output`
+to support nullable / pandas-extension columns in provider output schemas
+(e.g. ``PFF_SPADL_COLUMNS``'s ``Int64`` tackle-passthrough columns)."""
+
 _ADD_POSSESSIONS_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
     "game_id",
     "period_id",
@@ -1311,9 +1332,13 @@ def _finalize_output(
     cols = [*schema.keys(), *extras]
     result = df[cols].copy()
     for col, dtype in schema.items():
-        # ``np.dtype(dtype)`` narrows the schema's str dtype name to a typed
-        # ``DtypeObj`` so pandas-stubs's ``astype`` overload set accepts it.
-        result[col] = result[col].astype(np.dtype(dtype))
+        if dtype in _PANDAS_EXTENSION_DTYPES:
+            # pandas-stubs's ``astype`` overload set rejects bare extension-dtype
+            # strings (e.g. ``"Int64"``); the runtime accepts them via dispatch
+            # to ``ExtensionDtype.construct_from_string``.
+            result[col] = result[col].astype(dtype)  # type: ignore[reportCallIssue]
+        else:
+            result[col] = result[col].astype(np.dtype(dtype))
     return result
 
 

@@ -163,12 +163,29 @@ def _load_wyscout_fixture():
     return actions
 
 
+def _load_pff_fixture():
+    from silly_kicks.spadl import pff
+
+    # Reuse the synthetic-match loader from test_pff.py to avoid duplication.
+    from tests.spadl.test_pff import _load_synthetic_events
+
+    events = _load_synthetic_events()
+    actions, _ = pff.convert_to_actions(
+        events,
+        home_team_id=100,
+        home_team_start_left=True,
+        home_team_start_left_extratime=True,
+    )
+    return actions
+
+
 _PROVIDER_LOADERS = {
     "sportec": _load_idsse_fixture,
     "metrica": _load_metrica_fixture,
     "statsbomb": _load_statsbomb_fixture,
     "opta": _load_opta_fixture,
     "wyscout": _load_wyscout_fixture,
+    "pff": _load_pff_fixture,
 }
 
 
@@ -205,15 +222,17 @@ def test_converter_returns_canonical_spadl_columns(provider: str):
     assert "type_id" in actions.columns
     assert len(actions) > 0
 
-    if provider == "sportec":
-        # Post-2.0.0: sportec output includes the 4 tackle_*_*_id columns.
+    if provider in ("sportec", "pff"):
+        # Sportec (2.0.0) and PFF (2.6.0) output includes the 4 tackle_*_*_id
+        # columns per ADR-001 (different dtypes — sportec object, PFF Int64 —
+        # but same column set).
         for col in (
             "tackle_winner_player_id",
             "tackle_winner_team_id",
             "tackle_loser_player_id",
             "tackle_loser_team_id",
         ):
-            assert col in actions.columns, f"sportec output missing ADR-001 column {col!r}"
+            assert col in actions.columns, f"{provider} output missing ADR-001 column {col!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +266,9 @@ def _input_team_values_for(provider: str) -> set[str]:
     if provider == "wyscout":
         # Synthetic fixture (see _load_wyscout_fixture); team_id is 100.
         return {"100"}
+    if provider == "pff":
+        # Synthetic fixture (see _load_pff_fixture); two teams 100 and 200.
+        return {"100", "200"}
     raise ValueError(f"unknown provider {provider!r}")
 
 
