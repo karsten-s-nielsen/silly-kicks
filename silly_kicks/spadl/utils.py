@@ -6,6 +6,8 @@ from typing import Final, TypedDict
 import numpy as np
 import pandas as pd
 
+from silly_kicks._nan_safety import nan_safe_enrichment
+
 from . import config as spadlconfig
 from .schema import SPADL_COLUMNS
 
@@ -44,11 +46,13 @@ _GK_ROLE_CATEGORIES: Final[tuple[str, ...]] = (
 )
 
 
+@nan_safe_enrichment
 def add_gk_role(
     actions: pd.DataFrame,
     *,
     penalty_area_x_threshold: float = 16.5,
     distribution_lookback_actions: int = 1,
+    goalkeeper_ids: set | None = None,
 ) -> pd.DataFrame:
     """Tag each action with the goalkeeper's role context.
 
@@ -87,6 +91,10 @@ def add_gk_role(
     has no ``position_group`` flag, so consumers who want to filter by
     registered GK position must do so via their own ``dim_players`` join.
 
+    NaN values in caller-supplied identifier columns (e.g. ``player_id``)
+    are treated as "not identifiable" for that row's enrichment lookup;
+    downstream rows behave as if no identifier were present. See ADR-003.
+
     Parameters
     ----------
     actions : pd.DataFrame
@@ -103,6 +111,26 @@ def add_gk_role(
         non-keeper action by the same player as ``distribution``. Default
         of 1 (immediately-preceding action only) avoids false positives
         from ball-possession returns; larger values widen the window.
+    goalkeeper_ids : set, optional
+        When provided, distribution-detection extends beyond strict
+        ``same_player`` matching to also tag rows where:
+
+        - The current row's ``player_id`` is in ``goalkeeper_ids`` AND the
+          preceding action (within ``distribution_lookback_actions`` steps,
+          same ``team_id`` and ``game_id``) was a keeper-type action.
+          (Use case: caller knows the GK player_ids; clean-attribution data.)
+        - Both the current row's and the preceding action's ``player_id``
+          are NaN AND the ``team_id`` matches AND the preceding action was
+          keeper-type. (Use case: caller's data has NaN player_id but the
+          team/sequence implies the GK distributed the ball.)
+
+        Opting in via this parameter signals that the caller accepts the
+        coarser heuristic (the second rule may over-tag if multiple
+        NaN-player_id non-keeper actions follow a keeper action by the
+        same team within the lookback window).
+
+        When ``None`` (default), only strict ``same_player`` matching applies
+        — byte-for-byte compatible with pre-2.5.0 behavior.
 
     Returns
     -------
@@ -171,18 +199,40 @@ def add_gk_role(
     is_sweeping = is_keeper & is_outside_box
 
     # Distribution detection: vectorised k-step lookback. For each k in
-    # [1..distribution_lookback_actions], OR in a (prev_is_keeper & same_player & same_game) mask.
-    # ``shift(fill_value=...)`` avoids the object-dtype downcast warning emitted by
-    # pandas 2.x when chaining shift().fillna() on bool series.
+    # [1..distribution_lookback_actions], OR in a (prev_is_keeper & match & same_game) mask
+    # where ``match`` is same_player by default, extended via goalkeeper_ids.
     prev_keeper_within_k = np.zeros(n, dtype=bool)
     is_keeper_series = pd.Series(is_keeper)
+    team_id = sorted_actions["team_id"]
     for k in range(1, distribution_lookback_actions + 1):
         shifted_keeper = is_keeper_series.shift(k, fill_value=False).to_numpy(dtype=bool)
         shifted_player = player_id.shift(k).to_numpy()
         shifted_game = game_id.shift(k).to_numpy()
-        same_player = player_id.to_numpy() == shifted_player
-        same_game = game_id.to_numpy() == shifted_game
-        prev_keeper_within_k |= shifted_keeper & same_player & same_game
+        cur_player_arr = player_id.to_numpy()
+        cur_game_arr = game_id.to_numpy()
+        same_player = cur_player_arr == shifted_player
+        same_game = cur_game_arr == shifted_game
+
+        match = same_player
+
+        if goalkeeper_ids is not None:
+            shifted_team = team_id.shift(k).to_numpy()
+            cur_team_arr = team_id.to_numpy()
+            same_team = cur_team_arr == shifted_team
+
+            # Rule (a) — known-GK match: caller declared a GK player_id set.
+            cur_is_known_gk = pd.Series(cur_player_arr).isin(goalkeeper_ids).to_numpy()
+            match = match | (cur_is_known_gk & same_team)
+
+            # Rule (b) — NaN-team fallback: both player_ids unidentifiable
+            # but same team + prev was keeper. Coarse heuristic; caller
+            # opts in by passing goalkeeper_ids (signals willingness to
+            # accept over-counting risk on dense NaN data).
+            cur_player_na = pd.isna(cur_player_arr)
+            shifted_player_na = pd.isna(shifted_player)
+            match = match | (cur_player_na & shifted_player_na & same_team)
+
+        prev_keeper_within_k |= shifted_keeper & match & same_game
 
     is_distribution = (~is_keeper) & prev_keeper_within_k
 
@@ -225,6 +275,7 @@ _PITCH_LENGTH_M: Final[float] = 105.0
 _PITCH_WIDTH_M: Final[float] = 68.0
 
 
+@nan_safe_enrichment
 def add_gk_distribution_metrics(
     actions: pd.DataFrame,
     *,
@@ -248,6 +299,11 @@ def add_gk_distribution_metrics(
     - ``gk_xt_delta`` — float xT-grid delta from start zone to end zone,
       computed only when ``xt_grid`` is provided AND the pass succeeded
       (``result_id == "success"``). NaN otherwise.
+
+    NaN values in caller-supplied identifier columns (e.g. ``player_id``)
+    are treated as "not identifiable" for that row's enrichment lookup.
+    Rows with NaN coordinates are excluded from xT-delta zone-binning
+    (``gk_xt_delta`` is NaN for those rows). See ADR-003.
 
     Parameters
     ----------
@@ -369,7 +425,12 @@ def add_gk_distribution_metrics(
     if xt_grid is not None:
         success_id = spadlconfig.result_id["success"]
         result_id_arr = actions["result_id"].to_numpy()
-        eligible = is_distribution & (result_id_arr == success_id)
+        # NaN coordinates would crash the .astype(int) zone-binning below.
+        # Filter to rows where all four coords are finite (guards against
+        # caller data with sparse spatial information). Non-finite rows
+        # leave xt_delta at NaN (default initialization).
+        coords_finite = np.isfinite(start_x) & np.isfinite(start_y) & np.isfinite(end_x) & np.isfinite(end_y)
+        eligible = is_distribution & (result_id_arr == success_id) & coords_finite
         if eligible.any():
             zone_x_start = np.clip((start_x[eligible] / (_PITCH_LENGTH_M / 12.0)).astype(int), 0, 11)
             zone_y_start = np.clip((start_y[eligible] / (_PITCH_WIDTH_M / 8.0)).astype(int), 0, 7)
@@ -400,6 +461,7 @@ _GK_KEEPER_TYPE_NAMES: Final[frozenset[str]] = frozenset(
 )
 
 
+@nan_safe_enrichment
 def add_pre_shot_gk_context(
     actions: pd.DataFrame,
     *,
@@ -439,6 +501,12 @@ def add_pre_shot_gk_context(
         downstream PSxG / xGOT models that may benefit from knowing the
         defending GK's recent engagement state. Validate empirically
         before drawing causal conclusions.
+
+    NaN values in caller-supplied identifier columns (e.g. ``player_id``)
+    are treated as "not identifiable" for that row's enrichment lookup;
+    when the most-recent defending-keeper-action's ``player_id`` is NaN,
+    the shot's GK-context columns receive their per-row default
+    (``gk_was_engaged=False``, ``defending_gk_player_id=NaN``). See ADR-003.
 
     Parameters
     ----------
@@ -540,7 +608,14 @@ def add_pre_shot_gk_context(
 
         # Most recent defending-keeper action's player_id defines the defending GK.
         relative_indices = np.where(defending_keeper_in_window)[0]
-        gk_id = int(player_id[window_start + relative_indices[-1]])
+        gk_id_raw = player_id[window_start + relative_indices[-1]]
+        if pd.isna(gk_id_raw):
+            # Defending keeper action is identified (in window), but its
+            # player_id is NaN — caller's data does not provide enough
+            # information to identify the defending GK. Leave defaults
+            # (gk_was_engaged stays False, defending_gk_player_id stays NaN).
+            continue
+        gk_id = int(gk_id_raw)
 
         same_gk_in_window = defending_in_window & (player_id[win] == gk_id)
         gk_keeper_actions_count = int((same_gk_in_window & is_keeper[win]).sum())
@@ -680,6 +755,7 @@ def _compute_possession_boundaries(
     return game_change | period_change_within_game | gap_timeout | boundary
 
 
+@nan_safe_enrichment
 def add_possessions(
     actions: pd.DataFrame,
     *,
@@ -749,6 +825,11 @@ def add_possessions(
     +--------------------------------------------------+--------+--------+------+--------+
 
     See :func:`boundary_metrics` for downstream measurement.
+
+    NaN values in caller-supplied identifier columns (e.g. ``team_id``)
+    are treated as "not identifiable" for that row's enrichment lookup;
+    boundaries are determined by team-change / time-gap / set-piece rules
+    that are NaN-safe by construction. See ADR-003.
 
     Parameters
     ----------
@@ -1071,7 +1152,10 @@ def coverage_metrics(
         # the input array). Equivalent to pd.value_counts but preserves
         # first-seen ordering for stable user-facing output.
         for tid in type_id_arr:
-            name = id_to_name.get(int(tid), "unknown")
+            if pd.isna(tid):
+                name = "unknown"
+            else:
+                name = id_to_name.get(int(tid), "unknown")
             counts[name] = counts.get(name, 0) + 1
 
     expected = set(expected_action_types) if expected_action_types else set()
@@ -1080,10 +1164,16 @@ def coverage_metrics(
     return CoverageMetrics(counts=counts, missing=missing, total_actions=n)
 
 
+@nan_safe_enrichment
 def add_names(actions: pd.DataFrame) -> pd.DataFrame:
     """Add the type name, result name and bodypart name to a SPADL dataframe.
 
     All columns not in the SPADL schema are preserved unchanged.
+
+    NaN values in caller-supplied identifier columns (e.g. ``type_id``)
+    are treated as "not identifiable" for that row's enrichment lookup;
+    NaN type/result/bodypart ids produce NaN name outputs via the
+    underlying merge. See ADR-003.
 
     Parameters
     ----------

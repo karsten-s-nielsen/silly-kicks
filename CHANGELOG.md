@@ -5,6 +5,88 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] — 2026-04-30
+
+### Added
+
+- **`silly_kicks._nan_safety.nan_safe_enrichment`** — marker decorator
+  declaring an enrichment helper satisfies the NaN-safety contract
+  (ADR-003). Sets `fn._nan_safe = True`; CI gates auto-discover decorated
+  helpers via this attribute.
+- **`goalkeeper_ids: set | None = None`** keyword-only parameter on
+  `silly_kicks.spadl.utils.add_gk_role` and
+  `silly_kicks.atomic.spadl.utils.add_gk_role`. When provided,
+  distribution-detection extends with two additional matching rules:
+  (a) `current player_id ∈ goalkeeper_ids` AND prev keeper-type same-team;
+  (b) NaN-team fallback — both player_ids NaN AND same team_id AND prev
+  keeper-type. Closes the lakehouse coverage gap on IDSSE/Metrica data
+  with sparse player attribution. When `None` (default), behavior is
+  byte-for-byte unchanged.
+- **`tests/test_enrichment_nan_safety.py`** — auto-discovered NaN-fuzz
+  test (15 cases). Parametrizes over every `@nan_safe_enrichment` helper
+  × synthetic NaN-laced SPADL fixture; asserts no crash + sensible
+  defaults. Includes registry-floor sanity assertions that catch silent
+  discovery breakage.
+- **`tests/test_enrichment_provider_e2e.py`** — auto-discovered
+  cross-provider e2e regression (21 cases). Parametrizes over every
+  `@nan_safe_enrichment` standard helper × vendored fixtures from
+  StatsBomb / IDSSE / Metrica; atomic helpers run on the
+  StatsBomb-derived atomic-SPADL fixture.
+- **`tests/test_gk_role_goalkeeper_ids.py`** — feature tests for the new
+  `goalkeeper_ids` parameter (8 cases): backward-compat, rule (a)
+  known-GK match, rule (b) NaN-team fallback, edge cases (atomic, empty
+  set, team-boundary respect).
+- **`docs/superpowers/adrs/ADR-003-nan-safety-enrichment-helpers.md`** —
+  formalizes the NaN-safety contract for public enrichment helpers,
+  alternatives considered, and the registry-floor sanity assertion as
+  the bulletproof for the auto-discovery mechanism.
+- **CLAUDE.md "Key conventions" amendment** pointing to ADR-003.
+
+### Fixed
+
+- **`silly_kicks.spadl.utils.add_pre_shot_gk_context`** —
+  `ValueError: cannot convert float NaN to integer` at line 543 when
+  the most-recent defending-keeper-action's `player_id` is NaN
+  (e.g. IDSSE bronze data with sparse player attribution). Surfaced
+  2026-04-30 by the luxury-lakehouse `compute_spadl_vaep` task. Fix:
+  detect NaN before the `int(...)` cast; `continue` to next shot
+  (defending_gk_player_id stays NaN per the function's documented
+  contract). Symmetric fix at
+  `silly_kicks.atomic.spadl.utils.add_pre_shot_gk_context` line 826.
+- **`silly_kicks.spadl.utils.add_gk_distribution_metrics`** — latent
+  `ValueError: cannot convert float NaN to integer` at lines 374-377
+  on `.astype(int)` zone-binning when a distribution-eligible row has
+  NaN coordinates. Fix: filter `eligible` mask by `np.isfinite(...)`
+  on all four coords. Symmetric fix at
+  `silly_kicks.atomic.spadl.utils.add_gk_distribution_metrics`
+  lines 665-668.
+- **`silly_kicks.spadl.utils.coverage_metrics`** (defensive) — same
+  `int(NaN)` crash class on `int(tid)` at line 1074 if input has NaN
+  `type_id`. Fix: NaN guard before the cast; NaN type_ids tally as
+  "unknown". Symmetric fix at
+  `silly_kicks.atomic.spadl.utils.coverage_metrics` line 1036. Not
+  under ADR-003 (TypedDict-returning, not enrichment helper) — fixed
+  while we're here.
+
+### Changed
+
+- 10 public enrichment helpers (5 standard + 5 atomic) decorated with
+  `@nan_safe_enrichment`: `add_possessions`, `add_names`, `add_gk_role`,
+  `add_gk_distribution_metrics`, `add_pre_shot_gk_context` × 2 packages.
+
+### Notes
+
+- **Hyrum's Law surface:** `add_gk_role.__signature__` gains the new
+  `goalkeeper_ids` keyword-only parameter. Consumers using
+  `inspect.signature(add_gk_role)` would see the addition. Documented
+  in ADR-003 as accepted exposure.
+- **Test count:** 884 → 928 passing, 4 deselected (+44 net delta:
+  15 fuzz + 21 e2e + 8 goalkeeper_ids feature tests). Pyright clean
+  (0 errors / 0 warnings / 0 informations).
+- Future direction: nullable-Int64 dtype migration for `player_id` /
+  `team_id` columns is the long-term answer to type-level NaN-safety;
+  out of scope for this PR (ADR-003 § Notes / Future direction).
+
 ## [2.4.0] — 2026-04-30
 
 ### Added
