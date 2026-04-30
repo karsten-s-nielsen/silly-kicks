@@ -1,33 +1,39 @@
-"""Framework primitives for VAEP feature transformers — type aliases,
-``gamestates``, ``simple`` decorator, ``play_left_to_right``,
-``feature_column_names``, and the ``_actiontype`` helper used by both
-the standard and atomic feature stacks.
-"""
+"""Standard-SPADL-specific framework helpers — ``play_left_to_right`` and
+``feature_column_names``. Both hardcode standard SPADL columns
+(``start_x`` / ``end_x`` / ``result_id`` / ``result_name``) so they don't
+generalize to atomic SPADL; atomic has its own equivalents in
+``silly_kicks.atomic.vaep.features``.
 
-from collections.abc import Callable
-from functools import wraps
-from typing import Any, no_type_check
+Re-exports the framework primitives from ``silly_kicks.vaep.feature_framework``
+so existing ``from silly_kicks.vaep.features.core import gamestates`` paths
+continue to resolve (Hyrum's Law preservation).
+"""
 
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 
 import silly_kicks.spadl.config as spadlcfg
+from silly_kicks.vaep.feature_framework import (
+    Actions,
+    Features,
+    FeatureTransfomer,
+    GameStates,
+    actiontype_categorical,
+    gamestates,
+    simple,
+)
 
 __all__ = [
     "Actions",
     "FeatureTransfomer",
     "Features",
     "GameStates",
+    "actiontype_categorical",
     "feature_column_names",
     "gamestates",
     "play_left_to_right",
     "simple",
 ]
-
-Actions = pd.DataFrame
-GameStates = list[pd.DataFrame]
-Features = pd.DataFrame
-FeatureTransfomer = Callable[[GameStates], Features]
 
 
 def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) -> list[str]:
@@ -81,65 +87,6 @@ def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) 
     return list(pd.concat([f(gs) for f in fs], axis=1).columns.values)
 
 
-def gamestates(actions: Actions, nb_prev_actions: int = 3) -> GameStates:
-    r"""Convert a dataframe of actions to gamestates.
-
-    Each gamestate is represented as the <nb_prev_actions> previous actions.
-
-    The list of gamestates is internally represented as a list of actions
-    dataframes :math:`[a_0,a_1,\ldots]` where each row in the a_i dataframe contains the
-    previous action of the action in the same row in the :math:`a_{i-1}` dataframe.
-
-    Parameters
-    ----------
-    actions : Actions
-        A DataFrame with the actions of a game.
-    nb_prev_actions : int, default=3  # noqa: DAR103
-        The number of previous actions included in the game state.
-
-    Raises
-    ------
-    ValueError
-        If the number of actions is smaller 1.
-
-    Returns
-    -------
-    GameStates
-         The <nb_prev_actions> previous actions for each action.
-
-    Examples
-    --------
-    Build a 3-step gamestate stream from a SPADL action DataFrame::
-
-        from silly_kicks.vaep.features import gamestates
-
-        states = gamestates(actions, nb_prev_actions=3)
-        # ``states`` is a list of 3 DataFrames — states[0] is the current action,
-        # states[1] is the previous action aligned by row, states[2] is the one before.
-    """
-    if nb_prev_actions < 1:
-        raise ValueError("The game state should include at least one preceding action.")
-    states = [actions]
-    group_keys = ["game_id", "period_id"]
-    # Precompute group-first values once for boundary filling (excludes groupby keys)
-    first_in_group = actions.groupby(group_keys, sort=False).transform("first")
-    for i in range(1, nb_prev_actions):
-        prev = actions.shift(i)
-        # Detect period/game boundaries: where shifted row crosses a group
-        boundary = (actions["game_id"] != actions["game_id"].shift(i)) | (
-            actions["period_id"] != actions["period_id"].shift(i)
-        )
-        # At boundaries, fill groupby-key columns with current row values
-        for col in group_keys:
-            prev.loc[boundary, col] = actions.loc[boundary, col]
-        # At boundaries, fill remaining columns with the first row of the current group
-        for col in first_in_group.columns:
-            prev.loc[boundary, col] = first_in_group.loc[boundary, col]
-        prev.index = actions.index.copy()
-        states.append(prev)
-    return states
-
-
 def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
     """Perform all actions in a gamestate in the same playing direction.
 
@@ -180,68 +127,3 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
         for col in ["start_y", "end_y"]:
             actions.loc[away_idx, col] = spadlcfg.field_width - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
     return gamestates
-
-
-@no_type_check
-def simple(actionfn: Callable) -> FeatureTransfomer:
-    """Make a function decorator to apply actionfeatures to game states.
-
-    Parameters
-    ----------
-    actionfn : Callable
-        A feature transformer that operates on actions.
-
-    Returns
-    -------
-    FeatureTransfomer
-        A feature transformer that operates on game states.
-
-    Examples
-    --------
-    Lift an action-level feature function to a gamestate-level transformer::
-
-        from silly_kicks.vaep.features import simple, actiontype
-
-        gamestate_actiontype = simple(actiontype)
-        feats = gamestate_actiontype(states)
-    """
-
-    @wraps(actionfn)
-    def _wrapper(gamestates: list[Actions]) -> pd.DataFrame:
-        if not isinstance(gamestates, (list,)):
-            gamestates = [gamestates]
-        X = []
-        for i, a in enumerate(gamestates):
-            Xi = actionfn(a)
-            Xi.columns = [c + "_a" + str(i) for c in Xi.columns]
-            X.append(Xi)
-        return pd.concat(X, axis=1)  # type: ignore[reportReturnType]
-
-    return _wrapper
-
-
-def _actiontype(actions: Actions, _spadl_cfg: Any = None) -> Features:
-    """Get the type of each action (inner implementation).
-
-    Parameters
-    ----------
-    actions : Actions
-        The actions of a game.
-    _spadl_cfg : module, optional
-        The SPADL config module to use. Defaults to ``spadlcfg``.
-
-    Returns
-    -------
-    Features
-        The 'type_id' of each action.
-    """
-    if _spadl_cfg is None:
-        _spadl_cfg = spadlcfg
-    X = pd.DataFrame(index=actions.index)
-    categories = list(dict.fromkeys(_spadl_cfg.actiontypes))  # dedupe, preserve order
-    X["actiontype"] = pd.Categorical(
-        actions["type_id"].replace(_spadl_cfg.actiontypes_df().type_name.to_dict()),
-        categories=categories,
-        ordered=False,
-    )
-    return X

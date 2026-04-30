@@ -31,6 +31,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/xthreat.py",
     "silly_kicks/vaep/labels.py",
     "silly_kicks/vaep/formula.py",
+    "silly_kicks/vaep/feature_framework.py",
     "silly_kicks/atomic/vaep/features.py",
     "silly_kicks/atomic/vaep/labels.py",
     "silly_kicks/atomic/vaep/formula.py",

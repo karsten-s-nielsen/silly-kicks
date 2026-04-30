@@ -12,6 +12,8 @@ See ``docs/superpowers/specs/2026-04-30-vaep-features-decomposition-design.md``
 for the rationale and submodule layout.
 """
 
+from silly_kicks.vaep.feature_framework import *  # noqa: F403
+
 from .actiontype import *  # noqa: F403
 from .bodypart import *  # noqa: F403
 from .context import *  # noqa: F403
@@ -31,6 +33,7 @@ __all__ = [
     "Features",
     "GameStates",
     "actiontype",
+    "actiontype_categorical",
     "actiontype_onehot",
     "actiontype_result_onehot",
     "actiontype_result_onehot_prev_only",

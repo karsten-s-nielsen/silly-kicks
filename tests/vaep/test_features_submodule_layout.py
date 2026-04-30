@@ -9,15 +9,10 @@ import importlib
 import pytest
 
 _LAYOUT: tuple[tuple[str, str], ...] = (
-    # core
-    ("gamestates", "core"),
-    ("simple", "core"),
+    # core (slimmed: only standard-SPADL-specific helpers stay; the 6 framework
+    # primitives moved to silly_kicks.vaep.feature_framework — see T-D)
     ("play_left_to_right", "core"),
     ("feature_column_names", "core"),
-    ("Actions", "core"),
-    ("GameStates", "core"),
-    ("Features", "core"),
-    ("FeatureTransfomer", "core"),
     # actiontype
     ("actiontype", "actiontype"),
     ("actiontype_onehot", "actiontype"),
