@@ -481,6 +481,20 @@ def convert_to_actions(
         SPADL actions with ``KLOPPY_SPADL_COLUMNS`` schema plus preserved extras.
     report : ConversionReport
         Audit trail with mapped/excluded/unrecognized event-type counts.
+
+    Examples
+    --------
+    Convert a Sportec/IDSSE bronze events DataFrame to SPADL::
+
+        from silly_kicks.spadl import sportec
+
+        actions, report = sportec.convert_to_actions(
+            events,
+            home_team_id="HOME",
+            goalkeeper_ids={"DFL-OBJ-..."},  # optional supplementary GK ids
+        )
+        # report.mapped_counts gives per-event-type counts; output schema is
+        # SPORTEC_SPADL_COLUMNS (KLOPPY_SPADL_COLUMNS + 4 tackle qualifier columns).
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Sportec")
     _validate_preserve_native(events, preserve_native, provider="Sportec", schema=KLOPPY_SPADL_COLUMNS)

@@ -142,6 +142,20 @@ def convert_to_actions(
         ``"AERIAL-LOST"``) are unchanged. An empty set is equivalent to
         ``None``. Pass goalkeeper_ids from match metadata (squad records
         / dim_players join) to enable GK coverage on Metrica data.
+
+    Examples
+    --------
+    Convert a Metrica bronze events DataFrame to SPADL::
+
+        from silly_kicks.spadl import metrica
+
+        actions, report = metrica.convert_to_actions(
+            events,
+            home_team_id="HOME",
+            goalkeeper_ids={"player_42", "player_99"},  # required for GK coverage
+        )
+        # Metrica has no native GK markers — pass goalkeeper_ids to recover
+        # keeper_pick_up / keeper_claim / synthesized GK distribution actions.
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Metrica")
     _validate_preserve_native(events, preserve_native, provider="Metrica", schema=KLOPPY_SPADL_COLUMNS)

@@ -252,6 +252,16 @@ class ExpectedThreat:
     ----------
     .. [1] Singh, Karun. "Introducing Expected Threat (xT)." 15 February, 2019.
         https://karun.in/blog/expected-threat.html
+
+    Examples
+    --------
+    Fit an Expected Threat (xT) grid and rate actions::
+
+        from silly_kicks.xthreat import ExpectedThreat
+
+        xt = ExpectedThreat()
+        xt.fit(actions)
+        values = xt.rate(actions)  # ndarray of shape (len(actions),)
     """
 
     def __init__(self, l: int = N, w: int = M, eps: float = 1e-5) -> None:
@@ -311,6 +321,13 @@ class ExpectedThreat:
         -------
         self
             Fitted xT model.
+
+        Examples
+        --------
+        Fit the xT grid on a SPADL action stream::
+
+            xt = ExpectedThreat().fit(actions)
+            # xt.xT is the (W, L) value surface; xt.heatmaps records each iteration.
         """
         self.heatmaps = []
         self.scoring_prob_matrix = _scoring_prob(actions, self.l, self.w)
@@ -355,6 +372,13 @@ class ExpectedThreat:
             over the pitch. ``xs`` has shape ``(L,)``, ``ys`` has shape ``(W,)``,
             and the returned grid has shape ``(W, L)`` — y-major, matching the
             xT grid's row-major orientation.
+
+        Examples
+        --------
+        Interpolate xT values across continuous coordinates::
+
+            interp = xt.interpolator(kind="linear")
+            grid = interp(xs, ys)  # (len(ys), len(xs)) array — y on first axis.
         """
         if RectBivariateSpline is None:
             raise ImportError("Interpolation requires scipy to be installed.")
@@ -403,6 +427,14 @@ class ExpectedThreat:
         -------
         np.ndarray
             The xT value for each action.
+
+        Examples
+        --------
+        Rate move-class actions in a SPADL stream::
+
+            xt = ExpectedThreat().fit(actions)
+            values = xt.rate(actions, use_interpolation=True)
+            # Non-move actions (shots / fouls / etc.) receive NaN.
         """
         if not np.any(self.xT):
             raise NotFittedError()

@@ -123,6 +123,17 @@ def convert_to_actions(
         If any ``preserve_native`` field overlaps with the canonical
         ``KLOPPY_SPADL_COLUMNS`` schema, or is missing from the first
         event's ``raw_event`` dict, or if ``raw_event`` is not a dict.
+
+    Examples
+    --------
+    Convert a kloppy ``EventDataset`` (any provider supported by kloppy) to SPADL::
+
+        import kloppy
+        from silly_kicks.spadl import kloppy as sk_kloppy
+
+        dataset = kloppy.statsbomb.load_open_data(match_id=7298)
+        actions, report = sk_kloppy.convert_to_actions(dataset, game_id=7298)
+        # report.unrecognized_counts surfaces any provider events not yet mapped.
     """
     # Validate preserve_native upfront (before transform, so we fail fast).
     if preserve_native:

@@ -29,6 +29,15 @@ def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) 
     -------
     list(str)
         The name of each generated feature.
+
+    Examples
+    --------
+    Discover the feature column names a feature-fn list will produce::
+
+        from silly_kicks.vaep import features as fs
+
+        cols = fs.feature_column_names([fs.actiontype_onehot, fs.bodypart_onehot])
+        # cols includes the cartesian product of feature x previous-action index.
     """
     spadlcolumns = [
         "game_id",
@@ -82,6 +91,16 @@ def gamestates(actions: Actions, nb_prev_actions: int = 3) -> GameStates:
     -------
     GameStates
          The <nb_prev_actions> previous actions for each action.
+
+    Examples
+    --------
+    Build a 3-step gamestate stream from a SPADL action DataFrame::
+
+        from silly_kicks.vaep.features import gamestates
+
+        states = gamestates(actions, nb_prev_actions=3)
+        # ``states`` is a list of 3 DataFrames — states[0] is the current action,
+        # states[1] is the previous action aligned by row, states[2] is the one before.
     """
     if nb_prev_actions < 1:
         raise ValueError("The game state should include at least one preceding action.")
@@ -128,6 +147,15 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
     See Also
     --------
     silly_kicks.spadl.play_left_to_right : For transforming actions.
+
+    Examples
+    --------
+    Mirror gamestates to a single direction (per home_team_id)::
+
+        from silly_kicks.vaep.features import play_left_to_right
+
+        ltr_states = play_left_to_right(states, home_team_id=100)
+        # Every away-team gamestate now has flipped (start_x, start_y) / (end_x, end_y).
     """
     a0 = gamestates[0]
     away_idx = a0.team_id != home_team_id
@@ -152,6 +180,15 @@ def simple(actionfn: Callable) -> FeatureTransfomer:
     -------
     FeatureTransfomer
         A feature transformer that operates on game states.
+
+    Examples
+    --------
+    Lift an action-level feature function to a gamestate-level transformer::
+
+        from silly_kicks.vaep.features import simple, actiontype
+
+        gamestate_actiontype = simple(actiontype)
+        feats = gamestate_actiontype(states)
     """
 
     @wraps(actionfn)
@@ -211,6 +248,14 @@ def actiontype(actions: Actions) -> Features:
     -------
     Features
         The 'type_id' of each action.
+
+    Examples
+    --------
+    Extract action-type integer codes per gamestate slot::
+
+        from silly_kicks.vaep.features import actiontype
+
+        feats = actiontype(states)
     """
     return _actiontype(actions)
 
@@ -228,6 +273,14 @@ def actiontype_onehot(actions: Actions) -> Features:
     -------
     Features
         A one-hot encoding of each action's type.
+
+    Examples
+    --------
+    Extract action-type one-hot features per gamestate slot::
+
+        from silly_kicks.vaep.features import actiontype_onehot
+
+        feats = actiontype_onehot(states)
     """
     X = {}
     for type_id, type_name in enumerate(spadlcfg.actiontypes):
@@ -249,6 +302,14 @@ def result(actions: Actions) -> Features:
     -------
     Features
         The 'result_id' of each action.
+
+    Examples
+    --------
+    Extract action-result integer codes per gamestate slot::
+
+        from silly_kicks.vaep.features import result
+
+        feats = result(states)
     """
     X = pd.DataFrame(index=actions.index)
     X["result"] = pd.Categorical(
@@ -272,6 +333,14 @@ def result_onehot(actions: Actions) -> Features:
     -------
     Features
         The one-hot encoding of each action's result.
+
+    Examples
+    --------
+    Extract action-result one-hot features per gamestate slot::
+
+        from silly_kicks.vaep.features import result_onehot
+
+        feats = result_onehot(states)
     """
     X = {}
     for result_id, result_name in enumerate(spadlcfg.results):
@@ -293,6 +362,14 @@ def actiontype_result_onehot(actions: Actions) -> Features:
     -------
     Features
         The one-hot encoding of each action's type and result.
+
+    Examples
+    --------
+    Extract joint action-type x result one-hot features per gamestate slot::
+
+        from silly_kicks.vaep.features import actiontype_result_onehot
+
+        feats = actiontype_result_onehot(states)
     """
     res = result_onehot.__wrapped__(actions)  # type: ignore
     tys = actiontype_onehot.__wrapped__(actions)  # type: ignore
@@ -315,6 +392,16 @@ def result_onehot_prev_only(gamestates: GameStates) -> Features:
     -------
     Features
         The one-hot encoding of each previous action's result, excluding a0.
+
+    Examples
+    --------
+    Result one-hot features for previous actions only (HybridVAEP — removes
+    result leakage on the current action)::
+
+        from silly_kicks.vaep.features import result_onehot_prev_only
+
+        feats = result_onehot_prev_only(states)
+        # feats has columns for a1, a2, ... but not a0.
     """
     dfs = []
     for i, actions in enumerate(gamestates):
@@ -340,6 +427,14 @@ def actiontype_result_onehot_prev_only(gamestates: GameStates) -> Features:
     -------
     Features
         The one-hot encoding of each previous action's type-result cross, excluding a0.
+
+    Examples
+    --------
+    Joint action-type x result one-hot for previous actions only::
+
+        from silly_kicks.vaep.features import actiontype_result_onehot_prev_only
+
+        feats = actiontype_result_onehot_prev_only(states)
     """
     dfs = []
     for i, actions in enumerate(gamestates):
@@ -371,6 +466,14 @@ def bodypart(actions: Actions) -> Features:
     --------
     bodypart_detailed :
         An alternative version that splits between the left and right foot.
+
+    Examples
+    --------
+    Extract bodypart integer codes per gamestate slot::
+
+        from silly_kicks.vaep.features import bodypart
+
+        feats = bodypart(states)
     """
     X = pd.DataFrame(index=actions.index)
     foot_id = spadlcfg.bodypart_id["foot"]
@@ -407,6 +510,14 @@ def bodypart_detailed(actions: Actions) -> Features:
     --------
     bodypart :
         An alternative version that does not split between the left and right foot.
+
+    Examples
+    --------
+    Extract detailed bodypart integer codes (foot_left / foot_right resolved)::
+
+        from silly_kicks.vaep.features import bodypart_detailed
+
+        feats = bodypart_detailed(states)
     """
     X = pd.DataFrame(index=actions.index)
     X["bodypart"] = pd.Categorical(
@@ -437,6 +548,14 @@ def bodypart_onehot(actions: Actions) -> Features:
     --------
     bodypart_detailed_onehot :
         An alternative version that splits between the left and right foot.
+
+    Examples
+    --------
+    Extract bodypart one-hot features per gamestate slot::
+
+        from silly_kicks.vaep.features import bodypart_onehot
+
+        feats = bodypart_onehot(states)
     """
     X = {}
     for bodypart_id, bodypart_name in enumerate(spadlcfg.bodyparts):
@@ -479,6 +598,14 @@ def bodypart_detailed_onehot(actions: Actions) -> Features:
     --------
     bodypart_onehot :
         An alternative version that does not split between the left and right foot.
+
+    Examples
+    --------
+    Extract detailed bodypart one-hot features per gamestate slot::
+
+        from silly_kicks.vaep.features import bodypart_detailed_onehot
+
+        feats = bodypart_detailed_onehot(states)
     """
     X = {}
     for bodypart_id, bodypart_name in enumerate(spadlcfg.bodyparts):
@@ -521,6 +648,14 @@ def time(actions: Actions) -> Features:
     Features
         The 'period_id', 'time_seconds' and 'time_seconds_overall' when each
         action was performed.
+
+    Examples
+    --------
+    Extract clock-time features per gamestate slot::
+
+        from silly_kicks.vaep.features import time
+
+        feats = time(states)
     """
     match_time_at_period_start = {1: 0, 2: 45, 3: 90, 4: 105, 5: 120}
     timedf = actions[["period_id", "time_seconds"]].copy()
@@ -541,6 +676,14 @@ def startlocation(actions: Actions) -> Features:
     -------
     Features
         The 'start_x' and 'start_y' location of each action.
+
+    Examples
+    --------
+    Extract action start-location features per gamestate slot::
+
+        from silly_kicks.vaep.features import startlocation
+
+        feats = startlocation(states)
     """
     return actions[["start_x", "start_y"]]  # type: ignore[reportReturnType]
 
@@ -558,6 +701,14 @@ def endlocation(actions: Actions) -> Features:
     -------
     Features
         The 'end_x' and 'end_y' location of each action.
+
+    Examples
+    --------
+    Extract action end-location features per gamestate slot::
+
+        from silly_kicks.vaep.features import endlocation
+
+        feats = endlocation(states)
     """
     return actions[["end_x", "end_y"]]  # type: ignore[reportReturnType]
 
@@ -577,6 +728,14 @@ def startpolar(actions: Actions) -> Features:
     -------
     Features
         The 'start_dist_to_goal' and 'start_angle_to_goal' of each action.
+
+    Examples
+    --------
+    Extract polar (distance/angle to goal) start features per gamestate slot::
+
+        from silly_kicks.vaep.features import startpolar
+
+        feats = startpolar(states)
     """
     polardf = pd.DataFrame(index=actions.index)
     dx = (spadlcfg.field_length - actions["start_x"]).abs().to_numpy()
@@ -602,6 +761,14 @@ def endpolar(actions: Actions) -> Features:
     -------
     Features
         The 'end_dist_to_goal' and 'end_angle_to_goal' of each action.
+
+    Examples
+    --------
+    Extract polar (distance/angle to goal) end features per gamestate slot::
+
+        from silly_kicks.vaep.features import endpolar
+
+        feats = endpolar(states)
     """
     polardf = pd.DataFrame(index=actions.index)
     dx = (spadlcfg.field_length - actions["end_x"]).abs().to_numpy()
@@ -626,6 +793,14 @@ def movement(actions: Actions) -> Features:
     Features
         The horizontal ('dx'), vertical ('dy') and total ('movement') distance
         covered by each action.
+
+    Examples
+    --------
+    Extract action displacement (dx, dy, total) features per gamestate slot::
+
+        from silly_kicks.vaep.features import movement
+
+        feats = movement(states)
     """
     mov = pd.DataFrame(index=actions.index)
     mov["dx"] = actions.end_x - actions.start_x
@@ -650,6 +825,14 @@ def player_possession_time(actions: Actions) -> Features:
     -------
     Features
         The 'player_possession_time' of each action.
+
+    Examples
+    --------
+    Extract per-action player-possession duration (seconds) features::
+
+        from silly_kicks.vaep.features import player_possession_time
+
+        feats = player_possession_time(states)
     """
     cur_action = actions[["period_id", "time_seconds", "player_id", "type_id"]]
     prev_action = actions[["period_id", "time_seconds", "player_id", "type_id"]].shift(1)
@@ -682,6 +865,14 @@ def team(gamestates: GameStates) -> Features:
     Features
         A dataframe with a column 'team_ai' for each <nb_prev_actions> indicating
         whether the team that performed action a0 is in possession.
+
+    Examples
+    --------
+    Extract team-of-actor features per gamestate slot::
+
+        from silly_kicks.vaep.features import team
+
+        feats = team(states)
     """
     a0 = gamestates[0]
     teamdf = pd.DataFrame(index=a0.index)
@@ -703,6 +894,14 @@ def time_delta(gamestates: GameStates) -> Features:
     Features
         A dataframe with a column 'time_delta_i' for each <nb_prev_actions>
         containing the number of seconds between action ai and action a0.
+
+    Examples
+    --------
+    Extract time-since-previous-action features per gamestate slot::
+
+        from silly_kicks.vaep.features import time_delta
+
+        feats = time_delta(states)
     """
     a0 = gamestates[0]
     dt = pd.DataFrame(index=a0.index)
@@ -725,6 +924,14 @@ def space_delta(gamestates: GameStates) -> Features:
         A dataframe with a column for the horizontal ('dx_a0i'), vertical
         ('dy_a0i') and total ('mov_a0i') distance covered between each
         <nb_prev_actions> action ai and action a0.
+
+    Examples
+    --------
+    Extract space-since-previous-action features per gamestate slot::
+
+        from silly_kicks.vaep.features import space_delta
+
+        feats = space_delta(states)
     """
     a0 = gamestates[0]
     spaced = pd.DataFrame(index=a0.index)
@@ -751,6 +958,14 @@ def speed(gamestates: GameStates) -> Features:
         A dataframe with columns 'speedx_a0i', 'speedy_a0i', 'speed_a0i'
         for each <nb_prev_actions> containing the ball speed in m/s  between
         action ai and action a0.
+
+    Examples
+    --------
+    Extract speed (space_delta / time_delta) features per gamestate slot::
+
+        from silly_kicks.vaep.features import speed
+
+        feats = speed(states)
     """
     a0 = gamestates[0]
     speed = pd.DataFrame(index=a0.index)
@@ -782,6 +997,14 @@ def goalscore(gamestates: GameStates) -> Features:
         The number of goals scored by the team performing the last action of the
         game state ('goalscore_team'), by the opponent ('goalscore_opponent'),
         and the goal difference between both teams ('goalscore_diff').
+
+    Examples
+    --------
+    Extract per-action goal-difference features (own goals scored vs conceded)::
+
+        from silly_kicks.vaep.features import goalscore
+
+        feats = goalscore(states)
     """
     actions = gamestates[0]
     teamA = actions["team_id"].values[0]
@@ -820,6 +1043,14 @@ def cross_zone(actions: Actions) -> Features:
     -------
     Features
         One-hot encoding of the cross zone (4 columns). Zero for non-cross actions.
+
+    Examples
+    --------
+    Extract cross-zone categorical features per gamestate slot::
+
+        from silly_kicks.vaep.features import cross_zone
+
+        feats = cross_zone(states)
     """
     is_cross = actions["type_id"].isin(
         [
@@ -870,6 +1101,14 @@ def assist_type(gamestates: GameStates) -> Features:
     -------
     Features
         One-hot encoding of assist type (6 columns). Zero for non-shot a0 actions.
+
+    Examples
+    --------
+    Extract assist-type categorical features per gamestate slot::
+
+        from silly_kicks.vaep.features import assist_type
+
+        feats = assist_type(states)
     """
     a0 = gamestates[0]
     is_shot = a0["type_id"].isin(
