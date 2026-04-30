@@ -65,6 +65,24 @@ class AtomicVAEP(VAEP):
         DTAI Sports Analytics Blog.
         https://dtai.cs.kuleuven.be/sports/blog/introducing-atomic-spadl:-a-new-way-to-represent-event-stream-data
         May 2020.
+
+    Examples
+    --------
+    Train an AtomicVAEP model on an atomic-SPADL stream::
+
+        import pandas as pd
+        from silly_kicks.atomic.vaep import AtomicVAEP
+
+        v = AtomicVAEP()
+        # Compute features + labels per game on the atomic stream:
+        X_list, y_list = [], []
+        for _, game in games.iterrows():
+            game_atomic = atomic[atomic["game_id"] == game.game_id]
+            X_list.append(v.compute_features(game, game_atomic))
+            y_list.append(v.compute_labels(game, game_atomic))
+        X, y = pd.concat(X_list), pd.concat(y_list)
+        v.fit(X, y)
+        ratings = v.rate(game, game_atomic)
     """
 
     _add_names = staticmethod(add_names)

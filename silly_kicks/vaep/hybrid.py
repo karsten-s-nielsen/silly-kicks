@@ -50,6 +50,18 @@ class HybridVAEP(VAEP):
         Label functions. Uses [scores, concedes] if None.
     nb_prev_actions : int, default=3
         Number of previous actions in game state.
+
+    Examples
+    --------
+    Train a HybridVAEP model (result leakage removed from current action)::
+
+        from silly_kicks.vaep.hybrid import HybridVAEP
+
+        v = HybridVAEP()
+        # Same compute_features / compute_labels / fit / rate lifecycle as VAEP.
+        # The only difference is the default xfns list — see ``hybrid_xfns_default``.
+        v.fit(X, y)
+        ratings = v.rate(game, game_actions)
     """
 
     def __init__(

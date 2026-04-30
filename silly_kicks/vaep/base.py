@@ -66,6 +66,27 @@ class VAEP:
         "Actions speak louder than goals: Valuing player actions in soccer." In
         Proceedings of the 25th ACM SIGKDD International Conference on Knowledge
         Discovery & Data Mining, pp. 1851-1861. 2019.
+
+    Examples
+    --------
+    Train a VAEP model and rate actions for a single game::
+
+        import pandas as pd
+        from silly_kicks.vaep import VAEP
+
+        v = VAEP()
+        # Compute features + labels across many games:
+        X_list, y_list = [], []
+        for _, game in games.iterrows():
+            game_actions = actions[actions["game_id"] == game.game_id]
+            X_list.append(v.compute_features(game, game_actions))
+            y_list.append(v.compute_labels(game, game_actions))
+        X, y = pd.concat(X_list), pd.concat(y_list)
+        v.fit(X, y, learner="xgboost")
+
+        # Rate one game's actions:
+        ratings = v.rate(game, game_actions)
+        # ratings has columns: offensive_value / defensive_value / vaep_value
     """
 
     _add_names = staticmethod(add_names)
@@ -105,6 +126,13 @@ class VAEP:
         -------
         features : pd.DataFrame
             Returns the feature-based representation of each game state in the game.
+
+        Examples
+        --------
+        Compute the feature representation for one game::
+
+            X = v.compute_features(game, game_actions)
+            # X has one row per game state with the columns specified by ``v.xfns``.
         """
         game_actions_with_names = self._add_names(game_actions)  # type: ignore
         gamestates = self._fs.gamestates(game_actions_with_names, self.nb_prev_actions)
@@ -130,6 +158,13 @@ class VAEP:
         -------
         labels : pd.DataFrame
             Returns the labels of each game state in the game.
+
+        Examples
+        --------
+        Compute the label representation (scores / concedes binaries) for one game::
+
+            y = v.compute_labels(game, game_actions)
+            # y has columns: scores / concedes (next-N-action lookahead).
         """
         game_actions_with_names = self._add_names(game_actions)  # type: ignore
         return pd.concat([fn(game_actions_with_names) for fn in self.yfns], axis=1)  # type: ignore[reportReturnType]
@@ -174,6 +209,12 @@ class VAEP:
         self
             Fitted VAEP model.
 
+        Examples
+        --------
+        Fit a VAEP model with xgboost (default) on accumulated features + labels::
+
+            v.fit(X, y, learner="xgboost", val_size=0.25)
+            # ``random_state`` controls the train/val split deterministically.
         """
         nb_states = len(X)
         rng = np.random.default_rng(random_state)
@@ -243,6 +284,13 @@ class VAEP:
         ratings : pd.DataFrame
             Returns the VAEP rating for each given action, as well as the
             offensive and defensive value of each action.
+
+        Examples
+        --------
+        Rate one game's actions after fitting::
+
+            ratings = v.rate(game, game_actions)
+            ratings[["offensive_value", "defensive_value", "vaep_value"]].head()
         """
         if not self.__models:
             raise NotFittedError()
@@ -275,6 +323,13 @@ class VAEP:
         -------
         score : dict
             The Brier and AUROC scores for both binary classification problems.
+
+        Examples
+        --------
+        Evaluate fit quality on held-out data::
+
+            metrics = v.score(X_test, y_test)
+            # metrics["scores"]["brier"] / metrics["scores"]["auroc"], same for "concedes".
         """
         if not self.__models:
             raise NotFittedError()

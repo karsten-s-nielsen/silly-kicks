@@ -5,6 +5,29 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] — 2026-04-30
+
+### Added
+
+- **Examples sections on all public API surfaces.** Closes the long-standing D-8
+  documentation gap. Every public function / class / method in
+  `silly_kicks.spadl`, `silly_kicks.atomic.spadl`, `silly_kicks.vaep`,
+  `silly_kicks.atomic.vaep`, and `silly_kicks.xthreat` now has a 3-7 line
+  illustrative example showing typical usage. ~50 surfaces newly documented.
+- **CI guardrail at `tests/test_public_api_examples.py`.** AST-based parametrized
+  test asserts every public symbol has an `Examples` section in its docstring.
+  Future PRs that add a public function without an Example fail CI; the failure
+  message points to canonical-style references (`add_possessions`,
+  `boundary_metrics`).
+
+### Changed
+
+- **D-9 entry removed from `TODO.md`.** Tech-debt entry was stale — all 9
+  module-level helpers in `silly_kicks/xthreat.py` are already underscore-
+  prefixed; the entry tracked work that was completed prior to silly-kicks 2.0.0.
+
+No API or behavior changes.
+
 ## [2.1.0] — 2026-04-29
 
 ### ⚠️ Breaking

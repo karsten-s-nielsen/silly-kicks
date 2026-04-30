@@ -109,6 +109,17 @@ def add_gk_role(
     ValueError
         If a required column is missing, ``penalty_area_x_threshold`` is
         negative, or ``distribution_lookback_actions < 1``.
+
+    Examples
+    --------
+    Tag GK roles after atomic conversion::
+
+        from silly_kicks.atomic.spadl import convert_to_atomic
+        from silly_kicks.atomic.spadl.utils import add_gk_role
+
+        atomic = convert_to_atomic(actions)
+        atomic = add_gk_role(atomic)
+        # atomic["gk_role"] is now a Categorical with 5 categories + None.
     """
     missing = [c for c in _ADD_GK_ROLE_REQUIRED_COLUMNS if c not in actions.columns]
     if missing:
@@ -555,6 +566,16 @@ def add_gk_distribution_metrics(
     Lamberts (2025), "Introducing the Goalkeeper Value Model (GVM)" —
     short / medium / long distribution categorisation and launch-pass
     distinction.
+
+    Examples
+    --------
+    Compute GK distribution metrics on an atomic-SPADL stream::
+
+        from silly_kicks.atomic.spadl.utils import add_gk_distribution_metrics
+
+        atomic = add_gk_distribution_metrics(atomic, long_threshold=60.0)
+        # Filter to launches:
+        launches = atomic[atomic["is_launch"]]
     """
     missing = [c for c in _ADD_GK_DISTRIBUTION_REQUIRED_COLUMNS if c not in actions.columns]
     if missing:
@@ -732,6 +753,15 @@ def add_pre_shot_gk_context(
     ValueError
         If a required column is missing, ``lookback_seconds`` is negative,
         or ``lookback_actions < 1``.
+
+    Examples
+    --------
+    Tag pre-shot defending-GK context on an atomic-SPADL stream::
+
+        from silly_kicks.atomic.spadl.utils import add_pre_shot_gk_context
+
+        atomic = add_pre_shot_gk_context(atomic, lookback_seconds=10.0)
+        engaged_shots = atomic[atomic["gk_was_engaged"]]
     """
     missing = [c for c in _ADD_PRE_SHOT_GK_CONTEXT_REQUIRED_COLUMNS if c not in actions.columns]
     if missing:
@@ -823,6 +853,15 @@ def add_names(actions: pd.DataFrame) -> pd.DataFrame:
     -------
     pd.DataFrame
         The original dataframe with 'type_name' and 'bodypart_name' appended.
+
+    Examples
+    --------
+    Append name columns for human-readable diagnostics on atomic-SPADL::
+
+        from silly_kicks.atomic.spadl.utils import add_names
+
+        atomic = add_names(atomic)
+        atomic[["type_name", "bodypart_name"]].head()
     """
     return (
         actions.drop(columns=["type_name", "bodypart_name"], errors="ignore")
@@ -858,6 +897,14 @@ def validate_atomic_spadl(
     ------
     ValueError
         If required columns are missing.
+
+    Examples
+    --------
+    Validate an atomic converter's output conforms to the Atomic-SPADL schema::
+
+        from silly_kicks.atomic.spadl.utils import validate_atomic_spadl
+
+        validate_atomic_spadl(atomic)  # raises ValueError on missing columns
     """
     if schema is None:
         schema = ATOMIC_SPADL_COLUMNS
@@ -896,6 +943,15 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame
     See Also
     --------
     silly_kicks.atomic.vaep.features.play_left_to_right : For transforming gamestates.
+
+    Examples
+    --------
+    Mirror atomic actions to a single direction (left-to-right per the home team)::
+
+        from silly_kicks.atomic.spadl.utils import play_left_to_right
+
+        ltr = play_left_to_right(atomic, home_team_id=100)
+        # All away-team actions now have flipped (x, y) and (dx, dy).
     """
     ltr_actions = actions.copy()
     away_idx = actions.team_id != home_team_id

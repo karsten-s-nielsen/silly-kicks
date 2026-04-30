@@ -471,6 +471,15 @@ def add_pre_shot_gk_context(
     - Butcher et al. (2025), "An Expected Goals On Target (xGOT) Model"
       (MDPI) — focuses on the shot moment; does not surface pre-shot GK
       engagement state.
+
+    Examples
+    --------
+    Tag pre-shot goalkeeper context for downstream PSxG / xGOT modeling::
+
+        actions, _ = statsbomb.convert_to_actions(events, home_team_id=100)
+        actions = add_pre_shot_gk_context(actions, lookback_seconds=10.0)
+        # Filter to shots where the defending GK was already engaged:
+        engaged_shots = actions[actions["gk_was_engaged"]]
     """
     missing = [c for c in _ADD_PRE_SHOT_GK_CONTEXT_REQUIRED_COLUMNS if c not in actions.columns]
     if missing:
@@ -1091,6 +1100,15 @@ def add_names(actions: pd.DataFrame) -> pd.DataFrame:
         All caller-added columns (e.g. ``match_id``, ``competition_id``,
         ``data_source``) are preserved in the returned DataFrame alongside
         the three appended name columns.
+
+    Examples
+    --------
+    Append name columns for human-readable diagnostics::
+
+        actions, _ = statsbomb.convert_to_actions(events, home_team_id=100)
+        actions = add_names(actions)
+        # actions now has type_name / result_name / bodypart_name string columns:
+        actions[["type_name", "result_name", "bodypart_name"]].head()
     """
     return (
         actions.drop(columns=["type_name", "result_name", "bodypart_name"], errors="ignore")
@@ -1123,6 +1141,14 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame
     See Also
     --------
     silly_kicks.vaep.features.play_left_to_right : For transforming gamestates.
+
+    Examples
+    --------
+    Mirror all actions to a single direction (left-to-right per the home team)::
+
+        actions, _ = statsbomb.convert_to_actions(events, home_team_id=100)
+        ltr = play_left_to_right(actions, home_team_id=100)
+        # All away-team actions now have flipped (start_x, start_y) / (end_x, end_y).
     """
     ltr_actions = actions.copy()
     away_idx = actions.team_id != home_team_id
@@ -1304,6 +1330,14 @@ def validate_spadl(
     ------
     ValueError
         If required columns are missing.
+
+    Examples
+    --------
+    Validate a converter's output conforms to the SPADL schema::
+
+        actions, _ = statsbomb.convert_to_actions(events, home_team_id=100)
+        validate_spadl(actions)  # raises ValueError on missing columns;
+                                 # warns on dtype mismatches.
     """
     if schema is None:
         schema = SPADL_COLUMNS
