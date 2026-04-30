@@ -1,25 +1,26 @@
 """Implements the feature tranformers of the VAEP framework."""
 
-from collections.abc import Callable
-
 import numpy as np
 import pandas as pd
 
 import silly_kicks.atomic.spadl.config as atomicspadl
-from silly_kicks.vaep.features import (
-    _actiontype,
+from silly_kicks.vaep.features.bodypart import (
     bodypart,
     bodypart_detailed,
     bodypart_detailed_onehot,
     bodypart_onehot,
-    gamestates,
-    player_possession_time,
-    simple,
-    speed,
-    team,
-    time,
-    time_delta,
 )
+from silly_kicks.vaep.features.context import player_possession_time, team
+from silly_kicks.vaep.features.core import (
+    Actions,
+    Features,
+    FeatureTransfomer,
+    GameStates,
+    _actiontype,
+    gamestates,
+    simple,
+)
+from silly_kicks.vaep.features.temporal import speed, time, time_delta
 
 __all__ = [
     "actiontype",
@@ -42,11 +43,6 @@ __all__ = [
     "time",
     "time_delta",
 ]
-
-Actions = pd.DataFrame
-GameStates = list[pd.DataFrame]
-Features = pd.DataFrame
-FeatureTransfomer = Callable[[GameStates], Features]
 
 
 @simple

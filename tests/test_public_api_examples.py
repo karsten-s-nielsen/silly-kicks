@@ -27,7 +27,6 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/atomic/spadl/base.py",
     "silly_kicks/vaep/base.py",
     "silly_kicks/vaep/hybrid.py",
-    "silly_kicks/vaep/features.py",
     "silly_kicks/atomic/vaep/base.py",
     "silly_kicks/xthreat.py",
     "silly_kicks/vaep/labels.py",
@@ -35,6 +34,14 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/atomic/vaep/features.py",
     "silly_kicks/atomic/vaep/labels.py",
     "silly_kicks/atomic/vaep/formula.py",
+    "silly_kicks/vaep/features/core.py",
+    "silly_kicks/vaep/features/actiontype.py",
+    "silly_kicks/vaep/features/result.py",
+    "silly_kicks/vaep/features/bodypart.py",
+    "silly_kicks/vaep/features/spatial.py",
+    "silly_kicks/vaep/features/temporal.py",
+    "silly_kicks/vaep/features/context.py",
+    "silly_kicks/vaep/features/specialty.py",
 )
 
 # Pure-type symbols that don't fit the illustrative-example pattern.

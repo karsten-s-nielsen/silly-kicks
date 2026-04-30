@@ -11,8 +11,7 @@ Open items tracked for future work. Closed items live in
 
 | # | Size | Item | Context |
 |---|------|------|---------|
-| A9 | Medium | Reduce `atomic/vaep/features.py` coupling to `vaep/features` (12 imports) | Legitimate delegation today, but tight coupling will fight if atomic features need to diverge independently |
-| — | Medium | Decompose `vaep/features.py` (809 lines) | Natural split: spatial features, temporal features, categorical features. Do when next adding features to this file |
+| A9 | Low | `atomic/vaep/features.py` per-concern coupling to `vaep/features` (12 symbols across 4 submodules — was monolith) | Partially addressed in 2.3.0 via vaep/features decomposition. Full decoupling deferred until atomic features genuinely need to diverge independently — extracting truly-shared framework into a cross-package module is the trigger condition. |
 
 ## Open PRs
 
@@ -20,9 +19,5 @@ Open items tracked for future work. Closed items live in
 
 ## Tech Debt
 
-| # | Sev | Item | Context |
-|---|-----|------|---------|
-| A19 | Low | Default hyperparameters scattered across 3 learner functions | Extracted to named constants in `learners.py`; could centralize further but low impact. Audit-source: DEFERRED.md (Phase 2 architecture audit, migrated 1.9.0). |
-| O-M1 | Low | Full `events.copy()` at top of StatsBomb `convert_to_actions` (`spadl/statsbomb.py:78`) | Defensive copy — could shrink on demand. Audit-source: DEFERRED.md (migrated 1.9.0). |
-| O-M6 | Low | Temporary n×3 DataFrame for StatsBomb fidelity version check (`spadl/statsbomb.py:171`) | Audit-source: DEFERRED.md (migrated 1.9.0). |
+(none currently queued — A19 / O-M1 / O-M6 reviewed and closed in 2.3.0 as stale-or-by-design; D-9 closed in 2.1.1; C-1 closed in 2.2.0)
 

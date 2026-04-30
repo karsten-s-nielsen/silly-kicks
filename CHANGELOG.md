@@ -5,6 +5,60 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] — 2026-04-30
+
+### Changed
+
+- **`silly_kicks.vaep.features` decomposed from a 1170-line monolith into a
+  package** of 8 concern-focused submodules (`core`, `actiontype`, `result`,
+  `bodypart`, `spatial`, `temporal`, `context`, `specialty`). Hybrid visibility:
+  every previously-public symbol remains importable via the package path
+  (`from silly_kicks.vaep.features import startlocation` keeps working
+  unchanged); submodule paths are also importable for advanced/atomic-internal
+  use. Closes the long-standing TODO architecture entry. **Pure structural
+  refactor — zero behavior change; every existing test passes through every
+  step.**
+- **`silly_kicks.atomic.vaep.features` updated to import per-concern.** 12
+  symbols imported across 4 grouped statements against
+  `vaep.features.{core,bodypart,context,temporal}` (was: single 12-symbol
+  monolith import). TODO A9 partially addressed (severity Medium → Low) —
+  full decoupling deferred until atomic features need to diverge independently.
+  Local type alias duplicates (`Actions = pd.DataFrame` etc.) replaced by a
+  single import from `vaep.features.core` (DRY cleanup).
+
+### Added
+
+- **8 new public-API submodule paths** (`silly_kicks.vaep.features.core`,
+  `.actiontype`, `.result`, `.bodypart`, `.spatial`, `.temporal`, `.context`,
+  `.specialty`). Documented as implementation detail of where each symbol
+  lives — the canonical entry point remains the package itself.
+- **3 new test files locking the structure:** T-A backcompat (33 parametrized
+  cases asserting every public symbol stays importable from the package path),
+  T-B submodule layout (33 parametrized cases asserting each symbol's
+  `__module__` matches the design contract), T-C atomic-per-concern (1 test
+  asserting atomic imports from per-concern submodules, not the package root).
+- **CI gate (`tests/test_public_api_examples.py::_PUBLIC_MODULE_FILES`)
+  widened from 19 → 26 entries** to cover all 8 new submodule paths. Net +7
+  parametrize cases.
+
+### Closed
+
+- **TODO A19** (default hyperparameters scattered across 3 learner functions):
+  reviewed and closed without code change. Already centralized as
+  `_XGBOOST_DEFAULTS` / `_CATBOOST_DEFAULTS` / `_LIGHTGBM_DEFAULTS` module-level
+  constants since 1.9.0; the audit description ("scattered across 3 functions")
+  predates that extraction.
+- **TODO O-M1** (full `events.copy()` at top of StatsBomb `convert_to_actions`):
+  reviewed and closed without code change. The defensive copy is correct by
+  design — `_flatten_extra` mutates the DataFrame by adding ~22 underscore
+  columns; without the copy, caller's events would be mutated in place.
+- **TODO O-M6** (temporary n×3 DataFrame for StatsBomb fidelity version check):
+  reviewed and closed without code change. ~50 KB peak per match; could be
+  numpy-fied for marginal gain (~25 KB savings); no measurable impact.
+
+No API breakage. 881 tests passing (807 baseline + 33 T-A + 33 T-B + 1 T-C +
+7 net gate delta), 4 deselected.
+
 ## [2.2.0] — 2026-04-30
 
 ### Added
