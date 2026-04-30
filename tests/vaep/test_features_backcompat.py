@@ -14,6 +14,7 @@ _PUBLIC_SYMBOLS: tuple[str, ...] = (
     "FeatureTransfomer",
     "GameStates",
     "actiontype",
+    "actiontype_categorical",
     "actiontype_onehot",
     "actiontype_result_onehot",
     "actiontype_result_onehot_prev_only",

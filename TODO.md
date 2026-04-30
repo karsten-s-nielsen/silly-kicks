@@ -9,9 +9,7 @@ Open items tracked for future work. Closed items live in
 
 ## Architecture
 
-| # | Size | Item | Context |
-|---|------|------|---------|
-| A9 | Low | `atomic/vaep/features.py` per-concern coupling to `vaep/features` (12 symbols across 4 submodules — was monolith) | Partially addressed in 2.3.0 via vaep/features decomposition. Full decoupling deferred until atomic features genuinely need to diverge independently — extracting truly-shared framework into a cross-package module is the trigger condition. |
+(none currently queued — A9 closed in silly-kicks 2.4.0 via `silly_kicks.vaep.feature_framework` extraction; see ADR-002)
 
 ## Open PRs
 

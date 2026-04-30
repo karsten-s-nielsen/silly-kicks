@@ -4,6 +4,15 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.atomic.spadl.config as atomicspadl
+from silly_kicks.vaep.feature_framework import (
+    Actions,
+    Features,
+    FeatureTransfomer,
+    GameStates,
+    actiontype_categorical,
+    gamestates,
+    simple,
+)
 from silly_kicks.vaep.features.bodypart import (
     bodypart,
     bodypart_detailed,
@@ -11,15 +20,6 @@ from silly_kicks.vaep.features.bodypart import (
     bodypart_onehot,
 )
 from silly_kicks.vaep.features.context import player_possession_time, team
-from silly_kicks.vaep.features.core import (
-    Actions,
-    Features,
-    FeatureTransfomer,
-    GameStates,
-    _actiontype,
-    gamestates,
-    simple,
-)
 from silly_kicks.vaep.features.temporal import speed, time, time_delta
 
 __all__ = [
@@ -59,7 +59,7 @@ def actiontype(actions: Actions) -> Features:
         feats = actiontype(states)
         # feats has columns 'type_id_a0', 'type_id_a1', 'type_id_a2'.
     """
-    return _actiontype(actions, _spadl_cfg=atomicspadl)
+    return actiontype_categorical(actions, atomicspadl)
 
 
 def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) -> list[str]:

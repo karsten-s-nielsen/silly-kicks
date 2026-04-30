@@ -1,15 +1,20 @@
 """Action-type feature transformers.
 
 Two transformers: integer-typed and one-hot-encoded action-type per gamestate
-slot. Both delegate the standard / atomic split via the ``_actiontype`` helper
-in :mod:`silly_kicks.vaep.features.core`.
+slot. The integer-typed variant delegates to ``actiontype_categorical`` in
+:mod:`silly_kicks.vaep.feature_framework` so standard and atomic VAEP share
+the same SPADL-config-parameterized helper.
 """
 
 import pandas as pd  # type: ignore
 
 import silly_kicks.spadl.config as spadlcfg
-
-from .core import Actions, Features, _actiontype, simple
+from silly_kicks.vaep.feature_framework import (
+    Actions,
+    Features,
+    actiontype_categorical,
+    simple,
+)
 
 __all__ = ["actiontype", "actiontype_onehot"]
 
@@ -36,7 +41,7 @@ def actiontype(actions: Actions) -> Features:
 
         feats = actiontype(states)
     """
-    return _actiontype(actions)
+    return actiontype_categorical(actions, spadlcfg)
 
 
 @simple

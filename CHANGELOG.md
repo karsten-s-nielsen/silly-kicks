@@ -5,6 +5,83 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] — 2026-04-30
+
+### Added
+
+- **`silly_kicks.vaep.feature_framework`** — new public module holding the 7
+  framework primitives both standard and atomic VAEP feature stacks build on:
+  4 type aliases (`Actions`, `Features`, `FeatureTransfomer`, `GameStates`),
+  `gamestates`, `simple`, and the promoted helper
+  `actiontype_categorical(actions, spadl_cfg)`. Cross-package framework
+  boundary now has a name; atomic-VAEP no longer reaches into
+  `vaep.features.core` for framework primitives.
+- **`actiontype_categorical(actions, spadl_cfg)`** — promoted from the
+  previously-private `_actiontype` helper in `vaep.features.core` to a public,
+  SPADL-config-parameterized framework helper. Both standard-VAEP and
+  atomic-VAEP wrap it with `@simple` to produce their respective `actiontype`
+  feature transformers. Drops the implicit-None config fallback (the function
+  is meaningless without a config); positional `spadl_cfg` parameter.
+  Examples-section docstring per the public-API discipline.
+- **`tests/vaep/test_feature_framework_layout.py`** — 7-case framework-layout
+  lock (T-D). Asserts each framework primitive's canonical home is
+  `silly_kicks.vaep.feature_framework`.
+- **`docs/superpowers/adrs/ADR-002-shared-vaep-feature-framework-boundary.md`** —
+  captures the framework-extraction decision, the 4 alternatives considered,
+  and the `_actiontype → actiontype_categorical` rename rationale.
+
+### Changed
+
+- **`silly_kicks.vaep.features.core` slimmed** to its standard-SPADL-specific
+  helpers (`play_left_to_right`, `feature_column_names`); re-exports the
+  framework primitives from `silly_kicks.vaep.feature_framework` so existing
+  `from silly_kicks.vaep.features.core import gamestates` paths continue to
+  resolve (Hyrum's-Law preservation).
+- **`silly_kicks.atomic.vaep.features` imports framework directly from
+  `vaep.feature_framework`** (no longer reaches into `vaep.features.core`);
+  per-concern feature reuse from `bodypart` / `context` / `temporal` is
+  preserved (intentional verbatim code-share, not framework leak).
+- **`silly_kicks.vaep.features.actiontype` body updated** to call
+  `actiontype_categorical(actions, spadlcfg)` instead of the private
+  `_actiontype(actions)` (the latter relied on an implicit-None spadlcfg
+  fallback; the new call passes spadlcfg explicitly — same resolved
+  behaviour).
+- **T-A backcompat (`tests/vaep/test_features_backcompat.py`)** gains one row
+  for `actiontype_categorical`. 33 → 34 cases.
+- **T-B layout (`tests/vaep/test_features_submodule_layout.py`)** drops the 6
+  framework rows now living outside the features package. 33 → 27 cases.
+- **T-C atomic-coupling (`tests/atomic/test_features_per_concern_import.py`)
+  rewritten** to forbid `vaep.features.core` import for framework primitives
+  and require import from `vaep.feature_framework`. Retains the existing
+  package-root-import forbid + 3 per-concern-import requirements.
+- **Examples-gate file list** (`tests/test_public_api_examples.py`) adds
+  `silly_kicks/vaep/feature_framework.py`. 26 → 27 cases.
+
+### Removed
+
+- **`silly_kicks.vaep.features.core._actiontype`** — promoted to public
+  `actiontype_categorical(actions, spadl_cfg)` in the new framework module.
+  Was a leading-underscore-private symbol; never in `__all__`; never
+  documented as public surface.
+
+### Closed
+
+- **TODO A9** — `atomic/vaep/features.py` per-concern coupling — closed via
+  framework extraction (the trigger-condition resolution from PR-S15's
+  deferral). The `## Architecture` section of `TODO.md` is now empty.
+  See ADR-002.
+
+### Notes
+
+- **Hyrum's Law surface:** `gamestates.__module__` (and `simple.__module__`)
+  flips from `silly_kicks.vaep.features.core` to
+  `silly_kicks.vaep.feature_framework`. Consumers introspecting via
+  `inspect.getmodule(gamestates)` would see the new value. Documented in
+  ADR-002 as accepted exposure.
+- **Test count:** 881 → 884 passing, 4 deselected (+3 net delta: +1 T-A row,
+  -6 T-B rows, +7 T-D cases, +1 Examples-gate parametrize). Pyright clean
+  (0 errors / 0 warnings / 0 informations).
+
 ## [2.3.0] — 2026-04-30
 
 ### Changed
