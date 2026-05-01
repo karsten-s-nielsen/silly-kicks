@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "2.7.0"
+version = "2.8.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -77,8 +77,10 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 # fixed-literal provider name and lakehouse-derived match_id into queries
 # against a read-only internal mart, not user input.
 "scripts/probe_tracking_baselines.py" = ["S608"]
+"scripts/probe_action_context_baselines.py" = ["S608"]
 "scripts/build_lakehouse_ci_fixtures.py" = ["S608"]
 "tests/test_tracking_real_data_sweep.py" = ["S608"]
+"tests/tracking/test_action_context_real_data_sweep.py" = ["S608"]
 "silly_kicks/atomic/vaep/**/*.py" = ["N803", "N806"]
 "silly_kicks/xthreat.py" = ["N803", "N806", "E741"]
 # False positive: ruff S105 flags string literals like "Free Kick" as "hardcoded passwords"
@@ -103,4 +105,5 @@ testpaths = ["tests"]
 pythonpath = [".", "tests"]
 markers = [
     "e2e: end-to-end tests requiring downloaded datasets",
+    "slow: tests that take significant wall-clock time (e.g., model fits)",
 ]

@@ -25,8 +25,12 @@ MIT license with full attribution preserved.
   native adapters for Sportec / IDSSE Bundesliga and PFF FC plus a kloppy
   gateway for Metrica + SkillCorner. Linkage primitive
   (``link_actions_to_frames`` + ``slice_around_event``) joins SPADL actions to
-  tracking frames. Tracking-aware features (action_context, pressure_on_carrier)
-  are deferred to a follow-up release. See ADR-004.
+  tracking frames (ADR-004). The first tracking-aware feature set ships in
+  ``silly_kicks.tracking.features`` (PR-S20, ADR-005): four features
+  (``nearest_defender_distance``, ``actor_speed``, ``receiver_zone_density``,
+  ``defenders_in_triangle_to_goal``) plus aggregator ``add_action_context``
+  and ``tracking_default_xfns`` for HybridVAEP integration. Atomic-SPADL
+  parity in ``silly_kicks.atomic.tracking.features``.
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions
 - **Atomic SPADL** -- continuous (non-discretized) action representation
@@ -115,7 +119,11 @@ Open [`docs/c4/architecture.html`](docs/c4/architecture.html) in a browser to ex
 
 ## Attribution
 
-This project builds on the foundational research by the KU Leuven Machine
+This project incorporates academic methodologies from the soccer-analytics
+literature. See [NOTICE](NOTICE) for full bibliographic citations and
+third-party library acknowledgements.
+
+silly-kicks builds on the foundational research by the KU Leuven Machine
 Learning Research Group. If you use this library in academic work, please cite
 the original papers:
 
