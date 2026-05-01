@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "2.6.0"
+version = "2.7.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-kloppy = ["kloppy>=3.15.0"]
+kloppy = ["kloppy>=3.18.0"]
 xgboost = ["xgboost>=2.0.0"]
 catboost = ["catboost>=1.2"]
 lightgbm = ["lightgbm>=4.0"]
@@ -73,6 +73,12 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "tests/**/*.py" = ["S101", "N806", "S106", "S107", "N802"]
 # ML convention: uppercase X, Y, Pscores, Pconcedes are standard in ML/stats code
 "silly_kicks/vaep/**/*.py" = ["N803", "N806"]
+# S608 (SQL injection): the probe + e2e-sweep helpers interpolate a
+# fixed-literal provider name and lakehouse-derived match_id into queries
+# against a read-only internal mart, not user input.
+"scripts/probe_tracking_baselines.py" = ["S608"]
+"scripts/build_lakehouse_ci_fixtures.py" = ["S608"]
+"tests/test_tracking_real_data_sweep.py" = ["S608"]
 "silly_kicks/atomic/vaep/**/*.py" = ["N803", "N806"]
 "silly_kicks/xthreat.py" = ["N803", "N806", "E741"]
 # False positive: ruff S105 flags string literals like "Free Kick" as "hardcoded passwords"
@@ -94,6 +100,7 @@ typeCheckingMode = "basic"
 # --- Pytest ---
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [".", "tests"]
 markers = [
     "e2e: end-to-end tests requiring downloaded datasets",
 ]

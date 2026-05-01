@@ -5,6 +5,79 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] — 2026-04-30
+
+### Added
+
+- **`silly_kicks.tracking` namespace** --- first-class tracking-data
+  support, parallel to `silly_kicks.spadl`. Hexagonal pure-function
+  contract: `convert_to_frames(...) -> tuple[pd.DataFrame,
+  TrackingConversionReport]`, zero I/O, zero global-state mutation.
+  Nineteen-column long-form canonical schema
+  (`TRACKING_FRAMES_COLUMNS`), per-provider dtype variants
+  (`KLOPPY_TRACKING_FRAMES_COLUMNS`, `SPORTEC_TRACKING_FRAMES_COLUMNS`,
+  `PFF_TRACKING_FRAMES_COLUMNS`), 105 x 68 m SPADL coordinates,
+  long-form ball-row encoding (`is_ball=True`), `team_attacking_direction` /
+  `ball_state` / `speed_source` provenance columns.
+- **Four-provider adapter coverage** --- Sportec/IDSSE
+  (`silly_kicks.tracking.sportec`, native), PFF
+  (`silly_kicks.tracking.pff`, native), Metrica + SkillCorner
+  (`silly_kicks.tracking.kloppy`, gateway via `kloppy.TrackingDataset`).
+  PFF native is preferred over kloppy's PFF tracking parser for
+  symmetry with `silly_kicks.spadl.pff` (PR-S18) and shared use of the
+  `_direction.home_attacks_right_per_period` helper.
+- **Linkage primitive**
+  (`silly_kicks.tracking.utils.link_actions_to_frames` +
+  `slice_around_event`) --- the load-bearing cross-pipeline operation
+  that PR-S20+ tracking-aware features will build on. Returns pointer
+  DataFrame plus `LinkReport` audit. Default tolerance 0.2 s, pinned
+  by an explicit default-stability test.
+- **Hybrid speed policy** --- adapters trust native speed where
+  provided (PFF, Sportec); derive via `_derive_speed` (per-player
+  groupby + diff) where missing (Metrica, SkillCorner). The
+  `speed_source` column records provenance.
+- **Empirical-probe-driven synthetic fixtures** ---
+  `scripts/probe_tracking_baselines.py` measures real-data statistics
+  (frame rates, NaN-rate-per-column, off-pitch tail rates,
+  ball-visibility rates, distance-to-ball percentiles) from the
+  lakehouse mart + local PFF; the committed JSON baseline at
+  `tests/datasets/tracking/empirical_probe_baselines.json` parameterizes
+  the per-provider synthetic generators. `realistic.parquet` fixtures
+  inject baseline-calibrated edge cases (off-pitch tail, ball-out
+  interval, ball-x throw-in tail) for CI; deterministic
+  `tiny.parquet` / `medium_halftime.parquet` remain available for
+  exact-answer unit tests.
+- **`tests/test_tracking_real_data_sweep.py`** --- e2e-marked sweep
+  exercising all four adapters against real data (local PFF JSONL.bz2 +
+  lakehouse-derived Sportec / Metrica / SkillCorner samples). Skipped
+  in CI; run locally before each tracking PR's single commit.
+- **ADR-004**
+  (`docs/superpowers/adrs/ADR-004-tracking-namespace-charter.md`) ---
+  silly_kicks.tracking namespace charter; nine invariants locking the
+  schema + adapter taxonomy + linkage contract for PR-S20+ to inherit.
+- **`pyproject.toml`** --- `kloppy` optional minimum bumped to >= 3.18.0
+  (kloppy 3.18 ships Metrica + SkillCorner tracking parsers used by the
+  gateway). Pytest `pythonpath` config now includes `["", "tests"]` so
+  per-provider synthetic-fixture generators are importable in test code
+  via `datasets.tracking.<provider>.generate_synthetic`.
+
+### Changed
+
+- **`silly_kicks/spadl/pff.py`** --- the per-period direction lookup
+  (`home_attacks_right_per_period`) is extracted into
+  `silly_kicks/tracking/_direction.py` so events PFF, tracking PFF,
+  and tracking Sportec adapters share one implementation. Pure
+  refactor; the events test suite (127 tests) passes unchanged.
+
+### Deferred
+
+Tracking-aware features deferred to follow-up scoping cycles, in
+priority order (per ADR-004 invariant 9): `action_context()` (PR-S20,
+target 2.8.0), `pressure_on_carrier()`, `infer_ball_carrier()`,
+`sync_score()`, pitch-control models (Spearman / Voronoi), smoothing
+primitives (Savitzky-Golay, EMA), multi-frame interpolation /
+gap filling, ReSpo.Vision adapter (licensing-gated).
+
 ## [2.6.0] — 2026-04-30
 
 ### Added

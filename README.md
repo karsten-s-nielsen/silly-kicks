@@ -21,6 +21,12 @@ MIT license with full attribution preserved.
   on-ball actions with dedicated DataFrame converters for StatsBomb, Wyscout,
   Opta, Sportec / IDSSE Bundesliga, Metrica Sports, and PFF FC — plus a kloppy
   gateway for raw-provider-data consumers (StatsBomb, Sportec, Metrica)
+- **Tracking** -- 19-column long-form per-frame schema parallel to SPADL, with
+  native adapters for Sportec / IDSSE Bundesliga and PFF FC plus a kloppy
+  gateway for Metrica + SkillCorner. Linkage primitive
+  (``link_actions_to_frames`` + ``slice_around_event``) joins SPADL actions to
+  tracking frames. Tracking-aware features (action_context, pressure_on_carrier)
+  are deferred to a follow-up release. See ADR-004.
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions
 - **Atomic SPADL** -- continuous (non-discretized) action representation
