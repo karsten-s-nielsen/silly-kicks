@@ -61,6 +61,8 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
+from silly_kicks.tracking import _direction
+
 from . import config as spadlconfig
 from .schema import PFF_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -304,13 +306,10 @@ def convert_to_actions(
             "but home_team_start_left_extratime was not provided. Set it explicitly to "
             "match metadata.homeTeamStartLeftExtraTime, or filter ET events out before calling."
         )
-    home_attacks_right_per_period = {
-        1: bool(home_team_start_left),
-        2: not bool(home_team_start_left),
-        3: bool(home_team_start_left_extratime),
-        4: (not bool(home_team_start_left_extratime) if home_team_start_left_extratime is not None else True),
-        5: True,  # PSO — single-end; flip moot for SH+P
-    }
+    home_attacks_right_per_period = _direction.home_attacks_right_per_period(
+        home_team_start_left=home_team_start_left,
+        home_team_start_left_extratime=home_team_start_left_extratime,
+    )
 
     # ------------------------------------------------------------------
     # Exclusion filtering — drop rows whose

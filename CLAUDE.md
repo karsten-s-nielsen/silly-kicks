@@ -6,6 +6,7 @@ Maintained fork of socceraction — SPADL event conversion + VAEP action valuati
 
 - **Hexagonal**: All core functions are pure (pandas in, pandas out). Zero I/O, zero global state mutation.
 - **Converters** (`spadl/`): Each provider (StatsBomb, Opta, Wyscout, Sportec, Metrica, PFF, plus the Kloppy gateway) has its own module. All return `tuple[pd.DataFrame, ConversionReport]` with guaranteed columns/dtypes via `_finalize_output()`.
+- **Tracking** (`tracking/`): Per-frame namespace parallel to `spadl/`. 19-column long-form schema (`TRACKING_FRAMES_COLUMNS`); native Sportec + PFF adapters; kloppy gateway for Metrica + SkillCorner. Linkage primitive (`link_actions_to_frames` + `slice_around_event`) joins SPADL actions to frames; pointer-DataFrame return + `LinkReport` audit. Tracking-aware features (action_context, pressure_on_carrier, pitch control) explicitly deferred to follow-up PRs. Decision: ADR-004.
 - **VAEP** (`vaep/`): Feature engineering + gradient boosting binary classifiers. `HybridVAEP` removes result leakage from a0 features. xG-targeted labels available via `xg_column` parameter.
 - **Atomic-SPADL** (`atomic/`): Variant where actions are decomposed into atomic sub-actions (receival, interception, out, etc.).
 
@@ -36,5 +37,5 @@ See [TODO.md](TODO.md) for tracked work.
 ## Dependencies
 
 - Runtime: pandas, numpy, scikit-learn (no pandera, no multimethod)
-- Optional: kloppy, xgboost, catboost, lightgbm
+- Optional: kloppy (>= 3.18 for tracking parsers), xgboost, catboost, lightgbm
 - numpy>=2.0 compatible
