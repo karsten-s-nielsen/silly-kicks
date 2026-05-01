@@ -1,7 +1,7 @@
 """Utility functions for working with SPADL dataframes."""
 
 import warnings
-from typing import Final, TypedDict
+from typing import TYPE_CHECKING, Final, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,12 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 
 from . import config as spadlconfig
 from .schema import SPADL_COLUMNS
+
+if TYPE_CHECKING:
+    # Type-only import for pyright fidelity. Runtime call site lazy-imports per ADR-005 § 5.
+    from silly_kicks.tracking.features import (  # noqa: F401
+        add_pre_shot_gk_position as _tracking_add_pre_shot_gk_position,
+    )
 
 _SET_PIECE_RESTART_TYPE_NAMES: Final[frozenset[str]] = frozenset(
     {"freekick_short", "freekick_crossed", "corner_short", "corner_crossed", "throw_in", "goalkick"}
@@ -486,10 +492,11 @@ _GK_KEEPER_TYPE_NAMES: Final[frozenset[str]] = frozenset(
 def add_pre_shot_gk_context(
     actions: pd.DataFrame,
     *,
+    frames: pd.DataFrame | None = None,
     lookback_seconds: float = 10.0,
     lookback_actions: int = 5,
 ) -> pd.DataFrame:
-    """Tag each shot with the defending goalkeeper's recent activity.
+    """Tag each shot with the defending goalkeeper's recent activity (and optional position).
 
     For every shot row (``action_type`` in ``{"shot", "shot_freekick",
     "shot_penalty"}``), looks back up to ``lookback_actions`` rows OR up
@@ -508,6 +515,14 @@ def add_pre_shot_gk_context(
     - ``defending_gk_player_id`` (float, NaN-coded int) — ``player_id`` of
       the most recent defending-team ``keeper_*`` action in the window.
       NaN when no defending GK is identifiable.
+
+    When ``frames`` is supplied, additionally emits 4 GK-position columns
+    (``pre_shot_gk_x``, ``pre_shot_gk_y``, ``pre_shot_gk_distance_to_goal``,
+    ``pre_shot_gk_distance_to_shot``) plus 4 linkage-provenance columns
+    (``frame_id``, ``time_offset_seconds``, ``link_quality_score``,
+    ``n_candidate_frames``) via the ``silly_kicks.tracking.features``
+    canonical compute. When ``frames=None`` (default), behavior is bit-identical
+    to silly-kicks 2.8.0 — no frames-related columns appear in the output.
 
     Non-shot rows receive default values (False / 0 / NaN). The defending
     GK is identified as the ``player_id`` of the most recent ``keeper_*``
@@ -535,6 +550,10 @@ def add_pre_shot_gk_context(
         SPADL action stream. Required columns: ``game_id``, ``period_id``,
         ``action_id``, ``team_id``, ``player_id``, ``type_id``,
         ``time_seconds``.
+    frames : pd.DataFrame | None, default None
+        Long-form tracking frames matching ``TRACKING_FRAMES_COLUMNS``.
+        When supplied, enables 4 GK-position + 4 linkage-provenance output
+        columns. PR-S21 (silly-kicks 2.9.0+).
     lookback_seconds : float, default 10.0
         Time window (seconds) before each shot in which to consider
         defending-GK actions.
@@ -545,7 +564,8 @@ def add_pre_shot_gk_context(
     Returns
     -------
     pd.DataFrame
-        Sorted copy of ``actions`` with the four context columns appended.
+        Sorted copy of ``actions`` with the four context columns appended
+        (and 4 GK-position + 4 provenance columns if ``frames`` supplied).
 
     Raises
     ------
@@ -560,15 +580,27 @@ def add_pre_shot_gk_context(
     - Butcher et al. (2025), "An Expected Goals On Target (xGOT) Model"
       (MDPI) — focuses on the shot moment; does not surface pre-shot GK
       engagement state.
+    - Anzer, G., & Bauer, P. (2021), "A goal scoring probability model for
+      shots based on synchronized positional and event data in football
+      and futsal." Frontiers in Sports and Active Living, 3, 624475 —
+      defending-GK position as xG feature; basis of the 4 GK-position
+      columns when ``frames`` is supplied.
 
     Examples
     --------
-    Tag pre-shot goalkeeper context for downstream PSxG / xGOT modeling::
+    Tag pre-shot goalkeeper context for downstream PSxG / xGOT modeling
+    (events-only path, silly-kicks 2.8.0 backward-compat)::
 
         actions, _ = statsbomb.convert_to_actions(events, home_team_id=100)
         actions = add_pre_shot_gk_context(actions, lookback_seconds=10.0)
-        # Filter to shots where the defending GK was already engaged:
         engaged_shots = actions[actions["gk_was_engaged"]]
+
+    Events + tracking path (silly-kicks 2.9.0+)::
+
+        from silly_kicks.tracking import sportec
+        frames, _ = sportec.convert_to_frames(raw, home_team_id="DFL-CLU-A", home_team_start_left=True)
+        actions = add_pre_shot_gk_context(actions, frames=frames)
+        # Now also has pre_shot_gk_x/_y/_distance_to_{goal,shot} columns.
     """
     missing = [c for c in _ADD_PRE_SHOT_GK_CONTEXT_REQUIRED_COLUMNS if c not in actions.columns]
     if missing:
@@ -587,7 +619,17 @@ def add_pre_shot_gk_context(
     gk_was_distributing = np.zeros(n, dtype=bool)
     gk_was_engaged = np.zeros(n, dtype=bool)
     gk_actions_in_possession = np.zeros(n, dtype=np.int64)
-    defending_gk_player_id = np.full(n, np.nan, dtype=np.float64)
+
+    # defending_gk_player_id preserves the input ``player_id`` dtype: numeric input -> float64
+    # NaN-coded; object/string input (Sportec / KLOPPY_SPADL_COLUMNS variant) -> object/None.
+    # This makes the helper provider-agnostic without breaking the float64-output contract for
+    # the canonical SPADL_COLUMNS case (PFF / StatsBomb / Opta / Wyscout / Metrica).
+    _pid = sorted_actions["player_id"]
+    player_id_is_object = _pid.dtype == object or pd.api.types.is_string_dtype(_pid)
+    if player_id_is_object:
+        defending_gk_player_id: np.ndarray = np.full(n, None, dtype=object)
+    else:
+        defending_gk_player_id = np.full(n, np.nan, dtype=np.float64)
 
     if n == 0:
         sorted_actions["gk_was_distributing"] = gk_was_distributing
@@ -636,21 +678,37 @@ def add_pre_shot_gk_context(
             # information to identify the defending GK. Leave defaults
             # (gk_was_engaged stays False, defending_gk_player_id stays NaN).
             continue
-        gk_id = int(gk_id_raw)
 
-        same_gk_in_window = defending_in_window & (player_id[win] == gk_id)
+        # Preserve native dtype: numeric -> float64 cast for backward-compat with the
+        # canonical SPADL_COLUMNS schema; object/string -> pass through verbatim.
+        if player_id_is_object:
+            gk_id_for_match: object = gk_id_raw
+            gk_id_for_assign: object = gk_id_raw
+        else:
+            gk_id_for_match = int(gk_id_raw)
+            gk_id_for_assign = float(gk_id_for_match)
+
+        same_gk_in_window = defending_in_window & (player_id[win] == gk_id_for_match)
         gk_keeper_actions_count = int((same_gk_in_window & is_keeper[win]).sum())
         gk_was_distributing_in_window = bool((same_gk_in_window & ~is_keeper[win]).any())
 
         gk_was_engaged[shot_idx] = True
         gk_was_distributing[shot_idx] = gk_was_distributing_in_window
         gk_actions_in_possession[shot_idx] = gk_keeper_actions_count
-        defending_gk_player_id[shot_idx] = float(gk_id)
+        defending_gk_player_id[shot_idx] = gk_id_for_assign
 
     sorted_actions["gk_was_distributing"] = gk_was_distributing
     sorted_actions["gk_was_engaged"] = gk_was_engaged
     sorted_actions["gk_actions_in_possession"] = gk_actions_in_possession
     sorted_actions["defending_gk_player_id"] = defending_gk_player_id
+
+    # PR-S21: when tracking frames supplied, lazy-import + merge GK-position columns.
+    # Lazy import preserves ADR-005 § 5 contract (no module-import-time spadl→tracking cycle).
+    if frames is not None:
+        from silly_kicks.tracking.features import add_pre_shot_gk_position
+
+        sorted_actions = add_pre_shot_gk_position(sorted_actions, frames)
+
     return sorted_actions
 
 

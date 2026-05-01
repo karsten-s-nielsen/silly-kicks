@@ -25,12 +25,18 @@ MIT license with full attribution preserved.
   native adapters for Sportec / IDSSE Bundesliga and PFF FC plus a kloppy
   gateway for Metrica + SkillCorner. Linkage primitive
   (``link_actions_to_frames`` + ``slice_around_event``) joins SPADL actions to
-  tracking frames (ADR-004). The first tracking-aware feature set ships in
-  ``silly_kicks.tracking.features`` (PR-S20, ADR-005): four features
+  tracking frames (ADR-004). The action-context tracking-aware feature set
+  ships in ``silly_kicks.tracking.features`` (PR-S20, ADR-005): four features
   (``nearest_defender_distance``, ``actor_speed``, ``receiver_zone_density``,
   ``defenders_in_triangle_to_goal``) plus aggregator ``add_action_context``
-  and ``tracking_default_xfns`` for HybridVAEP integration. Atomic-SPADL
-  parity in ``silly_kicks.atomic.tracking.features``.
+  and ``tracking_default_xfns`` for HybridVAEP integration. Pre-shot
+  goalkeeper position (PR-S21): four GK features
+  (``pre_shot_gk_x``, ``pre_shot_gk_y``, ``pre_shot_gk_distance_to_goal``,
+  ``pre_shot_gk_distance_to_shot``) plus aggregator
+  ``add_pre_shot_gk_position`` and ``pre_shot_gk_default_xfns``; events-side
+  ``add_pre_shot_gk_context`` gains an optional ``frames=`` kwarg that emits
+  the same GK position columns inline. Atomic-SPADL parity in
+  ``silly_kicks.atomic.tracking.features``.
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions
 - **Atomic SPADL** -- continuous (non-discretized) action representation

@@ -36,7 +36,7 @@ def test_actiontype_includes_atomic_types() -> None:
             "type_id": [receival_id],
         }
     )
-    result = actiontype(actions)
+    result = actiontype(actions)  # type: ignore[arg-type]  # @simple-decorated fn accepts a single Actions DataFrame at runtime
     # @simple wraps the column name as "actiontype_a0"
     assert "actiontype_a0" in result.columns
     assert result["actiontype_a0"].iloc[0] == "receival"

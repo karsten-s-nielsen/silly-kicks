@@ -112,7 +112,7 @@ def test_tracking_distance_to_ball_distribution_overlap():
         )
         players = frames[~frames["is_ball"]]
         joined = players.merge(ball, on=["period_id", "frame_id"])
-        dist = np.sqrt((joined["x"] - joined["bx"]) ** 2 + (joined["y"] - joined["by"]) ** 2)
+        dist = pd.Series(np.sqrt((joined["x"] - joined["bx"]) ** 2 + (joined["y"] - joined["by"]) ** 2))
         percentiles[prov] = np.percentile(dist.dropna(), [25, 50, 75, 95]).tolist()
     for prov, p in percentiles.items():
         assert 0 < p[1] < 100, f"{prov}: implausible p50 distance {p[1]}"

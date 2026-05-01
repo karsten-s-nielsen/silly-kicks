@@ -26,6 +26,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.spadl.utils import add_pre_shot_gk_context
 from tests.spadl._gk_test_fixtures import (
     _df,
@@ -419,3 +420,235 @@ class TestRealisticScenario:
         assert int(shot["defending_gk_player_id"]) == 999
         # 1 keeper_* action by player 999 within window (the save at action 0).
         assert int(shot["gk_actions_in_possession"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# PR-S21 — frames= kwarg backcompat + tracking integration
+# ---------------------------------------------------------------------------
+
+
+def _build_pr_s21_minimal_actions() -> pd.DataFrame:
+    """Mirrors the v2.8.0 golden fixture builder. Must stay byte-stable across PR-S21."""
+    return _df(
+        [
+            _make_pass_action(action_id=1, time_seconds=0.0, team_id=200, player_id=701),
+            _make_gk_action(
+                action_id=2,
+                keeper_action="keeper_save",
+                time_seconds=2.0,
+                team_id=100,
+                player_id=999,
+                start_x=5.0,
+                start_y=34.0,
+            ),
+            _make_pass_action(action_id=3, time_seconds=4.0, team_id=200, player_id=702),
+            _make_pass_action(action_id=4, time_seconds=6.0, team_id=200, player_id=703),
+            _make_shot_action(
+                action_id=5, time_seconds=8.0, team_id=200, player_id=704, start_x=95.0, start_y=34.0, shot_type="shot"
+            ),
+            _make_pass_action(action_id=6, time_seconds=12.0, team_id=100, player_id=205),
+            _make_shot_action(
+                action_id=7,
+                time_seconds=14.0,
+                team_id=100,
+                player_id=206,
+                start_x=10.0,
+                start_y=34.0,
+                shot_type="shot_freekick",
+            ),
+            _make_action(action_id=8, time_seconds=16.0, team_id=200, player_id=708),
+        ]
+    )
+
+
+class TestFramesKwargBackcompat:
+    def test_frames_none_bit_identical_to_v280(self):
+        """Backward-compat: silly-kicks 2.8.0 behavior pinned by golden fixture."""
+        from pathlib import Path
+
+        actions = _build_pr_s21_minimal_actions()
+        actual = add_pre_shot_gk_context(actions)
+        expected = pd.read_parquet(Path(__file__).parent / "_golden_pre_shot_gk_context_v280.parquet")
+        pd.testing.assert_frame_equal(actual, expected, check_dtype=True)
+
+    def test_frames_none_implicit_kwarg_form_unchanged(self):
+        """Calling without any kwarg still works — original positional/keyword API preserved."""
+        actions = _build_pr_s21_minimal_actions()
+        out = add_pre_shot_gk_context(actions, lookback_seconds=10.0, lookback_actions=5)
+        assert "gk_was_engaged" in out.columns
+        # No tracking-related columns when frames not supplied.
+        assert "pre_shot_gk_x" not in out.columns
+        assert "frame_id" not in out.columns
+
+
+class TestFramesKwargWithTracking:
+    @staticmethod
+    def _build_frames_for_pr_s21_actions() -> pd.DataFrame:
+        """One frame at t=8.0 covering shot at action_id=5.
+        GK player 999 (team 100) at (104, 34); shooter player 704 (team 200) at (95, 34).
+        """
+        rows = [
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=2000,
+                time_seconds=8.0,
+                frame_rate=25.0,
+                player_id=704,
+                team_id=200,
+                is_ball=False,
+                is_goalkeeper=False,
+                x=95.0,
+                y=34.0,
+                z=float("nan"),
+                speed=2.0,
+                speed_source="native",
+                ball_state="alive",
+                team_attacking_direction="ltr",
+                confidence=None,
+                visibility=None,
+                source_provider="test",
+            ),
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=2000,
+                time_seconds=8.0,
+                frame_rate=25.0,
+                player_id=999,
+                team_id=100,
+                is_ball=False,
+                is_goalkeeper=True,
+                x=104.0,
+                y=34.0,
+                z=float("nan"),
+                speed=0.5,
+                speed_source="native",
+                ball_state="alive",
+                team_attacking_direction="ltr",
+                confidence=None,
+                visibility=None,
+                source_provider="test",
+            ),
+        ]
+        return pd.DataFrame(rows)
+
+    def test_frames_supplied_emits_8_extra_columns(self):
+        actions = _build_pr_s21_minimal_actions()
+        frames = self._build_frames_for_pr_s21_actions()
+        out = add_pre_shot_gk_context(actions, frames=frames)
+        expected_extra = {
+            "pre_shot_gk_x",
+            "pre_shot_gk_y",
+            "pre_shot_gk_distance_to_goal",
+            "pre_shot_gk_distance_to_shot",
+            "frame_id",
+            "time_offset_seconds",
+            "n_candidate_frames",
+            "link_quality_score",
+        }
+        assert expected_extra.issubset(set(out.columns))
+
+    def test_frames_supplied_populates_gk_position_for_linked_shot(self):
+        actions = _build_pr_s21_minimal_actions()
+        frames = self._build_frames_for_pr_s21_actions()
+        out = add_pre_shot_gk_context(actions, frames=frames)
+        # Action 5 (shot at t=8.0) should have GK at (104, 34).
+        shot = out[out["action_id"] == 5].iloc[0]
+        assert float(shot["pre_shot_gk_x"]) == pytest.approx(104.0)
+        assert float(shot["pre_shot_gk_y"]) == pytest.approx(34.0)
+        # Distance to goal (105, 34) = 1; distance to shot start (95, 34) = 9.
+        assert float(shot["pre_shot_gk_distance_to_goal"]) == pytest.approx(1.0)
+        assert float(shot["pre_shot_gk_distance_to_shot"]) == pytest.approx(9.0)
+
+    def test_frames_supplied_non_shot_rows_have_nan_gk_position(self):
+        actions = _build_pr_s21_minimal_actions()
+        frames = self._build_frames_for_pr_s21_actions()
+        out = add_pre_shot_gk_context(actions, frames=frames)
+        non_shots = out[
+            ~out["type_id"].isin({spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty")})
+        ]
+        assert non_shots["pre_shot_gk_x"].isna().all()
+
+
+class TestFramesKwargNoModuleImportCycle:
+    def test_no_top_level_tracking_import_in_spadl_utils(self):
+        """Lazy-import contract per ADR-005 § 5: silly_kicks.spadl.utils must NOT import
+        silly_kicks.tracking.* at module top-level. Static AST inspection — runtime
+        ``sys.modules`` manipulation creates duplicate class objects that break
+        ``isinstance`` in other tests (cross-module class identity)."""
+        import ast
+        from pathlib import Path
+
+        import silly_kicks.spadl.utils as _utils
+
+        source = Path(_utils.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        offenders: list[str] = []
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("silly_kicks.tracking"):
+                        offenders.append(f"top-level `import {alias.name}` at line {node.lineno}")
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and node.module.startswith("silly_kicks.tracking"):
+                    offenders.append(f"top-level `from {node.module} import ...` at line {node.lineno}")
+            elif isinstance(node, ast.If):
+                test = node.test
+                is_type_checking = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+                    isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+                )
+                if is_type_checking:
+                    continue
+                for stmt in node.body:
+                    if (
+                        isinstance(stmt, ast.ImportFrom)
+                        and stmt.module
+                        and stmt.module.startswith("silly_kicks.tracking")
+                    ):
+                        offenders.append(
+                            f"non-TYPE_CHECKING top-level if-block imports {stmt.module} at line {stmt.lineno}"
+                        )
+        assert not offenders, f"silly_kicks.spadl.utils violates ADR-005 s 5 lazy-import: {offenders}"
+
+
+class TestFramesKwargNanSafety:
+    def test_nan_defending_gk_player_id_path_does_not_crash_with_frames(self):
+        """Pre-engagement shot (no defending-keeper engagement) -> NaN GK columns, no crash."""
+        # Only a shot, no keeper actions in window -> defending_gk_player_id is NaN.
+        actions = _df(
+            [
+                _make_shot_action(
+                    action_id=10, time_seconds=10.0, team_id=200, player_id=701, start_x=90.0, start_y=34.0
+                ),
+            ]
+        )
+        frames = pd.DataFrame(
+            [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=3000,
+                    time_seconds=10.0,
+                    frame_rate=25.0,
+                    player_id=999,
+                    team_id=100,
+                    is_ball=False,
+                    is_goalkeeper=True,
+                    x=104.0,
+                    y=34.0,
+                    z=float("nan"),
+                    speed=0.5,
+                    speed_source="native",
+                    ball_state="alive",
+                    team_attacking_direction="ltr",
+                    confidence=None,
+                    visibility=None,
+                    source_provider="test",
+                ),
+            ]
+        )
+        out = add_pre_shot_gk_context(actions, frames=frames)
+        # defending_gk_player_id is NaN -> all 4 GK position columns NaN.
+        assert pd.isna(out["defending_gk_player_id"].iloc[0])
+        assert pd.isna(out["pre_shot_gk_x"].iloc[0])

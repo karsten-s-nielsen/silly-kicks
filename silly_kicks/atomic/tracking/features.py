@@ -11,16 +11,25 @@ from __future__ import annotations
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
 from silly_kicks.tracking.feature_framework import lift_to_states
 from silly_kicks.tracking.utils import _resolve_action_frame_context
 
+_ATOMIC_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty"))
+
 __all__ = [
     "actor_speed",
     "add_action_context",
+    "add_pre_shot_gk_position",
+    "atomic_pre_shot_gk_default_xfns",
     "atomic_tracking_default_xfns",
     "defenders_in_triangle_to_goal",
     "nearest_defender_distance",
+    "pre_shot_gk_distance_to_goal",
+    "pre_shot_gk_distance_to_shot",
+    "pre_shot_gk_x",
+    "pre_shot_gk_y",
     "receiver_zone_density",
 ]
 
@@ -145,4 +154,176 @@ atomic_tracking_default_xfns = [
     lift_to_states(actor_speed),
     lift_to_states(receiver_zone_density),
     lift_to_states(defenders_in_triangle_to_goal),
+]
+
+
+# ---------------------------------------------------------------------------
+# PR-S21 — atomic pre_shot_gk_* mirror
+# ---------------------------------------------------------------------------
+
+
+def pre_shot_gk_x(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Atomic-SPADL: defending GK's x at the linked frame (m, LTR-normalized).
+
+    Mirrors :func:`silly_kicks.tracking.features.pre_shot_gk_x` with atomic shot type ids
+    (``{shot, shot_penalty}`` — atomic does NOT recognize ``shot_freekick``, which is
+    collapsed into ``freekick``).
+
+    REQUIRES ``defending_gk_player_id`` column in ``actions``
+    (run ``silly_kicks.atomic.spadl.utils.add_pre_shot_gk_context`` first).
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.atomic.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.atomic.tracking.features import pre_shot_gk_x
+        atomic = add_pre_shot_gk_context(atomic)
+        gk_x = pre_shot_gk_x(atomic, frames)
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021).
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(actions["x"], actions["y"], ctx, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)
+    return df["pre_shot_gk_x"].rename("pre_shot_gk_x")
+
+
+def pre_shot_gk_y(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Atomic-SPADL: defending GK's y at the linked frame.
+
+    See :func:`pre_shot_gk_x` for NaN/REQUIRES contract. See NOTICE for full citations.
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.atomic.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.atomic.tracking.features import pre_shot_gk_y
+        atomic = add_pre_shot_gk_context(atomic)
+        gk_y = pre_shot_gk_y(atomic, frames)
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021).
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(actions["x"], actions["y"], ctx, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)
+    return df["pre_shot_gk_y"].rename("pre_shot_gk_y")
+
+
+def pre_shot_gk_distance_to_goal(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Atomic-SPADL: Euclidean distance (m) from defending GK to goal-mouth center.
+
+    See :func:`pre_shot_gk_x` for NaN/REQUIRES contract. See NOTICE for full citations.
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.atomic.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.atomic.tracking.features import pre_shot_gk_distance_to_goal
+        atomic = add_pre_shot_gk_context(atomic)
+        d = pre_shot_gk_distance_to_goal(atomic, frames)
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021).
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(actions["x"], actions["y"], ctx, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)
+    return df["pre_shot_gk_distance_to_goal"].rename("pre_shot_gk_distance_to_goal")
+
+
+def pre_shot_gk_distance_to_shot(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Atomic-SPADL: Euclidean distance (m) from defending GK to shot anchor (action.x, action.y).
+
+    See :func:`pre_shot_gk_x` for NaN/REQUIRES contract. See NOTICE for full citations.
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.atomic.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.atomic.tracking.features import pre_shot_gk_distance_to_shot
+        atomic = add_pre_shot_gk_context(atomic)
+        d = pre_shot_gk_distance_to_shot(atomic, frames)
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021).
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(actions["x"], actions["y"], ctx, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)
+    return df["pre_shot_gk_distance_to_shot"].rename("pre_shot_gk_distance_to_shot")
+
+
+@nan_safe_enrichment
+def add_pre_shot_gk_position(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+) -> pd.DataFrame:
+    """Atomic-SPADL aggregator: 4 GK-position columns + 4 linkage-provenance columns.
+
+    Mirrors :func:`silly_kicks.tracking.features.add_pre_shot_gk_position` with atomic
+    column reads (``x``, ``y``) and atomic shot type ids (``{shot, shot_penalty}``).
+
+    REQUIRES ``defending_gk_player_id`` column in ``actions``
+    (run ``silly_kicks.atomic.spadl.utils.add_pre_shot_gk_context`` first).
+
+    Returns
+    -------
+    pd.DataFrame
+        Input atomic actions with the columns:
+        - pre_shot_gk_x (float64, m)
+        - pre_shot_gk_y (float64, m)
+        - pre_shot_gk_distance_to_goal (float64, m)
+        - pre_shot_gk_distance_to_shot (float64, m)
+        - frame_id (Int64; NaN if unlinked)
+        - time_offset_seconds (float64; NaN if unlinked)
+        - link_quality_score (float64; NaN if unlinked)
+        - n_candidate_frames (int64)
+
+    Raises
+    ------
+    ValueError
+        If ``defending_gk_player_id`` column is absent.
+
+    See NOTICE.
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.atomic.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.atomic.tracking.features import add_pre_shot_gk_position
+        atomic = add_pre_shot_gk_context(atomic)
+        enriched = add_pre_shot_gk_position(atomic, frames)
+    """
+    if "defending_gk_player_id" not in actions.columns:
+        raise ValueError(
+            "add_pre_shot_gk_position: actions missing required column "
+            "'defending_gk_player_id'. Run silly_kicks.atomic.spadl.utils.add_pre_shot_gk_context "
+            "first to populate it."
+        )
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(actions["x"], actions["y"], ctx, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)
+    out = actions.copy()
+    for col in ("pre_shot_gk_x", "pre_shot_gk_y", "pre_shot_gk_distance_to_goal", "pre_shot_gk_distance_to_shot"):
+        out[col] = df[col]
+    pointer_cols = ctx.pointers.set_index("action_id")[
+        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    ]
+    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+atomic_pre_shot_gk_default_xfns = [
+    lift_to_states(pre_shot_gk_x),
+    lift_to_states(pre_shot_gk_y),
+    lift_to_states(pre_shot_gk_distance_to_goal),
+    lift_to_states(pre_shot_gk_distance_to_shot),
 ]

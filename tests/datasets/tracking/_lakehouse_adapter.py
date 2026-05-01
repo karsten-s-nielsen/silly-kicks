@@ -193,7 +193,7 @@ def lakehouse_to_kloppy_dataset(lakehouse_df: pd.DataFrame, provider: Any):
     period_lookup = {p.id: p for p in periods}
     frames = []
     for (pid_int, fid_int), group in df.groupby(["period", "frame"], sort=True):
-        period_obj = period_lookup[int(pid_int)]
+        period_obj = period_lookup[int(pid_int)]  # type: ignore[arg-type]  # groupby keys are Hashable but runtime gives ints
         ts = datetime.timedelta(seconds=float(group["timestamp_seconds"].iloc[0]))
         players_data = {}
         for _, row in group.iterrows():
@@ -225,7 +225,7 @@ def lakehouse_to_kloppy_dataset(lakehouse_df: pd.DataFrame, provider: Any):
                 statistics=[],
                 ball_owning_team=home_team,
                 ball_state=None,
-                frame_id=int(fid_int),
+                frame_id=int(fid_int),  # type: ignore[arg-type]  # groupby key Hashable -> int at runtime
                 players_data=players_data,
                 other_data={},
                 ball_coordinates=ball_coords,

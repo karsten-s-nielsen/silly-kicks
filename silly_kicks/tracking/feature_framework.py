@@ -35,7 +35,7 @@ __all__ = [
 
 @dataclasses.dataclass(frozen=True)
 class ActionFrameContext:
-    """Linkage + actor/opposite-team frame slices, computed once per add_action_context call.
+    """Linkage + actor / opposite-team / defending-GK frame slices, computed once per call.
 
     Attributes
     ----------
@@ -50,6 +50,16 @@ class ActionFrameContext:
     opposite_rows_per_action : pd.DataFrame
         Long-form: (action_id, opposite-team frame row) pairs. Used by geometric
         feature kernels via groupby('action_id').
+    defending_gk_rows : pd.DataFrame
+        Long-form: one row per (linked action, frame row) where
+        ``frame.player_id == action.defending_gk_player_id`` AND ``not is_ball``.
+        Empty DataFrame when ``defending_gk_player_id`` column is absent from
+        ``actions``, when the ID is NaN, when the action is unlinked, or when
+        the GK player is absent from the linked frame (substitution case).
+        Consumed by ``silly_kicks.tracking._kernels._pre_shot_gk_position``.
+
+    Direct construction of ``ActionFrameContext`` is not part of the public API;
+    always build via ``silly_kicks.tracking.utils._resolve_action_frame_context``.
 
     Examples
     --------
@@ -57,13 +67,15 @@ class ActionFrameContext:
 
         from silly_kicks.tracking.utils import _resolve_action_frame_context
         ctx = _resolve_action_frame_context(actions, frames)
-        # ctx.actor_rows / ctx.opposite_rows_per_action consumed by per-feature kernels.
+        # ctx.actor_rows / ctx.opposite_rows_per_action / ctx.defending_gk_rows
+        # consumed by per-feature kernels.
     """
 
     actions: pd.DataFrame
     pointers: pd.DataFrame
     actor_rows: pd.DataFrame
     opposite_rows_per_action: pd.DataFrame
+    defending_gk_rows: pd.DataFrame = dataclasses.field(default_factory=pd.DataFrame)
 
 
 def lift_to_states(

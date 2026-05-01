@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -201,14 +203,20 @@ def test_interpolate_xt_grid_no_scipy(mocker: MockerFixture) -> None:
 def xt_model(sb_worldcup_data: pd.HDFStore) -> xt.ExpectedThreat:
     """Test the xT framework on the StatsBomb World Cup data."""
     # 1. Load a set of actions to train the model on
-    df_games = sb_worldcup_data["games"].set_index("game_id")
+    df_games = cast(pd.DataFrame, sb_worldcup_data["games"]).set_index("game_id")
     # 2. Convert direction of play
-    actions_ltr = pd.concat(
-        [
-            spadl.play_left_to_right(sb_worldcup_data[f"actions/game_{game_id}"], game.home_team_id)
-            for game_id, game in df_games.iterrows()
-        ]
-    ).pipe(pd.DataFrame)
+    actions_ltr = cast(
+        pd.DataFrame,
+        pd.concat(
+            [
+                spadl.play_left_to_right(
+                    cast(pd.DataFrame, sb_worldcup_data[f"actions/game_{game_id}"]),
+                    game.home_team_id,
+                )
+                for game_id, game in df_games.iterrows()
+            ]
+        ),
+    )
     # 3. Train xT model
     xTModel = xt.ExpectedThreat(l=16, w=12)
     xTModel.fit(actions_ltr)
@@ -216,18 +224,18 @@ def xt_model(sb_worldcup_data: pd.HDFStore) -> xt.ExpectedThreat:
 
 
 def test_predict(sb_worldcup_data: pd.HDFStore, xt_model: xt.ExpectedThreat) -> None:
-    games = sb_worldcup_data["games"]
+    games = cast(pd.DataFrame, sb_worldcup_data["games"])
     game = games.iloc[-1]
-    actions = sb_worldcup_data[f"actions/game_{game.game_id}"]
+    actions = cast(pd.DataFrame, sb_worldcup_data[f"actions/game_{game.game_id}"])
     ratings = xt_model.rate(actions)
     assert ratings.dtype is np.dtype(np.float64)
     assert len(ratings) == len(actions)
 
 
 def test_predict_with_interpolation(sb_worldcup_data: pd.HDFStore, xt_model: xt.ExpectedThreat) -> None:
-    games = sb_worldcup_data["games"]
+    games = cast(pd.DataFrame, sb_worldcup_data["games"])
     game = games.iloc[-1]
-    actions = sb_worldcup_data[f"actions/game_{game.game_id}"]
+    actions = cast(pd.DataFrame, sb_worldcup_data[f"actions/game_{game.game_id}"])
     ratings = xt_model.rate(actions, use_interpolation=True)
     assert ratings.dtype is np.dtype(np.float64)
     assert len(ratings) == len(actions)

@@ -971,7 +971,9 @@ class TestBoundaryAgainstStatsBomb64Match:
         ],
     )
     def test_boundary_metrics_against_native_per_match(self, sb_worldcup_data: pd.HDFStore, match_id: int):
-        actions = sb_worldcup_data.get(f"actions/game_{match_id}")
+        from typing import cast as _cast
+
+        actions = _cast(pd.DataFrame, sb_worldcup_data.get(f"actions/game_{match_id}"))
         non_synth = actions[actions["possession"].notna()].copy()
         non_synth = add_possessions(non_synth)
 
