@@ -59,7 +59,7 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
 - Anzer, G., & Bauer, P. (2021). "A goal scoring probability model for shots
   based on synchronized positional and event data in football and futsal."
   Frontiers in Sports and Active Living, 3, 624475.
-  (player_speed and distance-to-defender as xG features)
+  (player_speed, distance-to-defender, and defending-GK-position as xG features)
 
 - Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
   Conference.

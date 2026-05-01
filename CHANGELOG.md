@@ -5,6 +5,94 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] — 2026-05-01
+
+### Added — Pre-shot GK position + baselines backfill (PR-S21)
+
+- **`silly_kicks.tracking.features`** — 4 GK-position helpers: `pre_shot_gk_x`,
+  `pre_shot_gk_y`, `pre_shot_gk_distance_to_goal`, `pre_shot_gk_distance_to_shot`.
+  Plus aggregator `add_pre_shot_gk_position(actions, frames) -> pd.DataFrame`
+  that emits the 4 GK columns + 4 linkage-provenance columns. Decorated with
+  `@nan_safe_enrichment` per ADR-003. Plus `pre_shot_gk_default_xfns` (4
+  `lift_to_states` wrappers) for HybridVAEP integration.
+- **`silly_kicks.atomic.tracking.features`** — atomic-SPADL parity with the
+  same public surface (`atomic_pre_shot_gk_default_xfns`). Mirrors the standard
+  surface with atomic-shaped column reads (`x, y`) and atomic shot type ids
+  (`{shot, shot_penalty}` — atomic does not recognize `shot_freekick`).
+- **`silly_kicks.spadl.utils.add_pre_shot_gk_context(*, frames=None)`** — additive
+  optional `frames` kwarg. When supplied, emits 4 GK-position columns + 4
+  provenance columns by lazy-importing the canonical compute (preserves
+  ADR-005 §5 no-cycle invariant). When `frames=None` (default), behavior is
+  bit-identical to silly-kicks 2.8.0 — no frames-related columns appear.
+  Backward-compat pinned by golden-fixture test.
+- **`silly_kicks.atomic.spadl.utils.add_pre_shot_gk_context`** — atomic mirror
+  of the same `frames=None` extension.
+- **`silly_kicks.tracking._kernels._pre_shot_gk_position`** (private) —
+  schema-agnostic compute kernel shared between standard and atomic surfaces.
+- **`silly_kicks.tracking.feature_framework.ActionFrameContext`** gains
+  `defending_gk_rows: pd.DataFrame` field (default-factory empty DataFrame —
+  preserves direct construction backward-compat).
+- **`scripts/regenerate_action_context_baselines.py`** — one-shot regenerator
+  for `*_expected.parquet` files + `empirical_action_context_baselines.json`.
+- **`tests/datasets/tracking/action_context_slim/{provider}_expected.parquet`**
+  — per-provider expected output committed for the bit-exact per-row
+  regression gate (4 providers).
+- **`tests/tracking/_provider_inputs.py`** — shared loader/synthesizer for the
+  regenerator and CI gate; keeps both in sync.
+- **`tests/tracking/test_action_context_expected_output.py`** — bit-exact
+  per-row regression gate (4 providers).
+- **`tests/tracking/test_empirical_action_context_baselines.py`** — JSON shape
+  gate + JSON-vs-parquet consistency gate.
+
+### Changed
+
+- **`silly_kicks.spadl.utils.add_pre_shot_gk_context`** + atomic mirror —
+  bug-fix: `defending_gk_player_id` output column now preserves the input
+  `player_id` dtype. Numeric `player_id` (canonical SPADL_COLUMNS:
+  PFF / StatsBomb / Opta / Wyscout / Metrica) → `float64` NaN-coded (unchanged).
+  Object/string `player_id` (`KLOPPY_SPADL_COLUMNS` / `SPORTEC_SPADL_COLUMNS`
+  schema) → `object` dtype with `None` for unidentified rows. Previous
+  unconditional `int(gk_id_raw)` cast crashed on string Sportec player_ids;
+  surfaced by PR-S21's TF-11 regression-gate exercising real-shot rows on
+  Sportec data.
+- **`tests/datasets/tracking/empirical_action_context_baselines.json`** —
+  all 256 percentile slots backfilled (4 percentiles × 8 features × 4 providers).
+  Per-row gate exercises real GK-position computation on at least one shot
+  per provider (synthesizer in `tests/tracking/_provider_inputs.py` stamps a
+  synthetic keeper_save → shot pair anchored on real frame goalkeeper data
+  so the events-side helper populates `defending_gk_player_id` and the
+  tracking aggregator emits non-NaN GK position).
+- **`NOTICE`** — Anzer & Bauer (2021) entry description expanded to enumerate
+  defending-GK-position alongside player_speed and distance-to-defender.
+- **`TODO.md`** — TF-1 + TF-11 marked SHIPPED. PR-S21 active-cycle entry.
+  Bundled National Park additions: TF-12 (`pre_shot_gk_angle_*`), TF-13
+  (frame-based GK identification fallback), TF-14 (defensive-line features).
+
+### Removed
+
+- **4 vestigial `test_placeholder` stubs** (National Park cleanup): the
+  `TestKloppyE2E.test_placeholder` (`test_kloppy.py`),
+  `TestSpadlConvertorE2E.test_placeholder` (`test_opta.py`, `test_wyscout.py`),
+  and `TestSpadlConvertor.test_placeholder` (`test_statsbomb.py`) classes
+  were inert `pytest.skip()` calls inherited from the v0.1.0 socceraction
+  fork (the original DataLoader classes — `OptaLoader` / `StatsBombLoader` /
+  `PublicWyscoutLoader` / `KloppyLoader` — were removed at fork time but the
+  e2e test scaffolds were left behind as no-op skip stubs). Plus the
+  unreferenced `pytestmark_e2e` module attribute in `test_opta.py`. Net
+  effect: `pytest -m e2e` now runs 12 PASSED / 0 SKIPPED instead of
+  12 PASSED / 4 SKIPPED — the SKIPPED column is no longer a hiding place
+  for genuine missing-fixture failures.
+
+### Notes
+
+- No breaking changes. PR-S21 ships entirely within ADR-005's locked
+  architecture; no new ADR.
+- Per-Series GK helpers (`pre_shot_gk_x` etc.) silently emit all-NaN when
+  `defending_gk_player_id` is absent from `actions` — required by VAEP's
+  `feature_column_names` introspection path. The aggregator
+  `add_pre_shot_gk_position` raises `ValueError` (user-direct boundary).
+  Documented in helper docstrings + `pre_shot_gk_default_xfns`.
+
 ## [2.8.0] — 2026-05-01
 
 ### Added — Tracking-aware action_context features (PR-S20)

@@ -301,7 +301,8 @@ def _query_lakehouse_sample(provider_raw: str, n_rows: int = 50000) -> pd.DataFr
                   AND frame BETWEEN {min_f} AND {max_f}
                 """,
             )
-            cols = [d[0] for d in cur.description]
+            description = cur.description or []
+            cols = [d[0] for d in description]
             rows = cur.fetchall()
     finally:
         conn.close()
@@ -390,3 +391,193 @@ def test_skillcorner_action_context_sweep() -> None:
     enriched = add_action_context(actions, frames)
     _bounds_check(enriched, "skillcorner")
     _summarize(enriched, "skillcorner")
+
+
+# ---------------------------------------------------------------------------
+# PR-S21 — pre_shot_gk_position e2e smoke (per provider)
+# ---------------------------------------------------------------------------
+
+
+def _augment_actions_for_gk_pipeline(actions: pd.DataFrame) -> pd.DataFrame:
+    """Add the columns silly_kicks.spadl.utils.add_pre_shot_gk_context requires.
+
+    Synthesized actions from _synthesize_actions_from_frames lack game_id, type_id,
+    result_id, bodypart_id (since the PR-S20 e2e bounds-check doesn't need them).
+    For PR-S21 GK pipeline we need them populated; default to pass / success / foot
+    (no shots → GK columns will all be NaN; this is a structural smoke test).
+    """
+    from silly_kicks.spadl import config as spadlconfig
+
+    out = actions.copy()
+    if "game_id" not in out.columns:
+        out["game_id"] = 1
+    if "type_id" not in out.columns:
+        out["type_id"] = spadlconfig.actiontype_id["pass"]
+    if "result_id" not in out.columns:
+        out["result_id"] = spadlconfig.result_id["success"]
+    if "bodypart_id" not in out.columns:
+        out["bodypart_id"] = spadlconfig.bodypart_id["foot"]
+    return out
+
+
+_GK_PIPELINE_EXTRA_COLUMNS = (
+    "pre_shot_gk_x",
+    "pre_shot_gk_y",
+    "pre_shot_gk_distance_to_goal",
+    "pre_shot_gk_distance_to_shot",
+    "frame_id",
+    "time_offset_seconds",
+    "link_quality_score",
+    "n_candidate_frames",
+)
+
+
+def _gk_pipeline_smoke(actions: pd.DataFrame, frames: pd.DataFrame, provider: str) -> None:
+    """Run add_pre_shot_gk_context(actions, frames=frames) and assert structural properties.
+
+    Synthesized actions are non-shots → GK columns all NaN; this validates wiring +
+    lazy-import + 8 column emission, not value distributions. Real shot validation
+    is covered by tests/tracking/test_kernels.py (Tier-1) and the slim per-row gate.
+    """
+    from silly_kicks.spadl.utils import add_pre_shot_gk_context
+
+    actions = _augment_actions_for_gk_pipeline(actions)
+    enriched = add_pre_shot_gk_context(actions, frames=frames)
+    missing = [c for c in _GK_PIPELINE_EXTRA_COLUMNS if c not in enriched.columns]
+    assert not missing, f"{provider}: GK pipeline missing columns {missing}"
+    # GK columns should be all-NaN (synthesized non-shots).
+    for col in ("pre_shot_gk_x", "pre_shot_gk_y", "pre_shot_gk_distance_to_goal", "pre_shot_gk_distance_to_shot"):
+        assert enriched[col].isna().all(), f"{provider}: {col} has non-NaN values on non-shot synthesized actions."
+    # Provenance columns should be populated for at least 95% of rows (linkage rate).
+    link_rate = enriched["frame_id"].notna().mean()
+    assert link_rate >= 0.95, f"{provider}: GK pipeline link rate {link_rate:.2f} < 0.95"
+    print(f"\n[gk-pipeline-smoke:{provider}] link_rate={link_rate:.3f}, n={len(enriched)}")
+
+
+@pytest.mark.e2e
+def test_pff_pre_shot_gk_pipeline_smoke() -> None:
+    """PFF: load frames + synthesize non-shot actions; run full add_pre_shot_gk_context(frames=...)."""
+    path = os.environ.get("PFF_TRACKING_DIR")
+    if not path:
+        pytest.skip("PFF_TRACKING_DIR not set; skipping PFF GK pipeline smoke.")
+    pff_dir = Path(path)
+    if not pff_dir.is_dir():
+        pytest.skip(f"PFF_TRACKING_DIR={path!r} is not a directory; skipping.")
+    matches = sorted(p for p in pff_dir.iterdir() if p.name.endswith(".jsonl.bz2"))
+    if not matches:
+        pytest.skip(f"No .jsonl.bz2 files in PFF_TRACKING_DIR={path!r}; skipping.")
+
+    rows: list[dict[str, Any]] = []
+    with bz2.open(matches[0], "rt", encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            if i >= 3000:
+                break
+            obj = json.loads(line)
+            period_id = obj.get("period")
+            if period_id is None:
+                continue
+            for is_home, players in (
+                (True, obj.get("homePlayers") or []),
+                (False, obj.get("awayPlayers") or []),
+            ):
+                for p in players:
+                    rows.append(
+                        {
+                            "game_id": int(obj.get("gameRefId") or 0),
+                            "period_id": int(period_id),
+                            "frame_id": int(obj.get("frameNum") or i),
+                            "time_seconds": float(obj.get("periodElapsedTime") or 0.0),
+                            "frame_rate": 30.0,
+                            "player_id": p.get("jerseyNum"),
+                            "team_id": 1 if is_home else 2,
+                            "is_ball": False,
+                            "is_goalkeeper": False,
+                            "x_centered": float(p.get("x", 0.0)),
+                            "y_centered": float(p.get("y", 0.0)),
+                            "z": float("nan"),
+                            "speed_native": float("nan"),
+                            "ball_state": "alive",
+                        }
+                    )
+    if not rows:
+        pytest.skip("PFF GK pipeline smoke: no parseable rows.")
+    raw = pd.DataFrame(rows)
+    raw["player_id"] = raw["player_id"].astype("Int64")
+    raw["team_id"] = raw["team_id"].astype("Int64")
+
+    from silly_kicks.tracking.pff import convert_to_frames as pff_convert
+    from silly_kicks.tracking.utils import _derive_speed
+
+    frames, _ = pff_convert(raw, home_team_id=1, home_team_start_left=True)
+    frames = _derive_speed(frames)
+    actions = _synthesize_actions_from_frames(frames, n_actions=10)
+    _gk_pipeline_smoke(actions, frames, "pff")
+
+
+@pytest.mark.e2e
+def test_idsse_pre_shot_gk_pipeline_smoke() -> None:
+    raw = _query_lakehouse_sample("idsse")
+    if raw is None or len(raw) == 0:
+        pytest.skip("IDSSE GK pipeline smoke requires Databricks SQL connectivity.")
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.datasets.tracking._lakehouse_adapter import lakehouse_to_sportec_input
+
+    sportec_input = lakehouse_to_sportec_input(raw)
+    sportec_input = sportec_input.dropna(subset=["x_centered", "y_centered"])
+    if len(sportec_input) == 0:
+        pytest.skip("IDSSE lakehouse sample yielded no usable rows.")
+
+    from silly_kicks.tracking.sportec import convert_to_frames as sportec_convert
+
+    home_team_str = str(sportec_input.loc[~sportec_input["is_ball"], "team_id"].dropna().iloc[0])
+    frames, _ = sportec_convert(sportec_input, home_team_id=home_team_str, home_team_start_left=True)
+    actions = _synthesize_actions_from_frames(frames, n_actions=10)
+    _gk_pipeline_smoke(actions, frames, "sportec")
+
+
+@pytest.mark.e2e
+def test_metrica_pre_shot_gk_pipeline_smoke() -> None:
+    raw = _query_lakehouse_sample("metrica")
+    if raw is None or len(raw) == 0:
+        pytest.skip("Metrica GK pipeline smoke requires Databricks SQL connectivity.")
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from kloppy.domain import Provider  # type: ignore[reportMissingImports]
+
+    from tests.datasets.tracking._lakehouse_adapter import lakehouse_to_kloppy_dataset
+
+    ds = lakehouse_to_kloppy_dataset(raw, Provider.METRICA)
+    if len(ds.records) == 0:
+        pytest.skip("Metrica lakehouse sample yielded no usable frames.")
+
+    from silly_kicks.tracking.kloppy import convert_to_frames as kloppy_convert
+
+    frames, _ = kloppy_convert(ds)
+    actions = _synthesize_actions_from_frames(frames, n_actions=10)
+    _gk_pipeline_smoke(actions, frames, "metrica")
+
+
+@pytest.mark.e2e
+def test_skillcorner_pre_shot_gk_pipeline_smoke() -> None:
+    raw = _query_lakehouse_sample("skillcorner")
+    if raw is None or len(raw) == 0:
+        pytest.skip("SkillCorner GK pipeline smoke requires Databricks SQL connectivity.")
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from kloppy.domain import Provider  # type: ignore[reportMissingImports]
+
+    from tests.datasets.tracking._lakehouse_adapter import lakehouse_to_kloppy_dataset
+
+    ds = lakehouse_to_kloppy_dataset(raw, Provider.SKILLCORNER)
+    if len(ds.records) == 0:
+        pytest.skip("SkillCorner lakehouse sample yielded no usable frames.")
+
+    from silly_kicks.tracking.kloppy import convert_to_frames as kloppy_convert
+
+    frames, _ = kloppy_convert(ds)
+    actions = _synthesize_actions_from_frames(frames, n_actions=10)
+    _gk_pipeline_smoke(actions, frames, "skillcorner")

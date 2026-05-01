@@ -1,3 +1,5 @@
+from typing import cast
+
 import pandas as pd
 import pytest
 
@@ -22,21 +24,41 @@ def test_atomic_goal_from_shot_label(test_goal_df: pd.DataFrame) -> None:
 
 def test_predict(sb_worldcup_data: pd.HDFStore) -> None:
     # Convert to atomic actions
-    games = sb_worldcup_data["games"]
+    games = cast(pd.DataFrame, sb_worldcup_data["games"])
     atomic_actions = {
-        game.game_id: atomicspadl.convert_to_atomic(sb_worldcup_data[f"actions/game_{game.game_id}"])
+        game.game_id: atomicspadl.convert_to_atomic(  # type: ignore[attr-defined]
+            cast(pd.DataFrame, sb_worldcup_data[f"actions/game_{game.game_id}"]),  # type: ignore[attr-defined]
+        )
         for game in games.itertuples()
     }
     # Test the vAEP framework on the StatsBomb World Cup data
     model = AtomicVAEP(nb_prev_actions=1)
     # comppute features and labels
-    features = pd.concat(
-        [model.compute_features(game, atomic_actions[game.game_id]) for game in games.iloc[:-1].itertuples()]
+    features = cast(
+        pd.DataFrame,
+        pd.concat(
+            [
+                model.compute_features(
+                    game,  # type: ignore[arg-type]
+                    atomic_actions[game.game_id],  # type: ignore[attr-defined]
+                )
+                for game in games.iloc[:-1].itertuples()
+            ]
+        ),
     )
     expected_features = set(fs.feature_column_names(model.xfns, model.nb_prev_actions))
     assert set(features.columns) == expected_features
-    labels = pd.concat(
-        [model.compute_labels(game, atomic_actions[game.game_id]) for game in games.iloc[:-1].itertuples()]
+    labels = cast(
+        pd.DataFrame,
+        pd.concat(
+            [
+                model.compute_labels(
+                    game,  # type: ignore[arg-type]
+                    atomic_actions[game.game_id],  # type: ignore[attr-defined]
+                )
+                for game in games.iloc[:-1].itertuples()
+            ]
+        ),
     )
     expected_labels = {"scores", "concedes"}
     assert set(labels.columns) == expected_labels

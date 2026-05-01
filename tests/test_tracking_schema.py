@@ -94,7 +94,7 @@ def test_tracking_conversion_report_is_frozen_dataclass():
         derived_speed_rows=0,
         unrecognized_player_ids=set(),
     )
-    assert dataclasses.is_dataclass(r) and r.__dataclass_params__.frozen
+    assert dataclasses.is_dataclass(r) and r.__dataclass_params__.frozen  # type: ignore[attr-defined]
 
 
 def test_tracking_conversion_report_has_unrecognized():

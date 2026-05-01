@@ -221,31 +221,6 @@ def test_opta_input_validation():
 
 
 # ---------------------------------------------------------------------------
-# Tests below require Opta XML fixtures in tests/datasets/opta/ and the
-# removed silly_kicks.data.opta loader.  They are marked e2e so they are
-# skipped in normal CI runs.
-# ---------------------------------------------------------------------------
-
-pytestmark_e2e = pytest.mark.e2e
-
-
-@pytest.mark.e2e
-class TestSpadlConvertorE2E:
-    """End-to-end SPADL converter tests that need Opta fixture files.
-
-    These tests require:
-    - tests/datasets/opta/f7-23-2018-1009316-matchresults.xml
-    - tests/datasets/opta/f24-23-2018-1009316-eventdetails.xml
-    - silly_kicks.data.opta.OptaLoader (removed)
-
-    Skipped unless ``-m e2e`` is passed to pytest.
-    """
-
-    def test_placeholder(self) -> None:
-        pytest.skip("Opta fixture data and data loaders are not available")
-
-
-# ---------------------------------------------------------------------------
 # goalkeeper_ids — accepted as no-op for cross-provider API symmetry (1.10.0)
 # ---------------------------------------------------------------------------
 

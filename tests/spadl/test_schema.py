@@ -79,7 +79,7 @@ def test_conversion_report_is_frozen():
         unrecognized_counts={},
     )
     with pytest.raises(AttributeError):
-        report.provider = "other"
+        report.provider = "other"  # type: ignore[misc]  # frozen dataclass intentionally rejects assignment
 
 
 def test_config_df_caching():

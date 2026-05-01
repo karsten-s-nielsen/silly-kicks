@@ -439,25 +439,3 @@ def test_wyscout_input_validation():
     df = pd.DataFrame({"game_id": [1]})
     with pytest.raises(ValueError, match="Wyscout"):
         wy.convert_to_actions(df, home_team_id=100)
-
-
-# ---------------------------------------------------------------------------
-# Tests below require Wyscout fixture files in tests/datasets/wyscout_public/
-# and the removed silly_kicks.data.wyscout loader.  They are marked e2e so
-# they are skipped in normal CI runs.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.e2e
-class TestSpadlConvertorE2E:
-    """End-to-end SPADL converter tests that need Wyscout fixture files.
-
-    These tests require:
-    - tests/datasets/wyscout_public/raw/ event data
-    - silly_kicks.data.wyscout.PublicWyscoutLoader (removed)
-
-    Skipped unless ``-m e2e`` is passed to pytest.
-    """
-
-    def test_placeholder(self) -> None:
-        pytest.skip("Wyscout fixture data and data loaders are not available")

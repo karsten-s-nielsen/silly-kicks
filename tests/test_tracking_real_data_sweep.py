@@ -47,8 +47,10 @@ def _summarize_provider(frames: pd.DataFrame, provider: str) -> dict[str, Any]:
         )
         players = frames[~frames["is_ball"]]
         joined = players.merge(ball, on=["period_id", "frame_id"])
-        dist = np.sqrt(
-            (joined["x"] - joined["bx"]) ** 2 + (joined["y"] - joined["by"]) ** 2,
+        dist = pd.Series(
+            np.sqrt(
+                (joined["x"] - joined["bx"]) ** 2 + (joined["y"] - joined["by"]) ** 2,
+            ),
         ).dropna()
         if len(dist):
             dist_pcts = {f"p{p}": float(np.percentile(dist, p)) for p in (25, 50, 75, 95)}
@@ -269,7 +271,8 @@ def _query_lakehouse_sample(provider_raw: str, n_rows: int = 50000) -> pd.DataFr
                   AND frame BETWEEN {min_f} AND {max_f}
                 """
             )
-            cols = [d[0] for d in cur.description]
+            description = cur.description or []
+            cols = [d[0] for d in description]
             rows = cur.fetchall()
     finally:
         conn.close()

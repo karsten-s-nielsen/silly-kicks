@@ -149,3 +149,40 @@ def test_action_context_actor_speed_populated(provider: str) -> None:
     assert speed_populated_rate >= 0.8, (
         f"{provider}: actor_speed populated only on {speed_populated_rate:.2f} of actions"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR-S21 — pre_shot_gk_position bounds (where GK rows exist in the slim slice)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("provider", ["pff", "sportec", "metrica", "skillcorner"])
+def test_pre_shot_gk_position_bounds(provider: str) -> None:
+    """When pre_shot_gk_* columns are populated (i.e. shots with linked GK), they satisfy
+    bound constraints. Off-pitch tolerance acknowledges per-provider asymmetry
+    (memory: reference_lakehouse_tracking_traps).
+
+    With synthesized non-shot actions in the committed slim slice, all GK columns are
+    NaN — the assertion is trivially satisfied (no rows to check). The bounds-check is
+    structurally exercised when full-match e2e data lands shot rows.
+    """
+    from pathlib import Path
+
+    expected_path = (
+        Path(__file__).resolve().parent.parent
+        / "datasets"
+        / "tracking"
+        / "action_context_slim"
+        / f"{provider}_expected.parquet"
+    )
+    if not expected_path.exists():
+        pytest.skip(f"{expected_path} not committed.")
+    expected = pd.read_parquet(expected_path)
+    has_gk_rows = expected["pre_shot_gk_x"].notna()
+    if not has_gk_rows.any():
+        return  # synthesized non-shots → all NaN; bounds trivially pass
+    gk = expected[has_gk_rows]
+    assert (gk["pre_shot_gk_x"].between(-5, 110)).all()
+    assert (gk["pre_shot_gk_y"].between(-5, 73)).all()
+    assert (gk["pre_shot_gk_distance_to_goal"].between(0, 130)).all()
+    assert (gk["pre_shot_gk_distance_to_shot"].between(0, 130)).all()

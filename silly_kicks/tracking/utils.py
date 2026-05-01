@@ -274,7 +274,10 @@ def _resolve_action_frame_context(
     pointers, _report = link_actions_to_frames(actions, frames)
 
     # Inner-join pointers <-> frames on (period_id, frame_id) to materialize linked frames per action
-    actions_with_period = actions[["action_id", "period_id", "team_id", "player_id"]]
+    projection_cols = ["action_id", "period_id", "team_id", "player_id"]
+    if "defending_gk_player_id" in actions.columns:
+        projection_cols.append("defending_gk_player_id")
+    actions_with_period = actions[projection_cols]
     pointer_with_period = pointers.merge(actions_with_period, on="action_id", how="left", suffixes=("", "_action"))
     long = pointer_with_period.merge(
         frames,
@@ -300,11 +303,24 @@ def _resolve_action_frame_context(
     else:
         opposite = long.iloc[0:0].copy()
 
+    # defending_gk_rows (PR-S21): rows where frame.player_id == action.defending_gk_player_id
+    # AND defending_gk_player_id is not NaN AND not ball.
+    # Provider-native player_ids may be strings (sportec) or numeric — comparing them
+    # element-wise via pd.Series.eq handles both cases; the .notna() mask guards NaN.
+    if "defending_gk_player_id" in long.columns and "player_id_frame" in long.columns:
+        gk_id_action = long["defending_gk_player_id"]
+        pid_frame = long["player_id_frame"]
+        gk_mask = (pid_frame == gk_id_action) & gk_id_action.notna() & (~long["is_ball"])
+        defending_gk_rows = long.loc[gk_mask].copy()
+    else:
+        defending_gk_rows = long.iloc[0:0].copy()
+
     return ActionFrameContext(
         actions=actions,
         pointers=pointers,
         actor_rows=actor_rows,
         opposite_rows_per_action=opposite,
+        defending_gk_rows=defending_gk_rows,
     )
 
 

@@ -69,6 +69,14 @@ def test_action_frame_context_has_required_fields():
     assert expected.issubset(field_names)
 
 
+def test_action_frame_context_has_defending_gk_rows_field():
+    """ActionFrameContext exposes a defending_gk_rows: pd.DataFrame field per ADR-005 (PR-S21)."""
+    from silly_kicks.tracking.feature_framework import ActionFrameContext
+
+    field_names = {f.name for f in dataclasses.fields(ActionFrameContext)}
+    assert "defending_gk_rows" in field_names
+
+
 @pytest.fixture
 def tiny_actions_and_frames():
     """3 actions + 3 frames at known times; 4 players + ball per frame."""
@@ -215,6 +223,66 @@ def test_resolve_action_frame_context_unlinked_action():
     )
     ctx = _resolve_action_frame_context(actions, frames)
     assert pd.isna(ctx.pointers["frame_id"].iloc[0])
+
+
+@pytest.fixture
+def tiny_actions_and_frames_with_gk(tiny_actions_and_frames):
+    """tiny_actions_and_frames with a defending-GK player_id flagged on action 101.
+
+    Action 101 is taken by team 1; the defending GK is team-2 player 22 (already
+    in the frame at (70, 35)). The other actions get NaN defending_gk_player_id.
+    """
+    actions, frames = tiny_actions_and_frames
+    actions = actions.copy()
+    actions["defending_gk_player_id"] = [22.0, float("nan"), float("nan")]
+    return actions, frames
+
+
+def test_resolve_action_frame_context_populates_defending_gk_rows_when_player_id_matches(
+    tiny_actions_and_frames_with_gk,
+):
+    from silly_kicks.tracking.utils import _resolve_action_frame_context
+
+    actions, frames = tiny_actions_and_frames_with_gk
+    ctx = _resolve_action_frame_context(actions, frames)
+    gk_for_action_101 = ctx.defending_gk_rows[ctx.defending_gk_rows["action_id"] == 101]
+    assert len(gk_for_action_101) == 1
+    assert float(gk_for_action_101["x"].iloc[0]) == pytest.approx(70.0)
+    assert float(gk_for_action_101["y"].iloc[0]) == pytest.approx(35.0)
+
+
+def test_resolve_action_frame_context_excludes_action_with_nan_defending_gk_player_id(
+    tiny_actions_and_frames_with_gk,
+):
+    from silly_kicks.tracking.utils import _resolve_action_frame_context
+
+    actions, frames = tiny_actions_and_frames_with_gk
+    ctx = _resolve_action_frame_context(actions, frames)
+    gk_for_action_102 = ctx.defending_gk_rows[ctx.defending_gk_rows["action_id"] == 102]
+    assert len(gk_for_action_102) == 0
+
+
+def test_resolve_action_frame_context_defending_gk_rows_empty_when_column_absent(
+    tiny_actions_and_frames,
+):
+    """Backward-compat: PR-S20 callers without defending_gk_player_id get empty rows."""
+    from silly_kicks.tracking.utils import _resolve_action_frame_context
+
+    actions, frames = tiny_actions_and_frames
+    ctx = _resolve_action_frame_context(actions, frames)
+    assert len(ctx.defending_gk_rows) == 0
+
+
+def test_resolve_action_frame_context_excludes_ball_from_defending_gk_rows(tiny_actions_and_frames):
+    """Even if a ball row had matching player_id (it shouldn't), is_ball=True excludes it."""
+    from silly_kicks.tracking.utils import _resolve_action_frame_context
+
+    actions, frames = tiny_actions_and_frames
+    actions = actions.copy()
+    # Force defending_gk_player_id to NaN (ball player_id) for all rows; result should be empty.
+    actions["defending_gk_player_id"] = float("nan")
+    ctx = _resolve_action_frame_context(actions, frames)
+    assert len(ctx.defending_gk_rows) == 0
 
 
 def test_lift_to_states_marks_output_frame_aware(tiny_actions_and_frames):

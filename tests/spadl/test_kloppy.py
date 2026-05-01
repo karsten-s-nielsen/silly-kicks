@@ -326,16 +326,3 @@ class TestKloppyDirectionOfPlay:
             f"start_x={post_flip_x} — expected ~45.7 (post-flip). "
             f"If you see ~59.3, _fix_direction_of_play was NOT applied."
         )
-
-
-# ---------------------------------------------------------------------------
-# E2E tests (require external fixtures, removed data loaders)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.e2e
-class TestKloppyE2E:
-    """End-to-end Kloppy comparison tests requiring external fixture files."""
-
-    def test_placeholder(self) -> None:
-        pytest.skip("Kloppy comparison fixtures and data loaders are not available")

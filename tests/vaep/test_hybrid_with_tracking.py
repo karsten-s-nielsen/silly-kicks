@@ -128,3 +128,86 @@ def test_hybrid_vaep_with_tracking_lifecycle():
     v.fit(X, y, learner="xgboost", val_size=0.25, random_state=42)
     ratings = v.rate(game, actions, frames=frames)
     assert "vaep_value" in ratings.columns
+
+
+# ---------------------------------------------------------------------------
+# PR-S21 — pre_shot_gk_default_xfns lifecycle through HybridVAEP
+# ---------------------------------------------------------------------------
+
+
+def _make_synthetic_match_with_gk(seed: int = 42, n_actions: int = 200):
+    """Extension of _make_synthetic_match: shots (type_id=11) get defending_gk_player_id
+    populated, with a defending GK at (104, 34) in their linked frame.
+    Non-shot rows get NaN defending_gk_player_id.
+    """
+    actions, frames = _make_synthetic_match(seed=seed, n_actions=n_actions)
+    actions = actions.copy()
+    is_shot = actions["type_id"] == 11
+    actions["defending_gk_player_id"] = np.where(is_shot, 99.0, np.nan)
+    # For each shot's linked frame, append a defending-GK row (player 99 on opposite team).
+    extra_rows = []
+    for _, a in actions[is_shot].iterrows():
+        fid = int(a["time_seconds"] * 10)
+        opposite_team = 2 if a["team_id"] == 1 else 1
+        extra_rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=a["time_seconds"],
+                frame_rate=10.0,
+                player_id=99,
+                team_id=opposite_team,
+                is_ball=False,
+                is_goalkeeper=True,
+                x=104.0,
+                y=34.0,
+                z=float("nan"),
+                speed=0.5,
+                speed_source="native",
+                ball_state="alive",
+                team_attacking_direction="ltr",
+                confidence=None,
+                visibility=None,
+                source_provider="synth",
+            )
+        )
+    if extra_rows:
+        frames = pd.concat([frames, pd.DataFrame(extra_rows)], ignore_index=True)
+    return actions, frames
+
+
+@pytest.mark.slow
+def test_hybrid_vaep_with_pre_shot_gk_lifecycle():
+    """HybridVAEP + tracking_default_xfns + pre_shot_gk_default_xfns: full lifecycle smoke test.
+
+    Asserts:
+      - Both PR-S20 and PR-S21 lifted feature columns appear in X.
+      - fit/rate cycle reaches no errors on synthetic data.
+    """
+    from silly_kicks.tracking.features import (
+        pre_shot_gk_default_xfns,
+        tracking_default_xfns,
+    )
+    from silly_kicks.vaep.hybrid import HybridVAEP, hybrid_xfns_default
+
+    actions, frames = _make_synthetic_match_with_gk()
+    game = pd.Series({"game_id": 1, "home_team_id": 1, "away_team_id": 2})
+
+    v = HybridVAEP(xfns=hybrid_xfns_default + tracking_default_xfns + pre_shot_gk_default_xfns)
+    X = v.compute_features(game, actions, frames=frames)
+    # PR-S20 features
+    assert any("nearest_defender_distance_a0" in c for c in X.columns)
+    # PR-S21 features
+    assert any("pre_shot_gk_x_a0" in c for c in X.columns)
+    assert any("pre_shot_gk_distance_to_goal_a0" in c for c in X.columns)
+
+    y = pd.DataFrame(
+        {
+            "scores": (actions["type_id"] == 11).astype(int).to_numpy(),
+            "concedes": np.zeros(len(actions), dtype=int),
+        }
+    )
+    v.fit(X, y, learner="xgboost", val_size=0.25, random_state=42)
+    ratings = v.rate(game, actions, frames=frames)
+    assert "vaep_value" in ratings.columns

@@ -55,6 +55,8 @@ def _load_statsbomb_one_match() -> pd.DataFrame:
         games = games.to_frame()
     first_game_id = games.iloc[0]["game_id"]
     actions = pd.read_hdf(h5_path, key=f"actions/game_{first_game_id}")
+    if isinstance(actions, pd.Series):
+        actions = actions.to_frame()
     return actions
 
 

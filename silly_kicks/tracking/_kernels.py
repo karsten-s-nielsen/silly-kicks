@@ -21,6 +21,7 @@ from .feature_framework import ActionFrameContext
 
 # Goal-mouth coordinates per spadl.config (105 x 68 m pitch, goal post-to-post 7.32 m centered on y=34)
 _GOAL_X = 105.0
+_GOAL_Y_CENTER = 34.0
 _GOAL_LEFT_POST_Y = 30.34
 _GOAL_RIGHT_POST_Y = 37.66
 
@@ -181,4 +182,71 @@ def _defenders_in_triangle_to_goal(
     for aid, c in counts.items():
         if aid in action_to_idx.index:
             out.loc[action_to_idx.loc[aid]] = float(c)  # type: ignore[arg-type]  # .loc[scalar] returns Hashable; pandas-stubs limitation
+    return out
+
+
+def _pre_shot_gk_position(
+    anchor_x: pd.Series,
+    anchor_y: pd.Series,
+    ctx: ActionFrameContext,
+    *,
+    shot_type_ids: frozenset[int],
+) -> pd.DataFrame:
+    """Per shot action: defending GK's x/y at the linked frame + 2 derived distances.
+
+    Returns
+    -------
+    pd.DataFrame
+        Indexed identically to ctx.actions with 4 columns:
+        - pre_shot_gk_x (float64)
+        - pre_shot_gk_y (float64)
+        - pre_shot_gk_distance_to_goal (float64) — Euclidean to goal-mouth center (105, 34)
+        - pre_shot_gk_distance_to_shot (float64) — Euclidean to (anchor_x, anchor_y)
+
+    All NaN for: non-shot rows; rows with no defending_gk_row in ctx
+    (covers unlinked / pre-engagement / GK-absent-from-frame cases).
+
+    Schema-agnostic per ADR-005 s 3 — caller supplies anchor columns and shot_type_ids.
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    actions = ctx.actions
+    out = pd.DataFrame(
+        {
+            "pre_shot_gk_x": np.full(len(actions), np.nan, dtype="float64"),
+            "pre_shot_gk_y": np.full(len(actions), np.nan, dtype="float64"),
+            "pre_shot_gk_distance_to_goal": np.full(len(actions), np.nan, dtype="float64"),
+            "pre_shot_gk_distance_to_shot": np.full(len(actions), np.nan, dtype="float64"),
+        },
+        index=actions.index,
+    )
+    if "type_id" not in actions.columns:
+        return out
+    is_shot = actions["type_id"].isin(shot_type_ids).to_numpy()
+    if not is_shot.any():
+        return out
+
+    # Left-join GK x/y on action_id; non-shot/pre-engagement/GK-absent rows have NaN gk x/y.
+    if len(ctx.defending_gk_rows) > 0:
+        gk = ctx.defending_gk_rows[["action_id", "x", "y"]].rename(columns={"x": "_gk_x", "y": "_gk_y"})
+        gk = gk.drop_duplicates("action_id", keep="first")
+        per_action = actions[["action_id"]].merge(gk, on="action_id", how="left")
+    else:
+        per_action = actions[["action_id"]].assign(_gk_x=np.nan, _gk_y=np.nan)
+    per_action.index = actions.index
+
+    shot_mask = pd.Series(is_shot, index=actions.index)
+    gk_present_mask = per_action["_gk_x"].notna()
+    valid = shot_mask & gk_present_mask
+
+    if valid.any():
+        gx = per_action.loc[valid, "_gk_x"].astype("float64")
+        gy = per_action.loc[valid, "_gk_y"].astype("float64")
+        ax = anchor_x.loc[valid].astype("float64")
+        ay = anchor_y.loc[valid].astype("float64")
+
+        out.loc[valid, "pre_shot_gk_x"] = gx
+        out.loc[valid, "pre_shot_gk_y"] = gy
+        out.loc[valid, "pre_shot_gk_distance_to_goal"] = np.sqrt((_GOAL_X - gx) ** 2 + (_GOAL_Y_CENTER - gy) ** 2)
+        out.loc[valid, "pre_shot_gk_distance_to_shot"] = np.sqrt((ax - gx) ** 2 + (ay - gy) ** 2)
     return out

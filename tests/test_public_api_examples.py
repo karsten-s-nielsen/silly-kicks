@@ -68,9 +68,12 @@ def _has_examples_section(docstring: str | None) -> bool:
     return ">>> " in docstring
 
 
-def _walk_public_definitions(tree: ast.AST) -> list[tuple[str, int, str, ast.AST]]:
+_DocstringEligibleNode = ast.AsyncFunctionDef | ast.FunctionDef | ast.ClassDef
+
+
+def _walk_public_definitions(tree: ast.AST) -> list[tuple[str, int, str, _DocstringEligibleNode]]:
     """Yield (kind, lineno, qualified_name, node) for top-level public defs + public methods."""
-    out: list[tuple[str, int, str, ast.AST]] = []
+    out: list[tuple[str, int, str, _DocstringEligibleNode]] = []
     for node in tree.body:  # type: ignore[attr-defined]
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if node.name.startswith("_") or node.name in _SKIP_SYMBOLS:

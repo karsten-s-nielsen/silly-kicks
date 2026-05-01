@@ -129,3 +129,108 @@ def test_rate_passes_frames_to_compute_features():
     # We just verify the call doesn't error on the frames= passthrough.
     with pytest.raises(NotFittedError):
         v.rate(game, actions, game_states=None, frames=frames)
+
+
+# ---------------------------------------------------------------------------
+# PR-S21 — pre_shot_gk_default_xfns dispatch
+# ---------------------------------------------------------------------------
+
+
+def _make_game_actions_with_gk_id_and_frames():
+    """Tiny game + 5 actions including a SHOT with defending_gk_player_id populated;
+    one frame containing the GK row at known coords."""
+    game = pd.Series({"game_id": 1, "home_team_id": 1, "away_team_id": 2})
+    from silly_kicks.spadl import config as spadlconfig
+
+    shot_id = spadlconfig.actiontype_id["shot"]
+    pass_id = spadlconfig.actiontype_id["pass"]
+    actions = pd.DataFrame(
+        {
+            "game_id": [1] * 5,
+            "original_event_id": [None] * 5,
+            "action_id": [1, 2, 3, 4, 5],
+            "period_id": [1, 1, 1, 1, 1],
+            "time_seconds": [5.0, 10.0, 15.0, 20.0, 25.0],
+            "team_id": [1, 1, 2, 1, 1],
+            "player_id": [11, 12, 21, 11, 12],
+            "start_x": [10.0, 30.0, 50.0, 70.0, 90.0],
+            "start_y": [34.0, 30.0, 34.0, 38.0, 34.0],
+            "end_x": [30.0, 50.0, 30.0, 90.0, 100.0],
+            "end_y": [34.0, 30.0, 34.0, 38.0, 34.0],
+            "type_id": [pass_id, pass_id, pass_id, pass_id, shot_id],
+            "result_id": [1, 1, 1, 1, 1],
+            "bodypart_id": [0, 0, 0, 0, 0],
+            "defending_gk_player_id": [
+                float("nan"),
+                float("nan"),
+                float("nan"),
+                float("nan"),
+                99.0,
+            ],
+        }
+    )
+    # One frame at t=25.0 containing GK player_id=99 (team 2) at (104, 34).
+    frames = pd.DataFrame(
+        [
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=2500,
+                time_seconds=25.0,
+                frame_rate=10.0,
+                player_id=99,
+                team_id=2,
+                is_ball=False,
+                is_goalkeeper=True,
+                x=104.0,
+                y=34.0,
+                z=float("nan"),
+                speed=0.5,
+                speed_source="native",
+                ball_state="alive",
+                team_attacking_direction="ltr",
+                confidence=None,
+                visibility=None,
+                source_provider="test",
+            ),
+        ]
+    )
+    return game, actions, frames
+
+
+def test_compute_features_dispatches_pre_shot_gk_default_xfns():
+    """xfns=pre_shot_gk_default_xfns + frames -> 4 features x nb_states columns emitted."""
+    from silly_kicks.tracking.features import pre_shot_gk_default_xfns
+    from silly_kicks.vaep.base import VAEP
+
+    game, actions, frames = _make_game_actions_with_gk_id_and_frames()
+    v = VAEP(xfns=pre_shot_gk_default_xfns)  # type: ignore[arg-type]  # FrameAwareTransformer wraps FeatureTransfomer
+    X = v.compute_features(game, actions, frames=frames)
+    # 4 features x nb_states (default 3) = 12 columns
+    expected_cols = {
+        f"pre_shot_gk_{name}_a{i}" for name in ("x", "y", "distance_to_goal", "distance_to_shot") for i in range(3)
+    }
+    assert expected_cols.issubset(set(X.columns))
+
+
+def test_compute_features_pre_shot_gk_xfn_silent_nan_when_defending_gk_player_id_missing():
+    """When ``defending_gk_player_id`` is missing, per-Series helpers emit all-NaN.
+
+    The aggregator (``add_pre_shot_gk_position``) raises ValueError directly — that's
+    the user-facing contract — but per-Series helpers used via ``lift_to_states`` in
+    VAEP must tolerate VAEP's internal column-name introspection (which builds a dummy
+    10-row gamestate without the extension column). Documented in the docstrings of
+    ``pre_shot_gk_*`` and ``pre_shot_gk_default_xfns``: callers must run
+    ``add_pre_shot_gk_context(actions)`` first to populate ``defending_gk_player_id``.
+    """
+    from silly_kicks.tracking.features import pre_shot_gk_default_xfns
+    from silly_kicks.vaep.base import VAEP
+
+    game, actions, frames = _make_game_actions_with_gk_id_and_frames()
+    actions = actions.drop(columns=["defending_gk_player_id"])
+    v = VAEP(xfns=pre_shot_gk_default_xfns)  # type: ignore[arg-type]  # FrameAwareTransformer wraps FeatureTransfomer
+    X = v.compute_features(game, actions, frames=frames)
+    # All GK columns silently NaN — model can still fit but feature carries no signal.
+    for col in X.columns:
+        if col.startswith("pre_shot_gk_"):
+            assert X[col].isna().all(), f"{col} has non-NaN values when defending_gk_player_id missing"

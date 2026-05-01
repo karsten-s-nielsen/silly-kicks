@@ -6,10 +6,17 @@ Public API:
 - receiver_zone_density(actions, frames, *, radius=5.0) -> pd.Series
 - defenders_in_triangle_to_goal(actions, frames) -> pd.Series
 - add_action_context(actions, frames, *, receiver_zone_radius=5.0) -> pd.DataFrame
+- pre_shot_gk_x(actions, frames) -> pd.Series         (PR-S21)
+- pre_shot_gk_y(actions, frames) -> pd.Series         (PR-S21)
+- pre_shot_gk_distance_to_goal(actions, frames) -> pd.Series   (PR-S21)
+- pre_shot_gk_distance_to_shot(actions, frames) -> pd.Series   (PR-S21)
+- add_pre_shot_gk_position(actions, frames) -> pd.DataFrame    (PR-S21)
 - tracking_default_xfns: list[FrameAwareTransformer]
+- pre_shot_gk_default_xfns: list[FrameAwareTransformer]   (PR-S21)
 
 See NOTICE for full bibliographic citations and ADR-005 for the integration contract.
-Spec: docs/superpowers/specs/2026-04-30-action-context-pr1-design.md.
+Spec: docs/superpowers/specs/2026-04-30-action-context-pr1-design.md (PR-S20)
+      docs/superpowers/specs/2026-05-01-pre-shot-gk-plus-baselines-design.md (PR-S21)
 """
 
 from __future__ import annotations
@@ -17,16 +24,25 @@ from __future__ import annotations
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.spadl import config as spadlconfig
 
 from . import _kernels
 from .feature_framework import lift_to_states
 from .utils import _resolve_action_frame_context
 
+_STANDARD_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty"))
+
 __all__ = [
     "actor_speed",
     "add_action_context",
+    "add_pre_shot_gk_position",
     "defenders_in_triangle_to_goal",
     "nearest_defender_distance",
+    "pre_shot_gk_default_xfns",
+    "pre_shot_gk_distance_to_goal",
+    "pre_shot_gk_distance_to_shot",
+    "pre_shot_gk_x",
+    "pre_shot_gk_y",
     "receiver_zone_density",
     "tracking_default_xfns",
 ]
@@ -193,4 +209,196 @@ tracking_default_xfns = [
     lift_to_states(actor_speed),
     lift_to_states(receiver_zone_density),
     lift_to_states(defenders_in_triangle_to_goal),
+]
+
+
+# ---------------------------------------------------------------------------
+# PR-S21 — pre_shot_gk_* features
+# ---------------------------------------------------------------------------
+
+
+def pre_shot_gk_x(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Defending GK's x at the linked frame (m, LTR-normalized).
+
+    NaN for non-shot rows, unlinked actions, pre-engagement (NaN
+    ``defending_gk_player_id``), or GK-absent-from-frame (substitution) cases.
+
+    REQUIRES the actions DataFrame to have a ``defending_gk_player_id``
+    column (run ``silly_kicks.spadl.utils.add_pre_shot_gk_context`` first).
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    Compute defending-GK x for a SPADL action stream after engagement-state enrichment::
+
+        from silly_kicks.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.tracking.features import pre_shot_gk_x
+        actions = add_pre_shot_gk_context(actions)
+        gk_x = pre_shot_gk_x(actions, frames)
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021). "A goal scoring probability model for shots based on
+        synchronized positional and event data in football and futsal." Frontiers in
+        Sports and Active Living, 3, 624475. (defending-GK-position as xG feature)
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(
+        actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS
+    )
+    return df["pre_shot_gk_x"].rename("pre_shot_gk_x")
+
+
+def pre_shot_gk_y(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Defending GK's y at the linked frame (m, LTR-normalized).
+
+    NaN semantics identical to :func:`pre_shot_gk_x`. REQUIRES
+    ``defending_gk_player_id`` column in ``actions``.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.tracking.features import pre_shot_gk_y
+        actions = add_pre_shot_gk_context(actions)
+        gk_y = pre_shot_gk_y(actions, frames)
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021).
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(
+        actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS
+    )
+    return df["pre_shot_gk_y"].rename("pre_shot_gk_y")
+
+
+def pre_shot_gk_distance_to_goal(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Euclidean distance (m) from defending GK to goal-mouth center (105, 34).
+
+    NaN semantics identical to :func:`pre_shot_gk_x`. REQUIRES
+    ``defending_gk_player_id`` column in ``actions``.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.tracking.features import pre_shot_gk_distance_to_goal
+        actions = add_pre_shot_gk_context(actions)
+        d = pre_shot_gk_distance_to_goal(actions, frames)
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021).
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(
+        actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS
+    )
+    return df["pre_shot_gk_distance_to_goal"].rename("pre_shot_gk_distance_to_goal")
+
+
+def pre_shot_gk_distance_to_shot(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Euclidean distance (m) from defending GK to shot anchor (action.start_x, action.start_y).
+
+    NaN semantics identical to :func:`pre_shot_gk_x`. REQUIRES
+    ``defending_gk_player_id`` column in ``actions``.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.tracking.features import pre_shot_gk_distance_to_shot
+        actions = add_pre_shot_gk_context(actions)
+        d = pre_shot_gk_distance_to_shot(actions, frames)
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021).
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(
+        actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS
+    )
+    return df["pre_shot_gk_distance_to_shot"].rename("pre_shot_gk_distance_to_shot")
+
+
+@nan_safe_enrichment
+def add_pre_shot_gk_position(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+) -> pd.DataFrame:
+    """Enrich actions with 4 GK-position columns + 4 linkage-provenance columns.
+
+    REQUIRES the actions DataFrame to have a ``defending_gk_player_id`` column
+    (run ``silly_kicks.spadl.utils.add_pre_shot_gk_context`` first).
+
+    Returns
+    -------
+    pd.DataFrame
+        Input actions with the columns:
+        - pre_shot_gk_x (float64, m)
+        - pre_shot_gk_y (float64, m)
+        - pre_shot_gk_distance_to_goal (float64, m)
+        - pre_shot_gk_distance_to_shot (float64, m)
+        - frame_id (Int64; NaN if unlinked)
+        - time_offset_seconds (float64; NaN if unlinked)
+        - link_quality_score (float64; NaN if unlinked)
+        - n_candidate_frames (int64)
+
+    All 4 GK columns are NaN for non-shot / unlinked / pre-engagement /
+    GK-absent-from-frame rows.
+
+    Raises
+    ------
+    ValueError
+        If ``defending_gk_player_id`` column is absent from ``actions``.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    Tag pre-shot defending-GK position via the tracking-namespace canonical compute::
+
+        from silly_kicks.spadl.utils import add_pre_shot_gk_context
+        from silly_kicks.tracking.features import add_pre_shot_gk_position
+        actions = add_pre_shot_gk_context(actions)            # populates defending_gk_player_id
+        enriched = add_pre_shot_gk_position(actions, frames)  # adds 4 GK + 4 provenance columns
+    """
+    if "defending_gk_player_id" not in actions.columns:
+        raise ValueError(
+            "add_pre_shot_gk_position: actions missing required column "
+            "'defending_gk_player_id'. Run silly_kicks.spadl.utils.add_pre_shot_gk_context "
+            "first to populate it."
+        )
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_position(
+        actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS
+    )
+    out = actions.copy()
+    for col in ("pre_shot_gk_x", "pre_shot_gk_y", "pre_shot_gk_distance_to_goal", "pre_shot_gk_distance_to_shot"):
+        out[col] = df[col]
+    pointer_cols = ctx.pointers.set_index("action_id")[
+        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    ]
+    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+pre_shot_gk_default_xfns = [
+    lift_to_states(pre_shot_gk_x),
+    lift_to_states(pre_shot_gk_y),
+    lift_to_states(pre_shot_gk_distance_to_goal),
+    lift_to_states(pre_shot_gk_distance_to_shot),
 ]

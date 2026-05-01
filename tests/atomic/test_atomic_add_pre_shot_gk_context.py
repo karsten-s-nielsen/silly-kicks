@@ -378,3 +378,176 @@ class TestRealisticScenario:
         assert bool(shot["gk_was_distributing"]) is True
         assert int(shot["gk_actions_in_possession"]) == 1
         assert int(shot["defending_gk_player_id"]) == 999
+
+
+# ---------------------------------------------------------------------------
+# PR-S21 — frames= kwarg backcompat + tracking integration (atomic)
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicFramesKwargBackcompat:
+    def test_frames_none_bit_identical_to_v280(self):
+        """Backward-compat: silly-kicks 2.8.0 atomic behavior pinned by golden fixture."""
+        from pathlib import Path
+
+        # Reuse standard fixture builder — the atomic helper iterates type_id and
+        # ignores standard-only columns gracefully (game_id, period_id, action_id,
+        # team_id, player_id, type_id, time_seconds are present in both).
+        from tests.spadl._gk_test_fixtures import (
+            _df as _std_df,
+        )
+        from tests.spadl._gk_test_fixtures import (
+            _make_action as _std_make_action,
+        )
+        from tests.spadl._gk_test_fixtures import (
+            _make_gk_action as _std_make_gk_action,
+        )
+        from tests.spadl._gk_test_fixtures import (
+            _make_pass_action as _std_make_pass_action,
+        )
+        from tests.spadl._gk_test_fixtures import (
+            _make_shot_action as _std_make_shot_action,
+        )
+
+        actions = _std_df(
+            [
+                _std_make_pass_action(action_id=1, time_seconds=0.0, team_id=200, player_id=701),
+                _std_make_gk_action(
+                    action_id=2,
+                    keeper_action="keeper_save",
+                    time_seconds=2.0,
+                    team_id=100,
+                    player_id=999,
+                    start_x=5.0,
+                    start_y=34.0,
+                ),
+                _std_make_pass_action(action_id=3, time_seconds=4.0, team_id=200, player_id=702),
+                _std_make_pass_action(action_id=4, time_seconds=6.0, team_id=200, player_id=703),
+                _std_make_shot_action(
+                    action_id=5,
+                    time_seconds=8.0,
+                    team_id=200,
+                    player_id=704,
+                    start_x=95.0,
+                    start_y=34.0,
+                    shot_type="shot",
+                ),
+                _std_make_pass_action(action_id=6, time_seconds=12.0, team_id=100, player_id=205),
+                _std_make_shot_action(
+                    action_id=7,
+                    time_seconds=14.0,
+                    team_id=100,
+                    player_id=206,
+                    start_x=10.0,
+                    start_y=34.0,
+                    shot_type="shot_freekick",
+                ),
+                _std_make_action(action_id=8, time_seconds=16.0, team_id=200, player_id=708),
+            ]
+        )
+        actual = add_pre_shot_gk_context(actions)
+        expected = pd.read_parquet(Path(__file__).parent / "_golden_atomic_pre_shot_gk_context_v280.parquet")
+        pd.testing.assert_frame_equal(actual, expected, check_dtype=True)
+
+
+class TestAtomicFramesKwargWithTracking:
+    def test_frames_supplied_emits_8_extra_columns(self):
+        # Atomic shot at (90, 34); GK at (104, 34) -> distances 1, 14.
+        actions = _df(
+            [
+                _make_atomic_gk_action(
+                    action_id=0,
+                    keeper_action="keeper_save",
+                    player_id=999,
+                    team_id=100,
+                    time_seconds=0.0,
+                ),
+                _make_atomic_shot_action(
+                    action_id=1,
+                    player_id=704,
+                    team_id=200,
+                    time_seconds=2.0,
+                    x=90.0,
+                    y=34.0,
+                ),
+            ]
+        )
+        frames = pd.DataFrame(
+            [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=2000,
+                    time_seconds=2.0,
+                    frame_rate=25.0,
+                    player_id=999,
+                    team_id=100,
+                    is_ball=False,
+                    is_goalkeeper=True,
+                    x=104.0,
+                    y=34.0,
+                    z=float("nan"),
+                    speed=0.5,
+                    speed_source="native",
+                    ball_state="alive",
+                    team_attacking_direction="ltr",
+                    confidence=None,
+                    visibility=None,
+                    source_provider="test",
+                ),
+            ]
+        )
+        out = add_pre_shot_gk_context(actions, frames=frames)
+        expected_extra = {
+            "pre_shot_gk_x",
+            "pre_shot_gk_y",
+            "pre_shot_gk_distance_to_goal",
+            "pre_shot_gk_distance_to_shot",
+            "frame_id",
+            "time_offset_seconds",
+            "n_candidate_frames",
+            "link_quality_score",
+        }
+        assert expected_extra.issubset(set(out.columns))
+        # Atomic shot has type_id matching atomic shot ids; should populate.
+        shot_row = out[out["action_id"] == 1].iloc[0]
+        assert float(shot_row["pre_shot_gk_x"]) == pytest.approx(104.0)
+        assert float(shot_row["pre_shot_gk_distance_to_shot"]) == pytest.approx(14.0)
+
+
+class TestAtomicFramesKwargNoModuleImportCycle:
+    def test_no_top_level_atomic_tracking_import_in_atomic_spadl_utils(self):
+        """Lazy-import contract per ADR-005 § 5 (atomic mirror): static AST inspection."""
+        import ast
+        from pathlib import Path
+
+        import silly_kicks.atomic.spadl.utils as _utils
+
+        source = Path(_utils.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        offenders: list[str] = []
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("silly_kicks.atomic.tracking"):
+                        offenders.append(f"top-level `import {alias.name}` at line {node.lineno}")
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and node.module.startswith("silly_kicks.atomic.tracking"):
+                    offenders.append(f"top-level `from {node.module} import ...` at line {node.lineno}")
+            elif isinstance(node, ast.If):
+                test = node.test
+                is_type_checking = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+                    isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+                )
+                if is_type_checking:
+                    continue
+                for stmt in node.body:
+                    if (
+                        isinstance(stmt, ast.ImportFrom)
+                        and stmt.module
+                        and stmt.module.startswith("silly_kicks.atomic.tracking")
+                    ):
+                        offenders.append(
+                            f"non-TYPE_CHECKING top-level if-block imports {stmt.module} at line {stmt.lineno}"
+                        )
+        assert not offenders, f"silly_kicks.atomic.spadl.utils violates ADR-005 s 5 lazy-import: {offenders}"
