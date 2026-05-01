@@ -2,8 +2,8 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-05-01 (PR-S21 cycle in flight — `feat/pre-shot-gk-plus-baselines`)
-**(A) silly-kicks 2.8.0 SHIPPED** (PR-S20 — `action_context()` tracking-aware features + VAEP integration; ADR-005).
+**Last updated**: 2026-05-01 (silly-kicks 2.9.0 shipped; GKDV research program TF-15..TF-19 added)
+**(A) silly-kicks 2.9.0 SHIPPED** (PR-S21 — `pre_shot_gk_position_*` defending-GK features + baselines backfill; within ADR-005 envelope, no new ADR).
 
 ---
 
@@ -41,13 +41,7 @@ Quick-reference action items. Architectural decisions live in [docs/superpowers/
 
 ## Active Cycle
 
-PR-S21 — TF-1 (`pre_shot_gk_position_*`) + TF-11 (baselines backfill)
-(target silly-kicks 2.9.0).
-
-Branch: `feat/pre-shot-gk-plus-baselines`. Spec + plan: [docs/superpowers/specs/2026-05-01-pre-shot-gk-plus-baselines-design.md](docs/superpowers/specs/2026-05-01-pre-shot-gk-plus-baselines-design.md), [docs/superpowers/plans/2026-05-01-pre-shot-gk-plus-baselines.md](docs/superpowers/plans/2026-05-01-pre-shot-gk-plus-baselines.md).
-
-After ship, this section gets archived; PR-S21 ships within the existing
-ADR-005 envelope — no new ADR.
+(none currently active — see On Deck for next candidates)
 
 ---
 
