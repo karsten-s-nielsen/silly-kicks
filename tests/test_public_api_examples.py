@@ -36,6 +36,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/atomic/vaep/features.py",
     "silly_kicks/atomic/vaep/labels.py",
     "silly_kicks/atomic/vaep/formula.py",
+    "silly_kicks/atomic/tracking/features.py",
     "silly_kicks/vaep/features/core.py",
     "silly_kicks/vaep/features/actiontype.py",
     "silly_kicks/vaep/features/result.py",

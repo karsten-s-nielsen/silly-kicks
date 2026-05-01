@@ -23,9 +23,13 @@ __all__ = [
     "Actions",
     "FeatureTransfomer",
     "Features",
+    "FrameAwareTransformer",
+    "Frames",
     "GameStates",
     "actiontype_categorical",
+    "frame_aware",
     "gamestates",
+    "is_frame_aware",
     "simple",
 ]
 
@@ -33,6 +37,49 @@ Actions = pd.DataFrame
 GameStates = list[pd.DataFrame]
 Features = pd.DataFrame
 FeatureTransfomer = Callable[[GameStates], Features]
+
+Frames = pd.DataFrame
+"""Type alias for tracking frames DataFrame (long-form, TRACKING_FRAMES_COLUMNS-shaped)."""
+
+FrameAwareTransformer = Callable[[Any, Frames], Features]
+"""Tracking-aware feature transformer signature: (states, frames) -> Features.
+
+The first argument is GameStates; using Any here to avoid circular type-import
+constraints. Marked at runtime via the frame_aware decorator and dispatched in
+VAEP.compute_features."""
+
+
+def frame_aware(fn: Callable) -> Callable:
+    """Marker decorator: this xfn requires frames as a second argument.
+
+    Sets fn._frame_aware = True. VAEP.compute_features uses is_frame_aware to
+    dispatch (states, frames) calls vs (states) calls.
+
+    Examples
+    --------
+    Wrap a custom xfn so HybridVAEP routes frames to it::
+
+        from silly_kicks.vaep.feature_framework import frame_aware
+
+        @frame_aware
+        def my_tracking_feature(states, frames):
+            return some_dataframe
+    """
+    fn._frame_aware = True  # type: ignore[attr-defined]
+    return fn
+
+
+def is_frame_aware(fn: Callable) -> bool:
+    """Check if an xfn is marked as frame-aware (was decorated with @frame_aware).
+
+    Examples
+    --------
+    Inspect at runtime which xfns require tracking frames::
+
+        from silly_kicks.vaep.feature_framework import is_frame_aware
+        marked = is_frame_aware(my_xfn)
+    """
+    return getattr(fn, "_frame_aware", False)
 
 
 def gamestates(actions: Actions, nb_prev_actions: int = 3) -> GameStates:

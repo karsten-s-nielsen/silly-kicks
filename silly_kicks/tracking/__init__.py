@@ -1,8 +1,10 @@
-"""silly_kicks.tracking --- tracking-data namespace (PR-S19, primitive layer).
+"""silly_kicks.tracking --- tracking-data namespace.
 
-Schema, per-provider adapters, and the link_actions_to_frames primitive.
-Tracking-aware features (action_context, pressure_on_carrier, pitch control,
-etc.) ship in PR-S20+ scoping cycles. See ADR-004.
+PR-S19 (silly-kicks 2.7.0) shipped the primitive layer: schema, per-provider
+adapters, and the link_actions_to_frames primitive. PR-S20 (silly-kicks 2.8.0,
+ADR-005) shipped the first tracking-aware feature set (action_context: 4
+features + aggregator + lift_to_states extension utility) on top of those
+primitives.
 """
 
 __all__ = [
@@ -12,19 +14,38 @@ __all__ = [
     "TRACKING_CATEGORICAL_DOMAINS",
     "TRACKING_CONSTRAINTS",
     "TRACKING_FRAMES_COLUMNS",
+    "ActionFrameContext",
     "LinkReport",
     "TrackingConversionReport",
+    "actor_speed",
+    "add_action_context",
+    "defenders_in_triangle_to_goal",
+    "feature_framework",
+    "features",
     "kloppy",
+    "lift_to_states",
     "link_actions_to_frames",
+    "nearest_defender_distance",
     "pff",
     "play_left_to_right",
+    "receiver_zone_density",
     "schema",
     "slice_around_event",
     "sportec",
+    "tracking_default_xfns",
     "utils",
 ]
 
-from . import pff, schema, sportec, utils
+from . import feature_framework, features, pff, schema, sportec, utils
+from .feature_framework import ActionFrameContext, lift_to_states
+from .features import (
+    actor_speed,
+    add_action_context,
+    defenders_in_triangle_to_goal,
+    nearest_defender_distance,
+    receiver_zone_density,
+    tracking_default_xfns,
+)
 from .schema import (
     KLOPPY_TRACKING_FRAMES_COLUMNS,
     PFF_TRACKING_FRAMES_COLUMNS,

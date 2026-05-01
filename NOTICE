@@ -1,0 +1,80 @@
+silly-kicks
+Copyright (c) 2019 KU Leuven Machine Learning Research Group (Tom Decroos, Pieter Robberechts)
+Copyright (c) 2026 Karsten S. Nielsen
+
+This product is a maintained fork of socceraction
+(https://github.com/ML-KULeuven/socceraction). Major architectural changes
+since 1.0.0 are documented in CHANGELOG.md.
+
+Third-Party Libraries
+---------------------
+
+kloppy --- standardizing soccer tracking/event data (BSD-3-Clause License).
+Copyright (c) kloppy contributors.
+See: https://github.com/PySport/kloppy
+
+pandas, numpy, scikit-learn --- core dependencies (BSD / standard licenses).
+
+Optional gradient-boosting backends (xgboost, lightgbm, catboost) --- listed
+in pyproject.toml; each retains its upstream license.
+
+Mathematical / Methodological References
+----------------------------------------
+
+The SPADL action representation (silly_kicks/spadl/) implements the framework
+described in: Decroos, T., Van Haaren, J., & Davis, J. (2018). "SPADL: A
+Common Framework for Action Description in Soccer." Workshop on Machine
+Learning and Data Mining for Sports Analytics (ECML-PKDD).
+
+The VAEP action valuation framework (silly_kicks/vaep/) implements:
+Decroos, T., Bransen, L., Van Haaren, J., & Davis, J. (2019). "Actions
+Speak Louder Than Goals: Valuing Player Actions in Soccer." Proc. KDD '19.
+The HybridVAEP variant (silly_kicks/vaep/hybrid.py) is a result-leakage-
+removal variant introduced in this fork; no separate academic citation.
+
+The Atomic-SPADL representation and Atomic-VAEP framework
+(silly_kicks/atomic/) implement: Decroos, T., Robberechts, P., & Davis, J.
+(2020). "Introducing Atomic-SPADL: A New Way to Represent Event Stream Data."
+DTAI Sports Analytics Blog.
+
+The Expected Threat (xT) grid (silly_kicks/xthreat.py) seeds from:
+Singh, K. (2018). "Introducing Expected Threat (xT)." karun.in/blog/expected-threat
+The grid is recomputable from event data; the seed values are reference-only.
+
+The tracking namespace primitive layer (silly_kicks/tracking/, PR-S19,
+ADR-004) implements ingestion + linkage primitives across PFF, Sportec,
+Metrica, and SkillCorner. No new academic methodology beyond the canonical
+ADR.
+
+The four tracking-aware action-context features in
+silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
+(PR-S20, ADR-005) implement methodologies described in:
+
+- Lucey, P., Bialkowski, A., Monfort, M., Carr, P., & Matthews, I. (2014).
+  "Quality vs Quantity: Improved Shot Prediction in Soccer using Strategic
+  Features from Spatiotemporal Data." MIT Sloan Sports Analytics Conference.
+  (canonical "defenders in shot triangle" feature; nearest-defender-distance
+  for shots)
+
+- Anzer, G., & Bauer, P. (2021). "A goal scoring probability model for shots
+  based on synchronized positional and event data in football and futsal."
+  Frontiers in Sports and Active Living, 3, 624475.
+  (player_speed and distance-to-defender as xG features)
+
+- Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
+  Conference.
+  (zone-based defender intensity in pitch-control framework)
+
+- Power, P., Ruiz, H., Wei, X., & Lucey, P. (2017). "Not all passes are
+  created equal: Objectively measuring the risk and reward of passes in
+  soccer from tracking data." KDD '17 (OBSO).
+  (receiver-zone risk/reward modelling)
+
+- Pollard, R., & Reep, C. (1997). "Measuring the effectiveness of playing
+  strategies at soccer." Journal of the Royal Statistical Society Series D,
+  46(4), 541-550.
+  (early shot-quality / pressure-from-defenders concept)
+
+The implementations are independent Python translations of the published
+methodologies, not derived from any source code. Licensed under the same
+terms as silly-kicks (MIT License).

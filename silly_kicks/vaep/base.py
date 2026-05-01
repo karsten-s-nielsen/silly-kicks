@@ -111,7 +111,13 @@ class VAEP:
             self._cached_feature_cols = self._fs.feature_column_names(self.xfns, self.nb_prev_actions)
         return self._cached_feature_cols
 
-    def compute_features(self, game: pd.Series, game_actions: fs.Actions) -> pd.DataFrame:
+    def compute_features(
+        self,
+        game: pd.Series,
+        game_actions: fs.Actions,
+        *,
+        frames: pd.DataFrame | None = None,
+    ) -> pd.DataFrame:
         """
         Transform actions to the feature-based representation of game states.
 
@@ -121,23 +127,62 @@ class VAEP:
             The SPADL representation of a single game.
         game_actions : pd.DataFrame
             The actions performed during `game` in the SPADL representation.
+        frames : pd.DataFrame, optional
+            Long-form tracking frames matching TRACKING_FRAMES_COLUMNS. Required
+            when any xfn in self.xfns is marked frame-aware (via @frame_aware);
+            ignored otherwise. When supplied, frames are normalized to LTR via
+            ``silly_kicks.tracking.utils.play_left_to_right`` symmetrically with
+            actions. The lazy import ensures no vaep<->tracking module-import
+            cycle when frames is None.
 
         Returns
         -------
         features : pd.DataFrame
             Returns the feature-based representation of each game state in the game.
 
+        Raises
+        ------
+        ValueError
+            If self.xfns contains a frame-aware xfn but frames is None.
+
         Examples
         --------
-        Compute the feature representation for one game::
+        Compute the feature representation for one game (no tracking)::
 
             X = v.compute_features(game, game_actions)
             # X has one row per game state with the columns specified by ``v.xfns``.
+
+        Compute with tracking-aware xfns appended (e.g. PR-S20 default xfns)::
+
+            from silly_kicks.tracking.features import tracking_default_xfns
+            from silly_kicks.vaep.hybrid import HybridVAEP, hybrid_xfns_default
+            v = HybridVAEP(xfns=hybrid_xfns_default + tracking_default_xfns)
+            X = v.compute_features(game, game_actions, frames=match_frames)
         """
+        from .feature_framework import is_frame_aware
+
         game_actions_with_names = self._add_names(game_actions)  # type: ignore
         gamestates = self._fs.gamestates(game_actions_with_names, self.nb_prev_actions)
         gamestates = self._fs.play_left_to_right(gamestates, game.home_team_id)
-        return pd.concat([fn(gamestates) for fn in self.xfns], axis=1)  # type: ignore[reportReturnType]
+
+        if frames is not None:
+            from silly_kicks.tracking.utils import play_left_to_right as _track_ltr
+
+            frames = _track_ltr(frames, game.home_team_id)
+
+        feats = []
+        for fn in self.xfns:
+            if is_frame_aware(fn):
+                if frames is None:
+                    raise ValueError(f"{fn.__name__} requires frames; pass frames= to compute_features")
+                # Frame-aware xfns are 2-arg (states, frames) callables, but
+                # self.xfns is typed as list[FeatureTransfomer] (1-arg) for
+                # backwards compat with non-frame-aware xfns. The is_frame_aware
+                # branch above guarantees this xfn was decorated with @frame_aware.
+                feats.append(fn(gamestates, frames))  # type: ignore[call-arg]
+            else:
+                feats.append(fn(gamestates))
+        return pd.concat(feats, axis=1)  # type: ignore[reportReturnType]
 
     def compute_labels(
         self,
@@ -260,6 +305,8 @@ class VAEP:
         game: pd.Series,
         game_actions: fs.Actions,
         game_states: fs.Features | None = None,
+        *,
+        frames: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """
         Compute the VAEP rating for the given game states.
@@ -273,6 +320,9 @@ class VAEP:
         game_states : pd.DataFrame, default=None
             DataFrame with the game state representation of each action. If
             `None`, these will be computed on-the-fly.
+        frames : pd.DataFrame, optional
+            When ``game_states`` is None and self.xfns contains frame-aware xfns,
+            frames must be supplied; passed through to compute_features.
 
         Raises
         ------
@@ -287,17 +337,21 @@ class VAEP:
 
         Examples
         --------
-        Rate one game's actions after fitting::
+        Rate one game's actions after fitting (no tracking)::
 
             ratings = v.rate(game, game_actions)
             ratings[["offensive_value", "defensive_value", "vaep_value"]].head()
+
+        Rate with tracking frames (when self.xfns includes frame-aware xfns)::
+
+            ratings = v.rate(game, game_actions, frames=match_frames)
         """
         if not self.__models:
             raise NotFittedError()
 
         game_actions_with_names = self._add_names(game_actions)  # type: ignore
         if game_states is None:
-            game_states = self.compute_features(game, game_actions)
+            game_states = self.compute_features(game, game_actions, frames=frames)
 
         y_hat = self._estimate_probabilities(game_states)
         p_scores, p_concedes = y_hat.iloc[:, 0], y_hat.iloc[:, 1]

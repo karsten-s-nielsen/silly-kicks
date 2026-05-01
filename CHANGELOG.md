@@ -5,6 +5,87 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] — 2026-05-01
+
+### Added — Tracking-aware action_context features (PR-S20)
+
+- **`silly_kicks.tracking.features`** --- public per-feature surface for
+  standard SPADL: `nearest_defender_distance`, `actor_speed`,
+  `receiver_zone_density`, `defenders_in_triangle_to_goal`. Plus aggregator
+  `add_action_context(actions, frames, *, receiver_zone_radius=5.0) -> pd.DataFrame`
+  that enriches input actions with the 4 features + 4 linkage-provenance
+  columns (`frame_id`, `time_offset_seconds`, `link_quality_score`,
+  `n_candidate_frames`). Decorated with `@nan_safe_enrichment` per ADR-003.
+  Plus `tracking_default_xfns` (4 `lift_to_states` wrappers) for
+  HybridVAEP integration.
+- **`silly_kicks.atomic.tracking.features`** --- atomic-SPADL parity with
+  the same public surface (`atomic_tracking_default_xfns`). Mirrors the
+  standard surface with atomic-shaped column reads (`x, y, dx, dy`).
+- **`silly_kicks.tracking.feature_framework`** --- `ActionFrameContext`
+  frozen dataclass + `lift_to_states` (lifts an `(actions, frames) -> pd.Series`
+  helper to a `(states, frames) -> Features` transformer). Re-exports
+  `frame_aware`, `is_frame_aware`, `Frames`, `FrameAwareTransformer`.
+- **`silly_kicks.tracking._kernels`** (private) --- schema-agnostic compute
+  kernels shared between standard and atomic public surfaces. Per
+  ADR-005 §3 (kernel-extraction pattern).
+- **`silly_kicks.tracking.utils._resolve_action_frame_context`** (private)
+  --- builds the linked-context structure (linkage pointers + per-action
+  actor row + opposite-team frame rows) once per `add_action_context()` call.
+- **`silly_kicks.vaep.feature_framework`** --- extended with `frame_aware`
+  decorator, `is_frame_aware` predicate, and `Frames` / `FrameAwareTransformer`
+  type aliases. Marker-decorator pattern parallels the existing
+  `@nan_safe_enrichment` contract (ADR-003).
+- **`silly_kicks.vaep.base.VAEP.compute_features` / `rate`** --- additive
+  `frames=None` keyword-only parameter. Frame-aware xfn dispatch via
+  `is_frame_aware`. `HybridVAEP` and `AtomicVAEP` inherit the extension
+  automatically (no code changes in their files). Symmetric LTR-normalization
+  via lazy import of `tracking.utils.play_left_to_right` only when
+  `frames is not None` (no module-import-time vaep <-> tracking cycle).
+- **`silly_kicks._nan_safety`** --- new `is_nan_safe_enrichment(fn)` peer
+  predicate to the existing `nan_safe_enrichment` decorator. Mirrors the
+  new `is_frame_aware` introspection API.
+- **ADR-005** ([docs/superpowers/adrs/ADR-005-tracking-aware-features.md](docs/superpowers/adrs/ADR-005-tracking-aware-features.md))
+  --- tracking-aware feature integration contract. Captures the seven
+  cross-cutting decisions PR-S20 introduces so PR-S21+ tracking-aware
+  features inherit them without re-litigation.
+- **`NOTICE`** --- canonical academic-attribution record at repo root,
+  mirroring the lakehouse pattern. Cross-linked from `README.md` and
+  `CLAUDE.md`. Cites Lucey et al. (2014), Anzer & Bauer (2021),
+  Spearman (2018), Power et al. (2017), Pollard & Reep (1997) for the 4
+  PR-S20 features, plus the foundational SPADL / VAEP / Atomic-SPADL / xT
+  literature.
+- **`TODO.md` restructured** to the lakehouse-style "On Deck" table.
+  Eleven follow-up tracking-aware features (TF-1..TF-10) tracked with
+  Size / Source / Notes columns and academic citations; TF-11 tracks the
+  baselines-JSON backfill.
+- **Loop 0 lakehouse probe** --- `scripts/probe_action_context_baselines.py`
+  pulls slim-slice action+frame parquets per provider into
+  `tests/datasets/tracking/action_context_slim/` (sportec / metrica /
+  skillcorner; ~10 actions + linked frames each). Probe + outputs
+  committed; real datasets are not. Backbone for the cross-provider
+  parity test.
+- **Tier-3 cross-provider parity test** ---
+  `tests/tracking/test_action_context_cross_provider.py` runs
+  `add_action_context` against the lakehouse-derived slim parquets per
+  provider; asserts bounds + linkage rate >= 95% + actor_speed populated
+  >= 80%.
+- **e2e real-data sweep** ---
+  `tests/tracking/test_action_context_real_data_sweep.py` (4
+  e2e-marked tests, env-gated). Mirrors PR-S19's sweep shape: PFF via
+  `PFF_TRACKING_DIR`; IDSSE / Metrica / SkillCorner via Databricks SQL.
+  Skips with explicit reason on missing env.
+
+### Backward compatibility
+
+- All existing call sites (`v.compute_features(game, actions)`,
+  `v.rate(game, actions)`) work verbatim --- `frames=None` is the
+  default and walks the same code path. Regression-tested in
+  `test_compute_features_frames_none_is_regression_equivalent`.
+- No changes to `xfns_default`, `hybrid_xfns_default`, or atomic
+  `xfns_default`. Tracking-aware features must be opted in by appending
+  `tracking_default_xfns` (or `atomic_tracking_default_xfns`) to the
+  caller's xfns list.
+
 ## [2.7.0] — 2026-04-30
 
 ### Added

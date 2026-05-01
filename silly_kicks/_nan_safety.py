@@ -33,3 +33,16 @@ def nan_safe_enrichment(fn: T) -> T:
     """
     fn._nan_safe = True  # type: ignore[attr-defined]
     return fn
+
+
+def is_nan_safe_enrichment(fn: Callable) -> bool:
+    """Check if fn was decorated with @nan_safe_enrichment.
+
+    Examples
+    --------
+    Inspect at runtime which helpers claim NaN-safety::
+
+        from silly_kicks._nan_safety import is_nan_safe_enrichment
+        marked = is_nan_safe_enrichment(my_helper)
+    """
+    return getattr(fn, "_nan_safe", False)

@@ -13,8 +13,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
 
             spadl = container "silly_kicks.spadl" "SPADL conversion + post-conversion enrichments: 23 action types, 6 dedicated DataFrame converters with preserve_native + goalkeeper_ids passthrough (StatsBomb, Opta, Wyscout, Sportec, Metrica, PFF FC) plus a kloppy gateway covering StatsBomb / Sportec / Metrica, output coords clamped to [0, 105] x [0, 68] AND unified to canonical 'all-actions-LTR' SPADL orientation across all paths, ConversionReport audit; public enrichment helpers (add_names, add_possessions, GK analytics suite — gk_role / distribution_metrics / pre_shot_gk_context, use_tackle_winner_as_actor); boundary_metrics + coverage_metrics utilities for validating add_possessions output and per-action-type coverage; ADR-001 caller-conventions contract — Sportec output uses SPORTEC_SPADL_COLUMNS (KLOPPY_SPADL_COLUMNS + 4 object tackle qualifier passthrough columns); PFF output uses PFF_SPADL_COLUMNS (SPADL_COLUMNS + 4 nullable Int64 tackle passthrough columns)" "Python" "Library"
-            vaep = container "silly_kicks.vaep" "VAEP framework: feature extraction, label generation (binary + xG), model training, action valuation. Includes HybridVAEP (result-leakage-free)" "Python" "Library"
-            atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous action representation with 33 extended action types, deferred single-sort conversion, full parity for the post-conversion enrichment helper family (preserve_native, add_possessions, GK analytics suite, validate_atomic_spadl)" "Python" "Library"
+            vaep = container "silly_kicks.vaep" "VAEP framework: feature extraction, label generation (binary + xG), model training, action valuation. Includes HybridVAEP (result-leakage-free). compute_features / rate accept optional frames= kwarg dispatching frame-aware xfns (ADR-005)" "Python" "Library"
+            tracking = container "silly_kicks.tracking" "Tracking namespace (ADR-004): 19-column long-form per-frame schema, native Sportec + PFF adapters, kloppy gateway for Metrica + SkillCorner, link_actions_to_frames + slice_around_event linkage primitives. PR-S20 (ADR-005) added the first tracking-aware features: nearest_defender_distance, actor_speed, receiver_zone_density, defenders_in_triangle_to_goal + add_action_context aggregator + tracking_default_xfns. Schema-agnostic kernels in _kernels shared with atomic SPADL surface" "Python" "Library"
+            atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous action representation with 33 extended action types, deferred single-sort conversion, full parity for the post-conversion enrichment helper family (preserve_native, add_possessions, GK analytics suite, validate_atomic_spadl). atomic.tracking.features mirrors tracking.features for atomic-shaped column reads (x, y, dx, dy)" "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat model: pitch grid value surface via dynamic programming" "Python" "Library"
         }
 
@@ -26,18 +27,24 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
 
         // --- Relationships: Container level ---
         analyst -> spadl "Converts raw events to SPADL actions and enriches via" "convert_to_actions() + add_*() helper family"
-        analyst -> vaep "Values actions via" "VAEP.fit() / VAEP.rate() / HybridVAEP"
+        analyst -> tracking "Converts raw tracking data to long-form frames + enriches via" "convert_to_frames() + add_action_context()"
+        analyst -> vaep "Values actions via" "VAEP.fit() / VAEP.rate() / HybridVAEP (with optional frames=)"
         analyst -> xthreat "Computes pitch value surface via" "ExpectedThreat.fit()"
 
         pipeline -> spadl "Passes per-game DataFrames to" "lazy import inside UDF"
+        pipeline -> tracking "Passes per-match tracking frames to" "lazy import inside UDF"
         pipeline -> vaep "Scores actions with pre-trained models via" "VAEP.rate()"
 
         spadl -> kloppy "Accepts kloppy EventDataset in kloppy converter" "kloppy bridge"
+        tracking -> kloppy "Accepts kloppy TrackingDataset in kloppy gateway (Metrica, SkillCorner)" "kloppy bridge"
 
         vaep -> spadl "Reads SPADL config, schema constants, and action names from" "Python import"
         vaep -> mlLibs "Delegates model training to" "fit() dispatch via _LEARNER_REGISTRY"
+        tracking -> vaep "Imports frame_aware decorator + Frames type alias from" "vaep.feature_framework"
+        vaep -> tracking "Lazy-imports tracking.utils.play_left_to_right when frames= is supplied (no module-import-time cycle, ADR-005)" "lazy import"
         atomic -> spadl "Extends SPADL with atomic action types via" "Python import"
-        atomic -> vaep "Inherits VAEP pipeline via AtomicVAEP subclass" "Python import"
+        atomic -> vaep "Inherits VAEP pipeline via AtomicVAEP subclass; auto-inherits frames= extension (ADR-005)" "Python import"
+        atomic -> tracking "Reuses _kernels + lift_to_states from tracking namespace" "Python import"
         xthreat -> spadl "Reads SPADL config and schema from" "Python import"
     }
 

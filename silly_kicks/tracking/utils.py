@@ -242,6 +242,72 @@ def _count_candidates_within_tolerance(
     return pd.Series(counts, index=actions_sorted.index)
 
 
+def _resolve_action_frame_context(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+) -> ActionFrameContext:  # type: ignore[name-defined]  # noqa: F821
+    """Build the linked-context structure used by all 4 action_context features.
+
+    Calls link_actions_to_frames once, then derives:
+      - actor_rows: one row per action where the actor's player_id appears in the linked frame.
+      - opposite_rows_per_action: long-form (action_id, opposite-team frame row) pairs,
+        excluding ball rows (is_ball=True).
+
+    After the inner join with frames using ``suffixes=("_action", "_frame")``, the
+    overlapping columns ``team_id`` and ``player_id`` are renamed to
+    ``team_id_action`` / ``team_id_frame`` and ``player_id_action`` /
+    ``player_id_frame``. Per-feature kernels read the suffixed names.
+
+    Internal helper. Public per-feature surface lives in silly_kicks.tracking.features
+    and silly_kicks.atomic.tracking.features.
+
+    Examples
+    --------
+    Build the linked context once and consume across multiple feature kernels::
+
+        from silly_kicks.tracking.utils import _resolve_action_frame_context
+        ctx = _resolve_action_frame_context(actions, frames)
+        # ctx.actor_rows / ctx.opposite_rows_per_action drive the kernels.
+    """
+    from .feature_framework import ActionFrameContext  # avoid module-import cycle
+
+    pointers, _report = link_actions_to_frames(actions, frames)
+
+    # Inner-join pointers <-> frames on (period_id, frame_id) to materialize linked frames per action
+    actions_with_period = actions[["action_id", "period_id", "team_id", "player_id"]]
+    pointer_with_period = pointers.merge(actions_with_period, on="action_id", how="left", suffixes=("", "_action"))
+    long = pointer_with_period.merge(
+        frames,
+        on=["period_id", "frame_id"],
+        how="inner",
+        suffixes=("_action", "_frame"),
+    )
+
+    # actor_rows: filter to rows where frame.player_id == action.player_id (and not ball)
+    if "player_id_frame" in long.columns:
+        actor_mask = (long["player_id_frame"] == long["player_id_action"]) & (~long["is_ball"])
+        actor_long = long.loc[actor_mask].copy()
+    else:
+        actor_long = long.iloc[0:0].copy()
+
+    # Build per-action actor row; left-join on action_id so unlinked actions also appear (with NaN cols)
+    actor_rows = pd.DataFrame({"action_id": actions["action_id"]}).merge(actor_long, on="action_id", how="left")
+
+    # opposite_rows_per_action: filter to rows where frame.team_id != action.team_id and not ball
+    if "team_id_frame" in long.columns:
+        opp_mask = (long["team_id_frame"] != long["team_id_action"]) & (~long["is_ball"])
+        opposite = long.loc[opp_mask].copy()
+    else:
+        opposite = long.iloc[0:0].copy()
+
+    return ActionFrameContext(
+        actions=actions,
+        pointers=pointers,
+        actor_rows=actor_rows,
+        opposite_rows_per_action=opposite,
+    )
+
+
 def slice_around_event(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
