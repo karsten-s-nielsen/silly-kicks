@@ -22,6 +22,9 @@ Coordinate transformation: ``x = x_centered + 52.5``;
 
 from __future__ import annotations
 
+import warnings
+from typing import Literal
+
 import pandas as pd
 
 from . import _direction
@@ -53,6 +56,8 @@ def convert_to_frames(
     home_team_start_left: bool,
     home_team_start_left_extratime: bool | None = None,
     preserve_native: list[str] | None = None,
+    *,
+    output_convention: Literal["absolute_frame", "ltr"] | None = None,
 ) -> tuple[pd.DataFrame, TrackingConversionReport]:
     """Convert Sportec-shaped raw tracking frames to canonical schema.
 
@@ -68,26 +73,42 @@ def convert_to_frames(
         From DFL match-info XML; only required when periods 3/4 (ET) present.
     preserve_native : list[str] | None
         Reserved for future PR --- pass through optional input columns.
+    output_convention : {"absolute_frame", "ltr"} | None, default None
+        Coordinate convention of the returned frames. ``"absolute_frame"`` (the
+        historical default behaviour) emits frames in absolute-frame-home-right
+        convention with per-row ``team_attacking_direction``. ``"ltr"`` applies
+        :func:`silly_kicks.tracking.utils.play_left_to_right` internally so the
+        output is in canonical SPADL "all teams attack left-to-right"
+        convention. Passing ``None`` (the legacy unspecified state) emits a
+        ``DeprecationWarning`` and defaults to ``"absolute_frame"`` -- callers
+        should pick one explicitly. See ADR-006 (silly-kicks 3.0.0).
 
     Returns
     -------
     frames : pd.DataFrame
         Canonical SPORTEC_TRACKING_FRAMES_COLUMNS-shaped output, 105x68 m
-        SPADL coordinates.
+        SPADL coordinates, in the convention requested by ``output_convention``.
     report : TrackingConversionReport
 
     Examples
     --------
-    Parse DFL Position XML, join roster, then convert::
+    Parse DFL Position XML, join roster, convert in absolute-frame::
 
         from silly_kicks.tracking.sportec import convert_to_frames
         # raw_frames built from DFL XML upstream
         frames, report = convert_to_frames(
             raw_frames, home_team_id="DFL-CLU-0001A",
             home_team_start_left=True,
+            output_convention="absolute_frame",
         )
-        assert report.has_unrecognized is False
+
+    Or get SPADL LTR frames directly (downstream consumers like
+    ``silly_kicks.vaep.VAEP.compute_features`` accept either via the
+    ``frames_convention`` kwarg)::
+
+        frames, _ = convert_to_frames(..., output_convention="ltr")
     """
+    output_convention = _resolve_output_convention(output_convention, _adapter_name="sportec")
     _ = preserve_native  # reserved
     missing = EXPECTED_INPUT_COLUMNS - set(raw_frames.columns)
     if missing:
@@ -163,4 +184,40 @@ def convert_to_frames(
         derived_speed_rows=int((final["speed_source"] == "derived").sum()),
         unrecognized_player_ids=set(),
     )
+
+    if output_convention == "ltr":
+        from .utils import play_left_to_right
+
+        final = play_left_to_right(final, home_team_id)
+
     return final, report
+
+
+def _resolve_output_convention(
+    requested: Literal["absolute_frame", "ltr"] | None,
+    *,
+    _adapter_name: str,
+) -> Literal["absolute_frame", "ltr"]:
+    """Resolve the requested output_convention; warn when unspecified.
+
+    Per ADR-006 (silly-kicks 3.0.0), tracking adapters retain absolute-frame
+    default behaviour but require callers to opt in explicitly. ``None`` (the
+    legacy unspecified state) emits a DeprecationWarning and falls back to
+    "absolute_frame" so behaviour is preserved.
+    """
+    if requested is None:
+        warnings.warn(
+            f"tracking.{_adapter_name}.convert_to_frames called without explicit "
+            "output_convention. Defaulting to 'absolute_frame' (current behaviour). "
+            "Pass output_convention='absolute_frame' to silence this warning, or "
+            "'ltr' to opt into SPADL LTR output. See ADR-006 (silly-kicks 3.0.0).",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return "absolute_frame"
+    if requested not in ("absolute_frame", "ltr"):
+        raise ValueError(
+            f"tracking.{_adapter_name}.convert_to_frames: output_convention must be "
+            f"'absolute_frame' or 'ltr', got {requested!r}"
+        )
+    return requested

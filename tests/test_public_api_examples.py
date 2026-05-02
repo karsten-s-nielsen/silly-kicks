@@ -17,6 +17,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 # tests, and scripts.
 _PUBLIC_MODULE_FILES = (
     "silly_kicks/spadl/utils.py",
+    "silly_kicks/spadl/orientation.py",
     "silly_kicks/spadl/statsbomb.py",
     "silly_kicks/spadl/opta.py",
     "silly_kicks/spadl/wyscout.py",
@@ -55,6 +56,8 @@ _SKIP_SYMBOLS = frozenset(
         "BoundaryMetrics",  # TypedDict — fields are the documentation
         "CoverageMetrics",  # TypedDict
         "ConversionReport",  # TypedDict
+        "DetectionResult",  # frozen dataclass — fields are the documentation
+        "InputConvention",  # str-Enum — members are the documentation
     }
 )
 

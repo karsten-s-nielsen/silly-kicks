@@ -293,12 +293,14 @@ class TestKloppyConversionReport:
 
 
 class TestKloppyDirectionOfPlay:
-    """The kloppy converter must apply _fix_direction_of_play (silly-kicks 1.7.0).
+    """The kloppy converter must apply the canonical absolute-frame → SPADL LTR mirror.
 
     Pre-1.7.0, the kloppy converter stayed in kloppy's HOME_AWAY orientation
     (home plays LTR, away plays RTL) while StatsBomb / Wyscout / Opta all
     flipped away-team coords for canonical "all-actions-LTR" SPADL convention.
-    1.7.0 unifies the convention across all paths.
+    1.7.0 unified the convention via _fix_direction_of_play; 3.0.0 (PR-S22 /
+    ADR-006) routed it through the explicit ``to_spadl_ltr`` dispatcher with
+    ``input_convention=ABSOLUTE_FRAME_HOME_RIGHT``. Behaviour preserved.
     """
 
     def test_away_team_actions_have_flipped_coordinates(self, sportec_dataset):
@@ -324,5 +326,6 @@ class TestKloppyDirectionOfPlay:
         post_flip_x = target["start_x"].iloc[0]
         assert 43.5 < post_flip_x < 47.5, (
             f"start_x={post_flip_x} — expected ~45.7 (post-flip). "
-            f"If you see ~59.3, _fix_direction_of_play was NOT applied."
+            f"If you see ~59.3, the SPADL LTR mirror (to_spadl_ltr / ABSOLUTE_FRAME_HOME_RIGHT) "
+            f"was NOT applied -- check spadl/kloppy.py."
         )

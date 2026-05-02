@@ -9,8 +9,8 @@ import pandas as pd
 from .base import (
     _add_dribbles,
     _fix_clearances,
-    _fix_direction_of_play,
 )
+from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -262,6 +262,26 @@ def convert_to_actions(
     _validate_preserve_native(events, preserve_native, provider="Wyscout")
     _event_type_counts = Counter(events["type_id"])
 
+    # Convention sanity check: Wyscout open data is possession-perspective per
+    # the source spec (each team's events recorded in the team's own attacking
+    # frame, x ∈ [0, 100]). The validator needs flat start_x + is_shot columns;
+    # extract from the nested positions structure for one-shot detection input.
+    # See ADR-006.
+    _detector_input = events.assign(
+        _sk_start_x=events["positions"].map(
+            lambda p: p[0]["x"] if isinstance(p, list) and p and isinstance(p[0], dict) else None
+        ),
+        _sk_is_shot=(events["type_id"] == _WS_TYPE_SHOT),
+    )
+    validate_input_convention(
+        _detector_input,
+        declared=POSSESSION_PERSPECTIVE,
+        match_col="game_id",
+        x_col="_sk_start_x",
+        is_shot_col="_sk_is_shot",
+        x_max=100.0,
+    )
+
     _fix_wyscout_events, _make_new_positions, _fix_actions = _lazy_import_events()
     (_create_df_actions,) = _lazy_import_mappings()
 
@@ -282,7 +302,15 @@ def convert_to_actions(
     events = _fix_wyscout_events(events)
     actions = _create_df_actions(events, preserve_native=preserve_native)
     actions = _fix_actions(actions)
-    actions = _fix_direction_of_play(actions, home_team_id)
+    # SPADL canonical convention is "all teams attack left-to-right". Wyscout
+    # input is possession-perspective (already per-team LTR after rescale to
+    # 105x68 in _wyscout_mappings); explicit no-op call kept as the audit hook
+    # for tests/invariants/test_direction_of_play.py. See ADR-006.
+    actions = to_spadl_ltr(
+        actions,
+        input_convention=POSSESSION_PERSPECTIVE,
+        home_team_id=home_team_id,
+    )
     actions = _fix_clearances(actions)
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)

@@ -113,7 +113,8 @@ import numpy as np
 import pandas as pd
 
 from . import config as spadlconfig
-from .base import _add_dribbles, _fix_clearances, _fix_direction_of_play
+from .base import _add_dribbles, _fix_clearances
+from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -501,11 +502,37 @@ def convert_to_actions(
 
     event_type_counts = Counter(events["event_type"])
 
+    # Convention sanity check: Sportec/IDSSE bronze input is absolute-frame,
+    # home-right (verified empirically via lakehouse probe + ADR-006). The
+    # validator surfaces upstream loader regressions; warn by default, raise
+    # under SILLY_KICKS_ASSERT_INVARIANTS=1.
+    _detector_input = events.assign(
+        _sk_match_id=events["match_id"] if "match_id" in events.columns else 0,
+        _sk_is_shot=(events["event_type"] == "ShotAtGoal"),
+    )
+    _x_col = "x_source_position" if "x_source_position" in events.columns else "x_position_from_tracking"
+    _period_col = "period" if "period" in events.columns else "period_id"
+    if _x_col in events.columns and "team" in events.columns and _period_col in events.columns:
+        validate_input_convention(
+            _detector_input,
+            declared=ABSOLUTE_FRAME_HOME_RIGHT,
+            match_col="_sk_match_id",
+            x_col=_x_col,
+            team_col="team",
+            period_col=_period_col,
+            is_shot_col="_sk_is_shot",
+            x_max=105.0,
+        )
+
     raw_actions = _build_raw_actions(events, preserve_native, goalkeeper_ids=goalkeeper_ids)
 
     if len(raw_actions) > 0:
         actions = _fix_clearances(raw_actions)
-        actions = _fix_direction_of_play(actions, home_team_id)
+        actions = to_spadl_ltr(
+            actions,
+            input_convention=ABSOLUTE_FRAME_HOME_RIGHT,
+            home_team_id=home_team_id,
+        )
         actions["action_id"] = range(len(actions))
         actions = _add_dribbles(actions)
 

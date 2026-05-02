@@ -20,16 +20,6 @@ def _fix_clearances(actions: pd.DataFrame) -> pd.DataFrame:
     return actions
 
 
-def _fix_direction_of_play(actions: pd.DataFrame, home_team_id: int | str) -> pd.DataFrame:
-    away_idx = (actions.team_id != home_team_id).values
-    for col in ["start_x", "end_x"]:
-        actions.loc[away_idx, col] = spadlconfig.field_length - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
-    for col in ["start_y", "end_y"]:
-        actions.loc[away_idx, col] = spadlconfig.field_width - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
-
-    return actions
-
-
 min_dribble_length: float = 3.0
 max_dribble_length: float = 60.0
 max_dribble_duration: float = 10.0

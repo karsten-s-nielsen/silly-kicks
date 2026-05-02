@@ -1,5 +1,6 @@
 """Utility functions for working with SPADL dataframes."""
 
+import os
 import warnings
 from typing import TYPE_CHECKING, Final, TypedDict
 
@@ -1289,34 +1290,47 @@ def add_names(actions: pd.DataFrame) -> pd.DataFrame:
 
 
 def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame:
-    """Perform all actions in the same playing direction.
+    """Mirror away-team rows from absolute-frame to SPADL LTR convention.
 
-    This changes the start and end location of each action, such that all actions
-    are performed as if the team that executes the action plays from left to
-    right.
+    Public boundary helper for callers who hold actions in
+    absolute-frame-home-right convention (home team plays LTR, away team plays
+    RTL in absolute coordinates) and want to convert them to canonical SPADL
+    "all teams attack left-to-right" convention. Mirrors
+    ``(start_x, start_y) / (end_x, end_y)`` of every row whose
+    ``team_id != home_team_id``.
+
+    .. versionchanged:: 3.0.0
+        ADR-006 / PR-S22: every silly-kicks SPADL converter now outputs
+        canonical SPADL LTR directly via :func:`to_spadl_ltr` -- you should NOT
+        call this function on output from ``statsbomb.convert_to_actions`` etc.
+        The function is retained as a public utility for callers who load
+        actions from outside silly-kicks (e.g. raw socceraction output).
 
     Parameters
     ----------
     actions : pd.DataFrame
-        The SPADL actions of a game.
+        Actions in absolute-frame-home-right convention.
     home_team_id : int
-        The ID of the home team.
+        ID of the home team.
 
     Returns
     -------
     pd.DataFrame
-        All actions performed left to right.
+        Actions with all rows oriented left-to-right.
 
     See Also
     --------
-    silly_kicks.vaep.features.play_left_to_right : For transforming gamestates.
+    silly_kicks.spadl.to_spadl_ltr : Canonical normalizer used inside converters
+        (supports possession-perspective, absolute-frame, and per-period inputs).
+    silly_kicks.vaep.features.play_left_to_right : Equivalent for gamestates.
 
     Examples
     --------
-    Mirror all actions to a single direction (left-to-right per the home team)::
+    Convert externally-loaded absolute-frame actions to SPADL LTR::
 
-        actions, _ = statsbomb.convert_to_actions(events, home_team_id=100)
-        ltr = play_left_to_right(actions, home_team_id=100)
+        from silly_kicks.spadl import play_left_to_right
+
+        ltr = play_left_to_right(absolute_frame_actions, home_team_id=100)
         # All away-team actions now have flipped (start_x, start_y) / (end_x, end_y).
     """
     ltr_actions = actions.copy()
@@ -1397,6 +1411,33 @@ def _finalize_output(
             result[col] = result[col].astype(dtype)  # type: ignore[reportCallIssue]
         else:
             result[col] = result[col].astype(np.dtype(dtype))
+
+    # Direction-of-play invariant assertion (PR-S22 / ADR-006). Off by default
+    # for runtime cost; enabled in CI via SILLY_KICKS_ASSERT_INVARIANTS=1. Asserts
+    # SPADL canonical convention -- both teams' shots cluster at high-x. Defers
+    # silently on fixtures with fewer than 10 shots per team to avoid noise from
+    # small synthetic event sets and from the documented kloppy metrica
+    # fixture pairing issue (events from a different match than the metadata,
+    # per tests/datasets/kloppy/README.md). Realistic match data has 10-25
+    # shots per team per match. Atomic-SPADL output uses `x`/`y` not
+    # `start_x`/`start_y`; the assertion is skipped for that schema -- atomic
+    # actions inherit orientation from the SPADL convert_to_atomic input, which
+    # was already validated upstream.
+    if (
+        os.environ.get("SILLY_KICKS_ASSERT_INVARIANTS") == "1"
+        and "type_id" in result.columns
+        and "start_x" in result.columns
+    ):
+        shots = result[result["type_id"] == spadlconfig.actiontype_id["shot"]]
+        if len(shots) > 0 and shots["team_id"].nunique() >= 2:
+            by_team = shots.groupby("team_id")["start_x"].agg(["count", "mean"])
+            reliable = by_team[by_team["count"] >= 10]
+            if len(reliable) >= 2 and not (reliable["mean"] > spadlconfig.field_length / 2).all():
+                raise AssertionError(
+                    f"Direction-of-play invariant violated: not all teams attacking high-x. "
+                    f"Per-team shot stats (count, mean_x): {reliable.to_dict('index')}. "
+                    f"Expected all mean_x > {spadlconfig.field_length / 2:.1f}. See ADR-006."
+                )
     return result
 
 

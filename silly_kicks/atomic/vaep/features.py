@@ -115,32 +115,41 @@ def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) 
 
 
 def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
-    """Perform all action in the same playing direction.
+    """Mirror away-team atomic gamestate rows from absolute-frame to SPADL LTR.
 
-    This changes the start and end location of each action, such that all actions
-    are performed as if the team plays from left to right.
+    Public boundary helper for callers who have absolute-frame-home-right
+    atomic gamestates and want to convert them to canonical SPADL LTR
+    convention. Mirrors ``(x, y)`` and negates ``(dx, dy)`` for every row whose
+    ``a0.team_id != home_team_id``.
+
+    .. versionchanged:: 3.0.0
+        Pre-3.0.0, ``vaep.base.VAEP.compute_features`` (inherited by
+        ``AtomicVAEP``) called this function unconditionally on every input.
+        ADR-006 / PR-S22 removed that internal call because every silly-kicks
+        3.0.0+ converter outputs canonical SPADL LTR by default. This function
+        is retained as a public utility for external callers.
 
     Parameters
     ----------
     gamestates : GameStates
-        The game states of a game.
+        Atomic gamestates in absolute-frame-home-right convention.
     home_team_id : int
-        The ID of the home team.
+        ID of the home team.
 
     Returns
     -------
-    list(pd.DataFrame)
-        The game states with all actions performed left to right.
+    GameStates
+        Atomic gamestates with all rows performed left-to-right.
 
     Examples
     --------
-    Mirror gamestates so all actions are performed left-to-right (per home team)::
+    Convert externally-loaded absolute-frame atomic gamestates to SPADL LTR::
 
         from silly_kicks.atomic.vaep.features import gamestates, play_left_to_right
 
         states = gamestates(atomic, nb_prev_actions=3)
-        states = play_left_to_right(states, home_team_id=100)
-        # All away-team rows in each slot now have flipped (x, y) and (dx, dy).
+        ltr_states = play_left_to_right(states, home_team_id=100)
+        # All away-team rows in each slot now have flipped (x, y) and negated (dx, dy).
     """
     a0 = gamestates[0]
     away_idx = a0.team_id != home_team_id

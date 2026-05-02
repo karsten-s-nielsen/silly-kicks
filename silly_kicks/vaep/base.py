@@ -9,7 +9,7 @@ xfns_default : list(callable)
 
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -22,6 +22,9 @@ from . import features as fs
 from . import formula as vaep
 from . import labels as lab
 from .learners import _LEARNER_REGISTRY
+
+# Type alias for the frames_convention kwarg on compute_features (ADR-006).
+_FramesConvention = Literal["absolute_frame", "ltr"]
 
 xfns_default = [
     fs.actiontype_onehot,
@@ -117,6 +120,7 @@ class VAEP:
         game_actions: fs.Actions,
         *,
         frames: pd.DataFrame | None = None,
+        frames_convention: "_FramesConvention" = "absolute_frame",
     ) -> pd.DataFrame:
         """
         Transform actions to the feature-based representation of game states.
@@ -126,14 +130,27 @@ class VAEP:
         game : pd.Series
             The SPADL representation of a single game.
         game_actions : pd.DataFrame
-            The actions performed during `game` in the SPADL representation.
+            The actions performed during ``game`` in the SPADL representation.
+            **Must already be in canonical SPADL LTR convention**, which is what
+            every silly-kicks 3.0.0+ converter produces by default. Prior to
+            3.0.0 (ADR-006), this method applied an additional
+            ``play_left_to_right`` call on top of converter output, which
+            silently double-mirrored away-team rows for absolute-frame providers
+            (Sportec / Metrica / kloppy gateway / Opta) and accidentally
+            cancelled the converter's mirror for possession-perspective providers
+            (StatsBomb / Wyscout). The dual-mirror was removed in 3.0.0.
         frames : pd.DataFrame, optional
             Long-form tracking frames matching TRACKING_FRAMES_COLUMNS. Required
             when any xfn in self.xfns is marked frame-aware (via @frame_aware);
-            ignored otherwise. When supplied, frames are normalized to LTR via
-            ``silly_kicks.tracking.utils.play_left_to_right`` symmetrically with
-            actions. The lazy import ensures no vaep<->tracking module-import
-            cycle when frames is None.
+            ignored otherwise.
+        frames_convention : {"absolute_frame", "ltr"}, default "absolute_frame"
+            Coordinate convention of the input ``frames``. Tracking adapters
+            ship absolute-frame frames by default (with per-row
+            ``team_attacking_direction``); this method normalises them to SPADL
+            LTR via :func:`silly_kicks.tracking.utils.play_left_to_right` before
+            running frame-aware xfns. Pass ``"ltr"`` to skip normalisation when
+            the caller has already done it (e.g. via the tracking adapter's
+            ``output_convention="ltr"`` opt-in). Ignored when ``frames is None``.
 
         Returns
         -------
@@ -143,7 +160,8 @@ class VAEP:
         Raises
         ------
         ValueError
-            If self.xfns contains a frame-aware xfn but frames is None.
+            If self.xfns contains a frame-aware xfn but frames is None, or if
+            ``frames_convention`` is not one of the documented values.
 
         Examples
         --------
@@ -161,11 +179,19 @@ class VAEP:
         """
         from .feature_framework import is_frame_aware
 
+        if frames_convention not in ("absolute_frame", "ltr"):
+            raise ValueError(
+                f"compute_features: frames_convention must be 'absolute_frame' or 'ltr', got {frames_convention!r}"
+            )
+
         game_actions_with_names = self._add_names(game_actions)  # type: ignore
         gamestates = self._fs.gamestates(game_actions_with_names, self.nb_prev_actions)
-        gamestates = self._fs.play_left_to_right(gamestates, game.home_team_id)
+        # NOTE: pre-3.0.0 silly-kicks applied self._fs.play_left_to_right here
+        # on top of converter output. ADR-006 removed it -- converter output is
+        # already canonical SPADL LTR, so the second mirror inverted away-team
+        # rows. Removed in PR-S22 / 3.0.0.
 
-        if frames is not None:
+        if frames is not None and frames_convention == "absolute_frame":
             from silly_kicks.tracking.utils import play_left_to_right as _track_ltr
 
             frames = _track_ltr(frames, game.home_team_id)

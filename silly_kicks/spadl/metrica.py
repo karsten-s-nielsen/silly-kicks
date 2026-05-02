@@ -67,7 +67,8 @@ import numpy as np
 import pandas as pd
 
 from . import config as spadlconfig
-from .base import _add_dribbles, _fix_clearances, _fix_direction_of_play
+from .base import _add_dribbles, _fix_clearances
+from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -162,11 +163,28 @@ def convert_to_actions(
 
     event_type_counts = Counter(events["type"])
 
+    # Convention sanity check: Metrica events ship in absolute-frame, home-right
+    # convention (verified via lakehouse probe + ADR-006). Validator surfaces
+    # upstream loader regressions per ADR-006.
+    validate_input_convention(
+        events.assign(_sk_is_shot=(events["type"] == "SHOT")),
+        declared=ABSOLUTE_FRAME_HOME_RIGHT,
+        match_col="match_id",
+        team_col="team",
+        period_col="period",
+        is_shot_col="_sk_is_shot",
+        x_max=spadlconfig.field_length,
+    )
+
     raw_actions = _build_raw_actions(events, preserve_native, goalkeeper_ids=goalkeeper_ids)
 
     if len(raw_actions) > 0:
         actions = _fix_clearances(raw_actions)
-        actions = _fix_direction_of_play(actions, home_team_id)
+        actions = to_spadl_ltr(
+            actions,
+            input_convention=ABSOLUTE_FRAME_HOME_RIGHT,
+            home_team_id=home_team_id,
+        )
         actions["action_id"] = range(len(actions))
         actions = _add_dribbles(actions)
 

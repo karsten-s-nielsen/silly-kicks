@@ -11,9 +11,9 @@ from . import config as spadlconfig
 from .base import (
     _add_dribbles,
     _fix_clearances,
-    _fix_direction_of_play,
     min_dribble_length,
 )
+from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -97,6 +97,18 @@ def convert_to_actions(
         DataFrame containing Opta events from a single game.
     home_team_id : int
         ID of the home team in the corresponding game.
+
+        Coordinate-convention contract: this converter expects
+        ``input_convention=ABSOLUTE_FRAME_HOME_RIGHT`` -- both teams in the
+        same coordinate system, home team attacking RIGHT (high x) consistently
+        across ALL periods (i.e., NO half-time switching). Raw Opta f24 ships
+        per-period absolute-frame data with teams switching ends at half-time;
+        the upstream loader is responsible for normalising this to no-switch
+        before passing the events DataFrame here. The new
+        :func:`silly_kicks.spadl.validate_input_convention` (silly-kicks 3.0.0
+        / ADR-006) surfaces violations as warnings (or raises under
+        ``SILLY_KICKS_ASSERT_INVARIANTS=1``).
+
     preserve_native : list[str], optional
         Provider-native event fields to preserve alongside the canonical SPADL
         output as extra columns. Each field must be present on the input
@@ -132,6 +144,18 @@ def convert_to_actions(
     # Opta because source events natively mark GK actions.
     _ = goalkeeper_ids
     _event_type_counts = Counter(events["type_name"])
+
+    # Convention sanity check: Opta input is expected to be absolute-frame,
+    # home-right, NO per-period switch (loader-pre-normalised). See docstring
+    # contract above. Validator surfaces violations per ADR-006.
+    _shot_event_types = frozenset({"miss", "post", "attempt saved", "goal"})
+    validate_input_convention(
+        events.assign(_sk_is_shot=events["type_name"].isin(_shot_event_types)),
+        declared=ABSOLUTE_FRAME_HOME_RIGHT,
+        match_col="game_id",
+        is_shot_col="_sk_is_shot",
+        x_max=100.0,
+    )
 
     actions = pd.DataFrame()
 
@@ -182,7 +206,11 @@ def convert_to_actions(
         .reset_index(drop=True)
     )
     actions = _fix_owngoals(actions)
-    actions = _fix_direction_of_play(actions, home_team_id)
+    actions = to_spadl_ltr(
+        actions,
+        input_convention=ABSOLUTE_FRAME_HOME_RIGHT,
+        home_team_id=home_team_id,
+    )
     actions = _fix_clearances(actions)
     actions = _fix_interceptions(actions)
     actions["action_id"] = range(len(actions))

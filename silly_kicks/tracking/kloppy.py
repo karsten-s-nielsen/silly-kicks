@@ -10,6 +10,8 @@ See ADR-004 (silly-kicks 2.7.0) for the architectural rationale.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 from kloppy.domain import (  # type: ignore[reportMissingImports]
     Dimension,
@@ -20,6 +22,7 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
 )
 
 from .schema import KLOPPY_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+from .sportec import _resolve_output_convention
 from .utils import _derive_speed
 
 _PROVIDER_NAME_MAP: dict[Provider, str] = {
@@ -31,6 +34,8 @@ _PROVIDER_NAME_MAP: dict[Provider, str] = {
 def convert_to_frames(
     dataset: TrackingDataset,
     preserve_native: list[str] | None = None,
+    *,
+    output_convention: Literal["absolute_frame", "ltr"] | None = None,
 ) -> tuple[pd.DataFrame, TrackingConversionReport]:
     """Convert a kloppy TrackingDataset to canonical KLOPPY_TRACKING_FRAMES_COLUMNS schema.
 
@@ -45,23 +50,36 @@ def convert_to_frames(
         ``kloppy.skillcorner.load_tracking``.
     preserve_native : list[str] | None
         Reserved for future PR --- pass through optional input columns.
+    output_convention : {"absolute_frame", "ltr"} | None, default None
+        Coordinate convention of the returned frames. ``"absolute_frame"``
+        (the historical default) emits frames in absolute-frame-home-right
+        convention with per-row ``team_attacking_direction``. ``"ltr"`` applies
+        :func:`silly_kicks.tracking.utils.play_left_to_right` internally so the
+        output is in canonical SPADL "all teams attack left-to-right". Passing
+        ``None`` emits a ``DeprecationWarning`` and defaults to
+        ``"absolute_frame"`` -- callers should pick one explicitly. See
+        ADR-006 (silly-kicks 3.0.0).
 
     Returns
     -------
     frames : pd.DataFrame
-        KLOPPY_TRACKING_FRAMES_COLUMNS-shaped output.
+        KLOPPY_TRACKING_FRAMES_COLUMNS-shaped output, in the convention
+        requested by ``output_convention``.
     report : TrackingConversionReport
 
     Examples
     --------
-    Load a Metrica match via kloppy and convert::
+    Load a Metrica match via kloppy and convert in absolute frame::
 
         import kloppy
         from silly_kicks.tracking import kloppy as tracking_kloppy
         ds = kloppy.metrica.load_tracking_csv(home="home.csv", away="away.csv")
-        frames, report = tracking_kloppy.convert_to_frames(ds)
+        frames, report = tracking_kloppy.convert_to_frames(
+            ds, output_convention="absolute_frame",
+        )
     """
     _ = preserve_native  # reserved
+    output_convention = _resolve_output_convention(output_convention, _adapter_name="kloppy")
     provider = dataset.metadata.provider
     if provider == Provider.PFF:
         raise NotImplementedError(
@@ -192,4 +210,10 @@ def convert_to_frames(
         derived_speed_rows=int((final["speed_source"] == "derived").sum()),
         unrecognized_player_ids=set(),
     )
+
+    if output_convention == "ltr":
+        from .utils import play_left_to_right
+
+        final = play_left_to_right(final, home_team_id)
+
     return final, report

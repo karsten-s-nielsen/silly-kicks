@@ -68,11 +68,15 @@ def _load_idsse_via_sportec() -> pd.DataFrame:
     if not parquet_path.exists():
         pytest.skip(f"IDSSE fixture not found at {parquet_path}")
     events = pd.read_parquet(parquet_path)
-    home_team = events["team"].dropna().iloc[0]
+    # IDSSE bronze fixture's ``team`` column uses literal "home"/"away" labels
+    # (not team_ids). Pass "home" so the converter mirrors only away-team rows
+    # per the ABSOLUTE_FRAME_HOME_RIGHT contract. PR-S22 fixed the prior
+    # ``events["team"].iloc[0]`` heuristic which picked "away" because the
+    # first row in the fixture happens to be by the away team.
     gk_ids: set[str] | None = None
     if "play_goal_keeper_action" in events.columns:
         gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
-    actions, _ = sportec.convert_to_actions(events, home_team_id=str(home_team), goalkeeper_ids=gk_ids)
+    actions, _ = sportec.convert_to_actions(events, home_team_id="home", goalkeeper_ids=gk_ids)
     return actions
 
 
