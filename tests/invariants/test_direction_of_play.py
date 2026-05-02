@@ -103,3 +103,49 @@ def test_at_least_one_provider_has_two_teams_with_shots():
         "No provider in the parametrize matrix produced shots from >= 2 teams. "
         "The invariant test is vacuous; add a fixture that exercises both teams."
     )
+
+
+# ---------------------------------------------------------------------------
+# PR-S23 / silly-kicks 3.0.1: per-(team, period) orientation invariant.
+# Closes the test-density gap that let the silly-kicks 3.0.0 native Sportec
+# + Metrica per-period-absolute bug ship through PR-S22's invariant suite.
+# Existing sample_match.parquet fixtures had only 2 shots / 1 period -- the
+# per-period invariant could not be physically exercised until now.
+# ---------------------------------------------------------------------------
+
+
+_PER_PERIOD_CASES = [
+    # (provider_label, loader, n_min_shots_per_team_period_group)
+    ("sportec_native_per_period", _loaders.load_sportec_native_per_period, 3),
+    ("metrica_native_per_period", _loaders.load_metrica_native_per_period, 3),
+]
+
+
+@pytest.mark.parametrize("provider,loader,n_min_shots_per_group", _PER_PERIOD_CASES)
+def test_per_team_per_period_shots_attack_high_x(provider: str, loader, n_min_shots_per_group: int):
+    """SPADL canonical LTR holds per-(period, team), not just in aggregate.
+
+    A per-period-absolute bug (silly-kicks 3.0.0's Sportec + Metrica
+    declaration error) is invisible to the aggregate test when one
+    period's wrong-end signal cancels the other's. The per-(period,
+    team) groupby exposes the bug.
+    """
+    actions, _home_team_id = loader()
+    shots = actions[actions["type_id"] == spadlconfig.actiontype_id["shot"]]
+    if len(shots) == 0:
+        pytest.skip(f"{provider}: fixture has no shots")
+
+    by_group = shots.groupby(["period_id", "team_id"]).agg(n=("start_x", "size"), mean_x=("start_x", "mean"))
+    reliable = by_group[by_group["n"] >= n_min_shots_per_group]
+    if reliable.empty:
+        pytest.skip(
+            f"{provider}: no (period, team) group has >= {n_min_shots_per_group} shots; got {by_group.to_dict('index')}"
+        )
+
+    failing = reliable[reliable["mean_x"] <= spadlconfig.field_length / 2]
+    assert failing.empty, (
+        f"{provider}: per-(period, team) orientation violated. Groups failing canonical LTR:\n"
+        f"{failing.to_string()}\n"
+        f"Expected: each (period, team) group's mean shot start_x > "
+        f"{spadlconfig.field_length / 2}. Full breakdown:\n{by_group.to_string()}"
+    )

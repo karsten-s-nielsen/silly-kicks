@@ -5,6 +5,80 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] — 2026-05-02
+
+### Breaking-correctness fix (PR-S23) — Sportec + Metrica per-period direction-of-play
+
+`silly_kicks.spadl.sportec.convert_to_actions` and
+`silly_kicks.spadl.metrica.convert_to_actions` now correctly handle
+per-period-absolute bronze events (teams switching ends after halftime).
+silly-kicks 3.0.0 declared these converters as `ABSOLUTE_FRAME_HOME_RIGHT`,
+producing wrong-end SPADL output for half of every match. ADR-006 erratum
+documents the corrected per-converter declaration table.
+
+Callers must now pass per-period direction info via one of two paths
+(otherwise `ValueError` with migration guidance):
+
+```python
+# Path A -- bool pair (preferred; matches PFF events + tracking-Sportec API)
+actions, report = sportec.convert_to_actions(
+    events,
+    home_team_id="DFL-CLU-XXXXX",
+    home_team_start_left=True,                     # from DFL MatchInformation.xml
+    home_team_start_left_extratime=False,          # only when ET periods present
+)
+
+# Path B -- explicit mapping (escape hatch for arbitrary periods)
+actions, report = metrica.convert_to_actions(
+    events,
+    home_team_id="Home",
+    home_attacks_right_per_period={1: True, 2: False},
+)
+```
+
+Trained VAEP / HybridVAEP / xT models on Sportec or Metrica data from
+silly-kicks 3.0.0 must be re-trained on 3.0.1 output.
+
+### Test infrastructure
+
+- New per-period orientation fixtures committed at
+  `tests/datasets/idsse/per_period_match.parquet` (Bassek et al. CC-BY 4.0)
+  and `tests/datasets/metrica/per_period_match.parquet` (CC-BY-NC-4.0;
+  same precedent as existing Metrica Sample Game 2 fixture). Both are
+  excluded from the published wheel.
+- New `test_per_team_per_period_shots_attack_high_x` parametrized over
+  both new fixtures in `tests/invariants/test_direction_of_play.py`.
+  Closes the invariant-density gap that let PR-S22's bug ship.
+- 5 new `TestSportecPerPeriodKwargContract` + 5 new
+  `TestMetricaPerPeriodKwargContract` negative-path tests for kwarg
+  resolution policy.
+
+### Detector hardening (TF-22)
+
+`silly_kicks.spadl.orientation.detect_input_convention` no longer
+false-positives `ABSOLUTE_FRAME_HOME_RIGHT` on sparse-shot
+per-period-absolute matches. New guard: when no team has reliable shots
+in ≥ 2 distinct periods, returns `convention=None, confidence="low"`.
+Validator re-enabled at sportec / metrica / pff converter call sites
+declaring `PER_PERIOD_ABSOLUTE`.
+
+### Atomic-SPADL pathway
+
+Smoke test added at `tests/atomic/test_atomic_orientation.py` verifying
+the SPADL → atomic-SPADL composition preserves canonical-LTR. No
+converter changes (atomic has no native sportec/metrica converter).
+
+### Other
+
+- `silly_kicks/__init__.py` `__version__` bumped from "1.0.2" (stale
+  since at least 2.0.0) to "3.0.1" so it now matches `pyproject.toml`.
+- `scripts/extract_provider_fixtures.py` gains `--variant {default, per_period}`
+  flag for regenerating either fixture variant. Per-period extraction
+  pulls from `bronze.idsse_events` / `bronze.metrica_events` on Databricks
+  (env-var auth).
+- `NOTICE` "Test Data Sources" section attributes the new IDSSE +
+  Metrica Sample Game 1 fixtures.
+
 ## [3.0.0] — 2026-05-02
 
 ### Breaking — Correctness (PR-S22)

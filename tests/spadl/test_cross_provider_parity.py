@@ -52,7 +52,9 @@ def _load_idsse_fixture():
     gk_ids: set[str] | None = None
     if "play_goal_keeper_action" in events.columns:
         gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
-    actions, _ = sportec.convert_to_actions(events, home_team_id="home", goalkeeper_ids=gk_ids)
+    actions, _ = sportec.convert_to_actions(
+        events, home_team_id="home", goalkeeper_ids=gk_ids, home_team_start_left=True
+    )
     return actions
 
 
@@ -75,7 +77,9 @@ def _load_metrica_fixture():
     if home_passes.empty:
         pytest.skip("Metrica fixture lacks any PASS-by-home-team event with a known player_id")
     gk_id = str(home_passes["player"].iloc[0])
-    actions, _ = metrica.convert_to_actions(events, home_team_id=str(home_team), goalkeeper_ids={gk_id})
+    actions, _ = metrica.convert_to_actions(
+        events, home_team_id=str(home_team), goalkeeper_ids={gk_id}, home_team_start_left=True
+    )
     return actions
 
 
@@ -324,7 +328,7 @@ class TestSportecAdrContractOnProductionFixture:
         # rows (~3 events of 308) so the test's team_id ⊆ {home, away}
         # contract holds.
         events = events[events["team"].isin(["home", "away"]) | events["team"].isna()].reset_index(drop=True)
-        actions, _ = sportec.convert_to_actions(events, home_team_id="home")
+        actions, _ = sportec.convert_to_actions(events, home_team_id="home", home_team_start_left=True)
         return actions, events
 
     def test_no_dfl_clu_strings_leak_into_team_id(self):

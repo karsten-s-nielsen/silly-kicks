@@ -225,7 +225,12 @@ def load_sportec_native() -> LoaderResult:
     gk_ids: set[str] | None = None
     if "play_goal_keeper_action" in events.columns:
         gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
-    actions, _ = sportec.convert_to_actions(events, home_team_id=home_team_id, goalkeeper_ids=gk_ids)
+    actions, _ = sportec.convert_to_actions(
+        events,
+        home_team_id=home_team_id,
+        home_team_start_left=False,  # PR-S23: same match (idsse_J03WMX) as per_period fixture; home attacks LEFT in P1
+        goalkeeper_ids=gk_ids,
+    )
     return actions, home_team_id
 
 
@@ -264,7 +269,74 @@ def load_metrica_native() -> LoaderResult:
         gk_ids: set[str] | None = None
     else:
         gk_ids = {str(home_passes["player"].iloc[0])}
-    actions, _ = metrica.convert_to_actions(events, home_team_id=home_team, goalkeeper_ids=gk_ids)
+    actions, _ = metrica.convert_to_actions(
+        events,
+        home_team_id=home_team,
+        # PR-S23: legacy P1-only fixture; True is bit-identical to old absolute-frame behaviour
+        home_team_start_left=True,
+        goalkeeper_ids=gk_ids,
+    )
+    return actions, home_team
+
+
+# ---------------------------------------------------------------------------
+# Sportec native -- PER-PERIOD fixture (PR-S23 / silly-kicks 3.0.1)
+# ---------------------------------------------------------------------------
+
+
+def load_sportec_native_per_period() -> LoaderResult:
+    """Load the dense per-period IDSSE fixture for the per-(team, period) invariant.
+
+    Per-period orientation signature (verified empirically):
+    home attacks LEFT in P1 -> home_team_start_left=False.
+    """
+    from silly_kicks.spadl import sportec
+
+    parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "per_period_match.parquet"
+    events = pd.read_parquet(parquet_path)
+    home_team_id = "home"
+    gk_ids: set[str] | None = None
+    if "play_goal_keeper_action" in events.columns:
+        gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
+    actions, _ = sportec.convert_to_actions(
+        events,
+        home_team_id=home_team_id,
+        home_team_start_left=False,  # PR-S23: home attacks LEFT in P1 (lakehouse probe)
+        goalkeeper_ids=gk_ids,
+    )
+    return actions, home_team_id
+
+
+# ---------------------------------------------------------------------------
+# Metrica native -- PER-PERIOD fixture (PR-S23 / silly-kicks 3.0.1)
+# ---------------------------------------------------------------------------
+
+
+def load_metrica_native_per_period() -> LoaderResult:
+    """Load the dense per-period Metrica Sample Game 1 fixture.
+
+    Per-period orientation signature (verified empirically):
+    home attacks RIGHT in P1 -> home_team_start_left=True.
+    """
+    from silly_kicks.spadl import metrica
+
+    parquet_path = _REPO_ROOT / "tests" / "datasets" / "metrica" / "per_period_match.parquet"
+    events = pd.read_parquet(parquet_path)
+    # PR-S23: hard-code "Home" rather than events["team"].iloc[0] heuristic --
+    # see feedback_home_team_id_heuristic_fragile memory; first row is "Away"
+    # in this fixture so the heuristic would silently invert home/away.
+    home_team = "Home"
+    home_passes = events[(events["type"] == "PASS") & (events["team"] == home_team) & events["player"].notna()]
+    if home_passes.empty:
+        gk_ids: set[str] | None = None
+    else:
+        gk_ids = {str(home_passes["player"].iloc[0])}
+    actions, _ = metrica.convert_to_actions(
+        events,
+        home_team_id=home_team,
+        home_team_start_left=True,  # PR-S23: home attacks RIGHT in P1 (lakehouse probe)
+        goalkeeper_ids=gk_ids,
+    )
     return actions, home_team
 
 

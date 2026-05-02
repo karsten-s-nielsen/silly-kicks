@@ -213,3 +213,51 @@ enumerates the categorical impact rather than specific consumer artifacts.
   `scripts/probe_opta_convention.py`, `scripts/probe_convention_detector.py`.
 - Lakehouse session second-opinion review folded into final design (notably
   the test-layer-hierarchy promotion and the no-default-flip tracking decision).
+
+## Erratum (silly-kicks 3.0.1, 2026-05-02)
+
+Two rows of the per-converter input convention assignment table (§ 2)
+were incorrect in 3.0.0:
+
+| Converter | declared (3.0.0 — incorrect) | declared (3.0.1 — corrected) |
+|---|---|---|
+| `spadl/sportec.py` | `ABSOLUTE_FRAME_HOME_RIGHT` | `PER_PERIOD_ABSOLUTE` |
+| `spadl/metrica.py` | `ABSOLUTE_FRAME_HOME_RIGHT` | `PER_PERIOD_ABSOLUTE` |
+
+Native Sportec and Metrica bronze events ship per-period-absolute (teams
+switch ends after halftime — empirically verified against lakehouse
+production fixtures via the SK3-MIG migration session). The kloppy-gateway
+path (`spadl/kloppy.py`) remains `ABSOLUTE_FRAME_HOME_RIGHT` — kloppy
+normalises upstream via `Orientation.HOME_AWAY`.
+
+The 3.0.1 fix mirrors the existing PFF events-side and tracking-side
+Sportec API exactly: callers pass `home_team_start_left: bool` (or the
+escape-hatch `home_attacks_right_per_period` mapping), the converter
+derives flips and dispatches to `to_spadl_ltr` with `PER_PERIOD_ABSOLUTE`.
+See CHANGELOG 3.0.1 for the migration snippet.
+
+The detector heuristic (`detect_input_convention`) was simultaneously
+hardened (TF-22): when no team has reliable shots in ≥ 2 distinct
+periods, the detector returns `convention=None, confidence="low"` rather
+than false-positiving `ABSOLUTE_FRAME_HOME_RIGHT` on sparse-shot
+per-period-absolute matches. Validator re-enabled at sportec, metrica,
+and pff converter call sites with `declared=PER_PERIOD_ABSOLUTE`.
+
+## Lessons learned (silly-kicks 3.0.1)
+
+PR-S22 reported "1707 passed, 12 skipped, 0 failed" with strict-mode
+invariants enabled, yet the Sportec + Metrica per-period bug shipped.
+Root cause: `tests/datasets/idsse/sample_match.parquet` (2 shots total)
+and `tests/datasets/metrica/sample_match.parquet` (period 1 only) had
+insufficient per-period shot density to physically exercise the
+per-period orientation invariant. The invariant test layer was present
+but blind on these two providers.
+
+Lesson: a physical-invariant test is only load-bearing if the fixture
+density allows the invariant to actually be evaluated. Future
+provider-coverage PRs should verify the invariant suite's fixture
+density on a per-provider basis. PR-S23 adds explicit per-period
+fixtures (`tests/datasets/{idsse,metrica}/per_period_match.parquet`)
+with documented shot density requirements (≥ 5 shots per (team,
+period) group is the validator's medium-confidence threshold; the new
+fixtures meet this).

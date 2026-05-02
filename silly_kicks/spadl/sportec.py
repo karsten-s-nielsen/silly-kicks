@@ -99,7 +99,9 @@ columns happened to be in the same identifier convention as DFL's
 .. code-block:: python
 
     from silly_kicks.spadl import sportec, use_tackle_winner_as_actor
-    actions, _ = sportec.convert_to_actions(events, home_team_id="DFL-CLU-XXX")
+    actions, _ = sportec.convert_to_actions(
+        events, home_team_id="DFL-CLU-XXX", home_team_start_left=True,
+    )
     actions = use_tackle_winner_as_actor(actions)
 
 See ``docs/superpowers/adrs/ADR-001-converter-identifier-conventions.md``
@@ -108,13 +110,15 @@ for the contract rationale and audit findings.
 
 import warnings
 from collections import Counter
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
 
+from ..tracking import _direction
 from . import config as spadlconfig
 from .base import _add_dribbles, _fix_clearances
-from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr, validate_input_convention
+from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -445,10 +449,76 @@ _CONSULTED_QUALIFIER_COLUMNS: frozenset[str] = frozenset(
 )
 
 
+_MIGRATION_3_0_1_MESSAGE_SPORTEC = (
+    "silly_kicks.spadl.sportec.convert_to_actions requires explicit per-period "
+    "direction info as of silly-kicks 3.0.1. Sportec/DFL bronze events ship "
+    "per-period-absolute (teams switch ends after halftime). Pass "
+    "`home_team_start_left=True/False` from DFL MatchInformation.xml "
+    "(Environment.HomeTeamStartLeftSide), OR pass "
+    "`home_attacks_right_per_period={1: bool, 2: bool, ...}` directly. "
+    "See ADR-006 erratum + CHANGELOG 3.0.1 for the migration snippet."
+)
+
+
+def _resolve_per_period_flips_sportec(
+    *,
+    events: pd.DataFrame,
+    home_team_start_left: bool | None,
+    home_team_start_left_extratime: bool | None,
+    home_attacks_right_per_period: Mapping[int, bool] | None,
+) -> dict[int, bool]:
+    """Resolve the bool-pair-OR-mapping kwargs to a concrete per-period flip dict.
+
+    Mutual exclusion + loud failure on missing-input. Mirrors PFF events-side
+    and tracking-side Sportec API exactly.
+    """
+    if home_attacks_right_per_period is not None and (
+        home_team_start_left is not None or home_team_start_left_extratime is not None
+    ):
+        raise ValueError(
+            "sportec.convert_to_actions: pass home_team_start_left[+_extratime] OR "
+            "home_attacks_right_per_period, not both."
+        )
+
+    if home_attacks_right_per_period is not None:
+        return dict(home_attacks_right_per_period)
+
+    if home_team_start_left is None and home_team_start_left_extratime is not None:
+        raise ValueError(
+            "sportec.convert_to_actions: home_team_start_left_extratime supplied without "
+            "home_team_start_left. ET flag is meaningful only as a refinement of the "
+            "regular-time flag."
+        )
+
+    if home_team_start_left is None:
+        raise ValueError(_MIGRATION_3_0_1_MESSAGE_SPORTEC)
+
+    period_col = "period" if "period" in events.columns else "period_id"
+    if (
+        period_col in events.columns
+        and events[period_col].isin([3, 4]).any()
+        and home_team_start_left_extratime is None
+    ):
+        raise ValueError(
+            "sportec.convert_to_actions: events contain ET periods (period_id in {3, 4}) "
+            "but home_team_start_left_extratime was not provided. Set it explicitly to "
+            "match metadata (DFL HomeTeamStartLeftSideExtraTime equivalent), or filter "
+            "ET events out before calling."
+        )
+
+    return _direction.home_attacks_right_per_period(
+        home_team_start_left=home_team_start_left,
+        home_team_start_left_extratime=home_team_start_left_extratime,
+    )
+
+
 def convert_to_actions(
     events: pd.DataFrame,
     home_team_id: str,
     *,
+    home_team_start_left: bool | None = None,
+    home_team_start_left_extratime: bool | None = None,
+    home_attacks_right_per_period: Mapping[int, bool] | None = None,
     preserve_native: list[str] | None = None,
     goalkeeper_ids: set[str] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
@@ -460,8 +530,24 @@ def convert_to_actions(
         Normalized DFL event data with columns per ``EXPECTED_INPUT_COLUMNS``
         plus any subset of optional qualifier columns.
     home_team_id : str
-        Identifier of the home team (used to flip away-team coords for canonical
-        SPADL "all-actions-LTR" orientation).
+        Identifier of the home team (used to route per-period coord flips for
+        canonical SPADL "all-actions-LTR" orientation).
+    home_team_start_left : bool or None, default ``None``
+        From DFL ``MatchInformation.xml`` (``Environment.HomeTeamStartLeftSide``
+        attribute). When True, the home team starts on the left side of the
+        pitch in period 1 (its goal is on the left, so it shoots toward the
+        right goal). silly-kicks 3.0.1 introduced this kwarg to fix the
+        per-period-absolute direction-of-play bug; pass exactly one of
+        ``home_team_start_left`` or ``home_attacks_right_per_period``.
+    home_team_start_left_extratime : bool or None, default ``None``
+        Same flag for ET periods 3/4 (DFL ``HomeTeamStartLeftSideExtraTime``
+        equivalent). Required only when the input contains ``period_id`` 3 or 4.
+    home_attacks_right_per_period : Mapping[int, bool] or None, default ``None``
+        Escape hatch: pass the per-period flip mapping directly (e.g.
+        ``{1: True, 2: False}``). Useful for non-canonical period structures
+        (futsal halves, friendly-match formats) or when the caller has
+        pre-derived the mapping. Pass exactly one of ``home_team_start_left``
+        or ``home_attacks_right_per_period``.
     preserve_native : list[str], optional
         Caller-attached columns to preserve through to the output. Synthetic
         dribble rows get NaN in preserved columns.
@@ -485,27 +571,48 @@ def convert_to_actions(
 
     Examples
     --------
-    Convert a Sportec/IDSSE bronze events DataFrame to SPADL::
+    Convert a Sportec/IDSSE bronze events DataFrame to SPADL -- preferred path::
 
         from silly_kicks.spadl import sportec
 
         actions, report = sportec.convert_to_actions(
             events,
-            home_team_id="HOME",
+            home_team_id="DFL-CLU-XXXXX",
+            home_team_start_left=True,    # from DFL MatchInformation.xml
             goalkeeper_ids={"DFL-OBJ-..."},  # optional supplementary GK ids
         )
         # report.mapped_counts gives per-event-type counts; output schema is
         # SPORTEC_SPADL_COLUMNS (KLOPPY_SPADL_COLUMNS + 4 tackle qualifier columns).
+
+    Same conversion via the explicit-mapping escape hatch::
+
+        actions, report = sportec.convert_to_actions(
+            events,
+            home_team_id="DFL-CLU-XXXXX",
+            home_attacks_right_per_period={1: False, 2: True},
+        )
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Sportec")
     _validate_preserve_native(events, preserve_native, provider="Sportec", schema=KLOPPY_SPADL_COLUMNS)
 
     event_type_counts = Counter(events["event_type"])
 
-    # Convention sanity check: Sportec/IDSSE bronze input is absolute-frame,
-    # home-right (verified empirically via lakehouse probe + ADR-006). The
-    # validator surfaces upstream loader regressions; warn by default, raise
-    # under SILLY_KICKS_ASSERT_INVARIANTS=1.
+    # PR-S23 / silly-kicks 3.0.1: native Sportec/DFL bronze events ship
+    # PER_PERIOD_ABSOLUTE (teams switch ends after halftime; verified
+    # empirically via lakehouse SK3-MIG probe). The kloppy gateway path
+    # (silly_kicks.spadl.kloppy) remains ABSOLUTE_FRAME_HOME_RIGHT --
+    # kloppy normalises via Orientation.HOME_AWAY upstream. See ADR-006
+    # erratum.
+    flips = _resolve_per_period_flips_sportec(
+        events=events,
+        home_team_start_left=home_team_start_left,
+        home_team_start_left_extratime=home_team_start_left_extratime,
+        home_attacks_right_per_period=home_attacks_right_per_period,
+    )
+
+    # Convention sanity check: declared PER_PERIOD_ABSOLUTE; validator
+    # surfaces upstream loader regressions (e.g. caller accidentally feeds
+    # absolute-frame data). Strict mode under SILLY_KICKS_ASSERT_INVARIANTS=1.
     _detector_input = events.assign(
         _sk_match_id=events["match_id"] if "match_id" in events.columns else 0,
         _sk_is_shot=(events["event_type"] == "ShotAtGoal"),
@@ -515,7 +622,7 @@ def convert_to_actions(
     if _x_col in events.columns and "team" in events.columns and _period_col in events.columns:
         validate_input_convention(
             _detector_input,
-            declared=ABSOLUTE_FRAME_HOME_RIGHT,
+            declared=PER_PERIOD_ABSOLUTE,
             match_col="_sk_match_id",
             x_col=_x_col,
             team_col="team",
@@ -530,8 +637,9 @@ def convert_to_actions(
         actions = _fix_clearances(raw_actions)
         actions = to_spadl_ltr(
             actions,
-            input_convention=ABSOLUTE_FRAME_HOME_RIGHT,
+            input_convention=PER_PERIOD_ABSOLUTE,
             home_team_id=home_team_id,
+            home_attacks_right_per_period=flips,
         )
         actions["action_id"] = range(len(actions))
         actions = _add_dribbles(actions)

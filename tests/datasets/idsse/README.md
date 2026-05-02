@@ -34,3 +34,35 @@ via `[tool.hatch.build.targets.wheel] packages = ["silly_kicks"]` in
 # Requires DATABRICKS_HOST / DATABRICKS_TOKEN / DATABRICKS_HTTP_PATH env vars
 uv run python scripts/extract_provider_fixtures.py --provider idsse
 ```
+
+---
+
+## `per_period_match.parquet` (PR-S23 / silly-kicks 3.0.1)
+
+Full match `idsse_J03WMX` retained at the bronze schema level. Exists
+specifically to exercise the per-(team, period) direction-of-play
+invariant (`tests/invariants/test_direction_of_play.py::test_per_team_per_period_shots_attack_high_x`)
+that the 2-shot `sample_match.parquet` fixture cannot physically support.
+
+### Provenance
+
+- Source: same DFL DataHub free-sample data as `sample_match.parquet`,
+  pulled via the luxury-lakehouse SK3-MIG migration session.
+- Match identifier: `idsse_J03WMX` (Bundesliga; public DFL competition
+  identifier — no PII).
+- Subset rule: full match (no row cap; events filtered for the
+  silly-kicks bronze input shape only).
+- Row count: 1,715 events including 20 shots.
+- Per-period orientation signature (raw, pre-conversion):
+  - P1: 5 home shots cluster near x ≈ 14, 4 away shots near x ≈ 92.
+  - P2: 3 home shots near x ≈ 92, 8 away shots near x ≈ 18.
+  - Each team alternates side between periods → PER_PERIOD_ABSOLUTE.
+  - Home attacks LEFT in P1 → `home_team_start_left=False`.
+- File size: ~250 KB (full bronze 247-column schema).
+- Citation: see `NOTICE` "Test Data Sources" section.
+
+### Regenerating
+
+```bash
+uv run python scripts/extract_provider_fixtures.py --provider idsse --variant per_period
+```

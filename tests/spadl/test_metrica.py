@@ -59,22 +59,24 @@ def _df_metrica(typ: str, subtype: str | None = None, **overrides) -> pd.DataFra
 
 class TestMetricaContract:
     def test_returns_tuple_dataframe_conversion_report(self):
-        actions, report = metrica_mod.convert_to_actions(_df_minimal_pass(), home_team_id="Home")
+        actions, report = metrica_mod.convert_to_actions(
+            _df_minimal_pass(), home_team_id="Home", home_team_start_left=True
+        )
         assert isinstance(actions, pd.DataFrame)
         assert report.provider == "Metrica"
 
     def test_output_schema_matches_kloppy_spadl_columns(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_minimal_pass(), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(_df_minimal_pass(), home_team_id="Home", home_team_start_left=True)
         assert list(actions.columns) == list(KLOPPY_SPADL_COLUMNS.keys())
 
     def test_dtypes_match_schema(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_minimal_pass(), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(_df_minimal_pass(), home_team_id="Home", home_team_start_left=True)
         for col, expected in KLOPPY_SPADL_COLUMNS.items():
             assert str(actions[col].dtype) == expected
 
     def test_empty_input_returns_empty_actions_with_schema(self):
         events = pd.DataFrame({c: [] for c in _REQUIRED_COLS})
-        actions, _report = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _report = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         assert len(actions) == 0
         assert list(actions.columns) == list(KLOPPY_SPADL_COLUMNS.keys())
 
@@ -82,7 +84,7 @@ class TestMetricaContract:
         events = _df_minimal_pass()
         original_columns = list(events.columns)
         original_len = len(events)
-        _, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        _, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         assert list(events.columns) == original_columns
         assert len(events) == original_len
 
@@ -92,24 +94,30 @@ class TestMetricaRequiredColumns:
     def test_missing_required_column_raises(self, missing):
         events = _df_minimal_pass().drop(columns=[missing])
         with pytest.raises(ValueError, match=missing):
-            metrica_mod.convert_to_actions(events, home_team_id="Home")
+            metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
 
 
 class TestMetricaActionMapping:
     def test_pass_default(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("PASS"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(_df_metrica("PASS"), home_team_id="Home", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_pass_cross(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("PASS", "CROSS"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("PASS", "CROSS"), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
 
     def test_pass_goalkick(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("PASS", "GOAL KICK"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("PASS", "GOAL KICK"), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["goalkick"]
 
     def test_pass_head_bodypart(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("PASS", "HEAD"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("PASS", "HEAD"), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["bodypart_id"].iloc[0] == spadlconfig.bodypart_id["head"]
 
     @pytest.mark.parametrize(
@@ -123,29 +131,41 @@ class TestMetricaActionMapping:
         ],
     )
     def test_shot_outcomes(self, subtype, expected_result):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("SHOT", subtype), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("SHOT", subtype), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["shot"]
         assert actions["result_id"].iloc[0] == spadlconfig.result_id[expected_result]
 
     def test_recovery_maps_to_interception(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("RECOVERY"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("RECOVERY"), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["interception"]
 
     def test_challenge_won_maps_to_tackle(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("CHALLENGE", "WON"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("CHALLENGE", "WON"), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["tackle"]
 
     def test_challenge_lost_dropped(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("CHALLENGE", "LOST"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("CHALLENGE", "LOST"), home_team_id="Home", home_team_start_left=True
+        )
         assert len(actions) == 0
 
     def test_ball_lost_maps_to_bad_touch_fail(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("BALL LOST"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("BALL LOST"), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["bad_touch"]
         assert actions["result_id"].iloc[0] == spadlconfig.result_id["fail"]
 
     def test_fault_maps_to_foul_fail(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("FAULT"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("FAULT"), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["foul"]
         assert actions["result_id"].iloc[0] == spadlconfig.result_id["fail"]
 
@@ -159,19 +179,29 @@ class TestMetricaActionMapping:
         ],
     )
     def test_set_piece_dispatch(self, subtype, expected_type):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("SET PIECE", subtype), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("SET PIECE", subtype), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id[expected_type]
 
     def test_set_piece_kickoff_dropped(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("SET PIECE", "KICK OFF"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("SET PIECE", "KICK OFF"), home_team_id="Home", home_team_start_left=True
+        )
         assert len(actions) == 0
 
     def test_excluded_types_dropped(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("BALL OUT"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("BALL OUT"), home_team_id="Home", home_team_start_left=True
+        )
         assert len(actions) == 0
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("SUBSTITUTION"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("SUBSTITUTION"), home_team_id="Home", home_team_start_left=True
+        )
         assert len(actions) == 0
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica("FAULT RECEIVED"), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("FAULT RECEIVED"), home_team_id="Home", home_team_start_left=True
+        )
         assert len(actions) == 0
 
 
@@ -194,7 +224,7 @@ class TestMetricaSetPieceShotComposition:
                 "end_y": [34.0, 34.0],
             }
         )
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["shot_freekick"]
 
@@ -216,7 +246,7 @@ class TestMetricaSetPieceShotComposition:
                 "end_y": [34.0, 34.0],
             }
         )
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         type_set = set(actions["type_id"].tolist())
         assert spadlconfig.actiontype_id["freekick_short"] in type_set
         assert spadlconfig.actiontype_id["shot"] in type_set
@@ -240,7 +270,7 @@ class TestMetricaSetPieceShotComposition:
                 "end_y": [34.0, 34.0],
             }
         )
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         assert len(actions) == 2
 
     def test_corner_then_shot_no_upgrade_corner_retained(self):
@@ -261,7 +291,7 @@ class TestMetricaSetPieceShotComposition:
                 "end_y": [34.0, 34.0],
             }
         )
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         type_set = set(actions["type_id"].tolist())
         assert spadlconfig.actiontype_id["corner_short"] in type_set
         assert spadlconfig.actiontype_id["shot"] in type_set
@@ -271,13 +301,13 @@ class TestMetricaCoordinateClamping:
     def test_negative_start_x_clamped(self):
         events = _df_minimal_pass()
         events["start_x"] = [-1.5]
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         assert actions["start_x"].iloc[0] >= 0
 
     def test_oversized_start_y_clamped(self):
         events = _df_minimal_pass()
         events["start_y"] = [70.0]
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         assert actions["start_y"].iloc[0] <= 68
 
 
@@ -286,7 +316,7 @@ class TestMetricaDirectionOfPlay:
         events = _df_minimal_pass()
         events["team"] = ["Away"]
         events["start_x"] = [30.0]
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         assert actions["start_x"].iloc[0] == 75.0
 
 
@@ -294,14 +324,18 @@ class TestMetricaPreserveNative:
     def test_preserve_native_passes_through(self):
         events = _df_minimal_pass()
         events["my_extra"] = ["foo"]
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", preserve_native=["my_extra"])
+        actions, _ = metrica_mod.convert_to_actions(
+            events, home_team_id="Home", preserve_native=["my_extra"], home_team_start_left=True
+        )
         assert actions["my_extra"].iloc[0] == "foo"
 
     def test_preserve_native_schema_overlap_raises(self):
         events = _df_minimal_pass()
         events["team_id"] = ["overlap"]
         with pytest.raises(ValueError, match=r"overlap|already"):
-            metrica_mod.convert_to_actions(events, home_team_id="Home", preserve_native=["team_id"])
+            metrica_mod.convert_to_actions(
+                events, home_team_id="Home", preserve_native=["team_id"], home_team_start_left=True
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +395,9 @@ class TestMetricaCrossPathConsistency:
 
         bronze = _kloppy_dataset_to_metrica_df(metrica_dataset)
         home_team_id = metrica_dataset.metadata.teams[0].team_id
-        actions_dedicated, _ = metrica_mod.convert_to_actions(bronze, home_team_id=home_team_id)
+        actions_dedicated, _ = metrica_mod.convert_to_actions(
+            bronze, home_team_id=home_team_id, home_team_start_left=True
+        )
 
         assert len(actions_kloppy) > 0
         assert len(actions_dedicated) > 0
@@ -407,11 +443,15 @@ class TestMetricaGoalkeeperIdsRouting:
     """
 
     def test_no_goalkeeper_ids_pass_remains_pass(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica_pass_by_gk(), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica_pass_by_gk(), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_no_goalkeeper_ids_recovery_remains_interception(self):
-        actions, _ = metrica_mod.convert_to_actions(_df_metrica_recovery_by_gk(), home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica_recovery_by_gk(), home_team_id="Home", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["interception"]
 
     def test_no_goalkeeper_ids_emits_zero_keeper_actions(self):
@@ -429,7 +469,7 @@ class TestMetricaGoalkeeperIdsRouting:
         events["event_id"] = list(range(len(events)))
         events["start_time_s"] = [10.0, 20.0, 30.0, 40.0]
         events["end_time_s"] = [10.5, 20.5, 30.5, 40.5]
-        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home")
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
         keeper_ids = {
             spadlconfig.actiontype_id[t] for t in ("keeper_save", "keeper_claim", "keeper_punch", "keeper_pick_up")
         }
@@ -438,7 +478,7 @@ class TestMetricaGoalkeeperIdsRouting:
 
     def test_pass_by_gk_synthesizes_two_actions(self):
         actions, _ = metrica_mod.convert_to_actions(
-            _df_metrica_pass_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+            _df_metrica_pass_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
         )
         assert len(actions) == 2
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
@@ -446,14 +486,14 @@ class TestMetricaGoalkeeperIdsRouting:
 
     def test_recovery_by_gk_maps_to_keeper_pick_up(self):
         actions, _ = metrica_mod.convert_to_actions(
-            _df_metrica_recovery_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+            _df_metrica_recovery_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
         )
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
 
     def test_aerial_won_by_gk_maps_to_keeper_claim(self):
         actions, _ = metrica_mod.convert_to_actions(
-            _df_metrica_aerial_won_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+            _df_metrica_aerial_won_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
         )
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_claim"]
@@ -462,33 +502,41 @@ class TestMetricaGoalkeeperIdsRouting:
         # AERIAL-LOST → CHALLENGE not WON → dropped by default Metrica dispatch.
         # Adding goalkeeper_ids does NOT promote it to keeper_claim.
         actions, _ = metrica_mod.convert_to_actions(
-            _df_metrica_aerial_lost_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+            _df_metrica_aerial_lost_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
         )
         assert len(actions) == 0
 
     def test_pass_by_non_gk_player_unchanged_with_goalkeeper_ids(self):
         df = _df_minimal_pass()
         df["player"] = ["NOT_GK"]
-        actions, _ = metrica_mod.convert_to_actions(df, home_team_id="Home", goalkeeper_ids={"GK_HOME"})
+        actions, _ = metrica_mod.convert_to_actions(
+            df, home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
+        )
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_empty_goalkeeper_ids_set_equivalent_to_none(self):
         df = _df_metrica_pass_by_gk()
-        actions_empty, _ = metrica_mod.convert_to_actions(df, home_team_id="Home", goalkeeper_ids=set())
-        actions_none, _ = metrica_mod.convert_to_actions(df, home_team_id="Home", goalkeeper_ids=None)
+        actions_empty, _ = metrica_mod.convert_to_actions(
+            df, home_team_id="Home", goalkeeper_ids=set(), home_team_start_left=True
+        )
+        actions_none, _ = metrica_mod.convert_to_actions(
+            df, home_team_id="Home", goalkeeper_ids=None, home_team_start_left=True
+        )
         assert len(actions_empty) == len(actions_none) == 1
 
     def test_set_piece_freekick_by_gk_unchanged(self):
         df = _df_metrica("SET PIECE", "FREE KICK")
         df["player"] = ["GK_HOME"]
-        actions, _ = metrica_mod.convert_to_actions(df, home_team_id="Home", goalkeeper_ids={"GK_HOME"})
+        actions, _ = metrica_mod.convert_to_actions(
+            df, home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_short"]
 
     def test_pass_by_gk_synthetic_pass_has_other_bodypart(self):
         # The synthesized pass uses bodypart=other (matching sportec throwOut shape).
         actions, _ = metrica_mod.convert_to_actions(
-            _df_metrica_pass_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}
+            _df_metrica_pass_by_gk(), home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
         )
         # Action 1 (the synth pass) — bodypart = other
         assert actions["bodypart_id"].iloc[1] == spadlconfig.bodypart_id["other"]
@@ -501,6 +549,54 @@ class TestMetricaGoalkeeperIdsRouting:
             home_team_id="Home",
             goalkeeper_ids={"GK_HOME"},
             preserve_native=["my_extra"],
+            home_team_start_left=True,
         )
         assert actions["my_extra"].iloc[0] == "custom"
         assert actions["my_extra"].iloc[1] == "custom"
+
+
+class TestMetricaPerPeriodKwargContract:
+    """PR-S23 / silly-kicks 3.0.1: per-period direction-of-play kwarg semantics."""
+
+    def test_raises_when_no_per_period_kwarg_supplied(self):
+        events = _df_minimal_pass()
+        with pytest.raises(ValueError, match=r"3\.0\.1.*home_team_start_left"):
+            metrica_mod.convert_to_actions(events, home_team_id="Home")
+
+    def test_raises_when_both_kwargs_supplied(self):
+        events = _df_minimal_pass()
+        with pytest.raises(ValueError, match="not both"):
+            metrica_mod.convert_to_actions(
+                events,
+                home_team_id="Home",
+                home_team_start_left=True,
+                home_attacks_right_per_period={1: True, 2: False},
+            )
+
+    def test_accepts_explicit_mapping_path(self):
+        events = _df_minimal_pass()
+        actions, _ = metrica_mod.convert_to_actions(
+            events,
+            home_team_id="Home",
+            home_attacks_right_per_period={1: True, 2: False},
+        )
+        assert len(actions) >= 1
+
+    def test_raises_when_extratime_supplied_without_start_left(self):
+        events = _df_minimal_pass()
+        with pytest.raises(ValueError, match="_extratime supplied without"):
+            metrica_mod.convert_to_actions(
+                events,
+                home_team_id="Home",
+                home_team_start_left_extratime=True,
+            )
+
+    def test_raises_when_et_periods_present_without_extratime(self):
+        events = _df_minimal_pass().copy()
+        events["period"] = [3]  # ET period
+        with pytest.raises(ValueError, match="ET periods"):
+            metrica_mod.convert_to_actions(
+                events,
+                home_team_id="Home",
+                home_team_start_left=True,
+            )

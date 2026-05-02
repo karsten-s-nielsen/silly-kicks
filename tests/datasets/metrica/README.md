@@ -37,3 +37,38 @@ uv run python scripts/extract_provider_fixtures.py --provider metrica
 ```
 
 (Reads `tests/datasets/kloppy/metrica_events.json` directly — no network.)
+
+---
+
+## `per_period_match.parquet` (PR-S23 / silly-kicks 3.0.1)
+
+Full Metrica Sample Game 1 retained at the silly-kicks-input bronze
+schema level. Exists specifically to exercise the per-(team, period)
+direction-of-play invariant
+(`tests/invariants/test_direction_of_play.py::test_per_team_per_period_shots_attack_high_x`)
+that the period-1-only `sample_match.parquet` fixture cannot physically
+support.
+
+### Provenance
+
+- Source: [`metrica-sports/sample-data`](https://github.com/metrica-sports/sample-data)
+  Sample Game 1 (CC-BY-NC-4.0; same license as Sample Game 2 used in
+  `sample_match.parquet`). Pulled via luxury-lakehouse SK3-MIG
+  migration session.
+- Coord system normalization: lakehouse bronze ships Metrica's native
+  0-1 normalized coords; `extract_provider_fixtures.py --variant
+  per_period` rescales to 0-105 / 0-68 (Metrica's standard 105 m × 68 m
+  pitch) so the parquet schema matches `sample_match.parquet`.
+- Row count: 1,745 events including 24 shots.
+- Per-period orientation signature (post-rescale):
+  - P1: 11 home shots near x ≈ 92, 2 away shots near x ≈ 17.
+  - P2: 7 home shots near x ≈ 10, 4 away shots near x ≈ 86.
+  - Each team alternates side between periods → PER_PERIOD_ABSOLUTE.
+  - Home attacks RIGHT in P1 → `home_team_start_left=True`.
+- File size: ~47 KB.
+
+### Regenerating
+
+```bash
+uv run python scripts/extract_provider_fixtures.py --provider metrica --variant per_period
+```
