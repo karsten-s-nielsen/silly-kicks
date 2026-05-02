@@ -1061,36 +1061,46 @@ def validate_atomic_spadl(
 
 
 def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame:
-    """Perform all action in the same playing direction.
+    """Mirror away-team atomic rows from absolute-frame to SPADL LTR convention.
 
-    This changes the location of each action, such that all actions
-    are performed as if the team that executes the action plays from left to
-    right.
+    Public boundary helper for callers who hold atomic actions in
+    absolute-frame-home-right convention and want to convert them to canonical
+    SPADL LTR convention. Mirrors ``(x, y)`` and negates ``(dx, dy)`` of every
+    row whose ``team_id != home_team_id``.
+
+    .. versionchanged:: 3.0.0
+        ADR-006 / PR-S22: regular SPADL converters now produce canonical SPADL
+        LTR by default, and the atomic conversion preserves orientation. You
+        should NOT call this function on output from
+        :func:`silly_kicks.atomic.spadl.convert_to_atomic` chained off a
+        silly-kicks 3.0.0+ converter. Retained as a public utility for callers
+        who load atomic actions from outside silly-kicks.
 
     Parameters
     ----------
     actions : pd.DataFrame
-        The SPADL actins of a game.
+        Atomic actions in absolute-frame-home-right convention.
     home_team_id : int
-        The ID of the home team.
+        ID of the home team.
 
     Returns
     -------
-    list(pd.DataFrame)
-        All actions performed left to right.
+    pd.DataFrame
+        Atomic actions with all rows oriented left-to-right.
 
     See Also
     --------
-    silly_kicks.atomic.vaep.features.play_left_to_right : For transforming gamestates.
+    silly_kicks.spadl.to_spadl_ltr : Canonical normalizer used inside SPADL converters.
+    silly_kicks.atomic.vaep.features.play_left_to_right : Equivalent for atomic gamestates.
 
     Examples
     --------
-    Mirror atomic actions to a single direction (left-to-right per the home team)::
+    Convert externally-loaded absolute-frame atomic actions to SPADL LTR::
 
         from silly_kicks.atomic.spadl.utils import play_left_to_right
 
-        ltr = play_left_to_right(atomic, home_team_id=100)
-        # All away-team actions now have flipped (x, y) and (dx, dy).
+        ltr = play_left_to_right(absolute_frame_atomic, home_team_id=100)
+        # All away-team actions now have flipped (x, y) and negated (dx, dy).
     """
     ltr_actions = actions.copy()
     away_idx = actions.team_id != home_team_id

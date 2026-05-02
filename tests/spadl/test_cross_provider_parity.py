@@ -44,13 +44,15 @@ def _load_idsse_fixture():
             f"scripts/extract_provider_fixtures.py --provider idsse."
         )
     events = pd.read_parquet(parquet_path)
-    home_team = events["team"].dropna().iloc[0]
-    # GK player_ids recoverable from rows where play_goal_keeper_action
-    # is non-null in the fixture itself.
+    # IDSSE bronze ``team`` column uses literal "home"/"away" labels (not team_ids).
+    # Pass "home" so the converter mirrors only away-team rows per the
+    # ABSOLUTE_FRAME_HOME_RIGHT contract. PR-S22 fixed the prior
+    # ``events["team"].iloc[0]`` heuristic which picked "away" because the first
+    # row in this fixture happens to be an away-team event.
     gk_ids: set[str] | None = None
     if "play_goal_keeper_action" in events.columns:
         gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
-    actions, _ = sportec.convert_to_actions(events, home_team_id=str(home_team), goalkeeper_ids=gk_ids)
+    actions, _ = sportec.convert_to_actions(events, home_team_id="home", goalkeeper_ids=gk_ids)
     return actions
 
 
@@ -314,12 +316,14 @@ class TestSportecAdrContractOnProductionFixture:
         parquet_path = _REPO_ROOT / "tests" / "datasets" / "idsse" / "sample_match.parquet"
         events = pd.read_parquet(parquet_path)
 
-        # Pretend the caller normalized team to home/away labels (the
-        # luxury-lakehouse adapter pattern) — overwrite events["team"]
-        # using the first non-null team value as "home" and others as "away".
-        first_team = events["team"].dropna().iloc[0]
-        events["team"] = events["team"].apply(lambda t: "home" if t == first_team else ("away" if pd.notna(t) else t))
-
+        # The IDSSE bronze fixture already uses literal "home"/"away" labels in
+        # the team column (verified empirically; PR-S22). Earlier versions of
+        # this test inverted the labels via a `first_team = ... iloc[0]`
+        # heuristic that picked "away" — destructive, and obscured by the lack
+        # of a direction-of-play test. Use the labels as-is. Drop "unknown"
+        # rows (~3 events of 308) so the test's team_id ⊆ {home, away}
+        # contract holds.
+        events = events[events["team"].isin(["home", "away"]) | events["team"].isna()].reset_index(drop=True)
         actions, _ = sportec.convert_to_actions(events, home_team_id="home")
         return actions, events
 

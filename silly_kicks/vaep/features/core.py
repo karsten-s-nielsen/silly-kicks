@@ -132,35 +132,49 @@ def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) 
 
 
 def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
-    """Perform all actions in a gamestate in the same playing direction.
+    """Mirror away-team gamestate rows from absolute-frame to SPADL LTR convention.
 
-    This changes the start and end location of each action in a gamestate,
-    such that all actions are performed as if the team that performs the first
-    action in the gamestate plays from left to right.
+    Public boundary helper for callers who have absolute-frame-home-right
+    gamestates (home plays LTR, away plays RTL in absolute coordinates) and
+    want to convert them to the canonical SPADL "all teams attack
+    left-to-right" convention. Mirrors ``(start_x, start_y) / (end_x, end_y)``
+    of every row whose ``a0.team_id != home_team_id``.
+
+    .. versionchanged:: 3.0.0
+        Pre-3.0.0, ``vaep.base.VAEP.compute_features`` called this function
+        unconditionally on every input. ADR-006 / PR-S22 removed that internal
+        call because every silly-kicks 3.0.0+ converter outputs canonical SPADL
+        LTR by default -- the second mirror inverted away-team rows for
+        absolute-frame providers and accidentally compensated for a converter
+        bug in possession-perspective providers. This function is retained as
+        a public utility for external callers who load gamestates from outside
+        silly-kicks; internal call sites no longer use it.
 
     Parameters
     ----------
     gamestates : GameStates
-        The game states of a game.
+        Gamestates in absolute-frame-home-right convention.
     home_team_id : int
-        The ID of the home team.
+        ID of the home team. Determines which rows are away rows that need
+        mirroring.
 
     Returns
     -------
     GameStates
-        The game states with all actions performed left to right.
+        Gamestates with all actions performed left-to-right.
 
     See Also
     --------
-    silly_kicks.spadl.play_left_to_right : For transforming actions.
+    silly_kicks.spadl.play_left_to_right : Equivalent transform on a flat actions DataFrame.
+    silly_kicks.spadl.to_spadl_ltr : Canonical normalizer used inside converters.
 
     Examples
     --------
-    Mirror gamestates to a single direction (per home_team_id)::
+    Convert externally-loaded absolute-frame gamestates to SPADL LTR::
 
         from silly_kicks.vaep.features import play_left_to_right
 
-        ltr_states = play_left_to_right(states, home_team_id=100)
+        ltr_states = play_left_to_right(absolute_frame_states, home_team_id=100)
         # Every away-team gamestate now has flipped (start_x, start_y) / (end_x, end_y).
     """
     a0 = gamestates[0]

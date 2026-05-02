@@ -5,6 +5,112 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] — 2026-05-02
+
+### Breaking — Correctness (PR-S22)
+
+**Direction-of-play handling refactor.** The dual-mirror inversion that has
+been present since v0.1.0 is fixed. SPADL canonical convention is "all teams
+attack left-to-right" -- every team's actions at high-x in their own frame.
+Every silly-kicks SPADL converter now produces this convention directly via
+the new :func:`silly_kicks.spadl.to_spadl_ltr` dispatcher. Decision: ADR-006.
+
+**Code-side regression window.** The bug was present in the native StatsBomb,
+Wyscout, and Opta converters AND in `vaep.base.VAEP.compute_features` since
+the v0.1.0 fork (verified `git show 0b29178`). The kloppy gateway acquired
+the same code path in 1.7.0 but routed correctly because kloppy's transform
+already normalised to absolute-frame-home-right.
+
+**Consumer-artifact impact depends on which converter path each artifact's
+data went through.** Categorically affected:
+
+- Cached SPADL action tables derived from native ``silly_kicks.spadl.statsbomb``
+  / ``wyscout`` / ``opta`` -- away-team ``(x, y)`` were mirrored to the wrong
+  end of the pitch.
+- Trained VAEP / HybridVAEP models built on Sportec / Metrica / kloppy-gateway
+  / PFF SPADL -- VAEP feature engineering (now correctly free of the second
+  mirror) inverted away-team rows in gamestates.
+- Trained xG / xT models that consume polar / spatial features.
+- Pre-computed xT grids derived from broken SPADL inputs (U-shaped instead of
+  goal-monotonic).
+- Tracking-aware features: ``add_action_context`` (PR-S20),
+  ``add_pre_shot_gk_context`` (PR-S21).
+- Any downstream model trained on action-coord features.
+- Any test baseline / golden value calibrated on the prior pipeline.
+- Any dataset published from silly-kicks output that mirrors SPADL or VAEP.
+
+Per-consumer migration is the consumer's responsibility; this CHANGELOG enumerates
+the categorical impact rather than specific consumer artifacts.
+
+### Added
+
+- **`silly_kicks.spadl.orientation`** (NEW module) — canonical direction-of-play
+  primitives:
+  - ``InputConvention`` enum: ``POSSESSION_PERSPECTIVE`` (StatsBomb, Wyscout),
+    ``ABSOLUTE_FRAME_HOME_RIGHT`` (Sportec, Metrica, Opta, kloppy gateway),
+    ``PER_PERIOD_ABSOLUTE`` (PFF).
+  - ``to_spadl_ltr(actions, *, input_convention, home_team_id, ...)`` —
+    single canonical normalizer; each converter calls it exactly once.
+  - ``detect_input_convention(events, *, match_col, x_max, ...)`` — heuristic
+    detector; tiered confidence (≥10 shots/group = high, 5-9 = medium, <5 =
+    ambiguous defer).
+  - ``validate_input_convention(events, declared, *, on_mismatch)`` — wired
+    into every converter; warn by default, raise under
+    ``SILLY_KICKS_ASSERT_INVARIANTS=1``. Surfaces upstream loader regressions.
+- **`silly_kicks.vaep.base.VAEP.compute_features(..., frames_convention="absolute_frame")`**
+  — explicit kwarg controlling tracking-frame normalisation.
+- **`silly_kicks.tracking.{sportec,pff,kloppy}.convert_to_frames(..., output_convention=…)`**
+  — opt-in ``"ltr"`` mode for callers wanting SPADL LTR tracking output
+  directly. Default behaviour preserved (absolute_frame); ``None`` (legacy
+  unspecified) emits ``DeprecationWarning`` recommending callers be explicit.
+- **`tests/invariants/`** (NEW directory) — physical-invariant test layer
+  parametrised across providers with real fixtures:
+  - ``test_direction_of_play.py`` — per-team shots cluster at high-x,
+    parametrised × ``xy_fidelity_version ∈ {1, 2}`` for StatsBomb.
+  - ``test_vaep_geometric_sanity.py`` — VAEP shot dist < 50m AND xT
+    goal-monotonic.
+  - ``test_gk_position.py`` — GK actions cluster at defended (low-x) goal.
+  - ``test_input_convention_detector.py`` — detector + validator semantics
+    against real fixtures.
+
+### Changed
+
+- **`silly_kicks.spadl.statsbomb`, `wyscout`, `opta`, `sportec`, `metrica`,
+  `kloppy`, `pff`** — every ``convert_to_actions`` now routes the
+  direction-of-play step through ``to_spadl_ltr(input_convention=…)`` and
+  emits canonical SPADL LTR. The ``input_convention`` declared by each
+  converter is the load-bearing contract; ``validate_input_convention``
+  surfaces violations.
+- **`silly_kicks.spadl.opta.convert_to_actions`** — docstring contract
+  added: the converter expects loader-pre-normalised absolute-frame data
+  with NO per-period switching. Raw Opta f24 ships per-period switching;
+  callers must pre-normalise upstream.
+- **`silly_kicks.vaep.base.VAEP.compute_features`** — removed the inline
+  ``play_left_to_right`` call (the dual-mirror that this CHANGELOG fixes).
+  Converter output is already canonical SPADL LTR.
+- **`silly_kicks.spadl.utils._finalize_output`** — debug-mode invariant
+  assertion gated on ``SILLY_KICKS_ASSERT_INVARIANTS=1``: per-team shot mean
+  start_x must be > field_length/2.
+- **`silly_kicks.spadl.play_left_to_right`** + atomic-SPADL,
+  ``silly_kicks.vaep.features.play_left_to_right`` + atomic-VAEP equivalents
+  — docstrings updated. Functions are retained as public boundary helpers
+  (absolute-frame → SPADL LTR) but no longer called by silly-kicks itself.
+
+### Removed
+
+- **`silly_kicks.spadl.base._fix_direction_of_play`** (private symbol) —
+  replaced by ``silly_kicks.spadl.to_spadl_ltr``. Was only ever called by
+  the converters themselves; no public API impact.
+
+### Migration
+
+Re-derive any cached artifact whose path went through an affected converter.
+Specifically: re-derive SPADL action tables from raw events; re-train VAEP /
+HybridVAEP models; re-compute xT grids; re-baseline empirical golden values;
+re-publish any silly-kicks-derived datasets. The new validator surfaces input
+convention mismatches as warnings; set ``SILLY_KICKS_ASSERT_INVARIANTS=1`` in
+CI to promote them to failures.
+
 ## [2.9.0] — 2026-05-01
 
 ### Added — Pre-shot GK position + baselines backfill (PR-S21)

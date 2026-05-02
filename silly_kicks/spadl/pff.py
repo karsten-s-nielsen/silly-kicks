@@ -64,6 +64,7 @@ import pandas as pd
 from silly_kicks.tracking import _direction
 
 from . import config as spadlconfig
+from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr
 from .schema import PFF_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -504,17 +505,17 @@ def convert_to_actions(
         actions["action_id"] = np.arange(len(actions), dtype="int64")
 
     # ------------------------------------------------------------------
-    # Per-period direction-of-play flip
+    # Per-period direction-of-play normalisation. Routed through the canonical
+    # to_spadl_ltr dispatcher per ADR-006 (silly-kicks 3.0.0); behaviour
+    # preserved exactly because the dispatcher's PER_PERIOD_ABSOLUTE branch
+    # uses the same home_attacks_right_per_period mapping that PFF computed
+    # from metadata flags above.
     # ------------------------------------------------------------------
-    period_attacks_right = actions["period_id"].map(home_attacks_right_per_period).astype("bool")
-    is_home = actions["team_id"].eq(home_team_id)
-    team_attacks_right = is_home == period_attacks_right
-    flip_idx = np.asarray(~team_attacks_right, dtype=bool)
-    actions.loc[flip_idx, ["start_x", "end_x"]] = (
-        spadlconfig.field_length - actions.loc[flip_idx, ["start_x", "end_x"]].to_numpy()
-    )
-    actions.loc[flip_idx, ["start_y", "end_y"]] = (
-        spadlconfig.field_width - actions.loc[flip_idx, ["start_y", "end_y"]].to_numpy()
+    actions = to_spadl_ltr(
+        actions,
+        input_convention=PER_PERIOD_ABSOLUTE,
+        home_team_id=home_team_id,
+        home_attacks_right_per_period=home_attacks_right_per_period,
     )
 
     # ------------------------------------------------------------------

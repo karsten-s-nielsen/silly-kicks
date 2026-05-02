@@ -8,7 +8,8 @@ import numpy.typing as npt
 import pandas as pd
 
 from . import config as spadlconfig
-from .base import _add_dribbles, _fix_clearances, _fix_direction_of_play
+from .base import _add_dribbles, _fix_clearances
+from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -176,6 +177,25 @@ def convert_to_actions(
     _ = goalkeeper_ids
     _event_type_counts = Counter(events["type_name"])
 
+    # Convention sanity check: StatsBomb open data is possession-perspective per
+    # the source spec (each team's events recorded in the team's own attacking
+    # frame, x ∈ [0, 120]). The validator surfaces loader regressions where the
+    # upstream pipeline shifts to a different convention; warn by default, raise
+    # under SILLY_KICKS_ASSERT_INVARIANTS=1 (CI mode). See ADR-006. StatsBomb's
+    # raw events ship coords as a nested ``location: [x, y]`` list, so we
+    # extract ``_sk_start_x`` flat for the detector's per-row analysis.
+    validate_input_convention(
+        events.assign(
+            _sk_start_x=events["location"].map(lambda loc: loc[0] if isinstance(loc, list) and len(loc) >= 1 else None),
+            _sk_is_shot=(events["type_name"] == "Shot"),
+        ),
+        declared=POSSESSION_PERSPECTIVE,
+        match_col="game_id",
+        x_col="_sk_start_x",
+        is_shot_col="_sk_is_shot",
+        x_max=120.0,
+    )
+
     actions = pd.DataFrame()
 
     # Determine xy_fidelity_version and shot_fidelity_version
@@ -259,7 +279,15 @@ def convert_to_actions(
         .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")  # type: ignore[reportCallIssue]
         .reset_index(drop=True)
     )
-    actions = _fix_direction_of_play(actions, home_team_id)
+    # SPADL canonical convention is "all teams attack left-to-right". StatsBomb
+    # input is possession-perspective (already per-team LTR after rescale to
+    # 105x68), so this is an explicit no-op kept here as the audit hook for
+    # tests/invariants/test_direction_of_play.py. See ADR-006.
+    actions = to_spadl_ltr(
+        actions,
+        input_convention=POSSESSION_PERSPECTIVE,
+        home_team_id=home_team_id,
+    )
     actions = _fix_clearances(actions)
 
     actions["action_id"] = range(len(actions))

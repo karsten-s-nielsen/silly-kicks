@@ -15,10 +15,13 @@ Coordinate transformation: ``x = x_centered + 52.5``;
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 
 from . import _direction
 from .schema import PFF_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+from .sportec import _resolve_output_convention
 
 EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
     {
@@ -46,6 +49,8 @@ def convert_to_frames(
     home_team_start_left: bool,
     home_team_start_left_extratime: bool | None = None,
     preserve_native: list[str] | None = None,
+    *,
+    output_convention: Literal["absolute_frame", "ltr"] | None = None,
 ) -> tuple[pd.DataFrame, TrackingConversionReport]:
     """Convert PFF-shaped raw tracking frames to canonical schema.
 
@@ -60,11 +65,21 @@ def convert_to_frames(
     home_team_start_left_extratime : bool | None
         From PFF metadata ``homeTeamStartLeftExtraTime``; required when
         periods 3/4 are present.
+    output_convention : {"absolute_frame", "ltr"} | None, default None
+        Coordinate convention of the returned frames. ``"absolute_frame"`` (the
+        historical default behaviour) emits frames in absolute-frame-home-right
+        convention with per-row ``team_attacking_direction``. ``"ltr"`` applies
+        :func:`silly_kicks.tracking.utils.play_left_to_right` internally so the
+        output is in canonical SPADL "all teams attack left-to-right"
+        convention. Passing ``None`` (the legacy unspecified state) emits a
+        ``DeprecationWarning`` and defaults to ``"absolute_frame"`` -- callers
+        should pick one explicitly. See ADR-006 (silly-kicks 3.0.0).
 
     Returns
     -------
     frames : pd.DataFrame
-        PFF_TRACKING_FRAMES_COLUMNS-shaped output, 105x68 m SPADL coordinates.
+        PFF_TRACKING_FRAMES_COLUMNS-shaped output, 105x68 m SPADL coordinates,
+        in the convention requested by ``output_convention``.
     report : TrackingConversionReport
 
     Examples
@@ -78,9 +93,11 @@ def convert_to_frames(
         raw = pd.json_normalize(rows)  # caller-shaped flattening
         frames, report = convert_to_frames(
             raw, home_team_id=366, home_team_start_left=True,
+            output_convention="absolute_frame",
         )
     """
     _ = preserve_native  # reserved for future PR
+    output_convention = _resolve_output_convention(output_convention, _adapter_name="pff")
     missing = EXPECTED_INPUT_COLUMNS - set(raw_frames.columns)
     if missing:
         raise ValueError(f"pff convert_to_frames missing columns: {sorted(missing)}")
@@ -156,4 +173,10 @@ def convert_to_frames(
         derived_speed_rows=int((final["speed_source"] == "derived").sum()),
         unrecognized_player_ids=set(),
     )
+
+    if output_convention == "ltr":
+        from .utils import play_left_to_right
+
+        final = play_left_to_right(final, home_team_id)
+
     return final, report
