@@ -33,6 +33,15 @@ jobs:
             python-version: "3.10"
           - os: windows-latest
             python-version: "3.11"
+    env:
+      # Strict mode: promote the in-converter direction-of-play invariant
+      # assertion in `silly_kicks.spadl.utils._finalize_output` (PR-S22 /
+      # ADR-006) from default-warn to raise, AND promote the input-convention
+      # validator's `on_mismatch` resolution from "warn" to "raise". Catches
+      # home_team_id-heuristic regressions in test fixtures and any future
+      # loader-shape drift in consumer pipelines that pin against silly-kicks
+      # main. See feedback_home_team_id_heuristic_fragile.md.
+      SILLY_KICKS_ASSERT_INVARIANTS: "1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
