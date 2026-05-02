@@ -46,7 +46,7 @@ class TestSportecContract:
 
     def test_returns_tuple_dataframe_conversion_report(self):
         events = _df_minimal_pass()
-        result = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
+        result = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A", home_team_start_left=True)
         assert isinstance(result, tuple) and len(result) == 2
         actions, report = result
         assert isinstance(actions, pd.DataFrame)
@@ -54,18 +54,18 @@ class TestSportecContract:
 
     def test_output_schema_matches_sportec_spadl_columns(self):
         events = _df_minimal_pass()
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A", home_team_start_left=True)
         assert list(actions.columns) == list(SPORTEC_SPADL_COLUMNS.keys())
 
     def test_dtypes_match_schema(self):
         events = _df_minimal_pass()
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A", home_team_start_left=True)
         for col, expected in SPORTEC_SPADL_COLUMNS.items():
             assert str(actions[col].dtype) == expected, f"{col}: got {actions[col].dtype}, expected {expected}"
 
     def test_empty_input_returns_empty_actions_with_schema(self):
         events = pd.DataFrame({c: [] for c in _REQUIRED_COLS})
-        actions, report = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
+        actions, report = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A", home_team_start_left=True)
         assert len(actions) == 0
         assert list(actions.columns) == list(SPORTEC_SPADL_COLUMNS.keys())
         assert report.total_events == 0
@@ -75,7 +75,7 @@ class TestSportecContract:
         events = _df_minimal_pass()
         original_columns = list(events.columns)
         original_len = len(events)
-        _, _ = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
+        _, _ = sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A", home_team_start_left=True)
         assert list(events.columns) == original_columns
         assert len(events) == original_len
 
@@ -87,7 +87,7 @@ class TestSportecRequiredColumns:
     def test_missing_required_column_raises(self, missing):
         events = _df_minimal_pass().drop(columns=[missing])
         with pytest.raises(ValueError, match=missing):
-            sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
+            sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A", home_team_start_left=True)
 
 
 def _df_pass_default() -> pd.DataFrame:
@@ -202,46 +202,54 @@ def _df_goalkick() -> pd.DataFrame:
 
 class TestSportecActionMappingPassAndSetPieces:
     def test_pass_default_maps_to_pass_foot(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_pass_default(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_pass_default(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
         assert actions["bodypart_id"].iloc[0] == spadlconfig.bodypart_id["foot"]
 
     def test_pass_play_height_cross_maps_to_cross(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_pass_cross(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_pass_cross(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
 
     def test_pass_play_flat_cross_maps_to_cross(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_pass_flat_cross(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_pass_flat_cross(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
 
     def test_pass_play_height_head_uses_head_bodypart(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_pass_head(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_pass_head(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["bodypart_id"].iloc[0] == spadlconfig.bodypart_id["head"]
 
     def test_freekick_default_maps_to_freekick_short(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_freekick(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_freekick(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_short"]
 
     def test_freekick_with_cross_execution_maps_to_freekick_crossed(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_freekick_cross(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_freekick_cross(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["freekick_crossed"]
 
     def test_corner_default_maps_to_corner_short(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_corner(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_corner(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_short"]
 
     def test_corner_with_box_target_maps_to_corner_crossed(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_corner_crossed(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_corner_crossed(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_crossed"]
 
     def test_throwin_maps_to_throw_in_other_bodypart(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_throwin(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_throwin(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["throw_in"]
         assert actions["bodypart_id"].iloc[0] == spadlconfig.bodypart_id["other"]
 
     def test_goalkick_maps_to_goalkick(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_goalkick(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_goalkick(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["goalkick"]
 
 
@@ -334,19 +342,25 @@ def _df_play_gk_save() -> pd.DataFrame:
 
 class TestSportecActionMappingShotsTacklesFoulsGK:
     def test_shot_default_maps_to_shot(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_shot_default(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_shot_default(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["shot"]
 
     def test_shot_after_freekick_maps_to_shot_freekick(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_shot_after_freekick(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_shot_after_freekick(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["shot_freekick"]
 
     def test_shot_penalty_maps_to_shot_penalty(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_shot_penalty(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_shot_penalty(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["shot_penalty"]
 
     def test_shot_goal_outcome_maps_to_success_result(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_shot_goal(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_shot_goal(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["result_id"].iloc[0] == spadlconfig.result_id["success"]
 
     # NOTE: pre-2.0.0 test_tackle_uses_winner_as_actor deleted per ADR-001.
@@ -357,12 +371,14 @@ class TestSportecActionMappingShotsTacklesFoulsGK:
     # below.
 
     def test_foul_default_maps_to_foul_fail(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_foul(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_foul(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["foul"]
         assert actions["result_id"].iloc[0] == spadlconfig.result_id["fail"]
 
     def test_foul_with_paired_caution_upgrades_result(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_foul_with_yellow_caution_paired(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_foul_with_yellow_caution_paired(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["foul"]
         assert actions["result_id"].iloc[0] == spadlconfig.result_id["yellow_card"]
@@ -379,7 +395,7 @@ class TestSportecActionMappingShotsTacklesFoulsGK:
     def test_play_gk_action_maps(self, gk_action, expected_type):
         df = _df_play_gk_save()
         df["play_goal_keeper_action"] = [gk_action]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id[expected_type]
 
 
@@ -400,7 +416,7 @@ class TestSportecDirectionOfPlay:
                 "y": [34.0, 34.0],
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         home_row = actions[actions["team_id"] == "T-HOME"].iloc[0]
         away_row = actions[actions["team_id"] == "T-AWAY"].iloc[0]
         assert home_row["start_x"] == 30.0
@@ -414,14 +430,14 @@ class TestSportecCoordinateClamping:
     def test_negative_x_clamped_to_zero(self):
         events = _df_pass_default()
         events["x"] = [-1.5]
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         assert len(actions) == 1
         assert actions["start_x"].iloc[0] >= 0.0
 
     def test_oversized_y_clamped_to_pitch_width(self):
         events = _df_pass_default()
         events["y"] = [70.5]
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["start_y"].iloc[0] <= 68.0
 
 
@@ -442,7 +458,7 @@ class TestSportecActionId:
                 "y": [34.0, 34.0, 34.0],
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["action_id"].tolist() == list(range(len(actions)))
 
 
@@ -463,7 +479,7 @@ class TestSportecAddDribbles:
                 "y": [34.0, 34.0],
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         type_names = (
             spadlconfig.actiontypes_df().set_index("type_id").loc[actions["type_id"].tolist(), "type_name"].tolist()
         )
@@ -476,7 +492,9 @@ class TestSportecPreserveNative:
     def test_preserve_native_passes_through_extra_column(self):
         events = _df_pass_default()
         events["my_custom_col"] = ["custom_value"]
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", preserve_native=["my_custom_col"])
+        actions, _ = sportec_mod.convert_to_actions(
+            events, home_team_id="T-HOME", preserve_native=["my_custom_col"], home_team_start_left=True
+        )
         assert "my_custom_col" in actions.columns
         assert actions["my_custom_col"].iloc[0] == "custom_value"
 
@@ -484,12 +502,16 @@ class TestSportecPreserveNative:
         events = _df_pass_default()
         events["team_id"] = ["overlap"]
         with pytest.raises(ValueError, match=r"overlap|already"):
-            sportec_mod.convert_to_actions(events, home_team_id="T-HOME", preserve_native=["team_id"])
+            sportec_mod.convert_to_actions(
+                events, home_team_id="T-HOME", preserve_native=["team_id"], home_team_start_left=True
+            )
 
     def test_preserve_native_missing_column_raises(self):
         events = _df_pass_default()
         with pytest.raises(ValueError, match="missing"):
-            sportec_mod.convert_to_actions(events, home_team_id="T-HOME", preserve_native=["nonexistent_col"])
+            sportec_mod.convert_to_actions(
+                events, home_team_id="T-HOME", preserve_native=["nonexistent_col"], home_team_start_left=True
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +580,9 @@ class TestSportecCrossPathConsistency:
 
         bronze = _kloppy_dataset_to_sportec_bronze_df(sportec_dataset)
         home_team_id = sportec_dataset.metadata.teams[0].team_id
-        actions_dedicated, _ = sportec_mod.convert_to_actions(bronze, home_team_id=home_team_id)
+        actions_dedicated, _ = sportec_mod.convert_to_actions(
+            bronze, home_team_id=home_team_id, home_team_start_left=True
+        )
 
         assert len(actions_kloppy) > 0
         assert len(actions_dedicated) > 0
@@ -614,23 +638,25 @@ class TestSportecPlayEventRecognition:
     """
 
     def test_play_default_maps_to_pass(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_default(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_play_default(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert len(actions) == 1, "DFL Play events without GK qualifier should produce a SPADL action"
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_play_cross_maps_to_cross(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_cross(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_play_cross(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
 
     def test_play_head_uses_head_bodypart(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_head(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(_df_play_head(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["bodypart_id"].iloc[0] == spadlconfig.bodypart_id["head"]
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_play_with_recognized_gk_qualifier_keeps_keeper_action_mapping(self):
         df = _df_play_default()
         df["play_goal_keeper_action"] = ["save"]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_save"]
 
     def test_play_with_unrecognized_gk_qualifier_drops_to_non_action(self):
@@ -638,14 +664,14 @@ class TestSportecPlayEventRecognition:
         # remains conservatively non_action (not silently mapped to pass).
         df = _df_play_default()
         df["play_goal_keeper_action"] = ["someUnknownValue"]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert len(actions) == 0
 
     def test_play_with_empty_gk_qualifier_falls_through_to_pass(self):
         # Empty string in the qualifier column ≡ no qualifier ≡ pass-class.
         df = _df_play_default()
         df["play_goal_keeper_action"] = [""]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_legacy_Pass_event_type_no_longer_recognized(self):
@@ -672,7 +698,7 @@ class TestSportecPlayEventRecognition:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            actions, report = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+            actions, report = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         assert len(actions) == 0
         assert "Pass" in report.unrecognized_counts
 
@@ -711,37 +737,49 @@ class TestSportecGKQualifierSynthesis:
     """
 
     def test_throwout_synthesizes_two_actions(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("throwOut"), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_play_gk("throwOut"), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert len(actions) == 2
 
     def test_throwout_first_action_is_keeper_pick_up(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("throwOut"), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_play_gk("throwOut"), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
 
     def test_throwout_second_action_is_pass_with_other_bodypart(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("throwOut"), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_play_gk("throwOut"), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["pass"]
         assert actions["bodypart_id"].iloc[1] == spadlconfig.bodypart_id["other"]
 
     def test_punt_first_action_is_keeper_pick_up(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("punt"), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_play_gk("punt"), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
 
     def test_punt_second_action_is_goalkick_with_foot_bodypart(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("punt"), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_play_gk("punt"), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["goalkick"]
         assert actions["bodypart_id"].iloc[1] == spadlconfig.bodypart_id["foot"]
 
     def test_both_synthesized_actions_share_source_player_team_time(self):
         df = _df_play_gk("throwOut")
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["player_id"].iloc[0] == actions["player_id"].iloc[1] == "P-GK"
         assert actions["team_id"].iloc[0] == actions["team_id"].iloc[1] == "T-AWAY"
         assert actions["period_id"].iloc[0] == actions["period_id"].iloc[1] == 1
         assert actions["time_seconds"].iloc[0] == actions["time_seconds"].iloc[1] == 60.0
 
     def test_action_ids_renumbered_dense_zero_indexed(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_play_gk("throwOut"), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_play_gk("throwOut"), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["action_id"].tolist() == [0, 1]
 
     def test_multiple_throwouts_all_synthesized(self):
@@ -759,7 +797,7 @@ class TestSportecGKQualifierSynthesis:
                 "play_goal_keeper_action": ["throwOut"] * 3,
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         assert len(actions) == 6
         kp_count = (actions["type_id"] == spadlconfig.actiontype_id["keeper_pick_up"]).sum()
         pass_count = (actions["type_id"] == spadlconfig.actiontype_id["pass"]).sum()
@@ -781,7 +819,7 @@ class TestSportecGKQualifierSynthesis:
                 "play_goal_keeper_action": ["save", "throwOut", "punt"],
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         # save → 1 keeper_save; throwOut → 2 (pickup + pass); punt → 2 (pickup + goalkick)
         assert len(actions) == 5
         type_set = list(actions["type_id"])
@@ -793,7 +831,9 @@ class TestSportecGKQualifierSynthesis:
     def test_preserve_native_propagates_to_both_synthetic_actions(self):
         df = _df_play_gk("throwOut")
         df["my_extra"] = ["custom_val"]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", preserve_native=["my_extra"])
+        actions, _ = sportec_mod.convert_to_actions(
+            df, home_team_id="T-HOME", preserve_native=["my_extra"], home_team_start_left=True
+        )
         assert actions["my_extra"].iloc[0] == "custom_val"
         assert actions["my_extra"].iloc[1] == "custom_val"
 
@@ -812,14 +852,16 @@ class TestSportecGoalkeeperIdsSupplementary:
 
     def test_no_goalkeeper_ids_keeps_default_pass_class_behavior(self):
         df = _df_play_default()
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_player_in_goalkeeper_ids_with_no_qualifier_synthesizes(self):
         df = _df_play_default()
         df["player_id"] = ["P-GK"]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"})
+        actions, _ = sportec_mod.convert_to_actions(
+            df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"}, home_team_start_left=True
+        )
         assert len(actions) == 2
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
         assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["pass"]
@@ -827,27 +869,37 @@ class TestSportecGoalkeeperIdsSupplementary:
     def test_player_not_in_goalkeeper_ids_unchanged(self):
         df = _df_play_default()
         df["player_id"] = ["P-NOT-GK"]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"})
+        actions, _ = sportec_mod.convert_to_actions(
+            df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"}, home_team_start_left=True
+        )
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_player_in_goalkeeper_ids_with_throwout_qualifier_uses_qualifier_path(self):
         df = _df_play_gk("throwOut")
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"})
+        actions, _ = sportec_mod.convert_to_actions(
+            df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"}, home_team_start_left=True
+        )
         assert len(actions) == 2
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_pick_up"]
         assert actions["type_id"].iloc[1] == spadlconfig.actiontype_id["pass"]
 
     def test_player_in_goalkeeper_ids_with_save_qualifier_keeps_save(self):
         df = _df_play_gk("save")
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"})
+        actions, _ = sportec_mod.convert_to_actions(
+            df, home_team_id="T-HOME", goalkeeper_ids={"P-GK"}, home_team_start_left=True
+        )
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_save"]
 
     def test_empty_goalkeeper_ids_set_equivalent_to_none(self):
         df = _df_play_default()
-        actions_empty, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids=set())
-        actions_none, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", goalkeeper_ids=None)
+        actions_empty, _ = sportec_mod.convert_to_actions(
+            df, home_team_id="T-HOME", goalkeeper_ids=set(), home_team_start_left=True
+        )
+        actions_none, _ = sportec_mod.convert_to_actions(
+            df, home_team_id="T-HOME", goalkeeper_ids=None, home_team_start_left=True
+        )
         assert len(actions_empty) == len(actions_none) == 1
         assert actions_empty["type_id"].iloc[0] == actions_none["type_id"].iloc[0]
 
@@ -904,26 +956,26 @@ class TestSportecTackleNoOverride:
 
     def test_tackle_team_id_mirrors_input_team(self):
         df = _df_tackle_with_qualifiers()
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["team_id"].iloc[0] == "T-AWAY", (
             f"team_id should mirror input 'T-AWAY', got {actions['team_id'].iloc[0]!r}"
         )
 
     def test_tackle_player_id_mirrors_input_player_id(self):
         df = _df_tackle_with_qualifiers()
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["player_id"].iloc[0] == "P-LOSER"
 
     def test_legacy_home_label_survives(self):
         df = _df_tackle_with_qualifiers()
         df["team"] = ["home"]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home", home_team_start_left=True)
         assert actions["team_id"].iloc[0] == "home"
 
     def test_legacy_away_label_survives(self):
         df = _df_tackle_with_qualifiers()
         df["team"] = ["away"]
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home", home_team_start_left=True)
         assert actions["team_id"].iloc[0] == "away"
 
     def test_mixed_tackle_rows_preserve_per_row_labels(self):
@@ -942,12 +994,14 @@ class TestSportecTackleNoOverride:
                 "tackle_winner_team": ["DFL-CLU-A", "DFL-CLU-B"],
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="home", home_team_start_left=True)
         tackle_rows = actions[actions["type_id"] == spadlconfig.actiontype_id["tackle"]].reset_index(drop=True)
         assert tackle_rows["team_id"].tolist() == ["home", "away"]
 
     def test_tackle_with_no_qualifier_unchanged(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_tackle_no_qualifiers(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert actions["team_id"].iloc[0] == "T-HOME"
         assert actions["player_id"].iloc[0] == "P1"
 
@@ -958,16 +1012,18 @@ class TestSportecTackleWinnerColumns:
 
     def test_tackle_winner_player_id_populated_from_qualifier(self):
         df = _df_tackle_with_qualifiers()
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["tackle_winner_player_id"].iloc[0] == "P-WINNER"
 
     def test_tackle_winner_team_id_populated_from_qualifier(self):
         df = _df_tackle_with_qualifiers()
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["tackle_winner_team_id"].iloc[0] == "DFL-CLU-WINNER"
 
     def test_winner_columns_nan_when_qualifier_absent(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_tackle_no_qualifiers(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert pd.isna(actions["tackle_winner_player_id"].iloc[0])
         assert pd.isna(actions["tackle_winner_team_id"].iloc[0])
 
@@ -987,7 +1043,7 @@ class TestSportecTackleWinnerColumns:
                 "tackle_winner_team": ["DFL-CLU-X", None],
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         pass_row = actions[actions["type_id"] == spadlconfig.actiontype_id["pass"]].iloc[0]
         assert pd.isna(pass_row["tackle_winner_player_id"])
         assert pd.isna(pass_row["tackle_winner_team_id"])
@@ -1008,12 +1064,14 @@ class TestSportecTackleWinnerColumns:
                 "tackle_winner_team": ["DFL-CLU-X"],
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert pd.isna(actions["tackle_winner_player_id"].iloc[0])
         assert pd.isna(actions["tackle_winner_team_id"].iloc[0])
 
     def test_winner_columns_present_in_output_schema(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_tackle_no_qualifiers(), home_team_id="T-HOME", home_team_start_left=True
+        )
         for col in ("tackle_winner_player_id", "tackle_winner_team_id"):
             assert col in actions.columns
 
@@ -1023,22 +1081,24 @@ class TestSportecTackleLoserColumns:
 
     def test_tackle_loser_player_id_populated_from_qualifier(self):
         df = _df_tackle_with_qualifiers()
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["tackle_loser_player_id"].iloc[0] == "P-LOSER"
 
     def test_tackle_loser_team_id_populated_from_qualifier(self):
         df = _df_tackle_with_qualifiers()
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert actions["tackle_loser_team_id"].iloc[0] == "DFL-CLU-LOSER"
 
     def test_loser_columns_nan_when_qualifier_absent(self):
-        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_tackle_no_qualifiers(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert pd.isna(actions["tackle_loser_player_id"].iloc[0])
         assert pd.isna(actions["tackle_loser_team_id"].iloc[0])
 
     def test_loser_columns_nan_on_non_tackle_rows(self):
         df = _df_pass_default()
-        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
         assert pd.isna(actions["tackle_loser_player_id"].iloc[0])
         assert pd.isna(actions["tackle_loser_team_id"].iloc[0])
 
@@ -1049,13 +1109,17 @@ class TestSportecOutputSchema:
     def test_output_columns_match_sportec_spadl_columns_keys(self):
         from silly_kicks.spadl.schema import SPORTEC_SPADL_COLUMNS
 
-        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_tackle_no_qualifiers(), home_team_id="T-HOME", home_team_start_left=True
+        )
         assert list(actions.columns) == list(SPORTEC_SPADL_COLUMNS.keys())
 
     def test_output_dtypes_match_sportec_spadl_columns(self):
         from silly_kicks.spadl.schema import SPORTEC_SPADL_COLUMNS
 
-        actions, _ = sportec_mod.convert_to_actions(_df_tackle_no_qualifiers(), home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_tackle_no_qualifiers(), home_team_id="T-HOME", home_team_start_left=True
+        )
         for col, expected in SPORTEC_SPADL_COLUMNS.items():
             assert str(actions[col].dtype) == expected, f"{col}: got {actions[col].dtype}, expected {expected}"
 
@@ -1073,7 +1137,7 @@ class TestSportecOutputSchema:
                 "y": [34.0, 34.0],
             }
         )
-        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME")
+        actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         dribble_rows = actions[actions["type_id"] == spadlconfig.actiontype_id["dribble"]]
         assert len(dribble_rows) >= 1
         for col in (
@@ -1083,3 +1147,50 @@ class TestSportecOutputSchema:
             "tackle_loser_team_id",
         ):
             assert dribble_rows[col].isna().all(), f"{col} should be NaN on synthetic dribble rows"
+
+
+class TestSportecPerPeriodKwargContract:
+    """PR-S23 / silly-kicks 3.0.1: per-period direction-of-play kwarg semantics."""
+
+    def test_raises_when_no_per_period_kwarg_supplied(self):
+        events = _df_minimal_pass()
+        with pytest.raises(ValueError, match=r"3\.0\.1.*home_team_start_left"):
+            sportec_mod.convert_to_actions(events, home_team_id="DFL-CLU-A")
+
+    def test_raises_when_both_kwargs_supplied(self):
+        events = _df_minimal_pass()
+        with pytest.raises(ValueError, match="not both"):
+            sportec_mod.convert_to_actions(
+                events,
+                home_team_id="DFL-CLU-A",
+                home_team_start_left=True,
+                home_attacks_right_per_period={1: True, 2: False},
+            )
+
+    def test_accepts_explicit_mapping_path(self):
+        events = _df_minimal_pass()
+        actions, _ = sportec_mod.convert_to_actions(
+            events,
+            home_team_id="DFL-CLU-A",
+            home_attacks_right_per_period={1: True, 2: False},
+        )
+        assert len(actions) >= 1
+
+    def test_raises_when_extratime_supplied_without_start_left(self):
+        events = _df_minimal_pass()
+        with pytest.raises(ValueError, match="_extratime supplied without"):
+            sportec_mod.convert_to_actions(
+                events,
+                home_team_id="DFL-CLU-A",
+                home_team_start_left_extratime=True,
+            )
+
+    def test_raises_when_et_periods_present_without_extratime(self):
+        events = _df_minimal_pass().copy()
+        events["period"] = [3]  # ET period
+        with pytest.raises(ValueError, match="ET periods"):
+            sportec_mod.convert_to_actions(
+                events,
+                home_team_id="DFL-CLU-A",
+                home_team_start_left=True,
+            )

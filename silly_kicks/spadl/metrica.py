@@ -62,13 +62,15 @@ for the full design rationale.
 
 import warnings
 from collections import Counter
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
 
+from ..tracking import _direction
 from . import config as spadlconfig
 from .base import _add_dribbles, _fix_clearances
-from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr, validate_input_convention
+from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -110,10 +112,70 @@ _EXCLUDED_TYPES: frozenset[str] = frozenset(
 )
 
 
+_MIGRATION_3_0_1_MESSAGE_METRICA = (
+    "silly_kicks.spadl.metrica.convert_to_actions requires explicit per-period "
+    "direction info as of silly-kicks 3.0.1. Metrica bronze events ship "
+    "per-period-absolute (teams switch ends after halftime). Pass "
+    "`home_team_start_left=True/False` from Metrica metadata.xml "
+    "(Period entity team-direction attribute), OR pass "
+    "`home_attacks_right_per_period={1: bool, 2: bool, ...}` directly. "
+    "See ADR-006 erratum + CHANGELOG 3.0.1 for the migration snippet."
+)
+
+
+def _resolve_per_period_flips_metrica(
+    *,
+    events: pd.DataFrame,
+    home_team_start_left: bool | None,
+    home_team_start_left_extratime: bool | None,
+    home_attacks_right_per_period: Mapping[int, bool] | None,
+) -> dict[int, bool]:
+    """Resolve the bool-pair-OR-mapping kwargs to a concrete per-period flip dict.
+
+    Mutual exclusion + loud failure on missing-input. Mirrors PFF events-side
+    and Sportec events-side API exactly.
+    """
+    if home_attacks_right_per_period is not None and (
+        home_team_start_left is not None or home_team_start_left_extratime is not None
+    ):
+        raise ValueError(
+            "metrica.convert_to_actions: pass home_team_start_left[+_extratime] OR "
+            "home_attacks_right_per_period, not both."
+        )
+
+    if home_attacks_right_per_period is not None:
+        return dict(home_attacks_right_per_period)
+
+    if home_team_start_left is None and home_team_start_left_extratime is not None:
+        raise ValueError(
+            "metrica.convert_to_actions: home_team_start_left_extratime supplied without "
+            "home_team_start_left. ET flag is meaningful only as a refinement of the "
+            "regular-time flag."
+        )
+
+    if home_team_start_left is None:
+        raise ValueError(_MIGRATION_3_0_1_MESSAGE_METRICA)
+
+    if "period" in events.columns and events["period"].isin([3, 4]).any() and home_team_start_left_extratime is None:
+        raise ValueError(
+            "metrica.convert_to_actions: events contain ET periods (period in {3, 4}) "
+            "but home_team_start_left_extratime was not provided. Set it explicitly to "
+            "match metadata, or filter ET events out before calling."
+        )
+
+    return _direction.home_attacks_right_per_period(
+        home_team_start_left=home_team_start_left,
+        home_team_start_left_extratime=home_team_start_left_extratime,
+    )
+
+
 def convert_to_actions(
     events: pd.DataFrame,
     home_team_id: str,
     *,
+    home_team_start_left: bool | None = None,
+    home_team_start_left_extratime: bool | None = None,
+    home_attacks_right_per_period: Mapping[int, bool] | None = None,
     preserve_native: list[str] | None = None,
     goalkeeper_ids: set[str] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
@@ -124,7 +186,20 @@ def convert_to_actions(
     events : pd.DataFrame
         Normalized Metrica event data.
     home_team_id : str
-        Home-team identifier (used to flip away-team coords).
+        Home-team identifier (used to route per-period coord flips).
+    home_team_start_left : bool or None, default ``None``
+        From Metrica ``metadata.xml`` (Period entity team-direction attribute).
+        When True, the home team starts on the left side in period 1.
+        silly-kicks 3.0.1 introduced this kwarg to fix the per-period-absolute
+        direction-of-play bug; pass exactly one of ``home_team_start_left`` or
+        ``home_attacks_right_per_period``.
+    home_team_start_left_extratime : bool or None, default ``None``
+        Same flag for ET periods 3/4. Required only when the input contains
+        period 3 or 4 rows.
+    home_attacks_right_per_period : Mapping[int, bool] or None, default ``None``
+        Escape hatch: pass the per-period flip mapping directly (e.g.
+        ``{1: True, 2: False}``). Pass exactly one of ``home_team_start_left``
+        or ``home_attacks_right_per_period``.
     preserve_native : list[str] or None, default ``None``
         Caller-attached columns to preserve through to the output.
     goalkeeper_ids : set[str] or None, default ``None``
@@ -146,29 +221,48 @@ def convert_to_actions(
 
     Examples
     --------
-    Convert a Metrica bronze events DataFrame to SPADL::
+    Convert a Metrica bronze events DataFrame to SPADL -- preferred path::
 
         from silly_kicks.spadl import metrica
 
         actions, report = metrica.convert_to_actions(
             events,
-            home_team_id="HOME",
+            home_team_id="Home",
+            home_team_start_left=True,    # from Metrica metadata.xml
             goalkeeper_ids={"player_42", "player_99"},  # required for GK coverage
         )
-        # Metrica has no native GK markers — pass goalkeeper_ids to recover
+        # Metrica has no native GK markers -- pass goalkeeper_ids to recover
         # keeper_pick_up / keeper_claim / synthesized GK distribution actions.
+
+    Same conversion via the explicit-mapping escape hatch::
+
+        actions, report = metrica.convert_to_actions(
+            events,
+            home_team_id="Home",
+            home_attacks_right_per_period={1: True, 2: False},
+        )
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Metrica")
     _validate_preserve_native(events, preserve_native, provider="Metrica", schema=KLOPPY_SPADL_COLUMNS)
 
     event_type_counts = Counter(events["type"])
 
-    # Convention sanity check: Metrica events ship in absolute-frame, home-right
-    # convention (verified via lakehouse probe + ADR-006). Validator surfaces
-    # upstream loader regressions per ADR-006.
+    # PR-S23 / silly-kicks 3.0.1: native Metrica bronze events ship
+    # PER_PERIOD_ABSOLUTE (teams switch ends after halftime; verified
+    # empirically via lakehouse SK3-MIG probe). See ADR-006 erratum.
+    flips = _resolve_per_period_flips_metrica(
+        events=events,
+        home_team_start_left=home_team_start_left,
+        home_team_start_left_extratime=home_team_start_left_extratime,
+        home_attacks_right_per_period=home_attacks_right_per_period,
+    )
+
+    # Convention sanity check: declared PER_PERIOD_ABSOLUTE; validator
+    # surfaces upstream loader regressions. Strict mode under
+    # SILLY_KICKS_ASSERT_INVARIANTS=1.
     validate_input_convention(
         events.assign(_sk_is_shot=(events["type"] == "SHOT")),
-        declared=ABSOLUTE_FRAME_HOME_RIGHT,
+        declared=PER_PERIOD_ABSOLUTE,
         match_col="match_id",
         team_col="team",
         period_col="period",
@@ -182,8 +276,9 @@ def convert_to_actions(
         actions = _fix_clearances(raw_actions)
         actions = to_spadl_ltr(
             actions,
-            input_convention=ABSOLUTE_FRAME_HOME_RIGHT,
+            input_convention=PER_PERIOD_ABSOLUTE,
             home_team_id=home_team_id,
+            home_attacks_right_per_period=flips,
         )
         actions["action_id"] = range(len(actions))
         actions = _add_dribbles(actions)

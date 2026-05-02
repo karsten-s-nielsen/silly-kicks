@@ -415,7 +415,16 @@ def detect_input_convention(
             # Single-period match: cannot distinguish absolute_no_switch from per_period
             continue
         per_team_sides = match_grp.groupby(team_col)["side"].nunique()
-        if (per_team_sides == 1).all():
+        # TF-22 (silly-kicks 3.0.1): the absolute_frame_home_right branch
+        # additionally requires that at least one team has reliable data in
+        # >=2 distinct periods. Without this guard, sparse per-team-period-
+        # asymmetric data (e.g. IDSSE J03WMX, where home is reliable only in
+        # P1 and away only in P2) trivially satisfies (per_team_sides == 1)
+        # .all() and gets classified ABSOLUTE_FRAME_HOME_RIGHT even when the
+        # data is genuinely PER_PERIOD_ABSOLUTE. See ADR-006 erratum (PR-S23).
+        per_team_periods = match_grp.groupby(team_col)[period_col].nunique()
+        any_team_spans_both_periods = bool((per_team_periods >= 2).any())
+        if (per_team_sides == 1).all() and any_team_spans_both_periods:
             # Each team on same side across periods → absolute_no_switch
             team_means = match_grp.groupby(team_col)["mean_x"].mean()
             if team_means.nunique() == 2 and (team_means > x_mid).any() and (team_means < x_mid).any():
@@ -446,11 +455,21 @@ def detect_input_convention(
             },
         )
 
+    # TF-22: when match_verdicts is non-empty but every entry is None (e.g.
+    # sparse per-team-period-asymmetric shape where the absolute-no-switch
+    # guard rejected the verdict), this is the per-team-period-asymmetric
+    # case. Use confidence="low" so the caller's strict-mode validator
+    # silently defers to the declared convention rather than raising.
+    asymmetric_only = bool(match_verdicts) and all(v is None for v in match_verdicts)
     return DetectionResult(
         convention=None,
-        confidence="ambiguous",
+        confidence="low" if asymmetric_only else "ambiguous",
         diagnostics={
-            "reason": "no clean classification (mixed signals across matches or single-period data)",
+            "reason": (
+                "per-team-period-asymmetric (each team has reliable data in only one period)"
+                if asymmetric_only
+                else "no clean classification (mixed signals across matches or single-period data)"
+            ),
             "groups": reliable.to_dict("records"),
             "match_verdicts": [v.value if v else None for v in match_verdicts],
         },

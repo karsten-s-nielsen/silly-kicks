@@ -64,7 +64,7 @@ import pandas as pd
 from silly_kicks.tracking import _direction
 
 from . import config as spadlconfig
-from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr
+from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import PFF_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
@@ -297,6 +297,27 @@ def convert_to_actions(
     _validate_preserve_native(events, preserve_native, provider="PFF", schema=PFF_SPADL_COLUMNS)
 
     total_events_input = len(events)
+
+    # PR-S23 / silly-kicks 3.0.1: validator re-enabled after TF-22 detector
+    # hardening. PFF events ship PER_PERIOD_ABSOLUTE; the detector now
+    # correctly defers (convention=None) on sparse-shot matches rather than
+    # false-positiving ABSOLUTE_FRAME_HOME_RIGHT. ball_x is centered (-52.5
+    # to +52.5); shift to 0-105 frame for the detector's high-x/low-x logic.
+    if "ball_x" in events.columns and "team_id" in events.columns and "period_id" in events.columns:
+        _detector_input = events.assign(
+            _sk_ball_x_shifted=events["ball_x"].astype("float64") + 52.5,
+            _sk_is_shot=(events["possession_event_type"].fillna("") == "SH"),
+        )
+        validate_input_convention(
+            _detector_input,
+            declared=PER_PERIOD_ABSOLUTE,
+            match_col="game_id",
+            x_col="_sk_ball_x_shifted",
+            team_col="team_id",
+            period_col="period_id",
+            is_shot_col="_sk_is_shot",
+            x_max=spadlconfig.field_length,
+        )
 
     # ------------------------------------------------------------------
     # Per-period direction lookup (ET fallback validation)

@@ -2,8 +2,10 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-05-01 (silly-kicks 2.9.0 shipped; GKDV research program TF-15..TF-19 added)
-**(A) silly-kicks 2.9.0 SHIPPED** (PR-S21 — `pre_shot_gk_position_*` defending-GK features + baselines backfill; within ADR-005 envelope, no new ADR).
+**Last updated**: 2026-05-02 (silly-kicks 3.0.1 shipped; PR-S22 + PR-S23 direction-of-play correctness)
+**(A) silly-kicks 3.0.1 SHIPPED** (PR-S23 — Sportec + Metrica per-period direction-of-play fix; ADR-006 erratum; new per-period orientation invariant fixture; TF-22 detector hardening).
+**(B) silly-kicks 3.0.0 SHIPPED** (PR-S22 — direction-of-play correctness refactor; ADR-006).
+**(C) silly-kicks 2.9.0 SHIPPED** (PR-S21 — `pre_shot_gk_position_*` defending-GK features + baselines backfill; within ADR-005 envelope, no new ADR).
 
 ---
 
@@ -56,3 +58,5 @@ Quick-reference action items. Architectural decisions live in [docs/superpowers/
 ## Research & Future Work
 
 ReSpo.Vision tracking adapter — licensing-blocked. Track here when licensing clears.
+
+**TF-23 (Dunkin'/Wicked):** Native Sportec-XML / Metrica-CSV loader inside silly-kicks. Currently the architectural intent (per `silly_kicks/spadl/sportec.py` docstring) routes raw-XML / raw-CSV ingestion through the kloppy gateway; native converters take pre-DataFrame'd events. PR-S23 deferred adding native loaders. Surface this only if/when consumer demand exists for a kloppy-free ingestion path.

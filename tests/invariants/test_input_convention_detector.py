@@ -28,6 +28,7 @@ import pytest
 
 from silly_kicks.spadl.orientation import (
     ABSOLUTE_FRAME_HOME_RIGHT,
+    PER_PERIOD_ABSOLUTE,
     POSSESSION_PERSPECTIVE,
     InputConvention,
     detect_input_convention,
@@ -174,3 +175,149 @@ def test_validator_silent_on_idsse_because_signal_too_weak():
             is_shot_col="is_shot",
             on_mismatch="warn",
         )
+
+
+# ---------------------------------------------------------------------------
+# TF-22 (PR-S23 / silly-kicks 3.0.1): detector must NOT false-positive
+# ABSOLUTE_FRAME_HOME_RIGHT on sparse per-team-period-asymmetric per-period-
+# absolute data. The IDSSE J03WMX fixture (4/5/8/3 shots distribution) is
+# the canonical empirical example -- see lakehouse SK3-MIG bug report.
+# ---------------------------------------------------------------------------
+
+
+def _build_synthetic_per_period_events(
+    *,
+    p1_home_x_mean: float,
+    p1_home_n: int,
+    p1_away_x_mean: float,
+    p1_away_n: int,
+    p2_home_x_mean: float,
+    p2_home_n: int,
+    p2_away_x_mean: float,
+    p2_away_n: int,
+    x_max: float = 105.0,
+) -> pd.DataFrame:
+    """Synthetic 1-match events with controlled per-period-per-team shot counts + means.
+
+    Shot x values are tightly clustered around each requested mean so the
+    detector's >mid_x classification is unambiguous.
+    """
+    import numpy as np
+
+    rng = np.random.default_rng(seed=42)
+    rows: list[dict[str, object]] = []
+    eid = 0
+    for period, side, n, x_mean in (
+        (1, "home", p1_home_n, p1_home_x_mean),
+        (1, "away", p1_away_n, p1_away_x_mean),
+        (2, "home", p2_home_n, p2_home_x_mean),
+        (2, "away", p2_away_n, p2_away_x_mean),
+    ):
+        for _ in range(n):
+            eid += 1
+            x = float(np.clip(rng.normal(loc=x_mean, scale=0.5), 0.0, x_max))
+            rows.append(
+                {
+                    "match_id": "synth-001",
+                    "team": side,
+                    "period": period,
+                    "x": x,
+                    "is_shot": True,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_tf22_detector_sparse_per_team_period_asymmetric_returns_low_confidence_none():
+    """IDSSE J03WMX shape: home reliable in P1 only, away reliable in P2 only.
+
+    Each team has reliable data in 1 distinct period -- detector cannot
+    distinguish ABSOLUTE_FRAME_HOME_RIGHT from PER_PERIOD_ABSOLUTE on
+    shot-only signal. Must return convention=None, confidence='low'
+    (post-TF-22 hardening; before TF-22 this false-positives ABSOLUTE).
+    """
+    events = _build_synthetic_per_period_events(
+        p1_home_x_mean=13.0,
+        p1_home_n=5,
+        p1_away_x_mean=11.0,
+        p1_away_n=4,  # below medium threshold (n<5)
+        p2_home_x_mean=92.0,
+        p2_home_n=3,  # below medium threshold (n<5)
+        p2_away_x_mean=95.0,
+        p2_away_n=8,
+    )
+    result = detect_input_convention(
+        events,
+        match_col="match_id",
+        x_max=105.0,
+        x_col="x",
+        team_col="team",
+        period_col="period",
+        is_shot_col="is_shot",
+    )
+    assert result.convention is None, (
+        f"expected convention=None for sparse per-team-period-asymmetric data, "
+        f"got {result.convention!r}; diagnostics={result.diagnostics}"
+    )
+    assert result.confidence == "low", f"expected confidence='low', got {result.confidence!r}"
+
+
+def test_tf22_detector_dense_per_period_absolute_classifies_correctly():
+    """Dense per-period-absolute: each team has >=5 shots in EACH period.
+
+    Both teams alternate sides between periods -- must classify
+    PER_PERIOD_ABSOLUTE with confidence='high'.
+    """
+    events = _build_synthetic_per_period_events(
+        p1_home_x_mean=15.0,
+        p1_home_n=10,
+        p1_away_x_mean=90.0,
+        p1_away_n=10,
+        p2_home_x_mean=92.0,
+        p2_home_n=10,
+        p2_away_x_mean=13.0,
+        p2_away_n=10,
+    )
+    result = detect_input_convention(
+        events,
+        match_col="match_id",
+        x_max=105.0,
+        x_col="x",
+        team_col="team",
+        period_col="period",
+        is_shot_col="is_shot",
+    )
+    assert result.convention is PER_PERIOD_ABSOLUTE, (
+        f"expected PER_PERIOD_ABSOLUTE, got {result.convention!r}; diagnostics={result.diagnostics}"
+    )
+    assert result.confidence == "high"
+
+
+def test_tf22_detector_dense_absolute_frame_home_right_classifies_correctly():
+    """Dense absolute-frame-home-right: each team consistently on one side across both periods.
+
+    Sanity check that TF-22 hardening didn't regress dense-data classification.
+    """
+    events = _build_synthetic_per_period_events(
+        p1_home_x_mean=92.0,
+        p1_home_n=10,
+        p1_away_x_mean=13.0,
+        p1_away_n=10,
+        p2_home_x_mean=92.0,
+        p2_home_n=10,
+        p2_away_x_mean=13.0,
+        p2_away_n=10,
+    )
+    result = detect_input_convention(
+        events,
+        match_col="match_id",
+        x_max=105.0,
+        x_col="x",
+        team_col="team",
+        period_col="period",
+        is_shot_col="is_shot",
+    )
+    assert result.convention is ABSOLUTE_FRAME_HOME_RIGHT, (
+        f"expected ABSOLUTE_FRAME_HOME_RIGHT, got {result.convention!r}; diagnostics={result.diagnostics}"
+    )
+    assert result.confidence == "high"

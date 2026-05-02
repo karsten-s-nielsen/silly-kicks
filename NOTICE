@@ -78,3 +78,39 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).
+
+Test Data Sources
+-----------------
+
+Test fixtures under tests/datasets/ are excluded from the published
+silly-kicks wheel via the [tool.hatch.build.targets.wheel] packages
+config in pyproject.toml. They exist solely to exercise the converter
+pipelines in CI.
+
+The IDSSE per-period orientation fixture
+(tests/datasets/idsse/per_period_match.parquet, PR-S23 / silly-kicks
+3.0.1) is derived from the DFL Bundesliga Match Tracking Data -- Open
+Match Data 2022/23, published by Bassek et al. (2025) under CC-BY 4.0.
+Match identifier: idsse_J03WMX (public DFL competition identifier --
+no PII). Citation: Bassek, M., Skinner, J., Niemann, J., et al. (2025).
+"An Open Bundesliga Match Tracking Dataset." DFL DataHub.
+
+The Metrica per-period orientation fixture
+(tests/datasets/metrica/per_period_match.parquet, PR-S23 / silly-kicks
+3.0.1) is Sample Game 1 from
+https://github.com/metrica-sports/sample-data, published under
+CC-BY-NC-4.0 (same license as Sample Game 2 used by sample_match.parquet).
+Coordinates rescaled at extraction time from Metrica's native 0-1
+normalised frame to the silly-kicks-input 0-105 / 0-68 frame.
+
+The existing IDSSE contract-test fixture
+(tests/datasets/idsse/sample_match.parquet) is from DFL DataHub
+free-sample data (non-commercial redistribution permitted). The
+existing Metrica contract-test fixture
+(tests/datasets/metrica/sample_match.parquet) is Sample Game 2 from
+metrica-sports/sample-data (CC-BY-NC-4.0).
+
+The kloppy test fixtures (tests/datasets/kloppy/*.xml + .json) are
+vendored from kloppy under BSD-3-Clause. The metrica_events.json
+within is originally from metrica-sports/sample-data Sample Game 2
+(CC-BY-NC-4.0).
