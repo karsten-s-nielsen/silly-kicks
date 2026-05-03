@@ -964,10 +964,12 @@ def add_pre_shot_gk_context(
 
     # PR-S21: when tracking frames supplied, lazy-import + merge GK-position columns
     # from the atomic-namespace canonical compute. Lazy import preserves ADR-005 § 5.
+    # PR-S24: also lazy-import + merge GK-angle columns (umbrella emits 6 cols total).
     if frames is not None:
-        from silly_kicks.atomic.tracking.features import add_pre_shot_gk_position
+        from silly_kicks.atomic.tracking.features import add_pre_shot_gk_angle, add_pre_shot_gk_position
 
         sorted_actions = add_pre_shot_gk_position(sorted_actions, frames)
+        sorted_actions = add_pre_shot_gk_angle(sorted_actions, frames=frames)
 
     return sorted_actions
 

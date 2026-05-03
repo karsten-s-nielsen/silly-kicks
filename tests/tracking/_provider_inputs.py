@@ -186,3 +186,45 @@ def synthesize_actions(frames: pd.DataFrame, n_actions: int = N_ACTIONS_PER_PROV
             "bodypart_id": [foot_id] * n_passes + [other_id, foot_id],
         }
     )
+
+
+def synthesize_actions_per_period_dense(frames: pd.DataFrame, n_per_period: int = 5) -> pd.DataFrame:
+    """Synthesize actions ensuring >=1 shot + >=1 keeper_save per period in ``frames``.
+
+    PR-S24 fixture-density gate (Loop 4 Step 4.5 -- closes the silent vacuous-pass
+    failure mode for TF-12 per-period DOP-symmetry invariants). For every period
+    present in ``frames``, runs :func:`synthesize_actions` on the period's frame
+    slice, then concatenates and renumbers action_id. Each period contributes
+    ``n_per_period - 2`` passes + 1 keeper_save + 1 shot.
+
+    Periods that lack a defending GK frame OR enough non-ball / non-GK rows are
+    skipped (a period with no candidates cannot be synthesized at all). The
+    density gate test in ``tests/tracking/test_synthesizer_fixture_density.py``
+    explicitly asserts the surviving period set is non-empty AND every surviving
+    period has the required action mix.
+
+    Returns a DataFrame with the same column shape as ``synthesize_actions``;
+    ``action_id`` and ``original_event_id`` are renumbered globally.
+    """
+    parts: list[pd.DataFrame] = []
+    periods = sorted(frames["period_id"].dropna().unique())
+    for period in periods:
+        period_frames = frames[frames["period_id"] == period]
+        non_ball_non_gk = period_frames[(~period_frames["is_ball"]) & (~period_frames["is_goalkeeper"])]
+        if non_ball_non_gk.empty:
+            continue
+        gk_frames = period_frames[period_frames["is_goalkeeper"] & (~period_frames["is_ball"])]
+        if gk_frames.empty:
+            continue
+        try:
+            actions_p = synthesize_actions(period_frames, n_actions=n_per_period)
+        except ValueError:
+            continue
+        parts.append(actions_p)
+    if not parts:
+        msg = "synthesize_actions_per_period_dense: no period had sufficient frame coverage to synthesize."
+        raise ValueError(msg)
+    out = pd.concat(parts, ignore_index=True)
+    out["action_id"] = list(range(1, len(out) + 1))
+    out["original_event_id"] = [str(i + 1) for i in range(len(out))]
+    return out

@@ -35,12 +35,17 @@ _STANDARD_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot
 __all__ = [
     "actor_speed",
     "add_action_context",
+    "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "defenders_in_triangle_to_goal",
     "nearest_defender_distance",
+    "pre_shot_gk_angle_default_xfns",
+    "pre_shot_gk_angle_off_goal_line",
+    "pre_shot_gk_angle_to_shot_trajectory",
     "pre_shot_gk_default_xfns",
     "pre_shot_gk_distance_to_goal",
     "pre_shot_gk_distance_to_shot",
+    "pre_shot_gk_full_default_xfns",
     "pre_shot_gk_x",
     "pre_shot_gk_y",
     "receiver_zone_density",
@@ -402,3 +407,105 @@ pre_shot_gk_default_xfns = [
     lift_to_states(pre_shot_gk_distance_to_goal),
     lift_to_states(pre_shot_gk_distance_to_shot),
 ]
+
+
+# ---------------------------------------------------------------------------
+# PR-S24 -- TF-12: pre_shot_gk_angle_*
+# ---------------------------------------------------------------------------
+
+
+def pre_shot_gk_angle_to_shot_trajectory(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Signed angle (rad) between (goal-centre->anchor) and (GK->anchor) at the linked frame.
+
+    Zero ==> GK is on the shot trajectory line. Positive ==> GK to +y side; negative ==> -y side.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> # See tests/test_pre_shot_gk_angle.py for a runnable example.
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021). "A goal scoring probability model for shots based on
+        synchronized positional and event data in football and futsal." Frontiers in
+        Sports and Active Living, 3, 624475.
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_angle(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
+    return df["pre_shot_gk_angle_to_shot_trajectory"].rename("pre_shot_gk_angle_to_shot_trajectory")
+
+
+def pre_shot_gk_angle_off_goal_line(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Signed angle (rad) of GK position relative to goal-line normal at goal-mouth centre.
+
+    Zero ==> GK is on the goal-line normal. Positive ==> GK offset to +y side; negative ==> -y side.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> # See tests/test_pre_shot_gk_angle.py for a runnable example.
+
+    References
+    ----------
+    Anzer, G., & Bauer, P. (2021).
+    """
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_angle(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
+    return df["pre_shot_gk_angle_off_goal_line"].rename("pre_shot_gk_angle_off_goal_line")
+
+
+@nan_safe_enrichment
+def add_pre_shot_gk_angle(
+    actions: pd.DataFrame,
+    *,
+    frames: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add 2 GK-angle columns at the linked frame for each shot action.
+
+    REQUIRES ``defending_gk_player_id`` column (run
+    ``silly_kicks.spadl.utils.add_pre_shot_gk_context`` first).
+
+    Returns
+    -------
+    pd.DataFrame
+        Input actions with the columns:
+        - pre_shot_gk_angle_to_shot_trajectory (float64, radians, signed)
+        - pre_shot_gk_angle_off_goal_line (float64, radians, signed)
+
+    NaN for non-shot / unlinked / pre-engagement / GK-absent rows. Standalone
+    aggregator -- does NOT extend ``add_pre_shot_gk_position`` (preserves the
+    PR-S21 4-column surface; primitive+assembly pattern).
+
+    Raises
+    ------
+    ValueError
+        If ``defending_gk_player_id`` column is absent from ``actions``.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> # See tests/test_pre_shot_gk_angle.py for a runnable example.
+    """
+    if "defending_gk_player_id" not in actions.columns:
+        raise ValueError(
+            "add_pre_shot_gk_angle: actions missing required column 'defending_gk_player_id'. "
+            "Run silly_kicks.spadl.utils.add_pre_shot_gk_context first."
+        )
+    ctx = _resolve_action_frame_context(actions, frames)
+    df = _kernels._pre_shot_gk_angle(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
+    out = actions.copy()
+    for col in ("pre_shot_gk_angle_to_shot_trajectory", "pre_shot_gk_angle_off_goal_line"):
+        out[col] = df[col]
+    return out
+
+
+pre_shot_gk_angle_default_xfns = [
+    lift_to_states(pre_shot_gk_angle_to_shot_trajectory),
+    lift_to_states(pre_shot_gk_angle_off_goal_line),
+]
+
+
+pre_shot_gk_full_default_xfns = pre_shot_gk_default_xfns + pre_shot_gk_angle_default_xfns

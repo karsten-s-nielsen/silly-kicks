@@ -2,31 +2,19 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-05-02 (silly-kicks 3.0.1 shipped; PR-S22 + PR-S23 direction-of-play correctness; On-Deck reorganized by specification completeness; TF-2 and TF-12 reframed as multi-flavor / multi-feature)
-**(A) silly-kicks 3.0.1 SHIPPED** (PR-S23 — Sportec + Metrica per-period direction-of-play fix; ADR-006 erratum; new per-period orientation invariant fixture; TF-22 detector hardening).
-**(B) silly-kicks 3.0.0 SHIPPED** (PR-S22 — direction-of-play correctness refactor; ADR-006).
-**(C) silly-kicks 2.9.0 SHIPPED** (PR-S21 — `pre_shot_gk_position_*` defending-GK features + baselines backfill; within ADR-005 envelope, no new ADR).
+**Last updated**: 2026-05-03. **Current release**: silly-kicks 3.1.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
 ## On Deck
 
-Items are ranked top-to-bottom by specification completeness. Tier 1–2 are spec-complete and ready to implement directly; Tier 3–4 require empirical tuning or are heavier engineering; Tier 5–6 contain novel research components and have dependency cliffs (everything in Tier 5+ is blocked by TF-7 pitch control). Within each tier, items are ordered by additional implementation effort needed.
+Items are ranked top-to-bottom by specification completeness. Tier 2 is spec-complete and ready to implement directly; Tier 3–4 require empirical tuning or are heavier engineering; Tier 5–6 contain novel research components and have dependency cliffs (everything in Tier 5+ is blocked by TF-7 pitch control). Within each tier, items are ordered by additional implementation effort needed.
 
 | Size | What it means |
 |------|---------------|
 | **Monstah** | Multi-phase epic |
 | **Wicked** | Looks small, surprisingly impactful |
 | **Dunkin'** | Quick run, keeps things moving |
-
-### Tier 1 — Fully canonical or library-internal (ready to ship; no spec decisions)
-
-| # | Task | Size | Source | Notes |
-|---|------|------|--------|-------|
-| TF-6 | `sync_score` per-action tracking↔events sync-quality score | Dunkin' | ADR-004 #4; novel utility (no canonical academic reference) | **Ready to ship.** QA primitive. Reuses `link_actions_to_frames` pointers + `link_quality_score`. No academic citation required — library-internal QA, not a published metric. ADR-004 #4 already pre-specified design. ~50 LOC. |
-| TF-8 | Smoothing primitives (Savitzky-Golay, EMA) | Dunkin' | Savitzky & Golay 1964 (canonical); ADR-004 #6 | **Ready to ship.** Canonical formula; SciPy ships `savgol_filter`. EMA is a one-liner. **References:** Savitzky, A., & Golay, M. J. E. (1964), "Smoothing and Differentiation of Data by Simplified Least Squares Procedures." Analytical Chemistry, 36(8), 1627-1639. Per-provider preprocessor. ~80 LOC. |
-| TF-9 | Multi-frame interpolation / gap filling | Dunkin' | Standard numerical methods (no domain-specific paper); ADR-004 #7 | **Ready to ship.** Standard cubic-spline / linear interpolation (`scipy.interpolate`). No domain-specific citation; standard signal-processing practice. Pick linear vs. cubic spline at implementation time. ~100 LOC. |
-| TF-12 | `pre_shot_gk_angle_*` — multiple complementary GK-angle features | Dunkin' | Anzer & Bauer 2021; PR-S21 deferral; multi-feature reframe (2026-05-02) | **Ready to ship.** Reframed from "pick one canonical angle convention" to **ship two distinct features that answer different downstream questions** — they are not alternatives but complements: (a) `pre_shot_gk_angle_to_shot_trajectory` (signed) — GK alignment with the shooter→goal-centre line, for shot-stopping / xGOT-adjacent analysis; (b) `pre_shot_gk_angle_off_goal_line` (signed) — GK lateral displacement off the goal-line normal at the shot location, for positioning / sweeping analysis. Unsigned variants are `abs()` at the call site (one line; not shipped unless a concrete consumer asks). Library ships positions + 2 distances in PR-S21; angles complete the geometric set. ~50-80 LOC. |
 
 ### Tier 2 — Single published reference (ready to ship)
 

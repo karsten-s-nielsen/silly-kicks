@@ -376,3 +376,67 @@ def slice_around_event(
     out["time_offset_seconds"] = (out["time_seconds"] - out["action_time"]).astype("float64")
     out = out.drop(columns=["action_time"])
     return out.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# PR-S24 -- TF-6: sync_score per-action tracking<->events sync-quality
+# ---------------------------------------------------------------------------
+
+
+def sync_score(
+    links: pd.DataFrame,
+    *,
+    high_quality_threshold: float = 0.85,
+) -> pd.DataFrame:
+    """Per-action sync-quality scores (3 aggregations).
+
+    Returns a DataFrame indexed by ``action_id`` with columns:
+      - ``sync_score_min`` -- min(link_quality_score) per action.
+      - ``sync_score_mean`` -- mean(link_quality_score) per action.
+      - ``sync_score_high_quality_frac`` -- fraction of links with
+        ``link_quality_score >= high_quality_threshold``.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from silly_kicks.tracking.utils import sync_score
+    >>> links = pd.DataFrame({
+    ...     "action_id": [1, 1],
+    ...     "link_quality_score": [0.9, 0.8],
+    ...     "frame_id": [10, 11],
+    ...     "time_offset_seconds": [0.0, 0.04],
+    ...     "n_candidate_frames": [2, 2],
+    ... })
+    >>> df = sync_score(links, high_quality_threshold=0.85)
+    >>> float(df.loc[1, "sync_score_min"])
+    0.8
+    """
+    if "link_quality_score" not in links.columns or "action_id" not in links.columns:
+        raise ValueError("sync_score: links must contain 'action_id' and 'link_quality_score'")
+    grp = links.groupby("action_id", dropna=False)["link_quality_score"]
+    out = pd.DataFrame(
+        {
+            "sync_score_min": grp.min(),
+            "sync_score_mean": grp.mean(),
+            "sync_score_high_quality_frac": grp.apply(lambda s: float((s >= high_quality_threshold).mean())),
+        }
+    )
+    return out
+
+
+def add_sync_score(
+    actions: pd.DataFrame,
+    links: pd.DataFrame,
+    *,
+    high_quality_threshold: float = 0.85,
+) -> pd.DataFrame:
+    """Enrich ``actions`` with three ``sync_score_*`` columns merged on ``action_id``.
+
+    Examples
+    --------
+    >>> # See tests/test_sync_score.py for runnable example.
+    """
+    if "action_id" not in actions.columns:
+        raise ValueError("add_sync_score: actions must contain 'action_id'")
+    scores = sync_score(links, high_quality_threshold=high_quality_threshold)
+    return actions.merge(scores, left_on="action_id", right_index=True, how="left")

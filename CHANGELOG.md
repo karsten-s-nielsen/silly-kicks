@@ -5,6 +5,76 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] — 2026-05-02
+
+### Added
+
+- **TF-6 — `sync_score`** (`silly_kicks.tracking.utils.sync_score`,
+  `add_sync_score`, `LinkReport.sync_scores()`): per-action tracking↔events
+  sync-quality scores. New columns when used via `add_sync_score`:
+  - `sync_score_min`
+  - `sync_score_mean`
+  - `sync_score_high_quality_frac`
+- **TF-8 — smoothing primitives** (`silly_kicks.tracking.preprocess.smooth_frames`,
+  `derive_velocities`): Savitzky-Golay (canonical) and EMA smoothing of
+  positional columns. Schema-additive output columns:
+  - `x_smoothed`, `y_smoothed`
+  - `vx`, `vy`, `speed`
+  - `_preprocessed_with` (per-row provenance tag — load-bearing because
+    `pandas.DataFrame.attrs` does not propagate through merge/concat/applyInPandas)
+- **TF-9 — interpolation / gap-filling** (`silly_kicks.tracking.preprocess.interpolate_frames`):
+  linear NaN gap-filling up to `max_gap_seconds` (cubic deferred to TF-9-cubic).
+  Same schema as input — no new columns, just NaN cells replaced where the
+  gap is short enough.
+- **TF-12 — `pre_shot_gk_angle_*`** (`silly_kicks.tracking.features.add_pre_shot_gk_angle`,
+  `pre_shot_gk_angle_to_shot_trajectory`, `pre_shot_gk_angle_off_goal_line`,
+  `pre_shot_gk_angle_default_xfns`, `pre_shot_gk_full_default_xfns` + atomic
+  mirror). New columns:
+  - `pre_shot_gk_angle_to_shot_trajectory` (float64, radians, signed)
+  - `pre_shot_gk_angle_off_goal_line` (float64, radians, signed)
+- **`PreprocessConfig`** (`silly_kicks.tracking.preprocess.PreprocessConfig`):
+  shared preprocessing config dataclass with `default()` / `for_provider(name)`
+  factories and flag-based `is_default()`. Construction-time validator rejects
+  `derive_velocity=True` + `smoothing_method=None`.
+- **Tracking-converter optional `preprocess` kwarg** on
+  `silly_kicks.tracking.sportec.convert_to_frames`,
+  `tracking.pff.convert_to_frames`, and `tracking.kloppy.convert_to_frames`.
+  Default `None` ⇒ zero behavior change. When set, applies interpolation /
+  smoothing / velocity-derivation per the config; auto-promotes
+  `PreprocessConfig.default()` to `PreprocessConfig.for_provider(<this_provider>)`,
+  with `force_universal=True` + `UserWarning` fallback for unsupported providers.
+- **Umbrella facade extension**: `silly_kicks.spadl.utils.add_pre_shot_gk_context`
+  (and atomic mirror) now emits 6 GK-tracking columns when called with
+  `frames=...` (the existing 4 from PR-S21 plus the 2 new TF-12 angles).
+  The `frames=None` path is bit-identical to silly-kicks 2.9.0 — 4 columns.
+  Lakehouse boundary tests asserting on the `frames=...` column-set need
+  `expected_columns` extended by `pre_shot_gk_angle_to_shot_trajectory` and
+  `pre_shot_gk_angle_off_goal_line`.
+- **Empirical baselines**: `tests/fixtures/baselines/preprocess_baseline.json`
+  + `preprocess_sweep_log.json` (per-provider stats across all 4 supported
+  tracking providers including SkillCorner) +
+  `scripts/probe_preprocess_baseline.py` +
+  `scripts/regenerate_provider_defaults.py` (codegen pipeline replaces
+  manual sync hand-edit).
+
+### Changed
+
+- **scipy is now a hard runtime dependency** (`scipy>=1.10.0`) — required by
+  `tracking.preprocess` for Savitzky-Golay smoothing + derivative. Previously
+  optional for `silly_kicks.xthreat` only.
+
+### Notes
+
+- ADR-005 amendment formalising the multi-flavor convention asymmetry
+  (suffixed columns for VAEP xfns; canonical-single columns for preprocessing
+  utilities) lands alongside the TF-2 `pressure_on_actor` PR (scheduled
+  within 24-48 hours of PR-S24 merge — bounded deferral).
+- Lakehouse pin bump: `silly-kicks>=3.1.0,<4`. No 3.0.x → 3.1.0 migration
+  needed beyond the boundary-test column-set update above and (when adopting
+  preprocessing inside Spark UDFs) declaring `_preprocessed_with` +
+  smoothed/velocity fields explicitly in the `applyInPandas` `StructType`
+  schema.
+
 ## [3.0.1] — 2026-05-02
 
 ### Breaking-correctness fix (PR-S23) — Sportec + Metrica per-period direction-of-play

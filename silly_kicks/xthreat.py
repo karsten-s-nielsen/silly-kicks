@@ -5,14 +5,10 @@ from collections.abc import Callable
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from scipy.interpolate import RectBivariateSpline  # type: ignore[reportMissingImports]
 from sklearn.exceptions import NotFittedError
 
 import silly_kicks.spadl.config as spadlconfig
-
-try:
-    from scipy.interpolate import RectBivariateSpline  # type: ignore[reportMissingImports]
-except ImportError:  # pragma: no cover
-    RectBivariateSpline = None
 
 M: int = 12
 N: int = 16
