@@ -145,3 +145,17 @@ class LinkReport:
     @property
     def link_rate(self) -> float:
         return self.n_actions_linked / max(self.n_actions_in, 1)
+
+    def sync_scores(self, links, *, high_quality_threshold: float = 0.85):
+        """Per-action ``sync_score`` DataFrame for the supplied link batch.
+
+        The LinkReport summary holds counts; the link rows themselves are needed
+        to compute per-action aggregations -- pass them in.
+
+        Examples
+        --------
+        >>> # See tests/test_sync_score.py::test_link_report_sync_scores_method
+        """
+        from .utils import sync_score  # local import to avoid utils -> schema cycle
+
+        return sync_score(links, high_quality_threshold=high_quality_threshold)

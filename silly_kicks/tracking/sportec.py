@@ -23,12 +23,15 @@ Coordinate transformation: ``x = x_centered + 52.5``;
 from __future__ import annotations
 
 import warnings
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
 from . import _direction
 from .schema import SPORTEC_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+
+if TYPE_CHECKING:
+    from .preprocess import PreprocessConfig
 
 EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
     {
@@ -50,6 +53,9 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
 )
 
 
+_PROVIDER_NAME = "sportec"
+
+
 def convert_to_frames(
     raw_frames: pd.DataFrame,
     home_team_id: str,
@@ -58,6 +64,7 @@ def convert_to_frames(
     preserve_native: list[str] | None = None,
     *,
     output_convention: Literal["absolute_frame", "ltr"] | None = None,
+    preprocess: PreprocessConfig | None = None,
 ) -> tuple[pd.DataFrame, TrackingConversionReport]:
     """Convert Sportec-shaped raw tracking frames to canonical schema.
 
@@ -189,6 +196,18 @@ def convert_to_frames(
         from .utils import play_left_to_right
 
         final = play_left_to_right(final, home_team_id)
+
+    if preprocess is not None:
+        from .preprocess import derive_velocities, interpolate_frames, smooth_frames
+        from .preprocess._resolve import resolve_preprocess
+
+        cfg = resolve_preprocess(preprocess, provider=_PROVIDER_NAME)
+        if cfg.interpolation_method is not None:
+            final = interpolate_frames(final, config=cfg)
+        if cfg.smoothing_method is not None:
+            final = smooth_frames(final, config=cfg)
+        if cfg.derive_velocity:
+            final = derive_velocities(final, config=cfg)
 
     return final, report
 

@@ -33,9 +33,24 @@ MIT license with full attribution preserved.
   goalkeeper position (PR-S21): four GK features
   (``pre_shot_gk_x``, ``pre_shot_gk_y``, ``pre_shot_gk_distance_to_goal``,
   ``pre_shot_gk_distance_to_shot``) plus aggregator
-  ``add_pre_shot_gk_position`` and ``pre_shot_gk_default_xfns``; events-side
+  ``add_pre_shot_gk_position`` and ``pre_shot_gk_default_xfns``. Pre-shot
+  goalkeeper geometry (PR-S24): two signed-angle features
+  (``pre_shot_gk_angle_to_shot_trajectory``,
+  ``pre_shot_gk_angle_off_goal_line``) plus aggregator
+  ``add_pre_shot_gk_angle``, ``pre_shot_gk_angle_default_xfns``, and union
+  list ``pre_shot_gk_full_default_xfns``. Events-side
   ``add_pre_shot_gk_context`` gains an optional ``frames=`` kwarg that emits
-  the same GK position columns inline. Atomic-SPADL parity in
+  six GK columns inline (4 PR-S21 positions + 2 PR-S24 angles). Per-action
+  sync-quality (TF-6, PR-S24): ``sync_score`` / ``add_sync_score`` /
+  ``LinkReport.sync_scores()`` return three aggregations
+  (``sync_score_min`` / ``_mean`` / ``_high_quality_frac``). Frame
+  preprocessing (PR-S24, ``silly_kicks.tracking.preprocess``):
+  ``smooth_frames`` (Savitzky-Golay or EMA), ``interpolate_frames`` (linear
+  gap-fill), ``derive_velocities`` (vx/vy/speed via SG-derivative), shared
+  ``PreprocessConfig`` dataclass with per-provider defaults from a
+  codegen-from-JSON pipeline. Tracking converters take an optional
+  ``preprocess: PreprocessConfig | None = None`` kwarg with auto-promotion
+  to per-provider defaults. Atomic-SPADL parity in
   ``silly_kicks.atomic.tracking.features``.
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions

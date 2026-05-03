@@ -1,0 +1,202 @@
+{
+  "_provenance": {
+    "generated_by": "scripts/probe_preprocess_baseline.py",
+    "generated_at": "2026-05-03T20:43:26+00:00",
+    "silly_kicks_version": "3.1.0-dev",
+    "providers_probed": [
+      "sportec",
+      "pff",
+      "metrica",
+      "skillcorner"
+    ],
+    "probe_sources": [
+      "databricks_sql:metrica,skillcorner,sportec",
+      "pff_local:10502.jsonl.bz2"
+    ],
+    "fields_refreshed_from_real_data": [
+      "sampling_rate_hz",
+      "gap_rate_player_pct",
+      "gap_rate_ball_pct",
+      "velocity_outlier_rate_at_max_12mps",
+      "raw_position_noise_floor_m",
+      "gap_length_p50_frames",
+      "gap_length_p99_frames",
+      "post_interpolation_nan_rate_player_pct",
+      "post_interpolation_nan_rate_ball_pct",
+      "link_quality_score_p50",
+      "link_quality_score_p10",
+      "link_quality_high_threshold",
+      "gk_angle_to_shot_trajectory_p50_rad",
+      "gk_angle_off_goal_line_p50_rad"
+    ],
+    "fields_kept_as_placeholder": []
+  },
+  "by_provider": {
+    "sportec": {
+      "sampling_rate_hz": 25.0,
+      "raw_position_noise_floor_m": 0.09,
+      "velocity_outlier_rate_at_max_12mps": 0.0008,
+      "gap_rate_player_pct": 0.0,
+      "gap_rate_ball_pct": 0.0,
+      "gap_length_p50_frames": 1,
+      "gap_length_p99_frames": 12,
+      "post_interpolation_nan_rate_player_pct": 0.0,
+      "post_interpolation_nan_rate_ball_pct": 0.0,
+      "link_quality_score_p50": 1.0,
+      "link_quality_score_p10": 1.0,
+      "link_quality_high_threshold": 0.85,
+      "gk_angle_to_shot_trajectory_p50_rad": 2.995,
+      "gk_angle_off_goal_line_p50_rad": 0.002,
+      "_derived_defaults": {
+        "sg_window_seconds": 0.4,
+        "sg_poly_order": 3,
+        "ema_alpha": 0.3,
+        "max_gap_seconds": 0.48
+      }
+    },
+    "pff": {
+      "sampling_rate_hz": 30.0,
+      "raw_position_noise_floor_m": 0.0365,
+      "velocity_outlier_rate_at_max_12mps": 0.001,
+      "gap_rate_player_pct": 1.8,
+      "gap_rate_ball_pct": 7.8,
+      "gap_length_p50_frames": 1,
+      "gap_length_p99_frames": 15,
+      "post_interpolation_nan_rate_player_pct": 0.0,
+      "post_interpolation_nan_rate_ball_pct": 0.0,
+      "link_quality_score_p50": 1.0,
+      "link_quality_score_p10": 1.0,
+      "link_quality_high_threshold": 0.85,
+      "gk_angle_to_shot_trajectory_p50_rad": 0.136,
+      "gk_angle_off_goal_line_p50_rad": 0.237,
+      "_derived_defaults": {
+        "sg_window_seconds": 0.333,
+        "sg_poly_order": 3,
+        "ema_alpha": 0.3,
+        "max_gap_seconds": 0.5
+      }
+    },
+    "metrica": {
+      "sampling_rate_hz": 25.0,
+      "raw_position_noise_floor_m": 0.036,
+      "velocity_outlier_rate_at_max_12mps": 0.0008,
+      "gap_rate_player_pct": 0.0,
+      "gap_rate_ball_pct": 77.336,
+      "gap_length_p50_frames": 2,
+      "gap_length_p99_frames": 14,
+      "post_interpolation_nan_rate_player_pct": 0.0,
+      "post_interpolation_nan_rate_ball_pct": 0.0,
+      "link_quality_score_p50": 1.0,
+      "link_quality_score_p10": 1.0,
+      "link_quality_high_threshold": 0.85,
+      "gk_angle_to_shot_trajectory_p50_rad": 0.613,
+      "gk_angle_off_goal_line_p50_rad": 0.543,
+      "_derived_defaults": {
+        "sg_window_seconds": 0.4,
+        "sg_poly_order": 3,
+        "ema_alpha": 0.3,
+        "max_gap_seconds": 0.56
+      }
+    },
+    "skillcorner": {
+      "sampling_rate_hz": 10.0,
+      "raw_position_noise_floor_m": 0.1295,
+      "velocity_outlier_rate_at_max_12mps": 0.01,
+      "gap_rate_player_pct": 0.0,
+      "gap_rate_ball_pct": 0.034,
+      "gap_length_p50_frames": 1,
+      "gap_length_p99_frames": 6,
+      "post_interpolation_nan_rate_player_pct": 0.0,
+      "post_interpolation_nan_rate_ball_pct": 0.0,
+      "link_quality_score_p50": 1.0,
+      "link_quality_score_p10": 1.0,
+      "link_quality_high_threshold": 0.85,
+      "gk_angle_to_shot_trajectory_p50_rad": 1.167,
+      "gk_angle_off_goal_line_p50_rad": 0.004,
+      "_derived_defaults": {
+        "sg_window_seconds": 1.0,
+        "sg_poly_order": 3,
+        "ema_alpha": 0.3,
+        "max_gap_seconds": 0.6
+      }
+    }
+  },
+  "raw_lakehouse_stats": {
+    "metrica": {
+      "frame_rate_p50": 25,
+      "n_periods": 2,
+      "nan_rate_x": 0.0,
+      "nan_rate_y": 0.0,
+      "nan_rate_ball_x": 0.77336,
+      "nan_rate_ball_y": 0.77336,
+      "nan_rate_speed": 2e-05,
+      "nan_rate_speed_ms": 2e-05,
+      "speed_ms_p50": 1.4021596066424036,
+      "speed_ms_p99": 6.09975083507491,
+      "distance_to_ball_p50": 27.530701593675374,
+      "distance_to_ball_p95": 62.33111695453563,
+      "off_pitch_x_rate": 0.0025,
+      "off_pitch_y_rate": 0.00552,
+      "off_pitch_ball_x_rate": 0.00028,
+      "n_matches": 3,
+      "n_rows": 9458316,
+      "lakehouse_wide_form_units": "statsbomb_120x80",
+      "speed_native_supplied": true
+    },
+    "sportec": {
+      "frame_rate_p50": 25,
+      "n_periods": 2,
+      "nan_rate_x": 0.0,
+      "nan_rate_y": 0.0,
+      "nan_rate_ball_x": 0.0,
+      "nan_rate_ball_y": 0.0,
+      "nan_rate_speed": 2e-05,
+      "nan_rate_speed_ms": 2e-05,
+      "speed_ms_p50": 1.4055687755376196,
+      "speed_ms_p99": 6.276892257895894,
+      "distance_to_ball_p50": 29.924566678058113,
+      "distance_to_ball_p95": 66.54097242171703,
+      "off_pitch_x_rate": 0.0,
+      "off_pitch_y_rate": 0.0,
+      "off_pitch_ball_x_rate": 0.14979,
+      "n_matches": 7,
+      "n_rows": 21874234,
+      "lakehouse_wide_form_units": "statsbomb_120x80",
+      "speed_native_supplied": true
+    },
+    "skillcorner": {
+      "frame_rate_p50": 10,
+      "n_periods": 2,
+      "nan_rate_x": 0.0,
+      "nan_rate_y": 0.0,
+      "nan_rate_ball_x": 0.00034,
+      "nan_rate_ball_y": 0.00034,
+      "nan_rate_speed": 8e-05,
+      "nan_rate_speed_ms": 8e-05,
+      "speed_ms_p50": 2.143185160079466,
+      "speed_ms_p99": 29.618357441047703,
+      "distance_to_ball_p50": 25.875119311949522,
+      "distance_to_ball_p95": 57.79099338511059,
+      "off_pitch_x_rate": 0.0,
+      "off_pitch_y_rate": 0.0,
+      "off_pitch_ball_x_rate": 0.00137,
+      "n_matches": 10,
+      "n_rows": 6786057,
+      "lakehouse_wide_form_units": "statsbomb_120x80",
+      "speed_native_supplied": true
+    }
+  },
+  "raw_pff_stats": {
+    "frame_rate_p50": 30.0,
+    "n_periods": 1,
+    "n_frames_sample": 5000,
+    "ball_visible_rate": 0.922,
+    "avg_home_players_per_frame": 11.0,
+    "avg_away_players_per_frame": 11.0,
+    "off_pitch_x_rate": 0.0,
+    "off_pitch_y_rate": 0.0035272727272727274,
+    "speed_native_supplied": false,
+    "ball_row_rate": 1.0,
+    "match_filename": "10502.jsonl.bz2"
+  }
+}

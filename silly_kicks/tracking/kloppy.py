@@ -10,7 +10,7 @@ See ADR-004 (silly-kicks 2.7.0) for the architectural rationale.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 from kloppy.domain import (  # type: ignore[reportMissingImports]
@@ -25,6 +25,9 @@ from .schema import KLOPPY_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 from .sportec import _resolve_output_convention
 from .utils import _derive_speed
 
+if TYPE_CHECKING:
+    from .preprocess import PreprocessConfig
+
 _PROVIDER_NAME_MAP: dict[Provider, str] = {
     Provider.METRICA: "metrica",
     Provider.SKILLCORNER: "skillcorner",
@@ -36,6 +39,7 @@ def convert_to_frames(
     preserve_native: list[str] | None = None,
     *,
     output_convention: Literal["absolute_frame", "ltr"] | None = None,
+    preprocess: PreprocessConfig | None = None,
 ) -> tuple[pd.DataFrame, TrackingConversionReport]:
     """Convert a kloppy TrackingDataset to canonical KLOPPY_TRACKING_FRAMES_COLUMNS schema.
 
@@ -215,5 +219,18 @@ def convert_to_frames(
         from .utils import play_left_to_right
 
         final = play_left_to_right(final, home_team_id)
+
+    if preprocess is not None:
+        from .preprocess import derive_velocities, interpolate_frames, smooth_frames
+        from .preprocess._resolve import resolve_preprocess
+
+        provider_name = _PROVIDER_NAME_MAP.get(dataset.metadata.provider, str(dataset.metadata.provider).lower())
+        cfg = resolve_preprocess(preprocess, provider=provider_name)
+        if cfg.interpolation_method is not None:
+            final = interpolate_frames(final, config=cfg)
+        if cfg.smoothing_method is not None:
+            final = smooth_frames(final, config=cfg)
+        if cfg.derive_velocity:
+            final = derive_velocities(final, config=cfg)
 
     return final, report

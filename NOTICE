@@ -75,6 +75,16 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   46(4), 541-550.
   (early shot-quality / pressure-from-defenders concept)
 
+- Savitzky, A., & Golay, M. J. E. (1964). "Smoothing and Differentiation of
+  Data by Simplified Least Squares Procedures." Analytical Chemistry, 36(8),
+  1627-1639.
+  (Savitzky-Golay polynomial smoothing + analytical derivative -- used for
+  position smoothing and velocity derivation in
+  silly_kicks.tracking.preprocess (PR-S24, ADR-004 invariants 6/7).
+  PR-S24 also uses Anzer & Bauer (2021) above for the
+  pre_shot_gk_angle_to_shot_trajectory and pre_shot_gk_angle_off_goal_line
+  features in silly_kicks/tracking/features.py and the atomic mirror.)
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).

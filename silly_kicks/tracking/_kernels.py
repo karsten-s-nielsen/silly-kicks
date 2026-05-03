@@ -250,3 +250,68 @@ def _pre_shot_gk_position(
         out.loc[valid, "pre_shot_gk_distance_to_goal"] = np.sqrt((_GOAL_X - gx) ** 2 + (_GOAL_Y_CENTER - gy) ** 2)
         out.loc[valid, "pre_shot_gk_distance_to_shot"] = np.sqrt((ax - gx) ** 2 + (ay - gy) ** 2)
     return out
+
+
+def _pre_shot_gk_angle(
+    anchor_x: pd.Series,
+    anchor_y: pd.Series,
+    ctx: ActionFrameContext,
+    *,
+    shot_type_ids: frozenset[int],
+) -> pd.DataFrame:
+    """Per shot action: GK angle vs shot trajectory and goal-line normal.
+
+    Returns
+    -------
+    pd.DataFrame
+        Indexed identically to ctx.actions with 2 columns:
+        - pre_shot_gk_angle_to_shot_trajectory (float64, radians, signed)
+        - pre_shot_gk_angle_off_goal_line (float64, radians, signed)
+
+    All NaN for non-shot rows or rows with no defending_gk_row in ctx.
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    actions = ctx.actions
+    out = pd.DataFrame(
+        {
+            "pre_shot_gk_angle_to_shot_trajectory": np.full(len(actions), np.nan, dtype="float64"),
+            "pre_shot_gk_angle_off_goal_line": np.full(len(actions), np.nan, dtype="float64"),
+        },
+        index=actions.index,
+    )
+    if "type_id" not in actions.columns:
+        return out
+    is_shot = actions["type_id"].isin(shot_type_ids).to_numpy()
+    if not is_shot.any():
+        return out
+
+    if len(ctx.defending_gk_rows) > 0:
+        gk = ctx.defending_gk_rows[["action_id", "x", "y"]].rename(columns={"x": "_gk_x", "y": "_gk_y"})
+        gk = gk.drop_duplicates("action_id", keep="first")
+        per_action = actions[["action_id"]].merge(gk, on="action_id", how="left")
+    else:
+        per_action = actions[["action_id"]].assign(_gk_x=np.nan, _gk_y=np.nan)
+    per_action.index = actions.index
+
+    shot_mask = pd.Series(is_shot, index=actions.index)
+    gk_present_mask = per_action["_gk_x"].notna()
+    valid = shot_mask & gk_present_mask
+    if not valid.any():
+        return out
+
+    gx = per_action.loc[valid, "_gk_x"].astype("float64").to_numpy()
+    gy = per_action.loc[valid, "_gk_y"].astype("float64").to_numpy()
+    ax = anchor_x.loc[valid].astype("float64").to_numpy()
+    ay = anchor_y.loc[valid].astype("float64").to_numpy()
+
+    v1x = _GOAL_X - ax
+    v1y = _GOAL_Y_CENTER - ay
+    v2x = gx - ax
+    v2y = gy - ay
+    cross = v1x * v2y - v1y * v2x
+    dot = v1x * v2x + v1y * v2y
+    out.loc[valid, "pre_shot_gk_angle_to_shot_trajectory"] = np.arctan2(cross, dot)
+
+    out.loc[valid, "pre_shot_gk_angle_off_goal_line"] = np.arctan2(gy - _GOAL_Y_CENTER, _GOAL_X - gx)
+    return out
