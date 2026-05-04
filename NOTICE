@@ -85,9 +85,92 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   pre_shot_gk_angle_to_shot_trajectory and pre_shot_gk_angle_off_goal_line
   features in silly_kicks/tracking/features.py and the atomic mirror.)
 
+- Andrienko, G., Andrienko, N., Budziak, G., Dykes, J., Fuchs, G.,
+  von Landesberger, T., & Weber, H. (2017). "Visual analysis of pressure in
+  football." Data Mining and Knowledge Discovery, 31, 1793-1839.
+  Used by: silly_kicks.tracking.features.pressure_on_actor (method="andrienko_oval").
+  Numerical defaults from section 3.1: D_front=9 m, D_back=3 m, q=1.75.
+
+- Link, D., Lang, S., & Seidenschwarz, P. (2016). "Real Time Quantification of
+  Dangerousity in Football Using Spatiotemporal Tracking Data." PLOS ONE,
+  11(12): e0168768.
+  Used by: silly_kicks.tracking.features.pressure_on_actor (method="link_zones").
+  Zone radii (HOZ=4, LZ=3, HZ=2 m) and angular boundaries (45 deg, 90 deg) from
+  Figure 2. The paper additionally labels a 1 m "High Pressure Zone (HPZ)"
+  inner arc with prose-described "constant high pressure", but Eq (3) of
+  the paper does not special-case it -- silly-kicks honors Eq (3) as the
+  formal specification (Plan A: equation-faithful, no discontinuity).
+  Saturation constant k3 not published in the paper; silly-kicks default
+  k3=1.0 is an engineering choice exposed as a kwarg. Calibration deferred
+  post-release to Optuna sweep (silly-kicks TODO TF-24).
+
+- Bekkers, J. (2025). "Pressing Intensity: An Intuitive Measure for Pressing
+  in Soccer." arXiv:2501.04712.
+  Used by: silly_kicks.tracking.features.pressure_on_actor (method="bekkers_pi").
+  Time-to-intercept formula extends Spearman 2017 / Shaw / Pleuler with
+  velocity-direction penalty. Defaults from paper + canonical implementation
+  (UnravelSports/unravelsports, BSD-3-Clause).
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).
+
+Third-Party Code Attribution
+----------------------------
+
+The Bekkers Pressing Intensity time-to-intercept formula
+(silly_kicks.tracking._kernels._bekkers_tti) is a re-implementation of
+the canonical Python source published under the BSD 3-Clause License by
+Joris Bekkers / UnravelSports:
+
+    https://github.com/UnravelSports/unravelsports
+    unravel/soccer/models/utils.py -- time_to_intercept()
+
+Required attribution per BSD-3-Clause:
+
+    Copyright (c) 2025 UnravelSports
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
+    (1) Redistributions of source code must retain the above copyright
+        notice, this list of conditions and the following disclaimer.
+    (2) Redistributions in binary form must reproduce the above copyright
+        notice, this list of conditions and the following disclaimer in
+        the documentation and/or other materials provided with the
+        distribution.
+    (3) Neither the name of the copyright holder nor the names of its
+        contributors may be used to endorse or promote products derived
+        from this software without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+    FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+    COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+    INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+    BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+    LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+    ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+silly-kicks re-implements the algorithm with attribution; any modifications
+to numerical constants, parameter handling, or aggregation logic are
+documented in the source module docstring of silly_kicks.tracking._kernels.
+
+A 30-line excerpt of the canonical source (``time_to_intercept`` +
+``probability_to_intercept``) is also vendored at
+``tests/_vendored/unravelsports_tti.py`` with the BSD-3-Clause license header
+preserved verbatim. This excerpt is used solely by the golden-master parity
+test (``tests/tracking/test_pressure_bekkers_golden_master.py``) on Python
+versions where the live ``unravelsports`` package cannot be installed
+(``unravelsports>=1.2`` requires Python 3.11+; silly-kicks targets >=3.10).
+The vendored copy is test-only -- it is NOT exposed in the silly-kicks
+runtime distribution and is not consumed by any silly-kicks public API.
+
 
 Test Data Sources
 -----------------

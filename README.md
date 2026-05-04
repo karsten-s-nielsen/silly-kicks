@@ -50,7 +50,21 @@ MIT license with full attribution preserved.
   ``PreprocessConfig`` dataclass with per-provider defaults from a
   codegen-from-JSON pipeline. Tracking converters take an optional
   ``preprocess: PreprocessConfig | None = None`` kwarg with auto-promotion
-  to per-provider defaults. Atomic-SPADL parity in
+  to per-provider defaults. Pre-action movement (TF-3, PR-S25): two
+  features (``actor_arc_length_pre_window``, ``actor_displacement_pre_window``)
+  plus ``add_actor_pre_window`` aggregator and
+  ``actor_pre_window_default_xfns`` (default xfn list ships arc-length only).
+  Multi-flavor pressure on actor (TF-2, PR-S25):
+  ``pressure_on_actor(method=...)`` with three published methodologies
+  (``andrienko_oval`` -- Andrienko et al. 2017 directional oval (default);
+  ``link_zones`` -- Link et al. 2016 piecewise zones; ``bekkers_pi`` --
+  Bekkers 2024 Pressing Intensity, BSD-3-Clause UnravelSports port) plus
+  per-method frozen parameter dataclasses
+  (``AndrienkoParams`` / ``LinkParams`` / ``BekkersParams``) in
+  ``silly_kicks.tracking.pressure``, ``add_pressure_on_actor`` umbrella, and
+  ``pressure_default_xfns`` (default xfn list ships exactly one
+  flavor per ADR-005 §8 multi-flavor xfn column-naming convention; column
+  pattern ``pressure_on_actor__<method>``). Atomic-SPADL parity in
   ``silly_kicks.atomic.tracking.features``.
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions

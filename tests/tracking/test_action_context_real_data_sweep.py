@@ -25,6 +25,7 @@ from __future__ import annotations
 import bz2
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -581,3 +582,128 @@ def test_skillcorner_pre_shot_gk_pipeline_smoke() -> None:
     frames, _ = kloppy_convert(ds)
     actions = _synthesize_actions_from_frames(frames, n_actions=10)
     _gk_pipeline_smoke(actions, frames, "skillcorner")
+
+
+# ---------------------------------------------------------------------------
+# PR-S25 spec section 8.4 first bullet -- per-provider pressure + pre-window
+# pipeline gates against real-data slim slices + PFF synthetic fixture.
+# ---------------------------------------------------------------------------
+
+
+def _pressure_and_prewindow_pipeline_smoke(actions: pd.DataFrame, frames: pd.DataFrame, provider: str) -> None:
+    """Per spec section 8.4 first bullet:
+
+    - ``add_pressure_on_actor(methods=("andrienko_oval", "link_zones", "bekkers_pi"))``
+      produces >=1 non-NaN value per method per provider.
+    - ``add_actor_pre_window`` produces >=1 non-NaN value per provider for at
+      least one of arc-length / displacement.
+
+    For Bekkers, runs ``smooth_frames`` + ``derive_velocities`` first if the
+    provider doesn't supply native ``vx``/``vy`` columns.
+    """
+    from silly_kicks.tracking.features import (
+        add_actor_pre_window,
+        add_pressure_on_actor,
+    )
+
+    # TF-3: pre-window aggregator
+    out_pw = add_actor_pre_window(actions, frames)
+    arc_n = out_pw["actor_arc_length_pre_window"].notna().sum()
+    disp_n = out_pw["actor_displacement_pre_window"].notna().sum()
+    assert (arc_n + disp_n) >= 1, (
+        f"{provider}: add_actor_pre_window emitted 0 non-NaN values across both columns "
+        f"(arc_length n_valid={arc_n}, displacement n_valid={disp_n})"
+    )
+
+    # TF-2: pressure aggregator with all three methods
+    pressure_frames = frames
+    if "vx" not in frames.columns or "vy" not in frames.columns:
+        from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
+
+        pressure_frames = derive_velocities(smooth_frames(frames))
+
+    out_pr = add_pressure_on_actor(
+        actions,
+        pressure_frames,
+        methods=("andrienko_oval", "link_zones", "bekkers_pi"),
+    )
+    for method in ("andrienko_oval", "link_zones", "bekkers_pi"):
+        col = f"pressure_on_actor__{method}"
+        n_valid = out_pr[col].notna().sum()
+        assert n_valid >= 1, (
+            f"{provider}: add_pressure_on_actor[{method}] emitted 0 non-NaN values on {len(actions)} actions"
+        )
+    print(
+        f"\n[pressure-prewindow-smoke:{provider}] "
+        f"arc={arc_n} disp={disp_n} "
+        f"andrienko={out_pr['pressure_on_actor__andrienko_oval'].notna().sum()} "
+        f"link={out_pr['pressure_on_actor__link_zones'].notna().sum()} "
+        f"bekkers={out_pr['pressure_on_actor__bekkers_pi'].notna().sum()}"
+    )
+
+
+@pytest.mark.e2e
+def test_pff_pressure_and_prewindow_pipeline_smoke() -> None:
+    """PFF: synthetic fixture (``tests/datasets/tracking/pff/medium_halftime.parquet``)
+    via ``_provider_inputs.load_provider_frames('pff')`` per spec section 8.4."""
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import (
+        load_provider_frames,
+        synthesize_actions,
+    )
+
+    pff_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff" / "medium_halftime.parquet"
+    if not pff_fixture.exists():
+        pytest.skip(f"{pff_fixture} missing; PFF synthetic fixture required.")
+    frames = load_provider_frames("pff")
+    actions = synthesize_actions(frames)
+    _pressure_and_prewindow_pipeline_smoke(actions, frames, "pff")
+
+
+@pytest.mark.e2e
+def test_idsse_pressure_and_prewindow_pipeline_smoke() -> None:
+    """Sportec/IDSSE: real-data slim slice."""
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import (
+        load_provider_frames,
+        synthesize_actions,
+    )
+
+    slim = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim" / "sportec_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing; run scripts/probe_action_context_baselines.py.")
+    frames = load_provider_frames("sportec")
+    actions = synthesize_actions(frames)
+    _pressure_and_prewindow_pipeline_smoke(actions, frames, "sportec")
+
+
+@pytest.mark.e2e
+def test_metrica_pressure_and_prewindow_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import (
+        load_provider_frames,
+        synthesize_actions,
+    )
+
+    slim = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim" / "metrica_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("metrica")
+    actions = synthesize_actions(frames)
+    _pressure_and_prewindow_pipeline_smoke(actions, frames, "metrica")
+
+
+@pytest.mark.e2e
+def test_skillcorner_pressure_and_prewindow_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import (
+        load_provider_frames,
+        synthesize_actions,
+    )
+
+    slim = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim" / "skillcorner_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("skillcorner")
+    actions = synthesize_actions(frames)
+    _pressure_and_prewindow_pipeline_smoke(actions, frames, "skillcorner")

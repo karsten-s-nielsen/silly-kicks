@@ -272,8 +272,12 @@ def load_metrica_native() -> LoaderResult:
     actions, _ = metrica.convert_to_actions(
         events,
         home_team_id=home_team,
-        # PR-S23: legacy P1-only fixture; True is bit-identical to old absolute-frame behaviour
-        home_team_start_left=True,
+        # Metrica Sample Game 2: TEAM_A (home) attacks RIGHT in P1.
+        # PR-S25: corrected from legacy True (which was bit-identical to a
+        # pre-rescale fixture's broken orientation; once sample_match.parquet
+        # got the proper 0-1 -> 0-105 rescale, the source-of-truth orientation
+        # surfaced as home-attacks-right-in-P1).
+        home_team_start_left=False,
         goalkeeper_ids=gk_ids,
     )
     return actions, home_team

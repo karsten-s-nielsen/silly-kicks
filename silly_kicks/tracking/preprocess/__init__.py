@@ -19,9 +19,10 @@ single canonical inputs. Method comparison is a separate research workflow --
 call ``smooth_frames`` twice with different configs into different DataFrames
 and diff.
 
-ADR-005 amendment formalising this asymmetry lands with TF-2 (scheduled
-within 24-48 hours of PR-S24 merge -- bounded deferral per lakehouse-review N1).
-PR-S24 documents the rule operationally.
+ADR-005 §8 (PR-S25 / silly-kicks 3.2.0) formalises this asymmetry as the
+multi-flavor xfn column-naming convention for VAEP-consumed feature outputs
+(``<feature>__<method>`` suffixes); preprocessing utilities like
+``smooth_frames`` and ``derive_velocities`` keep canonical-single-column names.
 
 The original raw ``x`` / ``y`` columns are preserved unchanged (additive new
 columns, not in-place mutation; per ``feedback_additive_columns_over_inplace_mutation``).

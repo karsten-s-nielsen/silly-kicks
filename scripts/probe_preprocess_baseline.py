@@ -46,6 +46,8 @@ from typing import Any
 
 import numpy as np
 
+import silly_kicks
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_JSON = REPO_ROOT / "tests" / "fixtures" / "baselines" / "preprocess_baseline.json"
 SWEEP_LOG_JSON = REPO_ROOT / "tests" / "fixtures" / "baselines" / "preprocess_sweep_log.json"
@@ -133,7 +135,7 @@ def _provenance(probe_sources: list[str]) -> dict[str, Any]:
     return {
         "generated_by": "scripts/probe_preprocess_baseline.py",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "silly_kicks_version": "3.1.0-dev",
+        "silly_kicks_version": silly_kicks.__version__,
         "providers_probed": list(PROVIDERS),
         "probe_sources": probe_sources,
         "fields_refreshed_from_real_data": [

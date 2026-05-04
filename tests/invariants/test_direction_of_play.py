@@ -55,25 +55,35 @@ _STATSBOMB_CASES = [
 _ALL_CASES = _BASE_CASES + _STATSBOMB_CASES
 
 
+_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[name] for name in ("shot", "shot_penalty", "shot_freekick"))
+
+
 @pytest.mark.parametrize("provider,loader,n_min_shots_per_team", _ALL_CASES)
 def test_per_team_shots_attack_high_x(provider: str, loader, n_min_shots_per_team: int):
     """Every team's shots must average start_x > field_length / 2 (SPADL LTR).
+
+    Counts all SPADL shot variants (``shot`` / ``shot_penalty`` /
+    ``shot_freekick``) -- the direction-of-play invariant is type-agnostic;
+    a converter's set-piece-composition rules can upgrade ``SHOT`` to
+    ``shot_freekick`` (Metrica) without changing the geometric invariant.
 
     Tolerance: PFF / Sportec / Metrica synthetic fixtures may have only one
     team with shots in the limited fixture window; we check what's available
     and skip teams below ``n_min_shots_per_team``.
     """
     actions, _home_team_id = loader()
-    shots = actions[actions["type_id"] == spadlconfig.actiontype_id["shot"]]
-    if len(shots) == 0:
-        pytest.skip(f"{provider}: fixture has no shots")
+    shots = actions[actions["type_id"].isin(_SHOT_TYPE_IDS)]
+    assert len(shots) > 0, (
+        f"{provider}: fixture has no shot/shot_penalty/shot_freekick actions; regression in fixture or converter."
+    )
 
     by_team = shots.groupby("team_id").agg(n=("start_x", "size"), mean_x=("start_x", "mean"))
     reliable = by_team[by_team["n"] >= n_min_shots_per_team]
-    if reliable.empty:
-        pytest.skip(
-            f"{provider}: no team has >= {n_min_shots_per_team} shots in fixture; got {by_team.to_dict('index')}"
-        )
+    assert not reliable.empty, (
+        f"{provider}: no team has >= {n_min_shots_per_team} shots in fixture; "
+        f"got {by_team.to_dict('index')}. Lower n_min for this provider or "
+        "add more shot-rich rows to the fixture."
+    )
 
     # The actual invariant: each reliable team's mean shot start_x is above field midpoint.
     failing = reliable[reliable["mean_x"] <= spadlconfig.field_length / 2]
@@ -131,16 +141,18 @@ def test_per_team_per_period_shots_attack_high_x(provider: str, loader, n_min_sh
     team) groupby exposes the bug.
     """
     actions, _home_team_id = loader()
-    shots = actions[actions["type_id"] == spadlconfig.actiontype_id["shot"]]
-    if len(shots) == 0:
-        pytest.skip(f"{provider}: fixture has no shots")
+    shots = actions[actions["type_id"].isin(_SHOT_TYPE_IDS)]
+    assert len(shots) > 0, (
+        f"{provider}: per-period fixture has no shot/shot_penalty/shot_freekick actions; "
+        "regression in fixture or converter."
+    )
 
     by_group = shots.groupby(["period_id", "team_id"]).agg(n=("start_x", "size"), mean_x=("start_x", "mean"))
     reliable = by_group[by_group["n"] >= n_min_shots_per_group]
-    if reliable.empty:
-        pytest.skip(
-            f"{provider}: no (period, team) group has >= {n_min_shots_per_group} shots; got {by_group.to_dict('index')}"
-        )
+    assert not reliable.empty, (
+        f"{provider}: no (period, team) group has >= {n_min_shots_per_group} shots; "
+        f"got {by_group.to_dict('index')}. Lower n_min or augment fixture."
+    )
 
     failing = reliable[reliable["mean_x"] <= spadlconfig.field_length / 2]
     assert failing.empty, (

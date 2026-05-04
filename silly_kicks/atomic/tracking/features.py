@@ -14,18 +14,25 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
 from silly_kicks.tracking.feature_framework import lift_to_states
+from silly_kicks.tracking.pressure import Method, PressureParams
 from silly_kicks.tracking.utils import _resolve_action_frame_context
 
 _ATOMIC_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty"))
 
 __all__ = [
+    "actor_arc_length_pre_window",
+    "actor_displacement_pre_window",
     "actor_speed",
     "add_action_context",
+    "add_actor_pre_window",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
+    "add_pressure_on_actor",
+    "atomic_actor_pre_window_default_xfns",
     "atomic_pre_shot_gk_angle_default_xfns",
     "atomic_pre_shot_gk_default_xfns",
     "atomic_pre_shot_gk_full_default_xfns",
+    "atomic_pressure_default_xfns",
     "atomic_tracking_default_xfns",
     "defenders_in_triangle_to_goal",
     "nearest_defender_distance",
@@ -35,6 +42,7 @@ __all__ = [
     "pre_shot_gk_distance_to_shot",
     "pre_shot_gk_x",
     "pre_shot_gk_y",
+    "pressure_on_actor",
     "receiver_zone_density",
 ]
 
@@ -413,3 +421,182 @@ atomic_pre_shot_gk_angle_default_xfns = [
 
 
 atomic_pre_shot_gk_full_default_xfns = atomic_pre_shot_gk_default_xfns + atomic_pre_shot_gk_angle_default_xfns
+
+
+# ---------------------------------------------------------------------------
+# PR-S25 -- atomic mirror: TF-3 actor_*_pre_window
+# ---------------------------------------------------------------------------
+
+
+def actor_arc_length_pre_window(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    pre_seconds: float = 0.5,
+) -> pd.Series:
+    """Atomic-SPADL: geometric arc-length of actor's path over pre-action window.
+
+    See :func:`silly_kicks.tracking.features.actor_arc_length_pre_window`.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import actor_arc_length_pre_window
+    >>> # See tests/atomic/tracking/test_pre_window_features_atomic.py for runnable examples.
+    """
+    df = _kernels._actor_pre_window_kernel(actions, frames, pre_seconds=pre_seconds)
+    return df["actor_arc_length_pre_window"].rename("actor_arc_length_pre_window")
+
+
+def actor_displacement_pre_window(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    pre_seconds: float = 0.5,
+) -> pd.Series:
+    """Atomic-SPADL: net Euclidean displacement over pre-action window.
+
+    See :func:`silly_kicks.tracking.features.actor_displacement_pre_window`.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import actor_displacement_pre_window
+    >>> # See tests/atomic/tracking/test_pre_window_features_atomic.py for runnable examples.
+    """
+    df = _kernels._actor_pre_window_kernel(actions, frames, pre_seconds=pre_seconds)
+    return df["actor_displacement_pre_window"].rename("actor_displacement_pre_window")
+
+
+@nan_safe_enrichment
+def add_actor_pre_window(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    pre_seconds: float = 0.5,
+) -> pd.DataFrame:
+    """Atomic-SPADL aggregator for TF-3 features.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_actor_pre_window
+    >>> # See tests/atomic/tracking/test_pre_window_features_atomic.py for runnable examples.
+    """
+    df = _kernels._actor_pre_window_kernel(actions, frames, pre_seconds=pre_seconds)
+    out = actions.copy()
+    out["actor_arc_length_pre_window"] = df["actor_arc_length_pre_window"]
+    out["actor_displacement_pre_window"] = df["actor_displacement_pre_window"]
+    from silly_kicks.tracking.utils import link_actions_to_frames
+
+    pointers, _report = link_actions_to_frames(actions, frames)
+    pointer_cols = pointers.set_index("action_id")[
+        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    ]
+    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+atomic_actor_pre_window_default_xfns = [lift_to_states(actor_arc_length_pre_window)]
+
+
+# ---------------------------------------------------------------------------
+# PR-S25 -- atomic mirror: TF-2 pressure_on_actor multi-flavor
+# ---------------------------------------------------------------------------
+
+
+def pressure_on_actor(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    method: Method = "andrienko_oval",
+    params: PressureParams | None = None,
+) -> pd.Series:
+    """Atomic-SPADL: multi-flavor pressure on actor at linked frame.
+
+    Mirrors :func:`silly_kicks.tracking.features.pressure_on_actor` with
+    atomic anchor (x, y) instead of (start_x, start_y).
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import pressure_on_actor
+    >>> # See tests/atomic/tracking/test_pressure_*_atomic.py for runnable examples per method.
+    """
+    from silly_kicks.tracking.pressure import (
+        AndrienkoParams,
+        BekkersParams,
+        LinkParams,
+        validate_params_for_method,
+    )
+
+    validate_params_for_method(method, params)
+    if method == "andrienko_oval":
+        ap = params if isinstance(params, AndrienkoParams) else AndrienkoParams()
+        ctx = _resolve_action_frame_context(actions, frames)
+        s = _kernels._pressure_andrienko(actions["x"], actions["y"], ctx, params=ap)
+    elif method == "link_zones":
+        lp = params if isinstance(params, LinkParams) else LinkParams()
+        ctx = _resolve_action_frame_context(actions, frames)
+        s = _kernels._pressure_link(actions["x"], actions["y"], ctx, params=lp)
+    elif method == "bekkers_pi":
+        bp = params if isinstance(params, BekkersParams) else BekkersParams()
+        if "vx" not in frames.columns or "vy" not in frames.columns:
+            raise ValueError(
+                "pressure_on_actor(method='bekkers_pi'): frames missing velocity columns "
+                "'vx'/'vy'. Run silly_kicks.tracking.preprocess.derive_velocities(frames) "
+                "first, or use a provider that emits velocities natively."
+            )
+        if bp.use_ball_carrier_max and not frames["is_ball"].any():
+            raise ValueError(
+                "pressure_on_actor(method='bekkers_pi', params.use_ball_carrier_max=True): "
+                "frames missing is_ball=True rows in linked frames."
+            )
+        ctx = _resolve_action_frame_context(actions, frames)
+        from silly_kicks.tracking.features import _build_ball_xy_v_per_action
+
+        ball_xy_v = _build_ball_xy_v_per_action(actions, frames, ctx)
+        s = _kernels._pressure_bekkers(
+            actions["x"],
+            actions["y"],
+            ctx,
+            params=bp,
+            ball_xy_v_per_action=ball_xy_v,
+        )
+    else:
+        raise ValueError(f"Unknown method '{method}'.")
+    return s.rename(f"pressure_on_actor__{method}")
+
+
+@nan_safe_enrichment
+def add_pressure_on_actor(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    methods: tuple[Method, ...] = ("andrienko_oval",),
+    params_per_method: dict[Method, PressureParams] | None = None,
+) -> pd.DataFrame:
+    """Atomic-SPADL aggregator for multi-flavor TF-2 pressure.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_pressure_on_actor
+    >>> # See tests/atomic/tracking/test_pressure_*_atomic.py for runnable examples.
+    """
+    from silly_kicks.tracking.pressure import validate_params_for_method
+
+    if params_per_method is None:
+        params_per_method = {}
+    for m in methods:
+        validate_params_for_method(m, params_per_method.get(m))
+    out = actions.copy()
+    for m in methods:
+        s = pressure_on_actor(actions, frames, method=m, params=params_per_method.get(m))
+        out[f"pressure_on_actor__{m}"] = s.values
+    from silly_kicks.tracking.utils import link_actions_to_frames
+
+    pointers, _report = link_actions_to_frames(actions, frames)
+    pointer_cols = pointers.set_index("action_id")[
+        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    ]
+    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+atomic_pressure_default_xfns = [lift_to_states(pressure_on_actor)]

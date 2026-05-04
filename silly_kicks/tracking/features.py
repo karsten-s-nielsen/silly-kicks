@@ -28,15 +28,29 @@ from silly_kicks.spadl import config as spadlconfig
 
 from . import _kernels
 from .feature_framework import lift_to_states
-from .utils import _resolve_action_frame_context
+from .pressure import (
+    AndrienkoParams,
+    BekkersParams,
+    LinkParams,
+    Method,
+    PressureParams,
+    validate_params_for_method,
+)
+from .utils import _resolve_action_frame_context, link_actions_to_frames
 
 _STANDARD_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty"))
 
 __all__ = [
+    "Method",
+    "actor_arc_length_pre_window",
+    "actor_displacement_pre_window",
+    "actor_pre_window_default_xfns",
     "actor_speed",
     "add_action_context",
+    "add_actor_pre_window",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
+    "add_pressure_on_actor",
     "defenders_in_triangle_to_goal",
     "nearest_defender_distance",
     "pre_shot_gk_angle_default_xfns",
@@ -48,6 +62,8 @@ __all__ = [
     "pre_shot_gk_full_default_xfns",
     "pre_shot_gk_x",
     "pre_shot_gk_y",
+    "pressure_default_xfns",
+    "pressure_on_actor",
     "receiver_zone_density",
     "tracking_default_xfns",
 ]
@@ -509,3 +525,248 @@ pre_shot_gk_angle_default_xfns = [
 
 
 pre_shot_gk_full_default_xfns = pre_shot_gk_default_xfns + pre_shot_gk_angle_default_xfns
+
+
+# ---------------------------------------------------------------------------
+# PR-S25 -- TF-3: actor_*_pre_window features
+# ---------------------------------------------------------------------------
+
+
+def actor_arc_length_pre_window(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    pre_seconds: float = 0.5,
+) -> pd.Series:
+    """Geometric arc-length of actor's path over the pre-action window (m).
+
+    Per-action sum of consecutive segment distances over frames in
+    (action_time - pre_seconds, action_time], filtered to actor's player_id
+    within the same period:
+
+        sum_{k=1..N-1} sqrt((x_{k+1} - x_k)**2 + (y_{k+1} - y_k)**2)
+
+    Consecutive segments computed AFTER sorting by frame timestamp ASC and
+    dropping frames with NaN positions (bridge rule per spec section 3.2).
+    NaN if fewer than 2 valid frames remain.
+
+    The pre_seconds=0.5 default captures sub-second pre-action movement
+    intensity. For longer windows like Bauer & Anzer 2021 counterpressing
+    detection (5s), pass pre_seconds=5.0.
+
+    NOT a re-implementation of any paper's filtered/threshold-based
+    "covered distance" feature -- pure geometric arc-length, no
+    sprint-intensity filtering. See NOTICE.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from silly_kicks.tracking.features import actor_arc_length_pre_window
+    >>> actions = pd.DataFrame({
+    ...     "action_id": [1], "period_id": [1], "time_seconds": [10.0],
+    ...     "player_id": [42], "team_id": [1], "start_x": [50.0],
+    ...     "start_y": [34.0], "type_id": [0],
+    ... })
+    >>> frames = pd.DataFrame()  # empty -> all-NaN; runnable example
+    >>> _ = actor_arc_length_pre_window(actions, frames)
+    """
+    df = _kernels._actor_pre_window_kernel(actions, frames, pre_seconds=pre_seconds)
+    return df["actor_arc_length_pre_window"].rename("actor_arc_length_pre_window")
+
+
+def actor_displacement_pre_window(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    pre_seconds: float = 0.5,
+) -> pd.Series:
+    """Net Euclidean displacement (window-first to window-last valid position).
+
+    Differs from arc-length: a player who runs in a circle has high
+    arc-length but ~zero displacement.
+
+    NaN semantics identical to :func:`actor_arc_length_pre_window`. See NOTICE.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import actor_displacement_pre_window
+    >>> # See tests/tracking/test_pre_window_features.py for runnable examples.
+    """
+    df = _kernels._actor_pre_window_kernel(actions, frames, pre_seconds=pre_seconds)
+    return df["actor_displacement_pre_window"].rename("actor_displacement_pre_window")
+
+
+@nan_safe_enrichment
+def add_actor_pre_window(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    pre_seconds: float = 0.5,
+) -> pd.DataFrame:
+    """Enrich actions with 2 TF-3 movement columns + 4 linkage-provenance columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input actions with the columns:
+        - actor_arc_length_pre_window (float64, m)
+        - actor_displacement_pre_window (float64, m)
+        - frame_id (Int64; NaN if unlinked)
+        - time_offset_seconds (float64; NaN if unlinked)
+        - n_candidate_frames (int64)
+        - link_quality_score (float64; NaN if unlinked)
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_actor_pre_window
+    >>> # See tests/tracking/test_pre_window_features.py for runnable examples.
+    """
+    df = _kernels._actor_pre_window_kernel(actions, frames, pre_seconds=pre_seconds)
+    out = actions.copy()
+    out["actor_arc_length_pre_window"] = df["actor_arc_length_pre_window"]
+    out["actor_displacement_pre_window"] = df["actor_displacement_pre_window"]
+    pointers, _report = link_actions_to_frames(actions, frames)
+    pointer_cols = pointers.set_index("action_id")[
+        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    ]
+    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+actor_pre_window_default_xfns = [lift_to_states(actor_arc_length_pre_window)]
+
+
+# ---------------------------------------------------------------------------
+# PR-S25 -- TF-2: pressure_on_actor multi-flavor feature
+# ---------------------------------------------------------------------------
+
+
+def _build_ball_xy_v_per_action(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    ctx,
+) -> pd.DataFrame:
+    """Build per-action ball position+velocity at the linked frame.
+
+    Joins on ``(period_id, frame_id)`` jointly -- ``frame_id`` alone is not
+    unique across periods (PR-S25 e2e regression).
+    """
+    pointers = ctx.pointers
+    actions_with_period = actions[["action_id", "period_id"]]
+    pointers_with_period = pointers.merge(actions_with_period, on="action_id", how="left")
+    ball_rows = frames.loc[frames["is_ball"], ["period_id", "frame_id", "x", "y", "vx", "vy"]]
+    merged = pointers_with_period.merge(ball_rows, on=["period_id", "frame_id"], how="left")
+    return merged[["action_id", "x", "y", "vx", "vy"]]
+
+
+def pressure_on_actor(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    method: Method = "andrienko_oval",
+    params: PressureParams | None = None,
+) -> pd.Series:
+    """Pressure exerted on the action's actor at the linked frame.
+
+    Three published methodologies via ``method=``:
+
+    - ``"andrienko_oval"`` (default) - Andrienko et al. 2017 directional oval
+      pressure; sum across opposing defenders. Output range [0, ~200%].
+    - ``"link_zones"`` - Link et al. 2016 piecewise-zone pressure;
+      saturating exponential aggregation. Output [0, 1].
+    - ``"bekkers_pi"`` - Bekkers 2024 Pressing Intensity probabilistic TTI;
+      requires velocity columns vx/vy in frames. Output [0, 1].
+
+    Returns Series named ``pressure_on_actor__<method>`` (suffix-naming
+    convention per ADR-005 section 8 multi-flavor xfn rule).
+
+    NaN where action couldn't link; 0.0 where linked but no defenders
+    contribute pressure. ``bekkers_pi`` raises ValueError if frames lack
+    vx/vy or (when use_ball_carrier_max=True) if frames lack any ball rows.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import pressure_on_actor
+    >>> # See tests/tracking/test_pressure_*.py for runnable examples per method.
+    """
+    validate_params_for_method(method, params)
+    if method == "andrienko_oval":
+        ap = params if isinstance(params, AndrienkoParams) else AndrienkoParams()
+        ctx = _resolve_action_frame_context(actions, frames)
+        s = _kernels._pressure_andrienko(actions["start_x"], actions["start_y"], ctx, params=ap)
+    elif method == "link_zones":
+        lp = params if isinstance(params, LinkParams) else LinkParams()
+        ctx = _resolve_action_frame_context(actions, frames)
+        s = _kernels._pressure_link(actions["start_x"], actions["start_y"], ctx, params=lp)
+    elif method == "bekkers_pi":
+        bp = params if isinstance(params, BekkersParams) else BekkersParams()
+        if "vx" not in frames.columns or "vy" not in frames.columns:
+            raise ValueError(
+                "pressure_on_actor(method='bekkers_pi'): frames missing velocity columns "
+                "'vx'/'vy'. Run silly_kicks.tracking.preprocess.derive_velocities(frames) "
+                "first, or use a provider that emits velocities natively."
+            )
+        if bp.use_ball_carrier_max and not frames["is_ball"].any():
+            raise ValueError(
+                "pressure_on_actor(method='bekkers_pi', params.use_ball_carrier_max=True): "
+                "frames missing is_ball=True rows in linked frames. Either set "
+                "use_ball_carrier_max=False to compute pressure-on-player only, or "
+                "use a provider that emits ball positions per frame."
+            )
+        ctx = _resolve_action_frame_context(actions, frames)
+        ball_xy_v_per_action = _build_ball_xy_v_per_action(actions, frames, ctx)
+        s = _kernels._pressure_bekkers(
+            actions["start_x"],
+            actions["start_y"],
+            ctx,
+            params=bp,
+            ball_xy_v_per_action=ball_xy_v_per_action,
+        )
+    else:
+        # Defensive; validate_params_for_method already raised
+        raise ValueError(f"Unknown method '{method}'.")
+    return s.rename(f"pressure_on_actor__{method}")
+
+
+@nan_safe_enrichment
+def add_pressure_on_actor(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    methods: tuple[Method, ...] = ("andrienko_oval",),
+    params_per_method: dict[Method, PressureParams] | None = None,
+) -> pd.DataFrame:
+    """Enrich actions with one ``pressure_on_actor__<m>`` column per method
+    + 4 linkage-provenance columns.
+
+    Validates all (method, params) pairs BEFORE computing any column
+    (transactional behavior per spec section 8.5).
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_pressure_on_actor
+    >>> # See tests/tracking/test_pressure_*.py for runnable examples.
+    """
+    if params_per_method is None:
+        params_per_method = {}
+    # Validate all upfront (transactional)
+    for m in methods:
+        validate_params_for_method(m, params_per_method.get(m))
+
+    out = actions.copy()
+    for m in methods:
+        params = params_per_method.get(m)
+        s = pressure_on_actor(actions, frames, method=m, params=params)
+        out[f"pressure_on_actor__{m}"] = s.values
+
+    pointers, _report = link_actions_to_frames(actions, frames)
+    pointer_cols = pointers.set_index("action_id")[
+        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    ]
+    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+pressure_default_xfns = [lift_to_states(pressure_on_actor)]

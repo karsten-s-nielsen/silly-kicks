@@ -328,19 +328,32 @@ def _extract_metrica(out_path: Path) -> None:
         if not player:
             continue
 
-        # Defensive coord extraction: keys may exist with None values for
-        # off-pitch / non-coord events (substitutions, kickoffs, etc.).
-        # Fall back to a neutral on-pitch default in those cases.
-        def _coord(obj: object, key: str, default: float) -> float:
+        # Defensive coord extraction with provider-frame -> SPADL-frame
+        # rescale. kloppy's metrica_events.json ships 0-1 normalized coords
+        # (Metrica's native frame); the silly-kicks-input bronze schema is
+        # 0-105 / 0-68 (matches both per_period_match.parquet and the
+        # lakehouse adapter ``adapt_metrica_events_for_silly_kicks``). When
+        # a coord is missing, fall back to SPADL midfield (52.5, 34.0).
+        def _coord_x(obj: object) -> float:
             if not isinstance(obj, dict):
-                return default
-            v = obj.get(key)
-            return float(v) if v is not None else default
+                return _METRICA_PITCH_LENGTH_M / 2
+            v = obj.get("x")
+            if v is None:
+                return _METRICA_PITCH_LENGTH_M / 2
+            return float(v) * _METRICA_PITCH_LENGTH_M
 
-        start_x = _coord(start_obj, "x", 50.0)
-        start_y = _coord(start_obj, "y", 34.0)
-        end_x = _coord(end_obj, "x", start_x)
-        end_y = _coord(end_obj, "y", start_y)
+        def _coord_y(obj: object) -> float:
+            if not isinstance(obj, dict):
+                return _METRICA_PITCH_WIDTH_M / 2
+            v = obj.get("y")
+            if v is None:
+                return _METRICA_PITCH_WIDTH_M / 2
+            return float(v) * _METRICA_PITCH_WIDTH_M
+
+        start_x = _coord_x(start_obj)
+        start_y = _coord_y(start_obj)
+        end_x = _coord_x(end_obj) if (isinstance(end_obj, dict) and end_obj.get("x") is not None) else start_x
+        end_y = _coord_y(end_obj) if (isinstance(end_obj, dict) and end_obj.get("y") is not None) else start_y
 
         bronze_rows.append(
             {

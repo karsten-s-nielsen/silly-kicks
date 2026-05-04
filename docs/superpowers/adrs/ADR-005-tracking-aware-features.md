@@ -151,6 +151,41 @@ analysis, count unlinked actions via `frame_id.isna()`, or trace any
 feature value back to its source frame. Without this convention, downstream
 pipelines would re-compute the linkage to recover the same audit trail.
 
+### 8. Multi-flavor xfn column naming convention
+
+Added in PR-S25 (silly-kicks 3.2.0). When a single feature concept admits
+multiple methodologies (multi-flavor xfns — first concrete instance:
+PR-S25 `pressure_on_actor` with three methods `andrienko_oval` / `link_zones`
+/ `bekkers_pi`):
+
+- Each flavor MUST emit a flavor-suffixed column name `<feature>__<method>`
+  (double-underscore separator) so consumers registering parallel
+  `functools.partial(fn, method="X")` xfns in `VAEP.xfns` do not silently
+  overwrite each other inside `VAEP.compute_features`.
+- The default xfn list (`<feature>_default_xfns`) ships exactly ONE flavor
+  (the default method) to keep the VAEP feature space stable across
+  silly-kicks versions. Consumers wanting additional flavors register
+  additional `functools.partial` xfns explicitly.
+- Per-method parameters are passed via a flavor-specific frozen dataclass
+  (e.g., `AndrienkoParams`, `LinkParams`, `BekkersParams`) on the `params=`
+  kwarg, not as a flat keyword bag — keeps each flavor's parameter
+  surface discoverable and statically typed (pyright-friendly), and
+  allows `__post_init__` validation per flavor.
+- If `params=` is supplied with a type not matching the chosen `method`,
+  the public function raises TypeError loudly (no silent default fallback).
+
+This pattern applies only to **VAEP-consumed xfns** that emit per-action
+scalar features. Preprocessing utilities that produce canonical per-row
+columns (e.g., `derive_velocities` emits `vx`, `vy`, `speed`) keep their
+canonical-single-column names regardless of method; QA/inspection helpers
+case-by-case (per `feedback_multi_flavor_xfn_column_names`).
+
+Rationale recap: the suffix convention surfaces the methodology choice in
+the column name (downstream debugging is easier — column-name self-documents
+which formula produced each value), and the default-xfn-list-ships-one-flavor
+rule prevents "oh, did adding Link to the default break my model artefact?"
+regression after consumer updates.
+
 ## Consequences
 
 ### Positive
