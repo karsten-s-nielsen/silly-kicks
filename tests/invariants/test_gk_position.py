@@ -15,7 +15,14 @@ from silly_kicks.spadl import config as spadlconfig
 
 from . import _loaders
 
-_KEEPER_TYPE_NAMES = ("keeper_save", "keeper_claim", "keeper_punch")
+_KEEPER_TYPE_NAMES = (
+    "keeper_save",
+    "keeper_claim",
+    "keeper_punch",
+    "keeper_pick_up",  # PR-S25: same defended-goal invariant; also unblocks
+    # the sportec / metrica fixtures whose trimmed event windows produce only
+    # keeper_pick_up rows -- the test was previously skipping on those.
+)
 _KEEPER_TYPE_IDS = {spadlconfig.actiontype_id[t] for t in _KEEPER_TYPE_NAMES}
 
 
@@ -24,7 +31,11 @@ _GK_PROVIDERS = [
     ("statsbomb_7584", lambda: _loaders.load_statsbomb(7584)),
     ("statsbomb_3754058", lambda: _loaders.load_statsbomb(3754058)),
     ("sportec_native", _loaders.load_sportec_native),
-    ("sportec_via_kloppy", _loaders.load_sportec_via_kloppy),
+    # Excluded: sportec_via_kloppy. kloppy's vendored sportec test corpus has
+    # only 19 actions for this match and contains zero keeper events of any
+    # flavor (no save / claim / punch / pick_up). The kloppy-gateway path's
+    # geometric correctness is otherwise covered by sportec_via_kloppy in
+    # tests/invariants/test_direction_of_play.py and test_vaep_geometric_sanity.py.
     ("metrica_native", _loaders.load_metrica_native),
     # Excluded: pff_synthetic. The synthetic generator places the away-team RE
     # (recovery → keeper_save) events at ball_x=-45 (raw center-origin, = x=7.5
@@ -40,8 +51,10 @@ def test_gk_actions_cluster_at_defended_goal(provider: str, loader):
     """Every team's GK actions must average start_x < field_length / 2 (defending side in LTR)."""
     actions, _home_team_id = loader()
     gk_actions = actions[actions["type_id"].isin(_KEEPER_TYPE_IDS)]
-    if gk_actions.empty:
-        pytest.skip(f"{provider}: fixture has no GK actions")
+    assert not gk_actions.empty, (
+        f"{provider}: fixture produced 0 GK actions of any type "
+        f"({_KEEPER_TYPE_NAMES}); regression in fixture or converter."
+    )
 
     by_team = gk_actions.groupby("team_id")["start_x"].agg(["count", "mean"])
     # Only check teams with >= 1 GK action — synthetic / small fixtures may have only one team's GK

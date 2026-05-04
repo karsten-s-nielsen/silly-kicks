@@ -7,6 +7,7 @@ read identical inputs — no Hyrum-Law drift between manual regeneration and CI 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -228,3 +229,91 @@ def synthesize_actions_per_period_dense(frames: pd.DataFrame, n_per_period: int 
     out["action_id"] = list(range(1, len(out) + 1))
     out["original_event_id"] = [str(i + 1) for i in range(len(out))]
     return out
+
+
+# ---------------------------------------------------------------------------
+# PR-S25 -- TF-2 + TF-3 named scenarios per spec section 9
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PressingDefenderScenario:
+    """Synthesizer scenario for tracking-aware pressure tests (TF-2).
+
+    Geometry:
+      - Actor (ball-carrier) at (50.0, 34.0), v=(0, 0), is_ball_carrier=True
+      - Ball at (50.0, 34.0), v=(0, 0), is_ball=True
+      - Pressing defender at (52.0, 34.0), v=(3.0, 0), speed=3.0 m/s
+        (above 2.0 m/s active-pressing threshold; closing on actor)
+      - Passive defender at (60.0, 34.0), v=(0, 0), speed=0.0
+        (below threshold; tests filter)
+      - Goalkeeper at (104.0, 34.0), v=(0, 0)
+      - 7 attacking teammates spread across own half (geometry doesn't
+        matter for pressure-on-actor; included for realistic frame size)
+      - 9 defending teammates spread across opponent's half (>15m away
+        to avoid contributing pressure)
+    """
+
+    actor_pos: tuple[float, float] = (50.0, 34.0)
+    pressing_defender_pos: tuple[float, float] = (52.0, 34.0)
+    pressing_defender_velocity: tuple[float, float] = (3.0, 0.0)
+    passive_defender_pos: tuple[float, float] = (60.0, 34.0)
+
+
+@dataclass(frozen=True)
+class StationaryActorScenario:
+    """TF-3: actor stationary across the 0.5s window.
+
+    Expected: actor_arc_length_pre_window = 0.0; actor_displacement_pre_window = 0.0.
+    """
+
+    actor_pos: tuple[float, float] = (50.0, 34.0)
+    n_frames: int = 13
+    pre_seconds: float = 0.5
+
+
+@dataclass(frozen=True)
+class ConstantVelocityActorScenario:
+    """TF-3: actor moving at 5 m/s along +x for 0.5s.
+
+    Expected: arc-length ~= 2.5; displacement ~= 2.5 (path is straight line).
+    """
+
+    actor_start_pos: tuple[float, float] = (50.0, 34.0)
+    velocity_ms: tuple[float, float] = (5.0, 0.0)
+    pre_seconds: float = 0.5
+    n_frames: int = 13
+
+
+@dataclass(frozen=True)
+class CircularPathActorScenario:
+    """TF-3: actor traverses half-circle radius 2 in 0.5s.
+
+    Expected: arc-length ~= 6.28 (pi*r); displacement ~= 4.0 (diameter).
+    Demonstrates arc-length >> displacement for curved paths.
+    """
+
+    center_pos: tuple[float, float] = (50.0, 34.0)
+    radius: float = 2.0
+    half_circle_seconds: float = 0.5
+    n_frames: int = 13
+
+
+@dataclass(frozen=True)
+class BridgeNaNActorScenario:
+    """TF-3: NaN-bridge rule -- frames at -0.4, -0.3, NaN, -0.1, 0.0
+    with positions (0,0), (1,0), NaN, (3,0), (4,0).
+
+    Expected: arc-length = 1+2+1 = 4 (bridges across NaN);
+              displacement = 4 (first valid (0,0) -> last valid (4,0)).
+    """
+
+    valid_positions: tuple[tuple[float, float], ...] = (
+        (0.0, 0.0),
+        (1.0, 0.0),
+        (3.0, 0.0),
+        (4.0, 0.0),
+    )
+    nan_offset_indices: tuple[int, ...] = (2,)  # frame index in window order
+    n_frames: int = 5
+    pre_seconds: float = 0.5

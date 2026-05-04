@@ -5,6 +5,45 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] — 2026-05-04
+
+silly-kicks 3.2.0: TF-3 actor pre-window features + TF-2 multi-flavor pressure feature (PR-S25).
+
+### Added
+
+#### Tracking-aware features
+
+- `silly_kicks.tracking.features.actor_arc_length_pre_window` — geometric arc-length of actor's path over the pre-action window (TF-3, default xfn). NOT Bauer & Anzer's filtered/threshold covered-distance feature; pure geometry, no sprint-intensity filtering.
+- `silly_kicks.tracking.features.actor_displacement_pre_window` — net Euclidean displacement variant of TF-3 (window-first to window-last valid position).
+- `silly_kicks.tracking.features.add_actor_pre_window` — aggregator emitting both columns + 4 provenance columns.
+- `silly_kicks.tracking.features.actor_pre_window_default_xfns` — default xfn list (arc-length only).
+- `silly_kicks.tracking.features.pressure_on_actor` — multi-flavor pressure feature (TF-2); methods: `andrienko_oval` (default; Andrienko 2017), `link_zones` (Link 2016), `bekkers_pi` (Bekkers 2024).
+- `silly_kicks.tracking.features.add_pressure_on_actor` — aggregator emitting one `pressure_on_actor__<method>` per requested method.
+- `silly_kicks.tracking.features.pressure_default_xfns` — default xfn list (Andrienko only, single default flavor).
+- Atomic-SPADL parallel surface for all of the above (`silly_kicks.atomic.tracking.features.*`).
+
+#### New module
+
+- `silly_kicks.tracking.pressure` — multi-flavor pressure dispatch + per-method parameter dataclasses (`AndrienkoParams`, `LinkParams`, `BekkersParams`, `Method` Literal, `validate_params_for_method`).
+
+#### Architectural decision
+
+- ADR-005 §8 amendment: multi-flavor xfn column-naming convention (`<feature>__<method>` suffixes; default xfn list ships single default-method xfn; per-method params via flavor-specific frozen dataclass).
+
+#### Attribution
+
+- NOTICE entries: Andrienko 2017, Link 2016, Bekkers 2024 + BSD-3-Clause attribution to UnravelSports for the Bekkers TTI port.
+- Vendored 30-line BSD-3-Clause excerpt at `tests/_vendored/unravelsports_tti.py` (test-only) so the Bekkers golden-master parity test runs unconditionally on Python 3.10+ without requiring the live `unravelsports` package (which targets Python 3.11+).
+
+#### Test-only optional dependencies
+
+- `unravelsports>=1.2` (extra `golden-master`) — preferred canonical source for the Bekkers golden-master parity test on Python 3.11+; the test falls back to `tests/_vendored/unravelsports_tti.py` when the live package isn't installed (e.g., Python 3.10).
+
+#### Test infrastructure
+
+- `tests/datasets/metrica/sample_match.parquet` regenerated with the 0–1 → 0–105/0–68 SPADL-frame rescale (matches `per_period_match.parquet` and the lakehouse `adapt_metrica_events_for_silly_kicks` adapter); previous fixture leaked Metrica's normalized 0–1 frame into bronze rows. `scripts/extract_provider_fixtures.py --provider metrica` now applies the rescale at extract time.
+- Invariant tests (`tests/invariants/test_direction_of_play.py`, `test_gk_position.py`, `test_vaep_geometric_sanity.py`) hardened: `pytest.skip` paths replaced with explicit assertions or parametrize-list exclusions; shot counts now span all SPADL shot variants (`shot` / `shot_penalty` / `shot_freekick`) so converters' set-piece-composition rules don't mask the invariant; GK position invariant now also covers `keeper_pick_up`. Skipping count on the invariant suite went from 11 to 0.
+
 ## [3.1.0] — 2026-05-02
 
 ### Added

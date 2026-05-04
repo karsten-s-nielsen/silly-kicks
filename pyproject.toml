@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "3.1.0"
+version = "3.2.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -35,6 +35,12 @@ kloppy = ["kloppy>=3.18.0"]
 xgboost = ["xgboost>=2.0.0"]
 catboost = ["catboost>=1.2"]
 lightgbm = ["lightgbm>=4.0"]
+# PR-S25 (3.2.0): test-only dep for the Bekkers golden-master parity test.
+# CI installs this extra to exercise tests/tracking/test_pressure_bekkers_golden_master.py;
+# the test skips if unravelsports is not installed. Pinned to Python>=3.11 because
+# unravelsports>=1.2 itself requires Python 3.11+ -- silly-kicks targets >=3.10 so
+# the golden-master extra is only installable on the wider 3.11+ subset.
+golden-master = ["unravelsports>=1.2; python_version >= '3.11'"]
 test = [
     "pytest>=7.4.2",
     "pytest-mock>=3.11.1",
