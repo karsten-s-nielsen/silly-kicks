@@ -30,6 +30,7 @@ __all__ = [
     "add_sync_score",
     "back_line_high_x",
     "back_n_count",
+    "ball_carrier_at_action",
     "compactness_x",
     "compute_defensive_line",
     "defenders_in_triangle_to_goal",
@@ -40,6 +41,7 @@ __all__ = [
     "feature_framework",
     "features",
     "get_provider_defaults",
+    "infer_ball_carrier",
     "interpolate_frames",
     "kloppy",
     "lateral_width",
@@ -66,6 +68,7 @@ __all__ = [
 ]
 
 from . import feature_framework, features, pff, preprocess, schema, sportec, utils
+from ._ball_carrier import infer_ball_carrier
 from ._defensive_line import compute_defensive_line
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
@@ -76,6 +79,7 @@ from .features import (
     add_pre_shot_gk_position,
     back_line_high_x,
     back_n_count,
+    ball_carrier_at_action,
     compactness_x,
     defenders_in_triangle_to_goal,
     defending_gk_from_frames,

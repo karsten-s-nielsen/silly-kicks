@@ -22,7 +22,7 @@ def compute_defensive_line(
     n: int | Literal["adaptive"] = 4,
     adaptive_max_n: int = 5,
 ) -> pd.DataFrame:
-    """Per-(period_id, frame_id, team_id): 6 back-line geometry columns.
+    """Per-(game_id, period_id, frame_id, team_id): 6 back-line geometry columns.
 
     Computes for BOTH teams. home_team_id determines goal assignment
     (must match the value used in play_left_to_right).
@@ -45,7 +45,7 @@ def compute_defensive_line(
     Returns
     -------
     pd.DataFrame
-        Columns: period_id, frame_id, team_id, defensive_line_x,
+        Columns: game_id, period_id, frame_id, team_id, defensive_line_x,
         back_line_high_x, compactness_x, lateral_width, max_lateral_gap,
         back_n_count.
 
@@ -70,7 +70,7 @@ def compute_defensive_line(
     if adaptive_max_n not in (3, 4, 5):
         raise ValueError(f"adaptive_max_n must be in {{3, 4, 5}} (got {adaptive_max_n})")
 
-    required_cols = {"period_id", "frame_id", "team_id", "player_id", "is_ball", "is_goalkeeper", "x", "y"}
+    required_cols = {"game_id", "period_id", "frame_id", "team_id", "player_id", "is_ball", "is_goalkeeper", "x", "y"}
     missing = required_cols - set(frames.columns)
     if missing:
         raise ValueError(f"compute_defensive_line: frames missing columns {sorted(missing)}")
@@ -88,6 +88,7 @@ def compute_defensive_line(
 
     # --- Short-circuit ---
     result_cols = [
+        "game_id",
         "period_id",
         "frame_id",
         "team_id",
@@ -105,15 +106,16 @@ def compute_defensive_line(
     # Filter to outfield players with valid coordinates
     outfield = frames[(~frames["is_ball"]) & (~frames["is_goalkeeper"]) & frames["x"].notna()].copy()
 
-    # Group by (period_id, frame_id, team_id)
+    # Group by (game_id, period_id, frame_id, team_id)
     rows: list[dict] = []
-    groups = outfield.groupby(["period_id", "frame_id", "team_id"], dropna=False)
+    groups = outfield.groupby(["game_id", "period_id", "frame_id", "team_id"], dropna=False)
 
-    for (period_id, frame_id, team_id), group in groups:
+    for (game_id, period_id, frame_id, team_id), group in groups:
         p = len(group)
         if p < 3:
             rows.append(
                 {
+                    "game_id": game_id,
                     "period_id": period_id,
                     "frame_id": frame_id,
                     "team_id": team_id,
@@ -168,6 +170,7 @@ def compute_defensive_line(
 
         rows.append(
             {
+                "game_id": game_id,
                 "period_id": period_id,
                 "frame_id": frame_id,
                 "team_id": team_id,

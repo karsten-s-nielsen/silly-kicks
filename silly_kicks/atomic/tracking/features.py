@@ -14,6 +14,7 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
 from silly_kicks.tracking.feature_framework import lift_to_states
+from silly_kicks.tracking.features import ball_carrier_at_action
 from silly_kicks.tracking.pressure import Method, PressureParams
 from silly_kicks.tracking.utils import _resolve_action_frame_context
 
@@ -34,6 +35,7 @@ __all__ = [
     "atomic_pre_shot_gk_full_default_xfns",
     "atomic_pressure_default_xfns",
     "atomic_tracking_default_xfns",
+    "ball_carrier_at_action",
     "defenders_in_triangle_to_goal",
     "nearest_defender_distance",
     "pre_shot_gk_angle_off_goal_line",

@@ -824,7 +824,7 @@ def _defensive_line_at_actions(
 
     # Re-attach _row_idx + team_id + period_id from the indexed actions
     linked = linked.merge(
-        actions_with_idx[["action_id", "_row_idx", "team_id", "period_id"]],
+        actions_with_idx[["action_id", "_row_idx", "team_id", "period_id", "game_id"]],
         on="action_id",
         how="left",
     )
@@ -834,8 +834,8 @@ def _defensive_line_at_actions(
     # Join with defensive-line data: match on (period_id, frame_id) then filter to opposing team
     merged = linked.merge(
         dl,
-        left_on=["period_id", "frame_id_int"],
-        right_on=["period_id", "frame_id"],
+        left_on=["game_id", "period_id", "frame_id_int"],
+        right_on=["game_id", "period_id", "frame_id"],
         how="left",
         suffixes=("_action", "_dl"),
     )

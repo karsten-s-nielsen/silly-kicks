@@ -454,6 +454,47 @@ class TestAdaptive:
         assert home["back_n_count"] == 4
 
 
+class TestMultiGame:
+    def test_game_id_in_output_columns(self):
+        from silly_kicks.tracking._defensive_line import compute_defensive_line
+
+        frames = _make_frame_rows(
+            home_outfield_xs=[10.0, 12.0, 14.0, 16.0],
+            home_outfield_ys=[20.0, 30.0, 40.0, 50.0],
+            away_outfield_xs=[95.0, 93.0, 91.0, 89.0],
+            away_outfield_ys=[20.0, 30.0, 40.0, 50.0],
+        )
+        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        assert "game_id" in result.columns
+
+    def test_multi_game_no_collision(self):
+        """Two games with same (period_id, frame_id) produce separate rows."""
+        from silly_kicks.tracking._defensive_line import compute_defensive_line
+
+        f1 = _make_frame_rows(
+            home_outfield_xs=[10.0, 12.0, 14.0, 16.0],
+            home_outfield_ys=[20.0, 30.0, 40.0, 50.0],
+            away_outfield_xs=[95.0, 93.0, 91.0, 89.0],
+            away_outfield_ys=[20.0, 30.0, 40.0, 50.0],
+        )
+        f2 = _make_frame_rows(
+            home_outfield_xs=[20.0, 22.0, 24.0, 26.0],
+            home_outfield_ys=[20.0, 30.0, 40.0, 50.0],
+            away_outfield_xs=[85.0, 83.0, 81.0, 79.0],
+            away_outfield_ys=[20.0, 30.0, 40.0, 50.0],
+        )
+        f2["game_id"] = 2  # different game, same period_id=1, frame_id=1
+        frames = pd.concat([f1, f2], ignore_index=True)
+        result = compute_defensive_line(frames, home_team_id=1, n=4)
+
+        # Should have 4 rows: 2 games x 2 teams
+        assert len(result) == 4
+        g1_home = result[(result["game_id"] == 1) & (result["team_id"] == 1)].iloc[0]
+        g2_home = result[(result["game_id"] == 2) & (result["team_id"] == 1)].iloc[0]
+        assert g1_home["defensive_line_x"] == pytest.approx(13.0)
+        assert g2_home["defensive_line_x"] == pytest.approx(23.0)
+
+
 class TestMultiPeriod:
     def test_period_isolation(self):
         """Two periods don't bleed into each other."""
