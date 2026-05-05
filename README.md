@@ -21,7 +21,7 @@ MIT license with full attribution preserved.
   on-ball actions with dedicated DataFrame converters for StatsBomb, Wyscout,
   Opta, Sportec / IDSSE Bundesliga, Metrica Sports, and PFF FC — plus a kloppy
   gateway for raw-provider-data consumers (StatsBomb, Sportec, Metrica)
-- **Tracking** -- 19-column long-form per-frame schema parallel to SPADL, with
+- **Tracking** -- 20-column long-form per-frame schema parallel to SPADL, with
   native adapters for Sportec / IDSSE Bundesliga and PFF FC plus a kloppy
   gateway for Metrica + SkillCorner. Linkage primitive
   (``link_actions_to_frames`` + ``slice_around_event``) joins SPADL actions to

@@ -26,6 +26,7 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     "confidence": "object",
     "visibility": "object",
     "source_provider": "object",
+    "is_goalkeeper_source": "object",
 }
 
 KLOPPY_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
@@ -64,6 +65,7 @@ TRACKING_CATEGORICAL_DOMAINS: dict[str, frozenset[str]] = {
     "team_attacking_direction": frozenset({"ltr", "rtl"}),
     "speed_source": frozenset({"native", "derived"}),
     "source_provider": frozenset({"pff", "sportec", "metrica", "skillcorner"}),
+    "is_goalkeeper_source": frozenset({"native", "derived"}),
 }
 
 
@@ -104,6 +106,18 @@ class TrackingConversionReport:
     nan_rate_per_column: dict[str, float]
     derived_speed_rows: int
     unrecognized_player_ids: set
+    n_teams_gk_derived: int = 0
+    """Count of (game_id, team_id) pairs where the positional fallback
+    fired (kloppy's native is_goalkeeper count was != 1). 0 means kloppy's
+    native flagging was reliable across the whole input. ADR-007."""
+
+    derived_gk_picks: dict[tuple[str, str], list[str]] = dataclasses.field(default_factory=dict)
+    """For each (game_id, team_id) where the positional fallback fired,
+    the list of player_ids the algorithm flagged as GK. Single-element
+    list in normal matches; 2+ in substitution scenarios. Empty dict when
+    no fallback fired. Useful for downstream auditing — consumers can
+    spot-check 'for matches where source=derived, who did we pick?'.
+    ADR-007."""
 
     @property
     def has_unrecognized(self) -> bool:

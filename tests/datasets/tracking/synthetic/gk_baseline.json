@@ -1,0 +1,30 @@
+{
+  "description": "Expected GK identification results for synthetic fixtures (PR-S26 regression baseline)",
+  "generated_by": "scripts/build_synthetic_gk_fixtures.py with np.random.seed(42)",
+  "fixtures": {
+    "gk_substitution.parquet": {
+      "expected_picks": {
+        "gk_sub_match|home": ["gk_starter_home", "gk_sub_home"],
+        "gk_sub_match|away": ["gk_starter_away", "gk_sub_away"]
+      },
+      "notes": "Multi-GK substitution: starter plays period 1, sub plays period 2"
+    },
+    "sweeper_keeper.parquet": {
+      "expected_picks": {
+        "sweeper_match|home": ["sweeper_gk"]
+      },
+      "notes": "Sweeper-keeper fallback: pa_dwell < 0.40, detected via rank-sum"
+    },
+    "brief_outfielder.parquet": {
+      "expected_picks": {
+        "brief_match|home": ["real_gk"]
+      },
+      "notes": "Brief substitute excluded: appears in <30% of frames, filtered out"
+    }
+  },
+  "thresholds": {
+    "_GK_N_FRAMES_FRAC": 0.30,
+    "_GK_PA_DWELL_MIN": 0.40,
+    "_GK_DIST_MAX_M": 20.0
+  }
+}

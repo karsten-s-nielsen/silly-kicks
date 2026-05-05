@@ -155,6 +155,7 @@ def convert_to_frames(
     out["confidence"] = None
     out["visibility"] = None
     out["source_provider"] = "sportec"
+    out["is_goalkeeper_source"] = "native"
 
     final = pd.DataFrame({col: out[col] for col in SPORTEC_TRACKING_FRAMES_COLUMNS})
     for col, dtype_str in SPORTEC_TRACKING_FRAMES_COLUMNS.items():
@@ -190,6 +191,8 @@ def convert_to_frames(
         nan_rate_per_column=nan_rate,
         derived_speed_rows=int((final["speed_source"] == "derived").sum()),
         unrecognized_player_ids=set(),
+        n_teams_gk_derived=0,
+        derived_gk_picks={},
     )
 
     if output_convention == "ltr":

@@ -14,8 +14,8 @@ from silly_kicks.tracking.schema import (
 )
 
 
-def test_tracking_frames_columns_is_19_columns():
-    assert len(TRACKING_FRAMES_COLUMNS) == 19
+def test_tracking_frames_columns_is_20_columns():
+    assert len(TRACKING_FRAMES_COLUMNS) == 20
 
 
 def test_tracking_frames_columns_required_keys():
@@ -39,6 +39,7 @@ def test_tracking_frames_columns_required_keys():
         "confidence",
         "visibility",
         "source_provider",
+        "is_goalkeeper_source",
     }
     assert set(TRACKING_FRAMES_COLUMNS) == expected
 
