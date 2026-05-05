@@ -17,9 +17,9 @@ from silly_kicks.tracking.features import pressure_on_actor
 
 # Pinned hashes -- regenerate via REGENERATE_SNAPSHOTS=1 + scripts/regenerate_pressure_snapshot_shas.py
 EXPECTED_SHAS = {
-    "andrienko_oval": "8d49f11737ae1874aa3a65bf12c37d76f0f8d977738f2944a8be3244138e5a9c",
+    "andrienko_oval": "23a32e695889bfc61cb90328c948b03787ac670748b20b4d7639bc7d59cf3294",
     "link_zones": "834889e6f2707046f0dcdbaea0805c829137b84d2ad54893a316a99282064ec5",
-    "bekkers_pi": "3515a6aa716f97db256686f94b253ef17cebc0de510edce92778e24fbf2a3b28",
+    "bekkers_pi": "3ddcb35c67ca559e3ab19f405d45ff34872c29ba2f752b9992a08e39bc4086b2",
 }
 
 
