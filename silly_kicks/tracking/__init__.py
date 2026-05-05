@@ -7,6 +7,8 @@ features + aggregator + lift_to_states extension utility) on top of those
 primitives. PR-S21 (silly-kicks 2.9.0) shipped pre_shot_gk_position_*. PR-S24
 (silly-kicks 3.1.0) ships TF-6 sync_score, TF-8 smoothing/velocity, TF-9
 interpolation, TF-12 pre_shot_gk_angle_* + the shared `preprocess` module.
+PR-S27 ships TF-13 defending_gk_from_frames + TF-14 compute_defensive_line +
+6 per-Series action-coupled features + add_defensive_line + defensive_line_xfns.
 """
 
 __all__ = [
@@ -22,18 +24,28 @@ __all__ = [
     "TrackingConversionReport",
     "actor_speed",
     "add_action_context",
+    "add_defensive_line",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_sync_score",
+    "back_line_high_x",
+    "back_n_count",
+    "compactness_x",
+    "compute_defensive_line",
     "defenders_in_triangle_to_goal",
+    "defending_gk_from_frames",
+    "defensive_line_x",
+    "defensive_line_xfns",
     "derive_velocities",
     "feature_framework",
     "features",
     "get_provider_defaults",
     "interpolate_frames",
     "kloppy",
+    "lateral_width",
     "lift_to_states",
     "link_actions_to_frames",
+    "max_lateral_gap",
     "nearest_defender_distance",
     "pff",
     "play_left_to_right",
@@ -54,13 +66,23 @@ __all__ = [
 ]
 
 from . import feature_framework, features, pff, preprocess, schema, sportec, utils
+from ._defensive_line import compute_defensive_line
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
     actor_speed,
     add_action_context,
+    add_defensive_line,
     add_pre_shot_gk_angle,
     add_pre_shot_gk_position,
+    back_line_high_x,
+    back_n_count,
+    compactness_x,
     defenders_in_triangle_to_goal,
+    defending_gk_from_frames,
+    defensive_line_x,
+    defensive_line_xfns,
+    lateral_width,
+    max_lateral_gap,
     nearest_defender_distance,
     pre_shot_gk_angle_default_xfns,
     pre_shot_gk_angle_off_goal_line,

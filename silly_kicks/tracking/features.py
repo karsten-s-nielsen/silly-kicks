@@ -13,13 +13,21 @@ Public API:
 - add_pre_shot_gk_position(actions, frames) -> pd.DataFrame    (PR-S21)
 - tracking_default_xfns: list[FrameAwareTransformer]
 - pre_shot_gk_default_xfns: list[FrameAwareTransformer]   (PR-S21)
+- defending_gk_from_frames(actions, frames) -> pd.Series       (PR-S27, TF-13)
+- defensive_line_x / back_line_high_x / compactness_x / lateral_width /
+  max_lateral_gap / back_n_count (actions, frames, *, home_team_id) (PR-S27, TF-14)
+- add_defensive_line(actions, frames, *, home_team_id) -> pd.DataFrame  (PR-S27)
+- defensive_line_xfns(home_team_id) -> list                    (PR-S27)
 
 See NOTICE for full bibliographic citations and ADR-005 for the integration contract.
 Spec: docs/superpowers/specs/2026-04-30-action-context-pr1-design.md (PR-S20)
       docs/superpowers/specs/2026-05-01-pre-shot-gk-plus-baselines-design.md (PR-S21)
+      docs/superpowers/specs/2026-05-04-tf13-tf14-defensive-line-design.md (PR-S27)
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 import pandas as pd
 
@@ -27,6 +35,7 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 
 from . import _kernels
+from ._gk_resolve import defending_gk_from_frames
 from .feature_framework import lift_to_states
 from .pressure import (
     AndrienkoParams,
@@ -48,10 +57,19 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_defensive_line",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
+    "back_line_high_x",
+    "back_n_count",
+    "compactness_x",
     "defenders_in_triangle_to_goal",
+    "defending_gk_from_frames",
+    "defensive_line_x",
+    "defensive_line_xfns",
+    "lateral_width",
+    "max_lateral_gap",
     "nearest_defender_distance",
     "pre_shot_gk_angle_default_xfns",
     "pre_shot_gk_angle_off_goal_line",
@@ -770,3 +788,211 @@ def add_pressure_on_actor(
 
 
 pressure_default_xfns = [lift_to_states(pressure_on_actor)]
+
+
+# ---------------------------------------------------------------------------
+# PR-S27 -- TF-14: defensive-line features
+# ---------------------------------------------------------------------------
+
+
+def defensive_line_x(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int | Literal["adaptive"] = 4,
+) -> pd.Series:
+    """Mean x of the defending team's back-line at the linked frame (m).
+
+    NaN where action is unlinked or defending team has <3 valid outfield players.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import defensive_line_x
+    >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
+    """
+    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    return df["defensive_line_x"].rename("defensive_line_x")
+
+
+def back_line_high_x(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int | Literal["adaptive"] = 4,
+) -> pd.Series:
+    """x of the most advanced back-line player on the defending team (m).
+
+    Approximates the offside line when the GK is behind the defensive line
+    (typical case); NOT law-compliant for sweeper-keeper scenarios.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import back_line_high_x
+    >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
+    """
+    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    return df["back_line_high_x"].rename("back_line_high_x")
+
+
+def compactness_x(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int | Literal["adaptive"] = 4,
+) -> pd.Series:
+    """x-spread of defending team's back-line (max - min, meters).
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import compactness_x
+    >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
+    """
+    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    return df["compactness_x"].rename("compactness_x")
+
+
+def lateral_width(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int | Literal["adaptive"] = 4,
+) -> pd.Series:
+    """y-spread of defending team's back-line (max - min, meters).
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import lateral_width
+    >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
+    """
+    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    return df["lateral_width"].rename("lateral_width")
+
+
+def max_lateral_gap(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int | Literal["adaptive"] = 4,
+) -> pd.Series:
+    """Largest y-gap between adjacent y-sorted back-line players (m).
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import max_lateral_gap
+    >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
+    """
+    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    return df["max_lateral_gap"].rename("max_lateral_gap")
+
+
+def back_n_count(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int | Literal["adaptive"] = 4,
+) -> pd.Series:
+    """Number of players in the defending team's back line (3/4/5).
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import back_n_count
+    >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
+    """
+    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    return df["back_n_count"].rename("back_n_count")
+
+
+@nan_safe_enrichment
+def add_defensive_line(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int | Literal["adaptive"] = 4,
+) -> pd.DataFrame:
+    """Enrich actions with 6 defensive-line columns + 4 linkage-provenance columns.
+
+    Provenance columns (frame_id, time_offset_seconds, link_quality_score,
+    n_candidate_frames) are skipped if they already exist on the input DataFrame.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_defensive_line
+    >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
+    """
+    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    out = actions.copy()
+    for col in ("defensive_line_x", "back_line_high_x", "compactness_x", "lateral_width", "max_lateral_gap"):
+        out[col] = df[col]
+    out["back_n_count"] = df["back_n_count"].astype("Int64")
+
+    # Provenance: skip if already present (idempotent with other add_* enrichments)
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    existing_provenance = [c for c in provenance_cols if c in out.columns]
+    if not existing_provenance:
+        pointers, _report = link_actions_to_frames(actions, frames)
+        pointer_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def defensive_line_xfns(
+    home_team_id: int | str,
+    *,
+    n: int | Literal["adaptive"] = 4,
+) -> list:
+    """Build VAEP xfn list bound to a specific home_team_id.
+
+    Returns a list with ONE FrameAwareTransformer that emits all 6
+    defensive-line columns x 3 game-states = 18 columns total. This ensures
+    compute_defensive_line is called 3x (once per state), not 18x.
+
+    Examples
+    --------
+    Compose into HybridVAEP::
+
+        from silly_kicks.tracking.features import tracking_default_xfns, defensive_line_xfns
+        xfns = tracking_default_xfns + defensive_line_xfns("team_A")
+        X = compute_features(actions, xfns=xfns, frames=frames)
+    """
+    col_names = [
+        "defensive_line_x",
+        "back_line_high_x",
+        "compactness_x",
+        "lateral_width",
+        "max_lateral_gap",
+        "back_n_count",
+    ]
+
+    def _defensive_line_transformer(states, frames):
+        """Multi-column defensive-line xfn (6 cols x nb_states)."""
+        out = pd.DataFrame(index=states[0].index)
+        for i, slot in enumerate(states[:3]):
+            batch = _kernels._defensive_line_at_actions(slot, frames, home_team_id=home_team_id, n=n)
+            for col in col_names:
+                out[f"{col}_a{i}"] = batch[col].to_numpy()
+        return out
+
+    _defensive_line_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _defensive_line_transformer.__name__ = "defensive_line"
+    return [_defensive_line_transformer]
