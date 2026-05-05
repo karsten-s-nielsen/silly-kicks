@@ -111,6 +111,26 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   velocity-direction penalty. Defaults from paper + canonical implementation
   (UnravelSports/unravelsports, BSD-3-Clause).
 
+- Herold, M., Goes, F., Nopp, S., Bauer, P., Thompson, C., & Meyer, T.
+  (2022). "Machine learning-based analysis of match performance indicators
+  for classifying match outcomes in professional football." arXiv:2511.06191.
+  Used by: silly_kicks.tracking._defensive_line.compute_defensive_line (TF-14).
+  Defensive-line height, compactness, and lateral spread as match-outcome
+  discriminators. Default N=4.
+
+- Forcher, L., Forcher, L., Altmann, S., Stein, T., Biermann, H., Dutt, M.,
+  & Memmert, D. (2022). "How to defend against the pass into the box? Using
+  explainable machine learning to identify defensive strategies." KDD Workshop
+  on Data Science for Sports Analytics. arXiv:2511.00121.
+  Used by: silly_kicks.tracking._defensive_line (TF-14).
+  Back-line shape as defensive feature for pass-into-box models.
+
+- FIFA (2022). "Enhanced Football Intelligence: Physical Report —
+  FIFA World Cup Qatar 2022."
+  Used by: silly_kicks.tracking._defensive_line (TF-14).
+  Practitioner documentation of 4-back defensive-line metrics at tournament
+  level. Validates the N=4 default and line-height / compactness operationalisation.
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).

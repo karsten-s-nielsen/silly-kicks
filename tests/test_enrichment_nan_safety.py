@@ -21,6 +21,7 @@ import silly_kicks.atomic.spadl.config as atomic_spadlcfg
 import silly_kicks.atomic.spadl.utils as atomic_utils
 import silly_kicks.spadl.config as spadlcfg
 import silly_kicks.spadl.utils as std_utils
+import silly_kicks.tracking.features as tracking_features
 
 
 def _discover(module) -> tuple:
@@ -30,6 +31,11 @@ def _discover(module) -> tuple:
 
 STD_ENRICHMENTS = _discover(std_utils)
 ATOMIC_ENRICHMENTS = _discover(atomic_utils)
+TRACKING_ENRICHMENTS = _discover(tracking_features)
+# Split: helpers needing only (actions, frames) vs those needing extra kwargs
+_TRACKING_NEEDS_EXTRA = {"add_defensive_line", "add_pre_shot_gk_position", "add_pre_shot_gk_angle"}
+_TRACKING_STANDARD_SIG = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ not in _TRACKING_NEEDS_EXTRA)
+_TRACKING_EXTRA_KWARGS = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ in _TRACKING_NEEDS_EXTRA)
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +51,15 @@ def test_registry_nonempty_std() -> None:
     assert len(STD_ENRICHMENTS) >= 5, (
         f"Expected ≥5 @nan_safe_enrichment helpers in silly_kicks.spadl.utils; "
         f"found {len(STD_ENRICHMENTS)}: {[fn.__name__ for fn in STD_ENRICHMENTS]}. "
+        f"Did the marker name change or a helper lose its decoration?"
+    )
+
+
+def test_registry_nonempty_tracking() -> None:
+    """At least 6 @nan_safe_enrichment helpers in silly_kicks.tracking.features."""
+    assert len(TRACKING_ENRICHMENTS) >= 6, (
+        f"Expected ≥6 @nan_safe_enrichment helpers in silly_kicks.tracking.features; "
+        f"found {len(TRACKING_ENRICHMENTS)}: {[fn.__name__ for fn in TRACKING_ENRICHMENTS]}. "
         f"Did the marker name change or a helper lose its decoration?"
     )
 
@@ -242,3 +257,240 @@ def test_gk_distribution_metrics_excludes_nan_coords(std_nan_laced_actions) -> N
     assert pd.isna(nan_coord_row["gk_xt_delta"]) or nan_coord_row["gk_xt_delta"] == 0.0, (
         f"Expected NaN/0.0 gk_xt_delta on NaN-coord row; got {nan_coord_row['gk_xt_delta']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Tracking-namespace NaN-safety (PR-S27): auto-discovers @nan_safe_enrichment
+# helpers in silly_kicks.tracking.features and fuzzes with a NaN-laced
+# (actions, frames) fixture pair.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tracking_nan_laced_fixture() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """NaN-laced (actions, frames) pair for tracking helper fuzz."""
+    actions = pd.DataFrame(
+        {
+            "game_id": [1] * 5,
+            "action_id": list(range(5)),
+            "period_id": [1] * 5,
+            "time_seconds": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "team_id": pd.array([1, 2, pd.NA, 1, 2], dtype="Int64"),
+            "player_id": pd.array([101, pd.NA, 201, 102, 202], dtype="Int64"),
+            "start_x": [50.0, np.nan, 60.0, 70.0, 80.0],
+            "start_y": [34.0, 34.0, np.nan, 34.0, 34.0],
+            "end_x": [55.0, 65.0, 70.0, np.nan, 85.0],
+            "end_y": [34.0, 34.0, 34.0, 34.0, np.nan],
+            "type_id": [0] * 5,
+        }
+    )
+    # Minimal frames: 1 frame per second, both teams + GKs
+    frame_rows = []
+    for t in range(1, 6):
+        frame_rows.extend(
+            [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=np.nan,
+                    team_id=np.nan,
+                    is_ball=True,
+                    is_goalkeeper=False,
+                    x=50.0,
+                    y=34.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=100,
+                    team_id=1,
+                    is_ball=False,
+                    is_goalkeeper=True,
+                    x=5.0,
+                    y=34.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=101,
+                    team_id=1,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=30.0,
+                    y=20.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=102,
+                    team_id=1,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=32.0,
+                    y=40.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=103,
+                    team_id=1,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=34.0,
+                    y=50.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=104,
+                    team_id=1,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=36.0,
+                    y=60.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=200,
+                    team_id=2,
+                    is_ball=False,
+                    is_goalkeeper=True,
+                    x=100.0,
+                    y=34.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=201,
+                    team_id=2,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=70.0,
+                    y=20.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=202,
+                    team_id=2,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=72.0,
+                    y=40.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=203,
+                    team_id=2,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=74.0,
+                    y=50.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=t,
+                    time_seconds=float(t),
+                    frame_rate=25.0,
+                    player_id=204,
+                    team_id=2,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=76.0,
+                    y=60.0,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                ),
+            ]
+        )
+    frames = pd.DataFrame(frame_rows)
+    return actions, frames
+
+
+@pytest.mark.parametrize("helper", _TRACKING_STANDARD_SIG, ids=lambda h: h.__name__)
+def test_tracking_helper_nan_safe(helper, tracking_nan_laced_fixture) -> None:
+    """Every @nan_safe_enrichment tracking helper with (actions, frames) sig
+    survives NaN-laced input without crashing.
+    """
+    actions, frames = tracking_nan_laced_fixture
+    out = helper(actions, frames)
+    assert isinstance(out, pd.DataFrame), f"{helper.__name__} returned {type(out).__name__}, expected pd.DataFrame"
+    assert len(out) == len(actions), (
+        f"{helper.__name__} changed row count on NaN-laced input ({len(actions)} -> {len(out)})"
+    )
+
+
+@pytest.mark.parametrize("helper", _TRACKING_EXTRA_KWARGS, ids=lambda h: h.__name__)
+def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixture) -> None:
+    """Tracking helpers needing extra kwargs or columns survive NaN-laced input."""
+    actions, frames = tracking_nan_laced_fixture
+    name = helper.__name__
+    if name == "add_defensive_line":
+        out = helper(actions, frames, home_team_id=1)
+    elif name == "add_pre_shot_gk_position":
+        # Needs defending_gk_player_id column pre-populated
+        acts = actions.copy()
+        acts["defending_gk_player_id"] = pd.array([200, pd.NA, 200, 200, pd.NA], dtype="Int64")
+        out = helper(acts, frames)
+    elif name == "add_pre_shot_gk_angle":
+        # frames is keyword-only + needs defending_gk_player_id
+        acts = actions.copy()
+        acts["defending_gk_player_id"] = pd.array([200, pd.NA, 200, 200, pd.NA], dtype="Int64")
+        out = helper(acts, frames=frames)
+    else:
+        out = helper(actions, frames)
+    assert isinstance(out, pd.DataFrame), f"{name} returned {type(out).__name__}, expected pd.DataFrame"
+    assert len(out) == len(actions), f"{name} changed row count on NaN-laced input ({len(actions)} -> {len(out)})"

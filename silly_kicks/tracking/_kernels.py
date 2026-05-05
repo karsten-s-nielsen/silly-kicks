@@ -15,7 +15,7 @@ for the kernel pattern.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
@@ -770,4 +770,88 @@ def _actor_pre_window_kernel(
             row_idx = action_to_idx.loc[aid]
             out.loc[row_idx, "actor_arc_length_pre_window"] = arc
             out.loc[row_idx, "actor_displacement_pre_window"] = disp
+    return out
+
+
+def _defensive_line_at_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int | Literal["adaptive"] = 4,
+) -> pd.DataFrame:
+    """All 6 defensive-line columns for the defending team at each action's linked frame.
+
+    Calls compute_defensive_line ONCE on the full frames DataFrame, then
+    joins on (period_id, frame_id, opposing_team_id) per action.
+
+    Returns DataFrame aligned with actions.index.
+    """
+    from ._defensive_line import compute_defensive_line
+    from .utils import link_actions_to_frames
+
+    feature_cols = [
+        "defensive_line_x",
+        "back_line_high_x",
+        "compactness_x",
+        "lateral_width",
+        "max_lateral_gap",
+        "back_n_count",
+    ]
+    n_actions = len(actions)
+    empty = pd.DataFrame(
+        {col: np.full(n_actions, np.nan) for col in feature_cols},
+        index=actions.index,
+    )
+    empty["back_n_count"] = pd.array([pd.NA] * n_actions, dtype="Int64")
+
+    if n_actions == 0 or len(frames) == 0:
+        return empty
+
+    # Compute defensive line for all frames (ONCE)
+    dl = compute_defensive_line(frames, home_team_id=home_team_id, n=n)
+    if dl.empty:
+        return empty
+
+    # Link actions to frames — use _row_idx as stable positional key
+    # (action_id may not be unique in gamestates shifted slots)
+    actions_with_idx = actions.copy()
+    actions_with_idx["_row_idx"] = np.arange(n_actions)
+    pointers, _report = link_actions_to_frames(actions_with_idx, frames)
+    linked = pointers[pointers["frame_id"].notna()].copy()
+    if linked.empty:
+        return empty
+
+    # Re-attach _row_idx + team_id + period_id from the indexed actions
+    linked = linked.merge(
+        actions_with_idx[["action_id", "_row_idx", "team_id", "period_id"]],
+        on="action_id",
+        how="left",
+    )
+    # For duplicate action_ids (gamestates), keep all rows — _row_idx disambiguates
+    linked["frame_id_int"] = linked["frame_id"].astype("int64")
+
+    # Join with defensive-line data: match on (period_id, frame_id) then filter to opposing team
+    merged = linked.merge(
+        dl,
+        left_on=["period_id", "frame_id_int"],
+        right_on=["period_id", "frame_id"],
+        how="left",
+        suffixes=("_action", "_dl"),
+    )
+    # Keep only rows where dl team != action team (opposing team's line)
+    opposing = merged[merged["team_id_dl"] != merged["team_id_action"]]
+
+    # One result per _row_idx (positional, always unique)
+    opposing = opposing.drop_duplicates("_row_idx", keep="first")
+
+    # Map back to actions index by position
+    out = empty.copy()
+    for _, row in opposing.iterrows():
+        pos = int(row["_row_idx"])
+        idx = actions.index[pos]
+        for col in feature_cols:
+            out.at[idx, col] = row[col]
+
+    out["back_n_count"] = out["back_n_count"].astype("Int64")
     return out

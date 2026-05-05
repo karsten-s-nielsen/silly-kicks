@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] — 2026-05-05
+
+### Added
+
+#### TF-13: Frame-based defending-GK resolution
+
+- `silly_kicks.tracking.features.defending_gk_from_frames(actions, frames)` — resolves defending GK `player_id` from tracking frames for all actions (not just shots). Fallback for events-based `defending_gk_player_id` NaN rows.
+
+#### TF-14: Defensive-line geometry
+
+- `silly_kicks.tracking._defensive_line.compute_defensive_line(frames, *, home_team_id, n=4)` — per-frame 6-column back-line geometry for both teams. Columns: `defensive_line_x`, `back_line_high_x`, `compactness_x`, `lateral_width`, `max_lateral_gap`, `back_n_count`. Supports fixed N ∈ {3, 4, 5} or `"adaptive"` via x-gap clustering (1.5× dominance rule).
+- 6 per-Series action-coupled features: `defensive_line_x`, `back_line_high_x`, `compactness_x`, `lateral_width`, `max_lateral_gap`, `back_n_count`.
+- `silly_kicks.tracking.features.add_defensive_line(actions, frames, *, home_team_id, n=4)` — aggregator enriching actions with 6 defensive-line columns + 4 linkage-provenance columns (skip-if-exists).
+- `silly_kicks.tracking.features.defensive_line_xfns(home_team_id, *, n=4)` — VAEP xfn factory returning one multi-column transformer (6 cols × 3 states = 18 output columns).
+
+#### NaN-safety CI
+
+- `tests/test_enrichment_nan_safety.py` extended: auto-discovers `@nan_safe_enrichment` helpers in `silly_kicks.tracking.features` (≥6 registry floor); parametrized fuzz tests for all tracking helpers.
+
+#### Academic references (NOTICE)
+
+- Herold et al. 2022 (arXiv:2511.06191) — defensive-line height/compactness as match-outcome discriminators.
+- Forcher et al. 2022 (arXiv:2511.00121) — back-line shape for pass-into-box models.
+- FIFA EFI 2022 — practitioner 4-back defensive-line metrics.
+
 ## [3.3.0] — 2026-05-04
 
 silly-kicks 3.3.0: Kloppy gateway `is_goalkeeper` hardening (PR-S26).
