@@ -67,7 +67,10 @@ Items are ranked top-to-bottom by specification completeness. Tier 2 is spec-com
 
 ### Blocked or Deferred
 
-(none currently queued)
+- **ADR-code reconciliation sweep.** Periodically verify that documented ADRs
+  (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
+  constraints (e.g. "zero Spark imports in domain") hold in practice and that
+  superseded decisions are updated. Frequency: once per minor release cycle.
 
 ---
 

@@ -5,7 +5,7 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.5.0] — 2026-05-XX
+## [3.5.0] — 2026-05-05
 
 ### Added
 
@@ -1429,7 +1429,7 @@ the contract for all future converter additions.
 ### Added
 - **Kloppy converter: Sportec and Metrica support.** `Provider.SPORTEC`
   (Sportec Solutions / IDSSE Bundesliga event format) and `Provider.METRICA`
-  (Metrica Sports) are now first-class whitelisted providers in
+  (Metrica Sports) are now first-class allowlisted providers in
   `silly_kicks.spadl.kloppy.convert_to_actions`. Empirical verification on
   real fixture data confirms zero new event-type mappings are required —
   both providers' kloppy serializers emit only event types already covered
@@ -1451,7 +1451,7 @@ the contract for all future converter additions.
   `EventDataset` reached `dataset.transform()`. Latent since 1.0.0
   because pre-existing `tests/spadl/test_kloppy.py` was pure mocks
   that never reached the transform call. Affected **all** kloppy-based
-  conversion including the previously-whitelisted StatsBomb path.
+  conversion including the previously-allowlisted StatsBomb path.
 - 2 pyright errors in `silly_kicks/xthreat.py:402` surfaced by newer
   pandas-stubs / numpy-stubs versions: explicit `dtype=np.float64` added
   to two `np.linspace` calls so the inferred `NDArray[float64]` matches
