@@ -157,6 +157,140 @@ def test_skillcorner_realistic_dataset_round_trips():
     _bounds_check_loose(frames, "skillcorner")
 
 
+def test_kloppy_gk_derivation_fires_when_native_wrong():
+    """Verify GK derivation fires when kloppy's native is_goalkeeper is wrong.
+
+    Real Metrica/SkillCorner kloppy parsers set starting_position=Unknown,
+    so is_goalkeeper is always False. This test creates a dataset with
+    intentionally wrong native GK flags (mimicking real parser behavior)
+    and verifies the algorithm derives the correct GKs.
+    """
+    import datetime
+
+    from kloppy.domain import (
+        DatasetFlag,
+        Dimension,
+        Frame,
+        Ground,
+        Metadata,
+        MetricPitchDimensions,
+        Orientation,
+        Period,
+        Player,
+        PlayerData,
+        Point,
+        Point3D,
+        PositionType,
+        Provider,
+        Team,
+        TrackingDataset,
+    )
+
+    from silly_kicks.tracking.kloppy import convert_to_frames
+
+    # Build dataset where ALL players have starting_position=Unknown (no native GK flag)
+    home_team = Team(team_id="home", name="Home", ground=Ground.HOME)
+    away_team = Team(team_id="away", name="Away", ground=Ground.AWAY)
+
+    # GK is jersey 1, but we set starting_position=Unknown for ALL players
+    home_team.players = [
+        Player(
+            player_id=f"h_{i}",
+            team=home_team,
+            jersey_no=i,
+            first_name="H",
+            last_name=str(i),
+            starting_position=PositionType.Unknown,  # intentionally wrong
+        )
+        for i in range(11)
+    ]
+    away_team.players = [
+        Player(
+            player_id=f"a_{i}",
+            team=away_team,
+            jersey_no=i,
+            first_name="A",
+            last_name=str(i),
+            starting_position=PositionType.Unknown,  # intentionally wrong
+        )
+        for i in range(11)
+    ]
+
+    period = Period(
+        id=1,
+        start_timestamp=datetime.timedelta(seconds=0),
+        end_timestamp=datetime.timedelta(seconds=4),
+    )
+    pitch = MetricPitchDimensions(
+        x_dim=Dimension(0, 105.0),
+        y_dim=Dimension(0, 68.0),
+        standardized=False,
+        pitch_length=105.0,
+        pitch_width=68.0,
+    )
+    metadata = Metadata(
+        teams=[home_team, away_team],
+        periods=[period],
+        pitch_dimensions=pitch,
+        coordinate_system=None,
+        score=None,
+        frame_rate=25.0,
+        orientation=Orientation.HOME_AWAY,
+        flags=DatasetFlag.BALL_OWNING_TEAM,
+        provider=Provider.METRICA,
+        game_id="gk_derivation_test",
+    )
+
+    # Build 100 frames with GKs (jersey 0) positioned near goal
+    frames = []
+    for fid in range(100):
+        ts = datetime.timedelta(seconds=fid / 25.0)
+        players_data = {}
+
+        # Home players: jersey 0 is GK at x=5 (near goal)
+        for i, player in enumerate(home_team.players):
+            x = 5.0 if i == 0 else 40.0 + i * 3
+            y = 34.0
+            players_data[player] = PlayerData(coordinates=Point(x=x, y=y), distance=None, speed=1.0)
+
+        # Away players: jersey 0 is GK at x=100 (near goal at x=105)
+        # Outfielders at x=20-47 (far from their goal, not in PA)
+        for i, player in enumerate(away_team.players):
+            x = 100.0 if i == 0 else 20.0 + i * 3
+            y = 34.0
+            players_data[player] = PlayerData(coordinates=Point(x=x, y=y), distance=None, speed=1.0)
+
+        frames.append(
+            Frame(
+                period=period,
+                timestamp=ts,
+                statistics=[],
+                ball_owning_team=home_team,
+                ball_state=None,
+                frame_id=fid,
+                players_data=players_data,
+                other_data={},
+                ball_coordinates=Point3D(x=52.5, y=34.0, z=0.0),
+                ball_speed=5.0,
+            )
+        )
+
+    ds = TrackingDataset(metadata=metadata, records=frames)
+    result_frames, report = convert_to_frames(ds, output_convention="absolute_frame")
+
+    # Verify derivation fired (kloppy had no native GK flags)
+    assert report.n_teams_gk_derived == 2, f"Expected 2 teams with derived GK, got {report.n_teams_gk_derived}"
+    assert len(report.derived_gk_picks) == 2
+
+    # Verify correct GKs were picked (jersey 0 = player_id h_0 and a_0)
+    assert set(report.derived_gk_picks[("gk_derivation_test", "home")]) == {"h_0"}
+    assert set(report.derived_gk_picks[("gk_derivation_test", "away")]) == {"a_0"}
+
+    # Verify is_goalkeeper_source == "derived" for all player rows
+    player_rows = result_frames[~result_frames["is_ball"]]
+    assert (player_rows["is_goalkeeper_source"] == "derived").all()
+
+
 def test_metrica_realistic_dataset_off_pitch_player_tolerated():
     """The empirical baseline shows real Metrica data has small off-pitch
     tail; the realistic kloppy dataset variant injects this. The gateway

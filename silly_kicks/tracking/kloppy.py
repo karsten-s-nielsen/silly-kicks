@@ -181,6 +181,32 @@ def convert_to_frames(
     if df["speed"].isna().any():
         df = _derive_speed(df)
 
+    # --- GK identification: always run B+ algorithm, agreement-based source ---
+    from ._gk_identification import derive_goalkeepers
+
+    # Capture kloppy's native picks per (game_id, team_id) before overwriting
+    native_gk_picks: dict[tuple[str, str], set[str]] = {}
+    player_mask = ~df["is_ball"]
+    for (gid, tid), grp in df[player_mask].groupby(["game_id", "team_id"], sort=False):
+        native_gks = set(grp.loc[grp["is_goalkeeper"], "player_id"].dropna().astype(str))
+        native_gk_picks[(str(gid), str(tid))] = native_gks
+
+    # Run algorithm (overwrites is_goalkeeper column)
+    df, derived_picks = derive_goalkeepers(df)
+
+    # Compute agreement-based is_goalkeeper_source per (game_id, team_id)
+    # native iff algorithm picks == kloppy native picks
+    n_teams_gk_derived = 0
+    df["is_goalkeeper_source"] = None  # default for ball/no-team rows
+    for (gid, tid), algo_picks in derived_picks.items():
+        algo_set = set(algo_picks)
+        native_set = native_gk_picks.get((gid, tid), set())
+        source = "native" if algo_set == native_set else "derived"
+        if source == "derived":
+            n_teams_gk_derived += 1
+        team_mask = (df["game_id"] == gid) & (df["team_id"] == tid) & ~df["is_ball"]
+        df.loc[team_mask, "is_goalkeeper_source"] = source
+
     final = pd.DataFrame({col: df[col] for col in KLOPPY_TRACKING_FRAMES_COLUMNS})
     for col, dtype_str in KLOPPY_TRACKING_FRAMES_COLUMNS.items():
         if dtype_str == "bool":
@@ -213,6 +239,8 @@ def convert_to_frames(
         nan_rate_per_column=nan_rate,
         derived_speed_rows=int((final["speed_source"] == "derived").sum()),
         unrecognized_player_ids=set(),
+        n_teams_gk_derived=n_teams_gk_derived,
+        derived_gk_picks=derived_picks,
     )
 
     if output_convention == "ltr":

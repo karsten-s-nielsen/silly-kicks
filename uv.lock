@@ -2673,7 +2673,7 @@ wheels = [
 
 [[package]]
 name = "silly-kicks"
-version = "3.2.0"
+version = "3.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2727,7 +2727,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.1.1" },
     { name = "pandas-stubs", marker = "extra == 'dev'", specifier = ">=2.2.0" },
     { name = "pyarrow", marker = "extra == 'test'", specifier = ">=14.0.0" },
-    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.380" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.409" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.2" },
     { name = "pytest-benchmark", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.1.0" },

@@ -5,6 +5,38 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] — 2026-05-04
+
+silly-kicks 3.3.0: Kloppy gateway `is_goalkeeper` hardening (PR-S26).
+
+### Added
+
+#### GK identification
+
+- `silly_kicks.tracking._gk_identification.derive_goalkeepers` — B+ filtered algorithm for positional GK identification. Always-run design with agreement-based `is_goalkeeper_source` provenance. Handles: standard GKs (strict criteria: pa_dwell ≥ 0.40 AND dist < 20m), sweeper-keepers (rank-sum fallback), GK substitutions (multi-GK detection), brief outfielders (n_frames filter).
+- `is_goalkeeper_source` column added to `TRACKING_FRAMES_COLUMNS` schema — values `"native"` (algorithm agrees with kloppy) or `"derived"` (algorithm overrode kloppy).
+- `TrackingConversionReport.n_teams_gk_derived` — count of (game_id, team_id) pairs where source="derived".
+- `TrackingConversionReport.derived_gk_picks` — audit trail: `dict[(game_id, team_id), list[player_id]]` of algorithm picks.
+
+#### Kloppy gateway integration
+
+- `silly_kicks.tracking.kloppy.convert_to_frames` now runs the GK identification algorithm on all Metrica/SkillCorner matches, fixing 21-50% → 100% GK detection rate.
+
+#### Native path updates
+
+- `silly_kicks.tracking.sportec.convert_to_frames` emits `is_goalkeeper_source="native"`.
+- `silly_kicks.tracking.pff.convert_to_frames` emits `is_goalkeeper_source="native"`.
+
+#### Architectural decision
+
+- ADR-007: GK identification algorithm — documents thresholds, alternatives considered, and agreement-based source resolution design.
+
+#### Test fixtures
+
+- `tests/datasets/tracking/synthetic/gk_substitution.parquet` — multi-GK substitution scenario (2 teams × 2 GKs each).
+- `tests/datasets/tracking/synthetic/sweeper_keeper.parquet` — sweeper-keeper fallback case (pa_dwell < 0.40).
+- `tests/datasets/tracking/synthetic/brief_outfielder.parquet` — brief substitute exclusion case (n_frames filter).
+
 ## [3.2.0] — 2026-05-04
 
 silly-kicks 3.2.0: TF-3 actor pre-window features + TF-2 multi-flavor pressure feature (PR-S25).
