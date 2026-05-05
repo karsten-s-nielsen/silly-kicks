@@ -33,7 +33,14 @@ STD_ENRICHMENTS = _discover(std_utils)
 ATOMIC_ENRICHMENTS = _discover(atomic_utils)
 TRACKING_ENRICHMENTS = _discover(tracking_features)
 # Split: helpers needing only (actions, frames) vs those needing extra kwargs
-_TRACKING_NEEDS_EXTRA = {"add_defensive_line", "add_pre_shot_gk_position", "add_pre_shot_gk_angle"}
+_TRACKING_NEEDS_EXTRA = {
+    "add_defensive_line",
+    "add_line_break",
+    "add_off_ball_context",
+    "add_off_ball_runs",
+    "add_pre_shot_gk_angle",
+    "add_pre_shot_gk_position",
+}
 _TRACKING_STANDARD_SIG = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ not in _TRACKING_NEEDS_EXTRA)
 _TRACKING_EXTRA_KWARGS = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ in _TRACKING_NEEDS_EXTRA)
 
@@ -56,9 +63,9 @@ def test_registry_nonempty_std() -> None:
 
 
 def test_registry_nonempty_tracking() -> None:
-    """At least 6 @nan_safe_enrichment helpers in silly_kicks.tracking.features."""
-    assert len(TRACKING_ENRICHMENTS) >= 6, (
-        f"Expected ≥6 @nan_safe_enrichment helpers in silly_kicks.tracking.features; "
+    """At least 9 @nan_safe_enrichment helpers in silly_kicks.tracking.features."""
+    assert len(TRACKING_ENRICHMENTS) >= 9, (
+        f"Expected ≥9 @nan_safe_enrichment helpers in silly_kicks.tracking.features; "
         f"found {len(TRACKING_ENRICHMENTS)}: {[fn.__name__ for fn in TRACKING_ENRICHMENTS]}. "
         f"Did the marker name change or a helper lose its decoration?"
     )
@@ -478,7 +485,7 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
     """Tracking helpers needing extra kwargs or columns survive NaN-laced input."""
     actions, frames = tracking_nan_laced_fixture
     name = helper.__name__
-    if name == "add_defensive_line":
+    if name in ("add_defensive_line", "add_off_ball_runs", "add_line_break", "add_off_ball_context"):
         out = helper(actions, frames, home_team_id=1)
     elif name == "add_pre_shot_gk_position":
         # Needs defending_gk_player_id column pre-populated

@@ -131,6 +131,21 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   Practitioner documentation of 4-back defensive-line metrics at tournament
   level. Validates the N=4 default and line-height / compactness operationalisation.
 
+The off-ball-runs and line-break detection features in
+silly_kicks/tracking/_off_ball_runs.py (PR-S30, TF-4) are novel
+implementations inspired by:
+
+- Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
+  Conference.
+  (OBSO framework — Off-Ball Scoring Opportunity; off-ball-runs and
+  line-break concepts.)
+
+- Power, P., Ruiz, H., Wei, X., & Lucey, P. (2017). "Not all passes are
+  created equal: Objectively measuring the risk and reward of passes in
+  soccer from tracking data." KDD '17.
+  (Contextual passing risk/reward; qualitatively mentions line-breaking
+  passes inside formation clustering.)
+
 - Bauer, P., & Anzer, G. (2021). "Data-driven detection of counterpressing in
   professional football." Data Mining and Knowledge Discovery, 35(5), 2009-2049.
   (Section 3 describes a velocity-toward-ball heuristic for carrier

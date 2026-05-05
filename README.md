@@ -25,10 +25,10 @@ MIT license with full attribution preserved.
   native adapters for Sportec / IDSSE Bundesliga and PFF FC plus a kloppy
   gateway for Metrica + SkillCorner. Key capabilities: action-to-frame linkage,
   frame preprocessing (smoothing, interpolation, velocities), GK identification,
-  defensive-line geometry, ball-carrier inference, and 20+ tracking-aware
+  defensive-line geometry, ball-carrier inference, and 25+ tracking-aware
   action-context features for HybridVAEP integration including pressure
-  (three published methods), pre-shot GK position/angles, and pre-action
-  movement. Full feature inventory in the
+  (three published methods), pre-shot GK position/angles, pre-action
+  movement, off-ball runs, and line-break detection. Full feature inventory in the
   [CHANGELOG](CHANGELOG.md).
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions

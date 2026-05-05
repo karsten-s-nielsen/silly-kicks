@@ -186,7 +186,7 @@ def _provenance() -> dict[str, Any]:
     return {
         "generated_by": "scripts/probe_preprocess_baseline.py",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "silly_kicks_version": "3.1.0-dev",
+        "silly_kicks_version": "3.1.0",
         "providers_probed": list(PROVIDERS),
     }
 
@@ -250,7 +250,7 @@ Write `tests/fixtures/baselines/preprocess_baseline.json` with the schema from s
   "_provenance": {
     "generated_by": "scripts/probe_preprocess_baseline.py",
     "generated_at": "2026-05-02T00:00:00Z",
-    "silly_kicks_version": "3.1.0-dev",
+    "silly_kicks_version": "3.1.0",
     "providers_probed": ["sportec", "pff", "metrica", "skillcorner"]
   },
   "sportec": {

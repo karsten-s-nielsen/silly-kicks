@@ -5,6 +5,22 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] — 2026-05-05
+
+### Added
+
+#### TF-4: Off-ball runs + line-break detection
+
+- `add_off_ball_runs(actions, frames, *, home_team_id)` — 4 off-ball-run columns: `n_off_ball_runners_pre_window`, `max_off_ball_run_displacement_pre_window`, `mean_off_ball_run_speed_pre_window`, `n_off_ball_runners_toward_goal_pre_window`
+- `add_line_break(actions, frames, *, home_team_id)` — 2 line-break columns: `line_break` (nullable boolean), `n_attackers_behind_line` (Int64)
+- `add_off_ball_context(actions, frames, *, home_team_id)` — umbrella aggregator adding all 6 columns
+- `off_ball_context_xfns(home_team_id)` — VAEP factory (6 features x 3 states = 18 columns)
+
+#### Academic references (NOTICE)
+
+- Spearman 2018 (OBSO framework — off-ball-runs and line-break concepts)
+- Power et al. 2017 (contextual passing risk/reward; line-breaking passes)
+
 ## [3.5.0] — 2026-05-05
 
 ### Added

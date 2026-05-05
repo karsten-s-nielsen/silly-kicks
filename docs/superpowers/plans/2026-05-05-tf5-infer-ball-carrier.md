@@ -1388,7 +1388,7 @@ Since TF-5 will ship with this PR: delete the TF-5 row from the Tier 3 table.
 
 (b) Update the header date and current release:
 ```
-**Last updated**: 2026-05-05. **Current release**: silly-kicks 3.5.0-dev.
+**Last updated**: 2026-05-05. **Current release**: silly-kicks 3.5.0.
 ```
 
 (c) Move TF-5 to Active Cycle:

@@ -2,7 +2,7 @@
   "_provenance": {
     "generated_by": "scripts/probe_preprocess_baseline.py",
     "generated_at": "2026-05-03T20:43:26+00:00",
-    "silly_kicks_version": "3.1.0-dev",
+    "silly_kicks_version": "3.1.0",
     "providers_probed": [
       "sportec",
       "pff",

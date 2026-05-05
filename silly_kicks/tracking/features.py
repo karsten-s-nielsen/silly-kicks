@@ -59,6 +59,9 @@ __all__ = [
     "add_action_context",
     "add_actor_pre_window",
     "add_defensive_line",
+    "add_line_break",
+    "add_off_ball_context",
+    "add_off_ball_runs",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
@@ -73,6 +76,7 @@ __all__ = [
     "lateral_width",
     "max_lateral_gap",
     "nearest_defender_distance",
+    "off_ball_context_xfns",
     "pre_shot_gk_angle_default_xfns",
     "pre_shot_gk_angle_off_goal_line",
     "pre_shot_gk_angle_to_shot_trajectory",
@@ -1098,3 +1102,165 @@ def defensive_line_xfns(
     _defensive_line_transformer._frame_aware = True  # type: ignore[attr-defined]
     _defensive_line_transformer.__name__ = "defensive_line"
     return [_defensive_line_transformer]
+
+
+# ---------------------------------------------------------------------------
+# PR-S30 -- TF-4: off-ball runs + line-break features
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_off_ball_runs(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    pre_seconds: float = 1.5,
+    min_displacement_m: float = 3.0,
+) -> pd.DataFrame:
+    """Enrich actions with 4 off-ball-run columns.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_off_ball_runs
+    >>> # See tests/tracking/test_off_ball_runs.py for runnable examples.
+    """
+    from ._off_ball_runs import _off_ball_runs_kernel
+
+    df = _off_ball_runs_kernel(
+        actions,
+        frames,
+        home_team_id=home_team_id,
+        pre_seconds=pre_seconds,
+        min_displacement_m=min_displacement_m,
+    )
+    out = actions.copy()
+    for col in (
+        "n_off_ball_runners_pre_window",
+        "max_off_ball_run_displacement_pre_window",
+        "mean_off_ball_run_speed_pre_window",
+        "n_off_ball_runners_toward_goal_pre_window",
+    ):
+        out[col] = df[col]
+    return out
+
+
+@nan_safe_enrichment
+def add_line_break(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int = 4,
+) -> pd.DataFrame:
+    """Enrich actions with 2 line-break columns.
+
+    Provenance columns are NOT emitted by this aggregator. Use
+    ``add_defensive_line`` or ``add_action_context`` first if linkage
+    provenance is needed — they append provenance with skip-if-present guard.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_line_break
+    >>> # See tests/tracking/test_off_ball_runs.py for runnable examples.
+    """
+    from ._off_ball_runs import _line_break_kernel
+
+    df = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n)
+    out = actions.copy()
+    out["line_break"] = df["line_break"]
+    out["n_attackers_behind_line"] = df["n_attackers_behind_line"]
+    return out
+
+
+@nan_safe_enrichment
+def add_off_ball_context(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    n: int = 4,
+    pre_seconds: float = 1.5,
+    min_displacement_m: float = 3.0,
+) -> pd.DataFrame:
+    """Umbrella: add all 6 off-ball-run + line-break columns.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_off_ball_context
+    >>> # See tests/tracking/test_off_ball_runs.py for runnable examples.
+    """
+    from ._off_ball_runs import _line_break_kernel, _off_ball_runs_kernel
+
+    runs = _off_ball_runs_kernel(
+        actions,
+        frames,
+        home_team_id=home_team_id,
+        pre_seconds=pre_seconds,
+        min_displacement_m=min_displacement_m,
+    )
+    lb = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n)
+    out = actions.copy()
+    for col in runs.columns:
+        out[col] = runs[col]
+    for col in lb.columns:
+        out[col] = lb[col]
+    return out
+
+
+def off_ball_context_xfns(
+    home_team_id: int | str,
+    *,
+    n: int = 4,
+    pre_seconds: float = 1.5,
+    min_displacement_m: float = 3.0,
+) -> list:
+    """Build VAEP xfn list bound to home_team_id for TF-4 features.
+
+    Returns a list with ONE FrameAwareTransformer that emits all 6
+    off-ball-run + line-break columns x 3 game-states = 18 columns total.
+
+    Examples
+    --------
+    Compose into HybridVAEP::
+
+        from silly_kicks.tracking.features import tracking_default_xfns, off_ball_context_xfns
+        xfns = tracking_default_xfns + off_ball_context_xfns("team_A")
+        X = compute_features(actions, xfns=xfns, frames=frames)
+    """
+    from ._off_ball_runs import _LINE_BREAK_COLS, _OFF_BALL_RUNS_COLS, _line_break_kernel, _off_ball_runs_kernel
+
+    def _off_ball_context_transformer(states, frames):
+        """Multi-column off-ball-context xfn (6 cols x nb_states).
+
+        Known optimization target: _line_break_kernel calls
+        compute_defensive_line per slot, but defensive-line depends only
+        on frames (not actions) — result is identical across all 3 slots.
+        Acceptable for v1; hoist into shared pre-computation if profiling
+        shows this as a bottleneck.
+        """
+        out = pd.DataFrame(index=states[0].index)
+        for i, slot in enumerate(states[:3]):
+            runs = _off_ball_runs_kernel(
+                slot,
+                frames,
+                home_team_id=home_team_id,
+                pre_seconds=pre_seconds,
+                min_displacement_m=min_displacement_m,
+            )
+            lb = _line_break_kernel(slot, frames, home_team_id=home_team_id, n=n)
+            for col in _OFF_BALL_RUNS_COLS:
+                out[f"{col}_a{i}"] = runs[col].to_numpy()
+            for col in _LINE_BREAK_COLS:
+                out[f"{col}_a{i}"] = lb[col].to_numpy()
+        return out
+
+    _off_ball_context_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _off_ball_context_transformer.__name__ = "off_ball_context"
+    return [_off_ball_context_transformer]

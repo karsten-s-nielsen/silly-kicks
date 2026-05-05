@@ -139,7 +139,7 @@ def synthesize_actions(frames: pd.DataFrame, n_actions: int = N_ACTIONS_PER_PROV
 
     return pd.DataFrame(
         {
-            "game_id": [1] * len(sample),
+            "game_id": [frames["game_id"].iloc[0]] * len(sample),
             "original_event_id": [str(i + 1) for i in range(len(sample))],
             "action_id": list(range(1, len(sample) + 1)),
             "period_id": [
