@@ -35,6 +35,7 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 
 from . import _kernels
+from ._ball_carrier import infer_ball_carrier
 from ._gk_resolve import defending_gk_from_frames
 from .feature_framework import lift_to_states
 from .pressure import (
@@ -63,6 +64,7 @@ __all__ = [
     "add_pressure_on_actor",
     "back_line_high_x",
     "back_n_count",
+    "ball_carrier_at_action",
     "compactness_x",
     "defenders_in_triangle_to_goal",
     "defending_gk_from_frames",
@@ -85,6 +87,106 @@ __all__ = [
     "receiver_zone_density",
     "tracking_default_xfns",
 ]
+
+
+def ball_carrier_at_action(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    tolerance_seconds: float = 0.2,
+    tolerance_m: float = 3.0,
+    beta: float = 0.5,
+    gamma: float = 1.0,
+) -> pd.Series:
+    """Per-action ball carrier player_id resolved from tracking frames.
+
+    Links actions to frames via ``link_actions_to_frames``, then looks up
+    the ``infer_ball_carrier`` result at the linked frame.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions with action_id, period_id, time_seconds.
+    frames : pd.DataFrame
+        Long-form tracking frames (TRACKING_FRAMES_COLUMNS shape).
+    tolerance_seconds : float, default 0.2
+        Maximum |time_offset| for a valid link.
+    tolerance_m : float, default 3.0
+        Carrier-attribution radius passed to ``infer_ball_carrier``.
+    beta : float, default 0.5
+        Velocity weight passed to ``infer_ball_carrier``.
+    gamma : float, default 1.0
+        Hysteresis bonus passed to ``infer_ball_carrier``.
+
+    Returns
+    -------
+    pd.Series
+        Aligned with actions.index. dtype matches frames' player_id dtype.
+        NaN where action couldn't link or no carrier found.
+
+    Examples
+    --------
+    Get the ball carrier at each action::
+
+        from silly_kicks.tracking.features import ball_carrier_at_action
+        carrier = ball_carrier_at_action(actions, frames)
+
+    See NOTICE for full bibliographic citations.
+    """
+    import numpy as np
+
+    pid_dtype = frames["player_id"].dtype
+    n = len(actions)
+    out = pd.Series(np.full(n, np.nan), index=actions.index, dtype="object")
+
+    if n == 0 or len(frames) == 0:
+        return out
+
+    # Compute per-frame carriers
+    carriers = infer_ball_carrier(frames, tolerance_m=tolerance_m, beta=beta, gamma=gamma)
+    if carriers.empty:
+        return out
+
+    # Link actions to frames
+    pointers, _report = link_actions_to_frames(actions, frames, tolerance_seconds=tolerance_seconds)
+
+    # Join pointers with actions to get period_id + game_id
+    ptr = pointers.merge(
+        actions[["action_id", "period_id", "game_id"]],
+        on="action_id",
+        how="left",
+    )
+    linked = ptr[ptr["frame_id"].notna()].copy()
+    if linked.empty:
+        return out
+
+    linked["frame_id_int"] = linked["frame_id"].astype("int64")
+
+    # Join with carriers on (game_id, period_id, frame_id)
+    merged = linked.merge(
+        carriers[["game_id", "period_id", "frame_id", "ball_carrier_player_id"]],
+        left_on=["game_id", "period_id", "frame_id_int"],
+        right_on=["game_id", "period_id", "frame_id"],
+        how="left",
+    )
+
+    # Deduplicate: one carrier per action_id (take first)
+    merged = merged.drop_duplicates("action_id", keep="first")
+
+    # Map back to actions index
+    action_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
+    for _, row in merged.iterrows():
+        aid = row["action_id"]
+        if aid in action_to_idx.index:
+            out.loc[action_to_idx.loc[aid]] = row["ball_carrier_player_id"]
+
+    # Cast to match frames dtype if numeric
+    if pid_dtype == np.dtype("int64") or str(pid_dtype) == "Int64":
+        out = pd.to_numeric(out, errors="coerce")
+        if str(pid_dtype) == "Int64":
+            out = out.astype("Int64")
+
+    return out
 
 
 def nearest_defender_distance(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:

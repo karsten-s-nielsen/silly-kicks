@@ -131,6 +131,18 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   Practitioner documentation of 4-back defensive-line metrics at tournament
   level. Validates the N=4 default and line-height / compactness operationalisation.
 
+- Bauer, P., & Anzer, G. (2021). "Data-driven detection of counterpressing in
+  professional football." Data Mining and Knowledge Discovery, 35(5), 2009-2049.
+  (Section 3 describes a velocity-toward-ball heuristic for carrier
+  identification, used as input to their counterpressing classifier.
+  Adapted for infer_ball_carrier primitive in silly_kicks.tracking.)
+
+- Vidal-Codina, F., Evans, N., El Fakir, B., & Billingham, J. (2022).
+  "Automatic Event Detection in Football Using Tracking Data."
+  Sports Engineering, 25, 18.
+  (Inertia/hysteresis recommendation for ball-possession algorithms;
+  motivates the gamma hysteresis parameter in infer_ball_carrier.)
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).

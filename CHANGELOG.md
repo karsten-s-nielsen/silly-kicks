@@ -5,6 +5,24 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] — 2026-05-XX
+
+### Added
+
+#### TF-5: Per-frame ball-carrier inference
+
+- `silly_kicks.tracking._ball_carrier.infer_ball_carrier(frames, *, tolerance_m, beta, gamma)` — per-frame ball-carrier identification via composite distance + velocity-toward-ball scoring with hysteresis. Returns one row per (game_id, period_id, frame_id) with carrier player_id, distance, and team_id. Distance-only fallback when vx/vy columns absent.
+- `silly_kicks.tracking.features.ball_carrier_at_action(actions, frames, ...)` — action-coupled wrapper resolving ball carrier at each linked frame.
+
+#### Consistency: `compute_defensive_line` game_id groupby
+
+- `compute_defensive_line` now includes `game_id` in groupby + return schema, preventing cross-game collisions when processing multi-game batches.
+
+#### Academic references (NOTICE)
+
+- Bauer & Anzer 2021 (Data Mining and Knowledge Discovery) — velocity-toward-ball carrier identification heuristic.
+- Vidal-Codina et al. 2022 (Sports Engineering) — hysteresis recommendation for ball-possession algorithms.
+
 ## [3.4.0] — 2026-05-05
 
 ### Added
