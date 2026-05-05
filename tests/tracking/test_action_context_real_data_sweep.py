@@ -37,6 +37,84 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SLIM_DIR = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim"
 
 
+def _load_pff_raw(match_path: Path, max_lines: int = 3000) -> pd.DataFrame:
+    """Parse a PFF .jsonl.bz2 tracking file into pre-adapter raw DataFrame.
+
+    Derives game_id from the filename (e.g. ``10502.jsonl.bz2`` → 10502)
+    rather than relying on ``gameRefId`` which is absent on many rows.
+    """
+    game_id_from_filename = int(match_path.stem.split(".")[0])
+    rows: list[dict[str, Any]] = []
+    with bz2.open(match_path, "rt", encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            if i >= max_lines:
+                break
+            obj = json.loads(line)
+            period_id = obj.get("period")
+            if period_id is None:
+                continue
+            for is_home, players in (
+                (True, obj.get("homePlayers") or []),
+                (False, obj.get("awayPlayers") or []),
+            ):
+                for p in players:
+                    rows.append(
+                        {
+                            "game_id": game_id_from_filename,
+                            "period_id": int(period_id),
+                            "frame_id": int(obj.get("frameNum") or i),
+                            "time_seconds": float(obj.get("periodElapsedTime") or 0.0),
+                            "frame_rate": 30.0,
+                            "player_id": p.get("jerseyNum"),
+                            "team_id": 1 if is_home else 2,
+                            "is_ball": False,
+                            "is_goalkeeper": False,
+                            "x_centered": float(p.get("x", 0.0)),
+                            "y_centered": float(p.get("y", 0.0)),
+                            "z": float("nan"),
+                            "speed_native": float("nan"),
+                            "ball_state": "alive",
+                        }
+                    )
+            for ball in obj.get("balls") or []:
+                rows.append(
+                    {
+                        "game_id": game_id_from_filename,
+                        "period_id": int(period_id),
+                        "frame_id": int(obj.get("frameNum") or i),
+                        "time_seconds": float(obj.get("periodElapsedTime") or 0.0),
+                        "frame_rate": 30.0,
+                        "player_id": None,
+                        "team_id": None,
+                        "is_ball": True,
+                        "is_goalkeeper": False,
+                        "x_centered": float(ball.get("x", 0.0)),
+                        "y_centered": float(ball.get("y", 0.0)),
+                        "z": float(ball.get("z", 0.0)),
+                        "speed_native": float("nan"),
+                        "ball_state": "alive",
+                    }
+                )
+    raw = pd.DataFrame(rows)
+    raw["player_id"] = raw["player_id"].astype("Int64")
+    raw["team_id"] = raw["team_id"].astype("Int64")
+    return raw
+
+
+def _skip_if_no_pff_dir(label: str) -> tuple[Path, Path]:
+    """Return (pff_dir, first_match) or pytest.skip if PFF_TRACKING_DIR missing."""
+    path = os.environ.get("PFF_TRACKING_DIR")
+    if not path:
+        pytest.skip(f"PFF_TRACKING_DIR not set; skipping {label}.")
+    pff_dir = Path(path)
+    if not pff_dir.is_dir():
+        pytest.skip(f"PFF_TRACKING_DIR={path!r} is not a directory; skipping.")
+    matches = sorted(p for p in pff_dir.iterdir() if p.name.endswith(".jsonl.bz2"))
+    if not matches:
+        pytest.skip(f"No .jsonl.bz2 files in PFF_TRACKING_DIR={path!r}; skipping.")
+    return pff_dir, matches[0]
+
+
 def _bounds_check(enriched: pd.DataFrame, provider: str) -> None:
     """Assert per-feature bounds AND that each feature is actually exercised
     (n_valid > 0). Without the n_valid > 0 assertion, a feature could come
@@ -97,77 +175,10 @@ def test_pff_action_context_sweep() -> None:
     """PFF: load 1 match from PFF_TRACKING_DIR, build long-form via the PFF
     adapter, synthesize actions from frames at controlled times, run
     add_action_context, assert bounds + emit summary."""
-    path = os.environ.get("PFF_TRACKING_DIR")
-    if not path:
-        pytest.skip("PFF_TRACKING_DIR not set; skipping PFF action_context sweep.")
-    pff_dir = Path(path)
-    if not pff_dir.is_dir():
-        pytest.skip(f"PFF_TRACKING_DIR={path!r} is not a directory; skipping.")
-    matches = sorted(p for p in pff_dir.iterdir() if p.name.endswith(".jsonl.bz2"))
-    if not matches:
-        pytest.skip(f"No .jsonl.bz2 files in PFF_TRACKING_DIR={path!r}; skipping.")
-
-    rows: list[dict[str, Any]] = []
-    home_team_id_value: int | None = None
-    with bz2.open(matches[0], "rt", encoding="utf-8") as fh:
-        for i, line in enumerate(fh):
-            if i >= 3000:
-                break
-            obj = json.loads(line)
-            period_id = obj.get("period")
-            if period_id is None:
-                continue
-            game_event = obj.get("game_event") or {}
-            if home_team_id_value is None and isinstance(game_event.get("home_team"), dict):
-                home_team_id_value = game_event.get("home_team", {}).get("id")
-            for is_home, players in (
-                (True, obj.get("homePlayers") or []),
-                (False, obj.get("awayPlayers") or []),
-            ):
-                for p in players:
-                    rows.append(
-                        {
-                            "game_id": int(obj.get("gameRefId") or 0),
-                            "period_id": int(period_id),
-                            "frame_id": int(obj.get("frameNum") or i),
-                            "time_seconds": float(obj.get("periodElapsedTime") or 0.0),
-                            "frame_rate": 30.0,
-                            "player_id": p.get("jerseyNum"),
-                            "team_id": 1 if is_home else 2,
-                            "is_ball": False,
-                            "is_goalkeeper": False,
-                            "x_centered": float(p.get("x", 0.0)),
-                            "y_centered": float(p.get("y", 0.0)),
-                            "z": float("nan"),
-                            "speed_native": float("nan"),
-                            "ball_state": "alive",
-                        }
-                    )
-            for ball in obj.get("balls") or []:
-                rows.append(
-                    {
-                        "game_id": int(obj.get("gameRefId") or 0),
-                        "period_id": int(period_id),
-                        "frame_id": int(obj.get("frameNum") or i),
-                        "time_seconds": float(obj.get("periodElapsedTime") or 0.0),
-                        "frame_rate": 30.0,
-                        "player_id": None,
-                        "team_id": None,
-                        "is_ball": True,
-                        "is_goalkeeper": False,
-                        "x_centered": float(ball.get("x", 0.0)),
-                        "y_centered": float(ball.get("y", 0.0)),
-                        "z": float(ball.get("z", 0.0)),
-                        "speed_native": float("nan"),
-                        "ball_state": "alive",
-                    }
-                )
-    if not rows:
+    _, match_path = _skip_if_no_pff_dir("PFF action_context sweep")
+    raw = _load_pff_raw(match_path)
+    if raw.empty:
         pytest.skip("PFF action_context sweep: no parseable rows.")
-
-    raw = pd.DataFrame(rows)
-    raw["player_id"] = raw["player_id"].astype("Int64")
-    raw["team_id"] = raw["team_id"].astype("Int64")
 
     from silly_kicks.tracking.features import add_action_context
     from silly_kicks.tracking.pff import convert_to_frames as pff_convert
@@ -219,6 +230,7 @@ def _synthesize_actions_from_frames(frames: pd.DataFrame, n_actions: int = 10) -
     sample = candidates.drop_duplicates(["period_id", "frame_id"]).head(n_actions)
     return pd.DataFrame(
         {
+            "game_id": sample["game_id"].to_numpy(),
             "action_id": list(range(1, len(sample) + 1)),
             "period_id": sample["period_id"].to_numpy(),
             "time_seconds": sample["time_seconds"].to_numpy(),
@@ -458,53 +470,10 @@ def _gk_pipeline_smoke(actions: pd.DataFrame, frames: pd.DataFrame, provider: st
 @pytest.mark.e2e
 def test_pff_pre_shot_gk_pipeline_smoke() -> None:
     """PFF: load frames + synthesize non-shot actions; run full add_pre_shot_gk_context(frames=...)."""
-    path = os.environ.get("PFF_TRACKING_DIR")
-    if not path:
-        pytest.skip("PFF_TRACKING_DIR not set; skipping PFF GK pipeline smoke.")
-    pff_dir = Path(path)
-    if not pff_dir.is_dir():
-        pytest.skip(f"PFF_TRACKING_DIR={path!r} is not a directory; skipping.")
-    matches = sorted(p for p in pff_dir.iterdir() if p.name.endswith(".jsonl.bz2"))
-    if not matches:
-        pytest.skip(f"No .jsonl.bz2 files in PFF_TRACKING_DIR={path!r}; skipping.")
-
-    rows: list[dict[str, Any]] = []
-    with bz2.open(matches[0], "rt", encoding="utf-8") as fh:
-        for i, line in enumerate(fh):
-            if i >= 3000:
-                break
-            obj = json.loads(line)
-            period_id = obj.get("period")
-            if period_id is None:
-                continue
-            for is_home, players in (
-                (True, obj.get("homePlayers") or []),
-                (False, obj.get("awayPlayers") or []),
-            ):
-                for p in players:
-                    rows.append(
-                        {
-                            "game_id": int(obj.get("gameRefId") or 0),
-                            "period_id": int(period_id),
-                            "frame_id": int(obj.get("frameNum") or i),
-                            "time_seconds": float(obj.get("periodElapsedTime") or 0.0),
-                            "frame_rate": 30.0,
-                            "player_id": p.get("jerseyNum"),
-                            "team_id": 1 if is_home else 2,
-                            "is_ball": False,
-                            "is_goalkeeper": False,
-                            "x_centered": float(p.get("x", 0.0)),
-                            "y_centered": float(p.get("y", 0.0)),
-                            "z": float("nan"),
-                            "speed_native": float("nan"),
-                            "ball_state": "alive",
-                        }
-                    )
-    if not rows:
+    _, match_path = _skip_if_no_pff_dir("PFF GK pipeline smoke")
+    raw = _load_pff_raw(match_path)
+    if raw.empty:
         pytest.skip("PFF GK pipeline smoke: no parseable rows.")
-    raw = pd.DataFrame(rows)
-    raw["player_id"] = raw["player_id"].astype("Int64")
-    raw["team_id"] = raw["team_id"].astype("Int64")
 
     from silly_kicks.tracking.pff import convert_to_frames as pff_convert
     from silly_kicks.tracking.utils import _derive_speed
@@ -707,3 +676,357 @@ def test_skillcorner_pressure_and_prewindow_pipeline_smoke() -> None:
     frames = load_provider_frames("skillcorner")
     actions = synthesize_actions(frames)
     _pressure_and_prewindow_pipeline_smoke(actions, frames, "skillcorner")
+
+
+# ---------------------------------------------------------------------------
+# PR-S30 — off-ball runs + line-break e2e smoke (per provider)
+# ---------------------------------------------------------------------------
+
+
+def _off_ball_context_pipeline_smoke(
+    actions: pd.DataFrame, frames: pd.DataFrame, home_team_id: object, provider: str
+) -> None:
+    """Per TF-4 spec: ``add_off_ball_context`` produces >=1 non-NaN value for
+    both off-ball runners AND line-break columns per provider.
+
+    Off-ball runs require ``home_team_id`` for coordinate-frame resolution
+    (SPADL per-action vs tracking per-period).
+    """
+    from silly_kicks.tracking import play_left_to_right
+    from silly_kicks.tracking.features import add_off_ball_context
+
+    frames = play_left_to_right(frames, home_team_id=home_team_id)
+    # Align game_id: synthesize_actions hardcodes game_id=1 but real frames
+    # use provider-specific IDs.
+    real_game_id = frames["game_id"].iloc[0]
+    actions = actions.copy()
+    actions["game_id"] = real_game_id
+
+    result = add_off_ball_context(actions, frames, home_team_id=home_team_id)
+    runners_n = result["n_off_ball_runners_pre_window"].notna().sum()
+    assert runners_n >= 1, (
+        f"{provider}: add_off_ball_context emitted 0 non-NaN off-ball-runner values on {len(actions)} actions"
+    )
+    behind_n = result["n_attackers_behind_line"].notna().sum()
+    assert behind_n >= 1, (
+        f"{provider}: add_off_ball_context emitted 0 non-NaN line-break values on {len(actions)} actions"
+    )
+    print(
+        f"\n[off-ball-context-smoke:{provider}] "
+        f"runners={runners_n} toward_goal={result['n_off_ball_runners_toward_goal_pre_window'].notna().sum()} "
+        f"max_disp={result['max_off_ball_run_displacement_pre_window'].notna().sum()} "
+        f"mean_speed={result['mean_off_ball_run_speed_pre_window'].notna().sum()} "
+        f"behind_line={behind_n} "
+        f"line_break_true={result['line_break'].sum() if result['line_break'].notna().any() else 0}"
+    )
+
+
+@pytest.mark.e2e
+def test_pff_off_ball_context_pipeline_smoke() -> None:
+    """PFF: synthetic fixture via load_provider_frames('pff')."""
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import (
+        load_provider_frames,
+        synthesize_actions,
+    )
+
+    pff_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff" / "medium_halftime.parquet"
+    if not pff_fixture.exists():
+        pytest.skip(f"{pff_fixture} missing; PFF synthetic fixture required.")
+    frames = load_provider_frames("pff")
+    actions = synthesize_actions(frames)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    _off_ball_context_pipeline_smoke(actions, frames, team_counts.index[0], "pff")
+
+
+@pytest.mark.e2e
+def test_idsse_off_ball_context_pipeline_smoke() -> None:
+    """Sportec/IDSSE: real-data slim slice."""
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import (
+        load_provider_frames,
+        synthesize_actions,
+    )
+
+    slim = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim" / "sportec_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing; run scripts/probe_action_context_baselines.py.")
+    frames = load_provider_frames("sportec")
+    actions = synthesize_actions(frames)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    _off_ball_context_pipeline_smoke(actions, frames, team_counts.index[0], "sportec")
+
+
+@pytest.mark.e2e
+def test_metrica_off_ball_context_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import (
+        load_provider_frames,
+        synthesize_actions,
+    )
+
+    slim = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim" / "metrica_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("metrica")
+    actions = synthesize_actions(frames)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    _off_ball_context_pipeline_smoke(actions, frames, team_counts.index[0], "metrica")
+
+
+@pytest.mark.e2e
+def test_skillcorner_off_ball_context_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import (
+        load_provider_frames,
+        synthesize_actions,
+    )
+
+    slim = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim" / "skillcorner_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("skillcorner")
+    actions = synthesize_actions(frames)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    _off_ball_context_pipeline_smoke(actions, frames, team_counts.index[0], "skillcorner")
+
+
+# ---------------------------------------------------------------------------
+# PR-S30 — off-ball context e2e via lakehouse / PFF local raw data
+# ---------------------------------------------------------------------------
+
+
+def _off_ball_context_lakehouse_smoke(
+    actions: pd.DataFrame, frames: pd.DataFrame, home_team_id: object, provider: str
+) -> None:
+    """Run add_off_ball_context on actions/frames from the lakehouse/PFF raw path."""
+    from silly_kicks.tracking import play_left_to_right
+    from silly_kicks.tracking.features import add_off_ball_context
+
+    frames = play_left_to_right(frames, home_team_id=home_team_id)
+    result = add_off_ball_context(actions, frames, home_team_id=home_team_id)
+    runners_n = result["n_off_ball_runners_pre_window"].notna().sum()
+    assert runners_n >= 1, f"{provider}: off-ball-context lakehouse smoke emitted 0 non-NaN runner values"
+    behind_n = result["n_attackers_behind_line"].notna().sum()
+    assert behind_n >= 1, f"{provider}: off-ball-context lakehouse smoke emitted 0 non-NaN line-break values"
+    print(f"\n[off-ball-context-lakehouse:{provider}] runners={runners_n} behind_line={behind_n}")
+
+
+@pytest.mark.e2e
+def test_pff_off_ball_context_lakehouse_smoke() -> None:
+    """PFF: load from PFF_TRACKING_DIR, build long-form, run off-ball context."""
+    _, match_path = _skip_if_no_pff_dir("PFF off-ball context e2e")
+    raw = _load_pff_raw(match_path)
+    if raw.empty:
+        pytest.skip("PFF off-ball context e2e: no parseable rows.")
+
+    from silly_kicks.tracking.pff import convert_to_frames as pff_convert
+
+    frames, _ = pff_convert(raw, home_team_id=1, home_team_start_left=True)
+    actions = _synthesize_actions_from_frames(frames, n_actions=10)
+    _off_ball_context_lakehouse_smoke(actions, frames, 1, "pff")
+
+
+@pytest.mark.e2e
+def test_idsse_off_ball_context_lakehouse_smoke() -> None:
+    raw = _query_lakehouse_sample("idsse")
+    if raw is None or len(raw) == 0:
+        pytest.skip("IDSSE off-ball context e2e requires Databricks SQL connectivity.")
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.datasets.tracking._lakehouse_adapter import lakehouse_to_sportec_input
+
+    sportec_input = lakehouse_to_sportec_input(raw)
+    sportec_input = sportec_input.dropna(subset=["x_centered", "y_centered"])
+    if len(sportec_input) == 0:
+        pytest.skip("IDSSE lakehouse sample yielded no usable rows.")
+
+    from silly_kicks.tracking.sportec import convert_to_frames as sportec_convert
+
+    home_team_str = str(sportec_input.loc[~sportec_input["is_ball"], "team_id"].dropna().iloc[0])
+    frames, _ = sportec_convert(sportec_input, home_team_id=home_team_str, home_team_start_left=True)
+    actions = _synthesize_actions_from_frames(frames, n_actions=10)
+    _off_ball_context_lakehouse_smoke(actions, frames, home_team_str, "sportec")
+
+
+@pytest.mark.e2e
+def test_metrica_off_ball_context_lakehouse_smoke() -> None:
+    raw = _query_lakehouse_sample("metrica")
+    if raw is None or len(raw) == 0:
+        pytest.skip("Metrica off-ball context e2e requires Databricks SQL connectivity.")
+    sys.path.insert(0, str(REPO_ROOT))
+    from kloppy.domain import Provider  # type: ignore[reportMissingImports]
+
+    from tests.datasets.tracking._lakehouse_adapter import lakehouse_to_kloppy_dataset
+
+    ds = lakehouse_to_kloppy_dataset(raw, Provider.METRICA)
+    if len(ds.records) == 0:
+        pytest.skip("Metrica lakehouse sample yielded no usable frames.")
+
+    from silly_kicks.tracking.kloppy import convert_to_frames as kloppy_convert
+
+    frames, _ = kloppy_convert(ds)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    home_team_id = team_counts.index[0]
+    actions = _synthesize_actions_from_frames(frames, n_actions=10)
+    _off_ball_context_lakehouse_smoke(actions, frames, home_team_id, "metrica")
+
+
+@pytest.mark.e2e
+def test_skillcorner_off_ball_context_lakehouse_smoke() -> None:
+    raw = _query_lakehouse_sample("skillcorner")
+    if raw is None or len(raw) == 0:
+        pytest.skip("SkillCorner off-ball context e2e requires Databricks SQL connectivity.")
+    sys.path.insert(0, str(REPO_ROOT))
+    from kloppy.domain import Provider  # type: ignore[reportMissingImports]
+
+    from tests.datasets.tracking._lakehouse_adapter import lakehouse_to_kloppy_dataset
+
+    ds = lakehouse_to_kloppy_dataset(raw, Provider.SKILLCORNER)
+    if len(ds.records) == 0:
+        pytest.skip("SkillCorner lakehouse sample yielded no usable frames.")
+
+    from silly_kicks.tracking.kloppy import convert_to_frames as kloppy_convert
+
+    frames, _ = kloppy_convert(ds)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    home_team_id = team_counts.index[0]
+    actions = _synthesize_actions_from_frames(frames, n_actions=10)
+    _off_ball_context_lakehouse_smoke(actions, frames, home_team_id, "skillcorner")
+
+
+# ---------------------------------------------------------------------------
+# PR-S30 backfill — defensive_line + ball_carrier e2e smoke (PR-S27/S28
+# features that use game_id groupby but shipped without e2e coverage)
+# ---------------------------------------------------------------------------
+
+
+def _defensive_line_pipeline_smoke(
+    actions: pd.DataFrame, frames: pd.DataFrame, home_team_id: object, provider: str
+) -> None:
+    """Run add_defensive_line and assert >=1 non-NaN value per provider."""
+    from silly_kicks.tracking import play_left_to_right
+    from silly_kicks.tracking.features import add_defensive_line
+
+    frames = play_left_to_right(frames, home_team_id=home_team_id)
+    result = add_defensive_line(actions, frames, home_team_id=home_team_id)
+    n_valid = result["defensive_line_x"].notna().sum()
+    assert n_valid >= 1, f"{provider}: add_defensive_line emitted 0 non-NaN values on {len(actions)} actions"
+    print(f"\n[defensive-line-smoke:{provider}] n_valid={n_valid}")
+
+
+def _ball_carrier_pipeline_smoke(actions: pd.DataFrame, frames: pd.DataFrame, provider: str) -> None:
+    """Run ball_carrier_at_action and assert structural properties."""
+    from silly_kicks.tracking.features import ball_carrier_at_action
+
+    result = ball_carrier_at_action(actions, frames)
+    assert len(result) == len(actions)
+    n_valid = result.notna().sum()
+    print(f"\n[ball-carrier-smoke:{provider}] n_valid={n_valid}/{len(result)}")
+
+
+@pytest.mark.e2e
+def test_pff_defensive_line_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+    pff_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff" / "medium_halftime.parquet"
+    if not pff_fixture.exists():
+        pytest.skip(f"{pff_fixture} missing.")
+    frames = load_provider_frames("pff")
+    actions = synthesize_actions(frames)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    _defensive_line_pipeline_smoke(actions, frames, team_counts.index[0], "pff")
+
+
+@pytest.mark.e2e
+def test_idsse_defensive_line_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+    slim = SLIM_DIR / "sportec_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("sportec")
+    actions = synthesize_actions(frames)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    _defensive_line_pipeline_smoke(actions, frames, team_counts.index[0], "sportec")
+
+
+@pytest.mark.e2e
+def test_metrica_defensive_line_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+    slim = SLIM_DIR / "metrica_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("metrica")
+    actions = synthesize_actions(frames)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    _defensive_line_pipeline_smoke(actions, frames, team_counts.index[0], "metrica")
+
+
+@pytest.mark.e2e
+def test_skillcorner_defensive_line_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+    slim = SLIM_DIR / "skillcorner_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("skillcorner")
+    actions = synthesize_actions(frames)
+    team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
+    _defensive_line_pipeline_smoke(actions, frames, team_counts.index[0], "skillcorner")
+
+
+@pytest.mark.e2e
+def test_pff_ball_carrier_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+    pff_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff" / "medium_halftime.parquet"
+    if not pff_fixture.exists():
+        pytest.skip(f"{pff_fixture} missing.")
+    frames = load_provider_frames("pff")
+    actions = synthesize_actions(frames)
+    _ball_carrier_pipeline_smoke(actions, frames, "pff")
+
+
+@pytest.mark.e2e
+def test_idsse_ball_carrier_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+    slim = SLIM_DIR / "sportec_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("sportec")
+    actions = synthesize_actions(frames)
+    _ball_carrier_pipeline_smoke(actions, frames, "sportec")
+
+
+@pytest.mark.e2e
+def test_metrica_ball_carrier_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+    slim = SLIM_DIR / "metrica_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("metrica")
+    actions = synthesize_actions(frames)
+    _ball_carrier_pipeline_smoke(actions, frames, "metrica")
+
+
+@pytest.mark.e2e
+def test_skillcorner_ball_carrier_pipeline_smoke() -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+    slim = SLIM_DIR / "skillcorner_slim.parquet"
+    if not slim.exists():
+        pytest.skip(f"{slim} missing.")
+    frames = load_provider_frames("skillcorner")
+    actions = synthesize_actions(frames)
+    _ball_carrier_pipeline_smoke(actions, frames, "skillcorner")

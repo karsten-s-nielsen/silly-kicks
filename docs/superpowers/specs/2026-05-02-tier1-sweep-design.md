@@ -369,7 +369,7 @@ def add_pre_shot_gk_angle(
   "_provenance": {
     "generated_by": "scripts/probe_preprocess_baseline.py",
     "generated_at": "2026-05-XX",  // filled at probe-run time
-    "silly_kicks_version": "3.1.0-dev",
+    "silly_kicks_version": "3.1.0",
     "providers_probed": ["sportec", "pff", "metrica", "skillcorner"]
   },
   "sportec": {
