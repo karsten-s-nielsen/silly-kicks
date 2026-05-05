@@ -23,49 +23,13 @@ MIT license with full attribution preserved.
   gateway for raw-provider-data consumers (StatsBomb, Sportec, Metrica)
 - **Tracking** -- 20-column long-form per-frame schema parallel to SPADL, with
   native adapters for Sportec / IDSSE Bundesliga and PFF FC plus a kloppy
-  gateway for Metrica + SkillCorner. Linkage primitive
-  (``link_actions_to_frames`` + ``slice_around_event``) joins SPADL actions to
-  tracking frames (ADR-004). The action-context tracking-aware feature set
-  ships in ``silly_kicks.tracking.features`` (PR-S20, ADR-005): four features
-  (``nearest_defender_distance``, ``actor_speed``, ``receiver_zone_density``,
-  ``defenders_in_triangle_to_goal``) plus aggregator ``add_action_context``
-  and ``tracking_default_xfns`` for HybridVAEP integration. Pre-shot
-  goalkeeper position (PR-S21): four GK features
-  (``pre_shot_gk_x``, ``pre_shot_gk_y``, ``pre_shot_gk_distance_to_goal``,
-  ``pre_shot_gk_distance_to_shot``) plus aggregator
-  ``add_pre_shot_gk_position`` and ``pre_shot_gk_default_xfns``. Pre-shot
-  goalkeeper geometry (PR-S24): two signed-angle features
-  (``pre_shot_gk_angle_to_shot_trajectory``,
-  ``pre_shot_gk_angle_off_goal_line``) plus aggregator
-  ``add_pre_shot_gk_angle``, ``pre_shot_gk_angle_default_xfns``, and union
-  list ``pre_shot_gk_full_default_xfns``. Events-side
-  ``add_pre_shot_gk_context`` gains an optional ``frames=`` kwarg that emits
-  six GK columns inline (4 PR-S21 positions + 2 PR-S24 angles). Per-action
-  sync-quality (TF-6, PR-S24): ``sync_score`` / ``add_sync_score`` /
-  ``LinkReport.sync_scores()`` return three aggregations
-  (``sync_score_min`` / ``_mean`` / ``_high_quality_frac``). Frame
-  preprocessing (PR-S24, ``silly_kicks.tracking.preprocess``):
-  ``smooth_frames`` (Savitzky-Golay or EMA), ``interpolate_frames`` (linear
-  gap-fill), ``derive_velocities`` (vx/vy/speed via SG-derivative), shared
-  ``PreprocessConfig`` dataclass with per-provider defaults from a
-  codegen-from-JSON pipeline. Tracking converters take an optional
-  ``preprocess: PreprocessConfig | None = None`` kwarg with auto-promotion
-  to per-provider defaults. Pre-action movement (TF-3, PR-S25): two
-  features (``actor_arc_length_pre_window``, ``actor_displacement_pre_window``)
-  plus ``add_actor_pre_window`` aggregator and
-  ``actor_pre_window_default_xfns`` (default xfn list ships arc-length only).
-  Multi-flavor pressure on actor (TF-2, PR-S25):
-  ``pressure_on_actor(method=...)`` with three published methodologies
-  (``andrienko_oval`` -- Andrienko et al. 2017 directional oval (default);
-  ``link_zones`` -- Link et al. 2016 piecewise zones; ``bekkers_pi`` --
-  Bekkers 2024 Pressing Intensity, BSD-3-Clause UnravelSports port) plus
-  per-method frozen parameter dataclasses
-  (``AndrienkoParams`` / ``LinkParams`` / ``BekkersParams``) in
-  ``silly_kicks.tracking.pressure``, ``add_pressure_on_actor`` umbrella, and
-  ``pressure_default_xfns`` (default xfn list ships exactly one
-  flavor per ADR-005 §8 multi-flavor xfn column-naming convention; column
-  pattern ``pressure_on_actor__<method>``). Atomic-SPADL parity in
-  ``silly_kicks.atomic.tracking.features``.
+  gateway for Metrica + SkillCorner. Key capabilities: action-to-frame linkage,
+  frame preprocessing (smoothing, interpolation, velocities), GK identification,
+  defensive-line geometry, ball-carrier inference, and 20+ tracking-aware
+  action-context features for HybridVAEP integration including pressure
+  (three published methods), pre-shot GK position/angles, and pre-action
+  movement. Full feature inventory in the
+  [CHANGELOG](CHANGELOG.md).
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions
 - **Atomic SPADL** -- continuous (non-discretized) action representation
