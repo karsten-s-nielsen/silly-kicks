@@ -5,6 +5,33 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] — 2026-05-05
+
+### Added
+
+#### TF-7: Pitch control models (Spearman / Fernandez-Bornn / Voronoi)
+
+- `silly_kicks.tracking.pitch_control` subpackage — three-flavor spatial control computation
+- `compute_pitch_control(frame, attacking_team_id, *, method, params, decompose, ball_position)` → `PitchControlSurface`
+- `compute_pitch_control_at_points(frame, targets, attacking_team_id, *, method, params, ball_position)` → `np.ndarray`
+- `PitchControlSurface` frozen dataclass with `at_point`, `at_points`, `control_in_region`, `player_share`, `player_surface`, `to_xarray` methods
+- `SpearmanParams` / `FernandezBornnParams` / `VoronoiParams` frozen parameter dataclasses
+- Optional numba acceleration via `_numba_kernels.py` (`@njit(cache=True)` mirrors of numpy kernels; 5-10x speedup)
+- `pitch_control_at_action(actions, frames, *, method)` — action-coupled VAEP integration (NaN-safe, introspection-mode compatible)
+- `add_pitch_control(actions, frames, *, method)` — enrichment aggregator
+- `pitch_control_xfns(method)` / `pitch_control_default_xfns` — VAEP factory + default list
+- Atomic-SPADL mirrors: `atomic.tracking.features.pitch_control_at_action`, `add_pitch_control`, `atomic_pitch_control_xfns`
+
+#### Academic references (NOTICE)
+
+- Spearman et al. 2017 (kinematic TTI pitch control)
+- Fernandez & Bornn 2018 (bivariate-normal pitch control)
+- Shaw & Sudarshan 2020 (ball-travel-time filter)
+
+#### Architecture
+
+- ADR-008: Pitch Control Subpackage Architecture
+
 ## [3.6.0] — 2026-05-05
 
 ### Added

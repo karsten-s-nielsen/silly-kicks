@@ -2,13 +2,13 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-05-05. **Current release**: silly-kicks 3.6.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-05-05. **Current release**: silly-kicks 3.7.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
 ## On Deck
 
-Items are ranked top-to-bottom by specification completeness. Tier 2 is spec-complete and ready to implement directly; Tier 3–4 require empirical tuning or are heavier engineering; Tier 5–6 contain novel research components and have dependency cliffs (everything in Tier 5+ is blocked by TF-7 pitch control). Within each tier, items are ordered by additional implementation effort needed.
+Items are ranked top-to-bottom by specification completeness. Tier 2 is spec-complete and ready to implement directly; Tier 3–4 require empirical tuning or are heavier engineering; Tier 5–6 contain novel research components (TF-7 pitch control now shipped in 3.7.0). Within each tier, items are ordered by additional implementation effort needed.
 
 | Size | What it means |
 |------|---------------|
@@ -29,13 +29,7 @@ Items are ranked top-to-bottom by specification completeness. Tier 2 is spec-com
 | TF-24 | `LinkParams.k3` + TF-5 `(tolerance_m, beta)` Optuna calibration | Wicked | Lakehouse session 2026-05-03 (k3 calibration tooling discussion); TF-5 spec (2026-05-05) | **Post-release calibration.** Optimize `LinkParams.k3` (and optionally the joint 6-scalar Link parameter set: r_hoz/r_lz/r_hz + angle_hoz_lz_deg / angle_lz_hz_deg + k3) **plus TF-5's `infer_ball_carrier` parameters (`tolerance_m`, `beta`, `gamma`)** via Optuna TPE sweep, 50-100 trials, single CPU node. Link params objective: VAEP held-out Brier-score (or per-action calibration NLL) against held-out VAEP fold from lakehouse `bronze.model_validation_runs`. TF-5 params objective: carrier-accuracy `(inferred_carrier == action.player_id).mean()` at linked-event timestamps — thousands of labels per match across Sportec/Metrica/PFF. Update `LinkParams` defaults; update `infer_ball_carrier` defaults; update spec notes from "engineering choice" / "reasonable starting point" to "Optuna-calibrated against `<fold_name>` on `<date>`". Same script reusable for k1..k5 if scope expands. Also calibrate TF-4's off-ball-runs parameters (`pre_seconds`, `min_displacement_m`). **Wrong tool: lakehouse `evolve` framework** — single-scalar Bayesian optimization is Optuna-shaped, not evolve-shaped. Pre-release optimization avoided to (a) prevent circular validation against the training fold, (b) match the Link 2016 paper's own "formula + later empirical calibration" sequencing. ~1-2 days. |
 | TF-25 | Structural-form evolution of pressure aggregations | Wicked–Monstah | Lakehouse session 2026-05-03 (k3 calibration tooling discussion); lakehouse `evolve` framework | **Lakehouse-evolve-shaped follow-up to TF-24.** Use lakehouse evolve framework to evolve the aggregation function FORM (not just k3 scalar). Three concrete targets: (1) per-provider saturation forms — different sample rates, position-noise characteristics, and field-coverage assumptions across Sportec/StatsBomb 360/Metrica/Wyscout may demand different aggregations; (2) continuous `r_zo(α)` as alternative to three-zone bucketing; (3) non-linear distance-pressure curves beyond `1 - d/r_zo` (quadratic, sigmoid, learned-curve). **Trigger condition:** only fire if TF-24's Optuna sweep shows k3 itself moves meaningfully across providers — that's the signal that the FORM, not just the scalar, is provider-dependent. Without that signal, this is over-engineering. ~1-2 cycles + L40S budget for eval loop. |
 
-### Tier 4 — Multi-paper synthesis (specified but heavier)
-
-| # | Task | Size | Source | Notes |
-|---|------|------|--------|-------|
-| TF-7 | Pitch-control models (Spearman / Voronoi) | Monstah | Spearman 2018; Fernández & Bornn 2018; Spearman et al. 2017; ADR-004 #5 | **Foundational dependency for the entire GKDV research program (TF-15..TF-19) — every Layer-1 primitive consumes raw and threat-weighted pitch-control fields.** Three published implementations; numba acceleration, broadcast-tracking edge cases, validation harness. Own scoping cycle. **References:** Spearman, W., Basye, A., Dick, G., Hotovy, R., & Pop, P. (2017), "Physics-Based Modeling of Pass Probabilities in Soccer." MIT Sloan SAC. Spearman, W. (2018), "Beyond Expected Goals." MIT Sloan SAC. Fernández, J., & Bornn, L. (2018), "Wide Open Spaces: A statistical technique for measuring space creation in professional soccer." MIT Sloan SAC. |
-
-### Tier 5 — Novel research with published anchor (lift + extend; blocked by TF-7)
+### Tier 5 — Novel research with published anchor (lift + extend)
 
 | # | Task | Size | Source | Notes |
 |---|------|------|--------|-------|

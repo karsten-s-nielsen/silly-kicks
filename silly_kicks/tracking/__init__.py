@@ -9,6 +9,9 @@ primitives. PR-S21 (silly-kicks 2.9.0) shipped pre_shot_gk_position_*. PR-S24
 interpolation, TF-12 pre_shot_gk_angle_* + the shared `preprocess` module.
 PR-S27 ships TF-13 defending_gk_from_frames + TF-14 compute_defensive_line +
 6 per-Series action-coupled features + add_defensive_line + defensive_line_xfns.
+PR-S31 ships TF-7 pitch_control subpackage (Spearman/Fernandez-Bornn/Voronoi) +
+action-coupled VAEP integration (pitch_control_at_action + add_pitch_control +
+pitch_control_xfns factory).
 """
 
 __all__ = [
@@ -19,15 +22,20 @@ __all__ = [
     "TRACKING_CONSTRAINTS",
     "TRACKING_FRAMES_COLUMNS",
     "ActionFrameContext",
+    "FernandezBornnParams",
     "LinkReport",
+    "PitchControlSurface",
     "PreprocessConfig",
+    "SpearmanParams",
     "TrackingConversionReport",
+    "VoronoiParams",
     "actor_speed",
     "add_action_context",
     "add_defensive_line",
     "add_line_break",
     "add_off_ball_context",
     "add_off_ball_runs",
+    "add_pitch_control",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_sync_score",
@@ -36,6 +44,8 @@ __all__ = [
     "ball_carrier_at_action",
     "compactness_x",
     "compute_defensive_line",
+    "compute_pitch_control",
+    "compute_pitch_control_at_points",
     "defenders_in_triangle_to_goal",
     "defending_gk_from_frames",
     "defensive_line_x",
@@ -54,6 +64,10 @@ __all__ = [
     "nearest_defender_distance",
     "off_ball_context_xfns",
     "pff",
+    "pitch_control",
+    "pitch_control_at_action",
+    "pitch_control_default_xfns",
+    "pitch_control_xfns",
     "play_left_to_right",
     "pre_shot_gk_angle_default_xfns",
     "pre_shot_gk_angle_off_goal_line",
@@ -71,7 +85,7 @@ __all__ = [
     "utils",
 ]
 
-from . import feature_framework, features, pff, preprocess, schema, sportec, utils
+from . import feature_framework, features, pff, pitch_control, preprocess, schema, sportec, utils
 from ._ball_carrier import infer_ball_carrier
 from ._defensive_line import compute_defensive_line
 from .feature_framework import ActionFrameContext, lift_to_states
@@ -82,6 +96,7 @@ from .features import (
     add_line_break,
     add_off_ball_context,
     add_off_ball_runs,
+    add_pitch_control,
     add_pre_shot_gk_angle,
     add_pre_shot_gk_position,
     back_line_high_x,
@@ -96,6 +111,9 @@ from .features import (
     max_lateral_gap,
     nearest_defender_distance,
     off_ball_context_xfns,
+    pitch_control_at_action,
+    pitch_control_default_xfns,
+    pitch_control_xfns,
     pre_shot_gk_angle_default_xfns,
     pre_shot_gk_angle_off_goal_line,
     pre_shot_gk_angle_to_shot_trajectory,
@@ -103,6 +121,14 @@ from .features import (
     pre_shot_gk_full_default_xfns,
     receiver_zone_density,
     tracking_default_xfns,
+)
+from .pitch_control import (
+    FernandezBornnParams,
+    PitchControlSurface,
+    SpearmanParams,
+    VoronoiParams,
+    compute_pitch_control,
+    compute_pitch_control_at_points,
 )
 from .preprocess import (
     PreprocessConfig,

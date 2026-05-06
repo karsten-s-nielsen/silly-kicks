@@ -18,6 +18,10 @@ Public API:
   max_lateral_gap / back_n_count (actions, frames, *, home_team_id) (PR-S27, TF-14)
 - add_defensive_line(actions, frames, *, home_team_id) -> pd.DataFrame  (PR-S27)
 - defensive_line_xfns(home_team_id) -> list                    (PR-S27)
+- pitch_control_at_action(actions, frames) -> pd.Series        (PR-S31, TF-7)
+- add_pitch_control(actions, frames) -> pd.DataFrame           (PR-S31, TF-7)
+- pitch_control_xfns(method) -> list                           (PR-S31, TF-7)
+- pitch_control_default_xfns: list[FrameAwareTransformer]      (PR-S31, TF-7)
 
 See NOTICE for full bibliographic citations and ADR-005 for the integration contract.
 Spec: docs/superpowers/specs/2026-04-30-action-context-pr1-design.md (PR-S20)
@@ -62,6 +66,7 @@ __all__ = [
     "add_line_break",
     "add_off_ball_context",
     "add_off_ball_runs",
+    "add_pitch_control",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
@@ -77,6 +82,9 @@ __all__ = [
     "max_lateral_gap",
     "nearest_defender_distance",
     "off_ball_context_xfns",
+    "pitch_control_at_action",
+    "pitch_control_default_xfns",
+    "pitch_control_xfns",
     "pre_shot_gk_angle_default_xfns",
     "pre_shot_gk_angle_off_goal_line",
     "pre_shot_gk_angle_to_shot_trajectory",
@@ -1264,3 +1272,133 @@ def off_ball_context_xfns(
     _off_ball_context_transformer._frame_aware = True  # type: ignore[attr-defined]
     _off_ball_context_transformer.__name__ = "off_ball_context"
     return [_off_ball_context_transformer]
+
+
+# ---------------------------------------------------------------------------
+# PR-S31 -- TF-7: pitch control at action
+# ---------------------------------------------------------------------------
+
+
+def pitch_control_at_action(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    *,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.Series:
+    """Pitch control value at ball position for the acting team at the linked frame.
+
+    Returns a Series named ``pitch_control_at_ball__<method>`` with one value per action
+    in [0, 1], representing the attacking team's spatial control at the ball location
+    at the moment of the action.
+
+    NaN where action couldn't link to a frame or ball position is unavailable.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import pitch_control_at_action
+    >>> pc = pitch_control_at_action(actions, frames, method="spearman")
+    """
+    import numpy as np
+
+    col_name = f"pitch_control_at_ball__{method}"
+
+    # Introspection mode: VAEP fit-time calls with frames=None
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+
+    from .pitch_control import compute_pitch_control
+
+    # Ensure velocity columns exist (fill with zero if missing)
+    if "vx" not in frames.columns or "vy" not in frames.columns:
+        frames = frames.copy()
+        if "vx" not in frames.columns:
+            frames["vx"] = 0.0
+        if "vy" not in frames.columns:
+            frames["vy"] = 0.0
+
+    pointers, _report = link_actions_to_frames(actions, frames)
+
+    results = np.full(len(actions), np.nan)
+
+    # Merge pointers with action period_id for frame lookup
+    pointer_lookup = pointers.set_index("action_id")
+
+    # Group frames by (period_id, frame_id) for efficient lookup
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    for i, (_idx, action_row) in enumerate(actions.iterrows()):
+        action_id = action_row["action_id"]
+        if action_id not in pointer_lookup.index:
+            continue
+
+        frame_id_raw = pointer_lookup.at[action_id, "frame_id"]
+        if pd.isna(frame_id_raw):
+            continue
+
+        period_id = action_row["period_id"]
+        frame_id_int = int(float(frame_id_raw))  # type: ignore[arg-type]
+
+        try:
+            frame_data = frame_groups.get_group((period_id, frame_id_int))
+        except KeyError:
+            continue
+
+        team_id = action_row["team_id"]
+
+        # Compute pitch control for this frame
+        surface = compute_pitch_control(frame_data, attacking_team_id=team_id, method=method)
+
+        # Query at action start position (proxy for ball position)
+        start_x = action_row["start_x"]
+        start_y = action_row["start_y"]
+        if np.isnan(start_x) or np.isnan(start_y):
+            continue
+
+        results[i] = surface.at_point(start_x, start_y)
+
+    return pd.Series(results, index=actions.index, name=col_name)
+
+
+@nan_safe_enrichment
+def add_pitch_control(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.DataFrame:
+    """Enrich actions with ``pitch_control_at_ball__<method>`` column.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_pitch_control
+    >>> enriched = add_pitch_control(actions, frames)
+    """
+    out = actions.copy()
+    s = pitch_control_at_action(actions, frames, method=method)
+    out[s.name] = s.values
+    return out
+
+
+def pitch_control_xfns(
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> list:
+    """Factory returning a list with one FrameAwareTransformer for pitch control.
+
+    Uses the ``<feature>__<method>`` suffix-naming convention (ADR-005 section 8).
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import pitch_control_xfns
+    >>> xfns = pitch_control_xfns("spearman")
+    """
+
+    def _pc_helper(actions, frames):
+        return pitch_control_at_action(actions, frames, method=method)
+
+    _pc_helper.__name__ = f"pitch_control_at_ball__{method}"
+    return [lift_to_states(_pc_helper)]
+
+
+pitch_control_default_xfns = pitch_control_xfns("spearman")
