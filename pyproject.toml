@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "3.6.0"
+version = "3.7.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -32,6 +32,8 @@ dependencies = [
 
 [project.optional-dependencies]
 kloppy = ["kloppy>=3.18.0"]
+numba = ["numba>=0.59.0"]
+xarray = ["xarray>=2024.1.0"]
 xgboost = ["xgboost>=2.0.0"]
 catboost = ["catboost>=1.2"]
 lightgbm = ["lightgbm>=4.0"]
@@ -54,6 +56,9 @@ test = [
     # Metrica production-shape fixtures committed under tests/datasets/{idsse,metrica}/
     # (added in 1.10.0 for the cross-provider parity regression gate).
     "pyarrow>=14.0.0",
+    # numba exercises the @njit pitch-control kernels in test_numba_parity.py.
+    # Declared here (not just optional [numba]) so CI always validates parity.
+    "numba>=0.59.0",
 ]
 dev = [
     "ruff>=0.8.0",

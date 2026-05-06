@@ -8,6 +8,8 @@ See NOTICE for full bibliographic citations and ADR-005 for the integration cont
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
@@ -26,10 +28,13 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_pitch_control",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
     "atomic_actor_pre_window_default_xfns",
+    "atomic_pitch_control_default_xfns",
+    "atomic_pitch_control_xfns",
     "atomic_pre_shot_gk_angle_default_xfns",
     "atomic_pre_shot_gk_default_xfns",
     "atomic_pre_shot_gk_full_default_xfns",
@@ -38,6 +43,7 @@ __all__ = [
     "ball_carrier_at_action",
     "defenders_in_triangle_to_goal",
     "nearest_defender_distance",
+    "pitch_control_at_action",
     "pre_shot_gk_angle_off_goal_line",
     "pre_shot_gk_angle_to_shot_trajectory",
     "pre_shot_gk_distance_to_goal",
@@ -602,3 +608,74 @@ def add_pressure_on_actor(
 
 
 atomic_pressure_default_xfns = [lift_to_states(pressure_on_actor)]
+
+
+# ---------------------------------------------------------------------------
+# PR-S31 -- TF-7: pitch control at action (atomic variant)
+# ---------------------------------------------------------------------------
+
+
+def pitch_control_at_action(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    *,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.Series:
+    """Pitch control at ball position for the acting team (atomic SPADL).
+
+    Adapts atomic column names (``x, y``) to standard (``start_x, start_y``)
+    and delegates to the standard implementation.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import pitch_control_at_action
+    >>> pc = pitch_control_at_action(actions, frames)
+    """
+    from silly_kicks.tracking.features import pitch_control_at_action as _std_pc
+
+    if frames is None:
+        return _std_pc(actions, None, method=method)
+
+    adapted = actions.rename(columns={"x": "start_x", "y": "start_y"}, errors="ignore")
+    return _std_pc(adapted, frames, method=method)
+
+
+@nan_safe_enrichment
+def add_pitch_control(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.DataFrame:
+    """Enrich atomic actions with ``pitch_control_at_ball__<method>`` column.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_pitch_control
+    >>> enriched = add_pitch_control(actions, frames)
+    """
+    out = actions.copy()
+    s = pitch_control_at_action(actions, frames, method=method)
+    out[s.name] = s.values
+    return out
+
+
+def atomic_pitch_control_xfns(
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> list:
+    """Factory returning pitch control xfn list for atomic SPADL.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import atomic_pitch_control_xfns
+    >>> xfns = atomic_pitch_control_xfns("spearman")
+    """
+
+    def _pc_helper(actions, frames):
+        return pitch_control_at_action(actions, frames, method=method)
+
+    _pc_helper.__name__ = f"pitch_control_at_ball__{method}"
+    return [lift_to_states(_pc_helper)]
+
+
+atomic_pitch_control_default_xfns = atomic_pitch_control_xfns("spearman")

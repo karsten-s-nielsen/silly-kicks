@@ -38,6 +38,12 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/atomic/vaep/labels.py",
     "silly_kicks/atomic/vaep/formula.py",
     "silly_kicks/atomic/tracking/features.py",
+    "silly_kicks/tracking/pitch_control/_params.py",
+    "silly_kicks/tracking/pitch_control/_dispatch.py",
+    "silly_kicks/tracking/pitch_control/_surface.py",
+    "silly_kicks/tracking/pitch_control/_spearman.py",
+    "silly_kicks/tracking/pitch_control/_fernandez_bornn.py",
+    "silly_kicks/tracking/pitch_control/_voronoi.py",
     "silly_kicks/vaep/features/core.py",
     "silly_kicks/vaep/features/actiontype.py",
     "silly_kicks/vaep/features/result.py",
@@ -58,6 +64,7 @@ _SKIP_SYMBOLS = frozenset(
         "ConversionReport",  # TypedDict
         "DetectionResult",  # frozen dataclass — fields are the documentation
         "InputConvention",  # str-Enum — members are the documentation
+        "PitchControlParams",  # type alias union — components have examples
     }
 )
 
