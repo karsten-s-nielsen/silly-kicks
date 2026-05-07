@@ -270,3 +270,38 @@ def _select_best(scores: np.ndarray, pids: np.ndarray) -> int:
             best_idx = i
             best_pid = pids[i]
     return int(best_idx)
+
+
+def derive_team_in_possession(
+    frames: pd.DataFrame,
+    carrier: pd.DataFrame,
+) -> pd.DataFrame:
+    """Merge ball-carrier team into tracking frames as ``team_in_possession``.
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Long-form tracking frames (TRACKING_FRAMES_COLUMNS shape).
+    carrier : pd.DataFrame
+        Output of :func:`infer_ball_carrier`: must contain ``game_id``,
+        ``period_id``, ``frame_id``, ``ball_carrier_team_id``.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of ``frames`` with an additional ``team_in_possession`` column.
+        Frames with no carrier match get ``NaN``.
+
+    Examples
+    --------
+    Typical pipeline --- infer carrier, then derive possession::
+
+        from silly_kicks.tracking import infer_ball_carrier, derive_team_in_possession
+
+        carrier = infer_ball_carrier(frames)
+        frames_with_poss = derive_team_in_possession(frames, carrier)
+    """
+    merge_cols = ["game_id", "period_id", "frame_id"]
+    carrier_slim = carrier[[*merge_cols, "ball_carrier_team_id"]].copy()
+    carrier_slim = carrier_slim.rename(columns={"ball_carrier_team_id": "team_in_possession"})
+    return frames.merge(carrier_slim, on=merge_cols, how="left")

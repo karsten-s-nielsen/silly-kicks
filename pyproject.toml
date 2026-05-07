@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "3.7.0"
+version = "3.8.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -43,6 +43,7 @@ lightgbm = ["lightgbm>=4.0"]
 # unravelsports>=1.2 itself requires Python 3.11+ -- silly-kicks targets >=3.10 so
 # the golden-master extra is only installable on the wider 3.11+ subset.
 golden-master = ["unravelsports>=1.2; python_version >= '3.11'"]
+das = ["accessible-space>=2.0,<3"]
 test = [
     "pytest>=7.4.2",
     "pytest-mock>=3.11.1",
@@ -59,6 +60,9 @@ test = [
     # numba exercises the @njit pitch-control kernels in test_numba_parity.py.
     # Declared here (not just optional [numba]) so CI always validates parity.
     "numba>=0.59.0",
+    # accessible-space exercises DAS invariants + shape-alignment tests.
+    # Declared here (not just optional [das]) so CI always validates DAS adapter.
+    "accessible-space>=2.0,<3",
 ]
 dev = [
     "ruff>=0.8.0",

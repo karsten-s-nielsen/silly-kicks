@@ -62,6 +62,7 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_das",
     "add_defensive_line",
     "add_line_break",
     "add_off_ball_context",
@@ -74,6 +75,8 @@ __all__ = [
     "back_n_count",
     "ball_carrier_at_action",
     "compactness_x",
+    "das_at_action",
+    "das_xfns",
     "defenders_in_triangle_to_goal",
     "defending_gk_from_frames",
     "defensive_line_x",
@@ -1402,3 +1405,209 @@ def pitch_control_xfns(
 
 
 pitch_control_default_xfns = pitch_control_xfns("spearman")
+
+
+# ---------------------------------------------------------------------------
+# DAS — Dangerous Accessible Space (TF-28)
+#
+# Architecture: single-pass precomputation. get_das() runs ONCE on the full
+# frames DataFrame; a (period_id, frame_id) → {team_id: DAS} lookup dict is
+# built from the result; action-coupled helpers and the VAEP transformer map
+# into this lookup. This avoids the 12n redundant get_das calls that would
+# result from 3 separate lift_to_states helpers x 3 gamestate slots.
+# ---------------------------------------------------------------------------
+
+import warnings as _warnings  # noqa: E402
+
+
+def _precompute_das_lookup(
+    frames: pd.DataFrame,
+) -> dict[tuple, dict]:
+    """Run get_das ONCE on all frames, build per-frame team-level DAS lookup.
+
+    Returns a dict mapping ``(period_id, frame_id)`` to ``{team_id: DAS_value}``.
+    """
+    from ._das import get_das
+
+    das_frames = get_das(frames, use_progress_bar=False)
+
+    player_rows = das_frames[das_frames["is_ball"] != True]  # noqa: E712
+    # Filter to rows with valid DAS — accessible-space may return NaN for some
+    # frames (e.g. insufficient players, off-pitch data). Without this filter,
+    # the lookup stores NaN, making all action-coupled results NaN.
+    valid_rows = player_rows.dropna(subset=["DAS"])
+    lookup: dict[tuple, dict] = {}
+    for (pid, fid, tid), grp in valid_rows.groupby(["period_id", "frame_id", "team_id"]):
+        # Team-level DAS is identical for all players of the same team in the
+        # same frame, so any row suffices.
+        lookup.setdefault((pid, fid), {})[tid] = float(grp["DAS"].iloc[0])
+    return lookup
+
+
+def _map_das_to_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    das_lookup: dict[tuple, dict],
+) -> pd.DataFrame:
+    """Map precomputed DAS lookup to actions. Returns 3-column DataFrame."""
+    import numpy as np
+
+    pointers, _ = link_actions_to_frames(actions, frames)
+    pointer_lookup = pointers.set_index("action_id")
+
+    team_vals = np.full(len(actions), np.nan)
+    opp_vals = np.full(len(actions), np.nan)
+
+    for i, (_idx, row) in enumerate(actions.iterrows()):
+        aid = row["action_id"]
+        if aid not in pointer_lookup.index:
+            continue
+        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        if pd.isna(fid_raw):
+            continue
+        key = (row["period_id"], int(float(fid_raw)))  # type: ignore[arg-type]
+        if key not in das_lookup:
+            continue
+
+        team_id = row["team_id"]
+        team_vals[i] = das_lookup[key].get(team_id, np.nan)
+        # Football: exactly 2 teams per frame; take the sole opponent.
+        opp = [v for k, v in das_lookup[key].items() if k != team_id]
+        if opp:
+            opp_vals[i] = opp[0]
+
+    return pd.DataFrame(
+        {
+            "das_team": team_vals,
+            "das_opponent": opp_vals,
+            "das_diff": team_vals - opp_vals,
+        },
+        index=actions.index,
+    )
+
+
+def das_at_action(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    *,
+    col_name: str = "das_team",
+) -> pd.Series:
+    """Team-level DAS at the linked frame for the acting team.
+
+    Returns a Series with one value per action. NaN where action couldn't
+    link to a frame or DAS computation failed.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import das_at_action
+    >>> das = das_at_action(actions, frames)
+    """
+    import numpy as np
+
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+
+    try:
+        lookup = _precompute_das_lookup(frames)
+    except (ValueError, RuntimeError, ImportError) as exc:
+        _warnings.warn(
+            f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all actions",
+            UserWarning,
+            stacklevel=2,
+        )
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+
+    mapped = _map_das_to_actions(actions, frames, lookup)
+    s = mapped["das_team"]
+    s.name = col_name
+    return s
+
+
+@nan_safe_enrichment
+def add_das(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+) -> pd.DataFrame:
+    """Enrich actions with ``das_team``, ``das_opponent``, ``das_diff`` columns.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_das
+    >>> enriched = add_das(actions, frames)
+    """
+    import numpy as np
+
+    out = actions.copy()
+
+    try:
+        lookup = _precompute_das_lookup(frames)
+    except (ValueError, RuntimeError, ImportError) as exc:
+        _warnings.warn(
+            f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS columns",
+            UserWarning,
+            stacklevel=2,
+        )
+        out["das_team"] = np.nan
+        out["das_opponent"] = np.nan
+        out["das_diff"] = np.nan
+        return out
+
+    mapped = _map_das_to_actions(actions, frames, lookup)
+    out["das_team"] = mapped["das_team"].values
+    out["das_opponent"] = mapped["das_opponent"].values
+    out["das_diff"] = mapped["das_diff"].values
+    return out
+
+
+def _make_das_transformer():
+    """Build a single FrameAwareTransformer that emits all 9 DAS columns.
+
+    Single-pass: calls get_das() ONCE on the full frames DataFrame, then
+    looks up per-action across all 3 gamestate slots. Returns columns:
+    das_team_a0..a2, das_opponent_a0..a2, das_diff_a0..a2.
+    """
+    import numpy as np
+
+    das_cols = ("das_team", "das_opponent", "das_diff")
+
+    def das_features(states, frames):
+        nb = min(len(states), 3)
+        out = pd.DataFrame(index=states[0].index)
+
+        # Empty frames → column-name probing (feature_column_names)
+        if len(frames) == 0:
+            for i in range(nb):
+                for col in das_cols:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        # Precompute DAS for ALL frames — single get_das call
+        try:
+            lookup = _precompute_das_lookup(frames)
+        except (ValueError, RuntimeError, ImportError) as exc:
+            _warnings.warn(
+                f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS features",
+                UserWarning,
+                stacklevel=2,
+            )
+            for i in range(nb):
+                for col in das_cols:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        # Map per gamestate slot
+        for i, slot in enumerate(states[:nb]):
+            mapped = _map_das_to_actions(slot, frames, lookup)
+            for col in das_cols:
+                out[f"{col}_a{i}"] = mapped[col].to_numpy()
+        return out
+
+    das_features._frame_aware = True  # type: ignore[attr-defined]
+    das_features.__name__ = "das_features"
+    das_features.__qualname__ = "das_features"
+    return das_features
+
+
+das_xfns = [_make_das_transformer()]

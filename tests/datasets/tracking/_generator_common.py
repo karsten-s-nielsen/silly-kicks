@@ -37,6 +37,8 @@ def deterministic_uniform_motion(
     t0: float = 0.0,
     seed: int = 42,
     *,
+    frame_id_offset: int = 0,
+    speed_native: bool = True,
     inject_realistic_edge_cases: bool = False,
     edge_case_provider: str | None = None,
 ) -> pd.DataFrame:
@@ -45,6 +47,15 @@ def deterministic_uniform_motion(
     Each player moves at a deterministic uniform speed. Per-provider
     generators wrap this with provider-native column shaping (string vs.
     int identifiers, file-format dtypes).
+
+    Parameters
+    ----------
+    frame_id_offset : int, default 0
+        Added to each frame index so multi-period fixtures can produce
+        globally unique frame_ids (as real PFF/Sportec data does).
+    speed_native : bool, default True
+        If False, ``speed_native`` is set to NaN for all rows (PFF does
+        not supply native speed).
 
     Returns a DataFrame with columns:
         period_id, frame_id, time_seconds, frame_rate,
@@ -72,7 +83,7 @@ def deterministic_uniform_motion(
                 rows.append(
                     {
                         "period_id": period_id,
-                        "frame_id": i,
+                        "frame_id": frame_id_offset + i,
                         "time_seconds": t,
                         "frame_rate": frame_rate,
                         "player_id": team_id * 100 + jersey,
@@ -83,7 +94,7 @@ def deterministic_uniform_motion(
                         "x_centered": base_x + 0.5 * np.sin(0.1 * i + jersey),
                         "y_centered": base_y + dy_drift_unit + 0.3 * np.cos(0.1 * i + jersey),
                         "z": float("nan"),
-                        "speed_native": float(rng.uniform(2.0, 6.0)),
+                        "speed_native": float(rng.uniform(2.0, 6.0)) if speed_native else float("nan"),
                         "ball_state": "alive",
                     }
                 )
@@ -92,7 +103,7 @@ def deterministic_uniform_motion(
         rows.append(
             {
                 "period_id": period_id,
-                "frame_id": i,
+                "frame_id": frame_id_offset + i,
                 "time_seconds": t,
                 "frame_rate": frame_rate,
                 "player_id": None,
@@ -103,7 +114,7 @@ def deterministic_uniform_motion(
                 "x_centered": ball_phase * 40.0,
                 "y_centered": 5.0 * np.sin(0.05 * i),
                 "z": 0.5,
-                "speed_native": 10.0,
+                "speed_native": 10.0 if speed_native else float("nan"),
                 "ball_state": "alive",
             }
         )

@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] — 2026-05-06
+
+### Added
+
+#### TF-28: DAS adapter — Dangerous Accessible Space
+
+- `silly_kicks.tracking._das` module — thin adapter over `accessible-space` PyPI package (MIT)
+- `get_das(frames)` → team-level AS/DAS per frame
+- `get_individual_das(frames)` → per-player AS/DAS per frame
+- `get_xc(passes, frames)` → expected pass completion per pass
+- `derive_team_in_possession(frames, carrier)` → general tracking helper (in `_ball_carrier.py`)
+- `das_at_action(actions, frames)` → action-coupled DAS
+- `add_das(actions, frames)` → enrichment aggregator (`das_team`, `das_opponent`, `das_diff`)
+- `das_xfns` — VAEP-compatible xfn list (single-pass precomputation, 9 columns)
+- `[das]` optional extra in pyproject.toml (`accessible-space>=2.0,<3`)
+
+#### TF-29: VAEP design-space variants — windowing + goalscore bias control
+
+- `window` parameter on `scores()` / `concedes()`: `"action"` (default), `"possession"`, `"time"`
+- `window_seconds` parameter for time-based windowing (default 15.0s)
+- `xfns_default_no_goalscore` in `vaep/base.py`
+- `hybrid_xfns_default_no_goalscore` in `vaep/hybrid.py`
+
+#### Academic references (NOTICE)
+
+- Bischofberger & Baca 2026 (Dangerous Accessible Space)
+- Cascioli, Robberechts, Van Tente & Davis 2024-2025 (DTAI VAEP design-space blog series)
+
 ## [3.7.0] — 2026-05-05
 
 ### Added
