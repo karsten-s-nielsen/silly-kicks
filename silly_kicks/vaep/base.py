@@ -43,6 +43,8 @@ xfns_default = [
     fs.goalscore,
 ]
 
+xfns_default_no_goalscore = [x for x in xfns_default if x is not fs.goalscore]
+
 
 class VAEP:
     """

@@ -48,8 +48,8 @@ def scores(actions: pd.DataFrame, nr_actions: int = 10, xg_column: str | None = 
 
     result = goal.copy()
     for i in range(1, nr_actions):
-        shifted_goal = goal.shift(-i).fillna(False)
-        shifted_owngoal = owngoal.shift(-i).fillna(False)
+        shifted_goal = goal.shift(-i, fill_value=False)
+        shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_team = team_id.shift(-i)
         same_team = team_id == shifted_team
         result = result | (shifted_goal & same_team) | (shifted_owngoal & ~same_team)
@@ -98,8 +98,8 @@ def concedes(actions: pd.DataFrame, nr_actions: int = 10, xg_column: str | None 
 
     result = owngoal.copy()
     for i in range(1, nr_actions):
-        shifted_goal = goal.shift(-i).fillna(False)
-        shifted_owngoal = owngoal.shift(-i).fillna(False)
+        shifted_goal = goal.shift(-i, fill_value=False)
+        shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_team = team_id.shift(-i)
         same_team = team_id == shifted_team
         result = result | (shifted_goal & ~same_team) | (shifted_owngoal & same_team)
@@ -116,8 +116,8 @@ def _scores_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.Dat
 
     result = pd.Series(0.0, index=actions.index)
     for i in range(1, nr_actions):
-        shifted_goal = goal.shift(-i).fillna(False)
-        shifted_owngoal = owngoal.shift(-i).fillna(False)
+        shifted_goal = goal.shift(-i, fill_value=False)
+        shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_xg = xg.shift(-i).fillna(0.0)
         shifted_team = team_id.shift(-i)
         same_team = team_id == shifted_team
@@ -136,8 +136,8 @@ def _concedes_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.D
 
     result = pd.Series(0.0, index=actions.index)
     for i in range(1, nr_actions):
-        shifted_goal = goal.shift(-i).fillna(False)
-        shifted_owngoal = owngoal.shift(-i).fillna(False)
+        shifted_goal = goal.shift(-i, fill_value=False)
+        shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_xg = xg.shift(-i).fillna(0.0)
         shifted_team = team_id.shift(-i)
         same_team = team_id == shifted_team

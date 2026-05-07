@@ -33,6 +33,8 @@ hybrid_xfns_default = [
     fs.goalscore,
 ]
 
+hybrid_xfns_default_no_goalscore = [x for x in hybrid_xfns_default if x is not fs.goalscore]
+
 
 class HybridVAEP(VAEP):
     """VAEP with result leakage removed from current-action features.

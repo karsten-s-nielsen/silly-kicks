@@ -31,6 +31,7 @@ __all__ = [
     "VoronoiParams",
     "actor_speed",
     "add_action_context",
+    "add_das",
     "add_defensive_line",
     "add_line_break",
     "add_off_ball_context",
@@ -46,14 +47,20 @@ __all__ = [
     "compute_defensive_line",
     "compute_pitch_control",
     "compute_pitch_control_at_points",
+    "das_at_action",
+    "das_xfns",
     "defenders_in_triangle_to_goal",
     "defending_gk_from_frames",
     "defensive_line_x",
     "defensive_line_xfns",
+    "derive_team_in_possession",
     "derive_velocities",
     "feature_framework",
     "features",
+    "get_das",
+    "get_individual_das",
     "get_provider_defaults",
+    "get_xc",
     "infer_ball_carrier",
     "interpolate_frames",
     "kloppy",
@@ -86,12 +93,14 @@ __all__ = [
 ]
 
 from . import feature_framework, features, pff, pitch_control, preprocess, schema, sportec, utils
-from ._ball_carrier import infer_ball_carrier
+from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
+from ._das import get_das, get_individual_das, get_xc
 from ._defensive_line import compute_defensive_line
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
     actor_speed,
     add_action_context,
+    add_das,
     add_defensive_line,
     add_line_break,
     add_off_ball_context,
@@ -103,6 +112,8 @@ from .features import (
     back_n_count,
     ball_carrier_at_action,
     compactness_x,
+    das_at_action,
+    das_xfns,
     defenders_in_triangle_to_goal,
     defending_gk_from_frames,
     defensive_line_x,

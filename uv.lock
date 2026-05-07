@@ -12,6 +12,25 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "accessible-space"
+version = "2.0.15"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/76/9e/c53e0c8a4752c1f2e5d438160396ab150af76c486091b29f26e9d9293e06/accessible_space-2.0.15.tar.gz", hash = "sha256:c93c47c53a872dc21e8fd2faa661d46ccc9837046d3e607d90c13a9203327941", size = 72538, upload-time = "2026-01-11T18:00:23.362Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/2e/8f34dbdc074323f2f9fdf8b3571b4ad2f821ae547e505ffb05bea556dab8/accessible_space-2.0.15-py3-none-any.whl", hash = "sha256:e9d92188e8c132d62d1d9d970285df2082237362085335f5a65d78c13864139d", size = 74475, upload-time = "2026-01-11T18:00:21.779Z" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2742,7 +2761,7 @@ wheels = [
 
 [[package]]
 name = "silly-kicks"
-version = "3.7.0"
+version = "3.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2758,6 +2777,9 @@ dependencies = [
 [package.optional-dependencies]
 catboost = [
     { name = "catboost" },
+]
+das = [
+    { name = "accessible-space" },
 ]
 dev = [
     { name = "pandas-stubs", version = "2.3.3.260113", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2778,6 +2800,7 @@ numba = [
     { name = "numba" },
 ]
 test = [
+    { name = "accessible-space" },
     { name = "numba" },
     { name = "pyarrow" },
     { name = "pytest" },
@@ -2797,6 +2820,8 @@ xgboost = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accessible-space", marker = "extra == 'das'", specifier = ">=2.0,<3" },
+    { name = "accessible-space", marker = "extra == 'test'", specifier = ">=2.0,<3" },
     { name = "catboost", marker = "extra == 'catboost'", specifier = ">=1.2" },
     { name = "kloppy", marker = "extra == 'kloppy'", specifier = ">=3.18.0" },
     { name = "lightgbm", marker = "extra == 'lightgbm'", specifier = ">=4.0" },
@@ -2819,7 +2844,7 @@ requires-dist = [
     { name = "xarray", marker = "extra == 'xarray'", specifier = ">=2024.1.0" },
     { name = "xgboost", marker = "extra == 'xgboost'", specifier = ">=2.0.0" },
 ]
-provides-extras = ["kloppy", "numba", "xarray", "xgboost", "catboost", "lightgbm", "golden-master", "test", "dev"]
+provides-extras = ["kloppy", "numba", "xarray", "xgboost", "catboost", "lightgbm", "golden-master", "das", "test", "dev"]
 
 [[package]]
 name = "six"
@@ -2971,6 +2996,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/12/64/da524626d3b9cc40c168a13da8335fe1c51be12c0a63685cc6db7308daae/tomli-2.4.1-cp314-cp314t-win_amd64.whl", hash = "sha256:2c1c351919aca02858f740c6d33adea0c5deea37f9ecca1cc1ef9e884a619d26", size = 121196, upload-time = "2026-03-25T20:22:01.169Z" },
     { url = "https://files.pythonhosted.org/packages/5a/cd/e80b62269fc78fc36c9af5a6b89c835baa8af28ff5ad28c7028d60860320/tomli-2.4.1-cp314-cp314t-win_arm64.whl", hash = "sha256:eab21f45c7f66c13f2a9e0e1535309cee140182a9cdae1e041d02e47291e8396", size = 100393, upload-time = "2026-03-25T20:22:02.137Z" },
     { url = "https://files.pythonhosted.org/packages/7b/61/cceae43728b7de99d9b847560c262873a1f6c98202171fd5ed62640b494b/tomli-2.4.1-py3-none-any.whl", hash = "sha256:0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe", size = 14583, upload-time = "2026-03-25T20:22:03.012Z" },
+]
+
+[[package]]
+name = "tqdm"
+version = "4.67.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
 ]
 
 [[package]]

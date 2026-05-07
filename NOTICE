@@ -177,6 +177,16 @@ implementations inspired by:
   (Inertia/hysteresis recommendation for ball-possession algorithms;
   motivates the gamma hysteresis parameter in infer_ball_carrier.)
 
+The DAS adapter (silly_kicks/tracking/_das.py) wraps the accessible-space
+package implementing: Bischofberger, J., & Baca, A. (2026). "Dangerous
+accessible space: a unified model of space and value in team sports."
+Journal of Big Data, 13, 76. Package: accessible-space on PyPI (MIT).
+
+The VAEP windowing variants (silly_kicks/vaep/labels.py) implement design
+choices from the DTAI Sports blog series: Cascioli, Robberechts, Van Tente
+& Davis (2024-2025). "Three Key Design Decisions for Possession State Value
+Models: An Experimental Analysis." Parts 1-3. KU Leuven / DTAI Sports.
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).
