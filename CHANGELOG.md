@@ -5,6 +5,16 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] — 2026-05-09
+
+### Added
+- **TF-31 Team Shape Envelope:** `compute_team_shape` per-frame primitive (7 metrics: n_outfield_players, centroid_x, centroid_y, convex_hull_area, team_length, team_width, stretch_index) + `add_team_shape` aggregator (14 action-coupled columns) + `team_shape_xfns` VAEP factory (36 columns). Ref: Clemente et al. 2013.
+- **TF-32 Ward Line-Breaking:** `detect_line_breaking` per-action Ward-clustering line-breaking detection (3 columns: line_break__ward, lines_broken__ward, line_breaking_type__ward) + `LineBreakingParams` frozen dataclass + `line_breaking_ward_xfns` VAEP factory (9 columns). Extends `add_line_break` with `method="ward"` dispatch. Ref: Karakus & Arkadas 2025.
+
+### Changed
+- `add_line_break` gains `method` kwarg (`"threshold"` default, `"ward"` new) and `params` kwarg for Ward-specific parameters. Default behavior unchanged.
+- `synthesize_actions` in test fixtures now gives pass actions a +20m forward trajectory offset (was zero-length).
+
 ## [3.8.0] — 2026-05-06
 
 ### Added
