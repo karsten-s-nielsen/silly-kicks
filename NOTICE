@@ -187,6 +187,31 @@ choices from the DTAI Sports blog series: Cascioli, Robberechts, Van Tente
 & Davis (2024-2025). "Three Key Design Decisions for Possession State Value
 Models: An Experimental Analysis." Parts 1-3. KU Leuven / DTAI Sports.
 
+The team shape envelope features in silly_kicks/tracking/_team_shape.py
+(PR-S33, TF-31) implement methodologies described in:
+
+- Clemente, F. M., Couceiro, M. S., Martins, F. M. L., & Mendes, R. (2013).
+  "Measuring Tactical Behaviour Using Technological Metrics: Case Study of a
+  Football Game." International Journal of Sports Science & Coaching, 8(4).
+  (stretch index = mean Euclidean distance from team centroid; canonical
+  per-team spatial descriptors)
+
+- Zhang, G., Kempe, M., McRobert, A., Folgado, H., & Olthof, S. B. H. (2025).
+  "Navigating team tactical analysis in football: An analytical pipeline
+  leveraging player tracking technology." International Journal of Sports
+  Science & Coaching.
+  (centroid, convex hull area, team length, team width, stretch index as
+  canonical team shape metrics)
+
+The Ward-clustering line-breaking detection in
+silly_kicks/tracking/_line_breaking.py (PR-S33, TF-32) implements the
+methodology described in:
+
+- Karakus, O., & Arkadas, H. (2025). "Through the Gaps: Uncovering Tactical
+  Line-Breaking Passes with Clustering." arXiv:2506.06666. ECML/PKDD MLSA 2025.
+  (1D Ward hierarchical clustering on x-coordinates for defensive line
+  identification; cross-product straddle test for pass-segment intersection)
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).

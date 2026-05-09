@@ -40,6 +40,7 @@ _TRACKING_NEEDS_EXTRA = {
     "add_off_ball_runs",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
+    "add_team_shape",
 }
 _TRACKING_STANDARD_SIG = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ not in _TRACKING_NEEDS_EXTRA)
 _TRACKING_EXTRA_KWARGS = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ in _TRACKING_NEEDS_EXTRA)
@@ -485,7 +486,7 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
     """Tracking helpers needing extra kwargs or columns survive NaN-laced input."""
     actions, frames = tracking_nan_laced_fixture
     name = helper.__name__
-    if name in ("add_defensive_line", "add_off_ball_runs", "add_line_break", "add_off_ball_context"):
+    if name in ("add_defensive_line", "add_off_ball_runs", "add_line_break", "add_off_ball_context", "add_team_shape"):
         out = helper(actions, frames, home_team_id=1)
     elif name == "add_pre_shot_gk_position":
         # Needs defending_gk_player_id column pre-populated

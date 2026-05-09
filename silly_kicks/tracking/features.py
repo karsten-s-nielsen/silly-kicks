@@ -31,8 +31,12 @@ Spec: docs/superpowers/specs/2026-04-30-action-context-pr1-design.md (PR-S20)
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+if TYPE_CHECKING:
+    from ._line_breaking import LineBreakingParams
+
+import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
@@ -71,6 +75,7 @@ __all__ = [
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
+    "add_team_shape",
     "back_line_high_x",
     "back_n_count",
     "ball_carrier_at_action",
@@ -82,6 +87,7 @@ __all__ = [
     "defensive_line_x",
     "defensive_line_xfns",
     "lateral_width",
+    "line_breaking_ward_xfns",
     "max_lateral_gap",
     "nearest_defender_distance",
     "off_ball_context_xfns",
@@ -100,6 +106,7 @@ __all__ = [
     "pressure_default_xfns",
     "pressure_on_actor",
     "receiver_zone_density",
+    "team_shape_xfns",
     "tracking_default_xfns",
 ]
 
@@ -1164,27 +1171,52 @@ def add_line_break(
     frames: pd.DataFrame,
     *,
     home_team_id: int | str,
+    method: Literal["threshold", "ward"] = "threshold",
     n: int = 4,
+    params: LineBreakingParams | None = None,
 ) -> pd.DataFrame:
-    """Enrich actions with 2 line-break columns.
+    """Enrich actions with line-break columns.
 
-    Provenance columns are NOT emitted by this aggregator. Use
-    ``add_defensive_line`` or ``add_action_context`` first if linkage
-    provenance is needed — they append provenance with skip-if-present guard.
+    Two methods are available:
+
+    - ``method="threshold"`` (default): Binary threshold test against the
+      defending team's ``defensive_line_x``. Returns ``line_break`` (bool)
+      and ``n_attackers_behind_line`` (Int64). Backward-compatible default.
+      ``params`` is ignored.
+    - ``method="ward"``: Ward-clustering line identification + segment
+      intersection. Returns ``line_break__ward`` (bool),
+      ``lines_broken__ward`` (Int64, 0-3), ``line_breaking_type__ward``
+      (str: "between_lines"/"around_line"/None). ``n`` is ignored.
+
+    Column sets are disjoint between methods (no collision). A consumer
+    can call both methods if they want all 5 columns (note: each call
+    performs its own ``link_actions_to_frames`` --- see §1.4 linkage
+    cost note in the spec).
 
     See NOTICE for full bibliographic citations.
 
     Examples
     --------
     >>> from silly_kicks.tracking.features import add_line_break
-    >>> # See tests/tracking/test_off_ball_runs.py for runnable examples.
+    >>> # See tests/tracking/test_line_breaking.py for runnable examples.
     """
-    from ._off_ball_runs import _line_break_kernel
+    if method == "threshold":
+        from ._off_ball_runs import _line_break_kernel
 
-    df = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n)
+        df = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n)
+        out = actions.copy()
+        out["line_break"] = df["line_break"]
+        out["n_attackers_behind_line"] = df["n_attackers_behind_line"]
+        return out
+
+    # method == "ward"
+    from ._line_breaking import detect_line_breaking
+
+    result = detect_line_breaking(actions, frames, home_team_id=home_team_id, params=params)
     out = actions.copy()
-    out["line_break"] = df["line_break"]
-    out["n_attackers_behind_line"] = df["n_attackers_behind_line"]
+    out["line_break__ward"] = result["line_break__ward"]
+    out["lines_broken__ward"] = result["lines_broken__ward"]
+    out["line_breaking_type__ward"] = result["line_breaking_type__ward"]
     return out
 
 
@@ -1275,6 +1307,303 @@ def off_ball_context_xfns(
     _off_ball_context_transformer._frame_aware = True  # type: ignore[attr-defined]
     _off_ball_context_transformer.__name__ = "off_ball_context"
     return [_off_ball_context_transformer]
+
+
+# ---------------------------------------------------------------------------
+# PR-S33 -- TF-31: team shape envelope
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_team_shape(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+) -> pd.DataFrame:
+    """Enrich actions with 14 team-shape columns (7 metrics x 2 teams).
+
+    Provenance columns (frame_id, time_offset_seconds, link_quality_score,
+    n_candidate_frames) are skipped if they already exist on the input.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_team_shape
+    >>> # See tests/tracking/test_team_shape.py for runnable examples.
+    """
+    from ._team_shape import compute_team_shape
+
+    out = actions.copy()
+
+    # Compute shape for both teams (ONCE each)
+    teams = frames[~frames["is_ball"].astype(bool)]["team_id"].dropna().unique()
+    if len(teams) < 2:
+        # Can't determine attacking/defending split — fill NaN
+        for suffix in ("attacking", "defending"):
+            for metric in (
+                "n_outfield_players",
+                "centroid_x",
+                "centroid_y",
+                "convex_hull_area",
+                "team_length",
+                "team_width",
+                "stretch_index",
+            ):
+                out[f"team_shape_{metric}_{suffix}"] = np.nan
+        return out
+
+    # Pre-compute and index shape by (game_id, period_id, frame_id) for O(1) lookup
+    shape_indexed: dict = {}
+    for tid in teams:
+        s = compute_team_shape(frames, team_id=tid)
+        shape_indexed[tid] = s.set_index(["game_id", "period_id", "frame_id"])
+
+    # Link actions to frames
+    pointers, _report = link_actions_to_frames(actions, frames)
+    linked = pointers[pointers["frame_id"].notna()].copy()
+
+    metrics = [
+        "n_outfield_players",
+        "centroid_x",
+        "centroid_y",
+        "convex_hull_area",
+        "team_length",
+        "team_width",
+        "stretch_index",
+    ]
+
+    # Initialize output columns to NaN
+    for suffix in ("attacking", "defending"):
+        for metric in metrics:
+            out[f"team_shape_{metric}_{suffix}"] = np.nan
+
+    if linked.empty:
+        return out
+
+    linked["frame_id_int"] = linked["frame_id"].astype("int64")
+    linked = linked.merge(
+        actions[["action_id", "team_id", "period_id", "game_id"]],
+        on="action_id",
+        how="left",
+    )
+
+    aid_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
+
+    for _, row in linked.iterrows():
+        aid = row["action_id"]
+        if aid not in aid_to_idx.index:
+            continue
+        idx = aid_to_idx.loc[aid]
+        action_team = row["team_id"]
+        if pd.isna(action_team):
+            continue
+        key = (row["game_id"], row["period_id"], int(row["frame_id_int"]))
+
+        for tid, sdf in shape_indexed.items():
+            if key not in sdf.index:
+                continue
+            shape_row = sdf.loc[key]
+            suffix = "attacking" if tid == action_team else "defending"
+            for metric in metrics:
+                out.at[idx, f"team_shape_{metric}_{suffix}"] = shape_row[metric]
+
+    # Provenance: skip if already present
+    provenance_cols = [
+        "frame_id",
+        "time_offset_seconds",
+        "n_candidate_frames",
+        "link_quality_score",
+    ]
+    existing_provenance = [c for c in provenance_cols if c in out.columns]
+    if not existing_provenance:
+        pointer_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def team_shape_xfns(home_team_id: int | str) -> list:
+    """Build VAEP xfn list for TF-31 team shape features.
+
+    Returns a list with ONE FrameAwareTransformer that emits 12 features x 3
+    game-states = 36 columns total. ``n_outfield_players`` is excluded (data-quality
+    indicator, not a tactical feature).
+
+    Examples
+    --------
+    Compose into HybridVAEP::
+
+        from silly_kicks.tracking.features import tracking_default_xfns, team_shape_xfns
+        xfns = tracking_default_xfns + team_shape_xfns("team_A")
+        X = compute_features(actions, xfns=xfns, frames=frames)
+    """
+    from ._team_shape import compute_team_shape
+
+    vaep_metrics = [
+        "centroid_x",
+        "centroid_y",
+        "convex_hull_area",
+        "team_length",
+        "team_width",
+        "stretch_index",
+    ]
+
+    col_names = []
+    for metric in vaep_metrics:
+        for suffix in ("attacking", "defending"):
+            col_names.append(f"team_shape_{metric}_{suffix}")
+
+    def _team_shape_transformer(states, frames):
+        """Multi-column team-shape xfn (12 cols x nb_states)."""
+        out = pd.DataFrame(index=states[0].index)
+        if frames is None:
+            for i in range(3):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        teams = frames[~frames["is_ball"].astype(bool)]["team_id"].dropna().unique()
+        shape_indexed = {}
+        for tid in teams:
+            s = compute_team_shape(frames, team_id=tid)
+            shape_indexed[tid] = s.set_index(["game_id", "period_id", "frame_id"])
+
+        for i, slot in enumerate(states[:3]):
+            slot_result = _team_shape_at_actions(slot, frames, home_team_id, shape_indexed)
+            for col in col_names:
+                out[f"{col}_a{i}"] = slot_result[col].to_numpy()
+        return out
+
+    _team_shape_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _team_shape_transformer.__name__ = "team_shape"
+    return [_team_shape_transformer]
+
+
+def _team_shape_at_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    home_team_id: int | str,
+    shape_indexed: dict,
+) -> pd.DataFrame:
+    """Join pre-indexed team shape to actions. Internal helper for xfn.
+
+    ``shape_indexed`` is a dict of {team_id: DataFrame} where each DataFrame
+    is indexed by (game_id, period_id, frame_id) for O(1) lookup.
+    """
+    vaep_metrics = [
+        "centroid_x",
+        "centroid_y",
+        "convex_hull_area",
+        "team_length",
+        "team_width",
+        "stretch_index",
+    ]
+    col_names = []
+    for metric in vaep_metrics:
+        for suffix in ("attacking", "defending"):
+            col_names.append(f"team_shape_{metric}_{suffix}")
+
+    n = len(actions)
+    empty = pd.DataFrame({col: np.full(n, np.nan) for col in col_names}, index=actions.index)
+
+    if n == 0 or len(frames) == 0:
+        return empty
+
+    actions_with_idx = actions.copy()
+    actions_with_idx["_row_idx"] = np.arange(n)
+    pointers, _report = link_actions_to_frames(actions_with_idx, frames)
+    linked = pointers[pointers["frame_id"].notna()].copy()
+    if linked.empty:
+        return empty
+
+    linked["frame_id_int"] = linked["frame_id"].astype("int64")
+    linked = linked.merge(
+        actions_with_idx[["action_id", "_row_idx", "team_id", "period_id", "game_id"]],
+        on="action_id",
+        how="left",
+    )
+    linked = linked.drop_duplicates("_row_idx", keep="first")
+
+    out = empty.copy()
+
+    for _, row in linked.iterrows():
+        pos = int(row["_row_idx"])
+        idx = actions.index[pos]
+        action_team = row["team_id"]
+        if pd.isna(action_team):
+            continue
+        key = (row["game_id"], row["period_id"], int(row["frame_id_int"]))
+
+        for tid, sdf in shape_indexed.items():
+            if key not in sdf.index:
+                continue
+            shape_row = sdf.loc[key]
+            suffix = "attacking" if tid == action_team else "defending"
+            for metric in vaep_metrics:
+                out.at[idx, f"team_shape_{metric}_{suffix}"] = shape_row[metric]
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# PR-S33 -- TF-32: Ward line-breaking xfns
+# ---------------------------------------------------------------------------
+
+
+def line_breaking_ward_xfns(home_team_id: int | str) -> list:
+    """Build VAEP xfn list for TF-32 Ward line-breaking features.
+
+    Returns a list with ONE FrameAwareTransformer that emits 3 features x 3
+    game-states = 9 columns total. ``line_break__ward`` is excluded (redundant
+    with ``lines_broken__ward > 0``; VAEP should not waste a parameter on a
+    linearly dependent feature).
+
+    The ``line_breaking_type__ward`` categorical is one-hot encoded:
+    ``line_breaking_type__ward_between_lines`` and ``line_breaking_type__ward_around_line``.
+
+    Examples
+    --------
+    Compose into HybridVAEP::
+
+        from silly_kicks.tracking.features import (
+            tracking_default_xfns,
+            line_breaking_ward_xfns,
+        )
+        xfns = tracking_default_xfns + line_breaking_ward_xfns("team_A")
+        X = compute_features(actions, xfns=xfns, frames=frames)
+    """
+    from ._line_breaking import detect_line_breaking
+
+    col_names = [
+        "lines_broken__ward",
+        "line_breaking_type__ward_between_lines",
+        "line_breaking_type__ward_around_line",
+    ]
+
+    def _line_breaking_ward_transformer(states, frames):
+        """Multi-column Ward line-breaking xfn (3 cols x nb_states)."""
+        out = pd.DataFrame(index=states[0].index)
+        if frames is None:
+            for i in range(3):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        for i, slot in enumerate(states[:3]):
+            lb = detect_line_breaking(slot, frames, home_team_id=home_team_id)
+            out[f"lines_broken__ward_a{i}"] = lb["lines_broken__ward"].to_numpy()
+            out[f"line_breaking_type__ward_between_lines_a{i}"] = (
+                lb["line_breaking_type__ward"] == "between_lines"
+            ).to_numpy()
+            out[f"line_breaking_type__ward_around_line_a{i}"] = (
+                lb["line_breaking_type__ward"] == "around_line"
+            ).to_numpy()
+        return out
+
+    _line_breaking_ward_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _line_breaking_ward_transformer.__name__ = "line_breaking_ward"
+    return [_line_breaking_ward_transformer]
 
 
 # ---------------------------------------------------------------------------

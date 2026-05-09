@@ -11,7 +11,10 @@ PR-S27 ships TF-13 defending_gk_from_frames + TF-14 compute_defensive_line +
 6 per-Series action-coupled features + add_defensive_line + defensive_line_xfns.
 PR-S31 ships TF-7 pitch_control subpackage (Spearman/Fernandez-Bornn/Voronoi) +
 action-coupled VAEP integration (pitch_control_at_action + add_pitch_control +
-pitch_control_xfns factory).
+pitch_control_xfns factory). PR-S33 ships TF-31 team shape envelope
+(compute_team_shape + add_team_shape + team_shape_xfns) + TF-32 Ward-clustering
+line-breaking (detect_line_breaking + add_line_break method="ward" dispatch +
+line_breaking_ward_xfns).
 """
 
 __all__ = [
@@ -23,6 +26,7 @@ __all__ = [
     "TRACKING_FRAMES_COLUMNS",
     "ActionFrameContext",
     "FernandezBornnParams",
+    "LineBreakingParams",
     "LinkReport",
     "PitchControlSurface",
     "PreprocessConfig",
@@ -40,6 +44,7 @@ __all__ = [
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_sync_score",
+    "add_team_shape",
     "back_line_high_x",
     "back_n_count",
     "ball_carrier_at_action",
@@ -47,6 +52,7 @@ __all__ = [
     "compute_defensive_line",
     "compute_pitch_control",
     "compute_pitch_control_at_points",
+    "compute_team_shape",
     "das_at_action",
     "das_xfns",
     "defenders_in_triangle_to_goal",
@@ -55,6 +61,7 @@ __all__ = [
     "defensive_line_xfns",
     "derive_team_in_possession",
     "derive_velocities",
+    "detect_line_breaking",
     "feature_framework",
     "features",
     "get_das",
@@ -66,6 +73,7 @@ __all__ = [
     "kloppy",
     "lateral_width",
     "lift_to_states",
+    "line_breaking_ward_xfns",
     "link_actions_to_frames",
     "max_lateral_gap",
     "nearest_defender_distance",
@@ -88,6 +96,7 @@ __all__ = [
     "smooth_frames",
     "sportec",
     "sync_score",
+    "team_shape_xfns",
     "tracking_default_xfns",
     "utils",
 ]
@@ -96,6 +105,8 @@ from . import feature_framework, features, pff, pitch_control, preprocess, schem
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
 from ._das import get_das, get_individual_das, get_xc
 from ._defensive_line import compute_defensive_line
+from ._line_breaking import LineBreakingParams, detect_line_breaking
+from ._team_shape import compute_team_shape
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
     actor_speed,
@@ -108,6 +119,7 @@ from .features import (
     add_pitch_control,
     add_pre_shot_gk_angle,
     add_pre_shot_gk_position,
+    add_team_shape,
     back_line_high_x,
     back_n_count,
     ball_carrier_at_action,
@@ -119,6 +131,7 @@ from .features import (
     defensive_line_x,
     defensive_line_xfns,
     lateral_width,
+    line_breaking_ward_xfns,
     max_lateral_gap,
     nearest_defender_distance,
     off_ball_context_xfns,
@@ -131,6 +144,7 @@ from .features import (
     pre_shot_gk_default_xfns,
     pre_shot_gk_full_default_xfns,
     receiver_zone_density,
+    team_shape_xfns,
     tracking_default_xfns,
 )
 from .pitch_control import (

@@ -177,12 +177,12 @@ def synthesize_actions(frames: pd.DataFrame, n_actions: int = N_ACTIONS_PER_PROV
                 float(last_frame["y"]),
             ],
             "end_x": [
-                *pass_rows["x"].to_numpy(),
+                *(pass_rows["x"].to_numpy() + 20.0),
                 float(gk_row["x"]),
                 float(last_frame["x"]),
             ],
             "end_y": [
-                *pass_rows["y"].to_numpy(),
+                *(pass_rows["y"].to_numpy() + 3.0),
                 float(gk_row["y"]),
                 float(last_frame["y"]),
             ],
