@@ -22,6 +22,7 @@ from ._params import (
     VoronoiParams,
     validate_params_for_method,
 )
+from ._spearman import compute_tti
 from ._surface import PitchControlSurface
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "VoronoiParams",
     "compute_pitch_control",
     "compute_pitch_control_at_points",
+    "compute_tti",
     "validate_params_for_method",
 ]

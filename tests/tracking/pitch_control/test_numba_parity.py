@@ -12,7 +12,7 @@ from silly_kicks.tracking.pitch_control._numba_kernels import (
     influence_numba,
     tti_numba,
 )
-from silly_kicks.tracking.pitch_control._spearman import _compute_influence, _compute_tti
+from silly_kicks.tracking.pitch_control._spearman import _compute_influence, compute_tti
 
 
 class TestTTIParity:
@@ -26,7 +26,7 @@ class TestTTIParity:
                 np.tile(np.linspace(0, 68, 32), 50),
             ]
         )
-        numpy_out = _compute_tti(pos, vel, targets, 0.7, 7.0)
+        numpy_out = compute_tti(pos, vel, targets, 0.7, 7.0)
         numba_out = tti_numba(pos, vel, targets, 0.7, 7.0)
         np.testing.assert_allclose(numpy_out, numba_out, rtol=1e-12)
 

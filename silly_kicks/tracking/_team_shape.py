@@ -45,8 +45,10 @@ def compute_team_shape(
     -------
     pd.DataFrame
         One row per (game_id, period_id, frame_id) where the team has at
-        least one visible outfield player. Columns: game_id, period_id,
-        frame_id, team_id, n_outfield_players, centroid_x, centroid_y,
+        least one visible outfield player. Frames with zero visible
+        outfield players are omitted from output (consumers should LEFT
+        JOIN and fill NaN). Columns: game_id, period_id, frame_id,
+        team_id, n_outfield_players, centroid_x, centroid_y,
         convex_hull_area, team_length, team_width, stretch_index.
 
     Examples

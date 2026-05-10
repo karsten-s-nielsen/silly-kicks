@@ -1,7 +1,7 @@
 """Spearman 2017 kinematic pitch control — ratio approximation.
 
 Three-stage pipeline:
-  1. _compute_tti() — acceleration-based time-to-intercept
+  1. compute_tti() — acceleration-based time-to-intercept
   2. _compute_influence() — per-player logistic sigmoid
   3. compute_spearman() — GK weighting + ratio aggregation
 
@@ -25,7 +25,7 @@ except ImportError:
     _HAS_NUMBA = False
 
 
-def _compute_tti(
+def compute_tti(
     pos: np.ndarray,
     vel: np.ndarray,
     targets: np.ndarray,
@@ -51,7 +51,7 @@ def _compute_tti(
     >>> pos = np.array([[0.0, 0.0]])
     >>> vel = np.array([[3.0, 0.0]])
     >>> target = np.array([[10.0, 0.0]])
-    >>> _compute_tti(pos, vel, target, 0.7, 7.0)
+    >>> compute_tti(pos, vel, target, 0.7, 7.0)
     array([[...]])
     """
     if _HAS_NUMBA:
@@ -175,7 +175,7 @@ def compute_spearman(
     player_ids_arr = players["player_id"].to_numpy()
 
     # Stage 1: Compute TTI for all players to all targets
-    tti_all = _compute_tti(pos, vel, targets, params.reaction_time, params.max_acceleration)
+    tti_all = compute_tti(pos, vel, targets, params.reaction_time, params.max_acceleration)
 
     # Ball-travel-time filter (optional)
     if ball_position is not None:

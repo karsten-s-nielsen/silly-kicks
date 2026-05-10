@@ -203,6 +203,26 @@ The team shape envelope features in silly_kicks/tracking/_team_shape.py
   (centroid, convex hull area, team length, team width, stretch index as
   canonical team shape metrics)
 
+The GK influence primitives in silly_kicks/tracking/_gk_influence.py
+(PR-S34, TF-15, GKDV Layer 1) implement threat-weighted pitch control
+decomposition using:
+
+- Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
+  Conference.
+  (pitch control foundation, TTI kinematic model)
+
+- Fernandez, J., & Bornn, L. (2018). "Wide Open Spaces: A Statistical
+  Technique for Measuring Space Creation in Professional Soccer." MIT Sloan
+  SAC.
+  (alternate pitch control formulation)
+
+- Singh, K. (2018). "Introducing Expected Threat (xT)." karun.in/blog/
+  expected-threat
+  (threat surface for weighting)
+
+The Get Goalside critique of raw pitch control GK over-crediting motivated
+the threat-weighting correction.
+
 The Ward-clustering line-breaking detection in
 silly_kicks/tracking/_line_breaking.py (PR-S33, TF-32) implements the
 methodology described in:

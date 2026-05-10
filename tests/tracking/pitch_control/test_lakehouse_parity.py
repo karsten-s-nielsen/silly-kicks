@@ -22,7 +22,7 @@ def test_spearman_matches_lakehouse_tti_formula():
     Lakehouse formula (identical math, different coordinate system):
         TTI = reaction_time + (-v_proj + sqrt(v_proj^2 + 2*a*d)) / a
     """
-    from silly_kicks.tracking.pitch_control._spearman import _compute_tti
+    from silly_kicks.tracking.pitch_control._spearman import compute_tti
 
     # Player at (10, 10), velocity (3, 0), target at (20, 10)
     # d = 10, v_proj = 3 (full projection along x)
@@ -30,7 +30,7 @@ def test_spearman_matches_lakehouse_tti_formula():
     pos = np.array([[10.0, 10.0]])
     vel = np.array([[3.0, 0.0]])
     target = np.array([[20.0, 10.0]])
-    tti = _compute_tti(pos, vel, target, 0.7, 7.0)
+    tti = compute_tti(pos, vel, target, 0.7, 7.0)
     expected = 0.7 + (-3.0 + np.sqrt(9.0 + 140.0)) / 7.0
     np.testing.assert_allclose(tti[0, 0], expected, rtol=1e-12)
 

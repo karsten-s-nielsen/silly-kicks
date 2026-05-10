@@ -22,11 +22,16 @@ Public API:
 - add_pitch_control(actions, frames) -> pd.DataFrame           (PR-S31, TF-7)
 - pitch_control_xfns(method) -> list                           (PR-S31, TF-7)
 - pitch_control_default_xfns: list[FrameAwareTransformer]      (PR-S31, TF-7)
+- gk_pitch_control_share_weighted / gk_reachable_area_m2 /
+  gk_closing_time_min_s / gk_closing_time_mean_s               (PR-S34, TF-15)
+- add_gk_influence(actions, frames, xt, *, home_team_id) -> pd.DataFrame (PR-S34)
+- gk_influence_xfns(xt, *, home_team_id) -> list               (PR-S34)
 
 See NOTICE for full bibliographic citations and ADR-005 for the integration contract.
 Spec: docs/superpowers/specs/2026-04-30-action-context-pr1-design.md (PR-S20)
       docs/superpowers/specs/2026-05-01-pre-shot-gk-plus-baselines-design.md (PR-S21)
       docs/superpowers/specs/2026-05-04-tf13-tf14-defensive-line-design.md (PR-S27)
+      docs/superpowers/specs/2026-05-09-tf15-gk-influence-primitives-design.md (PR-S34)
 """
 
 from __future__ import annotations
@@ -34,6 +39,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from silly_kicks.xthreat import ExpectedThreat
+
     from ._line_breaking import LineBreakingParams
 
 import numpy as np
@@ -68,6 +75,7 @@ __all__ = [
     "add_actor_pre_window",
     "add_das",
     "add_defensive_line",
+    "add_gk_influence",
     "add_line_break",
     "add_off_ball_context",
     "add_off_ball_runs",
@@ -86,6 +94,11 @@ __all__ = [
     "defending_gk_from_frames",
     "defensive_line_x",
     "defensive_line_xfns",
+    "gk_closing_time_mean_s",
+    "gk_closing_time_min_s",
+    "gk_influence_xfns",
+    "gk_pitch_control_share_weighted",
+    "gk_reachable_area_m2",
     "lateral_width",
     "line_breaking_ward_xfns",
     "max_lateral_gap",
@@ -1940,3 +1953,565 @@ def _make_das_transformer():
 
 
 das_xfns = [_make_das_transformer()]
+
+
+# ---------------------------------------------------------------------------
+# TF-15 -- GK influence primitives
+# ---------------------------------------------------------------------------
+
+
+def _gk_influence_at_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: str = "spearman",
+    zone_names: list[str] | None = None,
+    tau_seconds: float = 1.0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Batch kernel: compute GK influence for all actions at once.
+
+    Caches compute_gk_influence per unique (period_id, frame_id, team_id)
+    to avoid redundant pitch control computation.
+
+    Returns (result_df, pointers) — result_df aligned with actions.index
+    containing gk_pitch_control_share_weighted, gk_reachable_area_m2,
+    gk_closing_time_{min,mean}_s__<zone_name>; pointers from
+    link_actions_to_frames for caller reuse.
+    """
+    from ._gk_influence import GkInfluence, Zone, compute_gk_influence
+
+    _zone_names = zone_names or ["six_yard_box"]
+
+    # Initialize output columns
+    col_names = ["gk_pitch_control_share_weighted", "gk_reachable_area_m2"]
+    for zn in _zone_names:
+        col_names.extend(
+            [
+                f"gk_closing_time_min_s__{zn}",
+                f"gk_closing_time_mean_s__{zn}",
+            ]
+        )
+
+    result = pd.DataFrame(
+        {col: np.full(len(actions), np.nan) for col in col_names},
+        index=actions.index,
+    )
+
+    if len(frames) == 0:
+        return result, pd.DataFrame()
+
+    pointers, _ = link_actions_to_frames(actions, frames)
+    pointer_lookup = pointers.set_index("action_id")
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    # Cache: (period_id, frame_id, team_id) -> GkInfluence | None
+    cache: dict[tuple, GkInfluence | None] = {}
+
+    for i, (_idx, action_row) in enumerate(actions.iterrows()):
+        aid = action_row["action_id"]
+        tid = action_row["team_id"]
+        if pd.isna(tid):
+            continue
+        if aid not in pointer_lookup.index:
+            continue
+        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        if pd.isna(fid_raw):
+            continue
+
+        pid = action_row["period_id"]
+        fid = int(float(fid_raw))  # type: ignore[arg-type]
+        cache_key = (pid, fid, tid)
+
+        if cache_key not in cache:
+            try:
+                frame_data = frame_groups.get_group((pid, fid))
+            except KeyError:
+                cache[cache_key] = None
+                continue
+
+            gk_rows = frame_data[
+                frame_data["is_goalkeeper"].astype(bool)
+                & (~frame_data["is_ball"].astype(bool))
+                & (frame_data["team_id"] != tid)
+            ]
+            if gk_rows.empty:
+                cache[cache_key] = None
+                continue
+
+            gk_pid = gk_rows.iloc[0]["player_id"]
+            gk_team = gk_rows.iloc[0]["team_id"]
+            goal_x = 0.0 if gk_team == home_team_id else 105.0
+
+            # Resolve ball position for near/far post zones
+            ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
+            ball_y = float(ball_rows.iloc[0]["y"]) if not ball_rows.empty and pd.notna(ball_rows.iloc[0]["y"]) else None
+
+            # Build Zone instances per-action with resolved goal_x + ball_y
+            zones = []
+            for zn in _zone_names:
+                if zn == "six_yard_box":
+                    zones.append(Zone.six_yard_box(goal_x))
+                elif zn == "near_post":
+                    zones.append(Zone.near_post(goal_x, ball_y=ball_y))
+                elif zn == "far_post":
+                    zones.append(Zone.far_post(goal_x, ball_y=ball_y))
+                else:
+                    _warnings.warn(
+                        f"Unknown zone name '{zn}'; skipping",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+
+            try:
+                gi = compute_gk_influence(
+                    frame_data,
+                    attacking_team_id=tid,
+                    gk_player_id=gk_pid,
+                    xt=xt,
+                    home_team_id=home_team_id,
+                    method=method,  # type: ignore[arg-type]
+                    zones=zones,
+                    tau_seconds=tau_seconds,
+                )
+                cache[cache_key] = gi
+            except (ValueError, KeyError) as exc:
+                _warnings.warn(
+                    f"compute_gk_influence failed for frame=({pid},{fid}), team={tid}: {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                cache[cache_key] = None
+
+        gi = cache[cache_key]
+        if gi is None:
+            continue
+
+        idx = actions.index[i]
+        result.at[idx, "gk_pitch_control_share_weighted"] = gi.pitch_control_share_weighted
+        result.at[idx, "gk_reachable_area_m2"] = gi.reachable_area_m2
+        for zn, zct in gi.closing_times.items():
+            result.at[idx, f"gk_closing_time_min_s__{zn}"] = zct.min_s
+            result.at[idx, f"gk_closing_time_mean_s__{zn}"] = zct.mean_s
+
+    return result, pointers
+
+
+def gk_pitch_control_share_weighted(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: str = "spearman",
+) -> pd.Series:
+    """Threat-weighted GK pitch control share at the linked frame.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import gk_pitch_control_share_weighted
+    >>> share = gk_pitch_control_share_weighted(actions, frames, xt, home_team_id=1)
+    """
+    col_name = "gk_pitch_control_share_weighted"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    batch, _ = _gk_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        method=method,
+    )
+    return batch[col_name].rename(col_name)
+
+
+def gk_reachable_area_m2(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: str = "spearman",
+    tau_seconds: float = 1.0,
+) -> pd.Series:
+    """GK uniquely reachable area (m^2) at the linked frame.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import gk_reachable_area_m2
+    >>> area = gk_reachable_area_m2(actions, frames, xt, home_team_id=1)
+    """
+    col_name = "gk_reachable_area_m2"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    batch, _ = _gk_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        method=method,
+        tau_seconds=tau_seconds,
+    )
+    return batch[col_name].rename(col_name)
+
+
+def gk_closing_time_min_s(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    *,
+    home_team_id: int | str,
+    zone_name: str = "six_yard_box",
+) -> pd.Series:
+    """GK minimum closing time (seconds) to the specified zone.
+
+    Lightweight: uses compute_zone_closing_times directly (no pitch
+    control computation). See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import gk_closing_time_min_s
+    >>> ct = gk_closing_time_min_s(actions, frames, home_team_id=1)
+    """
+    col_name = f"gk_closing_time_min_s__{zone_name}"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    return _closing_time_per_series(
+        actions,
+        frames,
+        home_team_id=home_team_id,
+        zone_name=zone_name,
+        extract="min_s",
+        col_name=col_name,
+    )
+
+
+def gk_closing_time_mean_s(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    *,
+    home_team_id: int | str,
+    zone_name: str = "six_yard_box",
+) -> pd.Series:
+    """GK mean closing time (seconds) to the specified zone.
+
+    Lightweight: uses compute_zone_closing_times directly (no pitch
+    control computation). See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import gk_closing_time_mean_s
+    >>> ct = gk_closing_time_mean_s(actions, frames, home_team_id=1)
+    """
+    col_name = f"gk_closing_time_mean_s__{zone_name}"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    return _closing_time_per_series(
+        actions,
+        frames,
+        home_team_id=home_team_id,
+        zone_name=zone_name,
+        extract="mean_s",
+        col_name=col_name,
+    )
+
+
+def _closing_time_per_series(
+    actions,
+    frames,
+    *,
+    home_team_id,
+    zone_name,
+    extract,
+    col_name,
+) -> pd.Series:
+    """Lightweight closing-time path — calls compute_zone_closing_times directly."""
+    from ._gk_influence import Zone, compute_zone_closing_times
+
+    pointers, _ = link_actions_to_frames(actions, frames)
+    results = np.full(len(actions), np.nan)
+    pointer_lookup = pointers.set_index("action_id")
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    for i, (_idx, row) in enumerate(actions.iterrows()):
+        aid = row["action_id"]
+        tid = row["team_id"]
+        if pd.isna(tid) or aid not in pointer_lookup.index:
+            continue
+        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        if pd.isna(fid_raw):
+            continue
+
+        pid = row["period_id"]
+        fid = int(float(fid_raw))  # type: ignore[arg-type]
+        try:
+            frame_data = frame_groups.get_group((pid, fid))
+        except KeyError:
+            continue
+
+        gk_rows = frame_data[
+            frame_data["is_goalkeeper"].astype(bool)
+            & (~frame_data["is_ball"].astype(bool))
+            & (frame_data["team_id"] != tid)
+        ]
+        if gk_rows.empty:
+            continue
+        gk_pid = gk_rows.iloc[0]["player_id"]
+        gk_team = gk_rows.iloc[0]["team_id"]
+        goal_x = 0.0 if gk_team == home_team_id else 105.0
+
+        ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
+        ball_y = float(ball_rows.iloc[0]["y"]) if not ball_rows.empty and pd.notna(ball_rows.iloc[0]["y"]) else None
+
+        if zone_name == "six_yard_box":
+            zone = Zone.six_yard_box(goal_x)
+        elif zone_name == "near_post":
+            zone = Zone.near_post(goal_x, ball_y=ball_y)
+        elif zone_name == "far_post":
+            zone = Zone.far_post(goal_x, ball_y=ball_y)
+        else:
+            continue
+
+        try:
+            cts = compute_zone_closing_times(
+                frame_data,
+                gk_player_id=gk_pid,
+                zones=[zone],
+            )
+            zct = cts.get(zone_name)
+            if zct is not None:
+                results[i] = getattr(zct, extract)
+        except (ValueError, KeyError) as exc:
+            _warnings.warn(
+                f"compute_zone_closing_times failed for action_id={aid}: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    return pd.Series(results, index=actions.index, name=col_name)
+
+
+@nan_safe_enrichment
+def add_gk_influence(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: str = "spearman",
+    zone_names: list[str] | None = None,
+    tau_seconds: float = 1.0,
+) -> pd.DataFrame:
+    """Enrich actions with GK influence columns.
+
+    Default zone_names (["six_yard_box"]) emit 4 columns. Additional zone
+    names ("near_post", "far_post") add closing-time columns. Zones are
+    constructed per-action with the correct goal_x and ball_y.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_gk_influence
+    >>> enriched = add_gk_influence(actions, frames, xt, home_team_id=1)
+
+    See NOTICE for full bibliographic citations.
+    """
+    out = actions.copy()
+    batch, pointers = _gk_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        method=method,
+        zone_names=zone_names,
+        tau_seconds=tau_seconds,
+    )
+    for col in batch.columns:
+        out[col] = batch[col].values
+
+    # Provenance (reuse pointers from batch kernel)
+    provenance_cols = [
+        "frame_id",
+        "time_offset_seconds",
+        "n_candidate_frames",
+        "link_quality_score",
+    ]
+    existing = [c for c in provenance_cols if c in out.columns]
+    if not existing and len(pointers) > 0:
+        ptr_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(
+            ptr_cols,
+            left_on="action_id",
+            right_index=True,
+            how="left",
+        )
+
+    return out
+
+
+def gk_influence_xfns(
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    zone_names: list[str] | None = None,
+    tau_seconds: float = 1.0,
+) -> list:
+    """Factory returning a list with one FrameAwareTransformer for GK influence.
+
+    Default zones (six_yard_box only): 4 columns x 3 game states = 12 VAEP columns.
+    With near_post + far_post: 8 columns x 3 states = 24 columns.
+
+    The transformer precomputes compute_gk_influence per unique
+    (period_id, frame_id, team_id), avoiding redundant pitch control computation
+    across 3 game-state slots and repeated actions.
+
+    Parameters
+    ----------
+    xt : ExpectedThreat
+        Fitted xT model for threat weighting.
+    home_team_id : int | str
+        Home team identifier for goal-end orientation.
+    method : {"spearman", "fernandez_bornn", "voronoi"}
+        Pitch control model, default "spearman".
+    zone_names : list[str] | None
+        Zone factory names (e.g. ["six_yard_box", "near_post"]).
+        Defaults to ["six_yard_box"]. Zones are constructed per-action
+        with resolved goal_x + ball_y.
+    tau_seconds : float
+        TTI tau parameter, default 1.0.
+
+    Examples
+    --------
+    Compose into HybridVAEP::
+
+        from silly_kicks.tracking.features import tracking_default_xfns, gk_influence_xfns
+        xfns = tracking_default_xfns + gk_influence_xfns(xt, home_team_id=1)
+        X = compute_features(actions, xfns=xfns, frames=frames)
+    """
+    from . import _gk_influence as _gk_mod
+
+    resolved_zone_names = zone_names if zone_names is not None else ["six_yard_box"]
+
+    col_names = [
+        "gk_pitch_control_share_weighted",
+        "gk_reachable_area_m2",
+    ]
+    for zn in resolved_zone_names:
+        col_names.append(f"gk_closing_time_min_s__{zn}")
+        col_names.append(f"gk_closing_time_mean_s__{zn}")
+
+    def _gk_influence_transformer(states, frames):
+        """Multi-column GK influence xfn with frame precomputation cache."""
+        out = pd.DataFrame(index=states[0].index)
+
+        if frames is None:
+            for i in range(3):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        # Shared cache across all 3 slots: (period_id, frame_id, team_id) -> GkInfluence
+        cache: dict[tuple, _gk_mod.GkInfluence | None] = {}
+        frame_groups = frames.groupby(["period_id", "frame_id"])
+
+        def _get_gi(period_id, frame_id_int, team_id):
+            key = (period_id, frame_id_int, team_id)
+            if key in cache:
+                return cache[key]
+
+            try:
+                frame_data = frame_groups.get_group((period_id, frame_id_int))
+            except KeyError:
+                cache[key] = None
+                return None
+
+            gk_rows = frame_data[
+                frame_data["is_goalkeeper"].astype(bool)
+                & (~frame_data["is_ball"].astype(bool))
+                & (frame_data["team_id"] != team_id)
+            ]
+            if gk_rows.empty:
+                cache[key] = None
+                return None
+            gk_pid = gk_rows.iloc[0]["player_id"]
+            gk_team = gk_rows.iloc[0]["team_id"]
+            goal_x = 0.0 if gk_team == home_team_id else 105.0
+
+            # Resolve ball_y from frame
+            ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
+            ball_y = float(ball_rows.iloc[0]["y"]) if not ball_rows.empty and pd.notna(ball_rows.iloc[0]["y"]) else 34.0
+
+            # Build zones per-action with resolved goal_x + ball_y
+            action_zones = [
+                getattr(_gk_mod.Zone, zn)(goal_x, ball_y=ball_y)
+                if zn in ("near_post", "far_post")
+                else getattr(_gk_mod.Zone, zn)(goal_x)
+                for zn in resolved_zone_names
+            ]
+
+            try:
+                gi = _gk_mod.compute_gk_influence(
+                    frame_data,
+                    attacking_team_id=team_id,
+                    gk_player_id=gk_pid,
+                    xt=xt,
+                    home_team_id=home_team_id,
+                    method=method,
+                    zones=action_zones,
+                    tau_seconds=tau_seconds,
+                )
+            except (ValueError, KeyError) as exc:
+                _warnings.warn(
+                    f"compute_gk_influence failed for frame {frame_id_int}: {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                gi = None
+
+            cache[key] = gi
+            return gi
+
+        # C-1 fix: link_actions_to_frames per-slot (each slot has different action_ids)
+        for i, slot in enumerate(states[:3]):
+            slot_results = {col: np.full(len(slot), np.nan) for col in col_names}
+
+            pointers, _ = link_actions_to_frames(slot, frames)
+            pointer_lookup = pointers.set_index("action_id")
+
+            for j, (_idx, row) in enumerate(slot.iterrows()):
+                aid = row["action_id"]
+                tid = row["team_id"]
+                if pd.isna(tid):
+                    continue
+                if aid not in pointer_lookup.index:
+                    continue
+                fid_raw = pointer_lookup.at[aid, "frame_id"]
+                if pd.isna(fid_raw):
+                    continue
+
+                pid = row["period_id"]
+                fid = int(float(fid_raw))  # type: ignore[arg-type]
+
+                gi = _get_gi(pid, fid, tid)
+                if gi is None:
+                    continue
+
+                slot_results["gk_pitch_control_share_weighted"][j] = gi.pitch_control_share_weighted
+                slot_results["gk_reachable_area_m2"][j] = gi.reachable_area_m2
+                for zn, zct in gi.closing_times.items():
+                    if f"gk_closing_time_min_s__{zn}" in slot_results:
+                        slot_results[f"gk_closing_time_min_s__{zn}"][j] = zct.min_s
+                        slot_results[f"gk_closing_time_mean_s__{zn}"][j] = zct.mean_s
+
+            for col in col_names:
+                out[f"{col}_a{i}"] = slot_results[col]
+
+        return out
+
+    _gk_influence_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _gk_influence_transformer.__name__ = "gk_influence"
+    return [_gk_influence_transformer]
