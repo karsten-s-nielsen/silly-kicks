@@ -8,8 +8,8 @@ import pandas as pd
 from silly_kicks.tracking.pitch_control._params import SpearmanParams
 from silly_kicks.tracking.pitch_control._spearman import (
     _compute_influence,
-    _compute_tti,
     compute_spearman,
+    compute_tti,
 )
 
 
@@ -69,7 +69,7 @@ class TestTTI:
         pos = np.array([[0.0, 0.0]])
         vel = np.array([[0.0, 0.0]])
         target = np.array([[10.0, 0.0]])
-        tti = _compute_tti(pos, vel, target, reaction_time=0.7, max_acceleration=7.0)
+        tti = compute_tti(pos, vel, target, reaction_time=0.7, max_acceleration=7.0)
         # d=10, v_proj=0: TTI = 0.7 + sqrt(2*7*10)/7 = 0.7 + sqrt(140)/7
         expected = 0.7 + np.sqrt(140.0) / 7.0
         np.testing.assert_allclose(tti[0, 0], expected, rtol=1e-10)
@@ -80,8 +80,8 @@ class TestTTI:
         target = np.array([[10.0, 0.0]])
         vel_toward = np.array([[5.0, 0.0]])
         vel_away = np.array([[-5.0, 0.0]])
-        tti_toward = _compute_tti(pos, vel_toward, target, 0.7, 7.0)[0, 0]
-        tti_away = _compute_tti(pos, vel_away, target, 0.7, 7.0)[0, 0]
+        tti_toward = compute_tti(pos, vel_toward, target, 0.7, 7.0)[0, 0]
+        tti_away = compute_tti(pos, vel_away, target, 0.7, 7.0)[0, 0]
         assert tti_toward < tti_away
 
     def test_player_at_target(self):
@@ -89,7 +89,7 @@ class TestTTI:
         pos = np.array([[5.0, 5.0]])
         vel = np.array([[3.0, 0.0]])
         target = np.array([[5.0, 5.0]])
-        tti = _compute_tti(pos, vel, target, 0.7, 7.0)[0, 0]
+        tti = compute_tti(pos, vel, target, 0.7, 7.0)[0, 0]
         assert abs(tti - 0.7) < 1e-10
 
     def test_broadcast_shape(self):
@@ -97,7 +97,7 @@ class TestTTI:
         pos = np.array([[0, 0], [10, 10], [20, 20]], dtype="float64")
         vel = np.zeros((3, 2))
         targets = np.array([[5, 5], [15, 15]], dtype="float64")
-        tti = _compute_tti(pos, vel, targets, 0.7, 7.0)
+        tti = compute_tti(pos, vel, targets, 0.7, 7.0)
         assert tti.shape == (3, 2)
 
 

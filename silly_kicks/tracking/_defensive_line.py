@@ -15,6 +15,72 @@ import numpy as np
 import pandas as pd
 
 
+def select_back_line_players(
+    frames: pd.DataFrame,
+    team_id: int | str,
+    home_team_id: int | str,
+    *,
+    n: int | Literal["adaptive"] = 4,
+    adaptive_max_n: int = 5,
+) -> pd.DataFrame:
+    """Select the N outfield players closest to their own goal.
+
+    Returns a DataFrame of player rows (preserving x, y, vx, vy, player_id,
+    etc.) sorted by proximity to own goal. Operates on a single frame.
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Long-form tracking frame (single frame expected, but multi-frame
+        is tolerated — uses first frame group).
+    team_id : int | str
+        Team to select back-line players for.
+    home_team_id : int | str
+        Home team identifier for goal-end resolution.
+    n : int | Literal["adaptive"], default 4
+        Target back-line player count. Clamped to available outfield.
+    adaptive_max_n : int, default 5
+        Upper bound for adaptive N.
+
+    Returns
+    -------
+    pd.DataFrame
+        Player rows with all original columns preserved, sorted by
+        proximity to own goal. Length = min(n_effective, available_outfield).
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking._defensive_line import select_back_line_players
+    >>> back_line = select_back_line_players(frame, team_id=1, home_team_id=1)
+    >>> back_line[["player_id", "x", "y"]].head()
+
+    See NOTICE for full bibliographic citations.
+    """
+    outfield = frames[
+        (~frames["is_ball"].astype(bool))
+        & (~frames["is_goalkeeper"].astype(bool))
+        & (frames["team_id"] == team_id)
+        & frames["x"].notna()
+    ]
+
+    if len(outfield) < 3:
+        return outfield
+
+    defends_x0 = team_id == home_team_id
+    xs = outfield["x"].to_numpy(dtype="float64")
+
+    if defends_x0:
+        order = np.argsort(xs)
+    else:
+        order = np.argsort(-xs)
+
+    xs_sorted = xs[order]
+    p = len(outfield)
+    n_effective = _select_n(xs_sorted, n, adaptive_max_n, p)
+
+    return outfield.iloc[order[:n_effective]]
+
+
 def compute_defensive_line(
     frames: pd.DataFrame,
     *,

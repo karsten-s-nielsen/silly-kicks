@@ -16,7 +16,15 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
 from silly_kicks.tracking.feature_framework import lift_to_states
-from silly_kicks.tracking.features import ball_carrier_at_action
+from silly_kicks.tracking.features import (
+    add_gk_influence,
+    ball_carrier_at_action,
+    gk_closing_time_mean_s,
+    gk_closing_time_min_s,
+    gk_influence_xfns,
+    gk_pitch_control_share_weighted,
+    gk_reachable_area_m2,
+)
 from silly_kicks.tracking.pressure import Method, PressureParams
 from silly_kicks.tracking.utils import _resolve_action_frame_context
 
@@ -28,6 +36,7 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_gk_influence",
     "add_pitch_control",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
@@ -42,6 +51,11 @@ __all__ = [
     "atomic_tracking_default_xfns",
     "ball_carrier_at_action",
     "defenders_in_triangle_to_goal",
+    "gk_closing_time_mean_s",
+    "gk_closing_time_min_s",
+    "gk_influence_xfns",
+    "gk_pitch_control_share_weighted",
+    "gk_reachable_area_m2",
     "nearest_defender_distance",
     "pitch_control_at_action",
     "pre_shot_gk_angle_off_goal_line",

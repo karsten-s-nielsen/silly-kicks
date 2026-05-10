@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] — 2026-05-10
+
+### Added
+- **TF-15: GK influence primitives** (GKDV Layer 1):
+  - `compute_gk_influence()` per-frame entry point with 3 primitives:
+    threat-weighted pitch control share, uniquely reachable area, zone closing time
+  - `Zone` dataclass with `six_yard_box()`, `near_post()`, `far_post()` factories
+  - `GkInfluence` + `ZoneClosingTime` frozen return dataclasses
+  - GK-specific kinematic parameters (`gk_reaction_time`, `gk_max_acceleration`)
+  - Action-coupled: `add_gk_influence`, `gk_influence_xfns`, 4 per-Series helpers
+  - Atomic SPADL mirror
+  - Frame-precomputation cache in xfns factory
+- **Prerequisite: `compute_tti`** exported as public API from `pitch_control`
+- **Prerequisite: `select_back_line_players`** extracted from `_defensive_line.py`
+
+### Fixed
+- **TF-32 H1:** Independent dropna misalignment in `_line_breaking.py` (joint
+  dropna prevents silent data corruption when opponent has valid x but NaN y)
+- **TF-32 H2:** Extension-poisoning on `line_breaking_type` — `between_lines`
+  now correctly dominates when both extension and through-player intersections
+  occur in the same cluster
+- **TF-32 M4:** Non-pass actions (shots, dribbles, etc.) now correctly produce
+  pd.NA instead of being analyzed for line-breaking
+
 ## [3.9.0] — 2026-05-09
 
 ### Added

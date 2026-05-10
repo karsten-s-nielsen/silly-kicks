@@ -4,6 +4,19 @@ Identifies defensive lines via 1D Ward hierarchical clustering on opponent
 x-coordinates, constructs line segments, and tests pass trajectory
 intersection via cross-product straddle test.
 
+Deviations from reference: Karakus & Arkadas (2025) use centroid +
+vertical-span intersection test. This implementation uses polyline +
+cross-product straddle test, which captures actual defensive geometry
+(player positions form the line segments, not cluster centroids). The
+straddle test is more geometrically precise and handles non-vertical
+lines correctly.
+
+Out-of-scope paper metrics (Karakus & Arkadas 2025): SBR (Successful
+Ball Recovery), LBPCh1 (Line-Breaking Pass Chance 1st-half),
+LBPCh2 (Line-Breaking Pass Chance 2nd-half). These are game-level
+aggregates computed from the per-pass detection output and are not
+implemented here.
+
 See spec: docs/superpowers/specs/2026-05-09-tf31-tf32-team-shape-line-breaking-design.md s2.
 See NOTICE for full bibliographic citations.
 """
@@ -15,6 +28,12 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
+
+from silly_kicks.spadl import config as spadlconfig
+
+_PASS_CROSS_TYPE_IDS = frozenset(
+    spadlconfig.actiontype_id[n] for n in ("pass", "cross") if n in spadlconfig.actiontype_id
+)
 
 
 @dataclass(frozen=True)
@@ -28,7 +47,7 @@ class LineBreakingParams:
     """
 
     min_opponents: int = 3
-    n_clusters: int = 3
+    n_clusters: int = 3  # Design choice (defense/midfield/attack partition), not from reference paper
     min_pass_length: float = 3.0  # metres
     min_x_spread: float = 5.0  # metres
     pitch_y_min: float = 0.0  # SPADL y-coordinate of near sideline
@@ -110,6 +129,7 @@ def detect_line_breaking(
             [
                 "action_id",
                 "team_id",
+                "type_id",
                 "start_x",
                 "start_y",
                 "end_x",
@@ -149,6 +169,10 @@ def detect_line_breaking(
         pos = aid_to_pos[aid]
 
         action_team = row["team_id"]
+        action_type = row.get("type_id")
+        if pd.notna(action_type) and int(action_type) not in _PASS_CROSS_TYPE_IDS:
+            continue  # Non-pass/cross -> leave as pd.NA
+
         game_id = row["game_id"]
         period_id = row["period_id"]
         frame_id = int(row["frame_id_int"])
@@ -175,8 +199,10 @@ def detect_line_breaking(
             continue
 
         opp_df = frame_groups[(game_id, period_id, frame_id, opp_teams[0])]
-        opp_x = opp_df["x"].dropna().to_numpy(dtype="float64")
-        opp_y = opp_df["y"].dropna().to_numpy(dtype="float64")
+        valid_mask = opp_df["x"].notna() & opp_df["y"].notna()
+        valid_opp = opp_df[valid_mask]
+        opp_x = valid_opp["x"].to_numpy(dtype="float64")
+        opp_y = valid_opp["y"].to_numpy(dtype="float64")
 
         if len(opp_x) < params.min_opponents:
             lb_arr[pos] = 0.0
@@ -238,7 +264,7 @@ def detect_line_breaking(
 
             # Test each segment for intersection with pass trajectory
             cluster_broken = False
-            broke_on_extension = False
+            cluster_has_through = False
             n_segments = len(points_x) - 1
 
             for si in range(n_segments):
@@ -257,12 +283,12 @@ def detect_line_breaking(
                 ):
                     cluster_broken = True
                     # Extension segments are first and last
-                    if si == 0 or si == n_segments - 1:
-                        broke_on_extension = True
+                    if si != 0 and si != n_segments - 1:
+                        cluster_has_through = True
 
             if cluster_broken:
                 lines_broken += 1
-                if not broke_on_extension:
+                if cluster_has_through:
                     any_through = True
 
         lb_arr[pos] = 1.0 if lines_broken > 0 else 0.0

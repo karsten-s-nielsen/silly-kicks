@@ -38,3 +38,15 @@ def spadl_actions() -> pd.DataFrame:
 def atomic_spadl_actions() -> pd.DataFrame:
     json_file = os.path.join(os.path.dirname(__file__), "datasets", "spadl", "atomic_spadl.json")
     return pd.read_json(json_file, orient="records")
+
+
+@pytest.fixture
+def fitted_xt():
+    """Shared fitted ExpectedThreat fixture for all test subdirectories."""
+    import numpy as np
+
+    from silly_kicks.xthreat import ExpectedThreat
+
+    xt = ExpectedThreat(l=16, w=12)
+    xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+    return xt

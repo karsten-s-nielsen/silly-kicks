@@ -37,6 +37,7 @@ __all__ = [
     "add_action_context",
     "add_das",
     "add_defensive_line",
+    "add_gk_influence",
     "add_line_break",
     "add_off_ball_context",
     "add_off_ball_runs",
@@ -53,6 +54,7 @@ __all__ = [
     "compute_pitch_control",
     "compute_pitch_control_at_points",
     "compute_team_shape",
+    "compute_tti",
     "das_at_action",
     "das_xfns",
     "defenders_in_triangle_to_goal",
@@ -68,6 +70,11 @@ __all__ = [
     "get_individual_das",
     "get_provider_defaults",
     "get_xc",
+    "gk_closing_time_mean_s",
+    "gk_closing_time_min_s",
+    "gk_influence_xfns",
+    "gk_pitch_control_share_weighted",
+    "gk_reachable_area_m2",
     "infer_ball_carrier",
     "interpolate_frames",
     "kloppy",
@@ -92,6 +99,7 @@ __all__ = [
     "preprocess",
     "receiver_zone_density",
     "schema",
+    "select_back_line_players",
     "slice_around_event",
     "smooth_frames",
     "sportec",
@@ -104,7 +112,7 @@ __all__ = [
 from . import feature_framework, features, pff, pitch_control, preprocess, schema, sportec, utils
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
 from ._das import get_das, get_individual_das, get_xc
-from ._defensive_line import compute_defensive_line
+from ._defensive_line import compute_defensive_line, select_back_line_players
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._team_shape import compute_team_shape
 from .feature_framework import ActionFrameContext, lift_to_states
@@ -113,6 +121,7 @@ from .features import (
     add_action_context,
     add_das,
     add_defensive_line,
+    add_gk_influence,
     add_line_break,
     add_off_ball_context,
     add_off_ball_runs,
@@ -130,6 +139,11 @@ from .features import (
     defending_gk_from_frames,
     defensive_line_x,
     defensive_line_xfns,
+    gk_closing_time_mean_s,
+    gk_closing_time_min_s,
+    gk_influence_xfns,
+    gk_pitch_control_share_weighted,
+    gk_reachable_area_m2,
     lateral_width,
     line_breaking_ward_xfns,
     max_lateral_gap,
@@ -154,6 +168,7 @@ from .pitch_control import (
     VoronoiParams,
     compute_pitch_control,
     compute_pitch_control_at_points,
+    compute_tti,
 )
 from .preprocess import (
     PreprocessConfig,

@@ -35,6 +35,7 @@ TRACKING_ENRICHMENTS = _discover(tracking_features)
 # Split: helpers needing only (actions, frames) vs those needing extra kwargs
 _TRACKING_NEEDS_EXTRA = {
     "add_defensive_line",
+    "add_gk_influence",
     "add_line_break",
     "add_off_ball_context",
     "add_off_ball_runs",
@@ -488,6 +489,14 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
     name = helper.__name__
     if name in ("add_defensive_line", "add_off_ball_runs", "add_line_break", "add_off_ball_context", "add_team_shape"):
         out = helper(actions, frames, home_team_id=1)
+    elif name == "add_gk_influence":
+        import numpy as np
+
+        from silly_kicks.xthreat import ExpectedThreat
+
+        xt = ExpectedThreat(l=16, w=12)
+        xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+        out = helper(actions, frames, xt, home_team_id=1)
     elif name == "add_pre_shot_gk_position":
         # Needs defending_gk_player_id column pre-populated
         acts = actions.copy()
