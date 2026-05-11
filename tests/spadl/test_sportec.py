@@ -1194,3 +1194,174 @@ class TestSportecPerPeriodKwargContract:
                 home_team_id="DFL-CLU-A",
                 home_team_start_left=True,
             )
+
+
+# ---------------------------------------------------------------------------
+# Bug 3 — DFL XML tag "CornerKick" not recognized by DataFrame converter
+# (3.10.1; lakehouse passes event_type from XML first-child tag which is
+# "CornerKick", not "Corner". The kloppy path handles this natively but the
+# DataFrame path silently drops these rows to unrecognized_counts.)
+# ---------------------------------------------------------------------------
+
+
+def _df_cornerkick_xml_tag() -> pd.DataFrame:
+    """CornerKick using the raw DFL XML tag name (not the shortened 'Corner')."""
+    return pd.DataFrame(
+        {
+            "match_id": ["M1"],
+            "event_id": ["e1"],
+            "event_type": ["CornerKick"],
+            "period": [1],
+            "timestamp_seconds": [10.0],
+            "player_id": ["P1"],
+            "team": ["T-HOME"],
+            "x": [105.0],
+            "y": [0.0],
+        }
+    )
+
+
+def _df_cornerkick_crossed_xml_tag() -> pd.DataFrame:
+    df = _df_cornerkick_xml_tag()
+    df["corner_target_area"] = ["box"]
+    return df
+
+
+def _df_other_ball_action_clearance() -> pd.DataFrame:
+    """OtherBallAction with DefensiveClearance=true."""
+    return pd.DataFrame(
+        {
+            "match_id": ["M1"],
+            "event_id": ["e1"],
+            "event_type": ["OtherBallAction"],
+            "period": [1],
+            "timestamp_seconds": [10.0],
+            "player_id": ["P1"],
+            "team": ["T-HOME"],
+            "x": [20.0],
+            "y": [34.0],
+            "other_ball_action_defensive_clearance": ["true"],
+        }
+    )
+
+
+def _df_other_ball_action_non_clearance() -> pd.DataFrame:
+    """OtherBallAction without DefensiveClearance (or false)."""
+    return pd.DataFrame(
+        {
+            "match_id": ["M1"],
+            "event_id": ["e1"],
+            "event_type": ["OtherBallAction"],
+            "period": [1],
+            "timestamp_seconds": [10.0],
+            "player_id": ["P1"],
+            "team": ["T-HOME"],
+            "x": [30.0],
+            "y": [34.0],
+        }
+    )
+
+
+class TestSportecCornerKickAlias:
+    """DFL XML uses 'CornerKick' as the event tag; silly-kicks must accept both
+    'Corner' (legacy) and 'CornerKick' (raw XML tag) identically."""
+
+    def test_cornerkick_default_maps_to_corner_short(self):
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_cornerkick_xml_tag(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_short"]
+
+    def test_cornerkick_with_box_target_maps_to_corner_crossed(self):
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_cornerkick_crossed_xml_tag(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_crossed"]
+
+    def test_cornerkick_not_in_unrecognized_counts(self):
+        _, report = sportec_mod.convert_to_actions(
+            _df_cornerkick_xml_tag(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert "CornerKick" not in report.unrecognized_counts
+        assert report.total_actions == 1
+
+    def test_cornerkick_in_mapped_counts(self):
+        _, report = sportec_mod.convert_to_actions(
+            _df_cornerkick_xml_tag(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        # After normalization, should appear under "Corner" in mapped_counts
+        assert "Corner" in report.mapped_counts
+
+    def test_corner_legacy_still_works(self):
+        """Existing 'Corner' event_type must continue to work."""
+        actions, report = sportec_mod.convert_to_actions(_df_corner(), home_team_id="T-HOME", home_team_start_left=True)
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["corner_short"]
+        assert "Corner" in report.mapped_counts
+
+
+class TestSportecOtherBallAction:
+    """DFL 'OtherBallAction' events: clearances map to SPADL clearance,
+    non-clearances map to non_action for game-state context."""
+
+    def test_clearance_maps_to_clearance(self):
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_other_ball_action_clearance(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["clearance"]
+
+    def test_clearance_result_is_success(self):
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_other_ball_action_clearance(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["result_id"].iloc[0] == spadlconfig.result_id["success"]
+
+    def test_clearance_via_short_column_name(self):
+        """otherball_defensive_clearance (short prefix) also triggers clearance."""
+        df = _df_other_ball_action_non_clearance()
+        df["otherball_defensive_clearance"] = ["true"]
+        actions, _ = sportec_mod.convert_to_actions(df, home_team_id="T-HOME", home_team_start_left=True)
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["clearance"]
+
+    def test_non_clearance_is_mapped_but_dropped(self):
+        """Non-clearance OtherBallAction dispatches as non_action internally,
+        which is filtered from output — but it IS mapped (not unrecognized)."""
+        actions, report = sportec_mod.convert_to_actions(
+            _df_other_ball_action_non_clearance(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert len(actions) == 0  # non_action is stripped from output
+        assert "OtherBallAction" in report.mapped_counts
+        assert "OtherBallAction" not in report.unrecognized_counts
+
+    def test_other_ball_action_not_in_unrecognized_counts(self):
+        _, report = sportec_mod.convert_to_actions(
+            _df_other_ball_action_clearance(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert "OtherBallAction" not in report.unrecognized_counts
+
+    def test_other_ball_action_in_mapped_counts(self):
+        _, report = sportec_mod.convert_to_actions(
+            _df_other_ball_action_clearance(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert "OtherBallAction" in report.mapped_counts
+
+    def test_mixed_events_all_processed(self):
+        """CornerKick + OtherBallAction + Play in same batch all produce actions."""
+        events = pd.concat(
+            [
+                _df_cornerkick_xml_tag().assign(event_id="e1", timestamp_seconds=10.0),
+                _df_other_ball_action_clearance().assign(event_id="e2", timestamp_seconds=20.0),
+                _df_minimal_pass().assign(
+                    event_id="e3",
+                    timestamp_seconds=30.0,
+                    match_id="M1",
+                    team="T-HOME",
+                ),
+            ],
+            ignore_index=True,
+        )
+        actions, report = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
+        assert len(actions) == 3
+        assert report.unrecognized_counts == {}

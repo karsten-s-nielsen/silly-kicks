@@ -154,8 +154,17 @@ _MAPPED_EVENT_TYPES: frozenset[str] = frozenset(
         "ThrowIn",
         "GoalKick",
         "Play",
+        "OtherBallAction",
     }
 )
+
+# DFL XML tag aliases: the XML first-child tag name may differ from the
+# normalized form used in the dispatch logic below. Callers passing raw
+# XML tag names (e.g., lakehouse ingestion) need these aliases resolved
+# before the whitelist check. See Bug 3 (3.10.1).
+_EVENT_TYPE_ALIASES: dict[str, str] = {
+    "CornerKick": "Corner",
+}
 
 _EXCLUDED_EVENT_TYPES: frozenset[str] = frozenset(
     {
@@ -303,6 +312,11 @@ _RECOGNIZED_QUALIFIER_COLUMNS: frozenset[str] = frozenset(
         "otherball_team",
         "otherball_ball_possession_phase",
         "otherball_defensive_clearance",
+        # Lakehouse-prefixed variants (lakehouse uses event_type prefix)
+        "other_ball_action_defensive_clearance",
+        "other_ball_action_ball_possession_phase",
+        "other_ball_action_player",
+        "other_ball_action_team",
         "cross_side",
         "cross_goal_keeper",
         "cross_goal_keeper_interference",
@@ -594,6 +608,11 @@ def convert_to_actions(
     """
     _validate_input_columns(events, EXPECTED_INPUT_COLUMNS, provider="Sportec")
     _validate_preserve_native(events, preserve_native, provider="Sportec", schema=KLOPPY_SPADL_COLUMNS)
+
+    # Normalize DFL XML tag aliases before dispatch (e.g. "CornerKick" → "Corner").
+    if events["event_type"].isin(_EVENT_TYPE_ALIASES).any():
+        events = events.copy()
+        events["event_type"] = events["event_type"].replace(_EVENT_TYPE_ALIASES)
 
     event_type_counts = Counter(events["event_type"])
 
@@ -893,6 +912,21 @@ def _build_raw_actions(
     # we haven't analyzed). Empty-qualifier rows are pass-class above.
     is_play_unrecognized_gk = is_play & (play_gk != "") & ~is_play_known_qualifier
     type_ids[is_play_unrecognized_gk] = spadlconfig.actiontype_id["non_action"]
+
+    # --- OtherBallAction (DFL XML tag) ---
+    # DefensiveClearance=true → clearance; otherwise → non_action (preserves
+    # the event in the action stream for VAEP game-state context).
+    # Column name varies by caller: "otherball_defensive_clearance" (recognized
+    # qualifier list) or "other_ball_action_defensive_clearance" (lakehouse).
+    is_other_ball = et == "OtherBallAction"
+    _dc_short = _opt("otherball_defensive_clearance", "").fillna("").astype(str).str.lower().eq("true").to_numpy()
+    _dc_long = (
+        _opt("other_ball_action_defensive_clearance", "").fillna("").astype(str).str.lower().eq("true").to_numpy()
+    )
+    is_other_ball_clearance = is_other_ball & (_dc_short | _dc_long)
+    type_ids[is_other_ball_clearance] = spadlconfig.actiontype_id["clearance"]
+    result_ids[is_other_ball_clearance] = spadlconfig.result_id["success"]
+    type_ids[is_other_ball & ~is_other_ball_clearance] = spadlconfig.actiontype_id["non_action"]
 
     # --- ADR-001 qualifier passthrough columns for TacklingGame rows ---
     # Surface DFL tackle_winner / tackle_winner_team / tackle_loser /
