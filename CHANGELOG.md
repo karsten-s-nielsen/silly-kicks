@@ -5,6 +5,15 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.1] — 2026-05-11
+
+### Fixed
+- **Tracking namespace re-export gap:** `add_actor_pre_window`, `add_pressure_on_actor`,
+  `pressure_on_actor`, and 13 related symbols (TF-2 + TF-3 per-Series helpers, xfn lists,
+  pressure param types, pre-shot GK per-Series helpers) were exported from
+  `silly_kicks.tracking.features` but never re-exported from `silly_kicks.tracking`.
+  Oversight from PR-S25 (3.2.0). All 16 symbols now accessible at `silly_kicks.tracking.*`.
+
 ## [3.11.0] — 2026-05-11
 
 ### Added
