@@ -19,6 +19,7 @@ from silly_kicks.tracking.feature_framework import lift_to_states
 from silly_kicks.tracking.features import (
     add_gk_influence,
     ball_carrier_at_action,
+    cover_shadow_xfns,
     gk_closing_time_mean_s,
     gk_closing_time_min_s,
     gk_influence_xfns,
@@ -36,6 +37,7 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_cover_shadows",
     "add_gk_influence",
     "add_pitch_control",
     "add_pre_shot_gk_angle",
@@ -50,6 +52,7 @@ __all__ = [
     "atomic_pressure_default_xfns",
     "atomic_tracking_default_xfns",
     "ball_carrier_at_action",
+    "cover_shadow_xfns",
     "defenders_in_triangle_to_goal",
     "gk_closing_time_mean_s",
     "gk_closing_time_min_s",
@@ -693,3 +696,51 @@ def atomic_pitch_control_xfns(
 
 
 atomic_pitch_control_default_xfns = atomic_pitch_control_xfns("spearman")
+
+
+# ---------------------------------------------------------------------------
+# PR-S36 -- TF-30: Cover shadows (atomic variant)
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_cover_shadows(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt,
+    *,
+    home_team_id: int | str,
+    decision_rule: Literal["any", "majority", "all"] = "majority",
+    detailed: bool = False,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.DataFrame:
+    """Atomic-SPADL aggregator: cover shadow columns.
+
+    Adapts atomic column names (x, y) to standard (start_x, start_y).
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_cover_shadows
+    >>> enriched = add_cover_shadows(atomic_actions, frames, xt, home_team_id=1)
+    """
+    from silly_kicks.tracking.features import add_cover_shadows as _std_cs
+
+    adapted = actions.rename(
+        columns={"x": "start_x", "y": "start_y"},
+        errors="ignore",
+    )
+    result = _std_cs(
+        adapted,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        decision_rule=decision_rule,
+        detailed=detailed,
+        method=method,
+    )
+    # Rename back
+    result = result.rename(
+        columns={"start_x": "x", "start_y": "y"},
+        errors="ignore",
+    )
+    return result

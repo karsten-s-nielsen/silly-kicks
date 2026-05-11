@@ -232,6 +232,20 @@ methodology described in:
   (1D Ward hierarchical clustering on x-coordinates for defensive line
   identification; cross-product straddle test for pass-segment intersection)
 
+The cover shadow features in silly_kicks/tracking/_cover_shadows.py
+(PR-S36, TF-30) implement methodologies described in:
+
+- Cascioli, L., Wang, A., Stradiotti, L., Van Roy, M., Robberechts, P.,
+  Wouters, M., Jaspers, A., & Davis, J. (2025). "Quantifying Off-Ball
+  Defensive Impact through Cover Shadows." Hudl Research / DTAI, KU Leuven.
+  (Lane Control physics-based pass-blocking model; blocking score
+  counterfactual threat reduction metric)
+
+- Spearman, W., Basye, A., Dick, G., Hotovy, R., & Pop, P. (2017).
+  "Physics-Based Modeling of Pass Probabilities in Soccer." MIT Sloan SAC.
+  (Ball drag model: quadratic air resistance with rho=1.22, C_D=0.25,
+  A=0.038, m=0.42; referenced by Cascioli et al. for ball travel time)
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).

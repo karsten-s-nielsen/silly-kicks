@@ -73,6 +73,7 @@ __all__ = [
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
+    "add_cover_shadows",
     "add_das",
     "add_defensive_line",
     "add_gk_influence",
@@ -88,6 +89,7 @@ __all__ = [
     "back_n_count",
     "ball_carrier_at_action",
     "compactness_x",
+    "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
     "defenders_in_triangle_to_goal",
@@ -2515,3 +2517,263 @@ def gk_influence_xfns(
     _gk_influence_transformer._frame_aware = True  # type: ignore[attr-defined]
     _gk_influence_transformer.__name__ = "gk_influence"
     return [_gk_influence_transformer]
+
+
+# ---------------------------------------------------------------------------
+# PR-S36 -- TF-30: Cover shadows — lane control + blocking score
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_cover_shadows(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    decision_rule: Literal["any", "majority", "all"] = "majority",
+    detailed: bool = False,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.DataFrame:
+    """Enrich actions with cover shadow columns.
+
+    Computes lane-specific pass obstruction and blocking score for each action.
+    Emits 5 columns: n_blocked_receivers, n_potential_receivers, blocking_score,
+    blocked_threat_fraction, max_single_defender_blocking_score.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions with standard columns.
+    frames : pd.DataFrame
+        Tracking frames (LTR-normalized).
+    xt : ExpectedThreat
+        Fitted xT model for threat weighting.
+    home_team_id : int | str
+        Home team identifier (defends x=0).
+    decision_rule : {"any", "majority", "all"}
+        Lane-blocking decision rule. Default "majority".
+    detailed : bool
+        If True, compute per-defender blocking score via full pitch control
+        counterfactual. If False, use lightweight lane-control approximation.
+    method : str
+        Pitch control method.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input actions with 5 additional columns.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_cover_shadows
+    >>> enriched = add_cover_shadows(actions, frames, xt, home_team_id=1)
+
+    See NOTICE for full bibliographic citations.
+    """
+    from . import _cover_shadows as _cs_mod
+
+    out = actions.copy()
+    n = len(actions)
+    col_n_blocked = np.full(n, pd.NA, dtype="object")
+    col_n_potential = np.full(n, pd.NA, dtype="object")
+    col_bs = np.full(n, np.nan)
+    col_btf = np.full(n, np.nan)
+    col_max_def = np.full(n, np.nan)
+
+    pointers, _ = link_actions_to_frames(actions, frames)
+    pointer_lookup = pointers.set_index("action_id")
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    for j, (_idx, row) in enumerate(actions.iterrows()):
+        aid = row["action_id"]
+        tid = row["team_id"]
+        if pd.isna(tid) or aid not in pointer_lookup.index:
+            continue
+        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        if pd.isna(fid_raw):
+            continue
+
+        pid_period = row["period_id"]
+        fid = int(float(fid_raw))  # type: ignore[arg-type]
+
+        try:
+            frame_data = frame_groups.get_group((pid_period, fid))
+        except KeyError:
+            continue
+
+        passer_xy = (float(row["start_x"]), float(row["start_y"]))
+
+        cs = _cs_mod._compute_cover_shadow_dict(
+            frame_data,
+            passer_xy,
+            tid,
+            xt,
+            home_team_id=home_team_id,
+            decision_rule=decision_rule,
+            detailed=detailed,
+            method=method,
+        )
+        if cs is None:
+            continue
+
+        col_n_blocked[j] = cs["n_blocked_receivers"]
+        col_n_potential[j] = cs["n_potential_receivers"]
+        col_bs[j] = cs["blocking_score"]
+        col_btf[j] = cs["blocked_threat_fraction"]
+        col_max_def[j] = cs["max_single_defender_blocking_score"]
+
+    out["n_blocked_receivers"] = pd.array(col_n_blocked, dtype="Int64")
+    out["n_potential_receivers"] = pd.array(col_n_potential, dtype="Int64")
+    out["blocking_score"] = col_bs
+    out["blocked_threat_fraction"] = col_btf
+    out["max_single_defender_blocking_score"] = col_max_def
+
+    # Provenance columns
+    provenance_cols = [
+        "frame_id",
+        "time_offset_seconds",
+        "n_candidate_frames",
+        "link_quality_score",
+    ]
+    existing = [c for c in provenance_cols if c in out.columns]
+    if not existing and len(pointers) > 0:
+        ptr_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(
+            ptr_cols,
+            left_on="action_id",
+            right_index=True,
+            how="left",
+        )
+
+    return out
+
+
+def cover_shadow_xfns(
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    decision_rule: Literal["any", "majority", "all"] = "majority",
+    detailed: bool = False,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> list:
+    """Factory returning a list with one FrameAwareTransformer for cover shadows.
+
+    5 columns x 3 game states = 15 VAEP columns. Frame-precomputation cache
+    keyed on (period_id, frame_id, team_id, rounded_passer_xy).
+
+    Parameters
+    ----------
+    xt : ExpectedThreat
+        Fitted xT model for threat weighting.
+    home_team_id : int | str
+        Home team identifier for goal-end orientation.
+    decision_rule : {"any", "majority", "all"}
+        Lane-blocking decision rule. Default "majority".
+    detailed : bool
+        If True, per-defender blocking score via full PC counterfactual.
+    method : str
+        Pitch control method, default "spearman".
+
+    Examples
+    --------
+    Compose into HybridVAEP::
+
+        from silly_kicks.tracking.features import tracking_default_xfns, cover_shadow_xfns
+        xfns = tracking_default_xfns + cover_shadow_xfns(xt, home_team_id=1)
+        X = compute_features(actions, xfns=xfns, frames=frames)
+    """
+    from . import _cover_shadows as _cs_mod
+
+    col_names = _cs_mod._CS_COL_NAMES
+
+    def _cover_shadow_transformer(states, frames):
+        """Multi-column cover shadow xfn with frame precomputation cache."""
+        import warnings as _warnings
+
+        out = pd.DataFrame(index=states[0].index)
+
+        if frames is None:
+            for i in range(3):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        cache: dict[tuple, dict | None] = {}
+        frame_groups = frames.groupby(["period_id", "frame_id"])
+
+        def _get_cs(period_id, frame_id_int, team_id, passer_xy):
+            passer_key = (round(passer_xy[0], 0), round(passer_xy[1], 0))
+            key = (period_id, frame_id_int, team_id, passer_key)
+            if key in cache:
+                return cache[key]
+
+            try:
+                frame_data = frame_groups.get_group(
+                    (period_id, frame_id_int),
+                )
+            except KeyError:
+                cache[key] = None
+                return None
+
+            try:
+                result_dict = _cs_mod._compute_cover_shadow_dict(
+                    frame_data,
+                    passer_xy,
+                    team_id,
+                    xt,
+                    home_team_id=home_team_id,
+                    decision_rule=decision_rule,
+                    detailed=detailed,
+                    method=method,
+                )
+                cache[key] = result_dict
+                return result_dict
+
+            except (ValueError, KeyError) as exc:
+                _warnings.warn(
+                    f"cover_shadow computation failed for frame {frame_id_int}: {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                cache[key] = None
+                return None
+
+        for i, slot in enumerate(states[:3]):
+            slot_results = {col: np.full(len(slot), np.nan) for col in col_names}
+            pointers, _ = link_actions_to_frames(slot, frames)
+            pointer_lookup = pointers.set_index("action_id")
+
+            for j, (_idx, row) in enumerate(slot.iterrows()):
+                aid = row["action_id"]
+                tid = row["team_id"]
+                if pd.isna(tid):
+                    continue
+                if aid not in pointer_lookup.index:
+                    continue
+                fid_raw = pointer_lookup.at[aid, "frame_id"]
+                if pd.isna(fid_raw):
+                    continue
+
+                pid = row["period_id"]
+                fid = int(float(fid_raw))  # type: ignore[arg-type]
+                passer_xy = (
+                    float(row["start_x"]),
+                    float(row["start_y"]),
+                )
+
+                cs = _get_cs(pid, fid, tid, passer_xy)
+                if cs is None:
+                    continue
+
+                for col in col_names:
+                    slot_results[col][j] = cs[col]
+
+            for col in col_names:
+                out[f"{col}_a{i}"] = slot_results[col]
+
+        return out
+
+    _cover_shadow_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _cover_shadow_transformer.__name__ = "cover_shadows"
+    return [_cover_shadow_transformer]

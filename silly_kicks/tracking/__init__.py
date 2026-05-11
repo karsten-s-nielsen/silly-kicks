@@ -25,7 +25,9 @@ __all__ = [
     "TRACKING_CONSTRAINTS",
     "TRACKING_FRAMES_COLUMNS",
     "ActionFrameContext",
+    "CoverShadowParams",
     "FernandezBornnParams",
+    "LaneControlResult",
     "LineBreakingParams",
     "LinkReport",
     "PitchControlSurface",
@@ -35,6 +37,7 @@ __all__ = [
     "VoronoiParams",
     "actor_speed",
     "add_action_context",
+    "add_cover_shadows",
     "add_das",
     "add_defensive_line",
     "add_gk_influence",
@@ -50,11 +53,13 @@ __all__ = [
     "back_n_count",
     "ball_carrier_at_action",
     "compactness_x",
+    "compute_blocking_score",
     "compute_defensive_line",
     "compute_pitch_control",
     "compute_pitch_control_at_points",
     "compute_team_shape",
     "compute_tti",
+    "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
     "defenders_in_triangle_to_goal",
@@ -78,6 +83,7 @@ __all__ = [
     "infer_ball_carrier",
     "interpolate_frames",
     "kloppy",
+    "lane_control",
     "lateral_width",
     "lift_to_states",
     "line_breaking_ward_xfns",
@@ -111,6 +117,12 @@ __all__ = [
 
 from . import feature_framework, features, pff, pitch_control, preprocess, schema, sportec, utils
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
+from ._cover_shadows import (
+    CoverShadowParams,
+    LaneControlResult,
+    compute_blocking_score,
+    lane_control,
+)
 from ._das import get_das, get_individual_das, get_xc
 from ._defensive_line import compute_defensive_line, select_back_line_players
 from ._line_breaking import LineBreakingParams, detect_line_breaking
@@ -119,6 +131,7 @@ from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
     actor_speed,
     add_action_context,
+    add_cover_shadows,
     add_das,
     add_defensive_line,
     add_gk_influence,
@@ -133,6 +146,7 @@ from .features import (
     back_n_count,
     ball_carrier_at_action,
     compactness_x,
+    cover_shadow_xfns,
     das_at_action,
     das_xfns,
     defenders_in_triangle_to_goal,

@@ -5,6 +5,21 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] — 2026-05-11
+
+### Added
+- **TF-30: Cover Shadow Features — Lane Control + Blocking Score:**
+  - `CoverShadowParams` frozen dataclass with all tunable physics constants
+  - `LaneControlResult` frozen dataclass with per-line blocking probabilities + 3 decision flags
+  - `ball_drag_time()` — Spearman 2017 quadratic air drag ball travel time
+  - `player_tti()` — 3-phase react + accelerate + cruise time-to-intercept
+  - `lane_control()` — per-(passer, receiver) corridor-discretized blocking probability
+  - `compute_blocking_score()` — grid-based Voronoi counterfactual threat reduction
+  - `add_cover_shadows()` — action-coupled aggregator (5 columns: `n_blocked_receivers`, `n_potential_receivers`, `blocking_score`, `blocked_threat_fraction`, `max_single_defender_blocking_score`)
+  - `cover_shadow_xfns()` — VAEP factory (15 columns = 5 x 3 game states)
+  - Atomic SPADL mirror
+  - Ref: Cascioli, Wang, Stradiotti, Van Roy, Robberechts, Wouters, Jaspers & Davis 2025 (Hudl/DTAI, KU Leuven)
+
 ## [3.10.1] — 2026-05-10
 
 ### Fixed

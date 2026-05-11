@@ -34,6 +34,7 @@ ATOMIC_ENRICHMENTS = _discover(atomic_utils)
 TRACKING_ENRICHMENTS = _discover(tracking_features)
 # Split: helpers needing only (actions, frames) vs those needing extra kwargs
 _TRACKING_NEEDS_EXTRA = {
+    "add_cover_shadows",
     "add_defensive_line",
     "add_gk_influence",
     "add_line_break",
@@ -489,7 +490,7 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
     name = helper.__name__
     if name in ("add_defensive_line", "add_off_ball_runs", "add_line_break", "add_off_ball_context", "add_team_shape"):
         out = helper(actions, frames, home_team_id=1)
-    elif name == "add_gk_influence":
+    elif name in ("add_gk_influence", "add_cover_shadows"):
         import numpy as np
 
         from silly_kicks.xthreat import ExpectedThreat
