@@ -5,6 +5,19 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.1] — 2026-05-10
+
+### Fixed
+- **Sportec CornerKick alias:** DFL XML uses `CornerKick` as the event tag but
+  the DataFrame converter only accepted `Corner`. Callers passing raw XML tag
+  names (e.g., lakehouse ingestion) had corner events silently dropped to
+  `unrecognized_counts` (~16% of events in 7-match Bundesliga figshare
+  collection). Both `Corner` and `CornerKick` are now accepted.
+- **Sportec OtherBallAction handling:** DFL `OtherBallAction` events were
+  silently dropped. Now mapped: `DefensiveClearance=true` produces a SPADL
+  `clearance` action; other `OtherBallAction` events are mapped internally
+  (appear in `mapped_counts`) but filtered as `non_action`.
+
 ## [3.10.0] — 2026-05-10
 
 ### Added
