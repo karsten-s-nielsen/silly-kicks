@@ -146,6 +146,62 @@ def test_move_transition_matrix() -> None:
     assert move_mat[2, 2] == 1
 
 
+class TestNaNCoordinates:
+    """NaN coordinates in move actions must not crash _get_cell_indexes.
+
+    Real-world providers (Metrica, Sportec/IDSSE) produce NaN coordinates
+    on certain action types. These must be silently skipped during fitting
+    and rating, not raise IntCastingNaNError.
+    """
+
+    @pytest.fixture()
+    def actions_with_nan(self) -> pd.DataFrame:
+        pass_id = spadl.config.actiontypes.index("pass")
+        shot_id = spadl.config.actiontypes.index("shot")
+        success_id = spadl.config.results.index("success")
+        fail_id = spadl.config.results.index("fail")
+        return pd.DataFrame(
+            {
+                "game_id": [1] * 5,
+                "period_id": [1] * 5,
+                "action_id": list(range(5)),
+                "time_seconds": [0.0, 1.0, 2.0, 3.0, 4.0],
+                "team_id": [1, 1, 1, 1, 2],
+                "player_id": [101, 102, 103, 104, 201],
+                "start_x": [10.0, None, 50.0, 80.0, 90.0],
+                "start_y": [34.0, None, 34.0, 34.0, 34.0],
+                "end_x": [20.0, 60.0, 70.0, None, 100.0],
+                "end_y": [34.0, 34.0, 34.0, None, 34.0],
+                "type_id": [pass_id, pass_id, pass_id, pass_id, shot_id],
+                "result_id": [success_id, success_id, success_id, fail_id, success_id],
+                "bodypart_id": [0] * 5,
+            }
+        )
+
+    def test_fit_with_nan_coordinates(self, actions_with_nan: pd.DataFrame) -> None:
+        """fit() must not crash when move actions have NaN coordinates."""
+        model = xt.ExpectedThreat(l=4, w=3)
+        model.fit(actions_with_nan)
+        assert model.transition_matrix is not None
+        assert np.isfinite(model.xT).all()
+
+    def test_rate_with_nan_coordinates(self, actions_with_nan: pd.DataFrame) -> None:
+        """rate() must assign NaN to move actions with NaN coordinates."""
+        model = xt.ExpectedThreat(l=4, w=3)
+        model.fit(actions_with_nan)
+        ratings = model.rate(actions_with_nan)
+        assert len(ratings) == len(actions_with_nan)
+        # Action 0 (pass, success, valid coords) should be rated
+        assert np.isfinite(ratings[0])
+        # Action 1 (pass, success, NaN start) should be NaN
+        assert np.isnan(ratings[1])
+        # Action 2 (pass, success, valid coords) should be rated
+        assert np.isfinite(ratings[2])
+        # Action 3 (pass, fail) and action 4 (shot) are not successful moves → NaN
+        assert np.isnan(ratings[3])
+        assert np.isnan(ratings[4])
+
+
 def test_xt_model_init() -> None:
     """It should initialize all instance variables."""
     xTModel = xt.ExpectedThreat(l=8, w=6, eps=1e-3)

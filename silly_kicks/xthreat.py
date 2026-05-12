@@ -183,6 +183,8 @@ def _move_transition_matrix(actions: pd.DataFrame, l: int = N, w: int = M) -> np
         The transition matrix.
     """
     move_actions = _get_move_actions(actions)
+    # Drop actions with NaN coordinates — they cannot be assigned to grid cells.
+    move_actions = move_actions.dropna(subset=["start_x", "start_y", "end_x", "end_y"])
 
     X = pd.DataFrame()
     X["start_cell"] = _get_flat_indexes(move_actions.start_x, move_actions.start_y, l, w)
@@ -453,6 +455,8 @@ class ExpectedThreat:
         ratings[:] = np.nan
 
         move_actions = _get_successful_move_actions(actions.reset_index())  # type: ignore[reportArgumentType]
+        # Drop actions with NaN coordinates — they cannot be assigned to grid cells.
+        move_actions = move_actions.dropna(subset=["start_x", "start_y", "end_x", "end_y"])
 
         startxc, startyc = _get_cell_indexes(move_actions.start_x, move_actions.start_y, l, w)
         endxc, endyc = _get_cell_indexes(move_actions.end_x, move_actions.end_y, l, w)
