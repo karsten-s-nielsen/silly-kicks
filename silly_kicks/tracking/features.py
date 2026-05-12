@@ -375,10 +375,11 @@ def add_action_context(
     out["receiver_zone_density"] = rz.astype("Int64")
     dt = _kernels._defenders_in_triangle_to_goal(actions["start_x"], actions["start_y"], ctx)
     out["defenders_in_triangle_to_goal"] = dt.astype("Int64")
-    pointer_cols = ctx.pointers.set_index("action_id")[
-        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    ]
-    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    # Provenance: skip if already present (idempotent with other add_* enrichments)
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        pointer_cols = ctx.pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
     return out
 
 
@@ -567,10 +568,11 @@ def add_pre_shot_gk_position(
     out = actions.copy()
     for col in ("pre_shot_gk_x", "pre_shot_gk_y", "pre_shot_gk_distance_to_goal", "pre_shot_gk_distance_to_shot"):
         out[col] = df[col]
-    pointer_cols = ctx.pointers.set_index("action_id")[
-        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    ]
-    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    # Provenance: skip if already present (idempotent with other add_* enrichments)
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        pointer_cols = ctx.pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
     return out
 
 
@@ -782,11 +784,12 @@ def add_actor_pre_window(
     out = actions.copy()
     out["actor_arc_length_pre_window"] = df["actor_arc_length_pre_window"]
     out["actor_displacement_pre_window"] = df["actor_displacement_pre_window"]
-    pointers, _report = link_actions_to_frames(actions, frames)
-    pointer_cols = pointers.set_index("action_id")[
-        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    ]
-    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    # Provenance: skip if already present (idempotent with other add_* enrichments)
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        pointers, _report = link_actions_to_frames(actions, frames)
+        pointer_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
     return out
 
 
@@ -918,11 +921,12 @@ def add_pressure_on_actor(
         s = pressure_on_actor(actions, frames, method=m, params=params)
         out[f"pressure_on_actor__{m}"] = s.values
 
-    pointers, _report = link_actions_to_frames(actions, frames)
-    pointer_cols = pointers.set_index("action_id")[
-        ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
-    ]
-    out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    # Provenance: skip if already present (idempotent with other add_* enrichments)
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        pointers, _report = link_actions_to_frames(actions, frames)
+        pointer_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
     return out
 
 
