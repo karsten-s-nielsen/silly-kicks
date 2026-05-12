@@ -5,6 +5,17 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.2] — 2026-05-11
+
+### Fixed
+- **Provenance column skip guard:** `add_action_context`, `add_pre_shot_gk_position`,
+  `add_actor_pre_window`, and `add_pressure_on_actor` now skip merging linkage-provenance
+  columns (`frame_id`, `time_offset_seconds`, `link_quality_score`, `n_candidate_frames`)
+  when they already exist on the input DataFrame. Aligns with the idempotent pattern
+  established by `add_defensive_line`, `add_team_shape`, `add_gk_influence`, and
+  `add_cover_shadows` (PR-S27+). Without this guard, chaining multiple `add_*` enrichments
+  produced `_x`/`_y` suffixed duplicate columns via `pd.merge`.
+
 ## [3.11.1] — 2026-05-11
 
 ### Fixed
