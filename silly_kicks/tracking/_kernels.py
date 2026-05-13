@@ -779,6 +779,7 @@ def _defensive_line_at_actions(
     *,
     home_team_id: int | str,
     n: int | Literal["adaptive"] = 4,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """All 6 defensive-line columns for the defending team at each action's linked frame.
 
@@ -817,7 +818,10 @@ def _defensive_line_at_actions(
     # (action_id may not be unique in gamestates shifted slots)
     actions_with_idx = actions.copy()
     actions_with_idx["_row_idx"] = np.arange(n_actions)
-    pointers, _report = link_actions_to_frames(actions_with_idx, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions_with_idx, frames)
     linked = pointers[pointers["frame_id"].notna()].copy()
     if linked.empty:
         return empty

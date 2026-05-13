@@ -245,6 +245,8 @@ def _count_candidates_within_tolerance(
 def _resolve_action_frame_context(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
 ) -> ActionFrameContext:  # type: ignore[name-defined]  # noqa: F821
     """Build the linked-context structure used by all 4 action_context features.
 
@@ -271,7 +273,10 @@ def _resolve_action_frame_context(
     """
     from .feature_framework import ActionFrameContext  # avoid module-import cycle
 
-    pointers, _report = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
 
     # Inner-join pointers <-> frames on (period_id, frame_id) to materialize linked frames per action
     projection_cols = ["action_id", "period_id", "team_id", "player_id"]

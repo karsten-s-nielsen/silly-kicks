@@ -341,6 +341,7 @@ def add_action_context(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     receiver_zone_radius: float = 5.0,
 ) -> pd.DataFrame:
     """Enrich actions with 4 tracking-aware features + 4 linkage-provenance columns.
@@ -367,7 +368,7 @@ def add_action_context(
         from silly_kicks.tracking.features import add_action_context
         enriched = add_action_context(actions, frames, receiver_zone_radius=5.0)
     """
-    ctx = _resolve_action_frame_context(actions, frames)
+    ctx = _resolve_action_frame_context(actions, frames, links=links)
     out = actions.copy()
     out["nearest_defender_distance"] = _kernels._nearest_defender_distance(actions["start_x"], actions["start_y"], ctx)
     out["actor_speed"] = _kernels._actor_speed_from_ctx(ctx)
@@ -517,6 +518,8 @@ def pre_shot_gk_distance_to_shot(actions: pd.DataFrame, frames: pd.DataFrame) ->
 def add_pre_shot_gk_position(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with 4 GK-position columns + 4 linkage-provenance columns.
 
@@ -561,7 +564,7 @@ def add_pre_shot_gk_position(
             "'defending_gk_player_id'. Run silly_kicks.spadl.utils.add_pre_shot_gk_context "
             "first to populate it."
         )
-    ctx = _resolve_action_frame_context(actions, frames)
+    ctx = _resolve_action_frame_context(actions, frames, links=links)
     df = _kernels._pre_shot_gk_position(
         actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS
     )
@@ -636,6 +639,7 @@ def add_pre_shot_gk_angle(
     actions: pd.DataFrame,
     *,
     frames: pd.DataFrame,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Add 2 GK-angle columns at the linked frame for each shot action.
 
@@ -669,7 +673,7 @@ def add_pre_shot_gk_angle(
             "add_pre_shot_gk_angle: actions missing required column 'defending_gk_player_id'. "
             "Run silly_kicks.spadl.utils.add_pre_shot_gk_context first."
         )
-    ctx = _resolve_action_frame_context(actions, frames)
+    ctx = _resolve_action_frame_context(actions, frames, links=links)
     df = _kernels._pre_shot_gk_angle(actions["start_x"], actions["start_y"], ctx, shot_type_ids=_STANDARD_SHOT_TYPE_IDS)
     out = actions.copy()
     for col in ("pre_shot_gk_angle_to_shot_trajectory", "pre_shot_gk_angle_off_goal_line"):
@@ -760,6 +764,7 @@ def add_actor_pre_window(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     pre_seconds: float = 0.5,
 ) -> pd.DataFrame:
     """Enrich actions with 2 TF-3 movement columns + 4 linkage-provenance columns.
@@ -787,7 +792,10 @@ def add_actor_pre_window(
     # Provenance: skip if already present (idempotent with other add_* enrichments)
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols):
-        pointers, _report = link_actions_to_frames(actions, frames)
+        if links is not None:
+            pointers = links
+        else:
+            pointers, _report = link_actions_to_frames(actions, frames)
         pointer_cols = pointers.set_index("action_id")[provenance_cols]
         out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
     return out
@@ -825,6 +833,7 @@ def pressure_on_actor(
     *,
     method: Method = "andrienko_oval",
     params: PressureParams | None = None,
+    links: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Pressure exerted on the action's actor at the linked frame.
 
@@ -854,11 +863,11 @@ def pressure_on_actor(
     validate_params_for_method(method, params)
     if method == "andrienko_oval":
         ap = params if isinstance(params, AndrienkoParams) else AndrienkoParams()
-        ctx = _resolve_action_frame_context(actions, frames)
+        ctx = _resolve_action_frame_context(actions, frames, links=links)
         s = _kernels._pressure_andrienko(actions["start_x"], actions["start_y"], ctx, params=ap)
     elif method == "link_zones":
         lp = params if isinstance(params, LinkParams) else LinkParams()
-        ctx = _resolve_action_frame_context(actions, frames)
+        ctx = _resolve_action_frame_context(actions, frames, links=links)
         s = _kernels._pressure_link(actions["start_x"], actions["start_y"], ctx, params=lp)
     elif method == "bekkers_pi":
         bp = params if isinstance(params, BekkersParams) else BekkersParams()
@@ -875,7 +884,7 @@ def pressure_on_actor(
                 "use_ball_carrier_max=False to compute pressure-on-player only, or "
                 "use a provider that emits ball positions per frame."
             )
-        ctx = _resolve_action_frame_context(actions, frames)
+        ctx = _resolve_action_frame_context(actions, frames, links=links)
         ball_xy_v_per_action = _build_ball_xy_v_per_action(actions, frames, ctx)
         s = _kernels._pressure_bekkers(
             actions["start_x"],
@@ -895,6 +904,7 @@ def add_pressure_on_actor(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     methods: tuple[Method, ...] = ("andrienko_oval",),
     params_per_method: dict[Method, PressureParams] | None = None,
 ) -> pd.DataFrame:
@@ -918,13 +928,16 @@ def add_pressure_on_actor(
     out = actions.copy()
     for m in methods:
         params = params_per_method.get(m)
-        s = pressure_on_actor(actions, frames, method=m, params=params)
+        s = pressure_on_actor(actions, frames, method=m, params=params, links=links)
         out[f"pressure_on_actor__{m}"] = s.values
 
     # Provenance: skip if already present (idempotent with other add_* enrichments)
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols):
-        pointers, _report = link_actions_to_frames(actions, frames)
+        if links is not None:
+            pointers = links
+        else:
+            pointers, _report = link_actions_to_frames(actions, frames)
         pointer_cols = pointers.set_index("action_id")[provenance_cols]
         out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
     return out
@@ -1068,6 +1081,7 @@ def add_defensive_line(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     home_team_id: int | str,
     n: int | Literal["adaptive"] = 4,
 ) -> pd.DataFrame:
@@ -1083,7 +1097,7 @@ def add_defensive_line(
     >>> from silly_kicks.tracking.features import add_defensive_line
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
-    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n, links=links)
     out = actions.copy()
     for col in ("defensive_line_x", "back_line_high_x", "compactness_x", "lateral_width", "max_lateral_gap"):
         out[col] = df[col]
@@ -1093,7 +1107,10 @@ def add_defensive_line(
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     existing_provenance = [c for c in provenance_cols if c in out.columns]
     if not existing_provenance:
-        pointers, _report = link_actions_to_frames(actions, frames)
+        if links is not None:
+            pointers = links
+        else:
+            pointers, _report = link_actions_to_frames(actions, frames)
         pointer_cols = pointers.set_index("action_id")[provenance_cols]
         out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
     return out
@@ -1189,6 +1206,7 @@ def add_line_break(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     home_team_id: int | str,
     method: Literal["threshold", "ward"] = "threshold",
     n: int = 4,
@@ -1222,7 +1240,7 @@ def add_line_break(
     if method == "threshold":
         from ._off_ball_runs import _line_break_kernel
 
-        df = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n)
+        df = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n, links=links)
         out = actions.copy()
         out["line_break"] = df["line_break"]
         out["n_attackers_behind_line"] = df["n_attackers_behind_line"]
@@ -1231,7 +1249,7 @@ def add_line_break(
     # method == "ward"
     from ._line_breaking import detect_line_breaking
 
-    result = detect_line_breaking(actions, frames, home_team_id=home_team_id, params=params)
+    result = detect_line_breaking(actions, frames, home_team_id=home_team_id, params=params, links=links)
     out = actions.copy()
     out["line_break__ward"] = result["line_break__ward"]
     out["lines_broken__ward"] = result["lines_broken__ward"]
@@ -1244,6 +1262,7 @@ def add_off_ball_context(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     home_team_id: int | str,
     n: int = 4,
     pre_seconds: float = 1.5,
@@ -1267,7 +1286,7 @@ def add_off_ball_context(
         pre_seconds=pre_seconds,
         min_displacement_m=min_displacement_m,
     )
-    lb = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n)
+    lb = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n, links=links)
     out = actions.copy()
     for col in runs.columns:
         out[col] = runs[col]
@@ -1338,6 +1357,7 @@ def add_team_shape(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     home_team_id: int | str,
 ) -> pd.DataFrame:
     """Enrich actions with 14 team-shape columns (7 metrics x 2 teams).
@@ -1380,7 +1400,10 @@ def add_team_shape(
         shape_indexed[tid] = s.set_index(["game_id", "period_id", "frame_id"])
 
     # Link actions to frames
-    pointers, _report = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
     linked = pointers[pointers["frame_id"].notna()].copy()
 
     metrics = [
@@ -1634,6 +1657,7 @@ def pitch_control_at_action(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
+    links: pd.DataFrame | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> pd.Series:
     """Pitch control value at ball position for the acting team at the linked frame.
@@ -1669,7 +1693,10 @@ def pitch_control_at_action(
         if "vy" not in frames.columns:
             frames["vy"] = 0.0
 
-    pointers, _report = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
 
     results = np.full(len(actions), np.nan)
 
@@ -1717,6 +1744,7 @@ def add_pitch_control(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> pd.DataFrame:
     """Enrich actions with ``pitch_control_at_ball__<method>`` column.
@@ -1727,7 +1755,7 @@ def add_pitch_control(
     >>> enriched = add_pitch_control(actions, frames)
     """
     out = actions.copy()
-    s = pitch_control_at_action(actions, frames, method=method)
+    s = pitch_control_at_action(actions, frames, links=links, method=method)
     out[s.name] = s.values
     return out
 
@@ -1796,11 +1824,16 @@ def _map_das_to_actions(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     das_lookup: dict[tuple, dict],
+    *,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Map precomputed DAS lookup to actions. Returns 3-column DataFrame."""
     import numpy as np
 
-    pointers, _ = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _ = link_actions_to_frames(actions, frames)
     pointer_lookup = pointers.set_index("action_id")
 
     team_vals = np.full(len(actions), np.nan)
@@ -1877,6 +1910,8 @@ def das_at_action(
 def add_das(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with ``das_team``, ``das_opponent``, ``das_diff`` columns.
 
@@ -1902,7 +1937,7 @@ def add_das(
         out["das_diff"] = np.nan
         return out
 
-    mapped = _map_das_to_actions(actions, frames, lookup)
+    mapped = _map_das_to_actions(actions, frames, lookup, links=links)
     out["das_team"] = mapped["das_team"].values
     out["das_opponent"] = mapped["das_opponent"].values
     out["das_diff"] = mapped["das_diff"].values
@@ -1971,6 +2006,7 @@ def _gk_influence_at_actions(
     frames: pd.DataFrame,
     xt: ExpectedThreat,
     *,
+    links: pd.DataFrame | None = None,
     home_team_id: int | str,
     method: str = "spearman",
     zone_names: list[str] | None = None,
@@ -2008,7 +2044,10 @@ def _gk_influence_at_actions(
     if len(frames) == 0:
         return result, pd.DataFrame()
 
-    pointers, _ = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _ = link_actions_to_frames(actions, frames)
     pointer_lookup = pointers.set_index("action_id")
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
@@ -2307,6 +2346,7 @@ def add_gk_influence(
     frames: pd.DataFrame,
     xt: ExpectedThreat,
     *,
+    links: pd.DataFrame | None = None,
     home_team_id: int | str,
     method: str = "spearman",
     zone_names: list[str] | None = None,
@@ -2330,6 +2370,7 @@ def add_gk_influence(
         actions,
         frames,
         xt,
+        links=links,
         home_team_id=home_team_id,
         method=method,
         zone_names=zone_names,
@@ -2534,6 +2575,7 @@ def add_cover_shadows(
     frames: pd.DataFrame,
     xt: ExpectedThreat,
     *,
+    links: pd.DataFrame | None = None,
     home_team_id: int | str,
     decision_rule: Literal["any", "majority", "all"] = "majority",
     detailed: bool = False,
@@ -2585,7 +2627,10 @@ def add_cover_shadows(
     col_btf = np.full(n, np.nan)
     col_max_def = np.full(n, np.nan)
 
-    pointers, _ = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _ = link_actions_to_frames(actions, frames)
     pointer_lookup = pointers.set_index("action_id")
     frame_groups = frames.groupby(["period_id", "frame_id"])
 

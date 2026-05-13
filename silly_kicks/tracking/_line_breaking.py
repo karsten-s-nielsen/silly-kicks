@@ -67,6 +67,7 @@ def detect_line_breaking(
     *,
     home_team_id: int | str,
     params: LineBreakingParams | None = None,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Per-action Ward-clustering line-breaking detection.
 
@@ -118,7 +119,10 @@ def detect_line_breaking(
     from .utils import link_actions_to_frames
 
     # Link actions to frames
-    pointers, _report = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
     linked = pointers[pointers["frame_id"].notna()].copy()
     if linked.empty:
         return empty

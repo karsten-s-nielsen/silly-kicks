@@ -5,6 +5,22 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.0] — 2026-05-13
+
+### Added
+- **Pre-linking optimization (`links` kwarg):** All tracking `add_*` aggregators now accept
+  an optional `links: pd.DataFrame | None = None` keyword argument. When provided, the
+  function skips its internal `link_actions_to_frames` call and uses the caller-supplied
+  pointers. Pipeline callers (e.g. lakehouse) pre-link once and pass `links` to all
+  enrichment steps, reducing N × 2-5s to 1 × 2-5s per match (~25-65s saved per match
+  at 14 enrichment steps). Fully backwards-compatible — existing callers are unchanged.
+  Functions updated: `add_action_context`, `add_pre_shot_gk_position`,
+  `add_pre_shot_gk_angle`, `add_actor_pre_window`, `add_pressure_on_actor`,
+  `add_defensive_line`, `add_line_break`, `add_off_ball_context`, `add_team_shape`,
+  `add_pitch_control`, `pitch_control_at_action`, `add_das`, `add_gk_influence`,
+  `add_cover_shadows`, `add_pre_shot_gk_context` (spadl/utils), `pressure_on_actor`.
+  Internal helpers also accept `links` for full thread-through.
+
 ## [3.12.0] — 2026-05-13
 
 ### Changed (BREAKING)
