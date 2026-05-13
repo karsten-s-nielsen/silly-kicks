@@ -213,6 +213,7 @@ def _line_break_kernel(
     *,
     home_team_id: int | str,
     n: int = 4,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Per-action line-break detection and attacker count behind defensive line.
 
@@ -239,7 +240,10 @@ def _line_break_kernel(
         return empty
 
     # Link actions to frames
-    pointers, _report = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
     linked = pointers[pointers["frame_id"].notna()].copy()
     if linked.empty:
         return empty

@@ -154,6 +154,7 @@ def add_action_context(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     receiver_zone_radius: float = 5.0,
 ) -> pd.DataFrame:
     """Atomic-SPADL aggregator: enrich actions with the 4 features + 4 provenance cols.
@@ -170,7 +171,7 @@ def add_action_context(
         from silly_kicks.atomic.tracking.features import add_action_context
         enriched = add_action_context(atomic_actions, frames)
     """
-    ctx = _resolve_action_frame_context(actions, frames)
+    ctx = _resolve_action_frame_context(actions, frames, links=links)
     out = actions.copy()
     out["nearest_defender_distance"] = _kernels._nearest_defender_distance(actions["x"], actions["y"], ctx)
     out["actor_speed"] = _kernels._actor_speed_from_ctx(ctx)
@@ -303,6 +304,8 @@ def pre_shot_gk_distance_to_shot(actions: pd.DataFrame, frames: pd.DataFrame) ->
 def add_pre_shot_gk_position(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Atomic-SPADL aggregator: 4 GK-position columns + 4 linkage-provenance columns.
 
@@ -347,7 +350,7 @@ def add_pre_shot_gk_position(
             "'defending_gk_player_id'. Run silly_kicks.atomic.spadl.utils.add_pre_shot_gk_context "
             "first to populate it."
         )
-    ctx = _resolve_action_frame_context(actions, frames)
+    ctx = _resolve_action_frame_context(actions, frames, links=links)
     df = _kernels._pre_shot_gk_position(actions["x"], actions["y"], ctx, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)
     out = actions.copy()
     for col in ("pre_shot_gk_x", "pre_shot_gk_y", "pre_shot_gk_distance_to_goal", "pre_shot_gk_distance_to_shot"):
@@ -414,6 +417,7 @@ def add_pre_shot_gk_angle(
     actions: pd.DataFrame,
     *,
     frames: pd.DataFrame,
+    links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Atomic-SPADL aggregator: 2 GK-angle columns at the linked frame.
 
@@ -431,7 +435,7 @@ def add_pre_shot_gk_angle(
             "add_pre_shot_gk_angle: actions missing required column 'defending_gk_player_id'. "
             "Run silly_kicks.atomic.spadl.utils.add_pre_shot_gk_context first."
         )
-    ctx = _resolve_action_frame_context(actions, frames)
+    ctx = _resolve_action_frame_context(actions, frames, links=links)
     df = _kernels._pre_shot_gk_angle(actions["x"], actions["y"], ctx, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)
     out = actions.copy()
     for col in ("pre_shot_gk_angle_to_shot_trajectory", "pre_shot_gk_angle_off_goal_line"):
@@ -496,6 +500,7 @@ def add_actor_pre_window(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     pre_seconds: float = 0.5,
 ) -> pd.DataFrame:
     """Atomic-SPADL aggregator for TF-3 features.
@@ -511,7 +516,10 @@ def add_actor_pre_window(
     out["actor_displacement_pre_window"] = df["actor_displacement_pre_window"]
     from silly_kicks.tracking.utils import link_actions_to_frames
 
-    pointers, _report = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
     pointer_cols = pointers.set_index("action_id")[
         ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     ]
@@ -533,6 +541,7 @@ def pressure_on_actor(
     *,
     method: Method = "andrienko_oval",
     params: PressureParams | None = None,
+    links: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Atomic-SPADL: multi-flavor pressure on actor at linked frame.
 
@@ -554,11 +563,11 @@ def pressure_on_actor(
     validate_params_for_method(method, params)
     if method == "andrienko_oval":
         ap = params if isinstance(params, AndrienkoParams) else AndrienkoParams()
-        ctx = _resolve_action_frame_context(actions, frames)
+        ctx = _resolve_action_frame_context(actions, frames, links=links)
         s = _kernels._pressure_andrienko(actions["x"], actions["y"], ctx, params=ap)
     elif method == "link_zones":
         lp = params if isinstance(params, LinkParams) else LinkParams()
-        ctx = _resolve_action_frame_context(actions, frames)
+        ctx = _resolve_action_frame_context(actions, frames, links=links)
         s = _kernels._pressure_link(actions["x"], actions["y"], ctx, params=lp)
     elif method == "bekkers_pi":
         bp = params if isinstance(params, BekkersParams) else BekkersParams()
@@ -573,7 +582,7 @@ def pressure_on_actor(
                 "pressure_on_actor(method='bekkers_pi', params.use_ball_carrier_max=True): "
                 "frames missing is_ball=True rows in linked frames."
             )
-        ctx = _resolve_action_frame_context(actions, frames)
+        ctx = _resolve_action_frame_context(actions, frames, links=links)
         from silly_kicks.tracking.features import _build_ball_xy_v_per_action
 
         ball_xy_v = _build_ball_xy_v_per_action(actions, frames, ctx)
@@ -594,6 +603,7 @@ def add_pressure_on_actor(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     methods: tuple[Method, ...] = ("andrienko_oval",),
     params_per_method: dict[Method, PressureParams] | None = None,
 ) -> pd.DataFrame:
@@ -612,11 +622,14 @@ def add_pressure_on_actor(
         validate_params_for_method(m, params_per_method.get(m))
     out = actions.copy()
     for m in methods:
-        s = pressure_on_actor(actions, frames, method=m, params=params_per_method.get(m))
+        s = pressure_on_actor(actions, frames, method=m, params=params_per_method.get(m), links=links)
         out[f"pressure_on_actor__{m}"] = s.values
     from silly_kicks.tracking.utils import link_actions_to_frames
 
-    pointers, _report = link_actions_to_frames(actions, frames)
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
     pointer_cols = pointers.set_index("action_id")[
         ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     ]
@@ -636,6 +649,7 @@ def pitch_control_at_action(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
+    links: pd.DataFrame | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> pd.Series:
     """Pitch control at ball position for the acting team (atomic SPADL).
@@ -654,7 +668,7 @@ def pitch_control_at_action(
         return _std_pc(actions, None, method=method)
 
     adapted = actions.rename(columns={"x": "start_x", "y": "start_y"}, errors="ignore")
-    return _std_pc(adapted, frames, method=method)
+    return _std_pc(adapted, frames, links=links, method=method)
 
 
 @nan_safe_enrichment
@@ -662,6 +676,7 @@ def add_pitch_control(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    links: pd.DataFrame | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> pd.DataFrame:
     """Enrich atomic actions with ``pitch_control_at_ball__<method>`` column.
@@ -672,7 +687,7 @@ def add_pitch_control(
     >>> enriched = add_pitch_control(actions, frames)
     """
     out = actions.copy()
-    s = pitch_control_at_action(actions, frames, method=method)
+    s = pitch_control_at_action(actions, frames, links=links, method=method)
     out[s.name] = s.values
     return out
 
@@ -709,6 +724,7 @@ def add_cover_shadows(
     frames: pd.DataFrame,
     xt,
     *,
+    links: pd.DataFrame | None = None,
     home_team_id: int | str,
     decision_rule: Literal["any", "majority", "all"] = "majority",
     detailed: bool = False,
@@ -733,6 +749,7 @@ def add_cover_shadows(
         adapted,
         frames,
         xt,
+        links=links,
         home_team_id=home_team_id,
         decision_rule=decision_rule,
         detailed=detailed,

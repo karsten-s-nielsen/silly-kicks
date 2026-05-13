@@ -494,6 +494,7 @@ def add_pre_shot_gk_context(
     actions: pd.DataFrame,
     *,
     frames: pd.DataFrame | None = None,
+    links: pd.DataFrame | None = None,
     lookback_seconds: float = 10.0,
     lookback_actions: int = 5,
 ) -> pd.DataFrame:
@@ -709,8 +710,8 @@ def add_pre_shot_gk_context(
     if frames is not None:
         from silly_kicks.tracking.features import add_pre_shot_gk_angle, add_pre_shot_gk_position
 
-        sorted_actions = add_pre_shot_gk_position(sorted_actions, frames)
-        sorted_actions = add_pre_shot_gk_angle(sorted_actions, frames=frames)
+        sorted_actions = add_pre_shot_gk_position(sorted_actions, frames, links=links)
+        sorted_actions = add_pre_shot_gk_angle(sorted_actions, frames=frames, links=links)
 
     return sorted_actions
 
