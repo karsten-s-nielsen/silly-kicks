@@ -13,7 +13,7 @@ Output: structured JSON summary printed to stdout. Run via::
 Use the JSON summary in the PR description.
 
 The four loader bodies require local-data helpers the user has from
-PR-S18 (PFF) and the lakehouse pipelines (IDSSE / Metrica / SkillCorner).
+PR-S18 (Gradient Sports) and the lakehouse pipelines (IDSSE / Metrica / SkillCorner).
 Each test ``pytest.skip``s with an explicit reason when the
 ``*_TRACKING_DIR`` env var is missing or the loader is not available
 (memory: silently-skipping-tests-hide-breakage).
@@ -81,7 +81,7 @@ def _bounds_check(frames: pd.DataFrame, provider: str) -> None:
             # Real data has a small tail of physically-realistic
             # out-of-pitch rows: players overrun touchlines, ball goes for
             # throw-in, the goalkeeper runs into the goal, etc. Empirical
-            # PR-S19 sweep on PFF WC22 shows ~0.5% off-pitch on y; allow
+            # PR-S19 sweep on Gradient Sports WC22 shows ~0.5% off-pitch on y; allow
             # 2% tolerance per provider. The strict synthetic gate stays
             # at 100% in test_tracking_cross_provider_parity.py.
             in_bounds = vals.between(lo, hi).mean()
@@ -89,16 +89,16 @@ def _bounds_check(frames: pd.DataFrame, provider: str) -> None:
 
 
 @pytest.mark.e2e
-def test_pff_real_data_sweep():
-    path = os.environ.get("PFF_TRACKING_DIR")
+def test_gradientsports_real_data_sweep():
+    path = os.environ.get("GRADIENTSPORTS_TRACKING_DIR")
     if not path:
-        pytest.skip("PFF_TRACKING_DIR not set; skipping PFF real-data sweep.")
-    pff_dir = Path(path)
-    if not pff_dir.is_dir():
-        pytest.skip(f"PFF_TRACKING_DIR={path!r} is not a directory; skipping.")
-    matches = sorted(p for p in pff_dir.iterdir() if p.name.endswith(".jsonl.bz2"))
+        pytest.skip("GRADIENTSPORTS_TRACKING_DIR not set; skipping Gradient Sports real-data sweep.")
+    gs_dir = Path(path)
+    if not gs_dir.is_dir():
+        pytest.skip(f"GRADIENTSPORTS_TRACKING_DIR={path!r} is not a directory; skipping.")
+    matches = sorted(p for p in gs_dir.iterdir() if p.name.endswith(".jsonl.bz2"))
     if not matches:
-        pytest.skip(f"No .jsonl.bz2 files in PFF_TRACKING_DIR={path!r}; skipping.")
+        pytest.skip(f"No .jsonl.bz2 files in GRADIENTSPORTS_TRACKING_DIR={path!r}; skipping.")
 
     rows: list[dict[str, Any]] = []
     home_team_id_value: int | None = None
@@ -164,17 +164,17 @@ def test_pff_real_data_sweep():
                 )
 
     if not rows:
-        pytest.skip("PFF real-data sweep: no parseable rows from sample.")
+        pytest.skip("Gradient Sports real-data sweep: no parseable rows from sample.")
 
     raw = pd.DataFrame(rows)
     raw["player_id"] = raw["player_id"].astype("Int64")
     raw["team_id"] = raw["team_id"].astype("Int64")
 
-    from silly_kicks.tracking.pff import convert_to_frames
+    from silly_kicks.tracking.gradientsports import convert_to_frames
 
     frames, _ = convert_to_frames(raw, home_team_id=1, home_team_start_left=True)
-    _bounds_check(frames, "pff")
-    _summarize_provider(frames, "pff")
+    _bounds_check(frames, "gradientsports")
+    _summarize_provider(frames, "gradientsports")
 
 
 def _databricks_connect():

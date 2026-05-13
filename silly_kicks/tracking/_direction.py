@@ -1,8 +1,8 @@
-"""Direction-of-play helpers shared between PFF events + tracking adapters.
+"""Direction-of-play helpers shared between Gradient Sports events + tracking adapters.
 
-Extracted from ``silly_kicks/spadl/pff.py`` (PR-S18) into the tracking
-package so events PFF, tracking PFF, and tracking Sportec can share one
-implementation. ``home_attacks_right_per_period`` is the load-bearing
+Extracted from ``silly_kicks/spadl/gradientsports.py`` (PR-S18) into the
+tracking package so events Gradient Sports, tracking Gradient Sports, and
+tracking Sportec can share one implementation. ``home_attacks_right_per_period`` is the load-bearing
 helper; ``compute_attacking_direction`` is a higher-level wrapper used
 by tracking adapters to populate the per-row ``team_attacking_direction``
 column.
@@ -23,7 +23,7 @@ def home_attacks_right_per_period(
 ) -> dict[int, bool]:
     """Per-period flag: True iff the home team attacks RIGHT (LTR) in that period.
 
-    Mirrors the original PFF events convention: in period 1, the home team
+    Mirrors the original Gradient Sports events convention: in period 1, the home team
     attacks right when ``home_team_start_left=True`` (its goal is on the
     left, so it shoots toward the right goal). Period 2 inverts period 1.
     Period 3/4 (extra time) follow ``home_team_start_left_extratime``,
@@ -34,9 +34,9 @@ def home_attacks_right_per_period(
     Parameters
     ----------
     home_team_start_left : bool
-        From PFF metadata ``homeTeamStartLeft`` / DFL match-info equivalent.
+        From Gradient Sports metadata ``homeTeamStartLeft`` / DFL match-info equivalent.
     home_team_start_left_extratime : bool | None
-        From PFF metadata ``homeTeamStartLeftExtraTime`` / DFL equivalent.
+        From Gradient Sports metadata ``homeTeamStartLeftExtraTime`` / DFL equivalent.
         Only required when ET periods (3/4) are present in the data.
 
     Returns

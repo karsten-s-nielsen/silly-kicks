@@ -21,7 +21,7 @@ _PROVIDER_DEFAULTS: dict[str, PreprocessConfig] = {
         derive_velocity=True,
         link_quality_high_threshold=0.85,
     ),
-    "pff": PreprocessConfig(
+    "gradientsports": PreprocessConfig(
         smoothing_method="savgol",
         sg_window_seconds=0.333,
         sg_poly_order=3,

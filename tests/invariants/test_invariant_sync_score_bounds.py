@@ -17,7 +17,7 @@ from tests.tracking._provider_inputs import (
 )
 
 
-@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
 def test_sync_score_bounds_and_monotonicity(provider):
     frames = load_provider_frames(provider)
     actions = synthesize_actions_per_period_dense(frames)

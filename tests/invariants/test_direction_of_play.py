@@ -41,7 +41,7 @@ _BASE_CASES = [
     # tests/datasets/kloppy/README.md, so team_id mapping between events and
     # metadata is not reliable; kloppy may assign HOME/AWAY incorrectly. The
     # kloppy gateway path is exercised via sportec_via_kloppy above.
-    ("pff_synthetic", _loaders.load_pff_synthetic, 1),
+    ("gradientsports_synthetic", _loaders.load_gradientsports_synthetic, 1),
 ]
 
 
@@ -67,7 +67,7 @@ def test_per_team_shots_attack_high_x(provider: str, loader, n_min_shots_per_tea
     a converter's set-piece-composition rules can upgrade ``SHOT`` to
     ``shot_freekick`` (Metrica) without changing the geometric invariant.
 
-    Tolerance: PFF / Sportec / Metrica synthetic fixtures may have only one
+    Tolerance: Gradient Sports / Sportec / Metrica synthetic fixtures may have only one
     team with shots in the limited fixture window; we check what's available
     and skip teams below ``n_min_shots_per_team``.
     """

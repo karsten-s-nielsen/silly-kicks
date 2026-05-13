@@ -93,7 +93,7 @@ def test_derive_velocity_false_without_smoothing_is_fine():
 
 def test_get_provider_defaults_returns_all_four():
     defaults = get_provider_defaults()
-    assert set(defaults.keys()) == {"sportec", "pff", "metrica", "skillcorner"}
+    assert set(defaults.keys()) == {"sportec", "gradientsports", "metrica", "skillcorner"}
     for name, cfg in defaults.items():
         assert isinstance(cfg, PreprocessConfig), name
 

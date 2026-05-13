@@ -52,7 +52,7 @@ EXPECTED_COLUMNS = [
 ]
 
 
-@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
 def test_add_action_context_per_row_regression(provider: str) -> None:
     expected_path = SLIM_DIR / f"{provider}_expected.parquet"
     if not expected_path.exists():
@@ -77,7 +77,7 @@ def test_add_action_context_per_row_regression(provider: str) -> None:
     pd.testing.assert_frame_equal(actual, expected, atol=1e-9, rtol=0, check_dtype=True)
 
 
-@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
 def test_expected_parquet_has_real_gk_columns(provider: str) -> None:
     """Per-row regression gate must exercise REAL GK-position computation, not just the
     all-NaN path. Synthesizer (tests/tracking/_provider_inputs.py) stamps a synthetic

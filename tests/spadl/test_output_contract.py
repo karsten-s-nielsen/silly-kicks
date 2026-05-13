@@ -236,7 +236,7 @@ class TestAddNamesPreservesExtraColumns:
 def test_finalize_output_supports_int64_extension_dtype():
     """_finalize_output handles pandas nullable Int64 schema entries.
 
-    Required for PFF_SPADL_COLUMNS which uses Int64 on the four
+    Required for GRADIENTSPORTS_SPADL_COLUMNS which uses Int64 on the four
     tackle-passthrough columns (NaN-bearing integer ids).
     """
     import pandas as pd

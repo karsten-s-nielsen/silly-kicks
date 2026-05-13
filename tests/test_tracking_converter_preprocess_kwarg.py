@@ -4,7 +4,7 @@ PR-S24 / Loop 5 Step 5.4: verify ``convert_to_frames(..., preprocess=...)``
 actually invokes the interp -> smooth -> velocity chain on a real converter,
 not just resolves the config in isolation.
 
-Uses the PFF native converter as the test bed (simplest signature; integer
+Uses the Gradient Sports native converter as the test bed (simplest signature; integer
 ids; no kloppy dependency).
 """
 
@@ -17,8 +17,8 @@ import pytest
 from silly_kicks.tracking.preprocess import PreprocessConfig
 
 
-def _toy_pff_raw_frames(n: int = 60, hz: float = 30.0) -> pd.DataFrame:
-    """Minimal PFF-shaped raw frames satisfying EXPECTED_INPUT_COLUMNS."""
+def _toy_gradientsports_raw_frames(n: int = 60, hz: float = 30.0) -> pd.DataFrame:
+    """Minimal Gradient Sports-shaped raw frames satisfying EXPECTED_INPUT_COLUMNS."""
     rng = np.random.default_rng(42)
     t = np.arange(n) / hz
     rows = []
@@ -72,9 +72,9 @@ def _toy_pff_raw_frames(n: int = 60, hz: float = 30.0) -> pd.DataFrame:
 
 def test_preprocess_none_zero_behaviour_change():
     """Backcompat: default kwarg None -> output has no preprocess columns."""
-    from silly_kicks.tracking.pff import convert_to_frames
+    from silly_kicks.tracking.gradientsports import convert_to_frames
 
-    raw = _toy_pff_raw_frames()
+    raw = _toy_gradientsports_raw_frames()
     frames, _ = convert_to_frames(
         raw,
         home_team_id=100,
@@ -86,11 +86,11 @@ def test_preprocess_none_zero_behaviour_change():
     assert "_preprocessed_with" not in frames.columns
 
 
-def test_preprocess_default_auto_promotes_to_pff():
-    """PreprocessConfig.default() in PFF converter auto-promotes to for_provider('pff')."""
-    from silly_kicks.tracking.pff import convert_to_frames
+def test_preprocess_default_auto_promotes_to_gradientsports():
+    """PreprocessConfig.default() in Gradient Sports converter auto-promotes to for_provider('gradientsports')."""
+    from silly_kicks.tracking.gradientsports import convert_to_frames
 
-    raw = _toy_pff_raw_frames()
+    raw = _toy_gradientsports_raw_frames()
     frames, _ = convert_to_frames(
         raw,
         home_team_id=100,
@@ -104,7 +104,7 @@ def test_preprocess_default_auto_promotes_to_pff():
     assert "vy" in frames.columns
     assert "speed" in frames.columns
     assert "_preprocessed_with" in frames.columns
-    # PFF tag uses sg_window_seconds=0.333 (from for_provider auto-promotion).
+    # Gradient Sports tag uses sg_window_seconds=0.333 (from for_provider auto-promotion).
     tag = frames["_preprocessed_with"].iloc[0]
     assert "savgol" in tag
     assert "0.333" in tag
@@ -112,7 +112,7 @@ def test_preprocess_default_auto_promotes_to_pff():
 
 def test_preprocess_custom_config_passes_through():
     """Caller-built config (non-default) is NOT auto-promoted."""
-    from silly_kicks.tracking.pff import convert_to_frames
+    from silly_kicks.tracking.gradientsports import convert_to_frames
 
     cfg = PreprocessConfig(
         smoothing_method="ema",
@@ -123,7 +123,7 @@ def test_preprocess_custom_config_passes_through():
         max_gap_seconds=2.0,
         derive_velocity=True,
     )
-    raw = _toy_pff_raw_frames()
+    raw = _toy_gradientsports_raw_frames()
     frames, _ = convert_to_frames(
         raw,
         home_team_id=100,
@@ -137,9 +137,9 @@ def test_preprocess_custom_config_passes_through():
 
 def test_preprocess_raw_x_y_preserved():
     """Hyrum-Law: raw x/y unchanged by smoothing inside the converter."""
-    from silly_kicks.tracking.pff import convert_to_frames
+    from silly_kicks.tracking.gradientsports import convert_to_frames
 
-    raw = _toy_pff_raw_frames()
+    raw = _toy_gradientsports_raw_frames()
     frames_no_pp, _ = convert_to_frames(
         raw,
         home_team_id=100,
@@ -169,7 +169,7 @@ def test_preprocess_raw_x_y_preserved():
 def test_preprocess_skip_smoothing_skip_velocity():
     """Caller can disable smoothing AND velocity (config rejects derive_velocity=True+smoothing=None;
     must be derive_velocity=False to be valid)."""
-    from silly_kicks.tracking.pff import convert_to_frames
+    from silly_kicks.tracking.gradientsports import convert_to_frames
 
     cfg = PreprocessConfig(
         smoothing_method=None,
@@ -180,7 +180,7 @@ def test_preprocess_skip_smoothing_skip_velocity():
         max_gap_seconds=0.5,
         derive_velocity=False,
     )
-    raw = _toy_pff_raw_frames()
+    raw = _toy_gradientsports_raw_frames()
     frames, _ = convert_to_frames(
         raw,
         home_team_id=100,

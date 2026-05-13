@@ -1,19 +1,19 @@
-"""PFF FC / Gradient Sports DataFrame SPADL converter.
+"""Gradient Sports (formerly PFF FC) DataFrame SPADL converter.
 
-Converts already-flattened PFF events DataFrames (e.g., produced from the
-public WC 2022 release JSON via ``pd.json_normalize`` + a roster join) to
-SPADL actions.
+Converts already-flattened Gradient Sports events DataFrames (e.g., produced
+from the public WC 2022 release JSON via ``pd.json_normalize`` + a roster
+join) to SPADL actions.
 
-PFF event vocabulary (recognized as input)
-------------------------------------------
+Event vocabulary (recognized as input)
+--------------------------------------
 
-PFF events have a hierarchical shape: ``gameEvents`` envelope (high-level
-game-event class: OTB / OUT / SUB / FIRSTKICKOFF / SECONDKICKOFF / THIRDKICKOFF /
-FOURTHKICKOFF / END / FOUL / OFF / ON / G) + ``possessionEvents`` payload
-(detailed possession-event class: PA / SH / CR / CL / BC / CH / RE / TC / IT
-/ FO) + per-event ``fouls`` dict. Each top-level event JSON list element
-flattens to one row in the events DataFrame consumed here. (Note: ``fouls``
-is a single dict per event in real PFF data, not a JSON array.)
+Gradient Sports events have a hierarchical shape: ``gameEvents`` envelope
+(high-level game-event class: OTB / OUT / SUB / FIRSTKICKOFF / SECONDKICKOFF /
+THIRDKICKOFF / FOURTHKICKOFF / END / FOUL / OFF / ON / G) +
+``possessionEvents`` payload (detailed possession-event class: PA / SH / CR /
+CL / BC / CH / RE / TC / IT / FO) + per-event ``fouls`` dict. Each top-level
+event JSON list element flattens to one row in the events DataFrame consumed
+here. (Note: ``fouls`` is a single dict per event, not a JSON array.)
 
 The converter dispatches on the tuple ``(game_event_type,
 possession_event_type, set_piece_type)``. See the spec at
@@ -23,27 +23,27 @@ for the full mapping table.
 Coordinate system
 -----------------
 
-PFF source coordinates are pitch-centered meters (origin at center spot,
+Source coordinates are pitch-centered meters (origin at center spot,
 x ∈ ~[-52.5, 52.5], y ∈ ~[-34, 34]). The converter translates to SPADL's
 bottom-left-origin meters (x ∈ [0, 105], y ∈ [0, 68]) and applies per-period
 direction-of-play normalization so all teams attack left-to-right (the
 standard SPADL invariant).
 
-PFF coordinates reflect actual on-field direction (which switches between
+Coordinates reflect actual on-field direction (which switches between
 periods); the converter therefore requires explicit direction parameters
 (``home_team_start_left`` and, when ET is present, ``home_team_start_left_extratime``).
-Both come from PFF metadata JSON (``homeTeamStartLeft``, ``homeTeamStartLeftExtraTime``).
+Both come from metadata JSON (``homeTeamStartLeft``, ``homeTeamStartLeftExtraTime``).
 
 ADR-001: identifier conventions are sacred (silly-kicks 2.0.0)
 ---------------------------------------------------------------
 
 The converter never overrides ``team_id`` / ``player_id`` from the
-on-the-ball actor (PFF ``gameEvents.playerId``). Tackle winner/loser
-qualifier values (PFF ``challenge_winner_player_id`` / ``challenger_player_id``)
+on-the-ball actor (``gameEvents.playerId``). Tackle winner/loser
+qualifier values (``challenge_winner_player_id`` / ``challenger_player_id``)
 surface via dedicated output columns:
 
 ==========================  ============================================
-Output column               PFF qualifier source
+Output column               Qualifier source
 ==========================  ============================================
 ``tackle_winner_player_id`` ``challenge_winner_player_id``
 ``tackle_winner_team_id``   ``challenge_winner_team_id``  (caller-supplied via roster join)
@@ -52,7 +52,7 @@ Output column               PFF qualifier source
 ``tackle_loser_team_id``    derived: same logic on team_id
 ==========================  ============================================
 
-The output schema is :data:`silly_kicks.spadl.PFF_SPADL_COLUMNS`
+The output schema is :data:`silly_kicks.spadl.GRADIENTSPORTS_SPADL_COLUMNS`
 (extends :data:`silly_kicks.spadl.SPADL_COLUMNS` with the 4 tackle columns).
 """
 
@@ -65,7 +65,7 @@ from silly_kicks.tracking import _direction
 
 from . import config as spadlconfig
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
-from .schema import PFF_SPADL_COLUMNS, ConversionReport
+from .schema import GRADIENTSPORTS_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
         "game_event_type",
         "possession_event_type",
         "set_piece_type",
-        # Ball position (PFF centered meters)
+        # Ball position (centered meters)
         "ball_x",
         "ball_y",
         # Body part / pass / cross qualifiers
@@ -109,7 +109,7 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
         "ball_carry_outcome",
         "carry_intent",
         "carry_defender_player_id",
-        # Challenge / tackle qualifiers (PFF carries actor IDs only as players;
+        # Challenge / tackle qualifiers (carries actor IDs only as players;
         # caller supplies team affiliation via roster join — see § 4.5 of spec)
         "challenge_type",
         "challenge_outcome_type",
@@ -124,7 +124,7 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
         "keeper_touch_type",
         "touch_outcome_type",
         "touch_type",
-        # Foul (one PFF event row has at most one fouls[0] entry; flatten)
+        # Foul (one event row has at most one fouls[0] entry; flatten)
         "foul_type",
         "on_field_offense_type",
         "final_offense_type",
@@ -138,7 +138,7 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
 # Vectorized dispatch helpers
 # ---------------------------------------------------------------------------
 def _dispatch_bodypart(body_type: pd.Series) -> np.ndarray:
-    """Map PFF body_type codes to SPADL bodypart_id (vectorized).
+    """Map Gradient Sports body_type codes to SPADL bodypart_id (vectorized).
 
     Mapping: L → foot_left, R → foot_right, H → head, O → other, null → foot.
     """
@@ -247,22 +247,22 @@ def convert_to_actions(
     home_team_start_left_extratime: bool | None = None,
     preserve_native: list[str] | None = None,
 ) -> tuple[pd.DataFrame, ConversionReport]:
-    """Convert a flattened PFF events DataFrame to SPADL actions.
+    """Convert a flattened Gradient Sports events DataFrame to SPADL actions.
 
     Parameters
     ----------
     events : pd.DataFrame
-        PFF-shaped events DataFrame. Required columns:
+        Gradient Sports events DataFrame. Required columns:
         :data:`EXPECTED_INPUT_COLUMNS`.
     home_team_id : int
-        PFF home-team identifier (``homeTeam.id`` from PFF metadata JSON).
+        Home-team identifier (``homeTeam.id`` from metadata JSON).
     home_team_start_left : bool
         Whether the home team attacks toward the left goal in period 1
-        (``homeTeamStartLeft`` from PFF metadata JSON). Drives per-period
+        (``homeTeamStartLeft`` from metadata JSON). Drives per-period
         direction-of-play normalization.
     home_team_start_left_extratime : bool or None, default None
         Same flag for ET periods 3/4 (``homeTeamStartLeftExtraTime`` from
-        PFF metadata JSON). Required only if the events span ET; raises
+        metadata JSON). Required only if the events span ET; raises
         ``ValueError`` if events have ``period_id`` ∈ {3, 4} but this is
         ``None``.
     preserve_native : list[str] or None, default None
@@ -271,7 +271,7 @@ def convert_to_actions(
     Returns
     -------
     tuple[pd.DataFrame, ConversionReport]
-        SPADL actions matching :data:`silly_kicks.spadl.PFF_SPADL_COLUMNS`
+        SPADL actions matching :data:`silly_kicks.spadl.GRADIENTSPORTS_SPADL_COLUMNS`
         and a ConversionReport audit trail.
 
     Raises
@@ -285,21 +285,21 @@ def convert_to_actions(
     --------
     Convert a single match's events to SPADL::
 
-        from silly_kicks.spadl import pff
-        actions, report = pff.convert_to_actions(
+        from silly_kicks.spadl import gradientsports
+        actions, report = gradientsports.convert_to_actions(
             events,
             home_team_id=366,             # Netherlands in WC 2022 NED-USA
             home_team_start_left=True,    # from match metadata
         )
         assert not report.has_unrecognized
     """
-    _validate_input_columns(events, set(EXPECTED_INPUT_COLUMNS), provider="PFF")
-    _validate_preserve_native(events, preserve_native, provider="PFF", schema=PFF_SPADL_COLUMNS)
+    _validate_input_columns(events, set(EXPECTED_INPUT_COLUMNS), provider="gradientsports")
+    _validate_preserve_native(events, preserve_native, provider="gradientsports", schema=GRADIENTSPORTS_SPADL_COLUMNS)
 
     total_events_input = len(events)
 
     # PR-S23 / silly-kicks 3.0.1: validator re-enabled after TF-22 detector
-    # hardening. PFF events ship PER_PERIOD_ABSOLUTE; the detector now
+    # hardening. Gradient Sports events ship PER_PERIOD_ABSOLUTE; the detector now
     # correctly defers (convention=None) on sparse-shot matches rather than
     # false-positiving ABSOLUTE_FRAME_HOME_RIGHT. ball_x is centered (-52.5
     # to +52.5); shift to 0-105 frame for the detector's high-x/low-x logic.
@@ -324,7 +324,7 @@ def convert_to_actions(
     # ------------------------------------------------------------------
     if events["period_id"].isin([3, 4]).any() and home_team_start_left_extratime is None:
         raise ValueError(
-            "PFF convert_to_actions: events contain ET periods (period_id ∈ {3, 4}) "
+            "Gradient Sports convert_to_actions: events contain ET periods (period_id ∈ {3, 4}) "
             "but home_team_start_left_extratime was not provided. Set it explicitly to "
             "match metadata.homeTeamStartLeftExtraTime, or filter ET events out before calling."
         )
@@ -381,7 +381,7 @@ def convert_to_actions(
 
     # Empty-input fast path (after exclusion): empty schema-compliant output.
     if len(events) == 0:
-        actions = pd.DataFrame({col: [] for col in PFF_SPADL_COLUMNS.keys()})
+        actions = pd.DataFrame({col: [] for col in GRADIENTSPORTS_SPADL_COLUMNS.keys()})
         for col in (
             "tackle_winner_player_id",
             "tackle_winner_team_id",
@@ -389,9 +389,9 @@ def convert_to_actions(
             "tackle_loser_team_id",
         ):
             actions[col] = pd.array([], dtype="Int64")
-        actions = _finalize_output(actions, schema=PFF_SPADL_COLUMNS)
+        actions = _finalize_output(actions, schema=GRADIENTSPORTS_SPADL_COLUMNS)
         report = ConversionReport(
-            provider="PFF",
+            provider="gradientsports",
             total_events=total_events_input,
             total_actions=0,
             mapped_counts={},
@@ -407,7 +407,7 @@ def convert_to_actions(
     bodypart_id_arr = _dispatch_bodypart(events["body_type"])
 
     # ------------------------------------------------------------------
-    # Coordinate translation (PFF centered → SPADL bottom-left meters)
+    # Coordinate translation (centered → SPADL bottom-left meters)
     # ------------------------------------------------------------------
     actions = pd.DataFrame(
         {
@@ -469,7 +469,7 @@ def convert_to_actions(
     # ------------------------------------------------------------------
     # Foul row handling (two paths, depending on parent dispatch result)
     #
-    # PFF places foul info in a per-event ``fouls`` dict that may co-occur with:
+    # Gradient Sports places foul info in a per-event ``fouls`` dict that may co-occur with:
     #   - A real possession event (e.g. PA / CR / SH with a foul committed
     #     during it) -- we synthesize an ADDITIONAL foul row alongside the
     #     parent action.
@@ -529,7 +529,7 @@ def convert_to_actions(
     # Per-period direction-of-play normalisation. Routed through the canonical
     # to_spadl_ltr dispatcher per ADR-006 (silly-kicks 3.0.0); behaviour
     # preserved exactly because the dispatcher's PER_PERIOD_ABSOLUTE branch
-    # uses the same home_attacks_right_per_period mapping that PFF computed
+    # uses the same home_attacks_right_per_period mapping computed
     # from metadata flags above.
     # ------------------------------------------------------------------
     actions = to_spadl_ltr(
@@ -563,7 +563,7 @@ def convert_to_actions(
     # ------------------------------------------------------------------
     actions = _finalize_output(
         actions,
-        schema=PFF_SPADL_COLUMNS,
+        schema=GRADIENTSPORTS_SPADL_COLUMNS,
         extra_columns=preserve_native,
     )
 
@@ -582,7 +582,7 @@ def convert_to_actions(
     # Unrecognized-counts: any (ge, pe) pair that landed in non_action AND
     # was not already absorbed by foul-row handling (in-place conversion or
     # synthesis). Computed from the dispatch result + foul_mask, not from a
-    # post-synthesis lookup -- PFF gameEventId is not row-unique (multiple
+    # post-synthesis lookup -- gameEventId is not row-unique (multiple
     # rows can share a gameEventId when a high-level event has nested
     # possession events), so a lookup-based approach yields cross-talk.
     unrecognized_counts: Counter = Counter()
@@ -598,7 +598,7 @@ def convert_to_actions(
             unrecognized_counts[f"{ge_v}+{pe_v}"] += 1
 
     report = ConversionReport(
-        provider="PFF",
+        provider="gradientsports",
         total_events=total_events_input,
         total_actions=len(actions),
         mapped_counts=dict(mapped_counts),

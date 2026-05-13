@@ -2,7 +2,7 @@
 
 Each loader returns ``(actions, home_team_id)`` for one match using the same
 converter that production code uses. Real fixtures where they exist (StatsBomb,
-Sportec bronze, Metrica bronze, kloppy-Sportec/Metrica synthetic XML/JSON, PFF
+Sportec bronze, Metrica bronze, kloppy-Sportec/Metrica synthetic XML/JSON, Gradient Sports
 synthetic). Wyscout + Opta have no real fixtures committed -- both use
 synthetic 2-team event sets that exercise per-team direction.
 
@@ -345,17 +345,17 @@ def load_metrica_native_per_period() -> LoaderResult:
 
 
 # ---------------------------------------------------------------------------
-# PFF (synthetic generator output)
+# Gradient Sports (synthetic generator output)
 # ---------------------------------------------------------------------------
 
 
-def load_pff_synthetic() -> LoaderResult:
-    from silly_kicks.spadl import pff
-    from tests.spadl.test_pff import _load_synthetic_events
+def load_gradientsports_synthetic() -> LoaderResult:
+    from silly_kicks.spadl import gradientsports
+    from tests.spadl.test_gradientsports import _load_synthetic_events
 
     home_team_id = 100
     events = _load_synthetic_events()
-    actions, _ = pff.convert_to_actions(
+    actions, _ = gradientsports.convert_to_actions(
         events,
         home_team_id=home_team_id,
         home_team_start_left=True,

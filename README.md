@@ -19,10 +19,10 @@ MIT license with full attribution preserved.
 
 - **SPADL** -- Soccer Player Action Description Language: a unified schema for
   on-ball actions with dedicated DataFrame converters for StatsBomb, Wyscout,
-  Opta, Sportec / IDSSE Bundesliga, Metrica Sports, and PFF FC — plus a kloppy
+  Opta, Sportec / IDSSE Bundesliga, Metrica Sports, and Gradient Sports — plus a kloppy
   gateway for raw-provider-data consumers (StatsBomb, Sportec, Metrica)
 - **Tracking** -- 20-column long-form per-frame schema parallel to SPADL, with
-  native adapters for Sportec / IDSSE Bundesliga and PFF FC plus a kloppy
+  native adapters for Sportec / IDSSE Bundesliga and Gradient Sports plus a kloppy
   gateway for Metrica + SkillCorner. Key capabilities: action-to-frame linkage,
   frame preprocessing (smoothing, interpolation, velocities), GK identification,
   defensive-line geometry, ball-carrier inference, and 40+ tracking-aware

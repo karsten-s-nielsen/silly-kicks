@@ -73,7 +73,7 @@ def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
     Casts nullable pandas dtypes (Int64, boolean) to numpy equivalents
     because the accessible-space library cannot handle nullable arrays
     (e.g. BooleanArray comparisons produce 2-D structures that crash).
-    PFF is the primary provider affected (Int64 player_id/team_id/team_in_possession).
+    Gradient Sports is the primary provider affected (Int64 player_id/team_id/team_in_possession).
     """
     _validate_das_inputs(frames)
     out = _to_das_coords(frames)

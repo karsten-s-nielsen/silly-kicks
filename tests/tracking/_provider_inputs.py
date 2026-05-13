@@ -16,7 +16,7 @@ from silly_kicks.spadl import config as spadlconfig
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SLIM_DIR = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim"
-PFF_DIR = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff"
+GRADIENTSPORTS_DIR = REPO_ROOT / "tests" / "datasets" / "tracking" / "gradientsports"
 
 N_ACTIONS_PER_PROVIDER = 10
 
@@ -45,8 +45,8 @@ _FRAME_KEEP_COLS = {
 
 def load_provider_frames(provider: str) -> pd.DataFrame:
     """Load frames for a provider, projecting to silly-kicks tracking schema."""
-    if provider == "pff":
-        df = pd.read_parquet(PFF_DIR / "medium_halftime.parquet")
+    if provider == "gradientsports":
+        df = pd.read_parquet(GRADIENTSPORTS_DIR / "medium_halftime.parquet")
         return pd.DataFrame(
             {
                 "game_id": df.get("game_id", 1),
@@ -71,7 +71,7 @@ def load_provider_frames(provider: str) -> pd.DataFrame:
                 "team_attacking_direction": "ltr",
                 "confidence": pd.NA,
                 "visibility": pd.NA,
-                "source_provider": "pff",
+                "source_provider": "gradientsports",
             }
         )
     df = pd.read_parquet(SLIM_DIR / f"{provider}_slim.parquet")

@@ -37,7 +37,7 @@ def provider_defaults():
     return get_provider_defaults()
 
 
-@pytest.mark.parametrize("provider", ["sportec", "pff", "metrica", "skillcorner"])
+@pytest.mark.parametrize("provider", ["sportec", "gradientsports", "metrica", "skillcorner"])
 def test_integer_fields_exact_match(baseline_json, provider_defaults, provider):
     block = baseline_json[provider]
     cfg = provider_defaults[provider]
@@ -48,7 +48,7 @@ def test_integer_fields_exact_match(baseline_json, provider_defaults, provider):
     )
 
 
-@pytest.mark.parametrize("provider", ["sportec", "pff", "metrica", "skillcorner"])
+@pytest.mark.parametrize("provider", ["sportec", "gradientsports", "metrica", "skillcorner"])
 @pytest.mark.parametrize(
     "field,attr",
     [
@@ -65,7 +65,7 @@ def test_derived_default_floats_match(baseline_json, provider_defaults, provider
     )
 
 
-@pytest.mark.parametrize("provider", ["sportec", "pff", "metrica", "skillcorner"])
+@pytest.mark.parametrize("provider", ["sportec", "gradientsports", "metrica", "skillcorner"])
 def test_link_quality_high_threshold_match(baseline_json, provider_defaults, provider):
     expected = baseline_json[provider]["link_quality_high_threshold"]
     actual = provider_defaults[provider].link_quality_high_threshold
@@ -84,5 +84,5 @@ def test_sweep_log_exists():
     payload = json.loads(sweep_log.read_text(encoding="utf-8"))
     assert "_provenance" in payload
     assert "by_provider" in payload
-    for p in ("sportec", "pff", "metrica", "skillcorner"):
+    for p in ("sportec", "gradientsports", "metrica", "skillcorner"):
         assert p in payload["by_provider"], f"sweep_log missing provider block: {p}"

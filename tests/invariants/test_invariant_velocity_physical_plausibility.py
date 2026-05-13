@@ -19,7 +19,7 @@ from silly_kicks.tracking.preprocess import (
 from tests.tracking._provider_inputs import load_provider_frames
 
 
-@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
 def test_speed_within_human_bounds(provider):
     frames = load_provider_frames(provider)
     cfg = PreprocessConfig.for_provider(provider)

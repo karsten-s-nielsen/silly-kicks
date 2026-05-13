@@ -53,7 +53,7 @@ _VAEP_PROVIDERS = [
     ("sportec_native", _loaders.load_sportec_native),
     ("sportec_via_kloppy", _loaders.load_sportec_via_kloppy),
     ("metrica_native", _loaders.load_metrica_native),
-    ("pff_synthetic", _loaders.load_pff_synthetic),
+    ("gradientsports_synthetic", _loaders.load_gradientsports_synthetic),
 ]
 
 

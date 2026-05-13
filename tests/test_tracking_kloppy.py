@@ -49,12 +49,12 @@ def test_skillcorner_dataset_converts():
 
 
 def test_provider_pff_raises_not_implemented():
-    """Per ADR-004 invariant 4: route PFF through silly_kicks.tracking.pff."""
+    """Per ADR-004 invariant 4: route Gradient Sports through silly_kicks.tracking.gradientsports."""
     from kloppy.domain import Provider
 
     ds = build_metrica_tracking_dataset(n_frames=2)
     ds.metadata.provider = Provider.PFF
-    with pytest.raises(NotImplementedError, match=r"silly_kicks\.tracking\.pff"):
+    with pytest.raises(NotImplementedError, match=r"silly_kicks\.tracking\.gradientsports"):
         convert_to_frames(ds)
 
 

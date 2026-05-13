@@ -29,7 +29,7 @@ def _frames(period_id: int, n: int, hz: float = 25.0, t0: float = 0.0) -> pd.Dat
                     "team_attacking_direction": "ltr",
                     "confidence": None,
                     "visibility": None,
-                    "source_provider": "pff",
+                    "source_provider": "gradientsports",
                 }
             )
         rows.append(
@@ -52,7 +52,7 @@ def _frames(period_id: int, n: int, hz: float = 25.0, t0: float = 0.0) -> pd.Dat
                 "team_attacking_direction": None,
                 "confidence": None,
                 "visibility": None,
-                "source_provider": "pff",
+                "source_provider": "gradientsports",
             }
         )
     return pd.DataFrame(rows)

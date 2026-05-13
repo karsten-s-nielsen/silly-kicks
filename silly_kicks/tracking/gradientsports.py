@@ -1,12 +1,13 @@
-"""PFF FC tracking DataFrame converter.
+"""Gradient Sports (formerly PFF FC) tracking DataFrame converter.
 
-Mirrors silly_kicks.tracking.sportec but for PFF-shaped input. Reuses the
-shared ``_direction`` helper extracted from silly_kicks.spadl.pff (PR-S18) for
+Mirrors silly_kicks.tracking.sportec but for Gradient Sports-shaped input.
+Reuses the shared ``_direction`` helper extracted from
+silly_kicks.spadl.gradientsports (PR-S18) for
 ``home_team_start_left[_extratime]`` direction normalization.
 
 Input contract (EXPECTED_INPUT_COLUMNS):
   Same shape as sportec, except ``player_id`` / ``team_id`` are nullable
-  Int64 (PFF integer identifiers) and ``game_id`` is int64.
+  Int64 (Gradient Sports integer identifiers) and ``game_id`` is int64.
 
 Coordinate transformation: ``x = x_centered + 52.5``;
 ``y = y_centered + 34.0``. Per-period direction flip via the shared
@@ -20,13 +21,13 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from . import _direction
-from .schema import PFF_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
+from .schema import GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 from .sportec import _resolve_output_convention
 
 if TYPE_CHECKING:
     from .preprocess import PreprocessConfig
 
-_PROVIDER_NAME = "pff"
+_PROVIDER_NAME = "gradientsports"
 
 EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
     {
@@ -58,18 +59,18 @@ def convert_to_frames(
     output_convention: Literal["absolute_frame", "ltr"] | None = None,
     preprocess: PreprocessConfig | None = None,
 ) -> tuple[pd.DataFrame, TrackingConversionReport]:
-    """Convert PFF-shaped raw tracking frames to canonical schema.
+    """Convert Gradient Sports-shaped raw tracking frames to canonical schema.
 
     Parameters
     ----------
     raw_frames : pd.DataFrame
-        PFF input (see EXPECTED_INPUT_COLUMNS).
+        Gradient Sports input (see EXPECTED_INPUT_COLUMNS).
     home_team_id : int
-        PFF homeTeam.id from the metadata JSON.
+        homeTeam.id from the metadata JSON.
     home_team_start_left : bool
-        From PFF metadata ``homeTeamStartLeft``.
+        From metadata ``homeTeamStartLeft``.
     home_team_start_left_extratime : bool | None
-        From PFF metadata ``homeTeamStartLeftExtraTime``; required when
+        From metadata ``homeTeamStartLeftExtraTime``; required when
         periods 3/4 are present.
     output_convention : {"absolute_frame", "ltr"} | None, default None
         Coordinate convention of the returned frames. ``"absolute_frame"`` (the
@@ -84,16 +85,16 @@ def convert_to_frames(
     Returns
     -------
     frames : pd.DataFrame
-        PFF_TRACKING_FRAMES_COLUMNS-shaped output, 105x68 m SPADL coordinates,
+        GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS-shaped output, 105x68 m SPADL coordinates,
         in the convention requested by ``output_convention``.
     report : TrackingConversionReport
 
     Examples
     --------
-    Read PFF tracking JSONL.bz2, flatten to frames, then convert::
+    Read Gradient Sports tracking JSONL.bz2, flatten to frames, then convert::
 
         import bz2, json, pandas as pd
-        from silly_kicks.tracking.pff import convert_to_frames
+        from silly_kicks.tracking.gradientsports import convert_to_frames
         with bz2.open("10501.jsonl.bz2", "rt") as fh:
             rows = [json.loads(line) for line in fh]
         raw = pd.json_normalize(rows)  # caller-shaped flattening
@@ -103,16 +104,16 @@ def convert_to_frames(
         )
     """
     _ = preserve_native  # reserved for future PR
-    output_convention = _resolve_output_convention(output_convention, _adapter_name="pff")
+    output_convention = _resolve_output_convention(output_convention, _adapter_name="gradientsports")
     missing = EXPECTED_INPUT_COLUMNS - set(raw_frames.columns)
     if missing:
-        raise ValueError(f"pff convert_to_frames missing columns: {sorted(missing)}")
+        raise ValueError(f"gradientsports convert_to_frames missing columns: {sorted(missing)}")
 
     if raw_frames["period_id"].isin([3, 4]).any() and home_team_start_left_extratime is None:
         raise ValueError(
-            "pff convert_to_frames: frames contain ET periods (period_id in {3, 4}) "
+            "gradientsports convert_to_frames: frames contain ET periods (period_id in {3, 4}) "
             "but home_team_start_left_extratime was not provided. Set it from "
-            "PFF metadata.homeTeamStartLeftExtraTime, or filter ET frames out."
+            "metadata.homeTeamStartLeftExtraTime, or filter ET frames out."
         )
 
     out = raw_frames.copy()
@@ -140,11 +141,11 @@ def convert_to_frames(
     out["speed_source"] = pd.Series(speed_source, index=out.index, dtype="object")
     out["confidence"] = None
     out["visibility"] = None
-    out["source_provider"] = "pff"
+    out["source_provider"] = _PROVIDER_NAME
     out["is_goalkeeper_source"] = "native"
 
-    final = pd.DataFrame({col: out[col] for col in PFF_TRACKING_FRAMES_COLUMNS})
-    for col, dtype_str in PFF_TRACKING_FRAMES_COLUMNS.items():
+    final = pd.DataFrame({col: out[col] for col in GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS})
+    for col, dtype_str in GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS.items():
         if dtype_str == "bool":
             final[col] = final[col].astype("bool")
         elif dtype_str == "Int64":
@@ -170,7 +171,7 @@ def convert_to_frames(
     nan_rate = {col: float(final[col].isna().mean()) for col in final.columns}
 
     report = TrackingConversionReport(
-        provider="pff",
+        provider="gradientsports",
         total_input_frames=n_input_frames,
         total_output_rows=len(final),
         n_periods=n_periods,

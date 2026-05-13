@@ -1,7 +1,7 @@
 """e2e real-data sweep for the 4 PR-S20 action_context features.
 
-Mirrors PR-S19's ``tests/test_tracking_real_data_sweep.py`` shape: PFF
-loads from a local env-pointed directory (``PFF_TRACKING_DIR``); IDSSE /
+Mirrors PR-S19's ``tests/test_tracking_real_data_sweep.py`` shape: Gradient Sports
+loads from a local env-pointed directory (``GRADIENTSPORTS_TRACKING_DIR``); IDSSE /
 Metrica / SkillCorner pull a single-match wide-form sample from the
 lakehouse via Databricks SQL (``DATABRICKS_HOST`` / ``DATABRICKS_HTTP_PATH``
 / ``DATABRICKS_TOKEN``). For each provider:
@@ -37,8 +37,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SLIM_DIR = REPO_ROOT / "tests" / "datasets" / "tracking" / "action_context_slim"
 
 
-def _load_pff_raw(match_path: Path, max_lines: int = 3000) -> pd.DataFrame:
-    """Parse a PFF .jsonl.bz2 tracking file into pre-adapter raw DataFrame.
+def _load_gradientsports_raw(match_path: Path, max_lines: int = 3000) -> pd.DataFrame:
+    """Parse a Gradient Sports .jsonl.bz2 tracking file into pre-adapter raw DataFrame.
 
     Derives game_id from the filename (e.g. ``10502.jsonl.bz2`` → 10502)
     rather than relying on ``gameRefId`` which is absent on many rows.
@@ -101,18 +101,18 @@ def _load_pff_raw(match_path: Path, max_lines: int = 3000) -> pd.DataFrame:
     return raw
 
 
-def _skip_if_no_pff_dir(label: str) -> tuple[Path, Path]:
-    """Return (pff_dir, first_match) or pytest.skip if PFF_TRACKING_DIR missing."""
-    path = os.environ.get("PFF_TRACKING_DIR")
+def _skip_if_no_gs_dir(label: str) -> tuple[Path, Path]:
+    """Return (gs_dir, first_match) or pytest.skip if GRADIENTSPORTS_TRACKING_DIR missing."""
+    path = os.environ.get("GRADIENTSPORTS_TRACKING_DIR")
     if not path:
-        pytest.skip(f"PFF_TRACKING_DIR not set; skipping {label}.")
-    pff_dir = Path(path)
-    if not pff_dir.is_dir():
-        pytest.skip(f"PFF_TRACKING_DIR={path!r} is not a directory; skipping.")
-    matches = sorted(p for p in pff_dir.iterdir() if p.name.endswith(".jsonl.bz2"))
+        pytest.skip(f"GRADIENTSPORTS_TRACKING_DIR not set; skipping {label}.")
+    gs_dir = Path(path)
+    if not gs_dir.is_dir():
+        pytest.skip(f"GRADIENTSPORTS_TRACKING_DIR={path!r} is not a directory; skipping.")
+    matches = sorted(p for p in gs_dir.iterdir() if p.name.endswith(".jsonl.bz2"))
     if not matches:
-        pytest.skip(f"No .jsonl.bz2 files in PFF_TRACKING_DIR={path!r}; skipping.")
-    return pff_dir, matches[0]
+        pytest.skip(f"No .jsonl.bz2 files in GRADIENTSPORTS_TRACKING_DIR={path!r}; skipping.")
+    return gs_dir, matches[0]
 
 
 def _bounds_check(enriched: pd.DataFrame, provider: str) -> None:
@@ -171,28 +171,28 @@ def _summarize(enriched: pd.DataFrame, provider: str) -> dict[str, Any]:
 
 
 @pytest.mark.e2e
-def test_pff_action_context_sweep() -> None:
-    """PFF: load 1 match from PFF_TRACKING_DIR, build long-form via the PFF
-    adapter, synthesize actions from frames at controlled times, run
+def test_gradientsports_action_context_sweep() -> None:
+    """Gradient Sports: load 1 match from GRADIENTSPORTS_TRACKING_DIR, build long-form via the
+    Gradient Sports adapter, synthesize actions from frames at controlled times, run
     add_action_context, assert bounds + emit summary."""
-    _, match_path = _skip_if_no_pff_dir("PFF action_context sweep")
-    raw = _load_pff_raw(match_path)
+    _, match_path = _skip_if_no_gs_dir("Gradient Sports action_context sweep")
+    raw = _load_gradientsports_raw(match_path)
     if raw.empty:
-        pytest.skip("PFF action_context sweep: no parseable rows.")
+        pytest.skip("Gradient Sports action_context sweep: no parseable rows.")
 
     from silly_kicks.tracking.features import add_action_context
-    from silly_kicks.tracking.pff import convert_to_frames as pff_convert
+    from silly_kicks.tracking.gradientsports import convert_to_frames as gs_convert
     from silly_kicks.tracking.utils import _derive_speed
 
-    frames, _ = pff_convert(raw, home_team_id=1, home_team_start_left=True)
-    # PFF has speed_native_supplied=false (per PR-S19 baselines); the adapter
+    frames, _ = gs_convert(raw, home_team_id=1, home_team_start_left=True)
+    # Gradient Sports has speed_native_supplied=false (per PR-S19 baselines); the adapter
     # leaves speed=NaN, and finite-difference derivation is the caller's
     # responsibility per ADR-004 invariant 7.
     frames = _derive_speed(frames)
     actions = _synthesize_actions_from_frames(frames, n_actions=10)
     enriched = add_action_context(actions, frames)
-    _bounds_check(enriched, "pff")
-    _summarize(enriched, "pff")
+    _bounds_check(enriched, "gradientsports")
+    _summarize(enriched, "gradientsports")
 
 
 def _synthesize_actions_from_frames(frames: pd.DataFrame, n_actions: int = 10) -> pd.DataFrame:
@@ -205,7 +205,7 @@ def _synthesize_actions_from_frames(frames: pd.DataFrame, n_actions: int = 10) -
     pass / shot characterization.
 
     Skips the first 100 distinct frames so every synthesized action has prior
-    frames available for finite-difference speed derivation (PFF + Metrica +
+    frames available for finite-difference speed derivation (Gradient Sports + Metrica +
     SkillCorner have speed_native_supplied=false / partially derived; the
     first frame of the loaded slice has NaN speed because there's no t-1).
     Without this skip, actor_speed comes back NaN on every action and we
@@ -468,20 +468,20 @@ def _gk_pipeline_smoke(actions: pd.DataFrame, frames: pd.DataFrame, provider: st
 
 
 @pytest.mark.e2e
-def test_pff_pre_shot_gk_pipeline_smoke() -> None:
-    """PFF: load frames + synthesize non-shot actions; run full add_pre_shot_gk_context(frames=...)."""
-    _, match_path = _skip_if_no_pff_dir("PFF GK pipeline smoke")
-    raw = _load_pff_raw(match_path)
+def test_gradientsports_pre_shot_gk_pipeline_smoke() -> None:
+    """Gradient Sports: load frames + synthesize non-shot actions; run full add_pre_shot_gk_context(frames=...)."""
+    _, match_path = _skip_if_no_gs_dir("Gradient Sports GK pipeline smoke")
+    raw = _load_gradientsports_raw(match_path)
     if raw.empty:
-        pytest.skip("PFF GK pipeline smoke: no parseable rows.")
+        pytest.skip("Gradient Sports GK pipeline smoke: no parseable rows.")
 
-    from silly_kicks.tracking.pff import convert_to_frames as pff_convert
+    from silly_kicks.tracking.gradientsports import convert_to_frames as gs_convert
     from silly_kicks.tracking.utils import _derive_speed
 
-    frames, _ = pff_convert(raw, home_team_id=1, home_team_start_left=True)
+    frames, _ = gs_convert(raw, home_team_id=1, home_team_start_left=True)
     frames = _derive_speed(frames)
     actions = _synthesize_actions_from_frames(frames, n_actions=10)
-    _gk_pipeline_smoke(actions, frames, "pff")
+    _gk_pipeline_smoke(actions, frames, "gradientsports")
 
 
 @pytest.mark.e2e
@@ -555,7 +555,7 @@ def test_skillcorner_pre_shot_gk_pipeline_smoke() -> None:
 
 # ---------------------------------------------------------------------------
 # PR-S25 spec section 8.4 first bullet -- per-provider pressure + pre-window
-# pipeline gates against real-data slim slices + PFF synthetic fixture.
+# pipeline gates against real-data slim slices + Gradient Sports synthetic fixture.
 # ---------------------------------------------------------------------------
 
 
@@ -612,21 +612,21 @@ def _pressure_and_prewindow_pipeline_smoke(actions: pd.DataFrame, frames: pd.Dat
 
 
 @pytest.mark.e2e
-def test_pff_pressure_and_prewindow_pipeline_smoke() -> None:
-    """PFF: synthetic fixture (``tests/datasets/tracking/pff/medium_halftime.parquet``)
-    via ``_provider_inputs.load_provider_frames('pff')`` per spec section 8.4."""
+def test_gradientsports_pressure_and_prewindow_pipeline_smoke() -> None:
+    """Gradient Sports: synthetic fixture (``tests/datasets/tracking/gradientsports/medium_halftime.parquet``)
+    via ``_provider_inputs.load_provider_frames('gradientsports')`` per spec section 8.4."""
     sys.path.insert(0, str(REPO_ROOT))
     from tests.tracking._provider_inputs import (
         load_provider_frames,
         synthesize_actions,
     )
 
-    pff_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff" / "medium_halftime.parquet"
-    if not pff_fixture.exists():
-        pytest.skip(f"{pff_fixture} missing; PFF synthetic fixture required.")
-    frames = load_provider_frames("pff")
+    gs_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "gradientsports" / "medium_halftime.parquet"
+    if not gs_fixture.exists():
+        pytest.skip(f"{gs_fixture} missing; Gradient Sports synthetic fixture required.")
+    frames = load_provider_frames("gradientsports")
     actions = synthesize_actions(frames)
-    _pressure_and_prewindow_pipeline_smoke(actions, frames, "pff")
+    _pressure_and_prewindow_pipeline_smoke(actions, frames, "gradientsports")
 
 
 @pytest.mark.e2e
@@ -722,21 +722,21 @@ def _off_ball_context_pipeline_smoke(
 
 
 @pytest.mark.e2e
-def test_pff_off_ball_context_pipeline_smoke() -> None:
-    """PFF: synthetic fixture via load_provider_frames('pff')."""
+def test_gradientsports_off_ball_context_pipeline_smoke() -> None:
+    """Gradient Sports: synthetic fixture via load_provider_frames('gradientsports')."""
     sys.path.insert(0, str(REPO_ROOT))
     from tests.tracking._provider_inputs import (
         load_provider_frames,
         synthesize_actions,
     )
 
-    pff_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff" / "medium_halftime.parquet"
-    if not pff_fixture.exists():
-        pytest.skip(f"{pff_fixture} missing; PFF synthetic fixture required.")
-    frames = load_provider_frames("pff")
+    gs_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "gradientsports" / "medium_halftime.parquet"
+    if not gs_fixture.exists():
+        pytest.skip(f"{gs_fixture} missing; Gradient Sports synthetic fixture required.")
+    frames = load_provider_frames("gradientsports")
     actions = synthesize_actions(frames)
     team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
-    _off_ball_context_pipeline_smoke(actions, frames, team_counts.index[0], "pff")
+    _off_ball_context_pipeline_smoke(actions, frames, team_counts.index[0], "gradientsports")
 
 
 @pytest.mark.e2e
@@ -792,14 +792,14 @@ def test_skillcorner_off_ball_context_pipeline_smoke() -> None:
 
 
 # ---------------------------------------------------------------------------
-# PR-S30 — off-ball context e2e via lakehouse / PFF local raw data
+# PR-S30 — off-ball context e2e via lakehouse / Gradient Sports local raw data
 # ---------------------------------------------------------------------------
 
 
 def _off_ball_context_lakehouse_smoke(
     actions: pd.DataFrame, frames: pd.DataFrame, home_team_id: object, provider: str
 ) -> None:
-    """Run add_off_ball_context on actions/frames from the lakehouse/PFF raw path."""
+    """Run add_off_ball_context on actions/frames from the lakehouse/Gradient Sports raw path."""
     from silly_kicks.tracking import play_left_to_right
     from silly_kicks.tracking.features import add_off_ball_context
 
@@ -813,18 +813,18 @@ def _off_ball_context_lakehouse_smoke(
 
 
 @pytest.mark.e2e
-def test_pff_off_ball_context_lakehouse_smoke() -> None:
-    """PFF: load from PFF_TRACKING_DIR, build long-form, run off-ball context."""
-    _, match_path = _skip_if_no_pff_dir("PFF off-ball context e2e")
-    raw = _load_pff_raw(match_path)
+def test_gradientsports_off_ball_context_lakehouse_smoke() -> None:
+    """Gradient Sports: load from GRADIENTSPORTS_TRACKING_DIR, build long-form, run off-ball context."""
+    _, match_path = _skip_if_no_gs_dir("Gradient Sports off-ball context e2e")
+    raw = _load_gradientsports_raw(match_path)
     if raw.empty:
-        pytest.skip("PFF off-ball context e2e: no parseable rows.")
+        pytest.skip("Gradient Sports off-ball context e2e: no parseable rows.")
 
-    from silly_kicks.tracking.pff import convert_to_frames as pff_convert
+    from silly_kicks.tracking.gradientsports import convert_to_frames as gs_convert
 
-    frames, _ = pff_convert(raw, home_team_id=1, home_team_start_left=True)
+    frames, _ = gs_convert(raw, home_team_id=1, home_team_start_left=True)
     actions = _synthesize_actions_from_frames(frames, n_actions=10)
-    _off_ball_context_lakehouse_smoke(actions, frames, 1, "pff")
+    _off_ball_context_lakehouse_smoke(actions, frames, 1, "gradientsports")
 
 
 @pytest.mark.e2e
@@ -925,17 +925,17 @@ def _ball_carrier_pipeline_smoke(actions: pd.DataFrame, frames: pd.DataFrame, pr
 
 
 @pytest.mark.e2e
-def test_pff_defensive_line_pipeline_smoke() -> None:
+def test_gradientsports_defensive_line_pipeline_smoke() -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
 
-    pff_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff" / "medium_halftime.parquet"
-    if not pff_fixture.exists():
-        pytest.skip(f"{pff_fixture} missing.")
-    frames = load_provider_frames("pff")
+    gs_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "gradientsports" / "medium_halftime.parquet"
+    if not gs_fixture.exists():
+        pytest.skip(f"{gs_fixture} missing.")
+    frames = load_provider_frames("gradientsports")
     actions = synthesize_actions(frames)
     team_counts = frames[~frames["is_ball"].astype(bool)]["team_id"].value_counts()
-    _defensive_line_pipeline_smoke(actions, frames, team_counts.index[0], "pff")
+    _defensive_line_pipeline_smoke(actions, frames, team_counts.index[0], "gradientsports")
 
 
 @pytest.mark.e2e
@@ -981,16 +981,16 @@ def test_skillcorner_defensive_line_pipeline_smoke() -> None:
 
 
 @pytest.mark.e2e
-def test_pff_ball_carrier_pipeline_smoke() -> None:
+def test_gradientsports_ball_carrier_pipeline_smoke() -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
 
-    pff_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "pff" / "medium_halftime.parquet"
-    if not pff_fixture.exists():
-        pytest.skip(f"{pff_fixture} missing.")
-    frames = load_provider_frames("pff")
+    gs_fixture = REPO_ROOT / "tests" / "datasets" / "tracking" / "gradientsports" / "medium_halftime.parquet"
+    if not gs_fixture.exists():
+        pytest.skip(f"{gs_fixture} missing.")
+    frames = load_provider_frames("gradientsports")
     actions = synthesize_actions(frames)
-    _ball_carrier_pipeline_smoke(actions, frames, "pff")
+    _ball_carrier_pipeline_smoke(actions, frames, "gradientsports")
 
 
 @pytest.mark.e2e

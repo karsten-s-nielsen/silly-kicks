@@ -21,7 +21,7 @@ from silly_kicks.tracking._das import get_das
 from silly_kicks.tracking.features import add_das, das_at_action
 from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
 from tests.tracking._provider_inputs import (
-    PFF_DIR,
+    GRADIENTSPORTS_DIR,
     SLIM_DIR,
     load_provider_frames,
     synthesize_actions,
@@ -29,9 +29,9 @@ from tests.tracking._provider_inputs import (
 
 pytestmark = pytest.mark.e2e
 
-# Available providers: slim-parquet providers + pff
+# Available providers: slim-parquet providers + gradientsports
 _SLIM_PROVIDERS = sorted(p.stem.replace("_slim", "") for p in SLIM_DIR.glob("*_slim.parquet"))
-_PROVIDERS = _SLIM_PROVIDERS + (["pff"] if PFF_DIR.exists() else [])
+_PROVIDERS = _SLIM_PROVIDERS + (["gradientsports"] if GRADIENTSPORTS_DIR.exists() else [])
 
 
 def _prepare_provider(provider: str) -> tuple[pd.DataFrame, pd.DataFrame]:

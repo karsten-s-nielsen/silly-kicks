@@ -8,7 +8,7 @@ Each script is **documentation, not a test**. They run against user-supplied dat
 
 | Script | Provider | Demonstrates |
 |---|---|---|
-| `pff_wc2022_walkthrough.py` | PFF FC | JSON parsing → SPADL → Atomic-SPADL → coverage / boundary metrics → VAEP labels |
+| `gradientsports_wc2022_walkthrough.py` | Gradient Sports | JSON parsing → SPADL → Atomic-SPADL → coverage / boundary metrics → VAEP labels |
 
 ## Convention for new examples
 

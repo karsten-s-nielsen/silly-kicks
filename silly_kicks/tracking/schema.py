@@ -41,13 +41,14 @@ SPORTEC_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
 """Sportec native output: same shape as kloppy variant --- DFL TeamId / PersonId
 are string identifiers."""
 
-PFF_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
+GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     **TRACKING_FRAMES_COLUMNS,
     "player_id": "Int64",
     "team_id": "Int64",
 }
-"""PFF native output: nullable Int64 identifiers (matches PFF_SPADL_COLUMNS
-convention from PR-S18; allows NaN on ball rows). game_id stays int64."""
+"""Gradient Sports (formerly PFF FC) native output: nullable Int64 identifiers
+(matches GRADIENTSPORTS_SPADL_COLUMNS convention from PR-S18; allows NaN on
+ball rows). game_id stays int64."""
 
 TRACKING_CONSTRAINTS: dict[str, tuple[float, float]] = {
     "period_id": (1, 5),
@@ -64,7 +65,7 @@ TRACKING_CATEGORICAL_DOMAINS: dict[str, frozenset[str]] = {
     "ball_state": frozenset({"alive", "dead"}),
     "team_attacking_direction": frozenset({"ltr", "rtl"}),
     "speed_source": frozenset({"native", "derived"}),
-    "source_provider": frozenset({"pff", "sportec", "metrica", "skillcorner"}),
+    "source_provider": frozenset({"gradientsports", "sportec", "metrica", "skillcorner"}),
     "is_goalkeeper_source": frozenset({"native", "derived"}),
 }
 
@@ -74,7 +75,7 @@ class TrackingConversionReport:
     """Audit trail for tracking convert_to_frames(). Frame-shaped audit.
 
     Attributes:
-        provider: Provider name, lowercase ("pff" | "sportec" | "metrica" | "skillcorner").
+        provider: Provider name, lowercase ("gradientsports" | "sportec" | "metrica" | "skillcorner").
         total_input_frames: Frames in the raw input DataFrame.
         total_output_rows: Long-form expanded row count (frames x players + ball rows).
         n_periods: Number of distinct period_ids.

@@ -44,7 +44,7 @@ _PANDAS_EXTENSION_DTYPES: Final[frozenset[str]] = frozenset(
 """Pandas extension dtypes that must be passed as string names to ``astype``
 rather than wrapped in ``np.dtype(...)``. Used by :func:`_finalize_output`
 to support nullable / pandas-extension columns in provider output schemas
-(e.g. ``PFF_SPADL_COLUMNS``'s ``Int64`` tackle-passthrough columns)."""
+(e.g. ``GRADIENTSPORTS_SPADL_COLUMNS``'s ``Int64`` tackle-passthrough columns)."""
 
 _ADD_POSSESSIONS_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
     "game_id",
@@ -624,7 +624,7 @@ def add_pre_shot_gk_context(
     # defending_gk_player_id preserves the input ``player_id`` dtype: numeric input -> float64
     # NaN-coded; object/string input (Sportec / KLOPPY_SPADL_COLUMNS variant) -> object/None.
     # This makes the helper provider-agnostic without breaking the float64-output contract for
-    # the canonical SPADL_COLUMNS case (PFF / StatsBomb / Opta / Wyscout / Metrica).
+    # the canonical SPADL_COLUMNS case (Gradient Sports / StatsBomb / Opta / Wyscout / Metrica).
     _pid = sorted_actions["player_id"]
     player_id_is_object = _pid.dtype == object or pd.api.types.is_string_dtype(_pid)
     if player_id_is_object:

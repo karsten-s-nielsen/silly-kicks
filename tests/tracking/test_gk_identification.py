@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 
 from silly_kicks.tracking.schema import (
+    GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS,
     KLOPPY_TRACKING_FRAMES_COLUMNS,
-    PFF_TRACKING_FRAMES_COLUMNS,
     SPORTEC_TRACKING_FRAMES_COLUMNS,
     TRACKING_CATEGORICAL_DOMAINS,
     TRACKING_FRAMES_COLUMNS,
@@ -68,8 +68,8 @@ class TestSchemaGkSourceColumn:
     def test_sportec_tracking_frames_columns_inherits_is_goalkeeper_source(self):
         assert "is_goalkeeper_source" in SPORTEC_TRACKING_FRAMES_COLUMNS
 
-    def test_pff_tracking_frames_columns_inherits_is_goalkeeper_source(self):
-        assert "is_goalkeeper_source" in PFF_TRACKING_FRAMES_COLUMNS
+    def test_gradientsports_tracking_frames_columns_inherits_is_goalkeeper_source(self):
+        assert "is_goalkeeper_source" in GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS
 
     def test_categorical_domains_has_is_goalkeeper_source(self):
         assert "is_goalkeeper_source" in TRACKING_CATEGORICAL_DOMAINS
@@ -438,11 +438,11 @@ class TestBPlusScoreFunction:
 
 
 class TestNativePathSource:
-    """Tests for is_goalkeeper_source on native paths (Sportec/PFF)."""
+    """Tests for is_goalkeeper_source on native paths (Sportec/Gradient Sports)."""
 
-    def test_pff_schema_includes_is_goalkeeper_source(self):
-        """PFF schema includes is_goalkeeper_source column."""
-        assert "is_goalkeeper_source" in PFF_TRACKING_FRAMES_COLUMNS
+    def test_gradientsports_schema_includes_is_goalkeeper_source(self):
+        """Gradient Sports schema includes is_goalkeeper_source column."""
+        assert "is_goalkeeper_source" in GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS
 
     def test_sportec_schema_includes_is_goalkeeper_source(self):
         """Sportec schema includes is_goalkeeper_source column."""

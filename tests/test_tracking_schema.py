@@ -3,8 +3,8 @@
 import dataclasses
 
 from silly_kicks.tracking.schema import (
+    GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS,
     KLOPPY_TRACKING_FRAMES_COLUMNS,
-    PFF_TRACKING_FRAMES_COLUMNS,
     SPORTEC_TRACKING_FRAMES_COLUMNS,
     TRACKING_CATEGORICAL_DOMAINS,
     TRACKING_CONSTRAINTS,
@@ -57,10 +57,10 @@ def test_sportec_variant_matches_kloppy_variant():
     assert SPORTEC_TRACKING_FRAMES_COLUMNS == KLOPPY_TRACKING_FRAMES_COLUMNS
 
 
-def test_pff_variant_uses_nullable_int64_identifiers():
-    assert PFF_TRACKING_FRAMES_COLUMNS["player_id"] == "Int64"
-    assert PFF_TRACKING_FRAMES_COLUMNS["team_id"] == "Int64"
-    assert PFF_TRACKING_FRAMES_COLUMNS["game_id"] == "int64"
+def test_gradientsports_variant_uses_nullable_int64_identifiers():
+    assert GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS["player_id"] == "Int64"
+    assert GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS["team_id"] == "Int64"
+    assert GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS["game_id"] == "int64"
 
 
 def test_tracking_constraints_keys_subset_of_columns():
@@ -80,12 +80,14 @@ def test_tracking_categorical_domains_values():
     assert TRACKING_CATEGORICAL_DOMAINS["ball_state"] == frozenset({"alive", "dead"})
     assert TRACKING_CATEGORICAL_DOMAINS["team_attacking_direction"] == frozenset({"ltr", "rtl"})
     assert TRACKING_CATEGORICAL_DOMAINS["speed_source"] == frozenset({"native", "derived"})
-    assert TRACKING_CATEGORICAL_DOMAINS["source_provider"] == frozenset({"pff", "sportec", "metrica", "skillcorner"})
+    assert TRACKING_CATEGORICAL_DOMAINS["source_provider"] == frozenset(
+        {"gradientsports", "sportec", "metrica", "skillcorner"}
+    )
 
 
 def test_tracking_conversion_report_is_frozen_dataclass():
     r = TrackingConversionReport(
-        provider="pff",
+        provider="gradientsports",
         total_input_frames=100,
         total_output_rows=2200,
         n_periods=2,
@@ -99,9 +101,9 @@ def test_tracking_conversion_report_is_frozen_dataclass():
 
 
 def test_tracking_conversion_report_has_unrecognized():
-    r1 = TrackingConversionReport("pff", 0, 0, 0, {}, {}, {}, 0, set())
+    r1 = TrackingConversionReport("gradientsports", 0, 0, 0, {}, {}, {}, 0, set())
     assert r1.has_unrecognized is False
-    r2 = TrackingConversionReport("pff", 0, 0, 0, {}, {}, {}, 0, {123})
+    r2 = TrackingConversionReport("gradientsports", 0, 0, 0, {}, {}, {}, 0, {123})
     assert r2.has_unrecognized is True
 
 
@@ -124,7 +126,7 @@ def test_link_report_link_rate_nonzero():
         n_actions_linked=95,
         n_actions_unlinked=5,
         n_actions_multi_candidate=10,
-        per_provider_link_rate={"pff": 0.95},
+        per_provider_link_rate={"gradientsports": 0.95},
         max_time_offset_seconds=0.18,
         tolerance_seconds=0.2,
     )

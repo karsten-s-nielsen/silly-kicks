@@ -3,7 +3,7 @@
 Reads per-provider tracking statistics from:
   Source 1: Databricks SQL --- soccer_analytics.dev_gold.fct_tracking_frames
             (providers: metrica, idsse, skillcorner)
-  Source 2: Local PFF WC2022 JSONL.bz2 (1 match minimum to characterize)
+  Source 2: Local Gradient Sports WC2022 JSONL.bz2 (1 match minimum to characterize)
 
 Writes: tests/datasets/tracking/empirical_probe_baselines.json
 
@@ -16,7 +16,7 @@ Usage::
 
 Notes
 -----
-- The PFF local path contains brackets (``[Karsten]``, ``[Microsoft]``) that
+- The Gradient Sports local path contains brackets (``[Karsten]``, ``[Microsoft]``) that
   ``glob`` interprets as character classes, so listing uses ``Path.iterdir()``
   + suffix filter rather than ``Path.glob()`` (memory:reference_pff_data_local).
 - The probe is defensive about schema variation and lakehouse availability;
@@ -37,14 +37,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_JSON = REPO_ROOT / "tests" / "datasets" / "tracking" / "empirical_probe_baselines.json"
 
 LAKEHOUSE_TABLE = "soccer_analytics.dev_gold.fct_tracking_frames"
-PFF_LOCAL_DIR = Path(r"D:\[Karsten]\Dropbox\[Microsoft]\Downloads\FIFA World Cup 2022\Tracking Data")
+GRADIENTSPORTS_LOCAL_DIR = Path(r"D:\[Karsten]\Dropbox\[Microsoft]\Downloads\FIFA World Cup 2022\Tracking Data")
 
 
-def _list_pff_tracking_files(pff_dir: Path) -> list[Path]:
-    """List PFF .jsonl.bz2 files via iterdir() to bypass bracketed-path glob issues."""
-    if not pff_dir.is_dir():
+def _list_gradientsports_tracking_files(gs_dir: Path) -> list[Path]:
+    """List Gradient Sports .jsonl.bz2 files via iterdir() to bypass bracketed-path glob issues."""
+    if not gs_dir.is_dir():
         return []
-    return sorted(p for p in pff_dir.iterdir() if p.is_file() and p.name.endswith(".jsonl.bz2"))
+    return sorted(p for p in gs_dir.iterdir() if p.is_file() and p.name.endswith(".jsonl.bz2"))
 
 
 def probe_lakehouse() -> dict[str, dict[str, Any]]:
@@ -140,12 +140,12 @@ def _coerce(v: Any) -> Any:
     return float(v) if hasattr(v, "__float__") else str(v)
 
 
-def probe_pff_local(jsonl_bz2_path: Path, max_frames: int = 5000) -> dict[str, Any]:
-    """Read up to ``max_frames`` PFF tracking frames and characterize them.
+def probe_gradientsports_local(jsonl_bz2_path: Path, max_frames: int = 5000) -> dict[str, Any]:
+    """Read up to ``max_frames`` Gradient Sports tracking frames and characterize them.
 
-    PFF JSONL schema: each line is one frame with nested ``balls`` (list),
+    Gradient Sports JSONL schema: each line is one frame with nested ``balls`` (list),
     ``homePlayers`` / ``awayPlayers`` (lists). Frame rate is 29.97 fps per
-    PFF metadata; we report 30 as the canonical bucket.
+    Gradient Sports metadata; we report 30 as the canonical bucket.
     """
     rows: list[dict[str, Any]] = []
     n_balls_present = 0
@@ -185,7 +185,7 @@ def probe_pff_local(jsonl_bz2_path: Path, max_frames: int = 5000) -> dict[str, A
     n_periods = int(df["period"].dropna().nunique())
 
     return {
-        "frame_rate_p50": 30.0,  # PFF documented 29.97 Hz; round to 30 for synthetic generators
+        "frame_rate_p50": 30.0,  # Gradient Sports documented 29.97 Hz; round to 30 for synthetic generators
         "n_periods": n_periods,
         "n_frames_sample": n_frames,
         "ball_visible_rate": float(n_balls_present) / n_frames,
@@ -193,7 +193,7 @@ def probe_pff_local(jsonl_bz2_path: Path, max_frames: int = 5000) -> dict[str, A
         "avg_away_players_per_frame": float(n_awayplayers_total) / n_frames,
         "off_pitch_x_rate": float(n_off_pitch_x) / max(n_player_rows, 1),
         "off_pitch_y_rate": float(n_off_pitch_y) / max(n_player_rows, 1),
-        "speed_native_supplied": False,  # PFF JSONL doesn't carry per-player speed natively
+        "speed_native_supplied": False,  # Gradient Sports JSONL doesn't carry per-player speed natively
         "ball_row_rate": 1.0,
         "match_filename": jsonl_bz2_path.name,
     }
@@ -204,11 +204,11 @@ def main() -> None:
     lakehouse_stats = probe_lakehouse()
     print(f"  Got {len(lakehouse_stats)} provider entries: {list(lakehouse_stats)}")
 
-    print("[2/3] Probing local PFF WC22 (1 match)...")
-    matches = _list_pff_tracking_files(PFF_LOCAL_DIR)
+    print("[2/3] Probing local Gradient Sports WC22 (1 match)...")
+    matches = _list_gradientsports_tracking_files(GRADIENTSPORTS_LOCAL_DIR)
     if not matches:
-        print(f"  [warn] No PFF tracking files in {PFF_LOCAL_DIR}; PFF entry will use defaults.")
-        pff_stats: dict[str, Any] = {
+        print(f"  [warn] No Gradient Sports tracking files in {GRADIENTSPORTS_LOCAL_DIR}; entry will use defaults.")
+        gs_stats: dict[str, Any] = {
             "frame_rate_p50": 30.0,
             "n_frames_sample": 0,
             "speed_native_supplied": True,
@@ -216,14 +216,14 @@ def main() -> None:
             "match_filename": None,
         }
     else:
-        pff_stats = probe_pff_local(matches[0])
-        print(f"  Probed {pff_stats.get('match_filename')} ({pff_stats.get('n_frames_sample')} frames)")
+        gs_stats = probe_gradientsports_local(matches[0])
+        print(f"  Probed {gs_stats.get('match_filename')} ({gs_stats.get('n_frames_sample')} frames)")
 
     out = {
         "probe_run_date": "2026-04-30",
         "probe_run_source_lakehouse_table": LAKEHOUSE_TABLE,
-        "probe_run_source_pff_path_marker": "FIFA World Cup 2022/Tracking Data",
-        "providers": _ensure_all_providers({**lakehouse_stats, "pff": pff_stats}),
+        "probe_run_source_gradientsports_path_marker": "FIFA World Cup 2022/Tracking Data",
+        "providers": _ensure_all_providers({**lakehouse_stats, "gradientsports": gs_stats}),
     }
 
     print(f"[3/3] Writing {OUTPUT_JSON}...")
@@ -238,7 +238,7 @@ def _ensure_all_providers(stats: dict[str, dict[str, Any]]) -> dict[str, dict[st
         "metrica": {"frame_rate_p50": 25.0, "speed_native_supplied": False},
         "sportec": {"frame_rate_p50": 25.0, "speed_native_supplied": True},
         "skillcorner": {"frame_rate_p50": 10.0, "speed_native_supplied": False},
-        "pff": {"frame_rate_p50": 30.0, "speed_native_supplied": True},
+        "gradientsports": {"frame_rate_p50": 30.0, "speed_native_supplied": True},
     }
     out = dict(stats)
     for name, defaults_dict in defaults.items():

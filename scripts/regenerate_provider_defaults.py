@@ -58,7 +58,7 @@ def _emit_block(provider: str, block: dict) -> str:
 def main() -> int:
     payload = json.loads(BASELINE_JSON.read_text(encoding="utf-8"))
     OUTPUT_PY.parent.mkdir(parents=True, exist_ok=True)
-    body = "".join(_emit_block(p, payload[p]) for p in ("sportec", "pff", "metrica", "skillcorner"))
+    body = "".join(_emit_block(p, payload[p]) for p in ("sportec", "gradientsports", "metrica", "skillcorner"))
     OUTPUT_PY.write_text(_HEADER + body + _FOOTER, encoding="utf-8")
     print(f"[regen] wrote {OUTPUT_PY.relative_to(REPO_ROOT)}")
     return 0
