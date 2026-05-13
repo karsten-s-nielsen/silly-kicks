@@ -1,4 +1,4 @@
-"""PFF FC DataFrame SPADL converter tests."""
+"""Gradient Sports DataFrame SPADL converter tests."""
 
 import json
 from pathlib import Path
@@ -7,14 +7,14 @@ import pandas as pd
 import pytest
 
 from silly_kicks.spadl import config as spadlconfig
-from silly_kicks.spadl import pff as pff_mod
-from silly_kicks.spadl.schema import PFF_SPADL_COLUMNS
+from silly_kicks.spadl import gradientsports as gs_mod
+from silly_kicks.spadl.schema import GRADIENTSPORTS_SPADL_COLUMNS
 
 # Minimum set of input columns to construct a one-row test DataFrame.
-# Mirrors the EXPECTED_INPUT_COLUMNS frozenset in pff.py.
-_REQUIRED_COLS = sorted(pff_mod.EXPECTED_INPUT_COLUMNS)
+# Mirrors the EXPECTED_INPUT_COLUMNS frozenset in gradientsports.py.
+_REQUIRED_COLS = sorted(gs_mod.EXPECTED_INPUT_COLUMNS)
 
-_SYNTHETIC_FIXTURE = Path(__file__).parent.parent / "datasets" / "pff" / "synthetic_match.json"
+_SYNTHETIC_FIXTURE = Path(__file__).parent.parent / "datasets" / "gradientsports" / "synthetic_match.json"
 
 
 def _load_synthetic_events() -> pd.DataFrame:
@@ -26,7 +26,7 @@ def _load_synthetic_events() -> pd.DataFrame:
     for ev in events_json:
         ge = ev.get("gameEvents") or {}
         pe = ev.get("possessionEvents") or {}
-        # Real PFF data carries `fouls` as a single dict per event (not a list).
+        # Real Gradient Sports data carries `fouls` as a single dict per event (not a list).
         f0 = ev.get("fouls") or {}
         ball = (ev.get("ball") or [{}])[0] if ev.get("ball") else {}
 
@@ -150,12 +150,12 @@ def _df_minimal_pass() -> pd.DataFrame:
     return df
 
 
-class TestPffContract:
+class TestGradientsportsContract:
     """Contract: return shape, schema, dtypes, no input mutation."""
 
     def test_returns_tuple_dataframe_conversion_report(self):
         events = _df_minimal_pass()
-        result = pff_mod.convert_to_actions(
+        result = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -164,39 +164,39 @@ class TestPffContract:
         assert isinstance(result, tuple) and len(result) == 2
         actions, report = result
         assert isinstance(actions, pd.DataFrame)
-        assert report.provider == "PFF"
+        assert report.provider == "gradientsports"
 
-    def test_output_schema_matches_pff_spadl_columns(self):
+    def test_output_schema_matches_gradientsports_spadl_columns(self):
         events = _df_minimal_pass()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
             home_team_start_left_extratime=True,
         )
-        assert list(actions.columns) == list(PFF_SPADL_COLUMNS.keys())
+        assert list(actions.columns) == list(GRADIENTSPORTS_SPADL_COLUMNS.keys())
 
     def test_dtypes_match_schema(self):
         events = _df_minimal_pass()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
             home_team_start_left_extratime=True,
         )
-        for col, expected in PFF_SPADL_COLUMNS.items():
+        for col, expected in GRADIENTSPORTS_SPADL_COLUMNS.items():
             assert str(actions[col].dtype) == expected, f"{col}: got {actions[col].dtype}, expected {expected}"
 
     def test_empty_input_returns_empty_actions_with_schema(self):
         empty = pd.DataFrame({c: [] for c in _REQUIRED_COLS})
-        actions, report = pff_mod.convert_to_actions(
+        actions, report = gs_mod.convert_to_actions(
             empty,
             home_team_id=100,
             home_team_start_left=True,
             home_team_start_left_extratime=True,
         )
         assert len(actions) == 0
-        assert list(actions.columns) == list(PFF_SPADL_COLUMNS.keys())
+        assert list(actions.columns) == list(GRADIENTSPORTS_SPADL_COLUMNS.keys())
         assert report.total_events == 0
         assert report.total_actions == 0
 
@@ -204,7 +204,7 @@ class TestPffContract:
         events = _df_minimal_pass()
         original_columns = list(events.columns)
         original_len = len(events)
-        _, _ = pff_mod.convert_to_actions(
+        _, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -214,28 +214,28 @@ class TestPffContract:
         assert len(events) == original_len
 
 
-class TestPffRequiredColumns:
+class TestGradientsportsRequiredColumns:
     """Missing any required input column must raise ValueError with column names."""
 
     @pytest.mark.parametrize("missing", _REQUIRED_COLS)
     def test_missing_required_column_raises(self, missing):
         events = _df_minimal_pass().drop(columns=[missing])
         with pytest.raises(ValueError, match=missing):
-            pff_mod.convert_to_actions(
+            gs_mod.convert_to_actions(
                 events,
                 home_team_id=100,
                 home_team_start_left=True,
             )
 
 
-class TestPffCoordinateTranslation:
-    """PFF centered meters → SPADL bottom-left meters."""
+class TestGradientsportsCoordinateTranslation:
+    """Gradient Sports centered meters → SPADL bottom-left meters."""
 
     def test_center_spot_translates_to_pitch_center(self):
         df = _df_minimal_pass()
         df.loc[0, "ball_x"] = 0.0
         df.loc[0, "ball_y"] = 0.0
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -248,9 +248,9 @@ class TestPffCoordinateTranslation:
 
     def test_corner_translates_to_pitch_corner(self):
         df = _df_minimal_pass()
-        df.loc[0, "ball_x"] = -52.5  # PFF centered: left-side corner
+        df.loc[0, "ball_x"] = -52.5  # centered: left-side corner
         df.loc[0, "ball_y"] = -34.0
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -261,7 +261,7 @@ class TestPffCoordinateTranslation:
         assert actions.iloc[0]["start_y"] == pytest.approx(0.0)
 
 
-class TestPffDirectionOfPlay:
+class TestGradientsportsDirectionOfPlay:
     """All teams attack left-to-right after conversion (per-period flip)."""
 
     def test_home_period1_no_flip(self):
@@ -271,7 +271,7 @@ class TestPffDirectionOfPlay:
         df.loc[0, "ball_y"] = 0.0
         df.loc[0, "team_id"] = 100  # home
         df.loc[0, "period_id"] = 1
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -287,7 +287,7 @@ class TestPffDirectionOfPlay:
         df.loc[0, "ball_y"] = 0.0
         df.loc[0, "team_id"] = 200  # away
         df.loc[0, "period_id"] = 1
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -302,7 +302,7 @@ class TestPffDirectionOfPlay:
         df.loc[0, "ball_x"] = 26.25
         df.loc[0, "team_id"] = 100  # home
         df.loc[0, "period_id"] = 2
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -316,7 +316,7 @@ class TestPffDirectionOfPlay:
         df.loc[0, "ball_x"] = 26.25
         df.loc[0, "team_id"] = 200  # away
         df.loc[0, "period_id"] = 2
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -325,14 +325,14 @@ class TestPffDirectionOfPlay:
         assert actions.iloc[0]["start_x"] == pytest.approx(78.75)
 
 
-class TestPffExtraTimeFallback:
+class TestGradientsportsExtraTimeFallback:
     """ET data without explicit ET-direction param raises ValueError."""
 
     def test_period3_event_without_extratime_param_raises(self):
         df = _df_minimal_pass()
         df.loc[0, "period_id"] = 3
         with pytest.raises(ValueError, match="home_team_start_left_extratime"):
-            pff_mod.convert_to_actions(
+            gs_mod.convert_to_actions(
                 df,
                 home_team_id=100,
                 home_team_start_left=True,
@@ -342,7 +342,7 @@ class TestPffExtraTimeFallback:
         df = _df_minimal_pass()
         df.loc[0, "period_id"] = 4
         with pytest.raises(ValueError, match="home_team_start_left_extratime"):
-            pff_mod.convert_to_actions(
+            gs_mod.convert_to_actions(
                 df,
                 home_team_id=100,
                 home_team_start_left=True,
@@ -351,7 +351,7 @@ class TestPffExtraTimeFallback:
     def test_period3_event_with_extratime_param_succeeds(self):
         df = _df_minimal_pass()
         df.loc[0, "period_id"] = 3
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -360,7 +360,7 @@ class TestPffExtraTimeFallback:
         assert len(actions) == 1
 
 
-class TestPffBodyPart:
+class TestGradientsportsBodyPart:
     """body_type → SPADL bodypart_id mapping."""
 
     @pytest.mark.parametrize(
@@ -376,7 +376,7 @@ class TestPffBodyPart:
     def test_body_type_dispatch(self, body_type, expected_name):
         df = _df_minimal_pass()
         df.loc[0, "body_type"] = body_type
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -386,7 +386,7 @@ class TestPffBodyPart:
         assert actions.iloc[0]["bodypart_id"] == expected_id
 
 
-class TestPffPassDispatch:
+class TestGradientsportsPassDispatch:
     """OTB+PA dispatched by set_piece_type."""
 
     @pytest.mark.parametrize(
@@ -403,7 +403,7 @@ class TestPffPassDispatch:
     def test_pass_set_piece_composition(self, set_piece, expected_name):
         df = _df_minimal_pass()
         df.loc[0, "set_piece_type"] = set_piece
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -415,7 +415,7 @@ class TestPffPassDispatch:
     def test_pass_outcome_complete_is_success(self):
         df = _df_minimal_pass()
         df.loc[0, "pass_outcome_type"] = "C"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -426,7 +426,7 @@ class TestPffPassDispatch:
     def test_pass_outcome_fail_is_fail(self):
         df = _df_minimal_pass()
         df.loc[0, "pass_outcome_type"] = "F"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -435,7 +435,7 @@ class TestPffPassDispatch:
         assert actions.iloc[0]["result_id"] == spadlconfig.result_id["fail"]
 
 
-class TestPffCrossDispatch:
+class TestGradientsportsCrossDispatch:
     """OTB+CR dispatched by set_piece_type."""
 
     @pytest.mark.parametrize(
@@ -450,7 +450,7 @@ class TestPffCrossDispatch:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "CR"
         df.loc[0, "set_piece_type"] = set_piece
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -464,7 +464,7 @@ class TestPffCrossDispatch:
         df.loc[0, "possession_event_type"] = "CR"
         df.loc[0, "cross_outcome_type"] = "C"
         df.loc[0, "pass_outcome_type"] = None
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -473,7 +473,7 @@ class TestPffCrossDispatch:
         assert actions.iloc[0]["result_id"] == spadlconfig.result_id["success"]
 
 
-class TestPffShotDispatch:
+class TestGradientsportsShotDispatch:
     """OTB+SH dispatched by set_piece_type, results from shot_outcome_type."""
 
     @pytest.mark.parametrize(
@@ -488,7 +488,7 @@ class TestPffShotDispatch:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "SH"
         df.loc[0, "set_piece_type"] = set_piece
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -512,7 +512,7 @@ class TestPffShotDispatch:
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "SH"
         df.loc[0, "shot_outcome_type"] = shot_outcome
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -521,14 +521,14 @@ class TestPffShotDispatch:
         assert actions.iloc[0]["result_id"] == spadlconfig.result_id[expected_result]
 
 
-class TestPffRebound:
+class TestGradientsportsRebound:
     """RE events disambiguate by keeper_touch_type → keeper_save / keeper_pick_up."""
 
     def test_rebound_default_is_keeper_save(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "RE"
         df.loc[0, "keeper_touch_type"] = None
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -539,16 +539,16 @@ class TestPffRebound:
     def test_rebound_catch_class_is_keeper_pick_up(self):
         """Catch-class keeper_touch_type → keeper_pick_up.
 
-        NOTE: The exact PFF keeper_touch_type code letters are not enumerated
+        NOTE: The exact Gradient Sports keeper_touch_type code letters are not enumerated
         by the spec; the test uses "C" as a placeholder catch code matching
-        the catch_class set in pff.py. If the synthetic match generator
+        the catch_class set in gradientsports.py. If the synthetic match generator
         (Task 19) authors a different vocabulary, update this code AND the
-        catch_class set in pff.py simultaneously.
+        catch_class set in gradientsports.py simultaneously.
         """
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "RE"
         df.loc[0, "keeper_touch_type"] = "C"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -557,7 +557,7 @@ class TestPffRebound:
         assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["keeper_pick_up"]
 
 
-class TestPffTackle:
+class TestGradientsportsTackle:
     """OTB+CH → SPADL tackle, with winner/loser passthrough columns."""
 
     def _df_tackle(self, winner_id, winner_team_id):
@@ -576,7 +576,7 @@ class TestPffTackle:
 
     def test_tackle_type_id_set(self):
         df = self._df_tackle(winner_id=5, winner_team_id=200)
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -587,7 +587,7 @@ class TestPffTackle:
     def test_tackle_winner_columns_populated_when_challenger_wins(self):
         """Challenger (5/200) wins → carrier (1/100) lost."""
         df = self._df_tackle(winner_id=5, winner_team_id=200)
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -601,7 +601,7 @@ class TestPffTackle:
     def test_tackle_winner_columns_populated_when_carrier_holds(self):
         """Carrier (1/100) wins (== event_player_id) → challenger (5/200) lost."""
         df = self._df_tackle(winner_id=1, winner_team_id=100)
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -615,7 +615,7 @@ class TestPffTackle:
     def test_tackle_passthrough_NaN_on_non_tackle_rows(self):
         """A pass row has NA on all four tackle columns."""
         df = _df_minimal_pass()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -630,13 +630,13 @@ class TestPffTackle:
             assert pd.isna(actions.iloc[0][col]), f"{col} should be NA on a pass row"
 
 
-class TestPffClearanceDribbleTouchControl:
+class TestGradientsportsClearanceDribbleTouchControl:
     """OTB+CL → clearance, OTB+BC → dribble, OTB+TC → bad_touch."""
 
     def test_clearance(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "CL"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -647,7 +647,7 @@ class TestPffClearanceDribbleTouchControl:
     def test_ball_carry(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "BC"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -658,7 +658,7 @@ class TestPffClearanceDribbleTouchControl:
     def test_touch_control(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "TC"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -667,13 +667,13 @@ class TestPffClearanceDribbleTouchControl:
         assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["bad_touch"]
 
 
-class TestPffFoul:
+class TestGradientsportsFoul:
     """Rows with foul_type non-null synthesize an extra SPADL foul action."""
 
     def test_foul_synthesizes_additional_action(self):
         df = _df_minimal_pass()
         df.loc[0, "foul_type"] = "STANDARD"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -689,7 +689,7 @@ class TestPffFoul:
         df = _df_minimal_pass()
         df.loc[0, "foul_type"] = "STANDARD"
         df.loc[0, "final_foul_outcome_type"] = "Y"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -702,7 +702,7 @@ class TestPffFoul:
         df = _df_minimal_pass()
         df.loc[0, "foul_type"] = "STANDARD"
         df.loc[0, "final_foul_outcome_type"] = "R"
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -713,7 +713,7 @@ class TestPffFoul:
 
     def test_no_foul_no_synthesis(self):
         df = _df_minimal_pass()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -722,7 +722,7 @@ class TestPffFoul:
         assert len(actions) == 1
 
 
-class TestPffExclusions:
+class TestGradientsportsExclusions:
     """Structural / metadata events with no SPADL counterpart are excluded."""
 
     @pytest.mark.parametrize(
@@ -744,7 +744,7 @@ class TestPffExclusions:
         df = _df_minimal_pass()
         df.loc[0, "game_event_type"] = ge_type
         df.loc[0, "possession_event_type"] = None
-        actions, report = pff_mod.convert_to_actions(
+        actions, report = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -756,7 +756,7 @@ class TestPffExclusions:
     def test_otb_plus_it_excluded(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "IT"
-        actions, report = pff_mod.convert_to_actions(
+        actions, report = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -769,7 +769,7 @@ class TestPffExclusions:
         """OTB rows with empty possessionEventType are initialNonEvent markers."""
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = None
-        actions, report = pff_mod.convert_to_actions(
+        actions, report = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -779,7 +779,7 @@ class TestPffExclusions:
         assert report.excluded_counts.get("OTB+") == 1
 
 
-class TestPffDedicatedFoulEvent:
+class TestGradientsportsDedicatedFoulEvent:
     """Standalone FOUL gameEventType with possessionEventType='FO' converts
     in-place to a SPADL foul action (no phantom non_action row)."""
 
@@ -789,7 +789,7 @@ class TestPffDedicatedFoulEvent:
         df.loc[0, "possession_event_type"] = "FO"
         df.loc[0, "foul_type"] = "I"
         df.loc[0, "final_foul_outcome_type"] = "Y"
-        actions, report = pff_mod.convert_to_actions(
+        actions, report = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -803,7 +803,7 @@ class TestPffDedicatedFoulEvent:
         assert "FOUL+FO" not in report.unrecognized_counts
 
 
-class TestPffReportCounts:
+class TestGradientsportsReportCounts:
     """ConversionReport.mapped_counts uses SPADL action-type names."""
 
     def test_mapped_counts_uses_spadl_names(self):
@@ -813,7 +813,7 @@ class TestPffReportCounts:
         df.loc[1, "possession_event_type"] = "SH"
         df.loc[1, "shot_outcome_type"] = "G"
         df.loc[1, "time_seconds"] = 11.0
-        _, report = pff_mod.convert_to_actions(
+        _, report = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -823,7 +823,7 @@ class TestPffReportCounts:
         assert report.mapped_counts.get("shot") == 1
 
 
-class TestPffEndCoordinates:
+class TestGradientsportsEndCoordinates:
     """end_x/end_y of each action equals start_x/start_y of the next action
     in the same period (chained-event semantics)."""
 
@@ -834,7 +834,7 @@ class TestPffEndCoordinates:
         df.loc[1, "ball_x"] = 20.0
         df.loc[1, "ball_y"] = 5.0
         df.loc[1, "time_seconds"] = 11.0
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -846,7 +846,7 @@ class TestPffEndCoordinates:
     def test_last_action_end_equals_start(self):
         """Last action has no successor — end falls back to its own start."""
         df = _df_minimal_pass()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             df,
             home_team_id=100,
             home_team_start_left=True,
@@ -856,12 +856,12 @@ class TestPffEndCoordinates:
         assert actions.iloc[-1]["end_y"] == pytest.approx(actions.iloc[-1]["start_y"])
 
 
-class TestPffSyntheticMatchE2E:
+class TestGradientsportsSyntheticMatchE2E:
     """End-to-end conversion against the committed synthetic match fixture."""
 
     def test_synthetic_match_converts_with_no_unrecognized(self):
         events = _load_synthetic_events()
-        _, report = pff_mod.convert_to_actions(
+        _, report = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -873,7 +873,7 @@ class TestPffSyntheticMatchE2E:
     def test_synthetic_match_dispatch_coverage(self):
         """Every documented dispatch row produces at least one action."""
         events = _load_synthetic_events()
-        _, report = pff_mod.convert_to_actions(
+        _, report = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -910,7 +910,7 @@ class TestPffSyntheticMatchE2E:
         between synthetic-fixture coverage and the converter's excluded set.
         """
         events = _load_synthetic_events()
-        _, report = pff_mod.convert_to_actions(
+        _, report = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -936,7 +936,7 @@ class TestPffSyntheticMatchE2E:
 
     def test_synthetic_match_yields_goal_actions(self):
         events = _load_synthetic_events()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -954,7 +954,7 @@ class TestPffSyntheticMatchE2E:
 
     def test_synthetic_match_yields_yellow_and_red_cards(self):
         events = _load_synthetic_events()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -966,7 +966,7 @@ class TestPffSyntheticMatchE2E:
 
     def test_synthetic_match_tackle_winner_columns_populated(self):
         events = _load_synthetic_events()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -979,14 +979,14 @@ class TestPffSyntheticMatchE2E:
         assert winners_diff_from_actor and winners_eq_actor
 
 
-class TestPffAtomicComposability:
-    """PFF SPADL output composes cleanly with Atomic-SPADL."""
+class TestGradientsportsAtomicComposability:
+    """Gradient Sports SPADL output composes cleanly with Atomic-SPADL."""
 
     def test_atomic_conversion_runs_without_error(self):
         from silly_kicks.atomic.spadl import convert_to_atomic
 
         events = _load_synthetic_events()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1008,7 +1008,7 @@ class TestPffAtomicComposability:
         from silly_kicks.atomic.spadl import add_possessions, convert_to_atomic
 
         events = _load_synthetic_events()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1019,15 +1019,15 @@ class TestPffAtomicComposability:
         assert "possession_id" in with_poss.columns
 
 
-class TestPffVaepComposability:
-    """PFF SPADL output composes cleanly with VAEP labels."""
+class TestGradientsportsVaepComposability:
+    """Gradient Sports SPADL output composes cleanly with VAEP labels."""
 
     def test_vaep_labels_scores(self):
         from silly_kicks.spadl import add_names
         from silly_kicks.vaep.labels import scores
 
         events = _load_synthetic_events()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,
@@ -1043,7 +1043,7 @@ class TestPffVaepComposability:
         from silly_kicks.vaep.labels import concedes
 
         events = _load_synthetic_events()
-        actions, _ = pff_mod.convert_to_actions(
+        actions, _ = gs_mod.convert_to_actions(
             events,
             home_team_id=100,
             home_team_start_left=True,

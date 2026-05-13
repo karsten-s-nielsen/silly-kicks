@@ -54,12 +54,12 @@ Outputs
    --- provenance metadata + per-provider stat slots set to None
    (filled in by Task 13).
 
-PFF
----
-Intentionally absent from the lakehouse probe (PFF data is not
-redistributable per PR-S18). The JSON includes a ``pff`` provider entry
+Gradient Sports
+--------------
+Intentionally absent from the lakehouse probe (Gradient Sports data is not
+redistributable per PR-S18). The JSON includes a ``gradientsports`` provider entry
 with all stats null + a marker pointing to the synthetic baseline computed
-in Task 13 from ``tests/datasets/tracking/pff/medium_halftime.parquet``.
+in Task 13 from ``tests/datasets/tracking/gradientsports/medium_halftime.parquet``.
 
 Usage::
 
@@ -767,17 +767,17 @@ def _build_skeleton_baselines(
         entry["note"] = "distribution stats backfilled in Task 13 from this slim slice"
         providers_block[sk_name] = entry
 
-    # PFF: forward reference to Task 13 synthetic baseline.
-    pff_entry: dict[str, Any] = {
-        "source": "synthetic_pff_medium_halftime",
+    # Gradient Sports: forward reference to Task 13 synthetic baseline.
+    gs_entry: dict[str, Any] = {
+        "source": "synthetic_gradientsports_medium_halftime",
         "note": (
-            "PFF-license: no lakehouse probe; baselines computed in Task 13 "
-            "from tests/datasets/tracking/pff/medium_halftime.parquet using "
+            "Gradient Sports license: no lakehouse probe; baselines computed in Task 13 "
+            "from tests/datasets/tracking/gradientsports/medium_halftime.parquet using "
             "Task-7 features"
         ),
     }
-    pff_entry.update(null_stats)
-    providers_block["pff"] = pff_entry
+    gs_entry.update(null_stats)
+    providers_block["gradientsports"] = gs_entry
 
     return {
         "probe_run_date": "2026-05-01",

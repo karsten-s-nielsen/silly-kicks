@@ -1,17 +1,17 @@
-"""Generate synthetic PFF-shaped raw tracking input.
+"""Generate synthetic Gradient Sports-shaped raw tracking input.
 
-PFF input shape (mirrors what callers parse from .jsonl.bz2 + flatten):
+Gradient Sports input shape (mirrors what callers parse from .jsonl.bz2 + flatten):
   - game_id (int), period_id (int), frame_id (int), time_seconds (float)
   - frame_rate (float, ~30 Hz)
   - player_id (Int64 nullable, NaN on ball rows), team_id (Int64 nullable)
   - is_ball, is_goalkeeper
-  - x_centered, y_centered (float, PFF meters; 0 at pitch center)
+  - x_centered, y_centered (float, centered meters; 0 at pitch center)
   - z (float, populated for ball rows on most frames)
-  - speed_native (NaN — PFF does not supply native speed)
+  - speed_native (NaN — Gradient Sports does not supply native speed)
   - ball_state (object, "alive" | "dead")
   - jersey (str, real shirt numbers like "8", "23")
 
-Real PFF data properties (validated against 10502.jsonl.bz2):
+Real Gradient Sports data properties (validated against 10502.jsonl.bz2):
   - frameNum is globally unique across periods (P1: 5366+, P2: 90535+)
   - 11 players per team per frame (not 22)
   - jerseyNum is str type with real shirt numbers
@@ -38,10 +38,10 @@ from datasets.tracking._generator_common import (  # noqa: E402
 )
 
 OUT_DIR = Path(__file__).resolve().parent
-BASELINE = get_provider_baseline("pff")
+BASELINE = get_provider_baseline("gradientsports")
 FRAME_RATE = float(BASELINE.get("frame_rate_p50") or 30.0)
 
-# Real PFF jersey numbers from WC2022 match 10502 (home team first 100 frames).
+# Real Gradient Sports jersey numbers from WC2022 match 10502 (home team first 100 frames).
 # Used to make synthetic data structurally match real data (str type, realistic values).
 _HOME_JERSEYS = ["2", "4", "5", "8", "10", "14", "15", "17", "21", "22", "23"]
 _AWAY_JERSEYS = ["1", "3", "6", "7", "9", "11", "13", "16", "18", "19", "25"]
@@ -49,8 +49,8 @@ _CONFIDENCE_VALUES = ["LOW", "MEDIUM", "HIGH"]
 _VISIBILITY_VALUES = ["VISIBLE", "ESTIMATED"]
 
 
-def _to_pff_shape(ref: pd.DataFrame, *, game_id: int = 10501) -> pd.DataFrame:
-    """Shape generator output to match real PFF flattened schema."""
+def _to_gradientsports_shape(ref: pd.DataFrame, *, game_id: int = 10501) -> pd.DataFrame:
+    """Shape generator output to match real Gradient Sports flattened schema."""
     out = ref.copy()
     out["game_id"] = game_id
     out["player_id"] = out["player_id"].astype("Int64")
@@ -73,7 +73,7 @@ def _to_pff_shape(ref: pd.DataFrame, *, game_id: int = 10501) -> pd.DataFrame:
 
     out["jersey"] = out.apply(_map_jersey, axis=1)
 
-    # Add confidence and visibility (present in real PFF data).
+    # Add confidence and visibility (present in real Gradient Sports data).
     player_mask = ~out["is_ball"]
     out["confidence"] = pd.NA
     out["visibility"] = pd.NA
@@ -85,7 +85,7 @@ def _to_pff_shape(ref: pd.DataFrame, *, game_id: int = 10501) -> pd.DataFrame:
 
 def main() -> None:
     # --- tiny: 3 seconds, single period ---
-    # Real PFF frameNum starts at ~5000, not 0.
+    # Real Gradient Sports frameNum starts at ~5000, not 0.
     tiny_ref = deterministic_uniform_motion(
         n_frames=int(3 * FRAME_RATE),
         frame_rate=FRAME_RATE,
@@ -93,7 +93,7 @@ def main() -> None:
         frame_id_offset=5000,
         speed_native=False,
     )
-    tiny = _to_pff_shape(tiny_ref)
+    tiny = _to_gradientsports_shape(tiny_ref)
     tiny.to_parquet(OUT_DIR / "tiny.parquet", index=False)
 
     # --- medium_halftime: 30s P1 + 30s P2, globally unique frame_ids ---
@@ -117,7 +117,7 @@ def main() -> None:
         frame_id_offset=5000 + p1_n_frames + 1000,  # gap mimics real halftime break
         speed_native=False,
     )
-    medium = pd.concat([_to_pff_shape(p1), _to_pff_shape(p2)], ignore_index=True)
+    medium = pd.concat([_to_gradientsports_shape(p1), _to_gradientsports_shape(p2)], ignore_index=True)
     dead_mask = (medium["period_id"] == 1) & (medium["time_seconds"].between(10, 15))
     medium.loc[dead_mask, "ball_state"] = "dead"
     medium.to_parquet(OUT_DIR / "medium_halftime.parquet", index=False)
@@ -132,9 +132,9 @@ def main() -> None:
         frame_id_offset=5000,
         speed_native=False,
         inject_realistic_edge_cases=True,
-        edge_case_provider="pff",
+        edge_case_provider="gradientsports",
     )
-    realistic = _to_pff_shape(realistic)
+    realistic = _to_gradientsports_shape(realistic)
     realistic.to_parquet(OUT_DIR / "realistic.parquet", index=False)
 
     print(f"Wrote {OUT_DIR / 'tiny.parquet'} ({len(tiny)} rows)")

@@ -25,7 +25,7 @@ def _frame_row(period_id, frame_id, t):
         "team_attacking_direction": "ltr",
         "confidence": None,
         "visibility": None,
-        "source_provider": "pff",
+        "source_provider": "gradientsports",
     }
 
 

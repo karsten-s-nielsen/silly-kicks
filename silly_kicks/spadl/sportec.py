@@ -483,8 +483,8 @@ def _resolve_per_period_flips_sportec(
 ) -> dict[int, bool]:
     """Resolve the bool-pair-OR-mapping kwargs to a concrete per-period flip dict.
 
-    Mutual exclusion + loud failure on missing-input. Mirrors PFF events-side
-    and tracking-side Sportec API exactly.
+    Mutual exclusion + loud failure on missing-input. Mirrors Gradient Sports
+    events-side and tracking-side Sportec API exactly.
     """
     if home_attacks_right_per_period is not None and (
         home_team_start_left is not None or home_team_start_left_extratime is not None

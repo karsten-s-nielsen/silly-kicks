@@ -169,14 +169,14 @@ def _load_wyscout_fixture():
     return actions
 
 
-def _load_pff_fixture():
-    from silly_kicks.spadl import pff
+def _load_gradientsports_fixture():
+    from silly_kicks.spadl import gradientsports
 
-    # Reuse the synthetic-match loader from test_pff.py to avoid duplication.
-    from tests.spadl.test_pff import _load_synthetic_events
+    # Reuse the synthetic-match loader from test_gradientsports.py to avoid duplication.
+    from tests.spadl.test_gradientsports import _load_synthetic_events
 
     events = _load_synthetic_events()
-    actions, _ = pff.convert_to_actions(
+    actions, _ = gradientsports.convert_to_actions(
         events,
         home_team_id=100,
         home_team_start_left=True,
@@ -191,7 +191,7 @@ _PROVIDER_LOADERS = {
     "statsbomb": _load_statsbomb_fixture,
     "opta": _load_opta_fixture,
     "wyscout": _load_wyscout_fixture,
-    "pff": _load_pff_fixture,
+    "gradientsports": _load_gradientsports_fixture,
 }
 
 
@@ -228,9 +228,9 @@ def test_converter_returns_canonical_spadl_columns(provider: str):
     assert "type_id" in actions.columns
     assert len(actions) > 0
 
-    if provider in ("sportec", "pff"):
-        # Sportec (2.0.0) and PFF (2.6.0) output includes the 4 tackle_*_*_id
-        # columns per ADR-001 (different dtypes — sportec object, PFF Int64 —
+    if provider in ("sportec", "gradientsports"):
+        # Sportec (2.0.0) and Gradient Sports (2.6.0) output includes the 4 tackle_*_*_id
+        # columns per ADR-001 (different dtypes — sportec object, Gradient Sports Int64 —
         # but same column set).
         for col in (
             "tackle_winner_player_id",
@@ -272,8 +272,8 @@ def _input_team_values_for(provider: str) -> set[str]:
     if provider == "wyscout":
         # Synthetic fixture (see _load_wyscout_fixture); team_id is 100.
         return {"100"}
-    if provider == "pff":
-        # Synthetic fixture (see _load_pff_fixture); two teams 100 and 200.
+    if provider == "gradientsports":
+        # Synthetic fixture (see _load_gradientsports_fixture); two teams 100 and 200.
         return {"100", "200"}
     raise ValueError(f"unknown provider {provider!r}")
 

@@ -7,7 +7,7 @@ import pytest
 from silly_kicks.tracking import play_left_to_right
 from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
 
-_PROVIDERS = ["sportec", "metrica", "pff"]
+_PROVIDERS = ["sportec", "metrica", "gradientsports"]
 
 
 @pytest.fixture(params=_PROVIDERS)

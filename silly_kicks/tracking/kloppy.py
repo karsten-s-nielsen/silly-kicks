@@ -1,9 +1,10 @@
 """Kloppy TrackingDataset gateway for silly_kicks.tracking.
 
 Covers Metrica + SkillCorner via kloppy 3.18+ tracking parsers. Sportec
-and PFF intentionally raise NotImplementedError --- route through their
-native adapters (silly_kicks.tracking.sportec / silly_kicks.tracking.pff)
-for symmetry with silly_kicks.spadl.pff (PR-S18) and failure isolation.
+and Gradient Sports intentionally raise NotImplementedError --- route through
+their native adapters (silly_kicks.tracking.sportec /
+silly_kicks.tracking.gradientsports) for symmetry with
+silly_kicks.spadl.gradientsports (PR-S18) and failure isolation.
 
 See ADR-004 (silly-kicks 2.7.0) for the architectural rationale.
 """
@@ -45,7 +46,7 @@ def convert_to_frames(
 
     Dispatches on ``dataset.metadata.provider``. ``Provider.PFF`` and
     ``Provider.SPORTEC`` raise ``NotImplementedError`` --- route through
-    ``silly_kicks.tracking.pff`` and ``silly_kicks.tracking.sportec``.
+    ``silly_kicks.tracking.gradientsports`` and ``silly_kicks.tracking.sportec``.
 
     Parameters
     ----------
@@ -87,9 +88,9 @@ def convert_to_frames(
     provider = dataset.metadata.provider
     if provider == Provider.PFF:
         raise NotImplementedError(
-            "PFF tracking via kloppy is supported but disabled in PR-S19; "
-            "route through silly_kicks.tracking.pff for symmetry with "
-            "silly_kicks.spadl.pff (ADR-004)."
+            "Gradient Sports (PFF) tracking via kloppy is supported but disabled in PR-S19; "
+            "route through silly_kicks.tracking.gradientsports for symmetry with "
+            "silly_kicks.spadl.gradientsports (ADR-004)."
         )
     if provider == Provider.SPORTEC:
         raise NotImplementedError(

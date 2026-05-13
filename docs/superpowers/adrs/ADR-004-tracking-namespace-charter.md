@@ -9,7 +9,7 @@
 ## Context
 
 silly-kicks supports six event-data providers (StatsBomb, Opta, Wyscout,
-Sportec, Metrica, PFF) plus a kloppy event gateway, and provides VAEP / xT
+Sportec, Metrica, Gradient Sports) plus a kloppy event gateway, and provides VAEP / xT
 / atomic-SPADL action-valuation pipelines on top. Tracking data — the
 per-frame x/y positions of all players + ball — is **not** a first-class
 library surface today.
@@ -43,7 +43,7 @@ namespace (per ADR-001 cross-namespace consistency).
 `TRACKING_FRAMES_COLUMNS` — 19 columns; one row per (frame, player); ball
 as own row with `is_ball=True`. Per-provider dtype variants
 (`KLOPPY_TRACKING_FRAMES_COLUMNS`, `SPORTEC_TRACKING_FRAMES_COLUMNS`,
-`PFF_TRACKING_FRAMES_COLUMNS`) follow the events precedent; identifier
+`GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS`) follow the events precedent; identifier
 dtypes match the same provider's SPADL converter (per ADR-001).
 
 The schema additionally carries:
@@ -51,7 +51,7 @@ The schema additionally carries:
 - `ball_state`: `"alive" | "dead"`; NaN where unavailable.
 - `team_attacking_direction`: `"ltr" | "rtl"`; NaN for ball rows.
 - `speed_source`: `"native" | "derived"` provenance column.
-- `source_provider`: `"pff" | "sportec" | "metrica" | "skillcorner"`.
+- `source_provider`: `"gradientsports" | "sportec" | "metrica" | "skillcorner"`.
 
 ### 3. SPADL 105 × 68 m coordinates, bottom-left origin
 
@@ -64,18 +64,18 @@ the unit choice.
 
 ### 4. Adapter taxonomy
 
-Native modules for Sportec and PFF; kloppy gateway for Metrica +
+Native modules for Sportec and Gradient Sports (formerly PFF); kloppy gateway for Metrica +
 SkillCorner.
 
-| Provider     | Adapter         | Module                            |
-|--------------|------------------|-----------------------------------|
-| Sportec/IDSSE| native           | `silly_kicks/tracking/sportec.py` |
-| PFF          | native           | `silly_kicks/tracking/pff.py`     |
-| Metrica      | kloppy gateway   | `silly_kicks/tracking/kloppy.py`  |
-| SkillCorner  | kloppy gateway   | `silly_kicks/tracking/kloppy.py`  |
+| Provider              | Adapter         | Module                                      |
+|-----------------------|------------------|---------------------------------------------|
+| Sportec/IDSSE         | native           | `silly_kicks/tracking/sportec.py`           |
+| Gradient Sports       | native           | `silly_kicks/tracking/gradientsports.py`    |
+| Metrica               | kloppy gateway   | `silly_kicks/tracking/kloppy.py`            |
+| SkillCorner           | kloppy gateway   | `silly_kicks/tracking/kloppy.py`            |
 
-PFF native is preferred over kloppy's PFF tracking parser for symmetry
-with `silly_kicks.spadl.pff` (PR-S18) and to share the `_direction`
+Gradient Sports native is preferred over kloppy's Gradient Sports tracking parser for symmetry
+with `silly_kicks.spadl.gradientsports` (PR-S18) and to share the `_direction`
 helper extracted from PR-S18. Sportec must be native because kloppy
 3.18 has no Sportec/IDSSE tracking parser. The kloppy gateway raises
 `NotImplementedError` for `Provider.PFF` and `Provider.SPORTEC` —
@@ -100,7 +100,7 @@ stable-params). Changing the default requires updating the test.
 
 ### 7. Hybrid speed policy
 
-Speed populated for all providers. Trust native (PFF, Sportec); derive
+Speed populated for all providers. Trust native (Gradient Sports, Sportec); derive
 where missing (Metrica, SkillCorner) via `utils._derive_speed`. The
 `speed_source` column records provenance (`"native" | "derived" | NaN`).
 Adapters compute derivation; no downstream consumer should re-derive.
@@ -109,7 +109,7 @@ Adapters compute derivation; no downstream consumer should re-derive.
 
 Per-provider synthetic fixtures (`tests/datasets/tracking/{provider}/
 {tiny,medium_halftime}.parquet`) are distributionally parameterized
-from a one-off empirical probe of lakehouse + local PFF tracking
+from a one-off empirical probe of lakehouse + local Gradient Sports tracking
 (`scripts/probe_tracking_baselines.py` and
 `tests/datasets/tracking/empirical_probe_baselines.json` — both
 committed). The real datasets are NOT committed.
@@ -149,14 +149,14 @@ PR-2 (`action_context`) targets silly-kicks 2.8.0 against the locked
   reduces to: new adapter module + new fixture generator + new probe
   entry. Schema is invariant.
 - **Negative:** A 5th provider whose source schema cannot fit the 19-column
-  shape would force a schema revision; the four chosen (PFF / Sportec /
+  shape would force a schema revision; the four chosen (Gradient Sports / Sportec /
   Metrica / SkillCorner) cover the prevailing heterogeneity (JSON / JSONL
   / CSV / XML; 10/25/30 Hz), so the risk is low for the foreseeable
   expansion path.
 - **Bundled refactor:** The `_direction.py` helper is extracted from
-  `silly_kicks/spadl/pff.py` (PR-S18) into
-  `silly_kicks/tracking/_direction.py` so events PFF, tracking PFF, and
-  tracking Sportec adapters share one implementation. Pure refactor —
+  `silly_kicks/spadl/gradientsports.py` (PR-S18) into
+  `silly_kicks/tracking/_direction.py` so events Gradient Sports, tracking
+  Gradient Sports, and tracking Sportec adapters share one implementation. Pure refactor —
   zero behaviour change in events.
 
 ## References

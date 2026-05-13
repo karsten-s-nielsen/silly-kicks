@@ -45,7 +45,7 @@ Thresholds locked: `_GK_N_FRAMES_FRAC=0.30`, `_GK_PA_DWELL_MIN=0.40`, `_GK_DIST_
 ### Negative
 
 - ~20ms overhead per match for algorithm execution (acceptable given tracking volumes)
-- Native adapters (Sportec, PFF) must emit `is_goalkeeper_source="native"` for schema consistency
+- Native adapters (Sportec, Gradient Sports) must emit `is_goalkeeper_source="native"` for schema consistency
 
 ### Neutral
 

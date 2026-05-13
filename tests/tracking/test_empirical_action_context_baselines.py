@@ -35,7 +35,7 @@ FEATURE_COLS = [
     "pre_shot_gk_distance_to_shot",
 ]
 PERCENTILES = [25, 50, 75, 99]
-PROVIDERS = ["sportec", "metrica", "skillcorner", "pff"]
+PROVIDERS = ["sportec", "metrica", "skillcorner", "gradientsports"]
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)

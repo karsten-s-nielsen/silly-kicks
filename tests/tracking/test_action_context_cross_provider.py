@@ -9,8 +9,8 @@ sportec/metrica/skillcorner — the tracking side has correct identifiers, so
 synthesizing actions from frames gives us a reliable test.
 
 Tier-3 in PR-S19's three-tier strategy: real-distribution lakehouse-derived
-slices for license-permissive providers (sportec / metrica / skillcorner). PFF
-is synthetic-only per license; PFF cross-provider parity is exercised via the
+slices for license-permissive providers (sportec / metrica / skillcorner). Gradient Sports
+is synthetic-only per license; Gradient Sports cross-provider parity is exercised via the
 synthetic Tier-1 fixtures in the unit-test suite.
 """
 
@@ -156,7 +156,7 @@ def test_action_context_actor_speed_populated(provider: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("provider", ["pff", "sportec", "metrica", "skillcorner"])
+@pytest.mark.parametrize("provider", ["gradientsports", "sportec", "metrica", "skillcorner"])
 def test_pre_shot_gk_position_bounds(provider: str) -> None:
     """When pre_shot_gk_* columns are populated (i.e. shots with linked GK), they satisfy
     bound constraints. Off-pitch tolerance acknowledges per-provider asymmetry

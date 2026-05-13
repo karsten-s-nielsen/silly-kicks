@@ -11,7 +11,7 @@
 silly-kicks's SPADL canonical convention -- inherited from upstream socceraction
 -- is *"all teams attack left-to-right"*: every team's actions oriented at
 high-x in their own frame. The convention is documented in the Sportec converter
-docstring, the kloppy gateway comments, and the PFF converter docstring.
+docstring, the kloppy gateway comments, and the Gradient Sports converter docstring.
 
 The pre-3.0.0 implementation was internally inconsistent. Two architecturally
 identical mirror operations were applied sequentially during VAEP fitting:
@@ -31,7 +31,7 @@ correct VAEP gamestates simultaneously:
 |---|---|---|
 | Possession-perspective (StatsBomb / Wyscout) | ✗ Away mirrored to wrong end | ✓ Correct (double-mirror canceled by accident) |
 | Absolute-frame (Sportec / Metrica / kloppy / Opta) | ✓ Correct LTR | ✗ Away mirrored to wrong end by the second mirror |
-| Per-period absolute (PFF) | ✓ Correct LTR (per-period path independent) | ✗ Away mirrored to wrong end |
+| Per-period absolute (Gradient Sports) | ✓ Correct LTR (per-period path independent) | ✗ Away mirrored to wrong end |
 
 The bug had been present in the v0.1.0 fork (verified `git show 0b29178`):
 StatsBomb / Wyscout / Opta converters and `vaep/base.py` all called the mirror
@@ -82,7 +82,7 @@ single-line audit hook for tests/invariants.
 | `spadl/sportec.py` | `ABSOLUTE_FRAME_HOME_RIGHT` | yes (IDSSE bronze) |
 | `spadl/metrica.py` | `ABSOLUTE_FRAME_HOME_RIGHT` | yes (Metrica bronze) |
 | `spadl/kloppy.py` | `ABSOLUTE_FRAME_HOME_RIGHT` (post kloppy `Orientation.HOME_AWAY` transform) | n/a (kloppy already normalised) |
-| `spadl/pff.py` | `PER_PERIOD_ABSOLUTE` (via `homeTeamStartLeft`) | n/a (per-period coords need separate validator pattern -- TF-22 follow-up) |
+| `spadl/gradientsports.py` | `PER_PERIOD_ABSOLUTE` (via `homeTeamStartLeft`) | n/a (per-period coords need separate validator pattern -- TF-22 follow-up) |
 
 ### 3. Input-convention auto-validator
 
@@ -120,7 +120,7 @@ from outside silly-kicks. Internal call sites no longer use them.
 
 ### 5. Tracking adapters: explicit `output_convention` opt-in (no default flip)
 
-Tracking adapters (`tracking/sportec.py`, `tracking/pff.py`, `tracking/kloppy.py`)
+Tracking adapters (`tracking/sportec.py`, `tracking/gradientsports.py`, `tracking/kloppy.py`)
 gain an `output_convention: Literal["absolute_frame", "ltr"] | None = None`
 kwarg. `None` (legacy unspecified) emits a `DeprecationWarning` recommending
 the caller pick explicitly, then falls back to `"absolute_frame"` (the
@@ -172,7 +172,7 @@ Plus a `_finalize_output` debug-mode assertion gated on
 - **silly-kicks 3.0.0 is a breaking correctness change.** Every consumer
   artifact derived from native StatsBomb / Wyscout / Opta SPADL must be
   re-derived. Trained VAEP / HybridVAEP / xT models trained on absolute-frame
-  providers (Sportec / Metrica / kloppy / PFF / Opta) must be re-trained.
+  providers (Sportec / Metrica / kloppy / Gradient Sports / Opta) must be re-trained.
 - Tracking adapters now emit a `DeprecationWarning` for callers that don't
   pass `output_convention=` explicitly. Behaviour preserved; warning is the
   forcing function.
@@ -187,7 +187,7 @@ enumerates the categorical impact rather than specific consumer artifacts.
 ## Alternatives considered
 
 - **(a) Silently fix only StatsBomb/Wyscout** -- rejected: leaves Sportec /
-  Metrica / kloppy / PFF VAEP broken, and the dual-mirror inversion remains
+  Metrica / kloppy / Gradient Sports VAEP broken, and the dual-mirror inversion remains
   in the codebase as a hidden trap.
 - **(b) Keep dual mirror, document it** -- rejected: the inversion is per-provider,
   unfixable without breaking each provider in turn, and the documentation
@@ -230,7 +230,7 @@ production fixtures via the SK3-MIG migration session). The kloppy-gateway
 path (`spadl/kloppy.py`) remains `ABSOLUTE_FRAME_HOME_RIGHT` — kloppy
 normalises upstream via `Orientation.HOME_AWAY`.
 
-The 3.0.1 fix mirrors the existing PFF events-side and tracking-side
+The 3.0.1 fix mirrors the existing Gradient Sports events-side and tracking-side
 Sportec API exactly: callers pass `home_team_start_left: bool` (or the
 escape-hatch `home_attacks_right_per_period` mapping), the converter
 derives flips and dispatches to `to_spadl_ltr` with `PER_PERIOD_ABSOLUTE`.
@@ -241,7 +241,7 @@ hardened (TF-22): when no team has reliable shots in ≥ 2 distinct
 periods, the detector returns `convention=None, confidence="low"` rather
 than false-positiving `ABSOLUTE_FRAME_HOME_RIGHT` on sparse-shot
 per-period-absolute matches. Validator re-enabled at sportec, metrica,
-and pff converter call sites with `declared=PER_PERIOD_ABSOLUTE`.
+and gradientsports converter call sites with `declared=PER_PERIOD_ABSOLUTE`.
 
 ## Lessons learned (silly-kicks 3.0.1)
 

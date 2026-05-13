@@ -147,9 +147,9 @@
       "pre_shot_gk_distance_to_shot_p75": 61.3838009208626,
       "pre_shot_gk_distance_to_shot_p99": 61.3838009208626
     },
-    "pff": {
-      "source": "synthetic_pff_medium_halftime",
-      "note": "PFF-license: no lakehouse probe; baselines computed in Task 13 from tests/datasets/tracking/pff/medium_halftime.parquet using Task-7 features",
+    "gradientsports": {
+      "source": "synthetic_gradientsports_medium_halftime",
+      "note": "Gradient Sports license: no lakehouse probe; baselines computed in Task 13 from tests/datasets/tracking/gradientsports/medium_halftime.parquet using Task-7 features",
       "nearest_defender_distance_p25": 31.63385791222883,
       "nearest_defender_distance_p50": 31.702785078374518,
       "nearest_defender_distance_p75": 31.783568330982956,

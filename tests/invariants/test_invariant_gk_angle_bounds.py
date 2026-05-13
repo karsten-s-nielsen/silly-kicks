@@ -32,7 +32,7 @@ def _enriched_actions_for(provider: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     return enriched, frames
 
 
-@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
 def test_to_shot_trajectory_bounded(provider):
     enriched, frames = _enriched_actions_for(provider)
     s = pre_shot_gk_angle_to_shot_trajectory(enriched, frames)
@@ -43,7 +43,7 @@ def test_to_shot_trajectory_bounded(provider):
     assert valid.max() <= math.pi + 1e-9
 
 
-@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
 def test_off_goal_line_bounded(provider):
     enriched, frames = _enriched_actions_for(provider)
     s = pre_shot_gk_angle_off_goal_line(enriched, frames)

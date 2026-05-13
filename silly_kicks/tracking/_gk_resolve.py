@@ -39,7 +39,7 @@ def defending_gk_from_frames(
     -------
     pd.Series
         Aligned with actions.index. dtype matches frames' player_id dtype
-        (object for kloppy/sportec, int64/Int64 for PFF).
+        (object for kloppy/sportec, int64/Int64 for Gradient Sports).
         NaN where action couldn't link, no opposing-team GK in linked frame,
         or action.team_id is NaN.
 

@@ -18,8 +18,8 @@ line_breaking_ward_xfns).
 """
 
 __all__ = [
+    "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS",
     "KLOPPY_TRACKING_FRAMES_COLUMNS",
-    "PFF_TRACKING_FRAMES_COLUMNS",
     "SPORTEC_TRACKING_FRAMES_COLUMNS",
     "TRACKING_CATEGORICAL_DOMAINS",
     "TRACKING_CONSTRAINTS",
@@ -90,6 +90,7 @@ __all__ = [
     "gk_influence_xfns",
     "gk_pitch_control_share_weighted",
     "gk_reachable_area_m2",
+    "gradientsports",
     "infer_ball_carrier",
     "interpolate_frames",
     "kloppy",
@@ -101,7 +102,6 @@ __all__ = [
     "max_lateral_gap",
     "nearest_defender_distance",
     "off_ball_context_xfns",
-    "pff",
     "pitch_control",
     "pitch_control_at_action",
     "pitch_control_default_xfns",
@@ -131,7 +131,7 @@ __all__ = [
     "utils",
 ]
 
-from . import feature_framework, features, pff, pitch_control, preprocess, schema, sportec, utils
+from . import feature_framework, features, gradientsports, pitch_control, preprocess, schema, sportec, utils
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
 from ._cover_shadows import (
     CoverShadowParams,
@@ -226,8 +226,8 @@ from .pressure import (
     PressureParams,
 )
 from .schema import (
+    GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS,
     KLOPPY_TRACKING_FRAMES_COLUMNS,
-    PFF_TRACKING_FRAMES_COLUMNS,
     SPORTEC_TRACKING_FRAMES_COLUMNS,
     TRACKING_CATEGORICAL_DOMAINS,
     TRACKING_CONSTRAINTS,

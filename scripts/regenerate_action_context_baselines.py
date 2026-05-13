@@ -2,7 +2,7 @@
 
 For each provider:
   1. Load committed slim parquet (Tier-3 lakehouse-derived for sportec/metrica/skillcorner;
-     synthetic medium_halftime for pff). Frames only — actions in slim are placeholder rows
+     synthetic medium_halftime for gradientsports). Frames only — actions in slim are placeholder rows
      with NULL identifiers per the lakehouse fct_action_values asymmetry. Mirrors the PR-S20
      _load_frames + _synthesize_actions pattern in tests/tracking/test_action_context_cross_provider.py.
   2. Synthesize 10 actions anchored on real (period_id, frame_id, player_id) triples from the
@@ -105,7 +105,7 @@ def _compute_percentiles(expected: pd.DataFrame) -> dict:
 
 def main() -> None:
     json_state = json.loads(JSON_PATH.read_text())
-    for provider in ("sportec", "metrica", "skillcorner", "pff"):
+    for provider in ("sportec", "metrica", "skillcorner", "gradientsports"):
         frames = _load_provider_frames(provider)
         actions = _synthesize_actions(frames, n_actions=N_ACTIONS_PER_PROVIDER)
         expected = _compute_expected(actions, frames)

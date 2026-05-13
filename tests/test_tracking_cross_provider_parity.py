@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from silly_kicks.tracking import gradientsports, sportec
 from silly_kicks.tracking import kloppy as kloppy_gw
-from silly_kicks.tracking import pff, sportec
 from silly_kicks.tracking.schema import TRACKING_CONSTRAINTS
 from silly_kicks.tracking.utils import link_actions_to_frames
 
@@ -30,9 +30,9 @@ def _load_sportec():
     )
 
 
-def _load_pff():
-    raw = pd.read_parquet(_FIX / "pff" / "medium_halftime.parquet")
-    return pff.convert_to_frames(raw, home_team_id=100, home_team_start_left=True)
+def _load_gradientsports():
+    raw = pd.read_parquet(_FIX / "gradientsports" / "medium_halftime.parquet")
+    return gradientsports.convert_to_frames(raw, home_team_id=100, home_team_start_left=True)
 
 
 def _load_metrica():
@@ -55,7 +55,7 @@ def _load_skillcorner():
 
 PROVIDER_LOADERS = {
     "sportec": _load_sportec,
-    "pff": _load_pff,
+    "gradientsports": _load_gradientsports,
     "metrica": _load_metrica,
     "skillcorner": _load_skillcorner,
 }

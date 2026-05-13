@@ -37,11 +37,11 @@ _GK_PROVIDERS = [
     # geometric correctness is otherwise covered by sportec_via_kloppy in
     # tests/invariants/test_direction_of_play.py and test_vaep_geometric_sanity.py.
     ("metrica_native", _loaders.load_metrica_native),
-    # Excluded: pff_synthetic. The synthetic generator places the away-team RE
+    # Excluded: gradientsports_synthetic. The synthetic generator places the away-team RE
     # (recovery → keeper_save) events at ball_x=-45 (raw center-origin, = x=7.5
     # in bottom-left coords). For an AWAY GK in P1 with home_team_start_left=True,
     # the GK physically defends the RIGHT goal (x=105); ball_x=-45 puts the
-    # synthetic GK on the wrong side of the pitch. PFF's converter flip is
+    # synthetic GK on the wrong side of the pitch. Gradient Sports's converter flip is
     # otherwise verified correct by tests/invariants/test_direction_of_play.py.
 ]
 

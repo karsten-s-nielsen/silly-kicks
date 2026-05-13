@@ -42,7 +42,7 @@ Singh, K. (2018). "Introducing Expected Threat (xT)." karun.in/blog/expected-thr
 The grid is recomputable from event data; the seed values are reference-only.
 
 The tracking namespace primitive layer (silly_kicks/tracking/, PR-S19,
-ADR-004) implements ingestion + linkage primitives across PFF, Sportec,
+ADR-004) implements ingestion + linkage primitives across Gradient Sports (formerly PFF), Sportec,
 Metrica, and SkillCorner. No new academic methodology beyond the canonical
 ADR.
 

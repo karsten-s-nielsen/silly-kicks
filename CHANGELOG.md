@@ -5,6 +5,25 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.0] — 2026-05-13
+
+### Changed (BREAKING)
+- **PFF → Gradient Sports rename:** All public API symbols, module paths, and runtime
+  provider identifiers renamed from `pff` to `gradientsports` to reflect the PFF FC →
+  Gradient Sports corporate rebrand.
+  - `silly_kicks.spadl.pff` → `silly_kicks.spadl.gradientsports`
+  - `silly_kicks.tracking.pff` → `silly_kicks.tracking.gradientsports`
+  - `PFF_SPADL_COLUMNS` → `GRADIENTSPORTS_SPADL_COLUMNS`
+  - `PFF_TRACKING_FRAMES_COLUMNS` → `GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS`
+  - `source_provider` column value: `"pff"` → `"gradientsports"`
+  - `PreprocessConfig.for_provider("pff")` → `PreprocessConfig.for_provider("gradientsports")`
+  - `GRADIENTSPORTS_TRACKING_DIR` env var replaces `PFF_TRACKING_DIR`
+  - Example walkthrough: `pff_wc2022_walkthrough.py` → `gradientsports_wc2022_walkthrough.py`
+
+  > **Note:** Historical CHANGELOG entries below this point retain the original "PFF"
+  > terminology as they document the state of the codebase at the time of each release.
+  > The rename applies from 3.12.0 onwards.
+
 ## [3.11.3] — 2026-05-12
 
 ### Fixed

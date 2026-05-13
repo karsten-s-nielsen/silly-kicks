@@ -1,12 +1,12 @@
-"""End-to-end walkthrough: PFF FC WC 2022 -> SPADL -> Atomic-SPADL -> VAEP labels.
+"""End-to-end walkthrough: Gradient Sports (PFF FC) WC 2022 -> SPADL -> Atomic-SPADL -> VAEP labels.
 
 This script is **documentation, not test**. It runs against a user-supplied
-local PFF directory and demonstrates how to use the silly-kicks public API.
+local Gradient Sports (PFF) directory and demonstrates how to use the silly-kicks public API.
 
 Usage:
-    uv run python docs/examples/pff_wc2022_walkthrough.py /path/to/PFF/WC2022/
+    uv run python docs/examples/gradientsports_wc2022_walkthrough.py /path/to/GradientSports/WC2022/
 
-The PFF directory is expected to contain:
+The data directory is expected to contain:
 - `Event Data/<match_id>.json`
 - `Metadata/<match_id>.json`
 - `Rosters/<match_id>.json`
@@ -24,33 +24,33 @@ from pathlib import Path
 import pandas as pd
 
 from silly_kicks.atomic.spadl import convert_to_atomic
-from silly_kicks.spadl import add_names, boundary_metrics, coverage_metrics, pff
+from silly_kicks.spadl import add_names, boundary_metrics, coverage_metrics, gradientsports
 from silly_kicks.vaep.labels import scores
 
 # Match 10502 = NED-USA, 2022 R16. Edit to point at any match in the directory.
 DEFAULT_MATCH_ID = 10502
 
 
-def load_pff_events(pff_dir: Path, match_id: int) -> tuple[pd.DataFrame, dict]:
-    """Load and flatten one PFF match's event data into the
-    :data:`silly_kicks.spadl.pff.EXPECTED_INPUT_COLUMNS` shape.
+def load_gradientsports_events(gs_dir: Path, match_id: int) -> tuple[pd.DataFrame, dict]:
+    """Load and flatten one Gradient Sports (PFF) match's event data into the
+    :data:`silly_kicks.spadl.gradientsports.EXPECTED_INPUT_COLUMNS` shape.
 
     Returns
     -------
     (events_df, metadata)
         events_df : pd.DataFrame
-            Flat DataFrame matching ``pff.EXPECTED_INPUT_COLUMNS``.
+            Flat DataFrame matching ``gradientsports.EXPECTED_INPUT_COLUMNS``.
         metadata : dict
             Match metadata extracted from ``Metadata/<match_id>.json``
             (used to populate ``home_team_id`` and ``home_team_start_left``).
     """
-    with (pff_dir / "Event Data" / f"{match_id}.json").open("r", encoding="utf-8") as f:
+    with (gs_dir / "Event Data" / f"{match_id}.json").open("r", encoding="utf-8") as f:
         events_json = json.load(f)
-    with (pff_dir / "Metadata" / f"{match_id}.json").open("r", encoding="utf-8") as f:
+    with (gs_dir / "Metadata" / f"{match_id}.json").open("r", encoding="utf-8") as f:
         meta_list = json.load(f)
     metadata = meta_list[0] if isinstance(meta_list, list) else meta_list
 
-    with (pff_dir / "Rosters" / f"{match_id}.json").open("r", encoding="utf-8") as f:
+    with (gs_dir / "Rosters" / f"{match_id}.json").open("r", encoding="utf-8") as f:
         roster_json = json.load(f)
     pid_to_team = {int(r["player"]["id"]): int(r["team"]["id"]) for r in roster_json}
 
@@ -134,12 +134,12 @@ def load_pff_events(pff_dir: Path, match_id: int) -> tuple[pd.DataFrame, dict]:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("pff_dir", type=Path, help="Path to the PFF FC WC 2022 directory")
+    parser.add_argument("gs_dir", type=Path, help="Path to the Gradient Sports (PFF FC) WC 2022 directory")
     parser.add_argument("--match-id", type=int, default=DEFAULT_MATCH_ID)
     args = parser.parse_args()
 
-    print(f"Loading match {args.match_id} from {args.pff_dir}...")
-    events, metadata = load_pff_events(args.pff_dir, args.match_id)
+    print(f"Loading match {args.match_id} from {args.gs_dir}...")
+    events, metadata = load_gradientsports_events(args.gs_dir, args.match_id)
     print(f"  Loaded {len(events)} events.")
 
     home_team_id = int(metadata["homeTeam"]["id"])
@@ -148,7 +148,7 @@ def main():
         bool(metadata["homeTeamStartLeftExtraTime"]) if metadata.get("homeTeamStartLeftExtraTime") is not None else None
     )
 
-    actions, report = pff.convert_to_actions(
+    actions, report = gradientsports.convert_to_actions(
         events,
         home_team_id=home_team_id,
         home_team_start_left=home_team_start_left,

@@ -14,7 +14,7 @@ import pytest
 from silly_kicks.tracking.features import pressure_on_actor
 
 from ._provider_inputs import (
-    PFF_DIR,
+    GRADIENTSPORTS_DIR,
     SLIM_DIR,
     load_provider_frames,
     synthesize_actions,
@@ -22,10 +22,10 @@ from ._provider_inputs import (
 
 
 def _load_provider_actions_and_frames(provider: str):
-    if provider == "pff":
-        # PFF needs the medium_halftime fixture
-        if not (PFF_DIR / "medium_halftime.parquet").exists():
-            pytest.skip(f"{PFF_DIR}/medium_halftime.parquet missing")
+    if provider == "gradientsports":
+        # Gradient Sports needs the medium_halftime fixture
+        if not (GRADIENTSPORTS_DIR / "medium_halftime.parquet").exists():
+            pytest.skip(f"{GRADIENTSPORTS_DIR}/medium_halftime.parquet missing")
     else:
         if not (SLIM_DIR / f"{provider}_slim.parquet").exists():
             pytest.skip(f"{SLIM_DIR}/{provider}_slim.parquet missing")
@@ -176,11 +176,11 @@ def test_per_method_cross_provider_median_within_2x(method: str) -> None:
     """
     medians: dict[str, float] = {}
     for provider in ("sportec", "metrica", "skillcorner"):
-        if provider == "pff":
-            from ._provider_inputs import PFF_DIR
+        if provider == "gradientsports":
+            from ._provider_inputs import GRADIENTSPORTS_DIR
 
-            if not (PFF_DIR / "medium_halftime.parquet").exists():
-                pytest.fail(f"{provider}: PFF fixture missing; cannot proceed without skipping.")
+            if not (GRADIENTSPORTS_DIR / "medium_halftime.parquet").exists():
+                pytest.fail(f"{provider}: Gradient Sports fixture missing; cannot proceed without skipping.")
         else:
             if not (SLIM_DIR / f"{provider}_slim.parquet").exists():
                 pytest.fail(f"{provider}: slim parquet missing; regenerate with probe_action_context_baselines.py.")

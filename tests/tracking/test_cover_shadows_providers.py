@@ -9,13 +9,13 @@ from tests.tracking._provider_inputs import (
     synthesize_actions,
 )
 
-_PROVIDERS = ["sportec", "metrica", "skillcorner", "pff"]
+_PROVIDERS = ["sportec", "metrica", "skillcorner", "gradientsports"]
 
 _NAN_RATE_CEILING = {
     "sportec": 0.5,
     "metrica": 0.9,  # ~77% NaN ball coords
     "skillcorner": 0.7,
-    "pff": 0.5,
+    "gradientsports": 0.5,
 }
 
 

@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.tracking.schema import (
-    PFF_TRACKING_FRAMES_COLUMNS,
+    GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS,
     SPORTEC_TRACKING_FRAMES_COLUMNS,
     TRACKING_CONSTRAINTS,
     TrackingConversionReport,
@@ -74,9 +74,9 @@ def test_sportec_realistic_fixture_has_ball_out_interval():
     )
 
 
-def test_pff_realistic_fixture_round_trips():
-    raw = pd.read_parquet(_FIX / "pff" / "realistic.parquet")
-    from silly_kicks.tracking.pff import convert_to_frames
+def test_gradientsports_realistic_fixture_round_trips():
+    raw = pd.read_parquet(_FIX / "gradientsports" / "realistic.parquet")
+    from silly_kicks.tracking.gradientsports import convert_to_frames
 
     frames, report = convert_to_frames(
         raw,
@@ -84,17 +84,17 @@ def test_pff_realistic_fixture_round_trips():
         home_team_start_left=True,
     )
     assert isinstance(report, TrackingConversionReport)
-    assert set(frames.columns) == set(PFF_TRACKING_FRAMES_COLUMNS)
-    _bounds_check_loose(frames, "pff")
+    assert set(frames.columns) == set(GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS)
+    _bounds_check_loose(frames, "gradientsports")
 
 
-def test_pff_realistic_fixture_off_pitch_player_tolerated():
-    raw = pd.read_parquet(_FIX / "pff" / "realistic.parquet")
+def test_gradientsports_realistic_fixture_off_pitch_player_tolerated():
+    raw = pd.read_parquet(_FIX / "gradientsports" / "realistic.parquet")
     # The empirical baseline shows ~0.35% of player y rows off-pitch in real
-    # PFF data; the synthetic generator injects this rate. The conversion
+    # Gradient Sports data; the synthetic generator injects this rate. The conversion
     # should not crash, and the off-pitch tail in output (after coordinate
     # translation) should be non-empty.
-    from silly_kicks.tracking.pff import convert_to_frames
+    from silly_kicks.tracking.gradientsports import convert_to_frames
 
     frames, _ = convert_to_frames(
         raw,
@@ -105,7 +105,7 @@ def test_pff_realistic_fixture_off_pitch_player_tolerated():
     assert out_of_y > 0, "expected some off-pitch y values from injected edge cases"
 
 
-@pytest.mark.parametrize("provider", ["sportec", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "gradientsports"])
 def test_realistic_fixture_total_input_frames_in_report(provider):
     raw = pd.read_parquet(_FIX / provider / "realistic.parquet")
     if provider == "sportec":
@@ -117,7 +117,7 @@ def test_realistic_fixture_total_input_frames_in_report(provider):
             home_team_start_left=True,
         )
     else:
-        from silly_kicks.tracking.pff import convert_to_frames
+        from silly_kicks.tracking.gradientsports import convert_to_frames
 
         _, report = convert_to_frames(
             raw,

@@ -5,13 +5,13 @@
     "silly_kicks_version": "3.1.0",
     "providers_probed": [
       "sportec",
-      "pff",
+      "gradientsports",
       "metrica",
       "skillcorner"
     ],
     "probe_sources": [
       "databricks_sql:metrica,skillcorner,sportec",
-      "pff_local:10502.jsonl.bz2"
+      "gradientsports_local:10502.jsonl.bz2"
     ],
     "fields_refreshed_from_real_data": [
       "sampling_rate_hz",
@@ -53,7 +53,7 @@
       "max_gap_seconds": 0.48
     }
   },
-  "pff": {
+  "gradientsports": {
     "sampling_rate_hz": 30.0,
     "raw_position_noise_floor_m": 0.0365,
     "velocity_outlier_rate_at_max_12mps": 0.001,

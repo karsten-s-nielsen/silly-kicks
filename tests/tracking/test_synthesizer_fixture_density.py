@@ -24,7 +24,7 @@ _SHOT_TYPE_IDS = {spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick"
 _KEEPER_SAVE_TYPE_ID = spadlconfig.actiontype_id["keeper_save"]
 
 
-@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
 def test_per_period_shot_and_keeper_save_exist(provider):
     """For every period the synthesizer covers, assert >=1 shot AND >=1 keeper_save."""
     frames = load_provider_frames(provider)
@@ -45,7 +45,7 @@ def test_per_period_shot_and_keeper_save_exist(provider):
         )
 
 
-@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "pff"])
+@pytest.mark.parametrize("provider", ["sportec", "metrica", "skillcorner", "gradientsports"])
 def test_synthesized_action_id_globally_unique(provider):
     """Renumbering across periods must yield unique action_id."""
     frames = load_provider_frames(provider)

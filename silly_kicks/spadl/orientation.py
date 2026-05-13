@@ -10,8 +10,8 @@ Provider event streams arrive in three different coordinate conventions:
   (low-x) consistently across all periods. Sportec, Metrica, Opta (loader-pre-
   normalised), and the kloppy gateway use this convention.
 - ``PER_PERIOD_ABSOLUTE``: same as ``ABSOLUTE_FRAME_HOME_RIGHT`` in P1, but
-  teams switch ends after halftime. PFF uses an explicit ``homeTeamStartLeft``
-  flag per period; raw Opta f24 also ships this way.
+  teams switch ends after halftime. Gradient Sports uses an explicit
+  ``homeTeamStartLeft`` flag per period; raw Opta f24 also ships this way.
 
 The canonical SPADL output convention is "all teams attack left-to-right" --
 every team's actions at high-x in their own frame. :func:`to_spadl_ltr` is the
@@ -74,8 +74,8 @@ class InputConvention(str, Enum):
 
     PER_PERIOD_ABSOLUTE = "per_period_absolute"
     """Both teams in absolute coordinate system, but teams switch ends each
-    period (PFF, raw Opta f24). Requires per-period direction lookup
-    (e.g., from PFF's ``homeTeamStartLeft`` flag) to mirror the correct
+    period (Gradient Sports, raw Opta f24). Requires per-period direction
+    lookup (e.g., from ``homeTeamStartLeft`` flag) to mirror the correct
     rows per period."""
 
 
@@ -162,7 +162,7 @@ def to_spadl_ltr(
             home_team_id="DFL-CLU-XXX",
         )
 
-    PFF (per-period absolute -- consult homeTeamStartLeft)::
+    Gradient Sports (per-period absolute -- consult homeTeamStartLeft)::
 
         from silly_kicks.spadl.orientation import to_spadl_ltr, PER_PERIOD_ABSOLUTE
         from silly_kicks.tracking._direction import home_attacks_right_per_period
@@ -307,7 +307,7 @@ def detect_input_convention(
          -> ``PER_PERIOD_ABSOLUTE``.
       4. Otherwise -> ``None`` (ambiguous).
 
-    The detector requires ``match_col`` because PFF's ``homeTeamStartLeft`` varies
+    The detector requires ``match_col`` because ``homeTeamStartLeft`` varies
     per match in multi-match feeds; per-period detection only makes sense when
     grouped by match.
 

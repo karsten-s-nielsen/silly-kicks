@@ -1,6 +1,6 @@
 """Provider fixture tests for GK influence primitives (TF-15).
 
-Uses committed slim-parquet fixtures (Sportec, Metrica, SkillCorner) and PFF
+Uses committed slim-parquet fixtures (Sportec, Metrica, SkillCorner) and Gradient Sports
 synthetic fixtures for real-data validation of add_gk_influence. Exercises
 string-typed IDs (Sportec/Metrica/SkillCorner), partial NaN velocities
 (Metrica), and the full smooth→derive→link→compute pipeline.
@@ -16,14 +16,14 @@ import pytest
 from silly_kicks.tracking import play_left_to_right
 from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
 from tests.tracking._provider_inputs import (
-    PFF_DIR,
+    GRADIENTSPORTS_DIR,
     SLIM_DIR,
     load_provider_frames,
     synthesize_actions,
 )
 
 _SLIM_PROVIDERS = sorted(p.stem.replace("_slim", "") for p in SLIM_DIR.glob("*_slim.parquet"))
-_PROVIDERS = _SLIM_PROVIDERS + (["pff"] if PFF_DIR.exists() else [])
+_PROVIDERS = _SLIM_PROVIDERS + (["gradientsports"] if GRADIENTSPORTS_DIR.exists() else [])
 
 
 def _prepare(provider: str) -> tuple[pd.DataFrame, pd.DataFrame, object]:

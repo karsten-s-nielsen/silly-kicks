@@ -1,25 +1,25 @@
-"""Unit tests for silly_kicks.tracking.pff.convert_to_frames."""
+"""Unit tests for silly_kicks.tracking.gradientsports.convert_to_frames."""
 
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from silly_kicks.tracking.pff import convert_to_frames
+from silly_kicks.tracking.gradientsports import convert_to_frames
 from silly_kicks.tracking.schema import (
-    PFF_TRACKING_FRAMES_COLUMNS,
+    GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS,
     TRACKING_CONSTRAINTS,
     TrackingConversionReport,
 )
 
-FIXTURE_DIR = Path(__file__).resolve().parent / "datasets" / "tracking" / "pff"
+FIXTURE_DIR = Path(__file__).resolve().parent / "datasets" / "tracking" / "gradientsports"
 TINY = pd.read_parquet(FIXTURE_DIR / "tiny.parquet")
 MEDIUM = pd.read_parquet(FIXTURE_DIR / "medium_halftime.parquet")
 
 
 def test_tiny_output_columns_match_schema():
     frames, _ = convert_to_frames(TINY, home_team_id=100, home_team_start_left=True)
-    assert set(frames.columns) == set(PFF_TRACKING_FRAMES_COLUMNS)
+    assert set(frames.columns) == set(GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS)
 
 
 def test_tiny_player_team_id_are_int64_nullable():
@@ -81,7 +81,7 @@ def test_extratime_parameter_propagates():
     assert p3["x"].between(0, 105).all()
 
 
-def test_report_provider_is_pff():
+def test_report_provider_is_gradientsports():
     _, report = convert_to_frames(TINY, home_team_id=100, home_team_start_left=True)
     assert isinstance(report, TrackingConversionReport)
-    assert report.provider == "pff"
+    assert report.provider == "gradientsports"

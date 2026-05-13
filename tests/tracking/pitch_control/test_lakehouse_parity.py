@@ -103,7 +103,7 @@ def test_spearman_surface_structure_matches_lakehouse():
 # Provider coverage smoke tests
 # ---------------------------------------------------------------------------
 
-_PROVIDERS = ["sportec", "metrica", "skillcorner", "pff"]
+_PROVIDERS = ["sportec", "metrica", "skillcorner", "gradientsports"]
 
 
 def _load_single_frame(provider: str) -> pd.DataFrame:

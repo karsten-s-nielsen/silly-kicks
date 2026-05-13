@@ -10,9 +10,9 @@ on the fly via the same ``_lakehouse_to_kloppy_dataset`` helper used by
 the e2e sweep, then exercise the gateway / sportec adapter against the
 real-distribution data.
 
-PFF is intentionally absent --- its data is not redistributable per the
+Gradient Sports is intentionally absent --- its data is not redistributable per the
 license memorialized in PR-S18 (memory:reference_pff_data_local).
-PFF CI coverage uses the synthetic ``realistic.parquet`` driven by the
+Gradient Sports CI coverage uses the synthetic ``realistic.parquet`` driven by the
 empirical baseline JSON.
 
 Run once on a developer machine with Databricks env vars set:

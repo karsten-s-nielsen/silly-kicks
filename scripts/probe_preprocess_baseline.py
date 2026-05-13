@@ -7,7 +7,7 @@ Outputs:
 Sources (re-used from PR-S19 probe):
   - Lakehouse Databricks SQL: soccer_analytics.dev_gold.fct_tracking_frames
     (providers: metrica, idsse->sportec, skillcorner)
-  - Local PFF FC WC2022 JSONL.bz2 at PFF_LOCAL_DIR (env-overridable)
+  - Local Gradient Sports WC2022 JSONL.bz2 at GRADIENTSPORTS_LOCAL_DIR (env-overridable)
 
 Usage::
 
@@ -52,7 +52,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_JSON = REPO_ROOT / "tests" / "fixtures" / "baselines" / "preprocess_baseline.json"
 SWEEP_LOG_JSON = REPO_ROOT / "tests" / "fixtures" / "baselines" / "preprocess_sweep_log.json"
 
-PROVIDERS = ("sportec", "pff", "metrica", "skillcorner")
+PROVIDERS = ("sportec", "gradientsports", "metrica", "skillcorner")
 
 
 _PLACEHOLDERS: dict[str, dict[str, Any]] = {
@@ -73,7 +73,7 @@ _PLACEHOLDERS: dict[str, dict[str, Any]] = {
         "gk_angle_off_goal_line_p50_rad": 0.06,
         "_derived_defaults": {"sg_window_seconds": 0.4, "sg_poly_order": 3, "ema_alpha": 0.3, "max_gap_seconds": 0.48},
     },
-    "pff": {
+    "gradientsports": {
         "sampling_rate_hz": 30.0,
         "raw_position_noise_floor_m": 0.05,
         "velocity_outlier_rate_at_max_12mps": 0.001,
@@ -139,7 +139,7 @@ def _provenance(probe_sources: list[str]) -> dict[str, Any]:
         "providers_probed": list(PROVIDERS),
         "probe_sources": probe_sources,
         "fields_refreshed_from_real_data": [
-            # frames-only (lakehouse SQL or PFF JSONL)
+            # frames-only (lakehouse SQL or Gradient Sports JSONL)
             "sampling_rate_hz",
             "gap_rate_player_pct",
             "gap_rate_ball_pct",
@@ -306,12 +306,12 @@ def _enrich_from_slim_parquet(block: dict[str, Any], provider: str) -> dict[str,
     return block
 
 
-def _enrich_from_pff_block(block: dict[str, Any], pff: dict[str, Any]) -> dict[str, Any]:
-    """Overwrite PFF fields available from the JSONL probe."""
-    if "frame_rate_p50" in pff and pff["frame_rate_p50"] is not None:
-        block["sampling_rate_hz"] = float(pff["frame_rate_p50"])
-    # PFF probe reports off_pitch_x_rate and ball-presence rate; map ball-absence to gap_rate_ball_pct.
-    visible = pff.get("ball_visible_rate") or pff.get("ball_presence_rate")
+def _enrich_from_gradientsports_block(block: dict[str, Any], gs: dict[str, Any]) -> dict[str, Any]:
+    """Overwrite Gradient Sports fields available from the JSONL probe."""
+    if "frame_rate_p50" in gs and gs["frame_rate_p50"] is not None:
+        block["sampling_rate_hz"] = float(gs["frame_rate_p50"])
+    # Gradient Sports probe reports off_pitch_x_rate and ball-presence rate; map ball-absence to gap_rate_ball_pct.
+    visible = gs.get("ball_visible_rate") or gs.get("ball_presence_rate")
     if visible is not None:
         block["gap_rate_ball_pct"] = round((1.0 - float(visible)) * 100.0, 3)
     hz = block["sampling_rate_hz"]
@@ -334,25 +334,25 @@ def _probe_lakehouse_or_empty() -> dict[str, dict[str, Any]]:
         return {}
 
 
-def _probe_pff_or_empty() -> dict[str, Any] | None:
+def _probe_gradientsports_or_empty() -> dict[str, Any] | None:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         from probe_tracking_baselines import (  # type: ignore[import-not-found]
-            PFF_LOCAL_DIR,
-            _list_pff_tracking_files,
-            probe_pff_local,
+            GRADIENTSPORTS_LOCAL_DIR,
+            _list_gradientsports_tracking_files,
+            probe_gradientsports_local,
         )
     except Exception as e:
-        print(f"  [warn] probe_pff_local import failed: {e}; falling back to placeholder")
+        print(f"  [warn] probe_gradientsports_local import failed: {e}; falling back to placeholder")
         return None
-    files = _list_pff_tracking_files(PFF_LOCAL_DIR)
+    files = _list_gradientsports_tracking_files(GRADIENTSPORTS_LOCAL_DIR)
     if not files:
-        print(f"  [warn] no PFF tracking files in {PFF_LOCAL_DIR}; falling back to placeholder")
+        print(f"  [warn] no Gradient Sports tracking files in {GRADIENTSPORTS_LOCAL_DIR}; falling back to placeholder")
         return None
     try:
-        return probe_pff_local(files[0])
+        return probe_gradientsports_local(files[0])
     except Exception as e:
-        print(f"  [warn] probe_pff_local run failed: {e}; falling back to placeholder")
+        print(f"  [warn] probe_gradientsports_local run failed: {e}; falling back to placeholder")
         return None
 
 
@@ -367,13 +367,13 @@ def main() -> int:
     lakehouse_blocks = (
         _probe_lakehouse_or_empty() if any(p in {"sportec", "metrica", "skillcorner"} for p in selected) else {}
     )
-    pff_block = _probe_pff_or_empty() if "pff" in selected else None
+    gs_block = _probe_gradientsports_or_empty() if "gradientsports" in selected else None
 
     sources: list[str] = []
     if lakehouse_blocks:
         sources.append(f"databricks_sql:{','.join(sorted(lakehouse_blocks.keys()))}")
-    if pff_block:
-        sources.append(f"pff_local:{pff_block.get('match_filename', '?')}")
+    if gs_block:
+        sources.append(f"gradientsports_local:{gs_block.get('match_filename', '?')}")
 
     out: dict[str, Any] = {"_provenance": _provenance(sources)}
 
@@ -389,8 +389,8 @@ def main() -> int:
     for prov in PROVIDERS:
         block = existing.get(prov) or _placeholder_block(prov)
         if prov in selected:
-            if prov == "pff" and pff_block is not None:
-                block = _enrich_from_pff_block(block, pff_block)
+            if prov == "gradientsports" and gs_block is not None:
+                block = _enrich_from_gradientsports_block(block, gs_block)
             elif prov in lakehouse_blocks:
                 block = _enrich_from_lakehouse_block(block, lakehouse_blocks[prov])
             # Heavier-compute pass: refresh feature-pipeline-derived fields from slim parquets.
@@ -411,7 +411,7 @@ def main() -> int:
             "_provenance": _provenance(sources),
             "by_provider": {p: out.get(p, {}) for p in PROVIDERS},
             "raw_lakehouse_stats": lakehouse_blocks,
-            "raw_pff_stats": pff_block,
+            "raw_pff_stats": gs_block,
         }
         SWEEP_LOG_JSON.write_text(json.dumps(sweep_log, indent=2, sort_keys=False) + "\n", encoding="utf-8")
         print(f"[probe] wrote {SWEEP_LOG_JSON.relative_to(REPO_ROOT)}")

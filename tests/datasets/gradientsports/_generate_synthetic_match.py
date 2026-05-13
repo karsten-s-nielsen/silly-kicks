@@ -1,12 +1,12 @@
-"""Deterministic generator for the PFF FC synthetic match fixture.
+"""Deterministic generator for the Gradient Sports synthetic match fixture.
 
 Produces ``synthetic_match.json`` covering every dispatch row from
-``silly_kicks/spadl/pff.py`` with >=2x redundancy, plus exclusion / set-piece
+``silly_kicks/spadl/gradientsports.py`` with >=2x redundancy, plus exclusion / set-piece
 / result / body-part / tackle-winner / foul / card variations needed to
 exercise the full converter contract.
 
 Run:
-    uv run python tests/datasets/pff/_generate_synthetic_match.py
+    uv run python tests/datasets/gradientsports/_generate_synthetic_match.py
 
 The resulting JSON is committed and is the canonical test artifact. The
 generator is not invoked from pytest; it is a maintainer-time tool.
@@ -177,7 +177,7 @@ def _empty_pe():
 def _empty_foul():
     """One per-event ``fouls`` payload — a single dict (NOT a list of dicts).
 
-    Real PFF event data carries ``fouls`` as a single dict (not a JSON array)
+    Real Gradient Sports event data carries ``fouls`` as a single dict (not a JSON array)
     per event. Synthetic fixture must match this shape so the converter's
     expected JSON reader produces compatible DataFrame columns.
     """
@@ -214,7 +214,7 @@ def make_event(
     ball_y=0.0,
     **pe_overrides,
 ):
-    """Build one PFF event row."""
+    """Build one Gradient Sports event row."""
     pe = _empty_pe()
     if pe_type is not None:
         pe["possessionEventType"] = pe_type
@@ -470,7 +470,7 @@ def build_match():
     eid += 1
 
     # DEDICATED FOUL EVENT: gameEventType="FOUL" with possessionEventType="FO"
-    # plus populated fouls dict. Real PFF data uses these for some standalone
+    # plus populated fouls dict. Real Gradient Sports data uses these for some standalone
     # fouls (vs inline fouls on PA/CR/etc rows above). Converter handles
     # via in-place foul-row conversion.
     e = make_event(

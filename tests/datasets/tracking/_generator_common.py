@@ -52,10 +52,10 @@ def deterministic_uniform_motion(
     ----------
     frame_id_offset : int, default 0
         Added to each frame index so multi-period fixtures can produce
-        globally unique frame_ids (as real PFF/Sportec data does).
+        globally unique frame_ids (as real Gradient Sports/Sportec data does).
     speed_native : bool, default True
-        If False, ``speed_native`` is set to NaN for all rows (PFF does
-        not supply native speed).
+        If False, ``speed_native`` is set to NaN for all rows (Gradient Sports
+        does not supply native speed).
 
     Returns a DataFrame with columns:
         period_id, frame_id, time_seconds, frame_rate,
