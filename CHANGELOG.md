@@ -5,6 +5,44 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.0] — 2026-05-15
+
+### Fixed
+- **End coordinates for single-position providers (Bug #7):** DFL/Sportec and
+  Gradient Sports events carry only one `(x, y)` per event, so all SPADL actions
+  had `end_x == start_x`. Replaced `_fix_clearances()` with shared
+  `_derive_end_coordinates()` that overwrites `end_x`/`end_y` with the next
+  action's `start_x`/`start_y` for 9 pass-class action types (pass, cross,
+  throw_in, freekick_crossed, freekick_short, corner_crossed, corner_short,
+  clearance, goalkick). Source-data guard preserves providers that already supply
+  explicit end coordinates (StatsBomb, Opta, Wyscout, Metrica, SkillCorner).
+  Period-boundary safe via `groupby("period_id").shift(-1)`. Eliminates ~90% of
+  spurious dribble insertions on single-position providers.
+- **GK features NULL for IDSSE/Sportec (Bug #2):**
+  `add_pre_shot_gk_context(frames=...)` now uses `defending_gk_from_frames()` as
+  a `.fillna()` fallback when events-based lookback finds no `keeper_save` within
+  the search window. Shots within tracking coverage now reliably populate
+  `defending_gk_player_id` and all downstream GK position/angle features.
+
+### Added
+- `_derive_end_coordinates()` in `silly_kicks.spadl.base` — shared end-coordinate
+  derivation for all 8 converters (Sportec, StatsBomb, Opta, Wyscout, Metrica,
+  SkillCorner, kloppy, Gradient Sports).
+- `_DERIVE_END_TYPE_IDS` frozenset — canonical set of 9 action type IDs eligible
+  for end-coordinate derivation.
+- Unit tests: `tests/spadl/test_derive_end_coordinates.py` (15 tests).
+- Integration tests: `tests/spadl/test_end_coord_integration.py` (6 tests across
+  Sportec, StatsBomb, and Gradient Sports converters).
+- Integration tests: `tests/spadl/test_gk_fallback_integration.py` (2 tests using
+  paired IDSSE events + tracking fixture).
+- Test fixture: `tests/datasets/idsse/paired_tracking.parquet` — real paired
+  tracking data for match J03WMX (2 time windows, 2 GKs, ~37 KB).
+
+### Removed
+- `_fix_clearances()` from `silly_kicks.spadl.base` — superseded by
+  `_derive_end_coordinates()` which covers all pass-class types, not just
+  clearances.
+
 ## [3.14.1] — 2026-05-15
 
 ### Fixed

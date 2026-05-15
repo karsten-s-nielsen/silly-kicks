@@ -466,17 +466,22 @@ class TestSportecAddDribbles:
     """Synthetic dribbles inserted between same-team passes with positional gap."""
 
     def test_dribble_inserted_between_distant_same_team_passes(self):
+        # After _derive_end_coordinates, consecutive same-team passes on a
+        # single-position provider (DFL) have pass.end_x == next.start_x,
+        # so the gap is zero.  To trigger a dribble we need a non-derive
+        # action (TacklingGame) between two passes, so the tackle's end_x
+        # stays at its own position, creating a spatial gap to the next pass.
         events = pd.DataFrame(
             {
-                "match_id": ["M1", "M1"],
-                "event_id": ["e1", "e2"],
-                "event_type": ["Play", "Play"],
-                "period": [1, 1],
-                "timestamp_seconds": [10.0, 12.0],
-                "player_id": ["P1", "P2"],
-                "team": ["T-HOME"] * 2,
-                "x": [30.0, 60.0],
-                "y": [34.0, 34.0],
+                "match_id": ["M1"] * 3,
+                "event_id": ["e1", "e2", "e3"],
+                "event_type": ["Play", "TacklingGame", "Play"],
+                "period": [1, 1, 1],
+                "timestamp_seconds": [10.0, 11.0, 12.0],
+                "player_id": ["P1", "P1", "P1"],
+                "team": ["T-HOME"] * 3,
+                "x": [30.0, 30.0, 60.0],
+                "y": [34.0, 34.0, 34.0],
             }
         )
         actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
@@ -1124,17 +1129,19 @@ class TestSportecOutputSchema:
             assert str(actions[col].dtype) == expected, f"{col}: got {actions[col].dtype}, expected {expected}"
 
     def test_synthetic_dribble_rows_have_nan_in_tackle_columns(self):
+        # Need non-derive action (TacklingGame) between passes to create the
+        # spatial gap that triggers dribble insertion after _derive_end_coordinates.
         events = pd.DataFrame(
             {
-                "match_id": ["M1"] * 2,
-                "event_id": ["e1", "e2"],
-                "event_type": ["Play", "Play"],
-                "period": [1, 1],
-                "timestamp_seconds": [10.0, 12.0],
-                "player_id": ["P1", "P2"],
-                "team": ["T-HOME"] * 2,
-                "x": [30.0, 60.0],
-                "y": [34.0, 34.0],
+                "match_id": ["M1"] * 3,
+                "event_id": ["e1", "e2", "e3"],
+                "event_type": ["Play", "TacklingGame", "Play"],
+                "period": [1, 1, 1],
+                "timestamp_seconds": [10.0, 11.0, 12.0],
+                "player_id": ["P1", "P1", "P1"],
+                "team": ["T-HOME"] * 3,
+                "x": [30.0, 30.0, 60.0],
+                "y": [34.0, 34.0, 34.0],
             }
         )
         actions, _ = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)

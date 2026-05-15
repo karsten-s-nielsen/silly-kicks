@@ -26,7 +26,7 @@ import pandas as pd
 
 from . import config as spadlconfig
 from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
-from .base import _add_dribbles, _fix_clearances
+from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
 from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output
@@ -412,7 +412,7 @@ def convert_to_actions(
     actions["action_id"] = np.arange(len(actions), dtype="int64")
 
     # --- Post-processors ---
-    actions = _fix_clearances(actions)
+    actions = _derive_end_coordinates(actions)
     actions = _add_dribbles(actions)
 
     # Mark dribbles as derived

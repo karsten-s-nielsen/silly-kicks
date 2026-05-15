@@ -9,14 +9,51 @@ import pandas as pd  # type: ignore
 
 from . import config as spadlconfig
 
+# Type IDs for pass-class actions where the ball physically travels to a
+# different location.  Used by _derive_end_coordinates to overwrite
+# placeholder end_x/end_y with the next action's start position.
+_DERIVE_END_TYPE_IDS: frozenset[int] = frozenset(
+    {
+        spadlconfig.actiontype_id["pass"],  # 0
+        spadlconfig.actiontype_id["cross"],  # 1
+        spadlconfig.actiontype_id["throw_in"],  # 2
+        spadlconfig.actiontype_id["freekick_crossed"],  # 3
+        spadlconfig.actiontype_id["freekick_short"],  # 4
+        spadlconfig.actiontype_id["corner_crossed"],  # 5
+        spadlconfig.actiontype_id["corner_short"],  # 6
+        spadlconfig.actiontype_id["clearance"],  # 18
+        spadlconfig.actiontype_id["goalkick"],  # 22
+    }
+)
 
-def _fix_clearances(actions: pd.DataFrame) -> pd.DataFrame:
-    next_actions = actions.shift(-1)
-    next_actions[-1:] = actions[-1:]
-    clearance_idx = actions.type_id == spadlconfig.actiontype_id["clearance"]
-    actions.loc[clearance_idx, "end_x"] = next_actions[clearance_idx].start_x.values
-    actions.loc[clearance_idx, "end_y"] = next_actions[clearance_idx].start_y.values
 
+def _derive_end_coordinates(actions: pd.DataFrame) -> pd.DataFrame:
+    """Derive end_x/end_y from next action's start for pass-class types.
+
+    Only overwrites rows where the source data did not provide a separate
+    end coordinate (detected by ``end_x == start_x AND end_y == start_y``).
+    Period-safe: uses ``groupby("period_id").shift(-1)`` so the last action
+    per period keeps its original end coordinates.
+
+    Replaces the former ``_fix_clearances`` with a broader type set, a
+    source-data guard, and period-boundary safety.
+    """
+    if len(actions) == 0:
+        return actions
+    actions = actions.copy()
+
+    needs_derivation = (
+        actions["type_id"].isin(_DERIVE_END_TYPE_IDS)
+        & (actions["end_x"] == actions["start_x"])
+        & (actions["end_y"] == actions["start_y"])
+    )
+
+    next_start_x = actions.groupby("period_id")["start_x"].shift(-1)
+    next_start_y = actions.groupby("period_id")["start_y"].shift(-1)
+
+    mask = needs_derivation & next_start_x.notna()
+    actions.loc[mask, "end_x"] = next_start_x[mask].values
+    actions.loc[mask, "end_y"] = next_start_y[mask].values
     return actions
 
 

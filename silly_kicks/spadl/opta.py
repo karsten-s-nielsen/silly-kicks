@@ -10,7 +10,7 @@ import pandas as pd
 from . import config as spadlconfig
 from .base import (
     _add_dribbles,
-    _fix_clearances,
+    _derive_end_coordinates,
     min_dribble_length,
 )
 from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr, validate_input_convention
@@ -211,7 +211,7 @@ def convert_to_actions(
         input_convention=ABSOLUTE_FRAME_HOME_RIGHT,
         home_team_id=home_team_id,
     )
-    actions = _fix_clearances(actions)
+    actions = _derive_end_coordinates(actions)
     actions = _fix_interceptions(actions)
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)

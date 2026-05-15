@@ -704,6 +704,17 @@ def add_pre_shot_gk_context(
     sorted_actions["gk_actions_in_possession"] = gk_actions_in_possession
     sorted_actions["defending_gk_player_id"] = defending_gk_player_id
 
+    # Fallback: fill NaN defending_gk_player_id from tracking frames.
+    # DFL/Sportec events rarely produce keeper_save actions, so the
+    # events-based lookback above leaves most shots with NaN.  The
+    # frame-based resolver finds the opposing team's is_goalkeeper=True
+    # row in the nearest tracking frame.
+    if frames is not None:
+        from silly_kicks.tracking._gk_resolve import defending_gk_from_frames
+
+        gk_series = defending_gk_from_frames(sorted_actions, frames)
+        sorted_actions["defending_gk_player_id"] = sorted_actions["defending_gk_player_id"].fillna(gk_series)
+
     # PR-S21: when tracking frames supplied, lazy-import + merge GK-position columns.
     # PR-S24: also lazy-import + merge GK-angle columns (umbrella emits 6 cols total).
     # Lazy import preserves ADR-005 § 5 contract (no module-import-time spadl→tracking cycle).
