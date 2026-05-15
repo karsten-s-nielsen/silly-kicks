@@ -144,12 +144,14 @@ class TestMetricaActionMapping:
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["interception"]
 
     def test_challenge_won_maps_to_tackle(self):
+        """Bare 'WON' (SG2 format) still maps to tackle for backward compat."""
         actions, _ = metrica_mod.convert_to_actions(
             _df_metrica("CHALLENGE", "WON"), home_team_id="Home", home_team_start_left=True
         )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["tackle"]
 
     def test_challenge_lost_dropped(self):
+        """Bare 'LOST' (SG2 format) dropped — no fault, no action."""
         actions, _ = metrica_mod.convert_to_actions(
             _df_metrica("CHALLENGE", "LOST"), home_team_id="Home", home_team_start_left=True
         )
@@ -203,6 +205,114 @@ class TestMetricaActionMapping:
             _df_metrica("FAULT RECEIVED"), home_team_id="Home", home_team_start_left=True
         )
         assert len(actions) == 0
+
+
+class TestMetricaChallengeCompoundSubtypes:
+    """Metrica SG1 encodes CHALLENGE outcomes as compound dash-separated subtypes.
+
+    'TACKLE-WON', 'GROUND-WON', 'DRIBBLE-WON', 'AERIAL-WON' → tackle (WON);
+    'TACKLE-FAULT-LOST', 'GROUND-FAULT-LOST', 'AERIAL-FAULT-LOST' → foul (fail);
+    'TACKLE-LOST', 'GROUND-LOST', 'AERIAL-LOST' → dropped (non_action);
+    Bare subtypes without outcome ('GROUND', 'AERIAL', '') → dropped.
+    """
+
+    @pytest.mark.parametrize(
+        "subtype",
+        ["TACKLE-WON", "GROUND-WON", "DRIBBLE-WON", "AERIAL-WON"],
+    )
+    def test_compound_won_maps_to_tackle(self, subtype):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("CHALLENGE", subtype), home_team_id="Home", home_team_start_left=True
+        )
+        assert len(actions) >= 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["tackle"]
+        assert actions["result_id"].iloc[0] == spadlconfig.result_id["success"]
+
+    @pytest.mark.parametrize(
+        "subtype",
+        ["TACKLE-FAULT-LOST", "GROUND-FAULT-LOST", "AERIAL-FAULT-LOST", "AERIAL-FAULT-WON-LOST"],
+    )
+    def test_compound_fault_lost_maps_to_foul(self, subtype):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("CHALLENGE", subtype), home_team_id="Home", home_team_start_left=True
+        )
+        assert len(actions) >= 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["foul"]
+        assert actions["result_id"].iloc[0] == spadlconfig.result_id["fail"]
+
+    @pytest.mark.parametrize(
+        "subtype",
+        ["TACKLE-LOST", "GROUND-LOST", "AERIAL-LOST"],
+    )
+    def test_compound_lost_without_fault_dropped(self, subtype):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("CHALLENGE", subtype), home_team_id="Home", home_team_start_left=True
+        )
+        assert len(actions) == 0
+
+    @pytest.mark.parametrize(
+        "subtype",
+        ["GROUND", "AERIAL", "", None],
+    )
+    def test_bare_subtype_without_outcome_dropped(self, subtype):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("CHALLENGE", subtype), home_team_id="Home", home_team_start_left=True
+        )
+        assert len(actions) == 0
+
+    def test_aerial_fault_won_maps_to_tackle_not_foul(self):
+        """WON takes priority over FAULT when both present and outcome is WON."""
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("CHALLENGE", "AERIAL-FAULT-WON"),
+            home_team_id="Home",
+            home_team_start_left=True,
+        )
+        assert len(actions) >= 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["tackle"]
+
+    def test_aerial_won_by_gk_maps_to_keeper_claim(self):
+        """AERIAL-WON by a known GK → keeper_claim, not tackle."""
+        df = _df_metrica("CHALLENGE", "AERIAL-WON")
+        df["player"] = ["GK_HOME"]
+        actions, _ = metrica_mod.convert_to_actions(
+            df, home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
+        )
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["keeper_claim"]
+
+    def test_ground_won_by_gk_maps_to_tackle_not_keeper_claim(self):
+        """GROUND-WON (non-AERIAL) by GK → tackle, not keeper_claim."""
+        df = _df_metrica("CHALLENGE", "GROUND-WON")
+        df["player"] = ["GK_HOME"]
+        actions, _ = metrica_mod.convert_to_actions(
+            df, home_team_id="Home", goalkeeper_ids={"GK_HOME"}, home_team_start_left=True
+        )
+        assert len(actions) >= 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["tackle"]
+
+    def test_challenge_foul_pairs_with_card(self):
+        """CHALLENGE-FAULT-LOST → foul; subsequent CARD upgrades result_id."""
+        events = pd.DataFrame(
+            {
+                "match_id": ["G1", "G1"],
+                "event_id": [1, 2],
+                "type": ["CHALLENGE", "CARD"],
+                "subtype": ["TACKLE-FAULT-LOST", "YELLOW"],
+                "period": [1, 1],
+                "start_time_s": [10.0, 11.0],
+                "end_time_s": [10.5, 11.5],
+                "player": ["Home_5", "Home_5"],
+                "team": ["Home", "Home"],
+                "start_x": [50.0, 50.0],
+                "start_y": [34.0, 34.0],
+                "end_x": [50.0, 50.0],
+                "end_y": [34.0, 34.0],
+            }
+        )
+        actions, _ = metrica_mod.convert_to_actions(events, home_team_id="Home", home_team_start_left=True)
+        foul_actions = actions[actions["type_id"] == spadlconfig.actiontype_id["foul"]]
+        assert len(foul_actions) >= 1
+        assert foul_actions["result_id"].iloc[0] == spadlconfig.result_id["yellow_card"]
 
 
 class TestMetricaSetPieceShotComposition:

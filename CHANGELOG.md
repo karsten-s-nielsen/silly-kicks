@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.1] — 2026-05-15
+
+### Fixed
+- **`_derive_end_coordinates` NaN guard:** The source-data guard only checked
+  `end_x == start_x` (placeholder pattern). When end coordinates are NaN (Metrica
+  SG1 set pieces: freekick_short, corner_short, throw_in, goalkick), the guard
+  silently skipped derivation because `NaN != NaN` in pandas. Now also triggers on
+  `end_x.isna()`.
+- **Metrica CHALLENGE compound-subtype parsing:** The old exact-match
+  `sub_raw == "WON"` caught 0/233 challenges on SG1 (all real subtypes are compound
+  dash-separated: "TACKLE-WON", "GROUND-WON", "AERIAL-WON", etc.). Replaced with
+  `endswith("WON")` / `endswith("LOST")` + interior-token decomposition for AERIAL
+  and FAULT. Tackles, keeper claims, and fouls now surface correctly on SG1 data.
+- **Metrica foul extraction from CHALLENGE-FAULT-LOST:** SG1 has no
+  `type == "FAULT"` events; fouls are encoded as CHALLENGE subtypes containing
+  "FAULT" + ending in "LOST" (e.g., "TACKLE-FAULT-LOST"). These now map to
+  `foul` (fail) with card pairing working via the existing `_apply_card_pairs`.
+
+### Added
+- Tests: `TestNaNEndCoordinates` (5 tests) in `test_derive_end_coordinates.py`.
+- Tests: `TestMetricaChallengeCompoundSubtypes` (19 parametrized tests) in
+  `test_metrica.py` covering compound WON, FAULT-LOST, bare LOST, bare subtypes,
+  priority edge cases, GK routing, and card pairing.
+
 ## [3.15.0] — 2026-05-15
 
 ### Fixed
