@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.1] — 2026-05-15
+
+### Fixed
+- **DAS team symmetry bug:** `_precompute_das_lookup` used `get_das()` which
+  returns a single per-frame scalar, producing identical DAS values for both
+  teams and `das_diff` always zero. Switched to `get_individual_das()` with
+  per-team aggregation — `das_team` and `das_opponent` now correctly differ
+  between attacking and defending teams.
+- **Cover shadow man-marking over-absorption:** `_classify_man_markers` used
+  greedy union — any defender within `man_mark_radius` (3.0m) of *any*
+  attacker's behind-point was excluded from lane analysis. In compact
+  formations, overlapping exclusion zones from 10 attackers absorbed most/all
+  defenders, producing `blocking_score = 0`. Replaced with greedy
+  nearest-first 1:1 assignment — each defender marks at most one attacker.
+
+### Added
+- `test_precompute_das_lookup_asymmetric` — CI test asserting per-team DAS
+  asymmetry with realistic 11v11 spatial setup (was previously untested).
+- `test_mutual_exclusion_shared_behind_points` — CI test asserting man-marking
+  mutual exclusion with overlapping attacker behind-point zones.
+- `test_zero_length_pass_returns_false` — CI test documenting expected Ward
+  line-breaking behavior on zero-length trajectories (IDSSE/Sportec root
+  cause: single event position produces `start == end`, `pass_len = 0 <
+  min_pass_length = 3.0`).
+
 ## [3.13.0] — 2026-05-13
 
 ### Added

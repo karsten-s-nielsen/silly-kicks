@@ -294,7 +294,8 @@ def _classify_man_markers(
 
     A defender is man-marking if within man_mark_radius of the point
     man_mark_behind_offset meters behind any attacker toward the defender's
-    own goal.
+    own goal. Each defender can mark at most one attacker (mutual exclusion
+    via greedy nearest-first assignment).
     """
     if defenders.empty or attackers.empty:
         return set()
@@ -305,17 +306,32 @@ def _classify_man_markers(
     else:
         toward_own_goal = np.array([1.0, 0.0])
 
-    man_markers: set = set()
     att_pos = attackers[["x", "y"]].to_numpy()
     def_pos = defenders[["x", "y"]].to_numpy()
     def_ids = defenders["player_id"].to_numpy()
 
-    for a_xy in att_pos:
-        behind_point = a_xy + params.man_mark_behind_offset * toward_own_goal
-        dists = np.linalg.norm(def_pos - behind_point, axis=1)
-        close_mask = dists < params.man_mark_radius
-        for pid in def_ids[close_mask]:
-            man_markers.add(pid)
+    # Compute behind-points for all attackers
+    behind_points = att_pos + params.man_mark_behind_offset * toward_own_goal
+
+    # Build all (defender_idx, attacker_idx, distance) candidates within radius
+    candidates = []
+    for ai, bp in enumerate(behind_points):
+        dists = np.linalg.norm(def_pos - bp, axis=1)
+        for di in np.where(dists < params.man_mark_radius)[0]:
+            candidates.append((di, ai, dists[di]))
+
+    # Greedy nearest-first 1:1 assignment
+    candidates.sort(key=lambda c: c[2])
+    assigned_defenders: set[int] = set()
+    assigned_attackers: set[int] = set()
+    man_markers: set = set()
+
+    for di, ai, _dist in candidates:
+        if di in assigned_defenders or ai in assigned_attackers:
+            continue
+        assigned_defenders.add(di)
+        assigned_attackers.add(ai)
+        man_markers.add(def_ids[di])
 
     return man_markers
 

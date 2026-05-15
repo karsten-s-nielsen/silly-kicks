@@ -383,6 +383,64 @@ class TestManMarkingFilter:
         )
         assert 10 not in result
 
+    def test_mutual_exclusion_shared_behind_points(self):
+        """Each defender can man-mark at most one attacker (1:1 assignment).
+
+        Bug: greedy union allowed a single defender to be "absorbed" by
+        multiple attackers' overlapping behind-point zones, over-counting
+        man-markers and leaving too few lane blockers.
+
+        Fix: mutual exclusion — each defender assigned to at most one
+        attacker's behind-point (greedy nearest-first).
+        """
+        from silly_kicks.tracking._cover_shadows import (
+            CoverShadowParams,
+            _classify_man_markers,
+        )
+
+        p = CoverShadowParams()
+
+        # 5 defenders clustered at x=58-60, y=33-35.
+        # 3 attackers at (60,33), (60,34), (60,35) with behind-points
+        # at (59,33), (59,34), (59,35). All 5 defenders are within 3m
+        # of at least one behind-point.
+        # Old union: 5 man-markers (all defenders absorbed).
+        # Correct 1:1: 3 man-markers (one per attacker).
+        defenders = pd.DataFrame(
+            {
+                "player_id": [10, 11, 12, 13, 14],
+                "x": [58.0, 59.0, 60.0, 59.0, 58.0],
+                "y": [33.0, 33.0, 34.0, 35.0, 35.0],
+            }
+        )
+
+        attackers = pd.DataFrame(
+            {
+                "player_id": [60, 61, 62],
+                "x": [60.0, 60.0, 60.0],
+                "y": [33.0, 34.0, 35.0],
+            }
+        )
+
+        result = _classify_man_markers(
+            defenders,
+            attackers,
+            goal_x_own=0.0,
+            params=p,
+        )
+
+        # At most 3 man-markers (one per attacker, not per defender)
+        assert len(result) <= len(attackers), (
+            f"Man-markers ({len(result)}) exceeds attacker count ({len(attackers)}). "
+            "Greedy union absorbs defenders via overlapping behind-point zones."
+        )
+        # At least 2 defenders must remain as lane blockers
+        lane_blockers = len(defenders) - len(result)
+        assert lane_blockers >= 2, (
+            f"Only {lane_blockers} lane blockers remain out of {len(defenders)} "
+            f"defenders ({len(result)} absorbed as man-markers)."
+        )
+
 
 # === Task 4: Blocking score ===
 

@@ -1799,13 +1799,17 @@ import warnings as _warnings  # noqa: E402
 def _precompute_das_lookup(
     frames: pd.DataFrame,
 ) -> dict[tuple, dict]:
-    """Run get_das ONCE on all frames, build per-frame team-level DAS lookup.
+    """Run get_individual_das ONCE on all frames, build per-frame team-level DAS lookup.
+
+    Uses ``get_individual_das`` (per-player DAS) and sums per team.
+    ``get_das`` returns per-frame scalars that are identical for both teams,
+    which would make ``das_diff`` always zero.
 
     Returns a dict mapping ``(period_id, frame_id)`` to ``{team_id: DAS_value}``.
     """
-    from ._das import get_das
+    from ._das import get_individual_das
 
-    das_frames = get_das(frames, use_progress_bar=False)
+    das_frames = get_individual_das(frames, use_progress_bar=False)
 
     player_rows = das_frames[das_frames["is_ball"] != True]  # noqa: E712
     # Filter to rows with valid DAS — accessible-space may return NaN for some
@@ -1814,9 +1818,7 @@ def _precompute_das_lookup(
     valid_rows = player_rows.dropna(subset=["DAS"])
     lookup: dict[tuple, dict] = {}
     for (pid, fid, tid), grp in valid_rows.groupby(["period_id", "frame_id", "team_id"]):
-        # Team-level DAS is identical for all players of the same team in the
-        # same frame, so any row suffices.
-        lookup.setdefault((pid, fid), {})[tid] = float(grp["DAS"].iloc[0])
+        lookup.setdefault((pid, fid), {})[tid] = float(grp["DAS"].sum())
     return lookup
 
 

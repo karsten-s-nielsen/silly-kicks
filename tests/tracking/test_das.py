@@ -146,6 +146,110 @@ class TestGetDasShapeAlignment:
         assert len(result) == len(frames), f"get_das output length {len(result)} != input length {len(frames)}"
 
 
+@pytest.mark.e2e
+class TestDasTeamAsymmetry:
+    """DAS must differ between attacking and defending teams.
+
+    Bug: _precompute_das_lookup used get_das() which returns a single per-frame
+    scalar, so both teams get identical DAS values and das_diff is always 0.
+    Fix: use get_individual_das() aggregated per-team.
+    """
+
+    def _make_asymmetric_frame(self) -> pd.DataFrame:
+        """11v11 frame with clear spatial asymmetry for DAS differentiation."""
+        rng = np.random.default_rng(42)
+        rows = []
+        # Home team: attacking right, players in opponent half (high DAS expected)
+        for i in range(11):
+            rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": 0,
+                    "player_id": f"H{i}",
+                    "team_id": "Home",
+                    "x": rng.uniform(50, 95),
+                    "y": rng.uniform(10, 58),
+                    "vx": rng.normal(2, 1),
+                    "vy": rng.normal(0, 1),
+                    "is_ball": False,
+                    "team_in_possession": "Home",
+                }
+            )
+        # Away team: defending, clustered near own goal (low DAS expected)
+        for i in range(11):
+            rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": 0,
+                    "player_id": f"A{i}",
+                    "team_id": "Away",
+                    "x": rng.uniform(10, 40),
+                    "y": rng.uniform(10, 58),
+                    "vx": rng.normal(-1, 1),
+                    "vy": rng.normal(0, 1),
+                    "is_ball": False,
+                    "team_in_possession": "Home",
+                }
+            )
+        # Ball near midfield
+        rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": 0,
+                "player_id": "ball",
+                "team_id": None,
+                "x": 60.0,
+                "y": 34.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "is_ball": True,
+                "team_in_possession": "Home",
+            }
+        )
+        return pd.DataFrame(rows)
+
+    def test_team_das_differs_between_teams(self) -> None:
+        """get_individual_das aggregated per-team must produce different values."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import get_individual_das
+
+        frames = self._make_asymmetric_frame()
+        result = get_individual_das(frames, use_progress_bar=False)
+
+        player_rows = result[result["is_ball"] != True]  # noqa: E712
+        home_das = player_rows[player_rows["team_id"] == "Home"]["DAS"].sum()
+        away_das = player_rows[player_rows["team_id"] == "Away"]["DAS"].sum()
+        assert not np.isclose(home_das, away_das), (
+            f"Individual DAS should differ between asymmetric teams: Home={home_das:.4f}, Away={away_das:.4f}"
+        )
+
+    def test_precompute_das_lookup_asymmetric(self) -> None:
+        """_precompute_das_lookup must produce different DAS for each team."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking.features import _precompute_das_lookup
+
+        frames = self._make_asymmetric_frame()
+        lookup = _precompute_das_lookup(frames)
+
+        # Frame (1, 0) should have both teams with different DAS
+        frame_key = (1, 0)
+        assert frame_key in lookup, f"Frame {frame_key} not in lookup"
+        team_das = lookup[frame_key]
+        assert len(team_das) == 2, f"Expected 2 teams, got {len(team_das)}"
+
+        home_das = team_das.get("Home")
+        away_das = team_das.get("Away")
+        assert home_das is not None and away_das is not None
+        assert not np.isclose(home_das, away_das), (
+            f"DAS must differ between asymmetric teams: "
+            f"Home={home_das:.4f}, Away={away_das:.4f}. "
+            "If equal, _precompute_das_lookup is using per-frame scalar instead of per-team."
+        )
+
+
 class TestDasXfns:
     def test_das_xfns_are_frame_aware(self) -> None:
         from silly_kicks.tracking.features import das_xfns

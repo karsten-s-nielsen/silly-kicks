@@ -207,6 +207,44 @@ class TestDetectLineBreaking:
         row = result.iloc[0]
         assert row["line_break__ward"] == False  # noqa: E712
 
+    def test_zero_length_pass_returns_false(self):
+        """Zero-length pass (start==end) correctly returns False.
+
+        Root cause for IDSSE/Sportec Ward all-FALSE: Sportec event format
+        provides only a single position per event (event location), not
+        separate start/end. The SPADL converter sets start_x==end_x and
+        start_y==end_y. With pass_len=0 < min_pass_length=3.0, Ward
+        correctly returns FALSE. This is a data-source limitation (not a
+        silly-kicks bug). The threshold method in _off_ball_runs.py uses
+        positional comparison (end_x > def_line_x), which can return TRUE
+        for stationary actions, giving different results — but the Ward
+        geometric intersection test is the correct one for zero-length
+        trajectories.
+        """
+        from silly_kicks.tracking._line_breaking import detect_line_breaking
+
+        frames = _make_three_line_fixture()
+        home_player = frames[(~frames["is_ball"]) & (frames["team_id"] == 1) & (~frames["is_goalkeeper"])][
+            "player_id"
+        ].iloc[0]
+
+        # Simulate IDSSE: start == end (zero-length "cross")
+        actions = _make_action_at(
+            time_seconds=1.0,
+            player_id=int(home_player),
+            team_id=1,
+            start_x=60.0,
+            start_y=10.0,
+            end_x=60.0,  # same as start
+            end_y=10.0,  # same as start
+            type_id=1,  # cross
+        )
+
+        result = detect_line_breaking(actions, frames, home_team_id=1)
+        row = result.iloc[0]
+        assert row["line_break__ward"] == False  # noqa: E712
+        assert row["lines_broken__ward"] == 0
+
     def test_no_x_spread(self):
         """All opponents at same x -> no lines definable."""
         from silly_kicks.tracking._line_breaking import detect_line_breaking
