@@ -31,7 +31,8 @@ def _derive_end_coordinates(actions: pd.DataFrame) -> pd.DataFrame:
     """Derive end_x/end_y from next action's start for pass-class types.
 
     Only overwrites rows where the source data did not provide a separate
-    end coordinate (detected by ``end_x == start_x AND end_y == start_y``).
+    end coordinate (detected by ``end_x == start_x AND end_y == start_y``,
+    or ``end_x`` is NaN).
     Period-safe: uses ``groupby("period_id").shift(-1)`` so the last action
     per period keeps its original end coordinates.
 
@@ -42,11 +43,10 @@ def _derive_end_coordinates(actions: pd.DataFrame) -> pd.DataFrame:
         return actions
     actions = actions.copy()
 
-    needs_derivation = (
-        actions["type_id"].isin(_DERIVE_END_TYPE_IDS)
-        & (actions["end_x"] == actions["start_x"])
-        & (actions["end_y"] == actions["start_y"])
-    )
+    is_pass_class = actions["type_id"].isin(_DERIVE_END_TYPE_IDS)
+    placeholder_end = (actions["end_x"] == actions["start_x"]) & (actions["end_y"] == actions["start_y"])
+    missing_end = actions["end_x"].isna()
+    needs_derivation = is_pass_class & (placeholder_end | missing_end)
 
     next_start_x = actions.groupby("period_id")["start_x"].shift(-1)
     next_start_y = actions.groupby("period_id")["start_y"].shift(-1)

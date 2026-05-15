@@ -381,6 +381,148 @@ class TestPeriodBoundary:
         assert result.loc[1, "end_y"] == pytest.approx(40.0)
 
 
+class TestNaNEndCoordinates:
+    """Pass-class types with NaN end_x/end_y get derived from next action's start."""
+
+    def test_pass_with_nan_end_gets_next_start(self):
+        actions = _make_actions(
+            [
+                {
+                    "action_id": 0,
+                    "type_id": spadlconfig.actiontype_id["pass"],
+                    "time_seconds": 10.0,
+                    "start_x": 50.0,
+                    "start_y": 30.0,
+                    "end_x": float("nan"),
+                    "end_y": float("nan"),
+                },
+                {
+                    "action_id": 1,
+                    "type_id": spadlconfig.actiontype_id["tackle"],
+                    "time_seconds": 12.0,
+                    "start_x": 70.0,
+                    "start_y": 40.0,
+                    "end_x": 70.0,
+                    "end_y": 40.0,
+                },
+            ]
+        )
+        result = _derive_end_coordinates(actions)
+        assert result.loc[0, "end_x"] == pytest.approx(70.0)
+        assert result.loc[0, "end_y"] == pytest.approx(40.0)
+
+    def test_freekick_short_with_nan_end_gets_next_start(self):
+        actions = _make_actions(
+            [
+                {
+                    "action_id": 0,
+                    "type_id": spadlconfig.actiontype_id["freekick_short"],
+                    "time_seconds": 10.0,
+                    "start_x": 40.0,
+                    "start_y": 20.0,
+                    "end_x": float("nan"),
+                    "end_y": float("nan"),
+                },
+                {
+                    "action_id": 1,
+                    "type_id": spadlconfig.actiontype_id["pass"],
+                    "time_seconds": 11.0,
+                    "start_x": 45.0,
+                    "start_y": 25.0,
+                    "end_x": 45.0,
+                    "end_y": 25.0,
+                },
+            ]
+        )
+        result = _derive_end_coordinates(actions)
+        assert result.loc[0, "end_x"] == pytest.approx(45.0)
+        assert result.loc[0, "end_y"] == pytest.approx(25.0)
+
+    def test_corner_short_with_nan_end_gets_next_start(self):
+        actions = _make_actions(
+            [
+                {
+                    "action_id": 0,
+                    "type_id": spadlconfig.actiontype_id["corner_short"],
+                    "time_seconds": 10.0,
+                    "start_x": 105.0,
+                    "start_y": 0.0,
+                    "end_x": float("nan"),
+                    "end_y": float("nan"),
+                },
+                {
+                    "action_id": 1,
+                    "type_id": spadlconfig.actiontype_id["pass"],
+                    "time_seconds": 11.0,
+                    "start_x": 90.0,
+                    "start_y": 15.0,
+                    "end_x": 90.0,
+                    "end_y": 15.0,
+                },
+            ]
+        )
+        result = _derive_end_coordinates(actions)
+        assert result.loc[0, "end_x"] == pytest.approx(90.0)
+        assert result.loc[0, "end_y"] == pytest.approx(15.0)
+
+    def test_non_pass_class_with_nan_end_stays_nan(self):
+        actions = _make_actions(
+            [
+                {
+                    "action_id": 0,
+                    "type_id": spadlconfig.actiontype_id["shot"],
+                    "time_seconds": 10.0,
+                    "start_x": 90.0,
+                    "start_y": 34.0,
+                    "end_x": float("nan"),
+                    "end_y": float("nan"),
+                },
+                {
+                    "action_id": 1,
+                    "type_id": spadlconfig.actiontype_id["keeper_save"],
+                    "time_seconds": 11.0,
+                    "start_x": 104.0,
+                    "start_y": 34.0,
+                    "end_x": 104.0,
+                    "end_y": 34.0,
+                },
+            ]
+        )
+        result = _derive_end_coordinates(actions)
+        assert pd.isna(result.loc[0, "end_x"])
+        assert pd.isna(result.loc[0, "end_y"])
+
+    def test_pass_with_nan_end_at_period_boundary_stays_nan(self):
+        actions = _make_actions(
+            [
+                {
+                    "action_id": 0,
+                    "type_id": spadlconfig.actiontype_id["pass"],
+                    "time_seconds": 2700.0,
+                    "start_x": 80.0,
+                    "start_y": 34.0,
+                    "end_x": float("nan"),
+                    "end_y": float("nan"),
+                    "period_id": 1,
+                },
+                {
+                    "action_id": 1,
+                    "type_id": spadlconfig.actiontype_id["pass"],
+                    "time_seconds": 0.5,
+                    "start_x": 50.0,
+                    "start_y": 34.0,
+                    "end_x": 50.0,
+                    "end_y": 34.0,
+                    "period_id": 2,
+                },
+            ]
+        )
+        result = _derive_end_coordinates(actions)
+        # Last action in period 1: no next action in same period → stays NaN
+        assert pd.isna(result.loc[0, "end_x"])
+        assert pd.isna(result.loc[0, "end_y"])
+
+
 class TestEdgeCases:
     """Empty and single-row DataFrames."""
 

@@ -18,8 +18,8 @@ Recognized event types (case-sensitive ``UPPER``):
                      ``keeper_pick_up + pass`` (when by GK and goalkeeper_ids)
 ``SHOT``             ``shot`` (with set-piece composition for FREE KICK)
 ``RECOVERY``         ``interception`` (default) / ``keeper_pick_up`` (when by GK)
-``CHALLENGE``        ``tackle`` (when WON) / ``keeper_claim`` (AERIAL-WON by GK) /
-                     dropped (LOST / other AERIAL variants)
+``CHALLENGE``        ``tackle`` (compound *-WON) / ``keeper_claim`` (AERIAL-*-WON by GK) /
+                     ``foul`` (FAULT + *-LOST) / dropped (other LOST / bare)
 ``BALL LOST``        ``bad_touch`` (fail)
 ``FAULT``            ``foul`` (with CARD pairing for cards)
 ``SET PIECE``        ``freekick_short`` / ``corner_short`` / ``throw_in`` / ``goalkick``
@@ -41,7 +41,7 @@ With ``goalkeeper_ids``, conservative routing applies:
 
 - ``PASS`` (any subtype) by GK → synthesize ``keeper_pick_up + pass``
 - ``RECOVERY`` (any subtype) by GK → ``keeper_pick_up``
-- ``CHALLENGE`` ``AERIAL-WON`` by GK → ``keeper_claim``
+- ``CHALLENGE`` with AERIAL + WON by GK → ``keeper_claim``
 - All other event types unchanged (a GK taking a free kick is still
   ``freekick_short``, not a keeper action — set pieces are positional
   acts, not GK acts in the SPADL vocabulary)
@@ -417,16 +417,31 @@ def _build_raw_actions(
     type_ids[is_recovery_gk] = spadlconfig.actiontype_id["keeper_pick_up"]
     bodypart_ids[is_recovery_gk] = spadlconfig.bodypart_id["other"]
 
-    # --- CHALLENGE: WON -> tackle; AERIAL-WON-by-GK -> keeper_claim;
-    # other LOST/AERIAL-LOST/etc -> drop ---
+    # --- CHALLENGE: compound-subtype decomposition ---
+    # Metrica encodes challenge outcomes as compound dash-separated subtypes:
+    # "TACKLE-WON", "GROUND-FAULT-LOST", "AERIAL-WON", etc.  The terminal
+    # token is the outcome (WON / LOST); interior tokens describe the
+    # challenge type (TACKLE / GROUND / AERIAL) and whether a fault occurred.
     is_challenge = typ == "CHALLENGE"
-    is_challenge_won = is_challenge & (sub_raw == "WON")
-    is_challenge_aerial_won = is_challenge & (sub_raw == "AERIAL-WON")
-    is_challenge_aerial_won_gk = is_challenge_aerial_won & is_gk_player
+    _sub_ends_won = np.array([s.endswith("WON") for s in sub_raw])
+    _sub_ends_lost = np.array([s.endswith("LOST") for s in sub_raw])
+    _sub_has_aerial = np.array(["AERIAL" in s for s in sub_raw])
+    _sub_has_fault = np.array(["FAULT" in s for s in sub_raw])
+
+    # Tackle: any WON challenge (except aerial-WON by GK → keeper_claim)
+    is_challenge_aerial_won_gk = is_challenge & _sub_ends_won & _sub_has_aerial & is_gk_player
+    is_challenge_won = is_challenge & _sub_ends_won & ~is_challenge_aerial_won_gk
     type_ids[is_challenge_won] = spadlconfig.actiontype_id["tackle"]
     type_ids[is_challenge_aerial_won_gk] = spadlconfig.actiontype_id["keeper_claim"]
     bodypart_ids[is_challenge_aerial_won_gk] = spadlconfig.bodypart_id["other"]
-    is_challenge_dropped = is_challenge & ~is_challenge_won & ~is_challenge_aerial_won_gk
+
+    # Foul: FAULT + LOST → the losing player committed the foul
+    is_challenge_foul = is_challenge & _sub_has_fault & _sub_ends_lost
+    type_ids[is_challenge_foul] = spadlconfig.actiontype_id["foul"]
+    result_ids[is_challenge_foul] = spadlconfig.result_id["fail"]
+
+    # Drop: everything else (LOST without FAULT, bare subtypes with no outcome)
+    is_challenge_dropped = is_challenge & ~is_challenge_won & ~is_challenge_aerial_won_gk & ~is_challenge_foul
     type_ids[is_challenge_dropped] = spadlconfig.actiontype_id["non_action"]
 
     # --- BALL LOST -> bad_touch fail ---
