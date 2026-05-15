@@ -8,7 +8,7 @@ import pandas as pd
 
 from .base import (
     _add_dribbles,
-    _fix_clearances,
+    _derive_end_coordinates,
 )
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
@@ -311,7 +311,7 @@ def convert_to_actions(
         input_convention=POSSESSION_PERSPECTIVE,
         home_team_id=home_team_id,
     )
-    actions = _fix_clearances(actions)
+    actions = _derive_end_coordinates(actions)
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 

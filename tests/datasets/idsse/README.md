@@ -66,3 +66,30 @@ that the 2-shot `sample_match.parquet` fixture cannot physically support.
 ```bash
 uv run python scripts/extract_provider_fixtures.py --provider idsse --variant per_period
 ```
+
+---
+
+## `paired_tracking.parquet` (PR-S42 / silly-kicks 3.15.0)
+
+Tracking frames from match `J03WMX` covering two time windows aligned with
+events in `per_period_match.parquet`. Enables paired events+tracking testing
+for Bug #2 (GK fallback) and Bug #7 (end-coordinate derivation).
+
+### Provenance
+
+- Source: same DFL DataHub free-sample data, pulled from
+  `soccer_analytics.dev_gold.fct_tracking_frames` via Databricks.
+- Match identifier: `J03WMX` (Bundesliga; public DFL competition
+  identifier).
+- Time windows:
+  - P1: 90.0 - 107.0s (4 events: 3 Play + 1 ShotAtGoal)
+  - P2: 624.0 - 640.0s (9 events: 3 Play + 1 ThrowIn + 2 OtherBallAction + 1 TacklingGame + 1 ShotAtGoal)
+- Row count: ~18,194 (22 players x ~827 frames).
+- GK players: `DFL-OBJ-0002DR` (away), `DFL-OBJ-0002HE` (home).
+- File size: ~518 KB.
+- Extraction script: `scripts/extract_paired_idsse_fixture.py`.
+
+### License
+
+Same DFL DataHub free-sample license as `per_period_match.parquet`.
+Test-only fixture excluded from the published wheel.

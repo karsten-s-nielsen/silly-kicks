@@ -69,7 +69,7 @@ import pandas as pd
 
 from ..tracking import _direction
 from . import config as spadlconfig
-from .base import _add_dribbles, _fix_clearances
+from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -273,7 +273,7 @@ def convert_to_actions(
     raw_actions = _build_raw_actions(events, preserve_native, goalkeeper_ids=goalkeeper_ids)
 
     if len(raw_actions) > 0:
-        actions = _fix_clearances(raw_actions)
+        actions = _derive_end_coordinates(raw_actions)
         actions = to_spadl_ltr(
             actions,
             input_convention=PER_PERIOD_ABSOLUTE,

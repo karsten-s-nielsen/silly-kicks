@@ -614,8 +614,10 @@ class TestFramesKwargNoModuleImportCycle:
 
 class TestFramesKwargNanSafety:
     def test_nan_defending_gk_player_id_path_does_not_crash_with_frames(self):
-        """Pre-engagement shot (no defending-keeper engagement) -> NaN GK columns, no crash."""
-        # Only a shot, no keeper actions in window -> defending_gk_player_id is NaN.
+        """Frame-based GK fallback resolves defending GK when events-based lookback finds nothing."""
+        # Only a shot, no keeper actions in window -> events-based lookback
+        # produces NaN.  But frame-based fallback finds the opposing team's
+        # is_goalkeeper=True player (player 999, team 100 != shooter team 200).
         actions = _df(
             [
                 _make_shot_action(
@@ -649,6 +651,6 @@ class TestFramesKwargNanSafety:
             ]
         )
         out = add_pre_shot_gk_context(actions, frames=frames)
-        # defending_gk_player_id is NaN -> all 4 GK position columns NaN.
-        assert pd.isna(out["defending_gk_player_id"].iloc[0])
-        assert pd.isna(out["pre_shot_gk_x"].iloc[0])
+        # Frame-based fallback resolves defending GK (player 999).
+        assert out["defending_gk_player_id"].iloc[0] == 999
+        assert pd.notna(out["pre_shot_gk_x"].iloc[0])

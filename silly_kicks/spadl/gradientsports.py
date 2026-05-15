@@ -64,6 +64,7 @@ import pandas as pd
 from silly_kicks.tracking import _direction
 
 from . import config as spadlconfig
+from .base import _derive_end_coordinates
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import GRADIENTSPORTS_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -467,6 +468,13 @@ def convert_to_actions(
         actions.loc[tackle_mask, "tackle_loser_team_id"] = loser_tid
 
     # ------------------------------------------------------------------
+    # Derive end_x/end_y from next-action start for pass-class types.
+    # Must run BEFORE foul synthesis: synthesized foul rows interleave
+    # via 0.5-offset sort key and would intercept the shift(-1) chain.
+    # ------------------------------------------------------------------
+    actions = _derive_end_coordinates(actions)
+
+    # ------------------------------------------------------------------
     # Foul row handling (two paths, depending on parent dispatch result)
     #
     # Gradient Sports places foul info in a per-event ``fouls`` dict that may co-occur with:
@@ -538,25 +546,6 @@ def convert_to_actions(
         home_team_id=home_team_id,
         home_attacks_right_per_period=home_attacks_right_per_period,
     )
-
-    # ------------------------------------------------------------------
-    # end_x / end_y from next-action start_x/y within same period.
-    # Last row of each period falls back to its own start_x/y.
-    # ------------------------------------------------------------------
-    if len(actions) > 0:
-        next_start_x = actions["start_x"].shift(-1)
-        next_start_y = actions["start_y"].shift(-1)
-        same_period = actions["period_id"].eq(actions["period_id"].shift(-1))
-        actions["end_x"] = np.where(
-            same_period & next_start_x.notna(),
-            next_start_x,
-            actions["start_x"],
-        )
-        actions["end_y"] = np.where(
-            same_period & next_start_y.notna(),
-            next_start_y,
-            actions["start_y"],
-        )
 
     # ------------------------------------------------------------------
     # Finalize

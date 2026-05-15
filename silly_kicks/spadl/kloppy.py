@@ -44,7 +44,7 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
 from packaging import version
 
 from . import config as spadlconfig
-from .base import _add_dribbles, _fix_clearances
+from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output
@@ -217,7 +217,7 @@ def convert_to_actions(
     )
     df_actions = df_actions[df_actions.type_id != spadlconfig.actiontype_id["non_action"]]  # type: ignore[reportOptionalSubscript, reportOptionalMemberAccess]
 
-    df_actions = _fix_clearances(df_actions)  # type: ignore[reportArgumentType]  # kloppy API varies by version
+    df_actions = _derive_end_coordinates(df_actions)  # type: ignore[reportArgumentType]  # kloppy API varies by version
 
     df_actions["action_id"] = range(len(df_actions))
     df_actions = _add_dribbles(df_actions)
