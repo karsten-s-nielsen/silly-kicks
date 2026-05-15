@@ -1,0 +1,11 @@
+{
+  "id": 9999999,
+  "pitch_length": 105,
+  "pitch_width": 68,
+  "home_team": {"id": "team_home", "name": "Home FC"},
+  "away_team": {"id": "team_away", "name": "Away FC"},
+  "periods": [
+    {"id": 1, "start_frame": 0, "end_frame": 27000},
+    {"id": 2, "start_frame": 27001, "end_frame": 54000}
+  ]
+}

@@ -78,6 +78,16 @@ while allowing NaN on non-tackle rows. Long-term unification of the two
 extended schemas under a common name is a follow-up TODO."""
 
 
+SKILLCORNER_SPADL_COLUMNS: dict[str, str] = {
+    **KLOPPY_SPADL_COLUMNS,
+    "action_provenance": "object",
+}
+"""SkillCorner SPADL output schema: KLOPPY_SPADL_COLUMNS (object-dtype IDs) +
+``action_provenance`` column (``"native"`` or ``"derived"``). Derived actions
+include ``start_type``-based interceptions/recoveries, OBE-enriched tackles,
+keeper saves, and synthetic dribbles. See spec §6."""
+
+
 @dataclasses.dataclass(frozen=True)
 class ConversionReport:
     """Audit trail for convert_to_actions().
