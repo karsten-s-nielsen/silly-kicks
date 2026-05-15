@@ -1,0 +1,10 @@
+event_type,event_id,period,time_start,team_id,player_id,x_start,y_start,x_end,y_end,start_type,end_type,game_interruption_before,game_interruption_after,is_header,hand_pass,player_targeted_x_reception,player_targeted_y_reception
+player_possession,pp_1,1,00:10.0,team_home,p1,5.0,3.0,8.0,4.0,pass_reception,pass,,,False,False,15.0,10.0
+player_possession,pp_2,1,00:15.0,team_away,p12,15.0,10.0,18.0,12.0,pass_interception,pass,,,False,False,25.0,8.0
+on_ball_engagement,obe_1,1,00:14.8,team_away,p12,14.0,9.0,,,,direct_regain,,,,,,
+player_possession,pp_3,1,00:20.0,team_home,p3,20.0,5.0,22.0,3.0,recovery,pass,,,False,False,30.0,5.0
+on_ball_engagement,obe_2,1,00:19.5,team_home,p3,19.0,4.0,,,,direct_regain,,,,,,
+player_possession,pp_4,1,00:25.0,team_home,p4,30.0,2.0,33.0,1.0,pass_reception,shot,,,False,False,,
+player_possession,pp_5,1,00:27.0,team_away,p15,-40.0,0.0,-38.0,2.0,recovery,pass,,,False,False,-30.0,5.0
+player_possession,pp_6,1,00:30.0,team_home,p5,10.0,8.0,12.0,7.0,throw_in_interception,pass,,,False,False,20.0,10.0
+player_possession,pp_7,1,00:35.0,team_away,p13,5.0,3.0,8.0,4.0,pass_interception,pass,,,False,False,15.0,5.0

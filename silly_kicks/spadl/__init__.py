@@ -5,6 +5,7 @@ __all__ = [
     "GRADIENTSPORTS_SPADL_COLUMNS",
     "PER_PERIOD_ABSOLUTE",
     "POSSESSION_PERSPECTIVE",
+    "SKILLCORNER_SPADL_COLUMNS",
     "SPADL_COLUMNS",
     "SPORTEC_SPADL_COLUMNS",
     "BoundaryMetrics",
@@ -28,6 +29,7 @@ __all__ = [
     "opta",
     "play_left_to_right",
     "results_df",
+    "skillcorner",
     "statsbomb",
     "to_spadl_ltr",
     "use_tackle_winner_as_actor",
@@ -48,7 +50,13 @@ from .orientation import (
     to_spadl_ltr,
     validate_input_convention,
 )
-from .schema import GRADIENTSPORTS_SPADL_COLUMNS, SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
+from .schema import (
+    GRADIENTSPORTS_SPADL_COLUMNS,
+    SKILLCORNER_SPADL_COLUMNS,
+    SPADL_COLUMNS,
+    SPORTEC_SPADL_COLUMNS,
+    ConversionReport,
+)
 from .sportec import use_tackle_winner_as_actor
 from .utils import (
     BoundaryMetrics,
@@ -66,5 +74,10 @@ from .utils import (
 
 try:
     from . import kloppy
+except ImportError:
+    pass
+
+try:
+    from . import skillcorner
 except ImportError:
     pass
