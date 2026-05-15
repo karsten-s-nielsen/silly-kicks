@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-
 from silly_kicks.tracking.features import add_actor_pre_window
 
 # Re-use the 100-action fixture from the pressure perf budget module.
@@ -12,8 +10,8 @@ from .test_pressure_perf_budget import fixture_100
 # Re-export so pytest discovers the fixture in this module's collection.
 _ = fixture_100
 
-# Windows CI runners exhibit higher variance; use a relaxed ceiling to avoid flakes.
-_BUDGET_SECONDS = 0.15 if sys.platform == "win32" else 0.10
+# Flat ceiling with 1.5x headroom from worst observed CI timing (101ms on ubuntu 3.12).
+_BUDGET_SECONDS = 0.15
 
 
 def test_pre_window_perf_per_100_actions(benchmark, fixture_100) -> None:
