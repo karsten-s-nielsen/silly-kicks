@@ -5,6 +5,35 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.2] — 2026-05-17
+
+### Fixed
+- **Sportec/IDSSE shot goal detection:** DFL/IDSSE events use
+  `shot_outcome_type = "successful"` for goals, but the converter only matched
+  `"goal"` (legacy format). Real IDSSE data: all goals had `"successful"`, zero
+  had `"goal"`. Now accepts both `"goal"` and `"successful"`.
+- **Metrica SHOT compound-subtype goal detection:** SG1 compound subtypes like
+  `"ON TARGET-GOAL"` and `"HEAD-ON TARGET-GOAL"` were not matched by
+  `sub_raw == "GOAL"`. Replaced with `endswith("GOAL")` pattern (same approach
+  as PR-S43's CHALLENGE fix).
+- **Ward line-breaking game_id type mismatch:** `detect_line_breaking` dict-based
+  frame lookup silently returned empty results when actions carried string
+  game_ids and frames carried int game_ids (or vice versa). Now aligns types
+  before lookup.
+- **Off-ball runs line-break game_id type mismatch:** `_line_break_kernel` had
+  the same dict-based lookup vulnerability plus a merge crash on mixed
+  `game_id` dtypes. Now aligns types before both the merge and the lookup.
+
+### Added
+- Tests: `test_shot_outcome_type_mapping` (6 parametrized cases) in
+  `test_sportec.py` covering all real IDSSE `shot_outcome_type` values.
+- Tests: `TestMetricaShotCompoundSubtypes` (10 parametrized tests) in
+  `test_metrica.py` covering all real SG1 compound SHOT subtypes.
+- Tests: `TestGameIdTypeMismatch` (2 tests) in `test_line_breaking.py` covering
+  matching and mismatched game_id types.
+- Tests: `TestLineBreakKernelGameIdTypeMismatch` (1 test) in
+  `test_off_ball_runs.py` covering the off-ball-runs variant.
+
 ## [3.15.1] — 2026-05-15
 
 ### Fixed

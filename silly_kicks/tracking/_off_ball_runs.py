@@ -257,6 +257,16 @@ def _line_break_kernel(
         how="left",
     )
 
+    # Align game_id dtype between linked (from actions) and dl (from frames)
+    # before the merge — pandas rejects merge on object vs int64 keys.
+    if len(linked) > 0 and len(dl) > 0:
+        linked_gid_dtype = linked["game_id"].dtype
+        dl_gid_dtype = dl["game_id"].dtype
+        if linked_gid_dtype != dl_gid_dtype:
+            linked["game_id"] = linked["game_id"].astype(str)
+            dl = dl.copy()
+            dl["game_id"] = dl["game_id"].astype(str)
+
     # Join with defensive-line data: match on (game_id, period_id, frame_id)
     merged = linked.merge(
         dl,
@@ -282,6 +292,15 @@ def _line_break_kernel(
     frame_groups: dict = dict(
         iter(non_ball_non_gk.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False))
     )
+
+    # Align game_id dtype between opposing (from actions) and frame groupby keys.
+    # Same fix as _line_breaking.py: str is the universal safe direction.
+    if len(frame_groups) > 0 and len(opposing) > 0:
+        sample_frame_gid = next(iter(frame_groups))[0]
+        opposing_gid_sample = opposing["game_id"].iloc[0]
+        if not isinstance(opposing_gid_sample, type(sample_frame_gid)):
+            frame_groups = {(str(k[0]), k[1], k[2], k[3]): v for k, v in frame_groups.items()}
+            opposing["game_id"] = opposing["game_id"].astype(str)
 
     for _, row in opposing.iterrows():
         aid = row["action_id"]

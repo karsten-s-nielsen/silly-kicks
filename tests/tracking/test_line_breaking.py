@@ -564,3 +564,79 @@ class TestCrossMethodSanity:
         # Both should agree this pass breaks a line
         if ward.iloc[0]["lines_broken__ward"] > 0:
             assert threshold.iloc[0]["line_break"] == True  # noqa: E712
+
+
+class TestGameIdTypeMismatch:
+    """Bug 3: game_id type mismatch between actions (int) and frames (str).
+
+    Sportec SPADL uses string game_ids (KLOPPY_SPADL_COLUMNS: object),
+    while Sportec tracking uses string game_ids (SPORTEC_TRACKING_FRAMES_COLUMNS:
+    object). When actions come from kloppy gateway with int game_id but frames
+    have string game_id (or vice versa), the dict-based frame lookup in
+    detect_line_breaking silently fails because (1, 1, 1) != ("M1", 1, 1).
+    """
+
+    def test_string_game_id_in_frames_and_actions(self):
+        """When both frames and actions use string game_ids, Ward works."""
+        from silly_kicks.tracking._line_breaking import detect_line_breaking
+
+        frames = _make_three_line_fixture()
+        # Convert game_id to string (simulating Sportec provider)
+        frames["game_id"] = frames["game_id"].astype(str)
+
+        home_player = frames[(~frames["is_ball"]) & (frames["team_id"] == 1) & (~frames["is_goalkeeper"])][
+            "player_id"
+        ].iloc[0]
+
+        actions = _make_action_at(
+            time_seconds=1.0,
+            player_id=int(home_player),
+            team_id=1,
+            start_x=10.0,
+            start_y=34.0,
+            end_x=100.0,
+            end_y=34.0,
+        )
+        # Match string game_id
+        actions["game_id"] = actions["game_id"].astype(str)
+
+        result = detect_line_breaking(actions, frames, home_team_id=1)
+        row = result.iloc[0]
+        assert row["line_break__ward"] == True  # noqa: E712
+        assert row["lines_broken__ward"] == 3
+
+    def test_mismatched_game_id_types_still_works(self):
+        """When frames have int game_id but actions have str, Ward still works.
+
+        Real scenario: Sportec SPADL produces object/str game_ids (e.g. "1"),
+        while tracking frames from kloppy may produce int game_ids (1).
+        Same logical game, different Python types. The dict-based frame
+        lookup silently misses all frames because (1, 1, 1) != ("1", 1, 1).
+        """
+        from silly_kicks.tracking._line_breaking import detect_line_breaking
+
+        frames = _make_three_line_fixture()
+        # Frames keep int game_id=1
+
+        home_player = frames[(~frames["is_ball"]) & (frames["team_id"] == 1) & (~frames["is_goalkeeper"])][
+            "player_id"
+        ].iloc[0]
+
+        actions = _make_action_at(
+            time_seconds=1.0,
+            player_id=int(home_player),
+            team_id=1,
+            start_x=10.0,
+            start_y=34.0,
+            end_x=100.0,
+            end_y=34.0,
+        )
+        # Same logical game_id but as string — type mismatch
+        actions["game_id"] = "1"
+
+        # Frames have int game_id=1, actions have str game_id="1"
+        result = detect_line_breaking(actions, frames, home_team_id=1)
+        row = result.iloc[0]
+        # Before fix: line_break__ward would be False with lines_broken=0
+        assert row["line_break__ward"] == True  # noqa: E712
+        assert row["lines_broken__ward"] == 3

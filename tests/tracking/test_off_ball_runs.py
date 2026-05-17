@@ -768,3 +768,39 @@ class TestXfnFactory:
         xfns = off_ball_context_xfns(home_team_id=1)
         cols = feature_column_names(xfns)
         assert len(cols) == 18
+
+
+class TestLineBreakKernelGameIdTypeMismatch:
+    """game_id type mismatch between actions (str) and frames (int).
+
+    Same vulnerability as _line_breaking.py Bug 3: dict-based frame lookup
+    silently fails when game_id types don't match across actions and frames.
+    """
+
+    def test_mismatched_game_id_types_still_works(self):
+        """Str game_id in actions + int game_id in frames -> line_break still computed."""
+        from silly_kicks.tracking._off_ball_runs import _line_break_kernel
+        from tests.tracking.test_defensive_line import _make_frame_rows
+
+        frames = _make_frame_rows(
+            home_outfield_xs=[10.0, 12.0, 14.0, 16.0, 50.0],
+            home_outfield_ys=[20.0, 30.0, 40.0, 50.0, 34.0],
+            away_outfield_xs=[90.0, 92.0, 94.0, 96.0, 50.0],
+            away_outfield_ys=[20.0, 30.0, 40.0, 50.0, 34.0],
+        )
+        # Frames have int game_id=1
+        home_outfield = frames[(~frames["is_ball"]) & (frames["team_id"] == 1) & (~frames["is_goalkeeper"])]
+        actions = _make_action_at(
+            time_seconds=1.0,
+            player_id=int(home_outfield["player_id"].iloc[0]),
+            team_id=1,
+            end_x=95.0,
+            end_y=34.0,
+        )
+        # Actions have str game_id — type mismatch
+        actions["game_id"] = "1"
+
+        result = _line_break_kernel(actions, frames, home_team_id=1)
+        # Before fix: n_attackers_behind_line would be 0 (lookup miss)
+        assert result["line_break"].iloc[0] == True  # noqa: E712
+        assert result["n_attackers_behind_line"].iloc[0] >= 0

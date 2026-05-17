@@ -710,3 +710,48 @@ class TestMetricaPerPeriodKwargContract:
                 home_team_id="Home",
                 home_team_start_left=True,
             )
+
+
+class TestMetricaShotCompoundSubtypes:
+    """Metrica SG1 encodes SHOT outcomes as compound dash-separated subtypes.
+
+    Real data distribution from per_period_match fixture:
+    ON TARGET-GOAL(2), HEAD-ON TARGET-GOAL(1),
+    ON TARGET-SAVED(5), OFF TARGET-OUT(9), HEAD-OFF TARGET-OUT(2),
+    HEAD-ON TARGET-SAVED(2), BLOCKED(1), HEAD-WOODWORK-OUT(1), OFF TARGET(1).
+
+    The 'GOAL' token always appears at the end of the compound subtype.
+    """
+
+    @pytest.mark.parametrize(
+        "subtype",
+        ["ON TARGET-GOAL", "HEAD-ON TARGET-GOAL"],
+    )
+    def test_compound_goal_maps_to_success(self, subtype):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("SHOT", subtype), home_team_id="Home", home_team_start_left=True
+        )
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["shot"]
+        assert actions["result_id"].iloc[0] == spadlconfig.result_id["success"]
+
+    @pytest.mark.parametrize(
+        "subtype",
+        [
+            "ON TARGET-SAVED",
+            "OFF TARGET-OUT",
+            "HEAD-OFF TARGET-OUT",
+            "HEAD-ON TARGET-SAVED",
+            "BLOCKED",
+            "HEAD-WOODWORK-OUT",
+            "OFF TARGET",
+            "ON TARGET",
+        ],
+    )
+    def test_compound_non_goal_maps_to_fail(self, subtype):
+        actions, _ = metrica_mod.convert_to_actions(
+            _df_metrica("SHOT", subtype), home_team_id="Home", home_team_start_left=True
+        )
+        assert len(actions) == 1
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["shot"]
+        assert actions["result_id"].iloc[0] == spadlconfig.result_id["fail"]

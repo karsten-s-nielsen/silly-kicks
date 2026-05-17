@@ -471,7 +471,9 @@ def _build_raw_actions(
     # --- SHOT (with set-piece composition) ---
     is_shot = typ == "SHOT"
     type_ids[is_shot] = spadlconfig.actiontype_id["shot"]
-    is_goal = is_shot & (sub_raw == "GOAL")
+    # SG1 compound subtypes: "ON TARGET-GOAL", "HEAD-ON TARGET-GOAL", etc.
+    _sub_ends_goal = np.array([s.endswith("GOAL") for s in sub_raw])
+    is_goal = is_shot & _sub_ends_goal
     result_ids[is_shot] = spadlconfig.result_id["fail"]
     result_ids[is_goal] = spadlconfig.result_id["success"]
 
