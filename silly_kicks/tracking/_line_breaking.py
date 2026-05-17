@@ -159,6 +159,23 @@ def detect_line_breaking(
         frame_key = key[:3]
         frame_to_teams.setdefault(frame_key, []).append(key[3])
 
+    # Align game_id dtype between linked (from actions) and frame groupby keys.
+    # Actions may carry int game_id while frames carry str (or vice versa),
+    # causing the dict lookup to silently miss all frames.
+    # Cast linked game_id to str for comparison, and rebuild frame dicts
+    # with str keys if needed, since str is the universal safe direction.
+    if len(frame_to_teams) > 0:
+        sample_frame_gid = next(iter(frame_to_teams))[0]
+        linked_gid_sample = linked["game_id"].iloc[0]
+        if not isinstance(linked_gid_sample, type(sample_frame_gid)):
+            # Rebuild dicts with str game_id keys
+            frame_groups = {(str(k[0]), k[1], k[2], k[3]): v for k, v in frame_groups.items()}
+            frame_to_teams = {}
+            for key in frame_groups:
+                frame_key = key[:3]
+                frame_to_teams.setdefault(frame_key, []).append(key[3])
+            linked["game_id"] = linked["game_id"].astype(str)
+
     # Build positional lookup
     aid_to_pos = {aid: pos for pos, aid in enumerate(actions["action_id"].values)}
 

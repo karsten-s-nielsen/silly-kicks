@@ -288,6 +288,12 @@ def _df_shot_goal() -> pd.DataFrame:
     return df
 
 
+def _df_shot_with_outcome(outcome: str) -> pd.DataFrame:
+    df = _df_shot_default()
+    df["shot_outcome_type"] = [outcome]
+    return df
+
+
 def _df_foul() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -362,6 +368,34 @@ class TestSportecActionMappingShotsTacklesFoulsGK:
     def test_shot_goal_outcome_maps_to_success_result(self):
         actions, _ = sportec_mod.convert_to_actions(_df_shot_goal(), home_team_id="T-HOME", home_team_start_left=True)
         assert actions["result_id"].iloc[0] == spadlconfig.result_id["success"]
+
+    @pytest.mark.parametrize(
+        "outcome,expected_result",
+        [
+            # DFL/IDSSE uses "successful" for goals (Bug 5)
+            ("successful", "success"),
+            # Legacy "goal" value (pre-IDSSE)
+            ("goal", "success"),
+            # Non-goal outcomes → fail
+            ("wide", "fail"),
+            ("saved", "fail"),
+            ("blocked", "fail"),
+            ("woodwork", "fail"),
+        ],
+    )
+    def test_shot_outcome_type_mapping(self, outcome, expected_result):
+        """DFL/IDSSE shot_outcome_type values map correctly.
+
+        Real IDSSE data uses 'successful' (not 'goal') for goals.
+        Distribution from per_period_match fixture:
+        wide(9), saved(4), blocked(4), successful(2), woodwork(1).
+        """
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_shot_with_outcome(outcome),
+            home_team_id="T-HOME",
+            home_team_start_left=True,
+        )
+        assert actions["result_id"].iloc[0] == spadlconfig.result_id[expected_result]
 
     # NOTE: pre-2.0.0 test_tackle_uses_winner_as_actor deleted per ADR-001.
     # The override behavior it asserted (sportec rewriting team_id /

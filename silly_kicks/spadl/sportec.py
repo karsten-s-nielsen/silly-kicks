@@ -860,7 +860,8 @@ def _build_raw_actions(
     type_ids[is_shot_penalty] = spadlconfig.actiontype_id["shot_penalty"]
 
     shot_outcome = _opt("shot_outcome_type", "").fillna("").astype(str).to_numpy()
-    is_goal = is_shot & (shot_outcome == "goal")
+    # DFL/IDSSE uses "successful" for goals; legacy format uses "goal".
+    is_goal = is_shot & np.isin(shot_outcome, ["goal", "successful"])
     is_owngoal = is_shot & (shot_outcome == "ownGoal")
     result_ids[is_shot] = spadlconfig.result_id["fail"]
     result_ids[is_goal] = spadlconfig.result_id["success"]
