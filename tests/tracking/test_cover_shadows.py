@@ -297,13 +297,28 @@ class TestLaneControl:
         assert not result.is_blocked_majority
         assert not result.is_blocked_all
 
-    def test_ltr_validation(self):
-        """Non-LTR frames raise ValueError."""
+    def test_ltr_validation_rejects_all_rtl(self):
+        """Frames with only 'rtl' direction (no home 'ltr') raise ValueError."""
         from silly_kicks.tracking._cover_shadows import lane_control
 
         frame = _make_lane_control_frame(defender_pos=(62.5, 34.0))
         frame["team_attacking_direction"] = "rtl"
-        with pytest.raises(ValueError, match="LTR"):
+        with pytest.raises(ValueError, match="period-normalized"):
+            lane_control(
+                frame,
+                passer_xy=(50.0, 34.0),
+                receiver_xy=(75.0, 34.0),
+                home_team_id=1,
+                attacking_team_id=2,
+            )
+
+    def test_ltr_validation_rejects_unexpected_values(self):
+        """Frames with unexpected direction values raise ValueError."""
+        from silly_kicks.tracking._cover_shadows import lane_control
+
+        frame = _make_lane_control_frame(defender_pos=(62.5, 34.0))
+        frame["team_attacking_direction"] = "backwards"
+        with pytest.raises(ValueError, match="unexpected"):
             lane_control(
                 frame,
                 passer_xy=(50.0, 34.0),
@@ -546,13 +561,13 @@ class TestBlockingScore:
         )
         assert result.blocking_score == 0.0
 
-    def test_ltr_validation(self, fitted_xt):
-        """Non-LTR frames raise ValueError."""
+    def test_ltr_validation_rejects_all_rtl(self, fitted_xt):
+        """Frames with only 'rtl' direction (no home 'ltr') raise ValueError."""
         from silly_kicks.tracking._cover_shadows import compute_blocking_score
 
         frame = _make_lane_control_frame(defender_pos=(62.5, 34.0))
         frame["team_attacking_direction"] = "rtl"
-        with pytest.raises(ValueError, match="LTR"):
+        with pytest.raises(ValueError, match="period-normalized"):
             compute_blocking_score(
                 frame,
                 attacking_team_id=2,

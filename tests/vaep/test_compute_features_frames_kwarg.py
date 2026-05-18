@@ -76,14 +76,16 @@ def test_compute_features_dispatches_frame_aware_xfn():
     game, actions = _make_game_and_actions()
     # frames here is empty but non-None -> the @frame_aware xfn doesn't use it,
     # so the dispatch path is exercised.
-    # IMPORTANT: the frames DataFrame must have a `team_attacking_direction`
-    # column so the lazy-imported play_left_to_right call can run.
+    # IMPORTANT: the frames DataFrame must have columns that
+    # play_left_to_right needs (is_ball, team_id, team_attacking_direction).
     frames = pd.DataFrame(
         {
             "period_id": [],
             "frame_id": [],
             "time_seconds": [],
             "team_attacking_direction": [],
+            "is_ball": [],
+            "team_id": [],
             "x": [],
             "y": [],
         }
