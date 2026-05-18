@@ -26,15 +26,27 @@ _LINE_BREAK_COLS = [
 
 
 def _validate_ltr(frames: pd.DataFrame) -> None:
-    """Raise ValueError if frames contain non-LTR direction values."""
+    """Raise ValueError if frames are not period-normalized (home attacks LTR).
+
+    After ``play_left_to_right``, home-team rows have ``"ltr"`` and away-team
+    rows have ``"rtl"`` — both valid in the period-normalized frame. Rejects
+    frames with unexpected direction values or frames with only ``"rtl"``
+    (period normalization not applied).
+    """
     if "team_attacking_direction" in frames.columns:
-        directions = frames["team_attacking_direction"].dropna().unique()
-        non_ltr = [d for d in directions if d != "ltr"]
-        if non_ltr:
+        directions = set(frames["team_attacking_direction"].dropna().unique())
+        valid = {"ltr", "rtl"}
+        unexpected = directions - valid
+        if unexpected:
             raise ValueError(
-                "_off_ball_runs: frames must be LTR-normalized "
-                "(play_left_to_right). Found non-'ltr' values in "
-                f"team_attacking_direction: {non_ltr}"
+                "_off_ball_runs: frames have unexpected team_attacking_direction "
+                f"values: {sorted(unexpected)}. Expected 'ltr'/'rtl' only."
+            )
+        if directions and "ltr" not in directions:
+            raise ValueError(
+                "_off_ball_runs: frames must be period-normalized "
+                "(play_left_to_right). Found only 'rtl' direction values — "
+                "no home-team rows with 'ltr'."
             )
 
 

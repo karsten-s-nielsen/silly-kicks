@@ -5,6 +5,29 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.3] — 2026-05-18
+
+### Fixed
+- **`play_left_to_right` ball-flip bug:** Ball rows were not flipped because
+  they have `team_attacking_direction = None` (set by converters). Changed from
+  per-team to per-period normalization: identify periods where home team has
+  "rtl" direction, then flip ALL rows (players + ball) in those periods. This
+  preserves all pairwise Euclidean distances between entities.
+- **Downstream `_validate_ltr` validators:** Updated validators in
+  `_cover_shadows.py`, `_defensive_line.py`, and `_off_ball_runs.py` to accept
+  period-normalized frames (`{"ltr", "rtl"}` after `play_left_to_right`) instead
+  of rejecting any "rtl" values. Validators now reject unexpected values or
+  all-rtl-only frames.
+
+### Added
+- Tests: `test_play_left_to_right_ball_flip.py` — 16 regression tests covering
+  ball-player spatial consistency, per-period normalization, edge cases (NaN,
+  PSO, ball-only, string team IDs), and downstream validator compatibility.
+- Tests: `test_invariant_spatial_consistency.py` — 9 physical-invariant tests
+  (3 scenarios × 3 invariants) verifying `play_left_to_right` preserves all
+  pairwise distances, normalizes home direction to "ltr", and keeps ball
+  direction as None.
+
 ## [3.15.2] — 2026-05-17
 
 ### Fixed

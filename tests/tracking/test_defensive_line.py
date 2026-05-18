@@ -332,7 +332,7 @@ class TestEdgeCases:
             away_outfield_ys=[20.0, 25.0, 40.0, 48.0],
         )
         frames["team_attacking_direction"] = "rtl"
-        with pytest.raises(ValueError, match="LTR-normalized"):
+        with pytest.raises(ValueError, match="period-normalized"):
             compute_defensive_line(frames, home_team_id=1, n=4)
 
     def test_ltr_guard_allows_nan(self):

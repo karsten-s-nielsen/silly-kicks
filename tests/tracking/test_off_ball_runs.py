@@ -386,7 +386,7 @@ class TestOffBallRunsKernel:
         frames["team_attacking_direction"] = "rtl"
         actions = _make_action_at(time_seconds=0.08, player_id=10, team_id=1)
 
-        with pytest.raises(ValueError, match="LTR"):
+        with pytest.raises(ValueError, match="period-normalized"):
             _off_ball_runs_kernel(actions, frames, home_team_id=1)
 
     def test_empty_frames_returns_columns(self):

@@ -29,21 +29,29 @@ def _row(period_id, frame_id, player_id, team_id, x, y, *, is_ball=False, td="rt
     }
 
 
-def test_ball_x_flipped_when_attacking_rtl():
-    frames = pd.DataFrame([_row(1, 0, None, None, 20.0, 34.0, is_ball=True, td="rtl")])
+def test_ball_flipped_with_home_player_in_same_period():
+    """Ball is flipped when a home-team player in the same period has 'rtl'."""
+    frames = pd.DataFrame(
+        [
+            _row(1, 0, 7, 100, 30.0, 20.0, td="rtl"),  # home player, RTL
+            _row(1, 0, None, None, 20.0, 34.0, is_ball=True, td=None),  # ball, converter-realistic
+        ]
+    )
     out = play_left_to_right(frames, home_team_id=100)
-    assert out.iloc[0]["x"] == 85.0
-    assert out.iloc[0]["y"] == 68.0 - 34.0
+    # Period-level flip: both player and ball flipped
+    assert out.iloc[1]["x"] == 85.0
+    assert out.iloc[1]["y"] == 68.0 - 34.0
 
 
 def test_player_rows_flip_consistently_with_ball():
     frames = pd.DataFrame(
         [
             _row(1, 0, 7, 100, 30.0, 20.0, td="rtl"),
-            _row(1, 0, None, None, 40.0, 50.0, is_ball=True, td="rtl"),
+            _row(1, 0, None, None, 40.0, 50.0, is_ball=True, td=None),
         ]
     )
     out = play_left_to_right(frames, home_team_id=100)
+    # Period-level flip: home player "rtl" triggers flip of ALL rows
     assert out.iloc[0]["x"] == 75.0
     assert out.iloc[0]["y"] == 48.0
     assert out.iloc[1]["x"] == 65.0

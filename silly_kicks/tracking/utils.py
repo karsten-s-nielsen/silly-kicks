@@ -45,28 +45,36 @@ def _derive_speed(frames: pd.DataFrame) -> pd.DataFrame:
 
 
 def play_left_to_right(frames: pd.DataFrame, home_team_id) -> pd.DataFrame:
-    """Mirror tracking frames so the home team attacks left-to-right in every period.
+    """Normalize tracking frames so the home team attacks left-to-right in every period.
 
-    Operates on long-form rows (player rows AND ball rows). For rows where
-    ``team_attacking_direction == "rtl"``, mirrors x and y around the SPADL
-    pitch center (105/2, 68/2). Sets ``team_attacking_direction = "ltr"`` for
-    flipped rows. NaN coordinates pass through unchanged.
+    Performs **per-period** normalization: in any period where the home team's
+    ``team_attacking_direction`` is ``"rtl"``, ALL rows in that period (home
+    players, away players, AND ball) are mirrored around the SPADL pitch center
+    (105/2, 68/2). Direction labels swap (``"ltr"`` <-> ``"rtl"``) for player
+    rows in flipped periods; ball direction stays ``None``.
+
+    This ensures all entities remain in a single consistent coordinate frame
+    per period, preserving ball-player distances. After the call, the home team
+    attacks toward high x in every period; the away team attacks toward low x.
+
+    .. versionchanged:: 3.15.3
+       Changed from per-team flip (broke ball-player spatial relationships) to
+       per-period flip. See CHANGELOG for migration notes.
 
     Parameters
     ----------
     frames : pd.DataFrame
         Long-form tracking frames matching TRACKING_FRAMES_COLUMNS.
     home_team_id : int | str
-        ID of the home team. Currently reserved (the flip decision is taken
-        from ``team_attacking_direction`` which adapters precompute); kept in
-        signature for API parity with ``spadl.utils.play_left_to_right`` and
-        to support future direction-from-roster-only callers.
+        ID of the home team. Used to identify which periods need flipping
+        (periods where home-team player rows have direction ``"rtl"``).
 
     Returns
     -------
     pd.DataFrame
-        Frames with x/y mirrored where direction was "rtl" and
-        ``team_attacking_direction`` reset to "ltr" on flipped rows.
+        Frames with per-period normalization applied. Home-team player rows
+        have ``team_attacking_direction = "ltr"``; away-team rows have
+        ``"rtl"``; ball rows have ``None``.
 
     Examples
     --------
@@ -78,14 +86,32 @@ def play_left_to_right(frames: pd.DataFrame, home_team_id) -> pd.DataFrame:
             raw, home_team_id="DFL-CLU-A", home_team_start_left=True,
         )
         ltr_frames = play_left_to_right(frames, home_team_id="DFL-CLU-A")
-        # All rows now have team_attacking_direction == "ltr".
+        # Home-team rows now have team_attacking_direction == "ltr" in
+        # all periods; away-team rows have "rtl"; ball rows have None.
     """
-    _ = home_team_id  # reserved
     out = frames.copy()
-    flip_mask = (out["team_attacking_direction"] == "rtl").to_numpy()
-    out.loc[flip_mask, "x"] = 105.0 - out.loc[flip_mask, "x"]
-    out.loc[flip_mask, "y"] = 68.0 - out.loc[flip_mask, "y"]
-    out.loc[flip_mask, "team_attacking_direction"] = "ltr"
+    if len(out) == 0 or "is_ball" not in out.columns or "team_id" not in out.columns:
+        return out
+
+    # Identify periods where the home team has "rtl" direction → need flipping
+    is_ball = out["is_ball"].astype(bool)
+    home_player_mask = (~is_ball) & (out["team_id"] == home_team_id)
+    home_rtl_mask = home_player_mask & (out["team_attacking_direction"] == "rtl")
+    home_rtl_idx = np.flatnonzero(home_rtl_mask.to_numpy())
+    rtl_periods = set(out["period_id"].iloc[home_rtl_idx].unique())
+
+    if not rtl_periods:
+        return out  # Already period-normalized; no-op
+
+    # Flip ALL rows (player + ball) in periods where home attacks RTL
+    period_flip = out["period_id"].isin(rtl_periods).to_numpy()
+    out.loc[period_flip, "x"] = 105.0 - out.loc[period_flip, "x"]
+    out.loc[period_flip, "y"] = 68.0 - out.loc[period_flip, "y"]
+
+    # Swap direction labels for player rows in flipped periods
+    player_in_flip = period_flip & (~is_ball).to_numpy()
+    old_dir = out.loc[player_in_flip, "team_attacking_direction"].copy()
+    out.loc[player_in_flip, "team_attacking_direction"] = old_dir.map({"ltr": "rtl", "rtl": "ltr"})
     return out
 
 

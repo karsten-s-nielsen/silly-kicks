@@ -141,15 +141,22 @@ def compute_defensive_line(
     if missing:
         raise ValueError(f"compute_defensive_line: frames missing columns {sorted(missing)}")
 
-    # LTR guard
+    # LTR guard: period-normalized frames have home="ltr", away="rtl"
     if "team_attacking_direction" in frames.columns:
-        directions = frames["team_attacking_direction"].dropna().unique()
-        non_ltr = [d for d in directions if d != "ltr"]
-        if non_ltr:
+        directions = set(frames["team_attacking_direction"].dropna().unique())
+        valid = {"ltr", "rtl"}
+        unexpected = directions - valid
+        if unexpected:
             raise ValueError(
-                "compute_defensive_line: frames must be LTR-normalized "
-                "(play_left_to_right). Found non-'ltr' values in "
-                f"team_attacking_direction: {non_ltr}"
+                "compute_defensive_line: frames have unexpected "
+                f"team_attacking_direction values: {sorted(unexpected)}. "
+                "Expected 'ltr'/'rtl' only."
+            )
+        if directions and "ltr" not in directions:
+            raise ValueError(
+                "compute_defensive_line: frames must be period-normalized "
+                "(play_left_to_right). Found only 'rtl' direction values — "
+                "no home-team rows with 'ltr'."
             )
 
     # --- Short-circuit ---
