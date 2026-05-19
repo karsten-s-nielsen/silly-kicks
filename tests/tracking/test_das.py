@@ -1,5 +1,7 @@
 """Unit tests for DAS adapter."""
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -81,6 +83,58 @@ class TestInputValidation:
 
         df = self._minimal_frames()
         _validate_das_inputs(df)
+
+
+class TestPrepareFramesNumericPlayerId:
+    """Regression: numeric player_id must not trigger FutureWarning on ball assignment."""
+
+    def test_int64_player_id_no_warning(self) -> None:
+        from silly_kicks.tracking._das import _prepare_frames
+
+        df = pd.DataFrame(
+            {
+                "game_id": [1, 1],
+                "period_id": [1, 1],
+                "frame_id": [0, 0],
+                "player_id": [12345, 0],  # int64
+                "team_id": ["Home", "Home"],
+                "x": [50.0, 52.5],
+                "y": [34.0, 34.0],
+                "vx": [1.0, 0.0],
+                "vy": [0.0, 0.0],
+                "is_ball": [False, True],
+                "team_in_possession": ["Home", "Home"],
+            }
+        )
+        assert df["player_id"].dtype == np.dtype("int64")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            result = _prepare_frames(df)
+        assert result.loc[result["is_ball"] == True, "player_id"].iloc[0] == "ball"  # noqa: E712
+
+    def test_float64_player_id_no_warning(self) -> None:
+        from silly_kicks.tracking._das import _prepare_frames
+
+        df = pd.DataFrame(
+            {
+                "game_id": [1, 1],
+                "period_id": [1, 1],
+                "frame_id": [0, 0],
+                "player_id": [12345.0, np.nan],  # float64 (NaN for ball)
+                "team_id": ["Home", "Home"],
+                "x": [50.0, 52.5],
+                "y": [34.0, 34.0],
+                "vx": [1.0, 0.0],
+                "vy": [0.0, 0.0],
+                "is_ball": [False, True],
+                "team_in_possession": ["Home", "Home"],
+            }
+        )
+        assert df["player_id"].dtype == np.dtype("float64")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            result = _prepare_frames(df)
+        assert result.loc[result["is_ball"] == True, "player_id"].iloc[0] == "ball"  # noqa: E712
 
 
 class TestImportGuard:

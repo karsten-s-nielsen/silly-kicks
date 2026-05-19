@@ -2,25 +2,19 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-05-18. **Current release**: silly-kicks 3.15.3. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-05-19. **Current release**: silly-kicks 3.15.3. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
 ## On Deck
 
-Items are ranked top-to-bottom by specification completeness. Tier 2 is spec-complete and ready to implement directly; Tier 3–4 require empirical tuning or are heavier engineering; Tier 5–6 contain novel research components (TF-7 pitch control shipped 3.7.0; TF-28 DAS + TF-29 VAEP variants shipped 3.8.0). Within each tier, items are ordered by additional implementation effort needed.
+Items are ranked top-to-bottom by specification completeness. Tier 3–4 require empirical tuning or are heavier engineering; Tier 5–6 contain novel research components (TF-7 pitch control shipped 3.7.0; TF-28 DAS + TF-29 VAEP variants shipped 3.8.0). Within each tier, items are ordered by additional implementation effort needed.
 
 | Size | What it means |
 |------|---------------|
 | **Monstah** | Multi-phase epic |
 | **Wicked** | Looks small, surprisingly impactful |
 | **Dunkin'** | Quick run, keeps things moving |
-
-### Tier 2 — Single published reference (ready to ship)
-
-| # | Task | Size | Source | Notes |
-|---|------|------|--------|-------|
-| TF-10 | Lakehouse boundary adapter for silly-kicks tracking primitives | Wicked–Monstah | Lakehouse-side; tracked here for cross-repo visibility | **Ready to ship (lakehouse repo, not silly-kicks).** Cross-repo umbrella for consuming silly-kicks tracking-namespace outputs. Concrete bodies of work, ordered by readiness: (a) **PR-S20 action_context** → wire 4 features into `fct_action_values` / new mart (mechanical mapping; spec in PR-S20 §11); (b) **PR-S26 `is_goalkeeper` + `is_goalkeeper_source`** → switch `fct_tracking_frames` to consume silly-kicks-derived flag, retiring the Metrica jersey-#1 heuristic empirically wrong on 6/6 sampled team-matches in the 2026-05-04 cross-provider sweep (cite PR-S26 spec); (c) future tracking-aware features (PR-S21 pre_shot_gk_position, PR-S27 defensive_line, GKDV stack). References inherited from each PR's spec. |
 
 ### Tier 3 — Heuristic with empirical tuning
 

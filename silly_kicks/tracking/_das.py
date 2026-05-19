@@ -84,6 +84,7 @@ def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
             out[col] = out[col].astype(object)
         elif dtype_name == "boolean":
             out[col] = out[col].astype(bool)
+    out["player_id"] = out["player_id"].astype(object)
     ball_mask = out["is_ball"] == True  # noqa: E712
     out.loc[ball_mask, "player_id"] = "ball"
     return out
