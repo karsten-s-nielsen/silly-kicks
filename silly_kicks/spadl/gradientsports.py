@@ -417,7 +417,7 @@ def convert_to_actions(
             "action_id": np.arange(len(events), dtype="int64"),
             "period_id": events["period_id"].astype("int64").values,
             "time_seconds": events["time_seconds"].astype("float64").values,
-            "team_id": events["team_id"].astype("int64").values,
+            "team_id": events["team_id"].astype("Int64").fillna(0).astype("int64").values,
             "player_id": (events["player_id"].astype("Int64").fillna(0).astype("int64").values),
             "start_x": (events["ball_x"].astype("float64") + 52.5).values,
             "start_y": (events["ball_y"].astype("float64") + 34.0).values,
