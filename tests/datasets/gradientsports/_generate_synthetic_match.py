@@ -473,6 +473,8 @@ def build_match():
     # plus populated fouls dict. Real Gradient Sports data uses these for some standalone
     # fouls (vs inline fouls on PA/CR/etc rows above). Converter handles
     # via in-place foul-row conversion.
+    # Real GS data has NULL startGameClock on all 28 dedicated FOUL events
+    # across 13/64 WC2022 matches — the converter must impute time_seconds.
     e = make_event(
         eid,
         ge_type="FOUL",
@@ -483,6 +485,7 @@ def build_match():
         ball_y=0.0,
         bodyType="R",
     )
+    e["gameEvents"]["startGameClock"] = None
     e["fouls"] = {
         **_empty_foul(),
         "foulType": "I",
@@ -593,6 +596,28 @@ def build_match():
             passOutcomeType="C",
         )
     )
+    eid += 1
+
+    # NULL-ACTOR EVENTS: real WC 2022 has ~17 events/match with
+    # gameEvents.teamId=NULL and gameEvents.playerId=NULL (10 OTB+CH + 7 FOUL+FO).
+    # Converter must produce team_id=0, player_id=0 (Int64 fillna sentinel).
+    e = make_event(eid, ge_type="OTB", pe_type="CH", period=2, time_s=2680.0, ball_x=5.0, ball_y=2.0)
+    e["gameEvents"]["teamId"] = None
+    e["gameEvents"]["teamName"] = None
+    e["gameEvents"]["homeTeam"] = None
+    e["gameEvents"]["playerId"] = None
+    e["gameEvents"]["playerName"] = None
+    events.append(e)
+    eid += 1
+
+    e = make_event(eid, ge_type="FOUL", pe_type="FO", period=2, time_s=2690.0, ball_x=-10.0, ball_y=5.0)
+    e["gameEvents"]["teamId"] = None
+    e["gameEvents"]["teamName"] = None
+    e["gameEvents"]["homeTeam"] = None
+    e["gameEvents"]["playerId"] = None
+    e["gameEvents"]["playerName"] = None
+    e["fouls"] = {**_empty_foul(), "foulType": "M"}
+    events.append(e)
     eid += 1
 
     # END markers.
