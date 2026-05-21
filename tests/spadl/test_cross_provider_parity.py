@@ -274,7 +274,9 @@ def _input_team_values_for(provider: str) -> set[str]:
         return {"100"}
     if provider == "gradientsports":
         # Synthetic fixture (see _load_gradientsports_fixture); two teams 100 and 200.
-        return {"100", "200"}
+        # "0" is the fillna sentinel for null-actor events (OTB+CH challenges,
+        # FOUL+FO fouls with gameEvents.teamId=NULL) — not an ADR-001 violation.
+        return {"100", "200", "0"}
     raise ValueError(f"unknown provider {provider!r}")
 
 

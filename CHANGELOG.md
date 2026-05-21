@@ -5,6 +5,20 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.4] — 2026-05-21
+
+### Fixed
+- **Gradient Sports null-actor `team_id` crash:** Events with null `teamId`
+  (OTB+CH challenges and FOUL+FO fouls with no actor, ~17 per WC 2022 match)
+  caused `IntCastingNaNError` at `gradientsports.py:420`. Fixed by applying the
+  same `Int64 → fillna(0) → int64` pattern already used for `player_id`.
+
+### Added
+- Tests: `TestGradientsportsNullActorEvents` — 3 unit tests covering OTB+CH
+  and FOUL+FO null-actor events plus mixed-batch conversion.
+- Tests: `test_synthetic_match_null_actor_events_convert` — E2E assertion on
+  the synthetic fixture with two new null-actor events (gameEventId 46, 47).
+
 ## [3.15.3] — 2026-05-18
 
 ### Fixed

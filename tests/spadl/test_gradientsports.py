@@ -97,6 +97,7 @@ def _load_synthetic_events() -> pd.DataFrame:
     for col in (
         "possession_event_id",
         "player_id",
+        "team_id",
         "carry_defender_player_id",
         "challenger_player_id",
         "challenger_team_id",
@@ -107,7 +108,6 @@ def _load_synthetic_events() -> pd.DataFrame:
     df["game_id"] = df["game_id"].astype("int64")
     df["event_id"] = df["event_id"].astype("int64")
     df["period_id"] = df["period_id"].astype("int64")
-    df["team_id"] = df["team_id"].astype("int64")
     df["time_seconds"] = df["time_seconds"].astype("float64")
     df["ball_x"] = df["ball_x"].astype("float64")
     df["ball_y"] = df["ball_y"].astype("float64")
@@ -803,6 +803,143 @@ class TestGradientsportsDedicatedFoulEvent:
         assert "FOUL+FO" not in report.unrecognized_counts
 
 
+class TestGradientsportsNullActorEvents:
+    """Events with null teamId/playerId (OTB+CH challenges, FOUL+FO fouls)
+    survive the exclusion filter in real GS data. The converter must not crash
+    on NaN team_id — it should apply Int64→fillna(0)→int64, matching player_id.
+
+    Root cause: WC 2022 has ~17 events/match (10 OTB+CH + 7 FOUL+FO) with
+    gameEvents.teamId=NULL and gameEvents.playerId=NULL.
+    """
+
+    def _df_null_actor_challenge(self) -> pd.DataFrame:
+        """OTB+CH event with null team_id and player_id (real-data pattern)."""
+        base = {col: [None] for col in _REQUIRED_COLS}
+        overrides = {
+            "game_id": [10502],
+            "event_id": [1],
+            "possession_event_id": [1],
+            "period_id": [1],
+            "time_seconds": [10.5],
+            "team_id": [None],  # null actor — the bug trigger
+            "player_id": [None],  # null actor
+            "game_event_type": ["OTB"],
+            "possession_event_type": ["CH"],
+            "set_piece_type": [None],
+            "ball_x": [0.0],
+            "ball_y": [0.0],
+        }
+        base.update(overrides)
+        df = pd.DataFrame(base)
+        for col in (
+            "possession_event_id",
+            "player_id",
+            "carry_defender_player_id",
+            "challenger_player_id",
+            "challenger_team_id",
+            "challenge_winner_player_id",
+            "challenge_winner_team_id",
+        ):
+            if col in df.columns:
+                df[col] = df[col].astype("Int64")
+        # team_id stays as object with None — reproduces the real-data dtype
+        return df
+
+    def _df_null_actor_foul(self) -> pd.DataFrame:
+        """FOUL+FO event with null team_id and player_id (real-data pattern)."""
+        base = {col: [None] for col in _REQUIRED_COLS}
+        overrides = {
+            "game_id": [10502],
+            "event_id": [2],
+            "possession_event_id": [2],
+            "period_id": [1],
+            "time_seconds": [15.0],
+            "team_id": [None],  # null actor
+            "player_id": [None],  # null actor
+            "game_event_type": ["FOUL"],
+            "possession_event_type": ["FO"],
+            "set_piece_type": [None],
+            "ball_x": [5.0],
+            "ball_y": [3.0],
+            "foul_type": ["I"],  # indirect foul
+            "final_foul_outcome_type": [None],
+        }
+        base.update(overrides)
+        df = pd.DataFrame(base)
+        for col in (
+            "possession_event_id",
+            "player_id",
+            "carry_defender_player_id",
+            "challenger_player_id",
+            "challenger_team_id",
+            "challenge_winner_player_id",
+            "challenge_winner_team_id",
+        ):
+            if col in df.columns:
+                df[col] = df[col].astype("Int64")
+        return df
+
+    def test_otb_ch_null_actor_does_not_crash(self):
+        """OTB+CH challenge with null teamId must convert without error."""
+        df = self._df_null_actor_challenge()
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert len(actions) == 1
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["tackle"]
+        assert actions.iloc[0]["team_id"] == 0
+        assert actions.iloc[0]["player_id"] == 0
+
+    def test_foul_fo_null_actor_does_not_crash(self):
+        """FOUL+FO foul with null teamId must convert without error."""
+        df = self._df_null_actor_foul()
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert len(actions) == 1
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["foul"]
+        assert actions.iloc[0]["team_id"] == 0
+        assert actions.iloc[0]["player_id"] == 0
+
+    def test_mixed_null_and_valid_actors(self):
+        """Batch with both null-actor and valid-actor events converts cleanly."""
+        valid = _df_minimal_pass()
+        null_ch = self._df_null_actor_challenge()
+        null_ch.loc[0, "event_id"] = 2
+        null_ch.loc[0, "possession_event_id"] = 2
+        null_ch.loc[0, "time_seconds"] = 11.0
+        df = pd.concat([valid, null_ch], ignore_index=True)
+        # Re-cast nullable columns after concat
+        for col in (
+            "possession_event_id",
+            "player_id",
+            "carry_defender_player_id",
+            "challenger_player_id",
+            "challenger_team_id",
+            "challenge_winner_player_id",
+            "challenge_winner_team_id",
+        ):
+            if col in df.columns:
+                df[col] = df[col].astype("Int64")
+        actions, _report = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert len(actions) == 2
+        # First row: valid pass with real team_id
+        assert actions.iloc[0]["team_id"] == 100
+        # Second row: null-actor challenge with team_id=0
+        assert actions.iloc[1]["team_id"] == 0
+
+
 class TestGradientsportsReportCounts:
     """ConversionReport.mapped_counts uses SPADL action-type names."""
 
@@ -977,6 +1114,20 @@ class TestGradientsportsSyntheticMatchE2E:
         winners_diff_from_actor = (tackles["tackle_winner_player_id"] != tackles["player_id"]).any()
         winners_eq_actor = (tackles["tackle_winner_player_id"] == tackles["player_id"]).any()
         assert winners_diff_from_actor and winners_eq_actor
+
+    def test_synthetic_match_null_actor_events_convert(self):
+        """Null-actor OTB+CH and FOUL+FO events (real WC 2022 pattern) convert
+        with team_id=0, player_id=0 instead of crashing."""
+        events = _load_synthetic_events()
+        actions, _ = gs_mod.convert_to_actions(
+            events,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        null_actor_rows = actions[actions["team_id"] == 0]
+        assert len(null_actor_rows) >= 2, f"Expected >=2 null-actor rows (OTB+CH + FOUL+FO), got {len(null_actor_rows)}"
+        assert (null_actor_rows["player_id"] == 0).all()
 
 
 class TestGradientsportsAtomicComposability:
