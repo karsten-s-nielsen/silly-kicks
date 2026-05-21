@@ -71,7 +71,7 @@ def load_gradientsports_events(gs_dir: Path, match_id: int) -> tuple[pd.DataFram
                 "event_id": int(ev["gameEventId"]),
                 "possession_event_id": ev.get("possessionEventId"),
                 "period_id": int(ge.get("period") or 0),
-                "time_seconds": float(ge.get("startGameClock") or 0.0),
+                "time_seconds": ge.get("startGameClock"),
                 "team_id": int(ge.get("teamId") or 0),
                 "player_id": ge.get("playerId"),
                 "game_event_type": ge.get("gameEventType"),

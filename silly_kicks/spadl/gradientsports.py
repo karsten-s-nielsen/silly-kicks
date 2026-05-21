@@ -434,6 +434,17 @@ def convert_to_actions(
     )
 
     # ------------------------------------------------------------------
+    # Impute NaN time_seconds via forward-fill + back-fill within period.
+    # Real Gradient Sports data has NULL startGameClock on all dedicated
+    # FOUL events (gameEventType=FOUL, possessionEventType=FO) — 28/28
+    # across 13/64 WC2022 matches. Events are chronologically ordered
+    # within a period, so ffill propagates the preceding event's timestamp
+    # and bfill handles period-leading NaN.
+    # ------------------------------------------------------------------
+    if actions["time_seconds"].isna().any():
+        actions["time_seconds"] = actions.groupby("period_id")["time_seconds"].transform(lambda s: s.ffill().bfill())
+
+    # ------------------------------------------------------------------
     # Tackle winner/loser passthrough (ADR-001)
     # ------------------------------------------------------------------
     is_tackle = np.asarray(

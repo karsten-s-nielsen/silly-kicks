@@ -36,7 +36,7 @@ def _load_synthetic_events() -> pd.DataFrame:
                 "event_id": ev["gameEventId"],
                 "possession_event_id": ev.get("possessionEventId"),
                 "period_id": ge.get("period"),
-                "time_seconds": ge.get("startGameClock") or 0.0,
+                "time_seconds": ge.get("startGameClock"),
                 "team_id": ge.get("teamId"),
                 "player_id": ge.get("playerId"),
                 "game_event_type": ge.get("gameEventType"),
@@ -938,6 +938,108 @@ class TestGradientsportsNullActorEvents:
         assert actions.iloc[0]["team_id"] == 100
         # Second row: null-actor challenge with team_id=0
         assert actions.iloc[1]["team_id"] == 0
+
+
+class TestGradientsportsNanTimeSeconds:
+    """Dedicated FOUL events (gameEventType=FOUL, possessionEventType=FO) in
+    real Gradient Sports data have NULL startGameClock — 28/28 across 13/64
+    WC2022 matches. The converter must impute time_seconds via ffill+bfill
+    within each period, not leak NaN into the output.
+    """
+
+    @staticmethod
+    def _build_df(event_specs: list[tuple[str | None, float | None, dict]]) -> pd.DataFrame:
+        """Build a multi-row input DataFrame from (pe_type, time_s, extras) specs."""
+        rows: list[dict] = []
+        for i, (pe_type, time_s, extra) in enumerate(event_specs, start=1):
+            row = {col: None for col in _REQUIRED_COLS}
+            row.update(
+                {
+                    "game_id": 10502,
+                    "event_id": i,
+                    "possession_event_id": i,
+                    "period_id": 1,
+                    "time_seconds": time_s,
+                    "team_id": 100,
+                    "player_id": 1,
+                    "game_event_type": "FOUL" if pe_type is None else "OTB",
+                    "possession_event_type": "FO" if pe_type is None else pe_type,
+                    "ball_x": 0.0,
+                    "ball_y": 0.0,
+                }
+            )
+            if pe_type is None:
+                row["foul_type"] = "I"
+                row["final_foul_outcome_type"] = "Y"
+            row.update(extra)
+            rows.append(row)
+        df = pd.DataFrame(rows)
+        for col in ("possession_event_id", "player_id"):
+            df[col] = df[col].astype("Int64")
+        return df
+
+    def test_dedicated_foul_nan_time_seconds_imputed(self):
+        """Single dedicated FOUL with NaN time_seconds between two valid events."""
+        df = self._build_df(
+            [
+                ("PA", 60.0, {"pass_outcome_type": "C", "body_type": "R", "set_piece_type": "O"}),
+                (None, None, {}),  # FOUL — NaN time_seconds
+                ("PA", 70.0, {"pass_outcome_type": "C", "body_type": "R", "set_piece_type": "O"}),
+            ]
+        )
+
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        # The foul row must have a valid (non-NaN) time_seconds.
+        foul_mask = actions["type_id"] == spadlconfig.actiontype_id["foul"]
+        assert foul_mask.any(), "Expected at least one foul action"
+        assert actions.loc[foul_mask, "time_seconds"].notna().all(), (
+            "Dedicated FOUL with NULL startGameClock must have imputed time_seconds, got NaN"
+        )
+        # Imputed value should be 60.0 (forward-fill from the preceding pass).
+        assert actions.loc[foul_mask, "time_seconds"].iloc[0] == pytest.approx(60.0)
+
+    def test_period_leading_foul_uses_bfill(self):
+        """FOUL at the start of a period (no preceding event) uses back-fill."""
+        df = self._build_df(
+            [
+                (None, None, {}),  # FOUL at period start — NaN time_seconds
+                ("PA", 5.0, {"pass_outcome_type": "C", "body_type": "R", "set_piece_type": "O"}),
+            ]
+        )
+
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        foul_mask = actions["type_id"] == spadlconfig.actiontype_id["foul"]
+        assert foul_mask.any()
+        assert actions.loc[foul_mask, "time_seconds"].notna().all(), (
+            "Period-leading FOUL must use bfill when no preceding event exists"
+        )
+        assert actions.loc[foul_mask, "time_seconds"].iloc[0] == pytest.approx(5.0)
+
+    def test_synthetic_fixture_no_nan_time_seconds(self):
+        """Full synthetic fixture (with realistic NULL startGameClock on FOUL)
+        must produce zero NaN time_seconds in the output."""
+        events = _load_synthetic_events()
+        actions, _ = gs_mod.convert_to_actions(
+            events,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        nan_mask = actions["time_seconds"].isna()
+        assert not nan_mask.any(), (
+            f"Found {nan_mask.sum()} NaN time_seconds in output:\n"
+            f"{actions.loc[nan_mask, ['action_id', 'period_id', 'type_id', 'time_seconds']]}"
+        )
 
 
 class TestGradientsportsReportCounts:
