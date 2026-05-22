@@ -559,6 +559,16 @@ def convert_to_actions(
     )
 
     # ------------------------------------------------------------------
+    # Clip coordinates to SPADL pitch bounds [0, 105] x [0, 68].
+    # GS source tracking data reports positions slightly outside the
+    # field lines (~1.2% of WC2022 actions, max ~5m x / ~8m y overshoot).
+    # ------------------------------------------------------------------
+    actions["start_x"] = actions["start_x"].clip(0, spadlconfig.field_length)
+    actions["start_y"] = actions["start_y"].clip(0, spadlconfig.field_width)
+    actions["end_x"] = actions["end_x"].clip(0, spadlconfig.field_length)
+    actions["end_y"] = actions["end_y"].clip(0, spadlconfig.field_width)
+
+    # ------------------------------------------------------------------
     # Finalize
     # ------------------------------------------------------------------
     actions = _finalize_output(

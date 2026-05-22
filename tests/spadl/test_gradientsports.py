@@ -261,6 +261,124 @@ class TestGradientsportsCoordinateTranslation:
         assert actions.iloc[0]["start_y"] == pytest.approx(0.0)
 
 
+class TestGradientsportsCoordinateClipping:
+    """OOB coordinate clipping to SPADL pitch bounds [0, 105] x [0, 68].
+
+    Lakehouse WC2022 evidence: 1,108/91,931 actions (1.2%) had OOB coords.
+    Max overshoot: ~5m x, ~8m y (throw-ins, GK overruns, tracking noise).
+    All other providers clip; GS is the only source that was missing it.
+    """
+
+    def test_high_oob_start_coordinates_clipped(self):
+        """start_x > 105 and start_y > 68 are clipped to pitch bounds."""
+        df = _df_minimal_pass()
+        # ball_x=57.5 → SPADL 110.0 (OOB by 5m, matches lakehouse max_x=110.07)
+        # ball_y=44.0 → SPADL 78.0 (OOB by 10m, matches lakehouse max_y=78.07)
+        df.loc[0, "ball_x"] = 57.5
+        df.loc[0, "ball_y"] = 44.0
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["start_x"] == pytest.approx(spadlconfig.field_length)
+        assert actions.iloc[0]["start_y"] == pytest.approx(spadlconfig.field_width)
+
+    def test_low_oob_start_coordinates_clipped(self):
+        """start_x < 0 and start_y < 0 are clipped to zero."""
+        df = _df_minimal_pass()
+        # ball_x=-57.9 → SPADL -5.4 (matches lakehouse min_x=-5.4)
+        # ball_y=-42.15 → SPADL -8.15 (matches lakehouse min_y=-8.15)
+        df.loc[0, "ball_x"] = -57.9
+        df.loc[0, "ball_y"] = -42.15
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["start_x"] == pytest.approx(0.0)
+        assert actions.iloc[0]["start_y"] == pytest.approx(0.0)
+
+    def test_end_coordinates_clipped_after_derive(self):
+        """end_x/end_y (derived from next-action start) must also be clipped.
+
+        _derive_end_coordinates sets end = next-action's start for pass-class
+        types. If the next action's start is OOB, the derived end must be clipped.
+        """
+        df = _df_minimal_pass()
+        # Two-row frame: pass at center, followed by pass at OOB location.
+        # The first pass's end_x/end_y = second pass's start_x/start_y (OOB).
+        row2 = df.iloc[0].copy()
+        row2["event_id"] = 2
+        row2["possession_event_id"] = 2
+        row2["time_seconds"] = 12.0
+        row2["ball_x"] = 57.5  # → SPADL 110.0 (OOB)
+        row2["ball_y"] = 44.0  # → SPADL 78.0 (OOB)
+        df = pd.concat([df, pd.DataFrame([row2])], ignore_index=True)
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        # First action's end coords were derived from second action's start.
+        assert actions.iloc[0]["end_x"] <= spadlconfig.field_length
+        assert actions.iloc[0]["end_y"] <= spadlconfig.field_width
+
+    def test_away_team_oob_clipped_after_ltr_flip(self):
+        """Away team LTR flip doesn't produce or preserve OOB coordinates."""
+        df = _df_minimal_pass()
+        df.loc[0, "team_id"] = 200  # away
+        df.loc[0, "ball_x"] = 57.5  # → SPADL 110.0, then LTR flip → 105-110=-5 (OOB low!)
+        df.loc[0, "ball_y"] = 44.0  # → SPADL 78.0, then LTR y-flip → 68-78=-10 (OOB low!)
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["start_x"] >= 0.0
+        assert actions.iloc[0]["start_y"] >= 0.0
+        assert actions.iloc[0]["start_x"] <= spadlconfig.field_length
+        assert actions.iloc[0]["start_y"] <= spadlconfig.field_width
+
+    def test_inbounds_coordinates_unchanged(self):
+        """Coordinates within [0, 105] x [0, 68] are not affected by clipping."""
+        df = _df_minimal_pass()
+        df.loc[0, "ball_x"] = 26.25  # → SPADL 78.75 (in bounds)
+        df.loc[0, "ball_y"] = 10.0  # → SPADL 44.0 (in bounds)
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["start_x"] == pytest.approx(78.75)
+        assert actions.iloc[0]["start_y"] == pytest.approx(44.0)
+
+    def test_synthetic_fixture_all_coordinates_in_bounds(self):
+        """Full synthetic fixture (including OOB events) produces zero OOB rows."""
+        events = _load_synthetic_events()
+        actions, _ = gs_mod.convert_to_actions(
+            events,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        for col in ("start_x", "end_x"):
+            oob = (actions[col] < 0) | (actions[col] > spadlconfig.field_length)
+            assert not oob.any(), (
+                f"{col} has {oob.sum()} OOB values: min={actions[col].min()}, max={actions[col].max()}"
+            )
+        for col in ("start_y", "end_y"):
+            oob = (actions[col] < 0) | (actions[col] > spadlconfig.field_width)
+            assert not oob.any(), (
+                f"{col} has {oob.sum()} OOB values: min={actions[col].min()}, max={actions[col].max()}"
+            )
+
+
 class TestGradientsportsDirectionOfPlay:
     """All teams attack left-to-right after conversion (per-period flip)."""
 

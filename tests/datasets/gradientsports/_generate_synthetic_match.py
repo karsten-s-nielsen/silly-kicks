@@ -598,6 +598,73 @@ def build_match():
     )
     eid += 1
 
+    # OUT-OF-BOUNDS COORDINATES: real WC 2022 has ~1.2% actions with
+    # ball positions slightly outside the pitch lines (throw-ins, GK
+    # overruns, tracking noise). Max overshoot: ~5m x, ~8m y.
+    # Centered coords: ball_x=57.5 → SPADL 110.0 (OOB high x by 5m);
+    #                  ball_y=44.0 → SPADL 78.0 (OOB high y by 10m);
+    #                  ball_x=-58.0 → SPADL -5.5 (OOB low x by 5.5m);
+    #                  ball_y=-42.0 → SPADL -8.0 (OOB low y by 8m).
+    # Pass with OOB high x (throw-in area near attacking goal line)
+    events.append(
+        make_event(
+            eid,
+            pe_type="PA",
+            period=2,
+            time_s=40.0,
+            set_piece="T",
+            ball_x=57.5,
+            ball_y=0.0,
+            bodyType="R",
+            passOutcomeType="C",
+        )
+    )
+    eid += 1
+    # Cross with OOB high y (sideline overshoot)
+    events.append(
+        make_event(
+            eid,
+            pe_type="CR",
+            period=2,
+            time_s=42.0,
+            ball_x=30.0,
+            ball_y=44.0,
+            bodyType="R",
+            crossOutcomeType="C",
+        )
+    )
+    eid += 1
+    # Clearance with OOB low x and low y
+    events.append(
+        make_event(
+            eid,
+            pe_type="CL",
+            period=2,
+            time_s=44.0,
+            ball_x=-58.0,
+            ball_y=-42.0,
+            bodyType="H",
+        )
+    )
+    eid += 1
+    # Pass (away team) with OOB high y — exercises OOB after LTR flip
+    events.append(
+        make_event(
+            eid,
+            pe_type="PA",
+            period=2,
+            time_s=46.0,
+            team_id=AWAY_TEAM_ID,
+            player_id=12,
+            home_team=False,
+            ball_x=0.0,
+            ball_y=44.0,
+            bodyType="R",
+            passOutcomeType="C",
+        )
+    )
+    eid += 1
+
     # NULL-ACTOR EVENTS: real WC 2022 has ~17 events/match with
     # gameEvents.teamId=NULL and gameEvents.playerId=NULL (10 OTB+CH + 7 FOUL+FO).
     # Converter must produce team_id=0, player_id=0 (Int64 fillna sentinel).

@@ -5,6 +5,23 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.16.1] — 2026-05-22
+
+### Fixed
+- **Gradient Sports out-of-bounds coordinates not clipped to pitch:** The GS
+  converter was the only provider missing coordinate clipping to SPADL pitch
+  bounds [0, 105] x [0, 68]. Lakehouse WC2022 evidence: 1,108/91,931 actions
+  (1.2%) had OOB values (max ~5m x, ~8m y from throw-ins, GK overruns,
+  tracking noise). Added `.clip()` after LTR normalization, matching all other
+  converters.
+
+### Added
+- Tests: `TestGradientsportsCoordinateClipping` — 6 tests covering high/low OOB
+  start coords, end coords after derive, away-team OOB after LTR flip, in-bounds
+  guard, and full synthetic fixture zero-OOB integration test.
+- Synthetic fixture: 4 OOB events added (pass high-x, cross high-y, clearance
+  low-x/y, away-team pass high-y) with realistic values from lakehouse evidence.
+
 ## [3.16.0] — 2026-05-21
 
 ### Fixed
