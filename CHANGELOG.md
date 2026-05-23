@@ -5,6 +5,23 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.17.0] — 2026-05-23
+
+### Changed
+- **`infer_ball_carrier` ~30-50x faster via numba vectorization:** Replaced
+  Python `iterrows()` inner loop with dense numpy pre-indexing + numba `@njit`
+  kernel. A full GS WC2022 match (~200K frames) now completes in ~112ms
+  (was ~31s). Python fallback when numba unavailable (~10-20x faster than
+  iterrows). Public API unchanged; output bit-identical to previous
+  implementation.
+
+### Added
+- `silly_kicks/tracking/_ball_carrier_numba.py` — optional `@njit(cache=True)`
+  kernel for ball-carrier inference.
+- Tests: 16 new tests in `test_ball_carrier_numba_parity.py` — Python kernel
+  correctness (6), pre-index round-trip (2), numba parity (5), fallback path
+  (3), plus 2 e2e tests (benchmark + real-data numba-vs-numpy parity).
+
 ## [3.16.2] — 2026-05-23
 
 ### Fixed
