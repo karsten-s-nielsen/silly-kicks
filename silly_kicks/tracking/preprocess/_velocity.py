@@ -67,6 +67,13 @@ def derive_velocities(
         x_vals = x_src[idx_arr]
         y_vals = y_src[idx_arr]
         if len(x_vals) < window_frames:
+            # Single-frame groups have no meaningful velocity -- np.gradient
+            # requires at least 2 points.  Real-world example: GS WC2022
+            # match 3851, away #10 has exactly 1 frame in period 2.
+            if len(x_vals) <= 1:
+                vx[idx_arr] = np.nan
+                vy[idx_arr] = np.nan
+                continue
             x_safe = np.where(np.isnan(x_vals), 0.0, x_vals)
             y_safe = np.where(np.isnan(y_vals), 0.0, y_vals)
             vx_g = np.gradient(x_safe, dt)

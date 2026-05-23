@@ -5,6 +5,18 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.16.2] — 2026-05-23
+
+### Fixed
+- **`derive_velocities` crashes on single-frame player-period groups:** `np.gradient`
+  requires ≥2 points; a player-period with exactly 1 frame (real-world: GS WC2022
+  match 3851, away #10, period 2) triggered `ValueError`. Guard now sets vx/vy/speed
+  to NaN for ≤1-frame groups.
+
+### Added
+- Tests: `test_single_frame_group_no_crash`, `test_two_frame_group_produces_finite_velocity`,
+  `test_mixed_group_sizes_single_and_normal` — 3 edge-case tests for short player-period groups.
+
 ## [3.16.1] — 2026-05-22
 
 ### Fixed
