@@ -16,6 +16,314 @@ import warnings
 import numpy as np
 import pandas as pd
 
+try:
+    from ._ball_carrier_numba import _carrier_loop_numba
+
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+
+
+def _pre_index_frames(
+    frames: pd.DataFrame,
+) -> dict:
+    """Convert long-form tracking frames to dense numpy arrays for kernel consumption.
+
+    Returns a dict with keys:
+        bx, by, ball_dead: (n_frames,) arrays
+        px, py, pvx, pvy: (n_frames, max_players) arrays, NaN-padded
+        player_slots: (n_frames, max_players) int64, -1 for empty
+        n_valid: (n_frames,) int64
+        seg_starts, seg_ends: (n_segments,) int64
+        frame_meta: (n_frames, 3) — game_id, period_id, frame_id per frame
+        slot_to_pid: list — inverse mapping (slot → player_id)
+        slot_to_team_id: list — player_slot → team_id direct lookup (O(1) post-process)
+        pid_to_slot: dict — forward mapping
+        pid_dtype, tid_dtype: dtype — for output casting
+        has_velocity: bool
+    """
+    has_velocity = "vx" in frames.columns and "vy" in frames.columns
+
+    ball_mask = frames["is_ball"] == True  # noqa: E712
+    ball_rows = frames[ball_mask]
+    player_rows = frames[~ball_mask & frames["x"].notna()]
+
+    # Player/team ID ↔ slot mappings (sorted for deterministic tiebreak)
+    unique_pids = sorted(player_rows["player_id"].unique())
+    pid_to_slot = {pid: i for i, pid in enumerate(unique_pids)}
+    slot_to_pid = list(unique_pids)
+
+    # Direct player_slot -> team_id lookup (O(1) in post-process).
+    _pid_tid = (
+        player_rows[["player_id", "team_id"]]
+        .drop_duplicates(subset=["player_id"])
+        .set_index("player_id")["team_id"]
+        .to_dict()
+    )
+    slot_to_team_id = [_pid_tid.get(pid) for pid in unique_pids]
+
+    # Ball position per frame
+    ball_pos = (
+        ball_rows.groupby(["game_id", "period_id", "frame_id"], dropna=False)
+        .agg(bx=("x", "mean"), by=("y", "mean"), bs=("ball_state", "first"))
+        .reset_index()
+    )
+
+    # Unique frames sorted for stable ordering
+    unique_frames = (
+        frames[["game_id", "period_id", "frame_id"]]
+        .drop_duplicates()
+        .sort_values(["game_id", "period_id", "frame_id"], kind="mergesort")
+        .reset_index(drop=True)
+    )
+    n_frames = len(unique_frames)
+
+    frame_ball = unique_frames.merge(ball_pos, on=["game_id", "period_id", "frame_id"], how="left")
+
+    # Build frame index for O(1) lookup: (game_id, period_id, frame_id) → row index
+    frame_to_idx: dict[tuple, int] = {}
+    for i, row in enumerate(unique_frames.itertuples(index=False)):
+        frame_to_idx[(row.game_id, row.period_id, row.frame_id)] = i
+
+    # Per-frame ball arrays
+    bx_arr = frame_ball["bx"].to_numpy(dtype=np.float64)
+    by_arr = frame_ball["by"].to_numpy(dtype=np.float64)
+    bs_arr = frame_ball["bs"].to_numpy()
+    ball_dead = np.array(
+        [(bs == "dead") or np.isnan(bx_arr[i]) or np.isnan(by_arr[i]) for i, bs in enumerate(bs_arr)],
+        dtype=np.bool_,
+    )
+
+    # Player groups
+    player_groups = dict(iter(player_rows.groupby(["game_id", "period_id", "frame_id"])))
+    max_players = max((len(g) for g in player_groups.values()), default=0)
+    if max_players == 0:
+        max_players = 1  # avoid zero-width arrays
+
+    # Dense player arrays
+    px = np.full((n_frames, max_players), np.nan)
+    py = np.full((n_frames, max_players), np.nan)
+    pvx = np.full((n_frames, max_players), np.nan)
+    pvy = np.full((n_frames, max_players), np.nan)
+    player_slot_arr = np.full((n_frames, max_players), -1, dtype=np.int64)
+    n_valid = np.zeros(n_frames, dtype=np.int64)
+
+    for key, group in player_groups.items():
+        f_idx = frame_to_idx.get(key)
+        if f_idx is None:
+            continue
+        n = min(len(group), max_players)
+        n_valid[f_idx] = n
+        px[f_idx, :n] = group["x"].to_numpy(dtype=np.float64)[:n]
+        py[f_idx, :n] = group["y"].to_numpy(dtype=np.float64)[:n]
+        if has_velocity:
+            pvx[f_idx, :n] = group["vx"].to_numpy(dtype=np.float64)[:n]
+            pvy[f_idx, :n] = group["vy"].to_numpy(dtype=np.float64)[:n]
+        else:
+            pvx[f_idx, :n] = 0.0
+            pvy[f_idx, :n] = 0.0
+        pids = group["player_id"].to_numpy()
+        for j in range(n):
+            player_slot_arr[f_idx, j] = pid_to_slot.get(pids[j], -1)
+
+    # Segment boundaries: contiguous ranges per (game_id, period_id)
+    seg_groups = unique_frames.groupby(["game_id", "period_id"], dropna=False, sort=True)
+    seg_starts_list = []
+    seg_ends_list = []
+    for _, seg_idx in seg_groups.groups.items():
+        idx_arr = np.asarray(sorted(seg_idx), dtype=np.int64)
+        seg_starts_list.append(int(idx_arr[0]))
+        seg_ends_list.append(int(idx_arr[-1]) + 1)
+    seg_starts = np.array(seg_starts_list, dtype=np.int64)
+    seg_ends = np.array(seg_ends_list, dtype=np.int64)
+
+    # Frame metadata for post-processing
+    frame_meta_gid = unique_frames["game_id"].to_numpy()
+    frame_meta_pid = unique_frames["period_id"].to_numpy()
+    frame_meta_fid = unique_frames["frame_id"].to_numpy()
+
+    return dict(
+        bx=bx_arr,
+        by=by_arr,
+        ball_dead=ball_dead,
+        px=px,
+        py=py,
+        pvx=pvx,
+        pvy=pvy,
+        player_slots=player_slot_arr,
+        n_valid=n_valid,
+        seg_starts=seg_starts,
+        seg_ends=seg_ends,
+        frame_meta_gid=frame_meta_gid,
+        frame_meta_pid=frame_meta_pid,
+        frame_meta_fid=frame_meta_fid,
+        slot_to_pid=slot_to_pid,
+        slot_to_team_id=slot_to_team_id,
+        pid_to_slot=pid_to_slot,
+        pid_dtype=frames["player_id"].dtype,
+        tid_dtype=frames["team_id"].dtype,
+        has_velocity=has_velocity,
+    )
+
+
+def _carrier_loop_numpy(
+    bx: np.ndarray,
+    by: np.ndarray,
+    ball_dead: np.ndarray,
+    px: np.ndarray,
+    py: np.ndarray,
+    pvx: np.ndarray,
+    pvy: np.ndarray,
+    player_slots: np.ndarray,
+    n_valid: np.ndarray,
+    seg_starts: np.ndarray,
+    seg_ends: np.ndarray,
+    tolerance_m: float,
+    beta: float,
+    gamma: float,
+    has_velocity: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Python fallback for carrier loop — identical logic to numba kernel."""
+    n_frames = len(bx)
+    winner_slot = np.full(n_frames, -1, dtype=np.int64)
+    winner_dist = np.full(n_frames, np.nan)
+    n_segments = len(seg_starts)
+
+    for s in range(n_segments):
+        incumbent = -1
+        for f in range(seg_starts[s], seg_ends[s]):
+            if ball_dead[f]:
+                winner_slot[f] = -1
+                winner_dist[f] = np.nan
+                incumbent = -1
+                continue
+
+            nv = n_valid[f]
+            if nv == 0:
+                winner_slot[f] = -1
+                winner_dist[f] = np.nan
+                incumbent = -1
+                continue
+
+            # Compute distances for valid players
+            dists = np.empty(nv)
+            for i in range(nv):
+                dx = px[f, i] - bx[f]
+                dy = py[f, i] - by[f]
+                dists[i] = np.sqrt(dx * dx + dy * dy)
+
+            # Filter to tolerance
+            within_mask = dists <= tolerance_m
+            if not within_mask.any():
+                winner_slot[f] = -1
+                winner_dist[f] = np.nan
+                incumbent = -1
+                continue
+
+            # Build candidate arrays
+            cand_indices = np.flatnonzero(within_mask)
+            cand_dists = dists[cand_indices]
+            scores = cand_dists.copy()
+
+            if has_velocity:
+                for ci, i in enumerate(cand_indices):
+                    dx = px[f, i] - bx[f]
+                    dy = py[f, i] - by[f]
+                    d = dists[i]
+                    if d > 0:
+                        ux = -dx / d
+                        uy = -dy / d
+                    else:
+                        ux = 0.0
+                        uy = 0.0
+                    vx_val = pvx[f, i]
+                    vy_val = pvy[f, i]
+                    if np.isnan(vx_val) or np.isnan(vy_val):
+                        v_toward = 0.0
+                    else:
+                        v_toward = vx_val * ux + vy_val * uy
+                        if v_toward < 0:
+                            v_toward = 0.0
+                    scores[ci] = cand_dists[ci] - beta * v_toward
+
+            # Hysteresis
+            if incumbent >= 0 and gamma > 0:
+                for ci, i in enumerate(cand_indices):
+                    if player_slots[f, i] == incumbent:
+                        scores[ci] -= gamma
+                        break
+
+            # Select best: lowest score, tiebreak by lowest slot
+            min_score = scores[0]
+            best_ci = 0
+            for ci in range(1, len(scores)):
+                if scores[ci] < min_score - 1e-12:
+                    min_score = scores[ci]
+                    best_ci = ci
+                elif abs(scores[ci] - min_score) < 1e-12:
+                    if player_slots[f, cand_indices[ci]] < player_slots[f, cand_indices[best_ci]]:
+                        best_ci = ci
+                        min_score = scores[ci]
+
+            best_i = cand_indices[best_ci]
+            winner_slot[f] = player_slots[f, best_i]
+            winner_dist[f] = cand_dists[best_ci]
+            incumbent = player_slots[f, best_i]
+
+    return winner_slot, winner_dist
+
+
+def _post_process(
+    winner_slot: np.ndarray,
+    winner_dist: np.ndarray,
+    pre: dict,
+) -> pd.DataFrame:
+    """Map kernel output back to a DataFrame with player_id/team_id."""
+    result_cols = [
+        "game_id",
+        "period_id",
+        "frame_id",
+        "ball_carrier_player_id",
+        "ball_carrier_distance_m",
+        "ball_carrier_team_id",
+    ]
+    n = len(winner_slot)
+    slot_to_pid = pre["slot_to_pid"]
+    slot_to_team_id = pre["slot_to_team_id"]
+    pid_dtype = pre["pid_dtype"]
+    tid_dtype = pre["tid_dtype"]
+
+    carrier_pids = np.empty(n, dtype=object)
+    carrier_tids = np.empty(n, dtype=object)
+    for i in range(n):
+        ws = winner_slot[i]
+        if ws < 0:
+            carrier_pids[i] = np.nan
+            carrier_tids[i] = np.nan
+        else:
+            carrier_pids[i] = slot_to_pid[ws]
+            tid = slot_to_team_id[ws]
+            carrier_tids[i] = tid if tid is not None else np.nan
+
+    out = pd.DataFrame(
+        {
+            "game_id": pre["frame_meta_gid"],
+            "period_id": pre["frame_meta_pid"],
+            "frame_id": pre["frame_meta_fid"],
+            "ball_carrier_player_id": carrier_pids,
+            "ball_carrier_distance_m": winner_dist,
+            "ball_carrier_team_id": carrier_tids,
+        },
+        columns=result_cols,
+    )
+
+    if str(pid_dtype) == "Int64":
+        out["ball_carrier_player_id"] = pd.to_numeric(out["ball_carrier_player_id"], errors="coerce").astype("Int64")
+    if str(tid_dtype) == "Int64":
+        out["ball_carrier_team_id"] = pd.to_numeric(out["ball_carrier_team_id"], errors="coerce").astype("Int64")
+
+    return out
+
 
 def infer_ball_carrier(
     frames: pd.DataFrame,
@@ -90,186 +398,31 @@ def infer_ball_carrier(
             stacklevel=2,
         )
 
-    # Detect output dtypes from frames
-    pid_dtype = frames["player_id"].dtype
-    tid_dtype = frames["team_id"].dtype
+    # Phase 1: pre-index
+    pre = _pre_index_frames(frames)
 
-    # Split ball and player rows
-    ball_mask = frames["is_ball"] == True  # noqa: E712
-    ball_rows = frames[ball_mask]
-    player_rows = frames[~ball_mask & frames["x"].notna()]
-
-    # Per-frame ball position: mean of non-NaN ball x/y
-    ball_pos = (
-        ball_rows.groupby(["game_id", "period_id", "frame_id"], dropna=False)
-        .agg(bx=("x", "mean"), by=("y", "mean"), bs=("ball_state", "first"))
-        .reset_index()
+    # Phase 2: kernel
+    _kernel = _carrier_loop_numba if _HAS_NUMBA else _carrier_loop_numpy
+    winner_slot, winner_dist = _kernel(
+        bx=pre["bx"],
+        by=pre["by"],
+        ball_dead=pre["ball_dead"],
+        px=pre["px"],
+        py=pre["py"],
+        pvx=pre["pvx"],
+        pvy=pre["pvy"],
+        player_slots=pre["player_slots"],
+        n_valid=pre["n_valid"],
+        seg_starts=pre["seg_starts"],
+        seg_ends=pre["seg_ends"],
+        tolerance_m=tolerance_m,
+        beta=beta,
+        gamma=gamma,
+        has_velocity=has_velocity,
     )
 
-    # Unique frames (from all rows, not just ball rows)
-    unique_frames = (
-        frames[["game_id", "period_id", "frame_id"]]
-        .drop_duplicates()
-        .sort_values(["game_id", "period_id", "frame_id"])
-        .reset_index(drop=True)
-    )
-
-    # Merge ball position onto unique frames
-    frame_ball = unique_frames.merge(ball_pos, on=["game_id", "period_id", "frame_id"], how="left")
-
-    # Pre-build grouped dict for O(1) per-frame candidate lookup.
-    # Avoids O(n*m) boolean-mask filtering inside the sequential loop.
-    _empty_player_df = player_rows.iloc[:0]
-    player_groups: dict[tuple, pd.DataFrame] = dict(iter(player_rows.groupby(["game_id", "period_id", "frame_id"])))
-
-    # Process sequentially within each (game_id, period_id) group
-    results: list[dict] = []
-    groups = frame_ball.groupby(["game_id", "period_id"], dropna=False)
-
-    for (_gid, _pid), group in groups:
-        incumbent_pid = None
-        group_sorted = group.sort_values("frame_id")
-
-        for _, frow in group_sorted.iterrows():
-            gid = frow["game_id"]
-            pid_val = frow["period_id"]
-            fid = frow["frame_id"]
-            bx = frow["bx"]
-            by = frow["by"]
-            bs = frow["bs"]
-
-            # Dead ball -> NaN, reset incumbent
-            if bs == "dead":
-                incumbent_pid = None
-                results.append(_nan_row(gid, pid_val, fid))
-                continue
-
-            # No ball position -> NaN, reset incumbent
-            if pd.isna(bx) or pd.isna(by):
-                incumbent_pid = None
-                results.append(_nan_row(gid, pid_val, fid))
-                continue
-
-            # O(1) candidate lookup via pre-built dict
-            cands = player_groups.get((gid, pid_val, fid), _empty_player_df)
-
-            if cands.empty:
-                incumbent_pid = None
-                results.append(_nan_row(gid, pid_val, fid))
-                continue
-
-            # Compute distances
-            cx = cands["x"].to_numpy(dtype=float)
-            cy = cands["y"].to_numpy(dtype=float)
-            dx = cx - float(bx)
-            dy = cy - float(by)
-            dists = np.sqrt(dx * dx + dy * dy)
-
-            # Filter to tolerance
-            within = dists <= tolerance_m
-            if not within.any():
-                incumbent_pid = None
-                results.append(_nan_row(gid, pid_val, fid))
-                continue
-
-            cand_idx = np.flatnonzero(within)
-            cand_dists = dists[cand_idx]
-            cand_pids = cands["player_id"].to_numpy()[cand_idx]
-            cand_tids = cands["team_id"].to_numpy()[cand_idx]
-
-            # Compute scores
-            scores = cand_dists.copy()
-
-            if has_velocity:
-                vx_vals = cands["vx"].to_numpy(dtype=float)[cand_idx]
-                vy_vals = cands["vy"].to_numpy(dtype=float)[cand_idx]
-
-                # Direction from player to ball
-                dir_x = -dx[cand_idx]
-                dir_y = -dy[cand_idx]
-                dir_norm = np.sqrt(dir_x * dir_x + dir_y * dir_y)
-                # Avoid division by zero
-                safe_norm = np.where(dir_norm > 0, dir_norm, 1.0)
-                unit_x = dir_x / safe_norm
-                unit_y = dir_y / safe_norm
-
-                # Velocity toward ball (dot product)
-                v_toward = vx_vals * unit_x + vy_vals * unit_y
-                # Clamp negative, handle NaN
-                v_toward = np.where(np.isnan(v_toward), 0.0, np.maximum(v_toward, 0.0))
-
-                scores = cand_dists - beta * v_toward
-
-            # Apply hysteresis bonus to incumbent
-            if incumbent_pid is not None and gamma > 0:
-                inc_mask = cand_pids == incumbent_pid
-                if inc_mask.any():
-                    inc_idx = np.flatnonzero(inc_mask)
-                    scores[inc_idx] -= gamma
-
-            # Select best: lowest score, tiebreak by lowest player_id
-            best_idx = _select_best(scores, cand_pids)
-            winner_pid = cand_pids[best_idx]
-            winner_dist = float(cand_dists[best_idx])
-            winner_tid = cand_tids[best_idx]
-
-            incumbent_pid = winner_pid
-            results.append(
-                {
-                    "game_id": gid,
-                    "period_id": pid_val,
-                    "frame_id": fid,
-                    "ball_carrier_player_id": winner_pid,
-                    "ball_carrier_distance_m": winner_dist,
-                    "ball_carrier_team_id": winner_tid,
-                }
-            )
-
-    if not results:
-        return pd.DataFrame(columns=result_cols)
-
-    out = pd.DataFrame(results, columns=result_cols)
-
-    # Preserve dtype for player_id and team_id
-    if str(pid_dtype) == "Int64":
-        out["ball_carrier_player_id"] = pd.to_numeric(out["ball_carrier_player_id"], errors="coerce").astype("Int64")
-    if str(tid_dtype) == "Int64":
-        out["ball_carrier_team_id"] = pd.to_numeric(out["ball_carrier_team_id"], errors="coerce").astype("Int64")
-
-    return out
-
-
-def _nan_row(game_id, period_id, frame_id) -> dict:  # type: ignore[type-arg]
-    return {
-        "game_id": game_id,
-        "period_id": period_id,
-        "frame_id": frame_id,
-        "ball_carrier_player_id": np.nan,
-        "ball_carrier_distance_m": np.nan,
-        "ball_carrier_team_id": np.nan,
-    }
-
-
-def _select_best(scores: np.ndarray, pids: np.ndarray) -> int:
-    """Index of lowest score; tiebreak by lowest player_id.
-
-    Uses Python-level ``<`` for tiebreak comparison so both int and
-    string player_ids (e.g. Sportec DFL-OBJ-*) work safely across
-    numpy versions.
-    """
-    min_score = np.nanmin(scores)
-    tied = np.flatnonzero(np.abs(scores - min_score) < 1e-12)
-    if len(tied) == 1:
-        return int(tied[0])
-    # Tiebreak: lowest player_id via Python comparison (safe for
-    # both int and object/string dtypes).
-    best_idx = tied[0]
-    best_pid = pids[tied[0]]
-    for i in tied[1:]:
-        if pids[i] < best_pid:
-            best_idx = i
-            best_pid = pids[i]
-    return int(best_idx)
+    # Phase 3: post-process
+    return _post_process(winner_slot, winner_dist, pre)
 
 
 def derive_team_in_possession(
