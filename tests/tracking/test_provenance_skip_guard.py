@@ -16,6 +16,7 @@ from silly_kicks.spadl.utils import add_pre_shot_gk_context
 from silly_kicks.tracking.features import (
     add_action_context,
     add_actor_pre_window,
+    add_player_influence,
     add_pre_shot_gk_position,
     add_pressure_on_actor,
 )
@@ -47,6 +48,12 @@ def test_chained_enrichments_no_duplicate_provenance(provider: str) -> None:
     # Step 4: add_pressure_on_actor => should SKIP provenance
     actions = add_pressure_on_actor(actions, frames, methods=("andrienko_oval",))
     _assert_no_suffix_duplicates(actions, "add_pressure_on_actor")
+
+    # Step 5: add_player_influence => should SKIP provenance
+    xt = _make_xt()
+    home = actions["team_id"].dropna().iloc[0]
+    actions = add_player_influence(actions, frames, xt, home_team_id=home)
+    _assert_no_suffix_duplicates(actions, "add_player_influence")
 
     # Final: provenance columns exist exactly once
     for col in _PROVENANCE_COLS:
@@ -84,6 +91,16 @@ def test_pre_shot_gk_position_skips_provenance_when_present(provider: str) -> No
     # add_pre_shot_gk_position should skip provenance
     actions = add_pre_shot_gk_position(actions, frames)
     _assert_no_suffix_duplicates(actions, "add_pre_shot_gk_position")
+
+
+def _make_xt():
+    import numpy as np
+
+    from silly_kicks.xthreat import ExpectedThreat
+
+    xt = ExpectedThreat(l=16, w=12)
+    xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+    return xt
 
 
 def _assert_no_suffix_duplicates(df: pd.DataFrame, step_name: str) -> None:

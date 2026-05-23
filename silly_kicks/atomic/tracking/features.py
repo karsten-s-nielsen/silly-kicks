@@ -17,7 +17,9 @@ from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
 from silly_kicks.tracking.feature_framework import lift_to_states
 from silly_kicks.tracking.features import (
+    actor_reachable_area_m2,
     add_gk_influence,
+    add_player_influence,
     ball_carrier_at_action,
     cover_shadow_xfns,
     gk_closing_time_mean_s,
@@ -25,6 +27,11 @@ from silly_kicks.tracking.features import (
     gk_influence_xfns,
     gk_pitch_control_share_weighted,
     gk_reachable_area_m2,
+    off_ball_xt_opponent,
+    off_ball_xt_team,
+    player_influence_xfns,
+    reachable_area_opponent,
+    reachable_area_team,
 )
 from silly_kicks.tracking.pressure import Method, PressureParams
 from silly_kicks.tracking.utils import _resolve_action_frame_context
@@ -34,12 +41,14 @@ _ATOMIC_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot",
 __all__ = [
     "actor_arc_length_pre_window",
     "actor_displacement_pre_window",
+    "actor_reachable_area_m2",
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
     "add_cover_shadows",
     "add_gk_influence",
     "add_pitch_control",
+    "add_player_influence",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
@@ -60,7 +69,10 @@ __all__ = [
     "gk_pitch_control_share_weighted",
     "gk_reachable_area_m2",
     "nearest_defender_distance",
+    "off_ball_xt_opponent",
+    "off_ball_xt_team",
     "pitch_control_at_action",
+    "player_influence_xfns",
     "pre_shot_gk_angle_off_goal_line",
     "pre_shot_gk_angle_to_shot_trajectory",
     "pre_shot_gk_distance_to_goal",
@@ -68,6 +80,8 @@ __all__ = [
     "pre_shot_gk_x",
     "pre_shot_gk_y",
     "pressure_on_actor",
+    "reachable_area_opponent",
+    "reachable_area_team",
     "receiver_zone_density",
 ]
 

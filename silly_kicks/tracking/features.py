@@ -70,6 +70,7 @@ __all__ = [
     "actor_arc_length_pre_window",
     "actor_displacement_pre_window",
     "actor_pre_window_default_xfns",
+    "actor_reachable_area_m2",
     "actor_speed",
     "add_action_context",
     "add_actor_pre_window",
@@ -81,6 +82,7 @@ __all__ = [
     "add_off_ball_context",
     "add_off_ball_runs",
     "add_pitch_control",
+    "add_player_influence",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
@@ -106,9 +108,12 @@ __all__ = [
     "max_lateral_gap",
     "nearest_defender_distance",
     "off_ball_context_xfns",
+    "off_ball_xt_opponent",
+    "off_ball_xt_team",
     "pitch_control_at_action",
     "pitch_control_default_xfns",
     "pitch_control_xfns",
+    "player_influence_xfns",
     "pre_shot_gk_angle_default_xfns",
     "pre_shot_gk_angle_off_goal_line",
     "pre_shot_gk_angle_to_shot_trajectory",
@@ -120,6 +125,8 @@ __all__ = [
     "pre_shot_gk_y",
     "pressure_default_xfns",
     "pressure_on_actor",
+    "reachable_area_opponent",
+    "reachable_area_team",
     "receiver_zone_density",
     "team_shape_xfns",
     "tracking_default_xfns",
@@ -2828,3 +2835,544 @@ def cover_shadow_xfns(
     _cover_shadow_transformer._frame_aware = True  # type: ignore[attr-defined]
     _cover_shadow_transformer.__name__ = "cover_shadows"
     return [_cover_shadow_transformer]
+
+
+# ---------------------------------------------------------------------------
+# PR-S51 -- TF-36 + TF-33: Per-player influence + Off-ball xT
+# ---------------------------------------------------------------------------
+
+
+def _player_influence_at_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    tau_seconds: float = 1.0,
+    links: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Batch kernel: compute player influence for all actions.
+
+    Cache key: (period_id, frame_id, attacking_team_id). Returns
+    (result_df, pointers).
+    """
+    from ._player_influence import PlayerInfluence, compute_player_influence
+
+    col_names = [
+        "actor_reachable_area_m2",
+        "off_ball_xt_team",
+        "off_ball_xt_opponent",
+        "off_ball_xt_diff",
+        "reachable_area_team",
+        "reachable_area_opponent",
+        "reachable_area_diff",
+    ]
+
+    result = pd.DataFrame(
+        {col: np.full(len(actions), np.nan) for col in col_names},
+        index=actions.index,
+    )
+
+    if len(frames) == 0:
+        return result, pd.DataFrame()
+
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _ = link_actions_to_frames(actions, frames)
+    pointer_lookup = pointers.set_index("action_id")
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    # Cache: (period_id, frame_id, attacking_team_id) -> dict | None
+    cache: dict[tuple, dict[int | str, PlayerInfluence] | None] = {}
+
+    # Build player -> team_id lookup from PC surface (populated on first call)
+    player_team_lookup: dict[int | str, int | str] = {}
+
+    # Pre-compute column indices for .iat[] (list.index returns plain int)
+    _cols = list(result.columns)
+    _ci_actor = _cols.index("actor_reachable_area_m2")
+    _ci_xt_team = _cols.index("off_ball_xt_team")
+    _ci_xt_opp = _cols.index("off_ball_xt_opponent")
+    _ci_xt_diff = _cols.index("off_ball_xt_diff")
+    _ci_area_team = _cols.index("reachable_area_team")
+    _ci_area_opp = _cols.index("reachable_area_opponent")
+    _ci_area_diff = _cols.index("reachable_area_diff")
+
+    for i, (_idx, action_row) in enumerate(actions.iterrows()):
+        aid = action_row["action_id"]
+        tid = action_row["team_id"]
+        actor_pid = action_row["player_id"]
+        if pd.isna(tid):
+            continue
+        if aid not in pointer_lookup.index:
+            continue
+        fid_raw = pointer_lookup.at[aid, "frame_id"]
+        if pd.isna(fid_raw):
+            continue
+
+        pid = action_row["period_id"]
+        fid = int(float(str(fid_raw)))
+        cache_key = (pid, fid, tid)
+
+        if cache_key not in cache:
+            try:
+                frame_data = frame_groups.get_group((pid, fid))
+            except KeyError:
+                cache[cache_key] = None
+                continue
+
+            try:
+                pi_dict = compute_player_influence(
+                    frame_data,
+                    xt,
+                    attacking_team_id=tid,
+                    home_team_id=home_team_id,
+                    method=method,
+                    tau_seconds=tau_seconds,
+                )
+            except (ValueError, KeyError) as exc:
+                _warnings.warn(
+                    f"compute_player_influence failed for frame {fid}: {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                pi_dict = None
+
+            cache[cache_key] = pi_dict
+
+            # Populate player->team lookup from frame data
+            if pi_dict is not None:
+                outfield = frame_data[~frame_data["is_ball"].astype(bool) & ~frame_data["is_goalkeeper"].astype(bool)]
+                for _, prow in outfield.iterrows():
+                    p_id = prow["player_id"]
+                    if p_id not in player_team_lookup:
+                        player_team_lookup[p_id] = prow["team_id"]
+
+        pi_dict = cache[cache_key]
+        if pi_dict is None:
+            continue
+
+        # Aggregate per-team
+        actor_team = tid
+        team_xt = 0.0
+        opponent_xt = 0.0
+        actor_area = 0.0
+        team_area = 0.0
+        opponent_area = 0.0
+
+        for p_id, pi in pi_dict.items():
+            p_team = player_team_lookup.get(p_id)
+            if p_team is None:
+                continue
+            is_same_team = str(p_team) == str(actor_team)
+            is_actor = str(p_id) == str(actor_pid)
+
+            if is_same_team:
+                team_area += pi.reachable_area_m2
+                if is_actor:
+                    actor_area = pi.reachable_area_m2
+                else:
+                    team_xt += pi.off_ball_xt
+            else:
+                opponent_xt += pi.off_ball_xt
+                opponent_area += pi.reachable_area_m2
+
+        result.iat[i, _ci_actor] = actor_area
+        result.iat[i, _ci_xt_team] = team_xt
+        result.iat[i, _ci_xt_opp] = opponent_xt
+        result.iat[i, _ci_xt_diff] = team_xt - opponent_xt
+        result.iat[i, _ci_area_team] = team_area
+        result.iat[i, _ci_area_opp] = opponent_area
+        result.iat[i, _ci_area_diff] = team_area - opponent_area
+
+    return result, pointers
+
+
+def actor_reachable_area_m2(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    tau_seconds: float = 1.0,
+) -> pd.Series:
+    """Actor's uniquely reachable area (m^2) at the linked frame.
+
+    For multiple columns, prefer ``add_player_influence`` which computes
+    all 7 columns in a single pass.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import actor_reachable_area_m2
+    >>> area = actor_reachable_area_m2(actions, frames, xt, home_team_id=1)
+    """
+    col_name = "actor_reachable_area_m2"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    batch, _ = _player_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        method=method,
+        tau_seconds=tau_seconds,
+    )
+    return batch[col_name].rename(col_name)
+
+
+def off_ball_xt_team(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.Series:
+    """Sum of teammates' off-ball xT (excluding actor) at linked frame.
+
+    For multiple columns, prefer ``add_player_influence`` which computes
+    all 7 columns in a single pass.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import off_ball_xt_team
+    >>> val = off_ball_xt_team(actions, frames, xt, home_team_id=1)
+    """
+    col_name = "off_ball_xt_team"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    batch, _ = _player_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        method=method,
+    )
+    return batch[col_name].rename(col_name)
+
+
+def off_ball_xt_opponent(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.Series:
+    """Sum of opponents' off-ball xT at linked frame.
+
+    For multiple columns, prefer ``add_player_influence`` which computes
+    all 7 columns in a single pass.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import off_ball_xt_opponent
+    >>> val = off_ball_xt_opponent(actions, frames, xt, home_team_id=1)
+    """
+    col_name = "off_ball_xt_opponent"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    batch, _ = _player_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        method=method,
+    )
+    return batch[col_name].rename(col_name)
+
+
+def reachable_area_team(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    tau_seconds: float = 1.0,
+) -> pd.Series:
+    """Sum of acting team's uniquely reachable area (m^2) at linked frame.
+
+    For multiple columns, prefer ``add_player_influence`` which computes
+    all 7 columns in a single pass.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import reachable_area_team
+    >>> val = reachable_area_team(actions, frames, xt, home_team_id=1)
+    """
+    col_name = "reachable_area_team"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    batch, _ = _player_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        method=method,
+        tau_seconds=tau_seconds,
+    )
+    return batch[col_name].rename(col_name)
+
+
+def reachable_area_opponent(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    tau_seconds: float = 1.0,
+) -> pd.Series:
+    """Sum of opponent team's uniquely reachable area (m^2) at linked frame.
+
+    For multiple columns, prefer ``add_player_influence`` which computes
+    all 7 columns in a single pass.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import reachable_area_opponent
+    >>> val = reachable_area_opponent(actions, frames, xt, home_team_id=1)
+    """
+    col_name = "reachable_area_opponent"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+    batch, _ = _player_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        method=method,
+        tau_seconds=tau_seconds,
+    )
+    return batch[col_name].rename(col_name)
+
+
+@nan_safe_enrichment
+def add_player_influence(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt: ExpectedThreat,
+    *,
+    links: pd.DataFrame | None = None,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    tau_seconds: float = 1.0,
+) -> pd.DataFrame:
+    """Enrich actions with 7 player-influence columns + 4 provenance.
+
+    Columns: actor_reachable_area_m2, off_ball_xt_team, off_ball_xt_opponent,
+    off_ball_xt_diff, reachable_area_team, reachable_area_opponent,
+    reachable_area_diff.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_player_influence
+    >>> enriched = add_player_influence(actions, frames, xt, home_team_id=1)
+
+    See NOTICE for full bibliographic citations.
+    """
+    out = actions.copy()
+    batch, pointers = _player_influence_at_actions(
+        actions,
+        frames,
+        xt,
+        links=links,
+        home_team_id=home_team_id,
+        method=method,
+        tau_seconds=tau_seconds,
+    )
+    for col in batch.columns:
+        out[col] = batch[col].values
+
+    # Provenance (idempotent skip-guard)
+    provenance_cols = [
+        "frame_id",
+        "time_offset_seconds",
+        "n_candidate_frames",
+        "link_quality_score",
+    ]
+    existing = [c for c in provenance_cols if c in out.columns]
+    if not existing and len(pointers) > 0:
+        ptr_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(
+            ptr_cols,
+            left_on="action_id",
+            right_index=True,
+            how="left",
+        )
+
+    return out
+
+
+def player_influence_xfns(
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    tau_seconds: float = 1.0,
+) -> list:
+    """Factory returning a FrameAwareTransformer for player influence.
+
+    Emits 7 columns x 3 gamestate slots = 21 VAEP columns.
+
+    Examples
+    --------
+    Compose into HybridVAEP::
+
+        from silly_kicks.tracking.features import tracking_default_xfns, player_influence_xfns
+        xfns = tracking_default_xfns + player_influence_xfns(xt, home_team_id=1)
+        X = compute_features(actions, xfns=xfns, frames=frames)
+    """
+    from ._player_influence import PlayerInfluence, compute_player_influence
+
+    col_names = [
+        "actor_reachable_area_m2",
+        "off_ball_xt_team",
+        "off_ball_xt_opponent",
+        "off_ball_xt_diff",
+        "reachable_area_team",
+        "reachable_area_opponent",
+        "reachable_area_diff",
+    ]
+
+    def _player_influence_transformer(states, frames):
+        """Multi-column player influence xfn with frame precomputation cache."""
+        out = pd.DataFrame(index=states[0].index)
+
+        if frames is None:
+            for i in range(3):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        # Shared cache across all 3 slots
+        cache: dict[tuple, dict[int | str, PlayerInfluence] | None] = {}
+        frame_groups = frames.groupby(["period_id", "frame_id"])
+        player_team_lookup: dict[int | str, int | str] = {}
+
+        def _get_pi(period_id, frame_id_int, team_id):
+            key = (period_id, frame_id_int, team_id)
+            if key in cache:
+                return cache[key]
+
+            try:
+                frame_data = frame_groups.get_group((period_id, frame_id_int))
+            except KeyError:
+                cache[key] = None
+                return None
+
+            try:
+                pi_dict = compute_player_influence(
+                    frame_data,
+                    xt,
+                    attacking_team_id=team_id,
+                    home_team_id=home_team_id,
+                    method=method,
+                    tau_seconds=tau_seconds,
+                )
+            except (ValueError, KeyError) as exc:
+                _warnings.warn(
+                    f"compute_player_influence failed for frame {frame_id_int}: {exc}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                pi_dict = None
+
+            cache[key] = pi_dict
+
+            # Populate player->team lookup
+            if pi_dict is not None:
+                outfield = frame_data[~frame_data["is_ball"].astype(bool) & ~frame_data["is_goalkeeper"].astype(bool)]
+                for _, prow in outfield.iterrows():
+                    p_id = prow["player_id"]
+                    if p_id not in player_team_lookup:
+                        player_team_lookup[p_id] = prow["team_id"]
+
+            return pi_dict
+
+        def _aggregate(pi_dict, actor_team, actor_pid):
+            """Aggregate per-player values into 7-column dict."""
+            vals = {col: np.nan for col in col_names}
+            if pi_dict is None:
+                return vals
+
+            team_xt = 0.0
+            opp_xt = 0.0
+            actor_area = 0.0
+            team_area = 0.0
+            opp_area = 0.0
+
+            for p_id, pi in pi_dict.items():
+                p_team = player_team_lookup.get(p_id)
+                if p_team is None:
+                    continue
+                is_same = str(p_team) == str(actor_team)
+                is_actor = str(p_id) == str(actor_pid)
+
+                if is_same:
+                    team_area += pi.reachable_area_m2
+                    if is_actor:
+                        actor_area = pi.reachable_area_m2
+                    else:
+                        team_xt += pi.off_ball_xt
+                else:
+                    opp_xt += pi.off_ball_xt
+                    opp_area += pi.reachable_area_m2
+
+            vals["actor_reachable_area_m2"] = actor_area
+            vals["off_ball_xt_team"] = team_xt
+            vals["off_ball_xt_opponent"] = opp_xt
+            vals["off_ball_xt_diff"] = team_xt - opp_xt
+            vals["reachable_area_team"] = team_area
+            vals["reachable_area_opponent"] = opp_area
+            vals["reachable_area_diff"] = team_area - opp_area
+            return vals
+
+        for i, slot in enumerate(states[:3]):
+            slot_results = {col: np.full(len(slot), np.nan) for col in col_names}
+
+            pointers, _ = link_actions_to_frames(slot, frames)
+            pointer_lookup = pointers.set_index("action_id")
+
+            for j, (_idx, row) in enumerate(slot.iterrows()):
+                aid = row["action_id"]
+                tid = row["team_id"]
+                if pd.isna(tid):
+                    continue
+                if aid not in pointer_lookup.index:
+                    continue
+                fid_raw = pointer_lookup.at[aid, "frame_id"]
+                if pd.isna(fid_raw):
+                    continue
+
+                period = row["period_id"]
+                fid = int(float(str(fid_raw)))
+                actor_pid = row["player_id"]
+
+                pi_dict = _get_pi(period, fid, tid)
+                agg = _aggregate(pi_dict, tid, actor_pid)
+                for col in col_names:
+                    slot_results[col][j] = agg[col]
+
+            for col in col_names:
+                out[f"{col}_a{i}"] = slot_results[col]
+
+        return out
+
+    _player_influence_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _player_influence_transformer.__name__ = "player_influence"
+    return [_player_influence_transformer]

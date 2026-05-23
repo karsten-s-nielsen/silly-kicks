@@ -40,6 +40,7 @@ _TRACKING_NEEDS_EXTRA = {
     "add_line_break",
     "add_off_ball_context",
     "add_off_ball_runs",
+    "add_player_influence",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_team_shape",
@@ -66,9 +67,9 @@ def test_registry_nonempty_std() -> None:
 
 
 def test_registry_nonempty_tracking() -> None:
-    """At least 9 @nan_safe_enrichment helpers in silly_kicks.tracking.features."""
-    assert len(TRACKING_ENRICHMENTS) >= 9, (
-        f"Expected ≥9 @nan_safe_enrichment helpers in silly_kicks.tracking.features; "
+    """At least 10 @nan_safe_enrichment helpers in silly_kicks.tracking.features."""
+    assert len(TRACKING_ENRICHMENTS) >= 10, (
+        f"Expected ≥10 @nan_safe_enrichment helpers in silly_kicks.tracking.features; "
         f"found {len(TRACKING_ENRICHMENTS)}: {[fn.__name__ for fn in TRACKING_ENRICHMENTS]}. "
         f"Did the marker name change or a helper lose its decoration?"
     )
@@ -490,7 +491,7 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
     name = helper.__name__
     if name in ("add_defensive_line", "add_off_ball_runs", "add_line_break", "add_off_ball_context", "add_team_shape"):
         out = helper(actions, frames, home_team_id=1)
-    elif name in ("add_gk_influence", "add_cover_shadows"):
+    elif name in ("add_gk_influence", "add_cover_shadows", "add_player_influence"):
         import numpy as np
 
         from silly_kicks.xthreat import ExpectedThreat
