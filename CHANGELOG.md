@@ -5,6 +5,15 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `compute_player_influence`: per-frame primitive computing off-ball xT and uniquely reachable area for all outfield players (TF-36 + TF-33)
+- `add_player_influence`: action-coupled aggregator emitting 7 columns (`actor_reachable_area_m2`, `off_ball_xt_team`, `off_ball_xt_opponent`, `off_ball_xt_diff`, `reachable_area_team`, `reachable_area_opponent`, `reachable_area_diff`)
+- `player_influence_xfns`: VAEP factory (21 columns across 3 gamestate slots)
+- 5 per-Series helpers: `actor_reachable_area_m2`, `off_ball_xt_team`, `off_ball_xt_opponent`, `reachable_area_team`, `reachable_area_opponent`
+- `PlayerInfluence` frozen dataclass return type
+
 ## [3.17.0] — 2026-05-23
 
 ### Changed

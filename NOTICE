@@ -246,6 +246,20 @@ The cover shadow features in silly_kicks/tracking/_cover_shadows.py
   (Ball drag model: quadratic air resistance with rho=1.22, C_D=0.25,
   A=0.038, m=0.42; referenced by Cascioli et al. for ball travel time)
 
+The per-player influence primitives in silly_kicks/tracking/_player_influence.py
+(PR-S51, TF-36 + TF-33) compose:
+
+- Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
+  Conference.
+  (pitch control decomposition, TTI kinematic model for uniquely reachable area)
+
+- Singh, K. (2018). "Introducing Expected Threat (xT)." karun.in/blog/
+  expected-threat
+  (threat surface for per-player off-ball xT weighting)
+
+The per-player composition (off-ball xT via PC share × xT, uniquely reachable
+area generalized from GK-specific to all outfield) is novel to silly-kicks.
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).
