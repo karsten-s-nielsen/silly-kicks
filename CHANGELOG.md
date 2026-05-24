@@ -5,7 +5,7 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.18.0] — 2026-05-23
 
 ### Added
 - `compute_player_influence`: per-frame primitive computing off-ball xT and uniquely reachable area for all outfield players (TF-36 + TF-33)
