@@ -206,9 +206,17 @@ def ball_carrier_at_action(
 
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
 
+    # Align game_id dtype between linked (from actions) and carriers (from frames)
+    # before the merge — pandas rejects merge on object vs int64 keys.
+    carriers_proj = carriers[["game_id", "period_id", "frame_id", "ball_carrier_player_id"]].copy()
+    if len(linked) > 0 and len(carriers_proj) > 0:
+        if linked["game_id"].dtype != carriers_proj["game_id"].dtype:
+            linked["game_id"] = linked["game_id"].astype(str)
+            carriers_proj["game_id"] = carriers_proj["game_id"].astype(str)
+
     # Join with carriers on (game_id, period_id, frame_id)
     merged = linked.merge(
-        carriers[["game_id", "period_id", "frame_id", "ball_carrier_player_id"]],
+        carriers_proj,
         left_on=["game_id", "period_id", "frame_id_int"],
         right_on=["game_id", "period_id", "frame_id"],
         how="left",
@@ -1438,6 +1446,16 @@ def add_team_shape(
         how="left",
     )
 
+    # Align game_id dtype between linked (from actions) and shape_indexed keys
+    # (from frames) — int64 vs object mismatch causes silent dict-key miss.
+    if len(linked) > 0 and shape_indexed:
+        sample_sdf = next(iter(shape_indexed.values()))
+        if len(sample_sdf) > 0:
+            sample_key_gid = sample_sdf.index[0][0]
+            linked_gid_sample = linked["game_id"].iloc[0]
+            if not isinstance(linked_gid_sample, type(sample_key_gid)):
+                linked["game_id"] = linked["game_id"].astype(str)
+
     aid_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
 
     for _, row in linked.iterrows():
@@ -1573,6 +1591,16 @@ def _team_shape_at_actions(
         how="left",
     )
     linked = linked.drop_duplicates("_row_idx", keep="first")
+
+    # Align game_id dtype between linked (from actions) and shape_indexed keys
+    # (from frames) — int64 vs object mismatch causes silent dict-key miss.
+    if len(linked) > 0 and shape_indexed:
+        sample_sdf = next(iter(shape_indexed.values()))
+        if len(sample_sdf) > 0:
+            sample_key_gid = sample_sdf.index[0][0]
+            linked_gid_sample = linked["game_id"].iloc[0]
+            if not isinstance(linked_gid_sample, type(sample_key_gid)):
+                linked["game_id"] = linked["game_id"].astype(str)
 
     out = empty.copy()
 
