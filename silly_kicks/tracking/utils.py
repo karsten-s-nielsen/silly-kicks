@@ -397,16 +397,66 @@ def slice_around_event(
         cols = [*frames.columns, "action_id", "time_offset_seconds"]
         return pd.DataFrame(columns=cols)
 
-    a = actions[["action_id", "period_id", "time_seconds"]].rename(
-        columns={"time_seconds": "action_time"},
-    )
-    merged = frames.merge(a, on="period_id", how="inner")
-    delta = merged["time_seconds"] - merged["action_time"]
-    in_window = (delta >= -pre_seconds) & (delta <= post_seconds)
-    out = merged.loc[in_window].copy()
-    out["time_offset_seconds"] = (out["time_seconds"] - out["action_time"]).astype("float64")
-    out = out.drop(columns=["action_time"])
-    return out.reset_index(drop=True)
+    parts: list[pd.DataFrame] = []
+    a_proj = actions[["action_id", "period_id", "time_seconds"]]
+
+    for period_id, a_grp in a_proj.groupby("period_id", sort=False):
+        f_period = frames[frames["period_id"] == period_id]
+        if len(f_period) == 0:
+            continue
+
+        # One row per unique frame, sorted by time for searchsorted
+        frame_index = (
+            f_period[["frame_id", "time_seconds"]]
+            .drop_duplicates("frame_id")
+            .sort_values("time_seconds", kind="mergesort")
+            .reset_index(drop=True)
+        )
+        ft = frame_index["time_seconds"].to_numpy()
+        fids = frame_index["frame_id"].to_numpy()
+
+        action_times = a_grp["time_seconds"].to_numpy()
+        action_ids = a_grp["action_id"].to_numpy()
+
+        # O(A * log F) instead of O(A * F) cartesian merge
+        lo = np.searchsorted(ft, action_times - pre_seconds, side="left")
+        hi = np.searchsorted(ft, action_times + post_seconds, side="right")
+        counts = hi - lo
+        total = counts.sum()
+        if total == 0:
+            continue
+
+        # Vectorized expansion of (action_id, frame_id, action_time) triples
+        a_idx = np.repeat(np.arange(len(action_times)), counts)
+        cumstarts = np.empty(len(counts), dtype=np.intp)
+        cumstarts[0] = 0
+        np.cumsum(counts[:-1], out=cumstarts[1:])
+        within = np.arange(total) - np.repeat(cumstarts, counts)
+        frame_offsets = np.repeat(lo, counts) + within
+
+        pair_df = pd.DataFrame(
+            {
+                "action_id": action_ids[a_idx],
+                "_frame_id_key": fids[frame_offsets],
+                "_action_time": action_times[a_idx],
+            }
+        )
+
+        merged = pair_df.merge(
+            f_period,
+            left_on="_frame_id_key",
+            right_on="frame_id",
+            how="inner",
+        )
+        merged["time_offset_seconds"] = (merged["time_seconds"] - merged["_action_time"]).astype("float64")
+        merged = merged.drop(columns=["_action_time", "_frame_id_key"])
+        parts.append(merged)
+
+    if not parts:
+        cols = [*frames.columns, "action_id", "time_offset_seconds"]
+        return pd.DataFrame(columns=cols)
+
+    return pd.concat(parts, ignore_index=True)
 
 
 # ---------------------------------------------------------------------------
