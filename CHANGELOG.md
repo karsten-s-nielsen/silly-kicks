@@ -5,6 +5,17 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.18.1] — 2026-05-24
+
+### Fixed
+- **`slice_around_event` OOM on high-framerate tracking data:** Replaced
+  O(A*F) cartesian merge on `period_id` with O(A*log F) per-period
+  `np.searchsorted` on sorted frame times. At 25fps (Gradient Sports
+  WC2022), the old implementation produced ~1.6 billion intermediate rows
+  (12+ GiB allocation) and crashed; the new implementation materializes
+  only the windowed subset. Affects `add_actor_pre_window` and
+  `add_off_ball_runs` callers.
+
 ## [3.18.0] — 2026-05-23
 
 ### Added
