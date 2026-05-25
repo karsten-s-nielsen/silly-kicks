@@ -835,6 +835,14 @@ def _defensive_line_at_actions(
     # For duplicate action_ids (gamestates), keep all rows — _row_idx disambiguates
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
 
+    # Align game_id dtype between linked (from actions) and dl (from frames)
+    # before the merge — pandas rejects merge on object vs int64 keys.
+    if len(linked) > 0 and len(dl) > 0:
+        if linked["game_id"].dtype != dl["game_id"].dtype:
+            linked["game_id"] = linked["game_id"].astype(str)
+            dl = dl.copy()
+            dl["game_id"] = dl["game_id"].astype(str)
+
     # Join with defensive-line data: match on (period_id, frame_id) then filter to opposing team
     merged = linked.merge(
         dl,

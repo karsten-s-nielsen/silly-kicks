@@ -5,6 +5,18 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.18.2] — 2026-05-25
+
+### Fixed
+- **game_id dtype mismatch between actions (int64) and frames (str):**
+  Lakehouse SPADL pipelines produce `actions.game_id` as int64 (via
+  `hash_native_id_to_bigint`) while `frames.game_id` retains native
+  string values. Fixed 5 unguarded merge/lookup sites across
+  `_defensive_line_at_actions`, `ball_carrier_at_action`,
+  `add_team_shape`, and `_team_shape_at_actions` by casting both sides
+  to `str` when dtypes differ. Same pattern as the PR-S44 fix in
+  `_off_ball_runs` and `_line_breaking`.
+
 ## [3.18.1] — 2026-05-24
 
 ### Fixed
