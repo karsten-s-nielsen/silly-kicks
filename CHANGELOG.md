@@ -5,6 +5,16 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.1] — 2026-05-26
+
+### Fixed
+- **Ghost-GK training script OOM prevention:** Replaced bulk `pd.concat` of all
+  tracking parquets with per-file on-demand loading following lakehouse TC-3
+  pattern. Raw frames are loaded one parquet at a time, features extracted
+  per-game, then frames released immediately via explicit `del`. Peak memory
+  drops from ~2x total frame data to one parquet file + accumulated feature
+  matrix. Schema validation uses zero-data `pyarrow.parquet.read_schema`.
+
 ## [3.20.0] — 2026-05-26
 
 ### Added
