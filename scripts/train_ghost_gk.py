@@ -3,13 +3,19 @@
 
 Usage:
     uv run python scripts/train_ghost_gk.py \
-        --data-dir /path/to/tracking/parquet/ \
+        --data-dir /path/to/tc3_cache/ \
         --output-dir models/ \
-        --home-teams home_teams.json \
         --subsample-fps 1.0 \
         --n-estimators 500 \
         --max-depth 8 \
         --cv-folds 5
+
+Supports two directory layouts:
+  - Flat: data-dir/*.parquet
+  - TC3 cache: data-dir/{provider}/{game_id}/frames.parquet
+    (auto-reads meta.json siblings for home_team_id)
+
+Override home team mapping with --home-teams JSON file.
 
 Requires: silly-kicks installed (uv run handles this).
 
@@ -33,7 +39,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, required=True, help="Directory of tracking parquets")
     parser.add_argument("--output-dir", type=Path, default=Path("models"), help="Where to save model artifact")
     parser.add_argument("--actions-dir", type=Path, default=None, help="Optional: directory of SPADL actions parquets")
-    parser.add_argument("--home-teams", type=Path, required=True, help="JSON file: {game_id: home_team_id, ...}")
+    parser.add_argument(
+        "--home-teams",
+        type=Path,
+        default=None,
+        help="JSON file: {game_id: home_team_id, ...} (auto-read from meta.json if omitted)",
+    )
     parser.add_argument("--subsample-fps", type=float, default=1.0)
     parser.add_argument("--n-estimators", type=int, default=500)
     parser.add_argument("--max-depth", type=int, default=8)
@@ -50,14 +61,16 @@ def main() -> None:
     print(f"CV: {args.cv_folds}-fold StratifiedGroupKFold (match+provider)")
     print(f"Output: {args.output_dir}")
 
-    # --- 1. Load tracking data ---
+    # --- 1. Discover tracking parquets ---
+    # Support both flat (*.parquet) and tc3 cache ({provider}/{game_id}/frames.parquet) layouts.
     parquets = sorted(args.data_dir.glob("*.parquet"))
+    if not parquets:
+        parquets = sorted(args.data_dir.glob("**/frames.parquet"))
     if not parquets:
         print(f"ERROR: No .parquet files found in {args.data_dir}", file=sys.stderr)
         sys.exit(1)
-    frames = pd.concat([pd.read_parquet(p) for p in parquets], ignore_index=True)
 
-    # Validate schema
+    # Schema validation on first file only (all files share the same pipeline)
     required = {
         "game_id",
         "period_id",
@@ -70,21 +83,21 @@ def main() -> None:
         "x",
         "y",
     }
-    missing = required - set(frames.columns)
+    import pyarrow.parquet as pq
+
+    probe_cols = set(pq.read_schema(parquets[0]).names)
+    missing = required - probe_cols
     if missing:
         print(f"ERROR: Missing columns: {missing}", file=sys.stderr)
         sys.exit(1)
-    if "vx" not in frames.columns or "vy" not in frames.columns:
+    if "vx" not in probe_cols or "vy" not in probe_cols:
         print("ERROR: vx/vy columns missing. Run smooth_frames + derive_velocities first.", file=sys.stderr)
         sys.exit(1)
 
-    n_games = frames["game_id"].nunique()
-    n_frames_total = frames[["game_id", "period_id", "frame_id"]].drop_duplicates().shape[0]
-    providers = frames["source_provider"].unique().tolist() if "source_provider" in frames.columns else ["unknown"]
-    print(f"\nLoaded: {n_games} games, {n_frames_total} frames, providers: {providers}")
+    print(f"Found {len(parquets)} parquet files in {args.data_dir}")
 
-    # --- 2. Load actions (optional) ---
-    actions: pd.DataFrame | None = None
+    # --- 2. Load actions (optional, small — OK to hold in memory) ---
+    actions_by_game: dict[str, pd.DataFrame] = {}
     if args.actions_dir is not None:
         action_parquets = sorted(args.actions_dir.glob("*.parquet"))
         if action_parquets:
@@ -92,47 +105,81 @@ def main() -> None:
                 [pd.read_parquet(p) for p in action_parquets],
                 ignore_index=True,
             )
-            print(f"Loaded: {len(actions)} actions from {len(action_parquets)} files")
+            actions_by_game = dict(list(actions.groupby("game_id")))
+            del actions  # Release concatenated copy
+            print(f"Loaded actions for {len(actions_by_game)} games")
 
     # --- 3. Load home team mapping ---
-    with open(args.home_teams) as f:
-        home_team_map: dict[str, str] = json.load(f)
+    # Auto-discover from meta.json siblings when --home-teams is not provided.
+    home_team_map: dict[str, str] = {}
+    if args.home_teams is not None:
+        with open(args.home_teams) as f:
+            home_team_map = json.load(f)
+    else:
+        for pq_path in parquets:
+            meta_path = pq_path.parent / "meta.json"
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text())
+                game_id = pq_path.parent.name
+                home_team_map[game_id] = str(meta["home_team_id"])
+    if not home_team_map:
+        print(
+            "ERROR: No home team mapping. Provide --home-teams or use tc3 cache layout with meta.json.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     print(f"Home team mapping: {len(home_team_map)} games")
 
-    # --- 4. Per-game feature extraction ---
+    # --- 4. Per-game feature extraction (on-demand frame loading) ---
+    # Following lakehouse TC-3 pattern: load frames per-file, extract features,
+    # then delete frames immediately.  Only the extracted feature matrix (small)
+    # stays in memory — raw frames (large) are never held simultaneously.
     from silly_kicks.tracking import prepare_ghost_gk_training_data
-
-    frames_by_game = dict(list(frames.groupby("game_id")))
-    actions_by_game = dict(list(actions.groupby("game_id"))) if actions is not None else {}
 
     all_features: list[pd.DataFrame] = []
     all_labels: list[pd.DataFrame] = []
     all_game_ids: list = []
     all_providers: list[str] = []
+    n_skipped = 0
     t0 = time.time()
 
-    for game_id in sorted(frames_by_game):
-        game_frames = frames_by_game[game_id]
-        game_actions = actions_by_game.get(game_id) if actions is not None else None
-        home = home_team_map.get(str(game_id))
-        if home is None:
-            print(f"  SKIP game {game_id}: no home_team_id in mapping")
-            continue
-
-        feats, labs = prepare_ghost_gk_training_data(
-            game_frames,
-            home_team_id=home,
-            actions=game_actions,
-            subsample_fps=args.subsample_fps,
+    for pq_idx, pq_path in enumerate(parquets):
+        file_frames = pd.read_parquet(pq_path)
+        game_ids_in_file = sorted(file_frames["game_id"].unique())
+        print(
+            f"  [{pq_idx + 1}/{len(parquets)}] {pq_path.name}: {len(game_ids_in_file)} game(s), {len(file_frames)} rows"
         )
-        if len(feats) > 0:
-            all_features.append(feats)
-            all_labels.append(labs)
-            all_game_ids.extend([game_id] * len(feats))
-            prov = (
-                str(game_frames["source_provider"].iloc[0]) if "source_provider" in game_frames.columns else "unknown"
+
+        for game_id in game_ids_in_file:
+            home = home_team_map.get(str(game_id))
+            if home is None:
+                print(f"    SKIP game {game_id}: no home_team_id in mapping")
+                n_skipped += 1
+                continue
+
+            game_frames = file_frames[file_frames["game_id"] == game_id]
+            game_actions = actions_by_game.get(game_id) if actions_by_game else None
+
+            feats, labs = prepare_ghost_gk_training_data(
+                game_frames,
+                home_team_id=home,
+                actions=game_actions,
+                subsample_fps=args.subsample_fps,
             )
-            all_providers.extend([prov] * len(feats))
+            del game_frames  # Release per-game slice
+
+            if len(feats) > 0:
+                all_features.append(feats)
+                all_labels.append(labs)
+                all_game_ids.extend([game_id] * len(feats))
+                prov = (
+                    str(file_frames["source_provider"].iloc[0])
+                    if "source_provider" in file_frames.columns
+                    else "unknown"
+                )
+                all_providers.extend([prov] * len(feats))
+
+        del file_frames  # Release entire file's frames before loading next
 
     if not all_features:
         print("ERROR: No training samples extracted.", file=sys.stderr)
@@ -140,10 +187,14 @@ def main() -> None:
 
     features = pd.concat(all_features, ignore_index=True)
     labels = pd.concat(all_labels, ignore_index=True)
+    del all_features, all_labels  # Release intermediate lists
     groups = np.array(all_game_ids)
     provider_labels = np.array(all_providers)
     elapsed = time.time() - t0
-    print(f"\nExtracted {len(features)} samples from {len(set(all_game_ids))} games in {elapsed:.1f}s")
+    print(
+        f"\nExtracted {len(features)} samples from {len(set(all_game_ids))} games"
+        f" ({n_skipped} skipped) in {elapsed:.1f}s"
+    )
 
     # --- 5. StratifiedGroupKFold CV ---
     from sklearn.model_selection import StratifiedGroupKFold
