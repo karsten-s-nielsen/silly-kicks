@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "3.19.0"
+version = "3.20.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -105,6 +105,9 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/xthreat.py" = ["N803", "N806", "E741"]
 # Ghost-GK: ML-style uppercase X for feature matrices
 "silly_kicks/tracking/_ghost_gk.py" = ["N803", "N806"]
+# Ghost-GK scripts: ML-style uppercase X, Y
+"scripts/train_ghost_gk.py" = ["N803", "N806"]
+"scripts/publish_ghost_gk.py" = ["N803", "N806"]
 # False positive: ruff S105 flags string literals like "Free Kick" as "hardcoded passwords"
 # because they're compared to variables named pass_type, shot_type, etc.
 "silly_kicks/spadl/statsbomb.py" = ["S105"]

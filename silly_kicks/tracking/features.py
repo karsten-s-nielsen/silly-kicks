@@ -3421,6 +3421,7 @@ def add_ghost_gk(
     model=None,
     links: pd.DataFrame | None = None,
     home_team_id: int | str,
+    actions_for_context: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with ghost-GK positioning columns.
 
@@ -3442,6 +3443,9 @@ def add_ghost_gk(
         Pre-computed link pointers.
     home_team_id : int | str
         Home team ID.
+    actions_for_context : pd.DataFrame | None
+        SPADL actions for score_diff and phase context resolution.
+        If None, context defaults to 0 (backward-compatible).
 
     Examples
     --------
@@ -3465,7 +3469,12 @@ def add_ghost_gk(
     if "ghost_gk_x" in frames.columns and frames["ghost_gk_x"].notna().any():
         ghost_frames = frames
     else:
-        ghost_frames = compute_ghost_gk(frames, model=resolved_model, home_team_id=home_team_id)
+        ghost_frames = compute_ghost_gk(
+            frames,
+            model=resolved_model,
+            home_team_id=home_team_id,
+            actions=actions_for_context,
+        )
 
     # Extract ghost predictions from GK rows
     gk_ghost = ghost_frames[
