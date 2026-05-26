@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.20.0] — 2026-05-26
+
+### Added
+- **Ghost-GK training data assembly + HuggingFace Hub publish pipeline (TF-18):**
+  - `prepare_ghost_gk_training_data`: public API for extracting training
+    features + labels from tracking frames with match context resolution
+    (score state, set-piece phase), label domain filtering, and subsample support
+  - `_build_score_lookup`: home-perspective cumulative score from SPADL goal
+    actions with own-goal attribution flip
+  - `_build_phase_lookup`: set-piece phase with 10s exponential decay
+    (throw-in excluded per restart semantics)
+  - `_extract_all_ghost_gk_features`: shared batch helper used by both
+    `compute_ghost_gk` (inference) and `prepare_ghost_gk_training_data`
+    (training), eliminating duplicated iteration logic
+  - `compute_ghost_gk` now accepts optional `actions` parameter for
+    match context enrichment (score + phase features)
+  - `add_ghost_gk` now accepts optional `actions_for_context` parameter,
+    threaded through to `compute_ghost_gk`
+  - `scripts/train_ghost_gk.py`: full training CLI with StratifiedGroupKFold
+    CV, permutation importance, metrics.json acceptance criteria, round-trip
+    verification
+  - `scripts/publish_ghost_gk.py`: HuggingFace Hub publish CLI with
+    `--verify-only` dry-run mode and download round-trip verification
+
+### Fixed
+- **`compute_ghost_gk` timestamp key:** Fixed `"timestamp"` → `"time_seconds"`
+  key in velocity state tracking, matching the tracking schema column name
+
 ## [3.19.0] — 2026-05-25
 
 ### Added

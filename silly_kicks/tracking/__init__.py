@@ -123,6 +123,7 @@ __all__ = [
     "pre_shot_gk_full_default_xfns",
     "pre_shot_gk_x",
     "pre_shot_gk_y",
+    "prepare_ghost_gk_training_data",
     "preprocess",
     "pressure_default_xfns",
     "pressure_on_actor",
@@ -150,6 +151,7 @@ from ._cover_shadows import (
 )
 from ._das import get_das, get_individual_das, get_xc
 from ._defensive_line import compute_defensive_line, select_back_line_players
+from ._ghost_gk import prepare_ghost_gk_training_data
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._player_influence import PlayerInfluence, compute_player_influence
 from ._team_shape import compute_team_shape
