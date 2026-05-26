@@ -260,6 +260,23 @@ The per-player influence primitives in silly_kicks/tracking/_player_influence.py
 The per-player composition (off-ball xT via PC share × xT, uniquely reachable
 area generalized from GK-specific to all outfield) is novel to silly-kicks.
 
+The ghost-GK positioning model in silly_kicks/tracking/_ghost_gk.py
+(PR-S52, TF-18, GKDV Layer 2) implements methodologies described in:
+
+- Le, H. M., Yue, Y., Carr, P. & Lucey, P. (2017). "Data-Driven Ghosting
+  Using Deep Imitation Learning." MIT Sloan Sports Analytics Conference.
+  (Ghost player positioning concept; league-average baselines)
+
+- Dutta, R., Yurko, R. & Ventura, S. (2024). "NFL Ghosts: A framework for
+  evaluating defender positioning with conditional density estimation."
+  arXiv:2406.17220.
+  (RFCDE density estimation for positional ghosts; leaf co-occurrence
+  weighting; 2D KDE over tree-partitioned feature space)
+
+- Pospisil, T. & Lee, A. B. (2018). "RFCDE: Random Forests for Conditional
+  Density Estimation." arXiv:1804.05753.
+  (Random forest leaf-assignment for CDE; weighted kernel density estimation)
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).

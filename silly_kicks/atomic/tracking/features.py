@@ -18,10 +18,12 @@ from silly_kicks.tracking import _kernels
 from silly_kicks.tracking.feature_framework import lift_to_states
 from silly_kicks.tracking.features import (
     actor_reachable_area_m2,
+    add_ghost_gk,
     add_gk_influence,
     add_player_influence,
     ball_carrier_at_action,
     cover_shadow_xfns,
+    ghost_gk_xfns,
     gk_closing_time_mean_s,
     gk_closing_time_min_s,
     gk_influence_xfns,
@@ -46,6 +48,7 @@ __all__ = [
     "add_action_context",
     "add_actor_pre_window",
     "add_cover_shadows",
+    "add_ghost_gk",
     "add_gk_influence",
     "add_pitch_control",
     "add_player_influence",
@@ -63,6 +66,7 @@ __all__ = [
     "ball_carrier_at_action",
     "cover_shadow_xfns",
     "defenders_in_triangle_to_goal",
+    "ghost_gk_xfns",
     "gk_closing_time_mean_s",
     "gk_closing_time_min_s",
     "gk_influence_xfns",

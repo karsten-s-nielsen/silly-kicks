@@ -5,6 +5,26 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.19.0] — 2026-05-25
+
+### Added
+- **Ghost-GK positioning model (TF-18, GKDV Layer 2):**
+  Per-frame ghost-GK density prediction using RFCDE (leaf co-occurrence
+  weighted 2D KDE over HistGradientBoostingRegressor partitions).
+  Predicts where a league-average GK would position given game state.
+  - `GhostGkModel`: fit/predict/predict_density/save/load/from_hub
+  - `GhostGkDensity`: frozen dataclass (60x64 grid, joint 2D mode)
+  - `extract_ghost_gk_features`: 26-feature goal-relative extractor
+  - `compute_ghost_gk`: batched per-frame primitive
+  - `add_ghost_gk`: action-coupled aggregator (no provenance leak)
+  - `ghost_gk_xfns`: 9-column VAEP factory (3 cols x 3 states)
+  - Vectorized numpy tree traversal (no sklearn at inference)
+  - Serialization: npz + metadata.json + SHA256SUMS (no pickle)
+  - Lazy download from HuggingFace Hub via `[ghost-gk]` extra
+  - New extras: `[ghost-gk]` (huggingface_hub), `[ghost-gk-train]` (skl2onnx)
+  - Training script: `scripts/train_ghost_gk.py`
+  - Atomic mirror in `silly_kicks.atomic.tracking.features`
+
 ## [3.18.2] — 2026-05-25
 
 ### Fixed

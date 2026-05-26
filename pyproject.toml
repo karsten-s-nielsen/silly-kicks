@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "3.18.2"
+version = "3.19.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -44,6 +44,8 @@ lightgbm = ["lightgbm>=4.0"]
 # the golden-master extra is only installable on the wider 3.11+ subset.
 golden-master = ["unravelsports>=1.2; python_version >= '3.11'"]
 das = ["accessible-space>=2.0,<3"]
+ghost-gk = ["huggingface_hub>=0.20.0"]
+ghost-gk-train = ["skl2onnx>=1.16.0"]
 test = [
     "pytest>=7.4.2",
     "pytest-mock>=3.11.1",
@@ -63,6 +65,8 @@ test = [
     # accessible-space exercises DAS invariants + shape-alignment tests.
     # Declared here (not just optional [das]) so CI always validates DAS adapter.
     "accessible-space>=2.0,<3",
+    # huggingface_hub exercises Ghost-GK lazy download path in tests.
+    "huggingface_hub>=0.20.0",
 ]
 dev = [
     "ruff>=0.8.0",
@@ -99,6 +103,8 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "tests/tracking/test_action_context_real_data_sweep.py" = ["S608"]
 "silly_kicks/atomic/vaep/**/*.py" = ["N803", "N806"]
 "silly_kicks/xthreat.py" = ["N803", "N806", "E741"]
+# Ghost-GK: ML-style uppercase X for feature matrices
+"silly_kicks/tracking/_ghost_gk.py" = ["N803", "N806"]
 # False positive: ruff S105 flags string literals like "Free Kick" as "hardcoded passwords"
 # because they're compared to variables named pass_type, shot_type, etc.
 "silly_kicks/spadl/statsbomb.py" = ["S105"]

@@ -77,6 +77,7 @@ __all__ = [
     "add_cover_shadows",
     "add_das",
     "add_defensive_line",
+    "add_ghost_gk",
     "add_gk_influence",
     "add_line_break",
     "add_off_ball_context",
@@ -98,6 +99,7 @@ __all__ = [
     "defending_gk_from_frames",
     "defensive_line_x",
     "defensive_line_xfns",
+    "ghost_gk_xfns",
     "gk_closing_time_mean_s",
     "gk_closing_time_min_s",
     "gk_influence_xfns",
@@ -3404,3 +3406,146 @@ def player_influence_xfns(
     _player_influence_transformer._frame_aware = True  # type: ignore[attr-defined]
     _player_influence_transformer.__name__ = "player_influence"
     return [_player_influence_transformer]
+
+
+# ---------------------------------------------------------------------------
+# Ghost-GK positioning (TF-18, GKDV Layer 2)
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_ghost_gk(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    model=None,
+    links: pd.DataFrame | None = None,
+    home_team_id: int | str,
+) -> pd.DataFrame:
+    """Enrich actions with ghost-GK positioning columns.
+
+    Adds ghost_gk_x, ghost_gk_y, ghost_gk_spread per action (defending
+    GK's ghost position at the linked frame).
+
+    Only adds ghost-GK columns — does NOT add link provenance columns.
+    Callers wanting provenance should call link_actions_to_frames directly.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions.
+    frames : pd.DataFrame
+        Tracking frames (LTR-normalized).
+    model : GhostGkModel | None
+        Pre-loaded model. None = lazy download.
+    links : pd.DataFrame | None
+        Pre-computed link pointers.
+    home_team_id : int | str
+        Home team ID.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_ghost_gk
+    >>> enriched = add_ghost_gk(actions, frames, home_team_id=1)
+
+    See NOTICE for full bibliographic citations.
+    """
+    from ._ghost_gk import _resolve_model, compute_ghost_gk
+
+    resolved_model = _resolve_model(model)
+    out = actions.copy()
+
+    # Link actions to frames
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _ = link_actions_to_frames(actions, frames)
+
+    # Short-circuit: skip compute if frames already have ghost columns
+    if "ghost_gk_x" in frames.columns and frames["ghost_gk_x"].notna().any():
+        ghost_frames = frames
+    else:
+        ghost_frames = compute_ghost_gk(frames, model=resolved_model, home_team_id=home_team_id)
+
+    # Extract ghost predictions from GK rows
+    gk_ghost = ghost_frames[
+        ghost_frames["is_goalkeeper"].astype(bool)
+        & ~ghost_frames["is_ball"].astype(bool)
+        & ghost_frames["ghost_gk_x"].notna()
+    ][["game_id", "period_id", "frame_id", "team_id", "ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"]].copy()
+
+    # Build linked lookup
+    linked = pointers.merge(
+        actions[["action_id", "game_id", "period_id", "team_id"]],
+        on="action_id",
+    )
+
+    # Align game_id dtype (PR-S53 pattern)
+    if len(linked) > 0 and len(gk_ghost) > 0:
+        if linked["game_id"].dtype != gk_ghost["game_id"].dtype:
+            linked["game_id"] = linked["game_id"].astype(str)
+            gk_ghost["game_id"] = gk_ghost["game_id"].astype(str)
+
+    # Merge: find defending GK (opposite team from action's team)
+    merged = linked.merge(
+        gk_ghost,
+        on=["game_id", "period_id", "frame_id"],
+        how="left",
+        suffixes=("_action", "_gk"),
+    )
+    # Defending GK = opposite team
+    defending = merged[merged["team_id_action"] != merged["team_id_gk"]]
+    deduped = defending.drop_duplicates(subset=["action_id"], keep="first")
+
+    # Join back to actions
+    ghost_cols = deduped.set_index("action_id")[["ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"]]
+    out = out.merge(ghost_cols, left_on="action_id", right_index=True, how="left")
+
+    return out
+
+
+def ghost_gk_xfns(*, model=None, home_team_id: int | str) -> list:
+    """Factory returning a FrameAwareTransformer for ghost-GK features.
+
+    3 columns x 3 game states = 9 VAEP columns.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import ghost_gk_xfns
+    >>> xfns = ghost_gk_xfns(home_team_id=1)
+
+    See NOTICE for full bibliographic citations.
+    """
+    col_names = ["ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"]
+
+    def _ghost_gk_transformer(states, frames):
+        out = pd.DataFrame(index=states[0].index)
+
+        if frames is None:
+            for i in range(3):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        from ._ghost_gk import _resolve_model, compute_ghost_gk
+
+        resolved = _resolve_model(model)
+
+        # Compute once — add_ghost_gk short-circuits on pre-computed frames
+        ghost_frames = compute_ghost_gk(frames, model=resolved, home_team_id=home_team_id)
+
+        for i, slot in enumerate(states[:3]):
+            enriched = add_ghost_gk(
+                slot,
+                ghost_frames,
+                model=resolved,
+                home_team_id=home_team_id,
+            )
+            for col in col_names:
+                out[f"{col}_a{i}"] = enriched[col].values if col in enriched.columns else np.nan
+
+        return out
+
+    _ghost_gk_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _ghost_gk_transformer.__name__ = "ghost_gk_xfn"
+    return [_ghost_gk_transformer]
