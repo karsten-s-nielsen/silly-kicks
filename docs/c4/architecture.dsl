@@ -8,6 +8,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         // --- External Systems ---
         kloppy = softwareSystem "kloppy" "PySport event data normalization library" "External"
         mlLibs = softwareSystem "ML Libraries" "XGBoost, CatBoost, LightGBM gradient boosting frameworks" "External"
+        hfHub = softwareSystem "HuggingFace Hub" "Model artifact hosting for pre-trained Ghost-GK weights" "External"
 
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
@@ -24,6 +25,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         pipeline -> sillyKicks "Calls inside Spark applyInPandas UDFs via" "Python import"
         sillyKicks -> kloppy "Accepts EventDataset from" "kloppy bridge"
         sillyKicks -> mlLibs "Trains and predicts with" "Python API"
+        sillyKicks -> hfHub "Downloads pre-trained Ghost-GK model from" "huggingface_hub"
 
         // --- Relationships: Container level ---
         analyst -> spadl "Converts raw events to SPADL actions and enriches via" "convert_to_actions() + add_*() helper family"
@@ -37,6 +39,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
 
         spadl -> kloppy "Accepts kloppy EventDataset in kloppy converter" "kloppy bridge"
         tracking -> kloppy "Accepts kloppy TrackingDataset in kloppy gateway" "kloppy bridge"
+        tracking -> hfHub "Lazy-downloads Ghost-GK model weights via" "huggingface_hub"
 
         vaep -> spadl "Reads SPADL config, schema constants, and action names from" "Python import"
         vaep -> mlLibs "Delegates model training to" "fit() dispatch"

@@ -36,6 +36,7 @@ TRACKING_ENRICHMENTS = _discover(tracking_features)
 _TRACKING_NEEDS_EXTRA = {
     "add_cover_shadows",
     "add_defensive_line",
+    "add_ghost_gk",
     "add_gk_influence",
     "add_line_break",
     "add_off_ball_context",
@@ -499,6 +500,20 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         xt = ExpectedThreat(l=16, w=12)
         xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
         out = helper(actions, frames, xt, home_team_id=1)
+    elif name == "add_ghost_gk":
+        import numpy as np
+
+        from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES, GhostGkModel
+
+        rng = np.random.default_rng(42)
+        X_train = pd.DataFrame(rng.standard_normal((50, 26)), columns=GHOST_GK_FEATURE_NAMES)
+        X_train["phase"] = rng.integers(0, 3, 50).astype(float)
+        X_train["team_in_possession"] = rng.integers(0, 2, 50).astype(float)
+        X_train["ball_in_own_half"] = rng.integers(0, 2, 50).astype(float)
+        labels = pd.DataFrame({"gk_x": rng.uniform(2, 20, 50), "gk_y": rng.uniform(25, 45, 50)})
+        m = GhostGkModel(n_estimators=5)
+        m.fit(X_train, labels)
+        out = helper(actions, frames, model=m, home_team_id=1)
     elif name == "add_pre_shot_gk_position":
         # Needs defending_gk_player_id column pre-populated
         acts = actions.copy()
