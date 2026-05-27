@@ -81,7 +81,7 @@ def test_tracking_categorical_domains_values():
     assert TRACKING_CATEGORICAL_DOMAINS["team_attacking_direction"] == frozenset({"ltr", "rtl"})
     assert TRACKING_CATEGORICAL_DOMAINS["speed_source"] == frozenset({"native", "derived"})
     assert TRACKING_CATEGORICAL_DOMAINS["source_provider"] == frozenset(
-        {"gradientsports", "sportec", "metrica", "skillcorner"}
+        {"gradientsports", "sportec", "metrica", "skillcorner", "snapshot"}
     )
 
 

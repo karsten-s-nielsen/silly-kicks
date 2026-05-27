@@ -1,0 +1,163 @@
+"""Convert per-event player-position snapshots to tracking frame schema.
+
+Public API: snapshot_to_tracking_frames
+Module: silly_kicks.tracking._snapshot
+Spec: docs/superpowers/specs/2026-05-27-snapshot-to-tracking-frames-design.md
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+from .schema import TRACKING_FRAMES_COLUMNS
+
+
+def snapshot_to_tracking_frames(
+    snapshots: pd.DataFrame,
+    actions: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Convert per-event player-position snapshots to tracking frame schema.
+
+    Parameters
+    ----------
+    snapshots : pd.DataFrame
+        One row per player per event. Required columns: action_id, team_id,
+        is_goalkeeper, x, y. Optional: player_id (synthetic sequential int
+        if absent). Coordinates must be in the current SPADL coordinate system.
+    actions : pd.DataFrame
+        SPADL actions DataFrame. Used to derive game_id, period_id,
+        time_seconds, and ball position (start_x, start_y) per frame.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        (frames, links) where:
+        - frames: 20-column TRACKING_FRAMES_COLUMNS schema, one synthetic
+          frame per action that has snapshot data.
+        - links: Pre-built pointer DataFrame matching the
+          link_actions_to_frames output contract (action_id, frame_id,
+          time_offset_seconds=0.0, n_candidate_frames=1,
+          link_quality_score=1.0).
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking import snapshot_to_tracking_frames
+    >>> # See tests/tracking/test_snapshot.py for runnable examples.
+    """
+    # --- empty input ---
+    if len(snapshots) == 0:
+        return _empty_frames(), _empty_links()
+
+    # --- action metadata lookup ---
+    action_meta = actions[["action_id", "game_id", "period_id", "time_seconds", "start_x", "start_y"]].copy()
+    action_ids_with_data = snapshots["action_id"].unique()
+    action_meta = action_meta[action_meta["action_id"].isin(action_ids_with_data)]
+
+    if len(action_meta) == 0:
+        return _empty_frames(), _empty_links()
+
+    # --- player rows ---
+    has_player_id = "player_id" in snapshots.columns
+    player = snapshots.merge(
+        action_meta[["action_id", "game_id", "period_id", "time_seconds"]],
+        on="action_id",
+        how="inner",
+    )
+
+    if not has_player_id:
+        # Synthetic sequential int per frame
+        player = player.copy()
+        player["player_id"] = np.arange(len(player))
+
+    player_frames = pd.DataFrame(
+        {
+            "game_id": player["game_id"],
+            "period_id": player["period_id"],
+            "frame_id": player["action_id"],
+            "time_seconds": player["time_seconds"],
+            "frame_rate": np.nan,
+            "player_id": player["player_id"],
+            "team_id": player["team_id"],
+            "is_ball": False,
+            "is_goalkeeper": player["is_goalkeeper"],
+            "x": player["x"],
+            "y": player["y"],
+            "z": np.nan,
+            "speed": np.nan,
+            "speed_source": np.nan,
+            "ball_state": "alive",
+            "team_attacking_direction": "ltr",
+            "confidence": np.nan,
+            "visibility": np.nan,
+            "source_provider": "snapshot",
+            "is_goalkeeper_source": "native",
+        }
+    )
+
+    # --- ball rows (one per frame) ---
+    ball_frames = pd.DataFrame(
+        {
+            "game_id": action_meta["game_id"].values,
+            "period_id": action_meta["period_id"].values,
+            "frame_id": action_meta["action_id"].values,
+            "time_seconds": action_meta["time_seconds"].values,
+            "frame_rate": np.nan,
+            "player_id": np.nan,
+            "team_id": np.nan,
+            "is_ball": True,
+            "is_goalkeeper": False,
+            "x": action_meta["start_x"].values,
+            "y": action_meta["start_y"].values,
+            "z": np.nan,
+            "speed": np.nan,
+            "speed_source": np.nan,
+            "ball_state": "alive",
+            "team_attacking_direction": "ltr",
+            "confidence": np.nan,
+            "visibility": np.nan,
+            "source_provider": "snapshot",
+            "is_goalkeeper_source": "native",
+        }
+    )
+
+    # --- combine and enforce column order ---
+    frames = pd.concat([player_frames, ball_frames], ignore_index=True)
+    frames = frames[list(TRACKING_FRAMES_COLUMNS.keys())]
+
+    # --- links ---
+    links = pd.DataFrame(
+        {
+            "action_id": action_meta["action_id"].values,
+            "frame_id": action_meta["action_id"].values,
+            "time_offset_seconds": 0.0,
+            "n_candidate_frames": 1,
+            "link_quality_score": 1.0,
+        }
+    )
+
+    return frames, links
+
+
+def _empty_frames() -> pd.DataFrame:
+    """Return an empty DataFrame with TRACKING_FRAMES_COLUMNS schema."""
+    return pd.DataFrame({col: pd.Series([], dtype=dtype) for col, dtype in TRACKING_FRAMES_COLUMNS.items()})
+
+
+def _empty_links() -> pd.DataFrame:
+    """Return an empty links DataFrame matching link_actions_to_frames contract.
+
+    Dtypes default to int64 for the empty case (no input to infer from).
+    Matches the empty-return pattern in link_actions_to_frames (utils.py:163-170).
+    """
+    return pd.DataFrame(
+        {
+            "action_id": pd.Series([], dtype="int64"),
+            "frame_id": pd.Series([], dtype="int64"),
+            "time_offset_seconds": pd.Series([], dtype="float64"),
+            "n_candidate_frames": pd.Series([], dtype="int64"),
+            "link_quality_score": pd.Series([], dtype="float64"),
+        }
+    )

@@ -65,7 +65,7 @@ TRACKING_CATEGORICAL_DOMAINS: dict[str, frozenset[str]] = {
     "ball_state": frozenset({"alive", "dead"}),
     "team_attacking_direction": frozenset({"ltr", "rtl"}),
     "speed_source": frozenset({"native", "derived"}),
-    "source_provider": frozenset({"gradientsports", "sportec", "metrica", "skillcorner"}),
+    "source_provider": frozenset({"gradientsports", "sportec", "metrica", "skillcorner", "snapshot"}),
     "is_goalkeeper_source": frozenset({"native", "derived"}),
 }
 
