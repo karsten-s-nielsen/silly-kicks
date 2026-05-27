@@ -10,10 +10,10 @@ Usage:
         --max-depth 8 \
         --cv-folds 5
 
-Supports two directory layouts:
-  - Flat: data-dir/*.parquet
+Supports two directory layouts (prefers TC3 when both exist):
   - TC3 cache: data-dir/{provider}/{game_id}/frames.parquet
     (auto-reads meta.json siblings for home_team_id)
+  - Flat: data-dir/*.parquet
 
 Override home team mapping with --home-teams JSON file.
 
@@ -62,10 +62,11 @@ def main() -> None:
     print(f"Output: {args.output_dir}")
 
     # --- 1. Discover tracking parquets ---
-    # Support both flat (*.parquet) and tc3 cache ({provider}/{game_id}/frames.parquet) layouts.
-    parquets = sorted(args.data_dir.glob("*.parquet"))
+    # Support both tc3 cache ({provider}/{game_id}/frames.parquet) and flat (*.parquet) layouts.
+    # Prefer tc3 layout (more specific) to avoid picking up stale non-tracking parquets in the root.
+    parquets = sorted(args.data_dir.glob("**/frames.parquet"))
     if not parquets:
-        parquets = sorted(args.data_dir.glob("**/frames.parquet"))
+        parquets = sorted(args.data_dir.glob("*.parquet"))
     if not parquets:
         print(f"ERROR: No .parquet files found in {args.data_dir}", file=sys.stderr)
         sys.exit(1)
