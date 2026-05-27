@@ -120,8 +120,14 @@ def main() -> None:
             meta_path = pq_path.parent / "meta.json"
             if meta_path.exists():
                 meta = json.loads(meta_path.read_text())
-                game_id = pq_path.parent.name
-                home_team_map[game_id] = str(meta["home_team_id"])
+                home_val = str(meta["home_team_id"])
+                # Key by directory name (works for providers where dir name == game_id)
+                home_team_map[pq_path.parent.name] = home_val
+                # Also key by actual game_id from the parquet (handles SkillCorner
+                # where dir name is match_id but game_id column is a kloppy hash)
+                actual_ids = pq.read_table(pq_path, columns=["game_id"]).column("game_id").unique().to_pylist()
+                for gid in actual_ids:
+                    home_team_map[str(gid)] = home_val
     if not home_team_map:
         print(
             "ERROR: No home team mapping. Provide --home-teams or use tc3 cache layout with meta.json.",
