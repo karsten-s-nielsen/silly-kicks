@@ -304,6 +304,114 @@ class TestDasTeamAsymmetry:
         )
 
 
+class TestChunkSizePassthrough:
+    """chunk_size kwarg must thread through add_das/das_at_action to get_individual_das."""
+
+    def test_precompute_passes_chunk_size_to_get_individual_das(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_precompute_das_lookup(chunk_size=N) must forward to get_individual_das."""
+        import silly_kicks.tracking._das as das_mod
+
+        captured_kwargs: dict = {}
+
+        def fake_get_individual_das(frames: pd.DataFrame, **kwargs) -> pd.DataFrame:
+            captured_kwargs.update(kwargs)
+            out = frames.copy()
+            out["AS"] = 0.0
+            out["DAS"] = 0.0
+            return out
+
+        monkeypatch.setattr(das_mod, "get_individual_das", fake_get_individual_das)
+
+        from silly_kicks.tracking.features import _precompute_das_lookup
+
+        frames = pd.DataFrame(
+            {
+                "period_id": [1],
+                "frame_id": [0],
+                "team_id": ["A"],
+                "is_ball": [False],
+                "DAS": [0.0],
+            }
+        )
+        _precompute_das_lookup(frames, chunk_size=500)
+        assert captured_kwargs.get("chunk_size") == 500
+
+    def test_precompute_omits_chunk_size_when_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When chunk_size is None, chunk_size must NOT appear in kwargs."""
+        import silly_kicks.tracking._das as das_mod
+
+        captured_kwargs: dict = {}
+
+        def fake_get_individual_das(frames: pd.DataFrame, **kwargs) -> pd.DataFrame:
+            captured_kwargs.update(kwargs)
+            out = frames.copy()
+            out["AS"] = 0.0
+            out["DAS"] = 0.0
+            return out
+
+        monkeypatch.setattr(das_mod, "get_individual_das", fake_get_individual_das)
+
+        from silly_kicks.tracking.features import _precompute_das_lookup
+
+        frames = pd.DataFrame(
+            {
+                "period_id": [1],
+                "frame_id": [0],
+                "team_id": ["A"],
+                "is_ball": [False],
+                "DAS": [0.0],
+            }
+        )
+        _precompute_das_lookup(frames)
+        assert "chunk_size" not in captured_kwargs
+
+    def test_add_das_threads_chunk_size(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """add_das(chunk_size=N) must reach _precompute_das_lookup."""
+        import silly_kicks.tracking.features as feat_mod
+
+        captured_cs: list = []
+
+        def spy_precompute(frames, *, chunk_size=None):
+            captured_cs.append(chunk_size)
+            raise ImportError("short-circuit")
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", spy_precompute)
+
+        actions = pd.DataFrame(
+            {
+                "action_id": [1],
+                "game_id": [1],
+                "period_id": [1],
+                "team_id": ["A"],
+            }
+        )
+        frames = pd.DataFrame({"x": [1.0]})
+
+        # add_das catches ImportError and returns NaN columns
+        result = feat_mod.add_das(actions, frames, chunk_size=250)
+        assert captured_cs == [250]
+        assert "das_team" in result.columns
+
+    def test_das_at_action_threads_chunk_size(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """das_at_action(chunk_size=N) must reach _precompute_das_lookup."""
+        import silly_kicks.tracking.features as feat_mod
+
+        captured_cs: list = []
+
+        def spy_precompute(frames, *, chunk_size=None):
+            captured_cs.append(chunk_size)
+            raise ImportError("short-circuit")
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", spy_precompute)
+
+        actions = pd.DataFrame({"action_id": [1], "team_id": ["A"]})
+        frames = pd.DataFrame({"x": [1.0]})
+
+        result = feat_mod.das_at_action(actions, frames, chunk_size=100)
+        assert captured_cs == [100]
+        assert result.isna().all()
+
+
 class TestDasXfns:
     def test_das_xfns_are_frame_aware(self) -> None:
         from silly_kicks.tracking.features import das_xfns

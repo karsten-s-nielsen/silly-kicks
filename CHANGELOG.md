@@ -5,6 +5,24 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.22.1] — 2026-05-27
+
+### Added
+- **DAS `chunk_size` passthrough**: `add_das()`, `das_at_action()`, and
+  `_precompute_das_lookup()` accept optional `chunk_size: int | None` kwarg,
+  threaded through to `accessible-space`. Enables memory-constrained
+  environments (e.g. Databricks `applyInPandas` with 1 GB group memory cap)
+  to process large matches without OOM.
+
+### Fixed
+- **Ghost-GK training script**: `pd.NA` boolean ambiguity crash when
+  `ball_carrier_team_id` is `pd.NA` (`extract_ghost_gk_features` line 511).
+- **Ghost-GK training script**: Glob priority swap — prefer tc3 cache layout
+  (`**/frames.parquet`) over flat (`*.parquet`) to avoid stale non-tracking
+  parquets in cache root.
+- **CI perf budget**: Bump Andrienko pressure budget from 100ms to 120ms to
+  accommodate Windows CI runner timing variance.
+
 ## [3.22.0] — 2026-05-26
 
 ### Added

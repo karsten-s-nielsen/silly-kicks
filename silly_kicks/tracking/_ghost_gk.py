@@ -508,7 +508,11 @@ def extract_ghost_gk_features(
         compactness = np.nan
 
     ball_in_own_half = 1.0 if (not np.isnan(ball_x) and ball_x < _FIELD_LENGTH / 2) else 0.0
-    team_in_poss = 1.0 if ball_carrier_team_id == gk_team_id else 0.0
+    try:
+        team_in_poss = 1.0 if ball_carrier_team_id is not None and ball_carrier_team_id == gk_team_id else 0.0
+    except (ValueError, TypeError):
+        # pd.NA comparison raises TypeError; NaN comparison is always False
+        team_in_poss = 0.0
     period_clamped = min(int(frame_data["period_id"].iloc[0]), 2)
     time_s = float(frame_data["time_seconds"].iloc[0]) if "time_seconds" in frame_data.columns else 0.0
 

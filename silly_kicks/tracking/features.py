@@ -1860,6 +1860,8 @@ import warnings as _warnings  # noqa: E402
 
 def _precompute_das_lookup(
     frames: pd.DataFrame,
+    *,
+    chunk_size: int | None = None,
 ) -> dict[tuple, dict]:
     """Run get_individual_das ONCE on all frames, build per-frame team-level DAS lookup.
 
@@ -1867,11 +1869,23 @@ def _precompute_das_lookup(
     ``get_das`` returns per-frame scalars that are identical for both teams,
     which would make ``das_diff`` always zero.
 
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Long-form tracking frames.
+    chunk_size : int or None, default None
+        When set, passed through to ``accessible-space`` to process frames
+        in chunks of this size. Useful for memory-constrained environments
+        (e.g. Databricks ``applyInPandas`` with 1 GB group memory cap).
+
     Returns a dict mapping ``(period_id, frame_id)`` to ``{team_id: DAS_value}``.
     """
     from ._das import get_individual_das
 
-    das_frames = get_individual_das(frames, use_progress_bar=False)
+    kwargs: dict = {"use_progress_bar": False}
+    if chunk_size is not None:
+        kwargs["chunk_size"] = chunk_size
+    das_frames = get_individual_das(frames, **kwargs)
 
     player_rows = das_frames[das_frames["is_ball"] != True]  # noqa: E712
     # Filter to rows with valid DAS — accessible-space may return NaN for some
@@ -1936,6 +1950,7 @@ def das_at_action(
     frames: pd.DataFrame | None,
     *,
     col_name: str = "das_team",
+    chunk_size: int | None = None,
 ) -> pd.Series:
     """Team-level DAS at the linked frame for the acting team.
 
@@ -1955,7 +1970,7 @@ def das_at_action(
         return pd.Series(np.nan, index=actions.index, name=col_name)
 
     try:
-        lookup = _precompute_das_lookup(frames)
+        lookup = _precompute_das_lookup(frames, chunk_size=chunk_size)
     except (ValueError, RuntimeError, ImportError) as exc:
         _warnings.warn(
             f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all actions",
@@ -1976,8 +1991,22 @@ def add_das(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
+    chunk_size: int | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with ``das_team``, ``das_opponent``, ``das_diff`` columns.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions.
+    frames : pd.DataFrame
+        Long-form tracking frames.
+    links : pd.DataFrame or None, default None
+        Pre-computed action-frame link pointers.
+    chunk_size : int or None, default None
+        When set, passed through to ``accessible-space`` to process frames
+        in chunks. Useful for memory-constrained environments (e.g.
+        Databricks ``applyInPandas`` UDFs with 1 GB group memory cap).
 
     Examples
     --------
@@ -1989,7 +2018,7 @@ def add_das(
     out = actions.copy()
 
     try:
-        lookup = _precompute_das_lookup(frames)
+        lookup = _precompute_das_lookup(frames, chunk_size=chunk_size)
     except (ValueError, RuntimeError, ImportError) as exc:
         _warnings.warn(
             f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS columns",
