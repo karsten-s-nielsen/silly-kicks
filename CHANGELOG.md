@@ -5,6 +5,35 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.21.0] — 2026-05-26
+
+### Added
+- **Library extraction — 5 new tracking primitives + 1 enhancement (TF-39..TF-44, PR-S57):**
+  - **TF-39 Shape Graph** (`_shape_graph.py`): Sotudeh 2026 iterative
+    Delaunay edge-removal + face-center 5×5 position decomposition.
+    `compute_shape_graph`, `ShapeGraph`, `add_shape_graph` aggregator,
+    `shape_graph_xfns` 36-column VAEP factory.
+  - **TF-40 OBSO** (`_obso.py`): Spearman 2018 Off-Ball Scoring Opportunity
+    surface. `compute_obso_surface`, `ObsoSurface`/`ObsoParams` frozen
+    dataclasses, `add_obso` aggregator with frame-precomputation cache,
+    `obso_xfns` 9-column VAEP factory.
+  - **TF-41 Space Creation** (`_space_creation.py`): Fernandez & Bornn 2018
+    OBSO-weighted leave-one-out counterfactual. `compute_space_created`,
+    `SpaceCreationParams`, `add_space_creation` aggregator,
+    `space_creation_xfns` 9-column VAEP factory.
+  - **TF-42 PAUSA** (`_pausa.py`): Lee 2026 pass utility via temporal-spatial
+    OBSO decomposition. `compute_pausa`/`compute_pausa_batch`,
+    `add_pausa` aggregator, `pausa_xfns` 9-column VAEP factory.
+  - **TF-43 ELASTIC Sync** (`_elastic_sync.py`): Kim et al. 2025 event-tracking
+    synchronization via ball acceleration + proximity scoring.
+    `extract_ball_features`, `align_events_to_frames`, `ElasticSyncParams`,
+    `add_elastic_sync` aggregator, `elastic_sync_xfns` 6-column VAEP factory.
+  - **TF-44 Ward inter-line gaps** (`_team_shape.py` enhancement): Ward
+    hierarchical clustering for defensive line identification + inter-line
+    gap metrics. `n_defensive_lines` parameter; 3 new columns
+    (`defensive_line_height`, `inter_line_gap_1`, `inter_line_gap_2`).
+- Atomic mirror re-exports for all new VAEP xfn factories.
+
 ## [3.20.1] — 2026-05-26
 
 ### Fixed

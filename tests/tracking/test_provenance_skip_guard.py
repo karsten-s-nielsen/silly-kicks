@@ -16,9 +16,12 @@ from silly_kicks.spadl.utils import add_pre_shot_gk_context
 from silly_kicks.tracking.features import (
     add_action_context,
     add_actor_pre_window,
+    add_obso,
     add_player_influence,
     add_pre_shot_gk_position,
     add_pressure_on_actor,
+    add_shape_graph,
+    add_space_creation,
 )
 from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
 
@@ -54,6 +57,18 @@ def test_chained_enrichments_no_duplicate_provenance(provider: str) -> None:
     home = actions["team_id"].dropna().iloc[0]
     actions = add_player_influence(actions, frames, xt, home_team_id=home)
     _assert_no_suffix_duplicates(actions, "add_player_influence")
+
+    # Step 6: add_shape_graph => should SKIP provenance
+    actions = add_shape_graph(actions, frames, home_team_id=home)
+    _assert_no_suffix_duplicates(actions, "add_shape_graph")
+
+    # Step 7: add_obso => should SKIP provenance
+    actions = add_obso(actions, frames, home_team_id=home)
+    _assert_no_suffix_duplicates(actions, "add_obso")
+
+    # Step 8: add_space_creation => should SKIP provenance
+    actions = add_space_creation(actions, frames, home_team_id=home)
+    _assert_no_suffix_duplicates(actions, "add_space_creation")
 
     # Final: provenance columns exist exactly once
     for col in _PROVENANCE_COLS:

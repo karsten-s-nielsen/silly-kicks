@@ -23,17 +23,22 @@ from silly_kicks.tracking.features import (
     add_player_influence,
     ball_carrier_at_action,
     cover_shadow_xfns,
+    elastic_sync_xfns,
     ghost_gk_xfns,
     gk_closing_time_mean_s,
     gk_closing_time_min_s,
     gk_influence_xfns,
     gk_pitch_control_share_weighted,
     gk_reachable_area_m2,
+    obso_xfns,
     off_ball_xt_opponent,
     off_ball_xt_team,
+    pausa_xfns,
     player_influence_xfns,
     reachable_area_opponent,
     reachable_area_team,
+    shape_graph_xfns,
+    space_creation_xfns,
 )
 from silly_kicks.tracking.pressure import Method, PressureParams
 from silly_kicks.tracking.utils import _resolve_action_frame_context
@@ -66,6 +71,7 @@ __all__ = [
     "ball_carrier_at_action",
     "cover_shadow_xfns",
     "defenders_in_triangle_to_goal",
+    "elastic_sync_xfns",
     "ghost_gk_xfns",
     "gk_closing_time_mean_s",
     "gk_closing_time_min_s",
@@ -73,8 +79,10 @@ __all__ = [
     "gk_pitch_control_share_weighted",
     "gk_reachable_area_m2",
     "nearest_defender_distance",
+    "obso_xfns",
     "off_ball_xt_opponent",
     "off_ball_xt_team",
+    "pausa_xfns",
     "pitch_control_at_action",
     "player_influence_xfns",
     "pre_shot_gk_angle_off_goal_line",
@@ -87,6 +95,8 @@ __all__ = [
     "reachable_area_opponent",
     "reachable_area_team",
     "receiver_zone_density",
+    "shape_graph_xfns",
+    "space_creation_xfns",
 ]
 
 

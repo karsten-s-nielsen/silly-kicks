@@ -166,8 +166,8 @@ class TestComputeTeamShape:
         assert row["team_length"] == pytest.approx(10.0)
         assert row["team_width"] == pytest.approx(0.0)
 
-    def test_collinear_players_hull_nan(self):
-        """3+ collinear players -> QhullError caught, hull=NaN."""
+    def test_collinear_players_hull_zero(self):
+        """3+ collinear players -> QhullError caught, hull=0.0."""
         from silly_kicks.tracking._team_shape import compute_team_shape
 
         frames = _make_team_frames(
@@ -181,7 +181,7 @@ class TestComputeTeamShape:
 
         row = result.iloc[0]
         assert row["n_outfield_players"] == 3
-        assert pd.isna(row["convex_hull_area"])  # degenerate
+        assert row["convex_hull_area"] == pytest.approx(0.0)  # degenerate
         assert row["team_length"] == pytest.approx(20.0)
         assert row["team_width"] == pytest.approx(0.0)
 
@@ -244,9 +244,81 @@ class TestComputeTeamShape:
         assert result.iloc[1]["centroid_x"] == pytest.approx(35.0)
 
 
+class TestWardInterLineGaps:
+    """TF-44: Ward clustering defensive_line_height + inter-line gaps."""
+
+    def test_known_3_cluster_geometry(self):
+        """Three clear groups at x=15, x=40, x=65 -> known centroids + gaps."""
+        from silly_kicks.tracking._team_shape import compute_team_shape
+
+        positions = [
+            (14.0, 20.0),
+            (15.0, 30.0),
+            (16.0, 40.0),
+            (39.0, 15.0),
+            (40.0, 35.0),
+            (41.0, 50.0),
+            (64.0, 25.0),
+            (65.0, 34.0),
+            (66.0, 45.0),
+        ]
+        frames = _make_team_frames(outfield_positions=positions)
+        result = compute_team_shape(frames, team_id=1)
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["defensive_line_height"] == pytest.approx(15.0, abs=1.0)
+        assert row["inter_line_gap_1"] == pytest.approx(25.0, abs=2.0)
+        assert row["inter_line_gap_2"] == pytest.approx(25.0, abs=2.0)
+
+    def test_fewer_than_3_players_gaps_nan(self):
+        """2 players: 1 gap only (gap_2 = NaN)."""
+        from silly_kicks.tracking._team_shape import compute_team_shape
+
+        positions = [(20.0, 30.0), (60.0, 40.0)]
+        frames = _make_team_frames(outfield_positions=positions)
+        result = compute_team_shape(frames, team_id=1)
+        row = result.iloc[0]
+        assert not pd.isna(row["inter_line_gap_1"])
+        assert pd.isna(row["inter_line_gap_2"])
+        assert row["defensive_line_height"] == pytest.approx(20.0, abs=1.0)
+
+    def test_single_player(self):
+        """1 player: line height = player x, both gaps NaN."""
+        from silly_kicks.tracking._team_shape import compute_team_shape
+
+        positions = [(30.0, 34.0)]
+        frames = _make_team_frames(outfield_positions=positions)
+        result = compute_team_shape(frames, team_id=1)
+        row = result.iloc[0]
+        assert row["defensive_line_height"] == pytest.approx(30.0)
+        assert pd.isna(row["inter_line_gap_1"])
+        assert pd.isna(row["inter_line_gap_2"])
+
+    def test_tight_cluster_small_gap(self):
+        """Three tight groups near x=20,21,22 -> small but nonzero gaps."""
+        from silly_kicks.tracking._team_shape import compute_team_shape
+
+        positions = [
+            (20.0, 20.0),
+            (20.0, 40.0),
+            (20.0, 55.0),
+            (21.0, 15.0),
+            (21.0, 35.0),
+            (21.0, 50.0),
+            (22.0, 25.0),
+            (22.0, 45.0),
+            (22.0, 60.0),
+        ]
+        frames = _make_team_frames(outfield_positions=positions)
+        result = compute_team_shape(frames, team_id=1)
+        row = result.iloc[0]
+        assert row["inter_line_gap_1"] == pytest.approx(1.0, abs=0.5)
+        assert row["inter_line_gap_2"] == pytest.approx(1.0, abs=0.5)
+
+
 class TestAddTeamShape:
-    def test_enriches_actions_with_14_columns(self):
-        """add_team_shape adds 14 team-shape columns (7 metrics x 2 teams)."""
+    def test_enriches_actions_with_20_columns(self):
+        """add_team_shape adds 20 team-shape columns (10 metrics x 2 teams)."""
         from silly_kicks.tracking.features import add_team_shape
 
         # Build frames with two teams
@@ -284,6 +356,9 @@ class TestAddTeamShape:
             "team_shape_team_length_attacking",
             "team_shape_team_width_attacking",
             "team_shape_stretch_index_attacking",
+            "team_shape_defensive_line_height_attacking",
+            "team_shape_inter_line_gap_1_attacking",
+            "team_shape_inter_line_gap_2_attacking",
             "team_shape_n_outfield_players_defending",
             "team_shape_centroid_x_defending",
             "team_shape_centroid_y_defending",
@@ -291,6 +366,9 @@ class TestAddTeamShape:
             "team_shape_team_length_defending",
             "team_shape_team_width_defending",
             "team_shape_stretch_index_defending",
+            "team_shape_defensive_line_height_defending",
+            "team_shape_inter_line_gap_1_defending",
+            "team_shape_inter_line_gap_2_defending",
         ]
         for col in expected_cols:
             assert col in result.columns, f"Missing column: {col}"
@@ -332,7 +410,7 @@ class TestAddTeamShape:
 
 class TestTeamShapeXfns:
     def test_xfn_column_count(self):
-        """team_shape_xfns produces 36 columns (12 features x 3 states)."""
+        """team_shape_xfns produces 54 columns (18 features x 3 states)."""
         from silly_kicks.tracking.features import team_shape_xfns
 
         xfns = team_shape_xfns(home_team_id=1)
@@ -342,7 +420,7 @@ class TestTeamShapeXfns:
         assert getattr(xfn, "_frame_aware", False) is True
 
     def test_xfn_introspection_nan(self):
-        """frames=None -> NaN DataFrame with 36 correct column names."""
+        """frames=None -> NaN DataFrame with 54 correct column names."""
         from silly_kicks.tracking.features import team_shape_xfns
 
         xfns = team_shape_xfns(home_team_id=1)
@@ -369,8 +447,10 @@ class TestTeamShapeXfns:
         states = [dummy, dummy, dummy]
         result = xfn(states, None)
 
-        assert len(result.columns) == 36
+        assert len(result.columns) == 54
         assert result.isna().all().all()
         # Verify naming pattern
         assert "team_shape_centroid_x_attacking_a0" in result.columns
         assert "team_shape_stretch_index_defending_a2" in result.columns
+        assert "team_shape_defensive_line_height_attacking_a0" in result.columns
+        assert "team_shape_inter_line_gap_2_defending_a2" in result.columns

@@ -1,7 +1,8 @@
-"""Per-frame team shape envelope (TF-31).
+"""Per-frame team shape envelope (TF-31, TF-44).
 
-Computes centroid, convex hull area, length, width, stretch index, and
-visible outfield player count for a specified team per frame.
+Computes centroid, convex hull area, length, width, stretch index,
+defensive line height, inter-line gaps, and visible outfield player count
+for a specified team per frame.
 
 See spec: docs/superpowers/specs/2026-05-09-tf31-tf32-team-shape-line-breaking-design.md s1.
 See NOTICE for full bibliographic citations.
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial import ConvexHull, QhullError
 
 _RESULT_COLS = [
@@ -25,12 +27,17 @@ _RESULT_COLS = [
     "team_length",
     "team_width",
     "stretch_index",
+    "defensive_line_height",
+    "inter_line_gap_1",
+    "inter_line_gap_2",
 ]
 
 
 def compute_team_shape(
     frames: pd.DataFrame,
     team_id: int | str,
+    *,
+    n_defensive_lines: int = 3,
 ) -> pd.DataFrame:
     """Per-(game_id, period_id, frame_id) team shape metrics for one team.
 
@@ -40,6 +47,9 @@ def compute_team_shape(
         Long-form tracking frames (TRACKING_FRAMES_COLUMNS schema).
     team_id : int | str
         Team to compute shape for.
+    n_defensive_lines : int
+        Number of defensive lines to identify via Ward clustering
+        (default 3). Used for defensive_line_height and inter-line gaps.
 
     Returns
     -------
@@ -49,7 +59,8 @@ def compute_team_shape(
         outfield players are omitted from output (consumers should LEFT
         JOIN and fill NaN). Columns: game_id, period_id, frame_id,
         team_id, n_outfield_players, centroid_x, centroid_y,
-        convex_hull_area, team_length, team_width, stretch_index.
+        convex_hull_area, team_length, team_width, stretch_index,
+        defensive_line_height, inter_line_gap_1, inter_line_gap_2.
 
     Examples
     --------
@@ -100,7 +111,23 @@ def compute_team_shape(
                 hull = ConvexHull(np.column_stack([xs, ys]))
                 hull_area = float(hull.volume)  # 2D: volume = area
             except QhullError:
-                hull_area = np.nan
+                hull_area = 0.0  # collinear points -> degenerate hull with area 0
+
+        # Ward hierarchical clustering for inter-line gaps (TF-44)
+        n_eff = min(n_defensive_lines, n)
+        if n < 2:
+            def_line_height = float(xs.min())
+            gap_1 = np.nan
+            gap_2 = np.nan
+        else:
+            z = linkage(xs.reshape(-1, 1), method="ward")
+            labels = fcluster(z, t=n_eff, criterion="maxclust")
+            # Only include non-empty clusters (tight groups may collapse)
+            centroids = np.sort([float(np.mean(xs[labels == c])) for c in range(1, n_eff + 1) if np.any(labels == c)])
+            n_actual = len(centroids)
+            def_line_height = float(centroids[0])
+            gap_1 = float(centroids[1] - centroids[0]) if n_actual >= 2 else np.nan
+            gap_2 = float(centroids[2] - centroids[1]) if n_actual >= 3 else np.nan
 
         rows.append(
             {
@@ -115,6 +142,9 @@ def compute_team_shape(
                 "team_length": team_length,
                 "team_width": team_width,
                 "stretch_index": stretch,
+                "defensive_line_height": def_line_height,
+                "inter_line_gap_1": gap_1,
+                "inter_line_gap_2": gap_2,
             }
         )
 
