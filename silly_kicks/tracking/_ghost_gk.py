@@ -584,7 +584,8 @@ def _extract_all_ghost_gk_features(
     frames : pd.DataFrame
         TRACKING_FRAMES_COLUMNS, LTR-normalized, vx/vy present.
     home_team_id : str | int
-        Home team (attacks right, GK at x=0).
+        Home team (used as fallback; defending goal is inferred per-period
+        from mean GK x position to handle LTR data with period flips).
     carrier : pd.DataFrame | None
         Per-frame ball_carrier_team_id (from derive_team_in_possession).
     score_at_time : callable | None
@@ -641,6 +642,18 @@ def _extract_all_ghost_gk_features(
             keep_keys = unique_frames[keep_mask.values]
             work = frames.merge(keep_keys, on=["game_id", "period_id", "frame_id"])
 
+    # --- Precompute defending goal per (game_id, period_id, team_id) ---
+    # On LTR-normalized data with period flips (e.g. SkillCorner), teams swap
+    # ends at halftime.  Using team identity alone to assign goal_x is wrong
+    # for the flipped period.  Instead, use the GK's mean x per period to
+    # determine which goal the GK defends: mean_x < 52.5 → defending x=0,
+    # otherwise defending x=105.
+    _gk_mask = work["is_goalkeeper"].astype(bool) & ~work["is_ball"].astype(bool)
+    _gk_mean_x = work[_gk_mask].groupby(["game_id", "period_id", "team_id"])["x"].mean()
+    _defending_goal: dict = {
+        key: 0.0 if mean_x < _FIELD_LENGTH / 2 else _FIELD_LENGTH for key, mean_x in _gk_mean_x.items()
+    }
+
     # --- Group and iterate ---
     group_keys = ["game_id", "period_id", "frame_id"]
     grouped = list(work.groupby(group_keys, sort=True))
@@ -656,7 +669,7 @@ def _extract_all_ghost_gk_features(
 
         for _, gk_row in gk_rows.iterrows():
             gk_team = gk_row["team_id"]
-            goal_x = 0.0 if gk_team == home_team_id else _FIELD_LENGTH
+            goal_x = _defending_goal.get((gid, pid, gk_team), 0.0 if gk_team == home_team_id else _FIELD_LENGTH)
 
             # Score: callback returns home perspective, negate for away
             if score_at_time is not None:

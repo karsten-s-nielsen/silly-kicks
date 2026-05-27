@@ -5,6 +5,25 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.23.0] — 2026-05-27
+
+### Added
+- `snapshot_to_tracking_frames` public API in `silly_kicks.tracking` — converts
+  per-event player-position snapshots (e.g. StatsBomb 360 freeze-frames) into
+  the 20-column `TRACKING_FRAMES_COLUMNS` schema + pre-built linkage pointers.
+  Enables all single-frame `add_*` enrichment functions on freeze-frame data
+  without modification. (PR-S61)
+- `"snapshot"` added to `TRACKING_CATEGORICAL_DOMAINS["source_provider"]` domain
+  set.
+
+### Fixed
+- **Ghost-GK goal_x period-flip**: `extract_ghost_gk_features` hardcoded
+  `goal_x` by team identity, which is wrong for SkillCorner LTR-normalized
+  data where teams swap ends at halftime. Now infers defending goal per
+  (game_id, period_id, team_id) from mean GK x position with team-identity
+  fallback. Previously dropped ~50% of SkillCorner training data via
+  domain filter.
+
 ## [3.22.2] — 2026-05-27
 
 ### Fixed
