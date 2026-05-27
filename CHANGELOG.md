@@ -5,6 +5,15 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.22.0] — 2026-05-26
+
+### Added
+- **Game state enrichment** (`add_game_state`): Derives running scoreline from
+  successful shots and classifies each action as `"winning"`, `"losing"`, or
+  `"drawing"` from the acting team's perspective. Pure SPADL enrichment — no
+  tracking data required. `@nan_safe_enrichment` decorated; NaN `team_id` rows
+  default to `"drawing"` (ADR-003). Exported from `silly_kicks.spadl`.
+
 ## [3.21.0] — 2026-05-26
 
 ### Added
