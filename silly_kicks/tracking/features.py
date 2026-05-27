@@ -1971,7 +1971,7 @@ def das_at_action(
 
     try:
         lookup = _precompute_das_lookup(frames, chunk_size=chunk_size)
-    except (ValueError, RuntimeError, ImportError) as exc:
+    except (ValueError, RuntimeError, ImportError, IndexError, TypeError) as exc:
         _warnings.warn(
             f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all actions",
             UserWarning,
@@ -2019,7 +2019,7 @@ def add_das(
 
     try:
         lookup = _precompute_das_lookup(frames, chunk_size=chunk_size)
-    except (ValueError, RuntimeError, ImportError) as exc:
+    except (ValueError, RuntimeError, ImportError, IndexError, TypeError) as exc:
         _warnings.warn(
             f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS columns",
             UserWarning,
@@ -2062,7 +2062,7 @@ def _make_das_transformer():
         # Precompute DAS for ALL frames — single get_das call
         try:
             lookup = _precompute_das_lookup(frames)
-        except (ValueError, RuntimeError, ImportError) as exc:
+        except (ValueError, RuntimeError, ImportError, IndexError, TypeError) as exc:
             _warnings.warn(
                 f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS features",
                 UserWarning,

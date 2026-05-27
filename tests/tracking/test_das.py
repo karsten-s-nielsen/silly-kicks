@@ -412,6 +412,45 @@ class TestChunkSizePassthrough:
         assert result.isna().all()
 
 
+class TestDasExceptionGracefulDegradation:
+    """IndexError and TypeError from accessible-space must degrade to NaN, not crash."""
+
+    @pytest.mark.parametrize("exc_type", [IndexError, TypeError])
+    def test_add_das_catches_voronoi_exceptions(self, monkeypatch: pytest.MonkeyPatch, exc_type: type) -> None:
+        """add_das must catch IndexError/TypeError from degenerate Voronoi tessellation."""
+        import silly_kicks.tracking.features as feat_mod
+
+        def boom(frames, *, chunk_size=None):
+            raise exc_type("degenerate Voronoi tessellation")
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", boom)
+
+        actions = pd.DataFrame({"action_id": [1], "game_id": [1], "period_id": [1], "team_id": ["A"]})
+        frames = pd.DataFrame({"x": [1.0]})
+
+        result = feat_mod.add_das(actions, frames)
+        assert "das_team" in result.columns
+        assert result["das_team"].isna().all()
+        assert result["das_opponent"].isna().all()
+        assert result["das_diff"].isna().all()
+
+    @pytest.mark.parametrize("exc_type", [IndexError, TypeError])
+    def test_das_at_action_catches_voronoi_exceptions(self, monkeypatch: pytest.MonkeyPatch, exc_type: type) -> None:
+        """das_at_action must catch IndexError/TypeError from degenerate data."""
+        import silly_kicks.tracking.features as feat_mod
+
+        def boom(frames, *, chunk_size=None):
+            raise exc_type("NaN coordinates in tracking data")
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", boom)
+
+        actions = pd.DataFrame({"action_id": [1], "team_id": ["A"]})
+        frames = pd.DataFrame({"x": [1.0]})
+
+        result = feat_mod.das_at_action(actions, frames)
+        assert result.isna().all()
+
+
 class TestDasXfns:
     def test_das_xfns_are_frame_aware(self) -> None:
         from silly_kicks.tracking.features import das_xfns

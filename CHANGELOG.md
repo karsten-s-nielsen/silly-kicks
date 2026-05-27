@@ -5,6 +5,16 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.22.2] — 2026-05-27
+
+### Fixed
+- **DAS exception handling**: Widen `add_das()` / `das_at_action()` / VAEP
+  transformer exception tuple from `(ValueError, RuntimeError, ImportError)` to
+  also include `IndexError` and `TypeError`. Both occur in production on
+  degenerate Voronoi tessellations (collinear players) and NaN tracking
+  coordinates respectively. Graceful degradation to NaN columns instead of
+  pipeline crash.
+
 ## [3.22.1] — 2026-05-27
 
 ### Added
