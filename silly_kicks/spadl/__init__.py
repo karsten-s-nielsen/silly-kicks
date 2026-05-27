@@ -14,6 +14,7 @@ __all__ = [
     "DetectionResult",
     "InputConvention",
     "actiontypes_df",
+    "add_game_state",
     "add_gk_distribution_metrics",
     "add_gk_role",
     "add_names",
@@ -61,6 +62,7 @@ from .sportec import use_tackle_winner_as_actor
 from .utils import (
     BoundaryMetrics,
     CoverageMetrics,
+    add_game_state,
     add_gk_distribution_metrics,
     add_gk_role,
     add_names,

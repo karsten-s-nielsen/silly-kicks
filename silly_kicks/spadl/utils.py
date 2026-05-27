@@ -1580,3 +1580,93 @@ def validate_spadl(
                 stacklevel=2,
             )
     return df
+
+
+@nan_safe_enrichment
+def add_game_state(actions: pd.DataFrame) -> pd.DataFrame:
+    """Add ``game_state`` column to SPADL actions.
+
+    Derives the running scoreline from successful shots within the match,
+    then classifies each action as ``"winning"``, ``"losing"``, or
+    ``"drawing"`` from the perspective of the team performing the action.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions for a single match. Must contain columns:
+        ``game_id``, ``team_id``, ``period_id``, ``time_seconds``,
+        and either (``type_name``, ``result_name``) or
+        (``type_id``, ``result_id``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Input actions with an additional ``game_state`` column containing
+        one of ``"winning"``, ``"losing"``, or ``"drawing"``.
+
+    Notes
+    -----
+    - Operates on a single match (all rows must share the same ``game_id``).
+    - Own goals (``result_name == "owngoal"``) are attributed to the acting
+      team in SPADL, so they increment the wrong team's score. This affects
+      ~3-5% of all goals.
+    - Actions occurring at the exact same ``(period_id, time_seconds)`` as a
+      goal see the score AFTER that goal (inclusive boundary).
+
+    Examples
+    --------
+    Add game state context to actions::
+
+        from silly_kicks.spadl.utils import add_game_state
+        enriched = add_game_state(actions)
+        enriched["game_state"].value_counts()
+    """
+    df = actions.copy()
+
+    # Resolve goal mask — support both name and ID columns
+    if "type_name" in df.columns and "result_name" in df.columns:
+        goal_mask = (df["type_name"] == "shot") & (df["result_name"] == "success")
+    else:
+        shot_id = spadlconfig.actiontype_id["shot"]
+        success_id = spadlconfig.result_id["success"]
+        goal_mask = (df["type_id"] == shot_id) & (df["result_id"] == success_id)
+
+    # Identify the two teams in the match
+    teams = df["team_id"].dropna().unique()
+    if len(teams) < 2:
+        df["game_state"] = "drawing"
+        return df
+
+    team_a, team_b = teams[0], teams[1]
+
+    # Stable sort on (period_id, time_seconds, action_id)
+    sort_cols = ["period_id", "time_seconds"]
+    if "action_id" in df.columns:
+        sort_cols.append("action_id")
+    df = df.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
+
+    # Recalculate goal_mask after sort (index changed)
+    if "type_name" in df.columns and "result_name" in df.columns:
+        goal_mask = (df["type_name"] == "shot") & (df["result_name"] == "success")
+    else:
+        goal_mask = (df["type_id"] == shot_id) & (df["result_id"] == success_id)
+
+    # Cumulative goals scored by each team (inclusive — goal action sees its own goal)
+    goals_a = (goal_mask & (df["team_id"] == team_a)).cumsum()
+    goals_b = (goal_mask & (df["team_id"] == team_b)).cumsum()
+
+    # For each action, compute score differential from acting team's perspective.
+    # NaN team_id rows are neither team → default to "drawing" (ADR-003).
+    acting_is_a = df["team_id"] == team_a
+    acting_is_b = df["team_id"] == team_b
+    known_team = acting_is_a | acting_is_b
+
+    acting_goals = goals_a.where(acting_is_a, goals_b)
+    opponent_goals = goals_b.where(acting_is_a, goals_a)
+
+    diff = acting_goals - opponent_goals
+    df["game_state"] = "drawing"
+    df.loc[(diff > 0) & known_team, "game_state"] = "winning"
+    df.loc[(diff < 0) & known_team, "game_state"] = "losing"
+
+    return df
