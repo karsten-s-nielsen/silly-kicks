@@ -203,6 +203,53 @@ The team shape envelope features in silly_kicks/tracking/_team_shape.py
   (centroid, convex hull area, team length, team width, stretch index as
   canonical team shape metrics)
 
+  (TF-44 enhancement: Ward hierarchical clustering for defensive_line_height
+  and inter-line gap metrics; n_defensive_lines=3 default)
+
+The shape graph features in silly_kicks/tracking/_shape_graph.py
+(PR-S57, TF-39) implement methodologies described in:
+
+- Sotudeh, H. (2026). "Identification of Team Tactical Formations and Player
+  Positions in Association Football." PhD thesis, ETH Zurich (DISS. ETH
+  NO. 31732). Published: npj Complexity, DOI: 10.1038/s44260-025-00047-x.
+  (Algorithm 1: iterative Delaunay edge-removal via angular stability;
+  Chapter 4, §4.1-4.3: face-center 5x5 position decomposition with
+  Options B/C/D and §4.2 special cases)
+
+The OBSO surface computation in silly_kicks/tracking/_obso.py
+(PR-S57, TF-40) implements the Off-Ball Scoring Opportunity model:
+
+- Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
+  Conference.
+  (OBSO framework — pitch control × expected threat as off-ball opportunity
+  measure; ball-travel-time and reachability filtering)
+
+The space creation features in silly_kicks/tracking/_space_creation.py
+(PR-S57, TF-41) implement:
+
+- Fernandez, J., & Bornn, L. (2018). "Wide Open Spaces: A Statistical
+  Technique for Measuring Space Creation in Professional Soccer." MIT Sloan
+  SAC.
+  (OBSO-weighted leave-one-out counterfactual: space_created = sum of OBSO
+  gained by a player's presence; space_destroyed = sum of OBSO lost)
+
+The PAUSA pass utility metric in silly_kicks/tracking/_pausa.py
+(PR-S57, TF-42) implements:
+
+- Lee, I. H. (2026). "Valuing passes in football using PAUSA (Pass Utility
+  using Space Analysis)." arXiv:2506.09349.
+  (PAUSA temporal-spatial decomposition: temporal = actual/peak OBSO,
+  spatial = actual/optimal OBSO, composite = temporal × spatial)
+
+The ELASTIC event-tracking synchronization in
+silly_kicks/tracking/_elastic_sync.py (PR-S57, TF-43) implements:
+
+- Kim, H., Kim, J., & Kim, H. (2025). "ELASTIC: Event-Level Alignment of
+  STreaming data Including Coordinates." arXiv:2508.09238. ECML/PKDD MLSA
+  2025.
+  (Ball acceleration peak detection + player proximity scoring for
+  frame-level alignment of events to tracking data)
+
 The GK influence primitives in silly_kicks/tracking/_gk_influence.py
 (PR-S34, TF-15, GKDV Layer 1) implement threat-weighted pitch control
 decomposition using:

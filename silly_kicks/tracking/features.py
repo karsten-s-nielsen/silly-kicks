@@ -77,16 +77,21 @@ __all__ = [
     "add_cover_shadows",
     "add_das",
     "add_defensive_line",
+    "add_elastic_sync",
     "add_ghost_gk",
     "add_gk_influence",
     "add_line_break",
+    "add_obso",
     "add_off_ball_context",
     "add_off_ball_runs",
+    "add_pausa",
     "add_pitch_control",
     "add_player_influence",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
+    "add_shape_graph",
+    "add_space_creation",
     "add_team_shape",
     "back_line_high_x",
     "back_n_count",
@@ -99,6 +104,7 @@ __all__ = [
     "defending_gk_from_frames",
     "defensive_line_x",
     "defensive_line_xfns",
+    "elastic_sync_xfns",
     "ghost_gk_xfns",
     "gk_closing_time_mean_s",
     "gk_closing_time_min_s",
@@ -109,9 +115,14 @@ __all__ = [
     "line_breaking_ward_xfns",
     "max_lateral_gap",
     "nearest_defender_distance",
+    "obso_actual",
+    "obso_optimal",
+    "obso_peak",
+    "obso_xfns",
     "off_ball_context_xfns",
     "off_ball_xt_opponent",
     "off_ball_xt_team",
+    "pausa_xfns",
     "pitch_control_at_action",
     "pitch_control_default_xfns",
     "pitch_control_xfns",
@@ -130,6 +141,8 @@ __all__ = [
     "reachable_area_opponent",
     "reachable_area_team",
     "receiver_zone_density",
+    "shape_graph_xfns",
+    "space_creation_xfns",
     "team_shape_xfns",
     "tracking_default_xfns",
 ]
@@ -1377,7 +1390,7 @@ def add_team_shape(
     links: pd.DataFrame | None = None,
     home_team_id: int | str,
 ) -> pd.DataFrame:
-    """Enrich actions with 14 team-shape columns (7 metrics x 2 teams).
+    """Enrich actions with 20 team-shape columns (10 metrics x 2 teams).
 
     Provenance columns (frame_id, time_offset_seconds, link_quality_score,
     n_candidate_frames) are skipped if they already exist on the input.
@@ -1406,6 +1419,9 @@ def add_team_shape(
                 "team_length",
                 "team_width",
                 "stretch_index",
+                "defensive_line_height",
+                "inter_line_gap_1",
+                "inter_line_gap_2",
             ):
                 out[f"team_shape_{metric}_{suffix}"] = np.nan
         return out
@@ -1431,6 +1447,9 @@ def add_team_shape(
         "team_length",
         "team_width",
         "stretch_index",
+        "defensive_line_height",
+        "inter_line_gap_1",
+        "inter_line_gap_2",
     ]
 
     # Initialize output columns to NaN
@@ -1493,10 +1512,10 @@ def add_team_shape(
 
 
 def team_shape_xfns(home_team_id: int | str) -> list:
-    """Build VAEP xfn list for TF-31 team shape features.
+    """Build VAEP xfn list for TF-31/TF-44 team shape features.
 
-    Returns a list with ONE FrameAwareTransformer that emits 12 features x 3
-    game-states = 36 columns total. ``n_outfield_players`` is excluded (data-quality
+    Returns a list with ONE FrameAwareTransformer that emits 18 features x 3
+    game-states = 54 columns total. ``n_outfield_players`` is excluded (data-quality
     indicator, not a tactical feature).
 
     Examples
@@ -1516,6 +1535,9 @@ def team_shape_xfns(home_team_id: int | str) -> list:
         "team_length",
         "team_width",
         "stretch_index",
+        "defensive_line_height",
+        "inter_line_gap_1",
+        "inter_line_gap_2",
     ]
 
     col_names = []
@@ -1524,7 +1546,7 @@ def team_shape_xfns(home_team_id: int | str) -> list:
             col_names.append(f"team_shape_{metric}_{suffix}")
 
     def _team_shape_transformer(states, frames):
-        """Multi-column team-shape xfn (12 cols x nb_states)."""
+        """Multi-column team-shape xfn (18 cols x nb_states)."""
         out = pd.DataFrame(index=states[0].index)
         if frames is None:
             for i in range(3):
@@ -1567,6 +1589,9 @@ def _team_shape_at_actions(
         "team_length",
         "team_width",
         "stretch_index",
+        "defensive_line_height",
+        "inter_line_gap_1",
+        "inter_line_gap_2",
     ]
     col_names = []
     for metric in vaep_metrics:
@@ -3558,3 +3583,1167 @@ def ghost_gk_xfns(*, model=None, home_team_id: int | str) -> list:
     _ghost_gk_transformer._frame_aware = True  # type: ignore[attr-defined]
     _ghost_gk_transformer.__name__ = "ghost_gk_xfn"
     return [_ghost_gk_transformer]
+
+
+# ---------------------------------------------------------------------------
+# PR-S57 -- TF-39: shape graph (Sotudeh 2026)
+# ---------------------------------------------------------------------------
+
+_SHAPE_GRAPH_METRICS = ("density", "n_edges", "mean_stability")
+
+
+@nan_safe_enrichment
+def add_shape_graph(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    home_team_id: int | str,
+) -> pd.DataFrame:
+    """Enrich actions with 6 shape-graph columns (3 metrics x 2 teams).
+
+    Metrics per team (attacking / defending):
+    - ``shape_graph_density``: n_edges / max_possible_edges (float 0-1)
+    - ``shape_graph_n_edges``: number of stable edges (int)
+    - ``shape_graph_mean_stability``: mean angular stability in degrees
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_shape_graph
+    >>> # See tests/tracking/test_shape_graph.py for runnable examples.
+    """
+    from ._shape_graph import compute_shape_graph
+
+    out = actions.copy()
+    col_names = []
+    for metric in _SHAPE_GRAPH_METRICS:
+        for suffix in ("attacking", "defending"):
+            col_names.append(f"shape_graph_{metric}_{suffix}")
+    for col in col_names:
+        out[col] = np.nan
+
+    teams = frames[~frames["is_ball"].astype(bool)]["team_id"].dropna().unique()
+    if len(teams) < 2:
+        return out
+
+    # Pre-compute shape graph metrics indexed by (game_id, period_id, frame_id, team_id)
+    sg_indexed: dict = {}
+    for tid in teams:
+        team_frames = frames[
+            (frames["team_id"] == tid)
+            & (~frames["is_ball"].astype(bool))
+            & (~frames["is_goalkeeper"].astype(bool))
+            & frames["x"].notna()
+            & frames["y"].notna()
+        ]
+        if team_frames.empty:
+            continue
+        frame_metrics: list[dict] = []
+        for (gid, pid, fid), grp in team_frames.groupby(["game_id", "period_id", "frame_id"], dropna=False):
+            positions = grp[["x", "y"]].to_numpy(dtype="float64")
+            n = len(positions)
+            if n < 3:
+                frame_metrics.append(
+                    {
+                        "game_id": gid,
+                        "period_id": pid,
+                        "frame_id": fid,
+                        "density": np.nan,
+                        "n_edges": 0,
+                        "mean_stability": np.nan,
+                    }
+                )
+                continue
+            sg = compute_shape_graph(positions)
+            max_edges = n * (n - 1) / 2
+            density = float(len(sg.edges)) / max_edges if max_edges > 0 else 0.0
+            n_edges = len(sg.edges)
+            mean_stab = float(np.mean(sg.stabilities)) if n_edges > 0 else np.nan
+            frame_metrics.append(
+                {
+                    "game_id": gid,
+                    "period_id": pid,
+                    "frame_id": fid,
+                    "density": density,
+                    "n_edges": n_edges,
+                    "mean_stability": mean_stab,
+                }
+            )
+        if frame_metrics:
+            sdf = pd.DataFrame(frame_metrics).set_index(["game_id", "period_id", "frame_id"])
+            sg_indexed[tid] = sdf
+
+    if not sg_indexed:
+        return out
+
+    # Link actions to frames
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
+    linked = pointers[pointers["frame_id"].notna()].copy()
+    if linked.empty:
+        return out
+
+    linked["frame_id_int"] = linked["frame_id"].astype("int64")
+    linked = linked.merge(
+        actions[["action_id", "team_id", "period_id", "game_id"]],
+        on="action_id",
+        how="left",
+    )
+
+    # Align game_id dtype
+    if len(linked) > 0 and sg_indexed:
+        sample_sdf = next(iter(sg_indexed.values()))
+        if len(sample_sdf) > 0:
+            sample_key_gid = sample_sdf.index[0][0]
+            linked_gid_sample = linked["game_id"].iloc[0]
+            if not isinstance(linked_gid_sample, type(sample_key_gid)):
+                linked["game_id"] = linked["game_id"].astype(str)
+
+    aid_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
+
+    for _, row in linked.iterrows():
+        aid = row["action_id"]
+        if aid not in aid_to_idx.index:
+            continue
+        idx = aid_to_idx.loc[aid]
+        action_team = row["team_id"]
+        if pd.isna(action_team):
+            continue
+        key = (row["game_id"], row["period_id"], int(row["frame_id_int"]))
+
+        for tid, sdf in sg_indexed.items():
+            if key not in sdf.index:
+                continue
+            sg_row = sdf.loc[key]
+            suffix = "attacking" if tid == action_team else "defending"
+            for metric in _SHAPE_GRAPH_METRICS:
+                out.at[idx, f"shape_graph_{metric}_{suffix}"] = sg_row[metric]
+
+    # Provenance: skip if already present
+    provenance_cols = [
+        "frame_id",
+        "time_offset_seconds",
+        "n_candidate_frames",
+        "link_quality_score",
+    ]
+    existing_provenance = [c for c in provenance_cols if c in out.columns]
+    if not existing_provenance:
+        pointer_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def shape_graph_xfns(home_team_id: int | str) -> list:
+    """Build VAEP xfn list for TF-39 shape graph features.
+
+    Returns a list with ONE FrameAwareTransformer that emits 6 features x 3
+    game-states = 18 columns total.
+
+    Examples
+    --------
+    Compose into HybridVAEP::
+
+        from silly_kicks.tracking.features import tracking_default_xfns, shape_graph_xfns
+        xfns = tracking_default_xfns + shape_graph_xfns("team_A")
+        X = compute_features(actions, xfns=xfns, frames=frames)
+    """
+    from ._shape_graph import compute_shape_graph
+
+    col_names = []
+    for metric in _SHAPE_GRAPH_METRICS:
+        for suffix in ("attacking", "defending"):
+            col_names.append(f"shape_graph_{metric}_{suffix}")
+
+    def _shape_graph_transformer(states, frames):
+        """Multi-column shape-graph xfn (6 cols x nb_states)."""
+        out = pd.DataFrame(index=states[0].index)
+        if frames is None:
+            for i in range(3):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+
+        # Pre-compute shape graph metrics per (team, frame)
+        teams = frames[~frames["is_ball"].astype(bool)]["team_id"].dropna().unique()
+        sg_indexed: dict = {}
+        for tid in teams:
+            team_outfield = frames[
+                (frames["team_id"] == tid)
+                & (~frames["is_ball"].astype(bool))
+                & (~frames["is_goalkeeper"].astype(bool))
+                & frames["x"].notna()
+                & frames["y"].notna()
+            ]
+            if team_outfield.empty:
+                continue
+            rows_list: list[dict] = []
+            for (gid, pid, fid), grp in team_outfield.groupby(["game_id", "period_id", "frame_id"], dropna=False):
+                positions = grp[["x", "y"]].to_numpy(dtype="float64")
+                n = len(positions)
+                if n < 3:
+                    rows_list.append(
+                        {
+                            "game_id": gid,
+                            "period_id": pid,
+                            "frame_id": fid,
+                            "density": np.nan,
+                            "n_edges": 0,
+                            "mean_stability": np.nan,
+                        }
+                    )
+                    continue
+                sg = compute_shape_graph(positions)
+                max_edges = n * (n - 1) / 2
+                rows_list.append(
+                    {
+                        "game_id": gid,
+                        "period_id": pid,
+                        "frame_id": fid,
+                        "density": float(len(sg.edges)) / max_edges if max_edges > 0 else 0.0,
+                        "n_edges": len(sg.edges),
+                        "mean_stability": float(np.mean(sg.stabilities)) if len(sg.edges) > 0 else np.nan,
+                    }
+                )
+            if rows_list:
+                sg_indexed[tid] = pd.DataFrame(rows_list).set_index(["game_id", "period_id", "frame_id"])
+
+        for i, slot in enumerate(states[:3]):
+            slot_result = _shape_graph_at_actions(slot, frames, home_team_id, sg_indexed)
+            for col in col_names:
+                out[f"{col}_a{i}"] = slot_result[col].to_numpy()
+        return out
+
+    _shape_graph_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _shape_graph_transformer.__name__ = "shape_graph"
+    return [_shape_graph_transformer]
+
+
+def _shape_graph_at_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    home_team_id: int | str,
+    sg_indexed: dict,
+) -> pd.DataFrame:
+    """Join pre-indexed shape graph metrics to actions. Internal helper for xfn."""
+    col_names = []
+    for metric in _SHAPE_GRAPH_METRICS:
+        for suffix in ("attacking", "defending"):
+            col_names.append(f"shape_graph_{metric}_{suffix}")
+
+    n = len(actions)
+    empty = pd.DataFrame({col: np.full(n, np.nan) for col in col_names}, index=actions.index)
+
+    if n == 0 or len(frames) == 0:
+        return empty
+
+    actions_with_idx = actions.copy()
+    actions_with_idx["_row_idx"] = np.arange(n)
+    pointers, _report = link_actions_to_frames(actions_with_idx, frames)
+    linked = pointers[pointers["frame_id"].notna()].copy()
+    if linked.empty:
+        return empty
+
+    linked["frame_id_int"] = linked["frame_id"].astype("int64")
+    linked = linked.merge(
+        actions_with_idx[["action_id", "_row_idx", "team_id", "period_id", "game_id"]],
+        on="action_id",
+        how="left",
+    )
+    linked = linked.drop_duplicates("_row_idx", keep="first")
+
+    # Align game_id dtype
+    if len(linked) > 0 and sg_indexed:
+        sample_sdf = next(iter(sg_indexed.values()))
+        if len(sample_sdf) > 0:
+            sample_key_gid = sample_sdf.index[0][0]
+            linked_gid_sample = linked["game_id"].iloc[0]
+            if not isinstance(linked_gid_sample, type(sample_key_gid)):
+                linked["game_id"] = linked["game_id"].astype(str)
+
+    out = empty.copy()
+
+    for _, row in linked.iterrows():
+        pos = int(row["_row_idx"])
+        idx = actions.index[pos]
+        action_team = row["team_id"]
+        if pd.isna(action_team):
+            continue
+        key = (row["game_id"], row["period_id"], int(row["frame_id_int"]))
+
+        for tid, sdf in sg_indexed.items():
+            if key not in sdf.index:
+                continue
+            sg_row = sdf.loc[key]
+            suffix = "attacking" if tid == action_team else "defending"
+            for metric in _SHAPE_GRAPH_METRICS:
+                out.at[idx, f"shape_graph_{metric}_{suffix}"] = sg_row[metric]
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# OBSO — Off-Ball Scoring Opportunity (TF-40)
+#
+# Architecture: per-pass windowed computation. For each pass action, uses
+# slice_around_event to extract a frame window, computes pitch control at
+# each timestep, then calls compute_pass_obso to get the triplet
+# (actual_obso, peak_obso, optimal_obso).
+# ---------------------------------------------------------------------------
+
+_OBSO_COLUMNS = ("obso_actual", "obso_peak", "obso_optimal")
+
+_PASS_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("pass", "cross") if n in spadlconfig.actiontype_id)
+
+
+def obso_actual(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    *,
+    home_team_id: int | str = 0,
+    links: pd.DataFrame | None = None,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.Series:
+    """OBSO at the actual pass target at the event frame.
+
+    Only produces values for pass actions; NaN for all others.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import obso_actual
+    >>> s = obso_actual(actions, frames, home_team_id=1)
+    """
+    col_name = "obso_actual"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+
+    lookup = _precompute_obso_lookup(
+        actions,
+        frames,
+        links=links,
+        home_team_id=home_team_id,
+        transition_grid=transition_grid,
+        epv_grid=epv_grid,
+        pitch_control_method=pitch_control_method,
+    )
+    return pd.Series(
+        [lookup.get(i, {}).get("actual_obso", np.nan) for i in range(len(actions))],
+        index=actions.index,
+        name=col_name,
+    )
+
+
+def obso_peak(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    *,
+    home_team_id: int | str = 0,
+    links: pd.DataFrame | None = None,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.Series:
+    """Peak OBSO at the pass target across the frame window.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import obso_peak
+    >>> s = obso_peak(actions, frames, home_team_id=1)
+    """
+    col_name = "obso_peak"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+
+    lookup = _precompute_obso_lookup(
+        actions,
+        frames,
+        links=links,
+        home_team_id=home_team_id,
+        transition_grid=transition_grid,
+        epv_grid=epv_grid,
+        pitch_control_method=pitch_control_method,
+    )
+    return pd.Series(
+        [lookup.get(i, {}).get("peak_obso", np.nan) for i in range(len(actions))],
+        index=actions.index,
+        name=col_name,
+    )
+
+
+def obso_optimal(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None,
+    *,
+    home_team_id: int | str = 0,
+    links: pd.DataFrame | None = None,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.Series:
+    """Optimal OBSO across all teammate positions at the event frame.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import obso_optimal
+    >>> s = obso_optimal(actions, frames, home_team_id=1)
+    """
+    col_name = "obso_optimal"
+    if frames is None:
+        return pd.Series(np.nan, index=actions.index, name=col_name)
+
+    lookup = _precompute_obso_lookup(
+        actions,
+        frames,
+        links=links,
+        home_team_id=home_team_id,
+        transition_grid=transition_grid,
+        epv_grid=epv_grid,
+        pitch_control_method=pitch_control_method,
+    )
+    return pd.Series(
+        [lookup.get(i, {}).get("optimal_obso", np.nan) for i in range(len(actions))],
+        index=actions.index,
+        name=col_name,
+    )
+
+
+def _precompute_obso_lookup(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    home_team_id: int | str = 0,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pre_seconds: float = 3.0,
+    post_seconds: float = 1.0,
+) -> dict[int, dict[str, float]]:
+    """Run OBSO computation for all pass actions, return row-index lookup.
+
+    Returns dict mapping row position (0-based) to OBSO triplet dict.
+    """
+    from ._obso import compute_pass_obso
+
+    # Ensure velocity columns
+    if "vx" not in frames.columns or "vy" not in frames.columns:
+        frames = frames.copy()
+        if "vx" not in frames.columns:
+            frames["vx"] = 0.0
+        if "vy" not in frames.columns:
+            frames["vy"] = 0.0
+
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
+
+    pointer_lookup = pointers.set_index("action_id")
+
+    # Group frames for windowing
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    # Identify pass actions
+    pass_mask = actions["type_id"].isin(_PASS_TYPE_IDS)
+
+    lookup: dict[int, dict[str, float]] = {}
+
+    for i, (_idx, action_row) in enumerate(actions.iterrows()):
+        if not pass_mask.iloc[i]:
+            continue
+
+        action_id = action_row["action_id"]
+        if action_id not in pointer_lookup.index:
+            continue
+        frame_id_raw = pointer_lookup.at[action_id, "frame_id"]
+        if pd.isna(frame_id_raw):
+            continue
+
+        period_id = action_row["period_id"]
+        action_time = action_row["time_seconds"]
+        team_id = action_row["team_id"]
+        target_x = action_row["end_x"]
+        target_y = action_row["end_y"]
+
+        if pd.isna(target_x) or pd.isna(target_y) or pd.isna(team_id):
+            continue
+
+        # Build frame window around the pass
+        period_frames = frames[frames["period_id"] == period_id]
+        unique_frame_times = period_frames.drop_duplicates("frame_id")[["frame_id", "time_seconds"]].sort_values(
+            "time_seconds"
+        )
+        t_min = action_time - pre_seconds
+        t_max = action_time + post_seconds
+        window_fids = unique_frame_times[
+            (unique_frame_times["time_seconds"] >= t_min) & (unique_frame_times["time_seconds"] <= t_max)
+        ]["frame_id"].values
+
+        if len(window_fids) == 0:
+            continue
+
+        # Build list of single-frame DataFrames for the window
+        window_frames: list[pd.DataFrame] = []
+        event_idx = 0
+        closest_dist = float("inf")
+        for w_idx, wfid in enumerate(window_fids):
+            try:
+                wf = frame_groups.get_group((period_id, int(wfid)))
+                window_frames.append(wf)
+            except KeyError:
+                window_frames.append(pd.DataFrame())
+                continue
+
+            # Find closest frame to action time
+            wf_time = wf["time_seconds"].iloc[0] if len(wf) > 0 else float("inf")
+            dist = abs(wf_time - action_time)
+            if dist < closest_dist:
+                closest_dist = dist
+                event_idx = w_idx
+
+        # Filter out empty frames
+        valid_window = [wf for wf in window_frames if len(wf) > 0]
+        if not valid_window:
+            continue
+
+        # Recompute event_idx after filtering
+        event_idx_adjusted = min(event_idx, len(valid_window) - 1)
+
+        try:
+            result = compute_pass_obso(
+                valid_window,
+                event_frame_idx=event_idx_adjusted,
+                target_position=(float(target_x), float(target_y)),
+                attacking_team_id=team_id,
+                transition_grid=transition_grid,
+                epv_grid=epv_grid,
+                pitch_control_method=pitch_control_method,
+            )
+            lookup[i] = result
+        except Exception:  # noqa: S112 — expected: frame-level failures are non-fatal
+            continue
+
+    return lookup
+
+
+@nan_safe_enrichment
+def add_obso(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    home_team_id: int | str = 0,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.DataFrame:
+    """Enrich actions with OBSO columns (actual, peak, optimal).
+
+    Only pass actions receive values; all other actions are NaN.
+    Uses ``compute_pass_obso`` from ``silly_kicks.tracking._obso``.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions.
+    frames : pd.DataFrame
+        Long-form tracking frames.
+    links : pd.DataFrame or None
+        Pre-computed link pointers (from ``link_actions_to_frames``).
+    home_team_id : int or str
+        Home team identifier (used for LTR orientation consistency).
+    transition_grid : np.ndarray or None
+        Pre-computed ball transition probability grid.
+    epv_grid : np.ndarray or None
+        Pre-computed expected possession value grid.
+    pitch_control_method : str
+        Pitch control model (default ``"spearman"``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Actions enriched with ``obso_actual``, ``obso_peak``,
+        ``obso_optimal`` columns.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_obso
+    >>> enriched = add_obso(actions, frames, home_team_id=1)
+    """
+    out = actions.copy()
+
+    # Provenance skip guard
+    provenance_cols = [
+        "frame_id",
+        "time_offset_seconds",
+        "link_quality_score",
+        "n_candidate_frames",
+    ]
+    has_provenance = any(c in out.columns for c in provenance_cols)
+
+    lookup = _precompute_obso_lookup(
+        actions,
+        frames,
+        links=links,
+        home_team_id=home_team_id,
+        transition_grid=transition_grid,
+        epv_grid=epv_grid,
+        pitch_control_method=pitch_control_method,
+    )
+
+    for col in _OBSO_COLUMNS:
+        out[col] = np.nan
+
+    for row_pos, triplet in lookup.items():
+        idx = actions.index[row_pos]
+        out.at[idx, "obso_actual"] = triplet["actual_obso"]
+        out.at[idx, "obso_peak"] = triplet["peak_obso"]
+        out.at[idx, "obso_optimal"] = triplet["optimal_obso"]
+
+    # Add provenance if not already present
+    if not has_provenance and links is None:
+        pointers, _report = link_actions_to_frames(actions, frames)
+        for pc in provenance_cols:
+            if pc in pointers.columns:
+                merged = actions[["action_id"]].merge(
+                    pointers[["action_id", pc]],
+                    on="action_id",
+                    how="left",
+                )
+                out[pc] = merged[pc].values
+
+    return out
+
+
+def obso_xfns(
+    home_team_id: int | str = 0,
+    *,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> list:
+    """Factory returning 3 FrameAwareTransformers for OBSO features.
+
+    Produces 3 features x 3 gamestates = 9 VAEP columns:
+    ``obso_actual``, ``obso_peak``, ``obso_optimal``.
+
+    Parameters
+    ----------
+    home_team_id : int or str
+        Home team identifier.
+    transition_grid, epv_grid : np.ndarray or None
+        Pre-computed grids (None uses synthetic defaults).
+    pitch_control_method : str
+        Pitch control model.
+
+    Returns
+    -------
+    list
+        List of 3 lifted FrameAwareTransformers.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import obso_xfns
+    >>> xfns = obso_xfns(home_team_id=1)
+    >>> len(xfns)
+    3
+    """
+    xfns_out = []
+    for col_key, fn in [
+        ("obso_actual", obso_actual),
+        ("obso_peak", obso_peak),
+        ("obso_optimal", obso_optimal),
+    ]:
+
+        def _helper(
+            actions,
+            frames,
+            *,
+            _fn=fn,
+            _htid=home_team_id,
+            _tg=transition_grid,
+            _eg=epv_grid,
+            _pcm: Literal["spearman", "fernandez_bornn", "voronoi"] = pitch_control_method,
+        ):
+            return _fn(
+                actions,
+                frames,
+                home_team_id=_htid,
+                transition_grid=_tg,
+                epv_grid=_eg,
+                pitch_control_method=_pcm,
+            )
+
+        _helper.__name__ = col_key
+        _helper._frame_aware = True  # type: ignore[attr-defined]
+        xfns_out.append(lift_to_states(_helper))
+
+    return xfns_out
+
+
+# ---------------------------------------------------------------------------
+# TF-41 — Space Creation (Fernandez & Bornn 2018)
+# ---------------------------------------------------------------------------
+
+_SPACE_CREATION_COLUMNS = (
+    "space_created_m2_team",
+    "space_created_m2_opponent",
+    "space_destroyed_m2_team",
+    "space_destroyed_m2_opponent",
+    "net_space_m2_team",
+    "net_space_m2_opponent",
+)
+
+
+def _compute_space_creation_for_action(
+    action_row: pd.Series,
+    frame: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> dict[str, float]:
+    """Compute aggregated space creation for the actor's team at one action frame."""
+    from ._space_creation import compute_space_created
+
+    team_id = action_row["team_id"]
+    player_id = action_row["player_id"]
+
+    result = compute_space_created(
+        frame,
+        attacking_team_id=team_id,
+        transition_grid=transition_grid,
+        epv_grid=epv_grid,
+        pitch_control_method=pitch_control_method,
+    )
+
+    actor_row = result[result["player_id"] == player_id]
+    if len(actor_row) == 0:
+        return {
+            "space_created_m2_team": np.nan,
+            "space_destroyed_m2_team": np.nan,
+            "net_space_m2_team": np.nan,
+            "space_created_m2_opponent": np.nan,
+            "space_destroyed_m2_opponent": np.nan,
+            "net_space_m2_opponent": np.nan,
+        }
+
+    row = actor_row.iloc[0]
+    return {
+        "space_created_m2_team": float(row["space_created_m2"]),
+        "space_destroyed_m2_team": float(row["space_destroyed_m2"]),
+        "net_space_m2_team": float(row["net_space_m2"]),
+        "space_created_m2_opponent": np.nan,
+        "space_destroyed_m2_opponent": np.nan,
+        "net_space_m2_opponent": np.nan,
+    }
+
+
+@nan_safe_enrichment
+def add_space_creation(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    home_team_id: int | str = 0,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.DataFrame:
+    """Enrich actions with per-actor space creation columns.
+
+    Computes differential OBSO (leave-one-out) for the acting player at
+    each action's linked frame.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions.
+    frames : pd.DataFrame
+        Long-form tracking frames.
+    links : pd.DataFrame or None
+        Pre-computed link pointers.
+    home_team_id : int or str
+        Home team identifier.
+    transition_grid, epv_grid : np.ndarray or None
+        Pre-computed grids.
+    pitch_control_method : str
+        Pitch control model.
+
+    Returns
+    -------
+    pd.DataFrame
+        Actions enriched with ``space_created_m2_team``,
+        ``space_destroyed_m2_team``, ``net_space_m2_team``,
+        ``space_created_m2_opponent``, ``space_destroyed_m2_opponent``,
+        ``net_space_m2_opponent``.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_space_creation
+    >>> enriched = add_space_creation(actions, frames, home_team_id=1)
+    """
+    out = actions.copy()
+
+    provenance_cols = [
+        "frame_id",
+        "time_offset_seconds",
+        "link_quality_score",
+        "n_candidate_frames",
+    ]
+    has_provenance = any(c in out.columns for c in provenance_cols)
+
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames)
+
+    pointer_lookup = pointers.set_index("action_id")
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    for col in _SPACE_CREATION_COLUMNS:
+        out[col] = np.nan
+
+    for i, (_idx, action_row) in enumerate(actions.iterrows()):
+        action_id = action_row["action_id"]
+        if action_id not in pointer_lookup.index:
+            continue
+        frame_id_raw = pointer_lookup.at[action_id, "frame_id"]
+        if pd.isna(frame_id_raw):
+            continue
+
+        period_id = action_row["period_id"]
+        frame_id_int = int(float(frame_id_raw))  # type: ignore[arg-type]
+
+        try:
+            frame = frame_groups.get_group((period_id, frame_id_int))
+        except KeyError:
+            continue
+
+        result = _compute_space_creation_for_action(
+            action_row,
+            frame,
+            home_team_id=home_team_id,
+            transition_grid=transition_grid,
+            epv_grid=epv_grid,
+            pitch_control_method=pitch_control_method,
+        )
+
+        idx = actions.index[i]
+        for col, val in result.items():
+            out.at[idx, col] = val
+
+    if not has_provenance and links is None:
+        for pc in provenance_cols:
+            if pc in pointers.columns:
+                merged = actions[["action_id"]].merge(
+                    pointers[["action_id", pc]],
+                    on="action_id",
+                    how="left",
+                )
+                out[pc] = merged[pc].values
+
+    return out
+
+
+def space_creation_xfns(
+    home_team_id: int | str = 0,
+    *,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> list:
+    """Factory returning FrameAwareTransformers for space creation features.
+
+    Produces 3 features x 3 gamestates = 9 VAEP columns (team-side only):
+    ``space_created_m2_team``, ``space_destroyed_m2_team``, ``net_space_m2_team``.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import space_creation_xfns
+    >>> xfns = space_creation_xfns(home_team_id=1)
+    >>> len(xfns)
+    3
+    """
+    team_cols = [
+        "space_created_m2_team",
+        "space_destroyed_m2_team",
+        "net_space_m2_team",
+    ]
+    xfns_out = []
+    for col_name in team_cols:
+
+        def _helper(
+            actions,
+            frames,
+            *,
+            _col=col_name,
+            _htid=home_team_id,
+            _tg=transition_grid,
+            _eg=epv_grid,
+            _pcm: Literal["spearman", "fernandez_bornn", "voronoi"] = pitch_control_method,
+        ):
+            if frames is None:
+                return pd.Series(np.nan, index=actions.index, name=_col)
+            enriched = add_space_creation(
+                actions,
+                frames,
+                home_team_id=_htid,
+                transition_grid=_tg,
+                epv_grid=_eg,
+                pitch_control_method=_pcm,
+            )
+            return enriched[_col].rename(_col)
+
+        _helper.__name__ = col_name
+        _helper._frame_aware = True  # type: ignore[attr-defined]
+        xfns_out.append(lift_to_states(_helper))
+
+    return xfns_out
+
+
+# ---------------------------------------------------------------------------
+# TF-42 — PAUSA scoring (Lee et al. 2026)
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_pausa(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    home_team_id: int | str = 0,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> pd.DataFrame:
+    """Enrich pass actions with PAUSA decomposition columns.
+
+    Requires OBSO columns (``obso_actual``, ``obso_peak``, ``obso_optimal``).
+    If missing, computes them first via ``add_obso``.
+
+    Returns
+    -------
+    pd.DataFrame
+        Actions enriched with ``pausa_temporal``, ``pausa_spatial``,
+        ``pausa_composite`` columns (NaN for non-pass actions).
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_pausa
+    >>> enriched = add_pausa(actions, frames, home_team_id=1)
+    """
+    from ._pausa import compute_pausa_batch
+
+    out = actions.copy()
+
+    # Ensure OBSO columns exist
+    required_obso = {"obso_actual", "obso_peak", "obso_optimal"}
+    if not required_obso.issubset(out.columns):
+        out = add_obso(
+            out,
+            frames,
+            links=links,
+            home_team_id=home_team_id,
+            transition_grid=transition_grid,
+            epv_grid=epv_grid,
+            pitch_control_method=pitch_control_method,
+        )
+
+    # Apply PAUSA only to rows with OBSO values
+    has_obso = out["obso_actual"].notna()
+    if has_obso.any():
+        obso_subset = out.loc[has_obso, ["obso_actual", "obso_peak", "obso_optimal"]]
+        pausa_result = compute_pausa_batch(obso_subset)
+        for col in ("pausa_temporal", "pausa_spatial", "pausa_composite"):
+            out[col] = np.nan
+            out.loc[has_obso, col] = pausa_result[col].values
+    else:
+        for col in ("pausa_temporal", "pausa_spatial", "pausa_composite"):
+            out[col] = np.nan
+
+    return out
+
+
+def pausa_xfns(
+    home_team_id: int | str = 0,
+    *,
+    transition_grid: np.ndarray | None = None,
+    epv_grid: np.ndarray | None = None,
+    pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+) -> list:
+    """Factory returning 3 FrameAwareTransformers for PAUSA features.
+
+    Produces 3 features x 3 gamestates = 9 VAEP columns:
+    ``pausa_temporal``, ``pausa_spatial``, ``pausa_composite``.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import pausa_xfns
+    >>> xfns = pausa_xfns(home_team_id=1)
+    >>> len(xfns)
+    3
+    """
+    col_names = ["pausa_temporal", "pausa_spatial", "pausa_composite"]
+    xfns_out = []
+    for col_name in col_names:
+
+        def _helper(
+            actions,
+            frames,
+            *,
+            _col=col_name,
+            _htid=home_team_id,
+            _tg=transition_grid,
+            _eg=epv_grid,
+            _pcm: Literal["spearman", "fernandez_bornn", "voronoi"] = pitch_control_method,
+        ):
+            if frames is None:
+                return pd.Series(np.nan, index=actions.index, name=_col)
+            enriched = add_pausa(
+                actions,
+                frames,
+                home_team_id=_htid,
+                transition_grid=_tg,
+                epv_grid=_eg,
+                pitch_control_method=_pcm,
+            )
+            return enriched[_col].rename(_col)
+
+        _helper.__name__ = col_name
+        _helper._frame_aware = True  # type: ignore[attr-defined]
+        xfns_out.append(lift_to_states(_helper))
+
+    return xfns_out
+
+
+# ---------------------------------------------------------------------------
+# TF-43 — ELASTIC Sync (Kim et al. 2025)
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_elastic_sync(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    window_seconds: float = 1.0,
+    accel_weight: float = 0.6,
+    proximity_weight: float = 0.4,
+    min_confidence: float = 0.1,
+    frame_rate: int = 25,
+) -> pd.DataFrame:
+    """Enrich actions with ELASTIC event-tracking alignment columns.
+
+    Runs the ELASTIC algorithm (Kim et al. 2025) to find the best-matching
+    tracking frame for each action, returning alternative frame pointers
+    with confidence scores.
+
+    Returns
+    -------
+    pd.DataFrame
+        Actions enriched with ``elastic_frame_id``, ``elastic_confidence``,
+        ``elastic_error_seconds`` columns.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_elastic_sync
+    >>> enriched = add_elastic_sync(actions, frames)
+    """
+    from ._elastic_sync import ElasticSyncParams, align_events_to_frames
+
+    params = ElasticSyncParams(
+        window_seconds=window_seconds,
+        accel_weight=accel_weight,
+        proximity_weight=proximity_weight,
+        min_confidence=min_confidence,
+        frame_rate=frame_rate,
+    )
+
+    alignment = align_events_to_frames(actions, frames, params=params)
+    out = actions.copy()
+
+    _elastic_cols = ["elastic_frame_id", "elastic_confidence", "elastic_error_seconds"]
+    for col in _elastic_cols:
+        out[col] = np.nan
+
+    if not alignment.empty:
+        out = out.merge(
+            alignment[["action_id", *_elastic_cols]].rename(columns={c: f"_{c}" for c in _elastic_cols}),
+            on="action_id",
+            how="left",
+        )
+        for col in _elastic_cols:
+            mask = out[f"_{col}"].notna()
+            out.loc[mask, col] = out.loc[mask, f"_{col}"]
+            out.drop(columns=f"_{col}", inplace=True)
+
+    return out
+
+
+def elastic_sync_xfns(
+    *,
+    window_seconds: float = 1.0,
+    accel_weight: float = 0.6,
+    proximity_weight: float = 0.4,
+    min_confidence: float = 0.1,
+    frame_rate: int = 25,
+) -> list:
+    """Factory returning FrameAwareTransformers for ELASTIC sync features.
+
+    Produces 2 features x 3 gamestates = 6 VAEP columns:
+    ``elastic_confidence``, ``elastic_error_seconds``.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import elastic_sync_xfns
+    >>> xfns = elastic_sync_xfns()
+    >>> len(xfns)
+    2
+    """
+    col_names = ["elastic_confidence", "elastic_error_seconds"]
+    xfns_out = []
+    for col_name in col_names:
+
+        def _helper(
+            actions,
+            frames,
+            *,
+            _col=col_name,
+            _ws=window_seconds,
+            _aw=accel_weight,
+            _pw=proximity_weight,
+            _mc=min_confidence,
+            _fr=frame_rate,
+        ):
+            if frames is None:
+                return pd.Series(np.nan, index=actions.index, name=_col)
+            enriched = add_elastic_sync(
+                actions,
+                frames,
+                window_seconds=_ws,
+                accel_weight=_aw,
+                proximity_weight=_pw,
+                min_confidence=_mc,
+                frame_rate=_fr,
+            )
+            return enriched[_col].rename(_col)
+
+        _helper.__name__ = col_name
+        _helper._frame_aware = True  # type: ignore[attr-defined]
+        xfns_out.append(lift_to_states(_helper))
+
+    return xfns_out

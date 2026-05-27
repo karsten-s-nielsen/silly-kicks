@@ -42,5 +42,5 @@ class TestTeamShapeProviders:
 
         states = [actions, actions, actions]
         result = xfn(states, frames)
-        assert len(result.columns) == 36
+        assert len(result.columns) == 54
         assert result["team_shape_centroid_x_attacking_a0"].notna().sum() >= 1
