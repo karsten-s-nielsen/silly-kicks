@@ -53,6 +53,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    # Force unbuffered stdout so background tasks show progress immediately
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,71 +140,97 @@ def main() -> None:
         sys.exit(1)
     print(f"Home team mapping: {len(home_team_map)} games")
 
-    # --- 4. Per-game feature extraction (on-demand frame loading) ---
-    # Following lakehouse TC-3 pattern: load frames per-file, extract features,
-    # then delete frames immediately.  Only the extracted feature matrix (small)
-    # stays in memory — raw frames (large) are never held simultaneously.
-    from silly_kicks.tracking import prepare_ghost_gk_training_data
+    # --- 4. Per-game feature extraction (with disk cache) ---
+    # Cache extracted features to avoid re-reading 78 x 4M-row parquets on re-runs.
+    cache_dir = args.output_dir / "ghost_gk_v1" / "_feature_cache"
+    cache_feats = cache_dir / "features.parquet"
+    cache_labels = cache_dir / "labels.parquet"
+    cache_groups = cache_dir / "groups.npy"
+    cache_provs = cache_dir / "providers.npy"
 
-    all_features: list[pd.DataFrame] = []
-    all_labels: list[pd.DataFrame] = []
-    all_game_ids: list = []
-    all_providers: list[str] = []
-    n_skipped = 0
-    t0 = time.time()
+    if cache_feats.exists() and cache_labels.exists() and cache_groups.exists() and cache_provs.exists():
+        print(f"\nLoading cached features from {cache_dir}")
+        t0 = time.time()
+        features = pd.read_parquet(cache_feats)
+        labels = pd.read_parquet(cache_labels)
+        groups = np.load(cache_groups, allow_pickle=True)
+        provider_labels = np.load(cache_provs, allow_pickle=True)
+        elapsed = time.time() - t0
+        print(f"Loaded {len(features)} samples in {elapsed:.1f}s (cached)")
+    else:
+        # Following lakehouse TC-3 pattern: load frames per-file, extract features,
+        # then delete frames immediately.  Only the extracted feature matrix (small)
+        # stays in memory — raw frames (large) are never held simultaneously.
+        from silly_kicks.tracking import prepare_ghost_gk_training_data
 
-    for pq_idx, pq_path in enumerate(parquets):
-        file_frames = pd.read_parquet(pq_path)
-        game_ids_in_file = sorted(file_frames["game_id"].unique())
+        all_features: list[pd.DataFrame] = []
+        all_labels: list[pd.DataFrame] = []
+        all_game_ids: list = []
+        all_providers: list[str] = []
+        n_skipped = 0
+        t0 = time.time()
+
+        for pq_idx, pq_path in enumerate(parquets):
+            file_frames = pd.read_parquet(pq_path)
+            game_ids_in_file = sorted(file_frames["game_id"].unique())
+            print(
+                f"  [{pq_idx + 1}/{len(parquets)}] {pq_path.name}:"
+                f" {len(game_ids_in_file)} game(s), {len(file_frames)} rows"
+            )
+
+            for game_id in game_ids_in_file:
+                home = home_team_map.get(str(game_id))
+                if home is None:
+                    print(f"    SKIP game {game_id}: no home_team_id in mapping")
+                    n_skipped += 1
+                    continue
+
+                game_frames = file_frames[file_frames["game_id"] == game_id]
+                game_actions = actions_by_game.get(game_id) if actions_by_game else None
+
+                feats, labs = prepare_ghost_gk_training_data(
+                    game_frames,
+                    home_team_id=home,
+                    actions=game_actions,
+                    subsample_fps=args.subsample_fps,
+                )
+                del game_frames  # Release per-game slice
+
+                if len(feats) > 0:
+                    all_features.append(feats)
+                    all_labels.append(labs)
+                    all_game_ids.extend([game_id] * len(feats))
+                    prov = (
+                        str(file_frames["source_provider"].iloc[0])
+                        if "source_provider" in file_frames.columns
+                        else "unknown"
+                    )
+                    all_providers.extend([prov] * len(feats))
+
+            del file_frames  # Release entire file's frames before loading next
+
+        if not all_features:
+            print("ERROR: No training samples extracted.", file=sys.stderr)
+            sys.exit(1)
+
+        features = pd.concat(all_features, ignore_index=True)
+        labels = pd.concat(all_labels, ignore_index=True)
+        del all_features, all_labels  # Release intermediate lists
+        groups = np.array(all_game_ids)
+        provider_labels = np.array(all_providers)
+        elapsed = time.time() - t0
         print(
-            f"  [{pq_idx + 1}/{len(parquets)}] {pq_path.name}: {len(game_ids_in_file)} game(s), {len(file_frames)} rows"
+            f"\nExtracted {len(features)} samples from {len(set(all_game_ids))} games"
+            f" ({n_skipped} skipped) in {elapsed:.1f}s"
         )
 
-        for game_id in game_ids_in_file:
-            home = home_team_map.get(str(game_id))
-            if home is None:
-                print(f"    SKIP game {game_id}: no home_team_id in mapping")
-                n_skipped += 1
-                continue
-
-            game_frames = file_frames[file_frames["game_id"] == game_id]
-            game_actions = actions_by_game.get(game_id) if actions_by_game else None
-
-            feats, labs = prepare_ghost_gk_training_data(
-                game_frames,
-                home_team_id=home,
-                actions=game_actions,
-                subsample_fps=args.subsample_fps,
-            )
-            del game_frames  # Release per-game slice
-
-            if len(feats) > 0:
-                all_features.append(feats)
-                all_labels.append(labs)
-                all_game_ids.extend([game_id] * len(feats))
-                prov = (
-                    str(file_frames["source_provider"].iloc[0])
-                    if "source_provider" in file_frames.columns
-                    else "unknown"
-                )
-                all_providers.extend([prov] * len(feats))
-
-        del file_frames  # Release entire file's frames before loading next
-
-    if not all_features:
-        print("ERROR: No training samples extracted.", file=sys.stderr)
-        sys.exit(1)
-
-    features = pd.concat(all_features, ignore_index=True)
-    labels = pd.concat(all_labels, ignore_index=True)
-    del all_features, all_labels  # Release intermediate lists
-    groups = np.array(all_game_ids)
-    provider_labels = np.array(all_providers)
-    elapsed = time.time() - t0
-    print(
-        f"\nExtracted {len(features)} samples from {len(set(all_game_ids))} games"
-        f" ({n_skipped} skipped) in {elapsed:.1f}s"
-    )
+        # Save cache for subsequent runs
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        features.to_parquet(cache_feats)
+        labels.to_parquet(cache_labels)
+        np.save(cache_groups, groups)
+        np.save(cache_provs, provider_labels)
+        print(f"Cached features to {cache_dir}")
 
     # --- 5. StratifiedGroupKFold CV ---
     from sklearn.model_selection import StratifiedGroupKFold
@@ -215,17 +244,27 @@ def main() -> None:
     )
     fold_metrics: list[dict] = []
 
+    cv_t0 = time.time()
     for fold, (train_idx, test_idx) in enumerate(cv.split(features, provider_labels, groups)):
         print(f"\n--- Fold {fold + 1}/{args.cv_folds} ---")
+        print(f"  Train: {len(train_idx)} samples, Test: {len(test_idx)} samples")
         X_train, X_test = features.iloc[train_idx], features.iloc[test_idx]
         y_train, y_test = labels.iloc[train_idx], labels.iloc[test_idx]
 
         model = GhostGkModel(
             n_estimators=args.n_estimators,
             max_depth=args.max_depth,
+            verbose=1,
         )
+        fit_t0 = time.time()
         model.fit(X_train, y_train)
-        preds = model.predict(X_test)  # shape (n, 2)
+        fit_elapsed = time.time() - fit_t0
+        print(f"  Fit: {fit_elapsed:.1f}s")
+
+        pred_t0 = time.time()
+        preds = model.predict_mean(X_test)  # shape (n, 2) — fast weighted mean
+        pred_elapsed = time.time() - pred_t0
+        print(f"  Predict (weighted mean): {pred_elapsed:.1f}s")
 
         mae_x = float(np.mean(np.abs(preds[:, 0] - y_test["gk_x"].values)))
         mae_y = float(np.mean(np.abs(preds[:, 1] - y_test["gk_y"].values)))
@@ -247,8 +286,12 @@ def main() -> None:
                 )
             )
 
+        fold_wall = time.time() - cv_t0
+        avg_per_fold = fold_wall / (fold + 1)
+        remaining = avg_per_fold * (args.cv_folds - fold - 1)
         print(f"  MAE x={mae_x:.3f}m  y={mae_y:.3f}m  euclid={mae_euclid:.3f}m")
         print(f"  Per-provider: {per_prov}")
+        print(f"  CV elapsed: {fold_wall:.0f}s, ETA remaining: {remaining:.0f}s")
         fold_metrics.append(
             {
                 "mae_x": mae_x,
@@ -273,11 +316,15 @@ def main() -> None:
     print("\n--- Feature importance (full model, x-coordinate only) ---")
     print("NOTE: Importance measured for gk_x predictions only.")
     print("Features primarily influencing gk_y may show artificially low importance.")
+    print("Training final model on all data...")
     final_model = GhostGkModel(
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
+        verbose=1,
     )
+    final_t0 = time.time()
     final_model.fit(features, labels)
+    print(f"Final model fit: {time.time() - final_t0:.1f}s")
 
     # Use a simple sklearn wrapper for permutation importance
     from sklearn.base import BaseEstimator, RegressorMixin
@@ -291,8 +338,10 @@ def main() -> None:
 
         def predict(self, X: np.ndarray) -> np.ndarray:
             assert self.m is not None  # noqa: S101
-            return self.m.predict(pd.DataFrame(X, columns=features.columns))[:, 0]
+            return self.m.predict_mean(pd.DataFrame(X, columns=features.columns))[:, 0]
 
+    print("Running permutation importance (5 repeats)...")
+    pi_t0 = time.time()
     pi = permutation_importance(
         _SklearnWrapper(m=final_model),
         features.values,
@@ -301,6 +350,7 @@ def main() -> None:
         n_repeats=5,
         random_state=42,
     )
+    print(f"Permutation importance: {time.time() - pi_t0:.1f}s")
     importances = sorted(
         zip(features.columns, pi.importances_mean, strict=True),
         key=lambda x: -x[1],
@@ -314,11 +364,17 @@ def main() -> None:
     final_model.save(artifact_dir)
     print(f"\nModel saved to {artifact_dir}")
 
-    # Round-trip verify
+    # Round-trip verify (compare serialized weights, not KDE predictions —
+    # predict() through KDE is intractable at training scale)
     loaded = GhostGkModel.load(artifact_dir)
-    sample_pred = loaded.predict(features.head(10))
-    expected = final_model.predict(features.head(10))
-    np.testing.assert_allclose(sample_pred, expected, atol=1e-10)
+    for attr in ("_tree_nodes", "_training_gk_x", "_training_gk_y", "_training_leaves"):
+        orig = getattr(final_model, attr)
+        back = getattr(loaded, attr)
+        if isinstance(orig, list):
+            for i, (a, b) in enumerate(zip(orig, back, strict=True)):
+                np.testing.assert_array_equal(a, b, err_msg=f"{attr}[{i}]")
+        else:
+            np.testing.assert_array_equal(orig, back, err_msg=attr)
     print("Round-trip verification: PASS")
 
     # --- 8. Metrics JSON ---

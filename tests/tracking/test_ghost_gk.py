@@ -379,15 +379,41 @@ class TestSerialization:
 
 
 class TestFailFast:
-    """Fail-fast when [ghost-gk] extra not installed or model unavailable."""
+    """Fail-fast when bundled weights missing or invalid variant."""
 
-    def test_ghost_gk_missing_huggingface_hub(self):
-        """Mock huggingface_hub unavailable -> ImportError with install instructions."""
+    def test_resolve_model_missing_weights(self):
+        """Missing bundled weights -> FileNotFoundError."""
         from silly_kicks.tracking._ghost_gk import _resolve_model
 
-        with patch.dict("sys.modules", {"huggingface_hub": None}):
-            with pytest.raises(ImportError, match=r"pip install silly-kicks\[ghost-gk\]"):
+        with patch("silly_kicks.tracking._ghost_gk._WEIGHTS_ROOT", Path("/nonexistent")):
+            with pytest.raises(FileNotFoundError, match="Bundled Ghost-GK weights"):
                 _resolve_model(None)
+
+    def test_resolve_model_loads_default(self):
+        """Default bundled weights loaded when no model supplied."""
+        from silly_kicks.tracking._ghost_gk import (
+            _WEIGHTS_ROOT,
+            GhostGkModel,
+            _resolve_model,
+        )
+
+        if not (_WEIGHTS_ROOT / "default" / "SHA256SUMS").exists():
+            pytest.skip("Bundled weights not present in dev checkout")
+        model = _resolve_model(None)
+        assert isinstance(model, GhostGkModel)
+
+    def test_resolve_model_loads_full(self):
+        """Full variant loaded by name."""
+        from silly_kicks.tracking._ghost_gk import (
+            _WEIGHTS_ROOT,
+            GhostGkModel,
+            _resolve_model,
+        )
+
+        if not (_WEIGHTS_ROOT / "full" / "SHA256SUMS").exists():
+            pytest.skip("Full bundled weights not present in dev checkout")
+        model = _resolve_model("full")
+        assert isinstance(model, GhostGkModel)
 
     def test_resolve_model_passthrough(self):
         """Pre-loaded model passed through without download."""

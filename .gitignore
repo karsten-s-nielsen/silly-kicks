@@ -40,5 +40,8 @@ tests/datasets/wyscout_public/
 # StatsBomb open-data raw events cache for scripts/build_worldcup_fixture.py
 tests/datasets/statsbomb/raw/.cache/
 
+# Training artifacts (full model + feature cache — bundled weights are in silly_kicks/)
+models/
+
 # Claude Code
 .claude/
