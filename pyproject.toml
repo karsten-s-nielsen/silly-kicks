@@ -80,9 +80,10 @@ Repository = "https://github.com/karsten-s-nielsen/silly-kicks"
 
 [tool.hatch.build.targets.wheel]
 packages = ["silly_kicks"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"silly_kicks/tracking/_ghost_gk_weights/default" = "silly_kicks/tracking/_ghost_gk_weights/default"
+# Exclude the "full" Ghost-GK weights (~91 MB) from the wheel — they are
+# downloaded from HuggingFace Hub on first use.  The "default" weights (~9 MB)
+# are included automatically as part of the silly_kicks package.
+exclude = ["silly_kicks/tracking/_ghost_gk_weights/full"]
 
 # --- Ruff ---
 [tool.ruff]
