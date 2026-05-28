@@ -5,6 +5,50 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.25.0] — 2026-05-28
+
+### Fixed
+- **ELASTIC alignment for native-frame-numbered providers** (IDSSE/Sportec):
+  `align_events_to_frames` assumed `frame_id == time_seconds * frame_rate`
+  (0-based), producing all-NaN alignments for providers whose `frame_id` has a
+  non-zero origin (e.g. period 1 from 10000). Now derives a per-`(game_id,
+  period_id)` linear `frame_id ↔ time_seconds` fit (`_fit_frame_time_relationship`)
+  used for both the candidate-frame window and the `aligned_ts` / `error_seconds`
+  conversion; falls back to `time * frame_rate` when frames lack `time_seconds`.
+  0-based providers (Metrica/StatsBomb) are unaffected (bit-identical).
+
+### Added
+- **Shared per-frame pitch-control surface** (`PitchControlCache`, TF-7): memoizes
+  canonical per-frame surfaces keyed on `(game_id, period_id, frame_id, team,
+  method, params, ball_position, decompose)`, so the enrichment families that use
+  pitch control compute each surface once instead of once per family. Threaded via
+  an optional `pitch_control_cache` kwarg (mirrors the `links` pattern) on
+  `add_obso`, `add_cover_shadows`, `add_gk_influence`, `add_player_influence`,
+  `add_space_creation`, `add_pitch_control` (+ `pitch_control_at_action`). Each
+  aggregator uses a fresh local cache by default (within-pass reuse); a
+  caller-supplied cache extends reuse across families in one pass. Only
+  canonical-frame surfaces are cached — counterfactual (player-removed) surfaces
+  stay uncached. Zero global state. Output is bit-identical.
+- `attacking_direction_col` passthrough on `get_individual_das` — supply a
+  precomputed per-frame direction column instead of inferring it.
+
+### Changed
+- **DAS + shape_graph linked-frame restriction** (perf, bit-identical): when
+  `links` is supplied, `add_das` / `add_shape_graph` restrict the expensive
+  per-frame computation to the action-linked frames. For DAS, attacking direction
+  is pinned on the *full* frames first (`_pin_attacking_direction`, reusing
+  accessible-space's own `infer_playing_direction`) before restriction, so the
+  per-period direction inference cannot flip on the restricted subset — making the
+  result provably bit-identical. shape_graph is a pure per-frame snapshot, so its
+  restriction is trivially identical.
+- **OBSO**: hoisted the per-period `(frame_id, time_seconds)` window table out of
+  the per-pass loop (was `O(passes × frames)`); pitch control now flows through the
+  shared cache, reusing surfaces across overlapping pass windows. Narrowed the
+  per-pass `except Exception` to `(ValueError, KeyError, IndexError)` so unexpected
+  errors propagate instead of being masked as NaN (ADR-002 no-silent-swallow).
+- **cover_shadows**: hoisted the receiver position / `xT` / baseline lane-control
+  out of the per-blocker loop (bit-identical).
+
 ## [3.24.0] — 2026-05-28
 
 ### Added

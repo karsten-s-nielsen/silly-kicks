@@ -19,7 +19,7 @@ import pandas as pd
 from silly_kicks.spadl import config as spadlconfig
 
 from ._defensive_line import select_back_line_players
-from .pitch_control import PitchControlParams, SpearmanParams, compute_pitch_control
+from .pitch_control import PitchControlCache, PitchControlParams, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
 if TYPE_CHECKING:
@@ -234,6 +234,7 @@ def compute_gk_influence(
     tau_seconds: float = 1.0,
     gk_reaction_time: float = 0.4,
     gk_max_acceleration: float = 7.0,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> GkInfluence:
     """Per-frame GK influence measurement (all three primitives).
 
@@ -313,9 +314,12 @@ def compute_gk_influence(
         zones = [Zone.six_yard_box(goal_x)]
 
     # --- Primitive (a): threat-weighted pitch control share ---
-    surface = compute_pitch_control(
+    # Canonical-frame surface — route through the shared cache so other
+    # families (and other actions on this frame) reuse it (TF-7 shared surface).
+    cache = pitch_control_cache if pitch_control_cache is not None else PitchControlCache()
+    surface = cache.surface(
         frame,
-        attacking_team_id=attacking_team_id,
+        attacking_team_id,
         method=method,
         params=params,
         decompose=True,

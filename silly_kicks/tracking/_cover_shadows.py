@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from .pitch_control import PitchControlParams, compute_pitch_control
+from .pitch_control import PitchControlCache, PitchControlParams, compute_pitch_control
 from .pitch_control._surface import PitchControlSurface
 
 if TYPE_CHECKING:
@@ -653,6 +653,7 @@ def compute_blocking_score(
     defenders_to_remove: list[int | str] | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     params: PitchControlParams | None = None,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> BlockingScoreResult:
     """Blocking score: counterfactual threat reduction from defender removal.
 
@@ -693,8 +694,11 @@ def compute_blocking_score(
     """
     _validate_ltr(frame, caller="compute_blocking_score")
 
-    # Original threat
-    surface_orig = compute_pitch_control(
+    # Original (canonical-frame) threat — routed through the shared cache.
+    # The counterfactual surface below is computed on a *modified* frame and
+    # must NOT use the cache (different content at the same frame_id).
+    cache = pitch_control_cache if pitch_control_cache is not None else PitchControlCache()
+    surface_orig = cache.surface(
         frame,
         attacking_team_id,
         method=method,
@@ -781,6 +785,7 @@ def _compute_cover_shadow_dict(
     decision_rule: str = "majority",
     detailed: bool = False,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> dict[str, float | int] | None:
     """Compute 5 cover-shadow values for a single frame + passer position.
 
@@ -870,6 +875,7 @@ def _compute_cover_shadow_dict(
         home_team_id=home_team_id,
         defenders_to_remove=lane_blocker_ids,
         method=method,
+        pitch_control_cache=pitch_control_cache,
     )
 
     # Max single-defender blocking score
@@ -883,6 +889,7 @@ def _compute_cover_shadow_dict(
                 home_team_id=home_team_id,
                 defenders_to_remove=[d_pid],
                 method=method,
+                pitch_control_cache=pitch_control_cache,
             )
             max_def = max(max_def, d_result.blocking_score)
     else:
@@ -890,22 +897,26 @@ def _compute_cover_shadow_dict(
         # lane_control without d to compute delta_P_received per receiver.
         # score_d = sum_r xT(r) * delta_P_received_r
         xt_interp = xt.interpolator()  # type: ignore[union-attr]
+        # Hoist loop-invariants out of the per-blocker loop: receiver position,
+        # xT, and baseline received-probability do not depend on the removed
+        # defender d. Exact (bit-identical); only the per-(d, receiver)
+        # lane_control re-run remains inside the loop.
+        receiver_records: list[tuple[float, float, float, float]] = []
+        for recv_pid, lc_orig in lane_results:
+            recv_rows = dangerous[dangerous["player_id"] == recv_pid]
+            if recv_rows.empty:
+                continue
+            recv_x = float(recv_rows.iloc[0]["x"])
+            recv_y = float(recv_rows.iloc[0]["y"])
+            recv_xt = float(xt_interp(np.array([recv_x]), np.array([recv_y]))[0, 0])
+            old_recv = lc_orig.p_received_center + lc_orig.p_received_left + lc_orig.p_received_right
+            receiver_records.append((recv_x, recv_y, recv_xt, old_recv))
+
         max_approx = 0.0
         for d_pid in lane_blocker_ids:
             frame_without_d = frame_data[frame_data["player_id"] != d_pid]
             score_d = 0.0
-            for recv_pid, lc_orig in lane_results:
-                recv_rows = dangerous[dangerous["player_id"] == recv_pid]
-                if recv_rows.empty:
-                    continue
-                recv_x = float(recv_rows.iloc[0]["x"])
-                recv_y = float(recv_rows.iloc[0]["y"])
-                recv_xt = float(
-                    xt_interp(
-                        np.array([recv_x]),
-                        np.array([recv_y]),
-                    )[0, 0]
-                )
+            for recv_x, recv_y, recv_xt, old_recv in receiver_records:
                 lc_new = lane_control(
                     frame_without_d,
                     passer_xy,
@@ -914,7 +925,6 @@ def _compute_cover_shadow_dict(
                     attacking_team_id=attacking_team_id,
                     params=cs_params,
                 )
-                old_recv = lc_orig.p_received_center + lc_orig.p_received_left + lc_orig.p_received_right
                 new_recv = lc_new.p_received_center + lc_new.p_received_left + lc_new.p_received_right
                 delta_p = max(new_recv - old_recv, 0.0)
                 score_d += recv_xt * delta_p

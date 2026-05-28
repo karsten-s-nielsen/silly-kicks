@@ -188,6 +188,44 @@ def _build_player_ball_distance_lookup(
     return lookup
 
 
+def _fit_frame_time_relationship(
+    frames: pd.DataFrame,
+) -> dict[tuple, tuple[float, float]]:
+    """Per-(game_id, period_id) linear fit ``frame_id ~= slope * time + intercept``.
+
+    fps is constant, so ``frame_id`` is linear in ``time_seconds``. Deriving the
+    fit from the frames' own ``(frame_id, time_seconds)`` pairs handles both
+    0-based providers (Metrica/StatsBomb, where ``frame_id == time * rate``) and
+    native-frame-numbered providers (IDSSE/Sportec, where ``frame_id`` is offset
+    from 0 — e.g. period 1 from 10000). Groups lacking >=2 distinct usable
+    ``time_seconds`` values are omitted; the caller falls back to
+    ``time * frame_rate`` for those.
+
+    Returns
+    -------
+    dict
+        Maps ``(game_id, period_id)`` to ``(slope, intercept)``.
+    """
+    fits: dict[tuple, tuple[float, float]] = {}
+    if "time_seconds" not in frames.columns:
+        return fits
+
+    for (gid, pid), grp in frames.groupby(["game_id", "period_id"]):
+        pairs = grp[["frame_id", "time_seconds"]].dropna().drop_duplicates()
+        if len(pairs) < 2:
+            continue
+        t = np.asarray(pairs["time_seconds"].values, dtype=np.float64)
+        f = np.asarray(pairs["frame_id"].values, dtype=np.float64)
+        if float(np.ptp(t)) < 1e-9:
+            continue  # degenerate (no time spread) -> caller falls back
+        slope, intercept = np.polyfit(t, f, 1)
+        if abs(slope) < 1e-9:
+            continue
+        fits[(gid, pid)] = (float(slope), float(intercept))
+
+    return fits
+
+
 def align_events_to_frames(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
@@ -256,6 +294,12 @@ def align_events_to_frames(
     for (gid, pid), grp in ball_features.groupby(["game_id", "period_id"]):
         frames_by_group[(gid, pid)] = np.sort(np.asarray(grp["frame_id"].values, dtype=np.int64))
 
+    # Per-(game_id, period_id) frame_id <-> time_seconds fit, so frame windows
+    # and frame->time conversions work for native-numbered providers
+    # (IDSSE/Sportec) as well as 0-based ones. Groups absent here fall back to
+    # the time * frame_rate assumption below.
+    frame_time_fits = _fit_frame_time_relationship(frames)
+
     window_frames = int(params.window_seconds * params.frame_rate)
     results: list[dict] = []
 
@@ -266,7 +310,12 @@ def align_events_to_frames(
         game_id = action_row["game_id"]
         player_id = str(action_row["player_id"])
 
-        nominal_frame = round(action_time * params.frame_rate)
+        fit = frame_time_fits.get((game_id, period_id))
+        if fit is not None:
+            slope, intercept = fit
+        else:
+            slope, intercept = float(params.frame_rate), 0.0
+        nominal_frame = round(slope * action_time + intercept)
 
         period_frames = frames_by_group.get((game_id, period_id))
         if period_frames is None or len(period_frames) == 0:
@@ -314,7 +363,7 @@ def align_events_to_frames(
         if confidence < params.min_confidence:
             continue
 
-        aligned_ts = best_frame / params.frame_rate
+        aligned_ts = (best_frame - intercept) / slope
         error_seconds = abs(aligned_ts - action_time)
 
         results.append(

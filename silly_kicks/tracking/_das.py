@@ -159,10 +159,51 @@ def get_das(
     return result
 
 
+def _pin_attacking_direction(frames: pd.DataFrame) -> pd.DataFrame:
+    """Attach an ``attacking_direction`` column inferred from the FULL frames.
+
+    accessible-space infers playing direction per ``(period, team_in_possession)``
+    from the mean x-position over the frames it is *given*. When the frame set is
+    later restricted to a handful of action-linked frames, that subset can infer a
+    flipped direction and silently change DAS. Pinning the direction here — reusing
+    the library's own ``infer_playing_direction`` for identical semantics — lets
+    callers restrict frames while keeping the full-frame sign, so per-frame DAS
+    stays bit-identical. Direction inference is shift-invariant (mean-x ordering),
+    so running it on un-shifted silly-kicks coordinates matches what the library
+    would compute internally on its shifted coordinates.
+
+    Returns a copy of ``frames`` with an added ``attacking_direction`` column.
+    """
+    _import_accessible_space()  # fail fast with the actionable install message
+    # Raise the canonical ValueError (which DAS consumers already catch and
+    # degrade to NaN) on missing vx/vy/team_in_possession, instead of letting
+    # accessible-space's infer_playing_direction raise an uncaught KeyError.
+    _validate_das_inputs(frames)
+    from accessible_space.interface import infer_playing_direction
+
+    out = frames.copy()
+    # Mirror the library's internal handling: ball rows carry no team.
+    ball_mask = out["is_ball"] == True  # noqa: E712
+    out.loc[ball_mask, "team_id"] = None
+    direction = infer_playing_direction(
+        out,
+        team_col="team_id",
+        period_col="period_id",
+        team_in_possession_col="team_in_possession",
+        x_col="x",
+        ball_team=None,
+        frame_col="frame_id",
+    )
+    out["attacking_direction"] = direction.to_numpy()
+    # infer_playing_direction adds its own 'playing_direction' column in place.
+    return out.drop(columns=["playing_direction"], errors="ignore")
+
+
 def get_individual_das(
     frames: pd.DataFrame,
     *,
     use_progress_bar: bool = False,
+    attacking_direction_col: str | None = None,
     **kwargs,
 ) -> pd.DataFrame:
     """Per-player Accessible Space and Dangerous Accessible Space per frame.
@@ -173,6 +214,11 @@ def get_individual_das(
         Long-form tracking frames with ``vx``, ``vy``, ``team_in_possession``.
     use_progress_bar : bool, default False
         Show progress bar.
+    attacking_direction_col : str or None, default None
+        When given, the column on ``frames`` holding a precomputed per-frame
+        attacking direction; the library uses it verbatim instead of inferring
+        direction from the input frames. When None, direction is inferred (the
+        default). See ``_pin_attacking_direction``.
     **kwargs
         Passthrough to ``accessible_space.get_individual_dangerous_accessible_space``.
 
@@ -200,7 +246,8 @@ def get_individual_das(
         x_pitch_max=_X_PITCH_MAX,
         y_pitch_min=_Y_PITCH_MIN,
         y_pitch_max=_Y_PITCH_MAX,
-        infer_attacking_direction=True,
+        infer_attacking_direction=attacking_direction_col is None,
+        attacking_direction_col=attacking_direction_col,
         use_progress_bar=use_progress_bar,
         **_COLUMN_MAP,
         **kwargs,

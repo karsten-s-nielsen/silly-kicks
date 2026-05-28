@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from .pitch_control import PitchControlParams, PitchControlSurface, SpearmanParams, compute_pitch_control
+from .pitch_control import PitchControlCache, PitchControlParams, PitchControlSurface, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
 if TYPE_CHECKING:
@@ -48,6 +48,7 @@ def compute_player_influence(
     tau_seconds: float = 1.0,
     reaction_time: float | None = None,
     max_acceleration: float | None = None,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> dict[int | str, PlayerInfluence]:
     """Per-frame influence for all outfield players.
 
@@ -101,9 +102,11 @@ def compute_player_influence(
     if surface is not None:
         pc = surface
     else:
-        pc = compute_pitch_control(
+        # Canonical-frame surface via the shared cache (TF-7 shared surface).
+        cache = pitch_control_cache if pitch_control_cache is not None else PitchControlCache()
+        pc = cache.surface(
             frame,
-            attacking_team_id=attacking_team_id,
+            attacking_team_id,
             method=method,
             params=params,
             decompose=True,
