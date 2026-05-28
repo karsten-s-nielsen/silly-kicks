@@ -44,6 +44,7 @@ lightgbm = ["lightgbm>=4.0"]
 # the golden-master extra is only installable on the wider 3.11+ subset.
 golden-master = ["unravelsports>=1.2; python_version >= '3.11'"]
 das = ["accessible-space>=2.0,<3"]
+ghost-gk = ["huggingface_hub>=0.20.0"]
 ghost-gk-train = ["skl2onnx>=1.16.0"]
 test = [
     "pytest>=7.4.2",
@@ -81,7 +82,7 @@ Repository = "https://github.com/karsten-s-nielsen/silly-kicks"
 packages = ["silly_kicks"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"silly_kicks/tracking/_ghost_gk_weights" = "silly_kicks/tracking/_ghost_gk_weights"
+"silly_kicks/tracking/_ghost_gk_weights/default" = "silly_kicks/tracking/_ghost_gk_weights/default"
 
 # --- Ruff ---
 [tool.ruff]

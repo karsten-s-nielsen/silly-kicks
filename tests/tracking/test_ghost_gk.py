@@ -402,18 +402,32 @@ class TestFailFast:
         model = _resolve_model(None)
         assert isinstance(model, GhostGkModel)
 
-    def test_resolve_model_loads_full(self):
-        """Full variant loaded by name."""
-        from silly_kicks.tracking._ghost_gk import (
-            _WEIGHTS_ROOT,
-            GhostGkModel,
-            _resolve_model,
-        )
+    def test_resolve_model_full_falls_back_to_hub(self):
+        """Full variant falls back to Hub download when not bundled."""
+        from silly_kicks.tracking._ghost_gk import _resolve_model
 
-        if not (_WEIGHTS_ROOT / "full" / "SHA256SUMS").exists():
-            pytest.skip("Full bundled weights not present in dev checkout")
-        model = _resolve_model("full")
-        assert isinstance(model, GhostGkModel)
+        mock_model = _fitted_model()[0]
+        with (
+            patch("silly_kicks.tracking._ghost_gk._WEIGHTS_ROOT", Path("/nonexistent")),
+            patch.object(type(mock_model), "from_hub", return_value=mock_model) as mock_hub,
+        ):
+            result = _resolve_model("full")
+            mock_hub.assert_called_once()
+            assert result is mock_model
+
+    def test_resolve_model_full_missing_huggingface_hub(self):
+        """Full variant without huggingface_hub installed -> ImportError."""
+        from silly_kicks.tracking._ghost_gk import _resolve_model
+
+        with (
+            patch("silly_kicks.tracking._ghost_gk._WEIGHTS_ROOT", Path("/nonexistent")),
+            patch(
+                "silly_kicks.tracking._ghost_gk.GhostGkModel.from_hub",
+                side_effect=ImportError("Ghost GK full model requires: pip install silly-kicks[ghost-gk]"),
+            ),
+        ):
+            with pytest.raises(ImportError, match="ghost-gk"):
+                _resolve_model("full")
 
     def test_resolve_model_passthrough(self):
         """Pre-loaded model passed through without download."""

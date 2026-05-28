@@ -128,27 +128,33 @@ _WEIGHTS_ROOT = Path(__file__).parent / "_ghost_gk_weights"
 GhostGkVariant = Literal["default", "full"]
 
 
+_HF_REPO_ID = "silly-kicks/ghost-gk-v1"
+
+
 def _resolve_model(model: GhostGkModel | GhostGkVariant | None) -> GhostGkModel:
-    """Resolve model parameter with cascade: caller > env > bundled variant.
+    """Resolve model parameter with cascade: caller > env > bundled/Hub variant.
 
     Resolution order:
     1. Caller-supplied ``GhostGkModel`` instance (pass-through)
     2. ``SILLY_KICKS_GHOST_GK_PATH`` env var (custom-trained model path)
-    3. Bundled variant by name (``"default"`` or ``"full"``)
+    3. Bundled variant by name — ``"default"`` is bundled in the wheel;
+       ``"full"`` is downloaded from HuggingFace Hub on first use
+       (requires ``pip install silly-kicks[ghost-gk]``).
 
     Parameters
     ----------
     model : GhostGkModel | "default" | "full" | None
         - ``None`` or ``"default"``: lightweight model (~9 MB, 36 k samples).
-          Fast density estimation, nearly identical point-estimate accuracy.
+          Bundled in the wheel — works offline, no download needed.
         - ``"full"``: high-resolution model (~91 MB, 537 k samples).
+          Downloaded from HuggingFace Hub on first use; cached locally.
           Smoother density surfaces at the cost of slower ``predict_density``.
         - ``GhostGkModel``: pre-loaded instance, returned as-is.
 
     Examples
     --------
     >>> resolved = _resolve_model(None)  # default bundled weights
-    >>> resolved = _resolve_model("full")  # high-resolution variant
+    >>> resolved = _resolve_model("full")  # download from HuggingFace Hub
     >>> resolved = _resolve_model(my_model)  # pass-through
     """
     if isinstance(model, GhostGkModel):
@@ -161,11 +167,19 @@ def _resolve_model(model: GhostGkModel | GhostGkVariant | None) -> GhostGkModel:
 
     # Resolve variant name
     variant: GhostGkVariant = model if model is not None else "default"
+
+    # Try bundled weights first (default is always bundled; full may be
+    # present in a dev checkout but is not shipped in the wheel)
     weights_dir = _WEIGHTS_ROOT / variant
-    if not (weights_dir / "SHA256SUMS").exists():
-        msg = f"Bundled Ghost-GK weights not found at {weights_dir}"
-        raise FileNotFoundError(msg)
-    return GhostGkModel.load(weights_dir)
+    if (weights_dir / "SHA256SUMS").exists():
+        return GhostGkModel.load(weights_dir)
+
+    # For "full" variant, download from HuggingFace Hub
+    if variant == "full":
+        return GhostGkModel.from_hub(_HF_REPO_ID)
+
+    msg = f"Bundled Ghost-GK weights not found at {weights_dir}"
+    raise FileNotFoundError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -1302,7 +1316,10 @@ class GhostGkModel:
 
     @classmethod
     def from_variant(cls, variant: GhostGkVariant = "default") -> GhostGkModel:
-        """Load a bundled model variant by name.
+        """Load a model variant by name.
+
+        ``"default"`` is bundled in the wheel. ``"full"`` is downloaded
+        from HuggingFace Hub on first use (requires ``[ghost-gk]`` extra).
 
         Parameters
         ----------
@@ -1315,10 +1332,31 @@ class GhostGkModel:
         >>> model = GhostGkModel.from_variant("full")
         """
         weights_dir = _WEIGHTS_ROOT / variant
-        if not (weights_dir / "SHA256SUMS").exists():
-            msg = f"Bundled Ghost-GK weights not found at {weights_dir}"
-            raise FileNotFoundError(msg)
-        return cls.load(weights_dir)
+        if (weights_dir / "SHA256SUMS").exists():
+            return cls.load(weights_dir)
+        if variant == "full":
+            return cls.from_hub(_HF_REPO_ID)
+        msg = f"Bundled Ghost-GK weights not found at {weights_dir}"
+        raise FileNotFoundError(msg)
+
+    @classmethod
+    def from_hub(cls, repo_id: str = _HF_REPO_ID) -> GhostGkModel:
+        """Download from HuggingFace Hub and load.
+
+        Requires ``pip install silly-kicks[ghost-gk]``.
+
+        Examples
+        --------
+        >>> model = GhostGkModel.from_hub()
+        """
+        try:
+            from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
+        except ImportError:
+            msg = "Ghost GK full model requires: pip install silly-kicks[ghost-gk]"
+            raise ImportError(msg) from None
+
+        local_dir = snapshot_download(repo_id=repo_id)
+        return cls.load(Path(local_dir))
 
 
 # ---------------------------------------------------------------------------
