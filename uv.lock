@@ -3263,6 +3263,9 @@ dev = [
     { name = "pyright" },
     { name = "ruff" },
 ]
+ghost-gk = [
+    { name = "huggingface-hub" },
+]
 ghost-gk-train = [
     { name = "skl2onnx" },
 ]
@@ -3303,6 +3306,7 @@ requires-dist = [
     { name = "accessible-space", marker = "extra == 'das'", specifier = ">=2.0,<3" },
     { name = "accessible-space", marker = "extra == 'test'", specifier = ">=2.0,<3" },
     { name = "catboost", marker = "extra == 'catboost'", specifier = ">=1.2" },
+    { name = "huggingface-hub", marker = "extra == 'ghost-gk'", specifier = ">=0.20.0" },
     { name = "huggingface-hub", marker = "extra == 'test'", specifier = ">=0.20.0" },
     { name = "kloppy", marker = "extra == 'kloppy'", specifier = ">=3.18.0" },
     { name = "lightgbm", marker = "extra == 'lightgbm'", specifier = ">=4.0" },
@@ -3326,7 +3330,7 @@ requires-dist = [
     { name = "xarray", marker = "extra == 'xarray'", specifier = ">=2024.1.0" },
     { name = "xgboost", marker = "extra == 'xgboost'", specifier = ">=2.0.0" },
 ]
-provides-extras = ["kloppy", "numba", "xarray", "xgboost", "catboost", "lightgbm", "golden-master", "das", "ghost-gk-train", "test", "dev"]
+provides-extras = ["kloppy", "numba", "xarray", "xgboost", "catboost", "lightgbm", "golden-master", "das", "ghost-gk", "ghost-gk-train", "test", "dev"]
 
 [[package]]
 name = "six"

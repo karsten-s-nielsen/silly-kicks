@@ -8,9 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.24.0] — 2026-05-28
 
 ### Added
-- **Bundled Ghost-GK model weights**: two pre-trained variants ship inside the
-  package — `"default"` (~9 MB, 36 k training samples) and `"full"` (~91 MB,
-  537 k training samples). No external downloads or `[ghost-gk]` extra needed.
+- **Bundled Ghost-GK model weights**: `"default"` variant (~9 MB, 36 k training
+  samples) ships inside the wheel — zero-config inference out of the box.
+  `"full"` variant (~91 MB, 537 k training samples) lazy-downloads from
+  HuggingFace Hub on first use (requires `pip install silly-kicks[ghost-gk]`).
 - `GhostGkVariant` type alias (`Literal["default", "full"]`) exported from
   `silly_kicks.tracking`.
 - `GhostGkModel.from_variant("full")` class method for explicit variant loading.
@@ -18,17 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (backward-compatible: `None` still selects the default model).
 
 ### Changed
-- `_resolve_model` cascade simplified: caller > env var > bundled variant.
-  HuggingFace Hub fallback removed.
+- `_resolve_model` cascade: caller > env var > bundled variant (for `"default"`)
+  or HuggingFace Hub download (for `"full"`).
 - Training script round-trip verification compares serialized weights instead
   of running intractable KDE predictions.
 - Training script caches extracted features to disk (`_feature_cache/`) and
   uses `predict_mean()` for permutation importance.
-
-### Removed
-- `GhostGkModel.from_hub()` — replaced by bundled weights + `from_variant()`.
-- `ghost-gk` optional dependency extra (`huggingface_hub`).
-- `scripts/publish_ghost_gk.py` — no longer needed without Hub publishing.
+- SHA-256 integrity check normalizes CRLF → LF before hashing `.json` files,
+  fixing cross-platform (Windows → Linux CI) hash mismatches.
 
 ## [3.23.0] — 2026-05-27
 
