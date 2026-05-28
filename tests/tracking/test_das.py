@@ -371,7 +371,7 @@ class TestChunkSizePassthrough:
 
         captured_cs: list = []
 
-        def spy_precompute(frames, *, chunk_size=None):
+        def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None):
             captured_cs.append(chunk_size)
             raise ImportError("short-circuit")
 
@@ -398,7 +398,7 @@ class TestChunkSizePassthrough:
 
         captured_cs: list = []
 
-        def spy_precompute(frames, *, chunk_size=None):
+        def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None):
             captured_cs.append(chunk_size)
             raise ImportError("short-circuit")
 
@@ -420,7 +420,7 @@ class TestDasExceptionGracefulDegradation:
         """add_das must catch IndexError/TypeError from degenerate Voronoi tessellation."""
         import silly_kicks.tracking.features as feat_mod
 
-        def boom(frames, *, chunk_size=None):
+        def boom(frames, *, chunk_size=None, link_frame_ids=None):
             raise exc_type("degenerate Voronoi tessellation")
 
         monkeypatch.setattr(feat_mod, "_precompute_das_lookup", boom)
@@ -493,3 +493,262 @@ class TestDasXfns:
         assert result.name == "das_team"
         assert result.isna().all()
         assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# Linked-frame restriction (perf, must be bit-identical)
+# ---------------------------------------------------------------------------
+
+
+def _make_flip_frames() -> pd.DataFrame:
+    """Frames whose full-period direction inference flips on a single-frame subset.
+
+    Home is in possession throughout. Across the bulk of the period Home sits
+    at low x (mean-x ordering => Home is the smaller-x / +1 team), but in the
+    lone linked frame (id 9) Home is camped at high x — so inferring direction
+    from frame 9 *alone* would flip Home's sign. Used to prove that pinning the
+    direction on the full frames (then restricting) preserves the correct sign.
+    """
+    rows = []
+    # Bulk frames: Home low-x, Away high-x.
+    for fid in range(4):
+        for i in range(3):
+            rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": fid,
+                    "player_id": f"H{i}",
+                    "team_id": "H",
+                    "x": 20.0 + i,
+                    "y": 30.0,
+                    "vx": 0.0,
+                    "vy": 0.0,
+                    "is_ball": False,
+                    "team_in_possession": "H",
+                }
+            )
+            rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": fid,
+                    "player_id": f"A{i}",
+                    "team_id": "A",
+                    "x": 80.0 + i,
+                    "y": 30.0,
+                    "vx": 0.0,
+                    "vy": 0.0,
+                    "is_ball": False,
+                    "team_in_possession": "H",
+                }
+            )
+    # Linked frame 9: Home camped high-x, Away low-x (subset would flip).
+    for i in range(3):
+        rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": 9,
+                "player_id": f"H{i}",
+                "team_id": "H",
+                "x": 90.0 + i,
+                "y": 30.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "is_ball": False,
+                "team_in_possession": "H",
+            }
+        )
+        rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": 9,
+                "player_id": f"A{i}",
+                "team_id": "A",
+                "x": 20.0 + i,
+                "y": 30.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "is_ball": False,
+                "team_in_possession": "H",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+class TestPinAttackingDirection:
+    """_pin_attacking_direction must capture FULL-frame direction, immune to subset flips."""
+
+    def test_pin_prevents_subset_flip(self) -> None:
+        pytest.importorskip("accessible_space")
+        from accessible_space.interface import infer_playing_direction
+
+        from silly_kicks.tracking._das import _pin_attacking_direction
+
+        frames = _make_flip_frames()
+        pinned = _pin_attacking_direction(frames)
+
+        # The pinned value for the linked frame reflects the FULL-period sign.
+        linked = pinned[pinned["frame_id"] == 9]
+        full_sign = pinned["attacking_direction"].iloc[0]
+        assert (linked["attacking_direction"] == full_sign).all()
+
+        # Inferring from the linked frame ALONE would produce the opposite sign.
+        subset = frames[frames["frame_id"] == 9].copy()
+        naive = infer_playing_direction(
+            subset,
+            team_col="team_id",
+            period_col="period_id",
+            team_in_possession_col="team_in_possession",
+            x_col="x",
+            ball_team=None,
+            frame_col="frame_id",
+        )
+        assert naive.iloc[0] != full_sign, "fixture must actually flip on the subset"
+
+    def test_pin_does_not_mutate_input(self) -> None:
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import _pin_attacking_direction
+
+        frames = _make_flip_frames()
+        cols_before = list(frames.columns)
+        _pin_attacking_direction(frames)
+        assert list(frames.columns) == cols_before
+
+    def test_missing_team_in_possession_raises_valueerror(self) -> None:
+        """Regression: missing team_in_possession must raise the canonical ValueError
+        (which add_das catches -> NaN), not accessible-space's uncaught KeyError."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import _pin_attacking_direction
+
+        frames = _make_flip_frames().drop(columns=["team_in_possession"])
+        with pytest.raises(ValueError, match="team_in_possession"):
+            _pin_attacking_direction(frames)
+
+    def test_missing_velocity_raises_valueerror(self) -> None:
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import _pin_attacking_direction
+
+        frames = _make_flip_frames().drop(columns=["vx"])
+        with pytest.raises(ValueError, match="velocity"):
+            _pin_attacking_direction(frames)
+
+
+class TestDasLinkedFrameRestriction:
+    """add_das/_precompute_das_lookup must restrict the per-frame sim to linked frames."""
+
+    def _capture_frames_stub(self, captured: dict):
+        def fake_gid(frames: pd.DataFrame, **kwargs) -> pd.DataFrame:
+            captured["frame_ids"] = sorted(frames["frame_id"].unique().tolist())
+            captured["kwargs"] = dict(kwargs)
+            out = frames.copy()
+            out["AS"] = 1.0
+            out["DAS"] = 1.0
+            return out
+
+        return fake_gid
+
+    def test_precompute_restricts_to_linked_frames(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import silly_kicks.tracking._das as das_mod
+
+        captured: dict = {}
+        monkeypatch.setattr(das_mod, "get_individual_das", self._capture_frames_stub(captured))
+        monkeypatch.setattr(
+            das_mod,
+            "_pin_attacking_direction",
+            lambda f: f.assign(attacking_direction=1.0),
+        )
+
+        from silly_kicks.tracking.features import _precompute_das_lookup
+
+        frames = pd.DataFrame(
+            {
+                "period_id": [1, 1, 1],
+                "frame_id": [0, 1, 2],
+                "team_id": ["A", "A", "A"],
+                "is_ball": [False, False, False],
+                "DAS": [0.0, 0.0, 0.0],
+            }
+        )
+        _precompute_das_lookup(frames, link_frame_ids={1})
+        assert captured["frame_ids"] == [1]
+        assert captured["kwargs"].get("attacking_direction_col") == "attacking_direction"
+
+    def test_precompute_no_restriction_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import silly_kicks.tracking._das as das_mod
+
+        captured: dict = {}
+        monkeypatch.setattr(das_mod, "get_individual_das", self._capture_frames_stub(captured))
+
+        from silly_kicks.tracking.features import _precompute_das_lookup
+
+        frames = pd.DataFrame(
+            {
+                "period_id": [1, 1, 1],
+                "frame_id": [0, 1, 2],
+                "team_id": ["A", "A", "A"],
+                "is_ball": [False, False, False],
+                "DAS": [0.0, 0.0, 0.0],
+            }
+        )
+        _precompute_das_lookup(frames)  # no link_frame_ids
+        assert captured["frame_ids"] == [0, 1, 2]
+        assert "attacking_direction_col" not in captured["kwargs"]
+
+    def test_add_das_passes_link_frame_ids(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import silly_kicks.tracking.features as feat_mod
+
+        captured: dict = {}
+
+        def fake_precompute(frames, *, chunk_size=None, link_frame_ids=None):
+            captured["link_frame_ids"] = link_frame_ids
+            return {}
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", fake_precompute)
+
+        from silly_kicks.tracking.features import add_das
+
+        actions = pd.DataFrame(
+            {
+                "action_id": [10, 11],
+                "game_id": [1, 1],
+                "period_id": [1, 1],
+                "team_id": ["A", "A"],
+            }
+        )
+        links = pd.DataFrame(
+            {
+                "action_id": [10, 11],
+                "frame_id": [5, 7],
+                "time_offset_seconds": [0.0, 0.0],
+                "n_candidate_frames": [1, 1],
+                "link_quality_score": [1.0, 1.0],
+            }
+        )
+        add_das(actions, pd.DataFrame({"frame_id": [5, 6, 7]}), links=links)
+        assert captured["link_frame_ids"] == {5, 7}
+
+    @pytest.mark.e2e
+    def test_lookup_bit_identical_full_vs_restricted(self) -> None:
+        """A linked frame's per-team DAS must be identical full vs restricted."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking.features import _precompute_das_lookup
+
+        base = TestDasTeamAsymmetry()._make_asymmetric_frame()
+        frame1 = base.copy()
+        frame1["frame_id"] = 1
+        # Perturb frame 1 so the period is not a trivial single repeated frame.
+        frame1["x"] = frame1["x"].clip(lower=5, upper=100) * 0.5 + 25.0
+        frames = pd.concat([base, frame1], ignore_index=True)
+
+        lookup_full = _precompute_das_lookup(frames)
+        lookup_restricted = _precompute_das_lookup(frames, link_frame_ids={0})
+
+        key = (1, 0)
+        assert key in lookup_full and key in lookup_restricted
+        for team in lookup_full[key]:
+            assert np.isclose(lookup_full[key][team], lookup_restricted[key][team], rtol=1e-6, atol=1e-9), (
+                f"team {team}: full={lookup_full[key][team]} restricted={lookup_restricted[key][team]}"
+            )

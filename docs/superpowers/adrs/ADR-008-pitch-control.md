@@ -66,3 +66,71 @@ core computation path.
 - The `PitchControlSurface` type becomes a consumer contract; field additions
   require CHANGELOG enumeration.
 - Numba cache files (`.nbi`/`.nbc`) are gitignored.
+
+## Amendment (2026-05-28, silly-kicks 3.25.0): shared surface + linked-frame restriction
+
+**Drivers:** lakehouse AC-1 perf handoff — `compute_pitch_control` was invoked
+independently by `add_obso`, `add_cover_shadows`, `add_gk_influence`,
+`add_player_influence`, `add_space_creation`, and `pitch_control_at_action` on
+overlapping frames, recomputing the same per-frame surface many times per match.
+The standard for every perf change here is **bit-identical output** — never trade
+accuracy for speed.
+
+### D5: Per-pass surface cache threaded via an optional kwarg (not global memoization)
+
+`PitchControlCache` (`pitch_control/_cache.py`) memoizes canonical per-frame
+surfaces keyed on `(game_id, period_id, frame_id, attacking_team_id, method,
+params, ball_position, decompose)` (with `params=None` normalized to the method
+default). It is threaded through the aggregators via an optional
+`pitch_control_cache: PitchControlCache | None = None` kwarg, mirroring the
+established `links` pre-linking pattern. Each aggregator instantiates a fresh
+local cache by default (within-pass reuse, e.g. OBSO's overlapping pass windows);
+a pipeline caller pre-builds one cache and passes it to all steps for cross-family
+reuse.
+
+**Rationale:** global memoization (an LRU/dict on `compute_pitch_control`) was
+rejected — it violates the hexagonal "zero global state mutation" rule, is unsafe
+under frame mutation (velocity derivation re-creates rows for the same
+`frame_id`), and is fragile under Databricks `applyInPandas`. The explicit threaded
+object has none of these problems and matches the existing `links` idiom.
+
+### D6: Only canonical-frame surfaces are cached; counterfactuals stay direct
+
+The cache is valid **only** for surfaces computed on the original tracking frame.
+Counterfactual surfaces — `cover_shadows`' defender-removed `surface_reduced` and
+`space_creation`'s leave-one-out `removed_surface` — share the canonical frame's
+`(game_id, period_id, frame_id)` but have different content, so they are never
+routed through the cache (direct `compute_pitch_control` calls). The cache also
+bypasses (computes uncached) when a frame does not resolve to a single
+`(game_id, period_id, frame_id)` or the method is unknown.
+
+`decompose` is part of the key: `decompose=True` consumers (`gk_influence`,
+`player_influence`) and `decompose=False` consumers share within their group
+(≈3× reduction). Promoting a decomposed surface to serve a non-decomposed request
+is a possible future refinement (deferred — requires verifying the aggregate field
+is identical).
+
+### D7: Linked-frame restriction must pin attacking direction (DAS)
+
+When `links` is supplied, `add_das` / `add_shape_graph` restrict the expensive
+per-frame computation to the action-linked frames. For `add_shape_graph` this is
+trivially bit-identical (pure per-frame snapshot). For DAS it is **not** naively
+bit-identical: `accessible-space` infers attacking direction per period from the
+mean x-position over the **input** frames, so a restricted ~3-frame subset can
+infer a flipped sign and change DAS. Resolution: `_pin_attacking_direction` runs
+`accessible-space`'s own `infer_playing_direction` on the **full** frames first
+(cheap groupby-mean), attaches the result, then restricts — and `get_individual_das`
+gained an `attacking_direction_col` passthrough so the simulation uses the pinned
+direction. Provably bit-identical for any data; e2e-verified.
+
+### Consequences (amendment)
+
+- `pitch_control_cache` joins `links` as a standard optional optimization kwarg on
+  tracking aggregators; new pitch-control consumers should accept and thread it.
+- The cover_shadows lightweight nested-loop pruning was **not** adopted: it is not
+  bit-identical because `lane_control` depends on a global greedy man-marker
+  assignment (removing an out-of-corridor defender can change an in-corridor
+  defender's lane-blocker status). Tracked in TODO for a dedicated, golden-master-
+  validated effort.
+- The VAEP `*_xfns` transformers do not yet share one cache across families in a
+  single pass (each keeps its own per-frame precompute); tracked in TODO.

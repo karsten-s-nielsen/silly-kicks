@@ -16,10 +16,13 @@ MIT Sloan Sports Analytics Conference.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from .pitch_control import PitchControlCache
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ def compute_space_created(
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     obso_sigma_x: float = 26.25,
     obso_sigma_y: float = 17.0,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
     """Per-player space creation via leave-one-out differential OBSO.
 
@@ -91,7 +95,7 @@ def compute_space_created(
     ['player_id', 'team_id', 'space_created_m2', 'space_destroyed_m2', 'net_space_m2']
     """
     from ._obso import _get_default_grids, _interpolate_grid
-    from .pitch_control import compute_pitch_control
+    from .pitch_control import PitchControlCache
 
     if params is None:
         params = SpaceCreationParams()
@@ -118,7 +122,11 @@ def compute_space_created(
     #    (decompose=True is free for Spearman/F&B — same influence computation,
     #    just retains the per-player arrays instead of discarding them)
     use_analytical = pitch_control_method in ("spearman", "fernandez_bornn")
-    baseline_surface = compute_pitch_control(
+    # Canonical-frame baseline via the shared cache (TF-7 shared surface). The
+    # leave-one-out counterfactuals below operate on modified frames and stay
+    # uncached.
+    cache = pitch_control_cache if pitch_control_cache is not None else PitchControlCache()
+    baseline_surface = cache.surface(
         frame,
         attacking_team_id,
         method=pitch_control_method,

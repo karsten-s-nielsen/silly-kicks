@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from silly_kicks.xthreat import ExpectedThreat
 
     from ._line_breaking import LineBreakingParams
+    from .pitch_control import PitchControlCache
 
 import numpy as np
 import pandas as pd
@@ -1721,6 +1722,7 @@ def pitch_control_at_action(
     *,
     links: pd.DataFrame | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.Series:
     """Pitch control value at ball position for the acting team at the linked frame.
 
@@ -1745,7 +1747,11 @@ def pitch_control_at_action(
     if frames is None:
         return pd.Series(np.nan, index=actions.index, name=col_name)
 
-    from .pitch_control import compute_pitch_control
+    from .pitch_control import PitchControlCache
+
+    # One cache across all actions (TF-7 shared surface); a caller-supplied
+    # cache extends reuse across feature families in a single pass.
+    cache = pitch_control_cache if pitch_control_cache is not None else PitchControlCache()
 
     # Ensure velocity columns exist (fill with zero if missing)
     if "vx" not in frames.columns or "vy" not in frames.columns:
@@ -1787,8 +1793,8 @@ def pitch_control_at_action(
 
         team_id = action_row["team_id"]
 
-        # Compute pitch control for this frame
-        surface = compute_pitch_control(frame_data, attacking_team_id=team_id, method=method)
+        # Compute pitch control for this frame (canonical-frame surface, cached)
+        surface = cache.surface(frame_data, team_id, method=method)
 
         # Query at action start position (proxy for ball position)
         start_x = action_row["start_x"]
@@ -1808,6 +1814,7 @@ def add_pitch_control(
     *,
     links: pd.DataFrame | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with ``pitch_control_at_ball__<method>`` column.
 
@@ -1817,7 +1824,7 @@ def add_pitch_control(
     >>> enriched = add_pitch_control(actions, frames)
     """
     out = actions.copy()
-    s = pitch_control_at_action(actions, frames, links=links, method=method)
+    s = pitch_control_at_action(actions, frames, links=links, method=method, pitch_control_cache=pitch_control_cache)
     out[s.name] = s.values
     return out
 
@@ -1862,6 +1869,7 @@ def _precompute_das_lookup(
     frames: pd.DataFrame,
     *,
     chunk_size: int | None = None,
+    link_frame_ids: set | None = None,
 ) -> dict[tuple, dict]:
     """Run get_individual_das ONCE on all frames, build per-frame team-level DAS lookup.
 
@@ -1877,6 +1885,14 @@ def _precompute_das_lookup(
         When set, passed through to ``accessible-space`` to process frames
         in chunks of this size. Useful for memory-constrained environments
         (e.g. Databricks ``applyInPandas`` with 1 GB group memory cap).
+    link_frame_ids : set or None, default None
+        When provided, restrict the (expensive) per-frame simulation to these
+        action-linked ``frame_id``s — per-frame DAS is a snapshot, so a linked
+        frame's value is independent of which other frames are present. The
+        attacking direction is pinned on the FULL frames first (via
+        ``_pin_attacking_direction``) so the restricted subset keeps the
+        full-period sign, making the result bit-identical to the unrestricted
+        computation. When None, all frames are simulated (direction inferred).
 
     Returns a dict mapping ``(period_id, frame_id)`` to ``{team_id: DAS_value}``.
     """
@@ -1885,6 +1901,14 @@ def _precompute_das_lookup(
     kwargs: dict = {"use_progress_bar": False}
     if chunk_size is not None:
         kwargs["chunk_size"] = chunk_size
+
+    if link_frame_ids is not None:
+        from ._das import _pin_attacking_direction
+
+        frames = _pin_attacking_direction(frames)
+        frames = frames[frames["frame_id"].isin(link_frame_ids)]
+        kwargs["attacking_direction_col"] = "attacking_direction"
+
     das_frames = get_individual_das(frames, **kwargs)
 
     player_rows = das_frames[das_frames["is_ball"] != True]  # noqa: E712
@@ -2017,8 +2041,15 @@ def add_das(
 
     out = actions.copy()
 
+    # When links are supplied, restrict the per-frame simulation to the linked
+    # frames (per-frame DAS is a snapshot; direction is pinned on full frames
+    # first, so the result is bit-identical — see _precompute_das_lookup).
+    link_frame_ids: set | None = None
+    if links is not None and "frame_id" in links.columns:
+        link_frame_ids = set(links["frame_id"].dropna().astype(int).tolist())
+
     try:
-        lookup = _precompute_das_lookup(frames, chunk_size=chunk_size)
+        lookup = _precompute_das_lookup(frames, chunk_size=chunk_size, link_frame_ids=link_frame_ids)
     except (ValueError, RuntimeError, ImportError, IndexError, TypeError) as exc:
         _warnings.warn(
             f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS columns",
@@ -2104,6 +2135,7 @@ def _gk_influence_at_actions(
     method: str = "spearman",
     zone_names: list[str] | None = None,
     tau_seconds: float = 1.0,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Batch kernel: compute GK influence for all actions at once.
 
@@ -2212,6 +2244,7 @@ def _gk_influence_at_actions(
                     method=method,  # type: ignore[arg-type]
                     zones=zones,
                     tau_seconds=tau_seconds,
+                    pitch_control_cache=pitch_control_cache,
                 )
                 cache[cache_key] = gi
             except (ValueError, KeyError) as exc:
@@ -2444,6 +2477,7 @@ def add_gk_influence(
     method: str = "spearman",
     zone_names: list[str] | None = None,
     tau_seconds: float = 1.0,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with GK influence columns.
 
@@ -2468,6 +2502,7 @@ def add_gk_influence(
         method=method,
         zone_names=zone_names,
         tau_seconds=tau_seconds,
+        pitch_control_cache=pitch_control_cache,
     )
     for col in batch.columns:
         out[col] = batch[col].values
@@ -2673,6 +2708,7 @@ def add_cover_shadows(
     decision_rule: Literal["any", "majority", "all"] = "majority",
     detailed: bool = False,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with cover shadow columns.
 
@@ -2711,6 +2747,12 @@ def add_cover_shadows(
     See NOTICE for full bibliographic citations.
     """
     from . import _cover_shadows as _cs_mod
+    from .pitch_control import PitchControlCache as _PitchControlCache
+
+    # One cache across all actions + the per-defender counterfactual loop so the
+    # canonical surface for a frame is computed once (TF-7 shared surface). A
+    # caller-supplied cache extends reuse across feature families.
+    cache = pitch_control_cache if pitch_control_cache is not None else _PitchControlCache()
 
     out = actions.copy()
     n = len(actions)
@@ -2755,6 +2797,7 @@ def add_cover_shadows(
             decision_rule=decision_rule,
             detailed=detailed,
             method=method,
+            pitch_control_cache=cache,
         )
         if cs is None:
             continue
@@ -2935,6 +2978,7 @@ def _player_influence_at_actions(
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
     links: pd.DataFrame | None = None,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Batch kernel: compute player influence for all actions.
 
@@ -3015,6 +3059,7 @@ def _player_influence_at_actions(
                     home_team_id=home_team_id,
                     method=method,
                     tau_seconds=tau_seconds,
+                    pitch_control_cache=pitch_control_cache,
                 )
             except (ValueError, KeyError) as exc:
                 _warnings.warn(
@@ -3255,6 +3300,7 @@ def add_player_influence(
     home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with 7 player-influence columns + 4 provenance.
 
@@ -3278,6 +3324,7 @@ def add_player_influence(
         home_team_id=home_team_id,
         method=method,
         tau_seconds=tau_seconds,
+        pitch_control_cache=pitch_control_cache,
     )
     for col in batch.columns:
         out[col] = batch[col].values
@@ -3659,6 +3706,15 @@ def add_shape_graph(
     if len(teams) < 2:
         return out
 
+    # When links are supplied, the per-frame shape graph is a snapshot, so only
+    # the action-linked frames are needed — restrict the (expensive) per-frame
+    # loop to them. The metric depends solely on a single frame's positions, so
+    # this is bit-identical. Gate on links is not None so the no-links path is
+    # unchanged for other consumers.
+    restrict_frame_ids: set | None = None
+    if links is not None and "frame_id" in links.columns:
+        restrict_frame_ids = set(links["frame_id"].dropna().astype("int64").tolist())
+
     # Pre-compute shape graph metrics indexed by (game_id, period_id, frame_id, team_id)
     sg_indexed: dict = {}
     for tid in teams:
@@ -3669,6 +3725,8 @@ def add_shape_graph(
             & frames["x"].notna()
             & frames["y"].notna()
         ]
+        if restrict_frame_ids is not None:
+            team_frames = team_frames[team_frames["frame_id"].isin(restrict_frame_ids)]
         if team_frames.empty:
             continue
         frame_metrics: list[dict] = []
@@ -4060,12 +4118,19 @@ def _precompute_obso_lookup(
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pre_seconds: float = 3.0,
     post_seconds: float = 1.0,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> dict[int, dict[str, float]]:
     """Run OBSO computation for all pass actions, return row-index lookup.
 
     Returns dict mapping row position (0-based) to OBSO triplet dict.
     """
     from ._obso import compute_pass_obso
+    from .pitch_control import PitchControlCache as _PitchControlCache
+
+    # One cache across all passes so overlapping pass windows reuse surfaces
+    # (TF-7 shared surface). A caller-supplied cache extends reuse across
+    # feature families in a single enrichment pass.
+    cache = pitch_control_cache if pitch_control_cache is not None else _PitchControlCache()
 
     # Ensure velocity columns
     if "vx" not in frames.columns or "vy" not in frames.columns:
@@ -4087,6 +4152,14 @@ def _precompute_obso_lookup(
 
     # Identify pass actions
     pass_mask = actions["type_id"].isin(_PASS_TYPE_IDS)
+
+    # Loop-invariant hoist: precompute one sorted (frame_id, time_seconds) table
+    # per period once, instead of rebuilding it for every pass action (was
+    # O(passes x frames)). Identical output.
+    period_frame_times: dict = {
+        pid: grp.drop_duplicates("frame_id")[["frame_id", "time_seconds"]].sort_values("time_seconds")
+        for pid, grp in frames.groupby("period_id")
+    }
 
     lookup: dict[int, dict[str, float]] = {}
 
@@ -4110,11 +4183,10 @@ def _precompute_obso_lookup(
         if pd.isna(target_x) or pd.isna(target_y) or pd.isna(team_id):
             continue
 
-        # Build frame window around the pass
-        period_frames = frames[frames["period_id"] == period_id]
-        unique_frame_times = period_frames.drop_duplicates("frame_id")[["frame_id", "time_seconds"]].sort_values(
-            "time_seconds"
-        )
+        # Build frame window around the pass (per-period table precomputed above)
+        unique_frame_times = period_frame_times.get(period_id)
+        if unique_frame_times is None:
+            continue
         t_min = action_time - pre_seconds
         t_max = action_time + post_seconds
         window_fids = unique_frame_times[
@@ -4160,9 +4232,16 @@ def _precompute_obso_lookup(
                 transition_grid=transition_grid,
                 epv_grid=epv_grid,
                 pitch_control_method=pitch_control_method,
+                pitch_control_cache=cache,
             )
             lookup[i] = result
-        except Exception:  # noqa: S112 — expected: frame-level failures are non-fatal
+        except (ValueError, KeyError, IndexError):
+            # Frame-level failures (degenerate geometry, missing frame) are
+            # non-fatal and skipped; unexpected errors now propagate so real
+            # bugs surface rather than being masked as NaN. (ADR-002
+            # no-silent-swallow; luxury-lakehouse is currently the only
+            # downstream consumer, so narrowing the catch surprises no
+            # third party.)
             continue
 
     return lookup
@@ -4178,6 +4257,7 @@ def add_obso(
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with OBSO columns (actual, peak, optimal).
 
@@ -4231,6 +4311,7 @@ def add_obso(
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
+        pitch_control_cache=pitch_control_cache,
     )
 
     for col in _OBSO_COLUMNS:
@@ -4345,6 +4426,7 @@ def _compute_space_creation_for_action(
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> dict[str, float]:
     """Compute aggregated space creation for the actor's team at one action frame."""
     from ._space_creation import compute_space_created
@@ -4358,6 +4440,7 @@ def _compute_space_creation_for_action(
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
+        pitch_control_cache=pitch_control_cache,
     )
 
     actor_row = result[result["player_id"] == player_id]
@@ -4392,6 +4475,7 @@ def add_space_creation(
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with per-actor space creation columns.
 
@@ -4427,6 +4511,12 @@ def add_space_creation(
     >>> enriched = add_space_creation(actions, frames, home_team_id=1)
     """
     out = actions.copy()
+
+    from .pitch_control import PitchControlCache as _PitchControlCache
+
+    # One cache across all actions (TF-7 shared surface); a caller-supplied
+    # cache extends reuse across feature families in a single pass.
+    cache = pitch_control_cache if pitch_control_cache is not None else _PitchControlCache()
 
     provenance_cols = [
         "frame_id",
@@ -4470,6 +4560,7 @@ def add_space_creation(
             transition_grid=transition_grid,
             epv_grid=epv_grid,
             pitch_control_method=pitch_control_method,
+            pitch_control_cache=cache,
         )
 
         idx = actions.index[i]

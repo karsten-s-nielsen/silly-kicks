@@ -17,10 +17,13 @@ Conference.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from .pitch_control import PitchControlCache
 
 # ---------------------------------------------------------------------------
 # Frozen dataclasses
@@ -287,6 +290,7 @@ def compute_pass_obso(
     epv_grid: np.ndarray | None = None,
     params: ObsoParams | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> dict[str, float]:
     """Compute PAUSA-relevant OBSO metrics for one pass.
 
@@ -328,10 +332,16 @@ def compute_pass_obso(
     >>> result["peak_obso"] >= result["actual_obso"]
     True
     """
-    from .pitch_control import compute_pitch_control_at_points
+    from .pitch_control import PitchControlCache
 
     if params is None:
         params = ObsoParams()
+
+    # Canonical-frame surfaces routed through the shared cache so overlapping
+    # pass windows (and the event/teammate queries on the same frame) reuse
+    # each surface (TF-7 shared surface). compute_pitch_control_at_points is
+    # equivalent to surface(...).at_points(...).
+    cache = pitch_control_cache if pitch_control_cache is not None else PitchControlCache()
 
     transition_grid, epv_grid = _get_default_grids(transition_grid, epv_grid)
 
@@ -346,9 +356,8 @@ def compute_pass_obso(
     # Ensure velocity columns exist
     event_df = _ensure_velocity_columns(event_df)
 
-    event_ppcf_at_target = compute_pitch_control_at_points(
-        event_df, target_arr, attacking_team_id, method=pitch_control_method
-    )
+    event_surface = cache.surface(event_df, attacking_team_id, method=pitch_control_method)
+    event_ppcf_at_target = event_surface.at_points(target_arr)
     actual_ppcf = float(event_ppcf_at_target[0])
 
     # Interpolate grids to ObsoParams dimensions for point lookup
@@ -380,7 +389,7 @@ def compute_pass_obso(
         if i == event_frame_idx:
             continue
         frame_df = _ensure_velocity_columns(frame_df)
-        ppcf_val = compute_pitch_control_at_points(frame_df, target_arr, attacking_team_id, method=pitch_control_method)
+        ppcf_val = cache.surface(frame_df, attacking_team_id, method=pitch_control_method).at_points(target_arr)
         frame_obso = float(np.clip(float(ppcf_val[0]) * trans_at_target * epv_at_target, 0.0, 1.0))
         if frame_obso > peak_obso:
             peak_obso = frame_obso
@@ -389,12 +398,8 @@ def compute_pass_obso(
     optimal_obso = actual_obso
     teammate_positions = _extract_teammate_positions(event_df, attacking_team_id)
     if len(teammate_positions) > 0:
-        tm_ppcf = compute_pitch_control_at_points(
-            event_df,
-            teammate_positions,
-            attacking_team_id,
-            method=pitch_control_method,
-        )
+        # Reuse the event-frame surface already computed above.
+        tm_ppcf = event_surface.at_points(teammate_positions)
         for j in range(len(teammate_positions)):
             tm_x_idx = int(
                 np.clip(

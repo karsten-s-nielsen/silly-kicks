@@ -78,6 +78,56 @@ def _make_actions(n: int = 5) -> pd.DataFrame:
     )
 
 
+def _make_idsse_like_frames(
+    n_frames: int = 100,
+    n_players_per_team: int = 3,
+    frame_rate: int = 25,
+    frame_offset: int = 10000,
+) -> pd.DataFrame:
+    """Frames with a native (non-zero) frame_id origin but 0-based period time.
+
+    Mirrors IDSSE/Sportec: period-1 ``frame_id`` numbered from 10000 while
+    ``time_seconds`` is period-elapsed (0-based). Used to regress the
+    frame-id-origin assumption in ``align_events_to_frames`` — the frame
+    window AND the frame->time conversion must derive from the frames' own
+    ``(frame_id, time_seconds)`` relationship, not from ``time * frame_rate``.
+    """
+    frames = _make_tracking_frames(
+        n_frames=n_frames,
+        n_players_per_team=n_players_per_team,
+        frame_rate=frame_rate,
+    )
+    frames["frame_id"] = frames["frame_id"] + frame_offset
+    return frames
+
+
+def _make_idsse_two_period_frames(n_frames: int = 80) -> pd.DataFrame:
+    """IDSSE-like two-period frames: period 1 from 10000, period 2 from 100000.
+
+    Mirrors real Sportec/IDSSE numbering (period 2 frames numbered from 100000)
+    while ``time_seconds`` is period-elapsed (0-based) in BOTH periods — so each
+    period needs its own (frame_id, time) fit.
+    """
+    p1 = _make_idsse_like_frames(n_frames=n_frames, frame_offset=10000)
+    p2 = _make_idsse_like_frames(n_frames=n_frames, frame_offset=100000)
+    p2["period_id"] = 2
+    return pd.concat([p1, p2], ignore_index=True)
+
+
+def _make_two_period_actions() -> pd.DataFrame:
+    """Actions spread across both periods (period-elapsed times)."""
+    return pd.DataFrame(
+        {
+            "action_id": range(6),
+            "game_id": [1] * 6,
+            "period_id": [1, 1, 1, 2, 2, 2],
+            "time_seconds": [0.2, 0.8, 1.4, 0.2, 0.8, 1.4],
+            "player_id": [f"p1_{i % 3}" for i in range(6)],
+            "type_id": [0] * 6,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests — ElasticSyncParams
 # ---------------------------------------------------------------------------
@@ -267,6 +317,70 @@ class TestAlignEventsToFrames:
         params = ElasticSyncParams(accel_weight=1.0, proximity_weight=0.0)
         result = align_events_to_frames(actions, frames, params=params)
         assert len(result) >= 0  # Just verifies it doesn't crash
+
+
+class TestAlignEventsNonZeroFrameOrigin:
+    """Regression: native-frame-numbered providers (IDSSE/Sportec).
+
+    ``frame_id`` has a non-zero origin (10000+) while ``time_seconds`` is
+    period-elapsed (0-based). Before the fix, ``round(time * frame_rate)``
+    produced an empty candidate window (all actions skipped) and the
+    ``best_frame / frame_rate`` conversion produced nonsensical
+    ``error_seconds``. Both must derive from the frames' own
+    ``(frame_id, time_seconds)`` relationship.
+    """
+
+    def test_returns_nonempty_alignments(self):
+        frames = _make_idsse_like_frames(n_frames=100, frame_offset=10000)
+        actions = _make_actions()
+        result = align_events_to_frames(actions, frames)
+        assert len(result) > 0
+
+    def test_aligned_frame_in_native_range(self):
+        frames = _make_idsse_like_frames(n_frames=100, frame_offset=10000)
+        actions = _make_actions()
+        result = align_events_to_frames(actions, frames)
+        assert len(result) > 0
+        assert (result["elastic_frame_id"] >= 10000).all()
+        assert (result["elastic_frame_id"] < 10100).all()
+
+    def test_error_seconds_within_window(self):
+        """error_seconds must use the frames' frame->time relationship.
+
+        With the origin bug a frame_id of 10000+ maps to ~400s, producing
+        nonsensical error_seconds far outside the alignment window.
+        """
+        params = ElasticSyncParams(window_seconds=1.0, frame_rate=25)
+        frames = _make_idsse_like_frames(n_frames=100, frame_offset=10000)
+        actions = _make_actions()
+        result = align_events_to_frames(actions, frames, params=params)
+        assert len(result) > 0
+        assert (result["elastic_error_seconds"] <= params.window_seconds + 1e-9).all()
+
+    def test_multi_period_distinct_origins(self):
+        """Each period's fit is independent: P1 -> 10000-range, P2 -> 100000-range."""
+        frames = _make_idsse_two_period_frames(n_frames=80)
+        actions = _make_two_period_actions()
+        result = align_events_to_frames(actions, frames)
+        assert len(result) > 0
+        merged = result.merge(actions[["action_id", "period_id"]], on="action_id")
+        p1 = merged[merged["period_id"] == 1]
+        p2 = merged[merged["period_id"] == 2]
+        assert len(p1) > 0 and len(p2) > 0
+        assert (p1["elastic_frame_id"] >= 10000).all()
+        assert (p1["elastic_frame_id"] < 100000).all()
+        assert (p2["elastic_frame_id"] >= 100000).all()
+        # error_seconds stays sane in both periods (inverse fit per period).
+        assert (result["elastic_error_seconds"] <= 1.0 + 1e-9).all()
+
+    def test_falls_back_when_time_seconds_absent(self):
+        """No time_seconds column -> fall back to time*frame_rate (0-based providers)."""
+        frames = _make_tracking_frames(n_frames=100).drop(columns=["time_seconds"])
+        actions = _make_actions()
+        result = align_events_to_frames(actions, frames)
+        # 0-based frames (frame_id == round(time*rate)) still align via fallback.
+        assert len(result) > 0
+        assert (result["elastic_frame_id"] < 100).all()
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ and ADR-008 for architectural decisions.
 
 from __future__ import annotations
 
+from ._cache import PitchControlCache
 from ._dispatch import compute_pitch_control, compute_pitch_control_at_points
 from ._params import (
     FernandezBornnParams,
@@ -28,6 +29,7 @@ from ._surface import PitchControlSurface
 __all__ = [
     "FernandezBornnParams",
     "Method",
+    "PitchControlCache",
     "PitchControlParams",
     "PitchControlSurface",
     "SpearmanParams",

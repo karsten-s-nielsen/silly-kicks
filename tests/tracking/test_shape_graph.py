@@ -458,6 +458,93 @@ def _make_frames_and_actions(
     return frames, actions
 
 
+def _multiframe_shape_graph(positions_442: np.ndarray, n_frames: int = 5) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Multi-frame frames + a single action, for linked-frame restriction tests.
+
+    Frame 100 keeps the base geometry; frames 101+ perturb player y so each
+    frame's shape graph differs (proving a linked frame's metric is independent
+    of the other frames present).
+    """
+    base, actions = _make_frames_and_actions(positions_442)
+    parts = [base]
+    for k in range(1, n_frames):
+        f = base.copy()
+        f["frame_id"] = 100 + k
+        f["time_seconds"] = 10.0 + 0.04 * k
+        outfield = ~f["is_ball"].astype(bool)
+        f.loc[outfield, "y"] = f.loc[outfield, "y"] * (1.0 + 0.05 * k)
+        parts.append(f)
+    return pd.concat(parts, ignore_index=True), actions
+
+
+def _links_to_frame(fid: int) -> pd.DataFrame:
+    """Minimal link pointers mapping action 0 to a given frame_id."""
+    return pd.DataFrame(
+        {
+            "action_id": [0],
+            "frame_id": [fid],
+            "time_offset_seconds": [0.0],
+            "n_candidate_frames": [1],
+            "link_quality_score": [1.0],
+        }
+    )
+
+
+class TestShapeGraphLinkedFrameRestriction:
+    """add_shape_graph must restrict the per-frame loop to linked frames when links given."""
+
+    def test_restricts_compute_calls(self, positions_442: np.ndarray, monkeypatch: pytest.MonkeyPatch) -> None:
+        import silly_kicks.tracking._shape_graph as sg_mod
+
+        real = sg_mod.compute_shape_graph
+        n = {"calls": 0}
+
+        def spy(positions, *a, **k):
+            n["calls"] += 1
+            return real(positions, *a, **k)
+
+        monkeypatch.setattr(sg_mod, "compute_shape_graph", spy)
+
+        from silly_kicks.tracking.features import add_shape_graph
+
+        frames, actions = _multiframe_shape_graph(positions_442, n_frames=5)
+        add_shape_graph(actions, frames, links=_links_to_frame(100), home_team_id=1)
+        # 1 linked frame x 2 teams, not 5 frames x 2 teams.
+        assert n["calls"] == 2
+
+    def test_no_links_computes_all_frames(self, positions_442: np.ndarray, monkeypatch: pytest.MonkeyPatch) -> None:
+        import silly_kicks.tracking._shape_graph as sg_mod
+
+        real = sg_mod.compute_shape_graph
+        n = {"calls": 0}
+
+        def spy(positions, *a, **k):
+            n["calls"] += 1
+            return real(positions, *a, **k)
+
+        monkeypatch.setattr(sg_mod, "compute_shape_graph", spy)
+
+        from silly_kicks.tracking.features import add_shape_graph
+
+        frames, actions = _multiframe_shape_graph(positions_442, n_frames=5)
+        add_shape_graph(actions, frames, home_team_id=1)  # no links -> full
+        assert n["calls"] == 10
+
+    def test_restricted_matches_single_frame(self, positions_442: np.ndarray) -> None:
+        """Restricting among many frames == computing with only the linked frame present."""
+        from silly_kicks.tracking.features import add_shape_graph
+
+        frames, actions = _multiframe_shape_graph(positions_442, n_frames=5)
+        links = _links_to_frame(100)
+        single = frames[frames["frame_id"] == 100]
+
+        r_multi = add_shape_graph(actions, frames, links=links, home_team_id=1)
+        r_single = add_shape_graph(actions, single, links=links, home_team_id=1)
+
+        cols = [c for c in r_multi.columns if c.startswith("shape_graph_")]
+        pd.testing.assert_frame_equal(r_multi[cols], r_single[cols])
+
+
 class TestAddShapeGraph:
     """Test add_shape_graph aggregator."""
 
