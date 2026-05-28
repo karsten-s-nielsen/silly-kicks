@@ -1221,14 +1221,18 @@ class GhostGkModel:
             "version": "1.0.0",
         }
         meta_path = path / "metadata.json"
-        with open(meta_path, "w") as f:
+        with open(meta_path, "w", newline="\n") as f:
             json.dump(metadata, f, indent=2)
 
         # 3. SHA-256
         sums_path = path / "SHA256SUMS"
-        with open(sums_path, "w") as f:
+        with open(sums_path, "w", newline="\n") as f:
             for fname in ["rfcde_weights.npz", "metadata.json"]:
-                h = hashlib.sha256((path / fname).read_bytes()).hexdigest()
+                raw = (path / fname).read_bytes()
+                # Normalize CRLF→LF for text files so hash is platform-independent
+                if fname.endswith(".json"):
+                    raw = raw.replace(b"\r\n", b"\n")
+                h = hashlib.sha256(raw).hexdigest()
                 f.write(f"{h}  {fname}\n")
 
     @classmethod
@@ -1255,7 +1259,11 @@ class GhostGkModel:
                 if not line:
                     continue
                 expected_hash, fname = line.split("  ", 1)
-                actual_hash = hashlib.sha256((path / fname).read_bytes()).hexdigest()
+                raw = (path / fname).read_bytes()
+                # Normalize CRLF→LF for text files so hash is platform-independent
+                if fname.endswith(".json"):
+                    raw = raw.replace(b"\r\n", b"\n")
+                actual_hash = hashlib.sha256(raw).hexdigest()
                 if actual_hash != expected_hash:
                     raise IntegrityError(
                         f"Integrity check failed for {fname}: expected {expected_hash}, got {actual_hash}"
