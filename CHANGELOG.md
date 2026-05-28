@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.24.0] — 2026-05-28
+
+### Added
+- **Bundled Ghost-GK model weights**: two pre-trained variants ship inside the
+  package — `"default"` (~9 MB, 36 k training samples) and `"full"` (~91 MB,
+  537 k training samples). No external downloads or `[ghost-gk]` extra needed.
+- `GhostGkVariant` type alias (`Literal["default", "full"]`) exported from
+  `silly_kicks.tracking`.
+- `GhostGkModel.from_variant("full")` class method for explicit variant loading.
+- `model="default" | "full"` parameter on `compute_ghost_gk` and `add_ghost_gk`
+  (backward-compatible: `None` still selects the default model).
+
+### Changed
+- `_resolve_model` cascade simplified: caller > env var > bundled variant.
+  HuggingFace Hub fallback removed.
+- Training script round-trip verification compares serialized weights instead
+  of running intractable KDE predictions.
+- Training script caches extracted features to disk (`_feature_cache/`) and
+  uses `predict_mean()` for permutation importance.
+
+### Removed
+- `GhostGkModel.from_hub()` — replaced by bundled weights + `from_variant()`.
+- `ghost-gk` optional dependency extra (`huggingface_hub`).
+- `scripts/publish_ghost_gk.py` — no longer needed without Hub publishing.
+
 ## [3.23.0] — 2026-05-27
 
 ### Added

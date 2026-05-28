@@ -21,7 +21,7 @@ import json
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -122,35 +122,50 @@ class IntegrityError(Exception):
 
 
 _ENV_VAR = "SILLY_KICKS_GHOST_GK_PATH"
+_WEIGHTS_ROOT = Path(__file__).parent / "_ghost_gk_weights"
+
+#: Valid model variant names for the ``model`` parameter.
+GhostGkVariant = Literal["default", "full"]
 
 
-def _resolve_model(model: GhostGkModel | None) -> GhostGkModel:
-    """Resolve model parameter: load default from Hub if None.
+def _resolve_model(model: GhostGkModel | GhostGkVariant | None) -> GhostGkModel:
+    """Resolve model parameter with cascade: caller > env > bundled variant.
 
-    Checks huggingface_hub availability BEFORE attempting download.
-    Respects SILLY_KICKS_GHOST_GK_PATH env var for offline use.
+    Resolution order:
+    1. Caller-supplied ``GhostGkModel`` instance (pass-through)
+    2. ``SILLY_KICKS_GHOST_GK_PATH`` env var (custom-trained model path)
+    3. Bundled variant by name (``"default"`` or ``"full"``)
+
+    Parameters
+    ----------
+    model : GhostGkModel | "default" | "full" | None
+        - ``None`` or ``"default"``: lightweight model (~9 MB, 36 k samples).
+          Fast density estimation, nearly identical point-estimate accuracy.
+        - ``"full"``: high-resolution model (~91 MB, 537 k samples).
+          Smoother density surfaces at the cost of slower ``predict_density``.
+        - ``GhostGkModel``: pre-loaded instance, returned as-is.
 
     Examples
     --------
-    >>> resolved = _resolve_model(None)  # downloads from Hub
+    >>> resolved = _resolve_model(None)  # default bundled weights
+    >>> resolved = _resolve_model("full")  # high-resolution variant
     >>> resolved = _resolve_model(my_model)  # pass-through
     """
-    if model is not None:
+    if isinstance(model, GhostGkModel):
         return model
-
-    # Check huggingface_hub availability before download attempt
-    try:
-        import huggingface_hub  # type: ignore[import-not-found]  # noqa: F401
-    except ImportError:
-        msg = "Ghost GK requires: pip install silly-kicks[ghost-gk]"
-        raise ImportError(msg) from None
 
     # Check env var override
     env_path = os.environ.get(_ENV_VAR)
     if env_path is not None:
         return GhostGkModel.load(Path(env_path))
 
-    return GhostGkModel.from_hub()
+    # Resolve variant name
+    variant: GhostGkVariant = model if model is not None else "default"
+    weights_dir = _WEIGHTS_ROOT / variant
+    if not (weights_dir / "SHA256SUMS").exists():
+        msg = f"Bundled Ghost-GK weights not found at {weights_dir}"
+        raise FileNotFoundError(msg)
+    return GhostGkModel.load(weights_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -939,13 +954,17 @@ class GhostGkModel:
     See NOTICE for full bibliographic citations.
     """
 
-    def __init__(self, *, n_estimators: int = 500, max_depth: int = 8):
+    def __init__(self, *, n_estimators: int = 500, max_depth: int = 8, verbose: int = 0):
         self._n_estimators = n_estimators
         self._max_depth = max_depth
+        self._verbose = verbose
         self._tree_nodes: list[np.ndarray] | None = None
         self._training_gk_x: np.ndarray | None = None
         self._training_gk_y: np.ndarray | None = None
         self._training_leaves: np.ndarray | None = None
+        # Transient sklearn regressors — available after fit(), not after load()
+        self._regressor_x: object | None = None
+        self._regressor_y: object | None = None
 
     def fit(self, features: pd.DataFrame, labels: pd.DataFrame) -> GhostGkModel:
         """Train on feature matrix + (gk_x, gk_y) labels.
@@ -977,10 +996,26 @@ class GhostGkModel:
             max_depth=self._max_depth,
             categorical_features=cat_arg,  # type: ignore[arg-type]
             random_state=42,
+            verbose=self._verbose,
         )
         regressor.fit(X, y_x)
 
-        # Extract tree node arrays for serialization + inference
+        # Train gk_y regressor (same hyperparams) for fast predict_mean
+        y_y = labels["gk_y"].values.astype(np.float64)
+        regressor_y = HistGradientBoostingRegressor(
+            max_iter=self._n_estimators,
+            max_depth=self._max_depth,
+            categorical_features=cat_arg,  # type: ignore[arg-type]
+            random_state=42,
+            verbose=self._verbose,
+        )
+        regressor_y.fit(X, y_y)
+
+        # Keep sklearn regressors for fast predict_mean (transient, not serialized)
+        self._regressor_x = regressor
+        self._regressor_y = regressor_y
+
+        # Extract tree node arrays for serialization + inference (gk_x trees only)
         self._tree_nodes = []
         for tree_list in regressor._predictors:
             tree = tree_list[0]
@@ -989,7 +1024,7 @@ class GhostGkModel:
         # Compute training leaves
         self._training_leaves = _vectorized_leaf_indices(self._tree_nodes, X)
         self._training_gk_x = np.array(y_x, copy=True)
-        self._training_gk_y = np.asarray(labels["gk_y"].values, dtype=np.float64).copy()
+        self._training_gk_y = np.asarray(y_y, dtype=np.float64).copy()
 
         return self
 
@@ -1005,6 +1040,40 @@ class GhostGkModel:
         """
         densities = self.predict_density(features)
         return np.array([[d.mode_x, d.mode_y] for d in densities])
+
+    def predict_mean(self, features: pd.DataFrame) -> np.ndarray:
+        """Fast point prediction using the underlying regressors.
+
+        Uses sklearn's Cython-optimized predict for both gk_x and gk_y.
+        Only available after `fit()` (not after `load()`, which discards
+        the sklearn regressors). Orders of magnitude faster than
+        `predict` (which runs per-sample KDE on a 60x64 grid) — suitable
+        for CV evaluation and batch scoring.
+
+        Returns shape (n_samples, 2) — predicted (x, y).
+
+        Examples
+        --------
+        >>> model.predict_mean(X_test).shape
+        (100, 2)
+        """
+        if self._regressor_x is None or self._regressor_y is None:
+            msg = (
+                "predict_mean requires sklearn regressors (available after "
+                "fit(), not after load()). Use predict() instead."
+            )
+            raise RuntimeError(msg)
+
+        from sklearn.ensemble import HistGradientBoostingRegressor
+
+        reg_x: HistGradientBoostingRegressor = self._regressor_x  # type: ignore[assignment]
+        reg_y: HistGradientBoostingRegressor = self._regressor_y  # type: ignore[assignment]
+
+        X = features.values.astype(np.float64)
+        result = np.empty((len(X), 2), dtype=np.float64)
+        result[:, 0] = reg_x.predict(X)
+        result[:, 1] = reg_y.predict(X)
+        return result
 
     def predict_density(self, features: pd.DataFrame) -> list[GhostGkDensity]:
         """Full density prediction per sample.
@@ -1224,21 +1293,24 @@ class GhostGkModel:
         return model
 
     @classmethod
-    def from_hub(cls, repo_id: str = "karsten-s-nielsen/ghost-gk-v1") -> GhostGkModel:
-        """Download from HuggingFace Hub and load.
+    def from_variant(cls, variant: GhostGkVariant = "default") -> GhostGkModel:
+        """Load a bundled model variant by name.
+
+        Parameters
+        ----------
+        variant : "default" | "full"
+            ``"default"``: lightweight model (~9 MB, 36 k training samples).
+            ``"full"``: high-resolution model (~91 MB, 537 k training samples).
 
         Examples
         --------
-        >>> model = GhostGkModel.from_hub()
+        >>> model = GhostGkModel.from_variant("full")
         """
-        try:
-            from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
-        except ImportError:
-            msg = "Ghost GK requires: pip install silly-kicks[ghost-gk]"
-            raise ImportError(msg) from None
-
-        local_dir = snapshot_download(repo_id=repo_id)
-        return cls.load(Path(local_dir))
+        weights_dir = _WEIGHTS_ROOT / variant
+        if not (weights_dir / "SHA256SUMS").exists():
+            msg = f"Bundled Ghost-GK weights not found at {weights_dir}"
+            raise FileNotFoundError(msg)
+        return cls.load(weights_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -1249,7 +1321,7 @@ class GhostGkModel:
 def compute_ghost_gk(
     frames: pd.DataFrame,
     *,
-    model: GhostGkModel | None = None,
+    model: GhostGkModel | GhostGkVariant | None = None,
     home_team_id: int | str,
     actions: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -1265,8 +1337,10 @@ def compute_ghost_gk(
     ----------
     frames : pd.DataFrame
         Tracking frames (TRACKING_FRAMES_COLUMNS schema, LTR-normalized).
-    model : GhostGkModel | None
-        Pre-loaded model. None = lazy download from Hub.
+    model : GhostGkModel | "default" | "full" | None
+        ``"default"`` / ``None``: bundled lightweight model (~9 MB).
+        ``"full"``: high-resolution bundled model (~91 MB).
+        Or a pre-loaded ``GhostGkModel`` instance.
     home_team_id : int | str
         Home team ID (attacks right -> defends at x=0).
     actions : pd.DataFrame | None

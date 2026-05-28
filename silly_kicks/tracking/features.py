@@ -3491,8 +3491,10 @@ def add_ghost_gk(
         SPADL actions.
     frames : pd.DataFrame
         Tracking frames (LTR-normalized).
-    model : GhostGkModel | None
-        Pre-loaded model. None = lazy download.
+    model : GhostGkModel | "default" | "full" | None
+        ``"default"`` / ``None``: bundled lightweight model (~9 MB).
+        ``"full"``: high-resolution bundled model (~91 MB).
+        Or a pre-loaded ``GhostGkModel`` instance.
     links : pd.DataFrame | None
         Pre-computed link pointers.
     home_team_id : int | str

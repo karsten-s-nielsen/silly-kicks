@@ -30,6 +30,7 @@ __all__ = [
     "CoverShadowParams",
     "ElasticSyncParams",
     "FernandezBornnParams",
+    "GhostGkVariant",
     "LaneControlResult",
     "LineBreakingParams",
     "LinkParams",
@@ -181,7 +182,7 @@ from ._cover_shadows import (
 from ._das import get_das, get_individual_das, get_xc
 from ._defensive_line import compute_defensive_line, select_back_line_players
 from ._elastic_sync import ElasticSyncParams, align_events_to_frames, extract_ball_features
-from ._ghost_gk import prepare_ghost_gk_training_data
+from ._ghost_gk import GhostGkVariant, prepare_ghost_gk_training_data
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_obso
 from ._pausa import compute_pausa, compute_pausa_batch
