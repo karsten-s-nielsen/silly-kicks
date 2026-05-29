@@ -1255,21 +1255,21 @@ class TestLeaveOneOutExactness:
         assert any(v > 0.0 for v in values), "all fixtures produced max_single=0 — exactness test is vacuous"
 
 
-class TestCoverShadowPerfBudget:
-    """Guard against silent regression of the leave-one-out optimization (spec §7).
+class TestCoverShadowComplexityGuard:
+    """Timing-independent regression guard for the leave-one-out optimization (spec §7).
 
-    Local post-change: ~12 ms/call (vs ~51 ms pre-change, ~4.3x). Budget = 45 ms: ample
-    headroom over local + slow-Windows-CI slowdown, yet below the ~51 ms pre-change cost so a
-    regression to the O(blockers x receivers) lane_control loop trips it. Re-tune from observed
-    CI timing (worst x 1.5) if it ever flakes.
+    Replaces a wall-clock perf budget that flaked on shared Windows CI (47 ms vs a 45 ms
+    ceiling on a byte-identical build). Instead of timing, this asserts the optimization's
+    invariant directly: the ``detailed=False`` path calls ``lane_control`` once per receiver
+    (the ``n_blocked`` first loop) -- NOT once per (blocker, receiver). A regression to the
+    old O(blockers x receivers) loop inflates the call count immediately, and this can never
+    flake on a slow runner.
     """
 
-    _BUDGET_S = 0.045
+    def test_lane_control_called_once_per_receiver(self, fitted_xt):
+        from unittest.mock import patch
 
-    def test_detailed_false_under_budget(self, fitted_xt):
-        import time
-
-        from silly_kicks.tracking._cover_shadows import _compute_cover_shadow_dict
+        import silly_kicks.tracking._cover_shadows as cs
 
         frame = _make_two_team_frame(
             home_positions=[
@@ -1297,15 +1297,16 @@ class TestCoverShadowPerfBudget:
                 (45.0, 55.0),
             ],
         )
-        # Warm up, then average several calls for a stable measurement.
-        for _ in range(3):
-            _compute_cover_shadow_dict(frame, (50.0, 34.0), 2, fitted_xt, home_team_id=1, detailed=False)
-        N = 20
-        t0 = time.perf_counter()
-        for _ in range(N):
-            _compute_cover_shadow_dict(frame, (50.0, 34.0), 2, fitted_xt, home_team_id=1, detailed=False)
-        per_call = (time.perf_counter() - t0) / N
-        assert per_call < self._BUDGET_S, (
-            f"detailed=False per-call {per_call * 1000:.2f} ms exceeds budget "
-            f"{self._BUDGET_S * 1000:.2f} ms (possible regression to the per-(d, receiver) loop)"
+        with patch.object(cs, "lane_control", wraps=cs.lane_control) as spy:
+            result = cs._compute_cover_shadow_dict(frame, (50.0, 34.0), 2, fitted_xt, home_team_id=1, detailed=False)
+
+        assert result is not None
+        n_dangerous = result["n_potential_receivers"]
+        # Meaningful multi-receiver fixture (else the guard is vacuous):
+        assert n_dangerous >= 2
+        # Exactly one lane_control per receiver (the n_blocked first loop); the vectorized
+        # leave-one-out must call NONE. The old loop would be n_dangerous x n_blockers.
+        assert spy.call_count == n_dangerous, (
+            f"lane_control called {spy.call_count}x for {n_dangerous} receivers -- expected once each; "
+            "a regression to the per-(blocker, receiver) loop would call it n_dangerous x n_blockers times"
         )
