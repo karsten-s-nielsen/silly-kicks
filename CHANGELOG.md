@@ -5,6 +5,26 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.26.0] — 2026-05-29
+
+### Performance
+- **Ghost-GK linked-frame restriction (`add_ghost_gk`, `ghost_gk_xfns`, TF-18).**
+  `compute_ghost_gk` gains an optional `link_frame_ids` kwarg that restricts both
+  the heavy per-frame feature extraction and the per-sample density KDE
+  (`predict_density`) to action-linked frames. The extractor still walks every
+  frame to maintain the cross-period one-step velocity state and computes the
+  per-period defending-goal mean-x over the full frames, so the two cross-frame
+  dependencies are preserved exactly and the per-sample KDE has no cross-sample
+  coupling — the output is **byte-identical** to the unrestricted compute (golden
+  tests cover the goal-flip and velocity edge cases, plus a discrimination test
+  proving a naive frame pre-filter would NOT be bit-identical). `add_ghost_gk`
+  derives the set from its link pointers (supplied or internally computed);
+  `ghost_gk_xfns` restricts to the union of its three gamestate slots. Measured
+  with the bundled model: the per-250-frame batch (the lakehouse fan-out unit)
+  drops from ~47.5 min to ~27 s (~100×); the dominant residual is the irreducible
+  per-linked-frame KDE (~4.4 s/eval), not extraction (~4.7% of the restricted
+  cost). No new columns, no API break (additive kwarg). (PR-S66)
+
 ## [3.25.1] — 2026-05-28
 
 ### Performance
