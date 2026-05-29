@@ -31,6 +31,7 @@ __all__ = [
     "ElasticSyncParams",
     "FernandezBornnParams",
     "GhostGkVariant",
+    "GradientsportsRosterReport",
     "LaneControlResult",
     "LineBreakingParams",
     "LinkParams",
@@ -60,6 +61,7 @@ __all__ = [
     "add_defensive_line",
     "add_elastic_sync",
     "add_gk_influence",
+    "add_gradientsports_player_ids",
     "add_line_break",
     "add_obso",
     "add_off_ball_context",
@@ -270,6 +272,7 @@ from .features import (
     team_shape_xfns,
     tracking_default_xfns,
 )
+from .gradientsports import GradientsportsRosterReport, add_gradientsports_player_ids
 from .pitch_control import (
     FernandezBornnParams,
     PitchControlSurface,

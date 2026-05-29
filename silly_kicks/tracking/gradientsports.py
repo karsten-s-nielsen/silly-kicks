@@ -16,6 +16,8 @@ Coordinate transformation: ``x = x_centered + 52.5``;
 
 from __future__ import annotations
 
+import dataclasses
+import warnings
 from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
@@ -202,3 +204,188 @@ def convert_to_frames(
             final = derive_velocities(final, config=cfg)
 
     return final, report
+
+
+# ---------------------------------------------------------------------------
+# Jersey -> roster player-id resolution (TF-24 PR-A)
+# ---------------------------------------------------------------------------
+
+_FRAMES_REQUIRED: frozenset[str] = frozenset({"team_side", "jersey_number", "is_ball"})
+_ROSTER_REQUIRED: frozenset[str] = frozenset({"team_id", "shirt_number", "player_id"})
+
+
+@dataclasses.dataclass(frozen=True)
+class GradientsportsRosterReport:
+    """Audit of a :func:`add_gradientsports_player_ids` resolution.
+
+    Attributes
+    ----------
+    n_player_rows : int
+        Non-ball rows seen.
+    n_matched : int
+        Player rows whose ``(team_id, jersey_number)`` matched a roster entry.
+    n_unmatched : int
+        ``n_player_rows - n_matched``.
+    unmatched_jerseys : frozenset[tuple[int, str]]
+        Distinct ``(team_id, jersey_number)`` keys that did not match.
+    roster_size : int
+        Roster rows used for the join (after de-duplication).
+    n_duplicate_roster_keys : int
+        Duplicate ``(team_id, shirt_number)`` roster keys dropped (``keep="first"``).
+
+    Examples
+    --------
+    >>> _, report = add_gradientsports_player_ids(frames, roster, home_team_id=366, away_team_id=51)
+    >>> report.n_matched
+    4
+    """
+
+    n_player_rows: int
+    n_matched: int
+    n_unmatched: int
+    unmatched_jerseys: frozenset[tuple[int, str]]
+    roster_size: int
+    n_duplicate_roster_keys: int
+
+
+def add_gradientsports_player_ids(
+    jersey_frames: pd.DataFrame,
+    roster: pd.DataFrame,
+    *,
+    home_team_id: int,
+    away_team_id: int,
+) -> tuple[pd.DataFrame, GradientsportsRosterReport]:
+    """Resolve GS tracking jersey numbers to the events SPADL ``player_id`` space.
+
+    Gradient Sports tracking frames carry only ``jerseyNum`` (+ a home/away split);
+    GS events SPADL ``player_id`` is the integer roster ``player.id``. This helper
+    joins ``(team_id, jersey_number)`` -> roster ``player_id`` so a tracking carrier
+    is joinable to events. Run it BEFORE
+    :func:`silly_kicks.tracking.gradientsports.convert_to_frames`.
+
+    Parameters
+    ----------
+    jersey_frames : pd.DataFrame
+        Long-form GS tracking rows. Required columns: ``team_side`` ("home"/"away";
+        ``None`` for ball), ``jersey_number`` (object/string; ``None`` for ball),
+        ``is_ball`` (bool). Other tracking columns are passed through untouched.
+    roster : pd.DataFrame
+        Required columns: ``team_id`` (coercible to int), ``shirt_number``
+        (object/string), ``player_id`` (int). Optional ``position_group_type``
+        (literal ``"GK"`` flags the goalkeeper).
+    home_team_id, away_team_id : int
+        The events SPADL ``int64`` team ids. ``team_side`` maps to these.
+
+    Returns
+    -------
+    frames : pd.DataFrame
+        Copy of ``jersey_frames`` with ``player_id`` (``Int64``; ``pd.NA`` for
+        ball/unmatched), ``team_id`` (``Int64``), ``is_goalkeeper`` (bool) added.
+    report : GradientsportsRosterReport
+
+    Examples
+    --------
+    >>> frames, report = add_gradientsports_player_ids(
+    ...     jersey_frames, roster, home_team_id=366, away_team_id=51
+    ... )
+    >>> report.n_matched >= 0
+    True
+    """
+    miss_f = _FRAMES_REQUIRED - set(jersey_frames.columns)
+    if miss_f:
+        raise ValueError(f"add_gradientsports_player_ids: jersey_frames missing columns: {sorted(miss_f)}")
+    miss_r = _ROSTER_REQUIRED - set(roster.columns)
+    if miss_r:
+        raise ValueError(f"add_gradientsports_player_ids: roster missing columns: {sorted(miss_r)}")
+
+    out = jersey_frames.copy()
+    is_ball = out["is_ball"].astype(bool)
+    is_player = ~is_ball
+
+    # team_side -> team_id (Int64; ball / unknown side -> NA)
+    side = out["team_side"].astype("string")
+    team_id = pd.Series(pd.NA, index=out.index, dtype="Int64")
+    team_id = team_id.mask(is_player & (side == "home"), home_team_id)
+    team_id = team_id.mask(is_player & (side == "away"), away_team_id)
+    out["team_id"] = team_id
+
+    # roster lookup as a "team|shirt" -> value dict.
+    has_pos = "position_group_type" in roster.columns
+    if not has_pos:
+        warnings.warn(
+            "gradientsports roster has no 'position_group_type' column; is_goalkeeper will be all-False",
+            UserWarning,
+            stacklevel=2,
+        )
+    r = roster.copy()
+    r["_team"] = pd.to_numeric(r["team_id"], errors="coerce").astype("Int64")
+    r["_shirt"] = r["shirt_number"].astype("string").str.strip()
+    r["_pid"] = pd.to_numeric(r["player_id"], errors="coerce").astype("Int64")
+    r["_is_gk"] = (r["position_group_type"].astype("string") == "GK") if has_pos else False
+    # N1: enforce roster (team, shirt) uniqueness BEFORE building the dicts. A duplicate key
+    # would let dict(zip(...)) keep the LAST entry (wrong) -- dedupe keep="first" so the first
+    # roster row wins, warn, and record the count. (.map can't explode rows; this guards value
+    # correctness + surfaces the anomaly.)
+    _dup = r.duplicated(subset=["_team", "_shirt"], keep="first")
+    n_duplicate_roster_keys = int(_dup.sum())
+    if n_duplicate_roster_keys:
+        warnings.warn(
+            f"gradientsports roster has {n_duplicate_roster_keys} duplicate "
+            "(team_id, shirt_number) key(s); keeping first",
+            UserWarning,
+            stacklevel=2,
+        )
+        r = r[~_dup]
+    r["_key"] = r["_team"].astype("string").str.cat(r["_shirt"], sep="|")
+    # NOTE: dict(zip(...)) keeps the LAST value on a duplicate key; Task 3 dedupes r with
+    # keep="first" BEFORE this so the first roster entry wins (and rows can't explode).
+    pid_map = dict(zip(r["_key"].to_list(), r["_pid"].to_list(), strict=False))
+    gk_map = dict(zip(r["_key"].to_list(), r["_is_gk"].to_list(), strict=False))
+
+    # ORDER-SAFE resolution (C2): elementwise .map on a same-index key Series -- positionally
+    # exact by construction (no merge / no index reassignment / no reorder risk). A frame row
+    # with NA team or NA jersey (ball rows) yields an NA key -> map miss -> pd.NA.
+    frame_key = out["team_id"].astype("string").str.cat(out["jersey_number"].astype("string").str.strip(), sep="|")
+    out["player_id"] = frame_key.map(pid_map).astype("Int64")
+    # `== True` maps True->True, False->False, NaN(miss)->False in one bool Series (no fillna
+    # object-downcast). E712 noqa matches the codebase idiom (e.g. tracking/_das.py).
+    out["is_goalkeeper"] = (frame_key.map(gk_map) == True).astype("bool")  # noqa: E712
+
+    matched = is_player & out["player_id"].notna()
+    n_player = int(is_player.sum())
+    n_matched = int(matched.sum())
+    unmatched_mask = is_player & out["player_id"].isna() & out["team_id"].notna() & out["jersey_number"].notna()
+    unmatched = {
+        (int(t), str(j))
+        for t, j in zip(out.loc[unmatched_mask, "team_id"], out.loc[unmatched_mask, "jersey_number"], strict=False)
+    }
+
+    # N2: vocabulary-drift guard -- if position groups are present + players matched but ZERO
+    # are flagged GK, the "GK" literal likely drifted; announce it instead of a silent GK-less
+    # match (which would degrade defending_gk / gk_influence for GS).
+    if has_pos and n_player and not bool(out["is_goalkeeper"].any()):
+        observed = sorted({str(v) for v in roster["position_group_type"].dropna().unique()})
+        warnings.warn(
+            f"gradientsports: no GK found (positionGroupType values were {observed}); expected literal 'GK'",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    # M2: a >=50% unmatched (or zero-match) rate is the precise signature of a wrong team-id
+    # space / roster mismatch (the silent bug being fixed). Warn loudly; never raise (ADR-003).
+    if n_player and (n_matched == 0 or (n_player - n_matched) / n_player >= 0.5):
+        warnings.warn(
+            f"gradientsports player-id resolution matched {n_matched}/{n_player} player rows "
+            "(>=50% unmatched); check team-id space / roster alignment",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return out, GradientsportsRosterReport(
+        n_player_rows=n_player,
+        n_matched=n_matched,
+        n_unmatched=n_player - n_matched,
+        unmatched_jerseys=frozenset(unmatched),
+        roster_size=len(r),
+        n_duplicate_roster_keys=n_duplicate_roster_keys,
+    )
