@@ -1297,7 +1297,7 @@ class TestAddGhostGkThreadsActions:
                     home_team_id=1,
                     actions_for_context=actions,
                 )
-            except Exception:  # noqa: S110
+            except Exception:
                 pass  # linking may fail on synthetic data
 
             # Check that compute_ghost_gk was called with actions kwarg

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "3.27.0"
+version = "3.28.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -46,6 +46,13 @@ golden-master = ["unravelsports>=1.2; python_version >= '3.11'"]
 das = ["accessible-space>=2.0,<3"]
 ghost-gk = ["huggingface_hub>=0.20.0"]
 ghost-gk-train = ["skl2onnx>=1.16.0"]
+# TF-24 (3.28.0): Optuna calibration harness (silly_kicks/calibration/). xgboost upper-bounded
+# because the 1e-9 cache-equivalence gate rides on tree_method="hist" determinism, which a
+# future major could change. ruthless-efficiency provides the Optuna optimisation substrate.
+calibration = [
+    "ruthless-efficiency[optuna]>=0.2.0",
+    "xgboost>=2.0,<3.0",
+]
 test = [
     "pytest>=7.4.2",
     "pytest-mock>=3.11.1",
@@ -71,6 +78,10 @@ test = [
     # tests/tracking/test_cover_shadows.py (PR-S65). Declared here so CI always runs
     # the load-bearing property test instead of failing collection / skipping it.
     "hypothesis>=6.0",
+    # TF-24 calibration harness deps so CI exercises ruthless[optuna] + xgboost (the
+    # cache-equivalence + Optuna-smoke tests in tests/calibration/).
+    "ruthless-efficiency[optuna]>=0.2.0",
+    "xgboost>=2.0,<3.0",
 ]
 dev = [
     "ruff>=0.8.0",
@@ -98,7 +109,7 @@ target-version = "py310"
 select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "N806", "S106", "S107", "N802"]
+"tests/**/*.py" = ["S101", "N806", "S106", "S107", "N802", "N812", "S110"]
 # ML convention: uppercase X, Y, Pscores, Pconcedes are standard in ML/stats code
 "silly_kicks/vaep/**/*.py" = ["N803", "N806"]
 # S608 (SQL injection): the probe + e2e-sweep helpers interpolate a
@@ -125,6 +136,13 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 # S608 false positive: the SQL has only module-level constants interpolated
 # (no user input). This is a build-time fixture extractor.
 "scripts/extract_provider_fixtures.py" = ["S608"]
+# TF-24 calibration: ML-style uppercase X/Y in the Stage-2 Brier objective.
+"silly_kicks/calibration/_vaep_brier_objective.py" = ["N803", "N806"]
+# TF-24 CLI prints a human-readable run summary (T201).
+"scripts/calibrate_tracking_defaults.py" = ["T201"]
+# NOTE (M5): NO blanket S608 for scripts/_loader_databricks.py — match_id is parameterized
+# and provider is allowlist-validated; only the allowlisted table NAME carries a narrow
+# inline `# noqa: S608` on its specific lines.
 
 [tool.ruff.lint.isort]
 known-first-party = ["silly_kicks"]
