@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "3.25.0"
+version = "3.25.1"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -67,6 +67,10 @@ test = [
     "accessible-space>=2.0,<3",
     # huggingface_hub exercises Ghost-GK lazy download path in tests.
     "huggingface_hub>=0.20.0",
+    # hypothesis powers the property-based no-ripple invariant test in
+    # tests/tracking/test_cover_shadows.py (PR-S65). Declared here so CI always runs
+    # the load-bearing property test instead of failing collection / skipping it.
+    "hypothesis>=6.0",
 ]
 dev = [
     "ruff>=0.8.0",

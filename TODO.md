@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-05-28. **Current release**: silly-kicks 3.25.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-05-28. **Current release**: silly-kicks 3.25.1. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -44,18 +44,6 @@ Items are ranked top-to-bottom by specification completeness. Tier 3–4 require
 
 ### Blocked or Deferred
 
-- **TF-7 cover_shadows nested-loop optimization (deferred, 3.25.0 review).** The
-  lightweight `_compute_cover_shadow_dict` re-runs `lane_control` per
-  `(lane-blocker, receiver)` (`O(blockers × receivers)`). The handoff proposed a
-  geometric "prune blockers outside the receiver's corridor → delta=0 exactly"
-  optimization, but it is **not bit-identical**: `lane_control` derives its
-  lane-blockers from a *global* greedy `_classify_man_markers` assignment, so
-  removing a defender outside the corridor can promote an in-corridor defender to
-  man-marker and change the result. (A geometric corridor test is also not exact —
-  a defender just outside can still be the nearest TTI reacher to an edge sample
-  point.) A provably-exact version needs per-`d` man-marker-change detection + a
-  TTI-aware corridor test + a golden-master bit-identical test on real data, and
-  likely a man-marking decouple. The safe receiver-`xT` hoist shipped in 3.25.0.
 - **TF-7 cross-family pitch-control cache in VAEP xfns (deferred).** `add_*`
   aggregators accept `pitch_control_cache` (3.25.0); the `*_xfns` VAEP transformers
   do not yet thread a shared cache across feature families in one pass (each keeps

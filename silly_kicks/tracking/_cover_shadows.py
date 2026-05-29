@@ -353,6 +353,90 @@ def _classify_man_markers(
 # ---------------------------------------------------------------------------
 
 
+def _lane_int_probs(
+    targets: np.ndarray,
+    defender_pos: np.ndarray,
+    defender_vel: np.ndarray,
+    attacker_pos: np.ndarray,
+    attacker_vel: np.ndarray,
+    *,
+    params: CoverShadowParams,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Per-lane clamp-independent precompute (PR-S65).
+
+    Returns ``(p_int_def, p_int_att, t_ball, p_ctrl)`` where ``p_int_*`` are the
+    per-(player, point) sigmoid interception probabilities and
+    ``p_ctrl[k] = 1 - exp(-lambda * dt_k)`` for ``dt_k > 0`` else ``0.0``
+    (``p_ctrl[0] = 0.0``). A ``0.0`` entry reproduces the original ``dt_k <= 0``
+    skip exactly (zero contribution, prior unchanged), so survival callers may
+    treat it as a no-op step. None of these quantities depend on the clamped
+    accumulation — see INV-1 in the design doc.
+
+    See docs/superpowers/specs/2026-05-28-cover-shadows-leave-one-out-decouple-design.md.
+    """
+    n_points = targets.shape[0]
+
+    # Ball travel time to each sample point
+    d_from_passer = np.linalg.norm(targets - targets[0:1], axis=1)
+    t_ball = ball_drag_time(d_from_passer, params)
+
+    # Defender / attacker TTI (per-player, independent of which other players are present)
+    tti_def = player_tti(defender_pos, defender_vel, targets, is_defender=True, params=params)
+    tti_att = player_tti(attacker_pos, attacker_vel, targets, is_defender=False, params=params)
+
+    # Sigmoid width + per-player interception probability
+    s = np.sqrt(3.0) * params.sigma / np.pi
+
+    def _p_int(tti_matrix: np.ndarray) -> np.ndarray:
+        dt = t_ball[np.newaxis, :] - tti_matrix  # positive = arrives before ball
+        return 1.0 / (1.0 + np.exp(-dt / s))
+
+    p_int_def = _p_int(tti_def)  # (n_defenders, n_points)
+    p_int_att = _p_int(tti_att)  # (n_attackers, n_points)
+
+    # Per-step control probability; 0.0 where dt_k <= 0 (reproduces the original skip).
+    dt = np.empty(n_points)
+    dt[0] = 0.0
+    dt[1:] = t_ball[1:] - t_ball[:-1]
+    p_ctrl = np.where(dt > 0, 1.0 - np.exp(-params.lambda_ctrl * dt), 0.0)
+
+    return p_int_def, p_int_att, t_ball, p_ctrl
+
+
+def _lane_received_survival(
+    p_int_def: np.ndarray,
+    p_int_att: np.ndarray,
+    p_ctrl: np.ndarray,
+) -> tuple[float, float]:
+    """Sequential clamped survival scan for one lane (PR-S65).
+
+    Verbatim arithmetic of the pre-refactor ``_compute_lane_probabilities`` inner
+    loop (sequential ``+=`` over players, ``min(prior + total, 1.0)`` clamp), so it
+    is bit-identical to the original. Returns ``(p_blocked, p_received)``.
+    """
+    n_points = p_ctrl.shape[0]
+    n_def = p_int_def.shape[0]
+    n_att = p_int_att.shape[0]
+    p_blocked = 0.0
+    p_received = 0.0
+    p_anyone_prior = 0.0
+    for k in range(1, n_points):
+        pc = p_ctrl[k]
+        if pc <= 0.0:
+            continue
+        total_contrib_k = 0.0
+        for j in range(n_def):
+            contrib = float(p_int_def[j, k]) * pc * (1.0 - p_anyone_prior)
+            p_blocked += contrib
+            total_contrib_k += contrib
+        for j in range(n_att):
+            contrib = float(p_int_att[j, k]) * pc * (1.0 - p_anyone_prior)
+            p_received += contrib
+            total_contrib_k += contrib
+        p_anyone_prior = min(p_anyone_prior + total_contrib_k, 1.0)
+    return p_blocked, p_received
+
+
 def _compute_lane_probabilities(
     targets: np.ndarray,
     defender_pos: np.ndarray,
@@ -364,75 +448,58 @@ def _compute_lane_probabilities(
 ) -> tuple[float, float]:
     """Compute P(blocked) and P(received) for one lane (one set of targets).
 
-    Returns (p_blocked, p_received).
+    Composition of ``_lane_int_probs`` (clamp-independent precompute) and
+    ``_lane_received_survival`` (sequential clamped scan). Bit-identical to the
+    pre-refactor implementation. Returns (p_blocked, p_received).
     """
-    n_points = targets.shape[0]
-
-    # Ball travel time to each sample point
-    d_from_passer = np.linalg.norm(
-        targets - targets[0:1],
-        axis=1,
+    p_int_def, p_int_att, _t_ball, p_ctrl = _lane_int_probs(
+        targets, defender_pos, defender_vel, attacker_pos, attacker_vel, params=params
     )
-    t_ball = ball_drag_time(d_from_passer, params)
+    return _lane_received_survival(p_int_def, p_int_att, p_ctrl)
 
-    # Defender TTI
-    tti_def = player_tti(
-        defender_pos,
-        defender_vel,
-        targets,
-        is_defender=True,
-        params=params,
-    )  # (n_defenders, n_points)
 
-    # Attacker TTI (passer excluded — only the receiver matters,
-    # but we pass all attackers for safety)
-    tti_att = player_tti(
-        attacker_pos,
-        attacker_vel,
-        targets,
-        is_defender=False,
-        params=params,
-    )  # (n_attackers, n_points)
+def _lane_received_batched(
+    p_int_def: np.ndarray,
+    p_int_att: np.ndarray,
+    p_ctrl: np.ndarray,
+) -> tuple[float, float, np.ndarray]:
+    """Baseline + per-blocker leave-one-out p_received for one lane, vectorized (PR-S65).
 
-    # Sigmoid width
-    s = np.sqrt(3.0) * params.sigma / np.pi
+    Returns ``(p_blocked_full, p_received_full, p_received_loo)`` where
+    ``p_received_loo[m]`` is p_received with lane-blocker row ``m`` excluded.
 
-    # Per-player interception probability
-    def _p_int(tti_matrix: np.ndarray) -> np.ndarray:
-        """Sigmoid interception probability for each (player, point)."""
-        dt = t_ball[np.newaxis, :] - tti_matrix  # positive = arrives before ball
-        return 1.0 / (1.0 + np.exp(-dt / s))
+    INV-1: the clamped recurrence is RE-RUN per variant (variant 0 = full racer set,
+    variant ``m+1`` = exclude blocker ``m``), each tracked by an independent ``prior``.
+    Excluding a blocker adjusts only the per-step PLAYER sum (``full_def - def_col``),
+    never a post-clamp subtraction. Differs from the sequential scan only by float
+    reduction order (well under rtol 1e-10 for ~10-element sums).
 
-    p_int_def = _p_int(tti_def)  # (n_defenders, n_points)
-    p_int_att = _p_int(tti_att)  # (n_attackers, n_points)
-
-    # Sequential integration along lane.
-    # All players at point k share the same P_anyone_prior from points < k.
-    # Accumulate all contributions at k, then update p_anyone_prior after.
-    p_blocked = 0.0
-    p_received = 0.0
-    p_anyone_prior = 0.0
-
+    See docs/superpowers/specs/2026-05-28-cover-shadows-leave-one-out-decouple-design.md.
+    """
+    n_points = p_ctrl.shape[0]
+    nb = p_int_def.shape[0]
+    nv = nb + 1  # variant 0 = full; variant m+1 = exclude blocker m
+    prior = np.zeros(nv)
+    p_blocked = np.zeros(nv)
+    p_received = np.zeros(nv)
+    att_sum_all = p_int_att.sum(axis=0)  # (n_points,)
     for k in range(1, n_points):
-        dt_k = t_ball[k] - t_ball[k - 1]
-        if dt_k <= 0:
+        pc = p_ctrl[k]
+        if pc <= 0.0:
             continue
-        p_ctrl = 1.0 - np.exp(-params.lambda_ctrl * dt_k)
-
-        total_contrib_k = 0.0
-        for j in range(len(defender_pos)):
-            contrib = float(p_int_def[j, k]) * p_ctrl * (1.0 - p_anyone_prior)
-            p_blocked += contrib
-            total_contrib_k += contrib
-
-        for j in range(len(attacker_pos)):
-            contrib = float(p_int_att[j, k]) * p_ctrl * (1.0 - p_anyone_prior)
-            p_received += contrib
-            total_contrib_k += contrib
-
-        p_anyone_prior = min(p_anyone_prior + total_contrib_k, 1.0)
-
-    return p_blocked, p_received
+        def_col = p_int_def[:, k]  # (nb,)
+        full_def = def_col.sum()
+        def_sum = np.empty(nv)
+        def_sum[0] = full_def
+        def_sum[1:] = full_def - def_col  # exclude each blocker (per-step masked sum)
+        att_sum = att_sum_all[k]
+        one_minus_prior = 1.0 - prior
+        blk = def_sum * pc * one_minus_prior
+        rec = att_sum * pc * one_minus_prior
+        p_blocked += blk
+        p_received += rec
+        prior = np.minimum(prior + blk + rec, 1.0)
+    return float(p_blocked[0]), float(p_received[0]), p_received[1:]
 
 
 def lane_control(
@@ -793,6 +860,15 @@ def _compute_cover_shadow_dict(
     (missing velocity columns, no ball, NaN coordinates, etc.).
     Used by both ``add_cover_shadows`` and ``cover_shadow_xfns`` to avoid
     duplicating the per-frame computation.
+
+    The ``detailed=False`` ``max_single_defender_blocking_score`` uses a fixed-cast
+    leave-one-out: man-markers are classified once on the full frame (provably a
+    no-op to re-classify per lane-blocker removal — no ripple), per-player
+    interception probabilities are precomputed once per receiver, and each blocker's
+    removal re-runs only the clamped survival recurrence with that blocker's row
+    masked (vectorized; INV-1: never a post-clamp subtraction). Bit-identical within
+    rtol 1e-10 to the prior per-(d, receiver) ``lane_control`` loop.
+    See docs/superpowers/specs/2026-05-28-cover-shadows-leave-one-out-decouple-design.md.
     """
     # Velocity columns are required for lane_control TTI race
     if "vx" not in frame_data.columns or "vy" not in frame_data.columns:
@@ -825,11 +901,13 @@ def _compute_cover_shadow_dict(
             "max_single_defender_blocking_score": 0.0,
         }
 
-    # Lane control for each receiver
+    # Baseline pass: lane_control per receiver on the FULL frame, used only for the
+    # n_blocked decision (kept unchanged so n_blocked_receivers stays provably
+    # bit-identical). The max_single leave-one-out below recomputes its own baseline
+    # via the vectorized precompute. See spec §5 (deliberate deviation note).
     cs_params = CoverShadowParams()
     decision_attr = f"is_blocked_{decision_rule}"
     n_blocked = 0
-    lane_results: list[tuple] = []  # (receiver_pid, LaneControlResult)
     for _, recv_row in dangerous.iterrows():
         recv_xy = (float(recv_row["x"]), float(recv_row["y"]))
         lc = lane_control(
@@ -840,7 +918,6 @@ def _compute_cover_shadow_dict(
             attacking_team_id=attacking_team_id,
             params=cs_params,
         )
-        lane_results.append((recv_row["player_id"], lc))
         if getattr(lc, decision_attr):
             n_blocked += 1
 
@@ -893,43 +970,54 @@ def _compute_cover_shadow_dict(
             )
             max_def = max(max_def, d_result.blocking_score)
     else:
-        # Lightweight approximation: for each lane-blocker d, re-run
-        # lane_control without d to compute delta_P_received per receiver.
-        # score_d = sum_r xT(r) * delta_P_received_r
+        # Lightweight: classify man-markers once (lane_blocker_ids, the fixed racer set),
+        # precompute per-player interception probs once per receiver, then a single
+        # vectorized leave-one-out (re-run the clamped survival per excluded lane-blocker).
+        # Bit-identical to the prior per-(d, receiver) lane_control loop within rtol 1e-10:
+        # man-marking is invariant under lane-blocker removal (no ripple), so removing d
+        # only drops d's row from the fixed racer set. See spec §2.1 / INV-1.
         xt_interp = xt.interpolator()  # type: ignore[union-attr]
-        # Hoist loop-invariants out of the per-blocker loop: receiver position,
-        # xT, and baseline received-probability do not depend on the removed
-        # defender d. Exact (bit-identical); only the per-(d, receiver)
-        # lane_control re-run remains inside the loop.
-        receiver_records: list[tuple[float, float, float, float]] = []
-        for recv_pid, lc_orig in lane_results:
-            recv_rows = dangerous[dangerous["player_id"] == recv_pid]
-            if recv_rows.empty:
-                continue
-            recv_x = float(recv_rows.iloc[0]["x"])
-            recv_y = float(recv_rows.iloc[0]["y"])
-            recv_xt = float(xt_interp(np.array([recv_x]), np.array([recv_y]))[0, 0])
-            old_recv = lc_orig.p_received_center + lc_orig.p_received_left + lc_orig.p_received_right
-            receiver_records.append((recv_x, recv_y, recv_xt, old_recv))
+        kept = defenders_outfield[defenders_outfield["player_id"].isin(lane_blocker_ids)]
+        lb_pos = kept[["x", "y"]].to_numpy(dtype=np.float64)
+        lb_vel = kept[["vx", "vy"]].to_numpy(dtype=np.float64)
+        att_pos = attackers[["x", "y"]].to_numpy(dtype=np.float64)
+        att_vel = attackers[["vx", "vy"]].to_numpy(dtype=np.float64)
+        n_lb = lb_pos.shape[0]
+        passer = np.array(passer_xy, dtype=np.float64)
 
-        max_approx = 0.0
-        for d_pid in lane_blocker_ids:
-            frame_without_d = frame_data[frame_data["player_id"] != d_pid]
-            score_d = 0.0
-            for recv_x, recv_y, recv_xt, old_recv in receiver_records:
-                lc_new = lane_control(
-                    frame_without_d,
-                    passer_xy,
-                    (recv_x, recv_y),
-                    home_team_id=home_team_id,
-                    attacking_team_id=attacking_team_id,
-                    params=cs_params,
+        score_per_blocker = np.zeros(n_lb)
+        for _, recv_row in dangerous.iterrows():
+            recv_x = float(recv_row["x"])
+            recv_y = float(recv_row["y"])
+            recv_xt = float(xt_interp(np.array([recv_x]), np.array([recv_y]))[0, 0])
+
+            receiver = np.array([recv_x, recv_y], dtype=np.float64)
+            pass_vec = receiver - passer
+            pass_dist = np.linalg.norm(pass_vec)
+            if pass_dist < 1e-6:
+                continue
+            u = pass_vec / pass_dist
+            u_perp = np.array([-u[1], u[0]])
+            half_width = cs_params.cone_width_factor * pass_dist / 2.0
+            t = np.linspace(0.0, 1.0, cs_params.n_sample_points)
+            center = passer[np.newaxis, :] + t[:, np.newaxis] * pass_vec[np.newaxis, :]
+            left = center + t[:, np.newaxis] * half_width * u_perp[np.newaxis, :]
+            right = center - t[:, np.newaxis] * half_width * u_perp[np.newaxis, :]
+
+            old_recv = 0.0
+            new_recv = np.zeros(n_lb)
+            for lane in (center, left, right):
+                p_int_def, p_int_att, _t_ball, p_ctrl = _lane_int_probs(
+                    lane, lb_pos, lb_vel, att_pos, att_vel, params=cs_params
                 )
-                new_recv = lc_new.p_received_center + lc_new.p_received_left + lc_new.p_received_right
-                delta_p = max(new_recv - old_recv, 0.0)
-                score_d += recv_xt * delta_p
-            max_approx = max(max_approx, score_d)
-        max_def = max_approx
+                _pb, base_rec, loo_rec = _lane_received_batched(p_int_def, p_int_att, p_ctrl)
+                old_recv += base_rec
+                new_recv += loo_rec
+
+            delta = np.maximum(new_recv - old_recv, 0.0)
+            score_per_blocker += recv_xt * delta
+
+        max_def = float(score_per_blocker.max()) if n_lb > 0 else 0.0
 
     return {
         "n_blocked_receivers": n_blocked,

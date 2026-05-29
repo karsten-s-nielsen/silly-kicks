@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 import pandas as pd
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from tests.tracking._gk_test_helpers import _make_two_team_frame
 from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
@@ -1025,3 +1029,283 @@ class TestDetailedVsLightweightCorrelation:
                 "Zero variance in cover shadow scores — insufficient scenario differentiation across test frames"
             )
         assert rho >= 0.7, f"Rank correlation {rho:.3f} < 0.7 between lightweight and full modes"
+
+
+class TestManMarkerInvariantUnderLaneBlockerRemoval:
+    """Load-bearing invariant for the leave-one-out perf refactor (PR-S65).
+
+    The lightweight ``max_single_defender_blocking_score`` removes each *lane-blocker*
+    (a defender that won no attacker in the greedy man-marker assignment) in turn. The
+    PR-S65 optimization hoists the man-marker classification out of the per-defender loop
+    on the premise that **removing a lane-blocker never changes the man-marker set** —
+    removing a non-winner from a greedy nearest-first matching cannot change the matching
+    of the others. If this property ever breaks (e.g. a future change to
+    ``_classify_man_markers``), the hoist would silently stop being bit-identical, so this
+    is pinned as a permanent regression guard. Lifted from the 2026-05-28 investigation probe.
+
+    See docs/superpowers/specs/2026-05-28-cover-shadows-leave-one-out-decouple-design.md §2.1/§6.4.
+    """
+
+    # home = defenders (team 1, defends low x -> goal_x_own=0.0); away = attackers (team 2)
+    _ATTACKING_TEAM = 2
+
+    SCENARIOS: ClassVar[dict] = {
+        # Two defenders contest one attacker's behind-point: the closer wins (man-marker),
+        # the farther is a within-radius *losing* lane-blocker. Removing the loser must not
+        # promote anyone.
+        "two_contest_one_behind_point": dict(
+            home_positions=[(69.5, 30.0), (67.0, 30.0), (55.0, 34.0), (50.0, 20.0), (52.0, 48.0)],
+            away_positions=[(70.0, 30.0), (75.0, 40.0), (80.0, 25.0), (60.0, 34.0), (85.0, 45.0)],
+        ),
+        # Contested chain across two attackers.
+        "contested_chain": dict(
+            home_positions=[(69.0, 30.0), (74.0, 40.0), (73.0, 39.0), (50.0, 34.0), (55.0, 25.0)],
+            away_positions=[(70.0, 30.0), (75.0, 40.0), (82.0, 28.0), (62.0, 34.0), (88.0, 50.0)],
+        ),
+        # Pile-up: four defenders all within radius of a single behind-point.
+        "pile_up_on_one_behind_point": dict(
+            home_positions=[(69.5, 30.0), (68.0, 30.5), (67.0, 29.5), (66.5, 31.0), (50.0, 34.0)],
+            away_positions=[(70.0, 30.0), (78.0, 40.0), (84.0, 25.0), (60.0, 34.0), (90.0, 45.0)],
+        ),
+    }
+
+    @pytest.mark.parametrize("scenario", list(SCENARIOS))
+    def test_removing_any_lane_blocker_leaves_man_markers_unchanged(self, scenario):
+        from silly_kicks.tracking._cover_shadows import CoverShadowParams, _classify_man_markers
+
+        params = CoverShadowParams()
+        cfg = self.SCENARIOS[scenario]
+        frame = _make_two_team_frame(**cfg)
+
+        players = frame[~frame["is_ball"].astype(bool)]
+        attackers = players[players["team_id"] == self._ATTACKING_TEAM]
+        defenders_outfield = players[
+            (players["team_id"] != self._ATTACKING_TEAM) & (~players["is_goalkeeper"].astype(bool))
+        ]
+
+        # Attacking team (2) != home (1) => defenders' own goal at x=0.0
+        goal_x_own = 0.0
+        full_mm = _classify_man_markers(defenders_outfield, attackers, goal_x_own=goal_x_own, params=params)
+        lane_blockers = [pid for pid in defenders_outfield["player_id"] if pid not in full_mm]
+
+        # The scenario must actually contain lane-blockers, else it guards nothing.
+        assert lane_blockers, f"{scenario}: no lane-blockers — fixture does not exercise the property"
+
+        for d in lane_blockers:
+            defs_without_d = defenders_outfield[defenders_outfield["player_id"] != d]
+            mm_without_d = _classify_man_markers(defs_without_d, attackers, goal_x_own=goal_x_own, params=params)
+            assert mm_without_d == (full_mm - {d}), (
+                f"{scenario}: removing lane-blocker {d} changed the man-marker set "
+                f"{sorted(full_mm - {d})} -> {sorted(mm_without_d)} (no-ripple property broken; "
+                "the PR-S65 man-marking hoist would no longer be bit-identical)"
+            )
+
+    @staticmethod
+    def _mk_players(positions, start_id):
+        return pd.DataFrame(
+            {
+                "player_id": list(range(start_id, start_id + len(positions))),
+                "x": [float(p[0]) for p in positions],
+                "y": [float(p[1]) for p in positions],
+            }
+        )
+
+    @settings(max_examples=150, deadline=None)
+    @given(
+        def_positions=st.lists(st.tuples(st.floats(0.0, 105.0), st.floats(0.0, 68.0)), min_size=2, max_size=11),
+        att_positions=st.lists(st.tuples(st.floats(0.0, 105.0), st.floats(0.0, 68.0)), min_size=2, max_size=11),
+        radius=st.floats(0.5, 6.0),
+        offset=st.floats(0.0, 3.0),
+        goal_x_own=st.sampled_from([0.0, 105.0]),
+    )
+    def test_no_ripple_property_random_rosters(self, def_positions, att_positions, radius, offset, goal_x_own):
+        """Property: removing ANY lane-blocker leaves the man-marker set unchanged, on random rosters.
+
+        This is the load-bearing invariant the PR-S65 hoist depends on (spec §2.1/§6.4).
+        Broad random coverage of the exact property, far stronger than hand-picked fixtures.
+        """
+        from silly_kicks.tracking._cover_shadows import CoverShadowParams, _classify_man_markers
+
+        defenders = self._mk_players(def_positions, start_id=100)
+        attackers = self._mk_players(att_positions, start_id=500)
+        params = CoverShadowParams(man_mark_radius=radius, man_mark_behind_offset=offset)
+
+        full_mm = _classify_man_markers(defenders, attackers, goal_x_own=goal_x_own, params=params)
+        lane_blockers = [pid for pid in defenders["player_id"] if pid not in full_mm]
+
+        for d in lane_blockers:
+            sub = defenders[defenders["player_id"] != d]
+            mm_sub = _classify_man_markers(sub, attackers, goal_x_own=goal_x_own, params=params)
+            assert mm_sub == (full_mm - {d}), (
+                f"removing lane-blocker {d} changed man-markers {sorted(full_mm - {d})} -> "
+                f"{sorted(mm_sub)} (no-ripple broken; PR-S65 hoist no longer bit-identical)"
+            )
+
+    def test_at_least_one_scenario_has_a_contesting_loser(self):
+        """Guard the guard: ensure a fixture has a within-radius losing lane-blocker.
+
+        A trivial fixture where every lane-blocker is far from all behind-points would pass
+        the invariant test while covering nothing interesting. This confirms at least one
+        scenario has a defender within ``man_mark_radius`` of a behind-point that still loses
+        the greedy assignment (the adversarial case).
+        """
+        from silly_kicks.tracking._cover_shadows import CoverShadowParams, _classify_man_markers
+
+        params = CoverShadowParams()
+        cfg = self.SCENARIOS["two_contest_one_behind_point"]
+        frame = _make_two_team_frame(**cfg)
+        players = frame[~frame["is_ball"].astype(bool)]
+        attackers = players[players["team_id"] == self._ATTACKING_TEAM]
+        defenders_outfield = players[
+            (players["team_id"] != self._ATTACKING_TEAM) & (~players["is_goalkeeper"].astype(bool))
+        ]
+        full_mm = _classify_man_markers(defenders_outfield, attackers, goal_x_own=0.0, params=params)
+
+        # Behind-points toward defenders' own goal (x=0 => toward -x).
+        att_pos = attackers[["x", "y"]].to_numpy()
+        behind = att_pos + params.man_mark_behind_offset * np.array([-1.0, 0.0])
+        def_pos = defenders_outfield[["x", "y"]].to_numpy()
+        def_ids = defenders_outfield["player_id"].to_numpy()
+
+        contesting_loser = False
+        for di, pid in enumerate(def_ids):
+            within = np.any(np.linalg.norm(behind - def_pos[di], axis=1) < params.man_mark_radius)
+            if within and pid not in full_mm:
+                contesting_loser = True
+                break
+        assert contesting_loser, "fixture lacks a within-radius losing lane-blocker — guard is vacuous"
+
+
+class TestLeaveOneOutExactness:
+    """Production max_single == independent frozen oracle, within rtol 1e-10 (spec §6.1).
+
+    Parametrized over several geometries (both attacking directions, dense + sparse) to
+    give breadth in lieu of an in-repo real match. The frozen oracle
+    (tests/tracking/_cover_shadows_reference.py) shares none of the production helpers, so
+    this certifies the refactor + vectorization against independent code and guards INV-1.
+    """
+
+    _DENSE_HOME: ClassVar[list] = [
+        (55.0, 30.0),
+        (58.0, 35.0),
+        (52.0, 28.0),
+        (62.0, 40.0),
+        (57.0, 32.0),
+        (60.0, 38.0),
+        (65.0, 25.0),
+        (20.0, 15.0),
+        (25.0, 55.0),
+        (30.0, 10.0),
+    ]
+    _DENSE_AWAY: ClassVar[list] = [
+        (50.0, 34.0),
+        (75.0, 34.0),
+        (80.0, 25.0),
+        (85.0, 45.0),
+        (70.0, 20.0),
+        (70.0, 48.0),
+        (90.0, 30.0),
+        (95.0, 40.0),
+        (45.0, 15.0),
+        (45.0, 55.0),
+    ]
+
+    # (home_positions, away_positions, attacking_team_id, home_team_id, passer_xy)
+    FIXTURES: ClassVar[dict] = {
+        "away_attacks_dense": (_DENSE_HOME, _DENSE_AWAY, 2, 1, (50.0, 34.0)),
+        "home_attacks_dense": (_DENSE_AWAY, _DENSE_HOME, 1, 1, (50.0, 34.0)),
+        "sparse_contest": (
+            [(48.0, 30.0), (47.0, 30.5), (40.0, 34.0), (35.0, 20.0), (38.0, 50.0)],
+            [(45.0, 30.0), (30.0, 25.0), (28.0, 40.0), (60.0, 34.0), (55.0, 20.0)],
+            2,
+            1,
+            (50.0, 34.0),
+        ),
+    }
+
+    @pytest.mark.parametrize("name", list(FIXTURES))
+    def test_production_matches_frozen_oracle(self, name, fitted_xt):
+        from silly_kicks.tracking._cover_shadows import _compute_cover_shadow_dict
+        from tests.tracking._cover_shadows_reference import _reference_max_single
+
+        home_pos, away_pos, att_team, home_team, passer = self.FIXTURES[name]
+        frame = _make_two_team_frame(home_positions=home_pos, away_positions=away_pos)
+
+        prod = _compute_cover_shadow_dict(frame, passer, att_team, fitted_xt, home_team_id=home_team, detailed=False)
+        ref = _reference_max_single(frame, passer, att_team, fitted_xt, home_team_id=home_team)
+
+        assert prod is not None
+        np.testing.assert_allclose(
+            prod["max_single_defender_blocking_score"],
+            ref,
+            rtol=1e-10,
+            err_msg=f"[{name}] production max_single diverged from the frozen leave-one-out oracle",
+        )
+
+    def test_at_least_one_fixture_is_nonzero(self, fitted_xt):
+        """Guard the guard: the exactness comparison must be non-vacuous (not all 0.0)."""
+        from silly_kicks.tracking._cover_shadows import _compute_cover_shadow_dict
+
+        values = []
+        for home_pos, away_pos, att_team, home_team, passer in self.FIXTURES.values():
+            frame = _make_two_team_frame(home_positions=home_pos, away_positions=away_pos)
+            r = _compute_cover_shadow_dict(frame, passer, att_team, fitted_xt, home_team_id=home_team, detailed=False)
+            if r is not None:
+                values.append(r["max_single_defender_blocking_score"])
+        assert any(v > 0.0 for v in values), "all fixtures produced max_single=0 — exactness test is vacuous"
+
+
+class TestCoverShadowPerfBudget:
+    """Guard against silent regression of the leave-one-out optimization (spec §7).
+
+    Local post-change: ~12 ms/call (vs ~51 ms pre-change, ~4.3x). Budget = 45 ms: ample
+    headroom over local + slow-Windows-CI slowdown, yet below the ~51 ms pre-change cost so a
+    regression to the O(blockers x receivers) lane_control loop trips it. Re-tune from observed
+    CI timing (worst x 1.5) if it ever flakes.
+    """
+
+    _BUDGET_S = 0.045
+
+    def test_detailed_false_under_budget(self, fitted_xt):
+        import time
+
+        from silly_kicks.tracking._cover_shadows import _compute_cover_shadow_dict
+
+        frame = _make_two_team_frame(
+            home_positions=[
+                (55.0, 30.0),
+                (58.0, 35.0),
+                (52.0, 28.0),
+                (62.0, 40.0),
+                (57.0, 32.0),
+                (60.0, 38.0),
+                (65.0, 25.0),
+                (20.0, 15.0),
+                (25.0, 55.0),
+                (30.0, 10.0),
+            ],
+            away_positions=[
+                (50.0, 34.0),
+                (75.0, 34.0),
+                (80.0, 25.0),
+                (85.0, 45.0),
+                (70.0, 20.0),
+                (70.0, 48.0),
+                (90.0, 30.0),
+                (95.0, 40.0),
+                (45.0, 15.0),
+                (45.0, 55.0),
+            ],
+        )
+        # Warm up, then average several calls for a stable measurement.
+        for _ in range(3):
+            _compute_cover_shadow_dict(frame, (50.0, 34.0), 2, fitted_xt, home_team_id=1, detailed=False)
+        N = 20
+        t0 = time.perf_counter()
+        for _ in range(N):
+            _compute_cover_shadow_dict(frame, (50.0, 34.0), 2, fitted_xt, home_team_id=1, detailed=False)
+        per_call = (time.perf_counter() - t0) / N
+        assert per_call < self._BUDGET_S, (
+            f"detailed=False per-call {per_call * 1000:.2f} ms exceeds budget "
+            f"{self._BUDGET_S * 1000:.2f} ms (possible regression to the per-(d, receiver) loop)"
+        )

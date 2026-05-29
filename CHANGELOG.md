@@ -5,6 +5,19 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.25.1] — 2026-05-28
+
+### Performance
+- **cover_shadows `max_single_defender_blocking_score` (`detailed=False`)** is now
+  computed via a single vectorized leave-one-out instead of an `O(blockers × receivers)`
+  `lane_control` re-run (~4× faster on a dense 10v10 frame). The per-defender man-marking
+  re-classification was hoisted out of the loop — it is provably a no-op for lane-blocker
+  removals (removing a non-winner cannot change a greedy nearest-first matching; see the
+  `TestManMarkerInvariantUnderLaneBlockerRemoval` property test). **Bit-identical within
+  `rtol 1e-10`** (validated against an independent frozen oracle) — **no value or API change,
+  and no downstream golden/model regeneration required.** The exact `detailed=True` path is
+  unchanged. (PR-S65)
+
 ## [3.25.0] — 2026-05-28
 
 ### Fixed
