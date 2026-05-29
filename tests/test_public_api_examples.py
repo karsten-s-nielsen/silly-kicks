@@ -39,6 +39,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/atomic/vaep/labels.py",
     "silly_kicks/atomic/vaep/formula.py",
     "silly_kicks/atomic/tracking/features.py",
+    "silly_kicks/tracking/gradientsports.py",
     "silly_kicks/tracking/pitch_control/_params.py",
     "silly_kicks/tracking/pitch_control/_dispatch.py",
     "silly_kicks/tracking/pitch_control/_surface.py",

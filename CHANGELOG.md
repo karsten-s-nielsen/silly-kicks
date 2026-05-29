@@ -5,6 +5,21 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.27.0] — 2026-05-29
+
+### Added
+- **`silly_kicks.tracking.gradientsports.add_gradientsports_player_ids`** — resolves Gradient
+  Sports tracking jersey numbers to the events SPADL `player_id`/`team_id` int space via the
+  roster (`(team_id, jersey_number) → roster player.id`, output `Int64`, unmatched → `pd.NA`
+  never `0`), with `is_goalkeeper` from `positionGroupType == "GK"`, `team_id` from a
+  caller-supplied home/away split, and a `GradientsportsRosterReport` audit. Run it before
+  `convert_to_frames`. Fixes a silent failure where GS tracking carriers (jersey-derived /
+  string ids) could not join GS events SPADL (`int64` player_id) — GS ball-carrier /
+  DAS / team-in-possession features were silently broken. Order-safe (elementwise map, no
+  row explosion); loud `UserWarning`s on a degenerate match rate, duplicate roster keys, a
+  missing/zero-GK `positionGroupType`; never raises (ADR-003). Verified end-to-end on real GS
+  WC2022 data (carrier accuracy 0.0 → nonzero). (TF-24 PR-A)
+
 ## [3.26.0] — 2026-05-29
 
 ### Performance
