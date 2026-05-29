@@ -5,6 +5,25 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.28.0] — 2026-05-29
+
+### Added
+- **TF-24 calibration harness** (`silly_kicks.calibration`, optional `[calibration]` extra):
+  Optuna-TPE calibration of three tracking defaults — `infer_ball_carrier`
+  (`tolerance_m`/`beta`/`gamma`), `LinkParams.k3`, and off-ball-run
+  `pre_seconds`/`min_displacement_m` — against real multi-provider tracking data via
+  `ruthless-efficiency[optuna]`. Pure, provider-agnostic objectives/CV/gates in the library
+  (`CarrierAccuracyObjective`; `AugmentedVaepBrierObjective` as a ruthless `CachedObjective` with
+  invariant-prepare + per-trial-patch and a deterministic-XGBoost cache-equivalence guarantee);
+  match-stratified CV (GroupKFold-5 / leave-one-match-out); a **frozen exogenous xT artifact**
+  (fit on a disjoint corpus, sha256-checksummed, fail-closed exclusion) for train–serve-consistent,
+  leak-free feature extraction; H1 degenerate-feature penalty (stateless, default-Brier-anchored);
+  per-provider signal-sanity + DAS-degradation surfacing; TF-25 provider-specific-defaults gate.
+  Plus a `scripts/calibrate_tracking_defaults.py` CLI with pining-for-the-data + Databricks-bronze
+  loaders (SkillCorner/IDSSE public, Gradient Sports owner-tier) and a data + version + xT-identity
+  manifest. The harness **recommends** values + produces an auditable report; it does NOT change
+  the library default constants (that is a separate "apply" PR after the maintainer's real sweep).
+
 ## [3.27.0] — 2026-05-29
 
 ### Added

@@ -54,6 +54,14 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/vaep/features/temporal.py",
     "silly_kicks/vaep/features/context.py",
     "silly_kicks/vaep/features/specialty.py",
+    "silly_kicks/calibration/_xt.py",
+    "silly_kicks/calibration/_cv.py",
+    "silly_kicks/calibration/_features.py",
+    "silly_kicks/calibration/_gates.py",
+    "silly_kicks/calibration/_spaces.py",
+    "silly_kicks/calibration/_carrier_objective.py",
+    "silly_kicks/calibration/_vaep_brier_objective.py",
+    "silly_kicks/calibration/_diagnostics.py",
 )
 
 # Pure-type symbols that don't fit the illustrative-example pattern.
