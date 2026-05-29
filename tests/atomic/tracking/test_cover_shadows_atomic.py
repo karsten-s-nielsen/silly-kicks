@@ -107,3 +107,42 @@ class TestAtomicCoverShadows:
         states = [dummy, dummy, dummy]
         result = transformer(states, None)
         assert result.shape[1] == 15
+
+    def test_atomic_max_single_equals_standard(self, fitted_xt):
+        """Atomic max_single == standard on a shared frame (pure delegation, PR-S65).
+
+        Pins the 'atomic inherits by pure delegation' claim so a future atomic fork
+        cannot silently drift from the standard computation.
+        """
+        import numpy as np
+
+        from silly_kicks.atomic.tracking.features import add_cover_shadows as atomic_cs
+        from silly_kicks.tracking.features import add_cover_shadows as std_cs
+
+        atomic_actions, frames = _make_atomic_actions_and_frames()
+        # Standard SPADL actions referencing the SAME frame/passer (x->start_x, dx->end_x).
+        std_actions = pd.DataFrame(
+            {
+                "action_id": [0, 1],
+                "game_id": [1, 1],
+                "period_id": [1, 1],
+                "time_seconds": [1.0, 999.0],
+                "team_id": [2, 2],
+                "type_id": [0, 0],
+                "result_id": [1, 1],
+                "start_x": [50.0, 50.0],
+                "start_y": [34.0, 34.0],
+                "end_x": [70.0, 70.0],
+                "end_y": [34.0, 34.0],
+                "bodypart_id": [0, 0],
+                "player_id": [60, 60],
+            }
+        )
+        std = std_cs(std_actions, frames, fitted_xt, home_team_id=1, detailed=False)
+        atom = atomic_cs(atomic_actions, frames, fitted_xt, home_team_id=1, detailed=False)
+        np.testing.assert_allclose(
+            atom["max_single_defender_blocking_score"].to_numpy(),
+            std["max_single_defender_blocking_score"].to_numpy(),
+            rtol=1e-10,
+            equal_nan=True,
+        )

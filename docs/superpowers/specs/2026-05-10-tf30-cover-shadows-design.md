@@ -1,5 +1,10 @@
 # TF-30: Cover Shadow Features — Lane Control + Blocking Score
 
+> **Amendment (2026-05-28, PR-S65):** the `detailed=False`
+> `max_single_defender_blocking_score` lightweight path was re-implemented as a vectorized
+> leave-one-out (bit-identical within `rtol 1e-10`, ~4× faster). See
+> `docs/superpowers/specs/2026-05-28-cover-shadows-leave-one-out-decouple-design.md`.
+
 **Date:** 2026-05-10
 **Status:** Approved
 **PR:** PR-S36
