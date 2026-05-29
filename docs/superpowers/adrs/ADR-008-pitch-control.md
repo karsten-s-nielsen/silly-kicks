@@ -123,6 +123,26 @@ infer a flipped sign and change DAS. Resolution: `_pin_attacking_direction` runs
 gained an `attacking_direction_col` passthrough so the simulation uses the pinned
 direction. Provably bit-identical for any data; e2e-verified.
 
+### D8: Ghost-GK linked-frame restriction preserves cross-frame deps, not direction (3.26.0)
+
+`add_ghost_gk` / `ghost_gk_xfns` restrict the expensive per-sample density KDE
+(and, since the same change, the heavy per-frame feature extraction) to the
+action-linked frames via a `link_frame_ids` kwarg on `compute_ghost_gk`
+(`add_ghost_gk` derives it from its link pointers; `ghost_gk_xfns` from the union
+of its three gamestate slots). Unlike D7's DAS case, the obstacle here is **not**
+direction inference: `_extract_all_ghost_gk_features` carries two cross-frame
+dependencies — a per-period defending-goal mean-x (`groupby` over the whole
+period) and a cross-period one-step velocity state (each frame's velocity vs its
+true predecessor for that `(game_id, gk_team)`). Resolution: the extractor still
+**walks every frame** to maintain the velocity state and computes the goal-mean
+over the full frames, and only builds a feature row / runs the KDE for linked
+frames. The per-sample KDE has zero cross-sample coupling, so the restricted
+output is byte-identical; golden tests cover the goal-flip + velocity edge cases
+plus a discrimination test proving a naive frame pre-filter would **not** be
+bit-identical. Measured (bundled model): ~100× faster per 250-frame fan-out batch;
+the residual is the irreducible per-linked-frame KDE (~4.4 s/eval), not extraction
+(~4.7%). PR-S66.
+
 ### Consequences (amendment)
 
 - `pitch_control_cache` joins `links` as a standard optional optimization kwarg on

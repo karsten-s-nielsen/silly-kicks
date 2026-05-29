@@ -601,6 +601,7 @@ def _extract_all_ghost_gk_features(
     score_at_time: Callable[[Any, float], float] | None = None,
     phase_at_time: Callable[[Any, float], int] | None = None,
     subsample_fps: float | None = None,
+    link_frame_ids: set[int] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Shared batch helper: iterate frames, extract features for every GK.
 
@@ -623,6 +624,12 @@ def _extract_all_ghost_gk_features(
         (game_id, time_seconds) -> int (0=open, 1=set_piece, 2=goal_kick).
     subsample_fps : float | None
         Thin frames to target fps before extraction.
+    link_frame_ids : set[int] | None, default None
+        When provided, build a feature row ONLY for frames in this set, but still
+        walk every frame to maintain the cross-period one-step velocity state, so
+        each linked frame sees its true predecessor (byte-identical velocity to the
+        unrestricted pass). The per-period defending-goal mean-x is computed over
+        the full frames either way. When None, every frame is extracted. PR-S66 §5.
 
     Returns
     -------
@@ -696,82 +703,97 @@ def _extract_all_ghost_gk_features(
         gk_rows = frame_data[frame_data["is_goalkeeper"].astype(bool) & ~frame_data["is_ball"].astype(bool)]
         time_s = float(frame_data["time_seconds"].iloc[0]) if "time_seconds" in frame_data.columns else 0.0
 
+        # PR-S66 §5: when link_frame_ids is set, build a feature row only for
+        # linked frames, but ALWAYS walk every frame below to update the velocity
+        # state so a linked frame's predecessor is its true (cross-period) neighbour
+        # rather than the previous *linked* frame.
+        # fid is the groupby key (int/np.int); membership in the int set matches
+        # by value regardless of numpy-vs-python int, so no explicit cast needed.
+        fid_linked = link_frame_ids is None or fid in link_frame_ids
+
         for _, gk_row in gk_rows.iterrows():
             gk_team = gk_row["team_id"]
             goal_x = _defending_goal.get((gid, pid, gk_team), 0.0 if gk_team == home_team_id else _FIELD_LENGTH)
-
-            # Score: callback returns home perspective, negate for away
-            if score_at_time is not None:
-                sd = score_at_time(gid, time_s)
-                if gk_team != home_team_id:
-                    sd = -sd
-            else:
-                sd = 0.0
-
-            # Phase
-            ph = phase_at_time(gid, time_s) if phase_at_time is not None else 0
-
-            # Carrier
-            carrier_team = None
-            if carrier_idx is not None:
-                key = (gid, pid, fid)
-                if key in carrier_idx.index:
-                    carrier_team = carrier_idx[key]  # type: ignore[call-overload]
-
-            # Velocity state
-            state_key = (gid, gk_team)
-            prev_dl_x, prev_dc_x = prev_state.get(state_key, (None, None))
-            prev_ts = prev_timestamps.get(state_key)
-            actual_dt = (time_s - prev_ts) if prev_ts is not None and time_s > prev_ts else _VELOCITY_WINDOW_S
-
-            feat = extract_ghost_gk_features(
-                frame_data,
-                gk_team_id=gk_team,
-                goal_x=goal_x,
-                score_diff=sd,
-                phase=ph,
-                ball_carrier_team_id=carrier_team,
-                prev_defensive_line_x=prev_dl_x,
-                prev_defending_centroid_x=prev_dc_x,
-                dt=actual_dt,
-            )
-            feature_rows.append(feat)
-
-            # GK position in goal-relative coords for labels
-            gk_x_raw = float(gk_row["x"])
-            gk_y_raw = float(gk_row["y"])
             flip = goal_x > 50.0
-            gk_x_gr = (_FIELD_LENGTH - gk_x_raw) if flip else gk_x_raw
-            gk_y_gr = gk_y_raw
 
-            meta_rows.append(
-                {
-                    "game_id": gid,
-                    "period_id": pid,
-                    "frame_id": fid,
-                    "gk_team_id": gk_team,
-                    "gk_x_gr": gk_x_gr,
-                    "gk_y_gr": gk_y_gr,
-                }
-            )
-
-            # Update velocity state
+            # Cheap defensive-line-x + centroid in goal-relative coords, computed
+            # for EVERY frame to drive the velocity state. These mirror exactly
+            # extract_ghost_gk_features' defensive_line_x and the stored centroid
+            # (median of the back-4 goal-relative x; mean goal-relative x) — see
+            # TestExtractionRestriction golden which guards bit-identical velocity.
             defending = frame_data[
                 (frame_data["team_id"] == gk_team)
                 & ~frame_data["is_goalkeeper"].astype(bool)
                 & ~frame_data["is_ball"].astype(bool)
             ]
             if len(defending) > 0:
-                if flip:
-                    def_cx = float(np.mean(_FIELD_LENGTH - np.asarray(defending["x"].values)))
-                else:
-                    def_cx = float(np.mean(np.asarray(defending["x"].values)))
+                _dxs = np.asarray(defending["x"].values)
+                _gr = (_FIELD_LENGTH - _dxs) if flip else _dxs
+                _sorted_xs = np.sort(_gr)
+                _n_back = min(4, len(_sorted_xs))
+                dl_x = float(np.median(_sorted_xs[:_n_back]))
+                def_cx = float(np.mean(_gr))
             else:
+                dl_x = np.nan
                 def_cx = np.nan
-            prev_state[state_key] = (
-                float(feat["defensive_line_x"].iloc[0]),
-                def_cx,
-            )
+
+            # Velocity state (true predecessor regardless of restriction)
+            state_key = (gid, gk_team)
+            prev_dl_x, prev_dc_x = prev_state.get(state_key, (None, None))
+            prev_ts = prev_timestamps.get(state_key)
+            actual_dt = (time_s - prev_ts) if prev_ts is not None and time_s > prev_ts else _VELOCITY_WINDOW_S
+
+            if fid_linked:
+                # Score: callback returns home perspective, negate for away
+                if score_at_time is not None:
+                    sd = score_at_time(gid, time_s)
+                    if gk_team != home_team_id:
+                        sd = -sd
+                else:
+                    sd = 0.0
+
+                # Phase
+                ph = phase_at_time(gid, time_s) if phase_at_time is not None else 0
+
+                # Carrier
+                carrier_team = None
+                if carrier_idx is not None:
+                    key = (gid, pid, fid)
+                    if key in carrier_idx.index:
+                        carrier_team = carrier_idx[key]  # type: ignore[call-overload]
+
+                feat = extract_ghost_gk_features(
+                    frame_data,
+                    gk_team_id=gk_team,
+                    goal_x=goal_x,
+                    score_diff=sd,
+                    phase=ph,
+                    ball_carrier_team_id=carrier_team,
+                    prev_defensive_line_x=prev_dl_x,
+                    prev_defending_centroid_x=prev_dc_x,
+                    dt=actual_dt,
+                )
+                feature_rows.append(feat)
+
+                # GK position in goal-relative coords for labels
+                gk_x_raw = float(gk_row["x"])
+                gk_y_raw = float(gk_row["y"])
+                gk_x_gr = (_FIELD_LENGTH - gk_x_raw) if flip else gk_x_raw
+                gk_y_gr = gk_y_raw
+
+                meta_rows.append(
+                    {
+                        "game_id": gid,
+                        "period_id": pid,
+                        "frame_id": fid,
+                        "gk_team_id": gk_team,
+                        "gk_x_gr": gk_x_gr,
+                        "gk_y_gr": gk_y_gr,
+                    }
+                )
+
+            # Update velocity state (every frame, linked or not)
+            prev_state[state_key] = (dl_x, def_cx)
             prev_timestamps[state_key] = time_s
 
     if not feature_rows:
@@ -1370,6 +1392,7 @@ def compute_ghost_gk(
     model: GhostGkModel | GhostGkVariant | None = None,
     home_team_id: int | str,
     actions: pd.DataFrame | None = None,
+    link_frame_ids: set[int] | None = None,
 ) -> pd.DataFrame:
     """Per-frame ghost-GK primitive (batched).
 
@@ -1392,6 +1415,14 @@ def compute_ghost_gk(
     actions : pd.DataFrame | None
         SPADL actions for score_diff and phase context. If None, both
         default to 0 (backward-compatible with 3.19.0 behaviour).
+    link_frame_ids : set[int] | None, default None
+        When provided, restrict the per-sample KDE (``predict_density``) to GK
+        samples whose ``frame_id`` is in this set. Feature extraction still runs
+        over the FULL frames, so the per-period defending-goal mean-x and the
+        cross-period one-step velocity state are preserved exactly --- the KDE is
+        per-sample independent, so the restricted result is byte-identical to the
+        unrestricted one for the kept frames. When None, every sample is predicted
+        (backward-compatible). See PR-S66 spec sections 2-3.
 
     Returns
     -------
@@ -1413,11 +1444,18 @@ def compute_ghost_gk(
     score_fn = _build_score_lookup(actions, home_team_id) if actions is not None else None
     phase_fn = _build_phase_lookup(actions) if actions is not None else None
 
+    # PR-S66 §5: restrict BOTH the heavy feature extraction and the per-sample KDE
+    # to the action-linked frames. _extract_all_ghost_gk_features still walks every
+    # frame to maintain the cross-period one-step velocity state and computes the
+    # per-period defending-goal mean-x over the full frames, so the linked-frame
+    # features --- and the per-sample KDE, which has zero cross-sample coupling ---
+    # are byte-identical to the unrestricted compute. See TestExtractionRestriction.
     batch_features, meta = _extract_all_ghost_gk_features(
         frames,
         home_team_id=home_team_id,
         score_at_time=score_fn,
         phase_at_time=phase_fn,
+        link_frame_ids=link_frame_ids,
     )
 
     if len(batch_features) == 0:

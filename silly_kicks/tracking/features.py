@@ -3568,6 +3568,15 @@ def add_ghost_gk(
     else:
         pointers, _ = link_actions_to_frames(actions, frames)
 
+    # PR-S66: restrict the per-frame KDE to the frames these actions link to.
+    # add_ghost_gk always has pointers (supplied or internally computed), so the
+    # restriction applies regardless of source; the per-frame ghost is internal
+    # and the action mapping reads only linked frames, so unrestricted frames
+    # staying NaN changes no consumed value. Bit-identical (see compute_ghost_gk).
+    link_frame_ids: set[int] | None = None
+    if "frame_id" in pointers.columns:
+        link_frame_ids = set(pointers["frame_id"].dropna().astype(int).tolist())
+
     # Short-circuit: skip compute if frames already have ghost columns
     if "ghost_gk_x" in frames.columns and frames["ghost_gk_x"].notna().any():
         ghost_frames = frames
@@ -3577,6 +3586,7 @@ def add_ghost_gk(
             model=resolved_model,
             home_team_id=home_team_id,
             actions=actions_for_context,
+            link_frame_ids=link_frame_ids,
         )
 
     # Extract ghost predictions from GK rows
@@ -3643,15 +3653,33 @@ def ghost_gk_xfns(*, model=None, home_team_id: int | str) -> list:
 
         resolved = _resolve_model(model)
 
-        # Compute once — add_ghost_gk short-circuits on pre-computed frames
-        ghost_frames = compute_ghost_gk(frames, model=resolved, home_team_id=home_team_id)
+        # PR-S66: link each gamestate slot once and restrict the single
+        # compute_ghost_gk to the UNION of their linked frames. The union ⊇ every
+        # slot's linked set, the KDE is byte-identical per sample, and each
+        # per-slot add_ghost_gk reads only its own linked frames (union extras
+        # stay NaN, unread). Reusing pointers as `links` avoids re-linking.
+        slot_pointers: list[pd.DataFrame] = []
+        link_frame_ids: set[int] = set()
+        for slot in states[:3]:
+            pointers, _ = link_actions_to_frames(slot, frames)
+            slot_pointers.append(pointers)
+            if "frame_id" in pointers.columns:
+                link_frame_ids |= set(pointers["frame_id"].dropna().astype(int).tolist())
 
-        for i, slot in enumerate(states[:3]):
+        ghost_frames = compute_ghost_gk(
+            frames,
+            model=resolved,
+            home_team_id=home_team_id,
+            link_frame_ids=link_frame_ids,
+        )
+
+        for i, (slot, pointers) in enumerate(zip(states[:3], slot_pointers, strict=False)):
             enriched = add_ghost_gk(
                 slot,
                 ghost_frames,
                 model=resolved,
                 home_team_id=home_team_id,
+                links=pointers,
             )
             for col in col_names:
                 out[f"{col}_a{i}"] = enriched[col].values if col in enriched.columns else np.nan
