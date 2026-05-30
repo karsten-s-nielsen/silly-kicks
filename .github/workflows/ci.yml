@@ -8,6 +8,12 @@ on:
 
 permissions: read-all
 
+# A newer push/PR update supersedes an in-flight run for the same ref instead of
+# queueing, so CI resources aren't spent on stale commits.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
