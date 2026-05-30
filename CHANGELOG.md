@@ -5,6 +5,26 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.2] — 2026-05-30
+
+### Fixed — TF-24 IDSSE calibration provider exclusion (maintainer tooling only)
+
+The TF-24 calibration loader silently calibrated on two providers instead of three. The Sportec
+kloppy-gateway converter (`spadl_kloppy.convert_to_actions`) leaves `game_id` as `None`, while the
+loader's frames carry the DFL match id from kloppy metadata. Every tracking-feature join (ball
+carrier, DAS, defensive line, team shape) keys on `(game_id, period_id, frame_id)`, so the
+`None`-vs-id mismatch dropped every IDSSE row → zero carrier signal → `signal_sanity` excluded IDSSE.
+
+- `scripts/_loader_pining._build_idsse` now stamps `actions.game_id` from the frames' `game_id`
+  (verified: 0 → 772/1090 valid carrier inferences on a real IDSSE match).
+- `scripts/calibrate_tracking_defaults._load_fold` gains a fail-loud `game_id`-consistency guard
+  (`_assert_match_game_id_consistent`) so a silent provider drop can never recur, with unit tests.
+
+**Consumer impact: none.** Changes are confined to `scripts/` + `tests/` (the maintainer calibration
+harness, not shipped in the wheel); the importable `silly_kicks` package is byte-identical to 4.0.1
+apart from the version string. Released for traceability. The lakehouse stamps `game_id` from its
+bronze tables and is unaffected.
+
 ## [4.0.1] — 2026-05-30
 
 ### Fixed — TF-24 calibration sweep runnable on all three providers
