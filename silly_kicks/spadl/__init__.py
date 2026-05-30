@@ -29,6 +29,7 @@ __all__ = [
     "kloppy",
     "opta",
     "play_left_to_right",
+    "require_et_direction",
     "results_df",
     "skillcorner",
     "statsbomb",
@@ -39,6 +40,7 @@ __all__ = [
     "wyscout",
 ]
 
+from ..tracking.direction import require_et_direction
 from . import config, gradientsports, opta, statsbomb, wyscout
 from .config import actiontypes_df, bodyparts_df, results_df
 from .orientation import (

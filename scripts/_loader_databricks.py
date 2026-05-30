@@ -91,6 +91,7 @@ def _convert(provider: str, raw_events: pd.DataFrame, raw_frames: pd.DataFrame):
     starting direction come from ``bronze.tracking_player_metadata`` (NOT events.iloc[0]).
     """
     from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
+    from silly_kicks.tracking.utils import filter_extratime_frames
 
     # IDSSE/sportec bronze is the most common operator path; others can be added as needed.
     if provider in ("idsse", "sportec"):
@@ -99,6 +100,11 @@ def _convert(provider: str, raw_events: pd.DataFrame, raw_frames: pd.DataFrame):
 
         home_team_id = str(raw_frames["team_id"].dropna().mode().iloc[0])  # placeholder; see NOTE
         home_start_left = True
+        # Calibration only --- AC-1 production sources home_team_start_left_extratime via
+        # MatchMeta (lakehouse Phase A) and NEVER filters ET. Sportec (tracking + events)
+        # RAISES on ET-without-flag in silly-kicks 4.0.0 (ADR-010), so drop ET here.
+        raw_frames = filter_extratime_frames(raw_frames, label=f"{provider} tracking")
+        raw_events = filter_extratime_frames(raw_events, label=f"{provider} events")
         frames, _r = sportec_tracking.convert_to_frames(
             raw_frames, home_team_id=home_team_id, home_team_start_left=home_start_left
         )

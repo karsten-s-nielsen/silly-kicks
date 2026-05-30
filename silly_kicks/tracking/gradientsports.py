@@ -1,7 +1,7 @@
 """Gradient Sports (formerly PFF FC) tracking DataFrame converter.
 
 Mirrors silly_kicks.tracking.sportec but for Gradient Sports-shaped input.
-Reuses the shared ``_direction`` helper extracted from
+Reuses the shared ``direction`` helper extracted from
 silly_kicks.spadl.gradientsports (PR-S18) for
 ``home_team_start_left[_extratime]`` direction normalization.
 
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
-from . import _direction
+from . import direction
 from .schema import GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 from .sportec import _resolve_output_convention
 
@@ -111,18 +111,15 @@ def convert_to_frames(
     if missing:
         raise ValueError(f"gradientsports convert_to_frames missing columns: {sorted(missing)}")
 
-    if raw_frames["period_id"].isin([3, 4]).any() and home_team_start_left_extratime is None:
-        raise ValueError(
-            "gradientsports convert_to_frames: frames contain ET periods (period_id in {3, 4}) "
-            "but home_team_start_left_extratime was not provided. Set it from "
-            "metadata.homeTeamStartLeftExtraTime, or filter ET frames out."
-        )
+    direction.require_et_direction(
+        raw_frames["period_id"], home_team_start_left_extratime, source="gradientsports convert_to_frames"
+    )
 
     out = raw_frames.copy()
     out["x"] = out["x_centered"] + 52.5
     out["y"] = out["y_centered"] + 34.0
 
-    home_attacks_right = _direction.home_attacks_right_per_period(
+    home_attacks_right = direction.home_attacks_right_per_period(
         home_team_start_left=home_team_start_left,
         home_team_start_left_extratime=home_team_start_left_extratime,
     )

@@ -130,7 +130,7 @@ def to_spadl_ltr(
     home_attacks_right_per_period : Mapping[int, bool] | None
         Required for ``PER_PERIOD_ABSOLUTE``; ignored for other conventions.
         Maps period_id to True iff the home team attacks right in that period.
-        Use :func:`silly_kicks.tracking._direction.home_attacks_right_per_period`
+        Use :func:`silly_kicks.tracking.direction.home_attacks_right_per_period`
         to derive from a provider's ``homeTeamStartLeft`` flag.
 
     Returns
@@ -165,7 +165,7 @@ def to_spadl_ltr(
     Gradient Sports (per-period absolute -- consult homeTeamStartLeft)::
 
         from silly_kicks.spadl.orientation import to_spadl_ltr, PER_PERIOD_ABSOLUTE
-        from silly_kicks.tracking._direction import home_attacks_right_per_period
+        from silly_kicks.tracking.direction import home_attacks_right_per_period
 
         flips = home_attacks_right_per_period(
             home_team_start_left=True, home_team_start_left_extratime=False,

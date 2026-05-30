@@ -255,7 +255,7 @@ class TestToSpadlLtrPerPeriod:
         assert (out["start_x"] > field_length / 2).all()
 
     def test_handles_extra_time_periods(self):
-        from silly_kicks.tracking._direction import home_attacks_right_per_period
+        from silly_kicks.tracking.direction import home_attacks_right_per_period
 
         flips = home_attacks_right_per_period(
             home_team_start_left=True,

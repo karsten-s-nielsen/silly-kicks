@@ -9,10 +9,60 @@ Includes:
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
 from .schema import LinkReport
+
+
+def filter_extratime_frames(frames: pd.DataFrame, *, label: str) -> pd.DataFrame:
+    """Drop extra-time periods (3/4) from a frames/events DataFrame.
+
+    **Calibration / sampling ONLY.** Calibration is sample-based, so dropping ET
+    frames loses a little signal but never correctness. **Production must NOT
+    filter ET** --- it must source ``home_team_start_left_extratime`` from provider
+    metadata (e.g. via ``MatchMeta``) and pass it to the converter, validated by
+    the public guard :func:`silly_kicks.tracking.require_et_direction`. Dropping ET
+    in production would silently discard real match data. See ADR-010 §4 / spec §7.
+
+    A no-op (no warning) when no ET periods are present. When ET periods are
+    dropped, emits a ``UserWarning`` naming ``label`` so the skip is auditable.
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Long-form frames or events with a period column (``period_id`` for tracking
+        frames; ``period`` for some events-input shapes --- both are accepted).
+    label : str
+        Human-readable context (e.g. ``"gradientsports 10517"``) for the warning.
+
+    Returns
+    -------
+    pd.DataFrame
+        ``frames`` with period ``in {3, 4}`` rows removed (a copy when any were
+        dropped; otherwise the input is returned unchanged).
+
+    Examples
+    --------
+    Drop ET for a calibration sample::
+
+        from silly_kicks.tracking.utils import filter_extratime_frames
+        rt_only = filter_extratime_frames(frames, label="gradientsports 10517")
+    """
+    period_col = "period_id" if "period_id" in frames.columns else "period"
+    et_mask = frames[period_col].isin([3, 4])
+    if not et_mask.any():
+        return frames
+    warnings.warn(
+        f"{label}: extra-time periods (period_id in {{3, 4}}) present but dropped for "
+        "calibration/sampling. Production must source home_team_start_left_extratime "
+        "from metadata (see require_et_direction), not drop ET.",
+        UserWarning,
+        stacklevel=2,
+    )
+    return frames.loc[~et_mask].copy()
 
 
 def _derive_speed(frames: pd.DataFrame) -> pd.DataFrame:

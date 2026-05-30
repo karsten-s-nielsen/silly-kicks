@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
-from . import _direction
+from . import direction
 from .schema import SPORTEC_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 
 if TYPE_CHECKING:
@@ -129,7 +129,8 @@ def convert_to_frames(
     # periods ALL rows (player + ball) flip so the output frame is
     # home-team-attacks-LTR. Ball carries NaN direction; flip decisions
     # therefore key on the period rather than the per-row direction column.
-    home_attacks_right = _direction.home_attacks_right_per_period(
+    direction.require_et_direction(out["period_id"], home_team_start_left_extratime, source="sportec convert_to_frames")
+    home_attacks_right = direction.home_attacks_right_per_period(
         home_team_start_left=home_team_start_left,
         home_team_start_left_extratime=home_team_start_left_extratime,
     )

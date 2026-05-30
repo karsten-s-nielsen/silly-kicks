@@ -67,7 +67,7 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
-from ..tracking import _direction
+from ..tracking import direction
 from . import config as spadlconfig
 from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
@@ -156,14 +156,12 @@ def _resolve_per_period_flips_metrica(
     if home_team_start_left is None:
         raise ValueError(_MIGRATION_3_0_1_MESSAGE_METRICA)
 
-    if "period" in events.columns and events["period"].isin([3, 4]).any() and home_team_start_left_extratime is None:
-        raise ValueError(
-            "metrica.convert_to_actions: events contain ET periods (period in {3, 4}) "
-            "but home_team_start_left_extratime was not provided. Set it explicitly to "
-            "match metadata, or filter ET events out before calling."
+    if "period" in events.columns:
+        direction.require_et_direction(
+            events["period"], home_team_start_left_extratime, source="metrica convert_to_actions"
         )
 
-    return _direction.home_attacks_right_per_period(
+    return direction.home_attacks_right_per_period(
         home_team_start_left=home_team_start_left,
         home_team_start_left_extratime=home_team_start_left_extratime,
     )

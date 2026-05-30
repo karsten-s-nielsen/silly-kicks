@@ -45,3 +45,6 @@ models/
 
 # Claude Code
 .claude/
+
+# Hypothesis property-test database (regenerated locally; never committed)
+.hypothesis/

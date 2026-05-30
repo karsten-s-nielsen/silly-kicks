@@ -5,6 +5,63 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] — 2026-05-30
+
+### Changed (BREAKING) — symmetric fail-loud extra-time direction
+
+Per-period-absolute converters (Sportec/IDSSE, Metrica, Gradient Sports) flip
+coordinates **per period** by the home team's start direction. Extra time
+(periods 3/4) requires a separate `home_team_start_left_extratime` flag. The
+native converters previously handled a **missing** ET flag inconsistently — some
+raised, but **Sportec tracking silently defaulted**, shipping geometrically wrong
+ET coordinates with no signal. This release makes the behaviour **symmetric and
+fail-loud** across all five converters. Decision: **ADR-010**.
+
+- **`silly_kicks.tracking.sportec.convert_to_frames` now RAISES** on extra-time
+  (period 3/4) without `home_team_start_left_extratime` (previously it silently
+  defaulted to wrong ET geometry). **This is the breaking behaviour change.**
+- **Standardized ET error message across all five converters.** Sportec tracking
+  (new), Sportec events, Metrica events, Gradient Sports tracking + events all now
+  raise the **same `ValueError` message shape** via the shared guard:
+  `"<source>: data contains ET periods (period_id in {3, 4}) but
+  home_team_start_left_extratime was not provided. ..."`. Sportec/Metrica **events**
+  and Gradient Sports already raised on ET-without-flag (since 3.0.1 / earlier);
+  their message **text** is now standardized — the exception **type stays
+  `ValueError`** and the trigger condition is unchanged. **Consumers parsing the
+  old message text must update** (Hyrum's Law: 4 messages re-worded).
+- **New public guard `silly_kicks.tracking.require_et_direction(period_ids,
+  home_team_start_left_extratime, *, source)`** — re-exported from
+  `silly_kicks.spadl` for the events side. Lets consumers pre-flight-validate a
+  batch before converting (and a CI sentinel detect a pin/metadata mismatch).
+- **New public helper `silly_kicks.tracking.filter_extratime_frames(frames, *,
+  label)`** — drops ET periods for **calibration/sampling only** (with a
+  `UserWarning`); production must source the real ET flag, not drop ET.
+- **Module rename `silly_kicks.tracking._direction` → `silly_kicks.tracking.direction`**
+  (now a public module; single home for the direction helpers + the guard). The
+  `home_attacks_right_per_period` function keeps its name.
+
+### Migration
+
+- **Pass `home_team_start_left_extratime`** to `convert_to_frames` /
+  `convert_to_actions` for any match with extra time (sourced from provider
+  metadata, e.g. DFL `HomeTeamStartLeftSideExtraTime` / Gradient Sports
+  `homeTeamStartLeftExtraTime`). Without it, ET matches now raise.
+- **Lakehouse / consumers with ET matches: upgrade to the lakehouse Phase-A PR
+  first** (adds `MatchMeta.home_team_start_left_extratime` and plumbs it to
+  `convert_to_frames`/`convert_to_actions`) **BEFORE** bumping the silly-kicks pin
+  to 4.0.0. A pin bump without that plumbing will raise on any in-scope ET match.
+- Importers of the old `tracking._direction` module path must update to
+  `tracking.direction`.
+
+### Added
+
+- **TF-24 calibration sweep memory bounds.** `scripts/calibrate_tracking_defaults.py`
+  gains `--match-ids PROVIDER:id1,id2` (repeatable), `--max-matches-per-provider`,
+  and `--tracking-limit`, threaded through `_load_fold` into the loaders;
+  `_loader_pining.load_matches` gains `max_per_provider`. Defaults are unchanged
+  (load everything); set the flags to bound memory and run the sweep locally
+  (previously the fold load hardcoded "all matches at full depth" and could OOM).
+
 ## [3.30.0] — 2026-05-30
 
 ### Changed

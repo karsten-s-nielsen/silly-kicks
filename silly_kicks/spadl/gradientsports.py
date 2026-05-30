@@ -61,7 +61,7 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
-from silly_kicks.tracking import _direction
+from silly_kicks.tracking import direction
 
 from . import config as spadlconfig
 from .base import _derive_end_coordinates
@@ -323,13 +323,10 @@ def convert_to_actions(
     # ------------------------------------------------------------------
     # Per-period direction lookup (ET fallback validation)
     # ------------------------------------------------------------------
-    if events["period_id"].isin([3, 4]).any() and home_team_start_left_extratime is None:
-        raise ValueError(
-            "Gradient Sports convert_to_actions: events contain ET periods (period_id ∈ {3, 4}) "
-            "but home_team_start_left_extratime was not provided. Set it explicitly to "
-            "match metadata.homeTeamStartLeftExtraTime, or filter ET events out before calling."
-        )
-    home_attacks_right_per_period = _direction.home_attacks_right_per_period(
+    direction.require_et_direction(
+        events["period_id"], home_team_start_left_extratime, source="gradientsports convert_to_actions"
+    )
+    home_attacks_right_per_period = direction.home_attacks_right_per_period(
         home_team_start_left=home_team_start_left,
         home_team_start_left_extratime=home_team_start_left_extratime,
     )
