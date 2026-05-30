@@ -605,11 +605,9 @@ def pressure_on_actor(
                 "'vx'/'vy'. Run silly_kicks.tracking.preprocess.derive_velocities(frames) "
                 "first, or use a provider that emits velocities natively."
             )
-        if bp.use_ball_carrier_max and not frames["is_ball"].any():
-            raise ValueError(
-                "pressure_on_actor(method='bekkers_pi', params.use_ball_carrier_max=True): "
-                "frames missing is_ball=True rows in linked frames."
-            )
+        # No whole-batch ball-row guard: _pressure_bekkers falls back per-action to
+        # the base model (pressure-on-player only) when ball rows are missing.
+        # ball-carrier-max is an improvement, not a requirement (Bekkers 2024 section 2.4). (3.30.0)
         ctx = _resolve_action_frame_context(actions, frames, links=links)
         from silly_kicks.tracking.features import _build_ball_xy_v_per_action
 

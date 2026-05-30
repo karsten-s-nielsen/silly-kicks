@@ -179,6 +179,18 @@ def _pin_attacking_direction(frames: pd.DataFrame) -> pd.DataFrame:
     # degrade to NaN) on missing vx/vy/team_in_possession, instead of letting
     # accessible-space's infer_playing_direction raise an uncaught KeyError.
     _validate_das_inputs(frames)
+    # Dead-ball window: when team_in_possession is all-NaN (e.g. the ball is out of
+    # play and infer_ball_carrier found no carrier), infer_playing_direction asserts
+    # ("no non-ball teams in common") — an AssertionError that escapes add_das's
+    # except. Raise the canonical ValueError instead so DAS degrades to NaN here.
+    # Attacking direction is genuinely undefined without a possessing team; silly-kicks
+    # does NOT fabricate possession (ADR / PR-S67 invariant) — supply
+    # attacking_direction_col=... to bypass inference when the direction is known.
+    if not frames["team_in_possession"].notna().any():
+        raise ValueError(
+            "team_in_possession is all-NaN (dead-ball window): attacking direction is "
+            "undefined, so DAS is undefined here. add_das degrades these actions to NaN."
+        )
     from accessible_space.interface import infer_playing_direction
 
     out = frames.copy()

@@ -5,6 +5,32 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.30.0] — 2026-05-30
+
+### Changed
+- **`add_das` no longer crashes on all-dead-ball batches.** When `team_in_possession` is
+  all-NaN within the frames (a dead-ball window — e.g. the ball is out of play and
+  `infer_ball_carrier` found no carrier), `_pin_attacking_direction` now raises the
+  canonical `ValueError` that `add_das` already catches and degrades to NaN, instead of
+  letting accessible-space's `infer_playing_direction` raise an **uncaught
+  `AssertionError`** (which previously escaped `add_das`'s `except` and crashed the caller).
+  Attacking direction is genuinely undefined without a possessing team, so DAS is NaN
+  there — an honest "not applicable", not a crash. silly-kicks does **not** fabricate
+  possession (the PR-S67 invariant: *"DAS is only valid when a team has possession"*);
+  supply `attacking_direction_col=...` to bypass inference when the direction is known.
+  Happy path (possession present) is bit-identical.
+- **`pressure_on_actor(method="bekkers_pi", use_ball_carrier_max=True)` degrades
+  per-action on missing ball rows instead of raising / NaN-ing.** When an action's linked
+  frame has no ball position (e.g. Metrica windows where kloppy returned no
+  `ball_coordinates`), that action falls back to the Bekkers **base model**
+  (pressure-on-player only) — a documented variant (Bekkers 2024 §2.4), never NaN, never a
+  raise. Actions whose frames *do* have a ball still use the ball-carrier-max improvement.
+  Both the whole-batch `ValueError` (no ball rows anywhere) and the pre-3.30.0 per-action
+  NaN are removed; genuine data-shape errors (missing `vx`/`vy`) still raise loudly. Happy
+  path bit-identical (golden-master + snapshot unchanged). Atomic mirror included.
+  Surfaced by the luxury-lakehouse AC-1 (`bronze.spadl_action_context`) production run on
+  IDSSE dead-ball batches.
+
 ## [3.29.1] — 2026-05-30
 
 ### Changed

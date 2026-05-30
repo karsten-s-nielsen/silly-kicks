@@ -635,6 +635,18 @@ class TestPinAttackingDirection:
         with pytest.raises(ValueError, match="velocity"):
             _pin_attacking_direction(frames)
 
+    def test_all_nan_possession_raises_valueerror_not_assertionerror(self) -> None:
+        """Fix 1 (3.30.0): all-NaN team_in_possession (dead-ball window) must raise the
+        canonical ValueError that add_das catches -> NaN, NOT accessible-space's uncaught
+        AssertionError from infer_playing_direction."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import _pin_attacking_direction
+
+        frames = _make_flip_frames()
+        frames["team_in_possession"] = np.nan
+        with pytest.raises(ValueError, match=r"dead-ball"):
+            _pin_attacking_direction(frames)
+
 
 class TestDasLinkedFrameRestriction:
     """add_das/_precompute_das_lookup must restrict the per-frame sim to linked frames."""
@@ -1078,14 +1090,18 @@ class TestAttackingDirectionColEndToEnd:
         assert out["das_opponent"].isna().all()
         assert out["das_diff"].isna().all()
 
-    def test_b2_without_col_raises_assertionerror(self) -> None:
-        """Documents the bug the bypass fixes: with all-NaN possession + links,
-        the None path routes through _pin → infer_playing_direction → AssertionError,
-        which escapes add_das's except (it does not catch AssertionError)."""
+    def test_b2_without_col_no_crash_nan_when_tip_all_nan(self) -> None:
+        """Fix 1 (3.30.0): with all-NaN possession + links and NO attacking_direction_col,
+        the None path routes through _pin. Previously infer_playing_direction raised an
+        AssertionError that escaped add_das's except (a crash). Now _pin converts the
+        all-NaN-possession case to the canonical ValueError that add_das already catches,
+        so the dead-ball batch degrades to NaN DAS instead of crashing."""
         pytest.importorskip("accessible_space")
         from silly_kicks.tracking.features import add_das
 
         dead = self._possession_frame(tip=np.nan)
         actions, links = self._actions_links()
-        with pytest.raises(AssertionError):
-            add_das(actions, dead, links=links)
+        out = add_das(actions, dead, links=links)  # must NOT raise (AssertionError or otherwise)
+        assert out["das_team"].isna().all()
+        assert out["das_opponent"].isna().all()
+        assert out["das_diff"].isna().all()

@@ -659,34 +659,34 @@ def _pressure_bekkers(
 
         p_per_defender = p_to_actor.copy()
 
-        if params.use_ball_carrier_max and len(ball_per_action_indexed) > 0:
-            if aid in ball_per_action_indexed.index:
-                ball_row = ball_per_action_indexed.loc[aid]
-                ball_pos = np.array([[ball_row["x"], ball_row["y"]]], dtype="float64")
-                ball_vel = np.array([[ball_row["vx"], ball_row["vy"]]], dtype="float64")
-                if not (np.isnan(ball_pos).any() or np.isnan(ball_vel).any()):
-                    tti_to_ball = _bekkers_tti(
-                        p1=defender_pos,
-                        p2=ball_pos,
-                        v1=defender_vel,
-                        v2=ball_vel,
-                        reaction_time=params.reaction_time,
-                        max_object_speed=params.max_player_speed,
-                    )
-                    p_to_ball = _bekkers_p_intercept(
-                        tti=tti_to_ball,
-                        sigma=params.sigma,
-                        time_threshold=params.time_threshold,
-                    )[0, :]
-                    p_per_defender = np.maximum(p_to_actor, p_to_ball)
-                # else: this action has NaN ball -> NaN per spec section 4.5
-                else:
-                    out.loc[action_to_idx.loc[aid]] = float("nan")  # type: ignore[arg-type]
-                    continue
-            else:
-                # This action has no ball row -> NaN per spec section 4.5
-                out.loc[action_to_idx.loc[aid]] = float("nan")  # type: ignore[arg-type]
-                continue
+        # ball-carrier-max (Bekkers 2024 section 2.4): per defender, take
+        # max(p_to_actor, p_to_ball) when this action's linked frame has a finite ball
+        # position. When the ball is missing or NaN at the linked frame (e.g. Metrica
+        # windows where kloppy returned no ball_coordinates), fall back PER ACTION to
+        # the Bekkers base model (pressure-on-player only) -- a documented variant, not
+        # NaN and not a raise. ball-carrier-max is an improvement, not a requirement. (3.30.0)
+        if params.use_ball_carrier_max and aid in ball_per_action_indexed.index:
+            ball_row = ball_per_action_indexed.loc[aid]
+            ball_pos = np.array([[ball_row["x"], ball_row["y"]]], dtype="float64")
+            ball_vel = np.array([[ball_row["vx"], ball_row["vy"]]], dtype="float64")
+            if not (np.isnan(ball_pos).any() or np.isnan(ball_vel).any()):
+                tti_to_ball = _bekkers_tti(
+                    p1=defender_pos,
+                    p2=ball_pos,
+                    v1=defender_vel,
+                    v2=ball_vel,
+                    reaction_time=params.reaction_time,
+                    max_object_speed=params.max_player_speed,
+                )
+                p_to_ball = _bekkers_p_intercept(
+                    tti=tti_to_ball,
+                    sigma=params.sigma,
+                    time_threshold=params.time_threshold,
+                )[0, :]
+                p_per_defender = np.maximum(p_to_actor, p_to_ball)
+            # else: NaN ball at this frame -> keep p_per_defender = p_to_actor (base model).
+        # else: no ball row for this action (or use_ball_carrier_max=False) ->
+        # keep p_per_defender = p_to_actor (base model).
 
         # Active-pressing filter: defenders below speed_threshold contribute 0
         below_thresh = defender_speed < params.speed_threshold
