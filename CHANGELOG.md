@@ -5,6 +5,24 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.29.1] — 2026-05-30
+
+### Changed
+- **`ruthless-efficiency[optuna]` floor raised to `>=0.2.1`** in the `[calibration]` extra (and
+  the dev/test deps). 0.2.1 fixes a `warm_start` off-by-one in `OptunaStrategy`: a fresh
+  warm-started study ran `n_trials - 1` trials (at `n_trials=2`, only the warm-start baseline,
+  with zero exploration trials). The TF-24 calibration stage configs seed a warm-start (the
+  current library defaults), so the maintainer sweep must run against `>=0.2.1` for `n_trials`
+  to be honored and the calibration manifest's trial count to be accurate. Calibration-tooling
+  only (the `[calibration]` extra is lazy/optional, not imported by `silly_kicks/__init__`);
+  no runtime library change.
+
+### Fixed
+- **Calibration manifest `silly_kicks_version`** now records `silly_kicks.__version__` (the
+  source version that actually ran) instead of `importlib.metadata.version("silly-kicks")`
+  (installed-dist metadata, which is stale on an editable install bumped post-install — the
+  typical maintainer dev-sweep environment).
+
 ## [3.29.0] — 2026-05-29
 
 ### Added

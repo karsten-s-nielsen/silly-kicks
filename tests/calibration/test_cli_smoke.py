@@ -1,3 +1,4 @@
+import silly_kicks
 from scripts.calibrate_tracking_defaults import build_manifest, run_stage
 
 
@@ -11,6 +12,10 @@ def test_build_manifest_has_data_and_version_identity(frozen_xt):
         stage=1,
     )
     assert "silly_kicks_version" in manifest
+    # Provenance must reflect the SOURCE version that actually ran, not the
+    # installed-dist metadata (stale on an editable install bumped post-install,
+    # which is how the maintainer dev-sweep runs).
+    assert manifest["silly_kicks_version"] == silly_kicks.__version__
     assert "ruthless_version" in manifest
     assert "xgboost_version" in manifest
     assert manifest["match_ids"] == {"skillcorner": ["m1", "m2"]}

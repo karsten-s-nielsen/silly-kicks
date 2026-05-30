@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "3.29.0"
+version = "3.29.1"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -48,9 +48,10 @@ ghost-gk = ["huggingface_hub>=0.20.0"]
 ghost-gk-train = ["skl2onnx>=1.16.0"]
 # TF-24 (3.28.0): Optuna calibration harness (silly_kicks/calibration/). xgboost upper-bounded
 # because the 1e-9 cache-equivalence gate rides on tree_method="hist" determinism, which a
-# future major could change. ruthless-efficiency provides the Optuna optimisation substrate.
+# future major could change. ruthless-efficiency provides the Optuna optimisation substrate;
+# >=0.2.1 floor fixes a warm_start off-by-one (a fresh warm-started study ran n_trials-1 trials).
 calibration = [
-    "ruthless-efficiency[optuna]>=0.2.0",
+    "ruthless-efficiency[optuna]>=0.2.1",
     "xgboost>=2.0,<3.0",
 ]
 test = [
@@ -80,7 +81,7 @@ test = [
     "hypothesis>=6.0",
     # TF-24 calibration harness deps so CI exercises ruthless[optuna] + xgboost (the
     # cache-equivalence + Optuna-smoke tests in tests/calibration/).
-    "ruthless-efficiency[optuna]>=0.2.0",
+    "ruthless-efficiency[optuna]>=0.2.1",
     "xgboost>=2.0,<3.0",
 ]
 dev = [

@@ -48,5 +48,5 @@ See [TODO.md](TODO.md) for tracked work.
 ## Dependencies
 
 - Runtime: pandas, numpy, scikit-learn (no pandera, no multimethod)
-- Optional: kloppy (>= 3.18 for tracking parsers), xgboost, catboost, lightgbm, accessible-space (for DAS features), ruthless-efficiency[optuna] + xgboost>=2.0,<3.0 (for the `[calibration]` harness; the xgboost bound protects the 1e-9 cache-equivalence gate's `tree_method="hist"` determinism)
+- Optional: kloppy (>= 3.18 for tracking parsers), xgboost, catboost, lightgbm, accessible-space (for DAS features), ruthless-efficiency[optuna]>=0.2.1 + xgboost>=2.0,<3.0 (for the `[calibration]` harness; the ruthless floor fixes a `warm_start` n_trials off-by-one, the xgboost bound protects the 1e-9 cache-equivalence gate's `tree_method="hist"` determinism)
 - numpy>=2.0 compatible
