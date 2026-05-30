@@ -266,12 +266,13 @@ def test_bekkers_kernel_zero_defenders(use_ball_carrier_max: bool) -> None:
     assert out.iloc[0] == pytest.approx(0.0, abs=1e-9)
 
 
-def test_bekkers_no_ball_rows_anywhere_raises_value_error() -> None:
-    """Hard-fail per spec section 4.5 + section 11 risk row (lakehouse v2 review item 9):
-    use_ball_carrier_max=True with ZERO ball rows in entire frames -> ValueError.
-
-    Without this test, a future refactor could silently revert the load-bearing
-    decision against the silent UserWarning fallback.
+def test_bekkers_no_ball_rows_anywhere_falls_back_to_player_only() -> None:
+    """3.30.0 (supersedes the pre-3.30.0 hard-fail): use_ball_carrier_max=True with
+    ZERO ball rows in the entire batch no longer raises. Every action falls back
+    per-action to the Bekkers base model (pressure-on-player only). ball-carrier-max
+    is a documented improvement (Bekkers 2024 section 2.4), NOT a requirement; provider
+    gaps (e.g. Metrica windows with no ball coordinates) degrade gracefully — never
+    crash, never NaN. Guards the graceful-fallback decision against silent reversal.
     """
     from silly_kicks.tracking.features import pressure_on_actor
 
@@ -320,8 +321,10 @@ def test_bekkers_no_ball_rows_anywhere_raises_value_error() -> None:
             },
         ]
     )
-    with pytest.raises(ValueError, match="missing is_ball=True rows"):
-        pressure_on_actor(actions, frames, method="bekkers_pi")
+    # use_ball_carrier_max=True (default) must NOT raise; computes via p_to_actor.
+    result = pressure_on_actor(actions, frames, method="bekkers_pi")
+    assert result.notna().all(), "every action degrades to pressure-on-player, never NaN"
+    assert 0.0 <= float(result.iloc[0]) <= 1.0
 
 
 def test_bekkers_no_ball_rows_with_opt_out_succeeds() -> None:
@@ -386,12 +389,13 @@ def test_bekkers_no_ball_rows_with_opt_out_succeeds() -> None:
     assert result.notna().any()
 
 
-def test_bekkers_per_action_ball_row_absence_emits_nan() -> None:
-    """Per-action NaN per spec section 4.3 / section 4.5 (lakehouse v3 review item 3).
+def test_bekkers_per_action_ball_absence_falls_back_to_player_only() -> None:
+    """3.30.0 (supersedes pre-3.30.0 per-action NaN): per-action graceful fallback.
 
-    Some actions link to ball-present frames, others to ball-absent frames.
-    Ball-absent actions should emit NaN; ball-present actions compute normally.
-    Two actions, two distinct frames; only frame 1 has a ball row.
+    Some actions link to ball-present frames (compute WITH ball-carrier-max), others
+    to ball-absent frames (compute WITHOUT it — Bekkers base model). Both produce a
+    finite value; ball-absent actions are no longer NaN. Two actions, two distinct
+    frames; only frame 1 has a ball row.
     """
     from silly_kicks.tracking.features import pressure_on_actor
 
@@ -483,8 +487,55 @@ def test_bekkers_per_action_ball_row_absence_emits_nan() -> None:
             },
         ]
     )
-    # frames does have AT LEAST ONE ball row (action 1's), so the entire-frames
-    # hard-fail does NOT trigger; per-action NaN handling kicks in for action 2.
     result = pressure_on_actor(actions, frames, method="bekkers_pi")
-    assert pd.notna(result.iloc[0]), "action 1 should compute (ball row present at its frame)"
-    assert pd.isna(result.iloc[1]), "action 2 should be NaN (no ball row at its frame)"
+    assert pd.notna(result.iloc[0]), "action 1 computes (ball row present at its frame)"
+    assert pd.notna(result.iloc[1]), "action 2 falls back per-action to pressure-on-player only (ball absent), not NaN"
+
+
+def test_bekkers_raises_on_missing_velocity_cols() -> None:
+    """Genuine data-shape error (vx/vy missing) stays loud — the per-action ball
+    fallback does NOT mask a missing-velocity frame schema."""
+    from silly_kicks.tracking.features import pressure_on_actor
+
+    actions = pd.DataFrame(
+        {
+            "action_id": [1],
+            "period_id": [1],
+            "time_seconds": [0.0],
+            "team_id": ["home"],
+            "player_id": [10],
+            "start_x": [50.0],
+            "start_y": [34.0],
+            "type_id": [0],
+        }
+    )
+    frames = pd.DataFrame(
+        [
+            {
+                "frame_id": 1,
+                "period_id": 1,
+                "time_seconds": 0.0,
+                "team_id": "home",
+                "player_id": 10,
+                "is_ball": False,
+                "x": 50.0,
+                "y": 34.0,
+                "speed": 0.0,
+                "source_provider": "synthetic",
+            },
+            {
+                "frame_id": 1,
+                "period_id": 1,
+                "time_seconds": 0.0,
+                "team_id": "away",
+                "player_id": 100,
+                "is_ball": False,
+                "x": 52.0,
+                "y": 34.0,
+                "speed": 3.0,
+                "source_provider": "synthetic",
+            },
+        ]
+    )  # no vx/vy columns
+    with pytest.raises(ValueError, match="velocity columns"):
+        pressure_on_actor(actions, frames, method="bekkers_pi")
