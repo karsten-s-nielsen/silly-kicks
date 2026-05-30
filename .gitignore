@@ -48,3 +48,4 @@ models/
 
 # Hypothesis property-test database (regenerated locally; never committed)
 .hypothesis/
+calibration_runs/

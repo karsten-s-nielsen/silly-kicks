@@ -230,7 +230,7 @@ def main() -> None:
         n_trials=args.n_trials,
         seed=args.seed,
         store_path=args.store,
-        xt=xt,
+        xt=xt,  # FrozenXt artifact; the Stage-2 objective unwraps the inner ExpectedThreat itself
         carrier_params=carrier_params,
     )
 

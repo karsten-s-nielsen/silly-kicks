@@ -615,8 +615,14 @@ def _pressure_bekkers(
     ]
 
     if params.use_ball_carrier_max:
+        # Mirror the actor_per_action dedup above: a duplicated frame record (e.g. Gradient Sports
+        # ships some (period, frame) records up to 16x) yields >1 ball row for one action_id, so
+        # ball_per_action_indexed.loc[aid] would return a DataFrame and ball_pos would become 3-D,
+        # crashing _bekkers_tti with a broadcast error. Collapse to first per action.
         ball_per_action_indexed = (
-            ball_xy_v_per_action.set_index("action_id") if len(ball_xy_v_per_action) else pd.DataFrame()
+            ball_xy_v_per_action.drop_duplicates(subset=["action_id"], keep="first").set_index("action_id")
+            if len(ball_xy_v_per_action)
+            else pd.DataFrame()
         )
 
     grouped = ctx.opposite_rows_per_action.groupby("action_id")

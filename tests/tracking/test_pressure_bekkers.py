@@ -492,6 +492,33 @@ def test_bekkers_per_action_ball_absence_falls_back_to_player_only() -> None:
     assert pd.notna(result.iloc[1]), "action 2 falls back per-action to pressure-on-player only (ball absent), not NaN"
 
 
+def test_bekkers_kernel_tolerates_duplicate_ball_rows_per_action() -> None:
+    """Regression: duplicate frame records make ball_xy_v_per_action carry >1 row for one action.
+
+    Some provider tracking exports ship the SAME (period, frame) record multiple times (Gradient
+    Sports: up to 16 content-divergent copies of a frame). When an action links to such a frame,
+    ``ball_xy_v_per_action`` ends up with >1 row for that ``action_id``; ``.loc[aid]`` then returns
+    a DataFrame and ``np.array([[ball_row["x"], ball_row["y"]]])`` becomes a 3-D array, crashing
+    ``_bekkers_tti`` with a cryptic broadcast error ``(1,1,2,k) vs (1,n,2)``.
+
+    The ball path must collapse to a single row keep-first — exactly as the actor path already does
+    (see the drop_duplicates on actor_rows) — degrading gracefully instead of crashing. The loader
+    dedups the upstream frame records (root cause); this guards the kernel against any future
+    multi-row ball context (defense-in-depth).
+    """
+    ax, ay, ctx, ball = _build_ctx_with_velocities_and_ball(
+        actor_xy=(50.0, 34.0),
+        defenders=[(60.0, 34.0, -3.0, 0.0)],
+        ball_xyvxvy=(52.0, 34.0, 0.0, 0.0),
+    )
+    ball_dup = pd.concat([ball, ball, ball], ignore_index=True)  # same action_id appears 3x
+    assert int((ball_dup["action_id"] == 1).sum()) == 3
+    out = _pressure_bekkers(ax, ay, ctx, params=BekkersParams(use_ball_carrier_max=True), ball_xy_v_per_action=ball_dup)
+    single = _pressure_bekkers(ax, ay, ctx, params=BekkersParams(use_ball_carrier_max=True), ball_xy_v_per_action=ball)
+    assert 0.0 <= float(out.iloc[0]) <= 1.0  # finite, bounded — never a broadcast crash
+    assert float(out.iloc[0]) == pytest.approx(float(single.iloc[0]), rel=1e-9)  # keep-first == single row
+
+
 def test_bekkers_raises_on_missing_velocity_cols() -> None:
     """Genuine data-shape error (vx/vy missing) stays loud — the per-action ball
     fallback does NOT mask a missing-velocity frame schema."""

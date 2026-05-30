@@ -15,7 +15,7 @@ Examples
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -35,6 +35,9 @@ from silly_kicks.calibration._gates import (
     h1_penalty_fires,
     signal_sanity,
 )
+
+if TYPE_CHECKING:
+    from silly_kicks.calibration._xt import FrozenXt
 
 _DEFAULT_PARAMS = {"k3": 1.0, "pre_seconds": 1.5, "min_displacement_m": 3.0}
 
@@ -125,7 +128,11 @@ class AugmentedVaepBrierObjective:
 
     patch_params = frozenset({"k3", "pre_seconds", "min_displacement_m"})
 
-    def __init__(self, *, fold: dict[str, list[tuple]], xt: Any, carrier_params: dict, seed: int = 42) -> None:
+    def __init__(self, *, fold: dict[str, list[tuple]], xt: FrozenXt, carrier_params: dict, seed: int = 42) -> None:
+        # `xt` is the frozen calibration artifact (grid + provenance); the inner ExpectedThreat is
+        # unwrapped (self._xt.xt) where the feature functions consume it. Taking the FrozenXt here —
+        # not the bare grid — keeps the CLI passing ONE object to both this objective and the report
+        # manifest, and lets pyright reject a bare ExpectedThreat at the call site.
         self._fold = fold
         self._xt = xt
         self._carrier_params = carrier_params
@@ -193,7 +200,7 @@ class AugmentedVaepBrierObjective:
                 base, links, das_ok = enrich_invariant(
                     actions=actions,
                     frames=frames,
-                    xt=self._xt,
+                    xt=self._xt.xt,
                     home_team_id=home,
                     carrier_params=self._carrier_params,
                 )
@@ -258,7 +265,7 @@ class AugmentedVaepBrierObjective:
                     x_actions = enrich_full(
                         actions=e["raw_actions"],  # ORIGINAL SPADL actions — genuine from-scratch (H1)
                         frames=e["frames"],
-                        xt=self._xt,
+                        xt=self._xt.xt,
                         home_team_id=e["home"],
                         carrier_params=self._carrier_params,
                         **params,
