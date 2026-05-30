@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.29.0] — 2026-05-29
+
+### Added
+- **`attacking_direction_col` passthrough on `add_das` / `_precompute_das_lookup`**
+  (`silly_kicks.tracking.features`). When supplied, it names a column on `frames`
+  holding a caller-precomputed **per-frame numeric (+1/-1)** attacking direction —
+  one value per `(game_id, period_id, frame_id)`, the in-possession team's
+  direction. silly-kicks validates it (exists / numeric / fully covered per group,
+  restricted to the action-linked frames), **skips `_pin_attacking_direction`**,
+  and threads it straight to `get_individual_das` (the 3.25.0 lower-level
+  passthrough propagated up one layer). This lets callers bypass per-frame
+  direction inference when the direction is already known and inference would
+  assert or mis-infer — notably a dead-ball window with no non-NaN
+  `team_in_possession`, where `_pin`'s `infer_playing_direction` raises an
+  `AssertionError` that escaped `add_das`'s `except`. A misconfigured column fails
+  loud (`ValueError`/`TypeError`, e.g. rejecting a raw string `"ltr"`/`"rtl"`
+  column); it is **not** degraded to NaN. The contract is purely additive and
+  carries no convention coupling: silly-kicks does not interpret
+  `team_in_possession`, map string labels, or touch the library's possession gate
+  (frames with NaN possession still yield NaN DAS — invariant preserved). The
+  per-team→per-frame reduction and possession modeling remain the caller's
+  responsibility. `attacking_direction_col=None` is bit-identical to prior
+  behavior (direction inferred via `_pin`). Uncovered by the luxury-lakehouse AC-1
+  production run on IDSSE dead-ball batches.
+
 ## [3.28.0] — 2026-05-29
 
 ### Added
