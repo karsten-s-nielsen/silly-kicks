@@ -87,6 +87,26 @@ def _parse_match_ids(raw):
     return parsed
 
 
+def _assert_match_game_id_consistent(provider: str, mid: str, actions, frames) -> None:
+    """Fail loud if a match's actions and frames disagree on ``game_id``.
+
+    Every tracking-feature join (ball carrier, DAS, defensive line, team shape) keys on
+    ``(game_id, period_id, frame_id)``. A mismatch silently drops EVERY row for the match, so the
+    provider contributes ~0 signal and is quietly excluded by ``signal_sanity`` — calibrating on
+    fewer providers than the operator requested (the IDSSE ``game_id=None`` regression). Surface it
+    instead of degrading the fold in silence; the loader must stamp a consistent game_id on both.
+    """
+    a_ids = set(actions["game_id"].dropna().unique()) if "game_id" in actions.columns else set()
+    f_ids = set(frames["game_id"].dropna().unique()) if "game_id" in frames.columns else set()
+    if not a_ids or not f_ids or {str(x) for x in a_ids} != {str(x) for x in f_ids}:
+        raise ValueError(
+            f"{provider} match {mid}: actions game_id {sorted(map(str, a_ids)) or '[none]'} != frames "
+            f"game_id {sorted(map(str, f_ids)) or '[none]'}. Tracking-feature joins key on game_id, so "
+            f"this silently drops the whole match (0 carrier signal -> provider excluded). The loader "
+            f"must stamp a consistent game_id on both actions and frames."
+        )
+
+
 def _load_fold(args):
     """Wire the chosen loader into the {provider: [(actions, frames, home)]} fold + match_ids."""
     if args.source == "pining":
@@ -105,6 +125,7 @@ def _load_fold(args):
     fold: dict[str, list[tuple]] = {}
     used_ids: dict[str, list[str]] = {}
     for provider, mid, actions, frames, home in loader.load_matches(**load_kwargs):
+        _assert_match_game_id_consistent(provider, mid, actions, frames)
         fold.setdefault(provider, []).append((actions, frames, home))
         used_ids.setdefault(provider, []).append(mid)
     return fold, used_ids

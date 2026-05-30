@@ -221,6 +221,14 @@ def _build_idsse(paths, tracking_limit):
     actions, _evt_report = spadl_kloppy.convert_to_actions(ev)
     tr = sportec.load_tracking(meta_data=str(paths["metadata"]), raw_data=str(paths["tracking"]), limit=tracking_limit)
     frames, home_team_id = _kloppy_tracking_to_frames(tr)
+    # The Sportec kloppy-gateway SPADL converter leaves game_id None, while the frames carry the DFL
+    # match id from kloppy tracking metadata. Every tracking-feature join (ball carrier, DAS,
+    # defensive line, team shape) keys on (game_id, period_id, frame_id), so a None-vs-id mismatch
+    # silently drops EVERY IDSSE row -> 0 carrier signal -> the provider is excluded by signal_sanity
+    # and never enters the calibration. Stamp the actions with the frames' game_id so the per-match
+    # joins match. (Harness-only: the lakehouse stamps game_id from its bronze tables.)
+    actions = actions.copy()
+    actions["game_id"] = frames["game_id"].iloc[0]
     return actions, _preprocess(frames), home_team_id
 
 
