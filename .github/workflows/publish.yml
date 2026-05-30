@@ -4,6 +4,12 @@ on:
   push:
     tags: ["v*"]
 
+# Least privilege: the build job only needs to read the repo. The publish job
+# overrides this with id-token: write (for PyPI Trusted Publishing) and does not
+# check out the repo, so it needs no contents access.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
