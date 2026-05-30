@@ -27,6 +27,7 @@ import pandas as pd
 from ruthless import InProcessBackend, render_json, render_summary_md
 from ruthless.strategies.optuna_ import OptunaStrategy
 
+import silly_kicks
 from silly_kicks.calibration import stage1_config, stage2_config
 from silly_kicks.calibration._carrier_objective import CarrierAccuracyObjective
 from silly_kicks.calibration._vaep_brier_objective import AugmentedVaepBrierObjective
@@ -42,7 +43,7 @@ def build_manifest(*, source, seed, n_trials, match_ids, xt, stage, diagnostics=
         "seed": seed,
         "n_trials": n_trials,
         "match_ids": match_ids,
-        "silly_kicks_version": version("silly-kicks"),
+        "silly_kicks_version": silly_kicks.__version__,  # source truth (editable-install safe)
         "ruthless_version": version("ruthless-efficiency"),
         "xgboost_version": version("xgboost"),
         "generated_date": _dt.date.today().isoformat(),
