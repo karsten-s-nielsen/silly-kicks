@@ -94,3 +94,51 @@ def test_load_matches_dispatches_per_provider(monkeypatch, tmp_path):
     provider, match_id, actions, frames, home = rows[0]
     assert (provider, match_id, home) == ("idsse", "M1", 1)
     assert isinstance(actions, pd.DataFrame) and isinstance(frames, pd.DataFrame)
+
+
+# --- Extra-time (period 3/4) direction resolution for per-period-absolute providers ---
+# (Gradient Sports' convert_to_frames RAISES on ET without home_team_start_left_extratime;
+#  the loader must pass it from metadata, or drop ET frames when metadata omits it.)
+
+
+def test_apply_et_direction_passes_metadata_value_when_present():
+    frames = pd.DataFrame({"period_id": [1, 1, 3, 3]})
+    out, et = L._apply_et_direction(frames, True, label="gs 123")
+    assert et is True
+    assert len(out) == 4  # ET frames kept; real direction passed to the converter
+
+
+def test_apply_et_direction_drops_et_when_metadata_missing():
+    frames = pd.DataFrame({"period_id": [1, 1, 3, 4]})
+    import pytest
+
+    with pytest.warns(UserWarning, match="ET"):
+        out, et = L._apply_et_direction(frames, None, label="gs 123")
+    assert et is None
+    assert set(out["period_id"]) == {1}  # ET dropped, no guess, no crash
+
+
+def test_apply_et_direction_noop_when_no_et_periods():
+    frames = pd.DataFrame({"period_id": [1, 1, 2, 2]})
+    out, et = L._apply_et_direction(frames, None, label="gs 123")
+    assert et is None
+    assert len(out) == 4  # regular time only: no drop, no warning, param stays None
+
+
+# --- TF-24 sweep memory bound: load_matches max_per_provider cap (Task 9b) ---
+
+
+def test_load_matches_max_per_provider_truncates(monkeypatch):
+    monkeypatch.setattr(L, "_list_matches", lambda p, t, b: [{"id": str(i), "artifacts": {}} for i in range(5)])
+    monkeypatch.setattr(L, "_download_artifacts", lambda *a, **k: {})
+    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None))
+    got = [mid for _p, mid, *_ in L.load_matches(providers=["gradientsports"], max_per_provider=2)]
+    assert got == ["0", "1"]
+
+
+def test_load_matches_no_cap_loads_all(monkeypatch):
+    monkeypatch.setattr(L, "_list_matches", lambda p, t, b: [{"id": str(i), "artifacts": {}} for i in range(3)])
+    monkeypatch.setattr(L, "_download_artifacts", lambda *a, **k: {})
+    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None))
+    got = [mid for _p, mid, *_ in L.load_matches(providers=["gradientsports"])]
+    assert got == ["0", "1", "2"]

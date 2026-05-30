@@ -19,6 +19,35 @@ from pathlib import Path
 
 import pandas as pd
 
+
+def _apply_et_direction(frames: pd.DataFrame, et_value, *, label: str):
+    """Resolve the extra-time start-direction for a per-period-absolute converter.
+
+    Per-period-absolute converters (Gradient Sports, Sportec, Metrica --- tracking
+    and events) RAISE on ET (period 3/4) without ``home_team_start_left_extratime``
+    (silly-kicks 4.0.0, ADR-010). This loader stays correct AND crash-free for
+    calibration sampling:
+
+    * ``et_value`` present (from ``homeTeamStartLeftExtraTime``) -> pass it through
+      (returns ``bool`` + ET frames untouched).
+    * ``et_value`` None but ET periods (3/4) present -> drop the ET frames with a
+      warning, via the public :func:`silly_kicks.tracking.filter_extratime_frames`.
+      Calibration samples regular time; never guess the ET orientation, never crash.
+    * No ET periods -> no-op (param stays ``None``).
+
+    **Calibration only** --- AC-1 production sources ``home_team_start_left_extratime``
+    via ``MatchMeta`` (lakehouse Phase A) and NEVER filters ET.
+
+    Returns ``(frames, et_param)``.
+    """
+    from silly_kicks.tracking.utils import filter_extratime_frames
+
+    et_param = bool(et_value) if et_value is not None else None
+    if et_param is None:
+        frames = filter_extratime_frames(frames, label=label)
+    return frames, et_param
+
+
 _DEFAULT_BASE_URL = "https://ozqgk9a3ji.execute-api.us-east-1.amazonaws.com/v1"
 _PUBLIC_TOKEN = "test-token-pining-for-the-data"  # noqa: S105  # documented PUBLIC token, not a secret
 
@@ -90,11 +119,15 @@ def load_matches(
     match_ids: dict[str, list[str]] | None = None,
     token: str | None = None,
     tracking_limit: int | None = None,
+    max_per_provider: int | None = None,
 ) -> Iterator[tuple[str, str, pd.DataFrame, pd.DataFrame, object]]:
     """Yield (provider, match_id, actions, frames, home_team_id) for each requested match.
 
     ``tracking_limit`` caps frames loaded per match (passed to the kloppy parsers) — essential for
-    the ~419 MB IDSSE tracking file in dev/e2e loops.
+    the ~419 MB IDSSE tracking file in dev/e2e loops. ``max_per_provider`` caps the NUMBER of
+    matches loaded per provider (after any ``match_ids`` selection) — bounds total memory for the
+    TF-24 sweep on a local machine (loading all matches at full depth can OOM; see calibrate CLI
+    ``--max-matches-per-provider``).
     """
     import tempfile
 
@@ -102,6 +135,8 @@ def load_matches(
     for provider in providers:
         manifest = {m["id"]: m for m in _list_matches(provider, tok, base_url)}
         wanted = (match_ids.get(provider) if match_ids else None) or list(manifest)
+        if max_per_provider is not None:
+            wanted = wanted[:max_per_provider]
         for match_id in wanted:
             artifacts = manifest[match_id]["artifacts"]
             with tempfile.TemporaryDirectory() as tmp:
@@ -381,6 +416,7 @@ def _build_gradientsports(paths, tracking_limit=None):
     home_team_id = int(meta["homeTeam"]["id"])
     away_team_id = int(meta["awayTeam"]["id"])
     home_start_left = bool(meta.get("homeTeamStartLeft", True))
+    home_start_left_et = meta.get("homeTeamStartLeftExtraTime")
 
     with open(paths["roster"], encoding="utf-8") as fh:
         roster_raw = json.load(fh)
@@ -438,12 +474,25 @@ def _build_gradientsports(paths, tracking_limit=None):
     resolved, _rep = add_gradientsports_player_ids(
         jersey_frames, roster, home_team_id=home_team_id, away_team_id=away_team_id
     )
-    frames, _r = convert_to_frames(resolved, home_team_id=home_team_id, home_team_start_left=home_start_left)
+    # Extra time needs the ET start direction; the GS converter raises without it.
+    resolved, home_start_left_et = _apply_et_direction(resolved, home_start_left_et, label=f"gradientsports {game_id}")
+    frames, _r = convert_to_frames(
+        resolved,
+        home_team_id=home_team_id,
+        home_team_start_left=home_start_left,
+        home_team_start_left_extratime=home_start_left_et,
+    )
 
     with open(paths["events"], encoding="utf-8") as fh:
         events_json = json.load(fh)
     events_df = _gs_flatten_events(events_json, roster)
+    # The events converter is per-period-absolute too (raises on ET without the flag).
+    # Apply the same resolution as tracking so actions + frames stay ET-consistent.
+    events_df, _ = _apply_et_direction(events_df, home_start_left_et, label=f"gradientsports {game_id} events")
     actions, _r2 = gs_spadl.convert_to_actions(
-        events_df, home_team_id=home_team_id, home_team_start_left=home_start_left
+        events_df,
+        home_team_id=home_team_id,
+        home_team_start_left=home_start_left,
+        home_team_start_left_extratime=home_start_left_et,
     )
     return actions, _preprocess(frames), str(home_team_id)

@@ -108,6 +108,7 @@ __all__ = [
     "extract_ball_features",
     "feature_framework",
     "features",
+    "filter_extratime_frames",
     "get_das",
     "get_individual_das",
     "get_provider_defaults",
@@ -159,6 +160,7 @@ __all__ = [
     "reachable_area_opponent",
     "reachable_area_team",
     "receiver_zone_density",
+    "require_et_direction",
     "schema",
     "select_back_line_players",
     "shape_graph_xfns",
@@ -193,6 +195,7 @@ from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_
 from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
 from ._team_shape import compute_team_shape
+from .direction import require_et_direction
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
     actor_arc_length_pre_window,
@@ -306,7 +309,14 @@ from .schema import (
     LinkReport,
     TrackingConversionReport,
 )
-from .utils import add_sync_score, link_actions_to_frames, play_left_to_right, slice_around_event, sync_score
+from .utils import (
+    add_sync_score,
+    filter_extratime_frames,
+    link_actions_to_frames,
+    play_left_to_right,
+    slice_around_event,
+    sync_score,
+)
 
 try:
     from . import kloppy

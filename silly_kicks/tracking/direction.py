@@ -12,9 +12,59 @@ Pure refactor: zero behaviour change in events.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
+import numpy as np
 import pandas as pd
+
+
+def require_et_direction(
+    period_ids: pd.Series | np.ndarray | Sequence[int],
+    home_team_start_left_extratime: bool | None,
+    *,
+    source: str,
+) -> None:
+    """Raise ``ValueError`` if ET periods are present but the ET direction is unset.
+
+    Per-period-absolute converters (Sportec, Metrica, Gradient Sports --- tracking
+    **and** events) flip coordinates per period by the home team's start direction.
+    Extra time (periods 3/4) needs a separate ``home_team_start_left_extratime``
+    flag; guessing it silently flips ET coordinates and corrupts every downstream
+    geometric feature. This shared guard makes the failure loud and identical across
+    all five converters. See ADR-010.
+
+    Parameters
+    ----------
+    period_ids : pd.Series | np.ndarray | Sequence[int]
+        The per-row / per-frame period identifiers of the data about to be converted.
+    home_team_start_left_extratime : bool | None
+        The ET start-direction flag from match metadata
+        (e.g. ``homeTeamStartLeftExtraTime``). ``None`` means "not provided".
+        ``False`` is a valid value and does **not** trigger the guard.
+    source : str
+        Human-readable converter identity for the error message, e.g.
+        ``"sportec convert_to_frames"``.
+
+    Raises
+    ------
+    ValueError
+        If ``home_team_start_left_extratime is None`` and any period in
+        ``period_ids`` is 3 or 4.
+
+    Examples
+    --------
+    Validate a batch before converting::
+
+        from silly_kicks.tracking import require_et_direction
+        require_et_direction(frames["period_id"], meta_flag, source="sportec convert_to_frames")
+    """
+    if home_team_start_left_extratime is None and pd.Series(period_ids).isin([3, 4]).any():
+        raise ValueError(
+            f"{source}: data contains ET periods (period_id in {{3, 4}}) but "
+            "home_team_start_left_extratime was not provided. Set it from the match "
+            "metadata (e.g. homeTeamStartLeftExtraTime), or filter ET out before converting."
+        )
 
 
 def home_attacks_right_per_period(
@@ -48,7 +98,7 @@ def home_attacks_right_per_period(
     --------
     Map a per-period flip lookup for the home team::
 
-        from silly_kicks.tracking._direction import home_attacks_right_per_period
+        from silly_kicks.tracking.direction import home_attacks_right_per_period
         flips = home_attacks_right_per_period(
             home_team_start_left=True, home_team_start_left_extratime=False,
         )

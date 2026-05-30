@@ -73,15 +73,38 @@ def run_stage(*, stage, fold, n_trials, seed, store_path, xt, carrier_params):
     return result, objective
 
 
+def _parse_match_ids(raw):
+    """Parse repeatable ``--match-ids PROVIDER:id1,id2`` into ``{provider: [ids]}`` (or None)."""
+    if not raw:
+        return None
+    parsed: dict[str, list[str]] = {}
+    for entry in raw:
+        provider, _, ids = entry.partition(":")
+        provider = provider.strip()
+        if not provider or not ids.strip():
+            raise ValueError(f"--match-ids expects 'PROVIDER:id1,id2', got {entry!r}")
+        parsed.setdefault(provider, []).extend(i.strip() for i in ids.split(",") if i.strip())
+    return parsed
+
+
 def _load_fold(args):
     """Wire the chosen loader into the {provider: [(actions, frames, home)]} fold + match_ids."""
     if args.source == "pining":
         import scripts._loader_pining as loader
     else:
         import scripts._loader_databricks as loader
+    match_ids = _parse_match_ids(getattr(args, "match_ids", None))
+    # Memory bounds: tracking_limit caps frames/match; max_per_provider caps matches/provider.
+    # Both default to None (load everything) for back-compat; set them to run the sweep locally.
+    load_kwargs = dict(
+        providers=args.providers,
+        match_ids=match_ids,
+        tracking_limit=getattr(args, "tracking_limit", None),
+        max_per_provider=getattr(args, "max_matches_per_provider", None),
+    )
     fold: dict[str, list[tuple]] = {}
     used_ids: dict[str, list[str]] = {}
-    for provider, mid, actions, frames, home in loader.load_matches(providers=args.providers, match_ids=None):
+    for provider, mid, actions, frames, home in loader.load_matches(**load_kwargs):
         fold.setdefault(provider, []).append((actions, frames, home))
         used_ids.setdefault(provider, []).append(mid)
     return fold, used_ids
@@ -166,6 +189,27 @@ def main() -> None:
     ap.add_argument("--xt-corpus-source", choices=["pining", "databricks"], default="pining")
     ap.add_argument("--carrier-best", default=None, help="JSON with the Stage-1 optimum (for Stage 2)")
     ap.add_argument("--report-out", default="calibration_report")
+    ap.add_argument(
+        "--match-ids",
+        action="append",
+        default=None,
+        metavar="PROVIDER:id1,id2",
+        help="Restrict to specific match ids per provider (repeatable), e.g. "
+        "--match-ids gradientsports:10517,10519 --match-ids idsse:M1",
+    )
+    ap.add_argument(
+        "--max-matches-per-provider",
+        type=int,
+        default=None,
+        help="Cap the number of matches loaded per provider (bounds memory; prevents the "
+        "TF-24 sweep OOM when loading all matches at full tracking depth locally).",
+    )
+    ap.add_argument(
+        "--tracking-limit",
+        type=int,
+        default=None,
+        help="Cap frames loaded per match (passed to the kloppy parsers; bounds memory).",
+    )
     args = ap.parse_args()
 
     fold, used_ids = _load_fold(args)
