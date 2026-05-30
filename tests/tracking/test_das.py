@@ -371,7 +371,7 @@ class TestChunkSizePassthrough:
 
         captured_cs: list = []
 
-        def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None):
+        def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
             captured_cs.append(chunk_size)
             raise ImportError("short-circuit")
 
@@ -398,7 +398,7 @@ class TestChunkSizePassthrough:
 
         captured_cs: list = []
 
-        def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None):
+        def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
             captured_cs.append(chunk_size)
             raise ImportError("short-circuit")
 
@@ -420,7 +420,7 @@ class TestDasExceptionGracefulDegradation:
         """add_das must catch IndexError/TypeError from degenerate Voronoi tessellation."""
         import silly_kicks.tracking.features as feat_mod
 
-        def boom(frames, *, chunk_size=None, link_frame_ids=None):
+        def boom(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
             raise exc_type("degenerate Voronoi tessellation")
 
         monkeypatch.setattr(feat_mod, "_precompute_das_lookup", boom)
@@ -702,7 +702,7 @@ class TestDasLinkedFrameRestriction:
 
         captured: dict = {}
 
-        def fake_precompute(frames, *, chunk_size=None, link_frame_ids=None):
+        def fake_precompute(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
             captured["link_frame_ids"] = link_frame_ids
             return {}
 
@@ -752,3 +752,340 @@ class TestDasLinkedFrameRestriction:
             assert np.isclose(lookup_full[key][team], lookup_restricted[key][team], rtol=1e-6, atol=1e-9), (
                 f"team {team}: full={lookup_full[key][team]} restricted={lookup_restricted[key][team]}"
             )
+
+
+# ---------------------------------------------------------------------------
+# attacking_direction_col passthrough (caller-supplied per-frame numeric direction)
+#
+# Contract (Option A): when supplied, attacking_direction_col names a column on
+# `frames` holding ONE numeric (+1/-1) value per (game_id, period_id, frame_id) —
+# the in-possession team's attacking direction. silly-kicks validates it
+# (exists / numeric / fully-covered per group), skips _pin_attacking_direction
+# entirely, and threads the column to get_individual_das. It does NOT interpret
+# team_in_possession to choose a team, and does NOT touch the library's
+# possession gate. When None, behavior is bit-identical to before (uses _pin).
+# ---------------------------------------------------------------------------
+
+
+def _numeric_dir_frames(
+    dir_by_frame: dict[int, float],
+    *,
+    game_id: int = 1,
+    period_id: int = 1,
+    rows_per_frame: int = 2,
+) -> pd.DataFrame:
+    """Minimal frames with a per-frame-consistent numeric direction column.
+
+    Each frame gets ``rows_per_frame`` player rows all carrying the same
+    direction value (the per-frame contract), plus a ball row (direction NaN,
+    as a real per-team source column would leave it).
+    """
+    rows = []
+    for fid, dval in dir_by_frame.items():
+        for p in range(rows_per_frame):
+            rows.append(
+                {
+                    "game_id": game_id,
+                    "period_id": period_id,
+                    "frame_id": fid,
+                    "player_id": f"P{p}",
+                    "team_id": "A" if p % 2 == 0 else "B",
+                    "is_ball": False,
+                    "attacking_direction": dval,
+                    "DAS": 1.0,
+                }
+            )
+        rows.append(
+            {
+                "game_id": game_id,
+                "period_id": period_id,
+                "frame_id": fid,
+                "player_id": "ball",
+                "team_id": None,
+                "is_ball": True,
+                "attacking_direction": np.nan,
+                "DAS": np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+class TestAttackingDirectionColValidation:
+    """(c) Fail-loud validation — errors must PROPAGATE, never NaN-fill."""
+
+    def _actions(self) -> pd.DataFrame:
+        return pd.DataFrame({"action_id": [1], "game_id": [1], "period_id": [1], "team_id": ["A"]})
+
+    def test_missing_column_raises_valueerror(self) -> None:
+        from silly_kicks.tracking.features import add_das
+
+        frames = _numeric_dir_frames({0: 1.0})
+        with pytest.raises(ValueError, match="not found"):
+            add_das(self._actions(), frames, attacking_direction_col="nope")
+
+    def test_non_numeric_column_raises_typeerror(self) -> None:
+        """String 'ltr'/'rtl' (the schema column) must be rejected, not silently used."""
+        from silly_kicks.tracking.features import add_das
+
+        frames = _numeric_dir_frames({0: 1.0})
+        frames["attacking_direction"] = "ltr"  # object dtype
+        with pytest.raises(TypeError, match="numeric"):
+            add_das(self._actions(), frames, attacking_direction_col="attacking_direction")
+
+    def test_all_nan_group_raises_valueerror_naming_group(self) -> None:
+        from silly_kicks.tracking.features import add_das
+
+        frames = _numeric_dir_frames({0: np.nan, 1: np.nan})
+        with pytest.raises(ValueError, match="period_id=1"):
+            add_das(self._actions(), frames, attacking_direction_col="attacking_direction")
+
+    def test_partial_coverage_group_raises_valueerror_naming_frames(self) -> None:
+        """Some frames populated, others NaN within a group → caller bug, fail loud."""
+        from silly_kicks.tracking.features import add_das
+
+        frames = _numeric_dir_frames({10: 1.0, 11: np.nan, 12: 1.0})
+        with pytest.raises(ValueError, match="11"):
+            add_das(self._actions(), frames, attacking_direction_col="attacking_direction")
+
+    def test_partial_outside_links_passes_validation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Validation is restricted to action-linked frames: NaN on an unlinked
+        dead-ball frame is fine (the lakehouse fills direction only where
+        possession exists; unlinked frames are never simulated)."""
+        import silly_kicks.tracking.features as feat_mod
+
+        reached: dict = {}
+
+        def fake_precompute(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
+            reached["adc"] = attacking_direction_col
+            return {}
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", fake_precompute)
+
+        frames = _numeric_dir_frames({5: 1.0, 6: np.nan})  # frame 6 unlinked + NaN
+        links = pd.DataFrame(
+            {
+                "action_id": [1],
+                "frame_id": [5],
+                "time_offset_seconds": [0.0],
+                "n_candidate_frames": [1],
+                "link_quality_score": [1.0],
+            }
+        )
+        # Frame 6's NaN must NOT trip validation because only frame 5 is linked.
+        feat_mod.add_das(self._actions(), frames, links=links, attacking_direction_col="attacking_direction")
+        assert reached["adc"] == "attacking_direction"
+
+    def test_valid_numeric_column_passes_to_precompute(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import silly_kicks.tracking.features as feat_mod
+
+        captured: dict = {}
+
+        def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
+            captured["adc"] = attacking_direction_col
+            return {}
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", spy_precompute)
+
+        frames = _numeric_dir_frames({0: 1.0, 1: -1.0})
+        links = pd.DataFrame(
+            {
+                "action_id": [1],
+                "frame_id": [0],
+                "time_offset_seconds": [0.0],
+                "n_candidate_frames": [1],
+                "link_quality_score": [1.0],
+            }
+        )
+        feat_mod.add_das(self._actions(), frames, links=links, attacking_direction_col="attacking_direction")
+        assert captured["adc"] == "attacking_direction"
+
+
+class TestPrecomputeAttackingDirectionColThreading:
+    """_precompute threads attacking_direction_col to get_individual_das and skips _pin."""
+
+    def test_threads_col_and_skips_pin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import silly_kicks.tracking._das as das_mod
+
+        captured: dict = {}
+
+        def fake_gid(frames: pd.DataFrame, **kwargs) -> pd.DataFrame:
+            captured["kwargs"] = dict(kwargs)
+            out = frames.copy()
+            out["AS"] = 1.0
+            out["DAS"] = 1.0
+            return out
+
+        def boom_pin(frames: pd.DataFrame) -> pd.DataFrame:
+            raise AssertionError("_pin_attacking_direction must be skipped when a column is supplied")
+
+        monkeypatch.setattr(das_mod, "get_individual_das", fake_gid)
+        monkeypatch.setattr(das_mod, "_pin_attacking_direction", boom_pin)
+
+        from silly_kicks.tracking.features import _precompute_das_lookup
+
+        frames = _numeric_dir_frames({0: 1.0, 1: 1.0})
+        # link restriction + supplied direction together (the lakehouse case)
+        _precompute_das_lookup(frames, link_frame_ids={0}, attacking_direction_col="attacking_direction")
+        assert captured["kwargs"].get("attacking_direction_col") == "attacking_direction"
+
+    def test_none_still_uses_pin_for_link_restriction(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: attacking_direction_col=None keeps the _pin path for links."""
+        import silly_kicks.tracking._das as das_mod
+
+        pin_called: dict = {}
+
+        def fake_gid(frames: pd.DataFrame, **kwargs) -> pd.DataFrame:
+            out = frames.copy()
+            out["AS"] = 1.0
+            out["DAS"] = 1.0
+            return out
+
+        def fake_pin(frames: pd.DataFrame) -> pd.DataFrame:
+            pin_called["yes"] = True
+            return frames.assign(attacking_direction=1.0)
+
+        monkeypatch.setattr(das_mod, "get_individual_das", fake_gid)
+        monkeypatch.setattr(das_mod, "_pin_attacking_direction", fake_pin)
+
+        from silly_kicks.tracking.features import _precompute_das_lookup
+
+        frames = _numeric_dir_frames({0: 1.0})
+        _precompute_das_lookup(frames, link_frame_ids={0})  # no attacking_direction_col
+        assert pin_called.get("yes") is True
+
+
+@pytest.mark.e2e
+class TestAttackingDirectionColEndToEnd:
+    """(b1)/(b2) — real accessible-space behavior with the passthrough."""
+
+    def _possession_frame(self, tip: object = "Home") -> pd.DataFrame:
+        """11v11 + ball, single frame, possession=`tip` (NaN ⇒ dead ball)."""
+        rng = np.random.default_rng(7)
+        rows = []
+        for i in range(11):
+            rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": 0,
+                    "player_id": f"H{i}",
+                    "team_id": "Home",
+                    "x": rng.uniform(50, 95),
+                    "y": rng.uniform(10, 58),
+                    "vx": rng.normal(2, 1),
+                    "vy": rng.normal(0, 1),
+                    "is_ball": False,
+                    "team_in_possession": tip,
+                }
+            )
+        for i in range(11):
+            rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": 0,
+                    "player_id": f"A{i}",
+                    "team_id": "Away",
+                    "x": rng.uniform(10, 40),
+                    "y": rng.uniform(10, 58),
+                    "vx": rng.normal(-1, 1),
+                    "vy": rng.normal(0, 1),
+                    "is_ball": False,
+                    "team_in_possession": tip,
+                }
+            )
+        rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": 0,
+                "player_id": "ball",
+                "team_id": None,
+                "x": 60.0,
+                "y": 34.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "is_ball": True,
+                "team_in_possession": tip,
+            }
+        )
+        return pd.DataFrame(rows)
+
+    def _actions_links(self):
+        actions = pd.DataFrame({"action_id": [1], "game_id": [1], "period_id": [1], "team_id": ["Home"]})
+        links = pd.DataFrame(
+            {
+                "action_id": [1],
+                "frame_id": [0],
+                "time_offset_seconds": [0.0],
+                "n_candidate_frames": [1],
+                "link_quality_score": [1.0],
+            }
+        )
+        return actions, links
+
+    def test_b1_bypass_finite_and_bit_identical_to_pin(self) -> None:
+        """Supplying _pin's own output as attacking_direction_col is a no-op:
+        finite DAS, bit-identical to letting _pin run (attacking_direction_col=None)."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import _pin_attacking_direction
+        from silly_kicks.tracking.features import add_das
+
+        frames = self._possession_frame(tip="Home")
+        actions, links = self._actions_links()
+
+        # Baseline: inference via _pin.
+        base = add_das(actions, frames, links=links)
+        assert np.isfinite(base["das_team"].iloc[0]), "baseline DAS must be finite"
+
+        # Supply the exact direction _pin would compute → must match bit-for-bit.
+        pinned = _pin_attacking_direction(frames)
+        frames_dir = frames.copy()
+        frames_dir["attacking_direction"] = pinned["attacking_direction"].to_numpy()
+        supplied = add_das(actions, frames_dir, links=links, attacking_direction_col="attacking_direction")
+
+        for col in ("das_team", "das_opponent", "das_diff"):
+            assert np.isfinite(supplied[col].iloc[0])
+            np.testing.assert_allclose(
+                supplied[col].to_numpy(),
+                base[col].to_numpy(),
+                rtol=0,
+                atol=0,
+                err_msg=f"{col}: supplied direction must equal inferred",
+            )
+
+    def test_b2_possession_gate_preserved_when_tip_all_nan(self) -> None:
+        """team_in_possession all-NaN + valid direction supplied → library's
+        possession gate fires internally (ValueError) → add_das NaN-fills. No
+        AssertionError (the _pin bypass is what avoids it)."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import _pin_attacking_direction
+        from silly_kicks.tracking.features import add_das
+
+        # Build a valid numeric direction from the possession-populated frame,
+        # then null possession (the dead-ball state).
+        live = self._possession_frame(tip="Home")
+        pinned = _pin_attacking_direction(live)
+        dead = live.copy()
+        dead["attacking_direction"] = pinned["attacking_direction"].to_numpy()
+        dead["team_in_possession"] = np.nan
+
+        actions, links = self._actions_links()
+
+        # Supplied path: no exception, NaN-filled (gate fired in the library).
+        out = add_das(actions, dead, links=links, attacking_direction_col="attacking_direction")
+        assert out["das_team"].isna().all()
+        assert out["das_opponent"].isna().all()
+        assert out["das_diff"].isna().all()
+
+    def test_b2_without_col_raises_assertionerror(self) -> None:
+        """Documents the bug the bypass fixes: with all-NaN possession + links,
+        the None path routes through _pin → infer_playing_direction → AssertionError,
+        which escapes add_das's except (it does not catch AssertionError)."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking.features import add_das
+
+        dead = self._possession_frame(tip=np.nan)
+        actions, links = self._actions_links()
+        with pytest.raises(AssertionError):
+            add_das(actions, dead, links=links)

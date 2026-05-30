@@ -1865,11 +1865,79 @@ pitch_control_default_xfns = pitch_control_xfns("spearman")
 import warnings as _warnings  # noqa: E402
 
 
+def _describe_das_group(keys: list[str], values) -> str:
+    """Human-readable ``(game_id=.., period_id=..)`` label for a groupby key."""
+    if not keys:
+        return "(all frames)"
+    if not isinstance(values, tuple):
+        values = (values,)
+    return "(" + ", ".join(f"{k}={v}" for k, v in zip(keys, values, strict=False)) + ")"
+
+
+def _validate_per_frame_attacking_direction(
+    frames: pd.DataFrame,
+    col: str,
+    *,
+    link_frame_ids: set | None = None,
+) -> None:
+    """Fail-loud validation of a caller-supplied per-frame attacking-direction column.
+
+    Contract (TF-28 ``add_das`` passthrough, Option A): when ``attacking_direction_col``
+    is supplied it must hold ONE numeric (+1/-1) value per
+    ``(game_id, period_id, frame_id)`` — the in-possession team's attacking
+    direction — for every action-linked frame. silly-kicks does not interpret
+    ``team_in_possession`` or any string convention; the caller owns the
+    per-team→per-frame reduction. Violations raise (never a NaN fallback):
+
+    * column missing                         -> ``ValueError``
+    * non-numeric dtype (e.g. ``"ltr"``)     -> ``TypeError``
+    * a ``(game_id, period_id)`` group all-NaN -> ``ValueError`` (names the group)
+    * a group partially populated            -> ``ValueError`` (names group + frames)
+
+    When ``link_frame_ids`` is given, only those frames are validated — unlinked
+    frames are never simulated, so their direction is irrelevant (a dead-ball
+    frame the caller left NaN must not trip validation).
+    """
+    if col not in frames.columns:
+        raise ValueError(f"add_das: attacking_direction_col='{col}' not found in frames columns {list(frames.columns)}")
+    if not pd.api.types.is_numeric_dtype(frames[col]):
+        raise TypeError(
+            f"add_das: attacking_direction_col='{col}' must be numeric (+1/-1 per frame); "
+            f"got dtype '{frames[col].dtype}'. Map string labels (e.g. 'ltr'/'rtl') to ±1 first."
+        )
+
+    scope = frames
+    if link_frame_ids is not None and "frame_id" in frames.columns:
+        scope = frames[frames["frame_id"].isin(link_frame_ids)]
+    if scope.empty:
+        return
+
+    group_keys = [k for k in ("game_id", "period_id") if k in scope.columns]
+    groups = scope.groupby(group_keys, dropna=False) if group_keys else [((), scope)]
+
+    for gkey, grp in groups:
+        per_frame_count = grp.groupby("frame_id")[col].count()
+        has_value = per_frame_count > 0
+        if not bool(has_value.any()):
+            raise ValueError(
+                f"add_das: attacking_direction_col='{col}' is all-NaN for group "
+                f"{_describe_das_group(group_keys, gkey)}; expected a numeric direction per frame."
+            )
+        if not bool(has_value.all()):
+            missing = sorted(int(f) for f in per_frame_count.index[~has_value.to_numpy()])
+            raise ValueError(
+                f"add_das: attacking_direction_col='{col}' is partially populated for group "
+                f"{_describe_das_group(group_keys, gkey)}: frames {missing} have no value. "
+                "Populate the direction for every linked frame (no partial coverage)."
+            )
+
+
 def _precompute_das_lookup(
     frames: pd.DataFrame,
     *,
     chunk_size: int | None = None,
     link_frame_ids: set | None = None,
+    attacking_direction_col: str | None = None,
 ) -> dict[tuple, dict]:
     """Run get_individual_das ONCE on all frames, build per-frame team-level DAS lookup.
 
@@ -1893,6 +1961,17 @@ def _precompute_das_lookup(
         ``_pin_attacking_direction``) so the restricted subset keeps the
         full-period sign, making the result bit-identical to the unrestricted
         computation. When None, all frames are simulated (direction inferred).
+    attacking_direction_col : str or None, default None
+        When supplied, the column on ``frames`` holding a caller-precomputed
+        per-frame numeric (+1/-1) attacking direction (the in-possession team's
+        direction). ``_pin_attacking_direction`` is skipped entirely — useful
+        when the caller already knows the direction and the per-frame inference
+        would assert or mis-infer (e.g. a dead-ball window with no non-NaN
+        ``team_in_possession``). The column is validated (see
+        ``_validate_per_frame_attacking_direction``) and threaded to
+        ``get_individual_das``; the library's possession gate is untouched.
+        Mutually exclusive with the ``_pin`` path: when given, it takes over
+        regardless of ``link_frame_ids``.
 
     Returns a dict mapping ``(period_id, frame_id)`` to ``{team_id: DAS_value}``.
     """
@@ -1902,7 +1981,17 @@ def _precompute_das_lookup(
     if chunk_size is not None:
         kwargs["chunk_size"] = chunk_size
 
-    if link_frame_ids is not None:
+    if attacking_direction_col is not None:
+        # Caller supplied a per-frame numeric direction. Restrict to the linked
+        # frames (per-frame DAS is a snapshot), validate, and bypass _pin —
+        # whose infer_playing_direction asserts on all-NaN team_in_possession.
+        # The library's possession gate (which NaN-fills empty-possession
+        # frames) is left untouched.
+        if link_frame_ids is not None:
+            frames = frames[frames["frame_id"].isin(link_frame_ids)]
+        _validate_per_frame_attacking_direction(frames, attacking_direction_col)
+        kwargs["attacking_direction_col"] = attacking_direction_col
+    elif link_frame_ids is not None:
         from ._das import _pin_attacking_direction
 
         frames = _pin_attacking_direction(frames)
@@ -2016,6 +2105,7 @@ def add_das(
     *,
     links: pd.DataFrame | None = None,
     chunk_size: int | None = None,
+    attacking_direction_col: str | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with ``das_team``, ``das_opponent``, ``das_diff`` columns.
 
@@ -2031,11 +2121,27 @@ def add_das(
         When set, passed through to ``accessible-space`` to process frames
         in chunks. Useful for memory-constrained environments (e.g.
         Databricks ``applyInPandas`` UDFs with 1 GB group memory cap).
+    attacking_direction_col : str or None, default None
+        When supplied, the column on ``frames`` holding a caller-precomputed
+        per-frame **numeric** (+1/-1) attacking direction — one value per
+        ``(game_id, period_id, frame_id)``, the in-possession team's direction.
+        silly-kicks validates it (exists / numeric / fully covered per group,
+        restricted to action-linked frames), then skips ``_pin_attacking_direction``
+        and threads it straight to ``accessible-space``. Use this when the
+        direction is already known and per-frame inference would assert or
+        mis-infer — e.g. a dead-ball window with no non-NaN ``team_in_possession``
+        (``_pin``'s ``infer_playing_direction`` asserts there). A misconfigured
+        column fails loud (``ValueError``/``TypeError``); it is **not** degraded
+        to NaN. The library's possession gate is unchanged: frames whose
+        ``team_in_possession`` is NaN still yield NaN DAS. When None, behavior is
+        bit-identical to before (direction inferred via ``_pin``).
 
     Examples
     --------
     >>> from silly_kicks.tracking.features import add_das
     >>> enriched = add_das(actions, frames)
+    >>> # caller-supplied per-frame numeric direction (skips inference):
+    >>> enriched = add_das(actions, frames, attacking_direction_col="attacking_direction")
     """
     import numpy as np
 
@@ -2048,8 +2154,19 @@ def add_das(
     if links is not None and "frame_id" in links.columns:
         link_frame_ids = set(links["frame_id"].dropna().astype(int).tolist())
 
+    # Fail loud on a misconfigured direction column BEFORE the try below (which
+    # degrades library/runtime failures to NaN). A bad column is a caller
+    # contract violation, not a runtime DAS failure — it must propagate.
+    if attacking_direction_col is not None:
+        _validate_per_frame_attacking_direction(frames, attacking_direction_col, link_frame_ids=link_frame_ids)
+
     try:
-        lookup = _precompute_das_lookup(frames, chunk_size=chunk_size, link_frame_ids=link_frame_ids)
+        lookup = _precompute_das_lookup(
+            frames,
+            chunk_size=chunk_size,
+            link_frame_ids=link_frame_ids,
+            attacking_direction_col=attacking_direction_col,
+        )
     except (ValueError, RuntimeError, ImportError, IndexError, TypeError) as exc:
         _warnings.warn(
             f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS columns",
