@@ -27,7 +27,7 @@ def test_patch_params_declared():
 
 
 def test_returns_finite_brier_and_per_provider_attrs(stage2_fold, frozen_xt):
-    obj = _obj(stage2_fold, frozen_xt.xt)
+    obj = _obj(stage2_fold, frozen_xt)
     m = obj.evaluate(_candidates()[0])
     assert np.isfinite(m["brier"])
     assert any(k.startswith("brier__") for k in m)  # per-provider Brier
@@ -35,7 +35,7 @@ def test_returns_finite_brier_and_per_provider_attrs(stage2_fold, frozen_xt):
 
 
 def test_cache_equivalence_fast_equals_full(stage2_fold, frozen_xt):
-    obj = _obj(stage2_fold, frozen_xt.xt)
+    obj = _obj(stage2_fold, frozen_xt)
     # Deterministic XGBoost + independent enrich_full => fast path ≡ full recompute to 1e-9.
     assert_cache_equivalence(obj, _candidates())
 
@@ -67,7 +67,7 @@ def test_h1_penalty_is_path_stable(stage2_fold, frozen_xt, monkeypatch):
     # When H1 fires, evaluate and evaluate_patch must return the SAME default-Brier-anchored
     # penalty (R1 stateless penalty). Force the gate to fire on every call.
     monkeypatch.setattr(vbo, "h1_penalty_fires", lambda *a, **k: True)
-    obj = _obj(stage2_fold, frozen_xt.xt)
+    obj = _obj(stage2_fold, frozen_xt)
     cand = _candidates()[0]
     inv = obj.prepare()
     full = obj.evaluate(cand)

@@ -401,6 +401,27 @@ def _gs_flatten_events(events_json: list[dict], roster: pd.DataFrame) -> pd.Data
     return df
 
 
+def _dedupe_gs_frame_records(frames_json: list[dict]) -> list[dict]:
+    """Drop duplicate Gradient Sports frame records, keep-first per ``(period, frameNum)``.
+
+    Some GS tracking exports ship the SAME ``(period, frameNum)`` record multiple times — observed
+    up to 16 content-divergent copies of a single frame (overlapping data chunks). Left in, each
+    duplicate fans out one row per entity at that frame key, so an action linked to such a frame
+    sees N x the players + N ball rows. That crashes ``bekkers_pi`` (a 3-D ``ball_pos`` broadcast
+    error) and silently inflates the inputs to pitch-control / DAS / team-shape. Keeping the first
+    occurrence restores the ADR-004 contract of one row per ``(period, frame, player)``.
+    """
+    seen: set[tuple] = set()
+    out: list[dict] = []
+    for fr in frames_json:
+        key = (fr["period"], fr["frameNum"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(fr)
+    return out
+
+
 def _build_gradientsports(paths, tracking_limit=None):
     """Gradient Sports: flatten JSONL tracking + roster -> add_gradientsports_player_ids -> frames;
     flatten gameEvents JSON -> SPADL via spadl.gradientsports. Ports the PR-A e2e + GS SPADL test.
@@ -432,6 +453,7 @@ def _build_gradientsports(paths, tracking_limit=None):
     raw = Path(paths["tracking"]).read_bytes()
     text = bz2.decompress(raw).decode("utf-8") if raw[:2] == b"BZ" else raw.decode("utf-8")
     frames_json = [json.loads(line) for line in text.splitlines() if line.strip()]
+    frames_json = _dedupe_gs_frame_records(frames_json)  # GS ships some (period, frame) records 2-16x
     if tracking_limit:
         frames_json = frames_json[:tracking_limit]
     game_id = int(meta.get("id", meta.get("gameId", 0)) or 0)

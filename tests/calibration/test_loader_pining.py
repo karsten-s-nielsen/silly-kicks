@@ -3,6 +3,27 @@ import pandas as pd
 import scripts._loader_pining as L
 
 
+def test_dedupe_gs_frame_records_keeps_first_per_period_frame():
+    # Gradient Sports ships some (period, frameNum) records multiple times (up to 16 content-
+    # divergent copies). The loader must dedup keep-first so each frame key yields one record;
+    # otherwise the linked-frame context fans out (bekkers_pi 3-D crash; inflated PC/DAS inputs).
+    frames_json = [
+        {"period": 1, "frameNum": 10, "tag": "a"},
+        {"period": 1, "frameNum": 10, "tag": "b"},  # duplicate key, divergent content
+        {"period": 1, "frameNum": 11, "tag": "c"},
+        {"period": 2, "frameNum": 10, "tag": "d"},  # same frameNum, different period -> kept
+        {"period": 1, "frameNum": 10, "tag": "e"},  # 3rd copy of (1,10)
+    ]
+    out = L._dedupe_gs_frame_records(frames_json)
+    assert [(f["period"], f["frameNum"]) for f in out] == [(1, 10), (1, 11), (2, 10)]
+    assert out[0]["tag"] == "a"  # keep-first
+
+
+def test_dedupe_gs_frame_records_noop_when_unique():
+    frames_json = [{"period": 1, "frameNum": i} for i in range(5)]
+    assert L._dedupe_gs_frame_records(frames_json) == frames_json
+
+
 def test_two_step_fetch_drops_bearer_on_presigned_get(monkeypatch, tmp_path):
     import urllib.error
 

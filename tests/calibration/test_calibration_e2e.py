@@ -74,7 +74,7 @@ def test_stage2_e2e_skillcorner_public():
         n_trials=2,
         seed=42,
         store_path=str(_tmp_db()),
-        xt=xt.xt,
+        xt=xt,  # the FrozenXt artifact (same object the CLI passes); the objective unwraps .xt
         carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0},
     )
     assert result.best is not None

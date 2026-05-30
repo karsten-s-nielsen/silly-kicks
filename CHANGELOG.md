@@ -5,6 +5,32 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.1] — 2026-05-30
+
+### Fixed — TF-24 calibration sweep runnable on all three providers
+
+Two latent bugs blocked the TF-24 maintainer calibration sweep. Both lived in code
+paths the calibration tests never exercised — the Stage-2 **CLI** wiring and the
+**Gradient Sports** Stage-2 path (the e2e + unit fixtures cover SkillCorner only).
+
+- **Stage-2 xT wiring in `scripts/calibrate_tracking_defaults.py`.** `main()` passed the
+  `FrozenXt` *artifact* straight into `AugmentedVaepBrierObjective`, but the objective needs
+  the inner `ExpectedThreat` (gk-influence / cover-shadows call `xt.interpolator(...)`). Stage 2
+  via the CLI crashed at `prepare()` with `AttributeError: 'FrozenXt' object has no attribute
+  'interpolator'`. The objective now accepts the `FrozenXt` and unwraps `.xt` internally, so the
+  CLI passes one artifact to both the objective and the report manifest. Annotations tightened
+  (`Any → FrozenXt` / `ExpectedThreat`) so the type checker rejects the mistake; the e2e + smoke
+  tests now drive the same wiring the CLI uses, with a new
+  `run_stage(stage=2, xt=<FrozenXt>)` regression guard.
+
+- **`bekkers_pi` pressure crashed on duplicate frame records.** Some Gradient Sports tracking
+  exports ship the same `(period, frameNum)` record up to 16× (content-divergent copies).
+  `_pressure_bekkers` deduped the actor row but not the ball row, so a multi-row ball context
+  built a 3-D `ball_pos` and crashed `_bekkers_tti` with a numpy broadcast error. The ball path
+  now dedups keep-first (mirrors the actor path). The calibration loader also dedups the upstream
+  duplicate frame records (root cause — restores the ADR-004 one-row-per-`(period, frame, player)`
+  contract; otherwise pitch-control / DAS / team-shape silently compute on inflated rows too).
+
 ## [4.0.0] — 2026-05-30
 
 ### Changed (BREAKING) — symmetric fail-loud extra-time direction

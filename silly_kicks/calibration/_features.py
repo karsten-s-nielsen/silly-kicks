@@ -29,10 +29,13 @@ Examples
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from silly_kicks.xthreat import ExpectedThreat
 
 # The 5 columns written by the two trial-dependent steps (spec §4a).
 _TRIAL_DEPENDENT_COLS = [
@@ -185,7 +188,7 @@ def enrich_invariant(
     *,
     actions: pd.DataFrame,
     frames: pd.DataFrame,
-    xt: Any,
+    xt: ExpectedThreat,
     home_team_id: int | str,
     carrier_params: dict,
 ) -> tuple[pd.DataFrame, pd.DataFrame, bool]:
@@ -292,7 +295,7 @@ def enrich_full(
     *,
     actions: pd.DataFrame,
     frames: pd.DataFrame,
-    xt: Any,
+    xt: ExpectedThreat,
     home_team_id: int | str,
     carrier_params: dict,
     k3: float,
