@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
+import warnings
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -129,8 +131,6 @@ def load_matches(
     TF-24 sweep on a local machine (loading all matches at full depth can OOM; see calibrate CLI
     ``--max-matches-per-provider``).
     """
-    import tempfile
-
     tok, base_url = _resolve_token(token), _base_url()
     for provider in providers:
         manifest = {m["id"]: m for m in _list_matches(provider, tok, base_url)}
@@ -139,11 +139,46 @@ def load_matches(
             wanted = wanted[:max_per_provider]
         for match_id in wanted:
             artifacts = manifest[match_id]["artifacts"]
+            actions, frames, home = _build_match_with_retry(
+                provider, match_id, artifacts, tok, base_url, tracking_limit
+            )
+            yield provider, match_id, actions, frames, home
+
+
+def _build_match_with_retry(
+    provider, match_id, artifacts, tok, base_url, tracking_limit, *, attempts: int = 3, backoff: float = 3.0
+):
+    """Download + build one match, retrying transient network/IO failures with a fresh temp dir.
+
+    The pining fetch (Bearer -> 302 -> presigned S3) and kloppy's subsequent file reads can blip
+    transiently — an empty/partial download surfaces as ``kloppy ... InputNotFoundError``, an S3 or
+    DNS hiccup as ``urllib``/``OSError``. The TF-24 sweep re-downloads ~140 matches across its four
+    fold-loads (2 phases x Stage 1 + Stage 2); a single un-retried blip would crash a whole stage,
+    losing hours of Stage-2 enrichment. Retry with a fresh temp dir + linear backoff, then fail loud
+    only if a match is genuinely unfetchable after ``attempts`` tries.
+    """
+    import tempfile
+
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_dir = Path(tmp)
                 paths = _download_artifacts(provider, match_id, artifacts, tok, base_url, tmp_dir)
-                actions, frames, home = _build_match(provider, match_id, paths, tracking_limit)
-            yield provider, match_id, actions, frames, home
+                return _build_match(provider, match_id, paths, tracking_limit)
+        except Exception as exc:  # transient network/IO (any source) — retried, then re-raised loud
+            last_exc = exc
+            if attempt < attempts:
+                warnings.warn(
+                    f"{provider} match {match_id}: load attempt {attempt}/{attempts} failed "
+                    f"({type(exc).__name__}: {exc}); retrying in {backoff * attempt:.0f}s",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                time.sleep(backoff * attempt)
+    raise RuntimeError(
+        f"{provider} match {match_id}: failed to load after {attempts} attempts (last error above)"
+    ) from last_exc
 
 
 def _download_artifacts(provider, match_id, artifacts, token, base_url, tmp_dir) -> dict[str, Path]:

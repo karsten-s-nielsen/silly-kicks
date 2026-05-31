@@ -5,6 +5,22 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.3] — 2026-05-30
+
+### Fixed — TF-24 calibration loader download resilience (maintainer tooling only)
+
+The pining match loader (`scripts/_loader_pining.load_matches`) had no retry: a single transient
+download/read blip (an empty/partial S3 fetch surfacing as kloppy `InputNotFoundError`, or a
+`urllib`/`OSError` network hiccup) crashed the entire fold load. Across the TF-24 sweep's ~140
+match-downloads (two phases × Stage 1 + Stage 2, each re-downloading its matches), a crash during
+Stage-2 `prepare()` would discard hours of DAS enrichment.
+
+- New `_build_match_with_retry` wraps each match's download+build in a 3-attempt loop with a fresh
+  temp dir and linear backoff, then fails loud if the match is genuinely unfetchable.
+
+**Consumer impact: none.** Confined to `scripts/` + `tests/`; the importable `silly_kicks` package is
+byte-identical to 4.0.2 apart from the version string. Released for traceability.
+
 ## [4.0.2] — 2026-05-30
 
 ### Fixed — TF-24 IDSSE calibration provider exclusion (maintainer tooling only)

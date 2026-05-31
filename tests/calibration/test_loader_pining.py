@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 import scripts._loader_pining as L
 
@@ -22,6 +23,35 @@ def test_dedupe_gs_frame_records_keeps_first_per_period_frame():
 def test_dedupe_gs_frame_records_noop_when_unique():
     frames_json = [{"period": 1, "frameNum": i} for i in range(5)]
     assert L._dedupe_gs_frame_records(frames_json) == frames_json
+
+
+def test_build_match_with_retry_recovers_from_transient(monkeypatch):
+    # A transient download/read blip (e.g. kloppy InputNotFoundError on a partial S3 fetch) must be
+    # retried with a fresh temp dir, not crash the whole fold load.
+    calls = {"n": 0}
+
+    def _flaky_download(*a, **k):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise OSError("transient S3 blip")
+        return {"events": "p"}
+
+    monkeypatch.setattr(L, "_download_artifacts", _flaky_download)
+    monkeypatch.setattr(L, "_build_match", lambda *a, **k: ("ACT", "FRM", "H"))
+    out = L._build_match_with_retry("skillcorner", "m1", {}, "tok", "url", None, attempts=3, backoff=0)
+    assert out == ("ACT", "FRM", "H")
+    assert calls["n"] == 2  # failed once, succeeded on the retry
+
+
+def test_build_match_with_retry_fails_loud_after_attempts(monkeypatch):
+    # A genuinely unfetchable match must fail loud after the retries, never silently skip.
+    def _always_fail(*a, **k):
+        raise OSError("down")
+
+    monkeypatch.setattr(L, "_download_artifacts", _always_fail)
+    monkeypatch.setattr(L, "_build_match", lambda *a, **k: None)
+    with pytest.raises(RuntimeError, match="failed to load after 2 attempts"):
+        L._build_match_with_retry("idsse", "M1", {}, "t", "u", None, attempts=2, backoff=0)
 
 
 def test_two_step_fetch_drops_bearer_on_presigned_get(monkeypatch, tmp_path):
