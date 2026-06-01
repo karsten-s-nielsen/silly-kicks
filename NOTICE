@@ -61,6 +61,15 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   Frontiers in Sports and Active Living, 3, 624475.
   (player_speed, distance-to-defender, and defending-GK-position as xG features)
 
+- Pipping, J., Feng, T., & Sabin, P. (2026). "Beyond Expected Goals: A
+  Probabilistic Framework for Shot Occurrences in Soccer." arXiv:2512.00203.
+  The xShotOccurrence model (silly_kicks/tracking/_xshot_occurrence.py, TF-16)
+  implements the shot-occurrence (xS) component — the probability a shot is
+  attempted within ~1 s of a frame. Only the xS sub-model is implemented; the
+  paper's xG and xG+ composition are out of scope (silly-kicks values
+  goals/threat via VAEP and xthreat). The openGoal goal-mouth-obstruction
+  feature follows the paper's Appendix A construction.
+
 - Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
   Conference.
   (zone-based defender intensity in pitch-control framework)

@@ -5,6 +5,47 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] — 2026-05-31
+
+### Added — xShotOccurrence (xS) model (TF-16, GKDV Layer 2)
+
+Per-frame shot-occurrence probability — `xS = P(a shot is attempted by the in-possession
+team within ~1 second of a tracking frame)` — implementing the xS sub-model of Pipping,
+Feng & Sabin (2026), arXiv:2512.00203 ("Beyond Expected Goals: A Probabilistic Framework
+for Shot Occurrences in Soccer"). Distinct from xG: xS models shot *taking*, not shot
+*quality*. This is GKDV Layer 2 — TF-19 will decompose `P(shot | actual_GK) −
+P(shot | ghost_GK)`. The paper's xG and xG+ composition are deliberately out of scope
+(silly-kicks values goals/threat via VAEP and xthreat).
+
+- New `silly_kicks.tracking._xshot_occurrence`: the paper-faithful 27-feature extractor
+  (`extract_xshot_features`; ball r/θ/z/speed, `openGoal` goal-mouth obstruction, GK
+  distance/bearing, 5 nearest defenders + 5 nearest attackers) in goal-relative
+  coordinates via a new shared `silly_kicks.tracking._geometry` helper; a time-windowed
+  label builder (`build_xshot_labels`, robust to non-contiguous `frame_id`); the
+  `XShotOccurrenceModel` (deterministic XGBoost, pickle-free booster-JSON + SHA256SUMS
+  serialization); and the ADR-005 surfaces `compute_xshot_occurrence` /
+  `add_xshot_occurrence` (`@nan_safe_enrichment`) / `xshot_occurrence_xfns`.
+- `prepare_xshot_training_data` — the shared train/serve feature/label entry point with
+  the paper's data-curation domain filter (alive-ball + attacking-third) and an optional
+  seeded negative-subsample.
+- HPO via the `ruthless` `CachedObjective` substrate (new `silly_kicks.tracking
+  ._xshot_occurrence_objective`) + a `scripts/train_xshot_occurrence.py` CLI. New generic
+  `[train]` extra (`ruthless-efficiency[optuna]` + xgboost); inference gates on the
+  existing `[xgboost]` extra and keeps `import silly_kicks` dependency-light.
+- `XShotFeatureSet` Literal with the `"extended"` variant reserved (raises
+  `NotImplementedError` this release). Atomic mirror in `atomic.tracking.features`.
+- Decision: **ADR-011** (trained-model feature lifecycle: code → training → bundled/Hub
+  weights). Attribution: NOTICE entry for arXiv:2512.00203.
+
+**Ships untrained.** This release is code + a synthetic CI fixture + real-provider
+extraction tests only; no model weights are bundled (`from_variant`/`from_hub` raise until
+the follow-up). The maintainer training run, bundled/Hub weights, the empirical PR-AUC
+acceptance gates, and wiring `xshot_occurrence_xfns` into the default xfn lists are
+deferred to a follow-up PR (it needs the gated multi-provider corpus the live TF-24 sweep
+is using). Note: a future TF-24 apply-PR change to `infer_ball_carrier` defaults is an xS
+retrain trigger — the carrier params used are recorded in model metadata and consumed at
+inference to keep train/serve consistent until then.
+
 ## [4.0.3] — 2026-05-30
 
 ### Fixed — TF-24 calibration loader download resilience (maintainer tooling only)
