@@ -175,16 +175,19 @@ def _build_player_ball_distance_lookup(
     ball_missing = np.isnan(bx) | np.isnan(by)
     dist[ball_missing] = np.inf
 
-    lookup: dict[tuple, float] = {}
-    for i in range(len(dist)):
-        key = (
-            merged.iloc[i]["game_id"],
-            merged.iloc[i]["period_id"],
-            int(merged.iloc[i]["frame_id"]),
-            str(merged.iloc[i]["player_id"]),
+    # Vectorized key/value build (Phase 0b) — avoids per-row .iloc scalar access.
+    # Match the prior loop's key types exactly: game_id/period_id as np.int64 (raw .iloc),
+    # frame_id as Python int (int(...)), player_id as Python str (str(...)).
+    keys = list(
+        zip(
+            merged["game_id"].to_numpy(),
+            merged["period_id"].to_numpy(),
+            merged["frame_id"].astype(int).tolist(),
+            merged["player_id"].astype(str).tolist(),
+            strict=True,
         )
-        lookup[key] = float(dist[i])
-
+    )
+    lookup: dict[tuple, float] = dict(zip(keys, dist.astype(float).tolist(), strict=True))
     return lookup
 
 

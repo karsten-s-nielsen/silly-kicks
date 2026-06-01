@@ -965,6 +965,102 @@ def _vectorized_leaf_indices(nodes_list: list[np.ndarray], X: np.ndarray) -> np.
     return leaves
 
 
+def _leaf_match_weights(
+    training_leaves: np.ndarray,
+    query_leaves: np.ndarray,
+    *,
+    query_block: int = 64,
+) -> np.ndarray:
+    """Per-query leaf-match weight = fraction of trees with matching leaf.
+
+    training_leaves : (n_train, n_trees); query_leaves : (n_query, n_trees).
+    Returns (n_query, n_train) weights. Streams queries in blocks to bound the
+    (qb, n_train, n_trees) broadcast for the 537k-train variant.
+    """
+    n_train, n_trees = training_leaves.shape
+    n_query = query_leaves.shape[0]
+    out = np.empty((n_query, n_train), dtype=np.float64)
+    for start in range(0, n_query, query_block):
+        sl = slice(start, min(start + query_block, n_query))
+        eq = training_leaves[None, :, :] == query_leaves[sl][:, None, :]  # (qb, n_train, n_trees)
+        out[sl] = eq.sum(axis=2).astype(np.float64) / n_trees
+    return out
+
+
+def _kde_density_scipy(
+    gk_x_w: np.ndarray,
+    gk_y_w: np.ndarray,
+    w: np.ndarray,
+    grid_points: np.ndarray,
+) -> np.ndarray:
+    """Reference per-sample weighted KDE on the fixed grid (scipy oracle).
+
+    gk_x_w, gk_y_w, w : shape (k,) — the sample's nonzero-weight leaf subset.
+    grid_points : shape (2, GRID_NX*GRID_NY).
+    Returns the UNnormalized density grid (GRID_NX, GRID_NY); callers normalize.
+    """
+    kde = gaussian_kde(np.vstack([gk_x_w, gk_y_w]), weights=w, bw_method="scott")
+    density_vals = kde(grid_points)
+    return density_vals.reshape(GRID_NX, GRID_NY)
+
+
+def _kde_density_vectorized(
+    gk_x_w: np.ndarray,
+    gk_y_w: np.ndarray,
+    w: np.ndarray,
+    grid_points: np.ndarray,
+    *,
+    train_block: int = 1024,
+) -> np.ndarray:
+    """Vectorized weighted Gaussian KDE on the fixed grid (scipy-faithful).
+
+    Reuses scipy's Scott bandwidth + weighted covariance + Cholesky whitening
+    (NOT a matrix inverse) so it matches scipy.stats.gaussian_kde within ~1e-9.
+    Streams the training subset in blocks of ``train_block`` to bound memory for
+    the 537k "full" variant. Returns the UNnormalized density grid (GRID_NX, GRID_NY).
+
+    Default ``train_block=1024`` is the conservative serverless choice: with grid m=3840,
+    the largest transient ``(2, kb, m)`` + tdiff + energy is ~150 MB/block, safe under the
+    Databricks 1 GB ``applyInPandas`` cap. The serverless venue runs the 9 MB "default" model
+    whose per-sample nonzero leaf subsets are small (k often < 1024 -> chunking rarely binds),
+    so 1024 costs ~nothing there; the local benchmark can raise it for the in-memory "full"
+    model.
+    """
+    from scipy.linalg import cho_factor, cho_solve
+
+    w = np.asarray(w, dtype=np.float64)
+    w = w / w.sum()
+    data = np.vstack([np.asarray(gk_x_w, np.float64), np.asarray(gk_y_w, np.float64)])  # (2, k)
+    d = 2
+    neff = 1.0 / np.sum(w**2)
+    factor = neff ** (-1.0 / (d + 4))
+    data_cov = np.atleast_2d(np.cov(data, rowvar=True, bias=False, aweights=w))
+    covariance = data_cov * factor**2
+    # Cholesky path (matches scipy _kde.py): whitening via cho_solve; lower=True so the
+    # factor's diagonal is in np.diag(chol[0]). cho_factor raises np.linalg.LinAlgError on a
+    # singular covariance (collinear/identical points) -- same as scipy's cholesky -- and
+    # predict_density's `except np.linalg.LinAlgError` degrades both to the uniform grid.
+    chol = cho_factor(covariance, lower=True)
+    log_det = 2.0 * np.sum(np.log(np.diag(chol[0])))
+    # norm is DERIVED from scipy's normalization 1/((2*pi)^(d/2) * sqrt(det(H))), not tuned:
+    #   sqrt(det(H)) = exp(0.5*log_det)  =>  norm = exp(-0.5*(log_det + d*log(2*pi))).
+    norm = np.exp(-0.5 * (log_det + d * np.log(2.0 * np.pi)))
+
+    m = grid_points.shape[1]
+    out = np.zeros(m, dtype=np.float64)
+    k = data.shape[1]
+    for start in range(0, k, train_block):
+        sl = slice(start, min(start + train_block, k))
+        diff = grid_points[:, None, :] - data[:, sl, None]  # (2, kb, m)
+        kb = diff.shape[1]
+        flat = diff.reshape(d, kb * m)
+        tdiff = cho_solve(chol, flat)  # whiten (2, kb*m)
+        energy = 0.5 * np.sum(flat * tdiff, axis=0).reshape(kb, m)  # (kb, m)
+        out += np.einsum("k,km->m", w[sl], np.exp(-energy))
+    out *= norm
+    return out.reshape(GRID_NX, GRID_NY)
+
+
 # ---------------------------------------------------------------------------
 # Model class
 # ---------------------------------------------------------------------------
@@ -1111,7 +1207,9 @@ class GhostGkModel:
         result[:, 1] = reg_y.predict(X)
         return result
 
-    def predict_density(self, features: pd.DataFrame) -> list[GhostGkDensity]:
+    def predict_density(
+        self, features: pd.DataFrame, *, kde_backend: str = "vectorized"
+    ) -> list[GhostGkDensity]:
         """Full density prediction per sample.
 
         Computes leaf co-occurrence weights, weighted 2D KDE, grid evaluation.
@@ -1136,17 +1234,17 @@ class GhostGkModel:
 
         X = features.values.astype(np.float64)
         query_leaves = _vectorized_leaf_indices(self._tree_nodes, X)
-        n_trees = query_leaves.shape[1]
 
         # Precompute grid mesh
         grid_xx, grid_yy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
         grid_points = np.vstack([grid_xx.ravel(), grid_yy.ravel()])
 
+        # Vectorized leaf-match weights for all query samples at once (block-streamed).
+        all_weights = _leaf_match_weights(self._training_leaves, query_leaves)
+
         results: list[GhostGkDensity] = []
         for i in range(len(X)):
-            # Weight = fraction of trees with matching leaf
-            matches = self._training_leaves == query_leaves[i]
-            weights = matches.sum(axis=1).astype(np.float64) / n_trees
+            weights = all_weights[i]
 
             nonzero = weights > 0
             w = weights[nonzero]
@@ -1157,13 +1255,13 @@ class GhostGkModel:
                 probs = np.ones((GRID_NX, GRID_NY)) / (GRID_NX * GRID_NY)
             else:
                 try:
-                    kde = gaussian_kde(
-                        np.vstack([gk_x_w, gk_y_w]),
-                        weights=w,
-                        bw_method="scott",
-                    )
-                    density_vals = kde(grid_points)
-                    probs = density_vals.reshape(GRID_NX, GRID_NY)
+                    if kde_backend == "scipy":
+                        probs = _kde_density_scipy(gk_x_w, gk_y_w, w, grid_points)
+                    elif kde_backend == "vectorized":
+                        probs = _kde_density_vectorized(gk_x_w, gk_y_w, w, grid_points)
+                    else:
+                        msg = f"Unknown kde_backend: {kde_backend!r}"
+                        raise ValueError(msg)
                     total = probs.sum()
                     if total > 0:
                         probs = probs / total

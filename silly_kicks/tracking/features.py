@@ -1995,6 +1995,24 @@ def _precompute_das_lookup(
         frames = frames[frames["frame_id"].isin(link_frame_ids)]
         kwargs["attacking_direction_col"] = "attacking_direction"
 
+    # Cross-repo: the lakehouse runs _fill_possession_from_set_piece_actions (possession
+    # back-fill for set-piece restarts) BEFORE add_das, so this guard correctly fires only
+    # when the link-restricted subset is still all-NaN AFTER that fill -- genuine dead-ball
+    # (e.g. IDSSE ~33% dead frames), not a fillable set-piece gap. `frames` here is the
+    # link-restricted subset (both branches above ran frames[frame_id.isin(link_frame_ids)]),
+    # so this surfaces silly-kicks' clear message instead of accessible-space's generic
+    # ValueError; add_das catches it and NaN-degrades.
+    if (
+        link_frame_ids is not None
+        and "team_in_possession" in frames.columns
+        and not frames["team_in_possession"].notna().any()
+    ):
+        msg = (
+            "team_in_possession is all-NaN in the link-restricted frame subset (dead-ball "
+            "window): DAS is undefined here. add_das degrades these actions to NaN."
+        )
+        raise ValueError(msg)
+
     das_frames = get_individual_das(frames, **kwargs)
 
     player_rows = das_frames[das_frames["is_ball"] != True]  # noqa: E712

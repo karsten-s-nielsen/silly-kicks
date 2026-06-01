@@ -442,8 +442,10 @@ def derive_team_in_possession(
     Returns
     -------
     pd.DataFrame
-        Copy of ``frames`` with an additional ``team_in_possession`` column.
-        Frames with no carrier match get ``NaN``.
+        Copy of ``frames`` with two added columns: ``team_in_possession`` and
+        ``ball_carrier_player_id`` (possession's team + player facets — the latter
+        forwarded to accessible-space as ``player_in_possession_col`` for correct
+        offside masking in DAS). Frames with no carrier match get ``NaN``.
 
     Examples
     --------
@@ -455,6 +457,6 @@ def derive_team_in_possession(
         frames_with_poss = derive_team_in_possession(frames, carrier)
     """
     merge_cols = ["game_id", "period_id", "frame_id"]
-    carrier_slim = carrier[[*merge_cols, "ball_carrier_team_id"]].copy()
+    carrier_slim = carrier[[*merge_cols, "ball_carrier_team_id", "ball_carrier_player_id"]].copy()
     carrier_slim = carrier_slim.rename(columns={"ball_carrier_team_id": "team_in_possession"})
     return frames.merge(carrier_slim, on=merge_cols, how="left")
