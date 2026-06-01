@@ -13,6 +13,8 @@ Import pattern:
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 try:
@@ -20,8 +22,21 @@ try:
 except ImportError as e:
     raise ImportError("numba is required for _ball_carrier_numba. Install with: pip install silly-kicks[numba]") from e
 
+# numba's on-disk cache (cache=True) requires a writable cache *locator* to be
+# resolved AT IMPORT TIME (a writable __pycache__ beside the source, a writable
+# user-wide cache dir, or NUMBA_CACHE_DIR set). On read-only / ephemeral installs
+# (e.g. Databricks serverless: wheel on a read-only ephemeral NFS path) all
+# locators fail and numba raises RuntimeError from inside a successful import —
+# taking down all of silly_kicks.tracking, not just the cached function (the
+# consumer try/except ImportError guards do NOT catch a RuntimeError). Default the
+# on-disk cache OFF so JIT works everywhere (cache=False keeps full native speed;
+# it only drops cross-process persistence → a one-time per-process recompile).
+# Opt back in via SILLY_KICKS_NUMBA_CACHE=1 (explicit, stable env / local dev) or
+# numba's own NUMBA_CACHE_DIR pointing at a writable dir (guaranteed-writable).
+_NUMBA_CACHE = os.environ.get("SILLY_KICKS_NUMBA_CACHE", "0") == "1" or bool(os.environ.get("NUMBA_CACHE_DIR"))
 
-@njit(cache=True)
+
+@njit(cache=_NUMBA_CACHE)
 def _carrier_loop_numba(
     bx: np.ndarray,
     by: np.ndarray,
