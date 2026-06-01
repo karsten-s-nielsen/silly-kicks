@@ -55,10 +55,10 @@ def _bench() -> None:
 
 def _attribute() -> None:
     """Attribute the ~14% pandas-scalar access to specific call sites."""
-    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
     from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier
+    from silly_kicks.tracking.features import add_elastic_sync, add_ghost_gk  # type: ignore
     from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
-    from silly_kicks.tracking.features import add_ghost_gk, add_elastic_sync  # type: ignore
+    from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
 
     frames = load_provider_frames("skillcorner")
     if "vx" not in frames.columns:
@@ -72,11 +72,11 @@ def _attribute() -> None:
     pr.enable()
     try:
         add_ghost_gk(actions, frames, home_team_id=home_team_id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"[attribute] add_ghost_gk failed ({exc}); continuing", flush=True)
     try:
         add_elastic_sync(actions, frames)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"[attribute] add_elastic_sync failed ({exc}); continuing", flush=True)
     pr.disable()
     s = io.StringIO()

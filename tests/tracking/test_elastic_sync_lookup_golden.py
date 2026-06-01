@@ -31,7 +31,9 @@ def _expected_lookup(frames: pd.DataFrame) -> dict:
     out: dict = {}
     for r in frames[~frames["is_ball"]].itertuples(index=False):
         bx, by = bpos.get((r.game_id, r.period_id, r.frame_id), (np.nan, np.nan))
-        d = float("inf") if (np.isnan(bx) or np.isnan(by)) else float(np.hypot(r.x - bx, r.y - by))
+        # Mirror the implementation's exact formula (np.sqrt of squares, NOT np.hypot) —
+        # they differ at the ULP level and that gap is platform-dependent (libm).
+        d = float("inf") if (np.isnan(bx) or np.isnan(by)) else float(np.sqrt((r.x - bx) ** 2 + (r.y - by) ** 2))
         out[(r.game_id, r.period_id, int(r.frame_id), str(r.player_id))] = d
     return out
 
@@ -40,9 +42,13 @@ def test_lookup_matches_oracle_and_key_dtypes():
     frames = _frames()
     lookup = _build_player_ball_distance_lookup(frames)
     assert len(lookup) == 240  # 40 frames * 6 players
-    # Behaviour-preservation: dict equality (keys compare by hash/eq, values by ==),
-    # robust to np.int64-vs-int key-type subtleties.
-    assert lookup == _expected_lookup(frames)
+    # Behaviour-preservation: identical key set + values equal within tolerance. NOT exact
+    # float dict-equality — scalar-vs-vectorized float ops can differ ~1 ULP cross-platform.
+    exp = _expected_lookup(frames)
+    assert set(lookup) == set(exp)
+    for key, val in exp.items():
+        got = lookup[key]
+        assert got == val or np.isclose(got, val, rtol=1e-9, atol=1e-9)
     # Complete key-dtype contract (all four elements):
     k = next(iter(lookup))
     assert isinstance(k[0], (int, np.integer))  # game_id
