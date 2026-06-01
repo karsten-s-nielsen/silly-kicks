@@ -5,6 +5,39 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.1] — 2026-06-01
+
+### Fixed — numba on-disk cache no longer hard-fails import on read-only installs
+
+`@njit(cache=True)` makes numba persist compiled code to disk, which requires a writable
+cache *locator* to be resolved **at decoration time** (module import): a writable
+`__pycache__` beside the source, a writable user-wide cache dir, or `NUMBA_CACHE_DIR` set.
+On read-only / ephemeral installs — e.g. Databricks serverless, where the wheel lands on a
+read-only ephemeral NFS path — all three locators fail and numba raises
+`RuntimeError: cannot cache function ... no locator available` from *inside* a successful
+import. Because the failing decoration runs when `silly_kicks.tracking` is imported, it took
+down **all** tracking functionality (`infer_ball_carrier`, pitch control, and everything
+that transitively imports them), not just the cached kernel. The existing
+`try/except ImportError → _HAS_NUMBA = False` fallbacks did not catch it — the exception is a
+`RuntimeError`, not an `ImportError`.
+
+- The four `@njit` kernels (`_carrier_loop_numba` in `tracking/_ball_carrier_numba.py`;
+  `tti_numba` / `influence_numba` / `gaussian_influence_numba` in
+  `tracking/pitch_control/_numba_kernels.py`) now gate `cache` on a module-level
+  `_NUMBA_CACHE` flag that **defaults OFF**, so import never resolves a cache locator and
+  cannot hard-fail on a read-only/ephemeral filesystem. `cache=False` keeps full native JIT
+  speed; it only drops cross-process cache persistence (a one-time ~1–5 s recompile per fresh
+  worker process — which an ephemeral worker discards on teardown anyway).
+- Opt back in to on-disk caching in stable environments (persistent cluster, local dev with a
+  writable install) via `SILLY_KICKS_NUMBA_CACHE=1`, **or** by pointing numba's own
+  `NUMBA_CACHE_DIR` at a writable directory (a consumer that sets it gets caching for free,
+  with no second silly-kicks-specific variable to remember).
+- Regression coverage: `tests/tracking/test_numba_cache_gating.py` asserts the default env
+  disables the cache (the decorated dispatchers keep numba's `NullCache`) and that either
+  opt-in env var re-enables it.
+
+Caught 2026-06-01 running tracking enrichment on Databricks serverless.
+
 ## [4.1.0] — 2026-05-31
 
 ### Added — xShotOccurrence (xS) model (TF-16, GKDV Layer 2)

@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-05-31. **Current release**: silly-kicks 4.1.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-01. **Current release**: silly-kicks 4.1.1. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
