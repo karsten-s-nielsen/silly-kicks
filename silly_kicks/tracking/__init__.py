@@ -49,6 +49,8 @@ __all__ = [
     "SpearmanParams",
     "TrackingConversionReport",
     "VoronoiParams",
+    "XShotFeatureSet",
+    "XShotOccurrenceModel",
     "actor_arc_length_pre_window",
     "actor_displacement_pre_window",
     "actor_pre_window_default_xfns",
@@ -76,6 +78,7 @@ __all__ = [
     "add_space_creation",
     "add_sync_score",
     "add_team_shape",
+    "add_xshot_occurrence",
     "align_events_to_frames",
     "back_line_high_x",
     "back_n_count",
@@ -94,6 +97,7 @@ __all__ = [
     "compute_space_created",
     "compute_team_shape",
     "compute_tti",
+    "compute_xshot_occurrence",
     "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
@@ -106,6 +110,7 @@ __all__ = [
     "detect_line_breaking",
     "elastic_sync_xfns",
     "extract_ball_features",
+    "extract_xshot_features",
     "feature_framework",
     "features",
     "filter_extratime_frames",
@@ -154,6 +159,7 @@ __all__ = [
     "pre_shot_gk_x",
     "pre_shot_gk_y",
     "prepare_ghost_gk_training_data",
+    "prepare_xshot_training_data",
     "preprocess",
     "pressure_default_xfns",
     "pressure_on_actor",
@@ -173,6 +179,7 @@ __all__ = [
     "team_shape_xfns",
     "tracking_default_xfns",
     "utils",
+    "xshot_occurrence_xfns",
 ]
 
 from . import feature_framework, features, gradientsports, pitch_control, preprocess, schema, sportec, utils
@@ -195,6 +202,15 @@ from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_
 from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
 from ._team_shape import compute_team_shape
+from ._xshot_occurrence import (
+    XShotFeatureSet,
+    XShotOccurrenceModel,
+    add_xshot_occurrence,
+    compute_xshot_occurrence,
+    extract_xshot_features,
+    prepare_xshot_training_data,
+    xshot_occurrence_xfns,
+)
 from .direction import require_et_direction
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (

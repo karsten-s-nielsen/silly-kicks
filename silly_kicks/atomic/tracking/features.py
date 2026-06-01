@@ -15,6 +15,7 @@ import pandas as pd
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
+from silly_kicks.tracking._xshot_occurrence import add_xshot_occurrence
 from silly_kicks.tracking.feature_framework import lift_to_states
 from silly_kicks.tracking.features import (
     actor_reachable_area_m2,
@@ -60,6 +61,7 @@ __all__ = [
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
+    "add_xshot_occurrence",
     "atomic_actor_pre_window_default_xfns",
     "atomic_pitch_control_default_xfns",
     "atomic_pitch_control_xfns",
