@@ -9,6 +9,7 @@ See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
+import contextlib
 import warnings
 
 import pandas as pd
@@ -33,6 +34,54 @@ _COLUMN_MAP = {
     "period_col": "period_id",
     "team_in_possession_col": "team_in_possession",
 }
+
+#: Canonical per-frame ball-carrier (passer) column, produced by derive_team_in_possession.
+#: Forwarded to accessible-space as player_in_possession_col so respect_offside (the DAS
+#: default) excludes the passer from the offside mask (Phase 0c).
+_DEFAULT_PLAYER_IN_POSSESSION_COL = "ball_carrier_player_id"
+
+#: Module-level one-time guard so the no-carrier guidance isn't emitted per call.
+_OFFSIDE_WARNED = False
+
+
+def _resolve_player_in_possession_col(frames: pd.DataFrame, player_in_possession_col: str | None) -> str | None:
+    """Resolve the carrier column to forward to accessible-space.
+
+    - ``None``: caller opted out; do not forward.
+    - present on ``frames``: forward it (correct offside -- passer excluded).
+    - explicitly named (non-default) but missing: ``ValueError`` (caller contract violation).
+    - default name missing (e.g. old frames): ``None`` (degrade to prior behavior).
+    """
+    if player_in_possession_col is None:
+        return None
+    if player_in_possession_col in frames.columns:
+        return player_in_possession_col
+    if player_in_possession_col != _DEFAULT_PLAYER_IN_POSSESSION_COL:
+        raise ValueError(f"player_in_possession_col={player_in_possession_col!r} not found in frames columns")
+    return None
+
+
+@contextlib.contextmanager
+def _suppress_offside_warning():
+    """Suppress accessible-space's per-call offside warning; silly-kicks owns this UX."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*player_in_possession_col.*", category=UserWarning)
+        yield
+
+
+def _warn_no_carrier_once() -> None:
+    """Emit silly-kicks' own offside-no-carrier guidance once per process (stacklevel=2)."""
+    global _OFFSIDE_WARNED
+    if not _OFFSIDE_WARNED:
+        _OFFSIDE_WARNED = True
+        warnings.warn(
+            "DAS respect_offside is on but no ball-carrier column was available to exclude "
+            "the passer from the offside mask. Pass player_in_possession_col, or run "
+            "derive_team_in_possession (which now preserves ball_carrier_player_id). "
+            "Proceeding without passer exclusion.",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def _import_accessible_space():  # type: ignore[return]
@@ -84,7 +133,14 @@ def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
             out[col] = out[col].astype(object)
         elif dtype_name == "boolean":
             out[col] = out[col].astype(bool)
-    out["player_id"] = out["player_id"].astype(object)
+    # accessible-space indexes the team / player columns 2-D (e.g. ``passer_teams[:, None]``
+    # in the offside path). pandas StringDtype / pyarrow-backed arrays (the default for string
+    # columns on newer pandas) reject 2-D indexing -> "IndexError: too many indices for array".
+    # Force numpy ``object`` so the library always sees a plain ndarray. (Idempotent for the
+    # object/int64 columns it already handled.)
+    for col in ("team_id", "team_in_possession", "player_id"):
+        if col in out.columns:
+            out[col] = out[col].astype(object)
     ball_mask = out["is_ball"] == True  # noqa: E712
     out.loc[ball_mask, "player_id"] = "ball"
     return out
@@ -94,6 +150,7 @@ def get_das(
     frames: pd.DataFrame,
     *,
     use_progress_bar: bool = False,
+    player_in_possession_col: str | None = _DEFAULT_PLAYER_IN_POSSESSION_COL,
     **kwargs,
 ) -> pd.DataFrame:
     """Team-level Accessible Space and Dangerous Accessible Space per frame.
@@ -130,20 +187,25 @@ def get_das(
     See NOTICE for full bibliographic citations.
     """
     asmod = _import_accessible_space()
+    ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
     prepared = _prepare_frames(frames)
 
-    ret = asmod.get_dangerous_accessible_space(
-        prepared,
-        ball_player_id="ball",
-        x_pitch_min=_X_PITCH_MIN,
-        x_pitch_max=_X_PITCH_MAX,
-        y_pitch_min=_Y_PITCH_MIN,
-        y_pitch_max=_Y_PITCH_MAX,
-        infer_attacking_direction=True,
-        use_progress_bar=use_progress_bar,
-        **_COLUMN_MAP,
-        **kwargs,
-    )
+    with _suppress_offside_warning():
+        ret = asmod.get_dangerous_accessible_space(
+            prepared,
+            ball_player_id="ball",
+            x_pitch_min=_X_PITCH_MIN,
+            x_pitch_max=_X_PITCH_MAX,
+            y_pitch_min=_Y_PITCH_MIN,
+            y_pitch_max=_Y_PITCH_MAX,
+            infer_attacking_direction=True,
+            player_in_possession_col=ppc,
+            use_progress_bar=use_progress_bar,
+            **_COLUMN_MAP,
+            **kwargs,
+        )
+    if ppc is None:
+        _warn_no_carrier_once()
 
     if len(ret.acc_space) != len(prepared):
         warnings.warn(
@@ -216,6 +278,7 @@ def get_individual_das(
     *,
     use_progress_bar: bool = False,
     attacking_direction_col: str | None = None,
+    player_in_possession_col: str | None = _DEFAULT_PLAYER_IN_POSSESSION_COL,
     **kwargs,
 ) -> pd.DataFrame:
     """Per-player Accessible Space and Dangerous Accessible Space per frame.
@@ -249,21 +312,26 @@ def get_individual_das(
     See NOTICE for full bibliographic citations.
     """
     asmod = _import_accessible_space()
+    ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
     prepared = _prepare_frames(frames)
 
-    ret = asmod.get_individual_dangerous_accessible_space(
-        prepared,
-        ball_player_id="ball",
-        x_pitch_min=_X_PITCH_MIN,
-        x_pitch_max=_X_PITCH_MAX,
-        y_pitch_min=_Y_PITCH_MIN,
-        y_pitch_max=_Y_PITCH_MAX,
-        infer_attacking_direction=attacking_direction_col is None,
-        attacking_direction_col=attacking_direction_col,
-        use_progress_bar=use_progress_bar,
-        **_COLUMN_MAP,
-        **kwargs,
-    )
+    with _suppress_offside_warning():
+        ret = asmod.get_individual_dangerous_accessible_space(
+            prepared,
+            ball_player_id="ball",
+            x_pitch_min=_X_PITCH_MIN,
+            x_pitch_max=_X_PITCH_MAX,
+            y_pitch_min=_Y_PITCH_MIN,
+            y_pitch_max=_Y_PITCH_MAX,
+            infer_attacking_direction=attacking_direction_col is None,
+            attacking_direction_col=attacking_direction_col,
+            player_in_possession_col=ppc,
+            use_progress_bar=use_progress_bar,
+            **_COLUMN_MAP,
+            **kwargs,
+        )
+    if ppc is None:
+        _warn_no_carrier_once()
 
     if len(ret.player_acc_space) != len(prepared):
         warnings.warn(

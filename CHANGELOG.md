@@ -5,6 +5,44 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] — 2026-06-01
+
+### Changed — ghost-GK density now uses a vectorized scipy-faithful KDE (default)
+
+`GhostGkModel.predict_density` replaces the per-sample `scipy.stats.gaussian_kde` with a
+vectorized weighted-Gaussian KDE kernel that reuses scipy's exact Scott bandwidth +
+weighted-covariance + Cholesky whitening (`cho_factor`/`cho_solve`), so outputs match the
+scipy reference within float64 tolerance (golden-master gated: continuous grid at
+`rtol≈1e-7`+atol+NaN-mask, discrete mode at exact argmax). The scipy path is retained as a
+selectable reference via a new `kde_backend="scipy" | "vectorized"` argument (default
+`"vectorized"`); the per-sample leaf-match is vectorized and the training set is streamed in
+blocks (`train_block`, default 1024) to bound memory under the serverless 1 GB UDF cap.
+Motivation: full-chain profiling identified `add_ghost_gk` as the dominant action-context
+cost. Output columns (`ghost_gk_x/y/spread`) and the public API are unchanged.
+
+### Added — DAS forwards the ball carrier to accessible-space (correct offside, no log flood)
+
+`derive_team_in_possession` now also preserves `ball_carrier_player_id` on the returned
+frames. `get_das` / `get_individual_das` accept `player_in_possession_col`
+(default `"ball_carrier_player_id"`): when present it is forwarded to accessible-space so
+`respect_offside` (the DAS default) excludes the passer from the offside mask. This silences
+accessible-space's per-call `player_in_possession_col` warning that previously flooded logs.
+A/B + unit tests confirm the forwarding is value-neutral (zero AS/DAS change) on real data;
+any future change would be a documented accuracy improvement. When no carrier column is
+available, silly-kicks emits its own one-time guidance instead of the per-call library
+warning. An explicitly-named missing column raises `ValueError`.
+
+### Fixed — clearer dead-ball message on link-restricted DAS subsets
+
+When `add_das(..., links=...)` restricts to an all-dead-ball frame subset, silly-kicks now
+raises its own clear "dead-ball window" `ValueError` (degraded to NaN as before) instead of
+letting accessible-space's generic "empty / no non-NaN team in possession" error surface.
+
+### Changed — elastic-sync distance lookup vectorized
+
+`_build_player_ball_distance_lookup` builds its key/value dict vectorially instead of per-row
+`.iloc` access (behaviour-preserving; golden-checked).
+
 ## [4.1.1] — 2026-06-01
 
 ### Fixed — numba on-disk cache no longer hard-fails import on read-only installs

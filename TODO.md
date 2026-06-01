@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-01. **Current release**: silly-kicks 4.1.1. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-01. **Current release**: silly-kicks 4.2.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -56,6 +56,19 @@ Items are ranked top-to-bottom by specification completeness. Tier 3–4 require
   (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
   constraints (e.g. "zero Spark imports in domain") hold in practice and that
   superseded decisions are updated. Frequency: once per minor release cycle.
+- **GS tracking-frames id dtype inconsistency (latent correctness bug; needs own
+  brainstorm).** `GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS` (`tracking/schema.py:44-48`)
+  forces `player_id`/`team_id` to `Int64`, whereas `KLOPPY`/`SPORTEC` use `object`
+  (native strings). Consumers that compare frame ids to native-string action /
+  `home_team_id` values (`utils.py` `_resolve_action_frame_context`,
+  `_defensive_line.py`) get `Int64(366) == "366"` → `False`, silently breaking GS
+  actor/opponent/defensive-line/possession resolution regardless of the player-id
+  helper. Verified lakehouse-side (2026-06-01 review); lakehouse uses a string-coercion
+  workaround after `convert_to_frames`. **Chesterton's Fence:** GS `Int64` is a
+  deliberate PR-S18 convention (NaN on ball rows; mirrors `GRADIENTSPORTS_SPADL_COLUMNS`)
+  and ADR-001 holds converter identifier conventions sacred — so the fix (align GS frames
+  to `object`/native-string **vs** make every consumer dtype-safe **vs** document + guard)
+  needs its own spec/brainstorm, not a drive-by change. Size: Wicked.
 
 ---
 
