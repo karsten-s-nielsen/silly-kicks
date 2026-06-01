@@ -6,6 +6,7 @@ regenerate and review the diff when bumping either dependency.
 
 Run: .venv/Scripts/python.exe scripts/gen_ghost_gk_kde_golden.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -51,9 +52,7 @@ def main() -> None:
         spread=spread,
     )
     print(f"wrote {OUT} ({OUT.stat().st_size / 1e6:.2f} MB)")
-    print(
-        f"gen-env: py={sys.version.split()[0]} numpy={np.__version__} scipy={scipy.__version__}"
-    )
+    print(f"gen-env: py={sys.version.split()[0]} numpy={np.__version__} scipy={scipy.__version__}")
 
 
 if __name__ == "__main__":

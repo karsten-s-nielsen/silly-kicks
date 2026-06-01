@@ -1,4 +1,5 @@
 """Phase 0a — vectorized ghost-GK KDE: kernel parity, leaf-match, golden master."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -16,9 +17,7 @@ def small_model() -> tuple[GhostGkModel, pd.DataFrame]:
     rng = np.random.default_rng(7)
     X = pd.DataFrame(rng.standard_normal((400, 26)), columns=GHOST_GK_FEATURE_NAMES)
     X["phase"] = rng.integers(0, 3, 400).astype(float)
-    labels = pd.DataFrame(
-        {"gk_x": rng.uniform(2, 20, 400), "gk_y": rng.uniform(25, 45, 400)}
-    )
+    labels = pd.DataFrame({"gk_x": rng.uniform(2, 20, 400), "gk_y": rng.uniform(25, 45, 400)})
     model = GhostGkModel(n_estimators=40)
     model.fit(X, labels)
     return model, X

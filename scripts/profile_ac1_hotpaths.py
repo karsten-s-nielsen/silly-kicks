@@ -7,6 +7,7 @@ Persist _phase0_report.txt BEFORE any cleanup.
   --attribute : cProfile add_ghost_gk + add_elastic_sync on a real provider batch and
                 print the callers of pandas _ixs / __getitem__ (Phase-0b attribution).
 """
+
 from __future__ import annotations
 
 import cProfile
@@ -39,8 +40,7 @@ def _bench() -> None:
         model.predict_density(X, kde_backend=backend)
         dt = time.perf_counter() - t0
         print(
-            f"[bench] {backend:10s}: {dt:.3f}s over {len(X)} samples "
-            f"({1000 * dt / len(X):.2f} ms/sample)",
+            f"[bench] {backend:10s}: {dt:.3f}s over {len(X)} samples ({1000 * dt / len(X):.2f} ms/sample)",
             flush=True,
         )
     # cProfile the vectorized path

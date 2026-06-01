@@ -44,9 +44,7 @@ _DEFAULT_PLAYER_IN_POSSESSION_COL = "ball_carrier_player_id"
 _OFFSIDE_WARNED = False
 
 
-def _resolve_player_in_possession_col(
-    frames: pd.DataFrame, player_in_possession_col: str | None
-) -> str | None:
+def _resolve_player_in_possession_col(frames: pd.DataFrame, player_in_possession_col: str | None) -> str | None:
     """Resolve the carrier column to forward to accessible-space.
 
     - ``None``: caller opted out; do not forward.
@@ -59,9 +57,7 @@ def _resolve_player_in_possession_col(
     if player_in_possession_col in frames.columns:
         return player_in_possession_col
     if player_in_possession_col != _DEFAULT_PLAYER_IN_POSSESSION_COL:
-        raise ValueError(
-            f"player_in_possession_col={player_in_possession_col!r} not found in frames columns"
-        )
+        raise ValueError(f"player_in_possession_col={player_in_possession_col!r} not found in frames columns")
     return None
 
 
@@ -69,9 +65,7 @@ def _resolve_player_in_possession_col(
 def _suppress_offside_warning():
     """Suppress accessible-space's per-call offside warning; silly-kicks owns this UX."""
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore", message=".*player_in_possession_col.*", category=UserWarning
-        )
+        warnings.filterwarnings("ignore", message=".*player_in_possession_col.*", category=UserWarning)
         yield
 
 
@@ -139,7 +133,14 @@ def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
             out[col] = out[col].astype(object)
         elif dtype_name == "boolean":
             out[col] = out[col].astype(bool)
-    out["player_id"] = out["player_id"].astype(object)
+    # accessible-space indexes the team / player columns 2-D (e.g. ``passer_teams[:, None]``
+    # in the offside path). pandas StringDtype / pyarrow-backed arrays (the default for string
+    # columns on newer pandas) reject 2-D indexing -> "IndexError: too many indices for array".
+    # Force numpy ``object`` so the library always sees a plain ndarray. (Idempotent for the
+    # object/int64 columns it already handled.)
+    for col in ("team_id", "team_in_possession", "player_id"):
+        if col in out.columns:
+            out[col] = out[col].astype(object)
     ball_mask = out["is_ball"] == True  # noqa: E712
     out.loc[ball_mask, "player_id"] = "ball"
     return out

@@ -1,4 +1,5 @@
 """Behaviour-preserving check for the de-iloc'd distance lookup (Phase 0b)."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -12,14 +13,29 @@ def _frames() -> pd.DataFrame:
     rows = []
     for fid in range(40):
         rows.append(
-            {"game_id": 1, "period_id": 1, "frame_id": fid, "player_id": None,
-             "team_id": None, "is_ball": True, "x": 50.0 + rng.normal(), "y": 34.0 + rng.normal()}
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": fid,
+                "player_id": None,
+                "team_id": None,
+                "is_ball": True,
+                "x": 50.0 + rng.normal(),
+                "y": 34.0 + rng.normal(),
+            }
         )
         for pid in range(6):
             rows.append(
-                {"game_id": 1, "period_id": 1, "frame_id": fid, "player_id": f"p{pid}",
-                 "team_id": 1 + pid % 2, "is_ball": False,
-                 "x": rng.uniform(0, 105), "y": rng.uniform(0, 68)}
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": fid,
+                    "player_id": f"p{pid}",
+                    "team_id": 1 + pid % 2,
+                    "is_ball": False,
+                    "x": rng.uniform(0, 105),
+                    "y": rng.uniform(0, 68),
+                }
             )
     return pd.DataFrame(rows)
 
@@ -53,6 +69,6 @@ def test_lookup_matches_oracle_and_key_dtypes():
     k = next(iter(lookup))
     assert isinstance(k[0], (int, np.integer))  # game_id
     assert isinstance(k[1], (int, np.integer))  # period_id
-    assert isinstance(k[2], int)                # frame_id -> Python int (int(...))
-    assert isinstance(k[3], str)                # player_id -> Python str (str(...))
+    assert isinstance(k[2], int)  # frame_id -> Python int (int(...))
+    assert isinstance(k[3], str)  # player_id -> Python str (str(...))
     assert all(isinstance(v, float) for v in lookup.values())

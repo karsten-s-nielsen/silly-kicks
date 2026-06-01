@@ -1207,9 +1207,7 @@ class GhostGkModel:
         result[:, 1] = reg_y.predict(X)
         return result
 
-    def predict_density(
-        self, features: pd.DataFrame, *, kde_backend: str = "vectorized"
-    ) -> list[GhostGkDensity]:
+    def predict_density(self, features: pd.DataFrame, *, kde_backend: str = "vectorized") -> list[GhostGkDensity]:
         """Full density prediction per sample.
 
         Computes leaf co-occurrence weights, weighted 2D KDE, grid evaluation.

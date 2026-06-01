@@ -616,15 +616,35 @@ def _tiny_poss_frames() -> pd.DataFrame:
     rows = []
     for fid in range(6):
         rows.append(
-            {"game_id": 1, "period_id": 1, "frame_id": fid, "time_seconds": fid / 25,
-             "player_id": None, "team_id": None, "is_ball": True,
-             "is_goalkeeper": False, "x": 50.0 + fid, "y": 34.0, "ball_state": "alive"}
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": fid,
+                "time_seconds": fid / 25,
+                "player_id": None,
+                "team_id": None,
+                "is_ball": True,
+                "is_goalkeeper": False,
+                "x": 50.0 + fid,
+                "y": 34.0,
+                "ball_state": "alive",
+            }
         )
         for pid, tid in [(10, 1), (20, 2)]:
             rows.append(
-                {"game_id": 1, "period_id": 1, "frame_id": fid, "time_seconds": fid / 25,
-                 "player_id": pid, "team_id": tid, "is_ball": False,
-                 "is_goalkeeper": False, "x": 50.0 + fid + tid, "y": 34.0, "ball_state": "alive"}
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": fid,
+                    "time_seconds": fid / 25,
+                    "player_id": pid,
+                    "team_id": tid,
+                    "is_ball": False,
+                    "is_goalkeeper": False,
+                    "x": 50.0 + fid + tid,
+                    "y": 34.0,
+                    "ball_state": "alive",
+                }
             )
     return pd.DataFrame(rows)
 
@@ -639,9 +659,7 @@ def test_derive_team_in_possession_preserves_carrier_player_id():
     assert "ball_carrier_player_id" in out.columns  # NEW: carrier id preserved
     merged = out.merge(
         carrier[["game_id", "period_id", "frame_id", "ball_carrier_player_id"]],
-        on=["game_id", "period_id", "frame_id"], suffixes=("", "_ref"),
+        on=["game_id", "period_id", "frame_id"],
+        suffixes=("", "_ref"),
     )
-    assert (
-        merged["ball_carrier_player_id"].fillna(-1)
-        == merged["ball_carrier_player_id_ref"].fillna(-1)
-    ).all()
+    assert (merged["ball_carrier_player_id"].fillna(-1) == merged["ball_carrier_player_id_ref"].fillna(-1)).all()

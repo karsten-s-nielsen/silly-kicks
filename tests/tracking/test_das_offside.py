@@ -1,4 +1,5 @@
 """Phase 0c — DAS carrier forwarding: value-neutral + warning silenced + validation."""
+
 from __future__ import annotations
 
 import warnings
@@ -24,15 +25,36 @@ def _frames_with_carrier() -> pd.DataFrame:
             (21, "Away", 75.0),
         ]:
             rows.append(
-                {"game_id": 1, "period_id": 1, "frame_id": fid, "player_id": pid,
-                 "team_id": tid, "x": x + rng.normal(0, 0.5), "y": 34.0 + rng.normal(0, 1),
-                 "vx": 0.0, "vy": 0.0, "is_ball": False, "team_in_possession": "Home",
-                 "ball_carrier_player_id": 10}
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": fid,
+                    "player_id": pid,
+                    "team_id": tid,
+                    "x": x + rng.normal(0, 0.5),
+                    "y": 34.0 + rng.normal(0, 1),
+                    "vx": 0.0,
+                    "vy": 0.0,
+                    "is_ball": False,
+                    "team_in_possession": "Home",
+                    "ball_carrier_player_id": 10,
+                }
             )
         rows.append(
-            {"game_id": 1, "period_id": 1, "frame_id": fid, "player_id": "ball",
-             "team_id": None, "x": 30.0, "y": 34.0, "vx": 0.0, "vy": 0.0,
-             "is_ball": True, "team_in_possession": "Home", "ball_carrier_player_id": 10}
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": fid,
+                "player_id": "ball",
+                "team_id": None,
+                "x": 30.0,
+                "y": 34.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "is_ball": True,
+                "team_in_possession": "Home",
+                "ball_carrier_player_id": 10,
+            }
         )
     return pd.DataFrame(rows)
 
@@ -42,16 +64,26 @@ def test_forwarding_is_value_neutral_and_silences_warning():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         r_on = get_das(frames, player_in_possession_col="ball_carrier_player_id")
-    assert not any(
-        "player_in_possession_col should be set" in str(x.message) for x in w
-    ), "library offside warning not silenced"
+    assert not any("player_in_possession_col should be set" in str(x.message) for x in w), (
+        "library offside warning not silenced"
+    )
     r_off = get_das(frames, player_in_possession_col=None)
-    np.testing.assert_allclose(
-        r_on["AS"].to_numpy(), r_off["AS"].to_numpy(), rtol=1e-12, atol=1e-12, equal_nan=True
-    )
-    np.testing.assert_allclose(
-        r_on["DAS"].to_numpy(), r_off["DAS"].to_numpy(), rtol=1e-12, atol=1e-12, equal_nan=True
-    )
+    np.testing.assert_allclose(r_on["AS"].to_numpy(), r_off["AS"].to_numpy(), rtol=1e-12, atol=1e-12, equal_nan=True)
+    np.testing.assert_allclose(r_on["DAS"].to_numpy(), r_off["DAS"].to_numpy(), rtol=1e-12, atol=1e-12, equal_nan=True)
+
+
+def test_arrow_backed_team_columns_dont_crash():
+    """pyarrow-backed string team columns (newer-pandas default) must not break get_das.
+
+    accessible-space indexes the team columns 2-D (offside path); _prepare_frames coerces
+    them to numpy object. Regression for the PR #87 CI failure on py3.11/3.12 (numpy 2.4).
+    """
+    pytest.importorskip("pyarrow")
+    frames = _frames_with_carrier()
+    for c in ("team_id", "team_in_possession", "player_id"):
+        frames[c] = frames[c].astype("string[pyarrow]")
+    result = get_das(frames, player_in_possession_col="ball_carrier_player_id")
+    assert "DAS" in result.columns and result["DAS"].notna().any()
 
 
 def test_explicit_missing_carrier_col_raises():
@@ -88,13 +120,24 @@ def test_all_deadball_linked_subset_degrades_with_clear_message():
     # Make frames 2-4 dead-ball; keep 0-1 alive so the FULL-frame _pin guard passes.
     frames.loc[frames["frame_id"] >= 2, "team_in_possession"] = np.nan
     actions = pd.DataFrame(
-        {"game_id": [1, 1], "action_id": [1, 2], "period_id": [1, 1],
-         "team_id": ["Home", "Home"], "player_id": [10, 11],
-         "start_x": [30.0, 35.0], "start_y": [34.0, 34.0]}
+        {
+            "game_id": [1, 1],
+            "action_id": [1, 2],
+            "period_id": [1, 1],
+            "team_id": ["Home", "Home"],
+            "player_id": [10, 11],
+            "start_x": [30.0, 35.0],
+            "start_y": [34.0, 34.0],
+        }
     )
     links = pd.DataFrame(
-        {"action_id": [1, 2], "frame_id": [3, 4], "time_offset_seconds": [0.0, 0.0],
-         "n_candidate_frames": [1, 1], "link_quality_score": [1.0, 1.0]}
+        {
+            "action_id": [1, 2],
+            "frame_id": [3, 4],
+            "time_offset_seconds": [0.0, 0.0],
+            "n_candidate_frames": [1, 1],
+            "link_quality_score": [1.0, 1.0],
+        }
     )
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
