@@ -1099,6 +1099,55 @@ def _kde_density_numba(
     return out.reshape(GRID_NX, GRID_NY)
 
 
+def _kde_density_fft(
+    gk_x_w: np.ndarray,
+    gk_y_w: np.ndarray,
+    w: np.ndarray,
+    grid_points: np.ndarray,  # unused: signature parity with the brute-force backends; uses the module grid
+) -> np.ndarray:
+    """Binned-convolution weighted Gaussian KDE on the fixed grid. O(k + m log m).
+
+    Reuses the EXACT ``_kde_setup`` kernel as the brute-force backends (same weighted Scott
+    covariance + Cholesky PD-branch + det/norm), so the convolution kernel is the identical
+    anisotropic Gaussian; the SOLE approximation is snapping each training point to its nearest
+    grid cell (NGP binning). Then one linear (zero-padded) FFT convolution gives
+    ``sum_j w_j K(grid - point_j)`` in O(m log m), independent of the point count k -- versus the
+    O(k*m) brute force (k = full training set, ~36k, on every ghost-GK prediction).
+
+    Faithful on the SUMMARY SCALARS predict_density emits (mode/mean/spread: mean is a grid
+    integral, spread an entropy, mode the argmax peak -- all robust to per-cell binning noise),
+    but NOT bit-faithful on the raw per-cell ``probabilities`` grid (binning quantizes per-cell
+    mass; ~1.5% typical / up to ~65% on near-zero tail cells). Consumers reading the raw grid
+    (not just the 3 scalars) should use ``"vectorized"``. See ADR-014.
+
+    ``_kde_setup`` raises ``np.linalg.LinAlgError`` on a singular covariance exactly as the other
+    backends, so predict_density's uniform-fallback applies unchanged. Returns the UNnormalized
+    density grid (GRID_NX, GRID_NY); predict_density divides by ``.sum()`` so ``norm`` cancels.
+    """
+    from scipy.signal import fftconvolve
+
+    _data, w_n, h11, h12, h22, det, norm = _kde_setup(gk_x_w, gk_y_w, w)
+    inv_det = 1.0 / det
+
+    # 1. NGP-bin the weighted points onto the fixed grid (uniform, cell-centered: idx =
+    #    round((p - p0)/res)); out-of-grid points clip to the edge cell (negligible in practice,
+    #    and the full-extent kernel below still carries their tail mass inward).
+    ix = np.clip(np.rint((gk_x_w - _GRID_X[0]) / GRID_RESOLUTION).astype(np.int64), 0, GRID_NX - 1)
+    iy = np.clip(np.rint((gk_y_w - _GRID_Y[0]) / GRID_RESOLUTION).astype(np.int64), 0, GRID_NY - 1)
+    field = np.zeros((GRID_NX, GRID_NY), dtype=np.float64)
+    np.add.at(field, (ix, iy), w_n)
+
+    # 2. Analytic anisotropic Gaussian kernel at full-grid extent ((2*NX-1, 2*NY-1) so mode="same"
+    #    is exact-centered; spans the whole grid so the untruncated-Gaussian tails are captured --
+    #    same energy form as _kde_density_vectorized).
+    dx = (np.arange(-(GRID_NX - 1), GRID_NX) * GRID_RESOLUTION)[:, None]
+    dy = (np.arange(-(GRID_NY - 1), GRID_NY) * GRID_RESOLUTION)[None, :]
+    kernel = norm * np.exp(-0.5 * inv_det * (h22 * dx * dx - 2.0 * h12 * dx * dy + h11 * dy * dy))
+
+    # 3. One linear (zero-padded) convolution = sum_j w_j * K(grid - point_j).
+    return fftconvolve(field, kernel, mode="same")
+
+
 # ---------------------------------------------------------------------------
 # Model class
 # ---------------------------------------------------------------------------
@@ -1252,10 +1301,14 @@ class GhostGkModel:
 
         Parameters
         ----------
-        kde_backend : {"vectorized", "scipy", "cpu-numba"}, default "vectorized"
+        kde_backend : {"vectorized", "scipy", "cpu-numba", "fft"}, default "vectorized"
             KDE kernel. "vectorized" (cpu-numpy) is the default closed-form path; "scipy" is the
             reference oracle; "cpu-numba" runs the serial @njit fused loop (~10x the hot loop,
-            value-equivalent within golden tolerance) and requires the ``[numba]`` extra.
+            value-equivalent within golden tolerance) and requires the ``[numba]`` extra; "fft"
+            is the binned-convolution backend (O(k + m log m); ~2000x on the full-k production
+            regime) -- faithful on the emitted scalars (mode/mean/spread) but NOT bit-faithful on
+            the raw ``probabilities`` grid (NGP binning quantizes per-cell mass). Use "vectorized"
+            if you read the raw grid; "fft" if you only consume mode_x/y + spread. See ADR-014.
 
         Examples
         --------
@@ -1304,6 +1357,8 @@ class GhostGkModel:
                         probs = _kde_density_vectorized(gk_x_w, gk_y_w, w, grid_points)
                     elif kde_backend == "cpu-numba":
                         probs = _kde_density_numba(gk_x_w, gk_y_w, w, grid_points)
+                    elif kde_backend == "fft":
+                        probs = _kde_density_fft(gk_x_w, gk_y_w, w, grid_points)
                     else:
                         msg = f"Unknown kde_backend: {kde_backend!r}"
                         raise ValueError(msg)
@@ -1567,9 +1622,11 @@ def compute_ghost_gk(
         per-sample independent, so the restricted result is byte-identical to the
         unrestricted one for the kept frames. When None, every sample is predicted
         (backward-compatible). See PR-S66 spec sections 2-3.
-    kde_backend : {"vectorized", "scipy", "cpu-numba"}, default "vectorized"
+    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft"}, default "vectorized"
         KDE kernel forwarded to ``predict_density``. "cpu-numba" runs the serial @njit fused
-        loop (requires the ``[numba]`` extra); value-equivalent to the default within tolerance.
+        loop (requires the ``[numba]`` extra); "fft" is the binned-convolution backend (~2000x,
+        scalar-faithful but raw-grid-approximate -- see ADR-014). Value-equivalent to the default
+        within tolerance on the emitted scalars.
 
     Returns
     -------
