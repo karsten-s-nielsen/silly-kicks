@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] — 2026-06-01
+
+### Added — `cpu-numba` ghost-GK KDE backend (~10× the closed-form hot loop, single-thread)
+
+`GhostGkModel.predict_density` / `compute_ghost_gk` / `add_ghost_gk` / `ghost_gk_xfns` accept
+`kde_backend="cpu-numba"` (default stays `"vectorized"` = cpu-numpy). It runs a serial `@njit` fully-fused closed-form KDE loop
+(no per-block temporaries), validated parity-exact (rtol 1e-9, incl. the production-scale k≈36000 case
+and the near-singular zone) against the numpy kernel. The headline **~10× on the hot loop was measured
+numba-serial vs numpy with all thread env vars pinned to 1** (`OMP/OPENBLAS/MKL/NUMEXPR/NUMBA_NUM_THREADS=1`)
+— single-thread-vs-single-thread, the Spark-`applyInPandas` in-venue reality. The numpy setup keeps
+`cho_factor` for the PD/singular branch + `log_det`, so the singular→uniform fallback boundary is
+byte-identical to the numpy path. Requires the `[numba]` extra (lazily imported; `import silly_kicks`
+stays numba-free). Opt-in — value-equivalent to the numpy default within golden tolerance.
+
+### Changed — default ghost-GK KDE whitening is now closed-form (removes `cho_solve`)
+
+**Heads-up for pinned consumers (Hyrum's Law): this shifts the DEFAULT `vectorized` backend's output, not
+just the opt-in `cpu-numba` path.** `_kde_density_vectorized` now computes the 2×2 Mahalanobis energy in
+closed form (`0.5/det·(h₂₂·dx² − 2·h₁₂·dx·dy + h₁₁·dy²)`) instead of `cho_solve`, sharing a new `_kde_setup`
+with the numba backend. Every consumer's `ghost_gk_x`/`ghost_gk_y`/`ghost_gk_spread` move by `~1e-12..1e-9`
+on a plain `4.2.0 → 4.3.0` upgrade, even without selecting a new backend. `cho_factor` is retained for the
+PD-branch + `log_det` (singular→uniform boundary unchanged from 4.2.0); value-equivalent within the frozen
+golden's `rtol≈1e-7` (golden NOT regenerated). The closed form alone is ~1.0× single-thread (the win is the
+numba loop above); it lands as the shared foundation.
+
 ## [4.2.0] — 2026-06-01
 
 ### Changed — ghost-GK density now uses a vectorized scipy-faithful KDE (default)

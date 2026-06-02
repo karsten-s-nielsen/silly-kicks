@@ -273,6 +273,13 @@ carrier-offside contract is carried into Appendix A.
 
 ## 4. Phase 1+ (deferred, gated) — multi-backend GPU engine playbook
 
+> **Status update (2026-06-01):** Phase 0 shipped in silly-kicks **4.2.0**; the lakehouse A/B
+> confirmed ghost-GK is still **91%** of the AC-1 chain after vectorization. Lakehouse review then
+> reframed Phase 1: AC-1 runs in **CPU-only serverless `applyInPandas`** (no GPU venue) and touches
+> only 84 tracking matches → **Phase 1 = numba-first (in-venue)**, GPU deferred until numba's gain is
+> measured. See `docs/superpowers/specs/2026-06-01-ghost-gk-kde-numba-acceleration-design.md`
+> (→ ADR-013). This GPU playbook below stays the reference for the deferred GPU track.
+
 Reusable for whichever path wins §3.4 (likely the ghost-GK KDE; the eval is an embarrassingly-
 parallel weighted Gaussian sum over samples × grid × train — same GPU profile as DAS). The
 discipline is unchanged from the reviewed DAS design and applied to the target kernel:

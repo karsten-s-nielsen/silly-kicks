@@ -1004,6 +1004,42 @@ def _kde_density_scipy(
     return density_vals.reshape(GRID_NX, GRID_NY)
 
 
+def _kde_setup(
+    gk_x_w: np.ndarray,
+    gk_y_w: np.ndarray,
+    w: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float, float, float, float, float]:
+    """Shared closed-form KDE setup for the numpy + numba kernels (Leg-B: identical setup).
+
+    Weighted Scott-bandwidth covariance + Cholesky PD-branch + self-consistent det/norm.
+    cho_factor raises np.linalg.LinAlgError on a non-PD covariance (collinear/identical points)
+    -- same as scipy's cholesky -- so predict_density's ``except np.linalg.LinAlgError`` degrades
+    to the uniform grid (the singular boundary is byte-identical to 4.2.0). ``norm`` is DERIVED
+    from scipy's normalization 1/((2*pi)^(d/2) * sqrt(det(H))): sqrt(det(H)) = exp(0.5*log_det),
+    so norm = exp(-0.5*(log_det + d*log(2*pi))). ``det`` is derived from the SAME factor as
+    log_det/norm (det(H) = det(L)^2 = (L00*L11)^2, chol[0] holding L on its diagonal for
+    lower=True), keeping the whitening (1/det) and normalization self-consistent in the
+    near-singular zone and avoiding the catastrophic cancellation of an independently-rounded
+    h11*h22 - h12^2 as det -> 0.
+
+    Returns (data, w, h11, h12, h22, det, norm): data (2, k) float64, w normalized.
+    """
+    from scipy.linalg import cho_factor
+
+    w = np.asarray(w, dtype=np.float64)
+    w = w / w.sum()
+    data = np.vstack([np.asarray(gk_x_w, np.float64), np.asarray(gk_y_w, np.float64)])  # (2, k)
+    d = 2
+    neff = 1.0 / np.sum(w**2)
+    factor = neff ** (-1.0 / (d + 4))
+    covariance = np.atleast_2d(np.cov(data, rowvar=True, bias=False, aweights=w)) * factor**2
+    chol = cho_factor(covariance, lower=True)
+    log_det = 2.0 * np.sum(np.log(np.diag(chol[0])))
+    norm = np.exp(-0.5 * (log_det + d * np.log(2.0 * np.pi)))
+    det = (chol[0][0, 0] * chol[0][1, 1]) ** 2
+    return data, w, covariance[0, 0], covariance[0, 1], covariance[1, 1], det, norm
+
+
 def _kde_density_vectorized(
     gk_x_w: np.ndarray,
     gk_y_w: np.ndarray,
@@ -1012,52 +1048,54 @@ def _kde_density_vectorized(
     *,
     train_block: int = 1024,
 ) -> np.ndarray:
-    """Vectorized weighted Gaussian KDE on the fixed grid (scipy-faithful).
+    """Vectorized weighted Gaussian KDE on the fixed grid (closed-form 2x2 whitening).
 
-    Reuses scipy's Scott bandwidth + weighted covariance + Cholesky whitening
-    (NOT a matrix inverse) so it matches scipy.stats.gaussian_kde within ~1e-9.
-    Streams the training subset in blocks of ``train_block`` to bound memory for
-    the 537k "full" variant. Returns the UNnormalized density grid (GRID_NX, GRID_NY).
+    Reuses ``_kde_setup`` (shared with the cpu-numba backend) for the weighted covariance +
+    Cholesky PD-branch + det/norm, then streams the training subset in blocks of ``train_block``,
+    computing the closed-form 2x2 Mahalanobis energy directly from dx,dy. H = covariance is 2x2
+    PD (cho_factor succeeded), so H^-1 = (1/det)[[h22,-h12],[-h12,h11]] and
+    ``energy = 0.5/det * (h22*dx^2 - 2*h12*dx*dy + h11*dy^2)`` -- no (2,kb,m) diff/tdiff
+    temporaries. Returns the norm-scaled density grid (GRID_NX, GRID_NY).
 
-    Default ``train_block=1024`` is the conservative serverless choice: with grid m=3840,
-    the largest transient ``(2, kb, m)`` + tdiff + energy is ~150 MB/block, safe under the
-    Databricks 1 GB ``applyInPandas`` cap. The serverless venue runs the 9 MB "default" model
-    whose per-sample nonzero leaf subsets are small (k often < 1024 -> chunking rarely binds),
-    so 1024 costs ~nothing there; the local benchmark can raise it for the in-memory "full"
-    model.
+    Default ``train_block=1024`` is the conservative serverless choice: with grid m=3840, the
+    largest transient ``(kb, m)`` dx/dy/energy is ~150 MB/block, safe under the Databricks 1 GB
+    ``applyInPandas`` cap. The 9 MB "default" model's per-sample nonzero leaf subsets are small
+    (k often < 1024 -> chunking rarely binds), so 1024 costs ~nothing there; the local benchmark
+    can raise it for the in-memory "full" model.
     """
-    from scipy.linalg import cho_factor, cho_solve
-
-    w = np.asarray(w, dtype=np.float64)
-    w = w / w.sum()
-    data = np.vstack([np.asarray(gk_x_w, np.float64), np.asarray(gk_y_w, np.float64)])  # (2, k)
-    d = 2
-    neff = 1.0 / np.sum(w**2)
-    factor = neff ** (-1.0 / (d + 4))
-    data_cov = np.atleast_2d(np.cov(data, rowvar=True, bias=False, aweights=w))
-    covariance = data_cov * factor**2
-    # Cholesky path (matches scipy _kde.py): whitening via cho_solve; lower=True so the
-    # factor's diagonal is in np.diag(chol[0]). cho_factor raises np.linalg.LinAlgError on a
-    # singular covariance (collinear/identical points) -- same as scipy's cholesky -- and
-    # predict_density's `except np.linalg.LinAlgError` degrades both to the uniform grid.
-    chol = cho_factor(covariance, lower=True)
-    log_det = 2.0 * np.sum(np.log(np.diag(chol[0])))
-    # norm is DERIVED from scipy's normalization 1/((2*pi)^(d/2) * sqrt(det(H))), not tuned:
-    #   sqrt(det(H)) = exp(0.5*log_det)  =>  norm = exp(-0.5*(log_det + d*log(2*pi))).
-    norm = np.exp(-0.5 * (log_det + d * np.log(2.0 * np.pi)))
-
+    data, w, h11, h12, h22, det, norm = _kde_setup(gk_x_w, gk_y_w, w)
+    inv_det = 1.0 / det
+    gx = grid_points[0]  # (m,)
+    gy = grid_points[1]  # (m,)
     m = grid_points.shape[1]
     out = np.zeros(m, dtype=np.float64)
     k = data.shape[1]
     for start in range(0, k, train_block):
         sl = slice(start, min(start + train_block, k))
-        diff = grid_points[:, None, :] - data[:, sl, None]  # (2, kb, m)
-        kb = diff.shape[1]
-        flat = diff.reshape(d, kb * m)
-        tdiff = cho_solve(chol, flat)  # whiten (2, kb*m)
-        energy = 0.5 * np.sum(flat * tdiff, axis=0).reshape(kb, m)  # (kb, m)
+        dx = gx[None, :] - data[0, sl][:, None]  # (kb, m)
+        dy = gy[None, :] - data[1, sl][:, None]  # (kb, m)
+        energy = 0.5 * inv_det * (h22 * dx * dx - 2.0 * h12 * dx * dy + h11 * dy * dy)  # (kb, m)
         out += np.einsum("k,km->m", w[sl], np.exp(-energy))
     out *= norm
+    return out.reshape(GRID_NX, GRID_NY)
+
+
+def _kde_density_numba(
+    gk_x_w: np.ndarray,
+    gk_y_w: np.ndarray,
+    w: np.ndarray,
+    grid_points: np.ndarray,
+) -> np.ndarray:
+    """cpu-numba KDE: numpy ``_kde_setup`` (cho_factor branch + det/norm) + the @njit fused loop.
+
+    No ``train_block`` chunking is needed -- the numba loop has no ``(k, m)`` temporaries. The
+    numba module is imported lazily here so ``import silly_kicks.tracking._ghost_gk`` stays
+    numba-free (numba is only required when the cpu-numba backend is actually selected).
+    """
+    from ._ghost_gk_numba import _kde_numba_loop
+
+    data, w, h11, h12, h22, det, norm = _kde_setup(gk_x_w, gk_y_w, w)
+    out = _kde_numba_loop(grid_points[0], grid_points[1], data[0], data[1], w, h11, h12, h22, 1.0 / det, norm)
     return out.reshape(GRID_NX, GRID_NY)
 
 
@@ -1212,6 +1250,13 @@ class GhostGkModel:
 
         Computes leaf co-occurrence weights, weighted 2D KDE, grid evaluation.
 
+        Parameters
+        ----------
+        kde_backend : {"vectorized", "scipy", "cpu-numba"}, default "vectorized"
+            KDE kernel. "vectorized" (cpu-numpy) is the default closed-form path; "scipy" is the
+            reference oracle; "cpu-numba" runs the serial @njit fused loop (~10x the hot loop,
+            value-equivalent within golden tolerance) and requires the ``[numba]`` extra.
+
         Examples
         --------
         >>> densities = model.predict_density(X_test)
@@ -1257,6 +1302,8 @@ class GhostGkModel:
                         probs = _kde_density_scipy(gk_x_w, gk_y_w, w, grid_points)
                     elif kde_backend == "vectorized":
                         probs = _kde_density_vectorized(gk_x_w, gk_y_w, w, grid_points)
+                    elif kde_backend == "cpu-numba":
+                        probs = _kde_density_numba(gk_x_w, gk_y_w, w, grid_points)
                     else:
                         msg = f"Unknown kde_backend: {kde_backend!r}"
                         raise ValueError(msg)
@@ -1489,6 +1536,7 @@ def compute_ghost_gk(
     home_team_id: int | str,
     actions: pd.DataFrame | None = None,
     link_frame_ids: set[int] | None = None,
+    kde_backend: str = "vectorized",
 ) -> pd.DataFrame:
     """Per-frame ghost-GK primitive (batched).
 
@@ -1519,6 +1567,9 @@ def compute_ghost_gk(
         per-sample independent, so the restricted result is byte-identical to the
         unrestricted one for the kept frames. When None, every sample is predicted
         (backward-compatible). See PR-S66 spec sections 2-3.
+    kde_backend : {"vectorized", "scipy", "cpu-numba"}, default "vectorized"
+        KDE kernel forwarded to ``predict_density``. "cpu-numba" runs the serial @njit fused
+        loop (requires the ``[numba]`` extra); value-equivalent to the default within tolerance.
 
     Returns
     -------
@@ -1558,7 +1609,7 @@ def compute_ghost_gk(
         return out
 
     # Batch predict
-    densities = resolved.predict_density(batch_features)
+    densities = resolved.predict_density(batch_features, kde_backend=kde_backend)
 
     # Build result DataFrame from predictions (single merge, not O(n*m) loop)
     result_df = pd.DataFrame(
