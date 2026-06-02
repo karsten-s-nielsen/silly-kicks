@@ -329,8 +329,8 @@ def infer_ball_carrier(
     frames: pd.DataFrame,
     *,
     tolerance_m: float = 3.0,
-    beta: float = 0.5,
-    gamma: float = 1.0,
+    beta: float = 0.0,
+    gamma: float = 0.25,
     pre: dict | None = None,
 ) -> pd.DataFrame:
     """Per-frame ball-carrier inference with hysteresis.
@@ -340,20 +340,36 @@ def infer_ball_carrier(
     composite score of distance and velocity-toward-ball, with an incumbent
     bonus (``gamma``) to prevent flickering.
 
+    The ``beta`` and ``gamma`` defaults are **Optuna-calibrated (TF-24)** at the
+    held ``tolerance_m=3.0`` against a 3-provider fold (SkillCorner + IDSSE/DFL +
+    Gradient Sports), maximizing carrier accuracy; the Balanced and Gold-max folds
+    agreed (``beta``≈0.0002/0.0009, ``gamma``≈0.221/0.259). ``beta=0`` (down from an
+    engineering default of 0.5) means velocity-toward-ball weighting did not help
+    carrier-actor accuracy; ``gamma≈0.25`` (down from 1.0) means near-stateless
+    selection is best. ``tolerance_m`` is **left at 3.0**: the carrier-actor-action
+    calibration objective is *under-determined* on the radius (its labels are
+    on-ball moments only, with no loose-ball negatives, so it presses the radius to
+    the upper search bound — not a value to apply). See the calibration manifest in
+    the TF-24 run reports.
+
     Parameters
     ----------
     frames : pd.DataFrame
         Long-form tracking frames (TRACKING_FRAMES_COLUMNS shape).
     tolerance_m : float, default 3.0
         Maximum ball-to-player distance for candidacy (meters).
-        Carrier-attribution radius, not dribbling-contact threshold.
-    beta : float, default 0.5
+        Carrier-attribution radius, not dribbling-contact threshold. Held at the
+        original engineering value — objective-under-determined (see above).
+    beta : float, default 0.0
         Distance advantage per m/s of velocity toward ball (seconds).
-    gamma : float, default 1.0
+        Optuna-calibrated (TF-24) to ~0 — velocity weighting did not help.
+        ``beta=0`` makes selection purely distance-based.
+    gamma : float, default 0.25
         Hysteresis bonus for incumbent carrier (meters). The incumbent's
         score is reduced by ``gamma``, so a new candidate must be
         ``gamma`` meters better in composite score to take over.
-        ``gamma=0`` gives stateless per-frame behaviour.
+        ``gamma=0`` gives stateless per-frame behaviour. Optuna-calibrated
+        (TF-24) to ~0.25 (near-stateless).
     pre : dict, optional
         Precomputed ``_pre_index_frames(frames)`` result. The pre-index step
         (long-form frames → dense per-frame numpy arrays) is a pure function of
@@ -376,7 +392,7 @@ def infer_ball_carrier(
     Infer ball carrier for a full match::
 
         from silly_kicks.tracking import infer_ball_carrier
-        carriers = infer_ball_carrier(frames, tolerance_m=3.0, beta=0.5, gamma=1.0)
+        carriers = infer_ball_carrier(frames, tolerance_m=3.0, beta=0.0, gamma=0.25)
 
     References
     ----------

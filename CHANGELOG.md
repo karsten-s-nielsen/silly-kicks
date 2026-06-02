@@ -5,6 +5,32 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.0] — 2026-06-02
+
+### Changed — TF-24 apply: Optuna-calibrated `infer_ball_carrier` defaults (`beta` 0.5→0.0, `gamma` 1.0→0.25)
+
+The TF-24 calibration is applied. `infer_ball_carrier` and `ball_carrier_at_action` defaults change:
+**`beta` 0.5 → 0.0** (velocity-toward-ball weighting did not help carrier-actor accuracy → selection is
+now purely distance-based) and **`gamma` 1.0 → 0.25** (near-stateless hysteresis). These are Optuna-calibrated
+at the held `tolerance_m=3.0` against a 3-provider fold (SkillCorner + IDSSE/DFL + Gradient Sports); the
+Balanced (25-match) and Gold-max (45-match) folds **independently agreed** (`beta`≈0.0002/0.0009,
+`gamma`≈0.221/0.259). Gain is modest — ~+2pp carrier accuracy at the default radius. This closes TF-24.
+
+**`tolerance_m` is deliberately left at 3.0.** The carrier-actor-action calibration objective is
+**under-determined on the radius**: its labels are on-ball moments only (no loose-ball negatives), so a wider
+radius monotonically improves recall and the objective presses `tolerance_m` to the upper search bound on both
+folds — a label-set artifact, not a validated optimum. Calibrating the radius would need loose-ball negatives.
+(The earlier `tolerance_m≈1.0` from the pre-4.4.0 sweep was the *opposite* artifact of a since-fixed
+precision-only objective; see 4.4.0.)
+
+**Heads-up (Hyrum's Law):** `infer_ball_carrier` is called across the tracking layer (DAS, ghost-GK,
+defensive line, team shape, possession), so this shifts carrier attribution for **every** tracking consumer
+(including lakehouse) — calibrated and modest, but a behavior change. It is also a retrain input for the
+(currently untrained) TF-16 xShotOccurrence model, which records + consumes the carrier params. **TF-25**
+(provider-specific pressure-aggregation form) is **not triggered** — the cross-provider dispersion its trigger
+requires did not appear (the only dispersion was the `tolerance_m` label-set artifact + carrier data-quality
+differences, neither indicating provider-dependent aggregation form).
+
 ## [4.6.0] — 2026-06-02
 
 ### Added — `kde_backend="fft"` ghost-GK KDE backend (binned-convolution, ~2000× on the full-k regime)
