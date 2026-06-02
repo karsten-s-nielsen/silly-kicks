@@ -90,6 +90,63 @@ class TestDtypeMismatch:
         assert len(result) == 2
 
 
+class TestKdeBackend:
+    def test_add_ghost_gk_cpu_numba_matches_default(self):
+        """add_ghost_gk(kde_backend="cpu-numba") == default (vectorized) within tolerance.
+
+        Guards the kde_backend threading add_ghost_gk -> compute_ghost_gk -> predict_density.
+        ghost_gk_x/y are discrete modes (a near-tie argmax can shift <=1 grid cell on numba's
+        accumulation order), so compare them within GRID_RESOLUTION; ghost_gk_spread is
+        continuous, compared at rtol 1e-7.
+        """
+        from silly_kicks.tracking._ghost_gk import GRID_RESOLUTION
+        from silly_kicks.tracking.features import add_ghost_gk
+
+        model, _, _ = _fitted_model()
+        actions = pd.DataFrame(
+            {
+                "game_id": ["100", "100"],
+                "action_id": [1, 2],
+                "period_id": [1, 1],
+                "time_seconds": [1.0, 2.0],
+                "team_id": [2, 2],
+                "player_id": ["a10", "a11"],
+                "start_x": [50.0, 55.0],
+                "start_y": [34.0, 34.0],
+                "end_x": [55.0, 60.0],
+                "end_y": [34.0, 34.0],
+                "type_id": [0, 0],
+                "result_id": [1, 1],
+                "bodypart_id": [0, 0],
+            }
+        )
+        frames = pd.concat(
+            [
+                _make_ghost_gk_frames(frame_id=1, timestamp=1.0),
+                _make_ghost_gk_frames(frame_id=2, timestamp=2.0),
+            ],
+            ignore_index=True,
+        )
+        base = add_ghost_gk(actions, frames, model=model, home_team_id=1)
+        nb = add_ghost_gk(actions, frames, model=model, home_team_id=1, kde_backend="cpu-numba")
+
+        # Meaningful (not a vacuous NaN==NaN): at least one finite ghost position.
+        assert np.isfinite(base["ghost_gk_x"].to_numpy(dtype=float)).any()
+        for col in ("ghost_gk_x", "ghost_gk_y"):  # discrete modes: <=1 grid cell
+            b = base[col].to_numpy(dtype=float)
+            n = nb[col].to_numpy(dtype=float)
+            assert np.array_equal(np.isnan(b), np.isnan(n))
+            mask = ~np.isnan(b)
+            assert np.all(np.abs(b[mask] - n[mask]) <= GRID_RESOLUTION + 1e-9)
+        np.testing.assert_allclose(
+            nb["ghost_gk_spread"].to_numpy(dtype=float),
+            base["ghost_gk_spread"].to_numpy(dtype=float),
+            rtol=1e-7,
+            atol=1e-9,
+            equal_nan=True,
+        )
+
+
 class TestTF19Interface:
     def test_ghost_gk_with_gk_deterrent_interface(self):
         """Density grid compatible with TF-19 consumption."""

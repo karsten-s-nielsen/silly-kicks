@@ -3655,6 +3655,7 @@ def add_ghost_gk(
     links: pd.DataFrame | None = None,
     home_team_id: int | str,
     actions_for_context: pd.DataFrame | None = None,
+    kde_backend: str = "vectorized",
 ) -> pd.DataFrame:
     """Enrich actions with ghost-GK positioning columns.
 
@@ -3681,6 +3682,10 @@ def add_ghost_gk(
     actions_for_context : pd.DataFrame | None
         SPADL actions for score_diff and phase context resolution.
         If None, context defaults to 0 (backward-compatible).
+    kde_backend : {"vectorized", "scipy", "cpu-numba"}, default "vectorized"
+        KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs
+        the serial @njit fused loop (requires the ``[numba]`` extra); value-equivalent to the
+        default within tolerance.
 
     Examples
     --------
@@ -3719,6 +3724,7 @@ def add_ghost_gk(
             home_team_id=home_team_id,
             actions=actions_for_context,
             link_frame_ids=link_frame_ids,
+            kde_backend=kde_backend,
         )
 
     # Extract ghost predictions from GK rows
@@ -3758,10 +3764,16 @@ def add_ghost_gk(
     return out
 
 
-def ghost_gk_xfns(*, model=None, home_team_id: int | str) -> list:
+def ghost_gk_xfns(*, model=None, home_team_id: int | str, kde_backend: str = "vectorized") -> list:
     """Factory returning a FrameAwareTransformer for ghost-GK features.
 
     3 columns x 3 game states = 9 VAEP columns.
+
+    Parameters
+    ----------
+    kde_backend : {"vectorized", "scipy", "cpu-numba"}, default "vectorized"
+        KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs the
+        serial @njit fused loop (requires the ``[numba]`` extra); value-equivalent within tolerance.
 
     Examples
     --------
@@ -3803,6 +3815,7 @@ def ghost_gk_xfns(*, model=None, home_team_id: int | str) -> list:
             model=resolved,
             home_team_id=home_team_id,
             link_frame_ids=link_frame_ids,
+            kde_backend=kde_backend,
         )
 
         for i, (slot, pointers) in enumerate(zip(states[:3], slot_pointers, strict=False)):

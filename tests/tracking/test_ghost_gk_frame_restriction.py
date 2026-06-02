@@ -110,9 +110,9 @@ class TestComputeGhostGkRestriction:
         captured: list[int] = []
         orig = model.predict_density
 
-        def spy(features):
+        def spy(features, **kwargs):
             captured.append(len(features))
-            return orig(features)
+            return orig(features, **kwargs)
 
         monkeypatch.setattr(model, "predict_density", spy)
         compute_ghost_gk(frames, model=model, home_team_id=1, link_frame_ids=linked)
@@ -275,6 +275,36 @@ class TestGhostGkXfnsRestriction:
 
         pd.testing.assert_frame_equal(restricted, full)
 
+    def test_xfns_cpu_numba_matches_default(self):
+        """ghost_gk_xfns(kde_backend="cpu-numba") == default within tolerance.
+
+        Guards the kde_backend threading ghost_gk_xfns -> compute_ghost_gk. The *_x/*_y columns
+        are discrete modes (a near-tie argmax can shift <=1 grid cell on numba's accumulation
+        order); *_spread columns are continuous.
+        """
+        from silly_kicks.tracking._ghost_gk import GRID_RESOLUTION
+        from silly_kicks.tracking.features import ghost_gk_xfns
+
+        model, _, _ = _fitted_model()
+        frames, _ = _make_goal_flip_velocity_fixture()
+        states = self._states()
+
+        (base_xfn,) = ghost_gk_xfns(model=model, home_team_id=1)
+        (nb_xfn,) = ghost_gk_xfns(model=model, home_team_id=1, kde_backend="cpu-numba")
+        base = base_xfn(states, frames)
+        nb = nb_xfn(states, frames)
+
+        assert list(nb.columns) == list(base.columns)
+        for col in base.columns:
+            b = base[col].to_numpy(dtype=float)
+            n = nb[col].to_numpy(dtype=float)
+            assert np.array_equal(np.isnan(b), np.isnan(n))
+            mask = ~np.isnan(b)
+            if col.startswith(("ghost_gk_x", "ghost_gk_y")):  # discrete modes: <=1 grid cell
+                assert np.all(np.abs(b[mask] - n[mask]) <= GRID_RESOLUTION + 1e-9)
+            else:  # ghost_gk_spread: continuous
+                np.testing.assert_allclose(n[mask], b[mask], rtol=1e-7, atol=1e-9)
+
 
 def _make_dense_match(n_frames: int = 250, home_team_id: int = 1, away_team_id: int = 2):
     """Multi-frame fixture for the structural call-count guard + a bit-identical
@@ -321,9 +351,9 @@ class TestGhostGkRestrictionStructuralGuard:
         captured: list[int] = []
         orig = model.predict_density
 
-        def spy(features):
+        def spy(features, **kwargs):
             captured.append(len(features))
-            return orig(features)
+            return orig(features, **kwargs)
 
         monkeypatch.setattr(model, "predict_density", spy)
         compute_ghost_gk(frames, model=model, home_team_id=1, link_frame_ids=linked)

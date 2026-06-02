@@ -64,7 +64,7 @@ def default_model_features(golden):
 # "scipy" here: re-running scipy on the 36k-sample bundled model to compare it against its own
 # frozen output is circular AND ~116s/call. scipy reproducibility is covered by the gen script
 # + the regen-on-bump maintenance note. The frozen npz IS the scipy oracle.
-@pytest.mark.parametrize("kde_backend", ["vectorized"])
+@pytest.mark.parametrize("kde_backend", ["vectorized", "cpu-numba"])
 def test_golden_continuous(golden, default_model_features, kde_backend):
     """Density grid + mean + spread: rtol/atol + explicit NaN-mask equality.
 
@@ -88,15 +88,29 @@ def test_golden_continuous(golden, default_model_features, kde_backend):
     np.testing.assert_allclose(mean_y, golden["mean_y"][:n], rtol=1e-7, atol=1e-9)
 
 
-@pytest.mark.parametrize("kde_backend", ["vectorized"])
+@pytest.mark.parametrize("kde_backend", ["vectorized", "cpu-numba"])
 def test_golden_discrete_mode(golden, default_model_features, kde_backend):
-    """mode_x/y (argmax): exact grid-cell match (NOT rtol)."""
+    """mode_x/y (argmax): exact grid-cell match for vectorized; <=1 cell for cpu-numba.
+
+    numba's j-outer/i-inner sequential accumulation vs numpy's pairwise reduction can flip a
+    NEAR-TIE argmax by <=1 grid cell. The density field is the primary check
+    (test_golden_continuous); the mode is derived, so for cpu-numba allow a <=GRID_RESOLUTION
+    shift. vectorized stays exact (it matched the frozen scipy golden in 4.2.0).
+    """
+    from silly_kicks.tracking._ghost_gk import GRID_RESOLUTION
+
     model, X = default_model_features
     densities = model.predict_density(X, kde_backend=kde_backend)
     mode_x = np.array([d.mode_x for d in densities])
     mode_y = np.array([d.mode_y for d in densities])
-    np.testing.assert_array_equal(mode_x, golden["mode_x"][:_N_GOLDEN])
-    np.testing.assert_array_equal(mode_y, golden["mode_y"][:_N_GOLDEN])
+    gmx = golden["mode_x"][:_N_GOLDEN]
+    gmy = golden["mode_y"][:_N_GOLDEN]
+    if kde_backend == "vectorized":
+        np.testing.assert_array_equal(mode_x, gmx)
+        np.testing.assert_array_equal(mode_y, gmy)
+    else:  # cpu-numba: near-tie argmax can shift <=1 grid cell on a different reduction order
+        assert np.all(np.abs(mode_x - gmx) <= GRID_RESOLUTION + 1e-9)
+        assert np.all(np.abs(mode_y - gmy) <= GRID_RESOLUTION + 1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +202,9 @@ def _small_dispatch_model():
     return GhostGkModel(n_estimators=10, max_depth=2).fit(X, labels), X
 
 
-@pytest.mark.parametrize("backend", ["scipy", "vectorized"])
+@pytest.mark.parametrize("backend", ["scipy", "vectorized", "cpu-numba"])
 def test_predict_density_backend_parity_small_model(backend):
-    """predict_density end-to-end: vectorized == scipy (NaN-mask + values) on a small model."""
+    """predict_density end-to-end: vectorized/cpu-numba == scipy (NaN-mask + values), small model."""
     model, X = _small_dispatch_model()
     sci = model.predict_density(X, kde_backend="scipy")
     other = model.predict_density(X, kde_backend=backend)
@@ -224,27 +238,28 @@ def test_vectorized_chunking_invariant():
 
 
 def test_vectorized_is_chunked_structural(monkeypatch):
-    """Structural bound: cho_solve runs per-block, never on the full k*m at once.
+    """Structural bound: the per-block exp runs ceil(k/block) times, never over the full k*m.
 
-    numpy buffers under-report in tracemalloc and shared-runner RSS is flaky, so guard the
-    memory bound structurally: an unchunked impl calls cho_solve ONCE with kb=k; a correctly
-    chunked one calls it ceil(k/block) times, each with shape[1] <= block*m.
+    Step-1 closed-form removed cho_solve; the per-block primitive is now ``np.exp(-energy)`` over a
+    ``(kb, m)`` array. numpy buffers under-report in tracemalloc and shared-runner RSS is flaky, so
+    guard the memory bound structurally: an unchunked impl calls exp ONCE over ``(k, m)``; a correctly
+    chunked one calls it ceil(k/block) times, each with ``<= block`` rows. (The scalar ``norm`` exp is
+    0-d and excluded by the ndim==2 filter.)
     """
-    import scipy.linalg as sla
-
     from silly_kicks.tracking._ghost_gk import _GRID_X, _GRID_Y, _kde_density_vectorized
 
-    m = 60 * 64
     block = 1024
     k = 5000  # -> ceil(5000/1024) = 5 blocks
-    calls = []
-    real = sla.cho_solve
+    shapes = []
+    real_exp = np.exp
 
-    def _spy(c_and_lower, b, **kw):
-        calls.append(b.shape)
-        return real(c_and_lower, b, **kw)
+    def _spy(x, *a, **kw):
+        arr = np.asarray(x)
+        if arr.ndim == 2:
+            shapes.append(arr.shape)
+        return real_exp(x, *a, **kw)
 
-    monkeypatch.setattr(sla, "cho_solve", _spy)
+    monkeypatch.setattr(np, "exp", _spy)
 
     rng = np.random.default_rng(5)
     gk_x_w = rng.uniform(0, 30, k)
@@ -255,8 +270,8 @@ def test_vectorized_is_chunked_structural(monkeypatch):
 
     out = _kde_density_vectorized(gk_x_w, gk_y_w, w, grid_points, train_block=block)
     assert out.shape == (60, 64)
-    assert len(calls) == int(np.ceil(k / block)), f"expected per-block cho_solve, got {len(calls)}"
-    assert all(shp[1] <= block * m for shp in calls), "a cho_solve saw more than one block of work"
+    assert len(shapes) == int(np.ceil(k / block)), f"expected per-block exp, got {len(shapes)}"
+    assert all(shp[0] <= block for shp in shapes), "an exp saw more than one block of rows"
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +315,7 @@ def test_predict_density_lt2_weight_returns_uniform(monkeypatch, small_model):
 
     monkeypatch.setattr(g, "_leaf_match_weights", _fake)
     uniform = 1.0 / (60 * 64)
-    for backend in ("scipy", "vectorized"):
+    for backend in ("scipy", "vectorized", "cpu-numba"):
         d = model.predict_density(X.iloc[:1], kde_backend=backend)[0]
         np.testing.assert_allclose(d.probabilities, uniform, rtol=0, atol=1e-15)
 
@@ -326,3 +341,149 @@ def test_default_backend_makes_no_scipy_kde(small_model, monkeypatch):
     model, X = small_model
     _ = model.predict_density(X)  # default backend
     assert calls["n"] == 0, "default path still constructs scipy.gaussian_kde"
+
+
+# ---------------------------------------------------------------------------
+# Step 1 (closed-form): near-singular parity (cho_solve Leg-B anchor + scipy backstop)
+# ---------------------------------------------------------------------------
+
+
+def _cho_solve_kde_grid(gk_x_w, gk_y_w, w, grid_points):
+    """4.2.0's cho_solve whitening, reproduced version-independently (Leg-B reference)."""
+    from scipy.linalg import cho_factor, cho_solve
+
+    from silly_kicks.tracking._ghost_gk import GRID_NX, GRID_NY
+
+    w = np.asarray(w, np.float64)
+    w = w / w.sum()
+    data = np.vstack([np.asarray(gk_x_w, np.float64), np.asarray(gk_y_w, np.float64)])
+    neff = 1.0 / np.sum(w**2)
+    factor = neff ** (-1.0 / 6.0)  # Scott, d=2 -> -1/(d+4)
+    cov = np.atleast_2d(np.cov(data, rowvar=True, bias=False, aweights=w)) * factor**2
+    chol = cho_factor(cov, lower=True)
+    log_det = 2.0 * np.sum(np.log(np.diag(chol[0])))
+    norm = np.exp(-0.5 * (log_det + 2.0 * np.log(2.0 * np.pi)))
+    diff = grid_points[:, :, None] - data[:, None, :]  # (2, m, k)
+    tdiff = cho_solve(chol, diff.reshape(2, -1))
+    energy = 0.5 * np.sum(diff.reshape(2, -1) * tdiff, axis=0).reshape(grid_points.shape[1], data.shape[1])
+    out = (np.exp(-energy) @ w) * norm
+    return out.reshape(GRID_NX, GRID_NY)
+
+
+def _near_singular_inputs():
+    # 30 points almost on a line y = 34 + 1e-3*(x-15): tiny off-axis spread -> high 2x2
+    # covariance condition number (near-singular but positive-definite).
+    rng = np.random.default_rng(123)
+    gk_x_w = rng.uniform(0, 30, 30)
+    gk_y_w = 34.0 + 1e-3 * (gk_x_w - 15.0) + rng.normal(0, 1e-4, 30)
+    w = rng.uniform(0.1, 1.0, 30)
+    w = w / w.sum()
+    return gk_x_w, gk_y_w, w
+
+
+def test_kernel_near_singular_parity():
+    """Near-singular-but-PD covariance: vectorized kernel matches BOTH the cho_solve
+    reference (Leg-B, sharp) and scipy (Leg-A, backstop) within tolerance.
+    """
+    from silly_kicks.tracking._ghost_gk import _GRID_X, _GRID_Y, _kde_density_vectorized
+
+    gk_x_w, gk_y_w, w = _near_singular_inputs()
+    gxx, gyy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
+    grid_points = np.vstack([gxx.ravel(), gyy.ravel()])
+
+    got = _kde_density_vectorized(gk_x_w, gk_y_w, w, grid_points)
+    np.testing.assert_allclose(got, _cho_solve_kde_grid(gk_x_w, gk_y_w, w, grid_points), rtol=1e-7, atol=1e-12)
+    np.testing.assert_allclose(got, _scipy_kde_grid(gk_x_w, gk_y_w, w, grid_points), rtol=1e-7, atol=1e-12)
+
+
+def test_vectorized_kernel_uses_no_cho_solve(small_model, monkeypatch):
+    """Step-1 optimization: the vectorized kernel must NOT call cho_solve (closed-form energy
+    replaces it). cho_factor is still used for the PD-branch + log_det.
+
+    Patch scipy.linalg.cho_solve (the MODULE attribute), NOT
+    silly_kicks.tracking._ghost_gk.cho_solve: the kernel imports cho_solve *function-scope*
+    (`from scipy.linalg import ...` inside _kde_density_vectorized), re-binding it from
+    scipy.linalg on every call -> patching scipy.linalg DOES intercept it (verified: 3 calls on
+    the pre-change kernel). There is NO module-level _ghost_gk.cho_solve, so a
+    `monkeypatch.setattr(_ghost_gk, "cho_solve", ...)` / `hasattr(...)` form would be a no-op
+    (always green). Do not "fix" it to that.
+    """
+    import scipy.linalg as sla
+
+    calls = {"solve": 0}
+    real_solve = sla.cho_solve
+    monkeypatch.setattr(
+        sla,
+        "cho_solve",
+        lambda *a, **k: (calls.__setitem__("solve", calls["solve"] + 1), real_solve(*a, **k))[1],
+    )
+    model, X = small_model
+    model.predict_density(X.iloc[:3], kde_backend="vectorized")
+    assert calls["solve"] == 0, "vectorized kernel still calls cho_solve"
+
+
+# ---------------------------------------------------------------------------
+# Step 2 (cpu-numba): @njit fused-loop kernel parity (Leg-B)
+# ---------------------------------------------------------------------------
+
+
+def test_numba_loop_matches_numpy_closed_form():
+    """The @njit fused loop == the numpy closed-form kernel (Leg-B, same _kde_setup), across the
+    regimes that matter for parity divergence:
+      - LARGE-k (k~36000): the PRODUCTION regime (lakehouse: real candidate clouds are ~36k leaf
+        positions, well-conditioned cond <= ~5.3, n=204). numba's j-outer/i-inner SEQUENTIAL
+        accumulation vs numpy einsum's PAIRWISE reduction diverges most when many terms are
+        summed -- this is the real-world gap, not near-singular.
+      - NEAR-SINGULAR: a conservative 1/det numerical-edge guard. Real ghost-GK never reaches
+        this regime (cond <= ~5.3), but it is cheap robustness against the ill-conditioned zone
+        where 1/det amplifies rounding.
+    """
+    from silly_kicks.tracking._ghost_gk import (
+        _GRID_X,
+        _GRID_Y,
+        GRID_NX,
+        GRID_NY,
+        _kde_density_vectorized,
+        _kde_setup,
+    )
+    from silly_kicks.tracking._ghost_gk_numba import _kde_numba_loop
+
+    gxx, gyy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
+    gp = np.vstack([gxx.ravel(), gyy.ravel()])
+
+    def _numba_grid(gk_x_w, gk_y_w, w):
+        data, wn, h11, h12, h22, det, norm = _kde_setup(gk_x_w, gk_y_w, w)
+        return _kde_numba_loop(gp[0], gp[1], data[0], data[1], wn, h11, h12, h22, 1.0 / det, norm).reshape(
+            GRID_NX, GRID_NY
+        )
+
+    rng = np.random.default_rng(11)
+    # Well-conditioned, incl. the production-scale k~36000 (the real accumulation-order regime).
+    for k in (3, 50, 2000, 36000):
+        x = rng.uniform(0, 30, k)
+        y = rng.uniform(18, 50, k)
+        w = rng.uniform(0.1, 1.0, k)
+        w = w / w.sum()
+        np.testing.assert_allclose(_numba_grid(x, y, w), _kde_density_vectorized(x, y, w, gp), rtol=1e-9, atol=1e-12)
+
+    # Conservative ill-conditioned guard (cond ~1e6). Real ghost-GK never reaches this (cond <= ~5.3,
+    # lakehouse n=204) -- a theoretical edge, looser Leg-B tol where 1/det amplifies rounding.
+    x, y, w = _near_singular_inputs()
+    np.testing.assert_allclose(_numba_grid(x, y, w), _kde_density_vectorized(x, y, w, gp), rtol=1e-7, atol=1e-12)
+
+
+def test_ghost_gk_does_not_eagerly_import_numba():
+    """Importing _ghost_gk must NOT transitively import numba or _ghost_gk_numba.
+
+    numba is loaded lazily only on the cpu-numba path (inside _kde_density_numba), so a bare
+    `import silly_kicks.tracking._ghost_gk` stays dependency-light. If this fails, an eager
+    top-level `from ._ghost_gk_numba import ...` slipped in -- move it into _kde_density_numba.
+    """
+    import importlib
+    import sys
+
+    for mod in ("numba", "silly_kicks.tracking._ghost_gk_numba", "silly_kicks.tracking._ghost_gk"):
+        sys.modules.pop(mod, None)
+    importlib.import_module("silly_kicks.tracking._ghost_gk")
+    assert "numba" not in sys.modules, "import _ghost_gk eagerly imported numba"
+    assert "silly_kicks.tracking._ghost_gk_numba" not in sys.modules
