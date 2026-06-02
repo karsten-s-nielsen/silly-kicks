@@ -3,8 +3,31 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-06-01 |
-| **Status** | Accepted |
+| **Status** | Accepted (amended 4.4.1 — DAS-value-neutral claim corrected, see Amendment) |
 | **Deciders** | Karsten Nielsen (maintainer), lakehouse review session |
+
+## Amendment (silly-kicks 4.4.1) — the DAS carrier-forwarding was NOT value-neutral
+
+This ADR (and the 4.2.0 changelog) claimed the ball-carrier offside forwarding was "value-neutral
+(zero AS/DAS change) on real data." **That was incorrect.** The validating A/B test
+(`test_das_offside.py`) placed the carrier clearly onside, so it never exercised the offside path;
+the "real data" A/B likewise did not hit a frame where the carrier crossed the offside line. A
+lakehouse golden e2e (IDSSE J03WMX p1) caught it: DAS changed 4.1.1→4.2.0 (`das_diff` maxΔ ≈ 261).
+
+Root cause (verified, accessible-space `core.py:183-204`): with `respect_offside` (the DAS default)
+accessible-space **deletes** offside attackers ("treats them like air"). The offside line is
+`max(2nd-last-defender_x, ball_x)` and the attacking team comes from `team_in_possession` — both
+identical before/after. The *only* delta is that forwarding `player_in_possession_col` **exempts the
+passer** from offside removal. On real matches the on-ball carrier is frequently tracked ~0.5 m ahead
+of the ball, tipping just over the line; 4.1.1 (no passer forwarded) deleted that on-ball player,
+redistributing their central space and distorting AS/DAS (e.g. inflating a nearby defender's
+`das_opponent` to an implausible ~367 m²). **So 4.2.0 is a correctness fix, not a regression** — it
+is precisely the failure accessible-space's own warning describes ("the ball carrier might be
+mis-identified as offside"). The carrier is correctly resolved (its team always equals
+`team_in_possession`; on the affected frames it is the nearest player to the ball). The effect is
+large but rare (≈1% of frames). **Downstream goldens frozen under ≤4.1.1 must be re-baselined** to
+the ≥4.2.0 values. Test correction + the regression-lock (`test_offside_carrier_forwarding_changes_das`)
+landed in 4.4.1.
 
 ## Context
 
@@ -49,8 +72,10 @@ the lakehouse serverless re-profile still showing ghost-GK as the bottleneck.
 - ghost-GK `predict_density` keeps a per-sample loop but removes scipy's per-call object overhead and
   vectorizes the leaf-match; the scipy `_reference` enables a model-traveling parity test that
   auto-revalidates on retrain.
-- DAS offside is now correct (passer excluded) and the per-call log flood is gone; A/B + unit tests
-  confirm the carrier forwarding is **value-neutral** (zero AS/DAS change) on real data.
+- DAS offside is now correct (passer excluded) and the per-call log flood is gone. **(Amended 4.4.1:
+  the original "value-neutral / zero AS/DAS change" claim here was wrong — see the Amendment above.
+  DAS values DID change in 4.2.0; it is a correctness fix, validated post-hoc, and downstream goldens
+  frozen under ≤4.1.1 must be re-baselined.)**
 - `ball_carrier_player_id` is now a first-class frame column for **all** downstream consumers, not
   just DAS.
 - Behaviour-preserving: golden masters (continuous grid `rtol≈1e-7`+atol+NaN-mask; discrete mode
