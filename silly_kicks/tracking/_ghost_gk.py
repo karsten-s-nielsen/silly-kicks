@@ -1099,6 +1099,65 @@ def _kde_density_numba(
     return out.reshape(GRID_NX, GRID_NY)
 
 
+def _bin_ngp(gk_x_w: np.ndarray, gk_y_w: np.ndarray, w_norm: np.ndarray) -> np.ndarray:
+    """Nearest-grid-point (NGP) binning of weighted points onto the fixed grid.
+
+    Each point is snapped to its single nearest cell (uniform, cell-centered grid: idx =
+    round((p - p0)/res)); out-of-grid points clip to the edge cell. Mass is conserved
+    (field.sum() == w_norm.sum()): every point contributes its full weight to exactly one cell.
+    """
+    ix = np.clip(np.rint((gk_x_w - _GRID_X[0]) / GRID_RESOLUTION).astype(np.int64), 0, GRID_NX - 1)
+    iy = np.clip(np.rint((gk_y_w - _GRID_Y[0]) / GRID_RESOLUTION).astype(np.int64), 0, GRID_NY - 1)
+    field = np.zeros((GRID_NX, GRID_NY), dtype=np.float64)
+    np.add.at(field, (ix, iy), w_norm)
+    return field
+
+
+def _bin_cic(gk_x_w: np.ndarray, gk_y_w: np.ndarray, w_norm: np.ndarray) -> np.ndarray:
+    """Cloud-in-cell (CIC / bilinear) binning of weighted points onto the fixed grid.
+
+    Each weighted point is spread bilinearly over its 4 surrounding cells with weights
+    (1-tx)(1-ty), tx(1-ty), (1-tx)ty, tx*ty (summing to 1), instead of snapped to the single
+    nearest cell (NGP). On a near-tie MULTIMODAL grid this preserves the relative peak masses, so
+    the emitted mode (argmax) flips ~76% less than NGP (real data: 21/97 -> 5/97; ADR-014). Mass
+    is conserved including for out-of-grid points: clip collapses indices to an edge cell but
+    np.add.at still accumulates all 4 contributions, so field.sum() == w_norm.sum().
+    """
+    fx = (gk_x_w - _GRID_X[0]) / GRID_RESOLUTION
+    fy = (gk_y_w - _GRID_Y[0]) / GRID_RESOLUTION
+    i0 = np.floor(fx).astype(np.int64)
+    j0 = np.floor(fy).astype(np.int64)
+    tx, ty = fx - i0, fy - j0
+    field = np.zeros((GRID_NX, GRID_NY), dtype=np.float64)
+    for di, wx in ((0, 1.0 - tx), (1, tx)):
+        ii = np.clip(i0 + di, 0, GRID_NX - 1)
+        for dj, wy in ((0, 1.0 - ty), (1, ty)):
+            jj = np.clip(j0 + dj, 0, GRID_NY - 1)
+            np.add.at(field, (ii, jj), w_norm * wx * wy)
+    return field
+
+
+def _fft_convolve_field(field: np.ndarray, h11: float, h12: float, h22: float, det: float, norm: float) -> np.ndarray:
+    """Shared FFT-convolution tail for the fft / fft-cic backends.
+
+    ``field`` is the binned weighted-point grid (GRID_NX, GRID_NY). Builds the full-extent analytic
+    anisotropic Gaussian kernel (identical energy form to _kde_density_vectorized) and returns the
+    UNnormalized density via one zero-padded linear fftconvolve = sum_j w_j K(grid - point_j) in
+    O(m log m). Binning is the SOLE per-backend difference; this tail is identical across fft /
+    fft-cic (predict_density divides by .sum(), so ``norm`` cancels).
+    """
+    # NB: this lazy (function-scope) import is LOAD-BEARING for the k-independence spy guard
+    # (test_fft*_is_k_independent_one_convolution) -- it resolves the patched scipy.signal attr at
+    # call time. Do NOT hoist to module level or the spy goes blind.
+    from scipy.signal import fftconvolve
+
+    inv_det = 1.0 / det
+    dx = (np.arange(-(GRID_NX - 1), GRID_NX) * GRID_RESOLUTION)[:, None]
+    dy = (np.arange(-(GRID_NY - 1), GRID_NY) * GRID_RESOLUTION)[None, :]
+    kernel = norm * np.exp(-0.5 * inv_det * (h22 * dx * dx - 2.0 * h12 * dx * dy + h11 * dy * dy))
+    return fftconvolve(field, kernel, mode="same")
+
+
 def _kde_density_fft(
     gk_x_w: np.ndarray,
     gk_y_w: np.ndarray,
@@ -1114,38 +1173,47 @@ def _kde_density_fft(
     ``sum_j w_j K(grid - point_j)`` in O(m log m), independent of the point count k -- versus the
     O(k*m) brute force (k = full training set, ~36k, on every ghost-GK prediction).
 
-    Faithful on the SUMMARY SCALARS predict_density emits (mode/mean/spread: mean is a grid
-    integral, spread an entropy, mode the argmax peak -- all robust to per-cell binning noise),
-    but NOT bit-faithful on the raw per-cell ``probabilities`` grid (binning quantizes per-cell
-    mass; ~1.5% typical / up to ~65% on near-zero tail cells). Consumers reading the raw grid
-    (not just the 3 scalars) should use ``"vectorized"``. See ADR-014.
+    Faithful on mean/spread always, and on the mode for UNIMODAL grids. On near-tie MULTIMODAL
+    grids the NGP snap can flip which peak is the argmax, shifting the emitted mode by several
+    metres (real data: up to ~6 m on ~22% of actions) -- use ``fft-cic`` (bilinear binning, ~76%
+    fewer flips) or ``vectorized`` when the mode matters on multimodal distributions. NOT
+    bit-faithful on the raw per-cell ``probabilities`` grid (binning quantizes per-cell mass;
+    ~1.5% typical / up to ~65% on near-zero tail cells). Consumers reading the raw grid should use
+    ``"vectorized"``. See ADR-014 (amended).
 
     ``_kde_setup`` raises ``np.linalg.LinAlgError`` on a singular covariance exactly as the other
     backends, so predict_density's uniform-fallback applies unchanged. Returns the UNnormalized
     density grid (GRID_NX, GRID_NY); predict_density divides by ``.sum()`` so ``norm`` cancels.
+
+    Shares ``_kde_setup`` + ``_fft_convolve_field`` verbatim with ``fft-cic``; the two differ only
+    in the binning step (this one ``_bin_ngp``, fft-cic ``_bin_cic``).
     """
-    from scipy.signal import fftconvolve
-
     _data, w_n, h11, h12, h22, det, norm = _kde_setup(gk_x_w, gk_y_w, w)
-    inv_det = 1.0 / det
+    field = _bin_ngp(gk_x_w, gk_y_w, w_n)
+    return _fft_convolve_field(field, h11, h12, h22, det, norm)
 
-    # 1. NGP-bin the weighted points onto the fixed grid (uniform, cell-centered: idx =
-    #    round((p - p0)/res)); out-of-grid points clip to the edge cell (negligible in practice,
-    #    and the full-extent kernel below still carries their tail mass inward).
-    ix = np.clip(np.rint((gk_x_w - _GRID_X[0]) / GRID_RESOLUTION).astype(np.int64), 0, GRID_NX - 1)
-    iy = np.clip(np.rint((gk_y_w - _GRID_Y[0]) / GRID_RESOLUTION).astype(np.int64), 0, GRID_NY - 1)
-    field = np.zeros((GRID_NX, GRID_NY), dtype=np.float64)
-    np.add.at(field, (ix, iy), w_n)
 
-    # 2. Analytic anisotropic Gaussian kernel at full-grid extent ((2*NX-1, 2*NY-1) so mode="same"
-    #    is exact-centered; spans the whole grid so the untruncated-Gaussian tails are captured --
-    #    same energy form as _kde_density_vectorized).
-    dx = (np.arange(-(GRID_NX - 1), GRID_NX) * GRID_RESOLUTION)[:, None]
-    dy = (np.arange(-(GRID_NY - 1), GRID_NY) * GRID_RESOLUTION)[None, :]
-    kernel = norm * np.exp(-0.5 * inv_det * (h22 * dx * dx - 2.0 * h12 * dx * dy + h11 * dy * dy))
+def _kde_density_fft_cic(
+    gk_x_w: np.ndarray,
+    gk_y_w: np.ndarray,
+    w: np.ndarray,
+    grid_points: np.ndarray,  # unused: signature parity with the brute-force backends
+) -> np.ndarray:
+    """Binned-convolution weighted Gaussian KDE with CIC (bilinear) binning. O(k + m log m).
 
-    # 3. One linear (zero-padded) convolution = sum_j w_j * K(grid - point_j).
-    return fftconvolve(field, kernel, mode="same")
+    Identical to ``_kde_density_fft`` except each weighted training point is spread BILINEARLY over
+    its 4 surrounding grid cells (``_bin_cic``) instead of snapped to the single nearest cell
+    (``_bin_ngp``). The ``_kde_setup`` kernel build and the ``_fft_convolve_field`` convolution are
+    shared verbatim. On near-tie MULTIMODAL grids CIC preserves the relative peak masses, so the
+    emitted mode (argmax) flips ~76% less than NGP (real data: 21/97 -> 5/97 actions). ~2x the NGP
+    bin cost, still ~1195x over ``vectorized``. Faithful on mean/spread; the raw per-cell grid is
+    tighter than NGP (~5.7e-3 vs 1.5e-2 median rel-err) but still approximate -- exact-grid
+    consumers use ``vectorized`` / ``cpu-numba``. ``_kde_setup`` raises ``np.linalg.LinAlgError`` on
+    a singular covariance exactly as the other backends. See ADR-014 (amended).
+    """
+    _data, w_n, h11, h12, h22, det, norm = _kde_setup(gk_x_w, gk_y_w, w)
+    field = _bin_cic(gk_x_w, gk_y_w, w_n)
+    return _fft_convolve_field(field, h11, h12, h22, det, norm)
 
 
 # ---------------------------------------------------------------------------
@@ -1301,14 +1369,17 @@ class GhostGkModel:
 
         Parameters
         ----------
-        kde_backend : {"vectorized", "scipy", "cpu-numba", "fft"}, default "vectorized"
+        kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
             KDE kernel. "vectorized" (cpu-numpy) is the default closed-form path; "scipy" is the
             reference oracle; "cpu-numba" runs the serial @njit fused loop (~10x the hot loop,
             value-equivalent within golden tolerance) and requires the ``[numba]`` extra; "fft"
             is the binned-convolution backend (O(k + m log m); ~2000x on the full-k production
-            regime) -- faithful on the emitted scalars (mode/mean/spread) but NOT bit-faithful on
-            the raw ``probabilities`` grid (NGP binning quantizes per-cell mass). Use "vectorized"
-            if you read the raw grid; "fft" if you only consume mode_x/y + spread. See ADR-014.
+            regime) -- faithful on mean/spread and on the mode for UNIMODAL grids, but on near-tie
+            MULTIMODAL grids the NGP snap can flip the emitted mode by several metres, and it is NOT
+            bit-faithful on the raw ``probabilities`` grid. "fft-cic" adds CIC (bilinear) binning:
+            ~76% fewer multimodal mode flips + tighter raw grid than "fft" (NGP) at ~2x the bin
+            cost. PREFER "fft-cic" over "fft" for new FFT consumers unless you need NGP's extra speed
+            on known-unimodal data; use "vectorized"/"cpu-numba" for an exact raw grid. See ADR-014.
 
         Examples
         --------
@@ -1359,6 +1430,8 @@ class GhostGkModel:
                         probs = _kde_density_numba(gk_x_w, gk_y_w, w, grid_points)
                     elif kde_backend == "fft":
                         probs = _kde_density_fft(gk_x_w, gk_y_w, w, grid_points)
+                    elif kde_backend == "fft-cic":
+                        probs = _kde_density_fft_cic(gk_x_w, gk_y_w, w, grid_points)
                     else:
                         msg = f"Unknown kde_backend: {kde_backend!r}"
                         raise ValueError(msg)
@@ -1622,11 +1695,13 @@ def compute_ghost_gk(
         per-sample independent, so the restricted result is byte-identical to the
         unrestricted one for the kept frames. When None, every sample is predicted
         (backward-compatible). See PR-S66 spec sections 2-3.
-    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft"}, default "vectorized"
+    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
         KDE kernel forwarded to ``predict_density``. "cpu-numba" runs the serial @njit fused
-        loop (requires the ``[numba]`` extra); "fft" is the binned-convolution backend (~2000x,
-        scalar-faithful but raw-grid-approximate -- see ADR-014). Value-equivalent to the default
-        within tolerance on the emitted scalars.
+        loop (requires the ``[numba]`` extra); "fft" is the binned-convolution backend (~2000x;
+        NGP binning -- can flip the mode on near-tie multimodal grids, raw-grid-approximate);
+        "fft-cic" adds CIC (bilinear) binning (~76% fewer multimodal mode flips + tighter raw grid
+        than "fft" at ~2x the bin cost). PREFER "fft-cic" over "fft" for new FFT consumers unless
+        you need NGP's extra speed on known-unimodal data. See ADR-014.
 
     Returns
     -------

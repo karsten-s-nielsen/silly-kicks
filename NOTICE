@@ -333,6 +333,11 @@ The ghost-GK positioning model in silly_kicks/tracking/_ghost_gk.py
   Density Estimation." arXiv:1804.05753.
   (Random forest leaf-assignment for CDE; weighted kernel density estimation)
 
+- Hockney, R. W. & Eastwood, J. W. (1988). "Computer Simulation Using
+  Particles." (Particle-mesh charge assignment: nearest-grid-point (NGP)
+  and cloud-in-cell (CIC, bilinear) binning -- the kde_backend="fft"/"fft-cic"
+  binning schemes for the O(k + m log m) FFT-convolution KDE; ADR-014)
+
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).
