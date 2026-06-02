@@ -155,8 +155,8 @@ def ball_carrier_at_action(
     *,
     tolerance_seconds: float = 0.2,
     tolerance_m: float = 3.0,
-    beta: float = 0.5,
-    gamma: float = 1.0,
+    beta: float = 0.0,
+    gamma: float = 0.25,
     pre: dict | None = None,
     links: pd.DataFrame | None = None,
 ) -> pd.Series:
@@ -175,10 +175,10 @@ def ball_carrier_at_action(
         Maximum |time_offset| for a valid link.
     tolerance_m : float, default 3.0
         Carrier-attribution radius passed to ``infer_ball_carrier``.
-    beta : float, default 0.5
-        Velocity weight passed to ``infer_ball_carrier``.
-    gamma : float, default 1.0
-        Hysteresis bonus passed to ``infer_ball_carrier``.
+    beta : float, default 0.0
+        Velocity weight passed to ``infer_ball_carrier`` (Optuna-calibrated, TF-24).
+    gamma : float, default 0.25
+        Hysteresis bonus passed to ``infer_ball_carrier`` (Optuna-calibrated, TF-24).
     pre : dict, optional
         Precomputed ``_pre_index_frames(frames)``, threaded to
         ``infer_ball_carrier`` to skip re-marshalling the frames. Both ``pre``

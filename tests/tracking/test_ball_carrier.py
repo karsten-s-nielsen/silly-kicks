@@ -101,7 +101,10 @@ class TestVelocityAwareScoring:
                 dict(pid=20, tid=1, x=52.5, y=34.0, vx=-4.0, vy=0.0),
             ],
         )
-        result = infer_ball_carrier(frames)
+        # Logic test: beta is set explicitly so the velocity-weighting assertion is
+        # independent of the calibrated default (beta=0.0 = pure distance, TF-24).
+        # This behavior is only observable with beta>0.
+        result = infer_ball_carrier(frames, beta=0.5)
         assert result["ball_carrier_player_id"].iloc[0] == 20
 
 
@@ -557,6 +560,37 @@ class TestReturnSchema:
         )
         result = infer_ball_carrier(frames)
         assert list(result.index) == list(range(len(result)))
+
+
+class TestCalibratedDefaults:
+    """The carrier scoring defaults are TF-24 Optuna-calibrated (apply-PR PR-S79).
+
+    ``beta``/``gamma`` were calibrated at the held ``tolerance_m=3.0`` against a 3-provider fold
+    (Balanced + Gold-max agreed: beta≈0, gamma≈0.24). ``tolerance_m`` is held at 3.0 because the
+    carrier-actor-action objective is under-determined on the radius. This is the single intentional
+    guard on the calibrated values — if they change, the calibration record must change too. Logic
+    tests elsewhere pass scoring params explicitly so they stay independent of these constants.
+    """
+
+    def test_infer_ball_carrier_calibrated_defaults(self):
+        import inspect
+
+        from silly_kicks.tracking._ball_carrier import infer_ball_carrier
+
+        params = inspect.signature(infer_ball_carrier).parameters
+        assert params["beta"].default == 0.0
+        assert params["gamma"].default == 0.25
+        assert params["tolerance_m"].default == 3.0  # held — objective-under-determined
+
+    def test_ball_carrier_at_action_calibrated_defaults(self):
+        import inspect
+
+        from silly_kicks.tracking.features import ball_carrier_at_action
+
+        params = inspect.signature(ball_carrier_at_action).parameters
+        assert params["beta"].default == 0.0
+        assert params["gamma"].default == 0.25
+        assert params["tolerance_m"].default == 3.0
 
 
 # Param sets spanning the current defaults, the recall-aware optimum region, and a tight
