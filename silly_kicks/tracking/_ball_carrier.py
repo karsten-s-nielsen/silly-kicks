@@ -331,6 +331,7 @@ def infer_ball_carrier(
     tolerance_m: float = 3.0,
     beta: float = 0.5,
     gamma: float = 1.0,
+    pre: dict | None = None,
 ) -> pd.DataFrame:
     """Per-frame ball-carrier inference with hysteresis.
 
@@ -353,6 +354,15 @@ def infer_ball_carrier(
         score is reduced by ``gamma``, so a new candidate must be
         ``gamma`` meters better in composite score to take over.
         ``gamma=0`` gives stateless per-frame behaviour.
+    pre : dict, optional
+        Precomputed ``_pre_index_frames(frames)`` result. The pre-index step
+        (long-form frames → dense per-frame numpy arrays) is a pure function of
+        ``frames`` and independent of ``tolerance_m`` / ``beta`` / ``gamma``, but
+        it dominates the cost. Callers that re-infer carriers on the *same*
+        frames with *different* params (e.g. the TF-24 Optuna calibration sweep)
+        can pass a cached ``pre`` to skip re-marshalling on every call — the
+        result is bit-identical to recomputing it. Leave ``None`` (default) to
+        compute it internally.
 
     Returns
     -------
@@ -398,8 +408,11 @@ def infer_ball_carrier(
             stacklevel=2,
         )
 
-    # Phase 1: pre-index
-    pre = _pre_index_frames(frames)
+    # Phase 1: pre-index (pure function of `frames`; a caller may supply a cached
+    # `pre` to skip this dominant cost when re-inferring on the same frames with
+    # different params — bit-identical to recomputing).
+    if pre is None:
+        pre = _pre_index_frames(frames)
 
     # Phase 2: kernel
     _kernel = _carrier_loop_numba if _HAS_NUMBA else _carrier_loop_numpy

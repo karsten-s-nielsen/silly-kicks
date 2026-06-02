@@ -157,6 +157,8 @@ def ball_carrier_at_action(
     tolerance_m: float = 3.0,
     beta: float = 0.5,
     gamma: float = 1.0,
+    pre: dict | None = None,
+    links: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Per-action ball carrier player_id resolved from tracking frames.
 
@@ -177,6 +179,16 @@ def ball_carrier_at_action(
         Velocity weight passed to ``infer_ball_carrier``.
     gamma : float, default 1.0
         Hysteresis bonus passed to ``infer_ball_carrier``.
+    pre : dict, optional
+        Precomputed ``_pre_index_frames(frames)``, threaded to
+        ``infer_ball_carrier`` to skip re-marshalling the frames. Both ``pre``
+        and ``links`` are independent of the carrier-scoring params, so a caller
+        re-resolving carriers on the same frames with different params (the TF-24
+        sweep) can compute them once and reuse — bit-identical to recomputing.
+    links : pd.DataFrame, optional
+        Precomputed ``link_actions_to_frames(actions, frames)`` pointers. When
+        supplied, the internal linking is skipped and these pointers are used
+        (mirrors the ``links`` kwarg on the ``add_*`` aggregators).
 
     Returns
     -------
@@ -202,13 +214,17 @@ def ball_carrier_at_action(
     if n == 0 or len(frames) == 0:
         return out
 
-    # Compute per-frame carriers
-    carriers = infer_ball_carrier(frames, tolerance_m=tolerance_m, beta=beta, gamma=gamma)
+    # Compute per-frame carriers (reusing a cached pre-index when supplied).
+    carriers = infer_ball_carrier(frames, tolerance_m=tolerance_m, beta=beta, gamma=gamma, pre=pre)
     if carriers.empty:
         return out
 
-    # Link actions to frames
-    pointers, _report = link_actions_to_frames(actions, frames, tolerance_seconds=tolerance_seconds)
+    # Link actions to frames (reuse caller-supplied pointers when provided —
+    # linking is independent of the carrier-scoring params).
+    if links is not None:
+        pointers = links
+    else:
+        pointers, _report = link_actions_to_frames(actions, frames, tolerance_seconds=tolerance_seconds)
 
     # Join pointers with actions to get period_id + game_id
     ptr = pointers.merge(
