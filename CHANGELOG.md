@@ -5,6 +5,33 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.0] — 2026-06-02
+
+### Added — cacheable carrier inference (`pre` / `links` kwargs) for the calibration sweep
+
+`infer_ball_carrier` gains an optional `pre` kwarg (a precomputed `_pre_index_frames(frames)`),
+and `ball_carrier_at_action` gains optional `pre` + `links` kwargs (mirroring the `links` convention
+on the `add_*` aggregators). The pre-index step (long-form frames → dense per-frame numpy arrays)
+**dominates carrier-inference cost — ~99%, measured — yet is a pure function of `frames`**, fully
+independent of the swept `tolerance_m`/`beta`/`gamma`; likewise the action→frame linking depends only
+on the fixed link tolerance. Callers that re-resolve carriers on the *same* frames with *different*
+params can now compute these once and pass them back, skipping the re-marshalling. Both default to
+`None` (compute internally) and are **bit-identical** to recomputing — gated by
+`tests/tracking/test_ball_carrier.py::TestCachedPreLinks` (`assert_frame_equal` / `assert_series_equal`
+across the defaults, the recall-aware optimum region, and a tight radius).
+
+### Changed — TF-24 Stage-1 carrier objective uses an invariant-prepare cache (~50–100× faster sweep)
+
+`CarrierAccuracyObjective` previously re-ran the full per-match pre-index + linking on **every Optuna
+trial**, even though both are param-invariant — making the Stage-1 sweep pandas-bound (numba accelerates
+only the ~1% kernel, so it gave no real speedup). `_match_accuracy` is now split into a cached
+`_prepare_match` (the param-invariant pre-index + link pointers + linked mask + actor ids, computed once
+per match and reused across all trials) and a cheap `_accuracy` (kernel + lookup only). Measured **137×**
+per-trial speedup on a 20k-frame synthetic match; a full gold-max Stage-1 sweep drops from ~days to
+~tens of minutes. The result is bit-identical to the uncached path — `_match_accuracy` is retained as the
+one-shot reference oracle, gated by `test_prepare_cached_once_and_matches_uncached` (prepare runs exactly
+once per match; cached evaluate == uncached). No public objective API change; zero global state.
+
 ## [4.4.1] — 2026-06-01
 
 ### Fixed (documentation/test) — correcting the 4.2.0 DAS "value-neutral" claim

@@ -559,6 +559,85 @@ class TestReturnSchema:
         assert list(result.index) == list(range(len(result)))
 
 
+# Param sets spanning the current defaults, the recall-aware optimum region, and a tight
+# radius — used by the cached-pre/links bit-identity tests.
+_CACHE_EQUIV_PARAMS = [
+    dict(tolerance_m=3.0, beta=0.5, gamma=1.0),
+    dict(tolerance_m=7.0, beta=0.0, gamma=0.1),
+    dict(tolerance_m=1.0, beta=1.0, gamma=2.0),
+]
+
+
+class TestCachedPreLinks:
+    """A precomputed ``pre`` (and cached ``links``) is bit-identical to recomputing.
+
+    The pre-index (long-form → dense numpy) is a pure function of ``frames`` and the linking
+    depends only on the fixed link tolerance — both independent of the carrier-scoring params.
+    Callers re-resolving carriers on the same frames with different params (the TF-24 sweep)
+    cache these once; the result must match recomputing from scratch exactly.
+    """
+
+    def _multi_frame(self):
+        f1 = _make_carrier_frame(
+            frame_id=1,
+            players=[
+                dict(pid=10, tid=1, x=51.0, y=34.0, vx=0.5, vy=0.0),
+                dict(pid=20, tid=1, x=53.0, y=34.0, vx=-1.0, vy=0.0),
+                dict(pid=30, tid=2, x=57.0, y=34.0, vx=0.0, vy=0.0),
+            ],
+        )
+        f2 = _make_carrier_frame(
+            frame_id=2,
+            players=[
+                dict(pid=10, tid=1, x=52.0, y=34.0, vx=0.0, vy=0.0),
+                dict(pid=20, tid=1, x=51.7, y=34.0, vx=-2.0, vy=0.0),
+                dict(pid=30, tid=2, x=56.0, y=34.0, vx=0.0, vy=0.0),
+            ],
+        )
+        f3 = _make_carrier_frame(
+            frame_id=3,
+            players=[
+                dict(pid=10, tid=1, x=55.0, y=34.0, vx=0.0, vy=0.0),
+                dict(pid=20, tid=1, x=50.6, y=34.0, vx=0.0, vy=0.0),
+                dict(pid=30, tid=2, x=58.0, y=34.0, vx=0.0, vy=0.0),
+            ],
+        )
+        return _concat_frames(f1, f2, f3)
+
+    def test_infer_ball_carrier_cached_pre_identical(self):
+        from silly_kicks.tracking._ball_carrier import _pre_index_frames, infer_ball_carrier
+
+        frames = self._multi_frame()
+        pre = _pre_index_frames(frames)
+        for params in _CACHE_EQUIV_PARAMS:
+            recomputed = infer_ball_carrier(frames, **params)
+            cached = infer_ball_carrier(frames, pre=pre, **params)
+            pd.testing.assert_frame_equal(recomputed, cached)
+
+    def test_ball_carrier_at_action_cached_pre_links_identical(self):
+        from silly_kicks.tracking._ball_carrier import _pre_index_frames
+        from silly_kicks.tracking.features import ball_carrier_at_action
+        from silly_kicks.tracking.utils import link_actions_to_frames
+
+        frames = self._multi_frame()
+        actions = pd.DataFrame(
+            {
+                "game_id": [1, 1, 1],
+                "action_id": [0, 1, 2],
+                "period_id": [1, 1, 1],
+                "time_seconds": [0.04, 0.08, 0.12],  # match frame_id 1/2/3 (= frame_id * 0.04)
+                "team_id": [1, 1, 1],
+                "player_id": [10, 20, 20],
+            }
+        )
+        pre = _pre_index_frames(frames)
+        links, _ = link_actions_to_frames(actions, frames, tolerance_seconds=0.2)
+        for params in _CACHE_EQUIV_PARAMS:
+            recomputed = ball_carrier_at_action(actions, frames, **params)
+            cached = ball_carrier_at_action(actions, frames, pre=pre, links=links, **params)
+            pd.testing.assert_series_equal(recomputed, cached)
+
+
 class TestActionCoupledWrapper:
     def _make_actions(self, n=2):
         return pd.DataFrame(

@@ -1,5 +1,6 @@
 from ruthless import Candidate
 
+import silly_kicks.calibration._carrier_objective as carrier_obj
 from silly_kicks.calibration._carrier_objective import CarrierAccuracyObjective
 
 _P = {"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}
@@ -42,3 +43,49 @@ def test_link_failure_excluded_not_penalized(synth_link_failure):
     metrics = obj.evaluate(Candidate(id="t0", params=_P))
     assert metrics["carrier_accuracy"] == 1.0
     assert metrics["n_compared__provA"] == 1.0  # only the linked action counts
+
+
+def test_prepare_cached_once_and_matches_uncached(synth_two_providers_imbalanced, monkeypatch):
+    """The per-match invariant prepare runs ONCE per match and is reused across trials, and
+    the cached evaluate is bit-identical to the uncached one-shot reference (_match_accuracy).
+
+    This is the cache-equivalence guard for the invariant-prepare optimization: the pre-index +
+    linking (param-invariant) are cached, so only the carrier kernel re-runs per candidate.
+    """
+    calls = {"n": 0}
+    real_prepare = carrier_obj._prepare_match
+
+    def spy(actions, frames):
+        calls["n"] += 1
+        return real_prepare(actions, frames)
+
+    monkeypatch.setattr(carrier_obj, "_prepare_match", spy)
+
+    fold = synth_two_providers_imbalanced  # provA: 100 matches, provB: 1 match => 101 matches
+    obj = CarrierAccuracyObjective(fold)
+    p1 = {"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}
+    p2 = {"tolerance_m": 7.0, "beta": 0.0, "gamma": 0.1}
+
+    m1 = obj.evaluate(Candidate(id="a", params=p1))
+    m2 = obj.evaluate(Candidate(id="b", params=p2))
+
+    n_matches = sum(len(v) for v in fold.values())
+    assert calls["n"] == n_matches  # prepared exactly once each; 2nd evaluate reuses the cache
+
+    # Cached metric equals the uncached one-shot reference for each candidate.
+    for params, metric in [(p1, m1), (p2, m2)]:
+        ref_per_provider = []
+        for _provider, matches in fold.items():
+            accs, weights = [], []
+            for actions, frames, _home in matches:
+                acc, n = carrier_obj._match_accuracy(actions, frames, **params)
+                if n > 0:
+                    accs.append(acc)
+                    weights.append(n)
+            if accs:
+                import numpy as np
+
+                ref_per_provider.append(float(np.average(accs, weights=weights)))
+        import numpy as np
+
+        assert metric["carrier_accuracy"] == float(np.mean(ref_per_provider))

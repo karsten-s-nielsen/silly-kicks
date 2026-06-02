@@ -582,7 +582,7 @@ def prepare_xshot_training_data(
     """
     if feature_set != "faithful":
         raise NotImplementedError("Only feature_set='faithful' is implemented.")
-    cp = dict(carrier_params) if carrier_params else dict(_DEFAULT_CARRIER_PARAMS)
+    cp: dict = dict(carrier_params) if carrier_params else dict(_DEFAULT_CARRIER_PARAMS)
     types = _DEFAULT_SHOT_TYPES if shot_types is None else tuple(shot_types)
 
     work = frames
