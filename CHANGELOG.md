@@ -5,6 +5,29 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.0] — 2026-06-02
+
+### Added — `kde_backend="fft"` ghost-GK KDE backend (binned-convolution, ~2000× on the full-k regime)
+
+`GhostGkModel.predict_density` / `compute_ghost_gk` / `add_ghost_gk` / `ghost_gk_xfns` accept
+`kde_backend="fft"` (default stays `"vectorized"`). The three existing backends are brute-force
+point×grid (O(k·m)); `fft` bins the weighted training points onto the fixed grid (nearest-grid-point)
+and runs one `scipy.signal.fftconvolve` against the analytic anisotropic Gaussian — **O(k + m·log m)**,
+independent of k. On the production regime (`_leaf_match_weights` returns all ~35 816 training points
+on every prediction → 137 M Gaussian evals brute-force), measured **~2355×** (4247 → 1.80 ms/prediction).
+Reuses the exact `_kde_setup` kernel + `cho_factor` PD-branch, so the singular-covariance uniform
+fallback is unchanged. **No new dependency** (scipy is already core). Decision: ADR-014.
+
+**Faithful on the emitted scalars, NOT on the raw grid (opt-in for this reason).** `fft` matches the
+scipy oracle on the three values `predict_density` emits — `mode_x`/`mode_y` (39/40 exact, ≤1 grid
+cell), `mean_x`/`mean_y` (≤5.5 mm), `spread` (≤0.16% rel) — because those are grid integrals / entropy
+/ argmax-peak, robust to per-cell binning noise. It is **NOT bit-faithful on the raw
+`GhostGkDensity.probabilities` grid** (NGP binning quantizes per-cell mass: ~1.5% typical, up to ~65%
+on near-zero tail cells). **Hyrum's Law:** consumers that read the raw `probabilities` grid (not just
+the 3 scalars) should keep `"vectorized"`; consumers that froze a golden on `ghost_gk_x/y` must
+re-baseline when adopting `fft` (~2.5% of predictions flip the discrete mode by ≤1 cell — a genuine
+flat-ridge near-tie). Default unchanged, so this is non-breaking.
+
 ## [4.5.0] — 2026-06-02
 
 ### Added — cacheable carrier inference (`pre` / `links` kwargs) for the calibration sweep

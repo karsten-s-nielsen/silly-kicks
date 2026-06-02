@@ -3698,10 +3698,11 @@ def add_ghost_gk(
     actions_for_context : pd.DataFrame | None
         SPADL actions for score_diff and phase context resolution.
         If None, context defaults to 0 (backward-compatible).
-    kde_backend : {"vectorized", "scipy", "cpu-numba"}, default "vectorized"
+    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft"}, default "vectorized"
         KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs
-        the serial @njit fused loop (requires the ``[numba]`` extra); value-equivalent to the
-        default within tolerance.
+        the serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the
+        binned-convolution backend (~2000x, scalar-faithful but raw-grid-approximate -- see
+        ADR-014). Value-equivalent to the default within tolerance on the emitted scalars.
 
     Examples
     --------
@@ -3787,9 +3788,11 @@ def ghost_gk_xfns(*, model=None, home_team_id: int | str, kde_backend: str = "ve
 
     Parameters
     ----------
-    kde_backend : {"vectorized", "scipy", "cpu-numba"}, default "vectorized"
+    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft"}, default "vectorized"
         KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs the
-        serial @njit fused loop (requires the ``[numba]`` extra); value-equivalent within tolerance.
+        serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the binned-convolution
+        backend (~2000x, scalar-faithful but raw-grid-approximate -- see ADR-014). Value-equivalent
+        within tolerance on the emitted scalars.
 
     Examples
     --------

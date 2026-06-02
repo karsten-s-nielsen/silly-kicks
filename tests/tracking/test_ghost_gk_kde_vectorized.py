@@ -113,6 +113,26 @@ def test_golden_discrete_mode(golden, default_model_features, kde_backend):
         assert np.all(np.abs(mode_y - gmy) <= GRID_RESOLUTION + 1e-9)
 
 
+def test_golden_fft_scalars(golden, default_model_features):
+    """fft scalar fidelity on the REAL bundled "default" model (the production regime) vs the
+    frozen scipy golden: mode <=1 grid cell, mean <1e-2 m, spread rel <5e-3. Locks the real-model
+    fidelity in CI -- the synthetic kernel-parity test uses broad clouds, and the lakehouse harness
+    that measured <=5.5mm mean / <=0.16% spread is not committed here. NOT the raw probabilities
+    grid (fft is scalar-faithful only -- see ADR-014; that is why fft is opt-in)."""
+    model, X = default_model_features
+    densities = model.predict_density(X, kde_backend="fft")
+    n = _N_GOLDEN
+    mode_x = np.array([d.mode_x for d in densities])
+    mode_y = np.array([d.mode_y for d in densities])
+    mean_x = np.array([d.mean_x for d in densities])
+    mean_y = np.array([d.mean_y for d in densities])
+    spread = np.array([d.spread for d in densities])
+    assert np.all(np.abs(mode_x - golden["mode_x"][:n]) <= 0.5 + 1e-9)
+    assert np.all(np.abs(mode_y - golden["mode_y"][:n]) <= 0.5 + 1e-9)
+    assert np.all(np.hypot(mean_x - golden["mean_x"][:n], mean_y - golden["mean_y"][:n]) < 1e-2)
+    assert np.all(np.abs(spread - golden["spread"][:n]) / np.abs(golden["spread"][:n]) < 5e-3)
+
+
 # ---------------------------------------------------------------------------
 # Kernel-level parity (random points — fast, independent of the bundled model)
 # ---------------------------------------------------------------------------
@@ -315,7 +335,7 @@ def test_predict_density_lt2_weight_returns_uniform(monkeypatch, small_model):
 
     monkeypatch.setattr(g, "_leaf_match_weights", _fake)
     uniform = 1.0 / (60 * 64)
-    for backend in ("scipy", "vectorized", "cpu-numba"):
+    for backend in ("scipy", "vectorized", "cpu-numba", "fft"):
         d = model.predict_density(X.iloc[:1], kde_backend=backend)[0]
         np.testing.assert_allclose(d.probabilities, uniform, rtol=0, atol=1e-15)
 
@@ -487,3 +507,132 @@ def test_ghost_gk_does_not_eagerly_import_numba():
     importlib.import_module("silly_kicks.tracking._ghost_gk")
     assert "numba" not in sys.modules, "import _ghost_gk eagerly imported numba"
     assert "silly_kicks.tracking._ghost_gk_numba" not in sys.modules
+
+
+# ---------------------------------------------------------------------------
+# fft backend (binned-convolution): faithful on the 3 emitted SCALARS (mode/mean/spread),
+# NOT on the raw per-cell grid; opt-in; O(k + m log m). See ADR-014.
+# ---------------------------------------------------------------------------
+
+
+def _grid_scalars(probs_unnorm):
+    """Reproduce predict_density's mode/mean/spread from an UNnormalized grid (same math)."""
+    from silly_kicks.tracking._ghost_gk import _GRID_X, _GRID_Y, GRID_RESOLUTION
+
+    total = probs_unnorm.sum()
+    p = probs_unnorm / total if total > 0 else np.ones_like(probs_unnorm) / probs_unnorm.size
+    gxx, gyy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
+    ix, iy = np.unravel_index(int(np.argmax(p)), p.shape)
+    nz = p[p > 0]
+    entropy = float(-np.sum(nz * np.log(nz)))
+    return {
+        "mode_x": float(_GRID_X[ix]),
+        "mode_y": float(_GRID_Y[iy]),
+        "mean_x": float(np.sum(p * gxx)),
+        "mean_y": float(np.sum(p * gyy)),
+        "spread": float(np.exp(entropy) * GRID_RESOLUTION**2),
+    }
+
+
+@pytest.mark.parametrize("seed", [7, 11, 19])
+def test_fft_kernel_matches_scipy_on_scalars(seed):
+    """fft is faithful on the 3 emitted scalars vs the scipy oracle on realistic well-conditioned,
+    in-grid clouds (the production regime: real ghost-GK clouds are cond<=5.3, oog~0.33%). The
+    cloud is correlated (anisotropic H with a real h12 cross-term). mode <=1 grid cell, mean
+    <3e-2 m, spread rel <5e-3. NOT asserted on the raw grid (binning quantizes per-cell mass).
+    Near-singular clouds are excluded: the mode is a flat-ridge argmax that is ill-defined for
+    BOTH backends, and that regime does not occur in production (the singular limit is covered by
+    test_fft_singular_covariance_raises_linalgerror)."""
+    from silly_kicks.tracking._ghost_gk import _GRID_X, _GRID_Y, _kde_density_fft
+
+    rng = np.random.default_rng(seed)
+    k = 400
+    gk_x_w = rng.normal(15.0, 4.0, k)
+    gk_y_w = 34.0 + 0.5 * (gk_x_w - 15.0) + rng.normal(0.0, 2.5, k)  # correlated -> anisotropic H (h12)
+    w = rng.uniform(0.1, 1.0, k)
+    w = w / w.sum()
+    gxx, gyy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
+    gp = np.vstack([gxx.ravel(), gyy.ravel()])
+    s_fft = _grid_scalars(_kde_density_fft(gk_x_w, gk_y_w, w, gp))
+    s_ora = _grid_scalars(_scipy_kde_grid(gk_x_w, gk_y_w, w, gp))
+
+    assert abs(s_fft["mode_x"] - s_ora["mode_x"]) <= 0.5 + 1e-9  # <=1 grid cell
+    assert abs(s_fft["mode_y"] - s_ora["mode_y"]) <= 0.5 + 1e-9
+    assert np.hypot(s_fft["mean_x"] - s_ora["mean_x"], s_fft["mean_y"] - s_ora["mean_y"]) < 3e-2
+    # spread (entropy-based) rel-err: 1e-2 has margin over the ~0.6% observed on these diffuse
+    # synthetic clouds; the production regime is tighter (harness: <=0.16% on the bundled model).
+    assert abs(s_fft["spread"] - s_ora["spread"]) / abs(s_ora["spread"]) < 1e-2
+
+
+def test_fft_out_of_grid_points_handled_gracefully():
+    """Out-of-grid training points (NGP clips them to the edge cell) must not crash and still
+    yield a finite, normalized grid; mean stays within a loose bound of the oracle (the clipping
+    of a sub-percent tail is a known approximation, validated negligible on the real model)."""
+    from silly_kicks.tracking._ghost_gk import _GRID_X, _GRID_Y, _kde_density_fft
+
+    rng = np.random.default_rng(3)
+    k = 400
+    gk_x_w = rng.normal(15.0, 4.0, k)
+    gk_y_w = 34.0 + rng.normal(0.0, 3.0, k)
+    gk_x_w[:4] = rng.uniform(-3.0, -0.5, 4)  # ~1% just left of the grid -> clip to edge
+    w = rng.uniform(0.1, 1.0, k)
+    w = w / w.sum()
+    gxx, gyy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
+    gp = np.vstack([gxx.ravel(), gyy.ravel()])
+    grid = _kde_density_fft(gk_x_w, gk_y_w, w, gp)
+    assert grid.shape == (60, 64)
+    assert np.all(np.isfinite(grid)) and grid.sum() > 0
+    s_fft = _grid_scalars(grid)
+    s_ora = _grid_scalars(_scipy_kde_grid(gk_x_w, gk_y_w, w, gp))
+    assert np.hypot(s_fft["mean_x"] - s_ora["mean_x"], s_fft["mean_y"] - s_ora["mean_y"]) < 1e-1
+
+
+def test_predict_density_fft_backend_switch(small_model):
+    """predict_density(kde_backend="fft") returns the standard GhostGkDensity (normalized grid)."""
+    model, X = small_model
+    densities = model.predict_density(X.iloc[:5], kde_backend="fft")
+    assert len(densities) == 5
+    assert densities[0].probabilities.shape == (60, 64)
+    assert densities[0].probabilities.sum() == pytest.approx(1.0, abs=1e-9)
+
+
+def test_fft_singular_covariance_raises_linalgerror():
+    """Collinear points -> _kde_setup's cho_factor raises (same as the other backends), so
+    predict_density's uniform-fallback applies unchanged."""
+    from silly_kicks.tracking._ghost_gk import _GRID_X, _GRID_Y, _kde_density_fft
+
+    gk_x_w = np.array([5.0, 5.0, 5.0])  # identical points -> singular covariance (mirrors the
+    gk_y_w = np.array([34.0, 34.0, 34.0])  # vectorized/scipy singular test)
+    w = np.array([1 / 3, 1 / 3, 1 / 3])
+    gxx, gyy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
+    gp = np.vstack([gxx.ravel(), gyy.ravel()])
+    with pytest.raises(np.linalg.LinAlgError):
+        _kde_density_fft(gk_x_w, gk_y_w, w, gp)
+
+
+def test_fft_is_k_independent_one_convolution(monkeypatch):
+    """Structural perf guard: fft does ONE fftconvolve per prediction, and its field+kernel
+    shapes are k-INDEPENDENT (O(m log m), not O(k*m)). Catches a silent revert to brute force."""
+    import scipy.signal as sps
+
+    from silly_kicks.tracking._ghost_gk import _GRID_X, _GRID_Y, _kde_density_fft
+
+    calls = []
+    real = sps.fftconvolve
+
+    def _spy(field, kernel, *a, **k):
+        calls.append((field.shape, kernel.shape))
+        return real(field, kernel, *a, **k)
+
+    monkeypatch.setattr(sps, "fftconvolve", _spy)  # function-scope import in _kde_density_fft -> intercepted
+    gxx, gyy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
+    gp = np.vstack([gxx.ravel(), gyy.ravel()])
+    rng = np.random.default_rng(1)
+    for k in (5, 5000):
+        x = rng.uniform(0, 30, k)
+        y = rng.uniform(18, 50, k)
+        w = rng.uniform(0.1, 1.0, k)
+        w = w / w.sum()
+        _kde_density_fft(x, y, w, gp)
+    assert len(calls) == 2, f"expected one fftconvolve per call, got {len(calls)}"
+    assert calls[0] == calls[1], "fft field/kernel shapes must be k-independent (O(m log m))"
