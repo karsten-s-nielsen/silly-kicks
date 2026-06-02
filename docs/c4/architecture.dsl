@@ -49,7 +49,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         pipeline -> tracking "Passes per-match tracking frames to" "lazy import inside UDF"
         pipeline -> vaep "Scores actions with pre-trained models via" "VAEP.rate()"
 
-        spadl -> kloppy "Accepts kloppy EventDataset in kloppy converter" "kloppy bridge"
+        spadl -> kloppy "Accepts kloppy EventDataset (derives game_id from dataset metadata) in kloppy converter" "kloppy bridge"
         tracking -> kloppy "Accepts kloppy TrackingDataset in kloppy gateway" "kloppy bridge"
         tracking -> hfHub "Lazy-downloads Ghost-GK model weights via" "huggingface_hub"
         tracking -> accessibleSpace "Computes DAS via" "get_individual_das()"

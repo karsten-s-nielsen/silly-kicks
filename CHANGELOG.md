@@ -5,6 +5,55 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] — 2026-06-01
+
+### Fixed — TF-24 Stage-1 carrier objective was precision-only (no recall term)
+
+`CarrierAccuracyObjective` (`silly_kicks.calibration._carrier_objective`) averaged accuracy **only over
+carrier-actor actions where a carrier was inferred** — `matched[valid].mean()` with `valid = inferred.notna()`.
+Actions whose actor ended up beyond `tolerance_m` of the ball (→ NaN inference) were dropped from the
+denominator instead of counted as misses, so there was **no recall penalty**: accuracy rose monotonically as
+the candidacy radius shrank, and the optimum collapsed onto the search lower bound. The objective was
+structurally blind to the very parameter it calibrates. `_match_accuracy` now uses the set of carrier-actor
+actions that successfully **link** to a frame as the denominator; a linked action with a NaN inferred carrier
+is a **miss**, while genuine link failures (independent of the swept params) stay excluded. This makes the
+objective sensitive to `tolerance_m` (an over-tight radius is penalized through lost recall). Calibration-only
+— no public runtime API change. Regression-gated by `tests/calibration/test_carrier_objective.py`
+(`test_unreachable_actor_counts_as_miss` = 0.5, `test_link_failure_excluded_not_penalized` = 1.0).
+
+**Consequence for the TF-24 apply-PR:** the completed maintainer sweep's headline `tolerance_m ≈ 1.0` (both
+folds, pressed to the search lower bound) is now understood to be a **degenerate boundary artifact of the old
+precision-only objective, not a validated optimum** — the two folds reproduced the same artifact, not an
+independent optimum. The `infer_ball_carrier` defaults are therefore **left unchanged** (`tolerance_m=3.0`,
+`beta=0.5`, `gamma=1.0`) pending a Stage-1 **re-sweep on the fixed objective**, which will produce a real
+interior optimum to apply in a follow-up. Stage-2 (augmented-VAEP Brier; `k3`, `pre_seconds`,
+`min_displacement_m`) is a separate held-out-Brier objective and is unaffected by this fix.
+
+**TF-25 (provider-specific defaults) disposition:** not triggered. TF-25 fires only if `tolerance_m`/`k3`
+disperse meaningfully across providers; the only Stage-1 signal so far (the boundary collapse) is an artifact,
+and Stage-2 was flat. Re-evaluate after the fixed-objective re-sweep.
+
+### Changed — kloppy `convert_to_actions` auto-derives `game_id` from dataset metadata
+
+`silly_kicks.spadl.kloppy.convert_to_actions(dataset, game_id=None)` now falls back to the dataset's own
+`metadata.game_id` (stringified to match the tracking gateway `silly_kicks.tracking.kloppy`, which uses
+`str(metadata.game_id)`) when the caller omits `game_id`. Previously the column was left unset (`None`).
+This is the **library-side fix for the IDSSE/Sportec join failure** that the TF-24 harness worked around at
+the loader layer: SPADL actions carried `game_id=None` while the frames carried the real id, so the
+`(game_id, period_id, frame_id)` joins in every tracking `add_*` enrichment missed every row. Now any
+kloppy-gateway consumer (Sportec/IDSSE, plus Metrica/SkillCorner via kloppy) gets join-compatible event and
+frame `game_id`s out of the box. **Heads-up (Hyrum's Law):** a caller that omitted `game_id` and relied on
+the column staying `None` will now see the dataset's id; pass `game_id` explicitly to override (caller values
+are always respected verbatim, ADR-001). Datasets with no `metadata.game_id` (e.g. the Metrica fixture) keep
+the unset/NaN column. Gated by `tests/spadl/test_kloppy.py::TestKloppyGameIdAutoDerive`.
+
+### Build — `numba` added to the `[calibration]` extra
+
+The `[calibration]` extra now installs `numba>=0.59.0`. The Stage-1/Stage-2 objectives call
+`infer_ball_carrier` + the pitch-control kernels once per trial; without numba those run as pure-Python loops,
+the dominant cost of a full sweep. Calibration venvs now get the compiled fast path by default (the TF-24
+maintainer sweep ran without it and was needlessly slow). `import silly_kicks` stays numba-free (lazy `@njit`).
+
 ## [4.3.0] — 2026-06-01
 
 ### Added — `cpu-numba` ghost-GK KDE backend (~10× the closed-form hot loop, single-thread)

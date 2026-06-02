@@ -110,10 +110,134 @@ def _carrier_match(game_id: str, *, correct: bool):
     return actions, frames, 1
 
 
+def _carrier_frame_rows(game_id: str, frame_id: int, time_seconds: float, layout: list[tuple]) -> list[dict]:
+    """Build the per-player rows for one carrier-fixture frame."""
+    rows = []
+    for pid, team, is_ball, is_gk, x, y in layout:
+        rows.append(
+            {
+                "game_id": game_id,
+                "period_id": 1,
+                "frame_id": frame_id,
+                "time_seconds": time_seconds,
+                "frame_rate": 25.0,
+                "player_id": pid,
+                "team_id": team,
+                "is_ball": is_ball,
+                "is_goalkeeper": is_gk,
+                "x": x,
+                "y": y,
+                "z": 0.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "ball_state": "alive",
+                "team_attacking_direction": "ltr",
+                "source_provider": "synthetic",
+            }
+        )
+    return rows
+
+
+def _carrier_action_row(game_id: str, action_id: int, time_seconds: float, actor: int) -> dict:
+    """One carrier-actor (pass) action attributed to ``actor``."""
+    return {
+        "game_id": game_id,
+        "action_id": action_id,
+        "period_id": 1,
+        "time_seconds": time_seconds,
+        "team_id": 1,
+        "player_id": actor,
+        "type_name": "pass",  # carrier-actor type
+        "type_id": 0,
+        "result_id": 1,
+        "bodypart_id": 0,
+        "start_x": 50.0,
+        "start_y": 34.0,
+        "end_x": 60.0,
+        "end_y": 34.0,
+    }
+
+
+def _carrier_match_unreachable_actor(game_id: str):
+    """Two carrier-actor actions, BOTH of which link to a frame:
+
+      - action 1 @ t=0.0: actor (10) is ON the ball -> inferred carrier 10 == actor (a hit).
+      - action 2 @ t=0.04: actor (10) truly carries but is 5m from the ball (beyond the
+        default tolerance_m of 3.0) and no other player is near -> inferred NaN -> a
+        tolerance-induced MISS.
+
+    Under correct (recall-aware) accounting the match scores 0.5 (one hit, one miss). The
+    old precision-only objective silently dropped action 2 (NaN excluded) and scored 1.0 —
+    the degeneracy that let tolerance_m collapse to the search lower bound.
+    """
+    near = [
+        ("ball", None, True, False, 50.0, 34.0),
+        (10, 1, False, False, 50.0, 34.0),  # on the ball
+        (11, 1, False, True, 5.0, 34.0),  # home GK, far
+        (20, 2, False, False, 80.0, 60.0),  # away outfield, far
+        (21, 2, False, True, 100.0, 34.0),  # away GK, far
+    ]
+    far = [
+        ("ball", None, True, False, 50.0, 34.0),
+        (10, 1, False, False, 55.0, 34.0),  # 5m from ball -> beyond tolerance_m
+        (11, 1, False, True, 5.0, 34.0),
+        (20, 2, False, False, 80.0, 60.0),
+        (21, 2, False, True, 100.0, 34.0),
+    ]
+    rows = _carrier_frame_rows(game_id, 0, 0.0, near) + _carrier_frame_rows(game_id, 1, 0.04, far)
+    frames = pd.DataFrame(rows)
+    actions = pd.DataFrame(
+        [
+            _carrier_action_row(game_id, 1, 0.0, actor=10),
+            _carrier_action_row(game_id, 2, 0.04, actor=10),
+        ]
+    )
+    return actions, frames, 1
+
+
+def _carrier_match_link_failure(game_id: str):
+    """Two carrier-actor actions: one links & is correct; one CANNOT link (no frame near
+    its time) -> excluded from the denominator, never penalized. Scores 1.0, because a
+    link failure is independent of the swept carrier parameters.
+    """
+    rows = _carrier_frame_rows(
+        game_id,
+        0,
+        0.0,
+        [
+            ("ball", None, True, False, 50.0, 34.0),
+            (10, 1, False, False, 50.0, 34.0),  # on the ball
+            (11, 1, False, True, 5.0, 34.0),
+            (20, 2, False, False, 80.0, 60.0),
+            (21, 2, False, True, 100.0, 34.0),
+        ],
+    )
+    frames = pd.DataFrame(rows)
+    actions = pd.DataFrame(
+        [
+            _carrier_action_row(game_id, 1, 0.0, actor=10),  # links to frame 0, correct
+            _carrier_action_row(game_id, 2, 999.0, actor=10),  # no frame near t=999 -> unlinked
+        ]
+    )
+    return actions, frames, 1
+
+
 @pytest.fixture
 def synth_known_carrier():
     """One provider, one perfect-carrier match => accuracy 1.0."""
     return {"provA": [_carrier_match("provA_1", correct=True)]}
+
+
+@pytest.fixture
+def synth_unreachable_actor():
+    """One provider, one match: a hit + a tolerance-induced miss (both linked) => 0.5."""
+    return {"provA": [_carrier_match_unreachable_actor("provA_1")]}
+
+
+@pytest.fixture
+def synth_link_failure():
+    """One provider, one match: a hit + an unlinkable action (excluded, not penalized) => 1.0."""
+    return {"provA": [_carrier_match_link_failure("provA_1")]}
 
 
 @pytest.fixture
