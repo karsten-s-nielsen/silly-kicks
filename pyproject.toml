@@ -52,7 +52,7 @@ ghost-gk-train = ["skl2onnx>=1.16.0"]
 # >=0.2.1 floor fixes a warm_start off-by-one (a fresh warm-started study ran n_trials-1 trials).
 calibration = [
     "ruthless-efficiency[optuna]>=0.2.1",
-    "xgboost>=2.0,<3.0",
+    "xgboost>=2.0,<4.0",
     # numba compiles the infer_ball_carrier + pitch-control kernels the Stage-1/Stage-2
     # objectives call once per trial. Without it those run as pure-Python loops — the
     # dominant cost of a full sweep. Declared here so calibration venvs get the fast path
@@ -87,14 +87,14 @@ test = [
     # TF-24 calibration harness deps so CI exercises ruthless[optuna] + xgboost (the
     # cache-equivalence + Optuna-smoke tests in tests/calibration/).
     "ruthless-efficiency[optuna]>=0.2.1",
-    "xgboost>=2.0,<3.0",
+    "xgboost>=2.0,<4.0",
 ]
 # Generic trained-model HPO/training extra (ADR-011). Shared by future trainers
 # (TF-16 xShotOccurrence + others) — same pins as [calibration]. Inference of a
 # trained model gates on its own runtime extra (e.g. [xgboost]), NOT this one.
 train = [
     "ruthless-efficiency[optuna]>=0.2.1",
-    "xgboost>=2.0,<3.0",
+    "xgboost>=2.0,<4.0",
 ]
 dev = [
     "ruff>=0.8.0",
