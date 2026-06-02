@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-02. **Current release**: silly-kicks 4.7.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-02. **Current release**: silly-kicks 4.8.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -45,6 +45,14 @@ Items are ranked top-to-bottom by specification completeness. Tier 3–4 require
   VAEP path. Additive (no API churn). Also extend `pitch_control_cache` to
   `player_influence`/`space_creation` callers' shared-pass usage (already wired on
   the aggregators; lakehouse pre-builds one cache like it pre-links).
+- **Ghost-GK-mode train/serve `kde_backend` guard (owner: first mode-consumer — prospectively
+  TF-17 / TF-19; NOT TF-16).** ADR-014 (amended, 4.8.0) established that `kde_backend="fft"` (NGP)
+  can shift the emitted ghost-GK *mode* (`ghost_gk_x/y`) by up to ~6 m on near-tie multimodal frames
+  (`fft-cic` cuts it ~76%). Any **trained-model consumer of the ghost-GK mode** MUST pin one
+  `kde_backend` for train AND serve, persist it in model metadata, and add a serve-time assert that
+  the metadata backend matches the runtime backend — turning the silent ≤6 m skew into a loud
+  failure. **TF-16 xShotOccurrence is unaffected** (verified: it uses the resolved/defending GK, not
+  the ghost-GK mode), so this binds whichever feature first trains on the mode (TF-17 / TF-19).
 - **ADR-code reconciliation sweep.** Periodically verify that documented ADRs
   (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
   constraints (e.g. "zero Spark imports in domain") hold in practice and that

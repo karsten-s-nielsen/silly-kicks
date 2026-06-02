@@ -3698,11 +3698,13 @@ def add_ghost_gk(
     actions_for_context : pd.DataFrame | None
         SPADL actions for score_diff and phase context resolution.
         If None, context defaults to 0 (backward-compatible).
-    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft"}, default "vectorized"
-        KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs
-        the serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the
-        binned-convolution backend (~2000x, scalar-faithful but raw-grid-approximate -- see
-        ADR-014). Value-equivalent to the default within tolerance on the emitted scalars.
+    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
+        KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs the
+        serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the binned-convolution
+        backend (~2000x; NGP binning, can flip the mode on near-tie multimodal grids); "fft-cic"
+        adds CIC (bilinear) binning (~76% fewer multimodal mode flips + tighter raw grid than "fft"
+        at ~2x the bin cost). PREFER "fft-cic" over "fft" for new FFT consumers unless you need
+        NGP's extra speed on known-unimodal data. See ADR-014.
 
     Examples
     --------
@@ -3788,11 +3790,13 @@ def ghost_gk_xfns(*, model=None, home_team_id: int | str, kde_backend: str = "ve
 
     Parameters
     ----------
-    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft"}, default "vectorized"
+    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
         KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs the
         serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the binned-convolution
-        backend (~2000x, scalar-faithful but raw-grid-approximate -- see ADR-014). Value-equivalent
-        within tolerance on the emitted scalars.
+        backend (~2000x; NGP binning, can flip the mode on near-tie multimodal grids); "fft-cic"
+        adds CIC (bilinear) binning (~76% fewer multimodal mode flips + tighter raw grid than "fft"
+        at ~2x the bin cost). PREFER "fft-cic" over "fft" for new FFT consumers unless you need
+        NGP's extra speed on known-unimodal data. See ADR-014.
 
     Examples
     --------

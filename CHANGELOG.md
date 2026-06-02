@@ -5,6 +5,36 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.8.0] — 2026-06-02
+
+### Added — opt-in `kde_backend="fft-cic"` ghost-GK KDE backend (CIC / bilinear binning)
+
+A fourth opt-in `kde_backend="fft-cic"` for the ghost-GK KDE, adding **CIC (cloud-in-cell / bilinear)
+binning** on the existing FFT-convolution path (`predict_density` / `compute_ghost_gk` /
+`add_ghost_gk` / `ghost_gk_xfns`, and the atomic mirror — flat string, no signature change). Binning
+is the only seam: `_kde_density_fft` (NGP) and `_kde_density_fft_cic` share the extracted
+`_kde_setup` + `_fft_convolve_field` verbatim and differ only in `_bin_ngp` vs `_bin_cic`. On near-tie
+**multimodal** grids CIC reduces NGP's spurious mode flips ~76% (real data: NGP shifts the emitted GK
+mode up to ~6 m on ~22% of actions → CIC ~5%) and tightens the raw grid (~5.7e-3 vs 1.5e-2 median
+rel-err), at ~2× the NGP bin cost (still ~1000×+ over brute force). No new dependency (core scipy).
+**Prefer `fft-cic` over `fft` for new FFT consumers** unless you need NGP's extra speed on
+known-unimodal data; `vectorized`/`cpu-numba` remain the only exact-raw-grid backends. Decision:
+ADR-014 (amended).
+
+### Changed — ADR-014 mode-fidelity correction (`fft` docstring; no runtime change to `fft`)
+
+`"fft"` (NGP) is **unchanged** and stays the fft-default — existing `"fft"` callers are unaffected.
+But its documented fidelity contract is corrected: 4.6.0 claimed the emitted scalars (incl. the mode)
+are "robust to per-cell binning noise"; that holds for mean/spread always and the mode on *unimodal*
+grids, but **on near-tie multimodal grids NGP can flip the emitted mode by several metres** — a claim
+4.6.0's *unimodal* parity bench structurally could not surface. The `_kde_density_fft` /
+`predict_density` docstrings and ADR-014 are amended accordingly.
+
+**Hyrum heads-up:** any trained-model consumer of the ghost-GK *mode* should pin one `kde_backend` for
+train and serve (and persist it in metadata) — under `fft` the GK mode can differ by ~6 m on
+multimodal frames. (TF-16 xShotOccurrence is unaffected — it uses the resolved/defending GK, not the
+ghost-GK mode.)
+
 ## [4.7.0] — 2026-06-02
 
 ### Changed — TF-24 apply: Optuna-calibrated `infer_ball_carrier` defaults (`beta` 0.5→0.0, `gamma` 1.0→0.25)

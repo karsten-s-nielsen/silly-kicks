@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-06-02 |
-| **Status** | Accepted |
+| **Status** | Accepted — amended 2026-06-02 (4.8.0: CIC `fft-cic` added; mode-fidelity claims corrected) |
 | **Deciders** | Karsten Nielsen (maintainer), luxury-lakehouse AC-1 session |
 
 ## Context
@@ -47,7 +47,7 @@ re-baselines the AC-1 golden under a tolerance'd CI gate.
 |---|---|---|---|
 | Keep brute force + numba (ADR-013) | already shipped, exact grid | O(k·m); ~10× / ~nil on serverless | doesn't move the order; ghost-GK stays 91% of the chain |
 | GPU backend | large raw speedup | no serverless GPU venue + ~84 matches (ADR-013 §8) | deferred; FFT gets the win on the existing CPU venue |
-| CIC (bilinear) binning instead of NGP | halves cell-level grid error | 2× slower; does NOT fix the single near-tie mode flip (flat-ridge argmax); equivalent to NGP on the 3 emitted scalars | NGP is simpler/faster and scalar-equivalent |
+| CIC (bilinear) binning instead of NGP | halves cell-level grid error; **also fixes the multimodal mode flip** | 2× slower | **Deferred at 4.6.0, ADOPTED at 4.8.0** as opt-in `fft-cic` — see the amended Decision below. (The original "scalar-equivalent / doesn't fix the mode flip" rejection was based on a *unimodal* bench; real multimodal data showed NGP flips the mode by up to ~6 m on ~22% of actions, which CIC fixes ~76%.) |
 | (chosen) NGP binned-convolution, opt-in | ~2000×, no new dep, reuses `_kde_setup` | not bit-faithful on the raw grid (binning) | the emitted scalars are faithful; raw-grid consumers keep `vectorized` |
 
 ## Consequences
@@ -55,9 +55,10 @@ re-baselines the AC-1 golden under a tolerance'd CI gate.
 ### Positive
 - **~2355× measured** (4247 → 1.80 ms/prediction; lakehouse 2259×) on the full-k production regime;
   O(k + m·log m). No new dependency (core scipy).
-- Faithful on the three scalars `predict_density` emits — **mode** (39/40 exact, max 1 cell),
-  **mean** (≤5.5 mm), **spread** (≤0.16% rel) — because mean is a grid integral, spread an entropy,
-  mode the argmax peak, all robust to per-cell binning noise.
+- Faithful on **mean** (≤5.5 mm) and **spread** (≤0.16% rel) — grid integral / entropy, robust to
+  binning — always, and on the **mode** for **unimodal** grids (39/40 exact, max 1 cell on the
+  unimodal bench). **CORRECTION (amended 4.8.0):** the mode is NOT robust on near-tie *multimodal*
+  grids — see the corrected Negative item and the amended Decision below.
 - Reuses `_kde_setup`, so the kernel + singular-cov boundary are identical to the other backends.
 
 ### Negative (Hyrum's Law)
@@ -66,9 +67,16 @@ re-baselines the AC-1 golden under a tolerance'd CI gate.
   consumer reading the raw grid (not just the 3 scalars) must use `vectorized`. **No silly-kicks
   consumer reads the raw grid** (verified: only the `GhostGkDensity` dataclass stores it; the
   action-coupled features emit only mode/spread), so this affects only external grid consumers.
-- ~2.5% of predictions flip the discrete mode by ≤1 grid cell (a genuine flat-ridge near-tie, also
-  seen across `vectorized`/`cpu-numba`). **Consumers freezing a golden on `ghost_gk_x/y` must
-  re-baseline when adopting `fft`** (default stays `vectorized`, so this is opt-in/non-breaking).
+- **CORRECTION (amended 4.8.0):** the original claim that mode flips are "~2.5% of predictions, ≤1
+  grid cell" held only for the *unimodal* bench. On near-tie **multimodal** grids (GK plausibly at
+  near *or* far post — two ~equal peaks ~6 m apart), NGP's per-point ±0.25 m snap can flip *which*
+  peak is the argmax, shifting the emitted mode by **up to ~6 m on ~22% of real actions** (IDSSE
+  J03WMX p1, 97 actions, NGP vs exact). `fft-cic` (CIC bilinear binning) reduces this to ~5%
+  (21/97 → 5/97; the residual are genuine near-ties unfixable by any binning). The unimodal bench
+  could not surface this — it structurally cannot exhibit a peak-selection flip (the same
+  "test couldn't bite" class as the 4.2.0 DAS value-neutral claim). **Consumers freezing a golden on
+  `ghost_gk_x/y` must re-baseline when adopting `fft`/`fft-cic`** (default stays `vectorized`, so
+  this is opt-in/non-breaking).
 - Near-singular covariances have an ill-defined (flat-ridge) mode for *all* backends; `fft` is not
   asserted to match there (not a production regime — real clouds are cond ≤ 5.3).
 
@@ -77,20 +85,46 @@ re-baselines the AC-1 golden under a tolerance'd CI gate.
   sharing `_kde_setup`. Parity is locked by the scipy-oracle scalar test + a structural
   k-independence guard (one `fftconvolve`, k-independent shapes).
 
-## Future work — CIC binning (gated, not built)
+## Decision (amended 4.8.0) — `fft-cic` shipped
 
-If a **raw-grid** consumer ever needs both speed and tighter per-cell fidelity — concretely, **if
-TF-19 (GKDV Layer 3) adopts a density-integrated counterfactual** (`Σ_cells P(action|GK=cell)·
-ghost_density(cell)`) rather than a mode-point counterfactual — add **CIC (cloud-in-cell / bilinear)
-binning** as a new `kde_backend="fft-cic"` (NGP stays `"fft"`). It is a clean, additive extension:
-binning is the **only** seam (the kernel + `fftconvolve` + `_kde_setup` contract are
-backend-invariant), so the work is extract `_bin_to_grid(..., scheme)` + one dispatch `elif` (~15
-LOC; a validated reference `_bin_cic` exists in the lakehouse harness) with **no public-API change**
-(flat `kde_backend` string, not a new kwarg). CIC's reason to exist is the raw grid (≈5.7e-3 vs
-1.5e-2 median rel-err), so it MUST ship with a **raw-grid-fidelity test** vs the scipy oracle — not
-just the scalar-parity suite, where CIC ties NGP and would test the wrong thing. **Do not build it
-until a real grid consumer needs it** (YAGNI; gated like the numba→GPU ladder). CIC does NOT fix the
-≤1-cell mode flip (a genuine flat-ridge near-tie).
+CIC (cloud-in-cell / bilinear) binning is now a **fourth opt-in backend `kde_backend="fft-cic"`**
+(NGP stays `"fft"`, unchanged, still the fft-default — never repurposed, so no existing `"fft"`
+caller's results change). Binning is the **only** seam: `_kde_density_fft` and `_kde_density_fft_cic`
+share `_kde_setup` + `_fft_convolve_field` verbatim and differ only in `_bin_ngp` vs `_bin_cic`. Flat
+`kde_backend` string, **no public-API signature change** — it auto-propagates through
+`compute_ghost_gk` / `add_ghost_gk` / `ghost_gk_xfns` and the atomic mirror.
+
+**Motivation (what changed since 4.6.0's "gated, YAGNI" stance):** the lakehouse measured, on real
+multimodal data, that NGP shifts the *emitted mode* (the `ghost_gk_x/y` argmax) by up to ~6 m on
+~22% of actions; CIC cuts that ~76% (21/97 → 5/97). So CIC's value is **not** only the raw grid (as
+4.6.0 assumed) — it is the **mode on multimodal grids**, the scalar consumers actually read. It also
+tightens the raw grid (≈5.7e-3 vs 1.5e-2 median rel-err). Cost ~2× NGP, still ~1195× over
+`vectorized`. **Default stays `vectorized`**; both FFT backends are approximate (raw-grid consumers
+needing exactness use `vectorized`/`cpu-numba`).
+
+**Root cause that 4.6.0 missed it:** the scalar-parity bench used ~**unimodal** queries, which
+structurally cannot exhibit a multimodal peak-selection flip — so the "scalars are robust / CIC ties
+NGP on scalars" claim was validated on a fixture that couldn't bite (the 4.2.0 DAS value-neutral
+lesson). The 4.8.0 test suite therefore makes the **bimodal mode-parity test the primary motivation
+gate** (CIC lands on the true-winner side on ≥3 more of N differential-phase constructions than NGP)
+**plus** the raw-grid-fidelity test (CIC median rel-err strictly < NGP on the real model) **plus** a
+real-model golden — see `tests/tracking/test_ghost_gk_kde_vectorized.py`.
+
+**Tests / locks:** on-grid-node seam lock (`fft-cic == fft` exactly when points sit on nodes, so
+binning is provably the only seam); the NGP path is locked behaviour-identical across the refactor by
+the existing rtol fft golden; mass-conservation + out-of-grid for `_bin_cic`; k-independence spy;
+real-model golden (rtol — CI-version-robust).
+
+**Train/serve-skew note:** any **trained-model consumer of the ghost-GK mode** must pin one
+`kde_backend` for train AND serve and persist it in model metadata (a serve-time backend assert turns
+the silent ≤6 m multimodal mode skew into a loud failure). Verified scope: **TF-16 xShotOccurrence
+does NOT consume the ghost-GK mode** (it uses the resolved/defending GK), so it is unaffected; the
+guard binds whichever feature first trains on the mode — prospectively TF-17 / TF-19 (tracked in
+TODO.md).
+
+**Future — `fft-cic-cic`/CIC-grid escalation (still gated, not built):** if a *raw-grid* consumer
+later needs per-cell fidelity beyond CIC's, the same binning seam admits a higher-order scheme; YAGNI
+until a real grid consumer needs it.
 
 ## Related
 - **Continues:** ADR-012 (AC-1 hot-path; DAS ~1% / ghost-GK ~91%) and ADR-013 (cpu-numba backend, GPU
