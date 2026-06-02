@@ -3623,7 +3623,7 @@ wheels = [
 
 [[package]]
 name = "silly-kicks"
-version = "4.3.0"
+version = "4.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -3638,6 +3638,7 @@ dependencies = [
 
 [package.optional-dependencies]
 calibration = [
+    { name = "numba" },
     { name = "ruthless-efficiency", extra = ["optuna"] },
     { name = "xgboost" },
 ]
@@ -3708,6 +3709,7 @@ requires-dist = [
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "kloppy", marker = "extra == 'kloppy'", specifier = ">=3.18.0" },
     { name = "lightgbm", marker = "extra == 'lightgbm'", specifier = ">=4.0" },
+    { name = "numba", marker = "extra == 'calibration'", specifier = ">=0.59.0" },
     { name = "numba", marker = "extra == 'numba'", specifier = ">=0.59.0" },
     { name = "numba", marker = "extra == 'test'", specifier = ">=0.59.0" },
     { name = "numpy", specifier = ">=1.26.0" },
@@ -3729,9 +3731,9 @@ requires-dist = [
     { name = "tables", marker = "extra == 'test'", specifier = ">=3.9.0" },
     { name = "unravelsports", marker = "python_full_version >= '3.11' and extra == 'golden-master'", specifier = ">=1.2" },
     { name = "xarray", marker = "extra == 'xarray'", specifier = ">=2024.1.0" },
-    { name = "xgboost", marker = "extra == 'calibration'", specifier = ">=2.0,<3.0" },
-    { name = "xgboost", marker = "extra == 'test'", specifier = ">=2.0,<3.0" },
-    { name = "xgboost", marker = "extra == 'train'", specifier = ">=2.0,<3.0" },
+    { name = "xgboost", marker = "extra == 'calibration'", specifier = ">=2.0,<4.0" },
+    { name = "xgboost", marker = "extra == 'test'", specifier = ">=2.0,<4.0" },
+    { name = "xgboost", marker = "extra == 'train'", specifier = ">=2.0,<4.0" },
     { name = "xgboost", marker = "extra == 'xgboost'", specifier = ">=2.0.0" },
 ]
 provides-extras = ["kloppy", "numba", "xarray", "xgboost", "catboost", "lightgbm", "golden-master", "das", "ghost-gk", "ghost-gk-train", "calibration", "test", "train", "dev"]

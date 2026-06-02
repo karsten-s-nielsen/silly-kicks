@@ -5,6 +5,29 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.1] — 2026-06-01
+
+### Fixed (documentation/test) — correcting the 4.2.0 DAS "value-neutral" claim
+
+The 4.2.0 changelog stated the ball-carrier offside forwarding was *"value-neutral (zero AS/DAS
+change) on real data"*. **That was wrong.** Its validating A/B test placed the carrier clearly
+onside, so it never exercised the offside path. On real matches the on-ball carrier is frequently
+tracked just ahead of the ball/offside line, where accessible-space (with `respect_offside`, the
+default) would **delete the carrier as offside** ("treats offside players like air") unless the
+passer is exempted. Forwarding `player_in_possession_col` (4.2.0+) exempts the passer, so **DAS
+(`das_team`/`das_opponent`/`das_diff`) did change in 4.2.0 — a correctness fix, not a regression**:
+the ball carrier is no longer mis-flagged offside. The shift is large but rare (≈1% of frames, only
+where the carrier crosses the offside line; tens–hundreds of m² when it hits), because deleting a
+central on-ball player materially perturbs the accessible-space tessellation.
+
+No runtime behaviour changes in this release. Changes: (a) the misleading
+`test_forwarding_is_value_neutral_and_silences_warning` is renamed/scoped to the onside-only case,
+and a new `test_offside_carrier_forwarding_changes_das` locks the correct behaviour (DAS *must*
+change when the carrier would be offside); (b) ADR-012 amended to record the corrected finding.
+
+**Downstream (Hyrum's Law):** consumers who froze DAS goldens under ≤4.1.1 must re-baseline — the
+≤4.1.1 values encode the pre-fix bug (carrier mis-flagged offside). The ≥4.2.0 values are correct.
+
 ## [4.4.0] — 2026-06-01
 
 ### Fixed — TF-24 Stage-1 carrier objective was precision-only (no recall term)
