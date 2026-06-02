@@ -5,6 +5,12 @@ by definition) whose inferred ball carrier matches the SPADL actor, averaged wit
 provider (so match-count imbalance can't dominate). Providers with ~0 matched carrier events are
 loudly EXCLUDED (signal_sanity), never silently averaged in.
 
+The accuracy denominator is the set of carrier-actor actions that successfully **link** to a
+tracking frame; a linked action with a NaN inferred carrier (the actor fell beyond ``tolerance_m``
+of the ball) counts as a MISS, while genuine link failures are excluded. This recall term is what
+makes the objective sensitive to ``tolerance_m`` — see ``_match_accuracy`` for the rationale and
+the precision-only degeneracy it fixes.
+
 Examples
 --------
 >>> from silly_kicks.calibration._carrier_objective import CarrierAccuracyObjective
@@ -22,10 +28,30 @@ from silly_kicks.calibration._gates import signal_sanity
 
 _CARRIER_ACTION_TYPES = {"pass", "cross", "shot", "dribble"}
 
+# Link tolerance for binding a carrier-actor action to a tracking frame. Mirrors the
+# default of ``ball_carrier_at_action`` so the linked set used for the denominator below
+# is identical to the one that function links against internally.
+_LINK_TOLERANCE_SECONDS = 0.2
+
 
 def _match_accuracy(actions, frames, *, tolerance_m, beta, gamma) -> tuple[float, int]:
-    """Carrier accuracy for one match + the number of carrier-actor actions compared."""
+    """Carrier accuracy for one match + the number of carrier-actor actions scored.
+
+    The denominator is the set of carrier-actor actions (pass/cross/shot/dribble — the
+    actor IS the ball carrier by definition) that successfully **link** to a tracking
+    frame. A linked action whose inferred carrier is NaN — i.e. the actor ended up beyond
+    ``tolerance_m`` of the ball, so the model attributed the carrier to nobody — counts as
+    a **miss**, not a silent exclusion. Genuine **link** failures (no frame within the link
+    tolerance) are excluded, since link success depends only on the fixed link tolerance,
+    not on the swept carrier parameters.
+
+    This is what makes the objective sensitive to ``tolerance_m``: an over-tight radius is
+    penalized through lost recall (more NaN misses). The earlier formulation averaged only
+    over actions where a carrier *was* inferred, which had no recall term — so accuracy rose
+    monotonically as the radius shrank and the optimum collapsed onto the search lower bound.
+    """
     from silly_kicks.tracking.features import ball_carrier_at_action
+    from silly_kicks.tracking.utils import link_actions_to_frames
 
     if "type_name" in actions.columns:
         mask = actions["type_name"].isin(_CARRIER_ACTION_TYPES)
@@ -38,15 +64,32 @@ def _match_accuracy(actions, frames, *, tolerance_m, beta, gamma) -> tuple[float
     filtered = actions[mask]
     if filtered.empty:
         return float("nan"), 0
-    inferred = ball_carrier_at_action(filtered, frames, tolerance_m=tolerance_m, beta=beta, gamma=gamma)
-    # Compare as strings to avoid Int64/int64/object dtype mismatch (provider-asymmetric ids).
-    # np.asarray-wrap the .values (ExtensionArray) so numpy ops + pyright are both happy.
-    matched = np.asarray(inferred.astype(str).to_numpy()) == np.asarray(filtered["player_id"].astype(str).to_numpy())
-    valid = np.asarray(inferred.notna().to_numpy())
-    n = int(valid.sum())
-    if n == 0:
+
+    # Linking is independent of the swept (tolerance_m, beta, gamma) — it only depends on the
+    # fixed link tolerance. It cleanly separates "could this action be attributed at all"
+    # (link success) from "did the carrier model attribute it correctly" (what the swept
+    # params control). Restricting the denominator to linked actions is the recall gate.
+    pointers, _report = link_actions_to_frames(filtered, frames, tolerance_seconds=_LINK_TOLERANCE_SECONDS)
+    linked_ids = pointers.loc[pointers["frame_id"].notna(), "action_id"]
+    linked_mask = np.asarray(filtered["action_id"].isin(linked_ids).to_numpy())
+    n_linked = int(linked_mask.sum())
+    if n_linked == 0:
         return float("nan"), 0
-    return float(matched[valid].mean()), n
+
+    inferred = ball_carrier_at_action(
+        filtered,
+        frames,
+        tolerance_seconds=_LINK_TOLERANCE_SECONDS,
+        tolerance_m=tolerance_m,
+        beta=beta,
+        gamma=gamma,
+    )
+    # Compare as strings to avoid Int64/int64/object dtype mismatch (provider-asymmetric ids).
+    # A NaN inference stringifies to "nan", which never equals a real actor id, so a
+    # tolerance-induced miss correctly scores as not-matched. np.asarray-wrap the .values
+    # (ExtensionArray) so numpy ops + pyright are both happy.
+    matched = np.asarray(inferred.astype(str).to_numpy()) == np.asarray(filtered["player_id"].astype(str).to_numpy())
+    return float(matched[linked_mask].mean()), n_linked
 
 
 class CarrierAccuracyObjective:

@@ -101,8 +101,12 @@ def convert_to_actions(
     dataset : EventDataset
         A Kloppy event data set.
     game_id : str or int, optional
-        The identifier of the game. If not provided, the game id will not be
-        set in the SPADL DataFrame.
+        The identifier of the game. If not provided, it falls back to the
+        dataset's own ``metadata.game_id`` (stringified to match the tracking
+        gateway, ``silly_kicks.tracking.kloppy``), so events and frames from the
+        same kloppy dataset share a join-compatible ``game_id``. If the dataset
+        has no ``game_id`` either, the column is left unset (NaN). A value passed
+        here is always used verbatim and overrides the dataset metadata.
     preserve_native : list[str], optional
         Provider-native fields to preserve from each event's
         ``event.raw_event`` dict onto the output actions df. Each field
@@ -159,6 +163,18 @@ def convert_to_actions(
                     f"Kloppy convert_to_actions: preserve_native fields missing from event.raw_event: "
                     f"{sorted(missing)}. Available raw_event keys: {sorted(raw.keys())}."
                 )
+
+    # When the caller omits game_id, fall back to the kloppy dataset's own match
+    # identifier (metadata.game_id). Stringified to match the tracking gateway
+    # (silly_kicks.tracking.kloppy, which sets game_id = str(metadata.game_id)), so
+    # kloppy-gateway events and frames share a join-compatible game_id out of the box —
+    # the library-side fix for the IDSSE/Sportec join failure (actions carried
+    # game_id=None and never matched the frames' (game_id, period_id, frame_id) key).
+    # A caller-supplied game_id is always respected verbatim (ADR-001).
+    if game_id is None:
+        meta_game_id = getattr(dataset.metadata, "game_id", None)
+        if meta_game_id is not None:
+            game_id = str(meta_game_id)
 
     # Check if Kloppy is installed and if the version is supported
     if dataset.metadata.provider not in _SUPPORTED_PROVIDERS:

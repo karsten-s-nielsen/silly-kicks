@@ -292,6 +292,35 @@ class TestKloppyConversionReport:
         assert excluded & unrecognized == set()
 
 
+class TestKloppyGameIdAutoDerive:
+    """When the caller omits ``game_id``, fall back to the kloppy dataset's own
+    ``metadata.game_id`` (stringified to match the tracking gateway), so kloppy-gateway
+    events and frames share a join-compatible ``game_id`` out of the box. This is the
+    library-side fix for the IDSSE/Sportec failure where SPADL actions carried
+    ``game_id=None`` and never joined to the tracking frames. A caller-supplied
+    ``game_id`` is always respected verbatim (ADR-001).
+    """
+
+    def test_derives_game_id_from_metadata_when_omitted(self, sportec_dataset):
+        # The vendored Sportec fixture carries metadata.game_id == 'DFL-MAT-003BN1'.
+        expected = str(sportec_dataset.metadata.game_id)
+        assert expected and expected != "None"
+        actions, _ = kloppy_mod.convert_to_actions(sportec_dataset)  # game_id omitted
+        assert (actions["game_id"] == expected).all()
+
+    def test_explicit_game_id_overrides_metadata(self, sportec_dataset):
+        # A caller value wins over metadata.game_id (no silent override of the caller).
+        actions, _ = kloppy_mod.convert_to_actions(sportec_dataset, game_id="explicit_override")
+        assert (actions["game_id"] == "explicit_override").all()
+
+    def test_none_metadata_game_id_stays_none(self, metrica_dataset):
+        # The Metrica fixture has metadata.game_id == None; with no caller value the
+        # column stays NaN/None (graceful — no crash, no fabricated id).
+        assert metrica_dataset.metadata.game_id is None
+        actions, _ = kloppy_mod.convert_to_actions(metrica_dataset)  # game_id omitted
+        assert actions["game_id"].isna().all()
+
+
 class TestKloppyDirectionOfPlay:
     """The kloppy converter must apply the canonical absolute-frame → SPADL LTR mirror.
 

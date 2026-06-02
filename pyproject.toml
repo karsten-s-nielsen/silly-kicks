@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.3.0"
+version = "4.4.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -53,6 +53,11 @@ ghost-gk-train = ["skl2onnx>=1.16.0"]
 calibration = [
     "ruthless-efficiency[optuna]>=0.2.1",
     "xgboost>=2.0,<3.0",
+    # numba compiles the infer_ball_carrier + pitch-control kernels the Stage-1/Stage-2
+    # objectives call once per trial. Without it those run as pure-Python loops — the
+    # dominant cost of a full sweep. Declared here so calibration venvs get the fast path
+    # by default (the TF-24 maintainer sweep ran without it and was needlessly slow).
+    "numba>=0.59.0",
 ]
 test = [
     "pytest>=7.4.2",
