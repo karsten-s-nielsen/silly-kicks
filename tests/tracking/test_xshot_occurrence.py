@@ -807,3 +807,25 @@ def test_xshot_module_xgboost_is_lazy():
         [sys.executable, "-c", code], capture_output=True, text=True
     )
     assert proc.returncode == 0, f"xgboost imported at module level: {proc.stdout.strip()}"
+
+
+def test_build_xshot_labels_bit_identical_after_refactor():
+    """R2-L2: refactoring build_xshot_labels onto _build_occurrence_labels must not shift xS
+    labels. frames_index uses the real `team_in_possession` schema (NOT team_id). Golden frozen
+    from the pre-refactor implementation output."""
+    import pandas as pd
+
+    from silly_kicks.tracking._xshot_occurrence import build_xshot_labels
+
+    frames_index = pd.DataFrame(
+        {
+            "game_id": ["g"] * 5,
+            "period_id": [1] * 5,
+            "time_seconds": [0.0, 0.5, 1.0, 1.5, 2.0],
+            "team_in_possession": ["A"] * 5,  # real xS column (line 299), NOT team_id
+        }
+    )
+    shots = pd.DataFrame({"game_id": ["g"], "period_id": [1], "team_id": ["A"], "time_seconds": [1.2]})
+    y = build_xshot_labels(frames_index, shots, horizon_seconds=1.0)
+    np.testing.assert_array_equal(np.asarray(y), np.array([0, 1, 1, 0, 0]))  # GOLDEN (frozen pre-refactor)
+    assert np.asarray(y).dtype == np.dtype(int)

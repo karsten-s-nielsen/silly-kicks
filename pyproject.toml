@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.10.0"
+version = "4.11.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -165,10 +165,14 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/calibration/_vaep_brier_objective.py" = ["N803", "N806"]
 # TF-16 xShotOccurrence: ML-style uppercase X feature matrices in the HPO objective.
 "silly_kicks/tracking/_xshot_occurrence_objective.py" = ["N803", "N806"]
+# TF-17 xCrossAttempt: ML-style uppercase X feature matrices in the HPO objective.
+"silly_kicks/tracking/_xcross_attempt_objective.py" = ["N803", "N806"]
 # TF-24 CLI prints a human-readable run summary (T201).
 "scripts/calibrate_tracking_defaults.py" = ["T201"]
 # TF-16 xS trainer: ML-style uppercase X + human-readable run summary (T201).
 "scripts/train_xshot_occurrence.py" = ["N803", "N806", "T201"]
+# TF-17 xCross trainer: ML-style uppercase X + human-readable run summary (T201).
+"scripts/train_xcross_attempt.py" = ["N803", "N806", "T201"]
 # NOTE (M5): NO blanket S608 for scripts/_loader_databricks.py — match_id is parameterized
 # and provider is allowlist-validated; only the allowlisted table NAME carries a narrow
 # inline `# noqa: S608` on its specific lines.

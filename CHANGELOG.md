@@ -5,6 +5,35 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.11.0] — 2026-06-03
+
+### Added — xCrossAttempt (xCross) cross-attempt-propensity model (TF-17, GKDV Layer 2)
+
+A per-frame, STATE-anchored surface — `P(the in-possession team attempts a cross within ~1 s of a
+frame)` — the cross analogue of xShotOccurrence (TF-16) and the next decision-probability surface in
+the GKDV program. Inspired by Cao et al. (2025, arXiv:2505.11841); realizes 7 of the paper's 8
+confounders (crosser position #7 omitted — no faithful tracking-only proxy) and **extends the
+propensity model with a novel goalkeeper-position confounder block** (the paper's confounder set
+excluded all GK variables).
+
+- New `silly_kicks.tracking._xcross_attempt`: `extract_xcross_features`, `build_xcross_labels`,
+  `prepare_xcross_training_data`, `XCrossAttemptModel` (pinned-deterministic XGBoost; pickle-free
+  booster-JSON + metadata + SHA256SUMS), and the ADR-005 surfaces `compute_xcross_attempt` /
+  `add_xcross_attempt` / `xcross_attempt_xfns` (+ atomic mirror).
+- Shared `silly_kicks.tracking._occurrence_labels._build_occurrence_labels`, extracted from
+  `build_xshot_labels` (now a thin, bit-identical wrapper — xS labels unchanged).
+- HPO objective (`_xcross_attempt_objective`) + training CLI (`scripts/train_xcross_attempt.py`),
+  gated behind the existing `[train]` extra; inference gates on `[xgboost]` (lazy — `import
+  silly_kicks` stays dependency-light).
+- **Ships UNTRAINED** (code + synthetic CI fixture + real-provider extraction tests):
+  `from_variant`/`from_hub` raise `FileNotFoundError` until the weights follow-up (PR-B), and
+  `xcross_attempt_xfns` is NOT wired into any default xfn list yet. The causal ATT/ATNT validation
+  harness is a separate follow-up (PR-C).
+- `score_differential` (confounder #1) requires match-context `actions`; `compute`/`add` accept an
+  optional `actions=` kwarg (NaN-tolerant when omitted). A future `infer_ball_carrier` carrier-default
+  change is an xCross retrain trigger (carrier params recorded + consumed from model metadata, R3).
+- **Released on top of** the ghost-GK re-fit (PR-S81, 4.10.0); TF-17 ships as 4.11.0.
+
 ## [4.10.0] — 2026-06-03
 
 ### Fixed — Ghost-GK serve-carrier consistency (PR-S81)

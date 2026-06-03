@@ -28,6 +28,7 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
+from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking.utils import link_actions_to_frames
 
 # Goal geometry (goal-relative coords: defended goal at x=0, centre y=34).
@@ -287,28 +288,9 @@ def build_xshot_labels(
     --------
     >>> # y = build_xshot_labels(fidx, shots, horizon_seconds=1.0)
     """
-    y = np.zeros(len(frames_index), dtype=int)
-    if len(shots) == 0:
-        return pd.Series(y, index=frames_index.index)
-    # Group shots by (game, period, team) -> sorted time array.
-    shot_groups: dict[tuple, np.ndarray] = {}
-    for key, grp in shots.groupby(["game_id", "period_id", "team_id"], dropna=False):
-        shot_groups[key] = np.sort(grp["time_seconds"].to_numpy(dtype=float))
-    gids = frames_index["game_id"].to_numpy()
-    pids = frames_index["period_id"].to_numpy()
-    tpos = frames_index["team_in_possession"].to_numpy()
-    ts = frames_index["time_seconds"].to_numpy(dtype=float)
-    for i in range(len(frames_index)):
-        key = (gids[i], pids[i], tpos[i])
-        arr = shot_groups.get(key)
-        if arr is None:
-            continue
-        lo = float(ts[i])
-        hi = lo + horizon_seconds
-        # any shot time in [lo, hi]?
-        left = np.searchsorted(arr, lo, side="left")
-        if left < len(arr) and arr[left] <= hi:
-            y[i] = 1
+    # Thin wrapper over the shared occurrence helper (M-3). frames carry the possessing team
+    # as `team_in_possession`; shots carry the acting team as `team_id`.
+    y = _build_occurrence_labels(frames_index, shots, horizon=horizon_seconds, frame_team_col="team_in_possession")
     return pd.Series(y, index=frames_index.index)
 
 
