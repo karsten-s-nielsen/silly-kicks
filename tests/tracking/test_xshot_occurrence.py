@@ -28,6 +28,30 @@ def test_to_goal_relative_nan_propagates():
     assert np.isnan(geo.to_goal_relative_vx(np.nan, goal_x=105.0))
 
 
+def test_geometry_exposes_pitch_constants():
+    """PR-S80: metadata template + TF-38 coordinate guard depend on these constants."""
+    assert geo.PITCH_LENGTH == 105.0
+    assert geo.PITCH_WIDTH == 68.0
+    assert isinstance(geo.GEOMETRY_VERSION, str) and geo.GEOMETRY_VERSION
+
+
+def test_default_carrier_params_are_shared_constant():
+    """xS sources carrier defaults from the single library constant (anti-drift; PR-S80 L1)."""
+    import inspect
+
+    from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
+
+    # xS uses the SAME object, not a re-hardcoded copy.
+    assert xs._DEFAULT_CARRIER_PARAMS is DEFAULT_CARRIER_PARAMS
+    # The constant carries the 4.7.0 calibrated values.
+    assert DEFAULT_CARRIER_PARAMS == {"tolerance_m": 3.0, "beta": 0.0, "gamma": 0.25}
+    # infer_ball_carrier's signature defaults equal the constant (drift guard).
+    sig = inspect.signature(infer_ball_carrier).parameters
+    assert sig["tolerance_m"].default == DEFAULT_CARRIER_PARAMS["tolerance_m"]
+    assert sig["beta"].default == DEFAULT_CARRIER_PARAMS["beta"]
+    assert sig["gamma"].default == DEFAULT_CARRIER_PARAMS["gamma"]
+
+
 # --- Task 2: openGoal obstruction helper ---
 # Goal mouth: y in [30.34, 37.66] at x=0 (defended goal). Ball is goal-relative.
 
@@ -301,7 +325,109 @@ def test_model_sha256_verification(tmp_path):
 def test_model_carrier_params_default_when_unset():
     X, y = _toy_xy()
     m = xs.XShotOccurrenceModel().fit(X, y)
-    assert m.carrier_params == {"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}
+    # PR-S80: default now sourced from the shared 4.7.0 constant.
+    assert m.carrier_params == {"tolerance_m": 3.0, "beta": 0.0, "gamma": 0.25}
+
+
+def test_fit_sets_base_score_to_positive_rate():
+    """N4: calibration must not silently depend on xgboost's auto-intercept."""
+    import json
+
+    X, y = _toy_xy()
+    m = xs.XShotOccurrenceModel().fit(X, y)
+    cfg = json.loads(m._booster.save_config())
+    # xgboost serializes base_score version-dependently: a plain "0.525" on some versions,
+    # a bracketed array string "[5.25E-1]" on others -- strip the brackets before parsing.
+    base = float(str(cfg["learner"]["learner_model_param"]["base_score"]).strip("[]"))
+    assert abs(base - float(y.mean())) < 1e-6
+
+
+def test_fit_does_not_reweight():
+    """P2/M2: the SHIPPED model must be unweighted (scale_pos_weight == 1), asserted on the
+    fitted booster — not merely absent from the search space."""
+    import json
+    import re
+
+    assert "scale_pos_weight" not in xs._pinned_params(None)
+    X, y = _toy_xy()
+    m = xs.XShotOccurrenceModel().fit(X, y)
+    cfg = json.dumps(json.loads(m._booster.save_config()))
+    # Value may be plain ("1") or a bracketed array string ("[1E0]") depending on xgboost version.
+    found = re.findall(r'"scale_pos_weight":\s*"?\[?([0-9.eE+-]+)\]?"?', cfg)
+    assert all(abs(float(v) - 1.0) < 1e-9 for v in found), f"model reweights: {found}"
+
+
+def test_metadata_records_pitch_and_platform(tmp_path):
+    import json
+
+    X, y = _toy_xy()
+    m = xs.XShotOccurrenceModel().fit(X, y)
+    m.save(tmp_path / "v1")
+    meta = json.loads((tmp_path / "v1" / "metadata.json").read_text())
+    assert meta["pitch_length"] == 105.0 and meta["pitch_width"] == 68.0
+    for k in ("geometry_version", "xgboost_version", "training_platform"):
+        assert k in meta
+
+
+def test_load_raises_on_pitch_dimension_mismatch(tmp_path, monkeypatch):
+    """M4: a rescale/unit change genuinely skews features -> fail closed, never warn."""
+    X, y = _toy_xy()
+    xs.XShotOccurrenceModel().fit(X, y).save(tmp_path / "v1")
+    monkeypatch.setattr(xs._geo, "PITCH_LENGTH", 100.0)
+    with pytest.raises((xs.IntegrityError, ValueError)):
+        xs.XShotOccurrenceModel.load(tmp_path / "v1")
+
+
+def test_load_warns_on_geometry_version_only(tmp_path, monkeypatch):
+    """Pure-representation change at identical pitch dims is invariant -> warn, not raise."""
+    import warnings
+
+    X, y = _toy_xy()
+    xs.XShotOccurrenceModel().fit(X, y).save(tmp_path / "v1")
+    monkeypatch.setattr(xs._geo, "GEOMETRY_VERSION", "goal-relative-2")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        xs.XShotOccurrenceModel.load(tmp_path / "v1")  # must NOT raise
+    assert any("geometry_version" in str(x.message).lower() for x in w)
+
+
+def test_from_variant_loads_bundled_dir(tmp_path, monkeypatch):
+    """from_variant loads a bundled dir (memoized); unknown variant raises."""
+    root = tmp_path / "_xshot_weights"
+    (root / "default").mkdir(parents=True)
+    X, y = _toy_xy()
+    xs.XShotOccurrenceModel().fit(X, y).save(root / "default")
+    monkeypatch.setattr(xs, "_XSHOT_WEIGHTS_ROOT", root)
+    monkeypatch.setattr(xs, "_VARIANT_CACHE", {})  # honour the temp root, not a cached instance
+
+    m = xs.XShotOccurrenceModel.from_variant("default")
+    assert m._booster is not None
+    # memoized: a second call returns the SAME instance
+    assert xs.XShotOccurrenceModel.from_variant("default") is m
+    with pytest.raises(FileNotFoundError):
+        xs.XShotOccurrenceModel.from_variant("does-not-exist")
+
+
+def test_directional_fixture_has_both_classes_and_schema():
+    """The committed frozen directional rows (CI liveness tripwire data) are well-formed."""
+    import pandas as pd
+
+    df = pd.read_parquet("tests/datasets/tracking/xshot_directional/frozen_rows.parquet")
+    assert set(xs.XSHOT_FEATURE_NAMES_FAITHFUL).issubset(df.columns)
+    assert "label" in df.columns
+    assert df["label"].nunique() == 2
+    assert df["label"].sum() >= 3 and (df["label"] == 0).sum() >= 3
+
+
+def test_xshot_surface_home_team_id_optional():
+    """T7: home_team_id is unused (GK-based goal resolution) -> callers may omit it, so the
+    factory can sit in a module-level default xfn list."""
+    frames = _synthetic_match_frames(n_frames=2)
+    m = xs.XShotOccurrenceModel().fit(*_toy_xy())
+    out = xs.compute_xshot_occurrence(frames, model=m)  # no home_team_id
+    assert "xshot_occurrence" in out.columns
+    xfns = xs.xshot_occurrence_xfns()  # buildable with no args
+    assert len(xfns) == 1 and getattr(xfns[0], "_frame_aware", False) is True
 
 
 # --- Task 6: compute_xshot_occurrence ---
@@ -429,11 +555,12 @@ def _synthetic_match_frames(n_frames=20, game_id=1):
     return df
 
 
-def test_compute_xshot_no_model_errors():
+def test_compute_xshot_model_none_uses_bundled_default():
+    # PR-S80: weights now ship, so model=None resolves to the bundled "default" variant
+    # (from_variant("default")) instead of raising. compute runs and adds the column.
     frames = _synthetic_match_frames(n_frames=2)
-    # model=None resolves to from_variant("default"), which raises until weights ship.
-    with pytest.raises((FileNotFoundError, RuntimeError)):
-        xs.compute_xshot_occurrence(frames, model=None, home_team_id=1)
+    out = xs.compute_xshot_occurrence(frames, model=None, home_team_id=1)
+    assert "xshot_occurrence" in out.columns
 
 
 def test_inference_uses_metadata_carrier_params(monkeypatch):

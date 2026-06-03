@@ -1,0 +1,79 @@
+{
+  "shipped_variant": "public",
+  "n_rows": 1194849,
+  "n_positive": 214401,
+  "providers": [
+    "gradientsports",
+    "idsse",
+    "skillcorner"
+  ],
+  "candidates": {
+    "public": {
+      "params": {
+        "n_estimators": 181.30121987799157,
+        "max_depth": 5.547988317134259,
+        "learning_rate": 0.020204469743321525,
+        "min_child_weight": 13.1035700805472,
+        "reg_lambda": 1.0894226594561744
+      },
+      "metrics": {
+        "pr_auc": 0.3067805543615046,
+        "brier": 0.1513070970773697,
+        "log_loss": 0.4694580599017931,
+        "pr_auc_std": 0.023886194403773736,
+        "positive_rate": 0.20189103539382963,
+        "base_rate_brier": 0.16113104522143706,
+        "n_usable_folds": 5
+      },
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ]
+    },
+    "full": {
+      "params": {
+        "n_estimators": 328.20142116900035,
+        "max_depth": 5.129410844036608,
+        "learning_rate": 0.05163494809541144,
+        "min_child_weight": 2.0053220644533045,
+        "reg_lambda": 4.542569079487376
+      },
+      "metrics": {
+        "pr_auc": 0.3023413898397821,
+        "brier": 0.13928623199462892,
+        "log_loss": 0.4442090962785425,
+        "pr_auc_std": 0.007542423776044245,
+        "positive_rate": 0.17943773648385697,
+        "base_rate_brier": 0.14723983520940687,
+        "n_usable_folds": 5
+      },
+      "providers": [
+        "gradientsports",
+        "idsse",
+        "skillcorner"
+      ]
+    },
+    "paired": {
+      "deltas": [
+        -0.06693593984493207,
+        -0.008559173100261719,
+        -0.05162939647435019,
+        -0.03159087234932967,
+        -0.025349014653959168
+      ],
+      "K": 5,
+      "n_positive": 0,
+      "ship_two": false,
+      "paired_delta_is_data_effect_shared_params": true,
+      "paired_hpo_nested": false
+    }
+  },
+  "acceptance": {
+    "enough_usable_folds": true,
+    "pr_auc_gt_base_rate": true,
+    "brier_lt_base_rate_brier": true,
+    "log_loss_lt_uniform": true
+  },
+  "estimates_are_cv_not_shipped_fit": true,
+  "artifact_size_bytes": 1190990
+}

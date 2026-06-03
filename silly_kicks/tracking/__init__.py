@@ -175,6 +175,7 @@ __all__ = [
     "snapshot_to_tracking_frames",
     "space_creation_xfns",
     "sportec",
+    "subsample_negatives",
     "sync_score",
     "team_shape_xfns",
     "tracking_default_xfns",
@@ -209,6 +210,7 @@ from ._xshot_occurrence import (
     compute_xshot_occurrence,
     extract_xshot_features,
     prepare_xshot_training_data,
+    subsample_negatives,
     xshot_occurrence_xfns,
 )
 from .direction import require_et_direction

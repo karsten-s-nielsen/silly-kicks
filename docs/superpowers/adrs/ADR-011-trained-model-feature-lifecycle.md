@@ -97,10 +97,28 @@ train/serve skew without an explicit retrain.
 - Inference runtime extras differ by model kind (`[xgboost]` vs `onnxruntime`);
   that is inherent to the model, not a lifecycle choice.
 
+## Update — TF-16 weights cycle (4.9.0, PR-S80)
+
+The xS weights run executed this lifecycle's "bundled/Hub weights" stage and refined two points:
+
+- **Single bundled variant for a booster, decided by evidence — not a size axis.** Unlike ghost-GK
+  (whose KDE artifact scales 9 MB ↔ 91 MB, justifying a `default`/`full` split), an xS XGBoost booster
+  is ~1.2 MB regardless of corpus, so the variant axis is **data provenance**, not size. A
+  pre-registered two-candidate comparison (`public` vs `full`, common public held-out, shared
+  hyperparameters) found owner-tier data *degraded* public-provider generalization, so a **single
+  `public` variant shipped**. The lesson: for size-invariant artifacts, justify any multi-variant
+  surface with measured generalization, not a presumed size trade-off.
+- **Model metadata carries a coordinate/units template** (`pitch_length`/`pitch_width`/
+  `geometry_version` + `xgboost_version`/`training_platform` + `shipped_variant`/`provider_list`), and
+  `load()` **fails closed** on a pitch-dimension/unit mismatch (warns on a translation-only geometry
+  change). This is the template a future ghost-GK R3 refit and any TF-38 coordinate change inherit.
+
 ## Related
 
-- **Specs:** `docs/superpowers/specs/2026-05-31-tf16-xshot-occurrence-design.md`
-- **Plans:** `docs/superpowers/plans/2026-05-31-tf16-xshot-occurrence.md`
+- **Specs:** `docs/superpowers/specs/2026-05-31-tf16-xshot-occurrence-design.md`;
+  `docs/superpowers/specs/2026-06-02-tf16-weights-run-design.md` (the weights cycle)
+- **Plans:** `docs/superpowers/plans/2026-05-31-tf16-xshot-occurrence.md`;
+  `docs/superpowers/plans/2026-06-02-pr-s80-tf16-xshot-weights.md`
 - **ADRs:** ADR-005 (tracking-aware feature surfaces); ADR-009 (ruthless
   `CachedObjective` calibration harness — the HPO substrate this reuses).
 - **Features:** TF-18 ghost-gk (first trained-model feature; pre-dates this ADR);

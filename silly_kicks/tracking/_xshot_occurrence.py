@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -22,7 +23,11 @@ import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.tracking import _geometry as _geo
-from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
+from silly_kicks.tracking._ball_carrier import (
+    DEFAULT_CARRIER_PARAMS,
+    derive_team_in_possession,
+    infer_ball_carrier,
+)
 from silly_kicks.tracking.utils import link_actions_to_frames
 
 # Goal geometry (goal-relative coords: defended goal at x=0, centre y=34).
@@ -307,10 +312,12 @@ def build_xshot_labels(
     return pd.Series(y, index=frames_index.index)
 
 
-_DEFAULT_CARRIER_PARAMS = {"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}
+_DEFAULT_CARRIER_PARAMS = DEFAULT_CARRIER_PARAMS  # shared constant (anti-drift; PR-S80 L1)
 _DEFAULT_SHOT_TYPES = ("shot", "shot_penalty", "shot_freekick")
 _HF_REPO_ID = "silly-kicks/xshot-occurrence-v1"
 _MODEL_VERSION = "1.0.0"
+_XSHOT_WEIGHTS_ROOT = Path(__file__).parent / "_xshot_weights"
+_VARIANT_CACHE: dict = {}  # P3: memoize bundled loads (default-list serve perf)
 _INT_PARAMS = ("n_estimators", "max_depth", "min_child_weight")
 
 
@@ -366,6 +373,9 @@ class XShotOccurrenceModel:
         self.carrier_params: dict = dict(_DEFAULT_CARRIER_PARAMS)
         self.horizon_seconds: float = 1.0
         self.shot_types: list[str] = ["shot", "shot_penalty", "shot_freekick"]
+        # Provenance (set by the trainer before save(); recorded in metadata — N5).
+        self.shipped_variant: str | None = None
+        self.provider_list: list | None = None
 
     def fit(
         self,
@@ -383,9 +393,16 @@ class XShotOccurrenceModel:
         """
         import xgboost as xgb
 
+        if int(xgb.__version__.split(".")[0]) < 2:
+            raise RuntimeError("xShotOccurrence requires xgboost>=2.0 (calibrated base_score / intercept estimation).")
         self.carrier_params = dict(carrier_params) if carrier_params else dict(_DEFAULT_CARRIER_PARAMS)
         self.horizon_seconds = horizon_seconds
-        clf = xgb.XGBClassifier(**self._params)
+        params = dict(self._params)
+        # N4: anchor calibration to the train positive rate explicitly so the M2 "log-loss keeps
+        # P(shot) calibrated without scale_pos_weight" claim does not silently depend on xgboost's
+        # auto-intercept behaviour surviving a future pin move.
+        params["base_score"] = float(np.asarray(labels, dtype=float).mean())
+        clf = xgb.XGBClassifier(**params)
         clf.fit(features.to_numpy(dtype=float), labels.to_numpy(dtype=int))
         booster = clf.get_booster()
         booster.feature_names = list(features.columns)
@@ -415,6 +432,10 @@ class XShotOccurrenceModel:
         """
         if self._booster is None:
             raise RuntimeError("Model not fitted.")
+        import platform
+
+        import xgboost as xgb
+
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
         self._booster.save_model(str(path / "model.json"))
@@ -426,6 +447,14 @@ class XShotOccurrenceModel:
             "carrier_params": self.carrier_params,
             "params": self._params,
             "version": _MODEL_VERSION,
+            # Coordinate/units template + reproducibility (PR-S80 §6 / M4, L2, N5).
+            "pitch_length": _geo.PITCH_LENGTH,
+            "pitch_width": _geo.PITCH_WIDTH,
+            "geometry_version": _geo.GEOMETRY_VERSION,
+            "xgboost_version": xgb.__version__,
+            "training_platform": platform.platform(),
+            "shipped_variant": self.shipped_variant,
+            "provider_list": self.provider_list,
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
@@ -459,10 +488,33 @@ class XShotOccurrenceModel:
             if hashlib.sha256(raw).hexdigest() != expected:
                 raise IntegrityError(f"Integrity check failed for {fname}")
         meta = json.loads((path / "metadata.json").read_text())
+        # Coordinate-change guard (PR-S80 §6, M4): a pitch-dimension/unit mismatch genuinely skews
+        # every goal-relative feature -> FAIL CLOSED (raise). A geometry_version change at identical
+        # dims is the translation-invariant case (e.g. the TF-38 origin shift) -> warn only (a
+        # warnings.warn is invisible in a swallowed-stdout Spark/batch serve, so we never rely on it
+        # for the case that actually skews).
+        rec_len = meta.get("pitch_length")
+        rec_wid = meta.get("pitch_width")
+        if rec_len is not None and (rec_len != _geo.PITCH_LENGTH or rec_wid != _geo.PITCH_WIDTH):
+            raise IntegrityError(
+                f"Pitch-dimension mismatch: model trained on {rec_len}x{rec_wid} m, library is "
+                f"{_geo.PITCH_LENGTH}x{_geo.PITCH_WIDTH} m. Goal-relative features would be skewed; "
+                "refusing to load (retrain required)."
+            )
+        rec_geo = meta.get("geometry_version")
+        if rec_geo is not None and rec_geo != _geo.GEOMETRY_VERSION:
+            warnings.warn(
+                f"geometry_version mismatch (model={rec_geo}, library={_geo.GEOMETRY_VERSION}) at "
+                "identical pitch dimensions -- treated as translation-invariant. Verify if a "
+                "non-translation coordinate change occurred.",
+                stacklevel=2,
+            )
         model = cls(feature_set=meta.get("feature_set", "faithful"), params=meta.get("params"))
         model.carrier_params = meta.get("carrier_params", dict(_DEFAULT_CARRIER_PARAMS))
         model.horizon_seconds = meta.get("horizon_seconds", 1.0)
         model.shot_types = meta.get("shot_types", model.shot_types)
+        model.shipped_variant = meta.get("shipped_variant")
+        model.provider_list = meta.get("provider_list")
         booster = xgb.Booster()
         booster.load_model(str(path / "model.json"))
         model._booster = booster
@@ -470,16 +522,30 @@ class XShotOccurrenceModel:
 
     @classmethod
     def from_variant(cls, variant: str = "default") -> XShotOccurrenceModel:
-        """Load a bundled/Hub variant by name. INERT until weights ship (spec §9).
+        """Load a bundled variant by name (memoized); fall through to Hub for the public variant.
+
+        ``"default"`` is bundled in the wheel and SHA-256 verified on first load, then cached —
+        an immutable, inference-only instance is safe to share across calls (P3: avoids reloading
+        + re-verifying per call on the default-xfns serve path).
 
         Examples
         --------
-        >>> # XShotOccurrenceModel.from_variant("default")  # raises until weights ship
+        >>> # XShotOccurrenceModel.from_variant("default")
         """
-        raise FileNotFoundError(
-            "xShotOccurrence weights are not yet bundled. Train via "
-            "scripts/train_xshot_occurrence.py, or await the TF-16 weights follow-up."
-        )
+        if variant in _VARIANT_CACHE:
+            return _VARIANT_CACHE[variant]
+        weights_dir = _XSHOT_WEIGHTS_ROOT / variant
+        if (weights_dir / "SHA256SUMS").exists():
+            model = cls.load(weights_dir)
+        elif variant == "public":  # the Hub-hosted variant, when two ship
+            model = cls.from_hub(_HF_REPO_ID)
+        else:
+            raise FileNotFoundError(
+                f"No bundled xShotOccurrence weights for variant {variant!r} at {weights_dir}. "
+                "Train via scripts/train_xshot_occurrence.py, or use from_hub()."
+            )
+        _VARIANT_CACHE[variant] = model
+        return model
 
     @classmethod
     def from_hub(cls, repo_id: str = _HF_REPO_ID) -> XShotOccurrenceModel:
@@ -539,8 +605,6 @@ def prepare_xshot_training_data(
     attacking_third_only: bool = True,
     shot_types: tuple[str, ...] | None = None,
     carrier_params: dict | None = None,
-    negative_subsample: float | None = None,
-    seed: int = 42,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
     """Build (features, labels, groups) for one match's frames -- the shared,
     public train/serve-parity entry point (spec §3.5).
@@ -554,9 +618,11 @@ def prepare_xshot_training_data(
     ``shots`` filtered to ``shot_types`` (default {shot, shot_penalty,
     shot_freekick}). ``groups`` is ``game_id`` for match-stratified GroupKFold.
 
-    ``negative_subsample`` (default off) drops that fraction of negative-label
-    rows using a ``seed``-seeded RNG (deterministic; D2) for wall-clock control on
-    large corpora; logged via warning so coverage reduction is never silent.
+    Always returns the **faithful** class distribution (no subsampling): this is the
+    train/serve-parity entry point, so contaminating it with a class-balance change
+    would silently distort any downstream CV's eval folds + base-rate baselines. For
+    wall-clock/memory control on large corpora, apply :func:`subsample_negatives` to a
+    **training split only** (never the held-out/eval fold). [PR-S80: moved out of here.]
 
     Parameters
     ----------
@@ -639,34 +705,50 @@ def prepare_xshot_training_data(
         shots_f = shots.iloc[0:0]  # empty type set + no type column -> no positives
     labels = build_xshot_labels(fidx, shots_f, horizon_seconds=horizon_seconds).to_numpy()
     groups = fidx["game_id"].to_numpy()
-
-    if negative_subsample is not None and 0.0 < negative_subsample < 1.0:
-        rng = np.random.default_rng(seed)
-        neg_idx = np.flatnonzero(labels == 0)
-        n_drop = round(len(neg_idx) * negative_subsample)
-        if n_drop > 0:
-            drop = rng.choice(neg_idx, size=n_drop, replace=False)
-            keep = np.ones(len(labels), dtype=bool)
-            keep[drop] = False
-            import warnings
-
-            warnings.warn(
-                f"xshot prepare: negative_subsample={negative_subsample} dropped "
-                f"{n_drop}/{len(neg_idx)} negative rows (seed={seed}).",
-                stacklevel=2,
-            )
-            features = features.iloc[keep].reset_index(drop=True)
-            labels = labels[keep]
-            groups = groups[keep]
-
     return features, labels, groups
+
+
+def subsample_negatives(
+    features: pd.DataFrame,
+    labels: np.ndarray,
+    groups: np.ndarray,
+    *,
+    fraction: float,
+    seed: int = 42,
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    """Drop ``fraction`` of the negative-label rows (deterministic given ``seed``).
+
+    **TRAIN-ONLY.** Apply this to a *training* split for wall-clock/memory control on large
+    corpora. NEVER apply it to a held-out / evaluation fold: subsampling the eval set fakes its
+    class balance and distorts log-loss / PR-AUC / Brier *and* the ``positive_rate`` /
+    ``base_rate_brier`` baselines those gates compare against. ``positive`` rows are always kept.
+
+    Returns a new ``(features, labels, groups)`` with the negatives thinned; a no-op (returns the
+    inputs unchanged) when ``fraction`` is falsy/<=0 or there is nothing to drop.
+
+    Examples
+    --------
+    >>> # Xtr, ytr, gtr = subsample_negatives(Xtr, ytr, gtr, fraction=0.5, seed=0)  # TRAIN fold only
+    """
+    if not fraction or fraction <= 0.0:
+        return features, labels, groups
+    labels = np.asarray(labels)
+    neg_idx = np.flatnonzero(labels == 0)
+    n_drop = round(len(neg_idx) * float(fraction))
+    if n_drop <= 0:
+        return features, labels, groups
+    rng = np.random.default_rng(seed)
+    drop = rng.choice(neg_idx, size=n_drop, replace=False)
+    keep = np.ones(len(labels), dtype=bool)
+    keep[drop] = False
+    return features.iloc[keep].reset_index(drop=True), labels[keep], np.asarray(groups)[keep]
 
 
 def compute_xshot_occurrence(
     frames: pd.DataFrame,
     *,
     model: XShotOccurrenceModel | str | None = None,
-    home_team_id: int | str,
+    home_team_id: int | str | None = None,  # unused (goal resolved GK-based); kept for call symmetry
     pitch_control_cache=None,  # reserved for 'extended' (not used by 'faithful')
     link_frame_ids: set[int] | None = None,
 ) -> pd.DataFrame:
@@ -728,8 +810,6 @@ def compute_xshot_occurrence(
 
     # N1: surface coverage loss rather than dropping silently.
     if n_skipped_goal and n_groups and n_skipped_goal / n_groups > 0.05:
-        import warnings
-
         warnings.warn(
             f"xshot_occurrence: {n_skipped_goal}/{n_groups} frame-groups skipped "
             f"(no defended-goal resolution); possible GK-identification gap.",
@@ -763,7 +843,7 @@ def add_xshot_occurrence(
     *,
     model: XShotOccurrenceModel | str | None = None,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
+    home_team_id: int | str | None = None,  # unused (goal resolved GK-based); kept for call symmetry
     pitch_control_cache=None,
 ) -> pd.DataFrame:
     """Enrich SPADL actions with an ``xshot_occurrence`` column (xS at the linked frame).
@@ -812,7 +892,7 @@ def add_xshot_occurrence(
 def xshot_occurrence_xfns(
     *,
     model: XShotOccurrenceModel | str | None = None,
-    home_team_id: int | str,
+    home_team_id: int | str | None = None,  # unused (goal resolved GK-based); kept for call symmetry
     pitch_control_cache=None,
 ) -> list:
     """Factory returning a FrameAwareTransformer emitting xshot_occurrence_a0/_a1/_a2.
