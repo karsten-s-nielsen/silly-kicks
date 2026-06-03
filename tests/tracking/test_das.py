@@ -1454,3 +1454,24 @@ class TestXcZeroFrameSubsetDegradesToNaN:
             warnings.simplefilter("ignore")
             out = get_xc(self._pass_at(2), self._frames())  # frame 2 = ball + players
         assert np.isfinite(out["xC"]).all(), "valid pass must yield finite xC"
+
+    def test_get_xc_pyarrow_string_team_columns(self) -> None:
+        """Regression: get_xc must coerce pyarrow-backed StringDtype team columns to
+        numpy object before calling accessible-space.
+
+        accessible-space's offside path 2-D-indexes the team arrays
+        (``passer_teams[:, np.newaxis]``); a pyarrow StringDtype column rejects 2-D
+        indexing with ``IndexError: too many indices for array``. This is the default
+        string dtype on newer pandas / py3.11+, so it bit only the CI 3.11/3.12 legs
+        (3.10 infers object strings). Constructing the dtype explicitly makes the lock
+        deterministic regardless of the ambient pandas string-inference default."""
+        pytest.importorskip("accessible_space")
+        pytest.importorskip("pyarrow")
+        from silly_kicks.tracking._das import get_xc
+
+        frames = self._frames().astype({"team_id": "string[pyarrow]", "team_in_possession": "string[pyarrow]"})
+        passes = self._pass_at(2).astype({"team_id": "string[pyarrow]"})
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_xc(passes, frames)  # must NOT raise IndexError
+        assert np.isfinite(out["xC"]).all(), "valid pass must yield finite xC even with pyarrow team dtype"

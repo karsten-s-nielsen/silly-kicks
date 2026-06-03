@@ -454,18 +454,27 @@ def get_xc(
     See NOTICE for full bibliographic citations.
     """
     asmod = _import_accessible_space()
-    _validate_das_inputs(frames)
-
-    prepared_frames = _to_das_coords(frames)
-    prepared_frames["player_id"] = prepared_frames["player_id"].astype(object)
-    ball_mask = prepared_frames["is_ball"] == True  # noqa: E712
-    prepared_frames.loc[ball_mask, "player_id"] = "ball"
+    # Use the canonical frame prep (validates inputs, shifts coords, labels the ball,
+    # downcasts Int64/boolean, and coerces team/team_in_possession/player_id to numpy
+    # object). The object coercion of the team columns is required: accessible-space's
+    # offside path 2-D-indexes the team arrays (passer_teams[:, np.newaxis]), which a
+    # pyarrow-backed StringDtype column (the default on newer pandas / py3.11+) rejects
+    # with "IndexError: too many indices for array". The old lighter prep only coerced
+    # player_id, so xC crashed there on the CI 3.11/3.12 legs. Mirrors get_das.
+    prepared_frames = _prepare_frames(frames)
 
     prepared_passes = passes.copy()
     prepared_passes["start_x"] = prepared_passes["start_x"] - _X_OFFSET
     prepared_passes["start_y"] = prepared_passes["start_y"] - _Y_OFFSET
     prepared_passes["end_x"] = prepared_passes["end_x"] - _X_OFFSET
     prepared_passes["end_y"] = prepared_passes["end_y"] - _Y_OFFSET
+    # Coerce the pass identifier columns to numpy object for the same reason as the
+    # tracking team columns above: with use_event_team_as_team_in_possession (the
+    # default) accessible-space derives passer_teams from the event team_id, then
+    # 2-D-indexes it (passer_teams[:, np.newaxis]) -- a pyarrow StringDtype rejects it.
+    for _col in ("team_id", "player_id"):
+        if _col in prepared_passes.columns:
+            prepared_passes[_col] = prepared_passes[_col].astype(object)
 
     # Same degenerate-frame fragility as the DAS path: accessible-space simulates one
     # frame per pass (its event frame) and keeps only frames with BOTH a ball row and

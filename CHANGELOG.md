@@ -39,6 +39,15 @@ also reaches `F == 0` — surfacing as `AssertionError: Dimension F is 0` rather
 precondition (shared `_frames_with_ball_and_players` helper) now guards `get_xc`, returning **NaN xC**
 for the affected passes instead of crashing.
 
+`get_xc` is now also hardened against the accessible-space × pyarrow-strings incompatibility: it used a
+lighter frame prep that coerced only `player_id` to numpy object, leaving pyarrow-backed `StringDtype`
+team columns in place — and accessible-space's offside path 2-D-indexes the team arrays
+(`passer_teams[:, np.newaxis]`), which pyarrow strings reject with `IndexError: too many indices for
+array` (the default string dtype on newer pandas / Python 3.11+, so it bit only those CI legs).
+`get_xc` now uses the canonical `_prepare_frames` (which coerces `team_id` / `team_in_possession` /
+`player_id`) and coerces the pass `team_id` / `player_id` too. This mirrors the DAS path's existing
+coercion.
+
 ## [4.9.0] — 2026-06-02
 
 ### Added — TF-16 xShotOccurrence (xS) trained weights (GKDV Layer 2)
