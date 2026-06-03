@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-03. **Current release**: silly-kicks 4.9.1. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-03. **Current release**: silly-kicks 4.10.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -52,23 +52,14 @@ Items are ranked top-to-bottom by specification completeness. Tier 3–4 require
   the metadata backend matches the runtime backend — turning the silent ≤6 m skew into a loud
   failure. **TF-16 xShotOccurrence is unaffected** (verified: it uses the resolved/defending GK, not
   the ghost-GK mode), so this binds whichever feature first trains on the mode (TF-17 / TF-19).
-- **Ghost-GK carrier train/serve consistency + R3 carrier-param record+consume (→ PR-S81, the
-  re-fit).** Two coupled issues on the `team_in_poss` feature (`_ghost_gk.py:541`), found during the
-  TF-16 weights cycle (2026-06-02): **(1)** `compute_ghost_gk` (serve, `:1732`) calls
-  `_extract_all_ghost_gk_features` **without `carrier=`**, so `team_in_poss` is **always 0.0 at
-  serve**, while `prepare_ghost_gk_training_data` (train, `:860`) computes the real carrier — a
-  pre-existing train/serve mismatch (contradicts TF-18 spec §5, which required serve to always
-  compute the carrier; the implementation diverged, likely PR-S66 frame-restriction or part-deux's
-  fft-cic). **(2)** Even once serve computes it, Ghost-GK calls `infer_ball_carrier` with **library
-  defaults** at both ends and does NOT record/consume the carrier params in `metadata.json` the way xS
-  does (R3), so a future `infer_ball_carrier` default change re-skews it. **Proper fix:** make
-  `compute_ghost_gk` compute the carrier (matching train) **and** give Ghost-GK the xS R3
-  record-in-metadata + consume-at-inference pattern. This **changes the bundled Ghost-GK's serve
-  output** (small — `team_in_poss` is long-tail ≪ `defensive_line_x`=15.2 — but a Hyrum change for
-  consumers incl. lakehouse), so it lands in **PR-S81 (the Ghost-GK 4.7.0 re-fit)** where the
-  behavior change is validated against a freshly-trained model + the lakehouse heads-up rides along.
-  Owner decision 2026-06-02 (was briefly slated for PR-S80; deferred once the serve-behavior-change
-  scope surfaced). Add a train/serve-parity regression test.
+- **Ghost-GK serve estimator: mode vs mean (surfaced by the PR-S81 re-fit gate).** Production
+  (`compute_ghost_gk`) serves the KDE **mode** (`ghost_gk_x/y = density argmax`), whose held-out
+  euclidean MAE is **~4.4 m**, while the model is *validated/published* on `predict_mean` (the leaf
+  weighted mean), MAE **~1.1 m**. So the served point estimate is materially worse than the reported
+  quality. Decide deliberately: either (a) serve `predict_mean` (needs the sklearn regressors, which
+  `save()`/`load()` discard — would require persisting them or reconstructing the mean from the
+  stored leaves), or (b) keep the mode but report the mode MAE in the model card / acceptance gates
+  so the published number matches what's served. Not PR-S81 scope (pre-existing); flagged here.
 - **ADR-code reconciliation sweep.** Periodically verify that documented ADRs
   (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
   constraints (e.g. "zero Spark imports in domain") hold in practice and that

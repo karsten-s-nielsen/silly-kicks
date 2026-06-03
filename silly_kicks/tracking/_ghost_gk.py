@@ -30,6 +30,8 @@ from scipy.stats import gaussian_kde
 
 from silly_kicks.spadl import config as spadlconfig
 
+from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
+
 # ---------------------------------------------------------------------------
 # Grid constants (fixed for API stability — see spec Density Grid)
 # ---------------------------------------------------------------------------
@@ -813,6 +815,7 @@ def prepare_ghost_gk_training_data(
     home_team_id: str | int,
     actions: pd.DataFrame | None = None,
     subsample_fps: float | None = 1.0,
+    carrier_params: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Assemble training features + labels from one game's tracking frames.
 
@@ -829,6 +832,11 @@ def prepare_ghost_gk_training_data(
     subsample_fps : float | None
         Target frame rate for training (default 1.0 Hz). None = no
         subsampling.
+    carrier_params : dict | None
+        Ball-carrier scoring params (``tolerance_m``/``beta``/``gamma``) used to
+        compute the ``team_in_possession`` feature. ``None`` uses the library
+        default (:data:`DEFAULT_CARRIER_PARAMS`); the trainer passes the same dict
+        here and to :meth:`GhostGkModel.fit` so recorded == used (R3, PR-S81).
 
     Returns
     -------
@@ -850,14 +858,15 @@ def prepare_ghost_gk_training_data(
     """
     import warnings
 
-    from ._ball_carrier import infer_ball_carrier
-
     # Build context callbacks
     score_fn = _build_score_lookup(actions, home_team_id) if actions is not None else None
     phase_fn = _build_phase_lookup(actions) if actions is not None else None
 
-    # Carrier (always computed --- only needs frames)
-    carrier_raw = infer_ball_carrier(frames)
+    # Carrier (always computed --- only needs frames). carrier_params=None is
+    # byte-identical to the historical bare call because DEFAULT_CARRIER_PARAMS
+    # equals infer_ball_carrier's signature defaults (PR-S81 / R3 single source).
+    cp: dict = dict(carrier_params) if carrier_params else dict(DEFAULT_CARRIER_PARAMS)
+    carrier_raw = infer_ball_carrier(frames, **cp)
     carrier_cols = carrier_raw[["game_id", "period_id", "frame_id", "ball_carrier_team_id"]]
 
     features, meta = _extract_all_ghost_gk_features(
@@ -1252,8 +1261,20 @@ class GhostGkModel:
         # Transient sklearn regressors — available after fit(), not after load()
         self._regressor_x: object | None = None
         self._regressor_y: object | None = None
+        # R3 (PR-S81): carrier params used to compute the training team_in_possession,
+        # recorded in metadata so serve resolves possession identically. Provenance
+        # fields are populated by the trainer before save().
+        self.carrier_params: dict = dict(DEFAULT_CARRIER_PARAMS)
+        self.training_commit: str | None = None
+        self.training_platform: str | None = None
 
-    def fit(self, features: pd.DataFrame, labels: pd.DataFrame) -> GhostGkModel:
+    def fit(
+        self,
+        features: pd.DataFrame,
+        labels: pd.DataFrame,
+        *,
+        carrier_params: dict | None = None,
+    ) -> GhostGkModel:
         """Train on feature matrix + (gk_x, gk_y) labels.
 
         Parameters
@@ -1262,12 +1283,18 @@ class GhostGkModel:
             Shape (n_samples, 26).
         labels : pd.DataFrame
             Columns "gk_x", "gk_y" — actual GK positions (goal-relative).
+        carrier_params : dict | None
+            Ball-carrier scoring params (``tolerance_m``/``beta``/``gamma``) that the
+            caller used to compute the training ``team_in_possession`` feature. Recorded
+            in metadata (R3) so serve resolves possession identically. ``None`` records
+            the library default (:data:`DEFAULT_CARRIER_PARAMS`).
 
         Examples
         --------
         >>> model = GhostGkModel()
         >>> model.fit(X_train, labels_train)
         """
+        self.carrier_params = dict(carrier_params) if carrier_params else dict(DEFAULT_CARRIER_PARAMS)
         from sklearn.ensemble import HistGradientBoostingRegressor
 
         X = features.values.astype(np.float64)
@@ -1512,6 +1539,8 @@ class GhostGkModel:
         np.savez_compressed(str(npz_path), **save_dict)  # type: ignore[arg-type]
 
         # 2. Metadata
+        import sklearn
+
         metadata = {
             "feature_names": GHOST_GK_FEATURE_NAMES,
             "grid_spec": {
@@ -1525,7 +1554,11 @@ class GhostGkModel:
             },
             "n_estimators": self._n_estimators,
             "max_depth": self._max_depth,
-            "version": "1.0.0",
+            "carrier_params": self.carrier_params,
+            "sklearn_version": sklearn.__version__,
+            "training_commit": self.training_commit,
+            "training_platform": self.training_platform,
+            "version": "1.1.0",
         }
         meta_path = path / "metadata.json"
         with open(meta_path, "w", newline="\n") as f:
@@ -1605,6 +1638,12 @@ class GhostGkModel:
         model._training_gk_y = training_gk_y
         model._training_leaves = training_leaves
 
+        # R3 (PR-S81): consume recorded carrier params; old (v1.0.0) artifacts
+        # without the field fall back to the library default.
+        model.carrier_params = metadata.get("carrier_params", dict(DEFAULT_CARRIER_PARAMS))
+        model.training_commit = metadata.get("training_commit")
+        model.training_platform = metadata.get("training_platform")
+
         return model
 
     @classmethod
@@ -1663,6 +1702,7 @@ def compute_ghost_gk(
     model: GhostGkModel | GhostGkVariant | None = None,
     home_team_id: int | str,
     actions: pd.DataFrame | None = None,
+    carrier: pd.DataFrame | None = None,
     link_frame_ids: set[int] | None = None,
     kde_backend: str = "vectorized",
 ) -> pd.DataFrame:
@@ -1687,6 +1727,14 @@ def compute_ghost_gk(
     actions : pd.DataFrame | None
         SPADL actions for score_diff and phase context. If None, both
         default to 0 (backward-compatible with 3.19.0 behaviour).
+    carrier : pd.DataFrame | None, default None
+        Optional precomputed carrier --- the
+        ``["game_id","period_id","frame_id","ball_carrier_team_id"]`` projection of
+        ``infer_ball_carrier(frames, **model.carrier_params)`` on the FULL frames.
+        When None, computed internally. Supply it to avoid recomputation across
+        repeated ghost-GK calls or across families that also resolve possession
+        (mirrors ``links``). Must be computed on full frames with the model's
+        carrier_params for the byte-identical frame-restriction invariant to hold.
     link_frame_ids : set[int] | None, default None
         When provided, restrict the per-sample KDE (``predict_density``) to GK
         samples whose ``frame_id`` is in this set. Feature extraction still runs
@@ -1723,6 +1771,17 @@ def compute_ghost_gk(
     score_fn = _build_score_lookup(actions, home_team_id) if actions is not None else None
     phase_fn = _build_phase_lookup(actions) if actions is not None else None
 
+    # PR-S81 serve-carrier consistency: compute the carrier on FULL frames with the
+    # model's recorded carrier_params (R3) so team_in_possession matches training. The
+    # carrier lookup in _extract_one_frame is per-(game,period,frame) independent, so
+    # restricting extraction to link_frame_ids stays byte-identical for kept frames
+    # (mirrors xS _xshot_occurrence.py). A caller may supply a precomputed `carrier`
+    # (computed on full frames with this model's carrier_params) to skip the internal
+    # inference (N5 cache convention; mirrors `links`).
+    if carrier is None:
+        carrier_raw = infer_ball_carrier(frames, **resolved.carrier_params)
+        carrier = carrier_raw[["game_id", "period_id", "frame_id", "ball_carrier_team_id"]]
+
     # PR-S66 §5: restrict BOTH the heavy feature extraction and the per-sample KDE
     # to the action-linked frames. _extract_all_ghost_gk_features still walks every
     # frame to maintain the cross-period one-step velocity state and computes the
@@ -1732,6 +1791,7 @@ def compute_ghost_gk(
     batch_features, meta = _extract_all_ghost_gk_features(
         frames,
         home_team_id=home_team_id,
+        carrier=carrier,
         score_at_time=score_fn,
         phase_at_time=phase_fn,
         link_frame_ids=link_frame_ids,

@@ -502,11 +502,32 @@ def test_ghost_gk_does_not_eagerly_import_numba():
     import importlib
     import sys
 
-    for mod in ("numba", "silly_kicks.tracking._ghost_gk_numba", "silly_kicks.tracking._ghost_gk"):
-        sys.modules.pop(mod, None)
-    importlib.import_module("silly_kicks.tracking._ghost_gk")
-    assert "numba" not in sys.modules, "import _ghost_gk eagerly imported numba"
-    assert "silly_kicks.tracking._ghost_gk_numba" not in sys.modules
+    import silly_kicks.tracking as _tracking_pkg
+
+    # Probe _ghost_gk's OWN body in isolation: pop numba/_ghost_gk_numba/_ghost_gk
+    # (keeping _ball_carrier + the parent package cached, so we test only what
+    # _ghost_gk itself imports, not what the package already pulled in). MUST restore
+    # both sys.modules AND the parent package attribute afterward -- otherwise the
+    # reimport leaves a DUPLICATE _ghost_gk module that breaks isinstance()/patch() in
+    # later tests (`import ... as ggk` binds via the parent attribute, not sys.modules;
+    # PR-S81 serve-carrier spy/_resolve_model failures).
+    mods = ("numba", "silly_kicks.tracking._ghost_gk_numba", "silly_kicks.tracking._ghost_gk")
+    saved_mods = {m: sys.modules.get(m) for m in mods}
+    saved_attr = getattr(_tracking_pkg, "_ghost_gk", None)
+    try:
+        for mod in mods:
+            sys.modules.pop(mod, None)
+        importlib.import_module("silly_kicks.tracking._ghost_gk")
+        assert "numba" not in sys.modules, "import _ghost_gk eagerly imported numba"
+        assert "silly_kicks.tracking._ghost_gk_numba" not in sys.modules
+    finally:
+        for m, obj in saved_mods.items():
+            if obj is not None:
+                sys.modules[m] = obj
+            else:
+                sys.modules.pop(m, None)
+        if saved_attr is not None:
+            _tracking_pkg._ghost_gk = saved_attr
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,45 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.10.0] — 2026-06-03
+
+### Fixed — Ghost-GK serve-carrier consistency (PR-S81)
+
+`compute_ghost_gk` now computes the ball-carrier on the **full** frames and threads it into
+feature extraction, so the `team_in_possession` feature matches training. Previously the serve
+path passed no carrier, leaving `team_in_possession` hardcoded to `0.0` at inference while
+training computed the real carrier — a latent train/serve skew (contradicting the TF-18 spec §5).
+
+This **changes served `ghost_gk_x` / `ghost_gk_y`** on the small fraction of frames where the
+defending GK's team is in possession. Measured on a real SkillCorner match (3000 GK-samples):
+**0.4 % of frames change, max 4.03 m, median 0 m, mean 0.004 m** — a long-tail effect, but a
+Hyrum-observable change for consumers (incl. the lakehouse). Driven by the bug fix, so it applies
+to every variant, not only the re-fit.
+
+### Changed — Ghost-GK R3 carrier-param record/consume + 4.7.0 re-fit (PR-S81)
+
+- **R3.** `GhostGkModel` now records the ball-carrier scoring params (`tolerance_m`/`beta`/`gamma`)
+  it was trained under in `metadata.json` (model `version` 1.0.0 → 1.1.0), plus
+  `sklearn_version` / `training_commit` / `training_platform`, and **consumes** them at serve
+  (`compute_ghost_gk` resolves possession with `model.carrier_params`, not the live library
+  default). Mirrors the xShotOccurrence R3 pattern. Back-compatible: a v1.0.0 artifact without the
+  field loads with the library default.
+- **Bundled weights re-fit** against the 4.7.0 carrier defaults (`beta=0.0, gamma=0.25`,
+  PR-S79) on 81 pining matches (887k samples, DGX Spark): `default` (wheel) + `full` (Hub). The
+  re-fit is quality-equivalent to the incumbent (held-out KDE-mode MAE 4.47 m vs 4.41 m;
+  `predict_mean` CV 1.12 m vs 1.14 m) and aligns the served carrier regime with the library
+  default + adds R3 provenance.
+- `compute_ghost_gk` / `add_ghost_gk` / `ghost_gk_xfns` gain an optional `carrier=` passthrough
+  (cache convention, mirrors `links`) so pipeline callers compute the carrier once.
+- `prepare_ghost_gk_training_data` gains an additive `carrier_params=` kwarg (return type
+  unchanged); the shared `_build_occurrence`-style time-windowed extraction is unchanged.
+
+### Internal
+
+- Shared `DEFAULT_CARRIER_PARAMS` consumed by Ghost-GK (anti-drift). New maintainer scripts:
+  `validate_ghost_gk_refit.py` (apples-to-apples gate), `measure_ghost_gk_serve_delta.py`,
+  `_loader_pining_to_cache.py`. `train_ghost_gk.py` records the carrier params + provenance.
+
 ## [4.9.1] — 2026-06-03
 
 ### Fixed — DAS crash on a degenerate (zero-frame) frame subset

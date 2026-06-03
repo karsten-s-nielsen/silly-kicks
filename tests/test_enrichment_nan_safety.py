@@ -523,6 +523,13 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         labels = pd.DataFrame({"gk_x": rng.uniform(2, 20, 50), "gk_y": rng.uniform(25, 45, 50)})
         m = GhostGkModel(n_estimators=5)
         m.fit(X_train, labels)
+        # PR-S81: the serve-carrier fix makes add_ghost_gk run infer_ball_carrier, which
+        # needs ball_state (a TRACKING_FRAMES_COLUMNS field the minimal fixture omits) +
+        # vx/vy. Provide them so the carrier resolves; NaN-laced identifiers stay fuzzed.
+        frames = frames.copy()
+        frames["ball_state"] = "alive"
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
         out = helper(actions, frames, model=m, home_team_id=1)
     elif name == "add_pre_shot_gk_position":
         # Needs defending_gk_player_id column pre-populated
