@@ -1105,3 +1105,373 @@ class TestAttackingDirectionColEndToEnd:
         assert out["das_team"].isna().all()
         assert out["das_opponent"].isna().all()
         assert out["das_diff"].isna().all()
+
+
+class TestZeroFrameSubsetDegradesToNaN:
+    """A frame subset with no frame containing BOTH the ball and players must
+    degrade to NaN DAS, not crash.
+
+    accessible-space restricts its simulation to frames present in *both* its
+    ball-row set and its player-row set (``transform_into_arrays``:
+    ``frames_to_consider = ball_frames & player_frames``), and computes that
+    intersection *after* its own ``team_in_possession.notna()`` filter — but its
+    "is the data empty?" guard runs *before* the intersection. So a non-empty
+    subset whose ball frames and player frames are disjoint collapses to a
+    zero-frame ``PLAYER_POS``; ``simulate_passes_chunked`` then returns ``None``
+    and ``get_dangerous_accessible_space`` dereferences ``None.x_grid`` —
+    ``AttributeError: 'NoneType' object has no attribute 'x_grid'``. That escapes
+    add_das's NaN-degradation except (which does not list AttributeError), so the
+    whole pipeline crashes. Reproduces the production GS-10502 crash where one
+    action batch's link-restricted frames lost their ball or player rows.
+
+    The fix (`_has_simulatable_frame`) detects this precondition in the
+    silly-kicks DAS boundary and returns NaN DAS, matching the existing
+    "undefined case -> NaN DAS" contract.
+    """
+
+    def _disjoint_frames(self) -> pd.DataFrame:
+        """Frame 1 = ball only; frame 2 = players only. Possession resolved on
+        all rows. Ball-frames {1} and player-frames {2} are disjoint → F==0."""
+        return pd.DataFrame(
+            [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=1,
+                    player_id="ball",
+                    team_id=None,
+                    is_ball=True,
+                    x=50.0,
+                    y=34.0,
+                    vx=0.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=2,
+                    player_id="H0",
+                    team_id="Home",
+                    is_ball=False,
+                    x=40.0,
+                    y=30.0,
+                    vx=1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=2,
+                    player_id="A0",
+                    team_id="Away",
+                    is_ball=False,
+                    x=60.0,
+                    y=30.0,
+                    vx=-1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+            ]
+        )
+
+    def test_has_simulatable_frame_false_when_disjoint(self) -> None:
+        from silly_kicks.tracking._das import _has_simulatable_frame, _prepare_frames
+
+        assert _has_simulatable_frame(_prepare_frames(self._disjoint_frames())) is False
+
+    def test_has_simulatable_frame_true_for_valid_frame(self) -> None:
+        from silly_kicks.tracking._das import _has_simulatable_frame, _prepare_frames
+
+        valid = pd.DataFrame(
+            [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=1,
+                    player_id="ball",
+                    team_id=None,
+                    is_ball=True,
+                    x=50.0,
+                    y=34.0,
+                    vx=0.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=1,
+                    player_id="H0",
+                    team_id="Home",
+                    is_ball=False,
+                    x=40.0,
+                    y=30.0,
+                    vx=1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=1,
+                    player_id="A0",
+                    team_id="Away",
+                    is_ball=False,
+                    x=60.0,
+                    y=30.0,
+                    vx=-1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+            ]
+        )
+        assert _has_simulatable_frame(_prepare_frames(valid)) is True
+
+    def test_get_individual_das_no_crash_returns_nan(self) -> None:
+        """Reproduces the production AttributeError path at the get_individual_das level."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import get_individual_das
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_individual_das(self._disjoint_frames())  # must NOT raise AttributeError
+        assert "DAS" in out.columns
+        assert out["DAS"].isna().all()
+        assert out["AS"].isna().all()
+        assert len(out) == 3  # shape preserved (one row per input frame-row)
+
+    def test_get_das_no_crash_returns_nan(self) -> None:
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import get_das
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_das(self._disjoint_frames())  # must NOT raise AttributeError
+        assert out["DAS"].isna().all()
+        assert out["AS"].isna().all()
+
+    def test_add_das_via_links_degrades_to_nan(self) -> None:
+        """End-to-end faithful repro: a link-restricted subset whose linked frames
+        are a ball-only frame + a player-only frame collapses to F==0 in
+        accessible-space. add_das must return NaN DAS, not crash."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking.features import add_das
+
+        frames = self._disjoint_frames()
+        actions = pd.DataFrame(
+            {"action_id": [1, 2], "game_id": [1, 1], "period_id": [1, 1], "team_id": ["Home", "Home"]}
+        )
+        # Restrict the per-frame sim to BOTH disjoint frames {1, 2}: the subset has a
+        # ball row (frame 1) and player rows (frame 2), so accessible-space's ball-present
+        # check passes, but no single frame has both → F==0 → would crash without the guard.
+        links = pd.DataFrame(
+            {
+                "action_id": [1, 2],
+                "frame_id": [1, 2],
+                "time_offset_seconds": [0.0, 0.0],
+                "n_candidate_frames": [1, 1],
+                "link_quality_score": [1.0, 1.0],
+            }
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = add_das(actions, frames, links=links)  # must NOT raise
+        assert out["das_team"].isna().all()
+        assert out["das_opponent"].isna().all()
+        assert out["das_diff"].isna().all()
+
+    def test_valid_frame_still_finite(self) -> None:
+        """Guard must not over-trigger: a normal frame (ball + players) still computes DAS."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import get_individual_das
+
+        valid = pd.DataFrame(
+            [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=1,
+                    player_id="ball",
+                    team_id=None,
+                    is_ball=True,
+                    x=50.0,
+                    y=34.0,
+                    vx=0.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+            ]
+            + [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=1,
+                    player_id=f"H{i}",
+                    team_id="Home",
+                    is_ball=False,
+                    x=30.0 + i,
+                    y=20.0 + i,
+                    vx=1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                )
+                for i in range(5)
+            ]
+            + [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=1,
+                    player_id=f"A{i}",
+                    team_id="Away",
+                    is_ball=False,
+                    x=70.0 - i,
+                    y=20.0 + i,
+                    vx=-1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                )
+                for i in range(5)
+            ]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_individual_das(valid)
+        assert np.isfinite(out["DAS"]).any(), "valid frame must yield at least one finite DAS"
+
+
+class TestXcZeroFrameSubsetDegradesToNaN:
+    """get_xc shares the DAS family's degenerate-frame fragility.
+
+    accessible-space's get_expected_pass_completion runs the same
+    transform_into_arrays (one simulated frame per pass), keeping only frames
+    with BOTH the ball and players. When no pass references such a frame the
+    intersection is empty -> F==0 -> the simulation result is None / trips a
+    matrix-consistency assertion and crashes (here an AssertionError rather than
+    the DAS path's AttributeError, but the same root). get_xc has no NaN
+    degradation of its own, so the crash propagates. The fix degrades to NaN xC.
+    """
+
+    def _frames(self) -> pd.DataFrame:
+        """Frame 1 = ball only; frame 2 = passer 'A' + opponent + ball.
+
+        The passer exists in tracking (frame 2) so accessible-space's
+        exclude_passer presence check passes, but a pass *at frame 1* references
+        a ball-only frame -> the player/ball intersection for that pass is empty."""
+        return pd.DataFrame(
+            [
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=1,
+                    player_id="ball",
+                    team_id=None,
+                    is_ball=True,
+                    x=50.0,
+                    y=34.0,
+                    vx=0.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=2,
+                    player_id="A",
+                    team_id="Home",
+                    is_ball=False,
+                    x=40.0,
+                    y=30.0,
+                    vx=1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=2,
+                    player_id="B",
+                    team_id="Away",
+                    is_ball=False,
+                    x=60.0,
+                    y=30.0,
+                    vx=-1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=2,
+                    player_id="ball",
+                    team_id=None,
+                    is_ball=True,
+                    x=50.0,
+                    y=34.0,
+                    vx=0.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                ),
+            ]
+        )
+
+    def _pass_at(self, frame_id: int) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                dict(
+                    action_id=1,
+                    frame_id=frame_id,
+                    player_id="A",
+                    team_id="Home",
+                    start_x=40.0,
+                    start_y=30.0,
+                    end_x=60.0,
+                    end_y=30.0,
+                ),
+            ]
+        )
+
+    def test_get_xc_no_crash_returns_nan(self) -> None:
+        """Pass referencing a ball-only frame must degrade to NaN xC, not crash."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import get_xc
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_xc(self._pass_at(1), self._frames())  # frame 1 = ball only
+        assert "xC" in out.columns
+        assert out["xC"].isna().all()
+        assert len(out) == 1  # shape preserved
+
+    def test_get_xc_valid_pass_still_finite(self) -> None:
+        """Guard must not over-trigger: a pass at a ball+players frame still computes xC."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import get_xc
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_xc(self._pass_at(2), self._frames())  # frame 2 = ball + players
+        assert np.isfinite(out["xC"]).all(), "valid pass must yield finite xC"
+
+    def test_get_xc_pyarrow_string_team_columns(self) -> None:
+        """Regression: get_xc must coerce pyarrow-backed StringDtype team columns to
+        numpy object before calling accessible-space.
+
+        accessible-space's offside path 2-D-indexes the team arrays
+        (``passer_teams[:, np.newaxis]``); a pyarrow StringDtype column rejects 2-D
+        indexing with ``IndexError: too many indices for array``. This is the default
+        string dtype on newer pandas / py3.11+, so it bit only the CI 3.11/3.12 legs
+        (3.10 infers object strings). Constructing the dtype explicitly makes the lock
+        deterministic regardless of the ambient pandas string-inference default."""
+        pytest.importorskip("accessible_space")
+        pytest.importorskip("pyarrow")
+        from silly_kicks.tracking._das import get_xc
+
+        frames = self._frames().astype({"team_id": "string[pyarrow]", "team_in_possession": "string[pyarrow]"})
+        passes = self._pass_at(2).astype({"team_id": "string[pyarrow]"})
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_xc(passes, frames)  # must NOT raise IndexError
+        assert np.isfinite(out["xC"]).all(), "valid pass must yield finite xC even with pyarrow team dtype"
