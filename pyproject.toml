@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.8.0"
+version = "4.9.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -95,6 +95,7 @@ test = [
 train = [
     "ruthless-efficiency[optuna]>=0.2.1",
     "xgboost>=2.0,<4.0",
+    "pyarrow>=14.0.0",  # trainer caches the extracted feature matrix to parquet (per-match streaming)
 ]
 dev = [
     "ruff>=0.8.0",

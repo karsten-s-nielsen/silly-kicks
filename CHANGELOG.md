@@ -5,6 +5,45 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.9.0] — 2026-06-02
+
+### Added — TF-16 xShotOccurrence (xS) trained weights (GKDV Layer 2)
+
+The xS shot-occurrence model now ships **trained** (PR-S75 shipped it untrained). A bundled
+`default` variant (~1.2 MB XGBoost booster) loads via `XShotOccurrenceModel.from_variant("default")`
+/ `from_hub`, and `model=None` on `compute_xshot_occurrence` / `add_xshot_occurrence` now resolves to
+it. `xshot_occurrence_xfns` is wired into `pre_shot_gk_full_default_xfns` (and its atomic mirror) —
+**not** the general `tracking_default_xfns`, which stays model-free (adding a frame-time bundled-weights
++ `[xgboost]` dependency to the broad default would be a Hyrum break). New `scripts/publish_xshot_occurrence.py`.
+
+**Training (DGX Spark, 81 matches / 1,194,849 rows / ~18% positive; against the 4.7.0 carrier
+defaults).** A pre-registered two-candidate comparison — `public` (skillcorner + idsse) vs `full`
+(+ gradientsports), evaluated on a common public held-out set at shared hyperparameters — found that
+**adding owner-tier gradientsports data degraded generalization to public-provider matches in all 5
+folds** (PR-AUC Δ ≈ −0.037), so the **reproducible `public` model shipped** (CV PR-AUC 0.307 > base
+rate 0.202; Brier 0.151 < base-rate 0.161). Model metadata records `shipped_variant` + `provider_list`,
+`carrier_params`, `pitch_length`/`pitch_width`/`geometry_version` (TF-38 coordinate-change template),
+and `xgboost_version`/`training_platform`. `pyarrow` added to the `[train]` extra (feature-cache).
+
+### Changed
+
+- **xS carrier defaults sourced from a single shared constant**
+  `silly_kicks.tracking._ball_carrier.DEFAULT_CARRIER_PARAMS` (the 4.7.0 calibrated `tolerance_m=3.0,
+  beta=0.0, gamma=0.25`) — removes the prior stale hardcoded copy and any future drift.
+- **xS HPO objective** now uses `StratifiedGroupKFold` (stable per-fold positives under the ~0.02 base
+  rate) and **drops `scale_pos_weight`** (xS is a calibrated `P(shot)`; the trainer gates on PR-AUC
+  **and** Brier vs base rate and is fail-closed — it refuses to write a sub-bar artifact).
+- `home_team_id` is now optional on the xS serve surface (it was unused — goal is resolved GK-based).
+- `XShotOccurrenceModel.load` fails closed on a pitch-dimension/unit metadata mismatch (warns on a
+  translation-only `geometry_version` change).
+- **`prepare_xshot_training_data` no longer subsamples** — the `negative_subsample`/`seed` parameters
+  are removed and it always returns the faithful class distribution (it is the train/serve-parity
+  entry point; subsampling it pre-split silently contaminated downstream CV eval folds + base-rate
+  baselines). Negative subsampling now lives in a standalone **`subsample_negatives(features, labels,
+  groups, *, fraction, seed)`** helper with a **train-only** contract, applied by the trainer to
+  **train folds only** (HPO + gate CV + paired test + final fit); held-out folds always keep the true
+  balance. (Surfaced as review M3.)
+
 ## [4.8.0] — 2026-06-02
 
 ### Added — opt-in `kde_backend="fft-cic"` ghost-GK KDE backend (CIC / bilinear binning)

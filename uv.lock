@@ -3623,7 +3623,7 @@ wheels = [
 
 [[package]]
 name = "silly-kicks"
-version = "4.8.0"
+version = "4.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -3688,6 +3688,7 @@ test = [
     { name = "xgboost" },
 ]
 train = [
+    { name = "pyarrow" },
     { name = "ruthless-efficiency", extra = ["optuna"] },
     { name = "xgboost" },
 ]
@@ -3716,6 +3717,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.1.1" },
     { name = "pandas-stubs", marker = "extra == 'dev'", specifier = ">=2.2.0" },
     { name = "pyarrow", marker = "extra == 'test'", specifier = ">=14.0.0" },
+    { name = "pyarrow", marker = "extra == 'train'", specifier = ">=14.0.0" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.409" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.2" },
     { name = "pytest-benchmark", marker = "extra == 'test'", specifier = ">=4.0.0" },

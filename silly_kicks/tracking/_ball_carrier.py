@@ -24,6 +24,12 @@ except ImportError:
     _HAS_NUMBA = False
 
 
+# Library-default carrier-inference params — single source of truth (TF-24 4.7.0
+# calibrated values). Consumers (e.g. xShotOccurrence) import this constant so their
+# default cannot drift from the library — the exact failure R3 was meant to prevent.
+DEFAULT_CARRIER_PARAMS = {"tolerance_m": 3.0, "beta": 0.0, "gamma": 0.25}
+
+
 def _pre_index_frames(
     frames: pd.DataFrame,
 ) -> dict:
@@ -328,9 +334,9 @@ def _post_process(
 def infer_ball_carrier(
     frames: pd.DataFrame,
     *,
-    tolerance_m: float = 3.0,
-    beta: float = 0.0,
-    gamma: float = 0.25,
+    tolerance_m: float = DEFAULT_CARRIER_PARAMS["tolerance_m"],
+    beta: float = DEFAULT_CARRIER_PARAMS["beta"],
+    gamma: float = DEFAULT_CARRIER_PARAMS["gamma"],
     pre: dict | None = None,
 ) -> pd.DataFrame:
     """Per-frame ball-carrier inference with hysteresis.

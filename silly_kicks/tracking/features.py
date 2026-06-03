@@ -53,6 +53,7 @@ from silly_kicks.spadl import config as spadlconfig
 from . import _kernels
 from ._ball_carrier import infer_ball_carrier
 from ._gk_resolve import defending_gk_from_frames
+from ._xshot_occurrence import xshot_occurrence_xfns
 from .feature_framework import lift_to_states
 from .pressure import (
     AndrienkoParams,
@@ -734,7 +735,11 @@ pre_shot_gk_angle_default_xfns = [
 ]
 
 
-pre_shot_gk_full_default_xfns = pre_shot_gk_default_xfns + pre_shot_gk_angle_default_xfns
+# PR-S80: xS (GKDV Layer 2) joins the GK/shot-context union ONLY -- NOT the general
+# tracking_default_xfns (which stays model-free; adding a frame-time bundled-weights +
+# [xgboost] dependency to the broad default would be a Hyrum break). Bundled model load is
+# memoized (from_variant("default") -> _VARIANT_CACHE).
+pre_shot_gk_full_default_xfns = pre_shot_gk_default_xfns + pre_shot_gk_angle_default_xfns + xshot_occurrence_xfns()
 
 
 # ---------------------------------------------------------------------------

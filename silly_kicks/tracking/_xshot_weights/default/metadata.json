@@ -1,0 +1,68 @@
+{
+  "feature_names": [
+    "r",
+    "theta",
+    "z",
+    "speed",
+    "openGoal",
+    "GK_r",
+    "GK_theta",
+    "DefDist_0",
+    "DefAngle_0",
+    "DefDist_1",
+    "DefAngle_1",
+    "DefDist_2",
+    "DefAngle_2",
+    "DefDist_3",
+    "DefAngle_3",
+    "DefDist_4",
+    "DefAngle_4",
+    "OffDist_0",
+    "OffAngle_0",
+    "OffDist_1",
+    "OffAngle_1",
+    "OffDist_2",
+    "OffAngle_2",
+    "OffDist_3",
+    "OffAngle_3",
+    "OffDist_4",
+    "OffAngle_4"
+  ],
+  "feature_set": "faithful",
+  "horizon_seconds": 1.0,
+  "shot_types": [
+    "shot",
+    "shot_penalty",
+    "shot_freekick"
+  ],
+  "carrier_params": {
+    "tolerance_m": 3.0,
+    "beta": 0.0,
+    "gamma": 0.25
+  },
+  "params": {
+    "n_estimators": 181,
+    "max_depth": 6,
+    "learning_rate": 0.020204469743321525,
+    "tree_method": "hist",
+    "n_jobs": 1,
+    "subsample": 1.0,
+    "colsample_bytree": 1.0,
+    "random_state": 42,
+    "eval_metric": "logloss",
+    "verbosity": 0,
+    "min_child_weight": 13,
+    "reg_lambda": 1.0894226594561744
+  },
+  "version": "1.0.0",
+  "pitch_length": 105.0,
+  "pitch_width": 68.0,
+  "geometry_version": "goal-relative-1",
+  "xgboost_version": "2.1.4",
+  "training_platform": "Linux-6.14.0-1015-nvidia-aarch64-with-glibc2.39",
+  "shipped_variant": "public",
+  "provider_list": [
+    "idsse",
+    "skillcorner"
+  ]
+}

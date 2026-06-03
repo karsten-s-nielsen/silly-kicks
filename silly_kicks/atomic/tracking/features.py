@@ -15,7 +15,7 @@ import pandas as pd
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
-from silly_kicks.tracking._xshot_occurrence import add_xshot_occurrence
+from silly_kicks.tracking._xshot_occurrence import add_xshot_occurrence, xshot_occurrence_xfns
 from silly_kicks.tracking.feature_framework import lift_to_states
 from silly_kicks.tracking.features import (
     actor_reachable_area_m2,
@@ -479,7 +479,12 @@ atomic_pre_shot_gk_angle_default_xfns = [
 ]
 
 
-atomic_pre_shot_gk_full_default_xfns = atomic_pre_shot_gk_default_xfns + atomic_pre_shot_gk_angle_default_xfns
+# PR-S80: mirror the non-atomic union -- xS (GKDV Layer 2) joins the atomic GK/shot-context
+# union too (the xshot_occurrence_xfns factory is action-decomposition-agnostic: it scores the
+# possessing team's shot probability at the linked frame, independent of atomic sub-actions).
+atomic_pre_shot_gk_full_default_xfns = (
+    atomic_pre_shot_gk_default_xfns + atomic_pre_shot_gk_angle_default_xfns + xshot_occurrence_xfns()
+)
 
 
 # ---------------------------------------------------------------------------

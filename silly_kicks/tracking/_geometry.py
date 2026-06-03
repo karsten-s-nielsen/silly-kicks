@@ -15,6 +15,13 @@ import math
 FIELD_LENGTH = 105.0
 GOAL_Y = 34.0  # pitch half-width (68 / 2) --- goal centre y
 
+PITCH_LENGTH = FIELD_LENGTH  # 105.0 m --- physical pitch length the goal-relative features assume
+PITCH_WIDTH = GOAL_Y * 2.0  # 68.0 m
+# Bump when the goal-relative transform's NUMERIC output changes (NOT for a pure origin
+# translation like TF-38, which is invariant). Consumed by trained-model metadata as the
+# coordinate-change fail-closed guard. See the TF-16 weights spec S6.
+GEOMETRY_VERSION = "goal-relative-1"
+
 
 def _flip(goal_x: float) -> bool:
     return goal_x > 50.0
