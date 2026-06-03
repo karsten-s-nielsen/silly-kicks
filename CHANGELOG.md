@@ -5,6 +5,40 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.9.1] — 2026-06-03
+
+### Fixed — DAS crash on a degenerate (zero-frame) frame subset
+
+`add_das` / `das_at_action` / `get_das` / `get_individual_das` could crash with
+`AttributeError: 'NoneType' object has no attribute 'x_grid'` when handed a frame subset in which
+**no single frame contains both the ball and players** (after resolving `team_in_possession`).
+accessible-space restricts its simulation to frames present in *both* its ball-row set and its
+player-row set (`transform_into_arrays`: `frames_to_consider = ball_frames & player_frames`), but its
+own emptiness guard runs *before* that intersection — so a non-empty subset whose ball and player
+frames are **disjoint** collapses to a zero-frame `PLAYER_POS` (`F == 0`), `simulate_passes_chunked`
+returns `None`, and `get_dangerous_accessible_space` dereferences `None.x_grid`. The resulting
+`AttributeError` was not in silly-kicks' DAS-degradation `except` tuple, so it propagated as a hard
+crash instead of degrading to NaN.
+
+This surfaced in a downstream lakehouse run (Gradient Sports match 10502, one action batch whose
+per-action **link-restricted** frames lost their ball or player rows) on silly-kicks 4.9.0 with
+accessible-space 2.1.0. The unguarded `None` dereference exists across accessible-space 2.x.
+
+**Fix:** a new `_has_simulatable_frame()` precondition in the silly-kicks DAS boundary detects the
+disjoint-frame case *before* calling accessible-space and returns **NaN DAS** (with a `UserWarning`),
+consistent with silly-kicks' existing "undefined case → NaN DAS" contract. This makes the whole
+`add_das` family robust to the accessible-space fragility for *all* consumers, not just the one that
+hit it. Valid frames are unaffected (the guard fires only when `ball_frames ∩ player_frames` is empty).
+No public API change; no behavior change for inputs that already produced DAS.
+
+`get_xc` (expected pass completion) shares the same accessible-space boundary and the same degenerate
+collapse (`get_expected_pass_completion` runs the identical `transform_into_arrays`, simulating one
+frame per pass). When no pass references a frame containing both the ball and players, that path
+also reaches `F == 0` — surfacing as `AssertionError: Dimension F is 0` rather than the DAS path's
+`AttributeError`, but the same root, and `get_xc` had no NaN degradation of its own. The same
+precondition (shared `_frames_with_ball_and_players` helper) now guards `get_xc`, returning **NaN xC**
+for the affected passes instead of crashing.
+
 ## [4.9.0] — 2026-06-02
 
 ### Added — TF-16 xShotOccurrence (xS) trained weights (GKDV Layer 2)

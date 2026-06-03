@@ -43,6 +43,22 @@ _DEFAULT_PLAYER_IN_POSSESSION_COL = "ball_carrier_player_id"
 #: Module-level one-time guard so the no-carrier guidance isn't emitted per call.
 _OFFSIDE_WARNED = False
 
+#: Emitted (stacklevel=2 at each DAS entry point) when a frame subset has no frame
+#: containing both the ball and players -- see _has_simulatable_frame.
+_NO_SIMULATABLE_FRAME_MSG = (
+    "DAS has no simulatable frame (no frame contains both the ball and players "
+    "with a resolved team_in_possession); returning NaN DAS. accessible-space would "
+    "otherwise build a zero-frame simulation and crash on a None dereference."
+)
+
+#: Emitted (stacklevel=2) when no pass references a frame containing both the
+#: ball and players -- the xC analogue of _NO_SIMULATABLE_FRAME_MSG.
+_NO_SIMULATABLE_XC_FRAME_MSG = (
+    "xC has no simulatable pass (no pass references a frame containing both the ball "
+    "and players); returning NaN xC. accessible-space would otherwise build a "
+    "zero-frame simulation and crash."
+)
+
 
 def _resolve_player_in_possession_col(frames: pd.DataFrame, player_in_possession_col: str | None) -> str | None:
     """Resolve the carrier column to forward to accessible-space.
@@ -146,6 +162,52 @@ def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _frames_with_ball_and_players(frames: pd.DataFrame) -> set:
+    """Frame ids that contain BOTH a ball row and a player (non-ball) row.
+
+    accessible-space restricts every simulation to exactly these frames —
+    ``transform_into_arrays`` computes ``frames_to_consider = ball_frames &
+    player_frames`` and drops the rest. When the result is empty it builds a
+    zero-frame ``PLAYER_POS`` (``F == 0``); ``simulate_passes_chunked`` then
+    returns ``None`` (or trips a matrix-consistency assertion), and the caller
+    dereferences the ``None`` simulation result — a hard crash
+    (``AttributeError`` on the DAS path, ``AssertionError`` on the xC path)
+    rather than an honest NaN. accessible-space's own "is the data empty?"
+    guards run *before* this intersection, so they do not catch the disjoint
+    case. ``frames`` rows carry ``is_ball`` (``_prepare_frames`` convention).
+    """
+    is_ball = frames["is_ball"] == True  # noqa: E712
+    ball_frames = set(frames.loc[is_ball, "frame_id"].unique())
+    player_frames = set(frames.loc[~is_ball, "frame_id"].unique())
+    return ball_frames & player_frames
+
+
+def _has_simulatable_frame(prepared: pd.DataFrame) -> bool:
+    """True iff DAS has at least one simulatable frame (ball + players present).
+
+    Mirrors accessible-space's DAS selection exactly: ``get_dangerous_accessible_space``
+    drops rows whose ``team_in_possession`` is NaN *first*, then
+    ``transform_into_arrays`` intersects ball/player frame sets. A link-restricted
+    subset whose ball frames and player frames are disjoint (e.g. one action batch
+    whose linked frames lost their ball or their player rows) collapses to
+    ``F == 0``; detecting it here lets DAS degrade to NaN — consistent with
+    silly-kicks' "undefined case -> NaN DAS" contract — instead of crashing.
+    See ``_frames_with_ball_and_players``. ``prepared`` is ``_prepare_frames`` output.
+    """
+    poss = prepared[prepared["team_in_possession"].notna()]
+    if poss.empty:
+        return False
+    return len(_frames_with_ball_and_players(poss)) > 0
+
+
+def _nan_das_result(frames: pd.DataFrame) -> pd.DataFrame:
+    """A copy of ``frames`` with all-NaN ``AS``/``DAS`` columns (degenerate DAS)."""
+    result = frames.copy()
+    result["AS"] = float("nan")
+    result["DAS"] = float("nan")
+    return result
+
+
 def get_das(
     frames: pd.DataFrame,
     *,
@@ -189,6 +251,10 @@ def get_das(
     asmod = _import_accessible_space()
     ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
     prepared = _prepare_frames(frames)
+
+    if not _has_simulatable_frame(prepared):
+        warnings.warn(_NO_SIMULATABLE_FRAME_MSG, UserWarning, stacklevel=2)
+        return _nan_das_result(frames)
 
     with _suppress_offside_warning():
         ret = asmod.get_dangerous_accessible_space(
@@ -315,6 +381,10 @@ def get_individual_das(
     ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
     prepared = _prepare_frames(frames)
 
+    if not _has_simulatable_frame(prepared):
+        warnings.warn(_NO_SIMULATABLE_FRAME_MSG, UserWarning, stacklevel=2)
+        return _nan_das_result(frames)
+
     with _suppress_offside_warning():
         ret = asmod.get_individual_dangerous_accessible_space(
             prepared,
@@ -396,6 +466,21 @@ def get_xc(
     prepared_passes["start_y"] = prepared_passes["start_y"] - _Y_OFFSET
     prepared_passes["end_x"] = prepared_passes["end_x"] - _X_OFFSET
     prepared_passes["end_y"] = prepared_passes["end_y"] - _Y_OFFSET
+
+    # Same degenerate-frame fragility as the DAS path: accessible-space simulates one
+    # frame per pass (its event frame) and keeps only frames with BOTH a ball row and
+    # player rows. If no pass references such a frame the intersection is empty -> F==0
+    # -> the simulation result is None and gets dereferenced (here an AssertionError on
+    # the matrix-consistency check). Degrade to NaN xC instead. (Only when the pass
+    # frame column is present; otherwise let accessible-space raise its own column error.)
+    if "frame_id" in prepared_passes.columns:
+        pass_frame_ids = set(prepared_passes["frame_id"].dropna().unique())
+        relevant_frames = prepared_frames[prepared_frames["frame_id"].isin(pass_frame_ids)]
+        if not _frames_with_ball_and_players(relevant_frames):
+            warnings.warn(_NO_SIMULATABLE_XC_FRAME_MSG, UserWarning, stacklevel=2)
+            result = passes.copy()
+            result["xC"] = float("nan")
+            return result
 
     ret = asmod.get_expected_pass_completion(
         prepared_passes,
