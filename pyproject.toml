@@ -109,9 +109,17 @@ Repository = "https://github.com/karsten-s-nielsen/silly-kicks"
 
 [tool.hatch.build.targets.wheel]
 packages = ["silly_kicks"]
-# Exclude the "full" Ghost-GK weights (~91 MB) from the wheel — they are
-# downloaded from HuggingFace Hub on first use.  The "default" weights (~9 MB)
-# are included automatically as part of the silly_kicks package.
+# The "full" Ghost-GK weights (~91 MB) are Hub-distributed (silly-kicks/ghost-gk-v1) and
+# NOT committed to the repo (4.10.0) — downloaded from HuggingFace Hub on first use. This
+# exclude is a defensive guard: if a maintainer trains a `full` model into that path locally,
+# it stays out of the wheel. The "default" weights (~13 MB) ship bundled in the package.
+exclude = ["silly_kicks/tracking/_ghost_gk_weights/full"]
+
+[tool.hatch.build.targets.sdist]
+# Same defensive exclude for the sdist. Each hatch target has its OWN include/exclude set,
+# so the wheel exclude does not cover the sdist — the 4.10.0 publish initially failed because
+# the sdist bundled the (then-committed) ~91 MB full/ weights and exceeded PyPI's 100 MB limit.
+# The full/ dir is now removed from the repo; this keeps any locally-trained full/ out of the sdist.
 exclude = ["silly_kicks/tracking/_ghost_gk_weights/full"]
 
 # --- Ruff ---

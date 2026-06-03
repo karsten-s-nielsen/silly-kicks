@@ -44,6 +44,14 @@ to every variant, not only the re-fit.
   `validate_ghost_gk_refit.py` (apples-to-apples gate), `measure_ghost_gk_serve_delta.py`,
   `_loader_pining_to_cache.py`. `train_ghost_gk.py` records the carrier params + provenance.
 
+### Packaging
+
+- The `full` Ghost-GK weights (~91 MB) are now **removed from the repository** — they are
+  Hub-distributed (`silly-kicks/ghost-gk-v1`) and `from_variant("full")` falls back to
+  `from_hub`. A `[tool.hatch.build.targets.sdist]` exclude is added alongside the existing wheel
+  exclude (each hatch target has its own include/exclude set): the larger re-fit `default` had
+  pushed the sdist — which still bundled `full/` — past PyPI's 100 MB per-file limit.
+
 ## [4.9.1] — 2026-06-03
 
 ### Fixed — DAS crash on a degenerate (zero-frame) frame subset
