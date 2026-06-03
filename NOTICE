@@ -70,6 +70,18 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   goals/threat via VAEP and xthreat). The openGoal goal-mouth-obstruction
   feature follows the paper's Appendix A construction.
 
+- Cao, Y., et al. (2025). "Framing Causal Questions in Sports Analytics: A Case
+  Study of Crossing in Soccer." arXiv:2505.11841. The xCrossAttempt model
+  (silly_kicks/tracking/_xcross_attempt.py, TF-17) is INSPIRED BY this paper. The
+  runtime surface is a per-frame, STATE-anchored cross-attempt-propensity model
+  ("will the in-possession team cross from this state within ~1 s") — it is NOT a
+  faithful reproduction of the paper's sender-level treatment. It realizes 7 of the
+  paper's 8 confounders (crosser position FW/MF/DF — categorical event metadata — is
+  omitted; no faithful tracking-only proxy exists) and EXTENDS the propensity model
+  with goalkeeper-position confounders (the paper's confounder set excluded all GK
+  variables). The paper's sender-level propensity-score-matching framework
+  (ATE/ATT) is reproduced separately in the TF-17 causal validation harness (PR-C).
+
 - Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
   Conference.
   (zone-based defender intensity in pitch-control framework)

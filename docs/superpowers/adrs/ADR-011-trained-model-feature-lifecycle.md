@@ -113,6 +113,25 @@ The xS weights run executed this lifecycle's "bundled/Hub weights" stage and ref
   `load()` **fails closed** on a pitch-dimension/unit mismatch (warns on a translation-only geometry
   change). This is the template a future ghost-GK R3 refit and any TF-38 coordinate change inherit.
 
+## Update — TF-17 (xCrossAttempt), 4.11.0
+
+xCrossAttempt is the **third** feature built to this lifecycle (after ghost-GK and xS) and follows
+the same staged code→weights path. Two refinements it introduces:
+
+- **Three-PR split (vs the usual two).** A trained-model feature whose research novelty needs an
+  *offline* validation distinct from the runtime surface splits into: **PR-A** code (untrained) →
+  **PR-B** weights + shipped-surface validation (incl. the surface GK-block ablation + the
+  GK-substitution-sensitivity probe that determines TF-19 viability) + default-xfn wiring → **PR-C**
+  the causal research harness (a private `silly_kicks/_causal/` matching port + a thin script driver)
+  + its own ADR-015. Rationale: a one-shot research artifact must not gate (or share a release with)
+  a maintained runtime feature, and TF-19 must be able to consume the surface without waiting on a
+  research study.
+- **Optional match-context inputs.** Where a confounder needs match context not present in a single
+  frame (xCross's `score_differential`), the `compute_*`/`add_*` surfaces take an optional `actions=`
+  kwarg and degrade gracefully to NaN (XGBoost-tolerant) when it is omitted — reusing ghost-GK's
+  `_build_score_lookup`. Faithfulness caveats (here: only 7 of the paper's 8 confounders are
+  realized) are recorded in NOTICE rather than overclaimed.
+
 ## Related
 
 - **Specs:** `docs/superpowers/specs/2026-05-31-tf16-xshot-occurrence-design.md`;

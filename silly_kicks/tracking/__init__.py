@@ -49,6 +49,8 @@ __all__ = [
     "SpearmanParams",
     "TrackingConversionReport",
     "VoronoiParams",
+    "XCrossAttemptModel",
+    "XCrossFeatureSet",
     "XShotFeatureSet",
     "XShotOccurrenceModel",
     "actor_arc_length_pre_window",
@@ -78,6 +80,7 @@ __all__ = [
     "add_space_creation",
     "add_sync_score",
     "add_team_shape",
+    "add_xcross_attempt",
     "add_xshot_occurrence",
     "align_events_to_frames",
     "back_line_high_x",
@@ -97,6 +100,7 @@ __all__ = [
     "compute_space_created",
     "compute_team_shape",
     "compute_tti",
+    "compute_xcross_attempt",
     "compute_xshot_occurrence",
     "cover_shadow_xfns",
     "das_at_action",
@@ -110,6 +114,7 @@ __all__ = [
     "detect_line_breaking",
     "elastic_sync_xfns",
     "extract_ball_features",
+    "extract_xcross_features",
     "extract_xshot_features",
     "feature_framework",
     "features",
@@ -159,6 +164,7 @@ __all__ = [
     "pre_shot_gk_x",
     "pre_shot_gk_y",
     "prepare_ghost_gk_training_data",
+    "prepare_xcross_training_data",
     "prepare_xshot_training_data",
     "preprocess",
     "pressure_default_xfns",
@@ -180,6 +186,7 @@ __all__ = [
     "team_shape_xfns",
     "tracking_default_xfns",
     "utils",
+    "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
 ]
 
@@ -203,6 +210,15 @@ from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_
 from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
 from ._team_shape import compute_team_shape
+from ._xcross_attempt import (
+    XCrossAttemptModel,
+    XCrossFeatureSet,
+    add_xcross_attempt,
+    compute_xcross_attempt,
+    extract_xcross_features,
+    prepare_xcross_training_data,
+    xcross_attempt_xfns,
+)
 from ._xshot_occurrence import (
     XShotFeatureSet,
     XShotOccurrenceModel,
