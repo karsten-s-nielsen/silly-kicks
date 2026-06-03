@@ -3676,6 +3676,7 @@ def add_ghost_gk(
     links: pd.DataFrame | None = None,
     home_team_id: int | str,
     actions_for_context: pd.DataFrame | None = None,
+    carrier: pd.DataFrame | None = None,
     kde_backend: str = "vectorized",
 ) -> pd.DataFrame:
     """Enrich actions with ghost-GK positioning columns.
@@ -3703,6 +3704,9 @@ def add_ghost_gk(
     actions_for_context : pd.DataFrame | None
         SPADL actions for score_diff and phase context resolution.
         If None, context defaults to 0 (backward-compatible).
+    carrier : pd.DataFrame | None
+        Optional precomputed carrier forwarded to ``compute_ghost_gk`` to avoid
+        recomputing possession (see its docstring; mirrors ``links``).
     kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
         KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs the
         serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the binned-convolution
@@ -3747,6 +3751,7 @@ def add_ghost_gk(
             model=resolved_model,
             home_team_id=home_team_id,
             actions=actions_for_context,
+            carrier=carrier,
             link_frame_ids=link_frame_ids,
             kde_backend=kde_backend,
         )
@@ -3788,13 +3793,22 @@ def add_ghost_gk(
     return out
 
 
-def ghost_gk_xfns(*, model=None, home_team_id: int | str, kde_backend: str = "vectorized") -> list:
+def ghost_gk_xfns(
+    *,
+    model=None,
+    home_team_id: int | str,
+    carrier: pd.DataFrame | None = None,
+    kde_backend: str = "vectorized",
+) -> list:
     """Factory returning a FrameAwareTransformer for ghost-GK features.
 
     3 columns x 3 game states = 9 VAEP columns.
 
     Parameters
     ----------
+    carrier : pd.DataFrame | None
+        Optional precomputed carrier forwarded to ``compute_ghost_gk`` to avoid
+        recomputing possession (see its docstring; mirrors ``links``).
     kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
         KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs the
         serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the binned-convolution
@@ -3842,6 +3856,7 @@ def ghost_gk_xfns(*, model=None, home_team_id: int | str, kde_backend: str = "ve
             frames,
             model=resolved,
             home_team_id=home_team_id,
+            carrier=carrier,
             link_frame_ids=link_frame_ids,
             kde_backend=kde_backend,
         )

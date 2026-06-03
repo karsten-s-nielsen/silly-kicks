@@ -49,6 +49,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-estimators", type=int, default=500)
     parser.add_argument("--max-depth", type=int, default=8)
     parser.add_argument("--cv-folds", type=int, default=5)
+    # PR-S81: carrier params (single source -> prepare AND fit; recorded in metadata, R3).
+    parser.add_argument(
+        "--carrier-beta", type=float, default=None, help="Carrier velocity weight (default: library default)"
+    )
+    parser.add_argument("--carrier-gamma", type=float, default=None, help="Carrier hysteresis (default: library)")
+    parser.add_argument("--carrier-tolerance", type=float, default=None, help="Carrier radius m (default: library)")
+    parser.add_argument(
+        "--variant",
+        choices=["default", "full"],
+        default="full",
+        help="Which variant this run produces (recorded in metrics/metadata)",
+    )
+    parser.add_argument(
+        "--subsample-cap",
+        type=int,
+        default=None,
+        help="Cap total training samples (default None=all; ~36000 for the bundled 'default')",
+    )
+    parser.add_argument(
+        "--training-platform", type=str, default=None, help="Recorded in metadata (e.g. 'dgx-spark-aarch64')"
+    )
     return parser.parse_args()
 
 
@@ -58,6 +79,27 @@ def main() -> None:
 
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    # PR-S81: resolve ONE carrier cp from CLI (default = library) and pass the SAME dict
+    # to both prepare (compute) and fit (record) so metadata records exactly what was used.
+    import subprocess
+
+    from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
+
+    cp = dict(DEFAULT_CARRIER_PARAMS)
+    if args.carrier_tolerance is not None:
+        cp["tolerance_m"] = args.carrier_tolerance
+    if args.carrier_beta is not None:
+        cp["beta"] = args.carrier_beta
+    if args.carrier_gamma is not None:
+        cp["gamma"] = args.carrier_gamma
+    print(f"Carrier params (single source, recorded + used): {cp}")
+
+    try:
+        training_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()  # noqa: S607
+    except Exception:
+        training_commit = None
+    print(f"training_commit={training_commit}, training_platform={args.training_platform}")
 
     print(f"Config: n_estimators={args.n_estimators}, max_depth={args.max_depth}")
     print(f"Data: {args.data_dir}, subsample_fps={args.subsample_fps}")
@@ -193,6 +235,7 @@ def main() -> None:
                     home_team_id=home,
                     actions=game_actions,
                     subsample_fps=args.subsample_fps,
+                    carrier_params=cp,
                 )
                 del game_frames  # Release per-game slice
 
@@ -232,6 +275,18 @@ def main() -> None:
         np.save(cache_provs, provider_labels)
         print(f"Cached features to {cache_dir}")
 
+    # PR-S81: variant axis = sample count -> wheel size. Cap AFTER extraction so the
+    # bundled "default" stays small while "full" keeps all in-domain samples.
+    if args.subsample_cap is not None and len(features) > args.subsample_cap:
+        rng = np.random.default_rng(42)
+        keep = rng.choice(len(features), size=args.subsample_cap, replace=False)
+        keep.sort()
+        features = features.iloc[keep].reset_index(drop=True)
+        labels = labels.iloc[keep].reset_index(drop=True)
+        groups = groups[keep]
+        provider_labels = provider_labels[keep]
+        print(f"Subsampled to {len(features)} samples (variant={args.variant}, cap={args.subsample_cap})")
+
     # --- 5. StratifiedGroupKFold CV ---
     from sklearn.model_selection import StratifiedGroupKFold
 
@@ -257,7 +312,7 @@ def main() -> None:
             verbose=1,
         )
         fit_t0 = time.time()
-        model.fit(X_train, y_train)
+        model.fit(X_train, y_train, carrier_params=cp)
         fit_elapsed = time.time() - fit_t0
         print(f"  Fit: {fit_elapsed:.1f}s")
 
@@ -323,7 +378,7 @@ def main() -> None:
         verbose=1,
     )
     final_t0 = time.time()
-    final_model.fit(features, labels)
+    final_model.fit(features, labels, carrier_params=cp)
     print(f"Final model fit: {time.time() - final_t0:.1f}s")
 
     # Use a simple sklearn wrapper for permutation importance
@@ -360,6 +415,8 @@ def main() -> None:
         print(f"  {name}: {imp:.4f}")
 
     # --- 7. Save final model ---
+    final_model.training_commit = training_commit
+    final_model.training_platform = args.training_platform
     artifact_dir = args.output_dir / "ghost_gk_v1"
     final_model.save(artifact_dir)
     print(f"\nModel saved to {artifact_dir}")
@@ -375,7 +432,8 @@ def main() -> None:
                 np.testing.assert_array_equal(a, b, err_msg=f"{attr}[{i}]")
         else:
             np.testing.assert_array_equal(orig, back, err_msg=attr)
-    print("Round-trip verification: PASS")
+    assert loaded.carrier_params == cp, f"carrier_params drift: {loaded.carrier_params} != {cp}"  # noqa: S101
+    print(f"Round-trip verification: PASS (R3 carrier_params={loaded.carrier_params})")
 
     # --- 8. Metrics JSON ---
     # Aggregate per-provider MAE across folds
@@ -389,13 +447,19 @@ def main() -> None:
 
     artifact_bytes = sum(f.stat().st_size for f in artifact_dir.rglob("*") if f.is_file())
 
+    # Derive game/provider counts from groups/provider_labels (always defined in BOTH
+    # the fresh-extract and cache-load branches, and subsample-cap-aware) -- all_game_ids/
+    # all_providers exist only on the fresh-extract path (PR-S81).
     metrics = {
-        "n_games": len(set(all_game_ids)),
+        "n_games": len(set(groups.tolist())),
         "n_samples": len(features),
-        "n_providers": len(set(all_providers)),
-        "providers": sorted(set(all_providers)),
+        "n_providers": len(set(provider_labels.tolist())),
+        "providers": sorted({str(p) for p in provider_labels.tolist()}),
         "cv_folds": args.cv_folds,
         "subsample_fps": args.subsample_fps,
+        "variant": args.variant,
+        "carrier_params": cp,
+        "training_commit": training_commit,
         "hyperparameters": {
             "n_estimators": args.n_estimators,
             "max_depth": args.max_depth,

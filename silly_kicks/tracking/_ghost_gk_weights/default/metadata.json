@@ -38,5 +38,13 @@
   },
   "n_estimators": 500,
   "max_depth": 8,
-  "version": "1.0.0"
+  "carrier_params": {
+    "tolerance_m": 3.0,
+    "beta": 0.0,
+    "gamma": 0.25
+  },
+  "sklearn_version": "1.9.0",
+  "training_commit": "655031479d5eac5553161c22807b25de91654f63",
+  "training_platform": "dgx-spark-aarch64",
+  "version": "1.1.0"
 }

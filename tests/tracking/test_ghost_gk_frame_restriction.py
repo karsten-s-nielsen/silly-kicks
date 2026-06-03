@@ -51,6 +51,26 @@ def _linked_gk_rows(result: pd.DataFrame, link_frame_ids: set) -> pd.DataFrame:
 
 
 class TestComputeGhostGkRestriction:
+    def test_full_vs_restricted_bit_identical_with_explicit_carrier(self):
+        # PR-S81/N5: supplying a precomputed carrier (on FULL frames) keeps the
+        # restriction byte-identical for kept frames, same as the internal-carrier path.
+        from silly_kicks.tracking._ball_carrier import infer_ball_carrier
+
+        model, _, _ = _fitted_model()
+        frames, linked = _make_goal_flip_velocity_fixture()
+        carrier = infer_ball_carrier(frames, **model.carrier_params)[
+            ["game_id", "period_id", "frame_id", "ball_carrier_team_id"]
+        ]
+
+        full = compute_ghost_gk(frames, model=model, home_team_id=1, carrier=carrier)
+        restricted = compute_ghost_gk(frames, model=model, home_team_id=1, carrier=carrier, link_frame_ids=linked)
+
+        f_rows = _linked_gk_rows(full, linked)
+        r_rows = _linked_gk_rows(restricted, linked)
+        assert len(f_rows) == len(r_rows) > 0
+        for col in _GHOST_COLS:
+            np.testing.assert_array_equal(f_rows[col].to_numpy(), r_rows[col].to_numpy())
+
     def test_full_vs_restricted_bit_identical(self):
         model, _, _ = _fitted_model()
         frames, linked = _make_goal_flip_velocity_fixture()
