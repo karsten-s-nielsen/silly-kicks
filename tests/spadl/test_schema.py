@@ -100,7 +100,7 @@ def test_atomic_config_df_caching():
 
 
 def test_gradientsports_spadl_columns_extends_spadl_columns():
-    """GRADIENTSPORTS_SPADL_COLUMNS is SPADL_COLUMNS + 4 tackle-passthrough columns."""
+    """GRADIENTSPORTS_SPADL_COLUMNS is SPADL_COLUMNS + 4 tackle-passthrough columns + is_synthetic."""
     from silly_kicks.spadl.schema import GRADIENTSPORTS_SPADL_COLUMNS, SPADL_COLUMNS
 
     expected_extras = {
@@ -108,6 +108,7 @@ def test_gradientsports_spadl_columns_extends_spadl_columns():
         "tackle_winner_team_id": "Int64",
         "tackle_loser_player_id": "Int64",
         "tackle_loser_team_id": "Int64",
+        "is_synthetic": "bool",  # 4.13.0 (ADR-018): provenance for converter-injected rows
     }
     # SPADL_COLUMNS appears verbatim, in order, at the front
     assert list(GRADIENTSPORTS_SPADL_COLUMNS.keys())[: len(SPADL_COLUMNS)] == list(SPADL_COLUMNS.keys())

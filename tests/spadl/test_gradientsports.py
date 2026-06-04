@@ -53,6 +53,7 @@ def _load_synthetic_events() -> pd.DataFrame:
                 "cross_type": pe.get("crossType"),
                 "cross_zone_type": pe.get("crossZoneType"),
                 "shot_outcome_type": pe.get("shotOutcomeType"),
+                "nonEvent": pe.get("nonEvent"),
                 "shot_type": pe.get("shotType"),
                 "shot_nature_type": pe.get("shotNatureType"),
                 "shot_initial_height_type": pe.get("shotInitialHeightType"),
@@ -648,12 +649,13 @@ class TestGradientsportsShotOutcomeRegression:
     ``owngoal`` mis-map fixed in 4.12.2.
 
     ``"O"`` is the off-target shot bucket (alongside ``S``=saved / ``B``=blocked),
-    NOT own-goal — own goals surface under ``"G"``. The converter must therefore
-    emit NO ``owngoal`` result. Exercised on the committed synthetic match
-    fixture, so it runs in the regular (non-e2e) suite.
+    NOT own-goal. The 4.12.2 bug turned such SHOTS into ``owngoal`` results, so the
+    enduring guard is: **no shot-class action carries the owngoal result.** (Real
+    own goals — the RE+G capture, 4.13.0 — are ``bad_touch``, not shots.) Exercised
+    on the committed synthetic match, so it runs in the regular (non-e2e) suite.
     """
 
-    def test_no_phantom_owngoals_on_realistic_match(self):
+    def test_no_shot_class_action_is_owngoal_on_realistic_match(self):
         events = _load_synthetic_events()
 
         # Guard: the fixture must actually carry off-target "O" shots, else this
@@ -670,22 +672,17 @@ class TestGradientsportsShotOutcomeRegression:
             home_team_start_left_extratime=True,
         )
 
-        # Core regression: zero phantom owngoal results anywhere in the output.
+        # 4.12.2 core: the "O" bug turned SHOTS into owngoals. No shot-class action may carry owngoal.
+        shot_type_ids = {spadlconfig.actiontype_id[name] for name in ("shot", "shot_freekick", "shot_penalty")}
         owngoal_id = spadlconfig.result_id["owngoal"]
-        n_owngoal = int((actions["result_id"] == owngoal_id).sum())
-        assert n_owngoal == 0, (
-            f"Gradient Sports converter emitted {n_owngoal} owngoal result(s); 'O' is off-target, "
-            "not own-goal, and no shot outcome should map to owngoal"
+        shot_owngoals = actions[actions["type_id"].isin(shot_type_ids) & (actions["result_id"] == owngoal_id)]
+        assert len(shot_owngoals) == 0, (
+            "no shot-class action may carry the owngoal result — 'O' is off-target, not own-goal"
         )
 
-        # Sanity: among shot-class actions, only "G" outcomes are successes.
-        shot_type_ids = {spadlconfig.actiontype_id[name] for name in ("shot", "shot_freekick", "shot_penalty")}
-        is_shot_action = actions["type_id"].isin(shot_type_ids)
-        n_shot_success = int((is_shot_action & (actions["result_id"] == spadlconfig.result_id["success"])).sum())
-        n_goal_outcomes = int((shot_outcomes == "G").sum())
-        assert n_shot_success == n_goal_outcomes, (
-            f"expected {n_goal_outcomes} successful shots (one per 'G' outcome), got {n_shot_success}"
-        )
+        # Any owngoal present is the legitimate RE+G own-goal capture (bad_touch), never a shot.
+        owngoals = actions[actions["result_id"] == owngoal_id]
+        assert (owngoals["type_id"] == spadlconfig.actiontype_id["bad_touch"]).all()
 
 
 class TestGradientsportsRebound:
@@ -1472,3 +1469,222 @@ class TestGradientsportsVaepComposability:
         actions_named = add_names(actions)
         labels = concedes(actions_named, nr_actions=5)
         assert len(labels) == len(actions)
+
+
+class TestGradientsportsNonEventExclusion:
+    """Component 4: possessionEvents.nonEvent==True voided events are excluded (observable no-op)."""
+
+    def test_nonevent_true_excluded_and_tallied(self):
+        df = pd.concat([_df_minimal_pass(), _df_minimal_pass()], ignore_index=True)
+        df.loc[1, "event_id"] = 2
+        df.loc[1, "possession_event_id"] = 2
+        df["nonEvent"] = [False, True]
+        actions, report = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert len(actions) == 1
+        assert report.excluded_counts.get("nonEvent") == 1
+
+    def test_nonevent_column_absent_warns_and_noops(self):
+        df = _df_minimal_pass()
+        with pytest.warns(UserWarning, match="nonEvent"):
+            actions, report = gs_mod.convert_to_actions(
+                df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+            )
+        assert len(actions) == 1
+        assert "nonEvent" not in report.excluded_counts
+
+    def test_nonevent_stringified_false_not_excluded(self):
+        # robust coercion: the string "false" must NOT be treated truthy (would invert exclusion).
+        df = _df_minimal_pass()
+        df["nonEvent"] = ["false"]
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert len(actions) == 1
+
+
+class TestGradientsportsOwnGoalCapture:
+    """Component 1: RE + shotOutcome G -> bad_touch + owngoal (conceding team / rebounder scorer)."""
+
+    def test_re_g_is_bad_touch_owngoal_conceding_team(self):
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "RE"
+        df.loc[0, "shot_outcome_type"] = "G"
+        df.loc[0, "team_id"] = 100  # conceding (acting) team
+        df.loc[0, "player_id"] = 7  # OG scorer (= gameEvents.playerId = rebounderPlayerId)
+        df.loc[0, "ball_x"] = -45.0  # -> start_x 7.5 (own half), survives the Task-3 tripwire
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["bad_touch"]
+        assert actions.iloc[0]["result_id"] == spadlconfig.result_id["owngoal"]
+        assert actions.iloc[0]["team_id"] == 100
+        assert actions.iloc[0]["player_id"] == 7
+
+    def test_re_without_g_still_keeper_save(self):
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "RE"
+        df.loc[0, "shot_outcome_type"] = None
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["keeper_save"]
+
+
+class TestGradientsportsOwnGoalTripwire:
+    """Component 1 tripwire: an RE+G owngoal must sit in the conceding team's OWN half (post-LTR);
+    else WARN + revert to keeper_save/fail. (start_x mapping verified: ball_x -45 -> 7.5 own half;
+    +45 -> 97.5 attacking half, for team 100 / period 1 / start_left=True.)"""
+
+    def _re_g(self, ball_x):
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "RE"
+        df.loc[0, "shot_outcome_type"] = "G"
+        df.loc[0, "team_id"] = 100
+        df.loc[0, "ball_x"] = ball_x
+        df["nonEvent"] = [False]  # silence the Component-4 absent-column warning
+        return df
+
+    def test_re_g_in_attacking_half_reverts_with_warning(self):
+        df = self._re_g(ball_x=45.0)  # -> start_x 97.5 (attacking half) -> revert
+        with pytest.warns(UserWarning, match="own-goal"):
+            actions, _ = gs_mod.convert_to_actions(
+                df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+            )
+        assert actions.iloc[0]["result_id"] == spadlconfig.result_id["fail"]
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["keeper_save"]
+
+    def test_re_g_in_own_half_kept_as_owngoal_no_warning(self, recwarn):
+        df = self._re_g(ball_x=-45.0)  # -> start_x 7.5 (own half) -> kept
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert actions.iloc[0]["result_id"] == spadlconfig.result_id["owngoal"]
+        assert not [w for w in recwarn.list if "own-goal" in str(w.message)]
+
+
+class TestGradientsportsCrossGoal:
+    """Component 2: CR + shotOutcome G -> keep the cross + synthesize a shot by the crosser."""
+
+    def test_cr_g_keeps_cross_and_synthesizes_shot(self):
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "CR"
+        df.loc[0, "set_piece_type"] = "F"  # free-kick cross -> shot_freekick
+        df.loc[0, "shot_outcome_type"] = "G"
+        df.loc[0, "pass_outcome_type"] = None  # CR is not a PA — clear the minimal-pass default
+        df.loc[0, "cross_outcome_type"] = "I"  # cross-as-pass incomplete
+        df.loc[0, "team_id"] = 100
+        df.loc[0, "player_id"] = 9  # crosser = scorer
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert len(actions) == 2
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["freekick_crossed"]
+        assert actions.iloc[0]["result_id"] == spadlconfig.result_id["fail"]
+        assert actions.iloc[1]["type_id"] == spadlconfig.actiontype_id["shot_freekick"]
+        assert actions.iloc[1]["result_id"] == spadlconfig.result_id["success"]
+        assert actions.iloc[1]["player_id"] == 9
+        assert actions.iloc[1]["team_id"] == 100
+        assert list(actions["action_id"]) == [0, 1]
+
+    def test_cross_goal_with_foul_orders_shot_before_foul(self):
+        # same-parent edge: a CR+G that ALSO carries a foul -> .4 shot AND .5 foul, in order.
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "CR"
+        df.loc[0, "set_piece_type"] = "O"
+        df.loc[0, "shot_outcome_type"] = "G"
+        df.loc[0, "pass_outcome_type"] = None
+        df.loc[0, "team_id"] = 100
+        df.loc[0, "player_id"] = 9
+        df.loc[0, "foul_type"] = "I"
+        df.loc[0, "final_foul_outcome_type"] = "Y"
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert [actions.iloc[i]["type_id"] for i in range(len(actions))] == [
+            spadlconfig.actiontype_id["cross"],
+            spadlconfig.actiontype_id["shot"],
+            spadlconfig.actiontype_id["foul"],
+        ]
+        assert list(actions["action_id"]) == [0, 1, 2]
+
+
+class TestGradientsportsGoalCaptureRealistic:
+    """Components 1/2/4 together on the committed synthetic match (RE+G OG #52, CR+G #53,
+    disallowed SH+G #54)."""
+
+    def test_owngoal_crossgoal_captured_disallowed_excluded(self):
+        events = _load_synthetic_events()
+        actions, report = gs_mod.convert_to_actions(
+            events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        # exactly one own goal (the RE+G), on the conceding team 100
+        og = actions[actions["result_id"] == spadlconfig.result_id["owngoal"]]
+        assert len(og) == 1
+        assert (og["type_id"] == spadlconfig.actiontype_id["bad_touch"]).all()
+        assert (og["team_id"] == 100).all()
+        # the cross-goal's synthetic shot is present (a successful shot-class action by the crosser)
+        shot_ids = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty")]
+        shots = actions[actions["type_id"].isin(shot_ids)]
+        assert (shots["result_id"] == spadlconfig.result_id["success"]).sum() >= 1
+        # the disallowed SH+G (nonEvent=True) was excluded
+        assert report.excluded_counts.get("nonEvent") == 1
+
+    def test_composition_dense_action_ids_and_order(self):
+        events = _load_synthetic_events()
+        actions, _ = gs_mod.convert_to_actions(
+            events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert list(actions["action_id"]) == list(range(len(actions)))  # dense + contiguous
+        # the cross-goal's synthetic shot sorts immediately after its cross (same player) -> .4 offset
+        shot_ids = {spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty")}
+        cross_ids = {spadlconfig.actiontype_id[n] for n in ("cross", "freekick_crossed", "corner_crossed")}
+        adjacency = [
+            i
+            for i in range(len(actions) - 1)
+            if actions.iloc[i]["type_id"] in cross_ids
+            and actions.iloc[i + 1]["type_id"] in shot_ids
+            and actions.iloc[i + 1]["player_id"] == actions.iloc[i]["player_id"]
+        ]
+        assert adjacency, "expected a cross immediately followed by its synthetic shot (same player)"
+
+
+class TestGradientsportsSyntheticProvenance:
+    """`is_synthetic` marks converter-injected rows (cross-goal shot, synthesized foul) that share the
+    parent's `original_event_id`, so consumers don't collapse/drop them on a dedup."""
+
+    def test_is_synthetic_in_schema_and_default_false(self):
+        from silly_kicks.spadl.schema import GRADIENTSPORTS_SPADL_COLUMNS
+
+        assert "is_synthetic" in GRADIENTSPORTS_SPADL_COLUMNS
+        actions, _ = gs_mod.convert_to_actions(
+            _df_minimal_pass(), home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert "is_synthetic" in actions.columns
+        assert bool(actions.iloc[0]["is_synthetic"]) is False  # a plain real pass
+
+    def test_cross_goal_shot_flagged_synthetic_cross_not(self):
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "CR"
+        df.loc[0, "set_piece_type"] = "F"
+        df.loc[0, "shot_outcome_type"] = "G"
+        df.loc[0, "pass_outcome_type"] = None
+        df.loc[0, "team_id"] = 100
+        df.loc[0, "player_id"] = 9
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert bool(actions.iloc[0]["is_synthetic"]) is False  # the real cross
+        assert bool(actions.iloc[1]["is_synthetic"]) is True  # the synthesized shot
+
+    def test_synthesized_foul_flagged_parent_not(self):
+        df = _df_minimal_pass()  # real PA with an inline foul -> parent kept + synth foul row
+        df.loc[0, "foul_type"] = "I"
+        df.loc[0, "final_foul_outcome_type"] = "Y"
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert len(actions) == 2
+        assert bool(actions.iloc[0]["is_synthetic"]) is False  # the pass
+        assert bool(actions.iloc[1]["is_synthetic"]) is True  # the synthesized foul
