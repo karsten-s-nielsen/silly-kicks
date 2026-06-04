@@ -304,8 +304,13 @@ These run against the synthetic match (Section 5.3) in `tests/spadl/test_pff.py`
 | `shot_outcome_type` | SPADL result |
 |---|---|
 | `G` (goal) | `success` |
-| `O` (own goal) | `owngoal` |
-| `S` (saved) / `B` (blocked) / `W` (wide) / `M` (missed) / null / other | `fail` |
+| `O` (off-target) / `S` (saved) / `B` (blocked) / `W` (wide) / `M` (missed) / null / other | `fail` |
+
+> **Corrected in 4.12.2.** `"O"` was originally (and wrongly) assumed to be own-goal and mapped to
+> `owngoal`. It is in fact the off-target shot bucket (alongside `S`=saved / `B`=blocked); verified
+> against the full WC2022 feed (a 0–0 match carries `O=10`; `"G"` counts reproduce every scoreline
+> incl. own goals). The converter now maps NO shot outcome to `owngoal` — own goals surface under
+> `"G"` and correct own-goal attribution is an open item pending the PFF FC codebook.
 
 **Foul result (cards):**
 

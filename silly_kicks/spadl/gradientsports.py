@@ -223,16 +223,23 @@ def _dispatch_actiontype_resultid(events: pd.DataFrame) -> tuple[np.ndarray, np.
 
     is_shot = pe == "SH"
     shot_goal = is_shot & (shot_outcome == "G")
-    shot_owngoal = is_shot & (shot_outcome == "O")
+    # shot_outcome_type "O" is OFF-TARGET (not own-goal). The four main shot
+    # outcomes are G=goal / S=saved / O=off-target / B=blocked; only "G" is a
+    # success. Verified against the full PFF FC / Gradient Sports WC2022 feed (64
+    # matches): "G" counts reproduce every scoreline + shootout tally, while a 0-0
+    # match (MAR-ESP) carries O=10 and "O" recurs 4-17x every match — impossible
+    # for own goals. Own goals surface under "G"; "shot_outcome_type" alone cannot
+    # distinguish them, so the converter maps NO shot outcome to `owngoal` (correct
+    # own-goal attribution is an open item pending the PFF FC codebook). All non-"G"
+    # shot outcomes fall through to the `fail` default below.
 
     is_yellow = pd.Series(foul_outcome).str.startswith(("Y", "2Y")).fillna(False).to_numpy()
     is_red = pd.Series(foul_outcome).str.startswith(("R", "SR")).fillna(False).to_numpy()
 
-    result_conds = [pass_success, shot_goal, shot_owngoal, is_yellow, is_red]
+    result_conds = [pass_success, shot_goal, is_yellow, is_red]
     result_choices = [
         rs_ids["success"],
         rs_ids["success"],
-        rs_ids["owngoal"],
         rs_ids["yellow_card"],
         rs_ids["red_card"],
     ]

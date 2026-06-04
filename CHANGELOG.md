@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.12.2] — 2026-06-04
+
+### Fixed — Gradient Sports / PFF FC shot `shot_outcome_type == "O"` mis-mapped to `owngoal`
+
+The Gradient Sports converter mapped shot `shot_outcome_type == "O"` to the SPADL `owngoal` result.
+`"O"` is in fact the **off-target** shot bucket (alongside `S`=saved, `B`=blocked); the four main
+shot outcomes are `G`=goal / `S`=saved / `O`=off-target / `B`=blocked, and only `G` is a success.
+The mapping was an unsourced assumption inherited from the original PFF FC converter (2.6.0), never
+checked against the PFF FC codebook.
+
+Verified against the full PFF FC / Gradient Sports WC2022 feed (all 64 matches): `"G"` counts
+reproduce every final scoreline **and** the exact penalty-shootout arithmetic (e.g. ARG–FRA final
+3–3, pens 4–2 → G=12 = 6 regulation/ET + 6 shootout), confirming own goals already surface under
+`"G"`; meanwhile MAR–ESP finished **0–0** yet carries `O=10`, and `"O"` recurs 4–17× in *every*
+match — impossible for own goals.
+
+- `silly_kicks.spadl.gradientsports`: dropped the `shot_outcome_type == "O" → owngoal` branch. `"O"`
+  (and every non-`"G"` shot outcome) now falls through to `fail`, like `S`/`B`.
+- The converter now maps **no** shot outcome to `owngoal`. Own goals are encoded as `"G"` and
+  `shot_outcome_type` alone cannot distinguish them, so correct own-goal attribution remains an open
+  item pending the PFF FC codebook.
+
+> **Hyrum's Law / behavior change:** SPADL stores built from this converter previously contained
+> phantom `owngoal` results (~563 across the 64 WC2022 GS matches, up to 17/match); these are now
+> `fail`. Consumers that counted or filtered on `owngoal` from Gradient Sports data will see those
+> rows reclassified — lakehouse SPADL stores should be re-baselined. The atomic-SPADL surface
+> inherits the change via the shared converter.
+
 ## [4.12.1] — 2026-06-04
 
 ### Fixed — `compute_ghost_gk` crash when a team has ≥2 goalkeepers in one frame
