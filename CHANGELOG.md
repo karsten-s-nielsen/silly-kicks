@@ -5,6 +5,49 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.13.0] — 2026-06-04
+
+### Added / Fixed — Gradient Sports goal-capture correctness + VAEP own-goal labeling (ADR-018)
+
+Completes the Gradient Sports / PFF FC goal-capture work begun in 4.12.2 (which removed the false
+`shot_outcome_type == "O" → owngoal` mapping). Empirically grounded in the full WC2022 catalog (64
+matches, 144,541 events).
+
+- **Own goals captured (`silly_kicks.spadl.gradientsports`).** `possession_event_type == "RE"` (rebound)
+  with `shot_outcome_type == "G"` is an own goal → `bad_touch` + `owngoal`, attributed to the conceding
+  team and the rebounder/scorer (`gameEvents.playerId`), per the StatsBomb/opta/sportec precedent. A
+  post-LTR **geometry tripwire** validates each own goal sits in the conceding team's own half
+  (`start_x < field_length/2`); a row failing it emits a `UserWarning` and reverts to `keeper_save`/`fail`
+  (guards the n=3 rule against rebound-goals/feed anomalies). The 3 real WC2022 own goals
+  (Enzo Fernández, Aguerd, Neuer) are captured correctly (owner-gated e2e).
+- **Cross-goals captured.** `possession_event_type == "CR"` with `shot_outcome_type == "G"` keeps the
+  cross/`freekick_crossed` action and **synthesizes a `shot`/`shot_freekick` + `success`** by the crosser
+  (foul-synthesis pattern), so a direct cross-goal registers as a goal (SPADL records goals only as
+  shots).
+- **Synthesized-row provenance.** A new `is_synthetic` (bool) column on `GRADIENTSPORTS_SPADL_COLUMNS` is
+  `True` on converter-injected rows (the cross-goal shot **and** the synthesized foul rows, which share
+  their parent's `original_event_id`) and `False` on real 1:1 rows — so a consumer de-duping on
+  `original_event_id` can keep the synthesized row instead of silently collapsing/dropping it.
+- **Voided events excluded.** `possessionEvents.nonEvent == True` (annulled plays — fouls/advantage called
+  back, offside, disallowed goals; 1081 across WC2022, incl. 21 disallowed goals) are now dropped in the
+  exclusion stage with a `ConversionReport.excluded_counts["nonEvent"]` tally. The `nonEvent` input column
+  is **optional**: absent → an observable no-op (one-time `UserWarning` + the report key omitted, so
+  "not checked" ≠ "0 voided"), so existing callers keep working but get a loud nudge to supply it.
+- **Own goals counted in VAEP labels (all providers) — ADR-018.** `vaep/labels.py` now detects own goals
+  by **result** (`result_id == owngoal`) via a single-source `_is_owngoal` helper, dropping the
+  `type_name.str.contains("shot")` gate that silently zeroed out every provider's own goals (they are all
+  `bad_touch`). Goal detection uses a sibling `_is_goal` with an explicit `{shot, shot_penalty,
+  shot_freekick}` name-set. A guard test forbids the old shot-gated owngoal pattern from reappearing.
+
+> **Hyrum's Law / behavior change:** (1) VAEP `scores`/`concedes`/xG label distributions shift for every
+> provider whose data contains own goals (~3–5% of goals previously invisible now count) — VAEP models
+> retrained on these labels will shift. (2) Gradient Sports action counts change: voided events dropped,
+> own goals now `bad_touch`+`owngoal`, cross-goals gain a synthetic shot row (flagged `is_synthetic=True`,
+> sharing the cross's `original_event_id`), and the GS output gains the `is_synthetic` column. (3) The
+> `nonEvent` soft input-contract: GS
+> callers must surface `possessionEvents.nonEvent` to exclude voided events, else the warning fires. The
+> atomic-SPADL surface inherits all converter changes; the atomic label path already counted own goals.
+
 ## [4.12.2] — 2026-06-04
 
 ### Fixed — Gradient Sports / PFF FC shot `shot_outcome_type == "O"` mis-mapped to `owngoal`

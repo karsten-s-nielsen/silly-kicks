@@ -65,6 +65,7 @@ GRADIENTSPORTS_SPADL_COLUMNS: dict[str, str] = {
     "tackle_winner_team_id": "Int64",
     "tackle_loser_player_id": "Int64",
     "tackle_loser_team_id": "Int64",
+    "is_synthetic": "bool",
 }
 """Gradient Sports (formerly PFF FC) SPADL output schema: SPADL_COLUMNS + 4
 nullable Int64 tackle-actor passthrough columns. NaN on rows where no

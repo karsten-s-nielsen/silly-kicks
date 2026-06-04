@@ -10,6 +10,27 @@ import pandas as pd
 
 import silly_kicks.spadl.config as spadl
 
+# Single-source goal/own-goal predicates (ADR-0NN). Extracted so the definition lives in ONE place
+# instead of being copy-pasted across the ~8 label functions (the copy-paste that hid the own-goal
+# undercount). Kept on `type_name` to preserve the label input contract, with an explicit shot-type
+# name-set rather than a fragile ``str.contains("shot")`` substring.
+_SHOT_TYPE_NAMES = frozenset({"shot", "shot_penalty", "shot_freekick"})
+
+
+def _is_goal(actions: pd.DataFrame) -> pd.Series:
+    """A goal is a successful shot-class action (shot / shot_penalty / shot_freekick)."""
+    return actions["type_name"].isin(_SHOT_TYPE_NAMES) & (actions["result_id"] == spadl.result_id["success"])
+
+
+def _is_owngoal(actions: pd.DataFrame) -> pd.Series:
+    """An own goal is unambiguous by RESULT (own goals are ``bad_touch``, not shots) — NO type gate.
+
+    This is the fix for the codebase-wide undercount: own goals (every converter emits them as
+    ``bad_touch``) never matched the former shot-type-substring gate, so they never registered in
+    scores/concedes/xG labels.
+    """
+    return actions["result_id"] == spadl.result_id["owngoal"]
+
 
 def _warn_if_nr_actions_ignored(nr_actions: int, window: str) -> None:
     if nr_actions != 10 and window != "action":
@@ -108,8 +129,8 @@ def scores(
 
 def _scores_action(actions: pd.DataFrame, nr_actions: int) -> pd.DataFrame:
     """Original VAEP action-count windowed scoring labels."""
-    goal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
-    owngoal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["owngoal"])
+    goal = _is_goal(actions)
+    owngoal = _is_owngoal(actions)
     team_id = actions["team_id"]
 
     result = goal.copy()
@@ -185,8 +206,8 @@ def concedes(
 
 def _concedes_action(actions: pd.DataFrame, nr_actions: int) -> pd.DataFrame:
     """Original VAEP action-count windowed conceding labels."""
-    goal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
-    owngoal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["owngoal"])
+    goal = _is_goal(actions)
+    owngoal = _is_owngoal(actions)
     team_id = actions["team_id"]
 
     result = owngoal.copy()
@@ -202,8 +223,8 @@ def _concedes_action(actions: pd.DataFrame, nr_actions: int) -> pd.DataFrame:
 
 def _scores_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.DataFrame:
     """Compute xG-weighted scoring labels using shift-based vectorization."""
-    goal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
-    owngoal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["owngoal"])
+    goal = _is_goal(actions)
+    owngoal = _is_owngoal(actions)
     xg = actions.get(xg_column, pd.Series(0.0, index=actions.index)).fillna(0.0)  # type: ignore[reportOptionalMemberAccess]
     team_id = actions["team_id"]
 
@@ -222,8 +243,8 @@ def _scores_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.Dat
 
 def _concedes_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.DataFrame:
     """Compute xG-weighted conceding labels using shift-based vectorization."""
-    goal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
-    owngoal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["owngoal"])
+    goal = _is_goal(actions)
+    owngoal = _is_owngoal(actions)
     xg = actions.get(xg_column, pd.Series(0.0, index=actions.index)).fillna(0.0)  # type: ignore[reportOptionalMemberAccess]
     team_id = actions["team_id"]
 
@@ -242,8 +263,8 @@ def _concedes_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.D
 
 def _scores_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.DataFrame:
     """Possession-chain windowed scoring labels."""
-    goal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
-    owngoal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["owngoal"])
+    goal = _is_goal(actions)
+    owngoal = _is_owngoal(actions)
     team_id = actions["team_id"]
 
     if xg_column is not None:
@@ -287,8 +308,8 @@ def _scores_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.DataF
 
 def _concedes_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.DataFrame:
     """Possession-chain windowed conceding labels."""
-    goal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
-    owngoal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["owngoal"])
+    goal = _is_goal(actions)
+    owngoal = _is_owngoal(actions)
     team_id = actions["team_id"]
 
     if xg_column is not None:
@@ -336,8 +357,8 @@ def _scores_time(
     xg_column: str | None,
 ) -> pd.DataFrame:
     """Time-windowed scoring labels using searchsorted for strict inequality."""
-    goal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
-    owngoal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["owngoal"])
+    goal = _is_goal(actions)
+    owngoal = _is_owngoal(actions)
     team_id = np.asarray(actions["team_id"].values)
     time_s = np.asarray(actions["time_seconds"].values, dtype=np.float64)
 
@@ -413,8 +434,8 @@ def _concedes_time(
     xg_column: str | None,
 ) -> pd.DataFrame:
     """Time-windowed conceding labels using searchsorted for strict inequality."""
-    goal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
-    owngoal = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["owngoal"])
+    goal = _is_goal(actions)
+    owngoal = _is_owngoal(actions)
     team_id = np.asarray(actions["team_id"].values)
     time_s = np.asarray(actions["time_seconds"].values, dtype=np.float64)
 
@@ -507,7 +528,7 @@ def goal_from_shot(actions: pd.DataFrame) -> pd.DataFrame:
         y = goal_from_shot(actions_with_names)
         # y["goal_from_shot"] is True only on shot rows that resulted in a goal.
     """
-    goals = actions["type_name"].str.contains("shot") & (actions["result_id"] == spadl.result_id["success"])
+    goals = _is_goal(actions)
 
     return pd.DataFrame(goals, columns=["goal_from_shot"])
 

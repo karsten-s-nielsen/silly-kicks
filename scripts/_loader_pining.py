@@ -357,6 +357,7 @@ _GS_EVENT_FIELD_MAP = {
     "cross_type": "crossType",
     "cross_zone_type": "crossZoneType",
     "shot_outcome_type": "shotOutcomeType",
+    "nonEvent": "nonEvent",
     "shot_type": "shotType",
     "shot_nature_type": "shotNatureType",
     "shot_initial_height_type": "shotInitialHeightType",

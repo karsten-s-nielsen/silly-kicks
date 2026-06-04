@@ -56,6 +56,7 @@ The output schema is :data:`silly_kicks.spadl.GRADIENTSPORTS_SPADL_COLUMNS`
 (extends :data:`silly_kicks.spadl.SPADL_COLUMNS` with the 4 tackle columns).
 """
 
+import warnings
 from collections import Counter
 
 import numpy as np
@@ -217,6 +218,13 @@ def _dispatch_actiontype_resultid(events: pd.DataFrame) -> tuple[np.ndarray, np.
     is_catch = (pe == "RE") & np.isin(keeper_touch, list(catch_class))
     type_id_arr = np.where(is_catch, at_ids["keeper_pick_up"], type_id_arr).astype("int64")
 
+    # Component 1 (ADR-0NN): RE + shotOutcome "G" is an OWN GOAL -> bad_touch + owngoal. Provisional
+    # here; the post-LTR geometry tripwire in convert_to_actions validates/reverts. Priority over the
+    # RE -> keeper_save/keeper_pick_up handling. Scorer (gameEvents.playerId = rebounderPlayerId) and
+    # conceding team are kept unchanged (ADR-001); the owngoal RESULT carries credit-the-opponent.
+    is_owngoal = (pe == "RE") & (shot_outcome == "G")
+    type_id_arr = np.where(is_owngoal, at_ids["bad_touch"], type_id_arr).astype("int64")
+
     # result_id dispatch.
     is_pass_class = (pe == "PA") | (pe == "CR")
     pass_success = is_pass_class & ((pass_outcome == "C") | (cross_outcome == "C"))  # noqa: S105
@@ -236,10 +244,11 @@ def _dispatch_actiontype_resultid(events: pd.DataFrame) -> tuple[np.ndarray, np.
     is_yellow = pd.Series(foul_outcome).str.startswith(("Y", "2Y")).fillna(False).to_numpy()
     is_red = pd.Series(foul_outcome).str.startswith(("R", "SR")).fillna(False).to_numpy()
 
-    result_conds = [pass_success, shot_goal, is_yellow, is_red]
+    result_conds = [pass_success, shot_goal, is_owngoal, is_yellow, is_red]
     result_choices = [
         rs_ids["success"],
         rs_ids["success"],
+        rs_ids["owngoal"],
         rs_ids["yellow_card"],
         rs_ids["red_card"],
     ]
@@ -382,6 +391,40 @@ def convert_to_actions(
         if n > 0:
             excluded_counts[f"{ge_}+{pe_}"] = n
 
+    # Component 4 (ADR-0NN): exclude voided ("annulled") events — possessionEvents.nonEvent == True
+    # (play called back for a foul/advantage/offside; disallowed goals). Optional column: when absent,
+    # an OBSERVABLE no-op (warn + omit the report key) so an under-equipped caller is not silently left
+    # emitting voided events (incl. phantom goals) — the silent-undercount failure mode this guards.
+    if "nonEvent" in events.columns:
+        # Robust bool coercion (NOT .astype(bool) — that maps the string "false" to True and would
+        # INVERT the exclusion, dropping real events and keeping voided ones). Only true-ish counts.
+        _ne = events["nonEvent"]
+        if _ne.dtype == bool:
+            is_nonevent = _ne.fillna(False).to_numpy()
+        else:
+
+            def _truthy(v: object) -> bool:
+                # Handles Python AND numpy bool (np.True_), strings, None/NaN. Avoids the `v is True`
+                # trap (False for np.True_) and the `.astype(bool)` trap ("false" -> True).
+                if isinstance(v, str):
+                    return v.strip().lower() == "true"
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return False
+                return bool(v)
+
+            is_nonevent = _ne.map(_truthy).fillna(False).astype(bool).to_numpy()
+        excluded_counts["nonEvent"] = int((is_nonevent & ~is_excluded).sum())
+        is_excluded = is_excluded | is_nonevent
+    else:
+        warnings.warn(
+            "gradientsports: 'nonEvent' column not supplied — voided events (annulled plays, "
+            "including disallowed goals) are NOT excluded. Map possessionEvents.nonEvent into the "
+            "converter input to enable Component-4 exclusion.",
+            UserWarning,
+            stacklevel=2,
+        )
+        # excluded_counts intentionally has NO 'nonEvent' key here: "not checked" != "0 voided".
+
     events = events.loc[~is_excluded].reset_index(drop=True)
 
     # Empty-input fast path (after exclusion): empty schema-compliant output.
@@ -434,6 +477,10 @@ def convert_to_actions(
             "tackle_winner_team_id": pd.array([pd.NA] * len(events), dtype="Int64"),
             "tackle_loser_player_id": pd.array([pd.NA] * len(events), dtype="Int64"),
             "tackle_loser_team_id": pd.array([pd.NA] * len(events), dtype="Int64"),
+            # Provenance (ADR-018): True on converter-INJECTED rows (synthesized fouls + cross-goal
+            # shots) that share their parent's original_event_id. Real 1:1 rows are False. Lets
+            # consumers avoid collapsing/dropping a synthesized row when de-duping on original_event_id.
+            "is_synthetic": np.zeros(len(events), dtype=bool),
         }
     )
 
@@ -533,20 +580,55 @@ def convert_to_actions(
         actions.loc[in_place_mask, "result_id"] = foul_result_full[in_place_mask]
         actions.loc[in_place_mask, "bodypart_id"] = spadlconfig.bodypart_id["foot"]
 
-    # Synthesize additional row: parent already dispatched to a real action.
+    # ---- Combined synthesis: foul rows (.5) + cross-goal shot rows (.4) -> one insert + renumber ----
+    # Invariant (round-2 #4): the synthesis masks are computed on `events` and applied to `actions`
+    # positionally, so they MUST still be 1:1 + index-aligned here (exclusion reset_index'd events;
+    # actions built 1:1; _derive_end_coordinates is in-place). Fail loud if a future row-op breaks it.
+    if len(actions) != len(events):  # internal invariant — actions built 1:1 with post-exclusion events
+        raise RuntimeError(
+            f"gradientsports synthesis precondition violated: {len(actions)} actions != {len(events)} events"
+        )
+
+    synth_parts: list[pd.DataFrame] = []
+    _base_order = np.arange(len(actions), dtype="float64")
+    actions["__order__"] = _base_order
+
+    # Foul rows: parent already dispatched to a real action (synthesize an ADDITIONAL foul row).
     if synth_mask.any():
-        synth_rows = actions.loc[synth_mask].copy()
-        synth_rows["type_id"] = foul_id
-        synth_rows["result_id"] = foul_result_full[synth_mask]
-        synth_rows["bodypart_id"] = spadlconfig.bodypart_id["foot"]
-        # Insert synthesized rows immediately AFTER their parents via .5-offset
-        # sort key, then renumber action_id dense.
-        actions["__order__"] = np.arange(len(actions), dtype="float64")
-        synth_rows["__order__"] = np.arange(len(actions))[synth_mask] + 0.5
-        actions = pd.concat([actions, synth_rows], ignore_index=True)
+        foul_rows = actions.loc[synth_mask].copy()
+        foul_rows["type_id"] = foul_id
+        foul_rows["result_id"] = foul_result_full[synth_mask]
+        foul_rows["bodypart_id"] = spadlconfig.bodypart_id["foot"]
+        foul_rows["is_synthetic"] = True
+        foul_rows["__order__"] = _base_order[synth_mask] + 0.5
+        synth_parts.append(foul_rows)
+
+    # Component 2 (ADR-0NN): cross-goal -> keep the cross, synthesize a shot by the crosser. SPADL
+    # records a normal goal only as shot+success, so a direct cross-goal must register as a shot.
+    # (`events` is still 1:1 with `actions`; recompute the CR mask from the post-exclusion events,
+    # NOT the stale pre-exclusion pe_arr_full.)
+    cg_mask = (events["possession_event_type"].fillna("").to_numpy() == "CR") & (
+        events["shot_outcome_type"].fillna("").to_numpy() == "G"
+    )
+    if cg_mask.any():
+        sp_cg = events["set_piece_type"].fillna("").to_numpy()[cg_mask]
+        cg_type = np.select(
+            [sp_cg == "F", sp_cg == "P"],
+            [spadlconfig.actiontype_id["shot_freekick"], spadlconfig.actiontype_id["shot_penalty"]],
+            default=spadlconfig.actiontype_id["shot"],
+        ).astype("int64")
+        shot_rows = actions.loc[cg_mask].copy()
+        shot_rows["type_id"] = cg_type
+        shot_rows["result_id"] = spadlconfig.result_id["success"]
+        shot_rows["is_synthetic"] = True
+        shot_rows["__order__"] = _base_order[cg_mask] + 0.4  # before a same-parent foul (.5)
+        synth_parts.append(shot_rows)
+
+    if synth_parts:
+        actions = pd.concat([actions, *synth_parts], ignore_index=True)
         actions = actions.sort_values("__order__").reset_index(drop=True)
-        actions = actions.drop(columns="__order__")
         actions["action_id"] = np.arange(len(actions), dtype="int64")
+    actions = actions.drop(columns="__order__")
 
     # ------------------------------------------------------------------
     # Per-period direction-of-play normalisation. Routed through the canonical
@@ -561,6 +643,27 @@ def convert_to_actions(
         home_team_id=home_team_id,
         home_attacks_right_per_period=home_attacks_right_per_period,
     )
+
+    # ------------------------------------------------------------------
+    # Component 1 own-goal geometry tripwire (post-LTR). SPADL-LTR puts the acting team attacking
+    # toward high-x, so a true own goal's ball sits in its OWN half (start_x < field_length/2). An
+    # RE+G owngoal in the attacking half is a likely rebound-GOAL or feed anomaly -> WARN + revert to
+    # the default RE handling (keeper_save/fail). Converts the n=3 rule into a self-policing one
+    # (the owner-gated e2e validates the inequality on the 3 real WC2022 own goals). See ADR-0NN.
+    # ------------------------------------------------------------------
+    _og = (actions["result_id"] == spadlconfig.result_id["owngoal"]).to_numpy()
+    if _og.any():
+        _bad = _og & (actions["start_x"].to_numpy() >= spadlconfig.field_length / 2.0)
+        if _bad.any():
+            warnings.warn(
+                f"gradientsports: {int(_bad.sum())} RE+G own-goal(s) with the ball in the acting "
+                "team's attacking half (start_x >= field_length/2) — reverting to keeper_save/fail "
+                "(likely a rebound-goal or feed anomaly, not an own goal).",
+                UserWarning,
+                stacklevel=2,
+            )
+            actions.loc[_bad, "type_id"] = spadlconfig.actiontype_id["keeper_save"]
+            actions.loc[_bad, "result_id"] = spadlconfig.result_id["fail"]
 
     # ------------------------------------------------------------------
     # Clip coordinates to SPADL pitch bounds [0, 105] x [0, 68].
