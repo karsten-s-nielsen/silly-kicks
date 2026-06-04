@@ -1800,6 +1800,23 @@ def compute_ghost_gk(
     if len(batch_features) == 0:
         return out
 
+    # Collapse duplicate (frame, gk_team) inference samples. Two same-team
+    # is_goalkeeper rows in one frame (a rostered backup keeper carried on-pitch
+    # alongside the starter, or a GK-substitution overlap frame) make
+    # _extract_all_ghost_gk_features emit one sample per GK row, all keyed on
+    # (game, period, frame, gk_team_id). The features are byte-identical per
+    # (frame, gk_team) — only the per-GK-row label differs, and labels are unused
+    # here — so collapsing to one sample keeps the KDE single-pass AND keeps the
+    # downstream left-merge 1:1 with the GK rows (duplicate result_df keys would
+    # inflate the merge and length-mismatch the positional assignment below). The
+    # training builder keeps per-GK-row samples (distinct labels) untouched.
+    _key_cols = ["game_id", "period_id", "frame_id", "gk_team_id"]
+    _keep = ~meta.duplicated(subset=_key_cols, keep="first")
+    if not _keep.all():
+        keep_mask = _keep.to_numpy()
+        meta = meta[keep_mask].reset_index(drop=True)
+        batch_features = batch_features[keep_mask].reset_index(drop=True)
+
     # Batch predict
     densities = resolved.predict_density(batch_features, kde_backend=kde_backend)
 
