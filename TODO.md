@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-04. **Current release**: silly-kicks 4.12.1 (fix: `compute_ghost_gk` crash on ≥2 same-team goalkeepers in one frame; reported by lakehouse). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-04. **Current release**: silly-kicks 4.12.2 (fix: Gradient Sports shot `shot_outcome_type == "O"` mis-mapped to `owngoal` → now `fail`; off-target, not own-goal; reported by lakehouse). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -44,6 +44,30 @@ Items are ranked top-to-bottom by specification completeness. Tier 3–4 require
   VAEP path. Additive (no API churn). Also extend `pitch_control_cache` to
   `player_influence`/`space_creation` callers' shared-pass usage (already wired on
   the aggregators; lakehouse pre-builds one cache like it pre-links).
+- **Gradient Sports / PFF FC own-goal capture (FOLLOW-UP feature, surfaced by the 4.12.2 "O"-mis-map
+  fix; lakehouse-investigated 2026-06-04).** 4.12.2 removed the false `shot_outcome_type == "O" →
+  owngoal` mapping (`"O"` is off-target). That fix is harm-reduction only — the converter now emits
+  NO `owngoal`, and the 3 real WC2022 own goals are still **missed** (they are not `SH` events, so
+  they never reach the shot-result branch). Lakehouse empirical finding (full WC2022, 64 matches):
+  **own goals are `possession_event_type == "RE"` (rebound) AND `shot_outcome_type == "G"`** — NULL
+  shooter, recorded on the **conceding** team. 3 such events tournament-wide, all confirmed real OGs
+  (Enzo Fernández vs AUS, Aguerd vs CAN, GER vs CRC); `RE` is otherwise ~all NULL shot-outcome
+  (`RE`+`G`=3 / `S`=5 / `O`=1 / `F`=1). The converter reasons about goals from `SH` only, so it both
+  fabricated phantom OGs (fixed) AND misses the real ones (this item). **Long-term fix direction:**
+  (1) add an `RE & shot_outcome_type == "G"` → `bad_touch` + `result=owngoal` refinement (well-
+  precedented — sportec `sportec.py:861-863` and opta `_fix_owngoals` both emit own goals as
+  `bad_touch`+`owngoal`; opta also mirrors `end_x`/`end_y`). **Keep the acting (conceding) team per
+  ADR-001 — do NOT flip `team_id`;** the `owngoal` result carries the credit-the-opponent semantics
+  downstream (`utils.py:1610` documents that own goals stay on the acting team). (2) Generalize goal
+  detection beyond `SH` (a goal is `shot_outcome_type == "G"` across the relevant event types). **Guards
+  required:** NULL-shooter expected on OGs; do NOT sweep in the 3 real NULL-shooter `CR` cross-goals
+  (Ziyech/Sabiri/Bruno Fernandes — real goals, crosser=scorer); confirm `RE`+`G` is *always* an OG vs
+  a rebound goal (n=3 is small). **Codebook authority (confirm with PFF FC before shipping):** canonical
+  meaning of `RE`; whether OGs can also surface under other event types (e.g. `CL` deflection); and
+  whether the raw PFF JSON carries an explicit own-goal/goal object that the bronze `json_normalize`
+  flattens away (the cleanest signal would be that attribute, not the `RE`+`G` heuristic). Needs its own
+  brainstorm/spec + realistic-fixture extension (the synthetic match currently has NO `RE`+`G` OG) +
+  TDD. Rare shot-outcome codes seen 1–4×/match: `C`, `L`, `F` (unmapped → `fail`); main four `G`/`S`/`O`/`B`.
 - **Ghost-GK-mode train/serve `kde_backend` guard (owner: first mode-consumer — prospectively
   TF-17 / TF-19; NOT TF-16).** ADR-014 (amended, 4.8.0) established that `kde_backend="fft"` (NGP)
   can shift the emitted ghost-GK *mode* (`ghost_gk_x/y`) by up to ~6 m on near-tie multimodal frames

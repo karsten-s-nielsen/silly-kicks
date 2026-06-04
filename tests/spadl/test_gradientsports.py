@@ -618,7 +618,11 @@ class TestGradientsportsShotDispatch:
         "shot_outcome, expected_result",
         [
             ("G", "success"),
-            ("O", "owngoal"),
+            # "O" is the off-target shot bucket (NOT own-goal). Verified against the
+            # full PFF FC / Gradient Sports WC2022 feed (64 matches): a 0-0 match
+            # (MAR-ESP) carries O=10, and O occurs 4-17x every match — impossible for
+            # own goals. Own goals surface under "G". See _dispatch_actiontype_resultid.
+            ("O", "fail"),
             ("S", "fail"),
             ("B", "fail"),
             ("W", "fail"),
@@ -637,6 +641,51 @@ class TestGradientsportsShotDispatch:
             home_team_start_left_extratime=True,
         )
         assert actions.iloc[0]["result_id"] == spadlconfig.result_id[expected_result]
+
+
+class TestGradientsportsShotOutcomeRegression:
+    """Realistic full-match regression for the ``shot_outcome_type == "O"`` →
+    ``owngoal`` mis-map fixed in 4.12.2.
+
+    ``"O"`` is the off-target shot bucket (alongside ``S``=saved / ``B``=blocked),
+    NOT own-goal — own goals surface under ``"G"``. The converter must therefore
+    emit NO ``owngoal`` result. Exercised on the committed synthetic match
+    fixture, so it runs in the regular (non-e2e) suite.
+    """
+
+    def test_no_phantom_owngoals_on_realistic_match(self):
+        events = _load_synthetic_events()
+
+        # Guard: the fixture must actually carry off-target "O" shots, else this
+        # regression cannot bite (a no-change test must exercise the path that
+        # CAN change the value).
+        shot_outcomes = events.loc[events["possession_event_type"] == "SH", "shot_outcome_type"]
+        n_off_target = int((shot_outcomes == "O").sum())
+        assert n_off_target >= 1, "fixture must contain >=1 off-target 'O' shot for this regression"
+
+        actions, _ = gs_mod.convert_to_actions(
+            events,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+
+        # Core regression: zero phantom owngoal results anywhere in the output.
+        owngoal_id = spadlconfig.result_id["owngoal"]
+        n_owngoal = int((actions["result_id"] == owngoal_id).sum())
+        assert n_owngoal == 0, (
+            f"Gradient Sports converter emitted {n_owngoal} owngoal result(s); 'O' is off-target, "
+            "not own-goal, and no shot outcome should map to owngoal"
+        )
+
+        # Sanity: among shot-class actions, only "G" outcomes are successes.
+        shot_type_ids = {spadlconfig.actiontype_id[name] for name in ("shot", "shot_freekick", "shot_penalty")}
+        is_shot_action = actions["type_id"].isin(shot_type_ids)
+        n_shot_success = int((is_shot_action & (actions["result_id"] == spadlconfig.result_id["success"])).sum())
+        n_goal_outcomes = int((shot_outcomes == "G").sum())
+        assert n_shot_success == n_goal_outcomes, (
+            f"expected {n_goal_outcomes} successful shots (one per 'G' outcome), got {n_shot_success}"
+        )
 
 
 class TestGradientsportsRebound:
