@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-03. **Current release**: silly-kicks 4.11.0. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-04. **Current release**: silly-kicks 4.12.0 (period-relative `time_seconds` contract + per-period link-coverage guard, ADR-017; resolves the lakehouse GS period-2 silent-data-loss class). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

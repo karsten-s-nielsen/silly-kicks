@@ -10,11 +10,19 @@ Includes:
 from __future__ import annotations
 
 import warnings
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 
-from .schema import LinkReport
+from .schema import LinkReport, TimeBaseDiagnosis
+
+MISMATCH_OVERLAP_FLOOR: float = 0.2
+"""Per-period action/frame range overlap below this is flagged a suspected
+time-base mismatch (period-relative vs absolute). Decoupled from the linker's
+min_link_rate: this governs the *cause hypothesis*, not the *symptom*. 0.2 is
+specific to near-disjoint ranges (the GS bug was ~0.14) and stays quiet on
+ordinary sparsity. See ADR-017."""
 
 
 def filter_extratime_frames(frames: pd.DataFrame, *, label: str) -> pd.DataFrame:
@@ -169,6 +177,9 @@ def link_actions_to_frames(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     tolerance_seconds: float = 0.2,
+    *,
+    min_link_rate: float = 0.5,
+    on_low_coverage: Literal["warn", "raise", "ignore"] = "warn",
 ) -> tuple[pd.DataFrame, LinkReport]:
     """Link each action to the nearest tracking frame in time within tolerance.
 
@@ -183,6 +194,36 @@ def link_actions_to_frames(
         deduplicated to one row per frame before merge.
     tolerance_seconds : float, default 0.2
         Maximum |time_offset| for a valid link. NaN frame_id otherwise.
+    min_link_rate : float, default 0.5
+        Per-period link-rate floor for the coverage guard. Evaluated
+        **per period** (the worst period), never the match aggregate -- a
+        match-aggregate floor would launder a catastrophically-unlinked period
+        behind a healthy one (e.g. GS 10503: 60.6% whole-match vs 19% in p2).
+        0.5 fires on structural defects (which crater coverage to 13-19%) while
+        staying quiet on legitimate sparsity (0.7-0.95). Tighten for stricter
+        consumers. See ADR-017.
+    on_low_coverage : {"warn", "raise", "ignore"}, default "warn"
+        Policy when any period's link rate is below ``min_link_rate``.
+        ``"warn"`` emits one ``UserWarning`` per offending period (low coverage
+        is a quality continuum, not a structurally-impossible input, so the
+        default does not raise); ``"raise"`` raises ``ValueError``; ``"ignore"``
+        is silent (the report is still populated). The message carries the
+        per-period rate, unlinked count, and -- when the period's action/frame
+        ranges are near-disjoint -- a suspected time-base mismatch hint.
+
+    Notes
+    -----
+    **Time-base contract.** ``actions`` and ``frames`` MUST share a per-period
+    time base. silly_kicks' canonical convention is that ``time_seconds`` is
+    **seconds since the start of its period, resetting to 0 each period** --- NOT
+    absolute match-clock / continuous across periods. Linking is per-period
+    (``merge_asof`` within each ``period_id``), so cross-period continuity is
+    irrelevant, but a period whose actions and frames use different origins
+    (e.g. period-relative frames vs absolute actions) will not link and trips
+    ``on_low_coverage``. For consumers that pre-filter / window / batch actions
+    by time before linking, call :func:`validate_time_base` on the **unfiltered**
+    inputs --- the guard here cannot see actions a pre-filter already dropped.
+    See ADR-017.
 
     Returns
     -------
@@ -279,6 +320,11 @@ def link_actions_to_frames(
         }
     )
 
+    per_period_link_rate: dict[int, float] = {
+        int(p): float(s.notna().mean())  # type: ignore[arg-type]  # groupby key is Hashable; period_id is int
+        for p, s in merged_all.groupby("period_id")["frame_id"]
+    }
+
     n_in = len(actions)
     n_linked = int(pointers["frame_id"].notna().sum())
     n_unlinked = n_in - n_linked
@@ -298,8 +344,190 @@ def link_actions_to_frames(
         per_provider_link_rate=per_provider,
         max_time_offset_seconds=max_off,
         tolerance_seconds=tolerance_seconds,
+        per_period_link_rate=per_period_link_rate,
+    )
+    _enforce_link_coverage(
+        actions,
+        frames,
+        report,
+        min_link_rate=min_link_rate,
+        on_low_coverage=on_low_coverage,
     )
     return pointers, report
+
+
+def _enforce_link_coverage(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    report: LinkReport,
+    *,
+    min_link_rate: float,
+    on_low_coverage: Literal["warn", "raise", "ignore"],
+) -> None:
+    """Per-period low-coverage policy for link_actions_to_frames. See ADR-017."""
+    if on_low_coverage == "ignore" or not report.per_period_link_rate:
+        return
+    offending = {p: r for p, r in report.per_period_link_rate.items() if r < min_link_rate}
+    if not offending:
+        return
+
+    diag = _diagnose_time_base(actions, frames)  # lazy: only on a tripped guard
+    suspected = set(diag.suspected_mismatch_periods)
+    worst_first = sorted(offending, key=lambda p: offending[p])
+
+    def _line(p: int) -> str:
+        n_total = int((actions["period_id"] == p).sum())
+        n_unlinked = round((1.0 - offending[p]) * n_total)
+        msg = (
+            f"link_actions_to_frames: period {p} link_rate {offending[p]:.2f} "
+            f"({n_total} actions, {n_unlinked} unlinked) below min_link_rate {min_link_rate:g}."
+        )
+        if p in suspected:
+            a_min, a_max = diag.per_period_action_range[p]
+            frng = diag.per_period_frame_range.get(p)
+            frames_desc = f"frames [{frng[0]:g}, {frng[1]:g}]" if frng else "no frames"
+            msg += (
+                f" period {p}: actions [{a_min:g}, {a_max:g}] vs {frames_desc} — "
+                f"near-disjoint (overlap {diag.per_period_overlap_fraction[p]:.2f}); "
+                "suspected period-relative/absolute time-base mismatch. "
+                "See the time-base contract in the docstring."
+            )
+        return msg
+
+    if on_low_coverage == "raise":
+        raise ValueError(" ".join(_line(p) for p in worst_first))
+    for p in worst_first:  # one warning per offending period (deduped per period)
+        # stacklevel=3: warn site is _enforce_link_coverage (1) -> link_actions_to_frames (2)
+        # -> the user's call site (3). NOT 2 — that would blame the linker's own internals.
+        # (Contrast validate_time_base, which warns in its own body, so stacklevel=2 is correct
+        # there. The project's "stacklevel=2" convention means "point at the user"; the literal
+        # value depends on call-nesting depth.)
+        warnings.warn(_line(p), UserWarning, stacklevel=3)
+
+
+def _diagnose_time_base(actions: pd.DataFrame, frames: pd.DataFrame) -> TimeBaseDiagnosis:
+    """Pure per-period action-vs-frame time-range diagnosis. No warn/raise/I/O.
+
+    Vectorized: per-period ranges via a single groupby().agg on each side
+    (NOT the iterrows pattern in _count_candidates_within_tolerance). NaN
+    time_seconds rows are dropped before computing ranges.
+    """
+    a = actions[["period_id", "time_seconds"]].dropna(subset=["time_seconds"])
+    f = frames[["period_id", "time_seconds"]].dropna(subset=["time_seconds"])
+    a_rng = a.groupby("period_id")["time_seconds"].agg(["min", "max"])
+    f_rng = f.groupby("period_id")["time_seconds"].agg(["min", "max"])
+
+    per_action: dict[int, tuple[float, float]] = {}
+    per_frame: dict[int, tuple[float, float]] = {}
+    overlap_frac: dict[int, float] = {}
+    suspected: list[int] = []
+
+    for p in a_rng.index:
+        # pandas-stubs types .loc[scalar, col] as Scalar (incl. complex); these are real floats.
+        a_min, a_max = float(a_rng.loc[p, "min"]), float(a_rng.loc[p, "max"])  # type: ignore[arg-type]
+        per_action[int(p)] = (a_min, a_max)
+        if p in f_rng.index:
+            f_min, f_max = float(f_rng.loc[p, "min"]), float(f_rng.loc[p, "max"])  # type: ignore[arg-type]
+            per_frame[int(p)] = (f_min, f_max)
+            span = a_max - a_min
+            if span <= 0.0:  # degenerate single-point action span
+                frac = 1.0 if (f_min <= a_min <= f_max) else 0.0
+            else:
+                overlap = max(0.0, min(a_max, f_max) - max(a_min, f_min))
+                frac = overlap / span
+        else:
+            frac = 0.0  # actions in this period but no frames at all
+        overlap_frac[int(p)] = frac
+        if frac < MISMATCH_OVERLAP_FLOOR:
+            suspected.append(int(p))
+
+    suspected.sort(key=lambda p: overlap_frac[p])  # worst (lowest overlap) first
+    message = _format_diagnosis(per_action, per_frame, overlap_frac, tuple(suspected))
+    return TimeBaseDiagnosis(per_action, per_frame, overlap_frac, tuple(suspected), message)
+
+
+def _format_diagnosis(
+    per_action: dict[int, tuple[float, float]],
+    per_frame: dict[int, tuple[float, float]],
+    overlap_frac: dict[int, float],
+    suspected: tuple[int, ...],
+) -> str:
+    """Human-readable summary; enumerates suspected periods worst-first."""
+    if not suspected:
+        return "no time-base mismatch detected (all periods overlap)"
+    parts = []
+    for p in suspected:
+        a_min, a_max = per_action[p]
+        if p in per_frame:
+            f_min, f_max = per_frame[p]
+            frames_desc = f"frames [{f_min:g}, {f_max:g}]"
+        else:
+            frames_desc = "no frames"
+        parts.append(
+            f"period {p}: actions [{a_min:g}, {a_max:g}] vs {frames_desc} "
+            f"— near-disjoint (overlap {overlap_frac[p]:.2f})"
+        )
+    return (
+        "; ".join(parts) + "; suspected period-relative/absolute time-base mismatch "
+        "(time_seconds must be period-relative; see the time-base contract)"
+    )
+
+
+def validate_time_base(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    on_mismatch: Literal["warn", "raise", "ignore"] = "raise",
+) -> TimeBaseDiagnosis:
+    """Pre-link assertion that actions + frames share a per-period time base.
+
+    silly_kicks' canonical ``time_seconds`` convention is **period-relative**
+    (resets to 0 each period; see the link_actions_to_frames docstring). This
+    helper runs the pure per-period range diagnosis and, on a suspected
+    mismatch, raises (default), warns, or returns silently.
+
+    **This is the primary guard for any consumer that pre-filters / windows /
+    batches actions by time before linking.** ``link_actions_to_frames``'s own
+    ``on_low_coverage`` guard only sees the actions that reach it -- a pre-filter
+    that drops out-of-range actions upstream leaves the linker with
+    ~100%-linkable survivors and the guard silent (exactly how the original GS
+    period-2 bug stayed invisible). Call this on the **unfiltered** inputs at
+    work-unit entry. See ADR-017.
+
+    Parameters
+    ----------
+    actions, frames : pd.DataFrame
+        SPADL actions / long-form tracking frames (need ``period_id`` +
+        ``time_seconds``).
+    on_mismatch : {"raise", "warn", "ignore"}, default "raise"
+        Policy when a suspected mismatch is found. Default ``"raise"`` -- an
+        explicitly-invoked assertion should fail loud (the asymmetry with the
+        linker's ``warn`` default is intentional).
+
+    Returns
+    -------
+    TimeBaseDiagnosis
+        The per-period diagnosis (returned in all policies, including "raise"
+        when no mismatch is found).
+
+    Raises
+    ------
+    ValueError
+        If ``on_mismatch="raise"`` and a suspected mismatch is found.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking import validate_time_base
+    >>> diag = validate_time_base(actions, frames, on_mismatch="warn")  # doctest: +SKIP
+    >>> diag.has_suspected_mismatch  # doctest: +SKIP
+    """
+    diag = _diagnose_time_base(actions, frames)
+    if diag.has_suspected_mismatch:
+        if on_mismatch == "raise":
+            raise ValueError(f"validate_time_base: {diag.message}")
+        if on_mismatch == "warn":
+            warnings.warn(f"validate_time_base: {diag.message}", UserWarning, stacklevel=2)
+    return diag
 
 
 def _count_candidates_within_tolerance(
@@ -415,7 +643,9 @@ def slice_around_event(
 
     Constrained to the same period; window does not cross period boundaries.
     Output is long-form (one row per (action_id, frame_id, player_or_ball))
-    with ``action_id`` and ``time_offset_seconds`` joined in.
+    with ``action_id`` and ``time_offset_seconds`` joined in. Assumes the
+    per-period ``time_seconds`` convention (resets each period); see
+    :func:`link_actions_to_frames` / ADR-017.
 
     Parameters
     ----------

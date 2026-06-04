@@ -47,6 +47,7 @@ __all__ = [
     "ShapeGraph",
     "SpaceCreationParams",
     "SpearmanParams",
+    "TimeBaseDiagnosis",
     "TrackingConversionReport",
     "VoronoiParams",
     "XCrossAttemptModel",
@@ -186,6 +187,7 @@ __all__ = [
     "team_shape_xfns",
     "tracking_default_xfns",
     "utils",
+    "validate_time_base",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
 ]
@@ -341,6 +343,7 @@ from .schema import (
     TRACKING_CONSTRAINTS,
     TRACKING_FRAMES_COLUMNS,
     LinkReport,
+    TimeBaseDiagnosis,
     TrackingConversionReport,
 )
 from .utils import (
@@ -350,6 +353,7 @@ from .utils import (
     play_left_to_right,
     slice_around_event,
     sync_score,
+    validate_time_base,
 )
 
 try:
