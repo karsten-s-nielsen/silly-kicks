@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-06-04 |
-| **Status** | Accepted — pending implementation (silly-kicks 4.12.0) |
+| **Status** | Accepted — implemented in silly-kicks 4.12.0 |
 | **Deciders** | Karsten S. Nielsen, Claude Opus 4.8 (1M); luxury-lakehouse AC-1 session (3-round spec + plan review) |
 
 ## Context

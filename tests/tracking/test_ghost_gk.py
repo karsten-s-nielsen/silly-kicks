@@ -477,6 +477,42 @@ class TestComputeGhostGk:
         result = compute_ghost_gk(frames, model=model, home_team_id=1)
         assert len(result) == len(frames)
 
+    def test_compute_ghost_gk_two_goalkeepers_same_team(self):
+        """A frame with two same-team is_goalkeeper rows must not crash and
+        both GK rows must receive the identical ghost-GK prediction.
+
+        Regression: a rostered backup keeper carried on-pitch alongside the
+        starter (or a GK-substitution overlap frame) produces two
+        is_goalkeeper=True rows for one team in a single frame. The per-(frame,
+        team) prediction is identical for both rows, so both must be filled with
+        that one value rather than raising
+        ``ValueError: Must have equal len keys and value``.
+        """
+        from silly_kicks.tracking._ghost_gk import compute_ghost_gk
+
+        model, _, _ = _fitted_model()
+        frames = _make_ghost_gk_frames(home_team_id=1, away_team_id=2)
+        # Inject a second home (team 1) goalkeeper in the same frame. Slice as a
+        # DataFrame (.loc[[idx]]) so column dtypes are preserved on concat.
+        starter_idx = frames.index[(frames["team_id"] == 1) & frames["is_goalkeeper"].astype(bool)][0]
+        backup = frames.loc[[starter_idx]].copy()
+        backup["player_id"] = "p1_backup"
+        backup["x"] = 7.0
+        backup["y"] = 30.0
+        frames = pd.concat([frames, backup], ignore_index=True)
+
+        # Must not raise.
+        result = compute_ghost_gk(frames, model=model, home_team_id=1)
+        assert len(result) == len(frames)
+
+        # Both home-GK rows get the same, non-NaN prediction.
+        home_gk = result[(result["team_id"] == 1) & result["is_goalkeeper"].astype(bool)]
+        assert len(home_gk) == 2
+        for col in ("ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"):
+            vals = home_gk[col].to_numpy(dtype=float)
+            assert np.isfinite(vals).all(), f"{col} should be filled for both GK rows"
+            np.testing.assert_allclose(vals[0], vals[1])
+
 
 # ---------------------------------------------------------------------------
 # Task 8: add_ghost_gk + ghost_gk_xfns

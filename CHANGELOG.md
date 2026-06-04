@@ -5,6 +5,29 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.12.1] — 2026-06-04
+
+### Fixed — `compute_ghost_gk` crash when a team has ≥2 goalkeepers in one frame
+
+`compute_ghost_gk` (hence `add_ghost_gk` / `ghost_gk_xfns`, and their atomic mirror) raised
+`ValueError: Must have equal len keys and value when setting with an iterable` for any frame
+containing two or more `is_goalkeeper=True` rows with the same `team_id`. Reported by
+luxury-lakehouse: a provider match rostered a backup keeper carried on-pitch alongside the starter
+in 100% of frames, so the very first batch of each half crashed and the match produced zero output.
+GK-substitution overlap frames trigger the same fault intermittently.
+
+- Root cause: `_extract_all_ghost_gk_features` emits one inference sample **per GK row**, all keyed on
+  `(game_id, period_id, frame_id, gk_team_id)`. A second same-team GK in a frame produced duplicate
+  keys; the downstream `how="left"` merge onto the GK rows then inflated past `gk_mask.sum()` and the
+  positional assignment back into `out.loc[gk_mask, ...]` length-mismatched.
+- Fix: `compute_ghost_gk` now collapses duplicate `(frame, gk_team)` inference samples (keeping the
+  first) **before** `predict_density`. The features are byte-identical per `(frame, gk_team)` — only
+  the per-GK-row label differs, and labels are unused at inference — so both GK rows receive the same
+  ghost-GK prediction, and the KDE runs once per `(frame, gk_team)` rather than once per GK row. The
+  training-data builder (`prepare_ghost_gk_training_data`) keeps its per-GK-row sampling (distinct
+  labels) untouched. Single-GK frames are unaffected (the de-dup is a no-op) — the frame-restriction
+  byte-identical golden still holds.
+
 ## [4.12.0] — 2026-06-04
 
 ### Added — period-relative `time_seconds` contract + loud per-period link-coverage guard (ADR-017)
