@@ -10,6 +10,7 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     "game_id": "int64",
     "period_id": "int64",
     "frame_id": "int64",
+    # PERIOD-RELATIVE: seconds since the start of the period, resets to 0 each period (ADR-017)
     "time_seconds": "float64",
     "frame_rate": "float64",
     "player_id": "int64",
@@ -157,6 +158,12 @@ class LinkReport:
     max_time_offset_seconds: float
     tolerance_seconds: float
 
+    per_period_link_rate: dict[int, float] = dataclasses.field(default_factory=dict)
+    """period_id -> linked / actions-in-that-period. Computed from the internal
+    per-period merge (NOT the returned pointers, which drop period_id), so a
+    catastrophically-unlinked period is never laundered behind a healthy one.
+    Empty for an empty-actions call. See ADR-017."""
+
     @property
     def link_rate(self) -> float:
         return self.n_actions_linked / max(self.n_actions_in, 1)
@@ -174,3 +181,34 @@ class LinkReport:
         from .utils import sync_score  # local import to avoid utils -> schema cycle
 
         return sync_score(links, high_quality_threshold=high_quality_threshold)
+
+
+@dataclasses.dataclass(frozen=True)
+class TimeBaseDiagnosis:
+    """Per-period action-vs-frame time-range diagnosis (time-base mismatch hypothesis).
+
+    Produced by ``silly_kicks.tracking.utils._diagnose_time_base`` and surfaced by
+    ``validate_time_base`` and the ``link_actions_to_frames`` low-coverage guard.
+    A *cause hypothesis* for low link coverage, distinct from the *symptom*
+    (low link rate). See ADR-017.
+
+    Attributes:
+        per_period_action_range: period_id -> (min, max) action time_seconds.
+        per_period_frame_range: period_id -> (min, max) frame time_seconds
+            (absent for a period that has actions but no frames).
+        per_period_overlap_fraction: period_id -> fraction of the action span
+            covered by the frame span (1.0 = frames fully span; 0.0 = disjoint).
+        suspected_mismatch_periods: periods with overlap < MISMATCH_OVERLAP_FLOOR,
+            ordered worst-first (lowest overlap first).
+        message: human-readable summary enumerating suspected periods worst-first.
+    """
+
+    per_period_action_range: dict[int, tuple[float, float]]
+    per_period_frame_range: dict[int, tuple[float, float]]
+    per_period_overlap_fraction: dict[int, float]
+    suspected_mismatch_periods: tuple[int, ...]
+    message: str
+
+    @property
+    def has_suspected_mismatch(self) -> bool:
+        return len(self.suspected_mismatch_periods) > 0

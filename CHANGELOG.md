@@ -5,6 +5,42 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.12.0] — 2026-06-04
+
+### Added — period-relative `time_seconds` contract + loud per-period link-coverage guard (ADR-017)
+
+Documents and enforces silly-kicks' canonical **period-relative** `time_seconds` convention
+(seconds since the start of each period, resetting to 0 — NOT absolute match-clock), and makes a
+low action↔frame link-coverage outcome loud. Resolves the GradientSports period-2 silent-data-loss
+class reported by luxury-lakehouse (a period-relative-vs-absolute time-base mismatch dropped ~81% of
+GS period-2 actions with no signal).
+
+- `silly_kicks.tracking.utils.link_actions_to_frames` gains `min_link_rate: float = 0.5` and
+  `on_low_coverage: Literal["warn", "raise", "ignore"] = "warn"`. The guard is evaluated **per
+  period** (worst period), never the match aggregate — a match-aggregate floor would launder a
+  catastrophically-unlinked period behind a healthy one. The warning/error message carries the
+  per-period rate, unlinked count, and — when a period's action/frame ranges are near-disjoint — a
+  suspected time-base-mismatch hint.
+- `LinkReport` gains `per_period_link_rate: dict[int, float]`, computed from the internal per-period
+  merge (not the returned pointers, which drop `period_id`).
+- New public `silly_kicks.tracking.validate_time_base(actions, frames, *, on_mismatch="raise")` +
+  `TimeBaseDiagnosis` — the primary guard for consumers that pre-filter / window / batch actions by
+  time before linking (the linker guard cannot see actions a pre-filter already dropped). Call it on
+  the **unfiltered** inputs at work-unit entry.
+- `MISMATCH_OVERLAP_FLOOR = 0.2` time-base-mismatch diagnostic, decoupled from `min_link_rate` (the
+  *cause hypothesis* vs the *symptom*).
+- The period-relative convention is documented on the tracking + events converter docstrings,
+  `link_actions_to_frames` / `slice_around_event`, and the SPADL + tracking schemas, and pinned by
+  convention lock tests for the converters whose `time_seconds` arithmetic the library owns (Opta,
+  StatsBomb). GradientSports `time_seconds` is a verbatim pass-through originating upstream and is
+  guarded lakehouse-side.
+
+> **Hyrum's Law / behavior change:** `link_actions_to_frames` now emits a `UserWarning` by default
+> on low per-period coverage. Consumers running `-W error` / `filterwarnings=error` will start
+> failing on genuinely-degraded matches — the intended shift-left. Pass `on_low_coverage="ignore"`
+> for a known-partial match, or `"raise"` to escalate. The atomic-SPADL surface inherits the change
+> via the shared linker.
+
 ## [4.11.0] — 2026-06-03
 
 ### Added — xCrossAttempt (xCross) cross-attempt-propensity model (TF-17, GKDV Layer 2)

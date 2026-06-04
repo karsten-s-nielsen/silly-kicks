@@ -72,6 +72,11 @@ def convert_to_frames(
     ----------
     raw_frames : pd.DataFrame
         Sportec input (see EXPECTED_INPUT_COLUMNS).
+        ``raw_frames["time_seconds"]`` must be **period-relative** (seconds since
+        the start of each period, resetting to 0 -- NOT absolute match-clock).
+        This is silly_kicks' canonical convention (matches the events converters)
+        and what :func:`silly_kicks.tracking.utils.link_actions_to_frames`
+        requires. See ADR-017.
     home_team_id : str
         DFL TeamId of the home team. Used to compute team_attacking_direction.
     home_team_start_left : bool

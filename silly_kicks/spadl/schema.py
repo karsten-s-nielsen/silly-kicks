@@ -11,6 +11,7 @@ SPADL_COLUMNS: dict[str, str] = {
     "original_event_id": "object",
     "action_id": "int64",
     "period_id": "int64",
+    # PERIOD-RELATIVE: seconds since the start of the period, resets to 0 each period (ADR-017)
     "time_seconds": "float64",
     "team_id": "int64",
     "player_id": "int64",
