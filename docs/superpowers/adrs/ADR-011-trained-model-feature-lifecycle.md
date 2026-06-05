@@ -132,6 +132,21 @@ the same staged code→weights path. Two refinements it introduces:
   `_build_score_lookup`. Faithfulness caveats (here: only 7 of the paper's 8 confounders are
   realized) are recorded in NOTICE rather than overclaimed.
 
+## Note — temporal-leakage discipline (external validation)
+
+A trained-model feature in this lifecycle is **leakage-corrected by construction**: its shared
+train/serve extractor uses only information available at the decision moment (xS/xCross use
+goal-relative geometry of the frame at time *t* — no post-event descriptors), and CV is
+**match-grouped** (`StratifiedGroupKFold` by match; TF-24 `GroupKFold(5)` / leave-one-match-out) so
+temporally adjacent frames cannot straddle train/test folds. Peters, Parmar, Davies & James (2026,
+"When Timing Matters: Evaluating Temporal Leakage in ML Models of Football Pass Turnovers," *Research
+Quarterly for Exercise and Sport*, DOI:10.1080/02701367.2026.2677718) independently quantifies why
+both matter (post-execution features inflate ROC-AUC by ~0.14 mean, tree models most affected) and
+endorses match-grouped CV as the mitigation. silly-kicks already embodies both; `HybridVAEP`
+(`silly_kicks/vaep/hybrid.py`) additionally supplies the result-leakage-free action-value path for
+the retrospective-vs-prospective use-case split the paper draws. **No build followed — the paper
+validates the existing design** (audit, 2026-06-05).
+
 ## Related
 
 - **Specs:** `docs/superpowers/specs/2026-05-31-tf16-xshot-occurrence-design.md`;
@@ -142,5 +157,6 @@ the same staged code→weights path. Two refinements it introduces:
   `CachedObjective` calibration harness — the HPO substrate this reuses).
 - **Features:** TF-18 ghost-gk (first trained-model feature; pre-dates this ADR);
   TF-16 xShotOccurrence (first built to this lifecycle).
-- **External:** Pipping/Feng/Sabin 2026 (arXiv:2512.00203); `ruthless-efficiency`
-  (PyPI); HuggingFace Hub `silly-kicks` org.
+- **External:** Pipping/Feng/Sabin 2026 (arXiv:2512.00203); Peters/Parmar/Davies/James 2026
+  (DOI:10.1080/02701367.2026.2677718 — temporal-leakage validation, see note above);
+  `ruthless-efficiency` (PyPI); HuggingFace Hub `silly-kicks` org.
