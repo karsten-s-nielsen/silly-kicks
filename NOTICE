@@ -82,6 +82,23 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   variables). The paper's sender-level propensity-score-matching framework
   (ATE/ATT) is reproduced separately in the TF-17 causal validation harness (PR-C).
 
+- Peters, A., Parmar, N., Davies, M., & James, N. (2026). "When Timing Matters:
+  Evaluating Temporal Leakage in Machine Learning Models of Football Pass
+  Turnovers." Research Quarterly for Exercise and Sport.
+  DOI:10.1080/02701367.2026.2677718.
+  Methodological support (NOT an implemented feature) for the leakage-corrected
+  design of silly-kicks' trained-model features: xShotOccurrence (TF-16,
+  silly_kicks/tracking/_xshot_occurrence.py) and xCrossAttempt (TF-17,
+  silly_kicks/tracking/_xcross_attempt.py) are state-anchored -- features are
+  goal-relative geometry of the frame at decision time, with no post-event
+  inputs -- and are trained with match-grouped cross-validation
+  (StratifiedGroupKFold by match; the TF-24 calibration harness uses
+  GroupKFold / leave-one-match-out). HybridVAEP (silly_kicks/vaep/hybrid.py)
+  removes a0 result leakage from action-value features. The paper's
+  retrospective-vs-prospective feature-set distinction matches the standard-VAEP
+  (retrospective valuation) vs HybridVAEP / state-anchored-xS/xCross
+  (prospective) split silly-kicks already ships. See ADR-011.
+
 - Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
   Conference.
   (zone-based defender intensity in pitch-control framework)
@@ -143,6 +160,11 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   Saturation constant k3 not published in the paper; silly-kicks default
   k3=1.0 is an engineering choice exposed as a kwarg. Calibration deferred
   post-release to Optuna sweep (silly-kicks TODO TF-24).
+  Note: only the Pressure component of the Link et al. Dangerousity model is
+  implemented (the link_zones pressure surface, Eq 3). The full Dangerousity
+  composite -- Zone x linear(Control, Pressure, Density) and the derived
+  Action-Value / Dominance surface -- is intentionally not implemented
+  (a deductive competitor to the VAEP / xT / OBSO / DAS stack already present).
 
 - Bekkers, J. (2025). "Pressing Intensity: An Intuitive Measure for Pressing
   in Soccer." arXiv:2501.04712.
