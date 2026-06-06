@@ -5,6 +5,45 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.14.0] — 2026-06-06
+
+### Changed — Ghost-GK serves the exact boosted HGBR mean (integrity fix), pickle-free (ADR-016, PR-S83)
+
+`compute_ghost_gk` served the KDE **mode** (~4.65 m held-out MAE) while the model card reported ~1.1 m
+for the sklearn `predict_mean` that `save()`/`load()` discarded (it raised after `load()` — **never
+served**). 4.14.0 closes the gap: `predict_mean` / `predict()` / `compute_ghost_gk` now serve the
+**exact sklearn `HistGradientBoostingRegressor` boosted prediction** — held-out euclidean MAE **1.07 m**
+(5-fold, vs the served mode's 4.65 m) — reconstructed **pickle-free** from serialized tree node arrays +
+baselines (`baseline + Σ_trees leaf_value`; new `_vectorized_leaf_values` kernel, an
+independent-parity-tested sibling of the KDE traversal). Inference stays sklearn-free + numpy-only +
+deterministic, and is **sklearn-version-independent** (sklearn couples only at fit/extract).
+
+An earlier attempt to serve the leaf-weighted **conditional mean** (no re-publish) was built and
+**empirically rejected** — it measured 7.0 m, *worse* than the 4.65 m mode (the conditional GK-position
+density is broad + multimodal, so central tendencies sit in low-density valleys). The boosted mean is a
+structurally stronger estimator (squared-error boosting on the full 26-feature interaction). See ADR-016
+for the rejection table + the stratified ship gate.
+
+- **`fit()` trains `phase` numerically** (`categorical_features=None`) — removes 24 categorical split
+  nodes whose routing bitsets aren't serialized, making the numeric reconstruction match sklearn exactly
+  **and** closing a latent KDE categorical-routing capability gap. The density/spread shifts slightly as
+  a result (expected; the served value is now the boosted mean, not the mode).
+- **Artifact format change (version 1.2.0):** the npz now carries the gk_y tree ensemble + both
+  baselines; `metadata.serve_estimator = "boosted_mean"`. **Both bundled `default` (wheel) and Hub
+  `full` weights are re-fit + re-published.** `load()` **fails closed** on a conflicting `serve_estimator`
+  (R3) and on pre-Option-A artifacts (missing gk_y trees → clear "re-fit required" error).
+
+> **BREAKING — column rename:** the emitted spread column `ghost_gk_spread` is renamed
+> **`ghost_gk_density_spread`** (in `compute_ghost_gk`, `add_ghost_gk`, `ghost_gk_xfns`, and the atomic
+> mirror). The served position is now the boosted mean while the spread is the conditional-**density**
+> dispersion (a different read-out — NOT the standard error of the served point); the rename makes that
+> structural. **Lakehouse consumers must rename the column on consume and re-materialize `ghost_gk_*`.**
+
+> **Hyrum's Law / behavior change:** every served `ghost_gk_x/y` value changes (deliberate value change,
+> not an API break); `model.predict()` is a public-API **semantic** change (returns the boosted mean, not
+> the KDE mode — the mode remains reachable via `predict_density(...).mode_x/mode_y`); old-format weights
+> no longer load (re-fit required). The lakehouse must re-materialize the ghost-GK columns.
+
 ## [4.13.0] — 2026-06-04
 
 ### Added / Fixed — Gradient Sports goal-capture correctness + VAEP own-goal labeling (ADR-018)
@@ -44,9 +83,9 @@ matches, 144,541 events).
 > retrained on these labels will shift. (2) Gradient Sports action counts change: voided events dropped,
 > own goals now `bad_touch`+`owngoal`, cross-goals gain a synthetic shot row (flagged `is_synthetic=True`,
 > sharing the cross's `original_event_id`), and the GS output gains the `is_synthetic` column. (3) The
-> `nonEvent` soft input-contract: GS
-> callers must surface `possessionEvents.nonEvent` to exclude voided events, else the warning fires. The
-> atomic-SPADL surface inherits all converter changes; the atomic label path already counted own goals.
+> `nonEvent` soft input-contract: GS callers must surface `possessionEvents.nonEvent` to exclude voided
+> events, else the warning fires. The atomic-SPADL surface inherits all converter changes; the atomic
+> label path already counted own goals.
 
 ## [4.12.2] — 2026-06-04
 

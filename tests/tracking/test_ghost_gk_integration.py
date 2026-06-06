@@ -51,7 +51,7 @@ class TestAtomicMirror:
 
         atomic = atomic_add(actions, frames, model=model, home_team_id=1)
 
-        for col in ["ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"]:
+        for col in ["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]:
             assert col in atomic.columns
 
 
@@ -96,7 +96,7 @@ class TestKdeBackend:
 
         Guards the kde_backend threading add_ghost_gk -> compute_ghost_gk -> predict_density.
         ghost_gk_x/y are discrete modes (a near-tie argmax can shift <=1 grid cell on numba's
-        accumulation order), so compare them within GRID_RESOLUTION; ghost_gk_spread is
+        accumulation order), so compare them within GRID_RESOLUTION; ghost_gk_density_spread is
         continuous, compared at rtol 1e-7.
         """
         from silly_kicks.tracking._ghost_gk import GRID_RESOLUTION
@@ -139,8 +139,8 @@ class TestKdeBackend:
             mask = ~np.isnan(b)
             assert np.all(np.abs(b[mask] - n[mask]) <= GRID_RESOLUTION + 1e-9)
         np.testing.assert_allclose(
-            nb["ghost_gk_spread"].to_numpy(dtype=float),
-            base["ghost_gk_spread"].to_numpy(dtype=float),
+            nb["ghost_gk_density_spread"].to_numpy(dtype=float),
+            base["ghost_gk_density_spread"].to_numpy(dtype=float),
             rtol=1e-7,
             atol=1e-9,
             equal_nan=True,

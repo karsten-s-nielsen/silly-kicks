@@ -29,16 +29,17 @@ Key properties:
 - **Density estimation, not regression**: Outputs a 60&times;64 probability grid (3,840 cells at 0.5m resolution), not a single (x, y) point. Captures multimodal positioning (e.g., split between near-post and central when the ball is wide).
 - **No pickle**: Serialized as npz (NumPy arrays) + JSON (metadata) + SHA-256 integrity sidecar. No pickle anywhere in the load/save path.
 - **Vectorized inference**: Tree traversal uses NumPy array operations (no sklearn at inference time). Batch prediction of 1,000 frames completes in under 1 second.
-- **Two variants**: `"default"` (approx. 9 MB, 36k training frames) ships bundled in the wheel; `"full"` (approx. 91 MB, 537k frames) downloads from this Hub repo on first use.
+- **Two variants**: `"default"` (approx. 12 MB, 36k training frames) ships bundled in the wheel; `"full"` (approx. 170 MB, 887k frames) downloads from this Hub repo on first use.
 
 ## Architecture
 
 The model implements RFCDE (Pospisil &amp; Lee 2018) adapted for goalkeeper positioning:
 
-1. **Feature extraction**: 26 goal-relative features per frame (ball state, defensive geometry, game context)
+1. **Feature extraction**: 26 goal-relative features per frame (ball state, defensive geometry, game context). `phase` is trained **numerically** (not categorical) so the pickle-free numeric tree traversal matches sklearn exactly (4.14.0; ADR-016).
 2. **Leaf assignment**: `HistGradientBoostingRegressor` (500 trees, max depth 8) trained on GK x-coordinate; leaf assignments partition the feature space
 3. **Co-occurrence weighting**: Training frames sharing leaf assignments with the query frame receive higher weight (Dutta et al. 2024 NFL Ghosts approach)
-4. **2D KDE**: Weighted Gaussian KDE over (x, y) positions of weighted training frames produces the density surface
+4. **2D KDE**: Weighted Gaussian KDE over (x, y) positions of weighted training frames produces the density surface (`mode`, `mean`, `density_spread`)
+5. **Served point estimate**: a second `HistGradientBoostingRegressor` is trained on GK y-coordinate; `ghost_gk_x/y` serve the exact boosted mean of both ensembles, reconstructed pickle-free as `baseline + Σ_trees leaf_value` (no sklearn at inference). 4.14.0; ADR-016.
 
 ### Features (26)
 
@@ -65,8 +66,8 @@ All coordinates are goal-relative: the defending goal is at x=0, pitch center at
 
 | Variant | Training frames | File size | Source |
 |---------|----------------|-----------|--------|
-| `default` | 36,000 | 9 MB | Bundled in `pip install silly-kicks` |
-| `full` | 537,000 | 91 MB | Downloaded from this HF repo via `pip install silly-kicks[ghost-gk]` |
+| `default` | 36,000 | 12 MB | Bundled in `pip install silly-kicks` |
+| `full` | 887,000 | 170 MB | Downloaded from this HF repo via `pip install silly-kicks[ghost-gk]` |
 
 The `default` variant provides nearly identical point-estimate accuracy (mode x/y) with faster density estimation. The `full` variant produces smoother, more detailed density surfaces &mdash; recommended for research applications where the full density shape matters.
 
@@ -78,6 +79,9 @@ Trained on licensed tracking data from professional football matches:
 |----------|-------------|-------|
 | Sportec (DFL) | Bundesliga | Native GK identification |
 | SkillCorner | Multiple leagues | Derived GK identification (ADR-007) |
+| Gradient Sports | FIFA World Cup 2022 | Owner-tier source — only the trained model weights are distributed here; the underlying raw tracking data is **not** redistributed |
+
+The `full` variant is trained on 81 matches / 887k frames across all three providers above; the `default` variant is a lighter 36k-frame subsample. Only the learned model parameters (tree structure, leaf-aggregated GK positions, KDE weights) are published — **no raw provider tracking data is redistributed**.
 
 Training frames are filtered to remove sweeper-rush events (GK outside penalty area during active defensive actions) to ensure the ghost represents normal positioning behavior.
 
@@ -112,12 +116,46 @@ Each prediction returns a `GhostGkDensity` frozen dataclass:
 |-------|------|-------------|
 | `mode_x` | float | Joint 2D mode x (argmax), goal-relative meters |
 | `mode_y` | float | Joint 2D mode y (argmax), goal-relative meters |
-| `mean_x` | float | Density-weighted mean x |
-| `mean_y` | float | Density-weighted mean y |
-| `spread` | float | Effective area (entropy-based dispersion measure) |
+| `mean_x` | float | Density-weighted (grid) mean x |
+| `mean_y` | float | Density-weighted (grid) mean y |
+| `spread` | float | Effective area (entropy-based **density** dispersion measure) |
 | `probabilities` | ndarray (60, 64) | Full density grid |
 | `grid_x` | ndarray (60,) | X-axis cell centers |
 | `grid_y` | ndarray (64,) | Y-axis cell centers |
+
+The **served** point estimate (`ghost_gk_x/y`, `model.predict()`) is the exact boosted HGBR
+`predict_mean` (below), reconstructed pickle-free — it is **not** a field of `GhostGkDensity`.
+
+### Served point estimate (v4.14.0)
+
+`ghost_gk_x/y` and `model.predict()` serve the **exact sklearn `HistGradientBoostingRegressor` boosted
+mean** — the same estimator the old card's ≈1.1 m number measured, but now reconstructed **pickle-free**
+(`baseline + Σ_trees leaf_value`) so it survives `load()` and is actually served. This closes a
+pre-existing integrity gap: the card reported ≈1.1 m for an estimator that `save()`/`load()` discarded,
+while production served the KDE **mode** (≈4.65 m):
+
+| Estimator | Held-out euclidean MAE | Served? |
+|-----------|------------------------|---------|
+| old card number (`predict_mean`, sklearn, phase-categorical) | ≈1.1 m | never served (unavailable after `load()`) |
+| KDE mode (≤ v4.12) | ≈4.65 m | served through 4.12 |
+| **boosted mean (4.14.0, reconstructed pickle-free)** | **1.07 m** (5-fold aggregate) | **served now** |
+
+The 4.14.0 number is re-measured at re-fit on the same held-out split as the mode (not copied from the
+old ≈1.1 m card, which was a *different*, phase-categorical model). An intermediate design that served
+the leaf-weighted *conditional mean* (no re-fit) was empirically rejected — it measured ≈7.0 m, worse
+than the mode, because the conditional density is broad + multimodal. The boosted mean is a structurally
+stronger estimator and is the only candidate that beats the mode. The mode remains available via
+`predict_density(...).mode_x/mode_y`. See ADR-016.
+
+**Weights re-fit + re-published (4.14.0).** This is an artifact-format change (the npz now carries the
+gk_y tree ensemble + baselines for the reconstruction; `metadata.version = 1.2.0`,
+`serve_estimator = "boosted_mean"`), and `fit()` now trains `phase` numerically (closing a latent KDE
+categorical-routing capability gap). Both the bundled `default` and this Hub `full` model are re-fit;
+old-format artifacts fail closed on load with a clear "re-fit required" error.
+
+> **Breaking:** the emitted spread column is renamed `ghost_gk_spread` → **`ghost_gk_density_spread`**
+> (it is the conditional-density dispersion, not the served point's standard error). Lakehouse consumers
+> must rename on consume + re-materialize `ghost_gk_*`.
 
 ### Serialization Format
 
@@ -189,9 +227,9 @@ Features are extracted in **goal-relative coordinates**:
 
 | File | Size | Description |
 |------|------|-------------|
-| `rfcde_weights.npz` | 91 MB | Tree structure, leaf assignments, training GK positions |
-| `metadata.json` | 1 KB | Feature names, grid specification, hyperparameters |
-| `SHA256SUMS` | 166 B | Integrity checksums |
+| `rfcde_weights.npz` | 170 MB | gk_x + gk_y tree structure + baselines, leaf assignments, training GK positions |
+| `metadata.json` | 1 KB | Feature names, grid specification, hyperparameters, `serve_estimator`, version |
+| `SHA256SUMS` | 164 B | Integrity checksums |
 
 ## More Information
 

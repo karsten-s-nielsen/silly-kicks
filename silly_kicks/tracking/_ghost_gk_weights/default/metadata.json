@@ -44,7 +44,8 @@
     "gamma": 0.25
   },
   "sklearn_version": "1.9.0",
-  "training_commit": "655031479d5eac5553161c22807b25de91654f63",
+  "training_commit": "110747491ad08e53f1e87845c9f82fce85f49e4a",
   "training_platform": "dgx-spark-aarch64",
-  "version": "1.1.0"
+  "serve_estimator": "boosted_mean",
+  "version": "1.2.0"
 }

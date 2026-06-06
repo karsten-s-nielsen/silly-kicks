@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.13.0"
+version = "4.14.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -109,10 +109,10 @@ Repository = "https://github.com/karsten-s-nielsen/silly-kicks"
 
 [tool.hatch.build.targets.wheel]
 packages = ["silly_kicks"]
-# The "full" Ghost-GK weights (~91 MB) are Hub-distributed (silly-kicks/ghost-gk-v1) and
+# The "full" Ghost-GK weights (~170 MB) are Hub-distributed (silly-kicks/ghost-gk-v1) and
 # NOT committed to the repo (4.10.0) — downloaded from HuggingFace Hub on first use. This
 # exclude is a defensive guard: if a maintainer trains a `full` model into that path locally,
-# it stays out of the wheel. The "default" weights (~13 MB) ship bundled in the package.
+# it stays out of the wheel. The "default" weights (~12 MB) ship bundled in the package.
 exclude = ["silly_kicks/tracking/_ghost_gk_weights/full"]
 
 [tool.hatch.build.targets.sdist]
@@ -151,7 +151,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/tracking/_ghost_gk.py" = ["N803", "N806"]
 # Ghost-GK scripts: ML-style uppercase X, Y
 "scripts/train_ghost_gk.py" = ["N803", "N806"]
-"scripts/publish_ghost_gk.py" = ["N803", "N806"]
+"scripts/measure_ghost_gk_estimators.py" = ["N803", "N806"]
 "scripts/gen_ghost_gk_kde_golden.py" = ["N803", "N806"]
 "scripts/profile_ac1_hotpaths.py" = ["N803", "N806"]
 "scripts/validate_ghost_gk_refit.py" = ["N803", "N806"]
