@@ -53,6 +53,7 @@ from silly_kicks.spadl import config as spadlconfig
 from . import _kernels
 from ._ball_carrier import infer_ball_carrier
 from ._gk_resolve import defending_gk_from_frames
+from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
 from ._xshot_occurrence import xshot_occurrence_xfns
 from .feature_framework import lift_to_states
 from .pressure import (
@@ -1512,7 +1513,7 @@ def add_team_shape(
             if key not in sdf.index:
                 continue
             shape_row = sdf.loc[key]
-            suffix = "attacking" if tid == action_team else "defending"
+            suffix = "attacking" if same_id(tid, action_team) else "defending"
             for metric in metrics:
                 out.at[idx, f"team_shape_{metric}_{suffix}"] = shape_row[metric]
 
@@ -1662,7 +1663,7 @@ def _team_shape_at_actions(
             if key not in sdf.index:
                 continue
             shape_row = sdf.loc[key]
-            suffix = "attacking" if tid == action_team else "defending"
+            suffix = "attacking" if same_id(tid, action_team) else "defending"
             for metric in vaep_metrics:
                 out.at[idx, f"team_shape_{metric}_{suffix}"] = shape_row[metric]
 
@@ -2078,9 +2079,11 @@ def _map_das_to_actions(
             continue
 
         team_id = row["team_id"]
-        team_vals[i] = das_lookup[key].get(team_id, np.nan)
+        # Dtype-safe team match (ADR-019): das_lookup keys are frame-derived (team_in_possession),
+        # team_id is action-derived -- canonical match instead of raw dict .get / != .
+        team_vals[i] = next((v for k, v in das_lookup[key].items() if same_id(k, team_id)), np.nan)
         # Football: exactly 2 teams per frame; take the sole opponent.
-        opp = [v for k, v in das_lookup[key].items() if k != team_id]
+        opp = [v for k, v in das_lookup[key].items() if not same_id(k, team_id)]
         if opp:
             opp_vals[i] = opp[0]
 
@@ -2357,7 +2360,7 @@ def _gk_influence_at_actions(
             gk_rows = frame_data[
                 frame_data["is_goalkeeper"].astype(bool)
                 & (~frame_data["is_ball"].astype(bool))
-                & (frame_data["team_id"] != tid)
+                & (~ids_match(frame_data["team_id"], tid))
             ]
             if gk_rows.empty:
                 cache[cache_key] = None
@@ -2365,7 +2368,7 @@ def _gk_influence_at_actions(
 
             gk_pid = gk_rows.iloc[0]["player_id"]
             gk_team = gk_rows.iloc[0]["team_id"]
-            goal_x = 0.0 if gk_team == home_team_id else 105.0
+            goal_x = 0.0 if same_id(gk_team, home_team_id) else 105.0
 
             # Resolve ball position for near/far post zones
             ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
@@ -2580,13 +2583,13 @@ def _closing_time_per_series(
         gk_rows = frame_data[
             frame_data["is_goalkeeper"].astype(bool)
             & (~frame_data["is_ball"].astype(bool))
-            & (frame_data["team_id"] != tid)
+            & (~ids_match(frame_data["team_id"], tid))
         ]
         if gk_rows.empty:
             continue
         gk_pid = gk_rows.iloc[0]["player_id"]
         gk_team = gk_rows.iloc[0]["team_id"]
-        goal_x = 0.0 if gk_team == home_team_id else 105.0
+        goal_x = 0.0 if same_id(gk_team, home_team_id) else 105.0
 
         ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
         ball_y = float(ball_rows.iloc[0]["y"]) if not ball_rows.empty and pd.notna(ball_rows.iloc[0]["y"]) else None
@@ -2760,14 +2763,14 @@ def gk_influence_xfns(
             gk_rows = frame_data[
                 frame_data["is_goalkeeper"].astype(bool)
                 & (~frame_data["is_ball"].astype(bool))
-                & (frame_data["team_id"] != team_id)
+                & (~ids_match(frame_data["team_id"], team_id))
             ]
             if gk_rows.empty:
                 cache[key] = None
                 return None
             gk_pid = gk_rows.iloc[0]["player_id"]
             gk_team = gk_rows.iloc[0]["team_id"]
-            goal_x = 0.0 if gk_team == home_team_id else 105.0
+            goal_x = 0.0 if same_id(gk_team, home_team_id) else 105.0
 
             # Resolve ball_y from frame
             ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
@@ -3248,8 +3251,8 @@ def _player_influence_at_actions(
             p_team = player_team_lookup.get(p_id)
             if p_team is None:
                 continue
-            is_same_team = str(p_team) == str(actor_team)
-            is_actor = str(p_id) == str(actor_pid)
+            is_same_team = same_id(p_team, actor_team)
+            is_actor = same_id(p_id, actor_pid)
 
             if is_same_team:
                 team_area += pi.reachable_area_m2
@@ -3604,8 +3607,8 @@ def player_influence_xfns(
                 p_team = player_team_lookup.get(p_id)
                 if p_team is None:
                     continue
-                is_same = str(p_team) == str(actor_team)
-                is_actor = str(p_id) == str(actor_pid)
+                is_same = same_id(p_team, actor_team)
+                is_actor = same_id(p_id, actor_pid)
 
                 if is_same:
                     team_area += pi.reachable_area_m2
@@ -3769,11 +3772,9 @@ def add_ghost_gk(
         on="action_id",
     )
 
-    # Align game_id dtype (PR-S53 pattern)
-    if len(linked) > 0 and len(gk_ghost) > 0:
-        if linked["game_id"].dtype != gk_ghost["game_id"].dtype:
-            linked["game_id"] = linked["game_id"].astype(str)
-            gk_ghost["game_id"] = gk_ghost["game_id"].astype(str)
+    # Align id-valued join keys before the merge so a string-id caller does not raise (ADR-019;
+    # replaces the prior ad-hoc game_id.astype(str) hand-patch).
+    linked, gk_ghost = align_join_keys(linked, gk_ghost, ["game_id", "period_id", "frame_id"])
 
     # Merge: find defending GK (opposite team from action's team)
     merged = linked.merge(
@@ -3782,8 +3783,9 @@ def add_ghost_gk(
         how="left",
         suffixes=("_action", "_gk"),
     )
-    # Defending GK = opposite team
-    defending = merged[merged["team_id_action"] != merged["team_id_gk"]]
+    # Defending GK = opposite team (ids_differ requires both present: an unmatched left-join row
+    # with NaN team_id_gk is correctly excluded, not treated as opposite).
+    defending = merged[ids_differ(merged["team_id_action"], merged["team_id_gk"])]
     deduped = defending.drop_duplicates(subset=["action_id"], keep="first")
 
     # Join back to actions
@@ -4024,7 +4026,7 @@ def add_shape_graph(
             if key not in sdf.index:
                 continue
             sg_row = sdf.loc[key]
-            suffix = "attacking" if tid == action_team else "defending"
+            suffix = "attacking" if same_id(tid, action_team) else "defending"
             for metric in _SHAPE_GRAPH_METRICS:
                 out.at[idx, f"shape_graph_{metric}_{suffix}"] = sg_row[metric]
 
@@ -4183,7 +4185,7 @@ def _shape_graph_at_actions(
             if key not in sdf.index:
                 continue
             sg_row = sdf.loc[key]
-            suffix = "attacking" if tid == action_team else "defending"
+            suffix = "attacking" if same_id(tid, action_team) else "defending"
             for metric in _SHAPE_GRAPH_METRICS:
                 out.at[idx, f"shape_graph_{metric}_{suffix}"] = sg_row[metric]
 
@@ -4659,7 +4661,7 @@ def _compute_space_creation_for_action(
         pitch_control_cache=pitch_control_cache,
     )
 
-    actor_row = result[result["player_id"] == player_id]
+    actor_row = result[ids_match(result["player_id"], player_id)]
     if len(actor_row) == 0:
         return {
             "space_created_m2_team": np.nan,

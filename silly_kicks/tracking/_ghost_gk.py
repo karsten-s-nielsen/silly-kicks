@@ -32,6 +32,7 @@ from scipy.stats import gaussian_kde
 from silly_kicks.spadl import config as spadlconfig
 
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
+from ._id_compat import same_id
 
 # ---------------------------------------------------------------------------
 # Grid constants (fixed for API stability — see spec Density Grid)
@@ -722,7 +723,7 @@ def _extract_all_ghost_gk_features(
 
         for _, gk_row in gk_rows.iterrows():
             gk_team = gk_row["team_id"]
-            goal_x = _defending_goal.get((gid, pid, gk_team), 0.0 if gk_team == home_team_id else _FIELD_LENGTH)
+            goal_x = _defending_goal.get((gid, pid, gk_team), 0.0 if same_id(gk_team, home_team_id) else _FIELD_LENGTH)
             flip = goal_x > 50.0
 
             # Cheap defensive-line-x + centroid in goal-relative coords, computed
@@ -756,7 +757,7 @@ def _extract_all_ghost_gk_features(
                 # Score: callback returns home perspective, negate for away
                 if score_at_time is not None:
                     sd = score_at_time(gid, time_s)
-                    if gk_team != home_team_id:
+                    if not same_id(gk_team, home_team_id):
                         sd = -sd
                 else:
                     sd = 0.0

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from ._id_compat import ids_match, same_id
 from .pitch_control import PitchControlCache, PitchControlParams, compute_pitch_control
 from .pitch_control._surface import PitchControlSurface
 
@@ -563,14 +564,14 @@ def lane_control(
 
     # Identify players
     players = frame[~frame["is_ball"].astype(bool)].copy()
-    defenders_all = players[players["team_id"] != attacking_team_id].copy()
-    attackers_all = players[players["team_id"] == attacking_team_id].copy()
+    defenders_all = players[~ids_match(players["team_id"], attacking_team_id)].copy()
+    attackers_all = players[ids_match(players["team_id"], attacking_team_id)].copy()
 
     # Exclude GK from lane-blocking defenders
     defenders_outfield = defenders_all[~defenders_all["is_goalkeeper"].astype(bool)]
 
     # Man-marking filter
-    if str(attacking_team_id) == str(home_team_id):
+    if same_id(attacking_team_id, home_team_id):
         goal_x_own = 105.0  # defenders' own goal
     else:
         goal_x_own = 0.0
@@ -647,7 +648,7 @@ def _voronoi_threat(
     from scipy.spatial.distance import cdist
 
     players = frame[~frame["is_ball"].astype(bool)].copy()
-    attackers = players[players["team_id"] == attacking_team_id].copy()
+    attackers = players[ids_match(players["team_id"], attacking_team_id)].copy()
 
     # Exclude GK from receiver set
     attackers_outfield = attackers[~attackers["is_goalkeeper"].astype(bool)]
@@ -663,7 +664,7 @@ def _voronoi_threat(
 
     # Dangerous receivers: ahead of ball toward defending goal
     # After play_left_to_right, home team attacks toward high x.
-    attacking_toward_high_x = str(attacking_team_id) == str(home_team_id)
+    attacking_toward_high_x = same_id(attacking_team_id, home_team_id)
     if attacking_toward_high_x:
         dangerous = attackers_outfield[attackers_outfield["x"] > ball_x]
     else:
@@ -789,10 +790,10 @@ def compute_blocking_score(
         cs_params = CoverShadowParams()
         players = frame[~frame["is_ball"].astype(bool)]
         defenders_outfield = players[
-            (players["team_id"] != attacking_team_id) & (~players["is_goalkeeper"].astype(bool))
+            (~ids_match(players["team_id"], attacking_team_id)) & (~players["is_goalkeeper"].astype(bool))
         ]
-        attackers = players[players["team_id"] == attacking_team_id]
-        if str(attacking_team_id) == str(home_team_id):
+        attackers = players[ids_match(players["team_id"], attacking_team_id)]
+        if same_id(attacking_team_id, home_team_id):
             goal_x_own = 105.0
         else:
             goal_x_own = 0.0
@@ -875,7 +876,7 @@ def _compute_cover_shadow_dict(
         return None
 
     players = frame_data[~frame_data["is_ball"].astype(bool)]
-    attackers = players[players["team_id"] == attacking_team_id]
+    attackers = players[ids_match(players["team_id"], attacking_team_id)]
     attackers_outfield = attackers[~attackers["is_goalkeeper"].astype(bool)]
 
     ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
@@ -884,7 +885,7 @@ def _compute_cover_shadow_dict(
     ball_x = float(ball_rows.iloc[0]["x"])
 
     # After play_left_to_right, home team attacks toward high x.
-    attacking_toward_high_x = str(attacking_team_id) == str(home_team_id)
+    attacking_toward_high_x = same_id(attacking_team_id, home_team_id)
     if attacking_toward_high_x:
         dangerous = attackers_outfield[attackers_outfield["x"] > ball_x]
     else:
@@ -922,8 +923,10 @@ def _compute_cover_shadow_dict(
             n_blocked += 1
 
     # Identify lane-blockers from man-marking filter
-    defenders_outfield = players[(players["team_id"] != attacking_team_id) & (~players["is_goalkeeper"].astype(bool))]
-    if str(attacking_team_id) == str(home_team_id):
+    defenders_outfield = players[
+        (~ids_match(players["team_id"], attacking_team_id)) & (~players["is_goalkeeper"].astype(bool))
+    ]
+    if same_id(attacking_team_id, home_team_id):
         goal_x_own = 105.0
     else:
         goal_x_own = 0.0

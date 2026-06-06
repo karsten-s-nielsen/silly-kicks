@@ -212,3 +212,31 @@ class TimeBaseDiagnosis:
     @property
     def has_suspected_mismatch(self) -> bool:
         return len(self.suspected_mismatch_periods) > 0
+
+
+@dataclasses.dataclass(frozen=True)
+class IdDtypeDiagnosis:
+    """Action-vs-frame id-dtype compatibility diagnosis (ADR-019).
+
+    Produced by ``silly_kicks.tracking.utils._diagnose_id_dtypes`` and surfaced by
+    ``validate_id_dtypes``. The tracking-feature seams coerce id dtypes transparently;
+    this is the opt-in loud guard for a dtype-sensitive consumer (e.g. the lakehouse).
+
+    Attributes:
+        per_column: id col -> (action_dtype_str, frame_dtype_str).
+        coercion_required_columns: cols whose action/frame numpy kinds differ
+            (would silently mis-compare / raise on merge without coercion).
+        home_team_id_dtype: dtype/kind of the scalar arg, if supplied (else None).
+        home_team_id_requires_coercion: scalar kind vs frame team_id kind differ.
+        message: human-readable summary.
+    """
+
+    per_column: dict[str, tuple[str, str]]
+    coercion_required_columns: tuple[str, ...]
+    home_team_id_dtype: str | None
+    home_team_id_requires_coercion: bool
+    message: str
+
+    @property
+    def has_mismatch(self) -> bool:
+        return len(self.coercion_required_columns) > 0 or self.home_team_id_requires_coercion

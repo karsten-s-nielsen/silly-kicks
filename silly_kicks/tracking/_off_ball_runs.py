@@ -12,6 +12,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ._id_compat import (
+    align_join_keys,
+    canonical_id,
+    canonical_id_series,
+    ids_differ,
+    ids_equal,
+    same_id,
+)
+
 _OFF_BALL_RUNS_COLS = [
     "n_off_ball_runners_pre_window",
     "max_off_ball_run_displacement_pre_window",
@@ -115,9 +124,9 @@ def _off_ball_runs_kernel(
 
         # Keep only same-team, non-actor, non-goalkeeper teammates
         teammates = sliced[
-            (sliced["team_id"] == sliced["action_team_id"])
-            & (sliced["player_id"] != sliced["actor_player_id"])
-            & (~sliced["is_goalkeeper"].astype(bool))
+            ids_equal(sliced["team_id"], sliced["action_team_id"]).to_numpy()
+            & ids_differ(sliced["player_id"], sliced["actor_player_id"]).to_numpy()
+            & (~sliced["is_goalkeeper"].astype(bool)).to_numpy()
         ].copy()
 
         # Drop NaN positions
@@ -162,7 +171,7 @@ def _off_ball_runs_kernel(
 
             # Get action's team_id for toward-goal direction — O(1) lookup
             action_team = action_team_lookup.loc[aid]
-            is_home = action_team == home_team_id
+            is_home = same_id(action_team, home_team_id)
 
             per_player = action_group.sort_values("time_seconds").groupby("player_id", sort=False)
 
@@ -280,6 +289,9 @@ def _line_break_kernel(
             dl["game_id"] = dl["game_id"].astype(str)
 
     # Join with defensive-line data: match on (game_id, period_id, frame_id)
+    # Align id-valued join keys (incl. the frame_id_int<->frame_id pair) so a string-id caller
+    # does not raise on the merge (ADR-019).
+    linked, dl = align_join_keys(linked, dl, ["game_id", "period_id", ("frame_id_int", "frame_id")])
     merged = linked.merge(
         dl,
         left_on=["game_id", "period_id", "frame_id_int"],
@@ -288,7 +300,7 @@ def _line_break_kernel(
         suffixes=("_action", "_dl"),
     )
     # Keep only rows where dl team != action team (opposing team's line)
-    opposing = merged[merged["team_id_dl"] != merged["team_id_action"]].copy()
+    opposing = merged[ids_differ(merged["team_id_dl"], merged["team_id_action"])].copy()
     opposing = opposing.drop_duplicates("action_id", keep="first")
 
     # Use positional arrays to avoid .at assignment issues with nullable dtypes
@@ -299,20 +311,15 @@ def _line_break_kernel(
     # Build positional lookup: action_id -> positional index in actions
     aid_to_pos = {aid: pos for pos, aid in enumerate(actions["action_id"].values)}
 
-    # Pre-build grouped dict for O(1) frame-player lookups
-    non_ball_non_gk = frames[(~frames["is_ball"].astype(bool)) & (~frames["is_goalkeeper"].astype(bool))]
+    # Pre-build grouped dict for O(1) frame-player lookups. Canonicalize the id-valued group
+    # keys (game_id, team_id) so the lookup matches the action-side key regardless of caller
+    # dtype (ADR-019; replaces the prior game_id-only isinstance/astype workaround).
+    non_ball_non_gk = frames[(~frames["is_ball"].astype(bool)) & (~frames["is_goalkeeper"].astype(bool))].copy()
+    non_ball_non_gk["_gid_key"] = canonical_id_series(non_ball_non_gk["game_id"])
+    non_ball_non_gk["_team_key"] = canonical_id_series(non_ball_non_gk["team_id"])
     frame_groups: dict = dict(
-        iter(non_ball_non_gk.groupby(["game_id", "period_id", "frame_id", "team_id"], sort=False))
+        iter(non_ball_non_gk.groupby(["_gid_key", "period_id", "frame_id", "_team_key"], sort=False))
     )
-
-    # Align game_id dtype between opposing (from actions) and frame groupby keys.
-    # Same fix as _line_breaking.py: str is the universal safe direction.
-    if len(frame_groups) > 0 and len(opposing) > 0:
-        sample_frame_gid = next(iter(frame_groups))[0]
-        opposing_gid_sample = opposing["game_id"].iloc[0]
-        if not isinstance(opposing_gid_sample, type(sample_frame_gid)):
-            frame_groups = {(str(k[0]), k[1], k[2], k[3]): v for k, v in frame_groups.items()}
-            opposing["game_id"] = opposing["game_id"].astype(str)
 
     for _, row in opposing.iterrows():
         aid = row["action_id"]
@@ -328,7 +335,7 @@ def _line_break_kernel(
         end_x = row["end_x"]
 
         # Coordinate-frame resolution
-        if action_team == home_team_id:
+        if same_id(action_team, home_team_id):
             spadl_def_line_x = def_line_x
         else:
             spadl_def_line_x = 105.0 - def_line_x
@@ -340,7 +347,7 @@ def _line_break_kernel(
         frame_id = int(row["frame_id_int"])
         period_id = row["period_id"]
         game_id_val = row["game_id"]
-        key = (game_id_val, period_id, frame_id, action_team)
+        key = (canonical_id(game_id_val), period_id, frame_id, canonical_id(action_team))
         frame_players = frame_groups.get(key, pd.DataFrame())
 
         if frame_players.empty:
@@ -350,7 +357,7 @@ def _line_break_kernel(
         # In tracking coords:
         # Home-team attackers "behind" away line: tracking x > defensive_line_x
         # Away-team attackers "behind" home line: tracking x < defensive_line_x
-        if action_team == home_team_id:
+        if same_id(action_team, home_team_id):
             behind_mask = frame_players["x"] > def_line_x
         else:
             behind_mask = frame_players["x"] < def_line_x

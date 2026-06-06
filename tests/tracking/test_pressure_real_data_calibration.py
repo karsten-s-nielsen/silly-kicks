@@ -162,12 +162,20 @@ def _synthesize_actions_with_pressure(
     return pd.DataFrame(chosen)
 
 
-@pytest.mark.parametrize("method", ["andrienko_oval", "link_zones", "bekkers_pi"])
+# bekkers_pi is intentionally EXCLUDED here. It is a kinematic time-to-intercept model that
+# presses the actor's *tracked frame* position+velocity, which the action-anchor synthesis does
+# not control -- so its cross-provider medians legitimately differ. It historically "agreed"
+# across providers only because an object-dtype `~is_ball` no-op counted the BALL (next to the
+# action) as a presser, inflating all three object providers consistently; ADR-019 fixed that
+# (and the now-correct `.astype(bool)` + `ids_differ` both-present opponent mask). bekkers stays
+# covered by ``test_bekkers_real_data_bounds`` (range + NaN-rate). See ADR-019.
+@pytest.mark.parametrize("method", ["andrienko_oval", "link_zones"])
 def test_per_method_cross_provider_median_within_2x(method: str) -> None:
     """Spec section 8.4: per-method medians per provider agree within 2x.
 
     Catches "Sportec medians 0.4 and Metrica medians 4.0 -- something is wrong"
-    pathologies that bound checks alone miss.
+    pathologies that bound checks alone miss. Anchor-based methods only
+    (andrienko_oval / link_zones) -- see the note above on bekkers_pi.
 
     Uses ``_synthesize_actions_with_pressure`` to guarantee non-zero pressure
     distributions per provider (forces actor within 5m of a defender; without

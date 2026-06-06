@@ -31,6 +31,8 @@ from scipy.cluster.hierarchy import fcluster, linkage
 
 from silly_kicks.spadl import config as spadlconfig
 
+from ._id_compat import same_id
+
 _PASS_CROSS_TYPE_IDS = frozenset(
     spadlconfig.actiontype_id[n] for n in ("pass", "cross") if n in spadlconfig.actiontype_id
 )
@@ -238,7 +240,7 @@ def detect_line_breaking(
             continue
 
         # Convert SPADL action coords to tracking coords for intersection
-        if action_team == home_team_id:
+        if same_id(action_team, home_team_id):
             track_start_x = start_x
             track_start_y = start_y
             track_end_x = end_x
