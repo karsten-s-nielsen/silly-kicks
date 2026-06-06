@@ -19,6 +19,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -132,6 +133,12 @@ GhostGkVariant = Literal["default", "full"]
 
 _HF_REPO_ID = "silly-kicks/ghost-gk-v1"
 
+#: Name of the served point estimate, recorded in metadata.json (R3-style provenance)
+#: and asserted on load(). "boosted_mean" = the exact sklearn HGBR boosted prediction
+#: reconstructed pickle-free (spec 2026-06-04 Option A §3.1); load() fails closed on a
+#: conflicting tag (train/serve skew guard).
+SERVED_ESTIMATOR = "boosted_mean"
+
 
 def _resolve_model(model: GhostGkModel | GhostGkVariant | None) -> GhostGkModel:
     """Resolve model parameter with cascade: caller > env > bundled/Hub variant.
@@ -146,9 +153,9 @@ def _resolve_model(model: GhostGkModel | GhostGkVariant | None) -> GhostGkModel:
     Parameters
     ----------
     model : GhostGkModel | "default" | "full" | None
-        - ``None`` or ``"default"``: lightweight model (~9 MB, 36 k samples).
+        - ``None`` or ``"default"``: lightweight model (~12 MB, 36 k samples).
           Bundled in the wheel — works offline, no download needed.
-        - ``"full"``: high-resolution model (~91 MB, 537 k samples).
+        - ``"full"``: high-resolution model (~170 MB, 887 k samples).
           Downloaded from HuggingFace Hub on first use; cached locally.
           Smoother density surfaces at the cost of slower ``predict_density``.
         - ``GhostGkModel``: pre-loaded instance, returned as-is.
@@ -974,6 +981,70 @@ def _vectorized_leaf_indices(nodes_list: list[np.ndarray], X: np.ndarray) -> np.
     return leaves
 
 
+def _vectorized_leaf_values(nodes_list: list[np.ndarray], X: np.ndarray) -> np.ndarray:
+    """Sum of the reached-leaf ``value`` across all trees — the HGBR raw additive prediction.
+
+    Sibling of :func:`_vectorized_leaf_indices`: identical traversal, but instead of
+    returning the reached leaf *index* per tree it accumulates the reached leaf's
+    ``value`` field. The HGBR boosted prediction (squared-error loss, identity link)
+    is ``baseline + sum_trees leaf_value`` with the learning rate baked into the
+    stored leaf ``value``s, so ``baseline + _vectorized_leaf_values(...)`` reconstructs
+    ``HistGradientBoostingRegressor.predict`` exactly (parity gate ≤ 1e-6).
+
+    Numeric thresholds only — valid because :meth:`GhostGkModel.fit` trains with no
+    categorical features (``categorical_features=None``; spec §3.2), so every split is
+    a ``num_threshold`` comparison and no ``raw_left_cat_bitsets`` routing is needed.
+    Same NaN / ``missing_go_to_left`` handling as :func:`_vectorized_leaf_indices`.
+
+    Parameters
+    ----------
+    nodes_list : list[np.ndarray]
+        One structured node array per tree (fields: ``left``, ``right``,
+        ``feature_idx``, ``num_threshold``, ``missing_go_to_left``, ``value``).
+    X : np.ndarray
+        Feature matrix, shape (n_samples, n_features); fit-time column order.
+
+    Returns
+    -------
+    np.ndarray
+        Shape (n_samples,) — summed leaf value per sample.
+
+    Examples
+    --------
+    >>> # baseline + _vectorized_leaf_values(trees, X) == regressor.predict(X)
+    >>> # (see tests/tracking/test_ghost_gk_serve_mean.py parity gate)
+    """
+    n_samples = X.shape[0]
+    total = np.zeros(n_samples, dtype=np.float64)
+
+    for nodes in nodes_list:
+        current = np.zeros(n_samples, dtype=np.intp)
+
+        for _ in range(100):  # depth bound
+            node_data = nodes[current]
+            is_leaf = node_data["left"] == 0
+            if np.all(is_leaf):
+                break
+
+            feat_vals = X[np.arange(n_samples), node_data["feature_idx"]]
+            go_left = np.where(
+                np.isnan(feat_vals),
+                node_data["missing_go_to_left"].astype(bool),
+                feat_vals <= node_data["num_threshold"],
+            )
+            next_node = np.where(go_left, node_data["left"], node_data["right"])
+            current = np.where(is_leaf, current, next_node)
+
+        # Convergence guard (raise, NOT assert — `python -O` strips asserts): a tree
+        # deeper than the cap would otherwise read an internal node's `value` (garbage).
+        if not np.all(nodes[current]["left"] == 0):
+            msg = "leaf traversal did not converge within depth cap"
+            raise RuntimeError(msg)
+        total += nodes[current]["value"]
+
+    return total
+
+
 def _leaf_match_weights(
     training_leaves: np.ndarray,
     query_leaves: np.ndarray,
@@ -984,7 +1055,7 @@ def _leaf_match_weights(
 
     training_leaves : (n_train, n_trees); query_leaves : (n_query, n_trees).
     Returns (n_query, n_train) weights. Streams queries in blocks to bound the
-    (qb, n_train, n_trees) broadcast for the 537k-train variant.
+    (qb, n_train, n_trees) broadcast for the 887k-train variant.
     """
     n_train, n_trees = training_leaves.shape
     n_query = query_leaves.shape[0]
@@ -1068,7 +1139,7 @@ def _kde_density_vectorized(
 
     Default ``train_block=1024`` is the conservative serverless choice: with grid m=3840, the
     largest transient ``(kb, m)`` dx/dy/energy is ~150 MB/block, safe under the Databricks 1 GB
-    ``applyInPandas`` cap. The 9 MB "default" model's per-sample nonzero leaf subsets are small
+    ``applyInPandas`` cap. The 12 MB "default" model's per-sample nonzero leaf subsets are small
     (k often < 1024 -> chunking rarely binds), so 1024 costs ~nothing there; the local benchmark
     can raise it for the in-memory "full" model.
     """
@@ -1255,12 +1326,16 @@ class GhostGkModel:
         self._max_depth = max_depth
         self._verbose = verbose
         self._tree_nodes: list[np.ndarray] | None = None
+        self._tree_nodes_y: list[np.ndarray] | None = None
+        self._baseline_x: float | None = None
+        self._baseline_y: float | None = None
         self._training_gk_x: np.ndarray | None = None
         self._training_gk_y: np.ndarray | None = None
         self._training_leaves: np.ndarray | None = None
-        # Transient sklearn regressors — available after fit(), not after load()
-        self._regressor_x: object | None = None
-        self._regressor_y: object | None = None
+        # Transient sklearn regressors kept after fit() for the parity gate only
+        # (NOT serialized — load() reconstructs from the stored tree node arrays).
+        self._sk_reg_x = None
+        self._sk_reg_y = None
         # R3 (PR-S81): carrier params used to compute the training team_in_possession,
         # recorded in metadata so serve resolves possession identically. Provenance
         # fields are populated by the trainer before save().
@@ -1297,97 +1372,111 @@ class GhostGkModel:
         self.carrier_params = dict(carrier_params) if carrier_params else dict(DEFAULT_CARRIER_PARAMS)
         from sklearn.ensemble import HistGradientBoostingRegressor
 
-        X = features.values.astype(np.float64)
+        # Canonical fit-time column order (predict_mean / predict_density index X
+        # positionally by feature_idx, so reorder here once at the source).
+        X = features[GHOST_GK_FEATURE_NAMES].values.astype(np.float64)
         y_x = labels["gk_x"].values.astype(np.float64)
-
-        # Determine categorical feature index (phase)
-        phase_idx = list(features.columns).index("phase") if "phase" in features.columns else None
-        cat_features = [phase_idx] if phase_idx is not None else []
-
-        cat_arg: list[int] | str = cat_features if cat_features else "from_dtype"
-        regressor = HistGradientBoostingRegressor(
-            max_iter=self._n_estimators,
-            max_depth=self._max_depth,
-            categorical_features=cat_arg,  # type: ignore[arg-type]
-            random_state=42,
-            verbose=self._verbose,
-        )
-        regressor.fit(X, y_x)
-
-        # Train gk_y regressor (same hyperparams) for fast predict_mean
         y_y = labels["gk_y"].values.astype(np.float64)
-        regressor_y = HistGradientBoostingRegressor(
-            max_iter=self._n_estimators,
-            max_depth=self._max_depth,
-            categorical_features=cat_arg,  # type: ignore[arg-type]
-            random_state=42,
-            verbose=self._verbose,
-        )
+
+        # phase-NUMERIC (spec §3.2): train all features numerically — every split is a
+        # num_threshold comparison, so the pickle-free numeric leaf traversal matches
+        # sklearn .predict() EXACTLY (no un-serialized categorical routing bitsets), and
+        # the latent KDE categorical-routing capability gap is closed by construction.
+        def _make_regressor() -> HistGradientBoostingRegressor:
+            return HistGradientBoostingRegressor(
+                max_iter=self._n_estimators,
+                max_depth=self._max_depth,
+                categorical_features=None,  # type: ignore[arg-type]  # sklearn stub types this str; None = all-numeric
+                random_state=42,
+                verbose=self._verbose,
+            )
+
+        regressor = _make_regressor()
+        regressor.fit(X, y_x)
+        regressor_y = _make_regressor()
         regressor_y.fit(X, y_y)
 
-        # Keep sklearn regressors for fast predict_mean (transient, not serialized)
-        self._regressor_x = regressor
-        self._regressor_y = regressor_y
+        # Fail-fast on a future sklearn private-API rename (raise, NOT assert — `python -O`
+        # strips asserts, which would silently reintroduce the risk this guard prevents).
+        # The parity test (test_ghost_gk_serve_mean.py) is the real correctness guard.
+        for reg in (regressor, regressor_y):
+            if not hasattr(reg, "_predictors") or reg._baseline_prediction.size != 1:
+                msg = "sklearn HistGradientBoostingRegressor private API changed — reconstruction needs review"
+                raise RuntimeError(msg)
 
-        # Extract tree node arrays for serialization + inference (gk_x trees only)
-        self._tree_nodes = []
-        for tree_list in regressor._predictors:
-            tree = tree_list[0]
-            self._tree_nodes.append(tree.nodes.copy())
+        # Extract tree node arrays for serialization + pickle-free inference (both ensembles).
+        self._tree_nodes = [tree_list[0].nodes.copy() for tree_list in regressor._predictors]
+        self._tree_nodes_y = [tree_list[0].nodes.copy() for tree_list in regressor_y._predictors]
 
-        # Compute training leaves
+        # Per-regressor additive baseline (numpy-2 safe: shape (1,1), bare float(ndarray)
+        # warns/raises under numpy>=2 — go through .item()).
+        self._baseline_x = float(regressor._baseline_prediction.item())
+        self._baseline_y = float(regressor_y._baseline_prediction.item())
+
+        # Keep training leaves + labels — the KDE / predict_density still needs them
+        # (the gk_x leaf partition + the joint (gk_x, gk_y) labels for the density/mode/spread).
         self._training_leaves = _vectorized_leaf_indices(self._tree_nodes, X)
         self._training_gk_x = np.array(y_x, copy=True)
         self._training_gk_y = np.asarray(y_y, dtype=np.float64).copy()
 
+        # Transient — retained for the parity gate, never serialized (load() reconstructs).
+        self._sk_reg_x = regressor
+        self._sk_reg_y = regressor_y
+
         return self
 
     def predict(self, features: pd.DataFrame) -> np.ndarray:
-        """Predict joint (x, y) mode for each sample.
+        """Predict the served estimate (x, y) for each sample — the exact boosted HGBR mean.
 
-        Returns shape (n_samples, 2) — argmax of joint 2D density grid.
+        Returns the same value the library writes into ``ghost_gk_x/ghost_gk_y``
+        (the exact sklearn ``HistGradientBoostingRegressor`` boosted prediction;
+        see :meth:`predict_mean`). **Changed in 4.14.0:** previously returned the KDE
+        joint *mode*; the mode is now reachable only via
+        ``predict_density(...).mode_x/mode_y``. spec (2026-06-04 Option A) §3.4.
+
+        Returns shape (n_samples, 2).
 
         Examples
         --------
         >>> model.predict(X_test).shape
         (100, 2)
         """
-        densities = self.predict_density(features)
-        return np.array([[d.mode_x, d.mode_y] for d in densities])
+        return self.predict_mean(features)
 
     def predict_mean(self, features: pd.DataFrame) -> np.ndarray:
-        """Fast point prediction using the underlying regressors.
+        """Served estimate: the exact sklearn HGBR boosted prediction, pickle-free + load-safe.
 
-        Uses sklearn's Cython-optimized predict for both gk_x and gk_y.
-        Only available after `fit()` (not after `load()`, which discards
-        the sklearn regressors). Orders of magnitude faster than
-        `predict` (which runs per-sample KDE on a 60x64 grid) — suitable
-        for CV evaluation and batch scoring.
+        ``predict = baseline + sum_trees leaf_value`` (squared-error loss, identity link;
+        the learning rate is baked into the stored leaf ``value``s). Reconstructed from
+        the serialized tree node arrays + baselines via :func:`_vectorized_leaf_values`,
+        so it is deterministic, sklearn-version-independent at inference, and identical
+        after :meth:`fit` and :meth:`load`. Cheap — pure leaf traversal, no leaf-match,
+        no grid KDE.
 
-        Returns shape (n_samples, 2) — predicted (x, y).
+        Returns shape (n_samples, 2) — served (x, y).
 
         Examples
         --------
         >>> model.predict_mean(X_test).shape
         (100, 2)
         """
-        if self._regressor_x is None or self._regressor_y is None:
-            msg = (
-                "predict_mean requires sklearn regressors (available after "
-                "fit(), not after load()). Use predict() instead."
-            )
+        if (
+            self._tree_nodes is None
+            or self._tree_nodes_y is None
+            or self._baseline_x is None
+            or self._baseline_y is None
+        ):
+            msg = "Model not fitted. Call .fit() or .load() first."
             raise RuntimeError(msg)
 
-        from sklearn.ensemble import HistGradientBoostingRegressor
-
-        reg_x: HistGradientBoostingRegressor = self._regressor_x  # type: ignore[assignment]
-        reg_y: HistGradientBoostingRegressor = self._regressor_y  # type: ignore[assignment]
-
-        X = features.values.astype(np.float64)
-        result = np.empty((len(X), 2), dtype=np.float64)
-        result[:, 0] = reg_x.predict(X)
-        result[:, 1] = reg_y.predict(X)
-        return result
+        # Reindex to the canonical fit-time column order (Hyrum guard): the reconstruction
+        # indexes X[:, feature_idx] positionally — a reordered DataFrame would silently
+        # mis-predict.
+        X = features[GHOST_GK_FEATURE_NAMES].values.astype(np.float64)
+        out = np.empty((len(X), 2), dtype=np.float64)
+        out[:, 0] = self._baseline_x + _vectorized_leaf_values(self._tree_nodes, X)
+        out[:, 1] = self._baseline_y + _vectorized_leaf_values(self._tree_nodes_y, X)
+        return out
 
     def predict_density(self, features: pd.DataFrame, *, kde_backend: str = "vectorized") -> list[GhostGkDensity]:
         """Full density prediction per sample.
@@ -1426,7 +1515,9 @@ class GhostGkModel:
         training_gk_x = self._training_gk_x
         training_gk_y = self._training_gk_y
 
-        X = features.values.astype(np.float64)
+        # Reindex to the canonical fit-time column order (same positional guard as
+        # predict_mean): the leaf traversal indexes X[:, feature_idx] positionally.
+        X = features[GHOST_GK_FEATURE_NAMES].values.astype(np.float64)
         query_leaves = _vectorized_leaf_indices(self._tree_nodes, X)
 
         # Precompute grid mesh
@@ -1504,9 +1595,15 @@ class GhostGkModel:
         """Serialize to npz + metadata.json + SHA256SUMS (no pickle).
 
         Artifact structure:
-        - rfcde_weights.npz: tree_nodes_* arrays + training_gk_x/y + training_leaves
-        - metadata.json: feature_names, grid_spec, hyperparams, version
+        - rfcde_weights.npz: gk_x + gk_y tree_nodes_* arrays + baselines +
+          training_gk_x/y + training_leaves
+        - metadata.json: feature_names, grid_spec, hyperparams, serve_estimator, version
         - SHA256SUMS: per-file integrity hashes
+
+        Option A (4.14.0) format: the npz additionally carries the gk_y tree ensemble
+        (``tree_nodes_y_*`` / ``n_trees_y``) and both regressors' additive baselines
+        (``baseline_x`` / ``baseline_y``) so :meth:`predict_mean` reconstructs the exact
+        boosted prediction after :meth:`load`. ``metadata["version"] == "1.2.0"``.
 
         Examples
         --------
@@ -1514,6 +1611,9 @@ class GhostGkModel:
         """
         if (
             self._tree_nodes is None
+            or self._tree_nodes_y is None
+            or self._baseline_x is None
+            or self._baseline_y is None
             or self._training_gk_x is None
             or self._training_gk_y is None
             or self._training_leaves is None
@@ -1530,10 +1630,17 @@ class GhostGkModel:
             "training_gk_y": self._training_gk_y,
             "training_leaves": self._training_leaves,
             "n_trees": np.array([len(self._tree_nodes)]),
+            # Option A: gk_y ensemble + both additive baselines for the boosted reconstruction.
+            "n_trees_y": np.array([len(self._tree_nodes_y)]),
+            "baseline_x": np.array([self._baseline_x], dtype=np.float64),
+            "baseline_y": np.array([self._baseline_y], dtype=np.float64),
         }
         for i, nodes in enumerate(self._tree_nodes):
             save_dict[f"tree_nodes_{i}"] = nodes.view(np.uint8)
             save_dict[f"tree_dtype_{i}"] = np.array([str(nodes.dtype)], dtype="U2000")
+        for i, nodes in enumerate(self._tree_nodes_y):
+            save_dict[f"tree_nodes_y_{i}"] = nodes.view(np.uint8)
+            save_dict[f"tree_dtype_y_{i}"] = np.array([str(nodes.dtype)], dtype="U2000")
 
         npz_path = path / "rfcde_weights.npz"
         np.savez_compressed(str(npz_path), **save_dict)  # type: ignore[arg-type]
@@ -1558,7 +1665,8 @@ class GhostGkModel:
             "sklearn_version": sklearn.__version__,
             "training_commit": self.training_commit,
             "training_platform": self.training_platform,
-            "version": "1.1.0",
+            "serve_estimator": SERVED_ESTIMATOR,
+            "version": "1.2.0",
         }
         meta_path = path / "metadata.json"
         with open(meta_path, "w", newline="\n") as f:
@@ -1613,17 +1721,42 @@ class GhostGkModel:
         with open(path / "metadata.json") as f:
             metadata = json.load(f)
 
+        # R3 fail-closed: an explicit, conflicting served-estimator tag must not be
+        # silently served with this code's read-out. Absent → default (back-compat).
+        recorded_estimator = metadata.get("serve_estimator", SERVED_ESTIMATOR)
+        if recorded_estimator != SERVED_ESTIMATOR:
+            raise IntegrityError(
+                f"Model metadata serve_estimator={recorded_estimator!r} != "
+                f"code SERVED_ESTIMATOR={SERVED_ESTIMATOR!r}; refusing to serve a "
+                f"mismatched estimator (train/serve skew guard)."
+            )
+
+        def _load_ensemble(data, nodes_prefix: str, dtype_prefix: str, count_key: str) -> list[np.ndarray]:
+            nodes_list = []
+            for i in range(int(data[count_key][0])):
+                raw_bytes = np.array(data[f"{nodes_prefix}{i}"])
+                # ast.literal_eval safely parses the dtype descriptor (list of tuples)
+                dtype = np.dtype(ast.literal_eval(str(data[f"{dtype_prefix}{i}"][0])))
+                nodes_list.append(raw_bytes.view(dtype))
+            return nodes_list
+
         # Load npz (use context manager to release file handle on Windows)
         with np.load(path / "rfcde_weights.npz", allow_pickle=False) as data:
-            n_trees = int(data["n_trees"][0])
-            tree_nodes = []
-            for i in range(n_trees):
-                raw_bytes = np.array(data[f"tree_nodes_{i}"])
-                dtype_str = str(data[f"tree_dtype_{i}"][0])
-                # ast.literal_eval safely parses the dtype descriptor (list of tuples)
-                dtype = np.dtype(ast.literal_eval(dtype_str))
-                nodes = raw_bytes.view(dtype)
-                tree_nodes.append(nodes)
+            # Fail-closed on pre-Option-A artifacts: predict_mean reconstructs the boosted
+            # prediction from the gk_y ensemble + baselines, which old (<=4.12) weights lack.
+            # Raise a clear "re-fit required" error rather than a cryptic KeyError downstream.
+            if "n_trees_y" not in data.files or "baseline_x" not in data.files:
+                msg = (
+                    "Ghost-GK artifact predates Option A (4.14.0): it lacks the gk_y tree "
+                    "ensemble + baselines that predict_mean reconstructs. Re-fit required "
+                    "(scripts/train_ghost_gk.py)."
+                )
+                raise IntegrityError(msg)
+
+            tree_nodes = _load_ensemble(data, "tree_nodes_", "tree_dtype_", "n_trees")
+            tree_nodes_y = _load_ensemble(data, "tree_nodes_y_", "tree_dtype_y_", "n_trees_y")
+            baseline_x = float(data["baseline_x"][0])
+            baseline_y = float(data["baseline_y"][0])
 
             training_gk_x = np.array(data["training_gk_x"])
             training_gk_y = np.array(data["training_gk_y"])
@@ -1634,6 +1767,9 @@ class GhostGkModel:
             max_depth=metadata.get("max_depth", 8),
         )
         model._tree_nodes = tree_nodes
+        model._tree_nodes_y = tree_nodes_y
+        model._baseline_x = baseline_x
+        model._baseline_y = baseline_y
         model._training_gk_x = training_gk_x
         model._training_gk_y = training_gk_y
         model._training_leaves = training_leaves
@@ -1643,6 +1779,23 @@ class GhostGkModel:
         model.carrier_params = metadata.get("carrier_params", dict(DEFAULT_CARRIER_PARAMS))
         model.training_commit = metadata.get("training_commit")
         model.training_platform = metadata.get("training_platform")
+
+        # Informational provenance only (NOT a correctness guard): inference is
+        # sklearn-version-independent — it reads stored npz dtype arrays and imports no
+        # sklearn (coupling is fit/extract-time only, spec §3.5). A mismatch flags a
+        # re-fit-under-a-new-sklearn for the maintainer's awareness; the parity gate on
+        # the fresh fit (Task 12) is the actual guard.
+        import sklearn
+
+        recorded_sklearn = metadata.get("sklearn_version")
+        if recorded_sklearn is not None and recorded_sklearn != sklearn.__version__:
+            warnings.warn(
+                f"Ghost-GK artifact fit under sklearn {recorded_sklearn}; runtime is "
+                f"{sklearn.__version__}. Inference is sklearn-version-independent (numpy "
+                f"reconstruction), so this is informational provenance, not a correctness "
+                f"issue. Re-validate parity if re-fitting.",
+                stacklevel=2,
+            )
 
         return model
 
@@ -1656,8 +1809,8 @@ class GhostGkModel:
         Parameters
         ----------
         variant : "default" | "full"
-            ``"default"``: lightweight model (~9 MB, 36 k training samples).
-            ``"full"``: high-resolution model (~91 MB, 537 k training samples).
+            ``"default"``: lightweight model (~12 MB, 36 k training samples).
+            ``"full"``: high-resolution model (~170 MB, 887 k training samples).
 
         Examples
         --------
@@ -1708,8 +1861,19 @@ def compute_ghost_gk(
 ) -> pd.DataFrame:
     """Per-frame ghost-GK primitive (batched).
 
-    Adds ghost_gk_x, ghost_gk_y, ghost_gk_spread columns.
+    Adds ghost_gk_x, ghost_gk_y, ghost_gk_density_spread columns.
     One prediction per (frame, GK team). Results written to GK rows.
+
+    ``ghost_gk_x/y`` are the served boosted-mean position (the exact sklearn HGBR
+    prediction via :meth:`GhostGkModel.predict_mean`). ``ghost_gk_density_spread``
+    is the conditional-**density** dispersion (entropy-based effective area from
+    :meth:`predict_density`) — it is **NOT** the standard error of the served
+    ``ghost_gk_x/y`` point. The served position (boosted mean) and the spread come
+    from two different read-outs (the boosted regressor vs the KDE density around the
+    mode/cloud), so the rename to ``ghost_gk_density_spread`` makes "density dispersion,
+    not the served point's SE" structural (4.14.0, Option A §3.4; breaking column
+    rename — see CHANGELOG / ADR-016). The density pass is now the only cost driver
+    here; ``predict_mean`` is ~free (leaf-value traversal).
 
     Input frames MUST be in LTR-normalized convention (home team attacks
     right in all periods --- standard silly-kicks tracking output).
@@ -1719,8 +1883,8 @@ def compute_ghost_gk(
     frames : pd.DataFrame
         Tracking frames (TRACKING_FRAMES_COLUMNS schema, LTR-normalized).
     model : GhostGkModel | "default" | "full" | None
-        ``"default"`` / ``None``: bundled lightweight model (~9 MB).
-        ``"full"``: high-resolution bundled model (~91 MB).
+        ``"default"`` / ``None``: bundled lightweight model (~12 MB).
+        ``"full"``: high-resolution model (~170 MB, downloaded from HF Hub).
         Or a pre-loaded ``GhostGkModel`` instance.
     home_team_id : int | str
         Home team ID (attacks right -> defends at x=0).
@@ -1754,7 +1918,7 @@ def compute_ghost_gk(
     Returns
     -------
     pd.DataFrame
-        Copy of frames with ghost_gk_x, ghost_gk_y, ghost_gk_spread added.
+        Copy of frames with ghost_gk_x, ghost_gk_y, ghost_gk_density_spread added.
 
     Examples
     --------
@@ -1765,7 +1929,7 @@ def compute_ghost_gk(
     out = frames.copy()
     out["ghost_gk_x"] = np.nan
     out["ghost_gk_y"] = np.nan
-    out["ghost_gk_spread"] = np.nan
+    out["ghost_gk_density_spread"] = np.nan
 
     # Build context callbacks from actions
     score_fn = _build_score_lookup(actions, home_team_id) if actions is not None else None
@@ -1800,13 +1964,13 @@ def compute_ghost_gk(
     if len(batch_features) == 0:
         return out
 
-    # Collapse duplicate (frame, gk_team) inference samples. Two same-team
+    # Collapse duplicate (frame, gk_team) inference samples (4.12.1 fix). Two same-team
     # is_goalkeeper rows in one frame (a rostered backup keeper carried on-pitch
     # alongside the starter, or a GK-substitution overlap frame) make
     # _extract_all_ghost_gk_features emit one sample per GK row, all keyed on
     # (game, period, frame, gk_team_id). The features are byte-identical per
     # (frame, gk_team) — only the per-GK-row label differs, and labels are unused
-    # here — so collapsing to one sample keeps the KDE single-pass AND keeps the
+    # here — so collapsing to one sample keeps the prediction single-pass AND keeps the
     # downstream left-merge 1:1 with the GK rows (duplicate result_df keys would
     # inflate the merge and length-mismatch the positional assignment below). The
     # training builder keeps per-GK-row samples (distinct labels) untouched.
@@ -1817,7 +1981,9 @@ def compute_ghost_gk(
         meta = meta[keep_mask].reset_index(drop=True)
         batch_features = batch_features[keep_mask].reset_index(drop=True)
 
-    # Batch predict
+    # Batch predict: position = served boosted mean (cheap leaf-value traversal);
+    # spread = conditional-density dispersion (the only cost driver here).
+    positions = resolved.predict_mean(batch_features)
     densities = resolved.predict_density(batch_features, kde_backend=kde_backend)
 
     # Build result DataFrame from predictions (single merge, not O(n*m) loop)
@@ -1827,9 +1993,9 @@ def compute_ghost_gk(
             "period_id": meta["period_id"].values,
             "frame_id": meta["frame_id"].values,
             "team_id": meta["gk_team_id"].values,
-            "ghost_gk_x": [d.mode_x for d in densities],
-            "ghost_gk_y": [d.mode_y for d in densities],
-            "ghost_gk_spread": [d.spread for d in densities],
+            "ghost_gk_x": positions[:, 0],
+            "ghost_gk_y": positions[:, 1],
+            "ghost_gk_density_spread": [d.spread for d in densities],
         }
     )
 
@@ -1843,6 +2009,6 @@ def compute_ghost_gk(
     )
     out.loc[gk_mask, "ghost_gk_x"] = gk_rows_df["ghost_gk_x"].values
     out.loc[gk_mask, "ghost_gk_y"] = gk_rows_df["ghost_gk_y"].values
-    out.loc[gk_mask, "ghost_gk_spread"] = gk_rows_df["ghost_gk_spread"].values
+    out.loc[gk_mask, "ghost_gk_density_spread"] = gk_rows_df["ghost_gk_density_spread"].values
 
     return out

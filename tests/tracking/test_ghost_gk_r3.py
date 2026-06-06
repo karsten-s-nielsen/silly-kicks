@@ -47,7 +47,7 @@ class TestR3Metadata:
             fresh.save(Path(d))
             meta = json.loads((Path(d) / "metadata.json").read_text())
             assert meta["carrier_params"] == cp
-            assert meta["version"] == "1.1.0"
+            assert meta["version"] == "1.2.0"  # Option A artifact format (gk_y ensemble + baselines)
             assert "sklearn_version" in meta
             reloaded = GhostGkModel.load(Path(d))
             assert reloaded.carrier_params == cp

@@ -9,7 +9,7 @@ import pytest
 from silly_kicks.tracking._ghost_gk import compute_ghost_gk
 from tests.tracking.test_ghost_gk import _fitted_model, _make_ghost_gk_frames
 
-_GHOST_COLS = ["ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"]
+_GHOST_COLS = ["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]
 
 
 def _make_goal_flip_velocity_fixture(home_team_id: int = 1, away_team_id: int = 2):
@@ -322,7 +322,7 @@ class TestGhostGkXfnsRestriction:
             mask = ~np.isnan(b)
             if col.startswith(("ghost_gk_x", "ghost_gk_y")):  # discrete modes: <=1 grid cell
                 assert np.all(np.abs(b[mask] - n[mask]) <= GRID_RESOLUTION + 1e-9)
-            else:  # ghost_gk_spread: continuous
+            else:  # ghost_gk_density_spread: continuous
                 np.testing.assert_allclose(n[mask], b[mask], rtol=1e-7, atol=1e-9)
 
 

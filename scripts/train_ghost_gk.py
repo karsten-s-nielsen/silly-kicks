@@ -70,6 +70,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--training-platform", type=str, default=None, help="Recorded in metadata (e.g. 'dgx-spark-aarch64')"
     )
+    parser.add_argument(
+        "--skip-permutation-importance",
+        action="store_true",
+        help="Skip the (slow, metrics-only) permutation importance pass. The artifact + CV "
+        "metrics + acceptance criteria are unaffected; only the printed feature-importance "
+        "ranking is omitted. At full scale (887k) the pass dominates wall-clock.",
+    )
+    parser.add_argument(
+        "--perm-importance-sample",
+        type=int,
+        default=150000,
+        help="Cap the permutation-importance EVAL rows to a seeded subsample (importance is a "
+        "statistical estimate; the ranking is stable on a representative sample). The full "
+        "corpus (887k) is memory-bandwidth-bound and intractable even with n_jobs. Default "
+        "150000 (~4x the default variant's whole training set). Set 0 for all rows.",
+    )
     return parser.parse_args()
 
 
@@ -317,9 +333,9 @@ def main() -> None:
         print(f"  Fit: {fit_elapsed:.1f}s")
 
         pred_t0 = time.time()
-        preds = model.predict_mean(X_test)  # shape (n, 2) — fast weighted mean
+        preds = model.predict_mean(X_test)  # shape (n, 2) — exact boosted HGBR mean (Option A)
         pred_elapsed = time.time() - pred_t0
-        print(f"  Predict (weighted mean): {pred_elapsed:.1f}s")
+        print(f"  Predict (boosted mean): {pred_elapsed:.1f}s")
 
         mae_x = float(np.mean(np.abs(preds[:, 0] - y_test["gk_x"].values)))
         mae_y = float(np.mean(np.abs(preds[:, 1] - y_test["gk_y"].values)))
@@ -381,38 +397,76 @@ def main() -> None:
     final_model.fit(features, labels, carrier_params=cp)
     print(f"Final model fit: {time.time() - final_t0:.1f}s")
 
-    # Use a simple sklearn wrapper for permutation importance
-    from sklearn.base import BaseEstimator, RegressorMixin
-
-    class _SklearnWrapper(BaseEstimator, RegressorMixin):  # type: ignore[misc]
-        def __init__(self, m: GhostGkModel | None = None) -> None:
-            self.m = m
-
-        def fit(self, X: np.ndarray, y: np.ndarray) -> _SklearnWrapper:
-            return self  # already fitted
-
-        def predict(self, X: np.ndarray) -> np.ndarray:
-            assert self.m is not None  # noqa: S101
-            return self.m.predict_mean(pd.DataFrame(X, columns=features.columns))[:, 0]
-
-    print("Running permutation importance (5 repeats)...")
-    pi_t0 = time.time()
-    pi = permutation_importance(
-        _SklearnWrapper(m=final_model),
-        features.values,
-        labels["gk_x"].values,
-        scoring="neg_mean_absolute_error",
-        n_repeats=5,
-        random_state=42,
+    # --- BLOCKING parity-on-fresh-fit gate (Option A, ADR-016) ---
+    # predict_mean (pickle-free numpy reconstruction) must equal the live sklearn
+    # regressors' .predict() to <=1e-6 on the ACTUAL fitted model. The regressors are
+    # transient (not serialized), so this can only run on the fresh fit, here. Abort
+    # before the expensive permutation importance + publish if parity fails.
+    _par_n = min(20000, len(features))
+    _par_idx = np.random.default_rng(0).choice(len(features), _par_n, replace=False)
+    _par_Xv = features.iloc[_par_idx][features.columns].values
+    _par_sk = np.column_stack([final_model._sk_reg_x.predict(_par_Xv), final_model._sk_reg_y.predict(_par_Xv)])
+    _par_err = float(np.abs(final_model.predict_mean(features.iloc[_par_idx]) - _par_sk).max())
+    _par_ncat = sum(int(t["is_categorical"].sum()) for t in final_model._tree_nodes) + sum(
+        int(t["is_categorical"].sum()) for t in final_model._tree_nodes_y
     )
-    print(f"Permutation importance: {time.time() - pi_t0:.1f}s")
-    importances = sorted(
-        zip(features.columns, pi.importances_mean, strict=True),
-        key=lambda x: -x[1],
-    )
-    print("Top 10 features:")
-    for name, imp in importances[:10]:
-        print(f"  {name}: {imp:.4f}")
+    print(f"PARITY GATE: max|predict_mean - sklearn| = {_par_err:.2e} over {_par_n} rows; n_cat = {_par_ncat}")
+    if _par_err > 1e-6 or _par_ncat != 0:
+        msg = f"BLOCKING parity gate FAILED (err={_par_err:.2e}, ncat={_par_ncat}); refusing to publish."
+        raise RuntimeError(msg)
+    print("PARITY GATE: PASS (boosted reconstruction is exact; safe to publish)")
+
+    # Permutation importance is metrics-only (printed, not saved to metrics.json) and
+    # dominates wall-clock at full scale (887k x 5 repeats x 26 features). Skippable.
+    if args.skip_permutation_importance:
+        print("Skipping permutation importance (--skip-permutation-importance).")
+    else:
+        # Use a simple sklearn wrapper for permutation importance
+        from sklearn.base import BaseEstimator, RegressorMixin
+
+        class _SklearnWrapper(BaseEstimator, RegressorMixin):  # type: ignore[misc]
+            def __init__(self, m: GhostGkModel | None = None) -> None:
+                self.m = m
+
+            def fit(self, X: np.ndarray, y: np.ndarray) -> _SklearnWrapper:
+                return self  # already fitted
+
+            def predict(self, X: np.ndarray) -> np.ndarray:
+                assert self.m is not None  # noqa: S101
+                return self.m.predict_mean(pd.DataFrame(X, columns=features.columns))[:, 0]
+
+        # Subsample the EVAL rows (importance is a statistical estimate; the ranking is stable
+        # on a representative sample). The full 887k corpus is memory-bandwidth-bound — each
+        # boosted predict_mean scans the full leaf arrays, so 20 workers contend for bandwidth
+        # and n_jobs gives no speedup. A 150k subsample is ~8x less traffic so n_jobs parallelizes.
+        _pi_cap = args.perm_importance_sample
+        if _pi_cap and _pi_cap < len(features):
+            _pi_idx = np.random.default_rng(42).choice(len(features), _pi_cap, replace=False)
+            _pi_X = features.values[_pi_idx]
+            _pi_y = labels["gk_x"].values[_pi_idx]
+        else:
+            _pi_X, _pi_y = features.values, labels["gk_x"].values
+        print(f"Running permutation importance (5 repeats, n_jobs=-1) on {len(_pi_X)} eval rows...")
+        pi_t0 = time.time()
+        # n_jobs=-1: parallelize the per-(feature, repeat) scorer calls; pair with
+        # OMP_NUM_THREADS=1 in the launch env so each loky worker stays single-threaded.
+        pi = permutation_importance(
+            _SklearnWrapper(m=final_model),
+            _pi_X,
+            _pi_y,
+            scoring="neg_mean_absolute_error",
+            n_repeats=5,
+            random_state=42,
+            n_jobs=-1,
+        )
+        print(f"Permutation importance: {time.time() - pi_t0:.1f}s")
+        importances = sorted(
+            zip(features.columns, pi.importances_mean, strict=True),
+            key=lambda x: -x[1],
+        )
+        print("Top 10 features:")
+        for name, imp in importances[:10]:
+            print(f"  {name}: {imp:.4f}")
 
     # --- 7. Save final model ---
     final_model.training_commit = training_commit

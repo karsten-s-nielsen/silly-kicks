@@ -446,7 +446,7 @@ class TestComputeGhostGk:
     """compute_ghost_gk batched per-frame primitive."""
 
     def test_compute_ghost_gk_adds_columns(self):
-        """Adds ghost_gk_x, ghost_gk_y, ghost_gk_spread per frame."""
+        """Adds ghost_gk_x, ghost_gk_y, ghost_gk_density_spread per frame."""
         from silly_kicks.tracking._ghost_gk import compute_ghost_gk
 
         model, _, _ = _fitted_model()
@@ -462,7 +462,7 @@ class TestComputeGhostGk:
         result = compute_ghost_gk(frames, model=model, home_team_id=1)
         assert "ghost_gk_x" in result.columns
         assert "ghost_gk_y" in result.columns
-        assert "ghost_gk_spread" in result.columns
+        assert "ghost_gk_density_spread" in result.columns
         # Results on GK rows
         gk_mask = result["is_goalkeeper"].astype(bool) & ~result["is_ball"].astype(bool)
         assert result.loc[gk_mask, "ghost_gk_x"].notna().any()
@@ -481,7 +481,7 @@ class TestComputeGhostGk:
         """A frame with two same-team is_goalkeeper rows must not crash and
         both GK rows must receive the identical ghost-GK prediction.
 
-        Regression: a rostered backup keeper carried on-pitch alongside the
+        Regression (4.12.1): a rostered backup keeper carried on-pitch alongside the
         starter (or a GK-substitution overlap frame) produces two
         is_goalkeeper=True rows for one team in a single frame. The per-(frame,
         team) prediction is identical for both rows, so both must be filled with
@@ -508,7 +508,7 @@ class TestComputeGhostGk:
         # Both home-GK rows get the same, non-NaN prediction.
         home_gk = result[(result["team_id"] == 1) & result["is_goalkeeper"].astype(bool)]
         assert len(home_gk) == 2
-        for col in ("ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"):
+        for col in ("ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"):
             vals = home_gk[col].to_numpy(dtype=float)
             assert np.isfinite(vals).all(), f"{col} should be filled for both GK rows"
             np.testing.assert_allclose(vals[0], vals[1])
@@ -558,7 +558,7 @@ class TestAggregatorAndXfns:
         result = add_ghost_gk(actions, frames, model=model, home_team_id=1)
         assert "ghost_gk_x" in result.columns
         assert "ghost_gk_y" in result.columns
-        assert "ghost_gk_spread" in result.columns
+        assert "ghost_gk_density_spread" in result.columns
         assert len(result) == len(actions)
         # No provenance leak
         assert "time_offset_seconds" not in result.columns
@@ -1248,7 +1248,7 @@ class TestComputeGhostGkRefactored:
         gk_mask = result["is_goalkeeper"].astype(bool) & ~result["is_ball"].astype(bool)
         actual = result.loc[
             gk_mask,
-            ["game_id", "period_id", "frame_id", "team_id", "ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"],
+            ["game_id", "period_id", "frame_id", "team_id", "ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"],
         ].reset_index(drop=True)
 
         golden = pd.read_parquet("tests/tracking/fixtures/ghost_gk_backward_compat.parquet")
@@ -1311,7 +1311,7 @@ class TestAddGhostGkThreadsActions:
         mock_result = _make_multi_frame_fixture(n_frames=1)
         mock_result["ghost_gk_x"] = 10.0
         mock_result["ghost_gk_y"] = 34.0
-        mock_result["ghost_gk_spread"] = 2.0
+        mock_result["ghost_gk_density_spread"] = 2.0
 
         actions = _make_spadl_actions(goals=[])
         frames = _make_multi_frame_fixture(n_frames=1)

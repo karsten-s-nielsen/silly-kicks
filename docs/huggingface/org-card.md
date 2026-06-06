@@ -27,7 +27,7 @@ Open-source Python library for soccer analytics &mdash; converts raw event and t
 
 | Model | Architecture | Description |
 |-------|-------------|-------------|
-| [ghost-gk-v1](https://huggingface.co/silly-kicks/ghost-gk-v1) | RFCDE (HistGBR leaf co-occurrence + 2D KDE) | Conditional density estimation for league-average goalkeeper positioning. 26 goal-relative features, 60&times;64 probability grid output. Two variants: `"default"` (approx. 9 MB, bundled in wheel) and `"full"` (approx. 91 MB, downloaded from Hub). |
+| [ghost-gk-v1](https://huggingface.co/silly-kicks/ghost-gk-v1) | RFCDE (HistGBR leaf co-occurrence + 2D KDE) | Conditional density estimation for league-average goalkeeper positioning. 26 goal-relative features, 60&times;64 probability grid output. Two variants: `"default"` (approx. 12 MB, bundled in wheel) and `"full"` (approx. 170 MB, downloaded from Hub). |
 
 ## What silly-kicks Does
 

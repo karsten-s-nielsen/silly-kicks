@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-05. **Current release**: silly-kicks 4.13.0 (Gradient Sports goal-capture correctness — own goals `RE`+`G` + cross-goals `CR`+`G` + `nonEvent` voided-event exclusion; own goals now counted in VAEP labels for all providers, ADR-018). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-06. **Current release**: silly-kicks 4.14.0 (Ghost-GK serves the exact boosted HGBR `predict_mean` reconstructed pickle-free — integrity fix, 1.07m held-out MAE vs the 4.65m served mode; phase-numeric + gk_y ensemble + re-fit/re-published both variants on clean 4.13.0 events; `ghost_gk_spread` → `ghost_gk_density_spread`; ADR-016, PR-S83). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -62,14 +62,6 @@ Items are ranked top-to-bottom by specification completeness. Tier 3–4 require
   the metadata backend matches the runtime backend — turning the silent ≤6 m skew into a loud
   failure. **TF-16 xShotOccurrence is unaffected** (verified: it uses the resolved/defending GK, not
   the ghost-GK mode), so this binds whichever feature first trains on the mode (TF-17 / TF-19).
-- **Ghost-GK serve estimator: mode vs mean (surfaced by the PR-S81 re-fit gate).** Production
-  (`compute_ghost_gk`) serves the KDE **mode** (`ghost_gk_x/y = density argmax`), whose held-out
-  euclidean MAE is **~4.4 m**, while the model is *validated/published* on `predict_mean` (the leaf
-  weighted mean), MAE **~1.1 m**. So the served point estimate is materially worse than the reported
-  quality. Decide deliberately: either (a) serve `predict_mean` (needs the sklearn regressors, which
-  `save()`/`load()` discard — would require persisting them or reconstructing the mean from the
-  stored leaves), or (b) keep the mode but report the mode MAE in the model card / acceptance gates
-  so the published number matches what's served. Not PR-S81 scope (pre-existing); flagged here.
 - **ADR-code reconciliation sweep.** Periodically verify that documented ADRs
   (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
   constraints (e.g. "zero Spark imports in domain") hold in practice and that
@@ -93,6 +85,8 @@ Items are ranked top-to-bottom by specification completeness. Tier 3–4 require
 ## Research & Future Work
 
 ReSpo.Vision tracking adapter — licensing-blocked. Track here when licensing clears.
+
+**xS / xCross re-fit on clean GS events (the GS-context-feature `score_diff` clean-up).** 4.12.2 (`"O"`→`fail`) + 4.13.0 (own/cross-goal capture + `nonEvent` exclusion) corrected the GradientSports goal stream, which feeds the events-derived `score_diff` feature. Ghost-GK (TF-18) was **already re-fit on the clean 4.13.0 events in 4.14.0/PR-S83** (the rebuilt feature cache fixed `score_diff` from an impossible ±18 range — ~640 phantom owngoals on the GS 89%-majority corpus — down to a realistic [-6,+6] with 3 real OGs; impact on ghost-GK confirmed immaterial since `score_diff` is not a top-10 feature). **Remaining:** xS (TF-16) and xCross (TF-17) also consume GS `score_diff`/game-state and may weight it more heavily than ghost-GK does (their `score_diff` importance is unmeasured) — when their next weights cycle runs, rebuild their feature cache against the 4.13.0-clean GS events and re-fit. Origin: 2026-06-04 PR-S83 feature-cache audit.
 
 **TF-23 (Dunkin'/Wicked):** Native Sportec-XML / Metrica-CSV loader inside silly-kicks. **Engineering-ready, priority-deferred.** Currently the architectural intent (per `silly_kicks/spadl/sportec.py` docstring) routes raw-XML / raw-CSV ingestion through the kloppy gateway; native converters take pre-DataFrame'd events. PR-S23 deferred adding native loaders. Pure parser implementation (no metric design); replicable from kloppy's source + provider XSD/CSV schemas. Surface this only if/when consumer demand exists for a kloppy-free ingestion path.
 

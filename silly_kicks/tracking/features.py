@@ -3681,7 +3681,7 @@ def add_ghost_gk(
 ) -> pd.DataFrame:
     """Enrich actions with ghost-GK positioning columns.
 
-    Adds ghost_gk_x, ghost_gk_y, ghost_gk_spread per action (defending
+    Adds ghost_gk_x, ghost_gk_y, ghost_gk_density_spread per action (defending
     GK's ghost position at the linked frame).
 
     Only adds ghost-GK columns — does NOT add link provenance columns.
@@ -3694,8 +3694,8 @@ def add_ghost_gk(
     frames : pd.DataFrame
         Tracking frames (LTR-normalized).
     model : GhostGkModel | "default" | "full" | None
-        ``"default"`` / ``None``: bundled lightweight model (~9 MB).
-        ``"full"``: high-resolution bundled model (~91 MB).
+        ``"default"`` / ``None``: bundled lightweight model (~12 MB).
+        ``"full"``: high-resolution model (~170 MB, downloaded from HF Hub).
         Or a pre-loaded ``GhostGkModel`` instance.
     links : pd.DataFrame | None
         Pre-computed link pointers.
@@ -3761,7 +3761,7 @@ def add_ghost_gk(
         ghost_frames["is_goalkeeper"].astype(bool)
         & ~ghost_frames["is_ball"].astype(bool)
         & ghost_frames["ghost_gk_x"].notna()
-    ][["game_id", "period_id", "frame_id", "team_id", "ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"]].copy()
+    ][["game_id", "period_id", "frame_id", "team_id", "ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]].copy()
 
     # Build linked lookup
     linked = pointers.merge(
@@ -3787,7 +3787,7 @@ def add_ghost_gk(
     deduped = defending.drop_duplicates(subset=["action_id"], keep="first")
 
     # Join back to actions
-    ghost_cols = deduped.set_index("action_id")[["ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"]]
+    ghost_cols = deduped.set_index("action_id")[["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]]
     out = out.merge(ghost_cols, left_on="action_id", right_index=True, how="left")
 
     return out
@@ -3824,7 +3824,7 @@ def ghost_gk_xfns(
 
     See NOTICE for full bibliographic citations.
     """
-    col_names = ["ghost_gk_x", "ghost_gk_y", "ghost_gk_spread"]
+    col_names = ["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]
 
     def _ghost_gk_transformer(states, frames):
         out = pd.DataFrame(index=states[0].index)
