@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from ._id_compat import ids_match, same_id
+from ._id_compat import same_id
 from .pitch_control import PitchControlCache, PitchControlParams, PitchControlSurface, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
@@ -151,7 +151,8 @@ def compute_player_influence(
 
     # Process per-team
     for team_id in players["team_id"].unique():
-        team_players = players[ids_match(players["team_id"], team_id)]
+        # frame-vs-frame (team_id is a value FROM players["team_id"]) -> raw compare.
+        team_players = players[players["team_id"] == team_id]
         n_team = len(team_players)
         pids = team_players["player_id"].values
 

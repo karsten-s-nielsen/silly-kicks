@@ -19,7 +19,7 @@ import pandas as pd
 from silly_kicks.spadl import config as spadlconfig
 
 from ._defensive_line import select_back_line_players
-from ._id_compat import ids_match, same_id
+from ._id_compat import same_id
 from .pitch_control import PitchControlCache, PitchControlParams, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
@@ -335,7 +335,9 @@ def compute_gk_influence(
         and surface.player_team_ids is not None
         and surface.per_player_influence is not None
     ):
-        team_mask_arr = ids_match(surface.player_team_ids, defending_team_id).to_numpy()
+        # frame-vs-frame (both from the same surface/frame) -> dtype-consistent by
+        # construction, raw compare (ADR-019 only governs cross-source/boundary seams).
+        team_mask_arr = surface.player_team_ids == defending_team_id
         for idx in np.flatnonzero(team_mask_arr):
             team_surface += surface.per_player_influence[idx]
 

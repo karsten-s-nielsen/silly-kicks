@@ -6,13 +6,15 @@ and pitch_control/test_perf_budget.py patterns.
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
 
-_BUDGET = 0.015 if sys.platform == "win32" else 0.010
+# compute_gk_influence runs ~4ms locally; the budget is a generous headroom ceiling that
+# still catches a >3x regression. The prior 10ms Linux ceiling was flaky on slow shared CI
+# runners (one measured 10.4ms while local is ~4ms), so it is raised to 15ms to match Windows
+# -- a wall-clock budget needs headroom for runner variance (it is not a precise SLA).
+_BUDGET = 0.015
 
 
 def _make_22_player_frame():
