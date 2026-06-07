@@ -118,6 +118,19 @@ def _df_pass_flat_cross() -> pd.DataFrame:
     return df
 
 
+def _df_pass_flat_cross_str_true() -> pd.DataFrame:
+    # DFL bronze emits play_flat_cross as the native string "true"/"false".
+    df = _df_pass_default()
+    df["play_flat_cross"] = ["true"]
+    return df
+
+
+def _df_pass_flat_cross_str_false() -> pd.DataFrame:
+    df = _df_pass_default()
+    df["play_flat_cross"] = ["false"]
+    return df
+
+
 def _df_pass_head() -> pd.DataFrame:
     df = _df_pass_default()
     df["play_height"] = ["head"]
@@ -218,6 +231,22 @@ class TestSportecActionMappingPassAndSetPieces:
             _df_pass_flat_cross(), home_team_id="T-HOME", home_team_start_left=True
         )
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+
+    def test_pass_play_flat_cross_string_true_maps_to_cross(self):
+        # DFL emits play_flat_cross as a string; "true" must map to cross.
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_pass_flat_cross_str_true(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["cross"]
+
+    def test_pass_play_flat_cross_string_false_maps_to_pass(self):
+        # Regression: pd.Series(["false"]).astype(bool) is True (non-empty string is
+        # truthy), so the old .astype(bool) coercion mislabelled the literal "false" as
+        # a cross — inverting ~99% of DFL pass/cross labels.
+        actions, _ = sportec_mod.convert_to_actions(
+            _df_pass_flat_cross_str_false(), home_team_id="T-HOME", home_team_start_left=True
+        )
+        assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["pass"]
 
     def test_pass_play_height_head_uses_head_bodypart(self):
         actions, _ = sportec_mod.convert_to_actions(_df_pass_head(), home_team_id="T-HOME", home_team_start_left=True)

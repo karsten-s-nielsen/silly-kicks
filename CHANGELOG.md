@@ -5,6 +5,24 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.16.1] — 2026-06-07
+
+### Fixed — Sportec/DFL converter mislabelled ~99% of passes as crosses
+
+`convert_to_actions` flagged a pass as a cross via `_opt("play_flat_cross", False).fillna(False).astype(bool)`.
+DFL bronze emits the `play_flat_cross` qualifier as the native string `"true"`/`"false"`, and
+`pd.Series(["false"]).astype(bool)` is `True` (any non-empty string is truthy) — so every pass whose
+`play_flat_cross` was non-null, **including the literal `"false"`, became a cross**. On real Bundesliga
+data this inverted the pass/cross split (e.g. match J03WMX: 875 cross / 7 pass, where cross should be
+~2–4% of passes). It was the only `.astype(bool)` on a string qualifier in `sportec.py`; the sibling
+qualifiers (`shot_after_free_kick`, the two `*_defensive_clearance`) already parse the string correctly.
+
+Fixed by parsing the string explicitly:
+`_opt("play_flat_cross", "").fillna("").astype(str).str.lower().eq("true")`, matching the in-file sibling
+convention. Because `str(True).lower() == "true"`, this also handles a native-bool column correctly, so the
+existing bool-flag behaviour is preserved. **Hyrum:** Sportec/IDSSE (DFL/Bundesliga) pass-vs-cross labels
+change for all event data — a SPADL re-conversion + downstream VAEP retrain trigger for Sportec consumers.
+
 ## [4.16.0] — 2026-06-07
 
 ### Added — TF-45 structural-pass primitives (LBS / SGM / SDI)
