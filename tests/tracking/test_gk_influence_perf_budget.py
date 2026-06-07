@@ -1,7 +1,10 @@
-"""Performance budget for compute_gk_influence (TF-15).
+"""Structural performance guard for compute_gk_influence (TF-15).
 
-Uses pytest-benchmark, matching test_pressure_perf_budget.py
-and pitch_control/test_perf_budget.py patterns.
+Replaces a flaky wall-clock budget (the 10ms Linux ceiling once measured 10.4ms on a slow
+shared runner) with a deterministic call-count invariant: compute_gk_influence builds the
+pitch-control surface ONCE (it then derives every zone/threat metric from that single
+surface). A regression to per-zone surface construction is the real cost blow-up. See
+tests/_perf_structural.py.
 """
 
 from __future__ import annotations
@@ -10,11 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# compute_gk_influence runs ~4ms locally; the budget is a generous headroom ceiling that
-# still catches a >3x regression. The prior 10ms Linux ceiling was flaky on slow shared CI
-# runners (one measured 10.4ms while local is ~4ms), so it is raised to 15ms to match Windows
-# -- a wall-clock budget needs headroom for runner variance (it is not a precise SLA).
-_BUDGET = 0.015
+from tests._perf_structural import call_counter
 
 
 def _make_22_player_frame():
@@ -134,22 +133,18 @@ def fixture_22():
     return frame, xt
 
 
-def test_compute_gk_influence_perf_budget(benchmark, fixture_22):
-    """compute_gk_influence on 22-player frame within budget."""
-    from silly_kicks.tracking._gk_influence import compute_gk_influence
+def test_gk_influence_builds_one_pitch_control_surface(fixture_22, monkeypatch):
+    """compute_gk_influence builds exactly ONE pitch-control surface for the whole frame."""
+    from silly_kicks.tracking import _gk_influence
+    from silly_kicks.tracking.pitch_control import _cache
 
     frame, xt = fixture_22
+    calls = call_counter(monkeypatch, _cache, "compute_pitch_control")
 
-    result = benchmark(
-        compute_gk_influence,
-        frame,
-        attacking_team_id=2,
-        gk_player_id=1,
-        xt=xt,
-        home_team_id=1,
-    )
+    result = _gk_influence.compute_gk_influence(frame, attacking_team_id=2, gk_player_id=1, xt=xt, home_team_id=1)
+
     assert result is not None
-    if benchmark.stats is not None:
-        assert benchmark.stats.stats.mean < _BUDGET, (
-            f"compute_gk_influence mean {benchmark.stats.stats.mean * 1000:.1f}ms > budget {_BUDGET * 1000:.0f}ms"
-        )
+    assert calls["n"] == 1, (
+        f"compute_gk_influence built {calls['n']} pitch-control surfaces (expected 1). "
+        "Every zone/threat metric must derive from the single cached surface, not a per-zone recompute."
+    )

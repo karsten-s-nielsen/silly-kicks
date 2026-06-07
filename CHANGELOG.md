@@ -59,17 +59,31 @@ The lakehouse may drop its string-coercion workaround and rely on the seam coerc
 conventions) is preserved — the fix lives entirely at the consumer seams. No new **runtime**
 dependencies; `import silly_kicks` stays dependency-light.
 
-### Internal — test-suite parallelization (CI runtime)
+### Internal — deterministic perf guards + CI runtime
 
-Library runtime is unaffected (test-infra only). The serial suite was 66% ghost-GK KDE, dominated
-by the brute-force `vectorized` backend (~17 s/call). CI now runs the bulk suite under
-`pytest -n auto --dist load` (new `pytest-xdist` in the `[test]` extra) with the wall-clock
-benchmark/perf-budget tests split into a separate single-threaded `--benchmark-only` step, so
-parallel CPU contention cannot flake their timing assertions. The ghost-GK golden gates now run the
-exact `cpu-numba` backend (matches `vectorized`/scipy at 1e-9 on the kernel; ~7.8× faster) instead of
-the brute-force one, and the bundled-model golden slices to 4 frozen samples (`vectorized` ↔ scipy
-parity is still locked by the kernel + model-traveling tests). Local bulk wall-clock ~578 s → ~110 s
-(16-core).
+Library runtime is unaffected (test-infra only). The wall-clock perf budgets (`assert mean_ms <
+budget`) flaked on shared CI runners (`compute_team_shape` 6.2ms > 5ms, `compute_gk_influence`
+10.4ms > 10ms) — a recurring red-CI source. Every such budget is replaced with a **deterministic
+structural guard** that asserts the invariant the budget actually protected, via a call-count spy on
+the dominant primitive (`tests/_perf_structural.py`):
+
+- pitch-control consumers (`compute_player_influence` / `compute_gk_influence`) build the per-frame
+  surface ONCE (the ADR-008 cache contract), not per player/zone;
+- the Ward line decompositions (`compute_team_shape` / `detect_line_breaking`) cluster once per
+  frame, not per player/segment;
+- `pressure_on_actor` (×3) / `add_actor_pre_window` link actions→frames ONCE per batch, not per
+  action;
+- the pitch-control kernels (Spearman / Fernandez-Bornn) run one vectorised grid pass per team, not
+  per cell;
+- the SPADL/atomic throughput converters stay vectorised (zero `apply(axis=1)`/`iterrows`/`itertuples`).
+
+The benchmark *measurements* are retained (no hard timing asserts) and run single-threaded for clean
+trend data. The dominant ghost-GK cost is cut at the source: the golden gates run the exact
+`cpu-numba` KDE backend (matches `vectorized`/scipy at 1e-9 on the kernel; ~7.8× faster) and the
+bundled-model golden slices to 4 frozen samples (`vectorized` ↔ scipy parity stays locked by the
+kernel + model-traveling tests). A `pytest-xdist` parallelization was evaluated and reverted — on the
+4-core/7GB CI runners it regressed py3.12 from pass to a memory/JIT-pressure kill (the opposite of the
+16-core local speedup); the bulk suite stays serial.
 
 ## [4.14.0] — 2026-06-06
 

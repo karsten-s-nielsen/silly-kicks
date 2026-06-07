@@ -1,7 +1,11 @@
 # tests/tracking/test_player_influence_perf_budget.py
-"""Performance budget for compute_player_influence (TF-36 + TF-33).
+"""Structural performance guard for compute_player_influence (TF-36 + TF-33).
 
-Uses pytest-benchmark. Budget set from first CI observation + 1.5x headroom.
+Replaces a flaky wall-clock budget with a deterministic call-count invariant: the function
+must build the per-frame pitch-control surface ONCE and reuse it across all 20 outfield
+players (the ADR-008 cache contract its module docstring states). A regression to per-player
+surface construction makes this O(players) — the real cost blow-up the old ms-budget only
+caught indirectly. See tests/_perf_structural.py.
 """
 
 from __future__ import annotations
@@ -10,9 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Flat ceiling — no platform ternary per feedback_windows_ci_perf_budget.md.
-# FIRST RUN: set from worst observed CI timing with 1.5x headroom.
-_BUDGET = 0.100  # 100ms — generous initial budget, tighten after first CI run
+from tests._perf_structural import call_counter
 
 
 def _make_22_player_frame():
@@ -111,22 +113,19 @@ def fixture_22():
     return frame, xt
 
 
-def test_compute_player_influence_perf_budget(benchmark, fixture_22):
-    """compute_player_influence on 22-player frame within budget."""
-    from silly_kicks.tracking._player_influence import compute_player_influence
+def test_player_influence_builds_one_pitch_control_surface(fixture_22, monkeypatch):
+    """compute_player_influence builds exactly ONE pitch-control surface for all 20 players."""
+    from silly_kicks.tracking import _player_influence
+    from silly_kicks.tracking.pitch_control import _cache
 
     frame, xt = fixture_22
+    # Patch the cache's primitive (the symbol cache.surface() resolves), not the dispatch site.
+    calls = call_counter(monkeypatch, _cache, "compute_pitch_control")
 
-    result = benchmark(
-        compute_player_influence,
-        frame,
-        xt,
-        attacking_team_id=1,
-        home_team_id=1,
-    )
-    assert result is not None
+    result = _player_influence.compute_player_influence(frame, xt, attacking_team_id=1, home_team_id=1)
+
     assert len(result) == 20  # 20 outfield players
-    if benchmark.stats is not None:
-        assert benchmark.stats.stats.mean < _BUDGET, (
-            f"compute_player_influence mean {benchmark.stats.stats.mean * 1000:.1f}ms > budget {_BUDGET * 1000:.0f}ms"
-        )
+    assert calls["n"] == 1, (
+        f"compute_player_influence built {calls['n']} pitch-control surfaces for 20 players "
+        "(expected 1 — the per-frame cache invariant). A per-player regression makes this O(players)."
+    )

@@ -1,10 +1,16 @@
-"""Performance budget for detect_line_breaking (TF-32)."""
+"""Structural performance guard for detect_line_breaking (TF-32).
+
+Replaces a flaky wall-clock budget with a deterministic call-count invariant: the defensive
+line is segmented with ONE ``scipy...linkage`` Ward clustering per frame, independent of
+action/segment count. A regression to per-action / per-segment clustering is the real cost
+blow-up. See tests/_perf_structural.py.
+"""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-_BUDGET = 0.020
+from tests._perf_structural import call_counter
 
 
 @pytest.fixture
@@ -84,13 +90,16 @@ def line_breaking_fixture():
     return actions, frames
 
 
-def test_line_breaking_perf_budget(benchmark, line_breaking_fixture):
-    from silly_kicks.tracking._line_breaking import detect_line_breaking
+def test_line_breaking_runs_one_ward_clustering(line_breaking_fixture, monkeypatch):
+    from silly_kicks.tracking import _line_breaking
 
     actions, frames = line_breaking_fixture
-    result = benchmark(detect_line_breaking, actions, frames, home_team_id=1)
+    calls = call_counter(monkeypatch, _line_breaking, "linkage")
+
+    result = _line_breaking.detect_line_breaking(actions, frames, home_team_id=1)
+
     assert result is not None
-    if benchmark.stats is not None:
-        assert benchmark.stats.stats.mean < _BUDGET, (
-            f"detect_line_breaking: {benchmark.stats.stats.mean * 1000:.1f}ms > {_BUDGET * 1000:.0f}ms"
-        )
+    assert calls["n"] == 1, (
+        f"detect_line_breaking ran {calls['n']} Ward clusterings for one frame (expected 1). "
+        "Per-action or per-segment clustering is the regression the wall-clock budget proxied."
+    )
