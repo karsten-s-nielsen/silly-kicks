@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import cast
 
 import numpy as np
@@ -9,6 +11,9 @@ from sklearn.exceptions import NotFittedError
 import silly_kicks.spadl as spadl
 import silly_kicks.xthreat as xt
 from silly_kicks.spadl.config import field_length, field_width
+from silly_kicks.xthreat import _grid
+from silly_kicks.xthreat._params import GridSpec
+from silly_kicks.xthreat._transitions import singh_transition_matrix
 
 
 class TestGridCount:
@@ -28,7 +33,7 @@ class TestGridCount:
         """It should map pitch coordinates to a 2D cell index."""
         x = pd.Series([0, field_length / 2 - 1, field_length])
         y = pd.Series([0, field_width / 2 + 1, field_width])
-        xi, yi = xt._get_cell_indexes(x, y, self.N, self.M)
+        xi, yi = _grid._get_cell_indexes(x, y, self.N, self.M)
         pd.testing.assert_series_equal(xi, pd.Series([0, 0, 1]))
         pd.testing.assert_series_equal(yi, pd.Series([0, 1, 1]))
 
@@ -36,7 +41,7 @@ class TestGridCount:
         """It should map out-of-bounds coordinates to the nearest cell index."""
         x = pd.Series([-10, field_length + 10])
         y = pd.Series([-10, field_width + 10])
-        xi, yi = xt._get_cell_indexes(x, y, self.N, self.M)
+        xi, yi = _grid._get_cell_indexes(x, y, self.N, self.M)
         pd.testing.assert_series_equal(xi, pd.Series([0, 1]))
         pd.testing.assert_series_equal(yi, pd.Series([0, 1]))
 
@@ -44,20 +49,20 @@ class TestGridCount:
         """It should map pitch coordinates to a flat index."""
         x = pd.Series([0, field_length / 2 - 1, field_length / 2 + 1, field_length])
         y = pd.Series([0, field_width / 2 + 1, field_width / 2 - 1, field_width])
-        idx = xt._get_flat_indexes(x, y, self.N, self.M)
+        idx = _grid._get_flat_indexes(x, y, self.N, self.M)
         pd.testing.assert_series_equal(idx, pd.Series([2, 0, 3, 1]))
 
     def test_count(self) -> None:
         """It should return the number of occurences in each grid cell."""
         x = pd.Series([0, field_length / 2 - 1, field_length, field_length + 10])
         y = pd.Series([0, field_width / 2 + 1, field_width, field_width + 10])
-        cnt = xt._count(x, y, self.N, self.M)
+        cnt = _grid._count(x, y, self.N, self.M)
         np.testing.assert_array_equal(cnt, [[1, 2], [1, 0]])
 
 
 def test_get_move_actions(spadl_actions: pd.DataFrame) -> None:
     """It should filter passes, dribbles and crosses."""
-    move_actions = xt._get_move_actions(spadl_actions)
+    move_actions = _grid._get_move_actions(spadl_actions)
     assert move_actions.type_id.isin(
         [
             spadl.config.actiontypes.index("pass"),
@@ -69,7 +74,7 @@ def test_get_move_actions(spadl_actions: pd.DataFrame) -> None:
 
 def test_get_successful_move_actions(spadl_actions: pd.DataFrame) -> None:
     """It should filter successful passes, dribbles and crosses."""
-    move_actions = xt._get_successful_move_actions(spadl_actions)
+    move_actions = _grid._get_successful_move_actions(spadl_actions)
     assert move_actions.type_id.isin(
         [
             spadl.config.actiontypes.index("pass"),
@@ -82,7 +87,7 @@ def test_get_successful_move_actions(spadl_actions: pd.DataFrame) -> None:
 
 def test_action_prob(spadl_actions: pd.DataFrame) -> None:
     """It should return the proportion of shots and moves for each cell."""
-    shot_prob, move_prob = xt._action_prob(spadl_actions, 10, 5)
+    shot_prob, move_prob = _grid._action_prob(spadl_actions, 10, 5)
     assert shot_prob.shape == (5, 10)
     assert move_prob.shape == (5, 10)
     assert np.any(shot_prob > 0)
@@ -94,7 +99,7 @@ def test_scoring_prob(spadl_actions: pd.DataFrame) -> None:
     """It should return the proportion of successful shots for each cell."""
     shots = spadl_actions.type_id == spadl.config.actiontypes.index("shot")
     goals = shots & (spadl_actions.result_id == spadl.config.results.index("success"))
-    scoring_prob = xt._scoring_prob(spadl_actions, 1, 1)
+    scoring_prob = _grid._scoring_prob(spadl_actions, 1, 1)
     assert scoring_prob.shape == (1, 1)
     assert sum(goals) / sum(shots) == scoring_prob[0]
 
@@ -139,7 +144,7 @@ def test_move_transition_matrix() -> None:
             },
         ]
     )
-    move_mat = xt._move_transition_matrix(spadl_actions, 2, 2)
+    move_mat = singh_transition_matrix(spadl_actions, GridSpec(n_zones_x=2, n_zones_y=2))
     assert np.sum(move_mat) == 1
     assert move_mat.shape == (4, 4)
     # (10, 10) is mapped to flat index 2 in a 2x2 grid
@@ -240,7 +245,7 @@ def test_xt_model_rate(spadl_actions: pd.DataFrame) -> None:
     """It should rate all successful move actions and assign all other actions NaN."""
     xTModel = xt.ExpectedThreat()
     xTModel.fit(spadl_actions)
-    successful_move_actions_idx = xt._get_successful_move_actions(spadl_actions).index
+    successful_move_actions_idx = _grid._get_successful_move_actions(spadl_actions).index
     ratings = xTModel.rate(spadl_actions)
     assert ratings.shape == (len(spadl_actions),)
     assert np.all(~np.isnan(ratings[successful_move_actions_idx]))
@@ -249,7 +254,7 @@ def test_xt_model_rate(spadl_actions: pd.DataFrame) -> None:
 
 def test_interpolate_xt_grid_no_scipy(mocker: MockerFixture) -> None:
     """It should raise an ImportError if scipy is not installed."""
-    mocker.patch.object(xt, "RectBivariateSpline", None)
+    mocker.patch("silly_kicks.xthreat._model.RectBivariateSpline", None)
     xTModel = xt.ExpectedThreat()
     with pytest.raises(ImportError, match=r"Interpolation requires scipy to be installed\."):
         xTModel.interpolator()
@@ -295,3 +300,31 @@ def test_predict_with_interpolation(sb_worldcup_data: pd.HDFStore, xt_model: xt.
     ratings = xt_model.rate(actions, use_interpolation=True)
     assert ratings.dtype is np.dtype(np.float64)
     assert len(ratings) == len(actions)
+
+
+def test_singh_path_byte_identical_to_legacy(spadl_actions: pd.DataFrame) -> None:
+    """Default ExpectedThreat (Singh, 16x12) must reproduce the pre-refactor output exactly."""
+    import tests.xthreat_legacy_reference as legacy
+
+    new = xt.ExpectedThreat().fit(spadl_actions)
+    old = legacy.ExpectedThreat().fit(spadl_actions)
+    np.testing.assert_array_equal(new.xT, old.xT)
+    np.testing.assert_array_equal(new.transition_matrix, old.transition_matrix)
+    np.testing.assert_array_equal(new.scoring_prob_matrix, old.scoring_prob_matrix)
+    np.testing.assert_array_equal(new.shot_prob_matrix, old.shot_prob_matrix)
+    np.testing.assert_array_equal(new.move_prob_matrix, old.move_prob_matrix)
+
+
+def test_singh_path_byte_identical_on_worldcup(sb_worldcup_data: pd.HDFStore) -> None:
+    """Same, on a real multi-match corpus, including rate() output."""
+    import tests.xthreat_legacy_reference as legacy
+    from tests._xthreat_helpers import _worldcup_ltr
+
+    actions = _worldcup_ltr(sb_worldcup_data)
+    new = xt.ExpectedThreat(l=16, w=12).fit(actions)
+    old = legacy.ExpectedThreat(l=16, w=12).fit(actions)
+    np.testing.assert_array_equal(new.xT, old.xT)
+    np.testing.assert_array_equal(new.transition_matrix, old.transition_matrix)
+    last = cast(pd.DataFrame, sb_worldcup_data["games"]).iloc[-1]
+    acts = cast(pd.DataFrame, sb_worldcup_data[f"actions/game_{last.game_id}"])
+    np.testing.assert_array_equal(new.rate(acts), old.rate(acts))

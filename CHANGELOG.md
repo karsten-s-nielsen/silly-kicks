@@ -5,6 +5,36 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.17.0] — 2026-06-07
+
+### Added — SK-xT-1: pluggable, evaluatable xT (`silly_kicks.xthreat`)
+
+`silly_kicks/xthreat.py` is now the `silly_kicks/xthreat/` package with a pluggable transition
+family in silly-kicks house style (string-dispatch + frozen-dataclass params, no ABCs; ADR-021):
+
+- **`ExpectedThreat(method="singh_counts" | "kde_smoothed", params=..., l=, w=)`** — the
+  `singh_counts` default is **byte-identical** to the prior implementation (proven by an
+  in-process frozen-oracle parity gate over the WC2018 fixture + `spadl_actions`). KDE-smoothed
+  transitions (`kde_smoothed_transition_matrix`, Silverman-1986 bandwidth, optional adaptive
+  per-source-zone) are a new flavor; `KDEParams.bandwidth` defaults to 1.0 (pure Silverman — a
+  conservative, corpus-agnostic baseline). KDE strictly beats Singh at every scale tested; the
+  held-out-NLL-optimal multiplier is corpus-size-dependent (~1 on a 64-match sample, ≥4 on an
+  8.9M-action mart) — tune via `compute_holdout_nll`. `singh_transition_matrix` is vectorized
+  (`np.add.at`), byte-identical to the legacy per-zone loop (exact-equality parity gate).
+- **`GridSpec`** — first-class variable resolution (pitch dims stay in `spadlconfig`; SSOT).
+- **Standalone `value_iteration`** (extracted byte-identically from the legacy solver; optional
+  `max_iter` guard, default unbounded) + **`singh_transition_matrix`** / `silverman_2d`.
+- **Held-out transition-model NLL evaluator** — `holdout_split` (`game_id`-keyed),
+  `compute_holdout_nll` (pure: matrix + holdout + grid), `compute_holdout_nll_per_group`. The
+  first held-out xT evaluation primitive in silly-kicks. (NOT an xT-quality metric — it scores
+  destination likelihood under the transition matrix.)
+
+KNN/conditional xT (pre-publication; tracking-join-dependent) is deferred. The lakehouse `XTGrid`
+typed wrapper is NOT adopted (xthreat keeps its raw `.xT` ndarray). **Additive — no behavior
+change on the default Singh path, so no retrain trigger for existing consumers** (incl. the TF-24
+calibration `FrozenXt`). Promotion proposed by the luxury-lakehouse session; attribution:
+Singh (2018), Silverman (1986), Salimi et al. (2026, LISS poster, pre-publication). Decision: ADR-021.
+
 ## [4.16.1] — 2026-06-07
 
 ### Fixed — Sportec/DFL converter mislabelled ~99% of passes as crosses

@@ -37,9 +37,25 @@ The Atomic-SPADL representation and Atomic-VAEP framework
 (2020). "Introducing Atomic-SPADL: A New Way to Represent Event Stream Data."
 DTAI Sports Analytics Blog.
 
-The Expected Threat (xT) grid (silly_kicks/xthreat.py) seeds from:
+The Expected Threat (xT) grid (silly_kicks/xthreat/) seeds from:
 Singh, K. (2018). "Introducing Expected Threat (xT)." karun.in/blog/expected-threat
 The grid is recomputable from event data; the seed values are reference-only.
+
+- Silverman, B. W. (1986). "Density Estimation for Statistics and Data Analysis."
+  Chapman & Hall.
+  Used by: silly_kicks.xthreat (method="kde_smoothed"), silverman_2d.
+  2D rule-of-thumb bandwidth h = n^(-1/6) * sigma (the (4/(d+2))^(1/(d+4)) constant is 1 at
+  d=2); optional per-source-zone adaptive bandwidth. The default KDEParams.bandwidth multiplier
+  is 1.0 (pure Silverman) -- a conservative, corpus-agnostic default; the NLL-optimal multiplier
+  is corpus-size-dependent and is tuned per corpus via compute_holdout_nll (ADR-021).
+
+- Salimi, M. S.; Salmankhah, A.; Nodin, A. (2026). "ExT: Improving the Computational
+  Efficiency and Spatial Granularity of the Expected Threat Model." LISS Football Analytics
+  Symposium.
+  Used by: silly_kicks.xthreat (method="kde_smoothed").
+  PRE-PUBLICATION (poster). silly-kicks implements a REPRODUCTION of the poster-level
+  KDE-smoothed transition only; the per-source-context KNN/conditional formulation is NOT
+  implemented. Update on publication.
 
 The tracking namespace primitive layer (silly_kicks/tracking/, PR-S19,
 ADR-004) implements ingestion + linkage primitives across Gradient Sports (formerly PFF), Sportec,
