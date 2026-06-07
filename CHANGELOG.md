@@ -56,8 +56,20 @@ features should be re-fit.**
 
 The lakehouse may drop its string-coercion workaround and rely on the seam coercion, or call
 `validate_id_dtypes(..., on_mismatch="raise")` at work-unit entry. ADR-001 (converter identifier
-conventions) is preserved — the fix lives entirely at the consumer seams. No new dependencies;
-`import silly_kicks` stays dependency-light.
+conventions) is preserved — the fix lives entirely at the consumer seams. No new **runtime**
+dependencies; `import silly_kicks` stays dependency-light.
+
+### Internal — test-suite parallelization (CI runtime)
+
+Library runtime is unaffected (test-infra only). The serial suite was 66% ghost-GK KDE, dominated
+by the brute-force `vectorized` backend (~17 s/call). CI now runs the bulk suite under
+`pytest -n auto --dist load` (new `pytest-xdist` in the `[test]` extra) with the wall-clock
+benchmark/perf-budget tests split into a separate single-threaded `--benchmark-only` step, so
+parallel CPU contention cannot flake their timing assertions. The ghost-GK golden gates now run the
+exact `cpu-numba` backend (matches `vectorized`/scipy at 1e-9 on the kernel; ~7.8× faster) instead of
+the brute-force one, and the bundled-model golden slices to 4 frozen samples (`vectorized` ↔ scipy
+parity is still locked by the kernel + model-traveling tests). Local bulk wall-clock ~578 s → ~110 s
+(16-core).
 
 ## [4.14.0] — 2026-06-06
 

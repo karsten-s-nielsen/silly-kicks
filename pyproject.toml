@@ -64,6 +64,10 @@ test = [
     "pytest-mock>=3.11.1",
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",
+    # pytest-xdist parallelizes the suite (CI runs `-n auto --dist loadscope`); the
+    # wall-clock benchmark/perf tests run in a separate single-threaded step so parallel
+    # CPU contention does not make their timing assertions flaky.
+    "pytest-xdist>=3.5.0",
     # pytables backs ``pd.HDFStore`` for the SB WorldCup-2018 fixture in tests/conftest.py.
     # Without it, the 5 ``test_predict*`` cases (vaep / xthreat / atomic vaep) error at
     # collection time with ImportError("Missing optional dependency 'pytables'").

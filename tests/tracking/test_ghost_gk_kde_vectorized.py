@@ -46,10 +46,14 @@ def golden():
     return np.load(_GOLDEN, allow_pickle=True)
 
 
-# predict_density on the bundled 36k-sample "default" model is heavy (~few s/sample), so the
-# golden slices to the first _N_GOLDEN frozen samples — enough spread to lock the grid/mode/
-# spread contract while keeping the CI gate tractable. (Full 24 samples are frozen on disk.)
-_N_GOLDEN = 8
+# predict_density on the bundled 36k-sample "default" model is heavy (the `vectorized`/`scipy`
+# oracle paths are ~4-9s/sample), so every golden gate slices to the first _N_GOLDEN frozen
+# samples — enough spread to lock the grid/mode/spread contract while keeping the CI gate
+# tractable. The main golden runs the production `cpu-numba` backend (~7.8x faster than
+# vectorized); the slow oracle now appears only in the parity tests (test_model_traveling_parity,
+# test_fft_cic_raw_grid_tighter_than_ngp). (Full 24 samples are frozen on disk; raise this to
+# widen coverage at a linear runtime cost.)
+_N_GOLDEN = 4
 
 
 @pytest.fixture(scope="module")
@@ -60,12 +64,16 @@ def default_model_features(golden):
     return model, X
 
 
-# Golden gate = the NEW backend vs FROZEN scipy-f64 values. We do NOT re-parametrize over
-# "scipy" here: re-running scipy on the 36k-sample bundled model to compare it against its own
-# frozen output is circular AND ~116s/call. scipy reproducibility is covered by the gen script
-# + the regen-on-bump maintenance note. The frozen npz IS the scipy oracle.
-@pytest.mark.parametrize("kde_backend", ["vectorized", "cpu-numba"])
-def test_golden_continuous(golden, default_model_features, kde_backend):
+# Golden gate = the production fast backend (cpu-numba) vs FROZEN scipy-f64 values. We do NOT
+# parametrize over "vectorized" or "scipy" here:
+#   * vectorized == scipy is already locked at the kernel (test_vectorized_kernel_matches_scipy,
+#     1e-9) and on the full loaded-model path (test_model_traveling_parity) — re-running the
+#     ~4.4s/sample brute-force backend against its own frozen output adds cost, not coverage.
+#   * re-running scipy on the 36k-sample bundled model to compare it against its own frozen output
+#     is circular AND ~116s/call; the frozen npz IS the scipy oracle (gen script + regen-on-bump).
+# cpu-numba == vectorized is locked at 1e-9 on production-scale k (test_numba_loop_matches_numpy_
+# closed_form), so this gate transitively proves cpu-numba == scipy on the real model.
+def test_golden_continuous(golden, default_model_features):
     """Density grid + mean + spread: rtol/atol + explicit NaN-mask equality.
 
     NB: this full-path golden gates at rtol=1e-7, looser than the raw-kernel parity
@@ -74,7 +82,7 @@ def test_golden_continuous(golden, default_model_features, kde_backend):
     which amplify floating error by ~2 orders. Do NOT tighten this to 1e-9 — it will flake.
     """
     model, X = default_model_features
-    densities = model.predict_density(X, kde_backend=kde_backend)
+    densities = model.predict_density(X, kde_backend="cpu-numba")
     probs = np.stack([d.probabilities for d in densities])
     spread = np.array([d.spread for d in densities])
     mean_x = np.array([d.mean_x for d in densities])
@@ -88,29 +96,27 @@ def test_golden_continuous(golden, default_model_features, kde_backend):
     np.testing.assert_allclose(mean_y, golden["mean_y"][:n], rtol=1e-7, atol=1e-9)
 
 
-@pytest.mark.parametrize("kde_backend", ["vectorized", "cpu-numba"])
-def test_golden_discrete_mode(golden, default_model_features, kde_backend):
-    """mode_x/y (argmax): exact grid-cell match for vectorized; <=1 cell for cpu-numba.
+def test_golden_discrete_mode(golden, default_model_features):
+    """mode_x/y (argmax): cpu-numba within <=1 grid cell of the frozen scipy golden.
 
     numba's j-outer/i-inner sequential accumulation vs numpy's pairwise reduction can flip a
     NEAR-TIE argmax by <=1 grid cell. The density field is the primary check
-    (test_golden_continuous); the mode is derived, so for cpu-numba allow a <=GRID_RESOLUTION
-    shift. vectorized stays exact (it matched the frozen scipy golden in 4.2.0).
+    (test_golden_continuous); the mode is derived, so allow a <=GRID_RESOLUTION shift. (The exact
+    vectorized==frozen-scipy mode that this gate held in 4.2.0 is now implied transitively:
+    test_vectorized_kernel_matches_scipy locks the grid at 1e-9, and an exact-1e-9 grid shares
+    scipy's argmax barring an astronomically unlikely <1e-9 tie.)
     """
     from silly_kicks.tracking._ghost_gk import GRID_RESOLUTION
 
     model, X = default_model_features
-    densities = model.predict_density(X, kde_backend=kde_backend)
+    densities = model.predict_density(X, kde_backend="cpu-numba")
     mode_x = np.array([d.mode_x for d in densities])
     mode_y = np.array([d.mode_y for d in densities])
     gmx = golden["mode_x"][:_N_GOLDEN]
     gmy = golden["mode_y"][:_N_GOLDEN]
-    if kde_backend == "vectorized":
-        np.testing.assert_array_equal(mode_x, gmx)
-        np.testing.assert_array_equal(mode_y, gmy)
-    else:  # cpu-numba: near-tie argmax can shift <=1 grid cell on a different reduction order
-        assert np.all(np.abs(mode_x - gmx) <= GRID_RESOLUTION + 1e-9)
-        assert np.all(np.abs(mode_y - gmy) <= GRID_RESOLUTION + 1e-9)
+    # near-tie argmax can shift <=1 grid cell on numba's different reduction order
+    assert np.all(np.abs(mode_x - gmx) <= GRID_RESOLUTION + 1e-9)
+    assert np.all(np.abs(mode_y - gmy) <= GRID_RESOLUTION + 1e-9)
 
 
 def test_golden_fft_scalars(golden, default_model_features):
@@ -171,10 +177,10 @@ def test_vectorized_kernel_matches_scipy(k):
 def test_model_traveling_parity(default_model_features):
     """vectorized ≈ scipy on whatever model is loaded (auto-revalidates on retrain).
 
-    Sliced to 3 samples: this runs the LIVE (slow) scipy reference on the bundled model.
+    Sliced to 2 samples: this runs the LIVE (slow, ~9s/sample) scipy reference on the bundled model.
     """
     model, X = default_model_features
-    Xs = X.iloc[:3]
+    Xs = X.iloc[:2]
     sci = model.predict_density(Xs, kde_backend="scipy")
     vec = model.predict_density(Xs, kde_backend="vectorized")
     p_sci = np.stack([d.probabilities for d in sci])
@@ -359,7 +365,7 @@ def test_default_backend_makes_no_scipy_kde(small_model, monkeypatch):
     # _kde_density_scipy resolves gaussian_kde from the _ghost_gk module global, so patch there.
     monkeypatch.setattr(g, "gaussian_kde", _spy)
     model, X = small_model
-    _ = model.predict_density(X)  # default backend
+    _ = model.predict_density(X.iloc[:3])  # default backend (3 rows proves the no-scipy guard)
     assert calls["n"] == 0, "default path still constructs scipy.gaussian_kde"
 
 

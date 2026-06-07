@@ -54,4 +54,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[kloppy,xgboost,test]"
-      - run: pytest tests/ -m "not e2e" -v --tb=short
+      # Bulk suite in parallel. `--dist load` spreads individual tests (not whole modules) across
+      # workers, so the slow ghost-GK golden tests fan out instead of pinning one worker -- ~110s
+      # vs ~155s for loadscope locally (16 cores). Tests are independent (no shared module fixture
+      # they'd otherwise recreate), so load is both faster and bit-identical. Perf tests skipped here.
+      - run: pytest tests/ -m "not e2e" -n auto --dist load --benchmark-skip --tb=short
+      # Wall-clock benchmark/perf-budget tests, single-threaded for stable timing (no parallel
+      # CPU contention).
+      - run: pytest tests/ -m "not e2e" --benchmark-only --tb=short

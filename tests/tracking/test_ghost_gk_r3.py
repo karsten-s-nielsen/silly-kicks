@@ -127,7 +127,7 @@ class TestServeCarrier:
 
         frames = _make_ghost_gk_frames()
         with patch.object(ggk, "infer_ball_carrier", wraps=ggk.infer_ball_carrier) as spy:
-            ggk.compute_ghost_gk(frames, model="default", home_team_id=1)
+            ggk.compute_ghost_gk(frames, model="default", home_team_id=1, kde_backend="cpu-numba")
         assert spy.called  # serve no longer skips carrier inference
 
     def test_supplied_carrier_skips_internal_inference(self):
@@ -140,7 +140,7 @@ class TestServeCarrier:
             ["game_id", "period_id", "frame_id", "ball_carrier_team_id"]
         ]
         with patch.object(ggk, "infer_ball_carrier") as spy:
-            ggk.compute_ghost_gk(frames, model=model, home_team_id=1, carrier=carrier)
+            ggk.compute_ghost_gk(frames, model=model, home_team_id=1, carrier=carrier, kde_backend="cpu-numba")
         assert not spy.called  # passthrough avoids recomputation
 
     def test_train_serve_feature_parity(self):
@@ -179,7 +179,7 @@ class TestAggregatorCarrierPassthrough:
         # add_ghost_gk's function-local `from ._ghost_gk import compute_ghost_gk` resolves
         # the current sys.modules module; patch.object on that same module keeps them aligned.
         with patch.object(ggk, "infer_ball_carrier") as spy:
-            add_ghost_gk(actions, frames, model=model, home_team_id=1, carrier=carrier)
+            add_ghost_gk(actions, frames, model=model, home_team_id=1, carrier=carrier, kde_backend="cpu-numba")
         assert not spy.called  # carrier forwarded to compute_ghost_gk
 
 

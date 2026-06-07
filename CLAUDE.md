@@ -46,6 +46,12 @@ e2e tests require dataset fixtures not committed to the repo. Tests with
 fixtures committed to the repo should not be marked e2e — they run in
 the regular suite.
 
+CI splits the run into two steps: the bulk suite in parallel
+(`pytest -m "not e2e" -n auto --dist load --benchmark-skip`, needs the `[test]`
+extra's `pytest-xdist`) and the wall-clock benchmark/perf-budget tests
+single-threaded (`--benchmark-only`), so parallel CPU contention does not flake
+their timing assertions. The serial command above stays valid for local runs.
+
 ## Open Items
 
 See [TODO.md](TODO.md) for tracked work.

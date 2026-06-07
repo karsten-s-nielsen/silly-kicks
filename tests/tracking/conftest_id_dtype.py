@@ -144,7 +144,7 @@ AGGREGATORS = [
     _ah(F.add_off_ball_runs, "add_off_ball_runs"),
     _ah(F.add_shape_graph, "add_shape_graph"),
     _ah(F.add_team_shape, "add_team_shape"),
-    _ah(F.add_ghost_gk, "add_ghost_gk"),
+    _ah(F.add_ghost_gk, "add_ghost_gk", kde_backend="cpu-numba"),
     _axh(F.add_cover_shadows, "add_cover_shadows"),
     _axh(F.add_gk_influence, "add_gk_influence"),
     _axh(F.add_player_influence, "add_player_influence"),
