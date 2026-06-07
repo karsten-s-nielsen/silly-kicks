@@ -1,6 +1,10 @@
-"""pytest-benchmark gates per spec section 8.1 review item 5.
+"""Structural performance guard for pressure_on_actor (TF-2), all three methods.
 
-Andrienko/Link < 120ms per 100 actions; Bekkers < 500ms per 100 actions on CI runner.
+Replaces flaky wall-clock budgets (120ms/500ms per 100 actions, runner-variance-prone) with a
+deterministic invariant: every method links actions→frames ONCE for the whole batch (via
+``_resolve_action_frame_context``) and then vectorises the pressure kernel over all actions.
+A regression to per-action re-linking is the real O(actions) cost blow-up. See
+tests/_perf_structural.py.
 """
 
 from __future__ import annotations
@@ -9,7 +13,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from silly_kicks.tracking.features import pressure_on_actor
+from silly_kicks.tracking import features as _features
+from tests._perf_structural import call_counter
 
 from .test_pressure_snapshot import _build_fixture
 
@@ -28,22 +33,17 @@ def fixture_100():
     return actions, frames
 
 
-def test_andrienko_perf_per_100_actions(benchmark, fixture_100) -> None:
+@pytest.mark.parametrize("method", ["andrienko_oval", "link_zones", "bekkers_pi"])
+def test_pressure_links_once_per_100_actions(method, fixture_100, monkeypatch) -> None:
     actions, frames = fixture_100
-    result = benchmark(pressure_on_actor, actions, frames, method="andrienko_oval")
+    # pressure_on_actor resolves the linked frame context via features._resolve_action_frame_context
+    # (imported into the features namespace); patch that name.
+    calls = call_counter(monkeypatch, _features, "_resolve_action_frame_context")
+
+    result = _features.pressure_on_actor(actions, frames, method=method)
+
     assert result.notna().any()
-    assert benchmark.stats.stats.mean < 0.12  # 120ms ceiling on CI; spec target 50ms
-
-
-def test_link_perf_per_100_actions(benchmark, fixture_100) -> None:
-    actions, frames = fixture_100
-    result = benchmark(pressure_on_actor, actions, frames, method="link_zones")
-    assert result.notna().any()
-    assert benchmark.stats.stats.mean < 0.12
-
-
-def test_bekkers_perf_per_100_actions(benchmark, fixture_100) -> None:
-    actions, frames = fixture_100
-    result = benchmark(pressure_on_actor, actions, frames, method="bekkers_pi")
-    assert result.notna().any()
-    assert benchmark.stats.stats.mean < 0.50  # 500ms ceiling on CI; spec target 250ms
+    assert calls["n"] == 1, (
+        f"pressure_on_actor(method={method!r}) resolved the frame context {calls['n']} times for "
+        "100 actions (expected 1). Per-action re-linking is the O(actions) regression the budget proxied."
+    )

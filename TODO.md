@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-06. **Current release**: silly-kicks 4.14.0 (Ghost-GK serves the exact boosted HGBR `predict_mean` reconstructed pickle-free — integrity fix, 1.07m held-out MAE vs the 4.65m served mode; phase-numeric + gk_y ensemble + re-fit/re-published both variants on clean 4.13.0 events; `ghost_gk_spread` → `ghost_gk_density_spread`; ADR-016, PR-S83). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-06. **Current release**: silly-kicks 4.15.0 (dtype-safe id contract at the tracking-feature seams — `_id_compat` + public `validate_id_dtypes`/`IdDtypeDiagnosis`; fixes silent cross-dtype actor/opponent/GK/possession mis-resolution + three latent bugs the contract exposed: object-`is_ball` ball-as-opponent, `str(5.0)` player-influence mislabel, object-path opponent join-miss; VAEP retrain trigger; ADR-019). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -66,19 +66,6 @@ Items are ranked top-to-bottom by specification completeness. Tier 3–4 require
   (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
   constraints (e.g. "zero Spark imports in domain") hold in practice and that
   superseded decisions are updated. Frequency: once per minor release cycle.
-- **GS tracking-frames id dtype inconsistency (latent correctness bug; needs own
-  brainstorm).** `GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS` (`tracking/schema.py:44-48`)
-  forces `player_id`/`team_id` to `Int64`, whereas `KLOPPY`/`SPORTEC` use `object`
-  (native strings). Consumers that compare frame ids to native-string action /
-  `home_team_id` values (`utils.py` `_resolve_action_frame_context`,
-  `_defensive_line.py`) get `Int64(366) == "366"` → `False`, silently breaking GS
-  actor/opponent/defensive-line/possession resolution regardless of the player-id
-  helper. Verified lakehouse-side (2026-06-01 review); lakehouse uses a string-coercion
-  workaround after `convert_to_frames`. **Chesterton's Fence:** GS `Int64` is a
-  deliberate PR-S18 convention (NaN on ball rows; mirrors `GRADIENTSPORTS_SPADL_COLUMNS`)
-  and ADR-001 holds converter identifier conventions sacred — so the fix (align GS frames
-  to `object`/native-string **vs** make every consumer dtype-safe **vs** document + guard)
-  needs its own spec/brainstorm, not a drive-by change. Size: Wicked.
 
 ---
 

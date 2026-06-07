@@ -18,6 +18,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ._id_compat import ids_match
+
 
 def require_et_direction(
     period_ids: pd.Series | np.ndarray | Sequence[int],
@@ -145,7 +147,7 @@ def compute_attacking_direction(
         if not period_mask.any():
             continue
         home_attacks_right = flags[p]
-        is_home = team_id == home_team_id
+        is_home = ids_match(team_id, home_team_id)
         out.loc[period_mask & is_home] = "ltr" if home_attacks_right else "rtl"
         out.loc[period_mask & ~is_home] = "rtl" if home_attacks_right else "ltr"
     return out

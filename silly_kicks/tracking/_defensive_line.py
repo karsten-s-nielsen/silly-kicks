@@ -14,6 +14,8 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from ._id_compat import ids_match, same_id
+
 
 def select_back_line_players(
     frames: pd.DataFrame,
@@ -59,14 +61,14 @@ def select_back_line_players(
     outfield = frames[
         (~frames["is_ball"].astype(bool))
         & (~frames["is_goalkeeper"].astype(bool))
-        & (frames["team_id"] == team_id)
+        & ids_match(frames["team_id"], team_id)
         & frames["x"].notna()
     ]
 
     if len(outfield) < 3:
         return outfield
 
-    defends_x0 = team_id == home_team_id
+    defends_x0 = same_id(team_id, home_team_id)
     xs = outfield["x"].to_numpy(dtype="float64")
 
     if defends_x0:
@@ -203,7 +205,7 @@ def compute_defensive_line(
             continue
 
         # Sort by proximity to own goal
-        defends_x0 = team_id == home_team_id
+        defends_x0 = same_id(team_id, home_team_id)
         xs = group["x"].to_numpy(dtype="float64")
         ys = group["y"].to_numpy(dtype="float64")
 

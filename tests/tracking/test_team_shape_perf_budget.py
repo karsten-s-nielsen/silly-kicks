@@ -1,10 +1,17 @@
-"""Performance budget for compute_team_shape (TF-31)."""
+"""Structural performance guard for compute_team_shape (TF-31).
+
+Replaces a flaky wall-clock budget (the 5ms ceiling once measured 6.2ms on a shared Windows
+runner and failed CI) with a deterministic call-count invariant: the per-frame Ward line
+decomposition runs ONE ``scipy...linkage`` clustering, independent of player count. A
+regression to per-player / repeated clustering is the real cost blow-up. See
+tests/_perf_structural.py.
+"""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-_BUDGET = 0.005
+from tests._perf_structural import call_counter
 
 
 @pytest.fixture
@@ -49,12 +56,17 @@ def team_shape_frame():
     return pd.DataFrame(rows)
 
 
-def test_team_shape_perf_budget(benchmark, team_shape_frame):
-    from silly_kicks.tracking._team_shape import compute_team_shape
+def test_team_shape_runs_one_ward_clustering(team_shape_frame, monkeypatch):
+    from silly_kicks.tracking import _team_shape
 
-    result = benchmark(compute_team_shape, team_shape_frame, team_id=1)
+    # _team_shape imports `linkage` at module scope (`from scipy... import linkage`), so patch
+    # the _team_shape module attribute (the name the function resolves), not scipy.
+    calls = call_counter(monkeypatch, _team_shape, "linkage")
+
+    result = _team_shape.compute_team_shape(team_shape_frame, team_id=1)
+
     assert result is not None
-    if benchmark.stats is not None:
-        assert benchmark.stats.stats.mean < _BUDGET, (
-            f"compute_team_shape: {benchmark.stats.stats.mean * 1000:.1f}ms > {_BUDGET * 1000:.0f}ms"
-        )
+    assert calls["n"] == 1, (
+        f"compute_team_shape ran {calls['n']} Ward clusterings for one frame (expected 1). "
+        "Per-player or repeated clustering is the O(n) regression the wall-clock budget proxied."
+    )

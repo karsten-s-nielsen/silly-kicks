@@ -54,4 +54,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[kloppy,xgboost,test]"
-      - run: pytest tests/ -m "not e2e" -v --tb=short
+      # Bulk suite (serial). xdist `-n auto` was reverted: on the 4-core/7GB CI runners it
+      # regressed py3.12 from pass to a memory/JIT-pressure kill (4x heavy ML imports + 4x numba
+      # compiles + the ghost-GK suite), the opposite of the 16-core local speedup. The dominant
+      # ghost-GK cost is instead cut at the source (exact cpu-numba KDE backend + shrunk golden).
+      # Perf budgets are now deterministic structural guards in the bulk (no wall-clock), so this
+      # step is stable; the pure benchmark *measurements* run single-threaded below for clean timing.
+      - run: pytest tests/ -m "not e2e" --benchmark-skip --tb=short
+      # Benchmark measurements (no hard timing asserts after the structural-guard conversion), run
+      # single-threaded so the recorded numbers are clean trend data, not CPU-contended noise.
+      - run: pytest tests/ -m "not e2e" --benchmark-only --tb=short

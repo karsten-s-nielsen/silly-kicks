@@ -15,7 +15,14 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from .schema import LinkReport, TimeBaseDiagnosis
+from ._id_compat import (
+    _as_bool,
+    _directly_comparable,
+    align_join_keys,
+    canonical_id_series,
+    ids_match,
+)
+from .schema import IdDtypeDiagnosis, LinkReport, TimeBaseDiagnosis
 
 MISMATCH_OVERLAP_FLOOR: float = 0.2
 """Per-period action/frame range overlap below this is flagged a suspected
@@ -153,7 +160,7 @@ def play_left_to_right(frames: pd.DataFrame, home_team_id) -> pd.DataFrame:
 
     # Identify periods where the home team has "rtl" direction → need flipping
     is_ball = out["is_ball"].astype(bool)
-    home_player_mask = (~is_ball) & (out["team_id"] == home_team_id)
+    home_player_mask = (~is_ball) & ids_match(out["team_id"], home_team_id)
     home_rtl_mask = home_player_mask & (out["team_attacking_direction"] == "rtl")
     home_rtl_idx = np.flatnonzero(home_rtl_mask.to_numpy())
     rtl_periods = set(out["period_id"].iloc[home_rtl_idx].unique())
@@ -530,6 +537,81 @@ def validate_time_base(
     return diag
 
 
+_ID_COLUMNS = ("player_id", "team_id", "defending_gk_player_id")
+
+
+def _diagnose_id_dtypes(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    home_team_id=None,
+) -> IdDtypeDiagnosis:
+    """Pure action-vs-frame id-dtype compatibility diagnosis (ADR-019)."""
+    per_column: dict[str, tuple[str, str]] = {}
+    coercion: list[str] = []
+    for col in _ID_COLUMNS:
+        if col in actions.columns and col in frames.columns:
+            ad, fd = actions[col].dtype, frames[col].dtype
+            per_column[col] = (str(ad), str(fd))
+            if ad.kind != fd.kind:
+                coercion.append(col)
+    ht_dtype = None
+    ht_coerce = False
+    if home_team_id is not None and "team_id" in frames.columns:
+        ht_dtype = type(home_team_id).__name__
+        scal_kind = pd.Series([home_team_id]).dtype.kind
+        ht_coerce = scal_kind != frames["team_id"].dtype.kind
+    bits = [f"{c}: action={per_column[c][0]} vs frame={per_column[c][1]}" for c in coercion]
+    if ht_coerce:
+        bits.append(f"home_team_id={ht_dtype} vs frame team_id={frames['team_id'].dtype}")
+    message = "id dtype mismatch (coercion applied at seams): " + "; ".join(bits) if bits else "id dtypes compatible"
+    return IdDtypeDiagnosis(per_column, tuple(coercion), ht_dtype, ht_coerce, message)
+
+
+def validate_id_dtypes(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id=None,
+    on_mismatch: Literal["warn", "raise", "ignore"] = "raise",
+) -> IdDtypeDiagnosis:
+    """Pre-flight guard that actions + frames share comparable id dtypes (ADR-019).
+
+    The tracking-feature seams coerce id dtypes transparently, so this is an OPT-IN
+    loud guard, not a required call. Mirrors :func:`validate_time_base`: ``on_mismatch``
+    defaults to ``"raise"`` (an explicitly-invoked assertion fails loud); ``"warn"`` /
+    ``"ignore"`` available. The diagnosis is returned under all policies.
+
+    Parameters
+    ----------
+    actions, frames : pd.DataFrame
+        SPADL actions / long-form tracking frames (id columns ``player_id`` /
+        ``team_id`` / optional ``defending_gk_player_id``).
+    home_team_id : int | str | None
+        Optional scalar to check against the frame ``team_id`` dtype (the
+        scalar-arg failure axis).
+    on_mismatch : {"raise", "warn", "ignore"}, default "raise"
+        Policy when an id-dtype mismatch is found.
+
+    Returns
+    -------
+    IdDtypeDiagnosis
+        The diagnosis (returned in all policies).
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking import validate_id_dtypes
+    >>> diag = validate_id_dtypes(actions, frames, on_mismatch="warn")  # doctest: +SKIP
+    >>> diag.has_mismatch  # doctest: +SKIP
+    """
+    diag = _diagnose_id_dtypes(actions, frames, home_team_id=home_team_id)
+    if diag.has_mismatch:
+        if on_mismatch == "raise":
+            raise ValueError(f"validate_id_dtypes: {diag.message}")
+        if on_mismatch == "warn":
+            warnings.warn(f"validate_id_dtypes: {diag.message}", UserWarning, stacklevel=2)
+    return diag
+
+
 def _count_candidates_within_tolerance(
     actions_sorted: pd.DataFrame,
     frame_index: pd.DataFrame,
@@ -588,6 +670,8 @@ def _resolve_action_frame_context(
         projection_cols.append("defending_gk_player_id")
     actions_with_period = actions[projection_cols]
     pointer_with_period = pointers.merge(actions_with_period, on="action_id", how="left", suffixes=("", "_action"))
+    # Align id-valued join keys before the merge so a string-id caller does not raise (ADR-019).
+    pointer_with_period, frames = align_join_keys(pointer_with_period, frames, ["period_id", "frame_id"])
     long = pointer_with_period.merge(
         frames,
         on=["period_id", "frame_id"],
@@ -595,9 +679,36 @@ def _resolve_action_frame_context(
         suffixes=("_action", "_frame"),
     )
 
+    # ADR-019: dtype-safe id comparisons at the actor / opponent / GK masks. Canonicalize each
+    # suffixed id column AT MOST ONCE and reuse across masks (A1 de-dup); the fast path leaves a
+    # same-kind/both-object pair raw-compared at zero cost.
+    not_ball = ~long["is_ball"].astype(bool)
+    _canon_cache: dict[str, pd.Series] = {}
+
+    def _canon_col(col: str) -> pd.Series:
+        # explicit membership check -- NOT setdefault, whose default arg is eagerly
+        # evaluated every call and would defeat the de-dup (A1).
+        if col not in _canon_cache:
+            _canon_cache[col] = canonical_id_series(long[col])
+        return _canon_cache[col]
+
+    def _ids_equal_cols(lcol: str, rcol: str) -> pd.Series:
+        a, b = long[lcol], long[rcol]
+        if _directly_comparable(a.dtype, b.dtype):
+            return _as_bool((a == b) & a.notna() & b.notna())
+        ca, cb = _canon_col(lcol), _canon_col(rcol)
+        return _as_bool((ca == cb) & ca.notna() & cb.notna())
+
+    def _ids_differ_cols(lcol: str, rcol: str) -> pd.Series:
+        a, b = long[lcol], long[rcol]
+        if _directly_comparable(a.dtype, b.dtype):
+            return _as_bool(a.notna() & b.notna() & (a != b))
+        ca, cb = _canon_col(lcol), _canon_col(rcol)
+        return _as_bool(ca.notna() & cb.notna() & (ca != cb))
+
     # actor_rows: filter to rows where frame.player_id == action.player_id (and not ball)
     if "player_id_frame" in long.columns:
-        actor_mask = (long["player_id_frame"] == long["player_id_action"]) & (~long["is_ball"])
+        actor_mask = _ids_equal_cols("player_id_frame", "player_id_action") & not_ball
         actor_long = long.loc[actor_mask].copy()
     else:
         actor_long = long.iloc[0:0].copy()
@@ -605,21 +716,19 @@ def _resolve_action_frame_context(
     # Build per-action actor row; left-join on action_id so unlinked actions also appear (with NaN cols)
     actor_rows = pd.DataFrame({"action_id": actions["action_id"]}).merge(actor_long, on="action_id", how="left")
 
-    # opposite_rows_per_action: filter to rows where frame.team_id != action.team_id and not ball
+    # opposite_rows_per_action: filter to rows where frame.team_id != action.team_id and not ball.
+    # ids_differ requires BOTH present, so an unmatched/NaN id is never mis-classified as opponent.
     if "team_id_frame" in long.columns:
-        opp_mask = (long["team_id_frame"] != long["team_id_action"]) & (~long["is_ball"])
+        opp_mask = _ids_differ_cols("team_id_frame", "team_id_action") & not_ball
         opposite = long.loc[opp_mask].copy()
     else:
         opposite = long.iloc[0:0].copy()
 
     # defending_gk_rows (PR-S21): rows where frame.player_id == action.defending_gk_player_id
-    # AND defending_gk_player_id is not NaN AND not ball.
-    # Provider-native player_ids may be strings (sportec) or numeric — comparing them
-    # element-wise via pd.Series.eq handles both cases; the .notna() mask guards NaN.
+    # AND defending_gk_player_id is not NaN AND not ball. ids_equal's both-present rule subsumes
+    # the explicit .notna() guard.
     if "defending_gk_player_id" in long.columns and "player_id_frame" in long.columns:
-        gk_id_action = long["defending_gk_player_id"]
-        pid_frame = long["player_id_frame"]
-        gk_mask = (pid_frame == gk_id_action) & gk_id_action.notna() & (~long["is_ball"])
+        gk_mask = _ids_equal_cols("player_id_frame", "defending_gk_player_id") & not_ball
         defending_gk_rows = long.loc[gk_mask].copy()
     else:
         defending_gk_rows = long.iloc[0:0].copy()

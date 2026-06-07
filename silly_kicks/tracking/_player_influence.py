@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from ._id_compat import same_id
 from .pitch_control import PitchControlCache, PitchControlParams, PitchControlSurface, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
@@ -117,7 +118,7 @@ def compute_player_influence(
     threat_grid = interp(pc.grid_x, pc.grid_y)  # (ny, nx)
 
     # xT flip for away-team attack
-    if attacking_team_id != home_team_id:
+    if not same_id(attacking_team_id, home_team_id):
         threat_grid = threat_grid[:, ::-1]
 
     cell_area = pc.cell_area
@@ -150,6 +151,7 @@ def compute_player_influence(
 
     # Process per-team
     for team_id in players["team_id"].unique():
+        # frame-vs-frame (team_id is a value FROM players["team_id"]) -> raw compare.
         team_players = players[players["team_id"] == team_id]
         n_team = len(team_players)
         pids = team_players["player_id"].values

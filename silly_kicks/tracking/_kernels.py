@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from ._id_compat import align_join_keys, ids_differ, ids_equal
 from .feature_framework import ActionFrameContext
 
 if TYPE_CHECKING:
@@ -749,7 +750,7 @@ def _actor_pre_window_kernel(
     sliced = sliced[~sliced["is_ball"].astype(bool)].copy()
     actor_id_per_action = actions[["action_id", "player_id"]].rename(columns={"player_id": "actor_player_id"})
     sliced = sliced.merge(actor_id_per_action, on="action_id", how="left")
-    sliced = sliced[sliced["player_id"] == sliced["actor_player_id"]].copy()
+    sliced = sliced[ids_equal(sliced["player_id"], sliced["actor_player_id"]).to_numpy()].copy()
     if len(sliced) == 0:
         return out
 
@@ -841,13 +842,9 @@ def _defensive_line_at_actions(
     # For duplicate action_ids (gamestates), keep all rows — _row_idx disambiguates
     linked["frame_id_int"] = linked["frame_id"].astype("int64")
 
-    # Align game_id dtype between linked (from actions) and dl (from frames)
-    # before the merge — pandas rejects merge on object vs int64 keys.
-    if len(linked) > 0 and len(dl) > 0:
-        if linked["game_id"].dtype != dl["game_id"].dtype:
-            linked["game_id"] = linked["game_id"].astype(str)
-            dl = dl.copy()
-            dl["game_id"] = dl["game_id"].astype(str)
+    # Align id-valued join keys (incl. the differently-named frame_id_int<->frame_id pair) so a
+    # string-id caller does not raise on the merge (ADR-019; replaces the ad-hoc astype(str)).
+    linked, dl = align_join_keys(linked, dl, ["game_id", "period_id", ("frame_id_int", "frame_id")])
 
     # Join with defensive-line data: match on (period_id, frame_id) then filter to opposing team
     merged = linked.merge(
@@ -858,7 +855,7 @@ def _defensive_line_at_actions(
         suffixes=("_action", "_dl"),
     )
     # Keep only rows where dl team != action team (opposing team's line)
-    opposing = merged[merged["team_id_dl"] != merged["team_id_action"]]
+    opposing = merged[ids_differ(merged["team_id_dl"], merged["team_id_action"])]
 
     # One result per _row_idx (positional, always unique)
     opposing = opposing.drop_duplicates("_row_idx", keep="first")

@@ -4,6 +4,7 @@ Run with: pytest tests/test_benchmark.py --benchmark-only
 """
 
 import pandas as pd
+import pytest
 
 import silly_kicks.atomic.spadl as atomicspadl
 import silly_kicks.atomic.spadl.config as atomicspadlcfg
@@ -49,39 +50,26 @@ def test_feature_column_names_benchmark(benchmark: "BenchmarkFixture") -> None: 
 
 
 def test_add_possessions_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
-    """Benchmark ``add_possessions`` on a 1500-action match (typical SPADL match size).
+    """Benchmark ``add_possessions`` on a 1500-action match (pure measurement).
 
-    Design budget per spec: median < 50ms on local dev hardware. Hard CI bound is
-    looser (200ms) to absorb shared-runner variance; the catch-quadratic-blowup
-    safeguard is the sublinear scaling test below.
+    Regression protection is the deterministic ``test_throughput_converters_stay_vectorised``
+    guard below — the old wall-clock ``elapsed < 200ms`` ceiling flaked on shared CI runners.
     """
-    import time as _time
-
     actions = _make_spadl_actions(1500)
-    spu.add_possessions(actions)  # warmup
-    start = _time.perf_counter()
     result = spu.add_possessions(actions)
-    elapsed = _time.perf_counter() - start
     assert "possession_id" in result.columns
-    assert elapsed < 0.2, f"add_possessions(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
     benchmark(spu.add_possessions, actions)
 
 
-def test_add_possessions_sublinear_scaling_10k(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
-    """``add_possessions`` on 10k actions must stay sublinear (<2s hard CI bound).
+def test_add_possessions_benchmark_10k(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
+    """Benchmark ``add_possessions`` on 10k actions (pure measurement at scale).
 
-    The vectorised pandas/numpy implementation is O(n); a regression to a
-    Python-level row loop would push this benchmark into multi-second territory.
+    The O(n)-vs-row-loop guarantee the old ``< 2s`` ceiling proxied is now enforced
+    deterministically by ``test_throughput_converters_stay_vectorised``.
     """
-    import time as _time
-
     actions = _make_spadl_actions(10_000)
-    spu.add_possessions(actions)  # warmup
-    start = _time.perf_counter()
     result = spu.add_possessions(actions)
-    elapsed = _time.perf_counter() - start
     assert "possession_id" in result.columns
-    assert elapsed < 2.0, f"add_possessions(10k) took {elapsed * 1000:.2f}ms, hard CI budget 2000ms"
     benchmark(spu.add_possessions, actions)
 
 
@@ -110,47 +98,29 @@ def _make_spadl_actions_with_gk(n: int = 1500) -> pd.DataFrame:
 
 def test_add_gk_role_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
     """``add_gk_role`` on a 1500-action match (Q8 budget < 50ms median; CI hard 200ms)."""
-    import time as _time
-
     actions = _make_spadl_actions_with_gk(1500)
-    spu.add_gk_role(actions)  # warmup
-    start = _time.perf_counter()
     result = spu.add_gk_role(actions)
-    elapsed = _time.perf_counter() - start
     assert "gk_role" in result.columns
-    assert elapsed < 0.2, f"add_gk_role(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
     benchmark(spu.add_gk_role, actions)
 
 
 def test_add_gk_distribution_metrics_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
     """``add_gk_distribution_metrics`` (without xT grid) on 1500 actions (CI hard 200ms)."""
-    import time as _time
-
     actions = _make_spadl_actions_with_gk(1500)
-    spu.add_gk_distribution_metrics(actions)  # warmup
-    start = _time.perf_counter()
     result = spu.add_gk_distribution_metrics(actions)
-    elapsed = _time.perf_counter() - start
     assert "gk_pass_length_m" in result.columns
-    assert elapsed < 0.2, f"add_gk_distribution_metrics(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
     benchmark(spu.add_gk_distribution_metrics, actions)
 
 
 def test_add_pre_shot_gk_context_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
-    """``add_pre_shot_gk_context`` on 1500 actions with ~75 shots (CI hard 200ms).
+    """``add_pre_shot_gk_context`` on 1500 actions with ~75 shots (pure measurement).
 
-    Per-shot lookback is O(K) Python-loop work; the budget allows for the
-    ~75-shot per-match overhead of the loop.
+    Per-shot lookback loops over a numpy shot-index array (~75 shots), not the full action
+    frame — so the stays-vectorised guard (no DataFrame row iteration) still holds.
     """
-    import time as _time
-
     actions = _make_spadl_actions_with_gk(1500)
-    spu.add_pre_shot_gk_context(actions)  # warmup
-    start = _time.perf_counter()
     result = spu.add_pre_shot_gk_context(actions)
-    elapsed = _time.perf_counter() - start
     assert "gk_was_engaged" in result.columns
-    assert elapsed < 0.2, f"add_pre_shot_gk_context(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
     benchmark(spu.add_pre_shot_gk_context, actions)
 
 
@@ -209,71 +179,92 @@ def _make_atomic_actions(n: int = 1500) -> pd.DataFrame:
 
 
 def test_atomic_convert_to_atomic_preserve_native_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
-    """``convert_to_atomic(preserve_native=...)`` on a 1500-action SPADL match (CI hard 500ms)."""
-    import time as _time
-
+    """``convert_to_atomic(preserve_native=...)`` on a 1500-action SPADL match (pure measurement)."""
     actions = _make_spadl_actions(1500)
     actions["my_extra"] = 1
-    atomicspadl.convert_to_atomic(actions, preserve_native=["my_extra"])  # warmup
-    start = _time.perf_counter()
     result = atomicspadl.convert_to_atomic(actions, preserve_native=["my_extra"])
-    elapsed = _time.perf_counter() - start
     assert "my_extra" in result.columns
-    assert elapsed < 0.5, f"convert_to_atomic(preserve_native, 1500) took {elapsed * 1000:.2f}ms, hard CI budget 500ms"
     benchmark(atomicspadl.convert_to_atomic, actions, preserve_native=["my_extra"])
 
 
 def test_atomic_add_possessions_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
     """Atomic ``add_possessions`` on a 1500-action match (CI hard 200ms)."""
-    import time as _time
-
     actions = _make_atomic_actions(1500)
-    atomicspu.add_possessions(actions)  # warmup
-    start = _time.perf_counter()
     result = atomicspu.add_possessions(actions)
-    elapsed = _time.perf_counter() - start
     assert "possession_id" in result.columns
-    assert elapsed < 0.2, f"atomic add_possessions(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
     benchmark(atomicspu.add_possessions, actions)
 
 
 def test_atomic_add_gk_role_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
     """Atomic ``add_gk_role`` on a 1500-action match (CI hard 200ms)."""
-    import time as _time
-
     actions = _make_atomic_actions(1500)
-    atomicspu.add_gk_role(actions)  # warmup
-    start = _time.perf_counter()
     result = atomicspu.add_gk_role(actions)
-    elapsed = _time.perf_counter() - start
     assert "gk_role" in result.columns
-    assert elapsed < 0.2, f"atomic add_gk_role(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
     benchmark(atomicspu.add_gk_role, actions)
 
 
 def test_atomic_add_gk_distribution_metrics_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
     """Atomic ``add_gk_distribution_metrics`` (without xT grid) on 1500 actions (CI hard 200ms)."""
-    import time as _time
-
     actions = _make_atomic_actions(1500)
-    atomicspu.add_gk_distribution_metrics(actions)  # warmup
-    start = _time.perf_counter()
     result = atomicspu.add_gk_distribution_metrics(actions)
-    elapsed = _time.perf_counter() - start
     assert "gk_pass_length_m" in result.columns
-    assert elapsed < 0.2, f"atomic add_gk_distribution_metrics(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
     benchmark(atomicspu.add_gk_distribution_metrics, actions)
 
 
 def test_atomic_add_pre_shot_gk_context_benchmark_1500(benchmark: "BenchmarkFixture") -> None:  # type: ignore[name-defined]  # noqa: F821
-    """Atomic ``add_pre_shot_gk_context`` on 1500 actions (CI hard 200ms)."""
-    import time as _time
-
+    """Atomic ``add_pre_shot_gk_context`` on 1500 actions (pure measurement)."""
     actions = _make_atomic_actions(1500)
-    atomicspu.add_pre_shot_gk_context(actions)  # warmup
-    start = _time.perf_counter()
     result = atomicspu.add_pre_shot_gk_context(actions)
-    elapsed = _time.perf_counter() - start
     assert "gk_was_engaged" in result.columns
-    assert elapsed < 0.2, f"atomic add_pre_shot_gk_context(1500) took {elapsed * 1000:.2f}ms, hard CI budget 200ms"
     benchmark(atomicspu.add_pre_shot_gk_context, actions)
+
+
+# ---------------------------------------------------------------------------
+# Structural throughput guard (replaces the per-test wall-clock `elapsed < X` ceilings,
+# which flaked on shared CI runners). The blow-up those budgets actually guarded against is
+# de-vectorisation — a converter regressing from the O(n) np.select path into a Python row
+# loop. We assert that deterministically: each converter does ZERO pandas row-wise iteration
+# (apply(axis=1) / iterrows / itertuples). See tests/_perf_structural.py.
+# ---------------------------------------------------------------------------
+
+
+def _converter_cases():
+    """(label, callable) for every throughput converter the old wall-clock budgets covered."""
+
+    return [
+        ("spadl.add_possessions", lambda: spu.add_possessions(_make_spadl_actions(1500))),
+        ("spadl.add_gk_role", lambda: spu.add_gk_role(_make_spadl_actions_with_gk(1500))),
+        (
+            "spadl.add_gk_distribution_metrics",
+            lambda: spu.add_gk_distribution_metrics(_make_spadl_actions_with_gk(1500)),
+        ),
+        ("spadl.add_pre_shot_gk_context", lambda: spu.add_pre_shot_gk_context(_make_spadl_actions_with_gk(1500))),
+        (
+            "convert_to_atomic",
+            lambda: atomicspadl.convert_to_atomic(
+                _make_spadl_actions(1500).assign(my_extra=1), preserve_native=["my_extra"]
+            ),
+        ),
+        ("atomic.add_possessions", lambda: atomicspu.add_possessions(_make_atomic_actions(1500))),
+        ("atomic.add_gk_role", lambda: atomicspu.add_gk_role(_make_atomic_actions(1500))),
+        (
+            "atomic.add_gk_distribution_metrics",
+            lambda: atomicspu.add_gk_distribution_metrics(_make_atomic_actions(1500)),
+        ),
+        ("atomic.add_pre_shot_gk_context", lambda: atomicspu.add_pre_shot_gk_context(_make_atomic_actions(1500))),
+    ]
+
+
+@pytest.mark.parametrize("label,run", _converter_cases(), ids=[c[0] for c in _converter_cases()])
+def test_throughput_converters_stay_vectorised(label, run, monkeypatch) -> None:
+    """Each throughput converter stays vectorised: zero pandas row-wise iteration on a 1500-action
+    match. A regression to a Python row loop (apply(axis=1) / iterrows / itertuples) is the O(n)
+    blow-up the old wall-clock budgets proxied — caught here deterministically, runner-independent."""
+    from tests._perf_structural import row_iteration_counter
+
+    calls = row_iteration_counter(monkeypatch)
+    run()
+    assert calls["n"] == 0, (
+        f"{label} performed {calls['n']} pandas row-wise iteration(s) on 1500 actions "
+        "(apply(axis=1)/iterrows/itertuples) — it de-vectorised. Restore the np.select / vectorised path."
+    )

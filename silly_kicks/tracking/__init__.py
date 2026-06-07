@@ -32,6 +32,7 @@ __all__ = [
     "FernandezBornnParams",
     "GhostGkVariant",
     "GradientsportsRosterReport",
+    "IdDtypeDiagnosis",
     "LaneControlResult",
     "LineBreakingParams",
     "LinkParams",
@@ -187,6 +188,7 @@ __all__ = [
     "team_shape_xfns",
     "tracking_default_xfns",
     "utils",
+    "validate_id_dtypes",
     "validate_time_base",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
@@ -342,6 +344,7 @@ from .schema import (
     TRACKING_CATEGORICAL_DOMAINS,
     TRACKING_CONSTRAINTS,
     TRACKING_FRAMES_COLUMNS,
+    IdDtypeDiagnosis,
     LinkReport,
     TimeBaseDiagnosis,
     TrackingConversionReport,
@@ -353,6 +356,7 @@ from .utils import (
     play_left_to_right,
     slice_around_event,
     sync_score,
+    validate_id_dtypes,
     validate_time_base,
 )
 

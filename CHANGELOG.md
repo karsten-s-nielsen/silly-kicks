@@ -5,6 +5,86 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.15.0] — 2026-06-06
+
+### Added — Dtype-safe id contract at tracking-feature seams (ADR-019)
+
+Tracking-feature consumers compared SPADL-action identifiers against tracking-frame identifiers (and
+the scalar `home_team_id` argument), and merged action↔frame frames on id-valued keys, with raw
+`==`/`!=`. These silently mis-resolve when the two sides have different dtypes (`Int64(366) == "366"`
+→ `False`), or **raise** on a mixed-dtype merge key — so any caller whose id dtype differs from the
+library's (e.g. the lakehouse, which persists frame ids as **string** while actions stay **bigint**)
+got silently-wrong actor / opponent / defending-GK / defensive-line / possession / attacking-team
+resolution. ADR-019 introduces a **dtype-safe id contract** at the consumer seams:
+
+- **New `silly_kicks.tracking._id_compat`** — one definition of "id identity": a single `_canonical`
+  truth (scalar `canonical_id` + vectorized `canonical_id_series`, integral-float collapse so
+  `366`/`366.0`/`Int64(366)`/`"366"` → `"366"`; genuine strings pass through), comparison helpers
+  (`ids_equal`/`ids_differ`/`ids_match`/`same_id`, NA-safe, non-nullable `np.bool_`), and a pre-merge
+  `align_join_keys` (numeric-vs-object only; numeric-vs-numeric and object-vs-object merge fine). A
+  same-kind/both-object fast path means **zero overhead** for matched-dtype pipelines and
+  genuine-string providers (sportec/kloppy).
+- **New public `validate_id_dtypes(actions, frames, *, home_team_id=None, on_mismatch="raise")`** +
+  `IdDtypeDiagnosis` (exported from `silly_kicks.tracking`) — an opt-in loud pre-flight guard mirroring
+  ADR-017's `validate_time_base`. Not threaded through the ~30 aggregators; the seam coercion already
+  makes them correct.
+- The seams are fixed comprehensively (every registered `add_*` aggregator) and guarded by a red-first
+  **asymmetric** dtype-invariance gate (numeric actions × string frames, and the reverse, with
+  `home_team_id` an independent axis) + a meta-assertion (gate surface == registered surface) + a
+  boundary-focused AST lint + a structural de-dup perf guard.
+
+### Fixed — three latent correctness bugs the contract exposed (Hyrum: feature values change)
+
+The contract corrects pre-existing silently-wrong behavior, so some feature values change for
+**numeric (pure-library) callers too**, not only string-id callers. **VAEP models consuming these
+features should be re-fit.**
+
+- **`_resolve` opponent mask counted the ball as an opponent** for object-`is_ball` providers
+  (kloppy/sportec/metrica/skillcorner): the old `~long["is_ball"]` on an **object**-dtype bool column
+  is a no-op (`~True → -2`, truthy), so the ball leaked into opponents. Fixed via `.astype(bool)` +
+  `ids_differ`'s both-present rule. Affects any opponent-aggregating feature; notably it inflated
+  `bekkers_pi` pressure (the ball was a phantom presser). The
+  `test_per_method_cross_provider_median_within_2x` calibration drops `bekkers_pi` (a kinematic model,
+  not geometry-comparable across providers; its prior agreement was the ball artifact).
+- **`add_player_influence` / `add_cover_shadows` team/opponent mislabel:** `str(action_team) ==
+  str(frame_team)` broke because `DataFrame.iterrows()` upcasts a numpy-`int64` action `team_id` to
+  `float64` (`str(5.0) != "5"`) while the nullable `Int64` frame side stays `"5"`. Fixed via `same_id`.
+- **Object-path opponent join-miss:** an unmatched `how="left"` row satisfied raw `NaN != "5"` → True
+  → wrongly "opponent". `ids_differ`'s both-present rule excludes it (the numeric path already did).
+
+### Lakehouse handshake
+
+The lakehouse may drop its string-coercion workaround and rely on the seam coercion, or call
+`validate_id_dtypes(..., on_mismatch="raise")` at work-unit entry. ADR-001 (converter identifier
+conventions) is preserved — the fix lives entirely at the consumer seams. No new **runtime**
+dependencies; `import silly_kicks` stays dependency-light.
+
+### Internal — deterministic perf guards + CI runtime
+
+Library runtime is unaffected (test-infra only). The wall-clock perf budgets (`assert mean_ms <
+budget`) flaked on shared CI runners (`compute_team_shape` 6.2ms > 5ms, `compute_gk_influence`
+10.4ms > 10ms) — a recurring red-CI source. Every such budget is replaced with a **deterministic
+structural guard** that asserts the invariant the budget actually protected, via a call-count spy on
+the dominant primitive (`tests/_perf_structural.py`):
+
+- pitch-control consumers (`compute_player_influence` / `compute_gk_influence`) build the per-frame
+  surface ONCE (the ADR-008 cache contract), not per player/zone;
+- the Ward line decompositions (`compute_team_shape` / `detect_line_breaking`) cluster once per
+  frame, not per player/segment;
+- `pressure_on_actor` (×3) / `add_actor_pre_window` link actions→frames ONCE per batch, not per
+  action;
+- the pitch-control kernels (Spearman / Fernandez-Bornn) run one vectorised grid pass per team, not
+  per cell;
+- the SPADL/atomic throughput converters stay vectorised (zero `apply(axis=1)`/`iterrows`/`itertuples`).
+
+The benchmark *measurements* are retained (no hard timing asserts) and run single-threaded for clean
+trend data. The dominant ghost-GK cost is cut at the source: the golden gates run the exact
+`cpu-numba` KDE backend (matches `vectorized`/scipy at 1e-9 on the kernel; ~7.8× faster) and the
+bundled-model golden slices to 4 frozen samples (`vectorized` ↔ scipy parity stays locked by the
+kernel + model-traveling tests). A `pytest-xdist` parallelization was evaluated and reverted — on the
+4-core/7GB CI runners it regressed py3.12 from pass to a memory/JIT-pressure kill (the opposite of the
+16-core local speedup); the bulk suite stays serial.
+
 ## [4.14.0] — 2026-06-06
 
 ### Changed — Ghost-GK serves the exact boosted HGBR mean (integrity fix), pickle-free (ADR-016, PR-S83)

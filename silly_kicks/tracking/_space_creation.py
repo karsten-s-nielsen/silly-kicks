@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from ._id_compat import ids_match
+
 if TYPE_CHECKING:
     from .pitch_control import PitchControlCache
 
@@ -157,7 +159,7 @@ def compute_space_created(
     baseline_obso = np.clip(np.asarray(baseline_surface.surface) * obso_multiplier, 0.0, 1.0)
 
     # 3. Identify attacking-team players (including GK)
-    atk_mask = (frame["team_id"] == attacking_team_id) & (frame["is_ball"] != True)  # noqa: E712
+    atk_mask = ids_match(frame["team_id"], attacking_team_id) & (frame["is_ball"] != True)  # noqa: E712
     atk_players = frame.loc[atk_mask]
 
     if atk_players.empty:
@@ -222,9 +224,9 @@ def _analytical_leave_one_out(
     p_ids = np.asarray(baseline_surface.player_ids)  # type: ignore[union-attr]
     p_teams = np.asarray(baseline_surface.player_team_ids)  # type: ignore[union-attr]
 
-    # Use numpy == (float64(1.0) == int(1) → True) not str() comparison
-    # (str(1.0) == str(1) → '1.0' != '1' — wrong!)
-    is_atk = p_teams == attacking_team_id
+    # Dtype-safe id match (ADR-019): canonical collapses 1.0/1/"1" consistently, so it is correct
+    # across numeric/string callers (the old raw == broke when p_teams was string + team numeric).
+    is_atk = ids_match(p_teams, attacking_team_id).to_numpy()
     att_total = ppi[is_atk].sum(axis=0)  # (ny, nx)
     def_total = ppi[~is_atk].sum(axis=0)  # (ny, nx)
 

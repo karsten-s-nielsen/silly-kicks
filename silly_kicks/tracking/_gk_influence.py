@@ -19,6 +19,7 @@ import pandas as pd
 from silly_kicks.spadl import config as spadlconfig
 
 from ._defensive_line import select_back_line_players
+from ._id_compat import same_id
 from .pitch_control import PitchControlCache, PitchControlParams, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
@@ -304,7 +305,7 @@ def compute_gk_influence(
 
     # --- Goal-end resolution ---
     defending_team_id = gk_row["team_id"]
-    if defending_team_id == home_team_id:
+    if same_id(defending_team_id, home_team_id):
         goal_x = 0.0  # home defends x=0
     else:
         goal_x = 105.0  # away defends x=105
@@ -334,6 +335,8 @@ def compute_gk_influence(
         and surface.player_team_ids is not None
         and surface.per_player_influence is not None
     ):
+        # frame-vs-frame (both from the same surface/frame) -> dtype-consistent by
+        # construction, raw compare (ADR-019 only governs cross-source/boundary seams).
         team_mask_arr = surface.player_team_ids == defending_team_id
         for idx in np.flatnonzero(team_mask_arr):
             team_surface += surface.per_player_influence[idx]
@@ -347,7 +350,7 @@ def compute_gk_influence(
     threat_grid = interp(surface.grid_x, surface.grid_y)  # (ny, nx)
 
     # xT flip for away-team attack
-    if attacking_team_id != home_team_id:
+    if not same_id(attacking_team_id, home_team_id):
         # Away attacks toward x=0 in LTR frames
         # Defending team is home -> goal at x=0 -> high threat near x=0
         threat_grid = threat_grid[:, ::-1]

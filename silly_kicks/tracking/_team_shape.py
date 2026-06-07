@@ -15,6 +15,8 @@ import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial import ConvexHull, QhullError
 
+from ._id_compat import ids_match
+
 _RESULT_COLS = [
     "game_id",
     "period_id",
@@ -76,7 +78,7 @@ def compute_team_shape(
 
     # Filter to outfield players with valid coordinates
     mask = (
-        (frames["team_id"] == team_id)
+        ids_match(frames["team_id"], team_id)
         & (~frames["is_ball"].astype(bool))
         & (~frames["is_goalkeeper"].astype(bool))
         & frames["x"].notna()

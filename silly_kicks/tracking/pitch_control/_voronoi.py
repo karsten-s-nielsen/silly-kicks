@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .._id_compat import ids_match
 from ._params import VoronoiParams
 from ._surface import PitchControlSurface
 
@@ -61,7 +62,7 @@ def compute_voronoi(
     # Player positions
     player_pos = players[["x", "y"]].to_numpy(dtype="float64")  # (n_players, 2)
     player_ids_arr = players["player_id"].to_numpy()
-    is_attacking = (players["team_id"] == attacking_team_id).to_numpy()
+    is_attacking = ids_match(players["team_id"], attacking_team_id).to_numpy()
 
     # Broadcast distance: (n_cells, n_players)
     diff = targets[:, np.newaxis, :] - player_pos[np.newaxis, :, :]

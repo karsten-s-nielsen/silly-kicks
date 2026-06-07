@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .._id_compat import ids_match
 from ._params import FernandezBornnParams
 from ._surface import PitchControlSurface
 
@@ -122,7 +123,7 @@ def compute_fernandez_bornn(
         vel = np.zeros_like(pos)
     vel = np.nan_to_num(vel, nan=0.0)
 
-    is_attacking = (players["team_id"] == attacking_team_id).to_numpy()
+    is_attacking = ids_match(players["team_id"], attacking_team_id).to_numpy()
     player_ids_arr = players["player_id"].to_numpy()
 
     # --- Per-player Gaussian parameters ---

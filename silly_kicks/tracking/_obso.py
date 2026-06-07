@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from ._id_compat import ids_match
+
 if TYPE_CHECKING:
     from .pitch_control import PitchControlCache
 
@@ -447,7 +449,7 @@ def _ensure_velocity_columns(frame: pd.DataFrame) -> pd.DataFrame:
 def _extract_teammate_positions(frame: pd.DataFrame, attacking_team_id: int | str) -> np.ndarray:
     """Extract (n, 2) array of non-ball attacking-team positions from a frame."""
     mask = (
-        (frame["team_id"] == attacking_team_id) & (frame["is_ball"] != True)  # noqa: E712
+        ids_match(frame["team_id"], attacking_team_id) & (frame["is_ball"] != True)  # noqa: E712
     )
     teammates = frame.loc[mask, ["x", "y"]].dropna()
     if teammates.empty:
