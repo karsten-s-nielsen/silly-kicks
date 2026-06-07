@@ -5,6 +5,45 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.16.0] — 2026-06-07
+
+### Added — TF-45 structural-pass primitives (LBS / SGM / SDI)
+
+Per-pass structural primitives quantifying how a pass deforms the opponent's defensive structure
+(Karakuş & Arkadaş 2026, arXiv:2603.28916): **Line Bypass Score** (`structural_lbs`), **Space Gain
+Metric** (`structural_sgm`), **Structural Disruption Index** (`structural_sdi`). New module
+`silly_kicks/tracking/_structural_pass.py`: a pure pandas-free core `_structural_pass_core`, the
+per-frame `compute_structural_pass_metrics`, the `@nan_safe_enrichment add_structural_pass`
+aggregator, and the `structural_pass_xfns` VAEP factory (both via the shared
+`_kernels._structural_pass_at_actions` batch kernel — 3×-not-9× call-count budget). Atomic mirror
+synthesizes `end = x+dx`. `StructuralPassParams.sigma = 15.0` is empirically tuned on 2,466 real
+WC2022 passes (smallest σ at which the inverse-density SGM is intrinsically pitch-bounded; see
+`scripts/tune_structural_pass_sigma.py`). **Library ships RAW primitives only** — the TIV z-norm
+composite, K-means archetypes, and passer/receiver rankings are corpus-level (consumer-side). Decision:
+ADR-005. Owner-gated e2e validates against real WC2022 Gradient Sports tracking.
+
+### Fixed — Systemic dup-`action_id` crash across frame-aware xfns (ADR-020)
+
+The per-slot `pointers.set_index("action_id").at[aid, "frame_id"]` pattern crashed when a `*_xfns`
+factory was composed into a VAEP model: shifted gamestate slots repeat the period-boundary action, so
+`action_id` is non-unique and `.at` returns a Series (`ValueError: truth value of a Series is
+ambiguous`), and provenance merges fan out (`Length mismatch`). Empirically confirmed across **8
+families**: `pitch_control`, `obso`, `pausa`, `space_creation`, `pressure`, `cover_shadow`,
+`gk_influence`, `player_influence`. Fixed via a shared `_kernels.resolve_frame_ids_by_position`
+(positional, dup-safe), a red-first behavioral gate that auto-enumerates every `*_xfns`
+(`tests/tracking/test_frame_aware_xfns_dup_action_id.py`), and a per-family retrofit. **Behavior change
+(Hyrum):** these `*_xfns` previously raised in the gamestate path and now produce values — a VAEP
+feature-matrix change / retrain trigger for any consumer using the xfns path. (The production/lakehouse
+`add_*` aggregator path on full action streams was unaffected — unique `action_id`.) Decision: ADR-020.
+
+### Fixed — Ghost-GK public-API export gap
+
+`silly_kicks.tracking` now exports the full ghost-GK feature surface — `add_ghost_gk`, `ghost_gk_xfns`,
+`compute_ghost_gk`, `GhostGkModel`, `GhostGkDensity` — from the package root (previously reachable only
+via the `silly_kicks.tracking.features` / `._ghost_gk` submodules). `add_ghost_gk` was the only feature
+`add_*` aggregator missing from `tracking.__all__`; this aligns ghost-GK with every other tracking
+feature (e.g. space-creation, xS, xCross) and corrects the C4 action-coupled-aggregator count.
+
 ## [4.15.0] — 2026-06-06
 
 ### Added — Dtype-safe id contract at tracking-feature seams (ADR-019)

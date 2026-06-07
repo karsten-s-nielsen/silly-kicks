@@ -322,6 +322,21 @@ methodology described in:
   (1D Ward hierarchical clustering on x-coordinates for defensive line
   identification; cross-product straddle test for pass-segment intersection)
 
+The per-pass structural primitives in silly_kicks/tracking/_structural_pass.py
+(TF-45) implement the methodology described in:
+
+- Karakus, O., & Arkadas, H. (2026). "Structural Pass Analysis in Football:
+  Learning Pass Archetypes and Tactical Impact from Spatio-Temporal Tracking
+  Data." arXiv:2603.28916. (Line Bypass Score, Space Gain Metric, Structural
+  Disruption Index.)
+  Faithfulness caveats: (a) receiver location x_r is the pass DESTINATION
+  (end_x/end_y) -- SPADL has no receiver_player_id; (b) LBS is purely 1-D along
+  the attacking axis (a far-touchline defender in the x-band is counted). The
+  library ships RAW primitives only; the TIV z-norm composite, K-means
+  archetypes, and passer/receiver rankings are corpus-level (consumer-side). The
+  owner-gated e2e LBS-AUC is a regression guard, not a reproduction of the
+  paper's progression result.
+
 The cover shadow features in silly_kicks/tracking/_cover_shadows.py
 (PR-S36, TF-30) implement methodologies described in:
 

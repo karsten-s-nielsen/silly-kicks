@@ -15,6 +15,10 @@ import pandas as pd
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
+from silly_kicks.tracking._structural_pass import (
+    StructuralPassParams,
+    compute_structural_pass_metrics,
+)
 from silly_kicks.tracking._xcross_attempt import add_xcross_attempt, xcross_attempt_xfns
 from silly_kicks.tracking._xshot_occurrence import add_xshot_occurrence, xshot_occurrence_xfns
 from silly_kicks.tracking.feature_framework import lift_to_states
@@ -48,6 +52,7 @@ from silly_kicks.tracking.utils import _resolve_action_frame_context
 _ATOMIC_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty"))
 
 __all__ = [
+    "StructuralPassParams",
     "actor_arc_length_pre_window",
     "actor_displacement_pre_window",
     "actor_reachable_area_m2",
@@ -62,6 +67,7 @@ __all__ = [
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
+    "add_structural_pass",
     "add_xcross_attempt",
     "add_xshot_occurrence",
     "atomic_actor_pre_window_default_xfns",
@@ -73,6 +79,7 @@ __all__ = [
     "atomic_pressure_default_xfns",
     "atomic_tracking_default_xfns",
     "ball_carrier_at_action",
+    "compute_structural_pass_metrics",
     "cover_shadow_xfns",
     "defenders_in_triangle_to_goal",
     "elastic_sync_xfns",
@@ -101,8 +108,62 @@ __all__ = [
     "receiver_zone_density",
     "shape_graph_xfns",
     "space_creation_xfns",
+    "structural_pass_xfns",
     "xcross_attempt_xfns",
 ]
+
+
+def _structural_pass_atomic_endpoints(actions: pd.DataFrame) -> pd.DataFrame:
+    """Synthesize start_x/start_y/end_x/end_y from atomic x,y,dx,dy. structural_pass
+    needs the RECEIVER (end), so a passer-only x->start_x rename is insufficient."""
+    adapted = actions.copy()
+    adapted["start_x"] = adapted["x"]
+    adapted["start_y"] = adapted["y"]
+    adapted["end_x"] = adapted["x"] + adapted["dx"]
+    adapted["end_y"] = adapted["y"] + adapted["dy"]
+    return adapted
+
+
+def add_structural_pass(actions, frames, *, home_team_id, links=None, params=None):
+    """Atomic-SPADL aggregator for structural-pass primitives (TF-45). Synthesizes
+    end_x/end_y from x+dx / y+dy (atomic has no end_*), delegates to the standard
+    aggregator, then drops the synthesized columns.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_structural_pass
+    >>> enriched = add_structural_pass(atomic_actions, frames, home_team_id=1)
+    >>> enriched[["structural_lbs", "structural_sgm", "structural_sdi"]].head()
+    """
+    from silly_kicks.tracking.features import add_structural_pass as _std
+
+    adapted = _structural_pass_atomic_endpoints(actions)
+    result = _std(adapted, frames, home_team_id=home_team_id, links=links, params=params)
+    return result.drop(columns=["start_x", "start_y", "end_x", "end_y"])
+
+
+def structural_pass_xfns(*, home_team_id, params=None):
+    """Atomic VAEP factory: each gamestate slot has its end_x/end_y synthesized from
+    x,y,dx,dy before the shared kernel runs.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import structural_pass_xfns
+    >>> xfns = structural_pass_xfns(home_team_id=1)
+    >>> len(xfns)
+    1
+    """
+    from silly_kicks.tracking.features import structural_pass_xfns as _std_xfns
+
+    inner = _std_xfns(home_team_id=home_team_id, params=params)[0]
+
+    def _atomic_transformer(states, frames):
+        adapted_states = [_structural_pass_atomic_endpoints(s) for s in states]
+        return inner(adapted_states, frames)
+
+    _atomic_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _atomic_transformer.__name__ = "structural_pass"
+    return [_atomic_transformer]
 
 
 def nearest_defender_distance(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:

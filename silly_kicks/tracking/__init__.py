@@ -30,6 +30,8 @@ __all__ = [
     "CoverShadowParams",
     "ElasticSyncParams",
     "FernandezBornnParams",
+    "GhostGkDensity",
+    "GhostGkModel",
     "GhostGkVariant",
     "GradientsportsRosterReport",
     "IdDtypeDiagnosis",
@@ -48,6 +50,7 @@ __all__ = [
     "ShapeGraph",
     "SpaceCreationParams",
     "SpearmanParams",
+    "StructuralPassParams",
     "TimeBaseDiagnosis",
     "TrackingConversionReport",
     "VoronoiParams",
@@ -66,6 +69,7 @@ __all__ = [
     "add_das",
     "add_defensive_line",
     "add_elastic_sync",
+    "add_ghost_gk",
     "add_gk_influence",
     "add_gradientsports_player_ids",
     "add_line_break",
@@ -80,6 +84,7 @@ __all__ = [
     "add_pressure_on_actor",
     "add_shape_graph",
     "add_space_creation",
+    "add_structural_pass",
     "add_sync_score",
     "add_team_shape",
     "add_xcross_attempt",
@@ -91,6 +96,7 @@ __all__ = [
     "compactness_x",
     "compute_blocking_score",
     "compute_defensive_line",
+    "compute_ghost_gk",
     "compute_obso_surface",
     "compute_pass_obso",
     "compute_pausa",
@@ -100,6 +106,7 @@ __all__ = [
     "compute_player_influence",
     "compute_shape_graph",
     "compute_space_created",
+    "compute_structural_pass_metrics",
     "compute_team_shape",
     "compute_tti",
     "compute_xcross_attempt",
@@ -125,6 +132,7 @@ __all__ = [
     "get_individual_das",
     "get_provider_defaults",
     "get_xc",
+    "ghost_gk_xfns",
     "gk_closing_time_mean_s",
     "gk_closing_time_min_s",
     "gk_influence_xfns",
@@ -183,6 +191,7 @@ __all__ = [
     "snapshot_to_tracking_frames",
     "space_creation_xfns",
     "sportec",
+    "structural_pass_xfns",
     "subsample_negatives",
     "sync_score",
     "team_shape_xfns",
@@ -205,7 +214,13 @@ from ._cover_shadows import (
 from ._das import get_das, get_individual_das, get_xc
 from ._defensive_line import compute_defensive_line, select_back_line_players
 from ._elastic_sync import ElasticSyncParams, align_events_to_frames, extract_ball_features
-from ._ghost_gk import GhostGkVariant, prepare_ghost_gk_training_data
+from ._ghost_gk import (
+    GhostGkDensity,
+    GhostGkModel,
+    GhostGkVariant,
+    compute_ghost_gk,
+    prepare_ghost_gk_training_data,
+)
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_obso
 from ._pausa import compute_pausa, compute_pausa_batch
@@ -213,6 +228,7 @@ from ._player_influence import PlayerInfluence, compute_player_influence
 from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_positions
 from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
+from ._structural_pass import StructuralPassParams, compute_structural_pass_metrics
 from ._team_shape import compute_team_shape
 from ._xcross_attempt import (
     XCrossAttemptModel,
@@ -247,6 +263,7 @@ from .features import (
     add_das,
     add_defensive_line,
     add_elastic_sync,
+    add_ghost_gk,
     add_gk_influence,
     add_line_break,
     add_obso,
@@ -260,6 +277,7 @@ from .features import (
     add_pressure_on_actor,
     add_shape_graph,
     add_space_creation,
+    add_structural_pass,
     add_team_shape,
     back_line_high_x,
     back_n_count,
@@ -273,6 +291,7 @@ from .features import (
     defensive_line_x,
     defensive_line_xfns,
     elastic_sync_xfns,
+    ghost_gk_xfns,
     gk_closing_time_mean_s,
     gk_closing_time_min_s,
     gk_influence_xfns,
@@ -310,6 +329,7 @@ from .features import (
     receiver_zone_density,
     shape_graph_xfns,
     space_creation_xfns,
+    structural_pass_xfns,
     team_shape_xfns,
     tracking_default_xfns,
 )
