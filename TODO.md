@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-07. **Current release**: silly-kicks 4.16.0 (TF-45 structural-pass primitives `structural_lbs`/`structural_sgm`/`structural_sdi`, ADR-005 + arXiv:2603.28916; σ=15 empirically tuned; raw primitives only. **Also fixes a systemic dup-`action_id` crash across 8 frame-aware xfns** — `pitch_control`/`obso`/`pausa`/`space_creation`/`pressure`/`cover_shadow`/`gk_influence`/`player_influence` — via `_kernels.resolve_frame_ids_by_position` + a behavioral gate over all `*_xfns`; VAEP-xfns-path retrain trigger; ADR-020). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-07. **Current release**: silly-kicks 4.16.1 (fix: Sportec/DFL `play_flat_cross` string qualifier mislabelled ~99% of passes as crosses — `.astype(bool)` on `"false"` is `True`; now parses the string. Sportec re-conversion + VAEP retrain trigger). **4.16.0**: TF-45 structural-pass primitives `structural_lbs`/`structural_sgm`/`structural_sdi`, ADR-005 + arXiv:2603.28916; σ=15 empirically tuned; raw primitives only. **Also fixes a systemic dup-`action_id` crash across 8 frame-aware xfns** — `pitch_control`/`obso`/`pausa`/`space_creation`/`pressure`/`cover_shadow`/`gk_influence`/`player_influence` — via `_kernels.resolve_frame_ids_by_position` + a behavioral gate over all `*_xfns`; VAEP-xfns-path retrain trigger; ADR-020). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

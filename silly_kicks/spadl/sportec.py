@@ -803,7 +803,12 @@ def _build_raw_actions(
     # Pass-class: Play with empty qualifier AND not in supplementary path.
     is_pass = is_play & (play_gk == "") & ~play_gk_supplementary
     is_cross_by_height = is_pass & _opt("play_height", None).eq("cross").to_numpy()
-    is_cross_by_flag = is_pass & _opt("play_flat_cross", False).fillna(False).astype(bool).to_numpy()
+    # DFL bronze emits play_flat_cross as the native string "true"/"false" (NOT a bool).
+    # .astype(bool) maps any non-empty string — including "false" — to True, which would
+    # mislabel ~99% of passes as crosses. Parse the string explicitly, matching the
+    # shot_after_free_kick / *_defensive_clearance siblings below. str(True).lower()=="true"
+    # so this also handles a native-bool column correctly.
+    is_cross_by_flag = is_pass & _opt("play_flat_cross", "").fillna("").astype(str).str.lower().eq("true").to_numpy()
     is_cross = is_cross_by_height | is_cross_by_flag
     is_pass_plain = is_pass & ~is_cross
     type_ids[is_pass_plain] = spadlconfig.actiontype_id["pass"]
