@@ -217,6 +217,7 @@ Would add TF-15 GK-influence primitives (threat-weighted PC share, uniquely reac
 ## 7. TF-19 integration path
 - TF-19 calls `compute_xcross_attempt(frames, model=..., link_frame_ids=...)` or `predict_proba` on a feature matrix it controls. xCrossAttempt stays **counterfactual-agnostic**.
 - The counterfactual `P(cross | ghost_GK)` is produced by TF-19 substituting the ghost-GK position into the frame **before** feature extraction. **This is where the `kde_backend` train/serve guard binds** (TF-19, not TF-17) — TF-19 must pin one `kde_backend` for the ghost-GK mode it substitutes and assert metadata match.
+  > **Superseded by ADR-016 (4.14.0):** the served `ghost_gk_x/y` is now `predict_mean()` (the deterministic, `kde_backend`-free boosted HGBR position), not the KDE mode — so the `kde_backend` train/serve guard is moot. TF-19 must substitute `predict_mean()` (not the KDE mode/argmax via `predict_density`); then no backend pin / metadata assert is needed. Revisit a pin only if a variant deliberately consumes the density mode or `ghost_gk_density_spread`. See the TF-19 row in `TODO.md`.
 - **Canonical-vs-counterfactual cache rule (B2) — RESOLVED via the §5 #3 proxy.** `faithful` #3 uses a cheap Voronoi-area proxy (not full TF-7 PC), so `faithful` is **cache-trap-free**: TF-19 can substitute the ghost GK and re-extract without any `pitch_control_cache` concern. The trap only re-enters with `extended` (which adds TF-7 surfaces); the rule (a counterfactual caller MUST NOT pass `pitch_control_cache`) is documented now so `extended` inherits it.
 
 ---
