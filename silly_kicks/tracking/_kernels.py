@@ -870,3 +870,104 @@ def _defensive_line_at_actions(
 
     out["back_n_count"] = out["back_n_count"].astype("Int64")
     return out
+
+
+def resolve_frame_ids_by_position(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+) -> np.ndarray:
+    """Float64 array (len == len(actions)): linked frame_id per action ROW, NaN if
+    unlinked. Robust to NON-UNIQUE action_id (VAEP shifted gamestate slots repeat the
+    boundary action). NEVER uses .at on a possibly-non-unique index.
+
+    add_*-supplied ``links`` are keyed by the unique action_id; the internal-link path
+    re-keys to a unique positional surrogate before linking.
+    """
+    from .utils import link_actions_to_frames
+
+    n = len(actions)
+    if n == 0:
+        return np.full(0, np.nan)
+    if links is not None:
+        # links action_id and actions action_id are both the post-link int64 SPADL id
+        # (link_actions_to_frames casts to int64); reindex aligns by exact id. The
+        # internal-link path below uses an int64 surrogate, so both paths are
+        # dtype-consistent -- locked by test_resolve_frame_ids_by_position.
+        fid = links.drop_duplicates("action_id").set_index("action_id")["frame_id"]
+        return fid.reindex(actions["action_id"].to_numpy()).to_numpy(dtype="float64")
+    link_input = actions.copy()
+    link_input["action_id"] = np.arange(n)  # unique positional surrogate
+    pointers, _ = link_actions_to_frames(link_input, frames)
+    return pointers.set_index("action_id")["frame_id"].reindex(np.arange(n)).to_numpy(dtype="float64")
+
+
+def _structural_pass_at_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    params=None,
+    links: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """structural_lbs / structural_sgm / structural_sdi for each pass/cross action at
+    its linked frame. Returns a DataFrame aligned with actions.index (3 columns).
+
+    Shared by add_structural_pass and structural_pass_xfns (DRY + 3x-not-9x budget).
+    Non-pass/cross rows and unlinked/degenerate rows -> NaN. Robust to non-unique
+    action_id in shifted VAEP gamestate slots (frame_id resolved by position).
+    """
+    from ._structural_pass import StructuralPassParams, compute_structural_pass_metrics
+
+    if params is None:
+        params = StructuralPassParams()
+
+    n = len(actions)
+    out = pd.DataFrame(
+        {
+            "structural_lbs": np.full(n, np.nan),
+            "structural_sgm": np.full(n, np.nan),
+            "structural_sdi": np.full(n, np.nan),
+        },
+        index=actions.index,
+    )
+    if n == 0 or len(frames) == 0:
+        return out
+
+    fid_by_pos = resolve_frame_ids_by_position(actions, frames, links=links)
+
+    col_lbs = np.full(n, np.nan)
+    col_sgm = np.full(n, np.nan)
+    col_sdi = np.full(n, np.nan)
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    for j, (_idx, row) in enumerate(actions.iterrows()):
+        if row.get("type_id") not in (0, 1):  # 0=pass, 1=cross (SPADL type ids)
+            continue
+        tid = row["team_id"]
+        if pd.isna(tid) or np.isnan(fid_by_pos[j]):
+            continue
+        pid = int(row["period_id"])  # shift may promote period_id to float
+        fid = int(fid_by_pos[j])
+        try:
+            frame_data = frame_groups.get_group((pid, fid))
+        except KeyError:
+            continue
+
+        m = compute_structural_pass_metrics(
+            frame_data,
+            attacking_team_id=tid,
+            home_team_id=home_team_id,
+            passer_xy=(float(row["start_x"]), float(row["start_y"])),
+            receiver_xy=(float(row["end_x"]), float(row["end_y"])),
+            params=params,
+        )
+        col_lbs[j] = m["structural_lbs"]
+        col_sgm[j] = m["structural_sgm"]
+        col_sdi[j] = m["structural_sdi"]
+
+    out["structural_lbs"] = col_lbs
+    out["structural_sgm"] = col_sgm
+    out["structural_sdi"] = col_sdi
+    return out

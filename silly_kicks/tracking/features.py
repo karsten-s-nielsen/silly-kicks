@@ -54,6 +54,7 @@ from . import _kernels
 from ._ball_carrier import infer_ball_carrier
 from ._gk_resolve import defending_gk_from_frames
 from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
+from ._structural_pass import StructuralPassParams
 from ._xshot_occurrence import xshot_occurrence_xfns
 from .feature_framework import lift_to_states
 from .pressure import (
@@ -914,6 +915,14 @@ def pressure_on_actor(
     >>> # See tests/tracking/test_pressure_*.py for runnable examples per method.
     """
     validate_params_for_method(method, params)
+    # Dup-action_id safety (ADR): VAEP shifted gamestate slots repeat the boundary
+    # action, so action_id is non-unique. The pressure kernels are action_id-indexed
+    # (would raise on the dup). Re-key to a unique positional surrogate for the compute;
+    # the output Series stays indexed by the (unique) frame index, so nothing leaks. Only
+    # on the internal-link path (links is None) -- caller-supplied links own the ids.
+    if links is None and actions["action_id"].duplicated().any():
+        actions = actions.copy()
+        actions["action_id"] = np.arange(len(actions))
     if method == "andrienko_oval":
         ap = params if isinstance(params, AndrienkoParams) else AndrienkoParams()
         ctx = _resolve_action_frame_context(actions, frames, links=links)
@@ -1206,6 +1215,73 @@ def defensive_line_xfns(
     _defensive_line_transformer._frame_aware = True  # type: ignore[attr-defined]
     _defensive_line_transformer.__name__ = "defensive_line"
     return [_defensive_line_transformer]
+
+
+@nan_safe_enrichment
+def add_structural_pass(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    links: pd.DataFrame | None = None,
+    params: StructuralPassParams | None = None,
+) -> pd.DataFrame:
+    """Append structural_lbs / structural_sgm / structural_sdi (NA for non-pass/cross).
+
+    Per-pass structural primitives (TF-45, arXiv:2603.28916). Idempotent provenance
+    columns. Accepts caller-supplied ``links`` (skips internal link_actions_to_frames).
+    The body implements the NaN-safety contract; @nan_safe_enrichment + the CI gate
+    only verify it.
+
+    See NOTICE for full bibliographic citations.
+    """
+    batch = _kernels._structural_pass_at_actions(actions, frames, home_team_id=home_team_id, params=params, links=links)
+    out = actions.copy()
+    # House Int64 idiom (float Series w/ NaN -> Int64 <NA>) preserves the LBS=0-vs-NaN
+    # distinction.
+    out["structural_lbs"] = batch["structural_lbs"].astype("Int64")
+    out["structural_sgm"] = batch["structural_sgm"].to_numpy()
+    out["structural_sdi"] = batch["structural_sdi"].to_numpy()
+
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    existing = [c for c in provenance_cols if c in out.columns]
+    if not existing:
+        pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+        if len(pointers) > 0:
+            ptr_cols = pointers.set_index("action_id")[provenance_cols]
+            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def structural_pass_xfns(
+    *,
+    home_team_id: int | str,
+    params: StructuralPassParams | None = None,
+) -> list:
+    """VAEP xfn factory: ONE FrameAwareTransformer emitting structural_lbs/sgm/sdi x 3
+    gamestate slots = 9 columns (structural_lbs_a0 .. structural_sdi_a2). Calls the
+    SHARED _kernels._structural_pass_at_actions once per slot (3x, not 9x).
+
+    See NOTICE for full bibliographic citations.
+    """
+    col_names = ["structural_lbs", "structural_sgm", "structural_sdi"]
+
+    def _structural_pass_transformer(states, frames):
+        out = pd.DataFrame(index=states[0].index)
+        if frames is None:
+            for i in range(min(3, len(states))):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+        for i, slot in enumerate(states[:3]):
+            batch = _kernels._structural_pass_at_actions(slot, frames, home_team_id=home_team_id, params=params)
+            for col in col_names:
+                out[f"{col}_a{i}"] = batch[col].to_numpy()
+        return out
+
+    _structural_pass_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _structural_pass_transformer.__name__ = "structural_pass"
+    return [_structural_pass_transformer]
 
 
 # ---------------------------------------------------------------------------
@@ -1780,30 +1856,23 @@ def pitch_control_at_action(
         if "vy" not in frames.columns:
             frames["vy"] = 0.0
 
-    if links is not None:
-        pointers = links
-    else:
-        pointers, _report = link_actions_to_frames(actions, frames)
-
     results = np.full(len(actions), np.nan)
 
-    # Merge pointers with action period_id for frame lookup
-    pointer_lookup = pointers.set_index("action_id")
+    # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns resolve
+    # frame_id by position, never .at on a non-unique action_id). Equivalent to the old
+    # .at lookup on unique action_ids (locked by test_resolve_frame_ids_by_position), so
+    # the add_pitch_control aggregator path is unchanged.
+    fid_by_pos = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
 
     # Group frames by (period_id, frame_id) for efficient lookup
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
     for i, (_idx, action_row) in enumerate(actions.iterrows()):
-        action_id = action_row["action_id"]
-        if action_id not in pointer_lookup.index:
+        if np.isnan(fid_by_pos[i]):
             continue
 
-        frame_id_raw = pointer_lookup.at[action_id, "frame_id"]
-        if pd.isna(frame_id_raw):
-            continue
-
-        period_id = action_row["period_id"]
-        frame_id_int = int(float(frame_id_raw))  # type: ignore[arg-type]
+        period_id = int(action_row["period_id"])
+        frame_id_int = int(fid_by_pos[i])
 
         try:
             frame_data = frame_groups.get_group((period_id, frame_id_int))
@@ -2810,22 +2879,17 @@ def gk_influence_xfns(
         for i, slot in enumerate(states[:3]):
             slot_results = {col: np.full(len(slot), np.nan) for col in col_names}
 
-            pointers, _ = link_actions_to_frames(slot, frames)
-            pointer_lookup = pointers.set_index("action_id")
+            # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns
+            # resolve frame_id by position, never .at on a non-unique action_id).
+            fid_by_pos = _kernels.resolve_frame_ids_by_position(slot, frames)
 
             for j, (_idx, row) in enumerate(slot.iterrows()):
-                aid = row["action_id"]
                 tid = row["team_id"]
-                if pd.isna(tid):
-                    continue
-                if aid not in pointer_lookup.index:
-                    continue
-                fid_raw = pointer_lookup.at[aid, "frame_id"]
-                if pd.isna(fid_raw):
+                if pd.isna(tid) or np.isnan(fid_by_pos[j]):
                     continue
 
-                pid = row["period_id"]
-                fid = int(float(fid_raw))  # type: ignore[arg-type]
+                pid = int(row["period_id"])
+                fid = int(fid_by_pos[j])
 
                 gi = _get_gi(pid, fid, tid)
                 if gi is None:
@@ -3082,22 +3146,17 @@ def cover_shadow_xfns(
 
         for i, slot in enumerate(states[:3]):
             slot_results = {col: np.full(len(slot), np.nan) for col in col_names}
-            pointers, _ = link_actions_to_frames(slot, frames)
-            pointer_lookup = pointers.set_index("action_id")
+            # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns
+            # resolve frame_id by position, never .at on a non-unique action_id).
+            fid_by_pos = _kernels.resolve_frame_ids_by_position(slot, frames)
 
             for j, (_idx, row) in enumerate(slot.iterrows()):
-                aid = row["action_id"]
                 tid = row["team_id"]
-                if pd.isna(tid):
-                    continue
-                if aid not in pointer_lookup.index:
-                    continue
-                fid_raw = pointer_lookup.at[aid, "frame_id"]
-                if pd.isna(fid_raw):
+                if pd.isna(tid) or np.isnan(fid_by_pos[j]):
                     continue
 
-                pid = row["period_id"]
-                fid = int(float(fid_raw))  # type: ignore[arg-type]
+                pid = int(row["period_id"])
+                fid = int(fid_by_pos[j])
                 passer_xy = (
                     float(row["start_x"]),
                     float(row["start_y"]),
@@ -3632,22 +3691,17 @@ def player_influence_xfns(
         for i, slot in enumerate(states[:3]):
             slot_results = {col: np.full(len(slot), np.nan) for col in col_names}
 
-            pointers, _ = link_actions_to_frames(slot, frames)
-            pointer_lookup = pointers.set_index("action_id")
+            # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns
+            # resolve frame_id by position, never .at on a non-unique action_id).
+            fid_by_pos = _kernels.resolve_frame_ids_by_position(slot, frames)
 
             for j, (_idx, row) in enumerate(slot.iterrows()):
-                aid = row["action_id"]
                 tid = row["team_id"]
-                if pd.isna(tid):
-                    continue
-                if aid not in pointer_lookup.index:
-                    continue
-                fid_raw = pointer_lookup.at[aid, "frame_id"]
-                if pd.isna(fid_raw):
+                if pd.isna(tid) or np.isnan(fid_by_pos[j]):
                     continue
 
-                period = row["period_id"]
-                fid = int(float(str(fid_raw)))
+                period = int(row["period_id"])
+                fid = int(fid_by_pos[j])
                 actor_pid = row["player_id"]
 
                 pi_dict = _get_pi(period, fid, tid)
@@ -4358,12 +4412,10 @@ def _precompute_obso_lookup(
         if "vy" not in frames.columns:
             frames["vy"] = 0.0
 
-    if links is not None:
-        pointers = links
-    else:
-        pointers, _report = link_actions_to_frames(actions, frames)
-
-    pointer_lookup = pointers.set_index("action_id")
+    # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns resolve
+    # frame_id by position, never .at on a non-unique action_id). Here it gates "is this
+    # action linked"; the OBSO window is time-based below.
+    fid_by_pos = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
 
     # Group frames for windowing
     frame_groups = frames.groupby(["period_id", "frame_id"])
@@ -4385,14 +4437,10 @@ def _precompute_obso_lookup(
         if not pass_mask.iloc[i]:
             continue
 
-        action_id = action_row["action_id"]
-        if action_id not in pointer_lookup.index:
-            continue
-        frame_id_raw = pointer_lookup.at[action_id, "frame_id"]
-        if pd.isna(frame_id_raw):
+        if np.isnan(fid_by_pos[i]):
             continue
 
-        period_id = action_row["period_id"]
+        period_id = int(action_row["period_id"])
         action_time = action_row["time_seconds"]
         team_id = action_row["team_id"]
         target_x = action_row["end_x"]
@@ -4544,6 +4592,9 @@ def add_obso(
     # Add provenance if not already present
     if not has_provenance and links is None:
         pointers, _report = link_actions_to_frames(actions, frames)
+        # drop_duplicates: shifted gamestate slots repeat the boundary action_id, so a
+        # raw merge would fan out (ADR: dup-action_id safety). One provenance row per id.
+        pointers = pointers.drop_duplicates("action_id")
         for pc in provenance_cols:
             if pc in pointers.columns:
                 merged = actions[["action_id"]].merge(
@@ -4749,22 +4800,21 @@ def add_space_creation(
     else:
         pointers, _report = link_actions_to_frames(actions, frames)
 
-    pointer_lookup = pointers.set_index("action_id")
+    # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns resolve
+    # frame_id by position; reached with non-unique action_id via space_creation_xfns).
+    # Equivalent to the old .at lookup on unique ids (test_resolve_frame_ids_by_position).
+    fid_by_pos = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
     for col in _SPACE_CREATION_COLUMNS:
         out[col] = np.nan
 
     for i, (_idx, action_row) in enumerate(actions.iterrows()):
-        action_id = action_row["action_id"]
-        if action_id not in pointer_lookup.index:
-            continue
-        frame_id_raw = pointer_lookup.at[action_id, "frame_id"]
-        if pd.isna(frame_id_raw):
+        if np.isnan(fid_by_pos[i]):
             continue
 
-        period_id = action_row["period_id"]
-        frame_id_int = int(float(frame_id_raw))  # type: ignore[arg-type]
+        period_id = int(action_row["period_id"])
+        frame_id_int = int(fid_by_pos[i])
 
         try:
             frame = frame_groups.get_group((period_id, frame_id_int))
@@ -4786,10 +4836,13 @@ def add_space_creation(
             out.at[idx, col] = val
 
     if not has_provenance and links is None:
+        # drop_duplicates: shifted gamestate slots repeat the boundary action_id, so a
+        # raw merge would fan out (ADR: dup-action_id safety). One provenance row per id.
+        pointers_unique = pointers.drop_duplicates("action_id")
         for pc in provenance_cols:
-            if pc in pointers.columns:
+            if pc in pointers_unique.columns:
                 merged = actions[["action_id"]].merge(
-                    pointers[["action_id", pc]],
+                    pointers_unique[["action_id", pc]],
                     on="action_id",
                     how="left",
                 )

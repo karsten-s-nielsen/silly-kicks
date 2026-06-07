@@ -46,6 +46,7 @@ _TRACKING_NEEDS_EXTRA = {
     "add_pre_shot_gk_position",
     "add_shape_graph",
     "add_space_creation",
+    "add_structural_pass",
     "add_team_shape",
 }
 _TRACKING_STANDARD_SIG = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ not in _TRACKING_NEEDS_EXTRA)
@@ -500,6 +501,7 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         "add_team_shape",
         "add_shape_graph",
         "add_space_creation",
+        "add_structural_pass",
     ):
         out = helper(actions, frames, home_team_id=1)
     elif name in ("add_gk_influence", "add_cover_shadows", "add_player_influence"):
