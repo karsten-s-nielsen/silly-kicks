@@ -193,3 +193,30 @@ def test_load_matches_no_cap_loads_all(monkeypatch):
     monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None))
     got = [mid for _p, mid, *_ in L.load_matches(providers=["gradientsports"])]
     assert got == ["0", "1", "2"]
+
+
+def test_build_skillcorner_frames_chains_load_convert_preprocess(monkeypatch):
+    # TF-27: the extracted seam must do skillcorner.load -> convert_to_frames -> _preprocess,
+    # passing limit + include_empty_frames through. Monkeypatched: no kloppy parse, no network.
+    # (function-local imports -> patch the SOURCE module attrs, not L's namespace.)
+    sentinel = pd.DataFrame({"x": [1.0, 2.0]})
+    seen = {}
+
+    def _fake_load(**kwargs):
+        seen["load_kwargs"] = kwargs
+        return "DS"
+
+    def _fake_convert(ds):
+        seen["ds"] = ds
+        return sentinel, None
+
+    monkeypatch.setattr("kloppy.skillcorner.load", _fake_load)
+    monkeypatch.setattr("silly_kicks.tracking.kloppy.convert_to_frames", _fake_convert)
+    monkeypatch.setattr(L, "_preprocess", lambda f: f.assign(_preprocessed=True))
+
+    out = L.build_skillcorner_frames({"metadata": "m.json", "tracking": "t.jsonl"}, 123)
+
+    assert seen["ds"] == "DS"  # convert_to_frames received the load() result
+    assert seen["load_kwargs"]["limit"] == 123
+    assert seen["load_kwargs"]["include_empty_frames"] is False
+    assert out["_preprocessed"].all() and list(out["x"]) == [1.0, 2.0]  # preprocess applied to convert output

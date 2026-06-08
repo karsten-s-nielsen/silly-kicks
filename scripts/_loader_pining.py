@@ -220,8 +220,13 @@ def _preprocess(frames: pd.DataFrame) -> pd.DataFrame:
     return derive_velocities(smooth_frames(frames))
 
 
-def _build_skillcorner(paths, match_id, tracking_limit):
-    """SkillCorner: kloppy tracking + silly-kicks SkillCorner events converter."""
+def build_skillcorner_frames(paths, tracking_limit):
+    """Preprocessed silly-kicks frames from SkillCorner artifacts (tracking ds path).
+
+    The single SkillCorner frame-construction path: kloppy load -> convert_to_frames
+    -> _preprocess (smooth + velocities), yielding SPADL-bounds (0-105/0-68) frames.
+    Reused by both _build_skillcorner (calibration) and the TF-27 GK-roster e2e.
+    """
     from kloppy import skillcorner
 
     from silly_kicks.tracking import kloppy as tracking_kloppy
@@ -233,6 +238,12 @@ def _build_skillcorner(paths, match_id, tracking_limit):
         include_empty_frames=False,
     )
     frames, _report = tracking_kloppy.convert_to_frames(ds)
+    return _preprocess(frames)
+
+
+def _build_skillcorner(paths, match_id, tracking_limit):
+    """SkillCorner: kloppy tracking + silly-kicks SkillCorner events converter."""
+    frames = build_skillcorner_frames(paths, tracking_limit)
     # Events: SkillCorner dynamic-events CSV + match.json -> silly-kicks SkillCorner SPADL converter.
     from silly_kicks.spadl import skillcorner as sk_spadl
 
@@ -241,7 +252,7 @@ def _build_skillcorner(paths, match_id, tracking_limit):
     home_team_id = str(meta["home_team"]["id"])  # authoritative; matches kloppy tracking team ids
     raw_events = pd.read_csv(paths["events"], low_memory=False)
     actions, _evt_report = sk_spadl.convert_to_actions(raw_events, meta)
-    return actions, _preprocess(frames), home_team_id
+    return actions, frames, home_team_id
 
 
 def _build_idsse(paths, tracking_limit):

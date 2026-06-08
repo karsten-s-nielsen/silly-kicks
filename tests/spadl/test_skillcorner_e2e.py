@@ -5,8 +5,6 @@ at C:\\Users\\Karsten\\AppData\\Local\\Temp\\skillcorner_sample\\
 """
 
 import json
-import os
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -14,38 +12,14 @@ import pytest
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.spadl.schema import SKILLCORNER_SPADL_COLUMNS
 from silly_kicks.spadl.skillcorner import convert_to_actions
-
-_SAMPLE_DIR = Path(
-    os.environ.get(
-        "SKILLCORNER_SAMPLE_DIR",
-        r"C:\Users\Karsten\AppData\Local\Temp\skillcorner_sample",
-    )
-)
-
-_MATCH_IDS = [
-    "1886347",
-    "1899585",
-    "1925299",
-    "1953632",
-    "1996435",
-    "2006229",
-    "2011166",
-    "2013725",
-    "2015213",
-    "2017461",
-]
-
-
-def _find_artifact(match_dir: Path, suffix: str) -> Path | None:
-    """Find artifact by suffix, handling both bare and {id}-prefixed names."""
-    candidates = list(match_dir.glob(f"*{suffix}"))
-    return candidates[0] if candidates else None
+from tests._skillcorner_sample import MATCH_IDS as _MATCH_IDS
+from tests._skillcorner_sample import SAMPLE_DIR as _SAMPLE_DIR
+from tests._skillcorner_sample import available_matches
+from tests._skillcorner_sample import find_artifact as _find_artifact
 
 
 def _has_data():
-    return _SAMPLE_DIR.exists() and any(
-        _find_artifact(_SAMPLE_DIR / m, "dynamic_events.csv") is not None for m in _MATCH_IDS
-    )
+    return bool(available_matches(("_dynamic_events.csv", "_match.json")))
 
 
 pytestmark = pytest.mark.e2e
