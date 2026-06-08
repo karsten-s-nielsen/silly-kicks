@@ -280,6 +280,22 @@ def test_prepare_returns_features_labels_groups():
     assert y.sum() >= 1  # the cross at 0.9 labels some wide-area frames positive
 
 
+def test_prepare_tolerates_na_team_id_in_frames():
+    """Regression (box pilot, real GS match): frames can carry pd.NA in team_id (ball row or an
+    unresolved GS jersey). prepare must not raise 'boolean value of NA is ambiguous' at the
+    defending-team computation. Inject an NA-team non-ball player into every frame."""
+    frames, actions = _mini_match()
+    extra = frames[frames["player_id"] == "Bgk"].copy()
+    extra["player_id"] = "Bx"
+    extra["is_goalkeeper"] = False
+    extra["team_id"] = pd.NA  # unresolved-team outfielder
+    frames_na = pd.concat([frames, extra], ignore_index=True)
+    X, y, _groups = xc.prepare_xcross_training_data(frames_na, actions, home_team_id="A")  # must not raise
+    assert list(X.columns) == xc.XCROSS_FEATURE_NAMES_FAITHFUL
+    assert len(X) == len(y)
+    assert y.sum() >= 1  # still labels the wide-area cross frames (defending team B resolved)
+
+
 def test_prepare_score_differential_wired_and_signed():
     """PA-H1: confounder #1 must be REALIZED (non-NaN) and signed from the possessing team's
     perspective. Team A (home, possessing) scored 1; B scored 0 -> score_differential = +1."""
@@ -350,11 +366,16 @@ def test_model_sha256_verification(tmp_path):
         xc.XCrossAttemptModel.load(d)
 
 
-def test_from_variant_filenotfound_until_weights():
+def test_from_variant_unknown_raises_filenotfound():
+    """An unbundled variant name raises FileNotFoundError and does NOT cascade to Hub.
+
+    (PR-B reframed the old "default raises until weights" assertion: once PR-B bundles `default`,
+    `from_variant("default")` succeeds -- but an unknown variant must always raise. `from_hub` now
+    does a real download; its behaviour is covered by the mocked test in the integration suite.)
+    """
+    xc._VARIANT_CACHE.clear()
     with pytest.raises(FileNotFoundError):
-        xc.XCrossAttemptModel.from_variant("default")
-    with pytest.raises(FileNotFoundError):
-        xc.XCrossAttemptModel.from_hub()
+        xc.XCrossAttemptModel.from_variant("does-not-exist")
 
 
 def test_carrier_params_recorded_and_restored(tmp_path):
@@ -395,10 +416,15 @@ def test_compute_adds_column_and_uses_metadata_carrier_params(monkeypatch):
     assert seen["tolerance_m"] == 2.5  # R3: carrier params read from model metadata, not library default
 
 
-def test_compute_no_model_errors():
+def test_compute_model_none_uses_bundled_default():
+    """Post-PR-B (Task 13 bundling): model=None resolves to the bundled 'default' (the production
+    path) and produces the column -- pre-weights this raised FileNotFoundError. An unsupported model
+    TYPE still raises TypeError (the _resolve_model contract)."""
     frames, _ = _mini_match()
-    with pytest.raises((ValueError, RuntimeError, FileNotFoundError, TypeError)):
-        xc.compute_xcross_attempt(frames, model=None, home_team_id="A")
+    out = xc.compute_xcross_attempt(frames, model=None, home_team_id="A")
+    assert "xcross_attempt" in out.columns
+    with pytest.raises(TypeError):
+        xc.compute_xcross_attempt(frames, model=123, home_team_id="A")  # unsupported type
 
 
 def test_compute_actions_populate_score_differential(monkeypatch):

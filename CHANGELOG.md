@@ -5,6 +5,98 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.18.0] — 2026-06-07
+
+### Added — TF-17 xCrossAttempt (xCross) TRAINED weights + GK validation + TF-19 wiring (PR-S85)
+
+The weights follow-up to PR-A's untrained code (4.11.0). Bundled the **`public`** xCrossAttempt
+model (skillcorner + idsse), trained on the clean-4.13.0-GS pining corpus (81 matches, 701,210
+wide-area frames / 11,930 cross-positives) against the 4.7.0 carrier defaults, on DGX Spark.
+A pre-registered `public`-vs-`full` two-candidate paired test (common public held-out, shared
+params) found owner-tier Gradient Sports data **degraded** public generalization in **all 5 folds**
+(Δ PR-AUC −0.009…−0.067) → shipped the reproducible public-only model (no Hub repo, mirrors xS).
+public CV: PR-AUC 0.0606 > base 0.0177; Brier 0.0172 < 0.0173; log-loss 0.0841 < ln2.
+`from_variant("default")` + `from_hub` live; `xcross_attempt_xfns` wired into
+`pre_shot_gk_full_default_xfns` (+ atomic mirror) **only**, not the general default.
+
+### Validation (reported in the bundled metrics.json; the GK-extension headline)
+
+- **`tf19_ready = False`** (pre-registered inert-GK contingency): the GK substitution-sensitivity
+  probe moves P(cross) by a median **0.00107** on a realistic GK shift — **2.6× the nearest-defender
+  control** (0.00041) and ∞× the random-outfielder band (0.0), i.e. GK position carries *relative*
+  signal, **but below the pre-registered absolute floor (0.01)** — too small to drive a meaningful
+  TF-19 `Δ_cross`. The surface ships regardless (a weak signal is not a build break); TF-19 (GKDV
+  Layer 3) consumption is gated on GK feature-engineering first, never shipped silently as novelty.
+- GK-block ablation: Δ PR-AUC +0.0011 (≈0 marginal CV lift) — yet `gk_theta` is the #4 feature by
+  permutation importance (0.0125): informative-but-collinear (the gate is the probe, not ablation).
+- **`score_differential` is the #2 feature by CV-held-out permutation importance (0.0216)** at 1.0
+  coverage — *material* for xCross (unlike Ghost-GK). Measured on the clean GS stream: range
+  [−5, +6], 0 impossible values (the old ±18 cache would have corrupted this — the clean rebuild was
+  load-bearing).
+
+### Added — TF-17 xCross causal validation harness (PR-C, ADR-015)
+
+The paper-faithful causal arm closing TF-17. Private `silly_kicks/_causal/` port (pure numpy/sklearn,
+no R, no new dependency): propensity-score matching (ATT/ATNT, 1:1 nearest-neighbor **with
+replacement**, no caliper, logistic propensity on standardized covariates, **Abadie–Imbens (2006)
+matching SEs**) + a spell-based crosser-anchored opportunity builder. `scripts/validate_xcross_causal.py`
+ablates the GK confounder block against a **row-permuted-GK placebo null band**, with a positivity
+guard, a PS-overlap + SMD-improvement claim gate, and a GK missing-indicator. The treatment window is
+`(entry, min(entry+T, spell_end)]` (fixed-`T` cap → no spell-length confounding; `spell_end` clamp →
+no cross-phase misattribution); the outcome is measured strictly post-treatment. The causal finding is
+a **reported** research artifact (`docs/research/xcross_causal/`), never a ship/CI gate — only the
+known-truth method tests (`tests/causal/`) gate CI. Reconstructs the paper's sender-level unit;
+tracking-only-opportunity-detection + league/era divergence reported, not hidden. Decision: ADR-015;
+attribution arXiv:2505.11841.
+
+### Causal result (reported in `docs/research/xcross_causal/`; clean all-provider corpus)
+
+Run on the full 3-provider pining corpus (skillcorner + idsse + gradientsports), seed 0:
+**23,966 opportunities / 669 treated (base outcome rate 4.3%)**.
+
+- **The cross effect is real and significant.** ATT (with GK block) **+0.0927 (SE 0.0156)**; ATT
+  without the GK block +0.0747 (SE 0.0167); ATNT +0.0551 (SE 0.0133) — ≈5σ. Crossing causally raises
+  the ~6-second scoring-opportunity outcome by **+7–9 percentage points** over the 4.3% base.
+- **The matching is valid:** propensity overlap 1.0 (no density trimming), max SMD 0.51 → **0.078**
+  post-match (< 0.1) → `causal_claim_supported = True`.
+- **The novel GK-position block does NOT clear the placebo band** (`gk_clears_placebo_band = False`,
+  **reported, not a gate**): adding the GK block shifts the ATT by **0.0179**, below the
+  row-permuted-GK placebo p95 of **0.0239** — i.e. not distinguishable from a shuffled-GK column on
+  this corpus. **This independently corroborates `tf19_ready = False`:** two methods (the PR-B
+  predictive substitution probe and this PR-C causal placebo ablation) now agree the GK block carries
+  relative-but-not-distinguishable signal → TF-19 stays gated.
+- **The GS feature fix was load-bearing.** With the `canonical_id` fix, GK/base NaN fractions are
+  ~0 (8.3e-5 / 0.0) and all three providers reach carrier-coverage 1.0 (GS contributes 19,833 of the
+  23,966 opportunities). An earlier run on the un-fixed extractor was a **false positive** —
+  `gk_clears_placebo_band = True` driven entirely by an 82.8%-NaN GS missingness confound; the fix
+  flipped it to the correct negative. (See the GS bug entry below.)
+
+### Fixed — GradientSports xCross feature extraction returned all-NaN (silent)
+
+`extract_xcross_features` matched the ball-carrier / goalkeeper by stringifying the frame's
+`player_id` / `team_id` via `.to_numpy().astype(str)`. GradientSports tracking frames carry
+**nullable `Int64`** ids, and `Int64.to_numpy()` **upcasts to float64** → `"11094.0"`, which never
+equals the clean-int carrier key `"1336"` → the carrier mask matched 0 rows → **every
+carrier-anchored confounder and the entire GK block came back NaN for all GradientSports frames**
+(≈83% of the real corpus, and the whole shipped GS xCross-inference path). Numeric team comparisons
+survived (`366.0 == 366`), so only the string player match broke; kloppy/string-id providers were
+unaffected, which is why it stayed latent. Fixed by routing the id match through the ADR-019
+`_id_compat.canonical_id` / `canonical_id_series` contract (collapses `366` / `366.0` / `Int64(366)`
+/ `"366"` → `"366"`). The existing tests only asserted column *existence*; added
+`test_int64_id_frames_resolve_carrier_and_gk_features` to assert feature *values* resolve (notna) on
+Int64-id frames. The shipped public model trains on kloppy/string providers so its weights are
+unaffected (no retrain); the fix repairs GS xCross *inference* (was silently NaN → xgboost-missing).
+
+- `prepare_xcross_training_data` raised `TypeError: boolean value of NA is ambiguous` on real frames
+  whose `team_id` column carries `pd.NA` (ball row / unresolved GS jersey); the defending-team
+  computation now filters by `is_ball` + `dropna()` (mirrors `compute_xcross_attempt`). Surfaced by
+  the maintainer-run training pilot.
+
+### Note
+
+- A future TF-24 carrier-default change is an xCross retrain trigger (carrier params recorded in
+  metadata + consumed at inference).
+
 ## [4.17.0] — 2026-06-07
 
 ### Added — SK-xT-1: pluggable, evaluatable xT (`silly_kicks.xthreat`)

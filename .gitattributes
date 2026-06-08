@@ -1,3 +1,4 @@
 # Trained-model artifacts: byte-exact, never line-ending-converted (SHA-256 verified on load).
 # Without this, Windows autocrlf could rewrite the bundled model.json and bloat diffs.
 silly_kicks/tracking/_xshot_weights/** binary
+silly_kicks/tracking/_xcross_weights/** binary

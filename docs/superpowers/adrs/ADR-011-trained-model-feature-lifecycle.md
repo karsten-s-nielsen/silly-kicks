@@ -132,6 +132,38 @@ the same staged code→weights path. Two refinements it introduces:
   `_build_score_lookup`. Faithfulness caveats (here: only 7 of the paper's 8 confounders are
   realized) are recorded in NOTICE rather than overclaimed.
 
+## Update — TF-17 PR-B weights cycle + PR-C causal arm (4.18.0, PR-S85)
+
+xCross's weights cycle (the **second** to run this lifecycle after xS/PR-S80) confirmed two patterns
+and added one:
+
+- **Same public-vs-full outcome as xS.** The pre-registered two-candidate paired test (common public
+  held-out, shared params) again found owner-tier Gradient Sports data degraded public generalization
+  in all 5 folds → shipped the reproducible **public-only** model, bundled-in-wheel, **no Hub repo**
+  (the tiny booster needs none). The fail-closed trainer + acceptance gates behaved as designed.
+- **Pre-registered numeric gates for the research-novelty signal.** The shipped-surface GK validation
+  uses a **private model-eval module** (`silly_kicks/tracking/_xcross_eval.py`) holding the ablation,
+  the substitution probe, and CV-held-out permutation importance — kept private (not promoted to
+  ruthless-efficiency, an optimisation substrate, nor to a public surface) until a 2nd consumer lands.
+  The TF-19-viability flag (`tf19_ready`) gates on the substitution probe **alone** against a pinned
+  `ratio≥2.0 AND absolute-floor≥0.01` rule (the floor frozen in code before the run); the result was
+  **`tf19_ready=False`** (GK carries relative signal — 2.6× the nearest-defender control — but the
+  absolute surface movement is below the floor). The surface ships regardless; TF-19 consumption is
+  gated on GK feature-engineering. Confirms the discipline: a null novelty result is reported loudly,
+  never shipped silently as a feature win.
+- **Clean-source prerequisite is load-bearing, and provable.** xCross consumes GS `score_diff`; the
+  cycle re-fit on the clean-4.13.0-GS events and reported a coverage-qualified importance — it landed
+  as the #2 feature, so training on the prior ±18-corrupted cache would have produced a wrong number.
+  A range probe (hard-fail on the impossible signature, soft-warn on a legitimate rout) guards it.
+- **An independent causal arm (PR-C, ADR-015) corroborated the null novelty result.** The propensity-
+  matching harness on the clean all-provider corpus (23,966 opportunities / 669 treated) measured a
+  real, significant cross effect (ATT_with_GK +0.0927, SE 0.0156) but found the GK confounder block
+  did **not** clear its row-permuted-GK placebo band (shift 0.0179 < p95 0.0239 →
+  `gk_clears_placebo_band=False`). Two independent methods — the PR-B predictive substitution probe and
+  the PR-C causal placebo ablation — agree the GK block carries relative-but-not-distinguishable signal,
+  which is exactly why `tf19_ready=False` is reported and TF-19 stays gated. The causal artifact is
+  **reported, never a CI/ship gate** (`docs/research/xcross_causal/`); only known-truth method tests gate.
+
 ## Note — temporal-leakage discipline (external validation)
 
 A trained-model feature in this lifecycle is **leakage-corrected by construction**: its shared

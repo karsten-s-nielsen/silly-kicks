@@ -26,6 +26,7 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
+from silly_kicks.tracking._id_compat import align_join_keys, canonical_id, canonical_id_series
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._xshot_occurrence import IntegrityError
 from silly_kicks.tracking.utils import link_actions_to_frames
@@ -135,8 +136,15 @@ def extract_xcross_features(
     f = frame_data
     is_ball = f["is_ball"].to_numpy(dtype=bool)
     is_gk = f["is_goalkeeper"].to_numpy(dtype=bool)
-    team = f["team_id"].to_numpy()
-    pid = f["player_id"].to_numpy()
+    # CANONICAL id arrays (ADR-019): a nullable-Int64 id column (GradientSports) -> .to_numpy()
+    # upcasts to float64, so a naive ``.astype(str)`` yields "366.0" and never matches the clean-int
+    # carrier id "366" -> carrier_mask all-False -> every carrier-anchored feature (and the
+    # carrier-gated GK block) silently NaN. canonical_id_series collapses 366/366.0/Int64(366)/"366"
+    # -> "366"; the sentinel fill keeps NA (ball rows) out of the comparisons. Genuine-string
+    # providers (kloppy) are unchanged, so the trained public model needs no retrain.
+    na_fill = "\x00"  # sentinel: no canonical id equals it, so NA (ball) rows never match
+    team = canonical_id_series(f["team_id"]).fillna(na_fill).to_numpy()
+    pid = canonical_id_series(f["player_id"]).fillna(na_fill).to_numpy()
     gr_x = np.array([_geo.to_goal_relative_x(x, goal_x=goal_x) for x in f["x"].to_numpy()])
     y = f["y"].to_numpy(dtype=float)
 
@@ -150,18 +158,16 @@ def extract_xcross_features(
         bvy = float(f.loc[is_ball, "vy"].to_numpy()[0])
         out["ball_speed"] = math.hypot(bvx, bvy)
 
-    # Carrier-anchored geometry.
-    # C3-hardening: match the carrier by id with NA guard + str-coercion so it works whether the
-    # frame player_id is native string (kloppy/sportec/skillcorner/metrica) OR Int64 (gradientsports).
-    # `ball_carrier_player_id` from infer_ball_carrier is kept dtype-consistent with frame player_id
-    # (conditional Int64 coercion, _ball_carrier.py:326-329), so this never silently all-NaNs; the
-    # str-coerce is belt-and-suspenders against the known Int64-vs-string id gotcha.
+    # Carrier-anchored geometry. Match the carrier by CANONICAL id (pid is already canonical above),
+    # so it works whether the frame player_id is native string (kloppy/sportec/skillcorner/metrica)
+    # OR nullable Int64 (gradientsports) -- see the canonical-id comment above.
     carrier_mask = np.zeros(len(f), dtype=bool)
     has_carrier = carrier_player_id is not None and not (
         isinstance(carrier_player_id, float) and math.isnan(carrier_player_id)
     )
+    carrier_key = canonical_id(carrier_player_id) if has_carrier else None
     if has_carrier:
-        carrier_mask = (pid.astype(str) == str(carrier_player_id)) & ~is_ball
+        carrier_mask = (pid == carrier_key) & ~is_ball
     cx = cy = None
     if carrier_mask.any():
         cx, cy = float(gr_x[carrier_mask][0]), float(y[carrier_mask][0])
@@ -170,7 +176,7 @@ def extract_xcross_features(
         mate = [
             (gr_x[i], y[i])
             for i in range(len(f))
-            if not is_ball[i] and team[i] == carrier_team and str(pid[i]) != str(carrier_player_id)
+            if not is_ball[i] and team[i] == carrier_team and pid[i] != carrier_key
         ]
         all_xy = [(gr_x[i], y[i]) for i in range(len(f)) if not is_ball[i]]
         out["dist_nearest_def"] = _nearest_dist((cx, cy), opp)
@@ -180,7 +186,7 @@ def extract_xcross_features(
 
     # GK block (NOVEL extension) -- defending GK = is_goalkeeper row on gk_team_id.
     # C1: posts live at the ATTACKED goal line gr_x = 0 (NOT PITCH_LENGTH). Gated on carrier (needs cy).
-    gk_mask = is_gk & (team == gk_team_id)
+    gk_mask = is_gk & (team == canonical_id(gk_team_id))
     if gk_mask.any() and cx is not None and cy is not None:  # cy set iff the carrier resolved
         gkx, gky = float(gr_x[gk_mask][0]), float(y[gk_mask][0])
         out["gk_r"], out["gk_theta"] = _polar(gkx, gky - _geo.GOAL_Y)
@@ -304,7 +310,12 @@ def prepare_xcross_training_data(
         if in_poss.empty:
             continue
         poss_team = in_poss.iloc[0]
-        defending = [t for t in grp["team_id"].unique() if t not in (poss_team, "ball")]
+        # Defending team = the OTHER team's non-ball players. Filter by is_ball + dropna so a real
+        # frame whose team_id column carries pd.NA (e.g. the ball row, or an unresolved GS jersey)
+        # does not (a) hit "t not in (poss_team, 'ball')" -> "boolean value of NA is ambiguous", or
+        # (b) be mistaken for a defending team. Mirrors compute_xcross_attempt's dropna()+!= pattern.
+        non_ball = grp[~grp["is_ball"].astype(bool)]
+        defending = [t for t in non_ball["team_id"].dropna().unique() if t != poss_team]
         if not defending:
             continue
         goal_x = goal_map.get((gid, pid, defending[0]))
@@ -546,10 +557,20 @@ class XCrossAttemptModel:
 
     @classmethod
     def from_hub(cls, repo_id: str = _HF_REPO_ID) -> XCrossAttemptModel:
-        """Download published weights from HuggingFace Hub. INERT until PR-B publishes."""
-        from huggingface_hub import snapshot_download  # noqa: F401
+        """Download published weights from HuggingFace Hub and load.
 
-        raise FileNotFoundError(f"No published xCrossAttempt weights at {repo_id} yet (PR-B follow-up).")
+        Requires ``pip install silly-kicks[xcross]``.
+
+        Examples
+        --------
+        >>> # model = XCrossAttemptModel.from_hub()
+        """
+        try:
+            from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
+        except ImportError:
+            raise ImportError("xCrossAttempt Hub weights require: pip install silly-kicks[xcross]") from None
+        local_dir = snapshot_download(repo_id=repo_id)
+        return cls.load(Path(local_dir))
 
 
 def _resolve_model(model: XCrossAttemptModel | str | None) -> XCrossAttemptModel:
@@ -627,11 +648,13 @@ def compute_xcross_attempt(
     probs = m.predict_proba(feature_matrix)
     key_df = pd.DataFrame(keys, columns=["game_id", "period_id", "frame_id", "team_id"])
     key_df["__p"] = probs
-    # N-B (mirror xS): join on TEMPORARY string keys -> never mutate out dtypes.
-    out["__gid"] = out["game_id"].astype(str)
-    out["__tid"] = out["team_id"].astype(str)
-    key_df["__gid"] = key_df["game_id"].astype(str)
-    key_df["__tid"] = key_df["team_id"].astype(str)
+    # N-B (mirror xS): join on TEMPORARY canonical id keys -> never mutate out dtypes.
+    # canonical_id_series (ADR-019) is the dtype-safe stringify (366/366.0/Int64(366) -> "366"),
+    # avoiding the .astype(str) "366.0" artifact on any float-upcast id column.
+    out["__gid"] = canonical_id_series(out["game_id"])
+    out["__tid"] = canonical_id_series(out["team_id"])
+    key_df["__gid"] = canonical_id_series(key_df["game_id"])
+    key_df["__tid"] = canonical_id_series(key_df["team_id"])
     key_df = key_df.drop(columns=["game_id", "team_id"])
     out = out.merge(key_df, on=["__gid", "period_id", "frame_id", "__tid"], how="left")
     out["xcross_attempt"] = out["__p"]
@@ -679,11 +702,12 @@ def add_xcross_attempt(
         ["game_id", "period_id", "frame_id", "team_id", "xcross_attempt"]
     ].copy()
     linked = pointers.merge(actions[["action_id", "game_id", "period_id", "team_id"]], on="action_id", how="left")
-    for col_name in ("game_id", "team_id"):
-        if len(linked) and len(xcol) and linked[col_name].dtype != xcol[col_name].dtype:
-            linked[col_name] = linked[col_name].astype(str)
-            xcol[col_name] = xcol[col_name].astype(str)
-    merged = linked.merge(xcol, on=["game_id", "period_id", "frame_id", "team_id"], how="left")
+    # ADR-019: action-side ids (e.g. int64 team_id) vs frame-derived ids (Int64/object) on the
+    # merge keys. align_join_keys no-ops when both sides are merge-compatible (both numeric or both
+    # object) and canonicalizes only the numeric-vs-object keys -- fixing the silent cross-dtype miss.
+    merge_keys = ["game_id", "period_id", "frame_id", "team_id"]
+    linked, xcol = align_join_keys(linked, xcol, merge_keys)
+    merged = linked.merge(xcol, on=merge_keys, how="left")
     deduped = merged.drop_duplicates(subset=["action_id"], keep="first")
     col = deduped.set_index("action_id")["xcross_attempt"]
     out = out.merge(col.rename("xcross_attempt"), left_on="action_id", right_index=True, how="left")

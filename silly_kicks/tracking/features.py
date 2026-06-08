@@ -55,6 +55,7 @@ from ._ball_carrier import infer_ball_carrier
 from ._gk_resolve import defending_gk_from_frames
 from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
 from ._structural_pass import StructuralPassParams
+from ._xcross_attempt import xcross_attempt_xfns
 from ._xshot_occurrence import xshot_occurrence_xfns
 from .feature_framework import lift_to_states
 from .pressure import (
@@ -741,7 +742,12 @@ pre_shot_gk_angle_default_xfns = [
 # tracking_default_xfns (which stays model-free; adding a frame-time bundled-weights +
 # [xgboost] dependency to the broad default would be a Hyrum break). Bundled model load is
 # memoized (from_variant("default") -> _VARIANT_CACHE).
-pre_shot_gk_full_default_xfns = pre_shot_gk_default_xfns + pre_shot_gk_angle_default_xfns + xshot_occurrence_xfns()
+# PR-B: xCross (TF-17, GKDV Layer 2) joins the same GK-union list as xS (NOT the general default).
+# Wired in regardless of the model's tf19_ready flag -- a VAEP feature factory exposes inputs to a
+# learner; the column is not asserted "validated useful" (an inert-GK model still ships its column).
+pre_shot_gk_full_default_xfns = (
+    pre_shot_gk_default_xfns + pre_shot_gk_angle_default_xfns + xshot_occurrence_xfns() + xcross_attempt_xfns()
+)
 
 
 # ---------------------------------------------------------------------------

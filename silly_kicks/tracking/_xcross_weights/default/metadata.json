@@ -1,0 +1,55 @@
+{
+  "feature_names": [
+    "ball_r",
+    "ball_theta",
+    "ball_speed",
+    "score_differential",
+    "dist_nearest_def",
+    "space_controlled",
+    "dist_nearest_teammate",
+    "dist_endline",
+    "box_off_def_ratio",
+    "ten_minute_warning",
+    "gk_r",
+    "gk_theta",
+    "gk_lateral_offset",
+    "gk_dist_near_post",
+    "gk_dist_far_post",
+    "gk_carrier_side"
+  ],
+  "feature_set": "faithful",
+  "horizon_seconds": 1.0,
+  "cross_types": [
+    "cross"
+  ],
+  "carrier_params": {
+    "tolerance_m": 3.0,
+    "beta": 0.0,
+    "gamma": 0.25
+  },
+  "params": {
+    "n_estimators": 152,
+    "max_depth": 2,
+    "learning_rate": 0.06444616409081405,
+    "tree_method": "hist",
+    "n_jobs": 1,
+    "subsample": 1.0,
+    "colsample_bytree": 1.0,
+    "random_state": 42,
+    "eval_metric": "logloss",
+    "verbosity": 0,
+    "min_child_weight": 17,
+    "reg_lambda": 3.2543144219910607
+  },
+  "version": "1.0.0",
+  "pitch_length": 105.0,
+  "pitch_width": 68.0,
+  "geometry_version": "goal-relative-1",
+  "xgboost_version": "3.2.0",
+  "training_platform": "Linux-6.14.0-1015-nvidia-aarch64-with-glibc2.39",
+  "shipped_variant": "public",
+  "provider_list": [
+    "idsse",
+    "skillcorner"
+  ]
+}

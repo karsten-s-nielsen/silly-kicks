@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL
 
@@ -183,6 +184,17 @@ def test_train_script_smoke(tmp_path):
     metrics = json.loads((art / "metrics.json").read_text())
     assert metrics["acceptance"] and all(metrics["acceptance"].values())  # gates passed
     assert metrics["estimates_are_cv_not_shipped_fit"] is True
+    # PR-B headline validations land in metrics.json
+    assert "delta_pr_auc" in metrics["gk_block_ablation"] and "delta_log_loss" in metrics["gk_block_ablation"]
+    probe = metrics["gk_substitution_probe"]
+    assert "tf19_ready" in probe and "gk_median_abs_delta" in probe
+    assert "nearest_def_median_abs_delta" in probe and "random_band_median_abs_delta" in probe
+    assert "score_differential_coverage" in metrics["permutation_importance"]
+    assert metrics["permutation_importance"]["held_out"] is True
+    assert metrics["score_differential_range_probe"]["abs_ge_12_count"] == 0  # clean synthetic
+    assert "tf19_ready" in metrics
+    # the substitution probe actually found eligible wide-area frames (the probe sample was saved + read)
+    assert probe["n_frames_used"] >= 1
 
 
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
@@ -291,3 +303,122 @@ def test_objective_cache_equivalence_with_train_subsample():
         ),
     ]
     assert_cache_equivalence(obj, candidates)
+
+
+@pytest.mark.parametrize("seed,ns", [(42, None), (7, None), (7, 0.5)])
+def test_cv_metrics_delegates_to_eval_cv_score(seed, ns):
+    """M4 (closed by extraction): the acceptance gate (_cv_metrics) and the ablation share ONE
+    _cv_score, so they use identical folds for ANY seed / negative_subsample. Exact equality (same
+    call), exercised on the seed + ns axes the old parity test could not see."""
+    import importlib.util
+    from pathlib import Path
+
+    from silly_kicks.tracking import _xcross_eval as ev
+
+    spec = importlib.util.spec_from_file_location("_train_xcross", Path("scripts/train_xcross_attempt.py"))
+    assert spec is not None and spec.loader is not None
+    trainer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(trainer)
+
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.normal(size=(300, 16)), columns=XCROSS_FEATURE_NAMES_FAITHFUL)
+    y = (rng.random(300) > 0.6).astype(int)
+    groups = np.array((["g1"] * 150) + (["g2"] * 150))
+    params = {"n_estimators": 40, "max_depth": 3, "learning_rate": 0.1, "min_child_weight": 1, "reg_lambda": 1.0}
+
+    m = trainer._cv_metrics(X, y, groups, params, seed=seed, negative_subsample=ns)
+    s = ev._cv_score(X, y, groups, params, seed=seed, negative_subsample=ns)
+    assert m["pr_auc"] == s["pr_auc"]  # exact: _cv_metrics literally calls _cv_score
+    assert m["log_loss"] == s["log_loss"]
+    assert {"positive_rate", "base_rate_brier"} <= set(m)  # the gate keys still present
+
+
+def test_from_hub_shape_mocked(monkeypatch, tmp_path):
+    """Task 5: from_hub downloads then loads; mock snapshot_download to a local saved artifact."""
+    import huggingface_hub
+
+    from silly_kicks.tracking import _xcross_attempt as xc
+
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.normal(size=(120, 16)), columns=XCROSS_FEATURE_NAMES_FAITHFUL)
+    m = xc.XCrossAttemptModel().fit(X, pd.Series((rng.random(120) > 0.6).astype(int)))
+    d = tmp_path / "art"
+    m.save(d)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda repo_id: str(d))
+    back = xc.XCrossAttemptModel.from_hub("silly-kicks/xcross-attempt-v1")
+    np.testing.assert_allclose(m.predict_proba(X), back.predict_proba(X), rtol=1e-9)
+
+
+def test_from_variant_default_does_not_cascade_to_hub(monkeypatch):
+    """B4: default loads bundled-or-raises; it must NOT call snapshot_download."""
+    from silly_kicks.tracking import _xcross_attempt as xc
+
+    xc._VARIANT_CACHE.clear()
+    called = {"hub": False}
+    monkeypatch.setattr(
+        xc.XCrossAttemptModel,
+        "from_hub",
+        classmethod(lambda cls, repo_id=xc._HF_REPO_ID: called.__setitem__("hub", True)),
+    )
+    if not (xc._XCROSS_WEIGHTS_ROOT / "default" / "SHA256SUMS").exists():
+        with pytest.raises(FileNotFoundError):
+            xc.XCrossAttemptModel.from_variant("default")
+        assert called["hub"] is False
+
+
+def test_xcross_xfns_in_pre_shot_gk_full_default():
+    from silly_kicks.tracking import features as tf
+
+    names = {getattr(fn, "__name__", "") for fn in tf.pre_shot_gk_full_default_xfns}
+    assert any("xcross" in n for n in names), names
+
+
+def test_atomic_xcross_xfns_in_pre_shot_gk_full_default():
+    from silly_kicks.atomic.tracking import features as af
+
+    names = {getattr(fn, "__name__", "") for fn in af.atomic_pre_shot_gk_full_default_xfns}
+    assert any("xcross" in n for n in names), names
+
+
+# --- Task 7: directional fixture + bundled-model tripwire (bundled tests skip until weights land) ---
+_XCROSS_DIRECTIONAL = "tests/datasets/tracking/xcross_directional/frozen_rows.parquet"
+_NO_XCROSS_WEIGHTS = not __import__("pathlib").Path("silly_kicks/tracking/_xcross_weights/default/SHA256SUMS").exists()
+
+
+def test_xcross_directional_fixture_schema():
+    df = pd.read_parquet(_XCROSS_DIRECTIONAL)
+    assert set(XCROSS_FEATURE_NAMES_FAITHFUL).issubset(df.columns)
+    assert "label" in df.columns and df["label"].nunique() == 2
+    assert df["label"].sum() >= 3 and (df["label"] == 0).sum() >= 3
+
+
+@pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+def test_xcross_bundled_model_is_live_not_degenerate():
+    from sklearn.metrics import roc_auc_score
+
+    from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
+
+    df = pd.read_parquet(_XCROSS_DIRECTIONAL)
+    m = XCrossAttemptModel.from_variant("default")
+    p = m.predict_proba(df[XCROSS_FEATURE_NAMES_FAITHFUL])
+    assert roc_auc_score(df["label"].to_numpy(), p) >= 0.9
+
+
+@pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+def test_xcross_from_variant_default_in_bounds():
+    from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
+
+    m = XCrossAttemptModel.from_variant("default")
+    p = m.predict_proba(pd.DataFrame(np.zeros((4, 16)), columns=XCROSS_FEATURE_NAMES_FAITHFUL))
+    assert np.all((p >= 0) & (p <= 1))
+
+
+@pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+def test_xcross_bundled_metadata_matches_training_intent():
+    import json
+    from pathlib import Path
+
+    md = json.loads(Path("silly_kicks/tracking/_xcross_weights/default/metadata.json").read_text())
+    assert md["carrier_params"] == {"tolerance_m": 3.0, "beta": 0.0, "gamma": 0.25}
+    assert md["pitch_length"] == 105.0 and md["pitch_width"] == 68.0
+    assert "geometry_version" in md and "xgboost_version" in md

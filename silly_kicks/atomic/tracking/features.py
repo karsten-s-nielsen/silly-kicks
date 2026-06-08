@@ -547,7 +547,10 @@ atomic_pre_shot_gk_angle_default_xfns = [
 # union too (the xshot_occurrence_xfns factory is action-decomposition-agnostic: it scores the
 # possessing team's shot probability at the linked frame, independent of atomic sub-actions).
 atomic_pre_shot_gk_full_default_xfns = (
-    atomic_pre_shot_gk_default_xfns + atomic_pre_shot_gk_angle_default_xfns + xshot_occurrence_xfns()
+    atomic_pre_shot_gk_default_xfns
+    + atomic_pre_shot_gk_angle_default_xfns
+    + xshot_occurrence_xfns()
+    + xcross_attempt_xfns()
 )
 
 
