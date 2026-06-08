@@ -60,7 +60,7 @@ jobs:
       # ghost-GK cost is instead cut at the source (exact cpu-numba KDE backend + shrunk golden).
       # Perf budgets are now deterministic structural guards in the bulk (no wall-clock), so this
       # step is stable; the pure benchmark *measurements* run single-threaded below for clean timing.
-      - run: pytest tests/ -m "not e2e" --benchmark-skip --tb=short
+      - run: pytest tests/ -m "not e2e" --benchmark-skip --tb=short --durations=0
       # Benchmark measurements (no hard timing asserts after the structural-guard conversion), run
       # single-threaded so the recorded numbers are clean trend data, not CPU-contended noise.
       - run: pytest tests/ -m "not e2e" --benchmark-only --tb=short
