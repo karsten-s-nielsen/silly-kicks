@@ -56,6 +56,38 @@ def _moves(n_per_zone: int = 20, seed: int = 0) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _corpus_with_shots(n_per_zone: int = 40, seed: int = 0) -> pd.DataFrame:
+    """``_moves`` plus a cluster of shots near goal (some scored) so the fitted xT grid is
+    non-zero. A passes-only corpus yields P(score)=0 everywhere -> an all-zero ``.xT`` ->
+    ``ExpectedThreat.rate`` (and the xt_xfns fitted-check) raise NotFittedError. Used by the
+    xt-VAEP-feature tests, which need a *rateable* fitted model."""
+    moves = _moves(n_per_zone=n_per_zone, seed=seed)
+    shot_id = cfg.actiontype_id["shot"]
+    rng = np.random.default_rng(seed + 99)
+    rows, aid = [], int(moves.action_id.max()) + 1
+    for _ in range(60):
+        scored = rng.random() < 0.2
+        rows.append(
+            dict(
+                game_id=1,
+                action_id=aid,
+                period_id=1,
+                time_seconds=float(aid),
+                team_id=1,
+                player_id=1,
+                bodypart_id=0,
+                type_id=shot_id,
+                result_id=cfg.result_id["success"] if scored else cfg.result_id["fail"],
+                start_x=float(np.clip(95.0 + rng.normal(0, 3), 0, cfg.field_length)),
+                start_y=float(np.clip(34.0 + rng.normal(0, 8), 0, cfg.field_width)),
+                end_x=cfg.field_length,
+                end_y=cfg.field_width / 2.0,
+            )
+        )
+        aid += 1
+    return pd.concat([moves, pd.DataFrame(rows)], ignore_index=True)
+
+
 def _sparse_overfit_corpus(seed: int = 0, n_games: int = 20) -> pd.DataFrame:
     """Sparse, wide-jitter passes from 4 centres across many games — Singh overfits (spiky rows),
     KDE smooths. Used by the KDE-beats-Singh hard gate (Task 10).

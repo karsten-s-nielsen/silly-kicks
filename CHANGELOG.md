@@ -5,6 +5,39 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.19.0] — 2026-06-08
+
+### Added — xT as a VAEP feature (`xt__<method>` xfn factory, ADR-022)
+
+`silly_kicks.vaep.features.xt_xfns(*, model)` (and its atomic mirror
+`silly_kicks.atomic.vaep.features.xt_xfns`) wire a fitted `ExpectedThreat` into the VAEP
+feature framework as a **frame-free**, opt-in feature transformer. It emits one
+`xt__<model.method>` column per gamestate slot (`xt__singh_counts_a0/_a1/_a2`,
+`xt__kde_smoothed_*`), following the ADR-005 §8 `<feature>__<method>` naming convention, and
+preserves `ExpectedThreat.rate`'s NaN contract for non-move / failed-move actions.
+
+- **Caller-supplies-the-model.** The factory closes over a *fitted* `ExpectedThreat` and fails
+  closed otherwise (`None` → `ValueError`, an unfitted model → `NotFittedError`, a `str` →
+  `NotImplementedError` — a reserved door for a future bundled-grid variant). Train/serve
+  consistency is the caller's responsibility: fit + freeze the grid once and reuse the identical
+  object at serve time (mirrors the `FrozenXt` / ADR-009 discipline). `ExpectedThreat` is imported
+  only under `TYPE_CHECKING` (duck-typed at runtime) — **no new runtime dependency edge**; bare
+  `import silly_kicks` is unaffected.
+- **Opt-in — no forced retrain.** `xt_xfns` is in **none** of the default/union xfn lists; opt in
+  with `VAEP(xfns=xfns_default + xt_xfns(model=frozen_xt))`. A guard test enforces its absence from
+  the defaults. **Opting it into your own xfns is a self-triggered VAEP retrain.**
+- **Atomic mirror reuses `model.rate()`** (unchanged) via a synthesized standard-SPADL frame with a
+  **type-aware** `result_id` — dribbles are intrinsically successful (never followed by a
+  `receival`); pass/cross success iff the next atom is `receival`. A blanket next-atom test would
+  NaN every dribble; the type-aware predicate keeps `xt__<method>` column-symmetric across both
+  SPADL flavours (verified by a geometry-keyed cross-representation oracle on the committed WC2018
+  fixture, plus a dribble keystone gate). Slots map by the composite
+  `(game_id, period_id, action_id)` key. A pass/cross that is the last action of a period has no
+  following atom and yields NaN (inherent atomic-representation edge; documented).
+
+`ExpectedThreat.rate()` is left **byte-identical** (no `_rate_cells` extraction) — the SK-xT-1
+parity gate and golden snapshots are untouched. Decision: ADR-022; attribution Singh (2018).
+
 ## [4.18.0] — 2026-06-07
 
 ### Added — TF-17 xCrossAttempt (xCross) TRAINED weights + GK validation + TF-19 wiring (PR-S85)

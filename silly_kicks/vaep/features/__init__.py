@@ -18,6 +18,7 @@ from .actiontype import *  # noqa: F403
 from .bodypart import *  # noqa: F403
 from .context import *  # noqa: F403
 from .core import *  # noqa: F403
+from .expected_threat import xt_xfns
 from .result import *  # noqa: F403
 from .spatial import *  # noqa: F403
 from .specialty import *  # noqa: F403
@@ -62,4 +63,5 @@ __all__ = [
     "team",
     "time",
     "time_delta",
+    "xt_xfns",
 ]
