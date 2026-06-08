@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.17.0"
+version = "4.18.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -46,6 +46,8 @@ golden-master = ["unravelsports>=1.2; python_version >= '3.11'"]
 das = ["accessible-space>=2.0,<3"]
 ghost-gk = ["huggingface_hub>=0.20.0"]
 ghost-gk-train = ["skl2onnx>=1.16.0"]
+# TF-17 (PR-B): xCrossAttempt Hub weights download (from_hub). huggingface_hub is lazy-imported.
+xcross = ["huggingface_hub>=0.20.0"]
 # TF-24 (3.28.0): Optuna calibration harness (silly_kicks/calibration/). xgboost upper-bounded
 # because the 1e-9 cache-equivalence gate rides on tree_method="hist" determinism, which a
 # future major could change. ruthless-efficiency provides the Optuna optimisation substrate;
@@ -113,14 +115,14 @@ packages = ["silly_kicks"]
 # NOT committed to the repo (4.10.0) — downloaded from HuggingFace Hub on first use. This
 # exclude is a defensive guard: if a maintainer trains a `full` model into that path locally,
 # it stays out of the wheel. The "default" weights (~12 MB) ship bundled in the package.
-exclude = ["silly_kicks/tracking/_ghost_gk_weights/full"]
+exclude = ["silly_kicks/tracking/_ghost_gk_weights/full", "silly_kicks/tracking/_xcross_weights/full"]
 
 [tool.hatch.build.targets.sdist]
 # Same defensive exclude for the sdist. Each hatch target has its OWN include/exclude set,
 # so the wheel exclude does not cover the sdist — the 4.10.0 publish initially failed because
 # the sdist bundled the (then-committed) ~91 MB full/ weights and exceeded PyPI's 100 MB limit.
 # The full/ dir is now removed from the repo; this keeps any locally-trained full/ out of the sdist.
-exclude = ["silly_kicks/tracking/_ghost_gk_weights/full"]
+exclude = ["silly_kicks/tracking/_ghost_gk_weights/full", "silly_kicks/tracking/_xcross_weights/full"]
 
 # --- Ruff ---
 [tool.ruff]
@@ -167,6 +169,12 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/tracking/_xshot_occurrence_objective.py" = ["N803", "N806"]
 # TF-17 xCrossAttempt: ML-style uppercase X feature matrices in the HPO objective.
 "silly_kicks/tracking/_xcross_attempt_objective.py" = ["N803", "N806"]
+# TF-17 xCrossAttempt: ML-style uppercase X feature matrices in the PR-B maintainer-eval module.
+"silly_kicks/tracking/_xcross_eval.py" = ["N803", "N806"]
+# TF-17 xCross PR-C causal port: ML-style uppercase X/Y/Z in the matching estimators.
+"silly_kicks/_causal/**/*.py" = ["N803", "N806"]
+# TF-17 xCross PR-C causal driver: ML-style uppercase X/Y/Z + `matching as M` (N812).
+"scripts/validate_xcross_causal.py" = ["N803", "N806", "N812"]
 # TF-24 CLI prints a human-readable run summary (T201).
 "scripts/calibrate_tracking_defaults.py" = ["T201"]
 # TF-16 xS trainer: ML-style uppercase X + human-readable run summary (T201).

@@ -96,7 +96,14 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   omitted; no faithful tracking-only proxy exists) and EXTENDS the propensity model
   with goalkeeper-position confounders (the paper's confounder set excluded all GK
   variables). The paper's sender-level propensity-score-matching framework
-  (ATE/ATT) is reproduced separately in the TF-17 causal validation harness (PR-C).
+  (ATE/ATT) is reproduced separately in the TF-17 causal validation harness (PR-C):
+  the private silly_kicks/_causal/ port (ADR-015) does propensity-score matching
+  (ATT/ATNT, 1:1 nearest-neighbor with replacement, no caliper, Abadie-Imbens SEs)
+  on crosser-anchored opportunity-spell rows, ablating the GK confounder block
+  against a row-permuted-GK placebo null band. It reconstructs the paper's
+  sender-level unit; the remaining divergence (tracking-only opportunity detection;
+  different league/era corpus) is reported, not hidden. The causal finding is a
+  reported research result, never a ship gate.
 
 - Peters, A., Parmar, N., Davies, M., & James, N. (2026). "When Timing Matters:
   Evaluating Temporal Leakage in Machine Learning Models of Football Pass
