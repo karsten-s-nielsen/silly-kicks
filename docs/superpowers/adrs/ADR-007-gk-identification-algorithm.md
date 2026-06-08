@@ -51,6 +51,17 @@ Thresholds locked: `_GK_N_FRAMES_FRAC=0.30`, `_GK_PA_DWELL_MIN=0.40`, `_GK_DIST_
 
 - `TrackingConversionReport` gains two fields: `n_teams_gk_derived`, `derived_gk_picks`
 
+### Validation
+
+- **Sportec** (native ground truth): 14/14 teams — Tier-1.
+- **SkillCorner** (external `match.json` roster via pining, `player_role.acronym == "GK"`):
+  20/20 team-GKs across the 10 public A-League matches — **Tier-1** (PR-S86, 4.19.1; gated by
+  `tests/tracking/test_gk_skillcorner_roster_e2e.py`, exact-set-equality). The algorithm
+  required no change.
+- **Metrica**: external-roster verification is impossible on public data (anonymized players,
+  no roster to anchor against; licensed EPTS metadata unavailable) — remains **Tier-2**
+  algorithm self-consistency, a documented permanent limitation.
+
 ## Related
 
 - **Specs:** `docs/superpowers/specs/2026-05-04-pr-s26-kloppy-gk-hardening-design.md`

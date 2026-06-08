@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.19.1] — 2026-06-08
+
+### Added — TF-27 SkillCorner derived-GK Tier-1 roster validation (PR-S86, ADR-007)
+
+Upgrades `_gk_identification.derive_goalkeepers` validation for SkillCorner from Tier-2
+(algorithm self-consistency) to **Tier-1** (external ground truth). A new owner-runnable
+e2e (`tests/tracking/test_gk_skillcorner_roster_e2e.py`) anchors `derived_gk_picks` against
+the pining `match.json` roster GK (`player_role.acronym == "GK"`) per team, with an
+exact-set-equality gate (catches over-identification) + a fail-loud join-key guard. Verified
+**20/20 team-GKs across all 10 public A-League matches** — no algorithm change required.
+A CI-runnable synthetic guard (`tests/tracking/test_gk_skillcorner_roster.py`) shares the same
+pure comparator (`tests/_skillcorner_sample.py`), and `scripts/download_skillcorner_sample.py`
+populates the sample dir (also unblocks the existing SkillCorner SPADL e2e). Metrica external
+verification remains impossible on public anonymized data (no roster) — a documented permanent
+limitation (ADR-007).
+
+### Changed
+
+- Refactored `scripts/_loader_pining._build_skillcorner` to delegate frame construction to a
+  new `build_skillcorner_frames` seam (single frame path; verbatim relocation, no behaviour
+  change — calibration unaffected). Breadcrumb for future calibration work.
+- ADR-007 / CLAUDE.md: SkillCorner derived-GK identification recorded as Tier-1 external-roster
+  validated.
+
 ## [4.19.0] — 2026-06-08
 
 ### Added — xT as a VAEP feature (`xt__<method>` xfn factory, ADR-022)
