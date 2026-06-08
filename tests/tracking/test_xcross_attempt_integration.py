@@ -143,6 +143,7 @@ def _write_synthetic_train_dir(tmp_path, *, n_games=4, learnable=True):
     return data_dir
 
 
+@pytest.mark.slow
 def test_train_script_smoke(tmp_path):
     import json
     import os
@@ -197,6 +198,7 @@ def test_train_script_smoke(tmp_path):
     assert probe["n_frames_used"] >= 1
 
 
+@pytest.mark.slow
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     """Fail-closed: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact."""
     import os

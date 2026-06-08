@@ -521,6 +521,7 @@ def test_xshot_cross_provider():
     assert len(seen) >= 2, f"cross-provider gate needs >=2 evaluable providers, got {seen}"
 
 
+@pytest.mark.slow
 def test_train_script_smoke(tmp_path):
     import json
     import os
@@ -564,6 +565,7 @@ def test_train_script_smoke(tmp_path):
     assert metrics["estimates_are_cv_not_shipped_fit"] is True  # N7
 
 
+@pytest.mark.slow
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     """N3: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact."""
     import os

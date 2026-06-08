@@ -27,6 +27,7 @@ def test_kde_strictly_beats_singh_on_synthetic_sparse_corpus(seed):
     assert nll_kde < nll_singh, f"seed={seed}: KDE {nll_kde} should beat Singh {nll_singh}"
 
 
+@pytest.mark.slow
 def test_kde_bandwidth_sweep_worldcup_diagnostic(sb_worldcup_data, capsys):
     """Widen past the lakehouse's saturated 2.0 edge. Logs the Singh baseline + the KDE NLL
     curve over bandwidths so the chosen KDEParams.bandwidth default is justified (NOT asserting)."""

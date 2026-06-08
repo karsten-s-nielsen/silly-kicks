@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from silly_kicks.tracking._ghost_gk import GRID_NX, GRID_NY, GhostGkModel
 from tests.tracking.test_ghost_gk import _fitted_model, _make_ghost_gk_frames
@@ -401,6 +402,7 @@ class TestRoundTripTrainPredict:
 class TestTrainScriptSmoke:
     """Train script runs on synthetic data and produces artifacts."""
 
+    @pytest.mark.slow
     def test_smoke(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir_p = Path(tmpdir)

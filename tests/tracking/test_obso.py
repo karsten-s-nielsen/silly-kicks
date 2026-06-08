@@ -435,6 +435,7 @@ class TestAddObso:
         # Provenance columns may also be added
         assert expected_cols.issubset(added)
 
+    @pytest.mark.slow
     def test_obso_bounded(self):
         """OBSO columns are in [0, 1] or NaN."""
         from silly_kicks.tracking.features import add_obso

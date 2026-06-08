@@ -2,6 +2,7 @@ import math
 
 import numpy as np
 import pandas as pd
+import pytest
 from ruthless import Candidate, assert_cache_equivalence
 
 import silly_kicks.calibration._vaep_brier_objective as vbo
@@ -26,6 +27,7 @@ def test_patch_params_declared():
     assert AugmentedVaepBrierObjective.patch_params == frozenset({"k3", "pre_seconds", "min_displacement_m"})
 
 
+@pytest.mark.slow
 def test_returns_finite_brier_and_per_provider_attrs(stage2_fold, frozen_xt):
     obj = _obj(stage2_fold, frozen_xt)
     m = obj.evaluate(_candidates()[0])
@@ -34,12 +36,14 @@ def test_returns_finite_brier_and_per_provider_attrs(stage2_fold, frozen_xt):
     assert any(k.startswith("brier_se__") for k in m)  # per-provider CV SE (M1)
 
 
+@pytest.mark.slow
 def test_cache_equivalence_fast_equals_full(stage2_fold, frozen_xt):
     obj = _obj(stage2_fold, frozen_xt)
     # Deterministic XGBoost + independent enrich_full => fast path ≡ full recompute to 1e-9.
     assert_cache_equivalence(obj, _candidates())
 
 
+@pytest.mark.slow
 def test_feature_matrix_parity_full_vs_invariant_patch(synth, frozen_xt):
     # N2: assert parity at the FEATURE level (not just downstream Brier).
     from silly_kicks.calibration._features import (
@@ -63,6 +67,7 @@ def test_feature_matrix_parity_full_vs_invariant_patch(synth, frozen_xt):
     )
 
 
+@pytest.mark.slow
 def test_h1_penalty_is_path_stable(stage2_fold, frozen_xt, monkeypatch):
     # When H1 fires, evaluate and evaluate_patch must return the SAME default-Brier-anchored
     # penalty (R1 stateless penalty). Force the gate to fire on every call.

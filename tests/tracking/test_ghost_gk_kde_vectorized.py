@@ -174,6 +174,7 @@ def test_vectorized_kernel_matches_scipy(k):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_model_traveling_parity(default_model_features):
     """vectorized ≈ scipy on whatever model is loaded (auto-revalidates on retrain).
 
@@ -916,6 +917,7 @@ def test_fft_cic_scalars_match_vectorized_unimodal(seed):
     assert abs(s_cic["spread"] - s_ora["spread"]) / abs(s_ora["spread"]) < 1e-2
 
 
+@pytest.mark.slow
 def test_fft_cic_raw_grid_tighter_than_ngp(golden, default_model_features):
     """The raw-grid fidelity test ADR-014 mandates for CIC: on real default-model leaf subsets,
     CIC's per-cell median rel-err vs the vectorized oracle is STRICTLY LOWER than NGP's. The grid

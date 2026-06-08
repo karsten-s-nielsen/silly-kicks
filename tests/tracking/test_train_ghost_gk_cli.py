@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
 from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
@@ -57,6 +58,7 @@ def _run(tmp_path: Path, *extra: str) -> dict:
     return json.loads((out / "ghost_gk_v1" / "metadata.json").read_text())
 
 
+@pytest.mark.slow
 def test_cli_records_supplied_carrier_params(tmp_path):
     meta = _run(tmp_path, "--carrier-beta", "0.9", "--carrier-gamma", "0.3", "--carrier-tolerance", "2.5")
     assert meta["carrier_params"] == {"tolerance_m": 2.5, "beta": 0.9, "gamma": 0.3}
@@ -64,6 +66,7 @@ def test_cli_records_supplied_carrier_params(tmp_path):
     assert meta["serve_estimator"] == "boosted_mean"
 
 
+@pytest.mark.slow
 def test_cli_omitted_records_library_default(tmp_path):
     meta = _run(tmp_path)
     assert meta["carrier_params"] == dict(DEFAULT_CARRIER_PARAMS)

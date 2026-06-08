@@ -1,3 +1,4 @@
+import pytest
 from ruthless import Candidate
 
 import silly_kicks.calibration._carrier_objective as carrier_obj
@@ -45,6 +46,7 @@ def test_link_failure_excluded_not_penalized(synth_link_failure):
     assert metrics["n_compared__provA"] == 1.0  # only the linked action counts
 
 
+@pytest.mark.slow
 def test_prepare_cached_once_and_matches_uncached(synth_two_providers_imbalanced, monkeypatch):
     """The per-match invariant prepare runs ONCE per match and is reused across trials, and
     the cached evaluate is bit-identical to the uncached one-shot reference (_match_accuracy).
