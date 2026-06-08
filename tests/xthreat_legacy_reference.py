@@ -1,4 +1,9 @@
-"""Implements the xT framework."""
+# ruff: noqa: E741
+"""FROZEN pre-refactor xthreat implementation. Test-only Singh-parity oracle for SK-xT-1.
+
+Do NOT edit — this is the byte-for-byte reference the refactored package must reproduce
+on the Singh path. See docs/superpowers/specs/2026-06-07-xthreat-pluggable-xt-promotion-design.md.
+"""
 
 from collections.abc import Callable
 

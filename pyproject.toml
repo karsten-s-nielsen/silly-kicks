@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.16.1"
+version = "4.17.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -146,7 +146,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 # (deployed AWS endpoint) + the presigned S3 URL it returns; no user-controlled/file: scheme.
 "tests/tracking/test_gradientsports_player_ids_e2e.py" = ["S310"]
 "silly_kicks/atomic/vaep/**/*.py" = ["N803", "N806"]
-"silly_kicks/xthreat.py" = ["N803", "N806", "E741"]
+"silly_kicks/xthreat/*.py" = ["N803", "N806", "E741"]
 # Ghost-GK: ML-style uppercase X for feature matrices
 "silly_kicks/tracking/_ghost_gk.py" = ["N803", "N806"]
 # Ghost-GK scripts: ML-style uppercase X, Y
