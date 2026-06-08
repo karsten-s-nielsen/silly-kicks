@@ -2,8 +2,10 @@
 
 import numpy as np
 import pandas as pd
+from sklearn.exceptions import NotFittedError
 
 import silly_kicks.atomic.spadl.config as atomicspadl
+import silly_kicks.spadl.config as stdspadl
 from silly_kicks.vaep.feature_framework import (
     Actions,
     Features,
@@ -42,6 +44,7 @@ __all__ = [
     "team",
     "time",
     "time_delta",
+    "xt_xfns",
 ]
 
 
@@ -368,3 +371,135 @@ def goalscore(gamestates: GameStates) -> Features:
     scoredf["goalscore_opponent"] = (goalscoreteamB * teamisA) + (goalscoreteamA * teamisB)
     scoredf["goalscore_diff"] = scoredf["goalscore_team"] - scoredf["goalscore_opponent"]
     return scoredf
+
+
+def _atomic_xt_delta_map(a0: pd.DataFrame, model) -> dict[tuple, float]:
+    """Per-action xT delta on the unshifted atomic stream, keyed by (game,period,action_id).
+
+    Type-aware success (dribble intrinsic; pass/cross next-atom-``receival``); reuses
+    ``model.rate`` via a synthesized standard-SPADL frame. See NOTICE for citations.
+
+    Parameters
+    ----------
+    a0 : pd.DataFrame
+        The unshifted atomic action stream (``states[0]``).
+    model : ExpectedThreat
+        A fitted xT model (duck-typed: ``.rate`` / ``.xT``).
+
+    Returns
+    -------
+    dict[tuple, float]
+        ``(game_id, period_id, action_id) -> xT delta`` for move atoms.
+    """
+    move_names = ("pass", "dribble", "cross")
+    move_ids = [atomicspadl.actiontype_id[n] for n in move_names]  # atomic ids
+    type_id = a0["type_id"].to_numpy()
+    is_move = np.isin(type_id, move_ids)
+    if not is_move.any():
+        return {}
+
+    # Next-atom success for pass/cross (within same game+period); dribble always successful.
+    n = len(a0)
+    next_type = np.full(n, -1, dtype=type_id.dtype)
+    next_type[:-1] = type_id[1:]
+    game = a0["game_id"].to_numpy()
+    period = a0["period_id"].to_numpy()
+    next_game = np.full(n, -1, dtype=game.dtype)
+    next_game[:-1] = game[1:]
+    next_period = np.full(n, -1, dtype=period.dtype)
+    next_period[:-1] = period[1:]
+    same_gp = (next_game == game) & (next_period == period)
+
+    receival_id = atomicspadl.actiontype_id["receival"]
+    dribble_id = atomicspadl.actiontype_id["dribble"]
+    is_dribble = type_id == dribble_id
+    is_passcross = is_move & ~is_dribble
+    success = is_dribble | (is_passcross & same_gp & (next_type == receival_id))
+
+    move_idx = np.flatnonzero(is_move)
+    sub = a0.iloc[move_idx]
+    synth = pd.DataFrame(
+        {
+            # Map atomic move type -> standard move type by NAME. The ids currently coincide
+            # (pass/dribble/cross == 0/21/1 in both configs), but keep the name-map deliberate:
+            # do NOT "simplify" to raw ids -- that would silently break if a future config
+            # (GS / SkillCorner) ever renumbers.
+            "type_id": [stdspadl.actiontype_id[atomicspadl.actiontypes[int(t)]] for t in type_id[move_idx]],
+            "result_id": np.where(success[move_idx], stdspadl.result_id["success"], stdspadl.result_id["fail"]),
+            "start_x": sub["x"].to_numpy(dtype=float),
+            "start_y": sub["y"].to_numpy(dtype=float),
+            "end_x": (sub["x"] + sub["dx"]).to_numpy(dtype=float),
+            "end_y": (sub["y"] + sub["dy"]).to_numpy(dtype=float),
+        }
+    )
+    # NOTE: synth feeds atomic (x, y) / (x+dx, y+dy) into model.rate(), which bins via
+    # silly_kicks.spadl.config field dims. Correct because atomic SPADL shares the standard
+    # 105x68 pitch frame (atomicspadl.field_length/width == spadl.config.field_length/width).
+    deltas = model.rate(synth)  # ndarray len(move_idx); NaN for failed/NaN-coord rows
+    # int-cast the key parts: gamestates' shift() can upcast id columns int->float on slots
+    # a1/a2, so building/looking-up keys as ints keeps them comparable regardless of dtype.
+    keys = [
+        (int(g), int(p), int(a)) for g, p, a in zip(sub["game_id"], sub["period_id"], sub["action_id"], strict=False)
+    ]
+    # dict() collapses duplicate keys (e.g. the all-zero dummy used by feature_column_names),
+    # so this never raises on non-unique keys the way a reindex/merge would.
+    return dict(zip(keys, deltas, strict=False))
+
+
+def xt_xfns(*, model=None) -> list[FeatureTransfomer]:
+    """Atomic mirror of the standard ``xt_xfns``: emits ``xt__<model.method>_a{i}``.
+
+    Type-aware success + ``model.rate`` reuse via a synthesized standard frame; maps to
+    slots by the composite ``(game_id, period_id, action_id)`` key. Opt-in (not in any
+    default list). See ``silly_kicks.vaep.features.expected_threat.xt_xfns`` and NOTICE.
+
+    Parameters
+    ----------
+    model : ExpectedThreat
+        A fitted xT model. ``str`` (future bundled variant) and ``None`` raise.
+
+    Returns
+    -------
+    list[FeatureTransfomer]
+        A one-element list holding the transformer.
+
+    Raises
+    ------
+    ValueError, NotImplementedError, NotFittedError
+        If ``model`` is not a fitted ExpectedThreat.
+
+    Examples
+    --------
+    Opt in to atomic xT as a VAEP feature::
+
+        from silly_kicks.atomic.vaep.features import xt_xfns
+
+        xfns = [afs.location, *xt_xfns(model=fitted_xt)]
+    """
+    if isinstance(model, str):
+        raise NotImplementedError(
+            "xt_xfns: bundled xT grid variants are not shipped yet; pass a fitted ExpectedThreat."
+        )
+    if model is None:
+        raise ValueError("xt_xfns requires a fitted ExpectedThreat (model=...).")
+    if not np.any(model.xT):
+        raise NotFittedError("xt_xfns requires a fitted ExpectedThreat; call model.fit(actions) first.")
+
+    col = f"xt__{model.method}"
+
+    def _xt(states: GameStates) -> Features:
+        a0 = states[0]
+        delta_map = _atomic_xt_delta_map(a0, model)
+        out = pd.DataFrame(index=a0.index)
+        for i, slot in enumerate(states):
+            # int-cast to match the int keys built in _atomic_xt_delta_map (shift() may have
+            # upcast these id columns to float on slots a1/a2; boundary rows are filled, never NaN).
+            keys = [
+                (int(g), int(p), int(a))
+                for g, p, a in zip(slot["game_id"], slot["period_id"], slot["action_id"], strict=False)
+            ]
+            out[f"{col}_a{i}"] = pd.Series([delta_map.get(k, np.nan) for k in keys], index=slot.index)
+        return out
+
+    _xt.__name__ = col
+    return [_xt]

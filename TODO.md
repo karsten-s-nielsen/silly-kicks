@@ -8,7 +8,7 @@ Quick-reference action items. Architectural decisions live in [docs/superpowers/
 
 ## On Deck
 
-Items are ranked top-to-bottom by specification completeness, then by additional implementation effort needed. (Most recently shipped: TF-17 xCrossAttempt, 4.18.0; TF-45 structural-pass primitives, 4.16.0.)
+Items are ranked top-to-bottom by specification completeness, then by additional implementation effort needed. (Most recently shipped: xT-as-VAEP-feature (SK-xT-2), 4.19.0; TF-17 xCrossAttempt, 4.18.0; TF-45 structural-pass primitives, 4.16.0.)
 
 | Size | What it means |
 |------|---------------|
@@ -56,12 +56,6 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 Build directly on the 4.17.0 pluggable xT (`xthreat/`, ADR-021); no external blockers.
 
-- **xT-as-VAEP-feature (`xt__<method>` xfn factory).** Wire xT ratings into the VAEP feature
-  framework as a frame-free xfn, following the ADR-005 §8 `<feature>__<method>` naming
-  (`xt__singh_counts` / `xt__kde_smoothed`). Design questions: which default xfn list ships it,
-  the default method, and the VAEP-retrain implication of adding the column. Orthogonal to the
-  model itself (xT is currently a standalone model + an input to `gk_influence`/`player_influence`/
-  `cover_shadows`, not a per-action VAEP feature). Lower priority. ~80–150 LOC + tests.
 - **`calibration`-integrated xT bandwidth/HPO sweep (TF-24 pattern).** The shipped held-out
   transition-NLL evaluator (`compute_holdout_nll`) is the objective substrate; add a `ruthless`/
   Optuna sweep over `KDEParams.bandwidth` (+ optionally `GridSpec` resolution / `adaptive`) per
