@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.20.0] — 2026-06-08
+
+### Added — SK-xT-3 calibration-integrated xT bandwidth/resolution sweep (ADR-009, ADR-021)
+
+`silly_kicks.calibration.xt_bandwidth_config` + `XtBandwidthObjective` — a `ruthless`/Optuna sweep
+over xT `KDEParams.bandwidth` × `GridSpec` resolution × `adaptive` minimizing K-fold held-out
+transition-NLL, with the Singh no-smoothing baseline reported alongside. Recommends a
+`KDEParams`+`GridSpec` via an auditable manifest (`scripts/calibrate_xt_bandwidth.py`); **changes no
+library default** (ADR-009). The recommendation is scoped to held-out *destination likelihood*
+(xT-quality impact reported, not asserted) and a downstream Spearman cross-check vs realised goals
+is emitted. The CLI supports download/parse caching for repeated runs: `_loader_pining.load_matches`
+gains an opt-in `cache_dir` (persistent, atomic-write artifact cache), and the CLI adds `--cache-dir`,
+`--corpus-cache` (assembled-corpus parquet — skips download+parse on re-runs), and `--subsample-games`
+(corpus-size contrast off the cache). The corpus is canonicalised to the standard SPADL columns +
+string-cast ids so the multi-provider parquet is serialisable.
+
+### Changed — vectorized gaussian xT KDE core (internal; no public-API change)
+
+`kde_smoothed_transition_matrix` now factors a shared, vectorized gaussian seam
+(`_gaussian_transition_from_grouped`) — softmax-stabilized, much faster per call, sklearn retained
+only for non-gaussian kernels. The gaussian numerics are re-pinned (Chesterton-verified: one caller,
+`singh_counts` default) and now stay finite/correct in the small-bandwidth regime where the previous
+sklearn-wrapper underflowed to the mean-row fallback.
+
 ## [4.19.2] — 2026-06-08
 
 ### Changed — CI slow-test gating: invariant heavy tests on a single primary leg (ADR-023)

@@ -46,3 +46,30 @@ ADR-004 (tracking-namespace charter) routes Sportec tracking through `silly_kick
 - **Plans:** `docs/superpowers/plans/2026-05-29-tf24-optuna-calibration-harness.md`
 - **ADRs:** relates to ADR-004 (tracking namespace), ADR-005 (tracking-aware features), ADR-008 (pitch control / pitch-control-cache reuse)
 - **External references:** `ruthless-efficiency` (PyPI 0.2.0); pining-for-the-data mock provider API; Link, Lang & Seidenschwarz 2016 (k3); Decroos/Van Roy xT
+
+---
+
+## Amendment (2026-06-08, SK-xT-3): xT bandwidth/resolution NLL objective
+
+Extends the recommends-an-auditable-manifest-never-mutates-defaults harness to xT
+(`silly_kicks/calibration/_xt_bandwidth_objective.py` + `xt_bandwidth_config`, ADR-021). It sweeps
+`KDEParams.bandwidth` x `GridSpec` resolution x `adaptive` over the held-out transition-NLL
+substrate (`compute_holdout_nll`) and recommends a `KDEParams`+`GridSpec`; the library default
+`KDEParams.bandwidth=1.0` is untouched.
+
+**Deliberate divergence from this ADR's CachedObjective pattern.** Stage 1/2 ship as a
+`ruthless.CachedObjective` guarded by `assert_cache_equivalence`. SK-xT-3 instead uses a plain
+duck-typed object with a resolution-keyed lazy cache and a hand-written warm==cold equivalence test,
+because the resolution axis means the invariant is keyed by `(grid, fold)` — which a single
+`prepare()` does not model. This is by design, not oversight.
+
+**Gaussian-core re-pin (Chesterton's Fence).** SK-xT-3 re-pins the gaussian KDE numerics to a
+vectorized implementation (shared `_gaussian_transition_from_grouped` seam) for a large per-trial
+speedup. `grep` confirms `kde_smoothed_transition_matrix` has exactly one caller (`_model.py:123`)
+and `ExpectedThreat` defaults to `singh_counts` (`_model.py:78`), so no shipped artifact (VAEP,
+bundled weights, lakehouse) depends on the KDE numerics — the re-pin is safe. The gaussian path now
+also stays finite/correct in the small-bandwidth regime where the previous sklearn-wrapper
+underflowed to the mean-row fallback.
+
+- **Specs:** `docs/superpowers/specs/2026-06-08-xt-bandwidth-calibration-design.md`
+- **Plans:** `docs/superpowers/plans/2026-06-08-xt-bandwidth-calibration.md`

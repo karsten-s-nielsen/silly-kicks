@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-08. **Current release**: silly-kicks 4.19.1 (TF-27 SkillCorner derived-GK Tier-1 roster validation). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-08. **Current release**: silly-kicks 4.20.0 (SK-xT-3 calibration-integrated xT bandwidth/resolution sweep). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -56,14 +56,6 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 Build directly on the 4.17.0 pluggable xT (`xthreat/`, ADR-021); no external blockers.
 
-- **`calibration`-integrated xT bandwidth/HPO sweep (TF-24 pattern).** The shipped held-out
-  transition-NLL evaluator (`compute_holdout_nll`) is the objective substrate; add a `ruthless`/
-  Optuna sweep over `KDEParams.bandwidth` (+ optionally `GridSpec` resolution / `adaptive`) per
-  corpus, living in `silly_kicks/calibration/` like the carrier/VAEP objectives. Motivated by the
-  4.17.0 live-mart triangulation: the NLL-optimal bandwidth is **corpus-size-dependent** (~1 on a
-  64-match sample, ≥4 on an 8.9M-action mart), so a per-corpus sweep has real value. Recommends
-  values + an auditable manifest; does NOT change library defaults (ADR-009 pattern). Coordinate
-  with the TF-24/lakehouse session (shared `calibration` area). Origin: 2026-06-07 SK-xT-1.
 - **Committed owner-gated lakehouse-mart NLL cross-check.** A permanent `@pytest.mark.e2e`,
   owner-gated test triangulating KDE-vs-Singh held-out NLL against
   `soccer_analytics.dev_gold.fct_action_values` (the 4.17.0 work ran this as a one-off,
