@@ -3623,7 +3623,7 @@ wheels = [
 
 [[package]]
 name = "silly-kicks"
-version = "4.19.1"
+version = "4.19.2"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -3682,6 +3682,7 @@ test = [
     { name = "pytest-benchmark" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
+    { name = "pyyaml" },
     { name = "ruthless-efficiency", extra = ["optuna"] },
     { name = "tables", version = "3.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "tables", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -3727,6 +3728,7 @@ requires-dist = [
     { name = "pytest-benchmark", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.1.0" },
     { name = "pytest-mock", marker = "extra == 'test'", specifier = ">=3.11.1" },
+    { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "ruthless-efficiency", extras = ["optuna"], marker = "extra == 'calibration'", specifier = ">=0.2.1" },
     { name = "ruthless-efficiency", extras = ["optuna"], marker = "extra == 'test'", specifier = ">=0.2.1" },

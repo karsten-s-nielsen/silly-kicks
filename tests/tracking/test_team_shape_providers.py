@@ -23,6 +23,7 @@ def provider_data(request):
 
 
 class TestTeamShapeProviders:
+    @pytest.mark.slow
     def test_add_team_shape_no_crash(self, provider_data):
         from silly_kicks.tracking.features import add_team_shape
 
@@ -33,6 +34,7 @@ class TestTeamShapeProviders:
         assert len(result) == len(actions)
         assert result["team_shape_centroid_x_attacking"].notna().sum() >= 1, "expected >=1 non-NaN team_shape row"
 
+    @pytest.mark.slow
     def test_team_shape_xfns_no_crash(self, provider_data):
         from silly_kicks.tracking.features import team_shape_xfns
 

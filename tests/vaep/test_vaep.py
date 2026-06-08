@@ -82,6 +82,7 @@ def vaep_model(sb_worldcup_data: pd.HDFStore) -> VAEP:
     return model
 
 
+@pytest.mark.slow
 def test_predict(sb_worldcup_data: pd.HDFStore, vaep_model: VAEP) -> None:
     games = cast(pd.DataFrame, sb_worldcup_data["games"])
     game = games.iloc[-1]

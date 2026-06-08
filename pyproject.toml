@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.19.1"
+version = "4.19.2"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -90,6 +90,10 @@ test = [
     # cache-equivalence + Optuna-smoke tests in tests/calibration/).
     "ruthless-efficiency[optuna]>=0.2.1",
     "xgboost>=2.0,<4.0",
+    # pyyaml backs the CI-gating tripwire (tests/test_ci_slow_gating_wired.py), which parses
+    # .github/workflows/ci.yml. Declared directly so the guard never rides a transitive edge
+    # (previously available only via huggingface_hub -> pyyaml). See ADR-023.
+    "pyyaml>=6.0",
 ]
 # Generic trained-model HPO/training extra (ADR-011). Shared by future trainers
 # (TF-16 xShotOccurrence + others) — same pins as [calibration]. Inference of a

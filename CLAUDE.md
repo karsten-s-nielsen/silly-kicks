@@ -48,13 +48,22 @@ e2e tests require dataset fixtures not committed to the repo. Tests with
 fixtures committed to the repo should not be marked e2e — they run in
 the regular suite.
 
-CI runs two steps: the bulk suite serial (`--benchmark-skip`) and the benchmark
-*measurements* single-threaded (`--benchmark-only`). There are no wall-clock
+CI runs a bulk suite step serial (`--benchmark-skip`) on every matrix leg and a benchmark
+*measurements* step single-threaded (`--benchmark-only`) on the primary leg only (see the
+slow-test-gating note below for the per-leg split). There are no wall-clock
 `assert ms < budget` perf tests — performance regressions are guarded by
 **deterministic structural guards** (call-count spies on each function's dominant
 primitive; see `tests/_perf_structural.py` + the `*_perf_budget.py` files), which
 never flake on shared runners. (An xdist parallelization was tried and reverted: it
 regressed py3.12 on the 4-core/7GB CI runners — memory/JIT pressure.)
+
+**`@pytest.mark.slow` = expensive AND platform/interpreter-INVARIANT** (does-it-run train-script
+smokes, same-run internal-consistency/parity, calibration cache-equivalence). These run **once on the
+CI primary leg (`ubuntu-3.12`, matrix `primary: true`)**; every other leg runs `-m "not e2e and not
+slow"`. Do **NOT** mark version-sensitive tests `slow` (golden-hash / snapshot / absolute-numeric — e.g.
+`test_golden_*`) — they must stay on all legs (OS + interpreter axes), as must cheap behavioral-contract
+guards (dup-`action_id`, id-dtype-invariance, orientation/roster). The matrix partition is guarded by
+`tests/test_ci_slow_gating_wired.py`. Decision: ADR-023.
 
 ## Open Items
 

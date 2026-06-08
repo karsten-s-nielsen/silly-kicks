@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 import silly_kicks
 from scripts.calibrate_tracking_defaults import build_manifest, run_stage
 
@@ -39,6 +41,7 @@ def test_stage1_smoke_returns_result(stage1_fold, tmp_path):
     assert hasattr(objective, "diagnostics")  # surfaced into the manifest (M1/M8)
 
 
+@pytest.mark.slow
 def test_stage2_smoke_accepts_frozen_xt_artifact(stage2_fold, frozen_xt, tmp_path):
     # Regression guard for the CLI Stage-2 wiring that shipped "e2e-green" yet crashed: main() hands
     # run_stage the FrozenXt ARTIFACT (the same object build_manifest gets), and the Stage-2

@@ -39,6 +39,13 @@ jobs:
             python-version: "3.10"
           - os: windows-latest
             python-version: "3.11"
+        include:
+          # Augments the existing ubuntu-3.12 leg (GitHub merges a matching include rather
+          # than creating a new leg) with primary: true -- the single source of truth for
+          # "which leg runs the platform-invariant @slow set + the benchmark step". See ADR-023.
+          - os: ubuntu-latest
+            python-version: "3.12"
+            primary: true
     env:
       # Strict mode: promote the in-converter direction-of-play invariant
       # assertion in `silly_kicks.spadl.utils._finalize_output` (PR-S22 /
@@ -60,7 +67,19 @@ jobs:
       # ghost-GK cost is instead cut at the source (exact cpu-numba KDE backend + shrunk golden).
       # Perf budgets are now deterministic structural guards in the bulk (no wall-clock), so this
       # step is stable; the pure benchmark *measurements* run single-threaded below for clean timing.
-      - run: pytest tests/ -m "not e2e" --benchmark-skip --tb=short
+      #
+      # Slow-test gating (ADR-023): the platform-/interpreter-INVARIANT heavy tests (train-script
+      # smokes, same-run internal-consistency/parity, calibration cache-equivalence) carry
+      # @pytest.mark.slow and run ONCE on the primary leg (ubuntu-3.12); every other leg runs the
+      # full fast/contract suite with `not slow`. Version-sensitive tests (golden/snapshot/absolute)
+      # are deliberately NOT marked slow -- they stay on all legs (OS + interpreter axes). The
+      # partition is structural (matrix.primary) and guarded by tests/test_ci_slow_gating_wired.py.
+      # Mutually-exclusive `if:`s keep every leg at exactly ONE bulk pytest process.
+      - if: ${{ !matrix.primary }}
+        run: pytest tests/ -m "not e2e and not slow" --benchmark-skip --tb=short --durations=25
+      - if: ${{ matrix.primary }}
+        run: pytest tests/ -m "not e2e" --benchmark-skip --tb=short --durations=25
       # Benchmark measurements (no hard timing asserts after the structural-guard conversion), run
-      # single-threaded so the recorded numbers are clean trend data, not CPU-contended noise.
-      - run: pytest tests/ -m "not e2e" --benchmark-only --tb=short
+      # single-threaded on the primary leg only so the recorded numbers are clean trend data.
+      - if: ${{ matrix.primary }}
+        run: pytest tests/ -m "not e2e" --benchmark-only --tb=short

@@ -5,6 +5,25 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.19.2] — 2026-06-08
+
+### Changed — CI slow-test gating: invariant heavy tests on a single primary leg (ADR-023)
+
+CI-/test-infra only — **no runtime change** (the wheel is byte-identical; `silly_kicks/` is untouched).
+The `test` matrix previously ran the full non-e2e suite on all 4 legs (ubuntu 3.10/3.11/3.12 +
+windows 3.12), making the slow Windows runner a ~16–20 min long pole. The expensive
+**platform-/interpreter-invariant** tests (train-script smokes, same-run internal-consistency / KDE
+parity, calibration cache-equivalence) now carry `@pytest.mark.slow` and run **once on a primary leg**
+(`ubuntu-latest` 3.12, identified by a matrix `primary: true` flag); every other leg runs
+`-m "not e2e and not slow"`. The `--benchmark-only` step is likewise primary-leg-only.
+
+The `slow` set was chosen from **real Windows-leg CI durations** (local profiling is not a faithful
+proxy). **Version-sensitive tests** (golden-hash / snapshot / absolute-numeric) and cheap
+behavioral-contract guards (dup-`action_id`, id-dtype-invariance, orientation/roster) are deliberately
+**not** marked `slow` — they stay on all legs (OS + interpreter axes). The matrix partition is guarded
+structurally by `tests/test_ci_slow_gating_wired.py`; `pyyaml` is now a direct `[test]` dep (the
+tripwire's parser). No xdist (it OOM-killed the runners before). Decision: ADR-023.
+
 ## [4.19.1] — 2026-06-08
 
 ### Added — TF-27 SkillCorner derived-GK Tier-1 roster validation (PR-S86, ADR-007)

@@ -22,6 +22,7 @@ def test_atomic_goal_from_shot_label(test_goal_df: pd.DataFrame) -> None:
     assert (lab.goal_from_shot(test_goal_df) == pd.DataFrame([[True], [False]], columns=["goal"]))["goal"].all()
 
 
+@pytest.mark.slow
 def test_predict(sb_worldcup_data: pd.HDFStore) -> None:
     # Convert to atomic actions
     games = cast(pd.DataFrame, sb_worldcup_data["games"])
