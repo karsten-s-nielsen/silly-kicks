@@ -78,12 +78,26 @@ def _list_matches(provider: str, token: str, base_url: str) -> list[dict]:
 
 
 def _download_to_temp(
-    provider: str, match_id: str, artifact_key: str, token: str, base_url: str, dest_dir: Path
+    provider: str,
+    match_id: str,
+    artifact_key: str,
+    token: str,
+    base_url: str,
+    dest_dir: Path,
+    *,
+    use_cache: bool = False,
 ) -> Path:
-    """Two-step: bearer GET -> 302 Location -> presigned GET (no bearer) -> stream to a temp file.
+    """Two-step: bearer GET -> 302 Location -> presigned GET (no bearer) -> stream to a file.
 
-    Streams so the ~419 MB IDSSE tracking.xml never sits fully in memory.
+    Streams so the ~419 MB IDSSE tracking.xml never sits fully in memory. When ``use_cache`` and a
+    non-empty ``dest`` already exists, returns it WITHOUT re-fetching (the cache hit — re-runs over
+    the same corpus skip every download). Writes go to a ``.partial`` sibling that is atomically
+    renamed into place only on a complete stream, so a crashed/retried download never leaves a
+    corrupt cache entry (a partial is simply re-fetched on the next attempt).
     """
+    dest = dest_dir / f"{provider}_{match_id}_{artifact_key}"
+    if use_cache and dest.exists() and dest.stat().st_size > 0:
+        return dest  # cache hit — no network
     opener = urllib.request.build_opener(_NoRedirect)
     url = f"{base_url}/{provider}/matches/{match_id}/{artifact_key}"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})  # noqa: S310
@@ -97,13 +111,14 @@ def _download_to_temp(
             raise
     if not location:
         raise RuntimeError(f"pining {provider}/{match_id}/{artifact_key}: expected a 302 redirect")
-    dest = dest_dir / f"{provider}_{match_id}_{artifact_key}"
-    with urllib.request.urlopen(location, timeout=600) as resp, open(dest, "wb") as fh:  # noqa: S310
+    partial = dest.with_name(dest.name + ".partial")
+    with urllib.request.urlopen(location, timeout=600) as resp, open(partial, "wb") as fh:  # noqa: S310
         while True:
             chunk = resp.read(1 << 20)  # 1 MiB
             if not chunk:
                 break
             fh.write(chunk)
+    partial.replace(dest)  # atomic — no partial cache entry on a mid-stream crash
     return dest
 
 
@@ -122,6 +137,7 @@ def load_matches(
     token: str | None = None,
     tracking_limit: int | None = None,
     max_per_provider: int | None = None,
+    cache_dir: str | Path | None = None,
 ) -> Iterator[tuple[str, str, pd.DataFrame, pd.DataFrame, object]]:
     """Yield (provider, match_id, actions, frames, home_team_id) for each requested match.
 
@@ -129,7 +145,9 @@ def load_matches(
     the ~419 MB IDSSE tracking file in dev/e2e loops. ``max_per_provider`` caps the NUMBER of
     matches loaded per provider (after any ``match_ids`` selection) — bounds total memory for the
     TF-24 sweep on a local machine (loading all matches at full depth can OOM; see calibrate CLI
-    ``--max-matches-per-provider``).
+    ``--max-matches-per-provider``). ``cache_dir`` (when set) persists every downloaded artifact
+    under ``cache_dir/{provider}/{match_id}/`` and reuses it on subsequent runs over the same corpus
+    — the network is paid once, not per re-run (the large IDSSE/GS tracking files dominate the load).
     """
     tok, base_url = _resolve_token(token), _base_url()
     for provider in providers:
@@ -140,13 +158,22 @@ def load_matches(
         for match_id in wanted:
             artifacts = manifest[match_id]["artifacts"]
             actions, frames, home = _build_match_with_retry(
-                provider, match_id, artifacts, tok, base_url, tracking_limit
+                provider, match_id, artifacts, tok, base_url, tracking_limit, cache_dir=cache_dir
             )
             yield provider, match_id, actions, frames, home
 
 
 def _build_match_with_retry(
-    provider, match_id, artifacts, tok, base_url, tracking_limit, *, attempts: int = 3, backoff: float = 3.0
+    provider,
+    match_id,
+    artifacts,
+    tok,
+    base_url,
+    tracking_limit,
+    *,
+    cache_dir=None,
+    attempts: int = 3,
+    backoff: float = 3.0,
 ):
     """Download + build one match, retrying transient network/IO failures with a fresh temp dir.
 
@@ -162,6 +189,14 @@ def _build_match_with_retry(
     last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
+            if cache_dir is not None:
+                # Persistent per-match cache dir (NOT a temp dir) — artifacts survive the call so
+                # subsequent runs over the same corpus skip every download (cache hit in
+                # _download_to_temp). The kloppy/build parse still re-runs; only the network is saved.
+                dl_dir = Path(cache_dir) / provider / str(match_id)
+                dl_dir.mkdir(parents=True, exist_ok=True)
+                paths = _download_artifacts(provider, match_id, artifacts, tok, base_url, dl_dir, use_cache=True)
+                return _build_match(provider, match_id, paths, tracking_limit)
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_dir = Path(tmp)
                 paths = _download_artifacts(provider, match_id, artifacts, tok, base_url, tmp_dir)
@@ -181,7 +216,9 @@ def _build_match_with_retry(
     ) from last_exc
 
 
-def _download_artifacts(provider, match_id, artifacts, token, base_url, tmp_dir) -> dict[str, Path]:
+def _download_artifacts(
+    provider, match_id, artifacts, token, base_url, tmp_dir, *, use_cache: bool = False
+) -> dict[str, Path]:
     """Download the artifacts each provider needs, keyed by a NORMALISED role name."""
     if provider == "idsse":
         roles = {"events": "events", "metadata": "metadata", "tracking": "tracking"}
@@ -198,7 +235,7 @@ def _download_artifacts(provider, match_id, artifacts, token, base_url, tmp_dir)
     out: dict[str, Path] = {}
     for role, key in roles.items():
         artifact_key = key if key in artifacts else role
-        out[role] = _download_to_temp(provider, match_id, artifact_key, token, base_url, tmp_dir)
+        out[role] = _download_to_temp(provider, match_id, artifact_key, token, base_url, tmp_dir, use_cache=use_cache)
     return out
 
 

@@ -16,8 +16,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from ruthless import Direction, FloatRange, OptunaConfig
+from ruthless import Choice, Direction, FloatRange, OptunaConfig
 from ruthless.config.common import StoreConfig
+
+from silly_kicks.xthreat import GridSpec
 
 
 def stage1_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "random"] = "tpe") -> OptunaConfig:
@@ -66,5 +68,48 @@ def stage2_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "ra
             "min_displacement_m": FloatRange(kind="float", lo=1.0, hi=8.0),
         },
         warm_start={"k3": 1.0, "pre_seconds": 1.5, "min_displacement_m": 3.0},
+        store=StoreConfig(kind="sqlite", path=store_path),
+    )
+
+
+# Aspect-sane grids near the pitch's ~1.54 ratio (105x68). Resolution is SWEPT (SK-xT-3) over this
+# curated discrete set rather than two independent IntRanges (~475 cells, admits non-physical 32x6).
+_GRIDS: tuple[str, ...] = ("12x8", "16x12", "20x14", "24x16", "28x18", "32x20")
+
+
+def grid_from_str(s: str) -> GridSpec:
+    """Parse a ``"<nx>x<ny>"`` grid string into a ``GridSpec`` (e.g. ``"16x12"`` -> 16x12).
+
+    Examples
+    --------
+    >>> from silly_kicks.calibration._spaces import grid_from_str
+    >>> grid_from_str("16x12").n_zones
+    192
+    """
+    nx, ny = s.lower().split("x")
+    return GridSpec(n_zones_x=int(nx), n_zones_y=int(ny))
+
+
+def xt_bandwidth_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "random"] = "tpe") -> OptunaConfig:
+    """SK-xT-3 — held-out xT transition-NLL sweep (minimize): bandwidth x adaptive x grid.
+
+    Examples
+    --------
+    >>> from silly_kicks.calibration._spaces import xt_bandwidth_config
+    >>> xt_bandwidth_config(n_trials=10, store_path="/tmp/xt.db").metric
+    'xt_holdout_nll'
+    """
+    return OptunaConfig(
+        kind="optuna",
+        metric="xt_holdout_nll",
+        direction=Direction.MINIMIZE,
+        n_trials=n_trials,
+        sampler=sampler,
+        param_space={
+            "bandwidth": FloatRange(kind="float", lo=0.1, hi=20.0, log=True),
+            "adaptive": Choice(kind="choice", choices=(True, False)),
+            "grid": Choice(kind="choice", choices=_GRIDS),
+        },
+        warm_start={"bandwidth": 1.0, "adaptive": True, "grid": "16x12"},
         store=StoreConfig(kind="sqlite", path=store_path),
     )

@@ -76,49 +76,101 @@ def _zone_centres(grid: GridSpec) -> npt.NDArray[np.float64]:
     return np.column_stack([cx, cy]).astype(np.float64)
 
 
-def kde_smoothed_transition_matrix(actions: pd.DataFrame, grid: GridSpec, params: KDEParams) -> npt.NDArray[np.float64]:
-    """Per-source-zone 2D KDE-smoothed move-transition matrix.
+def _bin_destinations_by_source(
+    actions: pd.DataFrame,
+    grid: GridSpec,
+    *,
+    max_points_per_zone: int | None = None,
+    rng_seed: int | None = None,
+) -> tuple[dict[int, npt.NDArray[np.float64]], npt.NDArray[np.float64]]:
+    """Group successful-move destinations by source zone in a SINGLE vectorized pass.
 
-    Salimi et al. 2026 (poster) reproduction; Silverman 1986 bandwidth. See NOTICE. Indexed by
-    silly-kicks flat zone indices (consistent with ``singh_transition_matrix`` + value iteration).
+    Returns ``(grouped, centres)`` where ``grouped[s]`` is the ``(n_s, 2)`` destination coords of
+    moves starting in flat zone ``s`` and ``centres`` is ``(n_zones, 2)``. ``grouped`` is the small
+    param-invariant artifact the calibration objective caches (NOT pairwise D², which is
+    ``n_s x n_zones`` and OOMs at scale). ``argsort + split`` replaces the legacy
+    ``for s: end_xy[start_cell == s]`` mask-in-loop. Optional deterministic per-zone subsample bounds
+    per-trial cdist FLOPs / pathological-zone memory; default ``(None, None)`` keeps every row
+    (byte-identical grouping to the legacy binning).
 
     Examples
     --------
-    Build a KDE-smoothed transition matrix::
+    Group a small SPADL corpus by source zone::
 
-        from silly_kicks.xthreat import GridSpec, KDEParams, kde_smoothed_transition_matrix
+        from silly_kicks.xthreat import GridSpec
+        from silly_kicks.xthreat._transitions import _bin_destinations_by_source
 
-        T = kde_smoothed_transition_matrix(actions, GridSpec(16, 12), KDEParams(bandwidth=2.0))
+        grouped, centres = _bin_destinations_by_source(actions, GridSpec(16, 12))
     """
-    from sklearn.neighbors import KernelDensity
-
     l, w = grid.n_zones_x, grid.n_zones_y
-    n = l * w
+    centres = _zone_centres(grid)
     move = _get_successful_move_actions(actions).dropna(subset=["start_x", "start_y", "end_x", "end_y"])
+    if len(move) == 0:
+        return {}, centres
     start_cell = _get_flat_indexes(move.start_x, move.start_y, l, w).to_numpy()
     end_xy = move[["end_x", "end_y"]].to_numpy(dtype=np.float64)
-    centres = _zone_centres(grid)
+    order = np.argsort(start_cell, kind="stable")
+    sc_sorted = start_cell[order]
+    end_sorted = end_xy[order]
+    boundaries = np.flatnonzero(np.diff(sc_sorted)) + 1
+    zone_per_group = sc_sorted[np.concatenate(([0], boundaries))]
+    groups = np.split(end_sorted, boundaries)
+    rng = np.random.default_rng(rng_seed)
+    grouped: dict[int, npt.NDArray[np.float64]] = {}
+    for s, pts in zip(zone_per_group, groups, strict=True):
+        if max_points_per_zone is not None and len(pts) > max_points_per_zone:
+            pts = pts[rng.choice(len(pts), size=max_points_per_zone, replace=False)]
+        grouped[int(s)] = pts
+    return grouped, centres
 
+
+def _gaussian_transition_from_grouped(
+    grouped: dict[int, npt.NDArray[np.float64]],
+    centres: npt.NDArray[np.float64],
+    grid: GridSpec,
+    params: KDEParams,
+) -> npt.NDArray[np.float64]:
+    """SHARED vectorized gaussian KDE seam — called by both the library core and the calibration
+    objective (equivalence is definitional, one function).
+
+    Per source zone with destinations ``pts``: ``logits = -D2 / (2h^2)`` where ``D2`` is the
+    ``(n_zones, n_s)`` pairwise squared distance from centres to pts; subtract the SCALAR global max
+    of ``logits`` (softmax stabilization — cancels in the row-normalization, prevents small-h
+    underflow; a per-centre max would corrupt the distribution); ``dens = exp(stabilized).sum``
+    over pts; row-normalize. Unpopulated zones get the populated mean row (matches the legacy
+    sklearn path's ``if total > 0 else mean-row`` branch).
+
+    Examples
+    --------
+    Build a gaussian transition matrix from pre-grouped destinations::
+
+        from silly_kicks.xthreat import GridSpec, KDEParams
+        from silly_kicks.xthreat._transitions import _bin_destinations_by_source, _gaussian_transition_from_grouped
+
+        grouped, centres = _bin_destinations_by_source(actions, GridSpec(16, 12))
+        T = _gaussian_transition_from_grouped(grouped, centres, GridSpec(16, 12), KDEParams())
+    """
+    n = grid.n_zones_x * grid.n_zones_y
     T = np.zeros((n, n), dtype=np.float64)
     populated: list[int] = []
-    for s in range(n):
-        rows = end_xy[start_cell == s]
-        if rows.shape[0] == 0:
+    for s, pts in grouped.items():
+        if pts.shape[0] == 0:
             continue
         if params.adaptive:
-            sigma = float(np.sqrt((rows[:, 0].var() + rows[:, 1].var()) / 2.0))
+            sigma = float(np.sqrt((pts[:, 0].var() + pts[:, 1].var()) / 2.0))
             if sigma == 0.0:
                 sigma = 1e-6
-            h = params.bandwidth * silverman_2d(rows.shape[0], sigma)
+            h = params.bandwidth * silverman_2d(pts.shape[0], sigma)
         else:
             h = params.bandwidth
-        kde = KernelDensity(kernel=params.kernel, bandwidth=h).fit(rows)
-        dens = np.exp(kde.score_samples(centres))
+        d2 = ((centres[:, None, :] - pts[None, :, :]) ** 2).sum(axis=2)  # (n_zones, n_s)
+        logits = -d2 / (2.0 * h * h)
+        logits = logits - logits.max()  # SCALAR global max — stabilize, cancels in normalization
+        dens = np.exp(logits).sum(axis=1)  # (n_zones,)
         total = dens.sum()
         if total > 0:
             T[s] = dens / total
             populated.append(s)
-
     if populated:
         mean_row = T[populated].mean(axis=0)
         s_mean = mean_row.sum()
@@ -129,3 +181,75 @@ def kde_smoothed_transition_matrix(actions: pd.DataFrame, grid: GridSpec, params
     else:
         T[:] = 1.0 / n
     return T
+
+
+def _kde_transition_from_grouped(
+    grouped: dict[int, npt.NDArray[np.float64]],
+    centres: npt.NDArray[np.float64],
+    grid: GridSpec,
+    params: KDEParams,
+) -> npt.NDArray[np.float64]:
+    """Dispatch the KDE core on ``params.kernel``: ``"gaussian"`` -> the vectorized shared seam;
+    any other kernel -> the sklearn ``KernelDensity`` fallback (unchanged generality).
+
+    Examples
+    --------
+    ::
+
+        from silly_kicks.xthreat import GridSpec, KDEParams
+        from silly_kicks.xthreat._transitions import _bin_destinations_by_source, _kde_transition_from_grouped
+
+        grouped, centres = _bin_destinations_by_source(actions, GridSpec(16, 12))
+        T = _kde_transition_from_grouped(grouped, centres, GridSpec(16, 12), KDEParams())
+    """
+    if params.kernel == "gaussian":
+        return _gaussian_transition_from_grouped(grouped, centres, grid, params)
+    from sklearn.neighbors import KernelDensity
+
+    n = grid.n_zones_x * grid.n_zones_y
+    T = np.zeros((n, n), dtype=np.float64)
+    populated: list[int] = []
+    for s, pts in grouped.items():
+        if pts.shape[0] == 0:
+            continue
+        if params.adaptive:
+            sigma = float(np.sqrt((pts[:, 0].var() + pts[:, 1].var()) / 2.0))
+            if sigma == 0.0:
+                sigma = 1e-6
+            h = params.bandwidth * silverman_2d(pts.shape[0], sigma)
+        else:
+            h = params.bandwidth
+        dens = np.exp(KernelDensity(kernel=params.kernel, bandwidth=h).fit(pts).score_samples(centres))
+        total = dens.sum()
+        if total > 0:
+            T[s] = dens / total
+            populated.append(s)
+    if populated:
+        mean_row = T[populated].mean(axis=0)
+        s_mean = mean_row.sum()
+        mean_row = mean_row / s_mean if s_mean > 0 else np.full(n, 1.0 / n)
+        for s in range(n):
+            if s not in populated:
+                T[s] = mean_row
+    else:
+        T[:] = 1.0 / n
+    return T
+
+
+def kde_smoothed_transition_matrix(actions: pd.DataFrame, grid: GridSpec, params: KDEParams) -> npt.NDArray[np.float64]:
+    """Per-source-zone 2D KDE-smoothed move-transition matrix.
+
+    Salimi et al. 2026 (poster) reproduction; Silverman 1986 bandwidth. See NOTICE. Indexed by
+    silly-kicks flat zone indices (consistent with ``singh_transition_matrix`` + value iteration).
+    The gaussian kernel (default) runs the vectorized shared seam; other kernels use sklearn.
+
+    Examples
+    --------
+    Build a KDE-smoothed transition matrix::
+
+        from silly_kicks.xthreat import GridSpec, KDEParams, kde_smoothed_transition_matrix
+
+        T = kde_smoothed_transition_matrix(actions, GridSpec(16, 12), KDEParams(bandwidth=2.0))
+    """
+    grouped, centres = _bin_destinations_by_source(actions, grid)
+    return _kde_transition_from_grouped(grouped, centres, grid, params)

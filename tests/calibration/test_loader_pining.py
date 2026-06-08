@@ -220,3 +220,17 @@ def test_build_skillcorner_frames_chains_load_convert_preprocess(monkeypatch):
     assert seen["load_kwargs"]["limit"] == 123
     assert seen["load_kwargs"]["include_empty_frames"] is False
     assert out["_preprocessed"].all() and list(out["x"]) == [1.0, 2.0]  # preprocess applied to convert output
+
+
+def test_download_to_temp_cache_hit_skips_network(tmp_path, monkeypatch):
+    # use_cache + a non-empty cached artifact present => return it WITHOUT any network call.
+    dest = tmp_path / "skillcorner_m1_events"
+    dest.write_text("cached-bytes")
+
+    def _boom(*a, **k):
+        raise AssertionError("network attempted on a cache hit")
+
+    monkeypatch.setattr(L.urllib.request, "build_opener", _boom)
+    got = L._download_to_temp("skillcorner", "m1", "events", "tok", "http://api", tmp_path, use_cache=True)
+    assert got == dest
+    assert got.read_text() == "cached-bytes"
