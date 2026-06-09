@@ -32,16 +32,24 @@ import pandas as pd
 
 from ._id_compat import ids_match, same_id
 
+# SGM eps-floor on rho (BUG-3 fix, 2026-06-09). A single defender at 3-sigma contributes
+# exp(-(3s)^2 / 2s^2) = exp(-4.5) ~= 0.0111 for any sigma, so flooring rho here caps 1/rho at
+# ~90: "no defender within 3-sigma of the passer/receiver" saturates to a bounded max space
+# instead of an unbounded 1/rho explosion (real GS data reached ~1e8). Sigma-independent.
+_RHO_FLOOR = float(np.exp(-4.5))
+
 
 @dataclass(frozen=True)
 class StructuralPassParams:
     """Tunable parameters for structural-pass metrics.
 
     sigma: defender spatial-influence radius (m) for the SGM Gaussian density.
-    Default 15.0 -- empirically tuned (2,466 real WC2022 passes): smallest sigma at
-    which the faithful 1/rho is intrinsically bounded by pitch geometry (no
-    eps-floor). See scripts/tune_structural_pass_sigma.py + spec D1. No is_default()
-    (matches CoverShadowParams / LineBreakingParams).
+    Default 15.0 -- empirically tuned (2,466 real WC2022 passes) as the smallest sigma that
+    keeps SGM well-scaled. NOTE: the original "1/rho is intrinsically bounded by pitch geometry
+    (no eps-floor)" claim was FALSIFIED on real data (byline crosses / fast breaks drive rho to
+    underflow -> 1/rho ~ 1e8), so an explicit eps-floor on rho (_RHO_FLOOR) bounds SGM
+    independently of sigma (BUG-3 fix, 2026-06-09). See scripts/tune_structural_pass_sigma.py +
+    spec D1. No is_default() (matches CoverShadowParams / LineBreakingParams).
     """
 
     sigma: float = 15.0
@@ -70,10 +78,18 @@ def _structural_pass_core(
     # LBS: defenders with start_x < d_x <= end_x (forward-only by construction)
     lbs = float(np.count_nonzero((d[:, 0] > p[0]) & (d[:, 0] <= r[0])))
 
-    # SGM: inverse Gaussian density (available space), receiver minus passer
+    # SGM: inverse Gaussian density (available space), receiver minus passer.
+    # BUG-3 fix (2026-06-09): rho is a sum of Gaussian kernels over defenders; when the
+    # passer/receiver is far from ALL defenders (byline crosses, fast breaks, sparse frames) rho
+    # underflows toward 0 and 1/rho explodes (real GS data reached ~1e8, poisoning every
+    # downstream aggregate). The "sigma=15 -> intrinsically bounded, no eps-floor" assumption was
+    # falsified, so floor rho at a single defender's contribution at 3-sigma (exp(-4.5) ~= 0.0111),
+    # which caps 1/rho at ~90 -- i.e. "no defender within 3-sigma" saturates to a bounded max
+    # space, instead of an unbounded explosion. Defenders within 3-sigma leave rho > floor, so
+    # normal-geometry values are unchanged.
     two_s2 = 2.0 * sigma * sigma
-    rho_p = np.exp(-((d - p) ** 2).sum(axis=1) / two_s2).sum()
-    rho_r = np.exp(-((d - r) ** 2).sum(axis=1) / two_s2).sum()
+    rho_p = max(float(np.exp(-((d - p) ** 2).sum(axis=1) / two_s2).sum()), _RHO_FLOOR)
+    rho_r = max(float(np.exp(-((d - r) ** 2).sum(axis=1) / two_s2).sum()), _RHO_FLOOR)
     sgm = (1.0 / rho_r) - (1.0 / rho_p)
 
     # SDI: distance-from-defensive-centroid, receiver minus passer

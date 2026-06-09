@@ -5,6 +5,52 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.20.1] — 2026-06-09
+
+### Fixed — provider data-quality bugs (SkillCorner time-base + goalkick; sportec pass completion; SGM bound + frame-orientation dtype)
+
+Four data-quality defects surfaced while validating GK-distribution completion cross-provider
+(corroborated + root-caused with the lakehouse bronze). **The SkillCorner, sportec, and
+frame-orientation fixes change VAEP/tracking label/feature distributions for those providers —
+retrain triggers.**
+
+- **SkillCorner `time_seconds` is now period-relative (BUG 1, ADR-017).**
+  `silly_kicks/spadl/skillcorner.py::_parse_time_start` parsed SkillCorner's `"MM:SS"`
+  *continuous broadcast clock* literally, so 2nd-half/ET events landed at ~2700–5800 s while the
+  period-relative tracking frames reset to 0 — collapsing action↔frame linkage for the entire
+  2nd half + ET (every frame-linked tracking feature silently degraded there). New
+  `_to_period_relative` subtracts the period-start offsets `{1:0, 2:2700, 3:5400, 4:6300, 5:7200}`.
+  Regression-guarded by a unit test + a strengthened owner-gated e2e (the old check only asserted
+  intra-period monotonicity, which a continuous clock also satisfies).
+- **SkillCorner goalkick result no longer hard-wired to success (BUG 2).** It was unconditionally
+  `success`, bypassing the `same_team_next` possession check used for every other pass; now routed
+  through it (lost-to-opponent → `fail`).
+- **sportec pass/set-piece completion from native DFL `play_evaluation` (BUG 2).**
+  `silly_kicks/spadl/sportec.py` marked *every* pass/cross/freekick/corner/throw-in/goalkick
+  `success`, ignoring the `play_evaluation` attribute it already parsed. Now: `unsuccessful` →
+  fail; `successfullyCompleted`/`successful`/NULL → success (conservative). Applies to Play,
+  set-piece events (which carry it via their nested Play), and the punt-synthesised goalkick
+  (inherits its parent Play's evaluation). DFL goalkicks are ~71% complete, not 100%.
+- **`metrica.py` left unchanged (measured-correct).** Metrica represents pass loss as a separate
+  `BALL LOST` event; a `PASS` is a *completed* pass (98% same-team-next in the fixture, losses
+  never attached to a `PASS`), so `result=success` is correct by design.
+- **`structural_sgm` numeric blow-up bounded (BUG 3, symptom).**
+  `silly_kicks/tracking/_structural_pass.py`: `sgm = 1/rho_r − 1/rho_p` exploded to ~±1e8 when the
+  passer/receiver was far from all defenders (the σ=15 "intrinsically bounded, no eps-floor"
+  claim was falsified on real byline-cross / fast-break frames). `rho` is now floored at a
+  defender's 3σ contribution (`exp(-4.5)≈0.0111`), capping `1/rho`≈90; normal-geometry values are
+  unchanged. The falsified docstring is corrected. Defense-in-depth for BUG 4 below.
+- **Frame-orientation `home_team_id` dtype bug (BUG 4, ADR-019) — the SGM root cause.**
+  `gradientsports.py` and `sportec.py` (tracking adapters) set `team_attacking_direction` via a
+  raw `team_id == home_team_id`, which silently matched **zero** players when `home_team_id` was
+  passed as `int` and the frame `team_id` was object-string (`"366"`) — every player mislabeled,
+  then `play_left_to_right` double-flipped, producing **mis-oriented frames** (the ~4× away-team
+  SGM blow-up, and a latent corruption of *every* frame-linked tracking feature whenever the
+  caller's `home_team_id` dtype mismatched). Both now use the dtype-safe `_id_compat.ids_match`
+  and **fail loud** if `home_team_id` matches no player. Regression-guarded by an int-vs-str
+  orientation-invariance test. (The kloppy gateway is unaffected — it derives `home_team_id`
+  internally as a string.)
+
 ## [4.20.0] — 2026-06-08
 
 ### Added — SK-xT-3 calibration-integrated xT bandwidth/resolution sweep (ADR-009, ADR-021)

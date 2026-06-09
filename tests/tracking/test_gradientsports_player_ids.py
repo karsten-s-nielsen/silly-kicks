@@ -317,3 +317,35 @@ class TestSyntheticEndToEndJoin:
         assert carrier_teams and carrier_teams <= {HOME, AWAY}
         sameteam = linked["team_id"] == linked["ball_carrier_team_id"]
         assert 0 < sameteam.mean() < 1
+
+
+class TestOrientationDtypeInvariance:
+    """ADR-019 regression guard (2026-06-09): convert_to_frames orientation must NOT depend on
+    the dtype of home_team_id. A raw `team_id == home_team_id` silently matched ZERO players when
+    the frame team_id was object-string and home_team_id was int -> team_attacking_direction
+    mislabeled -> play_left_to_right double-flipped -> mis-oriented frames (the structural_sgm
+    away-team blow-up root cause)."""
+
+    def _resolved_object_string_team_id(self):
+        from silly_kicks.tracking.gradientsports import convert_to_frames
+
+        resolved, _ = add_gradientsports_player_ids(_jersey_frames(), _roster(), home_team_id=HOME, away_team_id=AWAY)
+        resolved = resolved.copy()
+        # Simulate the lakehouse frame: team_id is object-string ("366"/"51"), as real GS rosters are.
+        resolved["team_id"] = resolved["team_id"].map(lambda v: str(int(v)) if pd.notna(v) else v).astype(object)
+        return resolved, convert_to_frames
+
+    def test_int_vs_str_home_team_id_identical(self):
+        resolved, convert_to_frames = self._resolved_object_string_team_id()
+        f_int, _ = convert_to_frames(resolved, home_team_id=366, home_team_start_left=True, output_convention="ltr")
+        f_str, _ = convert_to_frames(resolved, home_team_id="366", home_team_start_left=True, output_convention="ltr")
+        pd.testing.assert_frame_equal(f_int, f_str)
+
+    def test_int_home_team_id_orients_home_to_attack_high_x(self):
+        # period 1 + home_team_start_left=True -> home attacks +x, so the home GK (player 8326,
+        # who defends x=0) sits at LOW x. Under the dtype bug the frame double-flips and the GK
+        # lands at high x. Discriminating coord assertion on the int (buggy) path.
+        resolved, convert_to_frames = self._resolved_object_string_team_id()
+        f_int, _ = convert_to_frames(resolved, home_team_id=366, home_team_start_left=True, output_convention="ltr")
+        gk = f_int[f_int["player_id"].astype(str) == "8326"]
+        assert (gk["x"] < 52.5).all(), "home GK should be in its own (low-x) half when home attacks +x"

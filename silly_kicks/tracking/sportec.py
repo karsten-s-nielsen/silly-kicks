@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from . import direction
+from ._id_compat import ids_match
 from .schema import SPORTEC_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 
 if TYPE_CHECKING:
@@ -149,7 +150,15 @@ def convert_to_frames(
     # so retains NaN even on player rows.
     out["team_attacking_direction"] = None
     is_player = (~out["is_ball"].astype(bool)).to_numpy(dtype=bool)
-    is_home = (out["team_id"] == home_team_id).fillna(False).to_numpy(dtype=bool)
+    # ADR-019: dtype-safe is_home (raw `==` silently matched zero players for an int home_team_id
+    # vs object-string team_id -> mis-oriented frames; 2026-06-09 fix, mirrors gradientsports).
+    is_home = ids_match(out["team_id"], home_team_id).fillna(False).to_numpy(dtype=bool)
+    if is_player.any() and not (is_player & is_home).any():
+        warnings.warn(
+            f"sportec.convert_to_frames: home_team_id={home_team_id!r} matched ZERO player rows "
+            "(id dtype vs frame team_id mismatch?) -- frame orientation would be wrong.",
+            stacklevel=2,
+        )
     is_known_period = out["period_id"].isin([1, 2, 3, 4]).to_numpy(dtype=bool)
     out.loc[is_player & is_home & is_known_period, "team_attacking_direction"] = "ltr"
     out.loc[is_player & ~is_home & is_known_period, "team_attacking_direction"] = "rtl"
