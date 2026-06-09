@@ -5,6 +5,25 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.21.2] — 2026-06-09
+
+### Added — owner-gated lakehouse-mart xT held-out-NLL cross-check
+
+A permanent `@pytest.mark.e2e`, owner-gated regression tripwire
+(`tests/test_xthreat_nll_lakehouse_e2e.py`) triangulating KDE-vs-Singh held-out transition-NLL on
+**passes** against `soccer_analytics.dev_gold.fct_action_values` (the 4.17.0 work ran this as a
+non-committed one-off; ~4% relative KDE win on ~8.9M actions). Fits on the full train, scores a
+passes-only holdout (parity with the StatsBomb sibling + the published "Held-out NLL (passes)"
+3.789→3.748), and **on the full corpus only** hard-asserts at 16×12 that the tuned KDE(4.0) clears a
+conservative 1.5% relative-win floor AND the shipped-default KDE(1.0) strictly beats Singh
+(no floor — the default's margin erodes with corpus growth); logs 12×8. Adds the
+`fetch_action_values` + pure `shape_action_values` mart helpers to `scripts/_loader_databricks.py`
+(unit-tested) and pure `nll_relative_win` / `kde_clears_tripwire` verdict helpers (unit-tested).
+Skips wherever the owner Databricks credentials + `databricks-sql-connector` are absent (public CI).
+**No shipped-library change** — every artifact is in `scripts/` + `tests/`; the `silly_kicks/` wheel
+is unchanged except `__version__`. Additive — no behavior change, no retrain trigger. (TODO SK-xT-1
+follow-up; ADR-021.)
+
 ## [4.21.1] — 2026-06-09
 
 ### Changed — ADR-019 AST lint extended to the converter-adapter orientation seam
