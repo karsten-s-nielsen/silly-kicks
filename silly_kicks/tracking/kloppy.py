@@ -22,6 +22,7 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
     TrackingDataset,
 )
 
+from ._id_compat import same_id
 from .schema import KLOPPY_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 from .sportec import _resolve_output_convention
 from .utils import _derive_speed
@@ -126,7 +127,11 @@ def convert_to_frames(
             if pdata.coordinates is None:
                 continue
             team_id_str = str(player.team.team_id)
-            is_home = team_id_str == home_team_id
+            # ADR-019 (4.21.1): route the orientation seam through the id-compat helper for
+            # consistency with the gradientsports/sportec adapters. Both sides are already
+            # `str(...)` here (no caller-dtype boundary), so this is behavior-identical -- the
+            # same_id fast path (both object) adds negligible per-player overhead.
+            is_home = same_id(team_id_str, home_team_id)
             is_gk = player.starting_position is not None and "Goalkeeper" in str(player.starting_position)
             rows.append(
                 {

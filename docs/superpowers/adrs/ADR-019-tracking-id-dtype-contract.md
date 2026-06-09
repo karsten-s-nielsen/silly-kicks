@@ -118,3 +118,50 @@ the gate green and is left untouched; a broken one fails and is fixed.
 
 See ADR-001 (identifier conventions), ADR-017 (the `validate_time_base` guard this mirrors), ADR-005
 (the atomic mirror, which composes the fixed aggregators).
+
+## Amendment (4.21.1, 2026-06-09): the converter-adapter orientation seam is an ADR-019 boundary
+
+**Context.** The 4.20.1 provider data-quality batch fixed BUG-4: the tracking adapters
+`gradientsports.py` and `sportec.py` derived per-frame `team_attacking_direction` in
+`convert_to_frames` via a raw `team_id == home_team_id`. When the caller passed an int
+`home_team_id` against an object-string frame `team_id` (the lakehouse shape), the comparison
+silently matched **zero** players → every player mislabeled → `play_left_to_right` double-flipped
+the frame. This was the root cause of the `structural_sgm` away-team blow-up and latent corruption
+of every frame-linked tracking feature on a dtype mismatch. The fix routed both through `ids_match`
+and made a zero-match **fail loud**, with a per-adapter int-vs-str invariance test.
+
+**Why it went uncaught.** This is a fourth ADR-019 id-dtype instance, and it slipped past the static
+backstop because the AST lint (`tests/tracking/test_id_compat_lint.py`) **blanket-skipped** the
+adapter modules. The original `ALLOW_MODULES` rationale — "a raw `== home_team_id` here is the
+converter's OWN arg in the provider id space (ADR-001)" — conflated two different comparisons in the
+same file: the genuinely provider-space jersey→roster mapping (ADR-001, safe) and the
+**orientation seam**, where `home_team_id` is a caller-supplied argument of uncontrolled dtype
+compared against the frame `team_id` Series — the *exact* ADR-019 boundary, not an ADR-001
+exemption. A whole-file skip is the same unexamined-fence failure mode the contract exists to
+prevent.
+
+**Decision.** The converter-orientation seam is in scope of the boundary lint. `ALLOW_MODULES` is
+narrowed from `{_id_compat.py, sportec.py, gradientsports.py, kloppy.py}` to **`{_id_compat.py}`** —
+the helper module that defines and tests the primitives is the *sole* exemption; every tracking
+module, converter adapters included, routes its id comparisons through the helpers.
+
+- `gradientsports.py` / `sportec.py` — `convert_to_frames` already uses `ids_match` (the 4.20.1
+  BUG-4 fix); un-skipping them puts the seam under the lint.
+- `kloppy.py` — its orientation comparison is `str()`-vs-`str()` internal (`home_team_id` derived as
+  `str(home_team.team_id)`, no caller-dtype boundary), so a raw `==` was already correct. It is now
+  routed through `same_id` anyway, for **consistency** (one rule — adapters never compare ids raw)
+  and so the whole adapter family stays under the lint with no per-module exemption to reason about.
+  The change is behavior-identical (both sides already strings; `same_id`'s both-object fast path
+  adds negligible per-player overhead); the earlier concern that this would "pessimize provably-correct
+  code" was judged immaterial against the hot loop's existing pure-Python per-player dict-building.
+
+Two guards are added so the narrowing cannot silently regress: a **discriminating proof** that the
+detector actually fires on the BUG-4 shape (`out["team_id"] == home_team_id`) — distinguishing a
+genuinely-clean adapter from a detector that never fires for this shape — and an **anti-regression
+lock** pinning `ALLOW_MODULES == {_id_compat.py}` (no adapter can be re-exempted).
+
+**Scope of the lint, unchanged.** The two flagged shapes (`== home_team_id`; cross-source `_action`
+vs `_frame` suffix) are unchanged. The orientation seam is already shape 1, so no new detection
+logic was needed — only the over-broad exemption was removed. The single library-code change
+(kloppy's `==` → `same_id`) is **behavior-identical** (str-vs-str): no behavior change, no retrain
+trigger (the BUG-4 *fix* shipped in 4.20.1; this amendment guards the *class*).

@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-09. **Current release**: silly-kicks 4.21.0 (xT-GK (Eyestone) + goal-kick coverage + SkillCorner native-`result_id` completion fix & provider-aware completion-variant family, ADR-024). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-09. **Current release**: silly-kicks 4.21.1 (ADR-019 AST lint extended to the converter-adapter orientation seam; test + ADR amendment only). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -30,13 +30,6 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 ### Blocked or Deferred
 
-- **Extend the ADR-019 AST lint to converter-adapter orientation seams (4.20.1 follow-up).**
-  BUG 4 (the `gradientsports`/`sportec` `convert_to_frames` raw `team_id == home_team_id`
-  orientation bug) was a 4th ADR-019 id-dtype instance that went uncaught because the AST lint
-  (`tests/tracking/test_id_compat_lint.py`) covers feature-seam files, not the converter
-  adapters' own orientation code. The 4.20.1 fix added a per-adapter int-vs-str invariance test;
-  extending the lint to flag raw `== home_team_id` / `== team_id` in the tracking adapters would
-  guard the whole class. Consider an ADR-019 amendment noting the adapter-orientation seam.
 - **DFL `play_evaluation` full vocabulary (4.20.1 follow-up).** The sportec completion fix maps
   `unsuccessful`→fail; `successfullyCompleted`/`successful`/NULL→success (conservative). Values
   confirmed from a 7-match lakehouse pull; a larger pull should confirm no reason-coded failure

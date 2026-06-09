@@ -5,6 +5,32 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.21.1] — 2026-06-09
+
+### Changed — ADR-019 AST lint extended to the converter-adapter orientation seam
+
+The boundary lint (`tests/tracking/test_id_compat_lint.py`) no longer blanket-skips the tracking
+converter adapters. `ALLOW_MODULES` is narrowed from
+`{_id_compat.py, sportec.py, gradientsports.py, kloppy.py}` to **`{_id_compat.py}`** — the helper
+module that defines the primitives is now the *sole* exemption, so every tracking module (converter
+adapters included) has its id comparisons under the lint. This closes the gap that let **BUG-4** —
+the 4.20.1 frame-orientation dtype bug, a raw `team_id == home_team_id` that silently matched zero
+players for an int arg vs object-string frames (the `structural_sgm` away-team blow-up root cause) —
+reach production: it was a fourth ADR-019 id-dtype instance, and the over-broad file-skip hid it.
+
+- `gradientsports.py` / `sportec.py` `convert_to_frames` already use `ids_match` (the 4.20.1 fix);
+  un-skipping them puts the orientation seam under the lint.
+- `kloppy.py`'s orientation comparison is routed through `same_id` (it was `str()`-vs-`str()`
+  internal — no caller-dtype boundary — so this is **behavior-identical**, chosen for one consistent
+  rule and zero per-module exemptions).
+- Two guards lock the narrowing: a discriminating proof that the detector actually fires on the BUG-4
+  shape (distinguishing a genuinely-clean adapter from a detector that never fires for the shape), and
+  an anti-regression assertion pinning `ALLOW_MODULES == {_id_compat.py}`.
+
+ADR-019 amendment. The single library-code change (kloppy's `==` → `same_id`) is behavior-identical
+(str-vs-str): no behavior change, no retrain trigger — the BUG-4 *fix* shipped in 4.20.1; this guards
+the *class*.
+
 ## [4.21.0] — 2026-06-09
 
 ### Added — xT-GK (Eyestone): Expected Threat for Goalkeepers (ADR-024)
