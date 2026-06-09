@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-09. **Current release**: silly-kicks 4.21.1 (ADR-019 AST lint extended to the converter-adapter orientation seam; test + ADR amendment only). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-09. **Current release**: silly-kicks 4.21.2 (owner-gated lakehouse-mart xT held-out-NLL cross-check; test + dev-tooling only, no shipped-library change). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -68,18 +68,6 @@ Items are ranked top-to-bottom by specification completeness, then by additional
   (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
   constraints (e.g. "zero Spark imports in domain") hold in practice and that
   superseded decisions are updated. Frequency: once per minor release cycle.
-
-### SK-xT-1 follow-ups (unblocked, ready)
-
-Build directly on the 4.17.0 pluggable xT (`xthreat/`, ADR-021); no external blockers.
-
-- **Committed owner-gated lakehouse-mart NLL cross-check.** A permanent `@pytest.mark.e2e`,
-  owner-gated test triangulating KDE-vs-Singh held-out NLL against
-  `soccer_analytics.dev_gold.fct_action_values` (the 4.17.0 work ran this as a one-off,
-  non-committed; it confirmed a ~4% relative KDE win on 8.9M actions). Kept out of the default
-  suite to avoid product→consumer-infra coupling (SK-xT-1 spec review #1); an owner-gated version
-  makes it a durable regression tripwire, mirroring the existing GradientSports owner-gated e2e.
-  Origin: 2026-06-07 SK-xT-1.
 
 ---
 

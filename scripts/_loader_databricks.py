@@ -20,6 +20,12 @@ import pandas as pd
 _ALLOWED_PROVIDERS = frozenset({"idsse", "skillcorner", "gradientsports", "metrica", "sportec", "statsbomb", "wyscout"})
 _FETCH_BATCH = 50_000  # L4: stream big tracking pulls in batches, not one giant fetchall
 
+# Fixed, fully-qualified gold mart for the owner-gated xT NLL cross-check (read-only).
+# A module constant — never interpolated from caller input (mirrors the _ALLOWED_PROVIDERS discipline).
+_ACTION_VALUES_TABLE = "soccer_analytics.dev_gold.fct_action_values"
+# Only the passes-NLL columns; period/action_id deliberately omitted (unused — keeps the ~8.8M-row pull lean).
+_ACTION_VALUES_COLUMNS = "match_id, start_x, start_y, end_x, end_y, action_type, action_result"
+
 
 def _connect():
     try:
@@ -80,6 +86,59 @@ def load_matches(
         cur.close()
     finally:
         conn.close()
+
+
+def fetch_action_values(*, max_matches: int | None = None) -> pd.DataFrame:
+    """Read the gold action-values mart for the owner-gated xT held-out-NLL cross-check.
+
+    Pulls only the columns the passes transition-NLL path needs. SPADL-id shaping is
+    ``shape_action_values``. Read-only.
+
+    Parameters
+    ----------
+    max_matches : int | None
+        When set, restrict to the first ``max_matches`` distinct ``match_id`` (deterministic
+        ``ORDER BY match_id`` — lexicographically biased, a smoke aid only). ``None`` reads all.
+    """
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        if max_matches is not None:
+            ids = [
+                r[0]
+                for r in _query_param(
+                    cur,
+                    f"SELECT DISTINCT match_id FROM {_ACTION_VALUES_TABLE} ORDER BY match_id LIMIT %(n)s",  # noqa: S608
+                    {"n": int(max_matches)},
+                ).itertuples(index=False)
+            ]
+            if not ids:
+                return pd.DataFrame(columns=_ACTION_VALUES_COLUMNS.replace(" ", "").split(","))
+            placeholders = ", ".join(f"%(m{i})s" for i in range(len(ids)))
+            params = {f"m{i}": v for i, v in enumerate(ids)}
+            sql = f"SELECT {_ACTION_VALUES_COLUMNS} FROM {_ACTION_VALUES_TABLE} WHERE match_id IN ({placeholders})"  # noqa: S608
+            return _query_param(cur, sql, params)
+        return _query_param(cur, f"SELECT {_ACTION_VALUES_COLUMNS} FROM {_ACTION_VALUES_TABLE}")  # noqa: S608
+    finally:
+        conn.close()
+
+
+def shape_action_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Map the gold action-values mart to the SPADL-id columns the xthreat NLL path expects.
+
+    Pure, NaN-tolerant: ``action_type`` / ``action_result`` strings -> nullable-int ``type_id`` /
+    ``result_id`` codes (unmapped -> <NA>; ``Int64`` is deliberate per ADR-019, avoiding a float id
+    column — the caller drops the <NA> rows after its coverage guard so the ids reach the masks
+    NA-free); ``match_id`` -> ``game_id`` (the holdout_split key). Coverage + NA-drop are the
+    caller's job, not this function's.
+    """
+    import silly_kicks.spadl.config as spadlconfig  # function-local: keep module import cheap
+
+    out = df.copy()
+    out["type_id"] = out["action_type"].map(spadlconfig.actiontype_id).astype("Int64")
+    out["result_id"] = out["action_result"].map(spadlconfig.result_id).astype("Int64")
+    out["game_id"] = out["match_id"]
+    return out
 
 
 def _convert(provider: str, raw_events: pd.DataFrame, raw_frames: pd.DataFrame):

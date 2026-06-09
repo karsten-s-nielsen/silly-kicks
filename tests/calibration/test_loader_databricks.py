@@ -1,6 +1,7 @@
 import pandas as pd
 
 import scripts._loader_databricks as L
+import silly_kicks.spadl.config as spadlconfig
 
 
 class _FakeCursor:
@@ -93,3 +94,51 @@ def test_databricks_loader_parameterizes_match_id(monkeypatch):
     for sql, params in where_calls:
         assert "%(mid)s" in sql and "m1; DROP TABLE x" not in sql  # bound, not interpolated
         assert params == {"mid": "m1; DROP TABLE x"}
+
+
+def _mart_row(match_id, action_type, action_result, **kw):
+    base = dict(
+        match_id=match_id,
+        start_x=10.0,
+        start_y=20.0,
+        end_x=30.0,
+        end_y=40.0,
+        action_type=action_type,
+        action_result=action_result,
+    )
+    base.update(kw)
+    return base
+
+
+def test_shape_action_values_maps_strings_to_int_codes():
+    df = pd.DataFrame([_mart_row(101, "pass", "success"), _mart_row(101, "dribble", "fail")])
+    out = L.shape_action_values(df)
+    assert out.loc[0, "type_id"] == spadlconfig.actiontype_id["pass"]
+    assert out.loc[0, "result_id"] == spadlconfig.result_id["success"]
+    assert out.loc[1, "type_id"] == spadlconfig.actiontype_id["dribble"]
+    assert out.loc[1, "result_id"] == spadlconfig.result_id["fail"]
+
+
+def test_shape_action_values_uses_nullable_int_dtype():
+    out = L.shape_action_values(pd.DataFrame([_mart_row(1, "pass", "success")]))
+    assert str(out["type_id"].dtype) == "Int64"
+    assert str(out["result_id"].dtype) == "Int64"
+
+
+def test_shape_action_values_aliases_match_id_to_game_id():
+    out = L.shape_action_values(pd.DataFrame([_mart_row(777, "pass", "success")]))
+    assert (out["game_id"] == 777).all()
+
+
+def test_shape_action_values_tolerates_unmapped_vocab():
+    # Unknown action_type/result -> <NA> (the move filter drops it; must not raise).
+    df = pd.DataFrame([_mart_row(1, "teleport", "success"), _mart_row(1, "pass", "quantum")])
+    out = L.shape_action_values(df)
+    assert pd.isna(out.loc[0, "type_id"])
+    assert pd.isna(out.loc[1, "result_id"])
+
+
+def test_shape_action_values_preserves_coordinates():
+    out = L.shape_action_values(pd.DataFrame([_mart_row(1, "pass", "success", start_x=5.5, end_y=63.0)]))
+    assert out.loc[0, "start_x"] == 5.5
+    assert out.loc[0, "end_y"] == 63.0

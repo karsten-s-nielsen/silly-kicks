@@ -121,3 +121,26 @@ def _sparse_overfit_corpus(seed: int = 0, n_games: int = 20) -> pd.DataFrame:
                 )
                 aid += 1
     return pd.DataFrame(rows)
+
+
+def nll_relative_win(baseline_nll: float, candidate_nll: float) -> float:
+    """Relative held-out-NLL improvement of ``candidate`` over ``baseline``: ``(b - c) / b``.
+
+    Positive == candidate is better (lower NLL). Returns ``nan`` if ``baseline`` is non-finite or
+    zero (e.g. an empty-corpus ``compute_holdout_nll``), or if ``candidate`` is ``nan``.
+    """
+    if not np.isfinite(baseline_nll) or baseline_nll == 0:
+        return float("nan")
+    return (baseline_nll - candidate_nll) / baseline_nll
+
+
+def kde_clears_tripwire(singh_nll: float, kde_nll: float, *, floor: float) -> bool:
+    """The owner-gated tripwire predicate: KDE strictly beats Singh AND clears the relative floor.
+
+    Pure + NaN-safe (a non-finite relative win -> ``False``). Unit-tested so a flipped comparison or
+    wrong-direction floor is caught in CI, not only on the owner's mart.
+    """
+    rel = nll_relative_win(singh_nll, kde_nll)
+    if not np.isfinite(rel):
+        return False
+    return bool(kde_nll < singh_nll and rel >= floor)
