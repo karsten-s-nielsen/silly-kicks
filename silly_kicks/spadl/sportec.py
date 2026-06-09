@@ -846,6 +846,17 @@ def _build_raw_actions(
     type_ids[is_goalkick] = spadlconfig.actiontype_id["goalkick"]
     result_ids[is_goalkick] = spadlconfig.result_id["success"]
 
+    # BUG-2 fix (2026-06-09): pass-class + set-piece completion comes from the native DFL
+    # `play_evaluation` (carried on Play AND on GoalKick/FreeKick/Corner/ThrowIn via their nested
+    # Play; confirmed on 7 real DFL matches). Previously all of these were hard-wired success,
+    # zeroing failed-pass / failed-goalkick labels (IDSSE goalkicks read 100% success vs the real
+    # ~71%). The lone failure token is `unsuccessful`; `successfullyCompleted`/`successful` and
+    # NULL/unknown stay success (conservative -- only an explicit `unsuccessful` flips to fail).
+    play_eval = _opt("play_evaluation", "").fillna("").astype(str).to_numpy()
+    is_eval_fail = play_eval == "unsuccessful"
+    is_pass_or_setpiece = is_pass | is_freekick | is_corner | is_throwin | is_goalkick
+    result_ids[is_pass_or_setpiece & is_eval_fail] = spadlconfig.result_id["fail"]
+
     # --- Shot ---
     is_shot = et == "ShotAtGoal"
     after_fk = _opt("shot_after_free_kick", "").fillna("").astype(str).str.lower().eq("true").to_numpy()
@@ -1052,6 +1063,19 @@ def _synthesize_gk_distribution_actions(
     bodypart_ids_synth[is_punt_synth] = spadlconfig.bodypart_id["foot"]
     suffix[is_punt_synth] = "_synth_goalkick"
 
+    # BUG-2 fix (2026-06-09): the synthesized distribution (throwOut->pass / punt->goalkick)
+    # inherits the parent Play's native completion (play_evaluation); only an explicit
+    # `unsuccessful` is a fail (mirrors the open-play / set-piece rule above).
+    if "play_evaluation" in src.columns:
+        synth_eval = src["play_evaluation"].fillna("").astype(str).to_numpy()
+    else:
+        synth_eval = np.full(n_synth, "", dtype=object)
+    result_ids_synth = np.where(
+        synth_eval == "unsuccessful",
+        spadlconfig.result_id["fail"],
+        spadlconfig.result_id["success"],
+    ).astype(np.int64)
+
     synth = pd.DataFrame(
         {
             "game_id": src["match_id"].astype("object"),
@@ -1067,7 +1091,7 @@ def _synthesize_gk_distribution_actions(
             "end_x": src["x"].astype(np.float64),
             "end_y": src["y"].astype(np.float64),
             "type_id": type_ids_synth,
-            "result_id": np.full(n_synth, spadlconfig.result_id["success"], dtype=np.int64),
+            "result_id": result_ids_synth,
             "bodypart_id": bodypart_ids_synth,
         }
     )

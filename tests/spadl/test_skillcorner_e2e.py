@@ -64,6 +64,20 @@ class TestSkillcornerE2E:
                 f"Match {mid}: non-monotonic in period {period}"
             )
 
+    def test_time_is_period_relative_not_continuous_clock(self, match_data):
+        # BUG 1 regression guard: time_seconds must be PERIOD-RELATIVE (ADR-017), so each
+        # period's first action starts near 0 -- NOT the continuous broadcast clock (which put
+        # 2nd-half actions at 2700+ s and broke action<->frame linkage). Monotonicity alone
+        # (above) passes on a continuous clock too, which is why this slipped through.
+        events, meta, mid = match_data
+        actions, _ = convert_to_actions(events, meta)
+        for period in actions["period_id"].unique():
+            first = actions[actions["period_id"] == period]["time_seconds"].min()
+            assert first < 600.0, (
+                f"Match {mid}: period {period} first action at {first:.0f}s -- looks like a "
+                "continuous match clock, not period-relative (BUG 1)."
+            )
+
     def test_has_interceptions(self, match_data):
         events, meta, mid = match_data
         actions, _ = convert_to_actions(events, meta)

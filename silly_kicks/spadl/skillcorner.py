@@ -62,8 +62,20 @@ def _transform_coords(
     return x_out, y_out
 
 
+# SkillCorner's `time_start` is the CONTINUOUS broadcast clock (the 2nd half shows 45:00+,
+# extra time 90:00+/105:00+), so each period's nominal start offset must be subtracted to get
+# the period-relative seconds the tracking-frame contract requires (ADR-017). The offsets are
+# the regulation period boundaries (45/90/105/120 min), matching the Gradient Sports adapter.
+_PERIOD_START_SECONDS = {1: 0.0, 2: 45 * 60.0, 3: 90 * 60.0, 4: 105 * 60.0, 5: 120 * 60.0}
+
+
 def _parse_time_start(time_start: pd.Series) -> pd.Series:
-    """Parse ``MM:SS.d`` time strings to float seconds.
+    """Parse ``MM:SS.d`` time strings to float seconds (CONTINUOUS match clock).
+
+    NOTE: SkillCorner's ``time_start`` is the continuous broadcast clock (2nd-half values are
+    45:00+), so this returns seconds since MATCH start, NOT since period start. Callers must
+    re-base to period-relative via :func:`_to_period_relative` to satisfy the period-relative
+    frame contract (ADR-017).
 
     Parameters
     ----------
@@ -73,12 +85,23 @@ def _parse_time_start(time_start: pd.Series) -> pd.Series:
     Returns
     -------
     pd.Series
-        Float64 seconds since period start.
+        Float64 seconds since match start (continuous broadcast clock).
     """
     parts = time_start.str.split(":", expand=True)
     minutes = parts[0].astype("float64")
     seconds = parts[1].astype("float64")
     return minutes * 60 + seconds
+
+
+def _to_period_relative(time_seconds: pd.Series, period: pd.Series) -> pd.Series:
+    """Re-base the continuous match clock to PERIOD-RELATIVE seconds (ADR-017).
+
+    Subtracts each period's nominal start offset (``_PERIOD_START_SECONDS``) so the result aligns
+    with the period-relative tracking frames the linker joins against. Unknown period values fall
+    back to a 0 offset (no re-base). Fixes the SkillCorner 2nd-half action↔frame linkage failure
+    (BUG 1, 2026-06-09)."""
+    offset = period.map(_PERIOD_START_SECONDS).fillna(0.0).to_numpy()
+    return pd.Series(time_seconds.to_numpy(dtype="float64") - offset, index=time_seconds.index)
 
 
 def _dispatch_bodypart(
@@ -171,10 +194,10 @@ def convert_to_actions(
         obe["team_id"] = obe["team_id"].astype(str)
         obe["player_id"] = obe["player_id"].astype(str)
 
-    # --- Time parsing ---
-    pp["time_seconds"] = _parse_time_start(pp["time_start"])
-    if len(obe) > 0 and "time_start" in obe.columns:
-        obe["time_seconds"] = _parse_time_start(obe["time_start"])
+    # --- Time parsing --- (re-base the continuous broadcast clock to period-relative; ADR-017)
+    pp["time_seconds"] = _to_period_relative(_parse_time_start(pp["time_start"]), pp["period"])
+    if len(obe) > 0 and "time_start" in obe.columns and "period" in obe.columns:
+        obe["time_seconds"] = _to_period_relative(_parse_time_start(obe["time_start"]), obe["period"])
 
     total_pp = len(pp)
 
@@ -303,10 +326,13 @@ def convert_to_actions(
     )
 
     # Result dispatch
+    # NOTE (BUG 2 fix, 2026-06-09): goalkick is NOT hard-wired to success -- it falls through to
+    # the same possession-based `same_team_next` test as every other open-play / set-piece pass
+    # (a goalkick lost to the opponent is a `fail`). Previously `is_goalkick -> success` zeroed
+    # the goalkick label variance, corrupting goalkick-completion / VAEP goalkick labels.
     is_goal = gi_after == "goal_for"
     result_id_arr = np.select(
         [
-            is_goalkick,
             is_clearance,
             is_foul,
             is_shot & is_goal,
@@ -315,7 +341,6 @@ def convert_to_actions(
             ~same_team_next,
         ],
         [
-            spadlconfig.result_id["success"],
             spadlconfig.result_id["success"],
             spadlconfig.result_id["success"],
             spadlconfig.result_id["success"],
