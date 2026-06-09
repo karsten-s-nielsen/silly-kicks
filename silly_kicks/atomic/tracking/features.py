@@ -70,6 +70,7 @@ __all__ = [
     "add_structural_pass",
     "add_xcross_attempt",
     "add_xshot_occurrence",
+    "add_xt_gk",
     "atomic_actor_pre_window_default_xfns",
     "atomic_pitch_control_default_xfns",
     "atomic_pitch_control_xfns",
@@ -110,6 +111,7 @@ __all__ = [
     "space_creation_xfns",
     "structural_pass_xfns",
     "xcross_attempt_xfns",
+    "xt_gk_xfns",
 ]
 
 
@@ -163,6 +165,48 @@ def structural_pass_xfns(*, home_team_id, params=None):
 
     _atomic_transformer._frame_aware = True  # type: ignore[attr-defined]
     _atomic_transformer.__name__ = "structural_pass"
+    return [_atomic_transformer]
+
+
+def add_xt_gk(actions, frames, xt, *, links=None, home_team_id, params=None):
+    """Atomic-SPADL mirror of tracking.add_xt_gk (Eyestone). Synthesizes start/end from
+    x,y,dx,dy (atomic has no end_*), delegates to the standard aggregator, then drops the
+    synthesized columns. See silly_kicks.tracking.add_xt_gk + NOTICE.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_xt_gk
+    >>> enriched = add_xt_gk(atomic_actions, frames, fitted_xt, home_team_id=1)
+    >>> enriched[["xt_gk_base", "xt_gk_rav", "xt_gk"]].head()
+    """
+    from silly_kicks.tracking.features import add_xt_gk as _std
+
+    adapted = _structural_pass_atomic_endpoints(actions)
+    result = _std(adapted, frames, xt, links=links, home_team_id=home_team_id, params=params)
+    return result.drop(columns=["start_x", "start_y", "end_x", "end_y"])
+
+
+def xt_gk_xfns(xt, *, home_team_id, params=None):
+    """Atomic VAEP factory for xT-GK: each gamestate slot has its start/end synthesized
+    from x,y,dx,dy before the shared kernel runs.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import xt_gk_xfns
+    >>> xfns = xt_gk_xfns(fitted_xt, home_team_id=1)
+    >>> len(xfns)
+    1
+    """
+    from silly_kicks.tracking.features import xt_gk_xfns as _std_xfns
+
+    inner = _std_xfns(xt, home_team_id=home_team_id, params=params)[0]
+
+    def _atomic_transformer(states, frames):
+        adapted_states = [_structural_pass_atomic_endpoints(s) for s in states]
+        return inner(adapted_states, frames)
+
+    _atomic_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _atomic_transformer.__name__ = "xt_gk"
     return [_atomic_transformer]
 
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.20.1"
+version = "4.21.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -185,6 +185,10 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "scripts/train_xshot_occurrence.py" = ["N803", "N806", "T201"]
 # TF-17 xCross trainer: ML-style uppercase X + human-readable run summary (T201).
 "scripts/train_xcross_attempt.py" = ["N803", "N806", "T201"]
+# xT-GK GK-distribution completion: ML-style uppercase X feature matrices (logistic model).
+"silly_kicks/tracking/_gk_completion.py" = ["N803", "N806"]
+# xT-GK completion trainer: ML-style uppercase X + human-readable run summary (T201).
+"scripts/train_gk_completion.py" = ["N803", "N806", "T201"]
 # NOTE (M5): NO blanket S608 for scripts/_loader_databricks.py — match_id is parameterized
 # and provider is allowlist-validated; only the allowlisted table NAME carries a narrow
 # inline `# noqa: S608` on its specific lines.

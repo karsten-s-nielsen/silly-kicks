@@ -131,6 +131,7 @@ AGGREGATORS = [
     _a(F.add_actor_pre_window, "add_actor_pre_window"),
     _a(F.add_das, "add_das"),
     _a(F.add_elastic_sync, "add_elastic_sync"),
+    _a(F.add_gk_completion, "add_gk_completion"),
     _a(F.add_obso, "add_obso"),
     _a(F.add_pausa, "add_pausa"),
     _a(F.add_pitch_control, "add_pitch_control"),
@@ -149,6 +150,7 @@ AGGREGATORS = [
     _axh(F.add_cover_shadows, "add_cover_shadows"),
     _axh(F.add_gk_influence, "add_gk_influence"),
     _axh(F.add_player_influence, "add_player_influence"),
+    _axh(F.add_xt_gk, "add_xt_gk"),
 ]
 
 # Public add_* surface -- the meta-assertion (B3) checks AGGREGATORS covers all LINKED ones.

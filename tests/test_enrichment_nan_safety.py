@@ -48,6 +48,7 @@ _TRACKING_NEEDS_EXTRA = {
     "add_space_creation",
     "add_structural_pass",
     "add_team_shape",
+    "add_xt_gk",
 }
 _TRACKING_STANDARD_SIG = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ not in _TRACKING_NEEDS_EXTRA)
 _TRACKING_EXTRA_KWARGS = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ in _TRACKING_NEEDS_EXTRA)
@@ -504,6 +505,27 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         "add_structural_pass",
     ):
         out = helper(actions, frames, home_team_id=1)
+    elif name == "add_xt_gk":
+        import numpy as np
+
+        from silly_kicks.tracking._xt_gk import _gk_distribution_mask
+        from silly_kicks.xthreat import ExpectedThreat
+
+        # V1 (review #2): VERIFY (don't assume) this shared fixture has zero in-scope GK
+        # distributions, so get_xc is never reached. If the fixture ever gains a goalkick or
+        # a GK-actor pass, get_xc runs and the frame ball+player co-occurrence contract
+        # applies (a hard-crash path the DAS columns below do NOT cover) -- fail loudly here.
+        assert _gk_distribution_mask(actions, frames).sum() == 0, (
+            "add_xt_gk nan-safety branch assumes no in-scope GK distributions in the shared "
+            "fixture; it changed -- give this branch frames satisfying the full get_xc contract."
+        )
+        xt = ExpectedThreat(l=16, w=12)
+        xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+        frames = frames.copy()  # defensive DAS columns (belt-and-suspenders; mask is empty)
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
+        frames["team_in_possession"] = 1
+        out = helper(actions, frames, xt, home_team_id=1)
     elif name in ("add_gk_influence", "add_cover_shadows", "add_player_influence"):
         import numpy as np
 

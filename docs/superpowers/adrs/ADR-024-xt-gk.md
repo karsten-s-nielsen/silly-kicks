@@ -1,0 +1,166 @@
+# ADR-024: xT-GK (Eyestone) — pure parametric GK-distribution-value feature
+
+**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0)
+**Deciders:** Karsten (with Claude); collaborator Jeffrey Eyestone (metric author)
+**Related:** ADR-005 (tracking feature surfaces), ADR-019 (id-dtype contract), ADR-020 (frame-aware xfns frame-id resolution), ADR-021 (pluggable xT), ADR-011 (trained-model lifecycle — explicitly NOT applicable here)
+
+## Context
+
+Jeffrey Eyestone's **xT-GK** (Expected Threat for Goalkeepers; winner, Pitch to the Pros 1, May 2025) re-values goalkeeper distribution actions (goal-kicks, keeper passes/throws), correcting traditional (Karun-Singh) xT which systematically under-values GK zones, ignores pressure, and penalises back-passes. Jeffrey gave explicit public-with-attribution permission (email 2026-06-06). silly-kicks *computes* the metric; dashboards live in the lakehouse (the architecture split).
+
+## Decision
+
+Implement xT-GK as a **pure parametric compute feature** — an analytical formula with no learned weights. Its architectural siblings are OBSO / DAS / pitch-control / cover-shadows (frame-aware tracking features with `compute_*` / `add_*` / `*_xfns` + atomic mirror), **not** trained-model features. **ADR-011 (code-PR → weights-PR, booster-JSON, `[xgboost]` gate, HPO trainer) does NOT apply.**
+
+Key sub-decisions:
+
+1. **Tracking-required.** Of the six components, five are events-derivable but **PEV (pressure-escape) needs a pressure signal, and no pressure survives SPADL conversion** (StatsBomb `under_pressure` dropped; "Pressure" events excluded). Shipping a default missing pressure-escape would be a silent-drop trap. xT-GK lives in `tracking/` and is frame-aware. Matches Jeffrey's "continuous pressure" preference.
+
+2. **RAV's P(success) reuses the tracking xC model `get_xc`** (wraps `accessible_space.get_expected_pass_completion`) → xT-GK gates on the `[das]` extra, **fail-loud** (`ImportError("xT-GK requires the [das] extra: ...")`) — never a silent RAV-less composite. An empirical zone-grid completion model is far too sparse for the rare GK-distribution corpus.
+
+3. **Required injected pre-fitted `ExpectedThreat` (no self-fit → no leakage).** `ExpectedThreat` is fit-only (4.17.0). `compute_xt_gk`/`add_xt_gk` take a **required `xt=`** kwarg fitted by the caller on a corpus disjoint from the scored matches (the OBSO/frozen pattern). A guard raises if `xt.xT` is all-zero (unfitted). `xt_gk_xfns` is a factory closing over the injected `xt`.
+
+4. **Normative params are NEVER calibrated** (category error — they encode the value claim, not a predictor): γ/δ/φ/η + `v_def` + `defensive_third_boundary` + `pressure_scale` are intent-set. The lone smoothing nuisance `convolution_sigma` is hand-set (see §scan). There is **no calibration phase** and no TF-24 wiring (option (c)).
+
+5. **Formula — Option B (Jeffrey confirmed 2026-06-08).** The destination value `xT★(z')` enters the composite's main value path **once**, owned by RAV; the base term is **origin-only** (`−xT★(z)`). A separate `progress = xT★(z')−xT★(z)` feeds PEV only (folding PEV onto the origin-only base would zero it). Composite: `xT-GK = T·(−xT★(z) + γ·PEV + RAV) + φ·DZV`. This closes the earlier `(1+p)·xT★(z')` double-count.
+
+6. **`home_team_id` is parity-only.** xT-GK consumes **LTR-normalized** SPADL action coordinates, so `home_team_id` (required keyword on `add_xt_gk`/`xt_gk_xfns`) is accepted for GK-feature-family signature parity and CI-gate construction, and is intentionally unused by the math — documented so a future reader does not "fix" the unused arg.
+
+7. **xthreat coupling.** `_grid_value` reuses `silly_kicks.xthreat._grid._get_cell_indexes` (a private cross-package symbol) rather than re-deriving the cell-index convention — this is xthreat's port. Pinned by `test_grid_value_pinned_to_expected_threat_rate` (asserts `_progress` at σ=0 equals `ExpectedThreat.rate`). **Promote to a public xthreat API** (e.g. `ExpectedThreat.grid_value`) if xthreat ever refactors its grid orientation.
+
+8. **Unlinked in-scope rows are surfaced, not swallowed** — a NaN composite plus a fixed-message `warnings.warn` (count omitted so warning-dedup collapses it in the xfns hot loop) plus a NaN `link_quality_score` provenance column. Never a silent substitution.
+
+## convolution_sigma scan
+
+`convolution_sigma` default is **0.8** (provisional, hand-set). The one-off per-σ `xt_gk_base` distribution-stability scan on real tracking data is **owner-gated** (the three tracking providers have known data-quality issues, spec §7); it is recorded here when run. Until then, 0.8 is a defensible smoothing default; σ=0 disables convolution (`xT★ ≡ xT`).
+
+## OOD risk (RAV / get_xc on goal-kicks)
+
+accessible-space's xC is validated on open-play passes; goal-kicks are long aerials (a different regime). The synthetic construct gates are provider-independent and cannot detect this. An **owner-gated `@pytest.mark.e2e` smoke** (`tests/tracking/test_xt_gk_e2e.py`, set `XT_GK_E2E_MATCH_DIR`) asserts goal-kick xC is finite + non-degenerate. **Escalation (binding):** if goal-kick xC is garbage, a geometry-based completion prior for the aerial regime becomes Phase-1 scope, not a follow-up. **Outcome: ESCALATED** — the owner run measured open-play get_xc resolving for only ~31% of real goal-kicks. Resolved per the §Amendment below (a fitted `GkCompletionModel` replaced get_xc; the e2e is now a coverage/provenance smoke).
+
+## Consent trail (audit-grade)
+
+- **2026-06-06 email** (Jeffrey): *"Being public with attribution is OK."* + *"pick the easy answer"* / *"just do whatever is easy"* (component set = all; presets = ship; pressure = continuous; P(success) = library machinery).
+- **2026-06-08 reply** (Jeffrey, to the two-option question on the `(1+p)` destination weighting + preset publication): *"1 B, 2 OK to go with provisional values."* → **Option B** (destination counted once; base origin-only; RAV sole owner of `xT★(z')`) **and** provisional in-range preset values approved for publication.
+- **Scope of what's final vs provisional:** the composite `xt_gk` **form** is final (Q1 resolved). The preset **point-values** remain provisional pending an exact Q2 table; the `xt_gk` magnitudes may shift if Jeffrey later supplies exact numbers. The decomposed components are the stable deliverable.
+
+## Consequences
+
+- Additive: xt_gk is in **no** default xfn list (opting it into VAEP is a self-triggered retrain). No retrain trigger on existing features.
+- Phase 2 (opt-in team/dataset γ/δ/φ/η empirical estimation) is a separate, later release, gated on Jeffrey's preferred estimation recipe (his Q7).
+- New `[das]` dependency edge for xT-GK consumers (lazy; bare `import silly_kicks` stays light).
+
+## Amendment (4.21.0): goal-kick coverage — RAV completion model + coordinate derivation
+
+The owner OOD run (above) escalated: open-play `get_xc` resolved for only ~31% of real
+goal-kicks, and ~67% of real GS goal-kicks carry a NaN origin. Both gaps are closed **inside
+xT-GK, honestly tagged** — superseding decision §2 (RAV reuses `get_xc` / hard `[das]`):
+
+1. **RAV's P(success) is now a fitted `GkCompletionModel`** (`_gk_completion.py`) — a **logistic**
+   GK-distribution pass-completion model (sklearn at fit; pure-numpy `sigmoid(Xβ)` at serve, so
+   **no new runtime dependency**), label = observed SPADL `result_id == success`. Bundled GS
+   `default` (30 WC2022 matches) ships with the package; pickle-free JSON + SHA256 envelope;
+   `from_variant("default")` + a caller `completion=` override on `compute_xt_gk`/`add_xt_gk`.
+   **`[das]` is no longer required.** ADR-011's full trained-model lifecycle (booster-JSON,
+   `[xgboost]` gate, HPO) still does NOT apply — this is a trained-*light* artifact (few
+   coefficients, observable label, pure-numpy serve), the same tier as the xS/xCross precedent
+   for serialization/leakage discipline but without the heavy infra.
+   - **Green gate (the sole correctness gate): native-origin POOLED out-of-fold calibration.**
+     `scripts/train_gk_completion.py` scores all native-origin rows out-of-fold and requires a
+     bootstrap AUC CI **lower bound > 0.5** with `n_native ≥ 100` (sample-size-aware, not a
+     per-fold mean over the native minority). Measured on the GS default: **AUC 0.838,
+     CI95 [0.809, 0.865], n_native 1395, Brier 0.122 < base-rate 0.171**, density finite-rate
+     **96%**, label split 401 fail / 1265 success (success-rate 0.76, non-degenerate).
+     `prepare_gk_completion_training_data` **fails loud** on a degenerate label distribution.
+   - **Missing-value policy:** per-feature density NaN → training-mean impute (neutral after
+     standardization, via `nanmean`/`nanstd`); whole-row geometry-unscoreable → per-type base
+     rate. The base-rate fallback is reachable **only** through the standalone
+     `compute_gk_completion` — the RAV path leaves an unresolvable-destination goal-kick NaN
+     (no z' ⇒ no RAV/`xT★(z')`), so the coverage claim is "~100% of goal-kicks *with a
+     resolvable destination*", not all goal-kicks.
+   - **`is_throw_in` is near-inert on the GS default** (goalkeepers essentially never take
+     throw-ins → ~0 coefficient); kept for forward-compat, not a bug.
+
+2. **Coordinate derivation** (`resolve_gk_geometry`, `_gk_geometry.py`): a **scoped, conditional**
+   origin (native → in-area tracking-GK clamped to `x ≤ 16.5 m` → goal-area rule point
+   `(5.5, 34)`) + destination (native → in-period next-event start, `(game_id, period_id)`
+   boundary-guarded). The derived coordinates **feed the valuation internally and NEVER mutate
+   the shared `actions` frame** — a converter-/`spadl`-level coordinate change would be a Hyrum
+   + retrain trigger for every downstream consumer (VAEP, the xT fit, all features) and is the
+   **D-A1** general coordinate-enrichment follow-up (its own ADR + a coordinated retrain;
+   logged in TODO). The helper is built pure / provenance-emitting / xT-GK-decoupled precisely
+   so it can be lifted out later. Imputed-origin rows are **usable but lower-confidence** (the
+   imputed origin propagates through the model's length/forwardness features into RAV) and ship
+   **tagged + gated separately**, never silently equal to native-origin values.
+
+3. **Provenance for outside inspection.** Per-row enum columns ride in the output wide table —
+   `xt_gk_origin_source` (native / tracking_gk / goalkick_prior / unresolved), `xt_gk_dest_source`
+   (native / next_event / unresolved), `xt_gk_origin_confidence` (continuous) — the established
+   `is_goalkeeper_source` idiom (queryable/filterable downstream). An optional aggregate
+   `XtGkReport` (counts per source) mirrors `ConversionReport`/`LinkReport` for pipeline QA;
+   by construction its counts equal the columns' `value_counts`.
+
+4. **Train==serve parity** is enforced in code at **every** producer, not just by tests: one
+   shared domain predicate (`_gk_distribution_mask`), `resolve_gk_geometry` resolved on the
+   **full** action list *then* masked (so a NaN-destination kick's `next_event` borrows the next
+   *actual* action, not the next in-domain row — the positional-`shift(-1)` blind spot), one
+   shared `_gk_completion_density` producer, and one shared `extract_gk_completion_features`.
+   Parity tests back each axis.
+
+**Surfaces:** `resolve_gk_geometry`, `GkCompletionModel`, `compute_gk_completion`,
+`add_gk_completion`, `XtGkReport` exported from `silly_kicks.tracking` (+ the bundled
+`_gk_completion_weights/default/`). `add_gk_completion` is the **lakehouse wide-table
+aggregator** -- it emits a `gk_completion` column per in-scope GK distribution (NaN
+out-of-scope) for the single-pass action-context materialization, reusing RAV's exact
+`_completion_p` scoring path (geometry resolved on the full action list, then masked) so the
+standalone column equals the P(success) RAV consumes. It satisfies the standard `add_*`
+contracts: `@nan_safe_enrichment` (ADR-003), the id-dtype invariance gate (ADR-019, registered
+in the gate's `AGGREGATORS`), idempotent linkage-provenance merge, and the `links=` pre-linking
+kwarg. C4 action-coupled-aggregator count **26 → 27**. (No `gk_completion_xfns`: completion is
+RAV machinery, not a VAEP feature. Atomic mirror deferred -- the lakehouse path is standard
+SPADL.)
+
+## Amendment (4.21.0): SkillCorner completion — native-`result_id` fix + provider-aware variant family
+
+Folded into 4.21.0 (single release) so SkillCorner `xt_gk` is construct-correct and poolable with
+Gradient Sports. Spec: `docs/superpowers/specs/2026-06-09-xt-gk-multiprovider-completion-design.md`.
+
+**Decision.**
+- **D-S8 — fix SkillCorner `result_id` to the native pass outcome** (`pass_outcome` → `received==True`
+  success-only → residual `same_team_next`), emitting a dedicated `result_source` tier column
+  (`native`/`inferred`/`stopgap`). The prior bare `same_team_next` proxy was a converter
+  correctness bug: it agreed with the native outcome only ~0.72–0.79 and overstated goal-kick
+  success ~16 pp. Completion is corrected to native **where native fields exist**; residual rows keep
+  a flagged `stopgap` for VAEP coverage. **VAEP-retrain trigger** accepted (the gold-standard one-
+  construct fix is worth one more SkillCorner retrain; the lakehouse waits and re-materializes).
+- **D-S1/D-S2 — provider-aware variant family, weights re-measured.** `GkCompletionModel` gains a
+  variant registry (pure `variant_key_for_provider` + auto-selection from `frames["source_provider"]`,
+  `completion=` override, fail-loud on >1 real provider, `snapshot` excluded). The prior 0.50
+  non-transfer was on the WRONG (proxy) label and is void; **re-measured on the corrected native
+  label, GS still does not transfer** (GK-pass AUC 0.412 < chance) → SkillCorner needs distinct
+  weights. Bundled `skillcorner` variant: GK-pass **AUC 0.739, ECE 0.036**.
+- **F1/G1 — train on the `native` tier only.** `inferred` (`received==True`) is positive-only and
+  would bias the multiplicatively-consumed calibration; only `pass_outcome` supplies both classes.
+- **Goal-kicks are a documented limitation.** SkillCorner goal-kick completion is chance from
+  geometry (AUC 0.433) even on the native label; goal-kicks are **model-scored** (their `xt_gk` is
+  on-scale per the comparability gate) but low-discrimination — a per-type base-rate serve switch is
+  a deferred follow-up (TODO), not in this release.
+- **D-S7/D-S9 + H1 — pooling safety.** `xt_gk` is pooled across providers in the lakehouse. Provenance
+  columns `xt_gk_completion_variant` / `xt_gk_completion_source` + `XtGkReport.spans_multiple_variants`
+  make a mixed-variant aggregation observable. A cross-provider comparability gate
+  (`scripts/_xtgk_comparability.py`, owner-run, REPORTED not CI) found SC-vs-GS `xt_gk` **within
+  tolerance** on matched distance bands → pool directly, no re-scale (G2: post-calibration the
+  expected outcome is within-tolerance or escalate, never silent conforming; any re-scale would be a
+  per-variant post-composite affine on `xt_gk`, evidence-gated). Contract: **do not pool `xt_gk` across
+  `xt_gk_completion_variant` without a validated comparability**.
+
+**Consequences.** SkillCorner completion correct for every `result_id` consumer (VAEP + features +
+lakehouse SPADL), not just xT-GK — one construct, native where present. xT-GK reads `result_id`
+uniformly; no side-channel. VAEP-retrain trigger for SkillCorner. No C4 enumeration change (a
+completion *variant* is not a new aggregator; count stays 27). `[das]` remains optional.
+
+## References
+
+- Eyestone, J. (2025). *Expected Threat for Goalkeepers (xT-GK)*. Pitch to the Pros 1.
+- Singh, K. (2018). *Introducing Expected Threat (xT)*.
+- See NOTICE for full bibliographic citations.

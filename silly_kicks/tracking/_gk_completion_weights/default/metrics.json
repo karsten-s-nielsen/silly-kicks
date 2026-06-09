@@ -1,0 +1,30 @@
+{
+  "n_rows": 1666,
+  "n_native": 1395,
+  "base_rate": 0.7593037214885955,
+  "native_auc": 0.837467288314032,
+  "native_auc_ci95": [
+    0.8086498743157386,
+    0.8647023314548038
+  ],
+  "native_brier": 0.1220099771419453,
+  "base_rate_brier": 0.17083542092213616,
+  "density_finite_rate": 0.9633853541416567,
+  "label_split": {
+    "fail": 401,
+    "success": 1265
+  },
+  "providers": [
+    "gradientsports"
+  ],
+  "coef": {
+    "length": -1.289990444747856,
+    "forwardness": 0.12140490427573006,
+    "dy_abs": 0.800334734023125,
+    "dest_x": -0.40319944872413904,
+    "dest_y_off": -0.21959692780230097,
+    "dest_defender_density": -0.0777295664120578,
+    "is_goalkick": 0.1858083197017299,
+    "is_throw_in": 0.07843763707309707
+  }
+}

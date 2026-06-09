@@ -138,6 +138,61 @@ def _is_cross(
     return (has_native & native_cross) | (~has_native & spatial_cross)
 
 
+def _native_completion_result(
+    pass_outcome: pd.Series,
+    received: pd.Series,
+    same_team_next: pd.Series,
+    is_passlike: pd.Series,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Single-construct pass completion for SkillCorner pass/set-piece rows (D-S8, reviews N1/G1).
+
+    SkillCorner carries a NATIVE pass outcome (``pass_outcome``) the converter previously ignored,
+    defaulting every pass to the ``same_team_next`` possession proxy (a poor completion label:
+    ~0.72-0.79 agreement with the native outcome, and it overstated goal-kick success by ~16pp).
+    This routes ``result_id`` through the native construct (SPADL ``success`` = the pass reached a
+    teammate), tiered for provenance:
+
+    * **native**  -- ``pass_outcome`` present: ``successful`` -> success; ``unsuccessful`` /
+      ``offside`` -> fail. The one construct giving BOTH classes from a single rule.
+    * **inferred** -- ``pass_outcome`` absent but ``received==True``: a confirmed completion ->
+      success. SUCCESS-ONLY: ``received==False`` is NOT a fail signal (it may be a completion to a
+      NON-targeted teammate; N1), so it falls to the residual, never forced to fail.
+    * **stopgap**  -- neither native field: the ``same_team_next`` proxy, kept for VAEP ``result_id``
+      coverage only.
+
+    Only the **native** tier is clean enough for GK-completion training (G1: inferred is
+    structurally positive-only -> would bias calibration; see prepare_gk_completion_training_data).
+    Non-passlike rows are left at the fail default + ``stopgap`` tag; the converter's ``np.select``
+    overrides them with their own explicit (clearance/foul/shot) result.
+
+    Returns ``(result_id_array, result_source_array)``.
+    """
+    n = len(pass_outcome)
+    rid = np.full(n, spadlconfig.result_id["fail"], dtype=int)
+    src = np.full(n, "stopgap", dtype=object)
+    po = pass_outcome.astype("string").str.lower()
+    has_po = po.isin(["successful", "unsuccessful", "offside"]).to_numpy()
+    po_succ = (po == "successful").to_numpy()
+    rec_true = received.astype("string").str.lower().isin(["true", "1", "1.0"]).to_numpy()
+    stn = same_team_next.fillna(False).to_numpy()
+    passlike = is_passlike.fillna(False).to_numpy()
+    # tier 1: native pass_outcome (both classes)
+    rid = np.where(passlike & has_po & po_succ, spadlconfig.result_id["success"], rid)
+    rid = np.where(passlike & has_po & ~po_succ, spadlconfig.result_id["fail"], rid)
+    src = np.where(passlike & has_po, "native", src)
+    # tier 2: received==True -> success-only augmentation (clean success; tagged "inferred", G1
+    # training-excluded). received==False is NOT a fail signal (N1).
+    rec_aug = passlike & ~has_po & rec_true
+    rid = np.where(rec_aug, spadlconfig.result_id["success"], rid)
+    src = np.where(rec_aug, "inferred", src)
+    # tier 3 (residual): flagged stopgap via same_team_next (best-available VAEP coverage only)
+    resid = passlike & ~has_po & ~rec_true
+    rid = np.where(resid & stn, spadlconfig.result_id["success"], rid)
+    rid = np.where(resid & ~stn, spadlconfig.result_id["fail"], rid)
+    src = np.where(resid, "stopgap", src)
+    return rid, src
+
+
 def convert_to_actions(
     events: pd.DataFrame,
     match_metadata: dict,
@@ -326,30 +381,52 @@ def convert_to_actions(
     )
 
     # Result dispatch
-    # NOTE (BUG 2 fix, 2026-06-09): goalkick is NOT hard-wired to success -- it falls through to
-    # the same possession-based `same_team_next` test as every other open-play / set-piece pass
-    # (a goalkick lost to the opponent is a `fail`). Previously `is_goalkick -> success` zeroed
-    # the goalkick label variance, corrupting goalkick-completion / VAEP goalkick labels.
+    # D-S8 (2026-06-09): pass/set-piece result_id comes from the NATIVE pass outcome
+    # (`pass_outcome` -> `received` -> residual `same_team_next`) via `_native_completion_result`,
+    # NOT the bare `same_team_next` possession proxy (which overstated goal-kick success ~16pp and
+    # agreed with the native outcome only ~0.72-0.79). Clearance/foul/shot keep their explicit,
+    # deterministic results. `result_source` records the per-row completion-label tier
+    # (native/inferred/stopgap) -- only `native` trains the GK-completion model (G1).
     is_goal = gi_after == "goal_for"
+    pass_outcome_col = pp["pass_outcome"] if "pass_outcome" in pp.columns else pd.Series(np.nan, index=pp.index)
+    received_col = pp["received"] if "received" in pp.columns else pd.Series(np.nan, index=pp.index)
+    is_passlike = pd.Series(
+        np.isin(
+            type_id_arr,
+            [
+                spadlconfig.actiontype_id["pass"],
+                spadlconfig.actiontype_id["cross"],
+                spadlconfig.actiontype_id["goalkick"],
+                spadlconfig.actiontype_id["throw_in"],
+                spadlconfig.actiontype_id["corner_short"],
+                spadlconfig.actiontype_id["corner_crossed"],
+                spadlconfig.actiontype_id["freekick_short"],
+                spadlconfig.actiontype_id["freekick_crossed"],
+            ],
+        ),
+        index=pp.index,
+    )
+    passlike_rid, passlike_src = _native_completion_result(pass_outcome_col, received_col, same_team_next, is_passlike)
     result_id_arr = np.select(
         [
             is_clearance,
             is_foul,
             is_shot & is_goal,
             is_shot & ~is_goal,
-            same_team_next,
-            ~same_team_next,
+            is_passlike.to_numpy(),
         ],
         [
             spadlconfig.result_id["success"],
             spadlconfig.result_id["success"],
             spadlconfig.result_id["success"],
             spadlconfig.result_id["fail"],
-            spadlconfig.result_id["success"],
-            spadlconfig.result_id["fail"],
+            passlike_rid,
         ],
         default=spadlconfig.result_id["fail"],
     )
+    # result_source: native/inferred/stopgap for passlike rows; "native" for the explicit
+    # deterministic branches (clearance/foul/shot) -- their result is not a completion estimate.
+    result_source_arr = np.where(is_passlike.to_numpy(), passlike_src, "native")
 
     # --- Build native actions DataFrame ---
     game_id = str(match_metadata.get("id", "unknown"))
@@ -368,6 +445,7 @@ def convert_to_actions(
             "end_y": ey.values,
             "type_id": type_id_arr,
             "result_id": result_id_arr,
+            "result_source": result_source_arr,
             "bodypart_id": bodypart_arr,
             "action_provenance": "native",
         }
@@ -424,6 +502,12 @@ def convert_to_actions(
         ks["game_id"] = game_id
         ks["original_event_id"] = pd.NA
         ks["action_id"] = 0
+
+    # Derived defensive / keeper-save actions have deterministic (non-completion) results -> tag
+    # their result_source "native" so the `[actions.columns]` reindex below finds the column.
+    for _derived in (defensive, ks):
+        if len(_derived) > 0 and "result_source" not in _derived.columns:
+            _derived["result_source"] = "native"
 
     # Merge all actions
     parts = [actions]

@@ -100,7 +100,7 @@ _XFNS_NAMES = sorted(n for n in dir(F) if n.endswith("_xfns"))
 
 def test_meta_gate_covers_every_xfns_factory():
     assert set(_XFNS_NAMES) == {n for n in dir(F) if n.endswith("_xfns")}
-    assert len(_XFNS_NAMES) >= 20
+    assert len(_XFNS_NAMES) >= 21  # bumped for xt_gk_xfns
     assert not _CONSTRUCT_ALLOWLIST, "no construct-skips are expected today"
 
 

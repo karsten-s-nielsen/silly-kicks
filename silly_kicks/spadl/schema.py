@@ -83,11 +83,15 @@ extended schemas under a common name is a follow-up TODO."""
 SKILLCORNER_SPADL_COLUMNS: dict[str, str] = {
     **KLOPPY_SPADL_COLUMNS,
     "action_provenance": "object",
+    "result_source": "object",
 }
 """SkillCorner SPADL output schema: KLOPPY_SPADL_COLUMNS (object-dtype IDs) +
-``action_provenance`` column (``"native"`` or ``"derived"``). Derived actions
-include ``start_type``-based interceptions/recoveries, OBE-enriched tackles,
-keeper saves, and synthetic dribbles. See spec §6."""
+``action_provenance`` column (``"native"`` or ``"derived"``) + ``result_source``
+(``"native"`` / ``"inferred"`` / ``"stopgap"``: the pass-completion-label tier behind
+``result_id``; native = SkillCorner ``pass_outcome``, inferred = ``received==True``,
+stopgap = ``same_team_next`` residual. D-S8/G1: only ``native`` trains the GK-completion
+model). Derived actions include ``start_type``-based interceptions/recoveries, OBE-enriched
+tackles, keeper saves, and synthetic dribbles. See spec §6."""
 
 
 @dataclasses.dataclass(frozen=True)

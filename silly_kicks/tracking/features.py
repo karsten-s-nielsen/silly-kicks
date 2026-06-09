@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from silly_kicks.xthreat import ExpectedThreat
 
+    from ._gk_completion import GkCompletionModel
     from ._line_breaking import LineBreakingParams
     from .pitch_control import PitchControlCache
 
@@ -57,6 +58,7 @@ from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
 from ._structural_pass import StructuralPassParams
 from ._xcross_attempt import xcross_attempt_xfns
 from ._xshot_occurrence import xshot_occurrence_xfns
+from ._xt_gk import XtGkParams, compute_xt_gk
 from .feature_framework import lift_to_states
 from .pressure import (
     AndrienkoParams,
@@ -84,6 +86,7 @@ __all__ = [
     "add_defensive_line",
     "add_elastic_sync",
     "add_ghost_gk",
+    "add_gk_completion",
     "add_gk_influence",
     "add_line_break",
     "add_obso",
@@ -5146,3 +5149,122 @@ def elastic_sync_xfns(
         xfns_out.append(lift_to_states(_helper))
 
     return xfns_out
+
+
+@nan_safe_enrichment
+def add_xt_gk(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt: ExpectedThreat,
+    *,
+    links: pd.DataFrame | None = None,
+    home_team_id: int | str,
+    params: XtGkParams | None = None,
+) -> pd.DataFrame:
+    """Add xT-GK columns (xt_gk_base/pev/rav/dzv/pressure + composite xt_gk + the three
+    provenance columns xt_gk_origin_source/xt_gk_dest_source/xt_gk_origin_confidence) per
+    GK-distribution action. ``xt`` is a REQUIRED pre-fitted ExpectedThreat (no self-fit --
+    leakage contract). ``home_team_id`` is accepted for GK-feature-family signature parity
+    (and CI-gate construction); the xT-GK math operates on LTR-normalized SPADL action
+    coordinates and does not consume it. RAV uses a fitted GkCompletionModel (the bundled GS
+    ``default``); the [das] extra is no longer required.
+
+    See NOTICE for full bibliographic citations (Eyestone xT-GK).
+    """
+    out = actions.copy()
+    pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+
+    comp = compute_xt_gk(actions, frames, xt=xt, params=params, links=pointers)
+    for c in comp.columns:
+        out[c] = comp[c].to_numpy()
+
+    # Idempotent provenance merge (skip if any provenance column already present).
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    existing = [c for c in provenance_cols if c in out.columns]
+    if not existing and len(pointers) > 0:
+        ptr_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def xt_gk_xfns(
+    xt: ExpectedThreat,
+    *,
+    home_team_id: int | str,
+    params: XtGkParams | None = None,
+) -> list:
+    """Factory returning one frame-aware VAEP transformer for xT-GK, closing over the
+    caller-fitted ``xt`` (no self-fit -- leakage contract). Emits xt_gk_*_a{i} per
+    gamestate slot. ``home_team_id`` accepted for family parity + CI-gate construction
+    (see add_xt_gk).
+
+    The per-slot ``action_id`` rekey to a unique positional surrogate is required because
+    the sub-calls (pressure_on_actor / the completion-density linker) are action_id-keyed and
+    would fan out on a shifted gamestate slot that repeats the boundary action -- this is the
+    same mechanism resolve_frame_ids_by_position uses internally. Frame linkage is by time, so
+    values are unchanged; action_id is ephemeral here (only the value columns are returned).
+    """
+    from ._xt_gk import _OUTPUT_COLS
+
+    def _xt_gk_transformer(states, frames):
+        out = pd.DataFrame(index=states[0].index)
+        if frames is None:
+            for i in range(3):
+                for col in _OUTPUT_COLS:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+        for i, slot in enumerate(states[:3]):
+            safe = slot.copy()
+            safe["action_id"] = np.arange(len(safe))
+            comp = compute_xt_gk(safe, frames, xt=xt, params=params)
+            for col in _OUTPUT_COLS:
+                out[f"{col}_a{i}"] = comp[col].to_numpy()
+        return out
+
+    _xt_gk_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _xt_gk_transformer.__name__ = "xt_gk"
+    return [_xt_gk_transformer]
+
+
+@nan_safe_enrichment
+def add_gk_completion(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    model: GkCompletionModel | None = None,
+    links: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Enrich SPADL actions with a ``gk_completion`` column: the GK-distribution
+    pass-completion probability (xT-GK RAV's P(success) model) for each in-scope GK
+    distribution (goalkick, GK-actor pass/throw_in); NaN for out-of-scope actions.
+    ``model=None`` -> bundled GS ``default``. NaN identifiers route to NaN output
+    (ADR-003); ``links`` skips internal linking.
+
+    For the lakehouse wide action-context table. Reuses the EXACT scoring path xT-GK's
+    RAV uses (``_completion_p``): geometry is resolved on the FULL action list (so a
+    NaN-destination goalkick's next-event destination is the next ACTUAL action --
+    train==serve parity) and the model scores only the masked GK-distribution rows, so
+    this column equals the P(success) RAV consumes. Emits the four linkage-provenance
+    columns idempotently.
+
+    See NOTICE for full bibliographic citations (Eyestone xT-GK).
+    """
+    from ._gk_geometry import resolve_gk_geometry
+    from ._xt_gk import _completion_p, _gk_distribution_mask
+
+    out = actions.copy()
+    pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+
+    geom = resolve_gk_geometry(actions, frames=frames, links=pointers)
+    mask = _gk_distribution_mask(actions, frames)
+    vals = np.full(len(actions), np.nan, dtype=float)
+    if mask.any():
+        vals[mask] = _completion_p(actions, frames, geom, mask, pointers, model)
+    out["gk_completion"] = vals
+
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    existing = [c for c in provenance_cols if c in out.columns]
+    if not existing and len(pointers) > 0:
+        ptr_cols = pointers.set_index("action_id")[provenance_cols]
+        out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+    return out

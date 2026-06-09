@@ -33,6 +33,7 @@ __all__ = [
     "GhostGkDensity",
     "GhostGkModel",
     "GhostGkVariant",
+    "GkCompletionModel",
     "GradientsportsRosterReport",
     "IdDtypeDiagnosis",
     "LaneControlResult",
@@ -58,6 +59,8 @@ __all__ = [
     "XCrossFeatureSet",
     "XShotFeatureSet",
     "XShotOccurrenceModel",
+    "XtGkParams",
+    "XtGkReport",
     "actor_arc_length_pre_window",
     "actor_displacement_pre_window",
     "actor_pre_window_default_xfns",
@@ -70,6 +73,7 @@ __all__ = [
     "add_defensive_line",
     "add_elastic_sync",
     "add_ghost_gk",
+    "add_gk_completion",
     "add_gk_influence",
     "add_gradientsports_player_ids",
     "add_line_break",
@@ -89,6 +93,7 @@ __all__ = [
     "add_team_shape",
     "add_xcross_attempt",
     "add_xshot_occurrence",
+    "add_xt_gk",
     "align_events_to_frames",
     "back_line_high_x",
     "back_n_count",
@@ -97,6 +102,7 @@ __all__ = [
     "compute_blocking_score",
     "compute_defensive_line",
     "compute_ghost_gk",
+    "compute_gk_completion",
     "compute_obso_surface",
     "compute_pass_obso",
     "compute_pausa",
@@ -111,6 +117,7 @@ __all__ = [
     "compute_tti",
     "compute_xcross_attempt",
     "compute_xshot_occurrence",
+    "compute_xt_gk",
     "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
@@ -183,6 +190,7 @@ __all__ = [
     "reachable_area_team",
     "receiver_zone_density",
     "require_et_direction",
+    "resolve_gk_geometry",
     "schema",
     "select_back_line_players",
     "shape_graph_xfns",
@@ -201,6 +209,7 @@ __all__ = [
     "validate_time_base",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
+    "xt_gk_xfns",
 ]
 
 from . import feature_framework, features, gradientsports, pitch_control, preprocess, schema, sportec, utils
@@ -221,6 +230,8 @@ from ._ghost_gk import (
     compute_ghost_gk,
     prepare_ghost_gk_training_data,
 )
+from ._gk_completion import GkCompletionModel, compute_gk_completion
+from ._gk_geometry import resolve_gk_geometry
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_obso
 from ._pausa import compute_pausa, compute_pausa_batch
@@ -249,6 +260,7 @@ from ._xshot_occurrence import (
     subsample_negatives,
     xshot_occurrence_xfns,
 )
+from ._xt_gk import XtGkParams, XtGkReport, compute_xt_gk
 from .direction import require_et_direction
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
@@ -264,6 +276,7 @@ from .features import (
     add_defensive_line,
     add_elastic_sync,
     add_ghost_gk,
+    add_gk_completion,
     add_gk_influence,
     add_line_break,
     add_obso,
@@ -279,6 +292,7 @@ from .features import (
     add_space_creation,
     add_structural_pass,
     add_team_shape,
+    add_xt_gk,
     back_line_high_x,
     back_n_count,
     ball_carrier_at_action,
@@ -332,6 +346,7 @@ from .features import (
     structural_pass_xfns,
     team_shape_xfns,
     tracking_default_xfns,
+    xt_gk_xfns,
 )
 from .gradientsports import GradientsportsRosterReport, add_gradientsports_player_ids
 from .pitch_control import (
