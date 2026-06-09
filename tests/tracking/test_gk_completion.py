@@ -228,9 +228,18 @@ class TestAddGkCompletion:
         return pd.DataFrame(
             [
                 dict(
-                    game_id=9, period_id=1, frame_id=125, time_seconds=t, frame_rate=25.0,
-                    team_id=team, player_id=pid, is_goalkeeper=gk, is_ball=(pid == -1),
-                    x=x, y=y, source_provider="sportec",
+                    game_id=9,
+                    period_id=1,
+                    frame_id=125,
+                    time_seconds=t,
+                    frame_rate=25.0,
+                    team_id=team,
+                    player_id=pid,
+                    is_goalkeeper=gk,
+                    is_ball=(pid == -1),
+                    x=x,
+                    y=y,
+                    source_provider="sportec",
                 )
                 for pid, team, gk, x, y in rows
             ]
@@ -240,10 +249,17 @@ class TestAddGkCompletion:
         # row 0 = goalkick (in scope); row 1 = midfield pass by a non-GK (out of scope)
         return pd.DataFrame(
             {
-                "game_id": [9, 9], "action_id": [0, 1], "team_id": [1, 1], "player_id": [10, 11],
-                "period_id": [1, 1], "time_seconds": [5.0, 5.0], "type_id": [22, 0],
-                "start_x": [5.0, 50.0], "start_y": [34.0, 34.0],
-                "end_x": [55.0, 60.0], "end_y": [34.0, 34.0],
+                "game_id": [9, 9],
+                "action_id": [0, 1],
+                "team_id": [1, 1],
+                "player_id": [10, 11],
+                "period_id": [1, 1],
+                "time_seconds": [5.0, 5.0],
+                "type_id": [22, 0],
+                "start_x": [5.0, 50.0],
+                "start_y": [34.0, 34.0],
+                "end_x": [55.0, 60.0],
+                "end_y": [34.0, 34.0],
             }
         )
 
