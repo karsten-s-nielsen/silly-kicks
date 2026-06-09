@@ -1,0 +1,50 @@
+{
+  "verdict": "within_tolerance",
+  "offset_tol": 0.01,
+  "min_n": 30,
+  "gs_provider": "gradientsports",
+  "bands": [
+    {
+      "lo": 0.0,
+      "hi": 15.0,
+      "n_sc": 102,
+      "n_gs": 69,
+      "sc_mean": 0.006704350516908694,
+      "gs_mean": 0.015111869684921949,
+      "offset": -0.008407519168013255,
+      "powered": true
+    },
+    {
+      "lo": 15.0,
+      "hi": 30.0,
+      "n_sc": 143,
+      "n_gs": 76,
+      "sc_mean": 0.012913309082680608,
+      "gs_mean": 0.015243207168073458,
+      "offset": -0.0023298980853928494,
+      "powered": true
+    },
+    {
+      "lo": 30.0,
+      "hi": 45.0,
+      "n_sc": 42,
+      "n_gs": 49,
+      "sc_mean": 0.01585719581622542,
+      "gs_mean": 0.015742369904788098,
+      "offset": 0.00011482591143732387,
+      "powered": true
+    },
+    {
+      "lo": 45.0,
+      "hi": 120.0,
+      "n_sc": 21,
+      "n_gs": 60,
+      "sc_mean": 0.019303880879328755,
+      "gs_mean": 0.015000240400525345,
+      "offset": NaN,
+      "powered": false
+    }
+  ],
+  "n_sc_total": 308,
+  "n_gs_total": 301
+}

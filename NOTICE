@@ -336,6 +336,32 @@ decomposition using:
 The Get Goalside critique of raw pitch control GK over-crediting motivated
 the threat-weighting correction.
 
+The xT-GK feature in silly_kicks/tracking/_xt_gk.py implements an analytical
+Expected-Threat extension for goalkeeper distributions:
+
+- Eyestone, J. (2025). "Expected Threat for Goalkeepers (xT-GK)." Winner,
+  Pitch to the Pros 1.
+  (GK-distribution value: pressure-escape, risk-adjusted, defensive-zone
+  terms; team-philosophy parameter presets)
+
+- Singh, K. (2018). "Introducing Expected Threat (xT)." karun.in/blog/
+  expected-threat
+  (baseline grid the GK-specific terms compose over)
+
+The functional forms are the silly-kicks formulation of Eyestone's xT-GK (the
+source deck specifies components and parameter ranges, not closed-form
+equations). Contributed publicly with attribution by Jeffrey Eyestone's
+explicit permission (email 2026-06-06; formula choice + preset publication
+confirmed 2026-06-08).
+
+xT-GK's risk-adjusted term (RAV) draws its pass-completion probability from a
+fitted GK-distribution completion model (silly_kicks/tracking/_gk_completion.py,
+GkCompletionModel) and its missing goal-kick coordinates from a scoped geometry
+resolver (silly_kicks/tracking/_gk_geometry.py, resolve_gk_geometry). These are
+standard internal engineering (logistic regression + a conditional coordinate
+prior); they implement no third-party published methodology and require no
+additional attribution beyond the xT-GK and xT references above.
+
 The Ward-clustering line-breaking detection in
 silly_kicks/tracking/_line_breaking.py (PR-S33, TF-32) implements the
 methodology described in:

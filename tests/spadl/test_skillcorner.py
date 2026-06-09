@@ -23,9 +23,11 @@ class TestSkillcornerSchema:
         assert "action_provenance" in SKILLCORNER_SPADL_COLUMNS
         assert SKILLCORNER_SPADL_COLUMNS["action_provenance"] == "object"
 
-    def test_exactly_one_extra_column(self):
+    def test_skillcorner_extra_columns(self):
+        # action_provenance (native/derived) + result_source (completion-label tier, D-S8/G1)
         extra = set(SKILLCORNER_SPADL_COLUMNS) - set(KLOPPY_SPADL_COLUMNS)
-        assert extra == {"action_provenance"}
+        assert extra == {"action_provenance", "result_source"}
+        assert SKILLCORNER_SPADL_COLUMNS["result_source"] == "object"
 
 
 class TestCoordinateTransform:
