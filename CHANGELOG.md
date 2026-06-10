@@ -5,6 +5,23 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.21.3] — 2026-06-09
+
+### Changed — sportec DFL `play_evaluation` success-allowlist (completion robustness)
+
+Native sportec pass/set-piece completion now uses a **success-allowlist** (`fail` iff the DFL
+`Evaluation` is non-empty and ∉ `{successfullyCompleted, successful}`) instead of an exact
+`== "unsuccessful"` match — so any unseen reason-coded failure token (e.g. `unsuccessfulBecauseOfFoul`)
+is failed by construction, and a missing/empty `play_evaluation` still maps to success (no mass-fail
+on non-DFL data). Single-sourced across the main and synth-distribution sites (`_extract_play_eval` +
+`_play_evaluation_is_fail` + `_warn_unexpected_play_eval`); an unexpected token is warned, not silently
+classified. **Aligns the native converter with the kloppy gateway** (same success set) and is
+**byte-identical on observed DFL data** — verified on all 7 IDSSE matches, whose only non-success
+`play_evaluation` token is `unsuccessful` (robustness hardening, not a re-mapping). Hyrum surface: a
+DFL stream carrying failure tokens beyond `unsuccessful` would shift its fail distribution. Adds a
+CI-everywhere native-shape distribution regression test and an owner-gated Databricks-bronze e2e over
+the 7 IDSSE matches (`fetch_idsse_events`). No shipped-API change. (TODO 4.20.1 follow-up; refines BUG-2.)
+
 ## [4.21.2] — 2026-06-09
 
 ### Added — owner-gated lakehouse-mart xT held-out-NLL cross-check
