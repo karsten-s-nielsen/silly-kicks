@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import warnings
 from pathlib import Path
 
@@ -19,6 +20,26 @@ _THROW_IN = spadlconfig.actiontype_id["throw_in"]
 _WEIGHTS_ROOT = Path(__file__).parent / "_gk_completion_weights"
 _VARIANT_CACHE: dict = {}
 _GEOM_FEATURES = ("length", "forwardness", "dest_x", "dest_y_off")  # geometry-unscoreable iff any NaN
+
+_GATE_LCB_FLOOR = 0.5  # serve the model only if a type's held-out AUC LCB strictly exceeds chance
+_GATE_N_MIN = 50  # below this per-type sample a bootstrap LCB is too unstable to trust -> base_rate
+
+
+def serve_mode_from_lcb(
+    lcb: float | None, n: int, *, lcb_floor: float = _GATE_LCB_FLOOR, n_min: int = _GATE_N_MIN
+) -> str:
+    """Per-type serve-gate decision (the ONE place the rule lives; unit-tested at the boundaries).
+
+    Returns ``"model"`` iff the type's held-out AUC lower-confidence-bound strictly exceeds ``lcb_floor``
+    on a large-enough sample; else ``"base_rate"``. A ``None``/NaN ``lcb`` (undefined/degenerate AUC --
+    e.g. a near-empty positive class like GK throw-ins) or ``n < n_min`` -> ``"base_rate"``. See the
+    per-type-base-rate spec (2026-06-09) Decision 2: serve uses the conservative LCB while *bundling*
+    uses the point estimate -- different questions ("beats chance with confidence for THIS type" vs
+    "good enough to ship the variant")."""
+    if lcb is None or not math.isfinite(lcb) or n < n_min:
+        return "base_rate"
+    return "model" if lcb > lcb_floor else "base_rate"
+
 
 GK_COMPLETION_FEATURE_NAMES = [
     "length",
@@ -62,7 +83,7 @@ def extract_gk_completion_features(geom: pd.DataFrame, *, defender_density: pd.S
 class GkCompletionModel:
     """Logistic P(success) for GK distributions. sklearn at fit; pure-numpy at serve."""
 
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
 
     def __init__(self) -> None:
         self._coef: np.ndarray | None = None
@@ -71,6 +92,9 @@ class GkCompletionModel:
         self._std: np.ndarray | None = None
         self.feature_names: list[str] = list(GK_COMPLETION_FEATURE_NAMES)
         self._base_rates: dict[str, float] = {}
+        # Per-type serve gate (computed at train time from held-out CV; empty -> fail-open all-"model").
+        self._type_serve_mode: dict[str, str] = {}  # {goalkick|throw_in|other: "model"|"base_rate"}
+        self._type_gate_metrics: dict[str, dict] = {}  # {type: {auc, lcb, n}} -- transparency, not read at serve
         self.shipped_variant: str | None = None
         self.provider_list: list | None = None
 
@@ -136,6 +160,26 @@ class GkCompletionModel:
             return self._base_rates.get("throw_in", self._base_rates.get("global", 0.5))
         return self._base_rates.get("other", self._base_rates.get("global", 0.5))
 
+    @staticmethod
+    def _type_key(type_id: int) -> str:
+        if type_id == _GOALKICK:
+            return "goalkick"
+        if type_id == _THROW_IN:
+            return "throw_in"
+        return "other"
+
+    def serve_mode_for_types(self, type_ids: np.ndarray) -> np.ndarray:
+        """Per-row ``"model"``/``"base_rate"`` from the stored per-type gate; absent type -> ``"model"``
+        (fail-open). Pure; the gate is computed at train time (held-out CV)."""
+        return np.array([self._type_serve_mode.get(self._type_key(int(t)), "model") for t in type_ids], dtype=object)
+
+    def base_rate_for_types(self, type_ids: np.ndarray) -> np.ndarray:
+        """Vectorized per-type calibrated base rate (reuses ``_base_rate_for_type``)."""
+        return np.array(
+            [self._base_rate_for_type(float(t == _GOALKICK), float(t == _THROW_IN)) for t in type_ids],
+            dtype=float,
+        )
+
     # ---- serialization (pickle-free JSON envelope) ----
     def to_dict(self) -> dict:
         import sklearn
@@ -150,6 +194,8 @@ class GkCompletionModel:
             "mean": self._mean.tolist(),
             "std": self._std.tolist(),
             "base_rates": self._base_rates,
+            "type_serve_mode": self._type_serve_mode,
+            "type_gate_metrics": self._type_gate_metrics,
             "sklearn_version": sklearn.__version__,
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
@@ -164,6 +210,8 @@ class GkCompletionModel:
         m._mean = np.asarray(d["mean"], dtype=float)
         m._std = np.asarray(d["std"], dtype=float)
         m._base_rates = dict(d["base_rates"])
+        m._type_serve_mode = dict(d.get("type_serve_mode", {}))  # fail-open: absent -> all "model"
+        m._type_gate_metrics = dict(d.get("type_gate_metrics", {}))
         m.shipped_variant = d.get("shipped_variant")
         m.provider_list = d.get("provider_list")
         return m

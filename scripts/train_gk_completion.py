@@ -36,6 +36,15 @@ _N_NATIVE_FLOOR = 100
 _GKPASS_AUC_FLOOR = 0.70  # D-S3: SkillCorner GK-pass held-out floor
 _ECE_TOL = 0.10  # C1: calibration tolerance (expected calibration error)
 _SLOPE_TOL = 0.25  # C1: reliability-slope within [1-tol, 1+tol]; NaN slope (degenerate) is not gated
+# Corpus-identity probe tolerance (SK-91). The re-bundle SHIPS the committed coefficients (served =
+# load(); only the gate fields are added), so this never affects the served weights -- it only decides
+# abort-vs-attach by checking the fresh full-data probe still describes the SAME corpus+model. Byte
+# identity (1e-9) is unachievable across an unrecorded original `tracking_limit`: the GS frame subset
+# shifts the density feature by a hair (98% vs 96.3% finite -> coef move <=0.0056) even when the row
+# set reproduces EXACTLY. A meaningful tolerance separates that float/tracking_limit noise from a real
+# retrain (the SkillCorner data-drift retrain shifted coef ~0.47, ~9x this floor); SkillCorner's own
+# frames load whole at any cap so it still matches to ~0.
+_CORPUS_IDENTITY_ATOL = 0.05
 
 
 def _ece(y, p, n_bins=10):
@@ -105,6 +114,35 @@ def _bootstrap_auc_ci(y, p, n_boot=2000, lo=2.5, seed=0):
             continue
         aucs.append(roc_auc_score(y[idx], p[idx]))
     return float(np.percentile(aucs, lo)), float(np.percentile(aucs, 100 - lo))
+
+
+def _per_type_gate_from_oof(oof: np.ndarray, y_all: np.ndarray, X_all) -> tuple[dict, dict]:
+    """Per-type serve gate over the model's 3-way {goalkick, throw_in, other} partition (matches
+    GkCompletionModel._base_rates). Returns (type_serve_mode, type_gate_metrics) from held-out OOF.
+    A degenerate/insufficient bucket (AUC undefined or n < _GATE_N_MIN) -> base_rate via the shared
+    serve_mode_from_lcb. Bucket masks use the feature columns is_goalkick / is_throw_in."""
+    from sklearn.metrics import roc_auc_score
+
+    from silly_kicks.tracking._gk_completion import serve_mode_from_lcb
+
+    ok = np.isfinite(oof)
+    is_gk = X_all["is_goalkick"].to_numpy() == 1.0
+    is_ti = X_all["is_throw_in"].to_numpy() == 1.0
+    buckets = {"goalkick": is_gk, "throw_in": is_ti, "other": ~(is_gk | is_ti)}
+    serve_mode: dict[str, str] = {}
+    metrics: dict[str, dict] = {}
+    for name, b in buckets.items():
+        m = b & ok
+        n = int(m.sum())
+        if n < 2 or len(np.unique(y_all[m])) < 2:
+            auc = lcb = None  # degenerate (e.g. near-empty GK throw-in positive class)
+        else:
+            auc = float(roc_auc_score(y_all[m], oof[m]))
+            lcb = float(_bootstrap_auc_ci(y_all[m], oof[m])[0])
+        serve_mode[name] = serve_mode_from_lcb(lcb, n)
+        metrics[name] = {"auc": auc, "lcb": lcb, "n": n}
+        print(f"  [gate {name}] n={n} auc={auc} lcb={lcb} -> {serve_mode[name]}", flush=True)
+    return serve_mode, metrics
 
 
 def _train_skillcorner(args) -> int:
@@ -219,12 +257,26 @@ def _train_skillcorner(args) -> int:
 
     bundled = False
     if decision.startswith("bundle_skillcorner"):
+        # `model` = fresh full-data fit, used as the CORPUS-IDENTITY PROBE only. The SERVED artifact is
+        # the committed model (its bytes), so the OOF gate provably describes the served model AND
+        # coef stay byte-identical (spec v3 §5 + the additive-only re-bundle check). Re-fit is NEVER
+        # persisted on a re-bundle.
         model = GkCompletionModel().fit(X_all, pd.Series(y_all))
-        model.shipped_variant = "skillcorner"
-        model.provider_list = ["skillcorner"]
-        model.save(_SKILLCORNER_WEIGHTS_DIR)
+        sm, gm = _per_type_gate_from_oof(oof, y_all, X_all)
+        try:
+            served = GkCompletionModel.load(_SKILLCORNER_WEIGHTS_DIR)  # committed coef = the served bytes
+            np.testing.assert_allclose(model._coef, served._coef, atol=_CORPUS_IDENTITY_ATOL)
+            np.testing.assert_allclose([model._intercept], [served._intercept], atol=_CORPUS_IDENTITY_ATOL)
+            np.testing.assert_allclose(model._mean, served._mean, atol=_CORPUS_IDENTITY_ATOL)
+            np.testing.assert_allclose(model._std, served._std, atol=_CORPUS_IDENTITY_ATOL)
+        except FileNotFoundError:
+            served = model  # first-ever bundle: nothing committed to preserve -> ship the fresh fit
+        served.shipped_variant = "skillcorner"
+        served.provider_list = ["skillcorner"]
+        served._type_serve_mode, served._type_gate_metrics = sm, gm
+        served.save(_SKILLCORNER_WEIGHTS_DIR)
         reloaded = GkCompletionModel.load(_SKILLCORNER_WEIGHTS_DIR)
-        np.testing.assert_allclose(model.predict_proba(X_all), reloaded.predict_proba(X_all), atol=1e-9)
+        np.testing.assert_allclose(served.predict_proba(X_all), reloaded.predict_proba(X_all), atol=1e-9)
         bundled = True
         print(f"SAVED skillcorner weights -> {_SKILLCORNER_WEIGHTS_DIR}", flush=True)
     else:
@@ -257,7 +309,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--providers", nargs="+", default=["gradientsports"])
     ap.add_argument("--max-per-provider", type=int, default=64)
-    ap.add_argument("--tracking-limit", type=int, default=200)
+    ap.add_argument(
+        "--tracking-limit",
+        type=int,
+        default=None,
+        help="frames loaded per match; default None = FULL match (SK-91). The GK-completion model "
+        "REQUIRES full frames to reproduce the bundled weights: a small cap (the old generic 200) "
+        "starves the SkillCorner derived-GK -> it over-flags GKs in some matches and inflates the "
+        "frame-derived GK-pass domain, and collapses the GS density feature. Pass a small int only "
+        "for a quick dev smoke, never to (re-)bundle.",
+    )
     ap.add_argument("--variant", default="default", choices=["default", "skillcorner"])
     ap.add_argument("--cache-features", default=None, help="parquet path to cache/reuse extracted features (owner-run)")
     args = ap.parse_args()
@@ -321,12 +382,24 @@ def main() -> int:
         return 1
 
     # ---- final fit on ALL kept rows (native + imputed) ----
+    # `model` = corpus-identity PROBE; the SERVED artifact is the committed model + the OOF gate, so
+    # coef stay byte-identical and the gate provably describes the served model (spec v3 §5).
     model = GkCompletionModel().fit(X_all, pd.Series(y_all))
-    model.shipped_variant = "default"
-    model.provider_list = list(args.providers)
-    model.save(_WEIGHTS_DIR)
+    sm, gm = _per_type_gate_from_oof(oof, y_all, X_all)
+    try:
+        served = GkCompletionModel.load(_WEIGHTS_DIR)
+        np.testing.assert_allclose(model._coef, served._coef, atol=_CORPUS_IDENTITY_ATOL)
+        np.testing.assert_allclose([model._intercept], [served._intercept], atol=_CORPUS_IDENTITY_ATOL)
+        np.testing.assert_allclose(model._mean, served._mean, atol=_CORPUS_IDENTITY_ATOL)
+        np.testing.assert_allclose(model._std, served._std, atol=_CORPUS_IDENTITY_ATOL)
+    except FileNotFoundError:
+        served = model  # first-ever bundle: nothing committed to preserve
+    served.shipped_variant = "default"
+    served.provider_list = list(args.providers)
+    served._type_serve_mode, served._type_gate_metrics = sm, gm
+    served.save(_WEIGHTS_DIR)
     reloaded = GkCompletionModel.load(_WEIGHTS_DIR)
-    np.testing.assert_allclose(model.predict_proba(X_all), reloaded.predict_proba(X_all), atol=1e-9)
+    np.testing.assert_allclose(served.predict_proba(X_all), reloaded.predict_proba(X_all), atol=1e-9)
 
     metrics = {
         "n_rows": len(df),

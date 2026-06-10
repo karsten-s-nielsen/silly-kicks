@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "feature_names": [
     "length",
     "forwardness",
@@ -46,6 +46,28 @@
     "throw_in": 1.0,
     "other": 0.7844756399669695,
     "global": 0.7593037214885955
+  },
+  "type_serve_mode": {
+    "goalkick": "model",
+    "throw_in": "base_rate",
+    "other": "model"
+  },
+  "type_gate_metrics": {
+    "goalkick": {
+      "auc": 0.8361692447679709,
+      "lcb": 0.7981179396300103,
+      "n": 454
+    },
+    "throw_in": {
+      "auc": null,
+      "lcb": null,
+      "n": 1
+    },
+    "other": {
+      "auc": 0.8344746924783222,
+      "lcb": 0.8023008411213979,
+      "n": 1211
+    }
   },
   "sklearn_version": "1.7.2",
   "shipped_variant": "default",

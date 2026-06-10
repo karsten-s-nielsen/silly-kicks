@@ -1,6 +1,6 @@
 # ADR-024: xT-GK (Eyestone) — pure parametric GK-distribution-value feature
 
-**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0)
+**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4)
 **Deciders:** Karsten (with Claude); collaborator Jeffrey Eyestone (metric author)
 **Related:** ADR-005 (tracking feature surfaces), ADR-019 (id-dtype contract), ADR-020 (frame-aware xfns frame-id resolution), ADR-021 (pluggable xT), ADR-011 (trained-model lifecycle — explicitly NOT applicable here)
 
@@ -144,7 +144,8 @@ Gradient Sports. Spec: `docs/superpowers/specs/2026-06-09-xt-gk-multiprovider-co
 - **Goal-kicks are a documented limitation.** SkillCorner goal-kick completion is chance from
   geometry (AUC 0.433) even on the native label; goal-kicks are **model-scored** (their `xt_gk` is
   on-scale per the comparability gate) but low-discrimination — a per-type base-rate serve switch is
-  a deferred follow-up (TODO), not in this release.
+  a deferred follow-up (TODO), not in this release. **(Superseded in 4.21.4 — see the Amendment
+  below: SkillCorner goal-kicks now serve the calibrated base rate; GS goal-kicks stay model-scored.)**
 - **D-S7/D-S9 + H1 — pooling safety.** `xt_gk` is pooled across providers in the lakehouse. Provenance
   columns `xt_gk_completion_variant` / `xt_gk_completion_source` + `XtGkReport.spans_multiple_variants`
   make a mixed-variant aggregation observable. A cross-provider comparability gate
@@ -158,6 +159,55 @@ Gradient Sports. Spec: `docs/superpowers/specs/2026-06-09-xt-gk-multiprovider-co
 lakehouse SPADL), not just xT-GK — one construct, native where present. xT-GK reads `result_id`
 uniformly; no side-channel. VAEP-retrain trigger for SkillCorner. No C4 enumeration change (a
 completion *variant* is not a new aggregator; count stays 27). `[das]` remains optional.
+
+## Amendment (4.21.4, 2026-06-10) — per-type base-rate serve switch (SK-91)
+
+Ships the deferred per-type serve gate. `compute_xt_gk` consults a per-type decision baked into the
+`GkCompletionModel` artifact and, for a gated type, overrides the geometric `P(success)` with the
+**per-type calibrated base rate** (tagged `xt_gk_completion_source = "base_rate"`).
+
+**Decision.**
+- **The gate is one pure function — `serve_mode_from_lcb(lcb, n)`** (`_gk_completion.py`): serve the
+  model iff the type's held-out AUC **lower-confidence-bound > 0.5** on `n ≥ _GATE_N_MIN` (50); a
+  `None`/NaN LCB (degenerate/near-empty positive class) or too-small sample → `base_rate`. Serve uses
+  the **conservative LCB**; *bundling* the variant uses the point estimate (different questions).
+- **The gate lives in the artifact, not the call.** `GkCompletionModel` gains `_type_serve_mode` +
+  `_type_gate_metrics` (per-type `{auc, lcb, n}` transparency), computed at train time from the
+  held-out OOF over the model's 3-way `{goalkick, throw_in, other}` partition (`_per_type_gate_from_oof`,
+  wired into both fits). Artifact `VERSION` → **1.1.0**; `load()` **fail-opens** (a pre-gate 4.21.0
+  artifact has no `type_serve_mode` → all types serve `"model"` = prior behavior). `predict_proba`
+  stays a pure scorer; the switch + tagging is in `compute_xt_gk`; the atomic mirror inherits it.
+- **Data-driven per variant, measured owner-run.** Bundled **SkillCorner**: goal-kick → `base_rate`
+  (AUC 0.433, LCB 0.277), throw-in → `base_rate` (degenerate, n≈2), GK-passes → `model` (AUC 0.737,
+  LCB 0.674). Bundled **GS `default`**: goal-kick → `model` (AUC **0.836**, LCB 0.798 — GS goal-kick
+  completion *is* geometry-predictable, unlike SkillCorner), throw-in → `base_rate` (degenerate, n=1),
+  other → `model`. The committed mode for each is locked by a real-artifact test.
+
+**Re-bundle reproducibility (the non-obvious part).** The gate is attached onto the **committed
+coefficients** (the re-bundle loads the shipped model, sets the gate fields, re-saves — coefficients
+ship **byte-unchanged**; the fresh full-data fit is only a corpus-identity *probe*). A landmine
+surfaced: the bundled weights are reproducible **only with full-match frames**, but the documented
+training command falls back to the script default `--tracking-limit 200`. At 200 frames (~20 s) the
+SkillCorner *derived-GK* over-flags 3–4 goalkeepers in 2 of 10 matches (too little data), inflating
+the frame-derived GK-pass domain 461→538; with full frames it is robust (2 GKs/match) and the corpus
+reproduces **exactly** (event-pinned goal-kicks were stable throughout — the tell). GS reproduces its
+row set exactly at full frames but its coefficients differ by ≤0.0056 — an **unrecorded original
+`tracking_limit`** loaded a partial frame subset (density-finite 96.3% vs 98% at all-frames), an
+irreducible float difference. Decision: the corpus-identity guard moved from byte-identity (`atol=1e-9`)
+to a **meaningful tolerance** (`_CORPUS_IDENTITY_ATOL = 0.05`) — it still aborts on a real retrain
+(the earlier SkillCorner data-drift retrain shifted coefficients ~0.47, ~9× the floor) while
+tolerating tracking_limit density noise; the served coefficients are byte-identical regardless, since
+the re-bundle ships the loaded committed model. **The `train_gk_completion.py` `--tracking-limit`
+default was changed `200` → `None` (full match)** so the bare documented command reproduces — the
+generic 200 was a per-model footgun for this model (a small frame cap starves the SkillCorner
+derived-GK and collapses the GS density feature); both model cards record it.
+
+**Consequences.** Not a VAEP retrain (xt_gk is opt-in, in no default xfn list) — but an `xt_gk`
+serve-output change for the flipped types: the lakehouse re-materializes `xt_gk` for **SkillCorner
+goal-kicks (~15% of its GK-distribution rows) + degenerate throw-ins (both variants)**; GS goal-kicks
+unchanged. No C4 enumeration change (a serve gate on an existing model is not a new aggregator/model/
+backend; count stays 27). `compute_gk_completion` (standalone) is unaffected — it already base-rates
+geometry-unscoreable rows; the gate governs only the in-scope, geometry-resolved RAV path.
 
 ## References
 
