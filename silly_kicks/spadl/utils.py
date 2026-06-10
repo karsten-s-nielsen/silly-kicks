@@ -727,6 +727,94 @@ def add_pre_shot_gk_context(
     return sorted_actions
 
 
+_ADD_RESTART_COORDS_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
+    "game_id",
+    "period_id",
+    "action_id",
+    "type_id",
+    "start_x",
+    "start_y",
+    "end_x",
+    "end_y",
+)
+
+
+@nan_safe_enrichment
+def add_restart_coordinates(
+    actions: pd.DataFrame, *, frames: pd.DataFrame | None = None, links: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Impute missing restart coordinates as new, provenance-tagged columns (Phase 1, additive).
+
+    Derives origin/destination coordinates for restart actions whose native coordinate is NaN
+    (e.g. ~60% of Gradient Sports goal-kicks). Law-fixed-spot restarts (goal-kick, penalty, corner,
+    throw-in) get a geometric rule-point tier; all rows also get tracking-ball / next-event tiers.
+    Canonical ``start_x``/``start_y``/``end_x``/``end_y`` are **never mutated** -- the imputed values
+    land in new ``enriched_*`` columns with per-row ``*_coord_source`` + ``*_coord_confidence``
+    provenance.
+
+    When ``frames`` is supplied, the tracking-ball / in-area tracking-GK tiers are enabled (higher
+    confidence); with ``frames=None`` (events-only) only native / rule-point / next-event tiers run.
+    A geometry tripwire reverts an imputed origin that lands outside its Law region to
+    ``tripwire_reverted`` (warns); native out-of-region coords warn only (provider truth). NaN
+    identifiers route to the documented per-row default (ADR-003).
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL action stream. Requires ``game_id``, ``period_id``, ``action_id``, ``type_id``,
+        ``start_x``, ``start_y``, ``end_x``, ``end_y``.
+    frames : pd.DataFrame | None, default None
+        Long-form tracking frames (``TRACKING_FRAMES_COLUMNS``). Enables the tracking tiers.
+    links : pd.DataFrame | None, default None
+        Pre-computed action->frame pointers (skips internal linking).
+
+    Returns
+    -------
+    pd.DataFrame
+        Sorted copy of ``actions`` (by ``game_id``, ``period_id``, ``action_id``) with 8 appended
+        columns: ``enriched_start_x``/``_y``, ``start_coord_source``, ``start_coord_confidence``,
+        ``enriched_end_x``/``_y``, ``end_coord_source``, ``end_coord_confidence``.
+
+    Raises
+    ------
+    ValueError
+        If a required column is missing.
+
+    Examples
+    --------
+    Impute goal-kick origins (events-only) and keep only high-confidence positions::
+
+        actions, _ = gradientsports.convert_to_actions(events, home_team_id=100)
+        enriched = add_restart_coordinates(actions)
+        confident = enriched[enriched["start_coord_confidence"] >= 0.7]
+    """
+    missing = [c for c in _ADD_RESTART_COORDS_REQUIRED_COLUMNS if c not in actions.columns]
+    if missing:
+        raise ValueError(
+            f"add_restart_coordinates: actions missing required columns: {sorted(missing)}. "
+            f"Got: {sorted(actions.columns)}"
+        )
+    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+
+    from silly_kicks.tracking._gk_geometry import apply_restart_tripwire, resolve_restart_geometry
+
+    geom = resolve_restart_geometry(sorted_actions, frames=frames, links=links)  # PURE: no tripwire
+    geom["type_id"] = sorted_actions["type_id"].to_numpy()  # apply_restart_tripwire needs type_id
+    apply_restart_tripwire(geom)  # feature-policy step at the EDGE (spec section 6); mutates geom in place
+    for col in (
+        "enriched_start_x",
+        "enriched_start_y",
+        "start_coord_source",
+        "start_coord_confidence",
+        "enriched_end_x",
+        "enriched_end_y",
+        "end_coord_source",
+        "end_coord_confidence",
+    ):
+        sorted_actions[col] = geom[col].to_numpy()
+    return sorted_actions
+
+
 def _compute_possession_boundaries(
     sorted_actions: pd.DataFrame,
     *,

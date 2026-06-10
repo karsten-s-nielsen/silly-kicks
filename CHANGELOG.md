@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.22.0] — 2026-06-10
+
+### Added — general restart-coordinate enrichment (Phase 1, additive; ADR-025)
+
+New public `silly_kicks.spadl.add_restart_coordinates(actions, *, frames=None, links=None)` imputes
+missing coordinates for Law-fixed-spot restart types — goal-kick (6-yard box), penalty (spot), corner
+(arc), throw-in (touchline) — and emits them as **new** provenance-tagged columns
+(`enriched_start_x/_y`, `enriched_end_x/_y`, `start_coord_source` / `end_coord_source`,
+`start_coord_confidence` / `end_coord_confidence`), **never mutating** the canonical
+`start_x/start_y/end_x/end_y`. Frames-optional: with `frames` supplied the tracking-ball / in-area
+tracking-GK tiers raise confidence; events-only uses native / rule-point / next-event tiers. A
+geometry tripwire (à la ADR-018) reverts an imputed origin outside its Law region to
+`tripwire_reverted` (warns); native out-of-region coords warn only. Optional aggregate
+`silly_kicks.tracking.RestartCoordinateReport` (counts per source + `n_tripwire_reversions`).
+
+This promotes the goal-kick-scoped `resolve_gk_geometry` (ADR-024) into a single general engine
+`silly_kicks.tracking.resolve_restart_geometry` (parameterised by `impute_types`); `resolve_gk_geometry`
+is now a thin, **byte-identical** shim over it (`impute_types=(goalkick,)`), so xT-GK / completion and
+all 4 internal callers are unchanged — **no model retrain**. Scope grounded by a live lakehouse probe:
+NaN coordinates are a Gradient Sports set-piece phenomenon (StatsBomb/Wyscout/SkillCorner are 0%), so
+the Law-geometry prior is defensible. The canonical-coordinate promotion (which WOULD retrain
+VAEP/xT/calibration) is a deferred Phase 2 (separate PR). Additive only — no existing behavior or
+output changes.
+
 ## [4.21.4] — 2026-06-10
 
 ### Changed — xT-GK per-type base-rate serve switch (goal-kick completion honesty)

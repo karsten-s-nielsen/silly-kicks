@@ -3,6 +3,8 @@
 Per docs/superpowers/plans/2026-06-08-xt-gk-goalkick-coverage-implementation.md (Task A1).
 """
 
+import pathlib
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -119,3 +121,120 @@ class TestResolveGkGeometry:
         before = a["start_x"].copy()
         resolve_gk_geometry(a, frames=None)
         pd.testing.assert_series_equal(a["start_x"], before)
+
+
+_THROW = 2  # throw_in type_id
+
+
+class TestResolveGkGeometryFrozenContract:
+    """Pins the pre-promotion contract so the Task-5 delegation shim stays byte-identical."""
+
+    def test_exact_output_columns_no_dest_confidence(self):
+        g = resolve_gk_geometry(_actions(), frames=None)
+        assert set(g.columns) == {
+            "origin_x",
+            "origin_y",
+            "origin_source",
+            "origin_confidence",
+            "dest_x",
+            "dest_y",
+            "dest_source",
+        }  # note: NO dest_confidence column in the frozen contract
+
+    def test_nongoalkick_throwin_not_imputed(self):
+        # A throw_in with NaN origin must stay native-or-unresolved (goalkick-only imputation).
+        a = _actions(type_id=[_THROW, _GK], start_x=[np.nan, 5.0], start_y=[np.nan, 34.0])
+        g = resolve_gk_geometry(a, frames=None)
+        assert g.loc[0, "origin_source"] == "unresolved"
+        assert np.isnan(g.loc[0, "origin_x"])
+
+    def test_offposition_gk_goalkick_falls_to_rule_point(self):
+        # (Major-2a) off-position GK must NOT be used; falls to goalkick_prior.
+        frames = pd.DataFrame(
+            {
+                "game_id": [9],
+                "period_id": [1],
+                "frame_id": [1250],
+                "time_seconds": [50.0],
+                "team_id": [1],
+                "player_id": [10],
+                "is_goalkeeper": [True],
+                "is_ball": [False],
+                "x": [40.0],
+                "y": [33.0],
+                "source_provider": ["sportec"],
+            }
+        )
+        g = resolve_gk_geometry(_actions(), frames=frames)
+        assert g.loc[1, "origin_source"] == "goalkick_prior"
+        assert g.loc[1, "origin_x"] == pytest.approx(5.5)
+
+    def test_goalkick_no_native_end_no_next_event_unresolved(self):
+        # (Major-2b) NaN end + last row -> dest unresolved (must STAY unresolved post-refactor).
+        g = resolve_gk_geometry(_actions(end_x=[55.0, np.nan], end_y=[34.0, np.nan]), frames=None)
+        assert g.loc[1, "dest_source"] == "unresolved"
+        assert np.isnan(g.loc[1, "dest_x"])
+
+
+_FIX = pathlib.Path(__file__).parent / "_fixtures"
+
+
+class TestGoldenSnapshot:
+    """Byte-identical guard for the Task-5 refactor: full-frame snapshot pins column set + order +
+    dtypes + every cell on a multi-type fixture (goalkick / corner / throw-in / open-play pass)."""
+
+    def _multi(self):
+        return pd.DataFrame(
+            dict(
+                game_id=[9, 9, 9, 9],
+                period_id=[1, 1, 1, 1],
+                action_id=[0, 1, 2, 3],
+                team_id=[1, 1, 1, 1],
+                player_id=[10, 11, 12, 10],
+                type_id=[22, 5, 2, 0],
+                time_seconds=[5.0, 6.0, 7.0, 70.0],
+                start_x=[np.nan, np.nan, np.nan, 50.0],
+                start_y=[np.nan, np.nan, np.nan, 30.0],
+                end_x=[60.0, 95.0, 40.0, np.nan],
+                end_y=[30.0, 10.0, 20.0, np.nan],
+            )
+        )
+
+    def _frames(self):
+        return pd.DataFrame(
+            dict(
+                game_id=[9],
+                period_id=[1],
+                frame_id=[1250],
+                time_seconds=[5.0],
+                team_id=[1],
+                player_id=[10],
+                is_goalkeeper=[True],
+                is_ball=[False],
+                x=[4.0],
+                y=[33.0],
+                source_provider=["sportec"],
+            )
+        )
+
+    def test_golden_noframes(self):
+        got = resolve_gk_geometry(self._multi(), frames=None)
+        pd.testing.assert_frame_equal(got, pd.read_parquet(_FIX / "gk_geometry_golden_noframes.parquet"))
+
+    def test_golden_frames(self):
+        got = resolve_gk_geometry(self._multi(), frames=self._frames())
+        pd.testing.assert_frame_equal(got, pd.read_parquet(_FIX / "gk_geometry_golden_frames.parquet"))
+
+
+class TestShimNoTripwireLeak:
+    def test_resolve_gk_geometry_emits_no_warning_on_out_of_region_native(self):
+        # The engine is pure; the shim never tripwires -> a native-out-of-region goalkick is SILENT
+        # through resolve_gk_geometry (the frozen contract emitted no warnings).
+        import warnings as _w
+
+        a = _actions(start_x=[80.0, 5.0], start_y=[34.0, 34.0])  # row0 goalkick native x=80 (out of area)
+        with _w.catch_warnings():
+            _w.simplefilter("error")  # any warning -> test failure
+            g = resolve_gk_geometry(a, frames=None)
+        assert g.loc[0, "origin_source"] == "native"
+        assert g.loc[0, "origin_x"] == pytest.approx(80.0)

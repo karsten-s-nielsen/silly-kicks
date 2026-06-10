@@ -48,6 +48,7 @@ __all__ = [
     "PositionLabel",
     "PreprocessConfig",
     "PressureParams",
+    "RestartCoordinateReport",
     "ShapeGraph",
     "SpaceCreationParams",
     "SpearmanParams",
@@ -191,6 +192,7 @@ __all__ = [
     "receiver_zone_density",
     "require_et_direction",
     "resolve_gk_geometry",
+    "resolve_restart_geometry",
     "schema",
     "select_back_line_players",
     "shape_graph_xfns",
@@ -231,11 +233,12 @@ from ._ghost_gk import (
     prepare_ghost_gk_training_data,
 )
 from ._gk_completion import GkCompletionModel, compute_gk_completion
-from ._gk_geometry import resolve_gk_geometry
+from ._gk_geometry import resolve_gk_geometry, resolve_restart_geometry
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_obso
 from ._pausa import compute_pausa, compute_pausa_batch
 from ._player_influence import PlayerInfluence, compute_player_influence
+from ._restart_report import RestartCoordinateReport
 from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_positions
 from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
