@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-09. **Current release**: silly-kicks 4.21.2 (owner-gated lakehouse-mart xT held-out-NLL cross-check; test + dev-tooling only, no shipped-library change). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-09. **Current release**: silly-kicks 4.21.3 (sportec DFL `play_evaluation` success-allowlist — completion robustness, kloppy-aligned, byte-identical on observed DFL data). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -30,11 +30,6 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 ### Blocked or Deferred
 
-- **DFL `play_evaluation` full vocabulary (4.20.1 follow-up).** The sportec completion fix maps
-  `unsuccessful`→fail; `successfullyCompleted`/`successful`/NULL→success (conservative). Values
-  confirmed from a 7-match lakehouse pull; a larger pull should confirm no reason-coded failure
-  strings (e.g. `unsuccessfulBecauseOfFoul`) exist league-wide — any such are currently left
-  `success` and should be added to the failure set.
 - **xT-GK per-type base-rate serve switch for goal-kicks (4.21.0 follow-up).** SkillCorner (and
   potentially GS) goal-kick *completion* is chance from geometry (SkillCorner GK-pass AUC 0.739 but
   goal-kick AUC **0.433**, measured 2026-06-09). 4.21.0 ships goal-kicks **model-scored** — their

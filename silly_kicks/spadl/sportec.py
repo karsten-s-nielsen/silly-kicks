@@ -734,6 +734,50 @@ def _find_caution_pairs(
     return pairs
 
 
+_SUCCESS_EVAL: tuple[str, str] = ("successfullyCompleted", "successful")
+# Everything we expect on a DFL pass/set-piece Evaluation; anything else is surfaced by the warn.
+_KNOWN_EVAL: frozenset[str] = frozenset(_SUCCESS_EVAL) | {"unsuccessful", ""}
+
+
+def _extract_play_eval(df: pd.DataFrame) -> np.ndarray:
+    """Normalize the optional DFL ``play_evaluation`` column to a clean str array.
+
+    Absent column / NaN / null -> ``""`` so a missing column never mass-fails non-DFL sportec-like
+    data. Single source of the extraction both completion sites share (no per-site ``fillna`` drift).
+    """
+    if "play_evaluation" in df.columns:
+        return df["play_evaluation"].fillna("").astype(str).to_numpy()
+    return np.full(len(df), "", dtype=object)
+
+
+def _play_evaluation_is_fail(play_eval: np.ndarray) -> np.ndarray:
+    """Success-allowlist completion: non-empty, non-success DFL Evaluation -> fail (kloppy-aligned).
+
+    Empty / absent / null -> not-fail (the conservative success default). Any unseen reason-coded
+    failure token (e.g. ``unsuccessfulBecauseOfFoul``) -> fail by construction. Exact camelCase match
+    (DFL is consistent camelCase; a case-variant fails+warns by design -- deliberately NOT
+    ``.str.lower()`` like sibling qualifiers). Mirrors kloppy ``sportec/deserializer.py`` (the
+    reference DFL parser): ``Evaluation in {successfullyCompleted, successful}`` is the success set.
+    """
+    return (play_eval != "") & ~np.isin(play_eval, _SUCCESS_EVAL)
+
+
+def _warn_unexpected_play_eval(play_eval: np.ndarray) -> None:
+    """Surface any token that is neither a known success nor the known ``unsuccessful`` failure.
+
+    Makes a genuinely-new or benign DFL token visible (so it can be added to ``_SUCCESS_EVAL``)
+    instead of silently classified as fail. Called at BOTH completion sites over each site's relevant
+    rows -- punt-Play synth parents are excluded from ``is_pass``, so one warn cannot cover both.
+    """
+    unexpected = set(np.unique(play_eval)) - _KNOWN_EVAL
+    if unexpected:
+        warnings.warn(
+            f"sportec: unexpected play_evaluation token(s) {sorted(unexpected)} treated as fail "
+            f"(not in the success allowlist {_SUCCESS_EVAL}); verify against the DFL spec.",
+            stacklevel=2,
+        )
+
+
 def _build_raw_actions(
     events: pd.DataFrame,
     preserve_native: list[str] | None,
@@ -846,16 +890,16 @@ def _build_raw_actions(
     type_ids[is_goalkick] = spadlconfig.actiontype_id["goalkick"]
     result_ids[is_goalkick] = spadlconfig.result_id["success"]
 
-    # BUG-2 fix (2026-06-09): pass-class + set-piece completion comes from the native DFL
-    # `play_evaluation` (carried on Play AND on GoalKick/FreeKick/Corner/ThrowIn via their nested
-    # Play; confirmed on 7 real DFL matches). Previously all of these were hard-wired success,
-    # zeroing failed-pass / failed-goalkick labels (IDSSE goalkicks read 100% success vs the real
-    # ~71%). The lone failure token is `unsuccessful`; `successfullyCompleted`/`successful` and
-    # NULL/unknown stay success (conservative -- only an explicit `unsuccessful` flips to fail).
-    play_eval = _opt("play_evaluation", "").fillna("").astype(str).to_numpy()
-    is_eval_fail = play_eval == "unsuccessful"
+    # Pass-class + set-piece completion from the native DFL `play_evaluation` (carried on Play AND on
+    # GoalKick/FreeKick/Corner/ThrowIn via their nested Play). Success-ALLOWLIST (kloppy-aligned, 4.21.3):
+    # `fail` iff the Evaluation is non-empty AND not in {successfullyCompleted, successful} -- so any
+    # unseen reason-coded failure token (e.g. `unsuccessfulBecauseOfFoul`) fails by construction, while
+    # empty/absent/NULL stays success (conservative; never mass-fails a missing column). Byte-identical
+    # on observed DFL data (the only non-success token across the 7 IDSSE matches is `unsuccessful`).
+    play_eval = _extract_play_eval(rows)
     is_pass_or_setpiece = is_pass | is_freekick | is_corner | is_throwin | is_goalkick
-    result_ids[is_pass_or_setpiece & is_eval_fail] = spadlconfig.result_id["fail"]
+    result_ids[is_pass_or_setpiece & _play_evaluation_is_fail(play_eval)] = spadlconfig.result_id["fail"]
+    _warn_unexpected_play_eval(play_eval[is_pass_or_setpiece])
 
     # --- Shot ---
     is_shot = et == "ShotAtGoal"
@@ -1063,18 +1107,16 @@ def _synthesize_gk_distribution_actions(
     bodypart_ids_synth[is_punt_synth] = spadlconfig.bodypart_id["foot"]
     suffix[is_punt_synth] = "_synth_goalkick"
 
-    # BUG-2 fix (2026-06-09): the synthesized distribution (throwOut->pass / punt->goalkick)
-    # inherits the parent Play's native completion (play_evaluation); only an explicit
-    # `unsuccessful` is a fail (mirrors the open-play / set-piece rule above).
-    if "play_evaluation" in src.columns:
-        synth_eval = src["play_evaluation"].fillna("").astype(str).to_numpy()
-    else:
-        synth_eval = np.full(n_synth, "", dtype=object)
+    # The synthesized distribution (throwOut->pass / punt->goalkick) inherits the parent Play's
+    # native completion via the SAME success-allowlist as the main path (single-sourced helpers);
+    # empty/absent -> success. Mirrors the open-play / set-piece rule above.
+    synth_eval = _extract_play_eval(src)
     result_ids_synth = np.where(
-        synth_eval == "unsuccessful",
+        _play_evaluation_is_fail(synth_eval),
         spadlconfig.result_id["fail"],
         spadlconfig.result_id["success"],
     ).astype(np.int64)
+    _warn_unexpected_play_eval(synth_eval)
 
     synth = pd.DataFrame(
         {

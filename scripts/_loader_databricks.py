@@ -141,6 +141,19 @@ def shape_action_values(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def fetch_idsse_events() -> pd.DataFrame:
+    """Read all bronze IDSSE event rows (native sportec-converter input shape) for the owner-gated
+    play_evaluation e2e. Read-only; the 7 public IDSSE matches are ~10.5k events. Table name comes
+    from the allowlist-validated ``_table`` (idsse is in ``_ALLOWED_PROVIDERS``) -- no user input.
+    """
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        return _query_param(cur, f"SELECT * FROM {_table('idsse', 'events')}")  # noqa: S608
+    finally:
+        conn.close()
+
+
 def _convert(provider: str, raw_events: pd.DataFrame, raw_frames: pd.DataFrame):
     """Convert bronze rows to (actions, frames, home_team_id) via silly-kicks converters.
 
