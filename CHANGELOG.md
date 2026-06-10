@@ -5,6 +5,29 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.21.4] — 2026-06-10
+
+### Changed — xT-GK per-type base-rate serve switch (goal-kick completion honesty)
+
+`compute_xt_gk` now serves the **per-type calibrated base rate** (tagged `xt_gk_completion_source =
+"base_rate"`) instead of the geometric model for any completion-variant sub-domain whose held-out AUC
+lower-confidence-bound ≤ 0.5 (or degenerate / below a minimum sample) — the gate is a single
+`serve_mode_from_lcb(lcb, n)` decision baked into the `GkCompletionModel` artifact (`_type_serve_mode`
+\+ `_type_gate_metrics`, version 1.1.0). `load()` **fail-opens**: a pre-gate (4.21.0) artifact serves
+all types `"model"` = prior behavior. The switch is **data-driven per variant, not a blanket
+goal-kick rule**: the bundled **SkillCorner** gate routes **goal-kicks → `base_rate`** (held-out AUC
+0.433, near-chance from tracking geometry) while keeping GK-passes model-scored (AUC 0.737); the
+bundled **GS `default`** keeps **goal-kicks `model`-scored** (AUC 0.836, LCB 0.798 — GS goal-kick
+completion *is* predictable from geometry). Near-empty throw-in sub-domains (degenerate AUC) base-rate
+by construction in both.
+
+Coefficients are **byte-unchanged** — the re-bundle attaches the gate onto the committed model
+(corpus-identity-guarded; the guard tolerates the unrecorded-`tracking_limit` density float noise but
+aborts on a real retrain). **Not a VAEP retrain** (xt_gk is opt-in, in no default xfn list) — but an
+`xt_gk` serve-output change for the flipped types: the lakehouse re-materializes `xt_gk` for the
+**SkillCorner goal-kick rows (~15% of its GK-distribution actions) plus degenerate throw-ins (both
+variants)**; GS goal-kicks are unaffected. ADR-024 amendment. (4.21.0 §2.3/m3 follow-up.)
+
 ## [4.21.3] — 2026-06-09
 
 ### Changed — sportec DFL `play_evaluation` success-allowlist (completion robustness)

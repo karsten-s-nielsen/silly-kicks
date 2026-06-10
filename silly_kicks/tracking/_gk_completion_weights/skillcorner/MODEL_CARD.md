@@ -20,16 +20,22 @@ model is required.
 **Performance (out-of-fold, match-grouped).**
 - **GK-passes: AUC 0.739, ECE 0.036** (n=461) — clears the 0.70 floor, well-calibrated. This is the
   intended domain.
-- **Goal-kicks: AUC 0.433 (chance)** (n=81) — **KNOWN LIMITATION:** goal-kick completion is not
-  predictable from geometry even on the native label (short-goal-kick tactics, aerial regime).
-  Goal-kicks are still *model-scored* (their `xt_gk` is on-scale — see the comparability gate) but
-  carry **low discrimination**; treat goal-kick `xt_gk` as ~base-rate. A per-type base-rate serve
-  switch is a tracked follow-up (TODO.md).
+- **Goal-kicks: AUC 0.433 (chance)** (n=81) — goal-kick completion is not predictable from geometry
+  even on the native label (short-goal-kick tactics, aerial regime). **As of 4.21.4 (SK-91) the
+  per-type serve gate routes SkillCorner goal-kicks to the calibrated `base_rate`** (tagged
+  `xt_gk_completion_source = "base_rate"`); the gate (`_type_serve_mode`, artifact version 1.1.0)
+  is baked into `model.json` and serves the model only where the held-out AUC LCB > 0.5 (GK-passes:
+  AUC 0.737, LCB 0.674 → `model`). Throw-ins (degenerate, n≈2) base-rate by construction.
 
 **Pooling.** SkillCorner `xt_gk` is **within tolerance** of GS `xt_gk` on matched distance bands
 (`scripts/_xtgk_comparability.py`, owner-run) → poolable directly. Do **not** pool `xt_gk` across
 `xt_gk_completion_variant` values without a validated comparability check (ADR-024, H1/D-S9).
 
 **Provenance + reproduction.** See `metrics.json` (decision, per-sub-domain AUC/ECE, sample sizes).
-Trained via `python scripts/train_gk_completion.py --variant skillcorner`. Attribution: xT-GK is
-Jeffrey Eyestone's (Pitch to the Pros 1), public-with-attribution — see NOTICE / ADR-024.
+Reproduce with `python scripts/train_gk_completion.py --variant skillcorner` — the script now defaults
+to **full-match frames** (`--tracking-limit None`, SK-91). A small `--tracking-limit` does **not**
+reproduce these weights: ~20 s of frames starves the SkillCorner derived-GK, which then over-flags
+goalkeepers in some matches and inflates the frame-derived GK-pass domain (full frames reproduce
+N=542 exactly). The 4.21.4 re-bundle attaches the per-type gate onto the committed coefficients
+without changing them. Attribution: xT-GK is Jeffrey Eyestone's (Pitch to the Pros 1),
+public-with-attribution — see NOTICE / ADR-024.

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "feature_names": [
     "length",
     "forwardness",
@@ -46,6 +46,28 @@
     "throw_in": 1.0,
     "other": 0.8126361655773421,
     "global": 0.8062730627306273
+  },
+  "type_serve_mode": {
+    "goalkick": "base_rate",
+    "throw_in": "base_rate",
+    "other": "model"
+  },
+  "type_gate_metrics": {
+    "goalkick": {
+      "auc": 0.432937181663837,
+      "lcb": 0.2766022659966313,
+      "n": 81
+    },
+    "throw_in": {
+      "auc": null,
+      "lcb": null,
+      "n": 2
+    },
+    "other": {
+      "auc": 0.7372030675229129,
+      "lcb": 0.6735829010374822,
+      "n": 459
+    }
   },
   "sklearn_version": "1.7.2",
   "shipped_variant": "skillcorner",

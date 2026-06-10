@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-09. **Current release**: silly-kicks 4.21.3 (sportec DFL `play_evaluation` success-allowlist — completion robustness, kloppy-aligned, byte-identical on observed DFL data). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-10. **Current release**: silly-kicks 4.21.4 (xT-GK per-type base-rate serve switch — goal-kick completion honesty; SkillCorner goal-kicks serve the calibrated base rate, GS goal-kicks stay model-scored). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -30,18 +30,6 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 ### Blocked or Deferred
 
-- **xT-GK per-type base-rate serve switch for goal-kicks (4.21.0 follow-up).** SkillCorner (and
-  potentially GS) goal-kick *completion* is chance from geometry (SkillCorner GK-pass AUC 0.739 but
-  goal-kick AUC **0.433**, measured 2026-06-09). 4.21.0 ships goal-kicks **model-scored** — their
-  `xt_gk` is on-scale (the SC-vs-GS comparability gate passed *with* goal-kicks included), but the
-  RAV `P(success)` carries low discrimination there. **Follow-up:** add a per-type base-rate serve
-  switch in `compute_xt_gk` — when a sub-domain's held-out AUC fails a lower-confidence-bound floor,
-  serve the per-type calibrated base rate (tagged `xt_gk_completion_source = "base_rate"`) instead of
-  the geometric model, per spec §2.3/m3. **Why deferred:** it is a `compute_xt_gk` change that also
-  affects the GS `default` (whose per-type goal-kick behavior is not separately gated yet) — better
-  measured + gated on its own than bundled into the SkillCorner release. Spec:
-  `docs/superpowers/specs/2026-06-09-xt-gk-multiprovider-completion-design.md` §2.3. Origin:
-  2026-06-09 SkillCorner D-S1 re-measurement.
 - **TF-7 cross-family pitch-control cache in VAEP xfns (deferred).** `add_*`
   aggregators accept `pitch_control_cache` (3.25.0); the `*_xfns` VAEP transformers
   do not yet thread a shared cache across feature families in one pass (each keeps

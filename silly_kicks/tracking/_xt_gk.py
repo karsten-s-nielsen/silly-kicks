@@ -67,6 +67,7 @@ class XtGkReport:
     origin_source_counts: dict[str, int]
     dest_source_counts: dict[str, int]
     completion_variant_counts: dict[str, int]
+    completion_source_counts: dict[str, int]  # model vs base_rate (per-type serve gate); mirrors value_counts
     spans_multiple_variants: bool
 
     @classmethod
@@ -81,12 +82,18 @@ class XtGkReport:
             if "xt_gk_completion_variant" in df.columns
             else pd.Series(dtype=int)
         )
+        csc = (
+            df["xt_gk_completion_source"].value_counts(dropna=True)
+            if "xt_gk_completion_source" in df.columns
+            else pd.Series(dtype=int)
+        )
         return cls(
             n_rows=len(df),
             n_scored=int(df["xt_gk"].notna().sum()),
             origin_source_counts={str(k): int(v) for k, v in osc.items()},
             dest_source_counts={str(k): int(v) for k, v in dsc.items()},
             completion_variant_counts={str(k): int(v) for k, v in cvc.items()},
+            completion_source_counts={str(k): int(v) for k, v in csc.items()},
             spans_multiple_variants=bool(len(cvc) > 1),
         )
 
@@ -446,10 +453,17 @@ def compute_xt_gk(
     pev = _pev(rho, progress)
 
     pc = _completion_p(actions, frames, geom, mask, pointers, completion_model)  # RAV owns z' (Option B)
-    # Task 8 provenance: the variant that scored each row + the source. In the RAV path a row is
-    # scored only when geometry resolves (else NaN, not base-rated -- m2), so scored rows are "model".
+    # Per-type base-rate serve switch (spec 2026-06-09 §2.3/m3): a type whose held-out AUC can't beat
+    # chance with confidence serves the calibrated per-type base rate (tagged "base_rate") instead of
+    # the geometric p. Geometry-missing rows are already excluded from `mask` (m2), so the per-type
+    # gate is the only base-rate trigger here.
+    tids = actions.loc[mask, "type_id"].to_numpy()
+    serve_mode = completion_model.serve_mode_for_types(tids)
+    is_base = serve_mode == "base_rate"
+    if is_base.any():
+        pc[is_base] = completion_model.base_rate_for_types(tids[is_base])
     out.loc[mask, "xt_gk_completion_variant"] = completion_key
-    out.loc[mask, "xt_gk_completion_source"] = "model"
+    out.loc[mask, "xt_gk_completion_source"] = np.where(is_base, "base_rate", "model")
     rav = _rav(pc, dest_star, _counter_value(xt_star, ex, ey), p.delta)
 
     dzv = _dzv(sx, _grid_value(xt.xT, sx, sy), p.v_def, p.defensive_third_boundary)  # raw grid
