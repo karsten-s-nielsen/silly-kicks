@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-06-04 |
-| **Status** | Accepted (silly-kicks 4.14.0, PR-S83) |
+| **Status** | Accepted (silly-kicks 4.14.0, PR-S83); amended 4.22.1 (physical-pitch clamp at the serving seam — see Amendment) |
 | **Deciders** | Karsten Nielsen (maintainer), silly-kicks part-deux review sessions |
 
 (ADR-015 is reserved by TF-17 PR-C for the `silly_kicks/_causal/` matching port — see the ADR-011
@@ -158,3 +158,16 @@ alongside mode + B on the same strata (MAE + RMSE). Pre-locked rails (data-indep
   `predict_density`.
 
 See ADR-013 (numba), ADR-014 (fft backend), ADR-011 (trained-model lifecycle).
+
+## Amendment (4.22.1, 2026-06-11): physical-pitch clamp at the serving seam
+
+`compute_ghost_gk` now clamps the served `ghost_gk_x/y` (goal-relative) to the physical pitch
+(x ∈ [0, 105], y ∈ [0, 68]) with a warning (lakehouse 4.22.0 production report item 2: a corrupted
+upstream `is_goalkeeper` flag wrong-footed the goal-side flip and the boosted regressor extrapolated
+to 5.7 m *behind* the goal line — training labels are filtered to goal-relative x ∈ [0, 30], so such
+values are pure out-of-distribution output on garbage input). The clamp lives at the **serving seam
+in `compute_ghost_gk`**, deliberately NOT in `GhostGkModel.predict_mean` — the model-level
+exact-boosted parity contract (and its blocking parity gate) is untouched. Clamp target is the
+**physical pitch, not the trained grid domain**: healthy slight extrapolation past the 30 m label
+filter (sweeper rushes, observed up to ~31.8 m on clean providers) stays byte-unchanged, so the
+clamp only ever fires on physically-impossible (corrupt-input) rows.

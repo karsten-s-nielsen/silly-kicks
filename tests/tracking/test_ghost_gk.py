@@ -1341,3 +1341,67 @@ class TestAddGhostGkThreadsActions:
                 _, kwargs = mock_compute.call_args
                 assert "actions" in kwargs
                 assert kwargs["actions"] is actions
+
+
+class TestServePositionClamp:
+    """4.22.1: served ghost_gk_x/y are clamped to the physical pitch (goal-relative coords).
+
+    Lakehouse report 2026-06-11 item 2: garbage input (a mis-flagged is_goalkeeper
+    upstream) can wrong-foot the goal-side flip and push the boosted regressor far
+    outside its trained label domain -- a keeper served 5.7 m behind the goal line is
+    never physically meaningful. Clamp target is the PHYSICAL pitch, NOT the trained
+    grid domain: healthy extrapolation slightly past GRID_X_MAX (a sweeper rush) must
+    stay byte-unchanged.
+    """
+
+    @staticmethod
+    def _stub_densities(n):
+        class _D:
+            spread = 2.0
+
+        return [_D()] * n
+
+    def _run(self, monkeypatch, served_xy):
+        from silly_kicks.tracking._ghost_gk import GhostGkModel, compute_ghost_gk
+
+        model, _x, _labels = _fitted_model()
+        frames = _make_multi_frame_fixture(n_frames=2)
+        monkeypatch.setattr(
+            GhostGkModel,
+            "predict_mean",
+            lambda self, features: np.tile(np.asarray(served_xy, dtype=float), (len(features), 1)),
+        )
+        monkeypatch.setattr(
+            GhostGkModel,
+            "predict_density",
+            lambda self, features, *, kde_backend="vectorized": TestServePositionClamp._stub_densities(len(features)),
+        )
+        result = compute_ghost_gk(frames, model=model, home_team_id=1)
+        gk_mask = result["is_goalkeeper"].astype(bool) & ~result["is_ball"].astype(bool)
+        return result.loc[gk_mask, ["ghost_gk_x", "ghost_gk_y"]]
+
+    def test_out_of_bounds_served_position_is_clamped_and_warns(self, monkeypatch):
+        with pytest.warns(UserWarning, match="clamped"):
+            gk = self._run(monkeypatch, (-5.74, 100.0))
+        assert (gk["ghost_gk_x"] == 0.0).all()  # behind the defended goal line -> goal line
+        assert (gk["ghost_gk_y"] == 68.0).all()  # beyond the far touchline -> touchline
+
+    def test_in_bounds_served_position_is_byte_unchanged_and_silent(self, monkeypatch):
+        import warnings as _warnings
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            gk = self._run(monkeypatch, (10.0, 34.0))
+        assert (gk["ghost_gk_x"] == 10.0).all()
+        assert (gk["ghost_gk_y"] == 34.0).all()
+        assert not [w for w in caught if "clamped" in str(w.message)]
+
+    def test_boundary_values_are_not_clamped(self, monkeypatch):
+        import warnings as _warnings
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            gk = self._run(monkeypatch, (0.0, 68.0))
+        assert (gk["ghost_gk_x"] == 0.0).all()
+        assert (gk["ghost_gk_y"] == 68.0).all()
+        assert not [w for w in caught if "clamped" in str(w.message)]

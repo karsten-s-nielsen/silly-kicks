@@ -1866,7 +1866,11 @@ def compute_ghost_gk(
     One prediction per (frame, GK team). Results written to GK rows.
 
     ``ghost_gk_x/y`` are the served boosted-mean position (the exact sklearn HGBR
-    prediction via :meth:`GhostGkModel.predict_mean`). ``ghost_gk_density_spread``
+    prediction via :meth:`GhostGkModel.predict_mean`), in goal-relative coordinates
+    (x = distance from the defended goal line), clamped to the physical pitch
+    (x in [0, 105], y in [0, 68]; 4.22.1 -- garbage input, e.g. a mis-flagged
+    ``is_goalkeeper``, can push the regressor outside its trained domain; a clamp
+    emits a warning and only ever fires on such rows). ``ghost_gk_density_spread``
     is the conditional-**density** dispersion (entropy-based effective area from
     :meth:`predict_density`) — it is **NOT** the standard error of the served
     ``ghost_gk_x/y`` point. The served position (boosted mean) and the spread come
@@ -1985,6 +1989,26 @@ def compute_ghost_gk(
     # Batch predict: position = served boosted mean (cheap leaf-value traversal);
     # spread = conditional-density dispersion (the only cost driver here).
     positions = resolved.predict_mean(batch_features)
+
+    # 4.22.1 (lakehouse report 2026-06-11 item 2): clamp the served position to the
+    # PHYSICAL pitch in goal-relative coords (x = distance from the defended goal
+    # line). Garbage input (e.g. a mis-flagged is_goalkeeper upstream) can wrong-foot
+    # the per-period goal-side flip and push the boosted regressor far outside its
+    # trained label domain -- a keeper served behind the goal line is never physically
+    # meaningful. Physical bounds, NOT the trained grid domain: healthy extrapolation
+    # slightly past GRID_X_MAX (a sweeper rush) must stay byte-unchanged. The clamp
+    # lives at this serving seam so GhostGkModel.predict_mean keeps its exact-boosted
+    # parity contract (ADR-016).
+    _lo = np.array([0.0, 0.0])
+    _hi = np.array([_FIELD_LENGTH, _FIELD_WIDTH])
+    if bool(((positions < _lo) | (positions > _hi)).any()):
+        warnings.warn(
+            "ghost-GK: one or more served positions fell outside the physical pitch and "
+            "were clamped; suspect upstream tracking quality (e.g. a mis-flagged "
+            "is_goalkeeper).",
+            stacklevel=2,
+        )
+        positions = np.clip(positions, _lo, _hi)
     densities = resolved.predict_density(batch_features, kde_backend=kde_backend)
 
     # Build result DataFrame from predictions (single merge, not O(n*m) loop)

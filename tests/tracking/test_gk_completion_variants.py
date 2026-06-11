@@ -281,3 +281,24 @@ def test_train_skillcorner_smoke(tmp_path, monkeypatch):
     assert (tmp_path / "skillcorner" / "metrics.json").exists() or (
         tmp_path / "skillcorner_remeasurement.json"
     ).exists()
+
+
+# --- 4.22.1: variant-key -> bundled-weights alias (lakehouse report 2026-06-11 item 6) ---
+
+
+def test_from_variant_gs_aliases_to_default():
+    """ "gs" (the variant_key_for_provider key for the GS-construct providers) must load
+    the bundled "default" weights -- previously FileNotFoundError, so the two public
+    APIs did not compose."""
+    from silly_kicks.tracking._gk_completion import GkCompletionModel
+
+    m_gs = GkCompletionModel.from_variant("gs")
+    assert m_gs is GkCompletionModel.from_variant("default")  # shared cached instance
+
+
+def test_public_api_composition_never_raises():
+    """from_variant(variant_key_for_provider(p)) must work for every mapped provider."""
+    from silly_kicks.tracking._gk_completion import GkCompletionModel, variant_key_for_provider
+
+    for provider in ("gradientsports", "sportec", "metrica", "skillcorner", None, "unknown_x"):
+        GkCompletionModel.from_variant(variant_key_for_provider(provider))  # must not raise
