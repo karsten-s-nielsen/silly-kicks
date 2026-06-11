@@ -323,7 +323,7 @@ def test_metrica_real_data_sweep():
         pytest.skip(
             "Metrica real-data sweep requires Databricks SQL connectivity. Skipping.",
         )
-    from kloppy.domain import Provider
+    from kloppy.domain import Provider  # type: ignore[import-not-found]
 
     ds = _lakehouse_to_kloppy_dataset(raw, Provider.METRICA)
     if len(ds.records) == 0:
@@ -343,7 +343,7 @@ def test_skillcorner_real_data_sweep():
         pytest.skip(
             "SkillCorner real-data sweep requires Databricks SQL connectivity. Skipping.",
         )
-    from kloppy.domain import Provider
+    from kloppy.domain import Provider  # type: ignore[import-not-found]
 
     ds = _lakehouse_to_kloppy_dataset(raw, Provider.SKILLCORNER)
     if len(ds.records) == 0:

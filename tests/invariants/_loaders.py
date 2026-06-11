@@ -240,7 +240,7 @@ def load_sportec_native() -> LoaderResult:
 
 
 def load_sportec_via_kloppy() -> LoaderResult:
-    from kloppy import sportec
+    from kloppy import sportec  # type: ignore[import-not-found]
 
     from silly_kicks.spadl import kloppy as kloppy_mod
 

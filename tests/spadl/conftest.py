@@ -15,7 +15,7 @@ _KLOPPY_FIXTURES_DIR = Path(__file__).parent.parent / "datasets" / "kloppy"
 @pytest.fixture(scope="module")
 def sportec_dataset():
     """Module-scoped: parse the Sportec fixture once per test module."""
-    from kloppy import sportec
+    from kloppy import sportec  # type: ignore[import-not-found]
 
     return sportec.load_event(
         event_data=str(_KLOPPY_FIXTURES_DIR / "sportec_events.xml"),
@@ -26,7 +26,7 @@ def sportec_dataset():
 @pytest.fixture(scope="module")
 def metrica_dataset():
     """Module-scoped: parse the Metrica fixture once per test module."""
-    from kloppy import metrica
+    from kloppy import metrica  # type: ignore[import-not-found]
 
     return metrica.load_event(
         event_data=str(_KLOPPY_FIXTURES_DIR / "metrica_events.json"),

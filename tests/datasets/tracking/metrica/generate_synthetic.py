@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-from kloppy.domain import (
+from kloppy.domain import (  # type: ignore[import-not-found]
     CustomCoordinateSystem,
     DatasetFlag,
     Dimension,

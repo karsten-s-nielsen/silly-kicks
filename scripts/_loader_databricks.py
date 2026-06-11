@@ -29,7 +29,7 @@ _ACTION_VALUES_COLUMNS = "match_id, start_x, start_y, end_x, end_y, action_type,
 
 def _connect():
     try:
-        import databricks.sql as dbsql
+        import databricks.sql as dbsql  # type: ignore[import-not-found]
     except ImportError as exc:  # actionable hint
         raise RuntimeError(
             "databricks-sql-connector is required for the Databricks loader: pip install databricks-sql-connector"

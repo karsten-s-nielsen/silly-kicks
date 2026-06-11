@@ -90,8 +90,8 @@ class TestKloppyCoordinateSystemFix:
 
     def test_real_dataset_transform_does_not_typeerror(self):
         """convert_to_actions on a real Sportec dataset must not raise TypeError."""
-        from kloppy import sportec
-        from kloppy.domain import Provider
+        from kloppy import sportec  # type: ignore[import-not-found]
+        from kloppy.domain import Provider  # type: ignore[import-not-found]
         from packaging import version
 
         ds = sportec.load_event(

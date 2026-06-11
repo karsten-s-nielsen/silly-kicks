@@ -95,7 +95,7 @@ def lakehouse_to_kloppy_dataset(lakehouse_df: pd.DataFrame, provider: Any):
     yards. The silly_kicks gateway transforms to 105x68 m as part of its
     normal pipeline.
     """
-    from kloppy.domain import (
+    from kloppy.domain import (  # type: ignore[import-not-found]
         CustomCoordinateSystem,
         DatasetFlag,
         Dimension,
