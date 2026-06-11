@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-11. **Current release**: silly-kicks 4.22.2 (TF-41 `add_space_creation` dead `*_opponent` triplet removed from the contract — hard-coded NaN since 3.21.0, never specified; team triplet byte-identical; lakehouse bug report 2026-06-11). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-11. **Current release**: silly-kicks 4.23.0 (TF-41 space-creation `_opponent` triplet IMPLEMENTED — defender-side leave-one-out on the opponent-attacking OBSO surface, lakehouse-mandated after the 4.22.2 removal was rejected; `space_creation_xfns` 9→18 columns; + pyright gates `tests/`+`scripts/` in CI, 301 never-gated diagnostics fixed to zero). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

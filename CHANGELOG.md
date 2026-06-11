@@ -5,6 +5,75 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.23.0] — 2026-06-11
+
+### Added — the space-creation `*_opponent` triplet is IMPLEMENTED (TF-41; lakehouse-mandated; ADR-026)
+
+The lakehouse rejected 4.22.2's contract-removal resolution and mandated implementation
+(option 1 of the original report). `add_space_creation` now emits a live
+`space_created_m2_opponent` / `space_destroyed_m2_opponent` / `net_space_m2_opponent`:
+
+- **Semantics**: the actor's leave-one-out differential OBSO evaluated on the **opposing
+  team's OBSO surface** (actor as defender of that surface), per Fernandez & Bornn (2018).
+  `*_created_m2` >= 0 is opponent space existing because of the actor's presence;
+  `*_destroyed_m2` >= 0 is opponent space the actor's presence denies (the defensive-value
+  reading); `net_*` = created − destroyed (signed).
+- **Identical inputs by construction**: same linked frame, evaluation grid, OBSO sigmas,
+  transition/EPV grids, and pitch-control method as the `_team` triplet — magnitudes are
+  directly comparable. Analytical path (Spearman/F&B) derives the opponent surface from the
+  complement of the SAME decomposed baseline (zero extra pitch-control computations);
+  the Voronoi naive fallback recomputes the opponent surface explicitly per removal.
+  Verified by an analytical-vs-naive opponent parity oracle on both decomposable methods.
+- **Opponent resolution** is dtype-robust (`ids_match`, ADR-019). A linked frame without
+  exactly two team ids **raises `ValueError`** carrying the game/period/frame/action key —
+  corrupt input fails loud, never silent NaN. NaN actor identifiers still route to the
+  ADR-003 NaN-row default.
+- **NaN-mask parity**: the `_opponent` triplet is NaN exactly where the `_team` triplet is
+  NaN (single-call design — no new degradation paths). Gated by a coverage-parity test.
+- **Contract lockstep**: `_SPACE_CREATION_COLUMNS` (6), both return paths, the docstring,
+  and `space_creation_xfns` (now 6 features × 3 gamestates = **18 VAEP columns**, was 9).
+- **Meta-gate (recurrence guarantee), repo-wide**: `tests/tracking/test_aggregator_column_liveness.py`
+  runs EVERY registered tracking `add_*` (all 28, including the jersey-frames helper) on a
+  multi-domain fixture (pass / shot / GK goalkick / attacking-third ball / wide-area cross
+  windows with the actor carrying the ball) and asserts every column an aggregator ADDS is
+  non-null somewhere — a documented contract column that is 100%-NaN now fails CI for ANY
+  aggregator, with NO exception set (conditional columns get domain-exercising fixtures, not
+  exclusions) and a meta-assertion pinning the gate surface to `tracking.__all__` so a new
+  aggregator cannot land unwired. Plus the space-creation-specific lakehouse acceptance
+  tests: coverage parity, symmetry sanity, sign/range oracle, two-team guard.
+- `compute_space_created` gains `include_opponent_perspective: bool = False` (additive;
+  default output schema unchanged).
+
+Hyrum: `space_creation_xfns` length changes 3 → 6 (opt-in factory, in no default xfn list —
+opting in remains a self-triggered VAEP retrain per ADR-005). `add_space_creation` output
+gains 3 columns; existing 3 are byte-identical. Lakehouse re-adds the bronze column
+(`ADD COLUMNS` adoption PR) and extends its value-audit oracles. Minor bump per the
+lakehouse release-mechanics requirement (contract re-expansion must not ship as a patch
+on top of 4.22.2's removal).
+
+### Changed — pyright now gates `tests/` + `scripts/` in CI (infra-only, no wheel change)
+
+- **CI type-gate widened from `pyright silly_kicks/` to the full tree** (config-driven: pyproject
+  `[tool.pyright] include = ["silly_kicks", "tests", "scripts"]` + `extraPaths = ["scripts"]` so
+  the tests' runtime `sys.path` import of scripts-modules resolves statically). 301 pre-existing,
+  never-gated diagnostics across 73 files fixed to zero.
+- **`scripts/` fixes carry real hardening** (behavior-neutral at every site): explicit
+  `RuntimeError("HPO produced no best candidate")` narrowing in `train_xcross_attempt.py` /
+  `train_xshot_occurrence.py` (previously a latent end-of-sweep `AttributeError`); post-`fit()`
+  Optional-narrowing asserts in `train_gk_completion.py` / `train_ghost_gk.py`; honest return
+  annotations on the `_extract` helpers (pyright NoReturn mis-inference).
+- **`tests/` fixes are type-only**: trailing `# type: ignore[...]` per the codebase idiom for
+  pandas-stubs/numpy-stubs strictness, a handful of precise annotations (e.g. `MockSurface`
+  attribute declarations in `test_obso.py`), and `[import-not-found]` suppressions on the two
+  importorskip-guarded optional deps (`statsbombpy`, `xarray`). Every edited test file verified
+  byte-identical pass/skip outcomes against its pre-edit baseline.
+- Known suppressed-not-fixed class: `ruthless` `IntRange`/`Choice`/`FloatRange` `.log` and
+  `StoreConfig` Optional annotations are stub gaps in the ruthless package itself
+  (runtime-verified present); fix belongs upstream in ruthless, after which the
+  `tests/calibration/test_spaces.py` suppressions can drop.
+
+No library code changed (`silly_kicks/` untouched); not a retrain trigger; nothing re-materializes.
+
 ## [4.22.2] — 2026-06-11
 
 ### Removed — dead `*_opponent` triplet dropped from the `add_space_creation` contract (TF-41)

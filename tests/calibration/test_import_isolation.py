@@ -18,6 +18,6 @@ def test_top_level_import_does_not_pull_calibration_or_heavy_deps():
 
 def test_top_level_init_has_no_calibration_import():
     src = importlib.import_module("silly_kicks").__file__
-    with open(src, encoding="utf-8") as fh:
+    with open(src, encoding="utf-8") as fh:  # type: ignore[arg-type]
         text = fh.read()
     assert "import calibration" not in text and "from .calibration" not in text

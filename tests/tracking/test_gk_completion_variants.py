@@ -265,7 +265,7 @@ def test_train_skillcorner_smoke(tmp_path, monkeypatch):
     n = 160
     data = {f: rng.randn(n) for f in FEATS}
     data["is_goalkick"] = (np.arange(n) % 4 == 0).astype(float)  # ~25% goalkicks, rest GK-pass
-    data["is_throw_in"] = 0.0
+    data["is_throw_in"] = 0.0  # type: ignore[assignment]
     df = pd.DataFrame(data)
     df["_y"] = (rng.rand(n) < 0.6).astype(int)  # both classes
     df["_group"] = np.arange(n) % 5  # 5 groups for GroupKFold

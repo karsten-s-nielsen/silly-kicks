@@ -126,11 +126,11 @@ class TestToXarray:
         # This test may pass or skip depending on env
         s = _make_surface()
         try:
-            import xarray  # noqa: F401
+            import xarray  # noqa: F401  # type: ignore[import-not-found]
 
             # xarray is installed -- test it works
             da = s.to_xarray()
-            assert da.dims == ("y", "x")
+            assert da.dims == ("y", "x")  # type: ignore[attr-defined]
         except ImportError:
             with pytest.raises(ImportError, match="xarray"):
                 s.to_xarray()

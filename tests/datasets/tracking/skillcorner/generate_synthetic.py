@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from kloppy.domain import Provider, TrackingDataset
+from kloppy.domain import Provider, TrackingDataset  # type: ignore[import-not-found]
 
 _TESTS_DIR = Path(__file__).resolve().parents[3]
 if str(_TESTS_DIR) not in sys.path:

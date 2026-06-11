@@ -48,8 +48,8 @@ def test_short_gap_filled():
     out = interpolate_frames(f, config=PreprocessConfig.default())
     assert not out["x"].isna().any()
     # Linearly interpolated between x[4]=4.0 and x[7]=7.0 -> x[5]=5.0, x[6]=6.0
-    assert np.isclose(out.loc[5, "x"], 5.0, atol=1e-6)
-    assert np.isclose(out.loc[6, "x"], 6.0, atol=1e-6)
+    assert np.isclose(out.loc[5, "x"], 5.0, atol=1e-6)  # type: ignore[arg-type]
+    assert np.isclose(out.loc[6, "x"], 6.0, atol=1e-6)  # type: ignore[arg-type]
 
 
 def test_long_gap_stays_nan():

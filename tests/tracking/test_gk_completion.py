@@ -44,7 +44,7 @@ class TestFeatures:
     def test_missing_density_left_nan_for_model_to_impute(self):
         # P3: extract does NOT sentinel-fill; the MODEL mean-imputes density NaN (neutral).
         X = extract_gk_completion_features(_geom(), defender_density=pd.Series([np.nan, 2.0]))
-        assert np.isnan(X.loc[0, "dest_defender_density"])
+        assert np.isnan(X.loc[0, "dest_defender_density"])  # type: ignore[arg-type]
         assert X.loc[1, "dest_defender_density"] == 2.0
 
 
@@ -104,7 +104,7 @@ class TestModel:
         r_nan = X.iloc[[0]].copy()
         r_nan["dest_defender_density"] = np.nan
         r_mean = X.iloc[[0]].copy()
-        r_mean["dest_defender_density"] = m._mean[di]
+        r_mean["dest_defender_density"] = m._mean[di]  # type: ignore[index]
         np.testing.assert_allclose(m.predict_proba(r_nan), m.predict_proba(r_mean), atol=1e-12)
 
     def test_save_load_roundtrip_sha(self, tmp_path):
@@ -269,8 +269,8 @@ class TestAddGkCompletion:
         out = add_gk_completion(self._actions(), self._frames())
         assert "gk_completion" in out.columns
         assert "frame_id" in out.columns  # linkage provenance merged
-        assert 0.0 <= out.loc[0, "gk_completion"] <= 1.0  # goalkick scored
-        assert np.isnan(out.loc[1, "gk_completion"])  # out-of-scope -> NaN
+        assert 0.0 <= out.loc[0, "gk_completion"] <= 1.0  # type: ignore[operator]  # goalkick scored
+        assert np.isnan(out.loc[1, "gk_completion"])  # type: ignore[arg-type]  # out-of-scope -> NaN
         assert len(out) == len(self._actions())
 
     def test_links_kwarg_matches_internal_linking(self):

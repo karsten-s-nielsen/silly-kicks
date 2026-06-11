@@ -402,7 +402,7 @@ def _synthesize_skillcorner_actions(frames_df: pd.DataFrame) -> pd.DataFrame:
                 {
                     "match_key": int(start_row["match_key"]),
                     "match_id": str(start_row["match_id"]),
-                    "period": int(period_id),
+                    "period": int(period_id),  # type: ignore[reportArgumentType]
                     "time_seconds": float(start_row["timestamp_seconds"]),
                     "action_id": int(action_id_counter),
                     "team_id": 1,
@@ -466,9 +466,9 @@ def _convert_actions_to_silly_kicks(
     # opposite-team filter. NaN entries (rare; some action types lack a player) are
     # preserved as None / NaN in object dtype.
     if "team_id" in a.columns:
-        a["team_id"] = a["team_id"].where(a["team_id"].notna(), other=None)
+        a["team_id"] = a["team_id"].where(a["team_id"].notna(), other=None)  # type: ignore[reportArgumentType]
     if "player_id" in a.columns:
-        a["player_id"] = a["player_id"].where(a["player_id"].notna(), other=None)
+        a["player_id"] = a["player_id"].where(a["player_id"].notna(), other=None)  # type: ignore[reportArgumentType]
     a["time_seconds"] = pd.to_numeric(a["time_seconds"], errors="coerce").astype("float64")
     a["source_provider"] = silly_kicks_name
     return a
@@ -558,10 +558,10 @@ def _build_combined_slim(
         if col in a.columns and col in f.columns:
             if pd.api.types.is_object_dtype(f[col]) and not pd.api.types.is_object_dtype(a[col]):
                 # Stringify action-side values; keep NaN as None for parquet null.
-                a[col] = a[col].astype("object").where(a[col].notna(), other=None)
+                a[col] = a[col].astype("object").where(a[col].notna(), other=None)  # type: ignore[reportArgumentType]
                 a[col] = a[col].map(lambda v: None if v is None or (isinstance(v, float) and pd.isna(v)) else str(v))
             elif pd.api.types.is_object_dtype(a[col]) and not pd.api.types.is_object_dtype(f[col]):
-                f[col] = f[col].astype("object").where(f[col].notna(), other=None)
+                f[col] = f[col].astype("object").where(f[col].notna(), other=None)  # type: ignore[reportArgumentType]
                 f[col] = f[col].map(lambda v: None if v is None or (isinstance(v, float) and pd.isna(v)) else str(v))
 
     out = pd.concat([a, f], ignore_index=True, sort=False)

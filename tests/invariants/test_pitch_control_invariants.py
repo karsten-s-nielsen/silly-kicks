@@ -132,6 +132,7 @@ class TestDecompositionConsistency:
     def test_spearman_sum_reconstructs(self):
         frame = _make_frame([(30, 34), (40, 50)], [(70, 34), (80, 20)])
         s = compute_pitch_control(frame, 1, method="spearman", decompose=True)
+        assert s.player_ids is not None and s.per_player_influence is not None
         att_mask = np.isin(s.player_ids, [100, 101])
         att_sum = s.per_player_influence[att_mask].sum(axis=0)
         all_sum = s.per_player_influence.sum(axis=0)
@@ -142,6 +143,7 @@ class TestDecompositionConsistency:
     def test_voronoi_binary_sums_to_one(self):
         frame = _make_frame([(30, 34)], [(70, 34)])
         s = compute_pitch_control(frame, 1, method="voronoi", decompose=True)
+        assert s.per_player_influence is not None
         assert (s.per_player_influence.sum(axis=0) == 1.0).all()
 
 

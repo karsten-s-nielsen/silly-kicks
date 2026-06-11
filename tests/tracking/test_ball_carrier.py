@@ -15,7 +15,7 @@ def _make_carrier_frame(
     frame_id=1,
     ball_x=50.0,
     ball_y=34.0,
-    ball_state="alive",
+    ball_state: str | None = "alive",
     players: list[dict],
 ) -> pd.DataFrame:
     """Build a single-frame fixture for ball carrier tests.
@@ -644,7 +644,7 @@ class TestCachedPreLinks:
         frames = self._multi_frame()
         pre = _pre_index_frames(frames)
         for params in _CACHE_EQUIV_PARAMS:
-            recomputed = infer_ball_carrier(frames, **params)
+            recomputed = infer_ball_carrier(frames, **params)  # type: ignore[arg-type]
             cached = infer_ball_carrier(frames, pre=pre, **params)
             pd.testing.assert_frame_equal(recomputed, cached)
 
@@ -667,7 +667,7 @@ class TestCachedPreLinks:
         pre = _pre_index_frames(frames)
         links, _ = link_actions_to_frames(actions, frames, tolerance_seconds=0.2)
         for params in _CACHE_EQUIV_PARAMS:
-            recomputed = ball_carrier_at_action(actions, frames, **params)
+            recomputed = ball_carrier_at_action(actions, frames, **params)  # type: ignore[arg-type]
             cached = ball_carrier_at_action(actions, frames, pre=pre, links=links, **params)
             pd.testing.assert_series_equal(recomputed, cached)
 

@@ -115,7 +115,7 @@ def probe_lakehouse() -> dict[str, dict[str, Any]]:
                     row = cur.fetchone()
                     if row is None:
                         continue
-                    cols = [d[0] for d in cur.description]
+                    cols = [d[0] for d in cur.description]  # type: ignore[reportOptionalIterable]
                     out[key] = {c: _coerce(v) for c, v in zip(cols, row, strict=False)}
                     # The lakehouse mart is wide-form 120x80 (StatsBomb units); flag
                     # this so synthetic generators do not import the unit choice.

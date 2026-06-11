@@ -198,14 +198,14 @@ class TestKernel:
         from silly_kicks.tracking._kernels import _structural_pass_at_actions
 
         frame = _make_frame_rows(
-            home_team_id="H",
-            away_team_id="A",
+            home_team_id="H",  # type: ignore[arg-type]
+            away_team_id="A",  # type: ignore[arg-type]
             home_outfield_xs=[20.0, 22.0, 24.0, 26.0],
             home_outfield_ys=[20.0, 30.0, 40.0, 50.0],
             away_outfield_xs=[50.0, 60.0, 30.0, 80.0],
             away_outfield_ys=[34.0, 20.0, 34.0, 34.0],
         )
-        out = _structural_pass_at_actions(_actions(team_id="H"), frame, home_team_id="H")
+        out = _structural_pass_at_actions(_actions(team_id="H"), frame, home_team_id="H")  # type: ignore[arg-type]
         assert out["structural_lbs"].iloc[0] == 2
 
 
@@ -228,7 +228,9 @@ class TestResolveFrameIdsByPosition:
         pl = links.set_index("action_id")
         old = np.array(
             [
-                float(pl.at[a, "frame_id"]) if (a in pl.index and pd.notna(pl.at[a, "frame_id"])) else np.nan
+                float(pl.at[a, "frame_id"])  # type: ignore[arg-type]
+                if (a in pl.index and pd.notna(pl.at[a, "frame_id"]))
+                else np.nan
                 for a in acts["action_id"]
             ]
         )

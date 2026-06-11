@@ -57,7 +57,7 @@ def _adapt(events: list[dict[str, Any]], match_id: int) -> pd.DataFrame:
 @pytest.mark.e2e
 def test_kde_beats_singh_on_statsbomb_open_competition():
     pytest.importorskip("statsbombpy")
-    from statsbombpy import sb
+    from statsbombpy import sb  # type: ignore[import-not-found]
 
     try:
         matches = sb.matches(competition_id=_COMPETITION_ID, season_id=_SEASON_ID, fmt="dict")

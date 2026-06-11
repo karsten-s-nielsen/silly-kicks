@@ -167,7 +167,7 @@ def test_kloppy_gk_derivation_fires_when_native_wrong():
     """
     import datetime
 
-    from kloppy.domain import (
+    from kloppy.domain import (  # type: ignore[import-not-found]
         DatasetFlag,
         Dimension,
         Frame,
@@ -232,7 +232,7 @@ def test_kloppy_gk_derivation_fires_when_native_wrong():
         teams=[home_team, away_team],
         periods=[period],
         pitch_dimensions=pitch,
-        coordinate_system=None,
+        coordinate_system=None,  # type: ignore[arg-type]
         score=None,
         frame_rate=25.0,
         orientation=Orientation.HOME_AWAY,
@@ -344,7 +344,7 @@ def test_metrica_lakehouse_derived_round_trips():
         pytest.skip(f"{fixture} not committed yet --- regenerate via scripts/build_lakehouse_ci_fixtures.py")
     raw = pd.read_parquet(fixture)
     from datasets.tracking._lakehouse_adapter import lakehouse_to_kloppy_dataset
-    from kloppy.domain import Provider
+    from kloppy.domain import Provider  # type: ignore[import-not-found]
 
     from silly_kicks.tracking.kloppy import convert_to_frames
     from silly_kicks.tracking.schema import KLOPPY_TRACKING_FRAMES_COLUMNS
@@ -363,7 +363,7 @@ def test_skillcorner_lakehouse_derived_round_trips():
         pytest.skip(f"{fixture} not committed yet --- regenerate via scripts/build_lakehouse_ci_fixtures.py")
     raw = pd.read_parquet(fixture)
     from datasets.tracking._lakehouse_adapter import lakehouse_to_kloppy_dataset
-    from kloppy.domain import Provider
+    from kloppy.domain import Provider  # type: ignore[import-not-found]
 
     from silly_kicks.tracking.kloppy import convert_to_frames
     from silly_kicks.tracking.schema import KLOPPY_TRACKING_FRAMES_COLUMNS

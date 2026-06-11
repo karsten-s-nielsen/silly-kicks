@@ -227,7 +227,7 @@ def test_assemble_corpus_canonicalizes_for_parquet(tmp_path, monkeypatch):
     )()
     df = cli._assemble_corpus(args)
     assert "original_event_id" not in df.columns  # heterogeneous provider extra dropped
-    assert df["team_id"].map(type).eq(str).all()  # asymmetric ids string-cast
+    assert df["team_id"].map(type).eq(str).all()  # asymmetric ids string-cast  # type: ignore[arg-type]
     df.to_parquet(tmp_path / "c.parquet")  # must NOT raise pyarrow ArrowTypeError
 
 

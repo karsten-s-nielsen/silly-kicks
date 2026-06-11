@@ -176,7 +176,7 @@ class TestComputeSpearman:
         s = compute_spearman(frame, 1, SpearmanParams(), decompose=True)
         assert s.per_player_influence is not None
         # Sum attacking influence / (sum att + sum def) ~ surface
-        att_mask = np.isin(s.player_ids, [100, 101])
+        att_mask = np.isin(s.player_ids, [100, 101])  # type: ignore[arg-type]
         att_sum = s.per_player_influence[att_mask].sum(axis=0)
         all_sum = s.per_player_influence.sum(axis=0)
         reconstructed = np.where(all_sum > 1e-10, att_sum / all_sum, 0.5)

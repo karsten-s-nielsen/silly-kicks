@@ -102,7 +102,7 @@ def test_shot_dist_to_goal_is_shot_distance(provider: str, loader):
         f"{provider}: VAEP feats missing start_dist_to_goal_a0 (xfns customised?)"
     )
 
-    mean_shot_dist = float(feats.loc[shot_mask, "start_dist_to_goal_a0"].mean())
+    mean_shot_dist = float(feats.loc[shot_mask, "start_dist_to_goal_a0"].mean())  # type: ignore[union-attr]
     # Threshold = 50m. Real shots cluster at 10-25m from goal; the broken-pipeline
     # signature is 85-95m (full pitch length). Synthetic / tiny fixtures may
     # contain physically-unrealistic long-range shots that legitimately push the

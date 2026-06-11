@@ -50,7 +50,7 @@ def test_skillcorner_dataset_converts():
 
 def test_provider_pff_raises_not_implemented():
     """Per ADR-004 invariant 4: route Gradient Sports through silly_kicks.tracking.gradientsports."""
-    from kloppy.domain import Provider
+    from kloppy.domain import Provider  # type: ignore[import-not-found]
 
     ds = build_metrica_tracking_dataset(n_frames=2)
     ds.metadata.provider = Provider.PFF
@@ -59,7 +59,7 @@ def test_provider_pff_raises_not_implemented():
 
 
 def test_provider_sportec_raises_not_implemented():
-    from kloppy.domain import Provider
+    from kloppy.domain import Provider  # type: ignore[import-not-found]
 
     ds = build_metrica_tracking_dataset(n_frames=2)
     ds.metadata.provider = Provider.SPORTEC

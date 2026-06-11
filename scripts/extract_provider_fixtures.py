@@ -100,7 +100,7 @@ def _extract_idsse(out_path: Path, *, variant: str = "default") -> None:
     presence/absence on the missing-vars error path.
     """
     try:
-        from databricks import sql as dbsql
+        from databricks import sql as dbsql  # type: ignore[import-not-found]
     except ImportError:
         print(
             "ERROR: databricks-sql-connector not installed. Install with: uv pip install databricks-sql-connector",
@@ -200,7 +200,7 @@ def _extract_metrica_per_period(out_path: Path) -> None:
     from env (same security posture as ``_extract_idsse``).
     """
     try:
-        from databricks import sql as dbsql
+        from databricks import sql as dbsql  # type: ignore[import-not-found]
     except ImportError:
         print(
             "ERROR: databricks-sql-connector not installed. Install with: uv pip install databricks-sql-connector",
@@ -361,7 +361,7 @@ def _extract_metrica(out_path: Path) -> None:
                 "event_id": i,
                 "type": str(typ).upper() if typ else "GENERIC",
                 "subtype": str(sub).upper() if sub else None,
-                "period": int(period),
+                "period": int(period),  # type: ignore[reportArgumentType]
                 "start_time_s": float(start_time),
                 "end_time_s": float(end_time),
                 "player": str(player) if player else None,

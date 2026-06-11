@@ -41,8 +41,8 @@ def _to_atomic(actions):
 def test_atomic_standard_parity_pressure(method: str) -> None:
     actions, frames = _build_fixture()
     atomic = _to_atomic(actions)
-    std_result = std_pressure(actions, frames, method=method)
-    atomic_result = atomic_pressure(atomic, frames, method=method)
+    std_result = std_pressure(actions, frames, method=method)  # type: ignore[arg-type]
+    atomic_result = atomic_pressure(atomic, frames, method=method)  # type: ignore[arg-type]
     np.testing.assert_array_equal(
         std_result.fillna(-99999).values,
         atomic_result.fillna(-99999).values,

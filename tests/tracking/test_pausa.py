@@ -115,8 +115,8 @@ class TestComputePausaBatch:
         result = compute_pausa_batch(df)
         expected = result["pausa_temporal"] * result["pausa_spatial"]
         np.testing.assert_array_almost_equal(
-            result["pausa_composite"].values,
-            expected.values,
+            result["pausa_composite"].values,  # type: ignore[arg-type]
+            expected.values,  # type: ignore[arg-type]
         )
 
     def test_missing_columns_raises(self):

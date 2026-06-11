@@ -104,7 +104,7 @@ class TestRowAlignment:
             if bool(out.loc[i, "is_ball"]):
                 assert pd.isna(out.loc[i, "player_id"])
                 continue
-            want = expected[(out.loc[i, "team_side"], out.loc[i, "jersey_number"])]
+            want = expected[(out.loc[i, "team_side"], out.loc[i, "jersey_number"])]  # type: ignore[index]
             assert out.loc[i, "player_id"] == want, f"row {i} misaligned"
 
 

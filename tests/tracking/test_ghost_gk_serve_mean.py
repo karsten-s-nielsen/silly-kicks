@@ -51,10 +51,10 @@ class TestBoostedParity:
         y = pd.DataFrame({"gk_x": rng.uniform(2, 20, n), "gk_y": rng.uniform(25, 45, n)})
         m = gg.GhostGkModel(n_estimators=30).fit(X, y)
         # No categorical split nodes after phase-numeric (guards exact reconstruction):
-        assert sum(int(t["is_categorical"].sum()) for t in m._tree_nodes) == 0
+        assert sum(int(t["is_categorical"].sum()) for t in m._tree_nodes) == 0  # type: ignore[union-attr]
         # Parity vs the live sklearn regressors kept transiently after fit() (canonical col order):
         Xv = X[gg.GHOST_GK_FEATURE_NAMES].values
-        sk = np.column_stack([m._sk_reg_x.predict(Xv), m._sk_reg_y.predict(Xv)])
+        sk = np.column_stack([m._sk_reg_x.predict(Xv), m._sk_reg_y.predict(Xv)])  # type: ignore[union-attr]
         np.testing.assert_allclose(m.predict_mean(X), sk, atol=1e-6)
 
     def test_predict_mean_reindexes_to_canonical_order(self):
@@ -83,7 +83,7 @@ class TestFitStoresEnsembles:
         m = gg.GhostGkModel(n_estimators=10).fit(X, y)
         assert m._tree_nodes_y is not None and len(m._tree_nodes_y) > 0
         assert isinstance(m._baseline_x, float) and isinstance(m._baseline_y, float)
-        assert sum(int(t["is_categorical"].sum()) for t in m._tree_nodes) == 0  # phase numeric
+        assert sum(int(t["is_categorical"].sum()) for t in m._tree_nodes) == 0  # type: ignore[union-attr]  # phase numeric
         assert sum(int(t["is_categorical"].sum()) for t in m._tree_nodes_y) == 0
 
     def test_training_gk_y_is_input_labels(self):

@@ -25,10 +25,10 @@ class TestTodasCoords:
             }
         )
         result = _to_das_coords(df)
-        np.testing.assert_allclose(result["x"].values, [-_X_OFFSET, _X_OFFSET, 0.0])
-        np.testing.assert_allclose(result["y"].values, [-_Y_OFFSET, _Y_OFFSET, 0.0])
-        np.testing.assert_allclose(result["vx"].values, [1.0, 2.0, 0.0])
-        np.testing.assert_allclose(result["vy"].values, [0.5, -0.5, 0.0])
+        np.testing.assert_allclose(result["x"].values, [-_X_OFFSET, _X_OFFSET, 0.0])  # type: ignore[arg-type]
+        np.testing.assert_allclose(result["y"].values, [-_Y_OFFSET, _Y_OFFSET, 0.0])  # type: ignore[arg-type]
+        np.testing.assert_allclose(result["vx"].values, [1.0, 2.0, 0.0])  # type: ignore[arg-type]
+        np.testing.assert_allclose(result["vy"].values, [0.5, -0.5, 0.0])  # type: ignore[arg-type]
 
     def test_does_not_mutate_input(self) -> None:
         from silly_kicks.tracking._das import _to_das_coords
@@ -464,7 +464,7 @@ class TestDasXfns:
         from silly_kicks.tracking.features import das_xfns
         from silly_kicks.vaep.features import feature_column_names
 
-        cols = feature_column_names(das_xfns, nb_prev_actions=3)
+        cols = feature_column_names(das_xfns, nb_prev_actions=3)  # type: ignore[arg-type]
         expected_cols = {
             "das_team_a0",
             "das_team_a1",

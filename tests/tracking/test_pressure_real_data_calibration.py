@@ -199,7 +199,7 @@ def test_per_method_cross_provider_median_within_2x(method: str) -> None:
         actions = _synthesize_actions_with_pressure(frames, n_actions=20, target_d=2.0)
         assert not actions.empty, f"{provider}: no near-defender actions synthesized; fixture too sparse."
         frames = _prep_frames_for_method(frames, method)
-        out = pressure_on_actor(actions, frames, method=method)
+        out = pressure_on_actor(actions, frames, method=method)  # type: ignore[arg-type]
         valid = out.dropna()
         assert not valid.empty, f"{provider}/{method}: all NaN after pressure-anchored synthesis."
         medians[provider] = float(valid.median())
@@ -231,8 +231,8 @@ def test_atomic_standard_cross_provider_median_within_1pct(method: str) -> None:
         atomic_actions["dx"] = 0.0
         atomic_actions["dy"] = 0.0
         atomic_actions = atomic_actions.drop(columns=["start_x", "start_y"], errors="ignore")
-        std_out = pressure_on_actor(actions, frames, method=method)
-        atomic_out = atomic_pressure(atomic_actions, frames, method=method)
+        std_out = pressure_on_actor(actions, frames, method=method)  # type: ignore[arg-type]
+        atomic_out = atomic_pressure(atomic_actions, frames, method=method)  # type: ignore[arg-type]
         std_valid = std_out.dropna()
         atomic_valid = atomic_out.dropna()
         if std_valid.empty or atomic_valid.empty:

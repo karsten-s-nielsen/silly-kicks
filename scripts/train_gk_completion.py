@@ -265,6 +265,9 @@ def _train_skillcorner(args) -> int:
         sm, gm = _per_type_gate_from_oof(oof, y_all, X_all)
         try:
             served = GkCompletionModel.load(_SKILLCORNER_WEIGHTS_DIR)  # committed coef = the served bytes
+            # fit()/load() populate the coef arrays above; narrow off Optional for the type checker.
+            assert model._coef is not None and model._mean is not None and model._std is not None  # noqa: S101
+            assert served._coef is not None and served._mean is not None and served._std is not None  # noqa: S101
             np.testing.assert_allclose(model._coef, served._coef, atol=_CORPUS_IDENTITY_ATOL)
             np.testing.assert_allclose([model._intercept], [served._intercept], atol=_CORPUS_IDENTITY_ATOL)
             np.testing.assert_allclose(model._mean, served._mean, atol=_CORPUS_IDENTITY_ATOL)
@@ -388,6 +391,9 @@ def main() -> int:
     sm, gm = _per_type_gate_from_oof(oof, y_all, X_all)
     try:
         served = GkCompletionModel.load(_WEIGHTS_DIR)
+        # fit()/load() populate the coef arrays above; narrow off Optional for the type checker.
+        assert model._coef is not None and model._mean is not None and model._std is not None  # noqa: S101
+        assert served._coef is not None and served._mean is not None and served._std is not None  # noqa: S101
         np.testing.assert_allclose(model._coef, served._coef, atol=_CORPUS_IDENTITY_ATOL)
         np.testing.assert_allclose([model._intercept], [served._intercept], atol=_CORPUS_IDENTITY_ATOL)
         np.testing.assert_allclose(model._mean, served._mean, atol=_CORPUS_IDENTITY_ATOL)
@@ -412,7 +418,7 @@ def main() -> int:
         "density_finite_rate": density_finite,
         "label_split": label_split,
         "providers": list(args.providers),
-        "coef": dict(zip(feats, model._coef.tolist(), strict=True)),
+        "coef": dict(zip(feats, model._coef.tolist(), strict=True)),  # type: ignore[reportOptionalMemberAccess]
     }
     (_WEIGHTS_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(f"\nSAVED bundled default -> {_WEIGHTS_DIR}\nDONE", flush=True)

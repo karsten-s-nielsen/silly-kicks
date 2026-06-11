@@ -117,7 +117,7 @@ class TestServeCarrier:
 
         away_gk = meta["gk_team_id"] == 2
         assert (tip_bug == 0.0).all()  # RED-equivalent: bug path is all-zero
-        assert (tip_fixed[away_gk.values] == 1.0).all()  # away GK: its team is in possession
+        assert (tip_fixed[away_gk.values] == 1.0).all()  # away GK: its team is in possession  # type: ignore[index]
 
     def test_compute_ghost_gk_uses_carrier_by_default(self):
         # Post-fix: compute_ghost_gk internally computes the carrier (no carrier= passed).
@@ -149,7 +149,9 @@ class TestServeCarrier:
         frames = _frames_with_velocities()
         cp = dict(DEFAULT_CARRIER_PARAMS)
         train_feats, _ = prepare_ghost_gk_training_data(frames, home_team_id=1, carrier_params=cp)
-        carrier = infer_ball_carrier(frames, **cp)[["game_id", "period_id", "frame_id", "ball_carrier_team_id"]]
+        carrier = infer_ball_carrier(frames, **cp)[  # type: ignore[arg-type]
+            ["game_id", "period_id", "frame_id", "ball_carrier_team_id"]
+        ]
         serve_feats, _ = _extract_all_ghost_gk_features(frames, home_team_id=1, carrier=carrier)
         assert serve_feats["team_in_possession"].sum() > 0
         assert train_feats["team_in_possession"].sum() > 0

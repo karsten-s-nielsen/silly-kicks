@@ -127,7 +127,7 @@ def _pull_slim_slice(provider_raw: str) -> pd.DataFrame | None:
                   AND frame BETWEEN {min_f} AND {max_f}
                 """
             )
-            cols = [d[0] for d in cur.description]
+            cols = [d[0] for d in cur.description]  # type: ignore[reportOptionalIterable]
             rows = cur.fetchall()
     finally:
         conn.close()

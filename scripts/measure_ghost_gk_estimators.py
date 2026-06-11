@@ -99,7 +99,7 @@ def main() -> None:
     ap.add_argument("--eval-chunk", type=int, default=1000, help="memory chunk: peak ~(chunk, n_train) leaf-match")
     ap.add_argument("--out", default="metrics_estimators.json")
     args = ap.parse_args()
-    sys.stdout.reconfigure(line_buffering=True)  # live progress under nohup
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[reportAttributeAccessIssue]  # live progress under nohup
 
     c = args.feature_cache
     features = pd.read_parquet(c / "features.parquet")
@@ -132,7 +132,7 @@ def main() -> None:
         # Density-based references: a single (n, n_train) leaf-match matrix is ~45 GB at
         # n=8000 / n_train~710k, so chunk to keep peak ~(CHUNK, n_train). mode/grid-mean use
         # the fast fft-cic backend (~2000x; aggregate MAE ~= vectorized per PR-S81).
-        pts = np.column_stack([model._training_gk_x, model._training_gk_y])
+        pts = np.column_stack([model._training_gk_x, model._training_gk_y])  # type: ignore[reportArgumentType]
         chunk = args.eval_chunk
         mode_l, grid_l, bcen_l, gmed_l, spread_l = [], [], [], [], []
         for s in range(0, n, chunk):
@@ -141,8 +141,9 @@ def main() -> None:
             mode_l.extend([[d.mode_x, d.mode_y] for d in dens])
             grid_l.extend([[d.mean_x, d.mean_y] for d in dens])
             spread_l.extend([d.spread for d in dens])
-            ql = _vectorized_leaf_indices(model._tree_nodes, Xc[GHOST_GK_FEATURE_NAMES].values.astype(np.float64))
-            w = _leaf_match_weights(model._training_leaves, ql)
+            Xc_arr = Xc[GHOST_GK_FEATURE_NAMES].values.astype(np.float64)
+            ql = _vectorized_leaf_indices(model._tree_nodes, Xc_arr)  # type: ignore[reportArgumentType]
+            w = _leaf_match_weights(model._training_leaves, ql)  # type: ignore[reportArgumentType]
             for i in range(len(Xc)):
                 nz = w[i] > 0
                 bcen_l.append(_b_central(w[i][nz], pts[nz]) if nz.any() else pts.mean(0))

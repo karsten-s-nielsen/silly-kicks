@@ -11,7 +11,7 @@ import pandas as pd
 from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
 
 _spec = importlib.util.spec_from_file_location("_loader_pining_to_cache", Path("scripts/_loader_pining_to_cache.py"))
-_mod = importlib.util.module_from_spec(_spec)
+_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 

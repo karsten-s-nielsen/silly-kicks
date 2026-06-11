@@ -21,7 +21,7 @@ def test_dispatch_actually_swaps_transition():
     df = _moves(n_per_zone=80)
     singh = ExpectedThreat(l=6, w=4, method="singh_counts").fit(df)
     kde = ExpectedThreat(l=6, w=4, method="kde_smoothed").fit(df)
-    assert not np.array_equal(singh.transition_matrix, kde.transition_matrix)
+    assert not np.array_equal(singh.transition_matrix, kde.transition_matrix)  # type: ignore[arg-type]
 
 
 def test_dispatch_swaps_xt_with_shots():

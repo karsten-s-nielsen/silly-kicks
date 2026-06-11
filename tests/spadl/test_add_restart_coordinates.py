@@ -97,4 +97,4 @@ def test_tripwire_reverts_bad_imputed_corner_at_edge():
     with pytest.warns(UserWarning):
         out = add_restart_coordinates(a, frames=frames)
     assert out.loc[0, "start_coord_source"] == "tripwire_reverted"
-    assert np.isnan(out.loc[0, "enriched_start_x"])
+    assert np.isnan(out.loc[0, "enriched_start_x"])  # type: ignore[arg-type]

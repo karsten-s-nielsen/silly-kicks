@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.22.2"
+version = "4.23.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -198,9 +198,12 @@ known-first-party = ["silly_kicks"]
 
 # --- Pyright ---
 [tool.pyright]
-include = ["silly_kicks"]
+include = ["silly_kicks", "tests", "scripts"]
 pythonVersion = "3.10"
 typeCheckingMode = "basic"
+# tests import scripts-modules by bare name (sys.path insertion at runtime);
+# mirror that for static resolution.
+extraPaths = ["scripts"]
 
 # --- Pytest ---
 [tool.pytest.ini_options]

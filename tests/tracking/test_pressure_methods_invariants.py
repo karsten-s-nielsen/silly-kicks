@@ -79,7 +79,7 @@ def test_monotone_decreasing_in_distance(method: str) -> None:
     pressures = []
     for d in [1.0, 2.0, 3.0, 5.0]:
         actions, frames = _make_one_action_frame((50.0, 34.0), (50.0 + d, 34.0, 0.0, 0.0))
-        out = pressure_on_actor(actions, frames, method=method)
+        out = pressure_on_actor(actions, frames, method=method)  # type: ignore[arg-type]
         pressures.append(float(out.iloc[0]))
     for i in range(1, len(pressures)):
         assert pressures[i] <= pressures[i - 1]
@@ -89,20 +89,20 @@ def test_monotone_decreasing_in_distance(method: str) -> None:
 def test_axially_symmetric(method: str) -> None:
     actions_pos, frames_pos = _make_one_action_frame((50.0, 34.0), (51.0, 34.0 + 1.0, 0.0, 0.0))
     actions_neg, frames_neg = _make_one_action_frame((50.0, 34.0), (51.0, 34.0 - 1.0, 0.0, 0.0))
-    p_pos = pressure_on_actor(actions_pos, frames_pos, method=method).iloc[0]
-    p_neg = pressure_on_actor(actions_neg, frames_neg, method=method).iloc[0]
+    p_pos = pressure_on_actor(actions_pos, frames_pos, method=method).iloc[0]  # type: ignore[arg-type]
+    p_neg = pressure_on_actor(actions_neg, frames_neg, method=method).iloc[0]  # type: ignore[arg-type]
     assert p_pos == pytest.approx(p_neg, rel=1e-9)
 
 
 @pytest.mark.parametrize("method", ["andrienko_oval", "link_zones", "bekkers_pi"])
 def test_non_negative(method: str) -> None:
     actions, frames = _make_one_action_frame((50.0, 34.0), (52.0, 34.0, 3.0, 0.0))
-    out = pressure_on_actor(actions, frames, method=method)
+    out = pressure_on_actor(actions, frames, method=method)  # type: ignore[arg-type]
     assert (out.dropna() >= 0.0).all()
 
 
 @pytest.mark.parametrize("method", ["link_zones", "bekkers_pi"])
 def test_bounded_in_zero_one(method: str) -> None:
     actions, frames = _make_one_action_frame((50.0, 34.0), (50.5, 34.0, 3.0, 0.0))
-    out = pressure_on_actor(actions, frames, method=method)
+    out = pressure_on_actor(actions, frames, method=method)  # type: ignore[arg-type]
     assert ((out.dropna() >= 0.0) & (out.dropna() <= 1.0)).all()

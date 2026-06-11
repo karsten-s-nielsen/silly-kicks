@@ -65,9 +65,8 @@ def test_two_step_fetch_drops_bearer_on_presigned_get(monkeypatch, tmp_path):
         def open(self, req, timeout=0):
             step1["auth"] = req.get_header("Authorization")
             step1["url"] = req.full_url
-            raise urllib.error.HTTPError(
-                req.full_url, 302, "Found", {"Location": "https://s3.example/presigned?sig=x"}, None
-            )
+            hdrs = {"Location": "https://s3.example/presigned?sig=x"}
+            raise urllib.error.HTTPError(req.full_url, 302, "Found", hdrs, None)  # type: ignore[arg-type]
 
     class _FakeResp:
         def __init__(self, body=b"PAYLOAD"):

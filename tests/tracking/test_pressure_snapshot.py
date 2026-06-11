@@ -115,7 +115,7 @@ def _build_fixture():
 
 def _hash_series(s: pd.Series) -> str:
     arr = s.fillna(-99999.0).astype("float64").values
-    return hashlib.sha256(arr.tobytes()).hexdigest()
+    return hashlib.sha256(arr.tobytes()).hexdigest()  # type: ignore[attr-defined]
 
 
 def test_andrienko_snapshot_stable() -> None:

@@ -113,7 +113,7 @@ def test_objective_cache_equivalence():
             },
         ),
     ]
-    assert_cache_equivalence(obj, candidates)
+    assert_cache_equivalence(obj, candidates)  # type: ignore[arg-type]
 
 
 def test_objective_cache_equivalence_with_train_subsample():
@@ -146,7 +146,7 @@ def test_objective_cache_equivalence_with_train_subsample():
             },
         ),
     ]
-    assert_cache_equivalence(obj, candidates)
+    assert_cache_equivalence(obj, candidates)  # type: ignore[arg-type]
 
 
 def test_bundled_model_is_live_not_degenerate():
@@ -466,7 +466,10 @@ def _e2e_load_real(providers, max_per_provider):
     xs_, ys_, gs_, ps_ = [], [], [], []
     for prov, _mid, actions, frames, home in load_matches(providers=providers, max_per_provider=max_per_provider):
         X, y, groups = prepare_xshot_training_data(
-            frames, actions, home_team_id=home, carrier_params=DEFAULT_CARRIER_PARAMS
+            frames,
+            actions,
+            home_team_id=home,  # type: ignore[arg-type]
+            carrier_params=DEFAULT_CARRIER_PARAMS,
         )
         if len(X):
             xs_.append(X)
@@ -493,7 +496,7 @@ def test_xshot_gradientsports_e2e():
     sys.path.insert(0, "scripts")
     from train_xshot_occurrence import _cv_metrics, _gates
 
-    X, y, groups, _prov = _e2e_load_real(["skillcorner", "idsse", "gradientsports"], max_per_provider=3)
+    X, y, groups, _prov = _e2e_load_real(["skillcorner", "idsse", "gradientsports"], max_per_provider=3)  # type: ignore[misc]
     m = _cv_metrics(X, y, groups, _bundled_params())
     g = _gates(m)
     assert g["pr_auc_gt_base_rate"], m
@@ -509,7 +512,7 @@ def test_xshot_cross_provider():
     sys.path.insert(0, "scripts")
     from train_xshot_occurrence import _cv_metrics
 
-    X, y, groups, prov = _e2e_load_real(["skillcorner", "idsse", "gradientsports"], max_per_provider=3)
+    X, y, groups, prov = _e2e_load_real(["skillcorner", "idsse", "gradientsports"], max_per_provider=3)  # type: ignore[misc]
     seen = set()
     for p in np.unique(prov):
         mask = prov == p
@@ -768,7 +771,7 @@ def test_prepare_returns_faithful_distribution_no_subsample_param():
     assert "negative_subsample" not in sig and "seed" not in sig
     frames, shots = _match_frames_and_shots(n_frames=40)
     with pytest.raises(TypeError):
-        prepare_xshot_training_data(frames, shots, home_team_id=1, negative_subsample=0.5)
+        prepare_xshot_training_data(frames, shots, home_team_id=1, negative_subsample=0.5)  # type: ignore[call-arg]
 
 
 def test_subsample_negatives_deterministic_and_negatives_only():

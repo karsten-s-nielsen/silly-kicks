@@ -264,7 +264,7 @@ def build_skillcorner_frames(paths, tracking_limit):
     -> _preprocess (smooth + velocities), yielding SPADL-bounds (0-105/0-68) frames.
     Reused by both _build_skillcorner (calibration) and the TF-27 GK-roster e2e.
     """
-    from kloppy import skillcorner
+    from kloppy import skillcorner  # type: ignore[import-not-found]
 
     from silly_kicks.tracking import kloppy as tracking_kloppy
 
@@ -296,7 +296,7 @@ def _build_idsse(paths, tracking_limit):
     """IDSSE (DFL/Sportec XML): kloppy events (-> SPADL via kloppy gateway) + kloppy-parsed
     tracking mapped to the silly-kicks frames schema (the silly-kicks tracking kloppy gateway
     refuses Sportec by ADR-004, so the loader maps the kloppy TrackingDataset directly)."""
-    from kloppy import sportec
+    from kloppy import sportec  # type: ignore[import-not-found]
 
     from silly_kicks.spadl import kloppy as spadl_kloppy
 
@@ -318,7 +318,7 @@ def _build_idsse(paths, tracking_limit):
 def _kloppy_tracking_to_frames(dataset):
     """Map a kloppy sportec TrackingDataset -> silly-kicks TRACKING_FRAMES_COLUMNS (loader-local;
     avoids the ADR-004 gateway block for Sportec while still using kloppy's DFL XML parser)."""
-    from kloppy.domain import Dimension, MetricPitchDimensions, Orientation
+    from kloppy.domain import Dimension, MetricPitchDimensions, Orientation  # type: ignore[import-not-found]
 
     transformed = dataset.transform(
         to_pitch_dimensions=MetricPitchDimensions(

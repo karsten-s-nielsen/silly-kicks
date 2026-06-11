@@ -335,7 +335,7 @@ def test_fit_sets_base_score_to_positive_rate():
 
     X, y = _toy_xy()
     m = xs.XShotOccurrenceModel().fit(X, y)
-    cfg = json.loads(m._booster.save_config())
+    cfg = json.loads(m._booster.save_config())  # type: ignore[union-attr]
     # xgboost serializes base_score version-dependently: a plain "0.525" on some versions,
     # a bracketed array string "[5.25E-1]" on others -- strip the brackets before parsing.
     base = float(str(cfg["learner"]["learner_model_param"]["base_score"]).strip("[]"))
@@ -351,7 +351,7 @@ def test_fit_does_not_reweight():
     assert "scale_pos_weight" not in xs._pinned_params(None)
     X, y = _toy_xy()
     m = xs.XShotOccurrenceModel().fit(X, y)
-    cfg = json.dumps(json.loads(m._booster.save_config()))
+    cfg = json.dumps(json.loads(m._booster.save_config()))  # type: ignore[union-attr]
     # Value may be plain ("1") or a bracketed array string ("[1E0]") depending on xgboost version.
     found = re.findall(r'"scale_pos_weight":\s*"?\[?([0-9.eE+-]+)\]?"?', cfg)
     assert all(abs(float(v) - 1.0) < 1e-9 for v in found), f"model reweights: {found}"
@@ -717,7 +717,7 @@ def test_add_xshot_defensive_action_is_nan():
     X, y = _toy_xy()
     model = xs.XShotOccurrenceModel().fit(X, y)
     out = xs.add_xshot_occurrence(actions, frames, model=model, home_team_id=1)
-    assert np.isnan(out.loc[out.index[0], "xshot_occurrence"])
+    assert np.isnan(out.loc[out.index[0], "xshot_occurrence"])  # type: ignore[arg-type]
 
 
 # --- Task 8: xshot_occurrence_xfns ---

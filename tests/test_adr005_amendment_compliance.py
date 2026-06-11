@@ -56,7 +56,7 @@ def test_suffix_naming_per_method() -> None:
         }
     )
     for m in ["andrienko_oval", "link_zones"]:
-        s = pressure_on_actor(actions, frames, method=m)
+        s = pressure_on_actor(actions, frames, method=m)  # type: ignore[arg-type]
         assert s.name == f"pressure_on_actor__{m}"
 
 

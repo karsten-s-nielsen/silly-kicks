@@ -20,6 +20,7 @@ _DRIVER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "validate_xcros
 def _driver():
     """Load the driver script in-process (mirrors the trainer-smoke importlib pattern)."""
     spec = importlib.util.spec_from_file_location("_validate_xcross_causal", _DRIVER_PATH)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -95,7 +96,7 @@ def test_run_with_fake_loader(tmp_path, monkeypatch):
     frames = _multi_spell_frames(80)
     acts = _synth_actions(frames)
     fake = types.ModuleType("_loader_pining")
-    fake.load_matches = lambda **kw: iter([("skillcorner", "m1", acts, frames, 5)])
+    fake.load_matches = lambda **kw: iter([("skillcorner", "m1", acts, frames, 5)])  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "_loader_pining", fake)
     V = _driver()
     metrics = V.run(tmp_path, ["skillcorner"], 0.0, 0)

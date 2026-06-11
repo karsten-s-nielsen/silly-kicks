@@ -1116,7 +1116,7 @@ class TestGradientsportsNanTimeSeconds:
         """Build a multi-row input DataFrame from (pe_type, time_s, extras) specs."""
         rows: list[dict] = []
         for i, (pe_type, time_s, extra) in enumerate(event_specs, start=1):
-            row = {col: None for col in _REQUIRED_COLS}
+            row: dict[str, object] = {col: None for col in _REQUIRED_COLS}
             row.update(
                 {
                     "game_id": 10502,

@@ -4686,14 +4686,16 @@ def obso_xfns(
 # TF-41 — Space Creation (Fernandez & Bornn 2018)
 # ---------------------------------------------------------------------------
 
-# Team-side only: compute_space_created is the attacking-team leave-one-out, so an
-# opponent-side triplet has no defined semantics here. A *_opponent triplet shipped
-# 3.21.0-4.22.1 but was hard-coded NaN on every path; removed 4.22.2.
 _SPACE_CREATION_COLUMNS = (
     "space_created_m2_team",
+    "space_created_m2_opponent",
     "space_destroyed_m2_team",
+    "space_destroyed_m2_opponent",
     "net_space_m2_team",
+    "net_space_m2_opponent",
 )
+
+_SPACE_CREATION_NAN_ROW: dict[str, float] = dict.fromkeys(_SPACE_CREATION_COLUMNS, np.nan)
 
 
 def _compute_space_creation_for_action(
@@ -4706,11 +4708,34 @@ def _compute_space_creation_for_action(
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
 ) -> dict[str, float]:
-    """Compute aggregated space creation for the actor's team at one action frame."""
-    from ._space_creation import compute_space_created
+    """Compute both-perspective space creation for the actor at one action frame.
+
+    A single ``compute_space_created(include_opponent_perspective=True)`` call
+    yields all six values from the same frame, grid, and OBSO multiplier, so
+    the ``_team`` and ``_opponent`` triplets share an identical NaN mask by
+    construction.
+    """
+    from ._space_creation import _unique_team_ids, compute_space_created
 
     team_id = action_row["team_id"]
     player_id = action_row["player_id"]
+
+    # ADR-003: NaN actor identifiers route to the NaN-row default, never the guard.
+    if pd.isna(team_id) or pd.isna(player_id):
+        return dict(_SPACE_CREATION_NAN_ROW)
+
+    # Loud two-team guard with the action/frame key (lakehouse contract: a
+    # resolvable actor on a corrupt frame must raise, not silently emit NaN).
+    team_ids_in_frame = _unique_team_ids(frame)
+    if len(team_ids_in_frame) != 2:
+        raise ValueError(
+            "space_creation opponent perspective requires exactly two team ids "
+            f"in the linked frame; found {list(team_ids_in_frame)!r} "
+            f"(game_id={action_row.get('game_id')!r}, "
+            f"period_id={action_row.get('period_id')!r}, "
+            f"frame_id={frame['frame_id'].iloc[0]!r}, "
+            f"action_id={action_row.get('action_id')!r})"
+        )
 
     result = compute_space_created(
         frame,
@@ -4719,21 +4744,21 @@ def _compute_space_creation_for_action(
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
         pitch_control_cache=pitch_control_cache,
+        include_opponent_perspective=True,
     )
 
     actor_row = result[ids_match(result["player_id"], player_id)]
     if len(actor_row) == 0:
-        return {
-            "space_created_m2_team": np.nan,
-            "space_destroyed_m2_team": np.nan,
-            "net_space_m2_team": np.nan,
-        }
+        return dict(_SPACE_CREATION_NAN_ROW)
 
     row = actor_row.iloc[0]
     return {
         "space_created_m2_team": float(row["space_created_m2"]),
         "space_destroyed_m2_team": float(row["space_destroyed_m2"]),
         "net_space_m2_team": float(row["net_space_m2"]),
+        "space_created_m2_opponent": float(row["opponent_space_created_m2"]),
+        "space_destroyed_m2_opponent": float(row["opponent_space_destroyed_m2"]),
+        "net_space_m2_opponent": float(row["opponent_net_space_m2"]),
     }
 
 
@@ -4773,8 +4798,18 @@ def add_space_creation(
     -------
     pd.DataFrame
         Actions enriched with ``space_created_m2_team``,
-        ``space_destroyed_m2_team``, ``net_space_m2_team`` (team-side only;
-        the leave-one-out is defined on the actor's attacking surface).
+        ``space_destroyed_m2_team``, ``net_space_m2_team``,
+        ``space_created_m2_opponent``, ``space_destroyed_m2_opponent``,
+        ``net_space_m2_opponent``. The ``_team`` triplet is the actor's
+        leave-one-out differential on their own team's OBSO surface; the
+        ``_opponent`` triplet is the same leave-one-out evaluated on the
+        opposing team's OBSO surface (actor as defender), on the identical
+        grid/sigmas/transition/EPV inputs. Sign conventions:
+        ``*_created_m2`` >= 0 (space existing because of the actor's
+        presence), ``*_destroyed_m2`` >= 0 (space the actor's presence
+        denies), ``net_*`` = created - destroyed (signed). The two triplets
+        share an identical NaN mask (no linked frame / actor absent); a
+        linked frame without exactly two team ids raises ``ValueError``.
 
     Examples
     --------
@@ -4862,23 +4897,21 @@ def space_creation_xfns(
 ) -> list:
     """Factory returning FrameAwareTransformers for space creation features.
 
-    Produces 3 features x 3 gamestates = 9 VAEP columns (team-side only):
-    ``space_created_m2_team``, ``space_destroyed_m2_team``, ``net_space_m2_team``.
+    Produces 6 features x 3 gamestates = 18 VAEP columns (both perspectives,
+    lockstep with ``_SPACE_CREATION_COLUMNS``): ``space_created_m2_team``,
+    ``space_destroyed_m2_team``, ``net_space_m2_team``,
+    ``space_created_m2_opponent``, ``space_destroyed_m2_opponent``,
+    ``net_space_m2_opponent``.
 
     Examples
     --------
     >>> from silly_kicks.tracking.features import space_creation_xfns
     >>> xfns = space_creation_xfns(home_team_id=1)
     >>> len(xfns)
-    3
+    6
     """
-    team_cols = [
-        "space_created_m2_team",
-        "space_destroyed_m2_team",
-        "net_space_m2_team",
-    ]
     xfns_out = []
-    for col_name in team_cols:
+    for col_name in _SPACE_CREATION_COLUMNS:
 
         def _helper(
             actions,

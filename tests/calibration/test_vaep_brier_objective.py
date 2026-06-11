@@ -40,7 +40,7 @@ def test_returns_finite_brier_and_per_provider_attrs(stage2_fold, frozen_xt):
 def test_cache_equivalence_fast_equals_full(stage2_fold, frozen_xt):
     obj = _obj(stage2_fold, frozen_xt)
     # Deterministic XGBoost + independent enrich_full => fast path ≡ full recompute to 1e-9.
-    assert_cache_equivalence(obj, _candidates())
+    assert_cache_equivalence(obj, _candidates())  # type: ignore[arg-type]
 
 
 @pytest.mark.slow
