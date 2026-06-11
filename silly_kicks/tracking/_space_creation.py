@@ -89,19 +89,30 @@ def compute_space_created(
     """Per-player space creation via leave-one-out differential OBSO.
 
     For each attacking-team outfield player, removes that player from the
-    frame, re-computes pitch control, and measures the resulting change in
-    OBSO surface.  Positive delta = space the player creates; negative =
-    space they destroy.
+    frame, re-computes pitch control, and measures the resulting OBSO gain
+    attributable to the player's presence: ``space_created_m2`` (>= 0).
 
     With ``include_opponent_perspective=True``, the SAME leave-one-out is
     additionally evaluated on the opposing team's OBSO surface (the player
-    acting as a defender of that surface): ``opponent_space_created_m2`` is
-    opponent OBSO-weighted space that exists because of the player's presence
-    (>= 0), ``opponent_space_destroyed_m2`` is opponent space the player's
-    presence denies (>= 0; the defensive-value reading), and
-    ``opponent_net_space_m2`` is their signed difference. Both perspectives
-    share the identical grid, OBSO sigmas, transition/EPV grids, and
-    pitch-control method, so ``*_m2`` magnitudes are directly comparable.
+    acting as a defender of that surface), weighed by the opponent's OWN
+    attacking geometry: the same transition/EPV grid artifacts MIRRORED along
+    x to the goal the opponent attacks (the ball-distance weight stays
+    ball-anchored). Grid resolution, sigmas, and pitch-control method are
+    shared, so ``*_m2`` magnitudes are directly comparable — but the mirrored
+    weighting makes the opponent LOO a genuine independent measurement (an
+    unmirrored shared multiplier degenerates it to the exact pointwise
+    negation of the team LOO; 4.23.0 defect). The opponent measurement is
+    ``space_denied_m2_opponent`` (>= 0): opponent OBSO-weighted space the
+    player's presence denies — the rest-defense reading.
+
+    WHY exactly two columns (4.24.0 lean contract): the LOO is
+    pointwise-monotone — removing a player can only DECREASE his own team's
+    control and INCREASE the opponent's, everywhere, for every shipped
+    pitch-control method. A team-side "destroyed" half and an opponent-side
+    "created" half are therefore structurally 0, and net columns would be
+    exact redundancies of the two live measurements; none of them are part
+    of the contract (always-zero columns shipped 3.21.0-4.23.0 and were
+    retired by lakehouse/owner decision).
 
     Parameters
     ----------
@@ -122,23 +133,21 @@ def compute_space_created(
     obso_sigma_x, obso_sigma_y : float
         Gaussian decay sigmas for OBSO distance weighting (meters).
     include_opponent_perspective : bool
-        When True, also emit the ``opponent_*`` triplet (see above) and
+        When True, also emit ``space_denied_m2_opponent`` (see above) and
         REQUIRE the frame to contain exactly two team ids (raises
         ``ValueError`` otherwise — corrupt input fails loud).
 
     Returns
     -------
     pd.DataFrame
-        Columns: ``player_id``, ``team_id``, ``space_created_m2``,
-        ``space_destroyed_m2``, ``net_space_m2`` (+
-        ``opponent_space_created_m2``, ``opponent_space_destroyed_m2``,
-        ``opponent_net_space_m2`` when ``include_opponent_perspective=True``).
+        Columns: ``player_id``, ``team_id``, ``space_created_m2`` (+
+        ``space_denied_m2_opponent`` when ``include_opponent_perspective=True``).
 
     Examples
     --------
     >>> result = compute_space_created(frame, attacking_team_id=1)
     >>> result.columns.tolist()
-    ['player_id', 'team_id', 'space_created_m2', 'space_destroyed_m2', 'net_space_m2']
+    ['player_id', 'team_id', 'space_created_m2']
     """
     from ._obso import _get_default_grids, _interpolate_grid
     from .pitch_control import PitchControlCache
@@ -204,6 +213,21 @@ def compute_space_created(
         effective_transition = effective_transition / max_trans
     obso_multiplier = effective_transition * epv_interp  # (ny, nx) -- constant
 
+    # Opponent perspective: the opponent's OWN attacking geometry — the SAME
+    # transition/EPV artifacts mirrored along x (the opponent attacks the other
+    # goal); the ball-distance weight stays ball-anchored. Without the mirror the
+    # complementary PC surface makes the opponent LOO the exact pointwise negation
+    # of the team LOO (informationally empty — lakehouse round-2 rejection).
+    obso_multiplier_opponent = None
+    if include_opponent_perspective:
+        transition_opp = np.flip(transition_interp, axis=1)
+        epv_opp = np.flip(epv_interp, axis=1)
+        effective_transition_opp = transition_opp * distance_weight
+        max_trans_opp = np.max(effective_transition_opp)
+        if max_trans_opp > 1e-10:
+            effective_transition_opp = effective_transition_opp / max_trans_opp
+        obso_multiplier_opponent = effective_transition_opp * epv_opp
+
     # Baseline OBSO
     baseline_obso = np.clip(np.asarray(baseline_surface.surface) * obso_multiplier, 0.0, 1.0)
 
@@ -212,19 +236,9 @@ def compute_space_created(
     atk_players = frame.loc[atk_mask]
 
     if atk_players.empty:
-        base_cols = [
-            "player_id",
-            "team_id",
-            "space_created_m2",
-            "space_destroyed_m2",
-            "net_space_m2",
-        ]
+        base_cols = ["player_id", "team_id", "space_created_m2"]
         if include_opponent_perspective:
-            base_cols += [
-                "opponent_space_created_m2",
-                "opponent_space_destroyed_m2",
-                "opponent_net_space_m2",
-            ]
+            base_cols.append("space_denied_m2_opponent")
         return pd.DataFrame(columns=base_cols)
 
     # Cell area
@@ -243,6 +257,7 @@ def compute_space_created(
             cell_area,
             pitch_control_method,
             include_opponent=include_opponent_perspective,
+            obso_multiplier_opponent=obso_multiplier_opponent,
         )
     else:
         results = _naive_leave_one_out(
@@ -255,6 +270,7 @@ def compute_space_created(
             pitch_control_method,
             ball_position,
             opponent_team_id=opponent_team_id,
+            obso_multiplier_opponent=obso_multiplier_opponent,
         )
 
     return pd.DataFrame(results)
@@ -270,6 +286,7 @@ def _analytical_leave_one_out(
     method: Literal["spearman", "fernandez_bornn"],
     *,
     include_opponent: bool = False,
+    obso_multiplier_opponent: np.ndarray | None = None,
 ) -> list[dict]:
     """Analytical per-player delta — 1 PC computation instead of N+1.
 
@@ -279,9 +296,11 @@ def _analytical_leave_one_out(
 
     With ``include_opponent=True``, the opponent-attacking surface is the
     exact complement of the same decomposition (Spearman: def/(att+def);
-    F&B: sigmoid(def-att)), so the opponent-side leave-one-out (the player
-    as defender of that surface) costs zero extra PC computations and shares
-    the identical OBSO multiplier.
+    F&B: sigmoid(def-att)) — zero extra PC computations — but it is weighed by
+    ``obso_multiplier_opponent`` (the x-MIRRORED transition/EPV geometry of the
+    goal the opponent attacks). The mirror is what decouples the opponent LOO
+    from the team LOO: under the shared unmirrored multiplier the complement
+    made it the exact pointwise negation (4.23.0 defect).
     """
     # per_player_influence: (n_players, ny, nx) — post-GK-weighting influence
     ppi = np.asarray(baseline_surface.per_player_influence)  # type: ignore[union-attr]
@@ -296,13 +315,14 @@ def _analytical_leave_one_out(
 
     baseline_opp_obso = None
     if include_opponent:
+        assert obso_multiplier_opponent is not None  # noqa: S101 — caller contract
         if method == "spearman":
             total = att_total + def_total
             safe_total = np.maximum(total, 1e-10)
             base_opp_pc = np.where(total > 1e-10, def_total / safe_total, 0.5)
         else:  # fernandez_bornn
             base_opp_pc = 1.0 / (1.0 + np.exp(-(def_total - att_total)))
-        baseline_opp_obso = np.clip(base_opp_pc * obso_multiplier, 0.0, 1.0)
+        baseline_opp_obso = np.clip(base_opp_pc * obso_multiplier_opponent, 0.0, 1.0)
 
     results: list[dict] = []
     for player_row in atk_players.itertuples():
@@ -316,13 +336,9 @@ def _analytical_leave_one_out(
                 "player_id": pid,
                 "team_id": attacking_team_id,
                 "space_created_m2": 0.0,
-                "space_destroyed_m2": 0.0,
-                "net_space_m2": 0.0,
             }
             if include_opponent:
-                row["opponent_space_created_m2"] = 0.0
-                row["opponent_space_destroyed_m2"] = 0.0
-                row["opponent_net_space_m2"] = 0.0
+                row["space_denied_m2_opponent"] = 0.0
             results.append(row)
             continue
 
@@ -338,34 +354,32 @@ def _analytical_leave_one_out(
             removed_pc = 1.0 / (1.0 + np.exp(-(removed_att - def_total)))
 
         removed_obso = np.clip(removed_pc * obso_multiplier, 0.0, 1.0)
+        # Monotone LOO: removal only DECREASES own-team control, so the delta is
+        # one-signed — created is the whole measurement (a "destroyed" half would
+        # be structurally 0 and is deliberately NOT part of the contract; 4.24.0).
         delta = baseline_obso - removed_obso
         space_created = float(np.sum(np.maximum(delta, 0.0)) * cell_area)
-        space_destroyed = float(np.sum(np.abs(np.minimum(delta, 0.0))) * cell_area)
 
         row = {
             "player_id": pid,
             "team_id": attacking_team_id,
             "space_created_m2": space_created,
-            "space_destroyed_m2": space_destroyed,
-            "net_space_m2": space_created - space_destroyed,
         }
 
         if include_opponent:
             # Opponent-attacking surface without this player: the player leaves
             # the DEFENSE of that surface (same removal, complementary side).
+            # Monotone in the other direction: removal only INCREASES opponent
+            # control, so denial (the negative delta mass) is the whole measurement.
             if method == "spearman":
                 total = removed_att + def_total
                 safe_total = np.maximum(total, 1e-10)
                 removed_opp_pc = np.where(total > 1e-10, def_total / safe_total, 0.5)
             else:  # fernandez_bornn
                 removed_opp_pc = 1.0 / (1.0 + np.exp(-(def_total - removed_att)))
-            removed_opp_obso = np.clip(removed_opp_pc * obso_multiplier, 0.0, 1.0)
+            removed_opp_obso = np.clip(removed_opp_pc * obso_multiplier_opponent, 0.0, 1.0)
             delta_opp = baseline_opp_obso - removed_opp_obso
-            opp_created = float(np.sum(np.maximum(delta_opp, 0.0)) * cell_area)
-            opp_destroyed = float(np.sum(np.abs(np.minimum(delta_opp, 0.0))) * cell_area)
-            row["opponent_space_created_m2"] = opp_created
-            row["opponent_space_destroyed_m2"] = opp_destroyed
-            row["opponent_net_space_m2"] = opp_created - opp_destroyed
+            row["space_denied_m2_opponent"] = float(np.sum(np.abs(np.minimum(delta_opp, 0.0))) * cell_area)
 
         results.append(row)
 
@@ -383,26 +397,29 @@ def _naive_leave_one_out(
     ball_position: tuple[float, float],
     *,
     opponent_team_id=None,
+    obso_multiplier_opponent: np.ndarray | None = None,
 ) -> list[dict]:
     """Naive N-recompute fallback for non-decomposable models (Voronoi).
 
     When ``opponent_team_id`` is provided, the opponent-attacking surface is
     additionally recomputed per removal (explicit PC calls — correct for any
-    method, including non-complementary ones) with the identical OBSO
-    multiplier, yielding the ``opponent_*`` triplet.
+    method, including non-complementary ones) and weighed by
+    ``obso_multiplier_opponent`` (the x-mirrored opponent attacking geometry —
+    same semantics as the analytical path), yielding ``space_denied_m2_opponent``.
     """
     from .pitch_control import compute_pitch_control
 
     include_opponent = opponent_team_id is not None
     baseline_opp_obso = None
     if include_opponent:
+        assert obso_multiplier_opponent is not None  # noqa: S101 — caller contract
         baseline_opp_surface = compute_pitch_control(
             frame,
             opponent_team_id,
             method=pitch_control_method,
             ball_position=ball_position,
         )
-        baseline_opp_obso = np.clip(np.asarray(baseline_opp_surface.surface) * obso_multiplier, 0.0, 1.0)
+        baseline_opp_obso = np.clip(np.asarray(baseline_opp_surface.surface) * obso_multiplier_opponent, 0.0, 1.0)
 
     results: list[dict] = []
     for player_row in atk_players.itertuples():
@@ -422,14 +439,11 @@ def _naive_leave_one_out(
         removed_obso = np.clip(np.asarray(removed_surface.surface) * obso_multiplier, 0.0, 1.0)
         delta = baseline_obso - removed_obso
         space_created = float(np.sum(np.maximum(delta, 0.0)) * cell_area)
-        space_destroyed = float(np.sum(np.abs(np.minimum(delta, 0.0))) * cell_area)
 
         row = {
             "player_id": pid,
             "team_id": attacking_team_id,
             "space_created_m2": space_created,
-            "space_destroyed_m2": space_destroyed,
-            "net_space_m2": space_created - space_destroyed,
         }
 
         if include_opponent:
@@ -439,13 +453,9 @@ def _naive_leave_one_out(
                 method=pitch_control_method,
                 ball_position=ball_position,
             )
-            removed_opp_obso = np.clip(np.asarray(removed_opp_surface.surface) * obso_multiplier, 0.0, 1.0)
+            removed_opp_obso = np.clip(np.asarray(removed_opp_surface.surface) * obso_multiplier_opponent, 0.0, 1.0)
             delta_opp = baseline_opp_obso - removed_opp_obso
-            opp_created = float(np.sum(np.maximum(delta_opp, 0.0)) * cell_area)
-            opp_destroyed = float(np.sum(np.abs(np.minimum(delta_opp, 0.0))) * cell_area)
-            row["opponent_space_created_m2"] = opp_created
-            row["opponent_space_destroyed_m2"] = opp_destroyed
-            row["opponent_net_space_m2"] = opp_created - opp_destroyed
+            row["space_denied_m2_opponent"] = float(np.sum(np.abs(np.minimum(delta_opp, 0.0))) * cell_area)
 
         results.append(row)
 

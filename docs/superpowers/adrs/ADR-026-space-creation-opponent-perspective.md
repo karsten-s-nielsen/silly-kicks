@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-06-11 |
-| **Status** | Accepted |
-| **Deciders** | Karsten Nielsen, Claude (luxury-lakehouse mandate) |
+| **Status** | Accepted (AMENDED same-day, 4.24.0: opponent multiplier MIRRORED — original alternative B adopted after the unmirrored complement was proven informationally empty; see Amendment below) |
+| **Deciders** | Karsten Nielsen, Claude (luxury-lakehouse mandate, rounds 1+2) |
 
 ## Context
 
@@ -85,3 +85,33 @@ NaN *actor identifiers* (the guard is evaluated only after the actor is resolvab
 - **Issues / PRs:** lakehouse bug report 2026-06-11 + rejection letter (option 1 mandated); #125 (4.22.2 removal, superseded by this implementation)
 - **ADRs:** ADR-003 (NaN-safe enrichment — boundary preserved), ADR-005 (xfns conventions), ADR-019 (dtype-safe id comparisons — `ids_match` opponent resolution)
 - **External references:** Fernandez & Bornn (2018), "Wide Open Spaces", MIT Sloan Sports Analytics Conference (see NOTICE)
+
+## Amendment (4.24.0, same-day — lakehouse round-2 rejection)
+
+The original decision (option C: complement + SHARED UNMIRRORED multiplier) was **proven
+informationally empty**: with `opp_pc = 1 − pc` pointwise and the same non-negative multiplier
+`M`, the opponent LOO delta is the exact pointwise negation of the team delta —
+`opponent_space_destroyed_m2 ≡ space_created_m2` bit-for-bit (empirically reproduced; no clip
+boundary can bite since all factors lie in [0, 1]). The rejected option B's mirroring concern
+("the team side is direction-agnostic") missed that complement + shared weighting removes the
+opponent perspective's only degree of freedom. **Amended decision: option B+C hybrid — the
+complement decomposition stays (zero extra PC cost), but the opponent surface is weighed by the
+opponent's OWN attacking geometry (transition/EPV artifacts mirrored along x; ball-anchored
+distance weight unchanged).**
+
+Two structural facts surfaced by the round-2 analysis: the LOO is pointwise-MONOTONE under
+every shipped PC method, so a team-side "destroyed" (zero since TF-41 shipped) and an
+opponent-side "created" are exactly 0 regardless of multiplier orientation, and net columns
+are exact redundancies of the two live measurements. **Owner decision (same release, no
+consumer adopted 4.23.x): the contract was LEANED to exactly the two live columns —
+`space_created_m2` (attacking value) and `space_denied_m2_opponent` (rest-defense value) —
+at both the aggregator and the `compute_space_created` primitive; `space_creation_xfns` is
+2×3 = 6 VAEP columns.** A retired-columns guard test blocks resurrection of the always-zero
+names. Producing non-zero values for the retired halves would require a different estimand
+(repositioning counterfactuals rather than removal) — out of scope.
+
+The liveness gate gained the round-2 non-constant check with a declared, justified,
+invariant-tested `STRUCTURAL_CONSTANTS` registry; en route it flagged
+`pitch_control_at_ball__spearman` as near-ball degenerate (~0.5 within ~18 m of the ball by
+PPCF construction — informationally dead at linked-action start points; redesign tracked in
+TODO).
