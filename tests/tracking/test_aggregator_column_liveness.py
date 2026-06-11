@@ -58,7 +58,9 @@ def make_actions() -> pd.DataFrame:
             "game_id": [1] * 5,
             "action_id": [0, 1, 2, 3, 4],
             "period_id": [1] * 5,
-            "time_seconds": [10.0, 20.0, 30.0, 40.0, 50.0],
+            # Event clocks jittered off the 25 fps frame grid (real providers never
+            # align perfectly): sync/elastic quality varies instead of saturating.
+            "time_seconds": [10.0, 20.06, 30.0, 40.11, 50.02],
             "team_id": pd.Series([5, 5, 5, 5, 5], dtype="int64"),
             # action 2 is the goalkick by the team-5 GK (player 1)
             "player_id": pd.Series([10, 11, 1, 10, 11], dtype="int64"),
@@ -77,7 +79,8 @@ def make_actions() -> pd.DataFrame:
     )
 
 
-def _frow(pid, team, gk, x, y, t, *, is_ball=False):
+def _frow(pid, team, gk, x, y, t, *, is_ball=False, vx=4.3, vy=0.0):
+    speed = float(np.hypot(vx, vy))
     return dict(
         game_id=1,
         period_id=1,
@@ -91,9 +94,9 @@ def _frow(pid, team, gk, x, y, t, *, is_ball=False):
         x=float(min(max(x, 0.5), 104.5)),
         y=float(min(max(y, 0.5), 67.5)),
         z=0.0,
-        speed=4.3 if not is_ball else 6.0,
-        vx=4.3,
-        vy=0.0,
+        speed=speed if not is_ball else 6.0,
+        vx=float(vx),
+        vy=float(vy),
         speed_source="native",
         ball_state="alive",
         team_attacking_direction="ltr",
@@ -105,32 +108,73 @@ def _frow(pid, team, gk, x, y, t, *, is_ball=False):
 
 
 def make_frames() -> pd.DataFrame:
-    team5 = {10: -8.0, 11: -13.0, 12: -28.0, 13: -33.0, 14: -38.0}  # offset from ball_x
+    """Per-window geometry VARIES (velocities, y-layout, GK positions, kick power):
+    a fixture that repeats one geometric pattern makes genuinely-live metrics
+    constant across actions (actor_speed, defensive-line widths, GK reachable
+    area, ...) and false-fails the non-constant check."""
+    # Receivers 12/13 run AHEAD of the ball with the defensive block between them
+    # and the passer (cover-shadow lanes can actually be blocked); 10/11/14 offer
+    # behind. Offsets scale down near the pitch edges (no clamp pile-ups).
+    team5 = {10: -8.0, 11: -13.0, 12: 9.0, 13: 16.0, 14: -24.0}  # offset from ball_x
     team6 = {20: 12.0, 21: 14.0, 22: 22.0, 23: 27.0, 24: 30.0}
-    gks = {1: (5, 4.0), 2: (6, 101.0)}
     offsets = (-1.4, -1.05, -0.7, -0.35, 0.0)
+    actor_gaps = (0.05, 0.65, 0.45, 0.9, 1.25)  # one ~at-ball window: PC-at-ball varies
 
     rows = []
-    for t_a, ball_x, ball_y, actor_pid in _WINDOWS:
+    for w_idx, (t_a, ball_x, ball_y, actor_pid) in enumerate(_WINDOWS):
+        gk_jitter = 0.9 * w_idx
+        gks = {1: (5, 4.0 + gk_jitter, 31.0 + 1.5 * w_idx), 2: (6, 101.0 - gk_jitter, 36.5 - 1.2 * w_idx)}
+        kick_power = 12.0 + 3.0 * w_idx
+        # Kick fires on the FINAL inter-frame step only: the ball stays at the action's
+        # start point until the event (PC/lane sampling at start_x is live), while the
+        # last-step velocity jump still gives ELASTIC its acceleration signature.
+        kick_threshold = 0.93 + 0.01 * w_idx
+        # Teammates advance in the pre-window — except the cross window, where the
+        # runs retreat (OBSO declines toward the event: PAUSA's temporal term varies).
+        advance = 4.0 + 0.9 * w_idx if w_idx != 4 else -3.0
+        actor_gap = actor_gaps[w_idx]
+        # Nearest defender presses the carrier — except the cross window, where the
+        # carrier is ISOLATED (nobody within reach: uniquely-reachable area > 0).
+        presser_gap = 2.2 + 0.9 * w_idx if w_idx != 4 else 14.0
+        scale_back = min(1.0, max(0.15, (ball_x - 2.0) / 42.0))  # room behind the ball
+        scale_fwd = min(1.0, max(0.15, (103.0 - ball_x) / 32.0))  # room ahead of the ball
         for off in offsets:
             t = round(t_a + off, 3)
             frac = (off + 1.4) / 1.4  # 0 at window start -> 1 at the action
             # Ball: near-still while carried, kicked at the action (acceleration
-            # signature for ELASTIC; finite-difference accel spikes at frac>0.75).
-            kick = max(0.0, frac - 0.75) * 16.0
+            # signature for ELASTIC; finite-difference accel spikes past the threshold).
+            kick = max(0.0, frac - kick_threshold) * kick_power
             bx, by = ball_x + kick, ball_y
             for pid, dx in team5.items():
+                if pid == 14 and w_idx == 3:
+                    continue  # attacking side a man down once: squad-count metrics vary
+                v = 2.2 + 0.45 * (pid % 4) + 0.35 * w_idx
+                scale = scale_fwd if dx > 0 else scale_back
                 if pid == actor_pid:
-                    rows.append(_frow(pid, 5, False, bx - 0.6, ball_y, t))
+                    # Reach must EXCEED the ~2.1 m grid spacing for uniquely-reachable
+                    # cells to exist at all (TTI = reaction time + kinematics leaves
+                    # ~0.3 s of motion within tau=1 s); the cross window's carrier
+                    # sprints (8.5 m/s) into open space -> unique cells > 0 there.
+                    actor_vx = 8.5 if w_idx == 4 else 3.2 + 0.45 * w_idx
+                    rows.append(_frow(pid, 5, False, bx - actor_gap, ball_y, t, vx=actor_vx))
                 else:
-                    rows.append(_frow(pid, 5, False, ball_x + dx + 6.0 * frac, 34.0 + pid % 3, t))
+                    y = 33.0 + (pid % 3) * (2.0 + 0.6 * w_idx)
+                    x = ball_x + dx * scale + advance * frac
+                    rows.append(_frow(pid, 5, False, x, y, t, vx=v, vy=0.3 * (pid % 2)))
             for pid, dx in team6.items():
-                rows.append(_frow(pid, 6, False, ball_x + dx - 2.0 * frac, 30.0 + pid % 3, t))
-            for pid, (team, gx) in gks.items():
+                if pid == 24 and w_idx == 4:
+                    continue  # one window plays a man down: squad-count metrics vary
+                v = 1.8 + 0.4 * (pid % 3) + 0.3 * w_idx
+                y = 29.0 + (pid % 3) * (2.2 + 0.5 * w_idx)
+                # pid 20 presses the carrier (goal-side of the ball: cover-shadow lanes,
+                # pressure, PC-at-ball variation); the rest hold a varying block.
+                x = bx + presser_gap if pid == 20 else ball_x + dx * scale_fwd - 2.0 * frac
+                rows.append(_frow(pid, 6, False, x, y if pid != 20 else ball_y + 0.8, t, vx=-v, vy=-0.25 * (pid % 2)))
+            for pid, (team, gx, gy) in gks.items():
                 if pid == actor_pid:
-                    rows.append(_frow(pid, team, True, bx - 0.6, ball_y, t))
+                    rows.append(_frow(pid, team, True, bx - actor_gap, ball_y, t, vx=1.0))
                 else:
-                    rows.append(_frow(pid, team, True, gx, 34.0, t))
+                    rows.append(_frow(pid, team, True, gx, gy, t, vx=0.6 + 0.15 * w_idx))
             rows.append(_frow(pd.NA, pd.NA, False, bx, by, t, is_ball=True))
     f = pd.DataFrame(rows)
     f["player_id"] = f["player_id"].astype("Int64")
@@ -259,12 +303,58 @@ ENTRIES: dict[str, object] = {
 }
 
 
+# Documented STRUCTURAL CONSTANTS (lakehouse round-2 amendment: non-NaN alone is not
+# enough — `space_destroyed_m2` was 0-everywhere since TF-41). These are columns that
+# are constant BY DESIGN, each backed by a dedicated invariant test proving the
+# constant and a docstring/CHANGELOG entry. They are NOT exclusions: the liveness
+# (non-NaN) check still applies; only the non-constant check defers to the invariant
+# test named in the justification.
+STRUCTURAL_CONSTANTS: dict[str, dict[str, str]] = {
+    # add_space_creation declares none: its structurally-zero columns were RETIRED
+    # from the contract entirely (4.24.0 lean contract; resurrection is blocked by
+    # test_space_creation.py::TestComputeSpaceCreated::test_retired_columns_never_emitted).
+    "add_pitch_control": {
+        "pitch_control_at_ball__spearman": (
+            "Spearman PPCF is degenerate (0.5 fallback) within ~18 m of the ball: the"
+            " ball reaches near cells before any player's reaction time, so no player"
+            " accrues control there. Sampled at linked-action START points (always near"
+            " the ball), the column is ~0.5 by model construction — flagged to the"
+            " lakehouse in the 4.24.0 changelog; redesign tracked in TODO"
+            " (test_pitch_control_at_ball_near_ball_degeneracy below)"
+        ),
+    },
+}
+
+
+def test_pitch_control_at_ball_near_ball_degeneracy():
+    """Invariant behind the add_pitch_control STRUCTURAL_CONSTANTS entry: the
+    Spearman surface equals the 0.5 fallback at every linked-action start point
+    on this fixture (all within meters of the frame ball), while the SAME
+    surface deviates far from the ball — the column is near-ball-degenerate by
+    model construction, not by fixture accident."""
+    import numpy as np
+
+    from silly_kicks.tracking.pitch_control import compute_pitch_control
+
+    frames = _frames()
+    fr = frames[(frames["period_id"] == 1) & (frames["frame_id"] == 250)]
+    s = compute_pitch_control(fr, 5)
+    assert float(s.at_point(58.0, 32.0)) == 0.5  # at the action start (near ball)
+    arr = np.asarray(s.surface)
+    assert (arr != 0.5).any()  # ...but the surface is NOT globally constant
+
+
 def test_meta_surface_complete():
     """Every registered add_* export is wired into the liveness gate (B3 pattern)."""
     registered = {n for n in tracking.__all__ if n.startswith("add_")}
     assert set(ENTRIES) == registered, (
         f"liveness gate surface drift: missing={registered - set(ENTRIES)}, stale={set(ENTRIES) - registered}"
     )
+
+
+def test_meta_structural_constants_are_wired():
+    """Every declared structural constant belongs to a wired aggregator."""
+    assert set(STRUCTURAL_CONSTANTS) <= set(ENTRIES)
 
 
 @pytest.mark.parametrize("name", sorted(ENTRIES))
@@ -277,4 +367,27 @@ def test_aggregator_columns_live(name):
     assert not dead, (
         f"{name}: dead contract column(s) {dead} — 100%-null on a fixture that "
         f"exercises the family's domain (added columns: {added})"
+    )
+    # Non-constant (lakehouse round-2): a float METRIC column with >= 2 observed
+    # values carrying a single distinct value is informationally dead even when
+    # non-NaN (the `space_destroyed_m2 ≡ 0` failure mode). Categorical/provenance
+    # columns are exempt: object/bool/int by dtype, plus the four documented
+    # linkage-provenance floats (legitimately constant when every action links at
+    # offset 0 / quality 1; their merge semantics are gated by the provenance-skip
+    # guard, not here). The check targets metrics.
+    provenance = {"frame_id", "time_offset_seconds", "link_quality_score", "n_candidate_frames"}
+    declared = STRUCTURAL_CONSTANTS.get(name, {})
+    flat = [
+        c
+        for c in added
+        if c not in declared
+        and c not in provenance
+        and pd.api.types.is_float_dtype(out[c])
+        and out[c].notna().sum() >= 2
+        and out[c].dropna().nunique() == 1
+    ]
+    assert not flat, (
+        f"{name}: constant metric column(s) {flat} — single distinct value across the "
+        f"fixture; either the fixture does not exercise the metric or the column is "
+        f"structurally dead (declare + invariant-test it in STRUCTURAL_CONSTANTS if BY DESIGN)"
     )

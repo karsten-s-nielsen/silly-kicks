@@ -4686,13 +4686,14 @@ def obso_xfns(
 # TF-41 — Space Creation (Fernandez & Bornn 2018)
 # ---------------------------------------------------------------------------
 
+# Lean 2-column contract (4.24.0, lakehouse/owner decision): the LOO is
+# pointwise-monotone, so a team-side "destroyed" and an opponent-side "created"
+# are structurally 0 and nets are exact redundancies — always-zero columns
+# (shipped 3.21.0-4.23.0) are retired rather than carried. The two live
+# measurements: attack-side creation + rest-defense denial.
 _SPACE_CREATION_COLUMNS = (
-    "space_created_m2_team",
-    "space_created_m2_opponent",
-    "space_destroyed_m2_team",
-    "space_destroyed_m2_opponent",
-    "net_space_m2_team",
-    "net_space_m2_opponent",
+    "space_created_m2",
+    "space_denied_m2_opponent",
 )
 
 _SPACE_CREATION_NAN_ROW: dict[str, float] = dict.fromkeys(_SPACE_CREATION_COLUMNS, np.nan)
@@ -4711,9 +4712,9 @@ def _compute_space_creation_for_action(
     """Compute both-perspective space creation for the actor at one action frame.
 
     A single ``compute_space_created(include_opponent_perspective=True)`` call
-    yields all six values from the same frame, grid, and OBSO multiplier, so
-    the ``_team`` and ``_opponent`` triplets share an identical NaN mask by
-    construction.
+    yields both live measurements from the same frame and grid, so
+    ``space_created_m2`` and ``space_denied_m2_opponent`` share an identical
+    NaN mask by construction.
     """
     from ._space_creation import _unique_team_ids, compute_space_created
 
@@ -4753,12 +4754,8 @@ def _compute_space_creation_for_action(
 
     row = actor_row.iloc[0]
     return {
-        "space_created_m2_team": float(row["space_created_m2"]),
-        "space_destroyed_m2_team": float(row["space_destroyed_m2"]),
-        "net_space_m2_team": float(row["net_space_m2"]),
-        "space_created_m2_opponent": float(row["opponent_space_created_m2"]),
-        "space_destroyed_m2_opponent": float(row["opponent_space_destroyed_m2"]),
-        "net_space_m2_opponent": float(row["opponent_net_space_m2"]),
+        "space_created_m2": float(row["space_created_m2"]),
+        "space_denied_m2_opponent": float(row["space_denied_m2_opponent"]),
     }
 
 
@@ -4797,19 +4794,20 @@ def add_space_creation(
     Returns
     -------
     pd.DataFrame
-        Actions enriched with ``space_created_m2_team``,
-        ``space_destroyed_m2_team``, ``net_space_m2_team``,
-        ``space_created_m2_opponent``, ``space_destroyed_m2_opponent``,
-        ``net_space_m2_opponent``. The ``_team`` triplet is the actor's
-        leave-one-out differential on their own team's OBSO surface; the
-        ``_opponent`` triplet is the same leave-one-out evaluated on the
-        opposing team's OBSO surface (actor as defender), on the identical
-        grid/sigmas/transition/EPV inputs. Sign conventions:
-        ``*_created_m2`` >= 0 (space existing because of the actor's
-        presence), ``*_destroyed_m2`` >= 0 (space the actor's presence
-        denies), ``net_*`` = created - destroyed (signed). The two triplets
-        share an identical NaN mask (no linked frame / actor absent); a
-        linked frame without exactly two team ids raises ``ValueError``.
+        Actions enriched with the lean 2-column contract (4.24.0):
+        ``space_created_m2`` >= 0 — the actor's leave-one-out differential
+        on their own team's OBSO surface (space existing because of the
+        actor's presence; attacking value) — and ``space_denied_m2_opponent``
+        >= 0 — the same leave-one-out evaluated on the opposing team's OBSO
+        surface (actor as defender), weighed by the opponent's OWN attacking
+        geometry (x-mirrored transition/EPV artifacts; shared
+        grid/sigmas/method keep magnitudes comparable; rest-defense value).
+        The LOO is pointwise-monotone, so the complementary halves
+        (team-side destroyed, opponent-side created) are structurally 0 and
+        deliberately NOT part of the contract; net columns would be exact
+        redundancies and are likewise omitted. The two columns share an
+        identical NaN mask (no linked frame / actor absent); a linked frame
+        without exactly two team ids raises ``ValueError``.
 
     Examples
     --------
@@ -4897,18 +4895,16 @@ def space_creation_xfns(
 ) -> list:
     """Factory returning FrameAwareTransformers for space creation features.
 
-    Produces 6 features x 3 gamestates = 18 VAEP columns (both perspectives,
-    lockstep with ``_SPACE_CREATION_COLUMNS``): ``space_created_m2_team``,
-    ``space_destroyed_m2_team``, ``net_space_m2_team``,
-    ``space_created_m2_opponent``, ``space_destroyed_m2_opponent``,
-    ``net_space_m2_opponent``.
+    Produces 2 features x 3 gamestates = 6 VAEP columns (lockstep with
+    ``_SPACE_CREATION_COLUMNS``): ``space_created_m2`` (attack-side creation)
+    and ``space_denied_m2_opponent`` (rest-defense denial).
 
     Examples
     --------
     >>> from silly_kicks.tracking.features import space_creation_xfns
     >>> xfns = space_creation_xfns(home_team_id=1)
     >>> len(xfns)
-    6
+    2
     """
     xfns_out = []
     for col_name in _SPACE_CREATION_COLUMNS:

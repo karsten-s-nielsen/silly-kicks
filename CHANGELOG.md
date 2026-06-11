@@ -5,6 +5,59 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.24.0] — 2026-06-11
+
+### Fixed/Changed — opponent OBSO orientation MIRRORED + LEAN 2-column contract (TF-41 round-2; ADR-026 amended; owner-approved breaking)
+
+The lakehouse rejected 4.23.0's opponent triplet: under a complementary pitch-control model
+with a SHARED, UNMIRRORED multiplier, `opp_obso = (1−pc)·M` is fully determined by `pc·M`, so
+the opponent leave-one-out was the exact pointwise negation of the team LOO
+(`opponent_space_destroyed_m2 ≡ space_created_m2` bit-for-bit; reproduced and
+algebraically confirmed — informationally empty). The owner additionally directed a contract
+reshape in the same release (no consumer has adopted any 4.23.x surface):
+
+- **Semantic fix — the opponent surface is weighed by the opponent's OWN attacking
+  geometry**: the same transition/EPV grid ARTIFACTS mirrored along x to the goal the
+  opponent attacks; the ball-anchored distance weight is unchanged. Grid resolution, sigmas,
+  and PC method stay shared (magnitudes comparable). Both the analytical
+  (complement-decomposition) and naive (explicit recompute) paths consume the same mirrored
+  multiplier — one metric, two estimators (round-2 acceptance #4 method-consistency test:
+  spearman vs voronoi agree in sign and order of magnitude). Anti-mirror gate (round-2
+  acceptance #2) red-first then green; a geography pin makes silent un-mirroring untestable.
+- **LEAN CONTRACT (breaking, owner decision): `add_space_creation` now emits exactly TWO
+  columns** — **`space_created_m2`** (>= 0; the actor's LOO on their own team's OBSO
+  surface; attacking value) and **`space_denied_m2_opponent`** (>= 0; the same LOO on the
+  mirrored opponent surface; rest-defense value). The structurally-zero columns are RETIRED
+  rather than shipped: the LOO is pointwise-MONOTONE — removing a player can only decrease
+  his own team's control and increase the opponent's, everywhere, for every shipped PC
+  method — so a team-side "destroyed" (zero since TF-41 shipped) and an opponent-side
+  "created" are always 0, and net columns are exact redundancies of the live pair.
+  `compute_space_created` is leaned identically (per-player `space_created_m2` +
+  `space_denied_m2_opponent`); `space_creation_xfns` is 2 features × 3 gamestates = **6 VAEP
+  columns**. A retired-columns guard test blocks any resurrection. This answers the round-2
+  question "is team destroyed expected to acquire real values?": NO — the column no longer
+  exists (round-2 acceptance #1's non-zero-opponent-created clause is mathematically
+  unsatisfiable under removal-based LOO; producing it would need a repositioning-counterfactual
+  estimand, out of scope).
+- **Liveness gate gains the round-2 non-constant check**: every float metric column added by
+  any of the 28 aggregators with >= 2 observed values must carry > 1 distinct value, with a
+  declared, justified, invariant-tested `STRUCTURAL_CONSTANTS` registry (never silent
+  exclusions). The multi-domain fixture gained real per-window variation (velocities,
+  y-layout, GK drift, kick power/timing, event-clock jitter off the frame grid, an isolated
+  sprinting carrier, receivers ahead of the block, one-man-down windows).
+- **New finding flagged by the gate — `pitch_control_at_ball__spearman` is near-ball
+  degenerate**: the Spearman PPCF deviates from the 0.5 fallback only ~18 m+ from the ball
+  (the ball reaches nearer cells before any player's reaction time), and the column samples
+  linked-action START points, which are always near the ball — so it is **~0.5 for every
+  well-linked action in production**. Declared + invariant-tested as a structural constant;
+  lakehouse should treat the column as informationally dead pending redesign (tracked in
+  TODO). This is the third dead-metric instance the gate's bug class covers.
+
+Hyrum: BREAKING schema change vs 4.23.0 (columns dropped + renamed; opponent values change),
+accepted by owner/lakehouse agreement — no consumer adopted the 4.23.x surface and the 4.23.x
+line is superseded. **Final adoption column list: `space_created_m2`,
+`space_denied_m2_opponent`.** Not a VAEP retrain trigger (xfns opt-in, in no default list).
+
 ## [4.23.0] — 2026-06-11
 
 ### Added — the space-creation `*_opponent` triplet is IMPLEMENTED (TF-41; lakehouse-mandated; ADR-026)

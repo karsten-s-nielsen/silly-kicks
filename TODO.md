@@ -2,7 +2,9 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-11. **Current release**: silly-kicks 4.23.0 (TF-41 space-creation `_opponent` triplet IMPLEMENTED — defender-side leave-one-out on the opponent-attacking OBSO surface, lakehouse-mandated after the 4.22.2 removal was rejected; `space_creation_xfns` 9→18 columns; + pyright gates `tests/`+`scripts/` in CI, 301 never-gated diagnostics fixed to zero). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-11. **Current release**: silly-kicks 4.24.0 (TF-41 opponent OBSO orientation MIRRORED + LEAN 2-column contract `space_created_m2`/`space_denied_m2_opponent` (owner-approved breaking — monotone-LOO structural zeros + redundant nets retired); liveness gate gains the non-constant check + `STRUCTURAL_CONSTANTS` registry; `pitch_control_at_ball__spearman` flagged near-ball degenerate). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+
+**New (4.24.0): `pitch_control_at_ball__spearman` redesign** — Wicked. The Spearman PPCF is degenerate (0.5 fallback) within ~18 m of the ball (ball beats any player's reaction time to near cells), and the column samples linked-action START points → ~0.5 for every well-linked action in production (informationally dead; declared structural constant in the liveness gate; flagged to the lakehouse in the 4.24.0 changelog). Redesign options: sample at the action END point (ball travel time > 0), an integration window past the reaction time, or a potential-control variant. Touches every PC consumer — needs its own ADR.
 
 ---
 
