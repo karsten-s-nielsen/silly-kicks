@@ -425,6 +425,24 @@ class TestAddSpaceCreation:
         assert np.isnan(result.loc[0, "space_denied_m2_opponent"])  # type: ignore[arg-type]
         assert np.isnan(result.loc[0, "space_created_m2"])  # type: ignore[arg-type]
 
+    def test_nan_team_action_on_healthy_frame_returns_nan_row(self):
+        """Acceptance #3 (GS sentinel fix): a NaN-team action on a healthy
+        two-team frame routes to the NaN row — it must NOT reach the strict
+        opponent-resolution guard. This is the downstream contract the GS
+        converter's NaN-residue (formerly the sentinel '0') depends on: NaN is
+        ``pd.isna``-routable; '0' was not, which is why the sentinel crashed."""
+        from silly_kicks.tracking.features import _compute_space_creation_for_action
+
+        actions, frames = _make_actions_and_frames()
+        action_row = actions.iloc[0].copy()
+        action_row["team_id"] = np.nan  # the GS null-actor residue
+        frame = frames[frames["frame_id"] == frames["frame_id"].iloc[0]]
+        # Sanity: the frame really is a healthy two-team frame (the guard WOULD
+        # fire on a non-NaN unmatched id like the old sentinel '0').
+        result = _compute_space_creation_for_action(action_row, frame, home_team_id=1)
+        assert np.isnan(result["space_created_m2"])
+        assert np.isnan(result["space_denied_m2_opponent"])
+
     def test_row_count_preserved(self):
         """Row count unchanged after enrichment."""
         from silly_kicks.tracking.features import add_space_creation

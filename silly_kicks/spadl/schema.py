@@ -61,23 +61,35 @@ always NaN on non-tackle rows. See ADR-001 for the contract rationale."""
 
 GRADIENTSPORTS_SPADL_COLUMNS: dict[str, str] = {
     **SPADL_COLUMNS,
+    # team_id / player_id are nullable Int64 (NOT the SPADL_COLUMNS int64): the
+    # canonical gameEvents actor is genuinely absent on the null-actor duel/foul
+    # events (OTB+CH challenges, FOUL+FO fouls), so team_id/player_id must carry
+    # NaN there rather than a sentinel 0 that masquerades as a real id and
+    # crashes downstream id-resolution guards. ADR-001 forbids back-filling them
+    # from the duel/foul qualifiers; NaN is the correct "no single actor" value.
+    "team_id": "Int64",
+    "player_id": "Int64",
     "tackle_winner_player_id": "Int64",
     "tackle_winner_team_id": "Int64",
     "tackle_loser_player_id": "Int64",
     "tackle_loser_team_id": "Int64",
     "is_synthetic": "bool",
 }
-"""Gradient Sports (formerly PFF FC) SPADL output schema: SPADL_COLUMNS + 4
-nullable Int64 tackle-actor passthrough columns. NaN on rows where no
-challenge winner/loser is identifiable (i.e., everywhere except CH events).
+"""Gradient Sports (formerly PFF FC) SPADL output schema: SPADL_COLUMNS with
+nullable-``Int64`` ``team_id`` / ``player_id`` + 4 nullable Int64 tackle-actor
+passthrough columns. NaN on rows where no challenge winner/loser is
+identifiable (i.e., everywhere except CH events), and NaN on ``team_id`` /
+``player_id`` for the null-actor duel/foul events.
 
 Identifier-conventions rationale (ADR-001) shared with SPORTEC_SPADL_COLUMNS.
 
-Dtype departure from SPORTEC_SPADL_COLUMNS (which uses ``object`` strings):
-Gradient Sports native player/team identifiers are integers, whereas kloppy
-hands sportec strings. Using ``Int64`` (pandas nullable) preserves int-ness
-while allowing NaN on non-tackle rows. Long-term unification of the two
-extended schemas under a common name is a follow-up TODO."""
+Dtype departure from SPADL_COLUMNS (which uses non-nullable ``int64`` for
+``team_id`` / ``player_id``) AND from SPORTEC_SPADL_COLUMNS (which uses
+``object`` strings): Gradient Sports native player/team identifiers are
+integers, whereas kloppy hands sportec strings. Using ``Int64`` (pandas
+nullable) preserves int-ness while allowing NaN where the canonical actor is
+absent. Long-term unification of the two extended schemas under a common name
+is a follow-up TODO."""
 
 
 SKILLCORNER_SPADL_COLUMNS: dict[str, str] = {

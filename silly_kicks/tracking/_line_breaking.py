@@ -192,6 +192,11 @@ def detect_line_breaking(
         pos = aid_to_pos[aid]
 
         action_team = row["team_id"]
+        # NaN-actor action (e.g. the Gradient Sports null-actor duel/foul residue,
+        # team_id <NA>): NaN-route to the pd.NA default -- never let an NA reach the
+        # opponent-set `!=` below (`t != <NA>` -> "boolean value of NA is ambiguous").
+        if pd.isna(action_team):
+            continue
         action_type = row.get("type_id")
         if pd.notna(action_type) and int(action_type) not in _PASS_CROSS_TYPE_IDS:
             continue  # Non-pass/cross -> leave as pd.NA
@@ -214,7 +219,11 @@ def detect_line_breaking(
         # Find opposing team via O(1) lookup
         frame_key = (game_id, period_id, frame_id)
         teams_at_frame = frame_to_teams.get(frame_key, [])
-        opp_teams = [t for t in teams_at_frame if t != action_team]
+        # ADR-019: dtype-safe id comparison (Int64 action team_id vs object-string
+        # frame team_id -- e.g. GS-on-tracking -- where a raw `!=` is always True and
+        # silently keeps the actor's OWN team as the "opponent"). action_team is
+        # guaranteed non-NA here (NaN-routed above). Mirrors same_id at line ~250.
+        opp_teams = [t for t in teams_at_frame if not same_id(t, action_team)]
 
         if not opp_teams:
             lb_arr[pos] = 0.0
