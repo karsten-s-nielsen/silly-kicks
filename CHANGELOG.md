@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.22.2] — 2026-06-11
+
+### Removed — dead `*_opponent` triplet dropped from the `add_space_creation` contract (TF-41)
+
+- **Breaking (column removal): `add_space_creation` no longer emits
+  `space_created_m2_opponent`, `space_destroyed_m2_opponent`, `net_space_m2_opponent`.**
+  The triplet had been hard-coded `np.nan` on every code path since its introduction
+  (3.21.0, PR-S57) — a schema-only dead contract confirmed 100%-NULL across all four
+  tracking providers by the lakehouse action-context pipeline (bug report 2026-06-11).
+  The TF-41 spec never defined opponent-side semantics: `compute_space_created` is the
+  attacking-team leave-one-out differential OBSO (Fernandez & Bornn 2018), and
+  `space_creation_xfns` was always deliberately team-side only. An opponent-side metric
+  (the actor's leave-one-out effect on a counterfactual opponent-attacking OBSO surface)
+  would be a new research feature with its own sign/EPV-mirroring design — not a fill-in
+  of these columns. The team triplet (`space_created_m2_team`, `space_destroyed_m2_team`,
+  `net_space_m2_team`) is unchanged, byte-identical.
+- The contract gate (`tests/tracking/test_space_creation.py`) now asserts the emitted
+  columns are exactly the team triplet **and that each populates** (no dead column can
+  silently re-enter the contract).
+
+Hyrum note: consumers that mirror the documented column list (lakehouse
+`bronze.spadl_action_context`) drop the dead `*_opponent` columns on adoption; no values
+change anywhere, so nothing re-materializes. Not a VAEP retrain trigger
+(`space_creation_xfns` output is unchanged).
+
 ## [4.22.1] — 2026-06-11
 
 ### Fixed — lakehouse bug-report 2026-06-11 hardening (ghost-GK clamp, completion-variant alias)
