@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-11. **Current release**: silly-kicks 4.22.1 (lakehouse-report hardening — ghost-GK served position clamped to the physical pitch with a warning on garbage input; `GkCompletionModel.from_variant` variant-key alias `"gs"` → `"default"`; GS `convert_to_frames` `home_team_id` annotation `int | str`; OBSO peak-vs-optimal axes documented). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-11. **Current release**: silly-kicks 4.22.2 (TF-41 `add_space_creation` dead `*_opponent` triplet removed from the contract — hard-coded NaN since 3.21.0, never specified; team triplet byte-identical; lakehouse bug report 2026-06-11). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

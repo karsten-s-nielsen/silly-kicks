@@ -4686,13 +4686,13 @@ def obso_xfns(
 # TF-41 — Space Creation (Fernandez & Bornn 2018)
 # ---------------------------------------------------------------------------
 
+# Team-side only: compute_space_created is the attacking-team leave-one-out, so an
+# opponent-side triplet has no defined semantics here. A *_opponent triplet shipped
+# 3.21.0-4.22.1 but was hard-coded NaN on every path; removed 4.22.2.
 _SPACE_CREATION_COLUMNS = (
     "space_created_m2_team",
-    "space_created_m2_opponent",
     "space_destroyed_m2_team",
-    "space_destroyed_m2_opponent",
     "net_space_m2_team",
-    "net_space_m2_opponent",
 )
 
 
@@ -4727,9 +4727,6 @@ def _compute_space_creation_for_action(
             "space_created_m2_team": np.nan,
             "space_destroyed_m2_team": np.nan,
             "net_space_m2_team": np.nan,
-            "space_created_m2_opponent": np.nan,
-            "space_destroyed_m2_opponent": np.nan,
-            "net_space_m2_opponent": np.nan,
         }
 
     row = actor_row.iloc[0]
@@ -4737,9 +4734,6 @@ def _compute_space_creation_for_action(
         "space_created_m2_team": float(row["space_created_m2"]),
         "space_destroyed_m2_team": float(row["space_destroyed_m2"]),
         "net_space_m2_team": float(row["net_space_m2"]),
-        "space_created_m2_opponent": np.nan,
-        "space_destroyed_m2_opponent": np.nan,
-        "net_space_m2_opponent": np.nan,
     }
 
 
@@ -4779,9 +4773,8 @@ def add_space_creation(
     -------
     pd.DataFrame
         Actions enriched with ``space_created_m2_team``,
-        ``space_destroyed_m2_team``, ``net_space_m2_team``,
-        ``space_created_m2_opponent``, ``space_destroyed_m2_opponent``,
-        ``net_space_m2_opponent``.
+        ``space_destroyed_m2_team``, ``net_space_m2_team`` (team-side only;
+        the leave-one-out is defined on the actor's attacking surface).
 
     Examples
     --------

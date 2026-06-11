@@ -348,7 +348,13 @@ def _make_actions_and_frames():
 
 class TestAddSpaceCreation:
     def test_enrichment_columns(self):
-        """add_space_creation adds 6 space creation columns."""
+        """add_space_creation adds exactly the 3 team-side columns, all live.
+
+        The ``*_opponent`` triplet was removed from the contract (4.22.2): it
+        had been hard-coded NaN on every code path since introduction — a
+        schema-only dead column. This gate asserts the remaining columns
+        actually populate, so a dead column can't re-enter the contract.
+        """
         from silly_kicks.tracking.features import add_space_creation
 
         actions, frames = _make_actions_and_frames()
@@ -357,12 +363,12 @@ class TestAddSpaceCreation:
             "space_created_m2_team",
             "space_destroyed_m2_team",
             "net_space_m2_team",
-            "space_created_m2_opponent",
-            "space_destroyed_m2_opponent",
-            "net_space_m2_opponent",
         }
         added = set(result.columns) - set(actions.columns)
         assert expected_cols.issubset(added)
+        assert not {c for c in added if c.endswith("_opponent")}
+        for col in expected_cols:
+            assert result[col].notna().any(), f"{col} is all-NaN — dead contract column"
 
     def test_row_count_preserved(self):
         """Row count unchanged after enrichment."""
