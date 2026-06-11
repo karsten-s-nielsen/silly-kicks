@@ -10,7 +10,7 @@ def test_stage1_config_is_maximize_with_three_params():
     assert cfg.direction is Direction.MAXIMIZE
     assert set(cfg.param_space) == {"tolerance_m", "beta", "gamma"}
     assert set(cfg.warm_start) == {"tolerance_m", "beta", "gamma"}  # current defaults
-    assert cfg.store.path == "s1.db"
+    assert cfg.store.path == "s1.db"  # type: ignore[union-attr]
 
 
 def test_stage2_config_is_minimize_with_three_params():
@@ -18,7 +18,7 @@ def test_stage2_config_is_minimize_with_three_params():
     assert cfg.metric == "brier"
     assert cfg.direction is Direction.MINIMIZE
     assert set(cfg.param_space) == {"k3", "pre_seconds", "min_displacement_m"}
-    assert cfg.param_space["k3"].log is True  # log-uniform
+    assert cfg.param_space["k3"].log is True  # type: ignore[attr-defined]  # log-uniform
 
 
 def test_warm_start_subset_of_param_space_enforced_by_ruthless():
@@ -34,7 +34,7 @@ def test_xt_bandwidth_config_minimizes_nll_over_three_axes():
     assert cfg.metric == "xt_holdout_nll"
     assert cfg.direction is Direction.MINIMIZE
     assert set(cfg.param_space) == {"bandwidth", "adaptive", "grid"}
-    assert cfg.param_space["bandwidth"].log is True
+    assert cfg.param_space["bandwidth"].log is True  # type: ignore[attr-defined]
     assert set(cfg.warm_start) == {"bandwidth", "adaptive", "grid"}
     assert cfg.warm_start["grid"] == "16x12"
 

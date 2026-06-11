@@ -470,7 +470,7 @@ class TestDerivedActions:
         # Each derived defensive action must have a later native action in the stream
         for idx in defensive.index:
             pos = actions.index.get_loc(idx)
-            remaining = named.iloc[pos + 1 :]
+            remaining = named.iloc[pos + 1 :]  # type: ignore[operator]
             native_after = remaining[remaining["action_provenance"] == "native"]
             assert len(native_after) > 0, f"No native action after defensive at pos {pos}"
 

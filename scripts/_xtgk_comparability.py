@@ -83,7 +83,7 @@ def _collect(providers, max_per_provider, tracking_limit, xt):
         providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit
     ):
         try:
-            out = add_xt_gk(actions, frames, xt, home_team_id=home)
+            out = add_xt_gk(actions, frames, xt, home_team_id=home)  # type: ignore[reportArgumentType]
         except Exception as exc:  # a single bad match shouldn't kill the gate
             print(f"  {prov}/{mid}: add_xt_gk failed ({type(exc).__name__}: {exc})", flush=True)
             continue

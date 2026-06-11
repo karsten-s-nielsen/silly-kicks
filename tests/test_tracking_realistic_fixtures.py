@@ -232,7 +232,7 @@ def test_kloppy_gk_derivation_fires_when_native_wrong():
         teams=[home_team, away_team],
         periods=[period],
         pitch_dimensions=pitch,
-        coordinate_system=None,
+        coordinate_system=None,  # type: ignore[arg-type]
         score=None,
         frame_rate=25.0,
         orientation=Orientation.HOME_AWAY,

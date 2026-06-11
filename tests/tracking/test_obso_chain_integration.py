@@ -111,6 +111,6 @@ class TestObsoChain:
 
         # Composite = temporal * spatial
         np.testing.assert_array_almost_equal(
-            result["pausa_composite"].values,
-            (result["pausa_temporal"] * result["pausa_spatial"]).values,
+            result["pausa_composite"].values,  # type: ignore[arg-type]
+            (result["pausa_temporal"] * result["pausa_spatial"]).values,  # type: ignore[arg-type]
         )

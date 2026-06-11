@@ -29,7 +29,7 @@ class TestGkResolveInvariants:
         if pd.notna(resolved_pid):
             # The resolved GK should NOT be on the acting team
             acting_team = actions["team_id"].iloc[0]
-            gk_team = frames.loc[frames["player_id"] == resolved_pid, "team_id"].iloc[0]
+            gk_team = frames.loc[frames["player_id"] == resolved_pid, "team_id"].iloc[0]  # type: ignore[union-attr]
             assert gk_team != acting_team
 
     def test_empty_actions_empty_result(self):

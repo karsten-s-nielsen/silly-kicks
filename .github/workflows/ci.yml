@@ -26,7 +26,8 @@ jobs:
       - run: ruff check silly_kicks/ tests/ scripts/
       - run: ruff format --check silly_kicks/ tests/ scripts/
       - run: pip install -e ".[test]"
-      - run: pyright silly_kicks/
+      # config-driven include: silly_kicks + tests + scripts (pyproject [tool.pyright])
+      - run: pyright
 
   test:
     runs-on: ${{ matrix.os }}

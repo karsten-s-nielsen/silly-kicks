@@ -26,7 +26,7 @@ def main(n_matches: int) -> None:
     for _prov, _mid, actions, frames, home in load_matches(
         providers=["gradientsports"], max_per_provider=n_matches, tracking_limit=None
     ):
-        home_id = int(home)
+        home_id = int(home)  # type: ignore[reportArgumentType]
         passes = actions[(actions["type_id"] == 0) & (actions["result_id"] == 1)].copy()
         if passes.empty:
             continue
@@ -53,7 +53,7 @@ def main(n_matches: int) -> None:
                 dx, dy = 105.0 - dx, 68.0 - dy
             d = np.column_stack([dx, dy])
             sx, sy, ex, ey = (float(row[c]) for c in ("start_x", "start_y", "end_x", "end_y"))
-            rec = {"enters_third": (sx < FINAL_THIRD_X) and (ex >= FINAL_THIRD_X)}
+            rec: dict[str, object] = {"enters_third": (sx < FINAL_THIRD_X) and (ex >= FINAL_THIRD_X)}
             for sig in SIGMAS:
                 _, sgm, _ = _structural_pass_core(d, (sx, sy), (ex, ey), sig)
                 rec[f"sgm_{sig}"] = sgm

@@ -12,7 +12,7 @@ from tests.tracking.test_ghost_gk import _fitted_model, _make_ghost_gk_frames
 _GHOST_COLS = ["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]
 
 
-def _make_goal_flip_velocity_fixture(home_team_id: int = 1, away_team_id: int = 2):
+def _make_goal_flip_velocity_fixture(home_team_id: int = 1, away_team_id: int = 2) -> tuple[pd.DataFrame, set[int]]:
     """5 frames, 1 period, engineered to exercise BOTH cross-frame deps.
 
     - Goal-flip dep: home GK sits at x=5 in frames 1-4 (full-period mean stays
@@ -326,7 +326,9 @@ class TestGhostGkXfnsRestriction:
                 np.testing.assert_allclose(n[mask], b[mask], rtol=1e-7, atol=1e-9)
 
 
-def _make_dense_match(n_frames: int = 250, home_team_id: int = 1, away_team_id: int = 2):
+def _make_dense_match(
+    n_frames: int = 250, home_team_id: int = 1, away_team_id: int = 2
+) -> tuple[pd.DataFrame, set[int]]:
     """Multi-frame fixture for the structural call-count guard + a bit-identical
     check at modest size. NOTE: this is the lightweight CI guard, NOT the §5 scale
     measurement — the real full-match timing (n≈3000 rows≈70k, bundled model) is

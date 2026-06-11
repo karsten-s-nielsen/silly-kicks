@@ -28,8 +28,8 @@ def _load_loader():
     spec = importlib.util.spec_from_file_location(
         "_loader_pining", str(Path(__file__).parents[2] / "scripts" / "_loader_pining.py")
     )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
 
 

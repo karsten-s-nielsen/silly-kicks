@@ -247,7 +247,7 @@ def test_downstream_line_break_missing_home_team_id_raises(actions_3, snapshots_
     frames, links = snapshot_to_tracking_frames(snapshots_combined, actions_3)
     actions_with_data = actions_3[actions_3["action_id"].isin(links["action_id"])]
     with pytest.raises(TypeError):
-        add_line_break(actions_with_data, frames, links=links, method="ward")
+        add_line_break(actions_with_data, frames, links=links, method="ward")  # type: ignore[call-arg]
 
 
 def test_downstream_action_context_actor_speed_nan(actions_3, snapshots_combined):

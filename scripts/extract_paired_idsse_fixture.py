@@ -96,7 +96,7 @@ def main() -> int:
                     ORDER BY frame, player_id
                     """  # noqa: S608 — one-shot extraction script, not user-facing
                 )
-                cols = [d[0] for d in cur.description]
+                cols = [d[0] for d in cur.description]  # type: ignore[reportOptionalIterable]
                 rows = cur.fetchall()
                 df = pd.DataFrame.from_records(rows, columns=cols)
                 print(f"  {len(df)} rows, {df['frame'].nunique()} frames, {df['player_id'].nunique()} players")

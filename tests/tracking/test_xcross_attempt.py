@@ -424,7 +424,7 @@ def test_compute_model_none_uses_bundled_default():
     out = xc.compute_xcross_attempt(frames, model=None, home_team_id="A")
     assert "xcross_attempt" in out.columns
     with pytest.raises(TypeError):
-        xc.compute_xcross_attempt(frames, model=123, home_team_id="A")  # unsupported type
+        xc.compute_xcross_attempt(frames, model=123, home_team_id="A")  # type: ignore[arg-type]  # unsupported type
 
 
 def test_compute_actions_populate_score_differential(monkeypatch):

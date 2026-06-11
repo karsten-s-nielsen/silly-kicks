@@ -124,7 +124,7 @@ def _load_fold(args):
     )
     fold: dict[str, list[tuple]] = {}
     used_ids: dict[str, list[str]] = {}
-    for provider, mid, actions, frames, home in loader.load_matches(**load_kwargs):
+    for provider, mid, actions, frames, home in loader.load_matches(**load_kwargs):  # type: ignore[reportArgumentType]
         _assert_match_game_id_consistent(provider, mid, actions, frames)
         fold.setdefault(provider, []).append((actions, frames, home))
         used_ids.setdefault(provider, []).append(mid)

@@ -348,14 +348,15 @@ def _make_actions_and_frames():
 
 class TestAddSpaceCreation:
     def test_enrichment_columns(self):
-        """add_space_creation adds exactly the 3 team-side columns, all live.
+        """add_space_creation adds all 6 contract columns, every one live.
 
-        The ``*_opponent`` triplet was removed from the contract (4.22.2): it
-        had been hard-coded NaN on every code path since introduction — a
-        schema-only dead column. This gate asserts the remaining columns
-        actually populate, so a dead column can't re-enter the contract.
+        The ``*_opponent`` triplet shipped hard-coded NaN 3.21.0-4.22.1 (a
+        schema-only dead contract), was removed in 4.22.2, and is IMPLEMENTED
+        as of 4.23.0 (defender-side leave-one-out on the opponent-attacking
+        OBSO surface). The liveness loop is the structural guarantee that a
+        documented contract column can never again ship 100%-NaN.
         """
-        from silly_kicks.tracking.features import add_space_creation
+        from silly_kicks.tracking.features import _SPACE_CREATION_COLUMNS, add_space_creation
 
         actions, frames = _make_actions_and_frames()
         result = add_space_creation(actions, frames, home_team_id=1)
@@ -363,12 +364,222 @@ class TestAddSpaceCreation:
             "space_created_m2_team",
             "space_destroyed_m2_team",
             "net_space_m2_team",
+            "space_created_m2_opponent",
+            "space_destroyed_m2_opponent",
+            "net_space_m2_opponent",
         }
+        assert set(_SPACE_CREATION_COLUMNS) == expected_cols
         added = set(result.columns) - set(actions.columns)
         assert expected_cols.issubset(added)
-        assert not {c for c in added if c.endswith("_opponent")}
-        for col in expected_cols:
+        # Meta-gate (lakehouse acceptance #5): every documented contract column
+        # must be live on the fixture — a 100%-NaN contract column fails CI.
+        for col in _SPACE_CREATION_COLUMNS:
             assert result[col].notna().any(), f"{col} is all-NaN — dead contract column"
+
+    def test_opponent_coverage_parity(self):
+        """Acceptance #1: opponent non-NaN coverage == team non-NaN coverage.
+
+        The opponent triplet may be NaN ONLY where the team triplet is NaN
+        (identical NaN mask — no new degradation paths). This test would have
+        caught the original hard-coded-NaN defect on day one.
+        """
+        from silly_kicks.tracking.features import add_space_creation
+
+        actions, frames = _make_actions_and_frames()
+        result = add_space_creation(actions, frames, home_team_id=1)
+        for base in ("space_created_m2", "space_destroyed_m2", "net_space_m2"):
+            team_mask = result[f"{base}_team"].notna()
+            opp_mask = result[f"{base}_opponent"].notna()
+            assert team_mask.sum() > 0, f"{base}_team has no coverage on the fixture"
+            assert (team_mask == opp_mask).all(), f"{base}: NaN masks differ (team vs opponent)"
+
+    def test_opponent_symmetry_sanity(self):
+        """Acceptance #2: opponent triplet is neither identically 0 nor a copy of team."""
+        from silly_kicks.tracking.features import add_space_creation
+
+        actions, frames = _make_actions_and_frames()
+        result = add_space_creation(actions, frames, home_team_id=1)
+        opp = result[["space_created_m2_opponent", "space_destroyed_m2_opponent", "net_space_m2_opponent"]]
+        team = result[["space_created_m2_team", "space_destroyed_m2_team", "net_space_m2_team"]]
+        opp_vals = opp.to_numpy(dtype=float)
+        team_vals = team.to_numpy(dtype=float)
+        finite = np.isfinite(opp_vals)
+        assert finite.any()
+        assert not np.allclose(opp_vals[finite], 0.0), "opponent triplet identically zero"
+        assert not np.allclose(opp_vals[finite], team_vals[finite]), "opponent triplet equals team triplet"
+
+    def test_opponent_sign_and_range_oracle(self):
+        """Acceptance #3: created >= 0, destroyed >= 0, net == created - destroyed (exact),
+        magnitudes in the same order as the team triplet."""
+        from silly_kicks.tracking.features import add_space_creation
+
+        actions, frames = _make_actions_and_frames()
+        result = add_space_creation(actions, frames, home_team_id=1)
+        created = result["space_created_m2_opponent"].dropna()
+        destroyed = result["space_destroyed_m2_opponent"].dropna()
+        net = result["net_space_m2_opponent"].dropna()
+        assert (created >= 0).all()
+        assert (destroyed >= 0).all()
+        np.testing.assert_allclose(net.to_numpy(), (created - destroyed).to_numpy(), atol=1e-12)
+        # Comparable scale: same grid, same OBSO multiplier -> same order of magnitude.
+        team_scale = float(result[["space_created_m2_team", "space_destroyed_m2_team"]].abs().max().max())
+        opp_scale = float(result[["space_created_m2_opponent", "space_destroyed_m2_opponent"]].abs().max().max())
+        assert opp_scale > 0
+        assert opp_scale < 1000.0 * team_scale
+        assert team_scale < 1000.0 * opp_scale
+
+    def test_opponent_two_team_guard(self):
+        """Acceptance #4: a frame without exactly two team ids raises loud with
+        the frame/action key in the message — no silent NaN."""
+        from silly_kicks.tracking.features import add_space_creation
+
+        actions, frames = _make_actions_and_frames()
+        one_team_frames = frames[(frames["team_id"] == 1) | (frames["is_ball"] == True)]  # noqa: E712
+        with pytest.raises(ValueError, match=r"action_id"):
+            add_space_creation(actions[actions["team_id"] == 1], one_team_frames, home_team_id=1)
+
+    def test_opponent_nan_action_ids_no_raise(self):
+        """ADR-003: NaN actor identifiers route to the NaN-row default, never the guard."""
+        from silly_kicks.tracking.features import add_space_creation
+
+        actions, frames = _make_actions_and_frames()
+        actions = actions.copy()
+        actions.loc[0, "player_id"] = np.nan
+        result = add_space_creation(actions, frames, home_team_id=1)
+        assert np.isnan(result.loc[0, "space_created_m2_opponent"])  # type: ignore[arg-type]
+        assert np.isnan(result.loc[0, "space_created_m2_team"])  # type: ignore[arg-type]
+
+    def test_row_count_preserved(self):
+        """Row count unchanged after enrichment."""
+        from silly_kicks.tracking.features import add_space_creation
+
+        actions, frames = _make_actions_and_frames()
+        result = add_space_creation(actions, frames, home_team_id=1)
+        assert len(result) == len(actions)
+
+
+class TestComputeSpaceCreatedOpponentPerspective:
+    def test_opponent_columns_present(self):
+        """include_opponent_perspective=True adds the 3 opponent columns."""
+        frame = _make_frame()
+        result = compute_space_created(frame, attacking_team_id=1, include_opponent_perspective=True)
+        assert {
+            "opponent_space_created_m2",
+            "opponent_space_destroyed_m2",
+            "opponent_net_space_m2",
+        }.issubset(result.columns)
+        assert len(result) == 5
+
+    def test_default_excludes_opponent_columns(self):
+        """Default output schema is unchanged (backcompat)."""
+        frame = _make_frame()
+        result = compute_space_created(frame, attacking_team_id=1)
+        assert not any(c.startswith("opponent_") for c in result.columns)
+
+    def test_opponent_sign_convention(self):
+        """created >= 0, destroyed >= 0, net == created - destroyed."""
+        frame = _make_frame()
+        result = compute_space_created(frame, attacking_team_id=1, include_opponent_perspective=True)
+        assert (result["opponent_space_created_m2"] >= 0).all()
+        assert (result["opponent_space_destroyed_m2"] >= 0).all()
+        np.testing.assert_allclose(
+            result["opponent_net_space_m2"],
+            result["opponent_space_created_m2"] - result["opponent_space_destroyed_m2"],
+        )
+
+    def test_defender_mostly_denies_space(self):
+        """A present defender denies opponent space: destroyed dominates created
+        for at least one player (removing a defender frees opponent OBSO)."""
+        frame = _make_frame()
+        result = compute_space_created(frame, attacking_team_id=1, include_opponent_perspective=True)
+        assert (result["opponent_space_destroyed_m2"] > 0).any()
+
+    def test_two_team_guard_primitive(self):
+        """Frame without exactly two team ids raises when opponent perspective is on."""
+        frame = _make_frame()
+        one_team = frame[(frame["team_id"] == 1) | (frame["is_ball"] == True)]  # noqa: E712
+        with pytest.raises(ValueError, match="exactly two"):
+            compute_space_created(one_team, attacking_team_id=1, include_opponent_perspective=True)
+        # ... but stays silent when the perspective is off (backcompat).
+        compute_space_created(one_team, attacking_team_id=1)
+
+    @pytest.mark.parametrize("method", ["spearman", "fernandez_bornn"])
+    def test_opponent_analytical_matches_naive(self, method):
+        """Analytical opponent-side delta matches the naive N-recompute oracle."""
+        from silly_kicks.tracking._obso import _get_default_grids, _interpolate_grid
+        from silly_kicks.tracking._space_creation import (
+            _analytical_leave_one_out,
+            _naive_leave_one_out,
+        )
+        from silly_kicks.tracking.pitch_control import compute_pitch_control
+
+        frame = _make_frame(n_per_team=3)
+        atk_id = 1
+        ball_pos = (52.5, 34.0)
+
+        baseline = compute_pitch_control(
+            frame,
+            atk_id,
+            method=method,
+            decompose=True,
+            ball_position=ball_pos,
+        )
+        ny, nx = baseline.surface.shape
+        tg, eg = _get_default_grids(None, None)
+        ti = _interpolate_grid(tg, (ny, nx))
+        ei = _interpolate_grid(eg, (ny, nx))
+        gx, gy = np.asarray(baseline.grid_x), np.asarray(baseline.grid_y)
+        xx, yy = np.meshgrid(gx, gy)
+        dw = np.exp(-((xx - ball_pos[0]) ** 2) / (2.0 * 26.25**2) - (yy - ball_pos[1]) ** 2 / (2.0 * 17.0**2))
+        et = ti * dw
+        mt = np.max(et)
+        if mt > 1e-10:
+            et = et / mt
+        obso_mult = et * ei
+        baseline_obso = np.clip(np.asarray(baseline.surface) * obso_mult, 0.0, 1.0)
+        dx = float(gx[1] - gx[0])
+        dy = float(gy[1] - gy[0])
+        cell_area = dx * dy
+
+        atk_mask = (frame["team_id"] == atk_id) & (frame["is_ball"] != True)  # noqa: E712
+        atk_players = frame.loc[atk_mask]
+
+        analytical = _analytical_leave_one_out(
+            baseline,
+            baseline_obso,
+            obso_mult,
+            atk_id,
+            atk_players,
+            cell_area,
+            method,
+            include_opponent=True,
+        )
+        naive = _naive_leave_one_out(
+            frame,
+            baseline_obso,
+            obso_mult,
+            atk_id,
+            atk_players,
+            cell_area,
+            method,
+            ball_pos,
+            opponent_team_id=2,
+        )
+
+        assert len(analytical) == len(naive)
+        for a, n in zip(analytical, naive, strict=True):
+            assert a["player_id"] == n["player_id"]
+            for key in (
+                "opponent_space_created_m2",
+                "opponent_space_destroyed_m2",
+                "opponent_net_space_m2",
+            ):
+                np.testing.assert_allclose(
+                    a[key],
+                    n[key],
+                    atol=1e-6,
+                    err_msg=f"{key} mismatch for player {a['player_id']}",
+                )
 
     def test_row_count_preserved(self):
         """Row count unchanged after enrichment."""
@@ -381,11 +592,13 @@ class TestAddSpaceCreation:
 
 class TestSpaceCreationXfns:
     def test_column_count(self):
-        """space_creation_xfns produces 3 lifted xfns (9 VAEP columns)."""
-        from silly_kicks.tracking.features import space_creation_xfns
+        """space_creation_xfns produces 6 lifted xfns (18 VAEP columns), lockstep
+        with _SPACE_CREATION_COLUMNS."""
+        from silly_kicks.tracking.features import _SPACE_CREATION_COLUMNS, space_creation_xfns
 
         xfns = space_creation_xfns(home_team_id=1)
-        assert len(xfns) == 3
+        assert len(xfns) == 6
+        assert len(_SPACE_CREATION_COLUMNS) == 6
 
     def test_introspection_nan(self):
         """xfns produce NaN in introspection mode (frames=None)."""

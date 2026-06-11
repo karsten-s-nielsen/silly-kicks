@@ -11,7 +11,7 @@ def test_variable_resolution_24x16(sb_worldcup_data):
     actions = _worldcup_ltr(sb_worldcup_data)
     m = ExpectedThreat(l=24, w=16).fit(actions)
     assert m.xT.shape == (16, 24)
-    assert m.transition_matrix.shape == (384, 384)
+    assert m.transition_matrix.shape == (384, 384)  # type: ignore[union-attr]
     last = cast(pd.DataFrame, sb_worldcup_data["games"]).iloc[-1]
     acts = cast(pd.DataFrame, sb_worldcup_data[f"actions/game_{last.game_id}"])
     ratings = m.rate(acts)

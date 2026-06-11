@@ -221,7 +221,7 @@ class TestTripwire:
         assert n == 1
         assert df.loc[0, "start_coord_source"] == "tripwire_reverted"
         assert df.loc[0, "start_coord_confidence"] == pytest.approx(0.0)
-        assert np.isnan(df.loc[0, "enriched_start_x"])
+        assert np.isnan(df.loc[0, "enriched_start_x"])  # type: ignore[arg-type]
 
     def test_native_out_of_region_warns_not_reverted(self):
         # native coord out of region is provider truth -> warn-only, keep native

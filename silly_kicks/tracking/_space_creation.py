@@ -45,6 +45,33 @@ class SpaceCreationParams:
     pitch_width: float = 68.0
 
 
+def _unique_team_ids(frame: pd.DataFrame) -> np.ndarray:
+    """Unique non-NaN team ids among non-ball rows of a single frame."""
+    non_ball = frame.loc[frame["is_ball"] != True, "team_id"]  # noqa: E712
+    return np.asarray(non_ball.dropna().unique())
+
+
+def _resolve_opponent_team_id(frame: pd.DataFrame, attacking_team_id: int | str):
+    """Resolve the opposing team id from a two-team frame (dtype-robust).
+
+    Raises ``ValueError`` when the frame does not contain exactly two team
+    ids (excluding ball rows) or when ``attacking_team_id`` does not uniquely
+    match one of them — corrupt input must fail loud, not emit silent NaN.
+    """
+    uniq = _unique_team_ids(frame)
+    if len(uniq) != 2:
+        raise ValueError(
+            "opponent perspective requires exactly two team ids in the frame "
+            f"(excluding ball rows); found {list(uniq)!r}"
+        )
+    match_mask = ids_match(pd.Series(uniq), attacking_team_id).to_numpy()
+    if match_mask.sum() != 1:
+        raise ValueError(
+            f"attacking_team_id {attacking_team_id!r} does not uniquely match the frame team ids {list(uniq)!r}"
+        )
+    return uniq[~match_mask][0]
+
+
 def compute_space_created(
     frame: pd.DataFrame,
     attacking_team_id: int | str,
@@ -57,6 +84,7 @@ def compute_space_created(
     obso_sigma_x: float = 26.25,
     obso_sigma_y: float = 17.0,
     pitch_control_cache: PitchControlCache | None = None,
+    include_opponent_perspective: bool = False,
 ) -> pd.DataFrame:
     """Per-player space creation via leave-one-out differential OBSO.
 
@@ -64,6 +92,16 @@ def compute_space_created(
     frame, re-computes pitch control, and measures the resulting change in
     OBSO surface.  Positive delta = space the player creates; negative =
     space they destroy.
+
+    With ``include_opponent_perspective=True``, the SAME leave-one-out is
+    additionally evaluated on the opposing team's OBSO surface (the player
+    acting as a defender of that surface): ``opponent_space_created_m2`` is
+    opponent OBSO-weighted space that exists because of the player's presence
+    (>= 0), ``opponent_space_destroyed_m2`` is opponent space the player's
+    presence denies (>= 0; the defensive-value reading), and
+    ``opponent_net_space_m2`` is their signed difference. Both perspectives
+    share the identical grid, OBSO sigmas, transition/EPV grids, and
+    pitch-control method, so ``*_m2`` magnitudes are directly comparable.
 
     Parameters
     ----------
@@ -83,12 +121,18 @@ def compute_space_created(
         Pitch control model (default ``"spearman"``).
     obso_sigma_x, obso_sigma_y : float
         Gaussian decay sigmas for OBSO distance weighting (meters).
+    include_opponent_perspective : bool
+        When True, also emit the ``opponent_*`` triplet (see above) and
+        REQUIRE the frame to contain exactly two team ids (raises
+        ``ValueError`` otherwise — corrupt input fails loud).
 
     Returns
     -------
     pd.DataFrame
         Columns: ``player_id``, ``team_id``, ``space_created_m2``,
-        ``space_destroyed_m2``, ``net_space_m2``.
+        ``space_destroyed_m2``, ``net_space_m2`` (+
+        ``opponent_space_created_m2``, ``opponent_space_destroyed_m2``,
+        ``opponent_net_space_m2`` when ``include_opponent_perspective=True``).
 
     Examples
     --------
@@ -101,6 +145,11 @@ def compute_space_created(
 
     if params is None:
         params = SpaceCreationParams()
+
+    opponent_team_id = None
+    if include_opponent_perspective:
+        # Loud two-team guard (corrupt frames never degrade to silent NaN).
+        opponent_team_id = _resolve_opponent_team_id(frame, attacking_team_id)
 
     transition_grid, epv_grid = _get_default_grids(transition_grid, epv_grid)
 
@@ -163,15 +212,20 @@ def compute_space_created(
     atk_players = frame.loc[atk_mask]
 
     if atk_players.empty:
-        return pd.DataFrame(
-            columns=[
-                "player_id",
-                "team_id",
-                "space_created_m2",
-                "space_destroyed_m2",
-                "net_space_m2",
+        base_cols = [
+            "player_id",
+            "team_id",
+            "space_created_m2",
+            "space_destroyed_m2",
+            "net_space_m2",
+        ]
+        if include_opponent_perspective:
+            base_cols += [
+                "opponent_space_created_m2",
+                "opponent_space_destroyed_m2",
+                "opponent_net_space_m2",
             ]
-        )
+        return pd.DataFrame(columns=base_cols)
 
     # Cell area
     dx = float(grid_x[1] - grid_x[0]) if len(grid_x) > 1 else 1.0
@@ -188,6 +242,7 @@ def compute_space_created(
             atk_players,
             cell_area,
             pitch_control_method,
+            include_opponent=include_opponent_perspective,
         )
     else:
         results = _naive_leave_one_out(
@@ -199,6 +254,7 @@ def compute_space_created(
             cell_area,
             pitch_control_method,
             ball_position,
+            opponent_team_id=opponent_team_id,
         )
 
     return pd.DataFrame(results)
@@ -212,12 +268,20 @@ def _analytical_leave_one_out(
     atk_players: pd.DataFrame,
     cell_area: float,
     method: Literal["spearman", "fernandez_bornn"],
+    *,
+    include_opponent: bool = False,
 ) -> list[dict]:
     """Analytical per-player delta — 1 PC computation instead of N+1.
 
     Exploits additive decomposition of Spearman (ratio) and Fernandez-Bornn
     (sigmoid) pitch control models. Voronoi is NOT decomposable and must
     use the naive fallback.
+
+    With ``include_opponent=True``, the opponent-attacking surface is the
+    exact complement of the same decomposition (Spearman: def/(att+def);
+    F&B: sigmoid(def-att)), so the opponent-side leave-one-out (the player
+    as defender of that surface) costs zero extra PC computations and shares
+    the identical OBSO multiplier.
     """
     # per_player_influence: (n_players, ny, nx) — post-GK-weighting influence
     ppi = np.asarray(baseline_surface.per_player_influence)  # type: ignore[union-attr]
@@ -230,6 +294,16 @@ def _analytical_leave_one_out(
     att_total = ppi[is_atk].sum(axis=0)  # (ny, nx)
     def_total = ppi[~is_atk].sum(axis=0)  # (ny, nx)
 
+    baseline_opp_obso = None
+    if include_opponent:
+        if method == "spearman":
+            total = att_total + def_total
+            safe_total = np.maximum(total, 1e-10)
+            base_opp_pc = np.where(total > 1e-10, def_total / safe_total, 0.5)
+        else:  # fernandez_bornn
+            base_opp_pc = 1.0 / (1.0 + np.exp(-(def_total - att_total)))
+        baseline_opp_obso = np.clip(base_opp_pc * obso_multiplier, 0.0, 1.0)
+
     results: list[dict] = []
     for player_row in atk_players.itertuples():
         pid = player_row.player_id
@@ -238,15 +312,18 @@ def _analytical_leave_one_out(
         pid_matches = np.flatnonzero(p_ids == pid)
         if len(pid_matches) == 0:
             # Player not in PC (dropped by NaN filter) → zero contribution
-            results.append(
-                {
-                    "player_id": pid,
-                    "team_id": attacking_team_id,
-                    "space_created_m2": 0.0,
-                    "space_destroyed_m2": 0.0,
-                    "net_space_m2": 0.0,
-                }
-            )
+            row = {
+                "player_id": pid,
+                "team_id": attacking_team_id,
+                "space_created_m2": 0.0,
+                "space_destroyed_m2": 0.0,
+                "net_space_m2": 0.0,
+            }
+            if include_opponent:
+                row["opponent_space_created_m2"] = 0.0
+                row["opponent_space_destroyed_m2"] = 0.0
+                row["opponent_net_space_m2"] = 0.0
+            results.append(row)
             continue
 
         player_inf = ppi[pid_matches[0]]  # (ny, nx)
@@ -265,15 +342,32 @@ def _analytical_leave_one_out(
         space_created = float(np.sum(np.maximum(delta, 0.0)) * cell_area)
         space_destroyed = float(np.sum(np.abs(np.minimum(delta, 0.0))) * cell_area)
 
-        results.append(
-            {
-                "player_id": pid,
-                "team_id": attacking_team_id,
-                "space_created_m2": space_created,
-                "space_destroyed_m2": space_destroyed,
-                "net_space_m2": space_created - space_destroyed,
-            }
-        )
+        row = {
+            "player_id": pid,
+            "team_id": attacking_team_id,
+            "space_created_m2": space_created,
+            "space_destroyed_m2": space_destroyed,
+            "net_space_m2": space_created - space_destroyed,
+        }
+
+        if include_opponent:
+            # Opponent-attacking surface without this player: the player leaves
+            # the DEFENSE of that surface (same removal, complementary side).
+            if method == "spearman":
+                total = removed_att + def_total
+                safe_total = np.maximum(total, 1e-10)
+                removed_opp_pc = np.where(total > 1e-10, def_total / safe_total, 0.5)
+            else:  # fernandez_bornn
+                removed_opp_pc = 1.0 / (1.0 + np.exp(-(def_total - removed_att)))
+            removed_opp_obso = np.clip(removed_opp_pc * obso_multiplier, 0.0, 1.0)
+            delta_opp = baseline_opp_obso - removed_opp_obso
+            opp_created = float(np.sum(np.maximum(delta_opp, 0.0)) * cell_area)
+            opp_destroyed = float(np.sum(np.abs(np.minimum(delta_opp, 0.0))) * cell_area)
+            row["opponent_space_created_m2"] = opp_created
+            row["opponent_space_destroyed_m2"] = opp_destroyed
+            row["opponent_net_space_m2"] = opp_created - opp_destroyed
+
+        results.append(row)
 
     return results
 
@@ -287,9 +381,28 @@ def _naive_leave_one_out(
     cell_area: float,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"],
     ball_position: tuple[float, float],
+    *,
+    opponent_team_id=None,
 ) -> list[dict]:
-    """Naive N-recompute fallback for non-decomposable models (Voronoi)."""
+    """Naive N-recompute fallback for non-decomposable models (Voronoi).
+
+    When ``opponent_team_id`` is provided, the opponent-attacking surface is
+    additionally recomputed per removal (explicit PC calls — correct for any
+    method, including non-complementary ones) with the identical OBSO
+    multiplier, yielding the ``opponent_*`` triplet.
+    """
     from .pitch_control import compute_pitch_control
+
+    include_opponent = opponent_team_id is not None
+    baseline_opp_obso = None
+    if include_opponent:
+        baseline_opp_surface = compute_pitch_control(
+            frame,
+            opponent_team_id,
+            method=pitch_control_method,
+            ball_position=ball_position,
+        )
+        baseline_opp_obso = np.clip(np.asarray(baseline_opp_surface.surface) * obso_multiplier, 0.0, 1.0)
 
     results: list[dict] = []
     for player_row in atk_players.itertuples():
@@ -311,14 +424,29 @@ def _naive_leave_one_out(
         space_created = float(np.sum(np.maximum(delta, 0.0)) * cell_area)
         space_destroyed = float(np.sum(np.abs(np.minimum(delta, 0.0))) * cell_area)
 
-        results.append(
-            {
-                "player_id": pid,
-                "team_id": attacking_team_id,
-                "space_created_m2": space_created,
-                "space_destroyed_m2": space_destroyed,
-                "net_space_m2": space_created - space_destroyed,
-            }
-        )
+        row = {
+            "player_id": pid,
+            "team_id": attacking_team_id,
+            "space_created_m2": space_created,
+            "space_destroyed_m2": space_destroyed,
+            "net_space_m2": space_created - space_destroyed,
+        }
+
+        if include_opponent:
+            removed_opp_surface = compute_pitch_control(
+                removed_frame,
+                opponent_team_id,
+                method=pitch_control_method,
+                ball_position=ball_position,
+            )
+            removed_opp_obso = np.clip(np.asarray(removed_opp_surface.surface) * obso_multiplier, 0.0, 1.0)
+            delta_opp = baseline_opp_obso - removed_opp_obso
+            opp_created = float(np.sum(np.maximum(delta_opp, 0.0)) * cell_area)
+            opp_destroyed = float(np.sum(np.abs(np.minimum(delta_opp, 0.0))) * cell_area)
+            row["opponent_space_created_m2"] = opp_created
+            row["opponent_space_destroyed_m2"] = opp_destroyed
+            row["opponent_net_space_m2"] = opp_created - opp_destroyed
+
+        results.append(row)
 
     return results

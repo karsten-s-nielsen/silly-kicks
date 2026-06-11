@@ -883,7 +883,7 @@ class TestBlockingRateSmoke:
             if pd.isna(fid_raw):
                 continue
             try:
-                frame_data = frame_groups.get_group((row["period_id"], int(float(fid_raw))))
+                frame_data = frame_groups.get_group((row["period_id"], int(float(fid_raw))))  # type: ignore[arg-type]
             except KeyError:
                 continue
 

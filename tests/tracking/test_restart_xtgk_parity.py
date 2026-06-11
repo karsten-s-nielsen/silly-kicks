@@ -42,7 +42,7 @@ def test_throwin_not_imputed_in_shim_but_imputed_in_general():
     # row 1 is a throw_in: the shim's goalkick-only impute_types means its origin is NEVER imputed
     # (NaN -> unresolved), so no revert step is needed.
     assert legacy.loc[1, "origin_source"] == "unresolved"
-    assert np.isnan(legacy.loc[1, "origin_x"])
+    assert np.isnan(legacy.loc[1, "origin_x"])  # type: ignore[arg-type]
     # general DOES impute it (side from native end_y=20 -> touchline 0; along-line x from next_event
     # start_x=30) -> restart_prior at (30, 0).
     assert general.loc[1, "start_coord_source"] == "restart_prior"

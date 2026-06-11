@@ -259,8 +259,8 @@ def standard_frame():
         (0.5, -4.0),
     ]
     return _make_two_team_frame(
-        home_positions=home_pos,
-        away_positions=away_pos,
+        home_positions=home_pos,  # type: ignore[arg-type]
+        away_positions=away_pos,  # type: ignore[arg-type]
         home_velocities=home_vel,
         away_velocities=away_vel,
     )
@@ -735,8 +735,8 @@ class TestPartialNaNVelocities:
         home_vel = [(2.0, 0.5), (np.nan, np.nan), (0.0, 0.0), (np.nan, np.nan), (3.0, -1.0)]
         away_vel = [(-1.0, 0.0), (np.nan, np.nan), (2.0, 1.0), (0.0, 0.0), (np.nan, np.nan)]
         frame = _make_two_team_frame(
-            home_positions=home_pos,
-            away_positions=away_pos,
+            home_positions=home_pos,  # type: ignore[arg-type]
+            away_positions=away_pos,  # type: ignore[arg-type]
             home_velocities=home_vel,
             away_velocities=away_vel,
         )
@@ -760,8 +760,8 @@ class TestPartialNaNVelocities:
         away_pos = [(80, 20), (85, 30), (75, 40), (70, 55)]
         nan_vel = [(np.nan, np.nan)] * 4
         frame = _make_two_team_frame(
-            home_positions=home_pos,
-            away_positions=away_pos,
+            home_positions=home_pos,  # type: ignore[arg-type]
+            away_positions=away_pos,  # type: ignore[arg-type]
             home_velocities=nan_vel,
             away_velocities=nan_vel,
         )

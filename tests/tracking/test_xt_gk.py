@@ -121,7 +121,7 @@ class TestXtGkParams:
     def test_default_is_frozen_and_in_range(self):
         p = XtGkParams()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            p.gamma = 0.5  # frozen
+            p.gamma = 0.5  # type: ignore[misc]  # frozen
         assert 0.1 <= p.gamma <= 0.4
         assert 0.3 <= p.delta <= 0.8
         assert 0.8 <= p.eta <= 0.9
@@ -351,9 +351,9 @@ class TestComputeXtGk:
         out = compute_xt_gk(actions, frames, xt=_fitted_xt())
         assert list(out.columns) == _XT_GK_COLS + _PROVENANCE_COLS  # value cols + provenance
         assert len(out) == len(actions)
-        assert np.isnan(out.loc[2, "xt_gk"])  # out-of-scope -> NaN
+        assert np.isnan(out.loc[2, "xt_gk"])  # type: ignore[arg-type]  # out-of-scope -> NaN
         assert out.loc[2, "xt_gk_origin_source"] is None  # off-scope -> NaN provenance
-        assert not np.isnan(out.loc[0, "xt_gk_base"])  # in-scope -> value
+        assert not np.isnan(out.loc[0, "xt_gk_base"])  # type: ignore[arg-type]  # in-scope -> value
         assert out.loc[0, "xt_gk_origin_source"] == "native"  # native goalkick origin
         # Task 8 provenance: sportec frames -> "gs" variant; scored row -> "model" source; off-scope None.
         assert out.loc[0, "xt_gk_completion_variant"] == "gs"
@@ -370,9 +370,9 @@ class TestComputeXtGk:
         off = (frames["frame_id"] == 0) & (frames["player_id"] == 10)
         frames.loc[off, "x"] = 40.0  # GK off position -> tracking tier declines -> prior
         out = compute_xt_gk(actions, frames, xt=_fitted_xt())
-        assert not np.isnan(out.loc[0, "xt_gk"])  # scored (was NaN before the coord derivation)
+        assert not np.isnan(out.loc[0, "xt_gk"])  # type: ignore[arg-type]  # scored (was NaN before)
         assert out.loc[0, "xt_gk_origin_source"] == "goalkick_prior"
-        assert out.loc[0, "xt_gk_origin_confidence"] < 0.7
+        assert out.loc[0, "xt_gk_origin_confidence"] < 0.7  # type: ignore[operator]
 
     def test_unresolvable_destination_routes_to_nan(self):
         # an in-scope goalkick whose destination cannot be resolved (NaN native end AND no
@@ -383,7 +383,7 @@ class TestComputeXtGk:
         actions.loc[0, "end_y"] = np.nan
         frames = _frames_for(actions)
         out = compute_xt_gk(actions, frames, xt=_fitted_xt())
-        assert np.isnan(out.loc[0, "xt_gk"])
+        assert np.isnan(out.loc[0, "xt_gk"])  # type: ignore[arg-type]
         assert out.loc[0, "xt_gk_dest_source"] == "unresolved"
         assert len(out) == len(actions)
 
@@ -394,7 +394,7 @@ class TestComputeXtGk:
         actions.loc[0, "time_seconds"] = 999.0  # no frame near this time -> unlinked
         frames = _frames_for(actions)
         out = compute_xt_gk(actions, frames, xt=_fitted_xt())
-        assert np.isnan(out.loc[0, "xt_gk"])  # unlinked -> NaN, no crash
+        assert np.isnan(out.loc[0, "xt_gk"])  # type: ignore[arg-type]  # unlinked -> NaN, no crash
         assert len(out) == len(actions)
 
     def test_rav_uses_completion_model_not_das(self):
@@ -441,7 +441,7 @@ class TestComputeXtGk:
         actions = _gk_actions().iloc[[1]].copy()  # start_x=25 -> defensive third
         frames = _frames_for(actions)
         out = compute_xt_gk(actions, frames, xt=_gk_realistic_xt(), params=XtGkParams(phi=1.0))
-        assert out.loc[1, "xt_gk_dzv"] > 0.0
+        assert out.loc[1, "xt_gk_dzv"] > 0.0  # type: ignore[operator]
         # NOTE (review #3): we deliberately do NOT also assert with_dzv.xt_gk >
         # without_dzv.xt_gk -- that routes the claim through the composite's xC (can be NaN
         # on a synthetic fixture -> NaN>NaN false-fail). assertion 1 + the P1-3 _composite
@@ -493,8 +493,8 @@ class TestComputeXtGk:
         high = pd.concat([low, extra], ignore_index=True)
         out_low = compute_xt_gk(actions, low, xt=_fitted_xt())
         out_high = compute_xt_gk(actions, high, xt=_fitted_xt())
-        assert out_high.loc[0, "xt_gk_pressure"] > out_low.loc[0, "xt_gk_pressure"]
-        assert out_high.loc[0, "xt_gk_pev"] >= out_low.loc[0, "xt_gk_pev"]
+        assert out_high.loc[0, "xt_gk_pressure"] > out_low.loc[0, "xt_gk_pressure"]  # type: ignore[operator]
+        assert out_high.loc[0, "xt_gk_pev"] >= out_low.loc[0, "xt_gk_pev"]  # type: ignore[operator]
 
 
 class TestAddXtGk:
@@ -524,7 +524,7 @@ class TestAddXtGk:
         frames = _frames_for(actions)
         out = add_xt_gk(actions, frames, _fitted_xt(), home_team_id=1)
         assert len(out) == len(actions)
-        assert np.isnan(out.loc[0, "xt_gk"])
+        assert np.isnan(out.loc[0, "xt_gk"])  # type: ignore[arg-type]
 
 
 class TestXtGkXfns:

@@ -167,7 +167,7 @@ def main() -> None:
                 [pd.read_parquet(p) for p in action_parquets],
                 ignore_index=True,
             )
-            actions_by_game = dict(list(actions.groupby("game_id")))
+            actions_by_game = dict(list(actions.groupby("game_id")))  # type: ignore[reportAssignmentType]
             del actions  # Release concatenated copy
             print(f"Loaded actions for {len(actions_by_game)} games")
 
@@ -405,10 +405,16 @@ def main() -> None:
     _par_n = min(20000, len(features))
     _par_idx = np.random.default_rng(0).choice(len(features), _par_n, replace=False)
     _par_Xv = features.iloc[_par_idx][features.columns].values
-    _par_sk = np.column_stack([final_model._sk_reg_x.predict(_par_Xv), final_model._sk_reg_y.predict(_par_Xv)])
+    # The sklearn regressors + boosted tree-node arrays are populated by the fresh fit above
+    # (this gate runs only on the just-fitted model); narrow off Optional for the type checker.
+    _sk_reg_x, _sk_reg_y = final_model._sk_reg_x, final_model._sk_reg_y
+    _tree_nodes, _tree_nodes_y = final_model._tree_nodes, final_model._tree_nodes_y
+    assert _sk_reg_x is not None and _sk_reg_y is not None  # noqa: S101
+    assert _tree_nodes is not None and _tree_nodes_y is not None  # noqa: S101
+    _par_sk = np.column_stack([_sk_reg_x.predict(_par_Xv), _sk_reg_y.predict(_par_Xv)])
     _par_err = float(np.abs(final_model.predict_mean(features.iloc[_par_idx]) - _par_sk).max())
-    _par_ncat = sum(int(t["is_categorical"].sum()) for t in final_model._tree_nodes) + sum(
-        int(t["is_categorical"].sum()) for t in final_model._tree_nodes_y
+    _par_ncat = sum(int(t["is_categorical"].sum()) for t in _tree_nodes) + sum(
+        int(t["is_categorical"].sum()) for t in _tree_nodes_y
     )
     print(f"PARITY GATE: max|predict_mean - sklearn| = {_par_err:.2e} over {_par_n} rows; n_cat = {_par_ncat}")
     if _par_err > 1e-6 or _par_ncat != 0:
@@ -461,7 +467,7 @@ def main() -> None:
         )
         print(f"Permutation importance: {time.time() - pi_t0:.1f}s")
         importances = sorted(
-            zip(features.columns, pi.importances_mean, strict=True),
+            zip(features.columns, pi.importances_mean, strict=True),  # type: ignore[reportAttributeAccessIssue]
             key=lambda x: -x[1],
         )
         print("Top 10 features:")

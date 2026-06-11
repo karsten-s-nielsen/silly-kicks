@@ -49,8 +49,12 @@ def _expected_lookup(frames: pd.DataFrame) -> dict:
         bx, by = bpos.get((r.game_id, r.period_id, r.frame_id), (np.nan, np.nan))
         # Mirror the implementation's exact formula (np.sqrt of squares, NOT np.hypot) —
         # they differ at the ULP level and that gap is platform-dependent (libm).
-        d = float("inf") if (np.isnan(bx) or np.isnan(by)) else float(np.sqrt((r.x - bx) ** 2 + (r.y - by) ** 2))
-        out[(r.game_id, r.period_id, int(r.frame_id), str(r.player_id))] = d
+        d = (
+            float("inf")
+            if (np.isnan(bx) or np.isnan(by))  # type: ignore[arg-type]
+            else float(np.sqrt((r.x - bx) ** 2 + (r.y - by) ** 2))  # type: ignore[operator,arg-type]
+        )
+        out[(r.game_id, r.period_id, int(r.frame_id), str(r.player_id))] = d  # type: ignore[arg-type]
     return out
 
 

@@ -44,7 +44,7 @@ class TestResolveGkGeometry:
         assert g.loc[1, "origin_x"] == pytest.approx(5.5)
         assert g.loc[1, "origin_y"] == pytest.approx(34.0)
         assert g.loc[1, "origin_source"] == "goalkick_prior"
-        assert g.loc[1, "origin_confidence"] < 0.7
+        assert g.loc[1, "origin_confidence"] < 0.7  # type: ignore[operator]
 
     def test_tracking_gk_used_only_when_in_goal_area(self):
         frames = pd.DataFrame(
@@ -65,7 +65,7 @@ class TestResolveGkGeometry:
         g = resolve_gk_geometry(_actions(), frames=frames)
         assert g.loc[1, "origin_source"] == "tracking_gk"
         assert g.loc[1, "origin_x"] == pytest.approx(4.0)
-        assert 0.6 <= g.loc[1, "origin_confidence"] < 1.0
+        assert 0.6 <= g.loc[1, "origin_confidence"] < 1.0  # type: ignore[operator]
 
     def test_tracking_gk_offposition_clamped_to_prior(self):
         frames = pd.DataFrame(
@@ -91,7 +91,7 @@ class TestResolveGkGeometry:
         # row 1 has NaN end and is the LAST row -> no next-event -> unresolved
         g = resolve_gk_geometry(_actions(end_x=[55.0, np.nan]), frames=None)
         assert g.loc[0, "dest_source"] == "native"
-        assert np.isnan(g.loc[1, "dest_x"])
+        assert np.isnan(g.loc[1, "dest_x"])  # type: ignore[arg-type]
         assert g.loc[1, "dest_source"] == "unresolved"
 
     def test_nan_dest_uses_next_event_within_period(self):
@@ -113,7 +113,7 @@ class TestResolveGkGeometry:
         a.loc[1, "start_x"] = 40.0
         a.loc[1, "start_y"] = 30.0
         g = resolve_gk_geometry(a, frames=None)
-        assert np.isnan(g.loc[0, "dest_x"])  # boundary guard -> not used
+        assert np.isnan(g.loc[0, "dest_x"])  # type: ignore[arg-type]  # boundary guard -> not used
         assert g.loc[0, "dest_source"] == "unresolved"
 
     def test_does_not_mutate_input(self):
@@ -146,7 +146,7 @@ class TestResolveGkGeometryFrozenContract:
         a = _actions(type_id=[_THROW, _GK], start_x=[np.nan, 5.0], start_y=[np.nan, 34.0])
         g = resolve_gk_geometry(a, frames=None)
         assert g.loc[0, "origin_source"] == "unresolved"
-        assert np.isnan(g.loc[0, "origin_x"])
+        assert np.isnan(g.loc[0, "origin_x"])  # type: ignore[arg-type]
 
     def test_offposition_gk_goalkick_falls_to_rule_point(self):
         # (Major-2a) off-position GK must NOT be used; falls to goalkick_prior.
@@ -173,7 +173,7 @@ class TestResolveGkGeometryFrozenContract:
         # (Major-2b) NaN end + last row -> dest unresolved (must STAY unresolved post-refactor).
         g = resolve_gk_geometry(_actions(end_x=[55.0, np.nan], end_y=[34.0, np.nan]), frames=None)
         assert g.loc[1, "dest_source"] == "unresolved"
-        assert np.isnan(g.loc[1, "dest_x"])
+        assert np.isnan(g.loc[1, "dest_x"])  # type: ignore[arg-type]
 
 
 _FIX = pathlib.Path(__file__).parent / "_fixtures"

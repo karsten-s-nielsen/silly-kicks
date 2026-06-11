@@ -45,7 +45,7 @@ def test_skillcorner_derived_gk_matches_roster():
         match_dir = SAMPLE_DIR / mid
         meta_path = find_artifact(match_dir, "_match.json")
         trk_path = find_artifact(match_dir, "_tracking_extrapolated.jsonl")
-        with open(meta_path, encoding="utf-8") as fh:
+        with open(meta_path, encoding="utf-8") as fh:  # type: ignore[arg-type]
             meta = json.load(fh)
 
         truth = build_skillcorner_gk_truth(meta)

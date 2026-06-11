@@ -164,7 +164,7 @@ def test_home_direction_is_ltr_after_normalization(kwargs):
     home_dirs = out.loc[
         (~out["is_ball"]) & (out["team_id"] == home_team_id),
         "team_attacking_direction",
-    ].unique()
+    ].unique()  # type: ignore[union-attr]
     assert set(home_dirs) == {"ltr"}, f"Home directions after normalization: {home_dirs}"
 
 

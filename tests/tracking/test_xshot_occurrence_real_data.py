@@ -152,7 +152,7 @@ def _build_synthetic_canonical_frame(tid_dtype: str) -> pd.DataFrame:
     if tid_dtype == "object":
         df["team_id"] = df["team_id"].astype(str)
     else:
-        df["team_id"] = df["team_id"].astype(tid_dtype)
+        df["team_id"] = df["team_id"].astype(tid_dtype)  # type: ignore[arg-type]
     return df
 
 

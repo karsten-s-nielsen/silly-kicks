@@ -5,7 +5,7 @@ import pandas as pd
 from silly_kicks.tracking.utils import play_left_to_right
 
 
-def _row(period_id, frame_id, player_id, team_id, x, y, *, is_ball=False, td="rtl"):
+def _row(period_id, frame_id, player_id, team_id, x, y, *, is_ball=False, td: str | None = "rtl"):
     return {
         "game_id": 1,
         "period_id": period_id,

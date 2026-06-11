@@ -181,15 +181,15 @@ class TestDefendingGkFromFrames:
         from silly_kicks.tracking._gk_resolve import defending_gk_from_frames
 
         frames = _make_frames(
-            gk_player_id_away="DFL-OBJ-200",
-            away_team_id="team_b",
-            home_team_id="team_a",
-            gk_player_id_home="DFL-OBJ-100",
+            gk_player_id_away="DFL-OBJ-200",  # type: ignore[arg-type]
+            away_team_id="team_b",  # type: ignore[arg-type]
+            home_team_id="team_a",  # type: ignore[arg-type]
+            gk_player_id_home="DFL-OBJ-100",  # type: ignore[arg-type]
         )
         # Fix outfield player IDs to strings too
         frames["player_id"] = frames["player_id"].astype(object)
         frames["team_id"] = frames["team_id"].astype(object)
-        actions = _make_actions(team_id="team_a")
+        actions = _make_actions(team_id="team_a")  # type: ignore[arg-type]
         actions["player_id"] = actions["player_id"].astype(object)
         actions["team_id"] = actions["team_id"].astype(object)
         result = defending_gk_from_frames(actions, frames)

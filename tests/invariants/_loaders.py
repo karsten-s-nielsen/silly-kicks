@@ -49,9 +49,9 @@ def _adapt_statsbomb_raw(raw: list[dict[str, object]], game_id: int) -> pd.DataF
                 "event_id": e.get("id"),
                 "period_id": e.get("period"),
                 "timestamp": e.get("timestamp"),
-                "team_id": (e.get("team") or {}).get("id"),
-                "player_id": (e.get("player") or {}).get("id"),
-                "type_name": (e.get("type") or {}).get("name"),
+                "team_id": (e.get("team") or {}).get("id"),  # type: ignore[attr-defined]
+                "player_id": (e.get("player") or {}).get("id"),  # type: ignore[attr-defined]
+                "type_name": (e.get("type") or {}).get("name"),  # type: ignore[attr-defined]
                 "location": e.get("location"),
                 "extra": {k: v for k, v in e.items() if k not in _top_level_keys},
             }

@@ -20,7 +20,7 @@ def wc2018_actions() -> pd.DataFrame:
     games = pd.read_hdf(_H5_PATH, "games")
     game_id = games.iloc[0]["game_id"]
     actions = pd.read_hdf(_H5_PATH, f"actions/game_{game_id}")
-    return add_names(actions)
+    return add_names(actions)  # type: ignore[arg-type]
 
 
 class TestWindowActionE2E:

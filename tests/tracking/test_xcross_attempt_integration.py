@@ -52,7 +52,7 @@ def test_objective_cache_equivalence():
             },
         ),
     ]
-    assert_cache_equivalence(obj, candidates)
+    assert_cache_equivalence(obj, candidates)  # type: ignore[arg-type]
 
 
 # --- Task 11: training CLI ---
@@ -304,7 +304,7 @@ def test_objective_cache_equivalence_with_train_subsample():
             },
         ),
     ]
-    assert_cache_equivalence(obj, candidates)
+    assert_cache_equivalence(obj, candidates)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("seed,ns", [(42, None), (7, None), (7, 0.5)])

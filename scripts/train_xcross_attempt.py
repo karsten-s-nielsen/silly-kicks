@@ -45,7 +45,9 @@ def _iter_matches_from_pining(providers, max_per_provider):
     yield from load_matches(providers=providers, max_per_provider=max_per_provider)
 
 
-def _extract(source, horizon_seconds, *, probe_keep=2):
+def _extract(
+    source, horizon_seconds, *, probe_keep=2
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, tuple[list, list, object]]:
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
     from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL, prepare_xcross_training_data
 
@@ -113,6 +115,8 @@ def _hpo_once(X, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, 
         store=StoreConfig(kind="sqlite", path=str(out_dir / f"study_{tag}.db")),
     )
     result = OptunaStrategy(cfg, seed=42).run(obj, backend=InProcessBackend())
+    if result.best is None:
+        raise RuntimeError("HPO produced no best candidate")
     return dict(result.best.candidate.params)
 
 

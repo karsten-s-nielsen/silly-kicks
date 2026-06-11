@@ -361,7 +361,7 @@ def _extract_metrica(out_path: Path) -> None:
                 "event_id": i,
                 "type": str(typ).upper() if typ else "GENERIC",
                 "subtype": str(sub).upper() if sub else None,
-                "period": int(period),
+                "period": int(period),  # type: ignore[reportArgumentType]
                 "start_time_s": float(start_time),
                 "end_time_s": float(end_time),
                 "player": str(player) if player else None,

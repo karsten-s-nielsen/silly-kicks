@@ -69,14 +69,17 @@ def _make_tracking_frame(
     return pd.DataFrame(rows)
 
 
-def _make_simple_pc_surface() -> object:
+class MockSurface:
+    surface: np.ndarray
+    grid_x: np.ndarray
+    grid_y: np.ndarray
+
+
+def _make_simple_pc_surface() -> MockSurface:
     """Create a mock PitchControlSurface-like object."""
     grid_x = np.linspace(0, 105, 50)
     grid_y = np.linspace(0, 68, 32)
     surface = np.random.RandomState(42).uniform(0.3, 0.7, (32, 50))
-
-    class MockSurface:
-        pass
 
     s = MockSurface()
     s.surface = surface
@@ -216,7 +219,9 @@ class TestComputeObsoSurface:
         grid_y = np.linspace(0, 68, 32)
 
         class UniformPC:
-            pass
+            surface: np.ndarray
+            grid_x: np.ndarray
+            grid_y: np.ndarray
 
         pc = UniformPC()
         pc.surface = np.full((32, 50), 0.5)

@@ -97,13 +97,13 @@ class TestGkInfluenceInvariants:
         away_pos = [(80, 20), (85, 30), (80, 40), (85, 50)]
 
         frame_close = _make_two_team_frame(
-            home_positions=outfield,
-            away_positions=away_pos,
+            home_positions=outfield,  # type: ignore[arg-type]
+            away_positions=away_pos,  # type: ignore[arg-type]
             home_gk_pos=(3.0, 34.0),
         )
         frame_far = _make_two_team_frame(
-            home_positions=outfield,
-            away_positions=away_pos,
+            home_positions=outfield,  # type: ignore[arg-type]
+            away_positions=away_pos,  # type: ignore[arg-type]
             home_gk_pos=(30.0, 34.0),
         )
         gi_close = compute_gk_influence(
