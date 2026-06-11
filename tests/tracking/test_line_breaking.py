@@ -58,6 +58,63 @@ class TestDetectLineBreaking:
         assert row["lines_broken__ward"] == 3
         assert row["line_breaking_type__ward"] == "between_lines"
 
+    def test_nan_team_action_routes_to_na_not_crash(self):
+        """A NaN-team action (the GS null-actor duel/foul residue, Int64) on a
+        HEALTHY two-team frame must NaN-route — not crash the opponent-set
+        list-comp (`t != <NA>` -> 'boolean value of NA is ambiguous'). This is
+        the masked second crash the early opponent-resolution guard hid."""
+        from silly_kicks.tracking._line_breaking import detect_line_breaking
+
+        frames = _make_three_line_fixture()
+        actions = _make_action_at(
+            time_seconds=1.0,
+            player_id=1,
+            team_id=1,
+            start_x=10.0,
+            start_y=34.0,
+            end_x=100.0,
+            end_y=34.0,
+        )
+        actions["team_id"] = pd.array([pd.NA], dtype="Int64")
+        actions["player_id"] = pd.array([pd.NA], dtype="Int64")
+
+        result = detect_line_breaking(actions, frames, home_team_id=1)  # must not raise
+        row = result.iloc[0]
+        assert pd.isna(row["line_break__ward"]), "NaN-team action must NaN-route line_break__ward"
+        assert pd.isna(row["lines_broken__ward"])
+        assert row["line_breaking_type__ward"] is None
+
+    def test_opponent_identified_across_id_dtype_mismatch(self):
+        """Int64 action team_id vs string frame team_id (the GS-on-tracking dtype
+        pairing): the opponent set must EXCLUDE the actor's own team via the
+        ADR-019 same_id, not a raw `!=` that ('1' != 1 -> True) keeps both teams
+        and picks the actor's own line as 'opponent' (silent ward miscompute)."""
+        from silly_kicks.tracking._line_breaking import detect_line_breaking
+
+        frames = _make_three_line_fixture()  # team 1 at x=20-40, team 2 in 3 lines at x=50/70/90
+        frames = frames.copy()
+        frames["team_id"] = frames["team_id"].astype("object").map(lambda v: None if pd.isna(v) else str(int(v)))
+        # Start the pass BETWEEN the actor's own team (x<=40) and the opponent (x>=50),
+        # so the correct opponent (team '2') yields a 3-line break, but a raw `!=` that
+        # mis-picks the actor's own team '1' (entirely behind start_x=45) yields NO break.
+        actions = _make_action_at(
+            time_seconds=1.0,
+            player_id=1,
+            team_id=1,
+            start_x=45.0,
+            start_y=34.0,
+            end_x=100.0,
+            end_y=34.0,
+        )
+        actions["team_id"] = pd.array([1], dtype="Int64")  # Int64 action vs string frames
+
+        result = detect_line_breaking(actions, frames, home_team_id=1)
+        row = result.iloc[0]
+        # same_id -> opponent is team '2' (3 lines ahead) -> all 3 broken.
+        # raw `!=` -> opponent mis-resolved to team '1' (behind start_x=45) -> no break.
+        assert row["line_break__ward"] == True  # noqa: E712
+        assert row["lines_broken__ward"] == 3
+
     def test_pass_through_one_line(self):
         """Pass from x=55 to x=75 should break midfield line only."""
         from silly_kicks.tracking._line_breaking import detect_line_breaking

@@ -76,7 +76,17 @@ def convert_to_atomic(
     atomic_actions = _add_dribbles(atomic_actions)
     atomic_actions = _convert_columns(atomic_actions, extra_columns=preserve_native)
     atomic_actions = _simplify(atomic_actions)
-    return _finalize_output(atomic_actions, ATOMIC_SPADL_COLUMNS, extra_columns=preserve_native)
+    # Preserve the source id dtypes: atomic conversion is a structural transform
+    # and must not reinterpret team_id / player_id. Providers carry non-nullable
+    # int64 (statsbomb / opta), nullable Int64 (gradientsports — NaN on the
+    # null-actor duel/foul rows, never a sentinel 0), or object strings
+    # (sportec / skillcorner). Force-casting to the schema's int64 would crash on
+    # NaN (GS) or on string ids (kloppy-family); inherit the input dtype instead.
+    schema = dict(ATOMIC_SPADL_COLUMNS)
+    for _id in ("team_id", "player_id"):
+        if _id in actions.columns:
+            schema[_id] = str(actions[_id].dtype)
+    return _finalize_output(atomic_actions, schema, extra_columns=preserve_native)
 
 
 def _compute_pass_extras(actions: pd.DataFrame) -> pd.DataFrame:

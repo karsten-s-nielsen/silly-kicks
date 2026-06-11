@@ -226,7 +226,12 @@ def _mirror_per_period(
     Rows where attacking direction is RTL (False) get mirrored to LTR.
     """
     out = actions.copy()
-    is_home = (out["team_id"] == home_team_id).to_numpy()
+    # NA-safe: a nullable-Int64 team_id (Gradient Sports) carries NaN on the
+    # null-actor duel/foul rows. `NA == home_team_id` is NA; collapse it to
+    # False (na_value=False) so the boolean mask is valid AND so those rows keep
+    # the exact orientation the pre-NaN sentinel 0 produced (0 != home_team_id
+    # was also False → treated as away). Non-nullable id columns are unaffected.
+    is_home = (out["team_id"] == home_team_id).to_numpy(dtype=bool, na_value=False)
 
     periods = out["period_id"].unique()
     missing = [p for p in periods if p not in home_attacks_right_per_period]

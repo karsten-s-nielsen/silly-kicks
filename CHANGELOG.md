@@ -5,6 +5,82 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.25.0] — 2026-06-11
+
+### Fixed — GS null-actor duel/foul events emit NaN team_id/player_id (was sentinel 0); nullable Int64 (lakehouse production outage; ADR-001)
+
+The Gradient Sports converter emitted the integer sentinel `0` as `team_id`/`player_id`
+on null-actor events. Because `0` is non-NaN, it masqueraded as a real id, bypassed every
+downstream `pd.isna` NaN-route, and crashed the strict opponent-resolution guard in
+`tracking._space_creation._resolve_opponent_team_id`
+(`ValueError: attacking_team_id '0' does not uniquely match the frame team ids [...]`),
+taking down every Gradient Sports unit in the lakehouse action-context pipeline (2026-06-11).
+Under ≤4.22.1 the same rows produced silent NaN space values; 4.23.0's loud two-team guard
+turned the latent corruption into a hard failure. Good guard, bad input — the fix is upstream,
+in the converter.
+
+**Root cause.** `spadl/gradientsports.py` did `events["team_id"].astype("Int64").fillna(0)
+.astype("int64")` (and the same on `player_id`) because `SPADL_COLUMNS` types both as
+non-nullable `int64`, which cannot hold NaN. Gradient Sports is the only int-id provider;
+the kloppy-family providers carry object-string ids where the absent actor is naturally
+`None` (pd.isna-routable), which is why no other provider hit this.
+
+**Ground truth (canonical PFF WC2022 feed, 64 matches).** The null-team events are the
+two-sided duels and dedicated fouls — **594 `OTB`+`CH` challenges + 28 `FOUL`+`FO` fouls** —
+and on **every one of them `gameEvents.playerId` is ALSO null** (a challenge is a 50/50 duel
+with `homeDuelPlayerId` *and* `awayDuelPlayerId` and no single owning team; a dedicated foul
+has no on-the-ball actor). The only team-resolving ids that exist (challenger / winner /
+culprit) are possession-event *qualifiers* — synthesizing `team_id` from them is exactly the
+ADR-001 violation that silly-kicks 2.0.0 removed (the sportec tackle-winner override the
+lakehouse reported in PR-LL2; ADR-001 itself classifies team-less fouls as *legitimate NULL*).
+So NaN is the architecturally-correct value, confirmed with the lakehouse, which withdrew its
+original "resolve from the acting player's roster" prescription (that acting player does not
+exist on the feed).
+
+**Fix.**
+
+- `GRADIENTSPORTS_SPADL_COLUMNS` types `team_id` / `player_id` as nullable **`Int64`** (was
+  the inherited `int64`); they mirror the canonical `gameEvents` actor verbatim, **NaN where
+  the actor is absent — never a sentinel 0**.
+- **ADR-001-legal self-heal** (`_resolve_team_ids`): where a row has a real canonical
+  `player_id` but a null `team_id`, derive the team from that player's other same-match rows
+  (a player belongs to one team per match). Keys ONLY on the canonical `player_id` column,
+  NEVER on a duel/foul qualifier; an ambiguous mapping raises rather than guesses. On the
+  canonical feed this resolves nothing (player_id is null wherever team_id is), so all
+  null-actor rows are NaN; it self-heals only genuine player-present/team-absent rows.
+- Orientation `_mirror_per_period` is NA-safe (`na_value=False`): a null `team_id` keeps the
+  EXACT coordinate orientation the pre-fix sentinel 0 produced (`0 != home_team_id` and
+  `NA == home_team_id` both collapse to "not home"), so only `team_id`/`player_id` change —
+  coordinates are byte-identical.
+- `atomic.spadl.convert_to_atomic` preserves the source `team_id`/`player_id` dtype instead
+  of force-casting to the atomic schema's `int64` (which crashed on the new GS NaN — and
+  would also have crashed on sportec/skillcorner object-string ids; latent bug fixed).
+- **`tracking._line_breaking` (Ward line-breaking, `add_line_break(method="ward")`) — two
+  fixes a downstream NaN-safety audit surfaced** (the early opponent-resolution crash had been
+  masking them): (1) a NaN-team action now NaN-routes instead of raising
+  `TypeError: boolean value of NA is ambiguous` at the opponent-set list-comp (`t != <NA>`);
+  (2) the opponent set now uses the ADR-019 `same_id` instead of a raw `!=`, which on a
+  mixed-dtype pairing (Int64 action team vs object-string frame team — exactly GS actions on
+  tracking frames) was always True and silently kept the actor's OWN team as the "opponent",
+  mis-computing every GS Ward line-break. The ADR-019 AST lint missed this because the
+  operands are named `t`/`action_team`, not `*_id`. **All 14 frame-aware AC consumers
+  (space_creation, obso, pitch_control, shape_graph, team_shape, structural_pass,
+  line_break[ward+threshold], das, gk_influence, player_influence, cover_shadows, pausa,
+  pressure) verified to NaN-route a NaN-team action on a healthy two-team frame** — no crash,
+  real rows still compute; the few non-NaN values on the NaN-team row are team-INDEPENDENT
+  frame properties (`pitch_control_at_ball`, `pressure_on_actor`), not miscomputes.
+
+**Impact / re-conversion delta (acceptance #5).** ~**622 SPADL actions per WC2022 corpus**
+(≈594 tackle + 28 foul + the 1 null-actor touch→bad_touch) flip `team_id`/`player_id` from
+the sentinel `0` to NaN. Downstream these now route to the NaN-row default (e.g.
+`space_created` returns the NaN row) instead of crashing — they carry NO enrichment, which is
+honest for a contested duel / stoppage. **Hyrum / retrain trigger:** GS `team_id`/`player_id`
+dtype `int64`→`Int64` is an observable schema change, and the value flip shifts any
+team/player-keyed GS feature for these rows — VAEP/tracking consumers re-materialize GS.
+Decision: ADR-027 (GS null-actor NaN identifiers), grounded in ADR-001 (no qualifier→identifier
+override) + ADR-003 (NaN-safe enrichment) + ADR-019 (id-dtype contract). C4-free (no new
+aggregator/model/backend; count stays 27).
+
 ## [4.24.0] — 2026-06-11
 
 ### Fixed/Changed — opponent OBSO orientation MIRRORED + LEAN 2-column contract (TF-41 round-2; ADR-026 amended; owner-approved breaking)

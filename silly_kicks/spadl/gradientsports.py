@@ -40,7 +40,17 @@ ADR-001: identifier conventions are sacred (silly-kicks 2.0.0)
 The converter never overrides ``team_id`` / ``player_id`` from the
 on-the-ball actor (``gameEvents.playerId``). Tackle winner/loser
 qualifier values (``challenge_winner_player_id`` / ``challenger_player_id``)
-surface via dedicated output columns:
+surface via dedicated output columns.
+
+``team_id`` / ``player_id`` mirror the canonical ``gameEvents`` actor and are
+nullable ``Int64``: on the null-actor duel/foul events (``OTB``+``CH``
+challenges — a two-sided 50/50 duel with no single owning team — and dedicated
+``FOUL``+``FO`` fouls) both ``gameEvents.teamId`` AND ``playerId`` are NULL, so
+both output ids are ``NaN`` — NEVER a sentinel ``0`` (a non-NaN sentinel
+masquerades as a real id and crashes downstream id-resolution; lakehouse
+outage 2026-06-11). Synthesizing ``team_id`` from the duel/foul *qualifiers* is
+exactly the ADR-001 violation this contract forbids; the qualifier teams
+remain in the dedicated columns below:
 
 ==========================  ============================================
 Output column               Qualifier source
@@ -257,6 +267,55 @@ def _dispatch_actiontype_resultid(events: pd.DataFrame) -> tuple[np.ndarray, np.
     return type_id_arr, result_id_arr
 
 
+def _resolve_team_ids(events: pd.DataFrame) -> pd.arrays.IntegerArray:
+    """Resolve per-row ``team_id`` as nullable ``Int64`` (ADR-001-compliant).
+
+    ``team_id`` mirrors the canonical ``gameEvents`` actor verbatim. On the
+    Gradient Sports feed the actor is genuinely absent on the *null-actor* duel
+    and foul events (``OTB``+``CH`` challenges — a two-sided 50/50 duel with no
+    single owning team — and dedicated ``FOUL``+``FO`` fouls); both
+    ``gameEvents.teamId`` AND ``gameEvents.playerId`` are NULL there. Those rows
+    MUST carry ``NaN`` ``team_id``, never a sentinel ``0`` (a non-NaN sentinel
+    masquerades as a real team id, bypasses every downstream ``pd.isna``
+    NaN-route, and crashes the strict opponent-resolution guard).
+
+    Self-heal (ADR-001-legal canonical→canonical): where a row has a real
+    ``player_id`` (the canonical actor) but a NULL ``team_id``, derive the team
+    from that player's other same-match rows — a player belongs to exactly one
+    team per match. This keys ONLY on the canonical ``player_id`` column, NEVER
+    on a duel/foul *qualifier* (``challenger`` / ``winner`` / ``culprit``);
+    synthesizing ``team_id`` from a qualifier is the ADR-001 violation this
+    contract exists to prevent. An ambiguous mapping (a player attributed to >1
+    team in the match) raises rather than guesses. Rows with no canonical player
+    stay ``NaN``.
+    """
+    team = events["team_id"].astype("Int64").reset_index(drop=True)
+    player = events["player_id"].astype("Int64").reset_index(drop=True)
+
+    needs_fill = (team.isna() & player.notna()).to_numpy()
+    if not needs_fill.any():
+        return team.array  # type: ignore[return-value]
+
+    needed_players = set(player[needs_fill].dropna().tolist())
+    attributed = pd.DataFrame({"player_id": player[team.notna()], "team_id": team[team.notna()]}).dropna()
+    attributed = attributed[attributed["player_id"].isin(needed_players)]
+    if attributed.empty:
+        return team.array  # type: ignore[return-value]  # nothing resolvable; rows stay NaN
+
+    teams_per_player = attributed.groupby("player_id")["team_id"].nunique()
+    ambiguous = sorted(teams_per_player[teams_per_player > 1].index.tolist())
+    if ambiguous:
+        raise ValueError(
+            "gradientsports: ambiguous canonical player->team mapping — player_id(s) "
+            f"{ambiguous} attributed to more than one team in the same match; refusing "
+            "to guess team_id (the ADR-001 self-heal requires a unique team per player)."
+        )
+    mapping = attributed.drop_duplicates("player_id").set_index("player_id")["team_id"]
+    fill_vals = player[needs_fill].map(mapping)  # NaN where player_id not in the map
+    team.loc[needs_fill] = fill_vals.to_numpy()
+    return team.array  # type: ignore[return-value]
+
+
 def convert_to_actions(
     events: pd.DataFrame,
     home_team_id: int,
@@ -464,8 +523,12 @@ def convert_to_actions(
             "action_id": np.arange(len(events), dtype="int64"),
             "period_id": events["period_id"].astype("int64").values,
             "time_seconds": events["time_seconds"].astype("float64").values,
-            "team_id": events["team_id"].astype("Int64").fillna(0).astype("int64").values,
-            "player_id": (events["player_id"].astype("Int64").fillna(0).astype("int64").values),
+            # team_id / player_id mirror the canonical gameEvents actor as nullable
+            # Int64 (NaN where the actor is absent — the null-actor duel/foul events).
+            # NEVER a sentinel 0: see _resolve_team_ids + ADR-001. team_id self-heals
+            # from the canonical player's same-match team where resolvable.
+            "team_id": _resolve_team_ids(events),
+            "player_id": events["player_id"].astype("Int64").reset_index(drop=True).array,
             "start_x": (events["ball_x"].astype("float64") + 52.5).values,
             "start_y": (events["ball_y"].astype("float64") + 34.0).values,
             "end_x": (events["ball_x"].astype("float64") + 52.5).values,

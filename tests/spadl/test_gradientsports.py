@@ -968,12 +968,20 @@ class TestGradientsportsDedicatedFoulEvent:
 
 
 class TestGradientsportsNullActorEvents:
-    """Events with null teamId/playerId (OTB+CH challenges, FOUL+FO fouls)
-    survive the exclusion filter in real GS data. The converter must not crash
-    on NaN team_id — it should apply Int64→fillna(0)→int64, matching player_id.
+    """Events with null teamId AND null playerId (OTB+CH challenges, FOUL+FO
+    fouls) survive the exclusion filter in real GS data. The converter must not
+    crash, and must emit NaN team_id/player_id (nullable Int64) — NEVER a
+    sentinel 0. A non-NaN sentinel masquerades as a real id, bypasses every
+    downstream ``pd.isna`` NaN-route, and crashes the strict opponent-resolution
+    guard (lakehouse production outage, 2026-06-11).
 
-    Root cause: WC 2022 has ~17 events/match (10 OTB+CH + 7 FOUL+FO) with
-    gameEvents.teamId=NULL and gameEvents.playerId=NULL.
+    Ground truth (canonical PFF WC2022 feed, 64 matches): 594 OTB+CH + 28
+    FOUL+FO events carry gameEvents.teamId=NULL, and on EVERY one of them
+    gameEvents.playerId is ALSO NULL (a CH is a two-sided 50/50 duel with no
+    single owning team; a dedicated FOUL has no on-the-ball actor). The
+    team-resolving ids that DO exist (challenger / winner / culprit) are
+    possession-event qualifiers — ADR-001 forbids back-filling team_id/player_id
+    from them, so NaN is the correct value.
     """
 
     def _df_null_actor_challenge(self) -> pd.DataFrame:
@@ -1054,8 +1062,8 @@ class TestGradientsportsNullActorEvents:
         )
         assert len(actions) == 1
         assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["tackle"]
-        assert actions.iloc[0]["team_id"] == 0
-        assert actions.iloc[0]["player_id"] == 0
+        assert pd.isna(actions.iloc[0]["team_id"]), "null-actor challenge team_id must be NaN, not sentinel 0"
+        assert pd.isna(actions.iloc[0]["player_id"]), "null-actor challenge player_id must be NaN, not sentinel 0"
 
     def test_foul_fo_null_actor_does_not_crash(self):
         """FOUL+FO foul with null teamId must convert without error."""
@@ -1068,8 +1076,8 @@ class TestGradientsportsNullActorEvents:
         )
         assert len(actions) == 1
         assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["foul"]
-        assert actions.iloc[0]["team_id"] == 0
-        assert actions.iloc[0]["player_id"] == 0
+        assert pd.isna(actions.iloc[0]["team_id"]), "null-actor foul team_id must be NaN, not sentinel 0"
+        assert pd.isna(actions.iloc[0]["player_id"]), "null-actor foul player_id must be NaN, not sentinel 0"
 
     def test_mixed_null_and_valid_actors(self):
         """Batch with both null-actor and valid-actor events converts cleanly."""
@@ -1100,8 +1108,8 @@ class TestGradientsportsNullActorEvents:
         assert len(actions) == 2
         # First row: valid pass with real team_id
         assert actions.iloc[0]["team_id"] == 100
-        # Second row: null-actor challenge with team_id=0
-        assert actions.iloc[1]["team_id"] == 0
+        # Second row: null-actor challenge with NaN team_id (no canonical actor to resolve)
+        assert pd.isna(actions.iloc[1]["team_id"])
 
 
 class TestGradientsportsNanTimeSeconds:
@@ -1383,7 +1391,7 @@ class TestGradientsportsSyntheticMatchE2E:
 
     def test_synthetic_match_null_actor_events_convert(self):
         """Null-actor OTB+CH and FOUL+FO events (real WC 2022 pattern) convert
-        with team_id=0, player_id=0 instead of crashing."""
+        with NaN team_id/player_id (never sentinel 0) instead of crashing."""
         events = _load_synthetic_events()
         actions, _ = gs_mod.convert_to_actions(
             events,
@@ -1391,9 +1399,12 @@ class TestGradientsportsSyntheticMatchE2E:
             home_team_start_left=True,
             home_team_start_left_extratime=True,
         )
-        null_actor_rows = actions[actions["team_id"] == 0]
+        null_actor_rows = actions[actions["team_id"].isna()]
         assert len(null_actor_rows) >= 2, f"Expected >=2 null-actor rows (OTB+CH + FOUL+FO), got {len(null_actor_rows)}"
-        assert (null_actor_rows["player_id"] == 0).all()
+        assert null_actor_rows["player_id"].isna().all()
+        # And never a sentinel 0 anywhere.
+        assert int((actions["team_id"] == 0).sum()) == 0
+        assert int((actions["player_id"] == 0).sum()) == 0
 
 
 class TestGradientsportsAtomicComposability:
@@ -1688,3 +1699,164 @@ class TestGradientsportsSyntheticProvenance:
         assert len(actions) == 2
         assert bool(actions.iloc[0]["is_synthetic"]) is False  # the pass
         assert bool(actions.iloc[1]["is_synthetic"]) is True  # the synthesized foul
+
+
+def _df_two_attributed_passes_plus_null_team_row(
+    *,
+    null_player: bool,
+    null_player_id_value=None,
+    second_team_for_player_7=None,
+) -> pd.DataFrame:
+    """Build a 3-row events DataFrame:
+
+    - row 0: open-play pass by player 7 (team 100) — attributed.
+    - row 1: open-play pass by player 19 (team 200) — attributed.
+    - row 2: a challenge (CH) row with ``team_id`` NULL. ``player_id`` is NULL
+      when ``null_player`` else set to ``null_player_id_value`` (canonical actor).
+
+    When ``second_team_for_player_7`` is set, row 1 is re-keyed to player 7 on
+    that team — manufacturing an ambiguous canonical player->team mapping.
+    """
+    req = sorted(gs_mod.EXPECTED_INPUT_COLUMNS)
+
+    def _row(**kw):
+        base = {c: None for c in req}
+        base.update(kw)
+        return base
+
+    rows = [
+        _row(
+            game_id=10502,
+            event_id=1,
+            possession_event_id=1,
+            period_id=1,
+            time_seconds=10.0,
+            team_id=100,
+            player_id=7,
+            game_event_type="OTB",
+            possession_event_type="PA",
+            set_piece_type="O",
+            ball_x=0.0,
+            ball_y=0.0,
+            pass_outcome_type="C",
+            body_type="R",
+        ),
+        _row(
+            game_id=10502,
+            event_id=2,
+            possession_event_id=2,
+            period_id=1,
+            time_seconds=11.0,
+            team_id=(second_team_for_player_7 if second_team_for_player_7 is not None else 200),
+            player_id=(7 if second_team_for_player_7 is not None else 19),
+            game_event_type="OTB",
+            possession_event_type="PA",
+            set_piece_type="O",
+            ball_x=5.0,
+            ball_y=2.0,
+            pass_outcome_type="C",
+            body_type="R",
+        ),
+        _row(
+            game_id=10502,
+            event_id=3,
+            possession_event_id=3,
+            period_id=1,
+            time_seconds=12.0,
+            team_id=None,
+            player_id=(None if null_player else null_player_id_value),
+            game_event_type="OTB",
+            possession_event_type="CH",
+            set_piece_type=None,
+            ball_x=10.0,
+            ball_y=3.0,
+            body_type="R",
+        ),
+    ]
+    df = pd.DataFrame(rows)
+    for col in (
+        "possession_event_id",
+        "player_id",
+        "team_id",
+        "carry_defender_player_id",
+        "challenger_player_id",
+        "challenger_team_id",
+        "challenge_winner_player_id",
+        "challenge_winner_team_id",
+    ):
+        df[col] = df[col].astype("Int64")
+    df["game_id"] = df["game_id"].astype("int64")
+    df["event_id"] = df["event_id"].astype("int64")
+    df["period_id"] = df["period_id"].astype("int64")
+    df["time_seconds"] = df["time_seconds"].astype("float64")
+    df["ball_x"] = df["ball_x"].astype("float64")
+    df["ball_y"] = df["ball_y"].astype("float64")
+    return df
+
+
+class TestGradientsportsTeamAttributionNoSentinel:
+    """team_id/player_id reflect the canonical ``gameEvents`` actor; when that
+    actor is absent (the null-actor duel/foul events — 594 OTB+CH + 28 FOUL+FO
+    across the canonical WC2022 feed, BOTH gameEvents.teamId AND playerId NULL)
+    the converter emits NaN, NEVER the int sentinel 0.
+
+    A sentinel 0 masquerades as a real team id: it is non-NaN, so it bypasses
+    every ``pd.isna`` NaN-route downstream and crashes the strict
+    opponent-resolution guard (lakehouse production outage, 2026-06-11). ADR-001
+    forbids synthesizing team_id from duel/foul *qualifiers* (challenger /
+    winner / culprit), so the null-actor rows are correctly NaN.
+
+    The canonical-player self-heal fills team_id ONLY from a real same-match
+    ``player_id`` (the gameEvents actor) — never from a qualifier — so the
+    ADR-001 boundary stays inside silly-kicks.
+    """
+
+    def test_null_actor_challenge_emits_na_team_and_player_not_sentinel(self):
+        df = _df_two_attributed_passes_plus_null_team_row(null_player=True)
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        challenge = actions[actions["type_id"] == spadlconfig.actiontype_id["tackle"]]
+        assert len(challenge) == 1
+        assert pd.isna(challenge.iloc[0]["team_id"]), "null-actor challenge team_id must be NaN, not 0"
+        assert pd.isna(challenge.iloc[0]["player_id"]), "null-actor challenge player_id must be NaN, not 0"
+        assert int((actions["team_id"] == 0).sum()) == 0
+        assert int((actions["player_id"] == 0).sum()) == 0
+
+    def test_team_id_and_player_id_dtype_nullable_int64(self):
+        df = _df_two_attributed_passes_plus_null_team_row(null_player=True)
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert str(actions["team_id"].dtype) == "Int64"
+        assert str(actions["player_id"].dtype) == "Int64"
+
+    def test_self_heal_fills_team_from_canonical_player_within_match(self):
+        # Challenge row carries a real canonical player_id (7) but NULL team_id;
+        # player 7 is team 100 from row 0. ADR-001-legal canonical->canonical fill.
+        df = _df_two_attributed_passes_plus_null_team_row(null_player=False, null_player_id_value=7)
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        challenge = actions[actions["type_id"] == spadlconfig.actiontype_id["tackle"]]
+        assert len(challenge) == 1
+        assert challenge.iloc[0]["team_id"] == 100, "self-heal must resolve team from the canonical player's match team"
+        assert challenge.iloc[0]["player_id"] == 7
+
+    def test_self_heal_ambiguous_player_team_raises(self):
+        # Player 7 appears on both team 100 (row 0) and team 200 (row 1) -> refuse to guess.
+        df = _df_two_attributed_passes_plus_null_team_row(
+            null_player=False, null_player_id_value=7, second_team_for_player_7=200
+        )
+        with pytest.raises(ValueError, match=r"ambiguous|two teams|more than one team"):
+            gs_mod.convert_to_actions(
+                df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+            )
+
+    def test_no_sentinel_zero_over_synthetic_golden_fixture(self):
+        events = _load_synthetic_events()
+        actions, _ = gs_mod.convert_to_actions(
+            events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        assert int((actions["team_id"] == 0).sum()) == 0, "no team_id sentinel 0 may remain"
+        assert int((actions["player_id"] == 0).sum()) == 0, "no player_id sentinel 0 may remain"
