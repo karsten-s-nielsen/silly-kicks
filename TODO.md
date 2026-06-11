@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-10. **Current release**: silly-kicks 4.22.0 (general restart-coordinate enrichment, Phase 1 additive — `add_restart_coordinates` imputes NaN coords for goal-kick/penalty/corner/throw-in as new provenance-tagged columns; `resolve_gk_geometry` consolidated to a byte-identical shim over the general engine, no retrain; ADR-025). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-11. **Current release**: silly-kicks 4.22.1 (lakehouse-report hardening — ghost-GK served position clamped to the physical pitch with a warning on garbage input; `GkCompletionModel.from_variant` variant-key alias `"gs"` → `"default"`; GS `convert_to_frames` `home_team_id` annotation `int | str`; OBSO peak-vs-optimal axes documented). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

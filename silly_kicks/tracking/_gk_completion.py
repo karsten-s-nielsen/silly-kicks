@@ -250,6 +250,10 @@ class GkCompletionModel:
     def from_variant(cls, variant: str = "default") -> GkCompletionModel:
         # NOTE (m3): _VARIANT_CACHE returns a SHARED instance -- loaded models are treated IMMUTABLE
         # post-load (predict-only). A future mutator must clone, not mutate in place.
+        # 4.22.1: alias variant KEYS (the variant_key_for_provider vocabulary) onto bundled
+        # weight DIRS so the two public APIs compose -- "gs" previously raised
+        # FileNotFoundError because the GS-construct weights ship as "default".
+        variant = _VARIANT_KEY_ALIASES.get(variant, variant)
         if variant in _VARIANT_CACHE:
             return _VARIANT_CACHE[variant]
         wdir = _WEIGHTS_ROOT / variant
@@ -263,6 +267,9 @@ class GkCompletionModel:
 
 
 _PROVIDER_VARIANT = {"skillcorner": "skillcorner"}  # everything else -> the native-completion gs model
+# Variant-key -> bundled-weights-dir aliases (4.22.1): variant_key_for_provider speaks the
+# CONSTRUCT vocabulary ("gs"); the wheel ships the GS weights under "default".
+_VARIANT_KEY_ALIASES = {"gs": "default"}
 
 
 def variant_key_for_provider(source_provider: str | None) -> str:

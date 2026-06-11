@@ -328,6 +328,14 @@ def compute_pass_obso(
         ``optimal_obso`` -- Maximum OBSO across all teammate positions at
         event frame.
 
+        ``peak_obso`` and ``optimal_obso`` maximize over DIFFERENT axes (time
+        at the fixed target vs teammate positions at the fixed event frame), so
+        they are NOT mutually ordered: ``peak_obso > optimal_obso`` is
+        legitimate (the target spot got better later in the window than any
+        teammate's spot was at the event frame). Both are seeded from
+        ``actual_obso``, so ``actual_obso <= peak_obso`` and
+        ``actual_obso <= optimal_obso`` always hold.
+
     Examples
     --------
     >>> result = compute_pass_obso(window_frames, 5, (80.0, 30.0), 1)

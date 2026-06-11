@@ -54,7 +54,7 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
 
 def convert_to_frames(
     raw_frames: pd.DataFrame,
-    home_team_id: int,
+    home_team_id: int | str,
     home_team_start_left: bool,
     home_team_start_left_extratime: bool | None = None,
     preserve_native: list[str] | None = None,
@@ -73,8 +73,10 @@ def convert_to_frames(
         This is silly_kicks' canonical convention (matches the events converters)
         and what :func:`silly_kicks.tracking.utils.link_actions_to_frames`
         requires. See ADR-017.
-    home_team_id : int
-        homeTeam.id from the metadata JSON.
+    home_team_id : int | str
+        homeTeam.id from the metadata JSON. Matched against the frames'
+        string ``team_id`` dtype-safely (ADR-019 ``ids_match`` -- ``366`` and
+        ``"366"`` are equivalent); a value matching ZERO player rows raises.
     home_team_start_left : bool
         From metadata ``homeTeamStartLeft``.
     home_team_start_left_extratime : bool | None

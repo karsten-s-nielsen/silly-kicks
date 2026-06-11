@@ -5,6 +5,43 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.22.1] — 2026-06-11
+
+### Fixed — lakehouse bug-report 2026-06-11 hardening (ghost-GK clamp, completion-variant alias)
+
+Four small fixes from the lakehouse 4.22.0 production report (items confirmed against source; the
+two suspected value bugs — `xt_gk_pev` ≈ 0 and `obso_peak > obso_optimal` — were verified
+**by-design** and are documented below rather than changed):
+
+- **Ghost-GK served position clamped to the physical pitch** (`compute_ghost_gk`): garbage input
+  (e.g. an upstream mis-flagged `is_goalkeeper`, which can wrong-foot the per-period goal-side flip)
+  can push the boosted regressor far outside its trained label domain — a served keeper 5.7 m
+  *behind the goal line* is never physically meaningful. Served `ghost_gk_x/y` (goal-relative) are
+  now clamped to x ∈ [0, 105], y ∈ [0, 68] with a warning. Clamp target is the **physical pitch,
+  not the trained grid domain** — healthy slight extrapolation past the 30 m label filter (sweeper
+  rushes) stays **byte-unchanged**, so this only ever fires on corrupt input. The clamp lives at the
+  serving seam; `GhostGkModel.predict_mean` keeps its exact-boosted parity contract (ADR-016).
+- **`GkCompletionModel.from_variant("gs")` no longer raises `FileNotFoundError`**: variant KEYS
+  (the `variant_key_for_provider` vocabulary, where `"gs"` names the GS-construct model) now alias
+  onto the bundled weight DIRS (`"gs"` → `"default"`), so the two public APIs compose. Same shared
+  cached instance; no behavior change for `compute_xt_gk` (its private resolver already fell back).
+- **`tracking.gradientsports.convert_to_frames` `home_team_id` annotation fixed to `int | str`**
+  (runtime has been dtype-safe + fail-loud-on-zero-match since 4.15.0/ADR-019; the annotation and
+  docstring now say so).
+- **`compute_pass_obso` docstring**: `peak_obso` (max over *time* at the fixed target) and
+  `optimal_obso` (max over *teammate positions* at the event frame) maximize different axes and are
+  **not mutually ordered** — `peak > optimal` is legitimate; both dominate `actual_obso`.
+
+By-design confirmations for the report: `xt_gk_pev = rho × max(0, progress)` is exactly 0 whenever
+no opponent is inside the Andrienko pressure oval (~9 m) — structurally true for every goal kick
+(law: opponents outside the box) — or the move is non-forward; the emitted `xt_gk_pressure` column
+is `rho` and discriminates the two. `LinkReport.per_period_link_rate` (requested as new) has shipped
+since 4.12.0/ADR-017.
+
+Hyrum note: the ghost-GK clamp is a serve-output change **only on physically-impossible rows**
+(observed: metrica with a corrupted upstream GK flag). No retrain trigger; lakehouse re-materializes
+ghost-GK only if it wants the clamped values for already-ingested corrupt matches.
+
 ## [4.22.0] — 2026-06-10
 
 ### Added — general restart-coordinate enrichment (Phase 1, additive; ADR-025)
