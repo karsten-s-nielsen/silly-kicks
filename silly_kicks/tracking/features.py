@@ -52,6 +52,12 @@ from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 
 from . import _kernels
+from ._action_orientation import (
+    FIELD_LENGTH,
+    FIELD_WIDTH,
+    acting_team_attacks_rtl,
+    reproject_to_action_ltr,
+)
 from ._ball_carrier import infer_ball_carrier
 from ._gk_resolve import defending_gk_from_frames
 from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
@@ -1486,6 +1492,27 @@ def off_ball_context_xfns(
 # PR-S33 -- TF-31: team shape envelope
 # ---------------------------------------------------------------------------
 
+# ADR-028: team-shape position columns to re-project into action-LTR (both teams).
+# centroid_x / defensive_line_height are x-positions; centroid_y is a y-position.
+# convex_hull_area / team_length / team_width / stretch_index / inter_line_gap_* /
+# n_outfield_players are spans / counts / areas -> flip-invariant.
+_TEAM_SHAPE_X_COLS = [
+    "team_shape_centroid_x_attacking",
+    "team_shape_centroid_x_defending",
+    "team_shape_defensive_line_height_attacking",
+    "team_shape_defensive_line_height_defending",
+]
+_TEAM_SHAPE_Y_COLS = [
+    "team_shape_centroid_y_attacking",
+    "team_shape_centroid_y_defending",
+]
+
+
+def _reproject_team_shape(out: pd.DataFrame, actions: pd.DataFrame, frames: pd.DataFrame) -> pd.DataFrame:
+    """Mirror team-shape centroid / line-height positions into each action's LTR frame (ADR-028)."""
+    flip = acting_team_attacks_rtl(actions, frames)
+    return reproject_to_action_ltr(out, flip, x_cols=_TEAM_SHAPE_X_COLS, y_cols=_TEAM_SHAPE_Y_COLS)
+
 
 @nan_safe_enrichment
 def add_team_shape(
@@ -1613,6 +1640,7 @@ def add_team_shape(
     if not existing_provenance:
         pointer_cols = pointers.set_index("action_id")[provenance_cols]
         out = out.merge(pointer_cols, left_on="action_id", right_index=True, how="left")
+    out = _reproject_team_shape(out, actions, frames)  # ADR-028
     return out
 
 
@@ -1752,6 +1780,7 @@ def _team_shape_at_actions(
             for metric in vaep_metrics:
                 out.at[idx, f"team_shape_{metric}_{suffix}"] = shape_row[metric]
 
+    out = _reproject_team_shape(out, actions, frames)  # ADR-028
     return out
 
 
@@ -3854,6 +3883,17 @@ def add_ghost_gk(
     # Join back to actions
     ghost_cols = deduped.set_index("action_id")[["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]]
     out = out.merge(ghost_cols, left_on="action_id", right_index=True, how="left")
+
+    # ADR-028: emit in action-LTR. The model serves goal-relative coords (defended goal
+    # at x=0, y kept in absolute-frame terms). In action-LTR the defended goal is x=105,
+    # so x -> 105 - gr_x UNIFORMLY (gr_x already measures from the defended goal). y mirrors
+    # only for away-team actions (the per-action 180-degree reflection). density_spread is
+    # a dispersion magnitude -> invariant.
+    flip = acting_team_attacks_rtl(actions, frames).reindex(out.index, fill_value=False).to_numpy(dtype=bool)
+    gx = out["ghost_gk_x"].to_numpy(dtype="float64")
+    gy = out["ghost_gk_y"].to_numpy(dtype="float64")
+    out["ghost_gk_x"] = FIELD_LENGTH - gx
+    out["ghost_gk_y"] = np.where(flip, FIELD_WIDTH - gy, gy)
 
     return out
 

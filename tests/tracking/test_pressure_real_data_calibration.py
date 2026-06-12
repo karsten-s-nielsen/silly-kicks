@@ -125,13 +125,6 @@ def _synthesize_actions_with_pressure(
         if key in seen_frames:
             continue
         dx, dy = float(defender_row["x"]), float(defender_row["y"])
-        # Anchor actor at d=target_d from defender, on the side away from goal,
-        # so threat direction (anchor->goal) and presser direction (anchor->defender)
-        # are aligned (angle 0).
-        actor_x = dx - target_d  # actor sits at defender.x - target_d, defender ahead toward goal
-        actor_y = dy
-        if not (0 <= actor_x <= 105 and 0 <= actor_y <= 68):
-            continue
         # The actor must be on the OPPOSITE team from the defender. Pick the
         # first non-defender team in the frame.
         same_frame = candidates[
@@ -143,6 +136,22 @@ def _synthesize_actions_with_pressure(
             continue
         actor_team = same_frame["team_id"].iloc[0]
         actor_player_id = same_frame["player_id"].iloc[0]
+        # ADR-028: real converters emit LTR-normalized actions (the acting team attacks
+        # x=105). Build the whole geometry in action-LTR: re-project the chosen defender
+        # into the actor's LTR frame (mirror iff the actor's team attacks RTL in the
+        # frame), THEN place the actor target_d back from it toward the goal at x=105 so
+        # threat direction (anchor->goal) and presser direction (anchor->defender) are
+        # aligned (angle 0). This matches what the kernel computes (it re-projects the
+        # sampled defenders into the same action-LTR frame) for BOTH ltr and rtl teams.
+        actor_dir = same_frame["team_attacking_direction"].iloc[0]
+        if actor_dir == "rtl":
+            def_x, def_y = 105.0 - dx, 68.0 - dy
+        else:
+            def_x, def_y = dx, dy
+        actor_x = def_x - target_d  # defender sits target_d ahead toward the goal at x=105
+        actor_y = def_y
+        if not (0 <= actor_x <= 105 and 0 <= actor_y <= 68):
+            continue
         chosen.append(
             {
                 "action_id": len(chosen) + 1,

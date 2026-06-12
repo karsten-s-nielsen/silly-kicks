@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
 from ._id_compat import align_join_keys, ids_differ, ids_equal
 from .feature_framework import ActionFrameContext
 
@@ -869,6 +870,12 @@ def _defensive_line_at_actions(
             out.at[idx, col] = row[col]
 
     out["back_n_count"] = out["back_n_count"].astype("Int64")
+
+    # ADR-028: re-project the two x-positions into each action's LTR frame.
+    # compactness_x / lateral_width / max_lateral_gap / back_n_count are spans/counts
+    # (flip-invariant) and are left unchanged.
+    flip = acting_team_attacks_rtl(actions, frames)
+    out = reproject_to_action_ltr(out, flip, x_cols=["defensive_line_x", "back_line_high_x"], y_cols=[])
     return out
 
 
