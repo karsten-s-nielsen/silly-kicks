@@ -5,6 +5,15 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.27.0] — 2026-06-13
+
+### Added
+- `silly_kicks.tracking.orient_frames_to_ltr(frames, *, home_team_id, home_team_start_left, home_team_start_left_extratime=None)` — orients *unlabeled* absolute tracking frames into the canonical home-attacks-right (LTR) frame, single-sourcing the orientation contract for consumers that build frames from a non-kloppy source (bronze DataFrames). Pure composition of existing primitives (`compute_attacking_direction` + `play_left_to_right`) with fail-loud guards (missing-schema, already-labeled → use `play_left_to_right`, zero home-match, ET-without-flag). Companion to ADR-028: ADR-028's per-action reprojection no-ops on absolute frames (`team_attacking_direction = None`), so consumers must orient first. Decision: ADR-029.
+
+### Notes
+- **Additive — no model retrain.** Existing providers (sportec/gradientsports/kloppy) are byte-unchanged; the helper is new and not called internally. **Consumer impact:** adopting `orient_frames_to_ltr` in the lakehouse metrica/skillcorner bronze builders fixes their previously-bimodal tracking action geometry (`pre_shot_gk_x`, `defensive_line_x`, `nearest_defender_distance`, `pressure_on_actor__*`, etc.); those providers must be re-materialized lakehouse-side. The helper is only as correct as the caller-derived `home_team_start_left` — validate it per game.
+- Added a positive extra-time orientation regression guard for the native `gradientsports`/`sportec.convert_to_frames` ET path (`tests/tracking/test_adapter_extra_time_orientation.py`), prompted by a live GS-ET flip that was a consumer-side `home_team_start_left_extratime` placeholder bug, not a silly-kicks bug.
+
 ## [4.26.0] — 2026-06-12
 
 ### Fixed — tracking geometry now emitted in the per-action SPADL LTR frame (systemic orientation bug; ADR-028)

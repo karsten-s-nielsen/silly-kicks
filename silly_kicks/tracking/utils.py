@@ -181,6 +181,119 @@ def play_left_to_right(frames: pd.DataFrame, home_team_id) -> pd.DataFrame:
     return out
 
 
+_ORIENT_REQUIRED_COLUMNS = ("x", "y", "team_id", "period_id", "is_ball", "team_attacking_direction")
+
+
+def orient_frames_to_ltr(
+    frames: pd.DataFrame,
+    *,
+    home_team_id,
+    home_team_start_left: bool,
+    home_team_start_left_extratime: bool | None = None,
+) -> pd.DataFrame:
+    """Orient *unlabeled* absolute-orientation tracking frames into the canonical
+    home-attacks-right (LTR) frame, per period.
+
+    This is the unlabeled-input sibling of :func:`play_left_to_right`. It populates
+    ``team_attacking_direction`` from ``home_team_start_left`` (the physical pre-flip
+    direction) and then per-period flips so the home team attacks x=105 in every
+    period and the away team attacks x=0 --- byte-identical to
+    ``convert_to_frames(output_convention="ltr")`` and exactly the convention the
+    per-action geometry layer (ADR-028) expects.
+
+    Intended for consumers that build frames from a non-kloppy source (e.g. the
+    lakehouse metrica/skillcorner bronze builders) in absolute orientation. For frames
+    that ALREADY carry a populated ``team_attacking_direction`` (labeled, e.g.
+    ``kloppy.convert_to_frames(output_convention="absolute_frame")`` output), use
+    :func:`play_left_to_right` directly --- this helper raises on labeled input.
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Unlabeled absolute tracking frames. Required columns: ``x``, ``y``,
+        ``team_id``, ``period_id``, ``is_ball``, ``team_attacking_direction`` (which
+        must be all-null on entry). ``team_id`` may be any dtype --- comparisons route
+        through the ADR-019 dtype-safe ``ids_match``.
+    home_team_id : int | str
+        Identifies the home team in ``team_id``. The caller derives this; silly-kicks
+        does not infer it.
+    home_team_start_left : bool
+        True iff the home team's own goal is on the left (x=0) in period 1, i.e. it
+        attacks toward x=105 in period 1. Source of truth for the orientation; the
+        helper is only as correct as this flag (validate it per game --- see ADR-029).
+    home_team_start_left_extratime : bool | None, default None
+        Required only when ET periods (3/4) are present.
+
+    Returns
+    -------
+    pd.DataFrame
+        A new DataFrame in home-attacks-right convention. Not idempotent --- a second
+        call raises (the first populated ``team_attacking_direction``).
+
+    Raises
+    ------
+    ValueError
+        Missing required columns; ``team_attacking_direction`` non-null on entry (use
+        ``play_left_to_right``); ``home_team_id`` matches zero player rows; ET periods
+        present without ``home_team_start_left_extratime``.
+
+    See ADR-029 for the single-source-of-truth orientation contract.
+
+    Examples
+    --------
+    Orient absolute metrica/skillcorner frames into the canonical LTR convention::
+
+        from silly_kicks.tracking import orient_frames_to_ltr
+        ltr_frames = orient_frames_to_ltr(
+            abs_frames, home_team_id=57, home_team_start_left=True,
+        )
+    """
+    out = frames.copy()
+    if len(out) == 0:
+        return out
+
+    missing = [c for c in _ORIENT_REQUIRED_COLUMNS if c not in out.columns]
+    if missing:
+        raise ValueError(f"orient_frames_to_ltr: frames missing required columns: {missing}")
+
+    is_ball = out["is_ball"].astype(bool)
+    players = out[~is_ball]
+    if players.empty:
+        return out
+
+    # C2: labeled-input guard. Unlabeled absolute frames carry an all-null direction;
+    # any non-null means the frames are already labeled -> route to play_left_to_right.
+    if out["team_attacking_direction"].notna().any():
+        raise ValueError(
+            "orient_frames_to_ltr: frames already carry a populated "
+            "team_attacking_direction (labeled). This helper is for UNLABELED absolute "
+            "frames; use silly_kicks.tracking.play_left_to_right for labeled frames."
+        )
+
+    # C1: zero-match guard (ADR-019 dtype-safe compare). Zero home-player match means
+    # play_left_to_right cannot identify flip periods -> definitely-wrong output.
+    is_home = ids_match(players["team_id"], home_team_id).fillna(False)
+    if not bool(is_home.any()):
+        raise ValueError(
+            f"orient_frames_to_ltr: home_team_id={home_team_id!r} matched ZERO player rows "
+            "(id dtype mismatch vs frame team_id?) -- orientation would be wrong."
+        )
+
+    from .direction import compute_attacking_direction, require_et_direction
+
+    require_et_direction(out["period_id"], home_team_start_left_extratime, source="orient_frames_to_ltr")
+
+    out["team_attacking_direction"] = compute_attacking_direction(
+        team_id=out["team_id"],
+        period_id=out["period_id"],
+        is_ball=out["is_ball"],
+        home_team_id=home_team_id,
+        home_team_start_left=home_team_start_left,
+        home_team_start_left_extratime=home_team_start_left_extratime,
+    )
+    return play_left_to_right(out, home_team_id)
+
+
 def link_actions_to_frames(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
