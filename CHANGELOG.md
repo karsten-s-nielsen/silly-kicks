@@ -5,6 +5,49 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.26.0] — 2026-06-12
+
+### Fixed — tracking geometry now emitted in the per-action SPADL LTR frame (systemic orientation bug; ADR-028)
+
+**Breaking value change. VAEP/tracking-retrain trigger — re-materialize all tracking action-context.**
+
+SPADL actions are per-acting-team LTR (the acting team attacks x=105); `convert_to_frames`
+output is home-attacks-right (the home team attacks x=105 every period). The two are a 180°
+point reflection apart for away-team actions, and the tracking-geometry layer sampled frame
+positions **without re-projecting** them into the per-action LTR frame. On ~50% of
+tracking-provider action rows (away-team actions) this produced wrong values:
+
+- **Absolute positions at the wrong end** (visibly bimodal): `pre_shot_gk_x/y`,
+  `pre_shot_gk_distance_to_goal` (reached 106 m), `defensive_line_x`, `back_line_high_x`,
+  `team_shape_centroid_x/y_*`, `team_shape_defensive_line_height_*`.
+- **Mixed-frame scalars** (action anchor combined with frame positions → numerically wrong,
+  not just mis-oriented, and not visibly bimodal): `nearest_defender_distance`,
+  `receiver_zone_density`, `defenders_in_triangle_to_goal`, all `pressure_on_actor__*`,
+  `pre_shot_gk_distance_to_shot`, `pre_shot_gk_angle_*`.
+- **`ghost_gk_x/y`** were goal-relative (defended goal at x=0) while the actual-GK features
+  intended action-LTR → cross-frame "ghost deviation ≈ 90 m" downstream.
+
+Fixed by one canonical re-projection (`tracking/_action_orientation.py`, driven by the
+frame's `team_attacking_direction`) applied at three seams: the shared `ActionFrameContext`
+(fixes all 8 context kernels at once and makes their hardcoded goal-at-105 correct),
+`_defensive_line_at_actions`, and `add_team_shape`/`_team_shape_at_actions`. `add_ghost_gk`
+now emits action-LTR (`x → 105 − gr_x`; `y` mirrored for away actions); the model stays
+goal-relative. `compute_team_shape` is additionally made orientation-aware so
+`defensive_line_height`/`inter_line_gap_*` are each team's *true* defensive line (was the
+min-x cluster for everyone → the away team's advanced line). Self-reconciling features
+(`structural_pass`, `gk_influence`, `player_influence`, `cover_shadows`, `shape_graph`,
+`obso`, `space_creation`, `das`, `pitch_control`, `pausa`, `xt_gk`) are unchanged. A
+mirror-symmetry property test (`tests/tracking/test_action_ltr_mirror_invariance.py`) is the
+durable guard. Home-team values are byte-identical; only away-team values change.
+
+Also fixed a latent pandas-3.0 compatibility bug surfaced en route: the frame-fallback GK
+resolver in `add_pre_shot_gk_context` filled `defending_gk_player_id` via `.fillna()` with an
+object Series; pandas 3.0 stopped silently downcasting the result, leaving the column `object`
+(float64 on pandas 2.x), which made the downstream float-vs-object GK id match find zero rows →
+NaN GK position. The fill now restores the contractual float64 dtype. Affected real data on
+pandas 3.0 whenever the GK resolves via the frame fallback (the common path — DFL/Sportec rarely
+emit `keeper_save`).
+
 ## [4.25.0] — 2026-06-11
 
 ### Fixed — GS null-actor duel/foul events emit NaN team_id/player_id (was sentinel 0); nullable Int64 (lakehouse production outage; ADR-001)

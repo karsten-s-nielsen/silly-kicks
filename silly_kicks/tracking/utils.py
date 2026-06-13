@@ -15,6 +15,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
 from ._id_compat import (
     _as_bool,
     _directly_comparable,
@@ -732,6 +733,29 @@ def _resolve_action_frame_context(
         defending_gk_rows = long.loc[gk_mask].copy()
     else:
         defending_gk_rows = long.iloc[0:0].copy()
+
+    # ADR-028: re-project the sampled frame positions into each action's LTR frame.
+    # Frames are home-attacks-right; actions are per-acting-team-LTR. They are a
+    # 180-degree mirror apart for away-team actions. After this, the kernels'
+    # hardcoded goal at (105, 34) is correct because the acting team attacks x=105.
+    flip = acting_team_attacks_rtl(actions, frames)  # index: actions.index
+    # Key by action_id (same precondition as the action_id merges above). Dedupe defensively:
+    # gamestate-shifted slots repeat the SAME action (identical game/period/team) so first-wins
+    # is correct, and a duplicate index would otherwise make .map() raise.
+    flip_by_action = pd.Series(flip.to_numpy(dtype=bool), index=actions["action_id"].to_numpy())
+    flip_by_action = flip_by_action[~flip_by_action.index.duplicated(keep="first")]
+
+    def _reproject_rows(rows: pd.DataFrame) -> pd.DataFrame:
+        if rows.empty or "action_id" not in rows.columns:
+            return rows
+        row_flip = rows["action_id"].map(flip_by_action)
+        row_flip = row_flip.fillna(False).astype(bool)
+        row_flip.index = rows.index
+        return reproject_to_action_ltr(rows, row_flip, x_cols=["x"], y_cols=["y"])
+
+    actor_rows = _reproject_rows(actor_rows)
+    opposite = _reproject_rows(opposite)
+    defending_gk_rows = _reproject_rows(defending_gk_rows)
 
     return ActionFrameContext(
         actions=actions,

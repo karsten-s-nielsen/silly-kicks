@@ -115,21 +115,36 @@ def compute_team_shape(
             except QhullError:
                 hull_area = 0.0  # collinear points -> degenerate hull with area 0
 
+        # Defensive-line orientation (ADR-028): the deepest line is the cluster NEAREST
+        # the team's defended goal. team_attacking_direction tells which goal the team
+        # defends in these (home-attacks-right) frames: "ltr" attacks x=105 -> defends
+        # x=0 -> deepest = lowest-x cluster; "rtl" attacks x=0 -> defends x=105 ->
+        # deepest = highest-x cluster. Ordering from the deepest line outward makes
+        # defensive_line_height + inter-line gaps the team's true defensive line for
+        # BOTH teams (was min-x for everyone -> the away team's ADVANCED line). This is a
+        # frame-level value; add_team_shape re-projects it to the per-action LTR frame.
+        # Defaults to "ltr" (the historical behaviour) when direction is absent.
+        direction = group["team_attacking_direction"].iloc[0] if "team_attacking_direction" in group.columns else None
+        defends_high_x = direction == "rtl"
+
         # Ward hierarchical clustering for inter-line gaps (TF-44)
         n_eff = min(n_defensive_lines, n)
         if n < 2:
-            def_line_height = float(xs.min())
+            def_line_height = float(xs.max() if defends_high_x else xs.min())
             gap_1 = np.nan
             gap_2 = np.nan
         else:
             z = linkage(xs.reshape(-1, 1), method="ward")
             labels = fcluster(z, t=n_eff, criterion="maxclust")
-            # Only include non-empty clusters (tight groups may collapse)
+            # Cluster centroids, ordered from the DEEPEST line (nearest the defended goal)
+            # outward. Ascending for ltr (deepest = min-x); reversed for rtl (deepest = max-x).
             centroids = np.sort([float(np.mean(xs[labels == c])) for c in range(1, n_eff + 1) if np.any(labels == c)])
+            if defends_high_x:
+                centroids = centroids[::-1]
             n_actual = len(centroids)
             def_line_height = float(centroids[0])
-            gap_1 = float(centroids[1] - centroids[0]) if n_actual >= 2 else np.nan
-            gap_2 = float(centroids[2] - centroids[1]) if n_actual >= 3 else np.nan
+            gap_1 = float(abs(centroids[1] - centroids[0])) if n_actual >= 2 else np.nan
+            gap_2 = float(abs(centroids[2] - centroids[1])) if n_actual >= 3 else np.nan
 
         rows.append(
             {
