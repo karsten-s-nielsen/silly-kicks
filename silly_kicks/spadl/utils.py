@@ -713,7 +713,17 @@ def add_pre_shot_gk_context(
         from silly_kicks.tracking._gk_resolve import defending_gk_from_frames
 
         gk_series = defending_gk_from_frames(sorted_actions, frames)
-        sorted_actions["defending_gk_player_id"] = sorted_actions["defending_gk_player_id"].fillna(gk_series)
+        orig_dtype = sorted_actions["defending_gk_player_id"].dtype
+        filled = sorted_actions["defending_gk_player_id"].fillna(gk_series)
+        # pandas >=3.0 no longer silently downcasts an object fill back to the numeric column
+        # dtype (the 2.x FutureWarning became the behaviour). `defending_gk_from_frames` returns
+        # an object Series, so for the numeric-id contract ("float, NaN-coded int") the fill would
+        # leave defending_gk_player_id as object on pandas 3.0 -> the downstream float-vs-object GK
+        # id match in _resolve_action_frame_context silently finds zero rows -> NaN GK position.
+        # Restore the contractual float64 dtype; string-id providers stay object (orig is object).
+        if orig_dtype == np.float64 and filled.dtype == object:
+            filled = pd.to_numeric(filled, errors="coerce")
+        sorted_actions["defending_gk_player_id"] = filled
 
     # PR-S21: when tracking frames supplied, lazy-import + merge GK-position columns.
     # PR-S24: also lazy-import + merge GK-angle columns (umbrella emits 6 cols total).

@@ -40,6 +40,14 @@ min-x cluster for everyone → the away team's advanced line). Self-reconciling 
 mirror-symmetry property test (`tests/tracking/test_action_ltr_mirror_invariance.py`) is the
 durable guard. Home-team values are byte-identical; only away-team values change.
 
+Also fixed a latent pandas-3.0 compatibility bug surfaced en route: the frame-fallback GK
+resolver in `add_pre_shot_gk_context` filled `defending_gk_player_id` via `.fillna()` with an
+object Series; pandas 3.0 stopped silently downcasting the result, leaving the column `object`
+(float64 on pandas 2.x), which made the downstream float-vs-object GK id match find zero rows →
+NaN GK position. The fill now restores the contractual float64 dtype. Affected real data on
+pandas 3.0 whenever the GK resolves via the frame fallback (the common path — DFL/Sportec rarely
+emit `keeper_save`).
+
 ## [4.25.0] — 2026-06-11
 
 ### Fixed — GS null-actor duel/foul events emit NaN team_id/player_id (was sentinel 0); nullable Int64 (lakehouse production outage; ADR-001)

@@ -156,3 +156,49 @@ def test_home_shot_unchanged_no_flip():
     # Home shot: defending GK is away GK (frame x=102), no flip → stays 102, near attacked goal.
     assert shot["pre_shot_gk_x"] == 102.0
     assert shot["pre_shot_gk_distance_to_goal"] == 3.0
+
+
+def test_frame_fallback_preserves_numeric_gk_id_dtype():
+    """Regression (pandas >=3.0): the frame-fallback GK resolver must keep
+    defending_gk_player_id as float64 for numeric-id input. pandas 3.0 stopped
+    silently downcasting an object fill on .fillna, which left the column object and
+    made the downstream float-vs-object GK id match find zero rows -> NaN GK position
+    (CI 3.11/3.12 only; 3.10 uses pandas 2.x which downcast and masked it)."""
+    frames = _frame_rows()
+    actions = pd.DataFrame(
+        [
+            dict(
+                game_id=1,
+                period_id=1,
+                action_id=0,
+                team_id=HOME,
+                player_id=1.0,
+                type_id=GOALKICK,
+                result_id=1,
+                start_x=5.0,
+                start_y=34.0,
+                end_x=40.0,
+                end_y=34.0,
+                time_seconds=9.6,
+            ),
+            dict(
+                game_id=1,
+                period_id=1,
+                action_id=1,
+                team_id=AWAY,
+                player_id=99.0,
+                type_id=SHOT,
+                result_id=1,
+                start_x=92.0,
+                start_y=34.0,
+                end_x=105.0,
+                end_y=34.0,
+                time_seconds=10.0,
+            ),
+        ]
+    )
+    enriched = add_pre_shot_gk_context(actions, frames=frames)
+    # goalkick is NOT a keeper type, so the GK is resolved via the frame fallback.
+    assert enriched["defending_gk_player_id"].dtype == np.float64
+    shot = enriched[enriched["type_id"] == SHOT].iloc[0]
+    assert shot["defending_gk_player_id"] == 1.0
