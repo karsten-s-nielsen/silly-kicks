@@ -50,6 +50,8 @@ __all__ = [
     "PressureParams",
     "RestartCoordinateReport",
     "ShapeGraph",
+    "ShotGoalmouthParams",
+    "ShotGoalmouthReport",
     "SpaceCreationParams",
     "SpearmanParams",
     "StructuralPassParams",
@@ -88,6 +90,7 @@ __all__ = [
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
     "add_shape_graph",
+    "add_shot_goalmouth",
     "add_space_creation",
     "add_structural_pass",
     "add_sync_score",
@@ -112,6 +115,7 @@ __all__ = [
     "compute_pitch_control_at_points",
     "compute_player_influence",
     "compute_shape_graph",
+    "compute_shot_goalmouth",
     "compute_space_created",
     "compute_structural_pass_metrics",
     "compute_team_shape",
@@ -197,6 +201,11 @@ __all__ = [
     "schema",
     "select_back_line_players",
     "shape_graph_xfns",
+    "shot_crossing_y",
+    "shot_crossing_z",
+    "shot_on_target_derived",
+    "shot_speed",
+    "shot_time_to_goal_line",
     "slice_around_event",
     "smooth_frames",
     "snapshot_to_tracking_frames",
@@ -241,6 +250,7 @@ from ._pausa import compute_pausa, compute_pausa_batch
 from ._player_influence import PlayerInfluence, compute_player_influence
 from ._restart_report import RestartCoordinateReport
 from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_positions
+from ._shot_goalmouth import ShotGoalmouthParams, ShotGoalmouthReport, compute_shot_goalmouth
 from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
 from ._structural_pass import StructuralPassParams, compute_structural_pass_metrics
@@ -293,6 +303,7 @@ from .features import (
     add_pre_shot_gk_position,
     add_pressure_on_actor,
     add_shape_graph,
+    add_shot_goalmouth,
     add_space_creation,
     add_structural_pass,
     add_team_shape,
@@ -346,6 +357,11 @@ from .features import (
     reachable_area_team,
     receiver_zone_density,
     shape_graph_xfns,
+    shot_crossing_y,
+    shot_crossing_z,
+    shot_on_target_derived,
+    shot_speed,
+    shot_time_to_goal_line,
     space_creation_xfns,
     structural_pass_xfns,
     team_shape_xfns,

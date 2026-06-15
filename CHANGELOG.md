@@ -5,6 +5,91 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.28.0] — 2026-06-15
+
+### Added — TF-48 post-shot goalmouth crossing geometry (`add_shot_goalmouth`; ADR-030)
+
+New `silly_kicks.tracking.add_shot_goalmouth(actions, frames, *, links=None, params=None)` derives,
+for each shot action (`shot`/`shot_freekick`/`shot_penalty`), the goal-plane crossing from the
+post-contact ball trajectory in tracking frames: `shot_crossing_y`/`shot_crossing_z` (SPADL meters,
+canonical attacked-goal-at-x=105), `shot_speed` (fitted initial speed at contact — ALWAYS the
+contact sub-segment, never a post-bounce refit), `shot_time_to_goal_line`,
+`shot_on_target_derived` (posts/bar expanded by the ball-radius tolerance), plus full provenance
+(`shot_crossing_source` ∈ {observed, extrapolated, insufficient_frames, no_crossing,
+no_ball_frames, unresolved}, `shot_crossing_confidence`, `shot_fit_n_frames`, `shot_fit_rmse`,
+`shot_fit_end_reason`, `shot_z_profile` ∈ {airborne, rolling, bounced}). Pure geometry, no model —
+the lakehouse scores the output with its existing StatsBomb-trained PSxG model (Goals Prevented for
+the tracking providers). Engine (`compute_shot_goalmouth`) is pure + orientation-agnostic (goal
+ends from the GK map; `defended_goal_x` extracted byte-identically from xS into `_gk_resolve.py`);
+the per-shot kernel is pilot-hardened on real WC2022 data: a sample-and-hold collapse (GS's raw
+`balls` channel delivers ~15 Hz positions duplicated at 29.97 Hz stamps — 50% exact
+consecutive-duplicate x/y/z, raw-artifact-confirmed; held duplicates are phantom zero-velocity
+samples that phase-modulated every speed gate and saw-toothed the fits into phantom
+trajectory-breaks), flight-run anchoring for t0 (GS stamps shots up to ~2.6 s before contact) with
+a contact anchor (the shooter's own action coordinates — measured exact ball-track points on GS —
+split a continuous assist-cross/dribble + shot approach run at the contact; orientation-agnostic
+via the goal_x reflection), 0.1 s-baseline velocities (per-frame finite differences amplify
+29.97 fps jitter ~30×), LOCAL residual break checks (a segment-anchored linear residual
+phantom-breaks any smoothly curving chip/curl ~1 s in; a deflection violates even the local fit),
+z-aware flight classification (an airborne decelerating chip is flight; carries/frozen tails are
+on the ground), a flight-core trim (slow ground heads/tails removed; away-flying balls stay honest
+`no_crossing`; sub-flight balls `insufficient_frames`), an extrapolation-leverage cap
+(`max_extrapolation_leverage`: t\* beyond 3× the fitted span is a guess, not a fit — pilot-measured
+dy median 6.2 m vs 2.4 m below the cap), and a contact-EXISTENCE bar (a window whose ball never
+comes contactably near the stamped shot location — 2-D within 5 m at playable height z ≤ 2.6 m —
+provably does not contain the shot → honest `insufficient_frames`; kills the measured worst class,
+a 12.6 m "observed" goal crossing fitted from a pre-contact assist arc passing 6 m overhead).
+`ShotGoalmouthParams` (pilot-calibrated defaults) + `ShotGoalmouthReport`
+QA aggregate + per-Series wrappers + atomic mirror ({shot, shot_penalty}; `shot_freekick` is a
+`freekick` atom). **NO VAEP xfns factory** — post-contact outcome descriptors are
+HybridVAEP-class result leakage; a guard test auto-discovers every default xfn list and asserts
+absence. NOT in any default xfn list → **no retrain trigger**. C4 action-coupled-aggregator count
+27 → 28. Owner-gated GS↔StatsBomb WC2022 acceptance harness
+(`scripts/validate_shot_goalmouth_sb.py` + held-out e2e with ADR-pre-registered floors; goals/saves
+stratified — SB save end_locations are save-points, not plane crossings). **Holdout-validated
+accuracy (one-shot protocol, ADR-030 pre-registered floors, 48 held-out WC2022 matches, 999
+matched shots): goals |Δy| median 2.17 m (floor ≤ 2.5; p90 5.7 — tail dominated by
+observed-straddle GS-vs-SB hand-tag disagreements where GS's own in-net samples corroborate GS),
+|Δz| median 0.48 m (floor ≤ 1.25), on-target resolution coverage 0.620 (floor ≥ 0.60), on-target
+agreement 0.60 (floor ≥ 0.45) — ALL FLOORS PASS.** The meters→SB y-handedness is settled on GK
+GEOMETRY (SB shot freeze-frame defending GK vs the GS-tracked GK: 0.882 flip agreement on 646
+voters, pilot-vs-holdout instrument-stable at 0.883/0.882; the round-1 ball-tag gate was measured
+too noisy to settle a transform and is demoted to an informational diag). Holdout round 1 aborted
+at that ball-tag gate, and its documented failure analysis exposed a harness clock-base bug that
+had silently excluded ALL period-2 shots from every pilot metric (GS SPADL `time_seconds` is the
+CUMULATIVE match clock — the known lakehouse-guarded GS convention — while the harness converted
+SB to period-relative; fixed, matching now covers both halves; full record in ADR-030).
+Crossing-z is GS-z-channel-limited (onset lag). **Completion cycle (4.28.0):** two kernel
+refinements, re-validated on the FULL 64-match GS corpus (the post-holdout protocol): (1) a
+span-gated curve-aware y extrapolation — the constant-velocity fit extrapolated a curling/dipping
+flight's crossing LINEARLY (measured 5.4 m on a real chip-curl goal); when the producing segment
+supports a curvature estimate AND a quadratic markedly out-fits the line (real curl, not jitter),
+the crossing y is taken from the quadratic, capped tighter than the linear leverage; (2) an
+earliest-reaching flight-run tie-break — when >1 plane-approach run reaches the goal line, the SHOT
+is the EARLIEST (the bare nearest-plane rule had anchored t0 PAST a real in-mouth crossing on a
+measured holdout goal). Full-corpus re-validation: goals |Δy| median **2.08 m** (improved from
+holdout 2.17), |Δz| 0.49, coverage 0.63, on-target agreement 0.61, GK-handedness 0.882 on 851
+voters — ALL FLOORS PASS, no regression. A final-kernel sensitivity sweep (`--sweep`, extended to
+the contact/flight module constants on a 10 fps-downsampled copy) confirms the kernel is robust (no
+cliffs) and the new constants are inert on resolution. **Provider coverage:** GS is validated;
+SkillCorner/IDSSE currently return `insufficient_frames` due to a SEPARATELY-TRACKED upstream bug
+(kloppy-derived tracking frames have an inverted y-axis vs SPADL actions —
+`docs/research/bug_kloppy_tracking_y_inverted.md`, tracked in TODO.md); TF-48's kernel is
+provider-agnostic and resolves SkillCorner to the GS baseline once that input is corrected (proven:
+a coordinate-fix smoke-test lifts SC resolution 0.12→0.60). Decision: ADR-030.
+
+### Fixed
+
+- **pining GS loader dropped ball z** (`scripts/_loader_pining.py`): every frame row was hardcoded
+  `z=0.0` and the raw ball records' `z` (present on 100% of GS ball records; probe 2026-06-10) was
+  never read → all loader-fed GS frames had flat zero ball z. Ball rows now carry the real z
+  (players keep 0.0 — no z in GS player records). Affects any loader-fed analysis that consumed GS
+  ball z (e.g. xS ball-z features at GS inference saw zeros). **Audited:** re-ran the xS PR-S80
+  public-vs-full data-effect test with real GS z (controlled A/B at the shipped public params, GS z
+  real vs forced-0) — all 5 folds stay negative (mean Δ -0.058 with real z vs -0.026 with z=0;
+  ship_two=false either way), so the shipped xS conclusion (ship the public-only model) is UNCHANGED;
+  the loader z bug did not flip it.
+
 ## [4.27.1] — 2026-06-15
 
 ### Documentation

@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-15. **Current release**: silly-kicks 4.27.1 (docs-only: ADR-code reconciliation sweep — corrected stale prose in ADR-004/005/006/010/017; TODO header trimmed). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-15. **Current release**: silly-kicks 4.28.0 (TF-48 post-shot goalmouth crossing geometry — `add_shot_goalmouth` derives goal-plane crossing y/z + shot kinematics from post-contact ball trajectories for the lakehouse PSxG pipeline; pure geometry, no model, no retrain trigger; ADR-030). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -27,6 +27,37 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 ---
 
 ## Technical Debt
+
+### Confirmed bugs
+
+- **kloppy tracking frames have an INVERTED y-axis vs SPADL actions (HIGH; confirmed 2026-06-15 by two
+  sessions; OWN brainstorm→spec→plan→PR — do NOT bundle into TF-48).** Root cause: the TRACKING gateway
+  `tracking.convert_to_frames` (`tracking/kloppy.py:104-113`) + dev loader
+  `scripts/_loader_pining.py::_kloppy_tracking_to_frames` pass only `to_pitch_dimensions` +
+  `to_orientation=HOME_AWAY` and NEVER pin `to_coordinate_system`, so they retain each provider's
+  kloppy-native vertical orientation; the EVENT gateway (`spadl/kloppy.py:196-202`) DOES pin
+  `_SoccerActionCoordinateSystem` (origin=BOTTOM_LEFT, vertical=BOTTOM_TO_TOP). ⇒ `action_y == 68 − frame_y`
+  for SkillCorner + IDSSE (off-centre HOME-shot localization: SC d_yflip≈0.2m vs d_identity≈40m, gap ~0;
+  flipping frame y lifts add_shot_goalmouth resolution 0.123→0.605 on 10 SC matches). NOT orientation
+  (ADR-028 is a 180° point reflection; this is a single-axis y mirror) — orthogonal to + composes with
+  `play_left_to_right`. **Fix:** extract `_SoccerActionCoordinateSystem` to a shared location and pin it on
+  the tracking gateway too (NOT a blanket `y=68−y` — that double-inverts any already-correct provider).
+  **Gates:** (A) TEST Metrica (>1 match) — confirm inversion + fix lands at identity; (B) re-verify SC
+  action↔shooter at IDENTITY post-fix (SC actions come from the custom converter — canonical only if SC raw
+  event-y is BOTTOM_TO_TOP; else the SC events converter needs the flip too; measure the residual); (C)
+  production scope — `tracking/kloppy.py` is SHIPPED (SC+Metrica); confirm whether the lakehouse uses the
+  gateway vs its own bronze builder (ADR-029); (D) **highest-priority unknown:** check the PRODUCTION DFL
+  path `tracking/sportec.py` (native adapter, ADR-004 — the IDSSE evidence is the DEV loader only; same bug
+  class likely, UNTESTED); (E) add a REAL-DATA action↔frame y-consistency regression gate (synthetic
+  fixtures can't catch it); git-blame the transform (origin PR-S26/3.3.0) for Chesterton's Fence.
+  **Downstream (SC/Metrica; VAEP/tracking-RETRAIN trigger):** action-anchor×frame-y features CORRUPTED
+  (`action_context`, `pressure_on_actor` incl. vy, `pre_shot_gk_*` distances/angles, `shot_goalmouth`);
+  x-only + frame-integrated aggregates IMMUNE (`team_shape` spread/area/compactness, `defensive_line`
+  height); pitch-control-at-action family VERIFY-PER-FEATURE (A/B with vs without `y=68−y`); error = |68−2y|
+  → 0 at y=34, ~full-width at the touchlines. IDSSE has a SECOND issue on top (y-flip residual ~5.7m +
+  ball-at-wrong-end) — diagnose after the y-fix. Full report + repro:
+  `docs/research/bug_kloppy_tracking_y_inverted.md`. GS native adapter CLEAN; StatsBomb/Wyscout/Opta are
+  event-only.
 
 ### Blocked or Deferred
 

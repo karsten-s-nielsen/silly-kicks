@@ -15,6 +15,7 @@ import pandas as pd
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
+from silly_kicks.tracking._shot_goalmouth import ShotGoalmouthParams
 from silly_kicks.tracking._structural_pass import (
     StructuralPassParams,
     compute_structural_pass_metrics,
@@ -67,6 +68,7 @@ __all__ = [
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
+    "add_shot_goalmouth",
     "add_structural_pass",
     "add_xcross_attempt",
     "add_xshot_occurrence",
@@ -108,6 +110,11 @@ __all__ = [
     "reachable_area_team",
     "receiver_zone_density",
     "shape_graph_xfns",
+    "shot_crossing_y",
+    "shot_crossing_z",
+    "shot_on_target_derived",
+    "shot_speed",
+    "shot_time_to_goal_line",
     "space_creation_xfns",
     "structural_pass_xfns",
     "xcross_attempt_xfns",
@@ -905,3 +912,118 @@ def add_cover_shadows(
         errors="ignore",
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# TF-48: post-shot goalmouth crossing geometry -- atomic mirror (ADR-030)
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_shot_goalmouth(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    params: ShotGoalmouthParams | None = None,
+) -> pd.DataFrame:
+    """Atomic-SPADL mirror of tracking.features.add_shot_goalmouth (TF-48). NO coordinate
+    synthesis (no end=x+dx): the engine consumes action_id/game_id/period_id/time_seconds/
+    team_id/type_id (trajectory from frames, goal end from the GK map) plus the atom's own
+    ``x``/``y`` as the OPTIONAL contact anchor (the standard-SPADL ``start_x``/``start_y``
+    equivalent; NaN -> un-anchored fit, ADR-003). Atomic shot domain is {shot, shot_penalty}
+    (shot_freekick is a `freekick` atom -- intentional, existing pre-shot-GK precedent).
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_shot_goalmouth
+    >>> enriched = add_shot_goalmouth(atomic_actions, frames)  # doctest: +SKIP
+    >>> enriched[["shot_crossing_y", "shot_crossing_source"]]  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    from silly_kicks.tracking._shot_goalmouth import compute_shot_goalmouth
+    from silly_kicks.tracking.utils import link_actions_to_frames
+
+    out = actions.copy()
+    comp = compute_shot_goalmouth(actions, frames, links=links, params=params, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)
+    for c in comp.columns:
+        out[c] = comp[c].to_numpy() if comp[c].dtype != "boolean" else comp[c].array
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+        if len(pointers) > 0:
+            ptr_cols = pointers.set_index("action_id")[provenance_cols]
+            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def _atomic_shot_goalmouth_series(actions: pd.DataFrame, frames: pd.DataFrame, col: str) -> pd.Series:
+    from silly_kicks.tracking._shot_goalmouth import compute_shot_goalmouth
+
+    return compute_shot_goalmouth(actions, frames, shot_type_ids=_ATOMIC_SHOT_TYPE_IDS)[col].rename(col)
+
+
+def shot_crossing_y(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Goal-plane crossing y (m, canonical attacked-goal-at-x=105); atomic mirror.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import shot_crossing_y
+    >>> shot_crossing_y(atomic_actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return _atomic_shot_goalmouth_series(actions, frames, "shot_crossing_y")
+
+
+def shot_crossing_z(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Goal-plane crossing z (m); atomic mirror. NaN when ball z unavailable.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import shot_crossing_z
+    >>> shot_crossing_z(atomic_actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return _atomic_shot_goalmouth_series(actions, frames, "shot_crossing_z")
+
+
+def shot_speed(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Fitted initial ball speed at contact (m/s); atomic mirror (ADR-030 M-1 semantics).
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import shot_speed
+    >>> shot_speed(atomic_actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return _atomic_shot_goalmouth_series(actions, frames, "shot_speed")
+
+
+def shot_time_to_goal_line(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Elapsed seconds from contact to plane crossing; atomic mirror.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import shot_time_to_goal_line
+    >>> shot_time_to_goal_line(atomic_actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return _atomic_shot_goalmouth_series(actions, frames, "shot_time_to_goal_line")
+
+
+def shot_on_target_derived(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Nullable boolean on-target classification; atomic mirror (tolerance-folded posts/bar).
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import shot_on_target_derived
+    >>> shot_on_target_derived(atomic_actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return _atomic_shot_goalmouth_series(actions, frames, "shot_on_target_derived")

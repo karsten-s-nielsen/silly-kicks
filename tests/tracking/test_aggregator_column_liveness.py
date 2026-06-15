@@ -271,6 +271,49 @@ def _run_gradientsports_player_ids():
     return jersey_frames, out
 
 
+def _run_shot_goalmouth():
+    """TF-48 domain: the goalmouth-crossing family needs a POST-contact ball flight
+    that straddles the goal plane (the shared 5-sample pre-window fixture ends at the
+    action) plus GKs at both ends for the goal map and a ballistic z for the z-profile
+    columns -- an OBSERVED on-target crossing makes every contract column live."""
+    t_a = 60.0
+    rows = []
+    for i in range(-10, 34):  # 25 fps, t in [-0.4, +1.32] around the shot
+        t = round(t_a + i / 25.0, 3)
+        bt = max(t - t_a, 0.0)  # ball waits at the spot, then flies at 25 m/s
+        bx, by = 85.0 + 25.0 * bt, 30.0 + 2.0 * bt
+        rows.append(_frow(1, 5, True, 4.0, 34.0, t))
+        rows.append(_frow(2, 6, True, 101.0, 34.0, t))
+        ball = _frow(pd.NA, pd.NA, False, bx, by, t, is_ball=True)
+        ball["x"] = bx  # un-clamped: the crossing needs samples BEYOND x=105
+        ball["z"] = max(4.0 * bt - 4.905 * bt * bt, 0.0)
+        rows.append(ball)
+    frames = pd.DataFrame(rows)
+    frames["player_id"] = frames["player_id"].astype("Int64")
+    frames["team_id"] = frames["team_id"].astype("Int64")
+    actions = pd.DataFrame(
+        {
+            "game_id": [1],
+            "action_id": [0],
+            "period_id": [1],
+            "time_seconds": [t_a],
+            "team_id": pd.Series([5], dtype="int64"),
+            "player_id": pd.Series([10], dtype="int64"),
+            "start_x": [85.0],
+            "start_y": [30.0],
+            "end_x": [105.0],
+            "end_y": [34.0],
+            "type_id": [11],
+            "type_name": ["shot"],
+            "result_id": [1],
+            "result_name": ["success"],
+            "bodypart_id": [0],
+            "bodypart_name": ["foot"],
+        }
+    )
+    return actions, F.add_shot_goalmouth(actions, frames)
+
+
 ENTRIES: dict[str, object] = {
     "add_action_context": _std(F.add_action_context),
     "add_actor_pre_window": _std(F.add_actor_pre_window),
@@ -293,6 +336,7 @@ ENTRIES: dict[str, object] = {
     "add_pre_shot_gk_position": _std(F.add_pre_shot_gk_position),
     "add_pressure_on_actor": _std(F.add_pressure_on_actor),
     "add_shape_graph": _std(F.add_shape_graph, home_team_id=5),
+    "add_shot_goalmouth": _run_shot_goalmouth,
     "add_space_creation": _std(F.add_space_creation, home_team_id=5),
     "add_structural_pass": _std(F.add_structural_pass, home_team_id=5),
     "add_sync_score": _run_sync_score,
