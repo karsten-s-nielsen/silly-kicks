@@ -9,7 +9,8 @@
 ## Context
 
 silly-kicks 2.7.0 (PR-S19) shipped the `silly_kicks.tracking` namespace
-primitive layer (ADR-004): 19-column long-form schema, 4 provider
+primitive layer (ADR-004): long-form schema (19 columns at PR-S19; the
+`is_goalkeeper_source` provenance column added by PR-S26 made it 20), 4 provider
 adapters, `link_actions_to_frames` + `slice_around_event` linkage
 primitives. ADR-004 explicitly DEFERRED tracking-aware *features*
 (`action_context`, `pressure_on_carrier`, pitch control, etc.) to

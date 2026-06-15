@@ -5,6 +5,15 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.27.1] — 2026-06-15
+
+### Documentation
+- **ADR-code reconciliation sweep** — verified all 29 ADRs (ADR-001…029) against the current tree; 25 were clean, no behavioral drift found. Corrected stale prose in 5 living ADRs: ADR-004/ADR-005 (`TRACKING_FRAMES_COLUMNS` is 20 columns, not 19 — the `is_goalkeeper_source` provenance column added in PR-S26 was undocumented; now listed), ADR-004/ADR-006 (the `tracking._direction` module path was renamed to the public `tracking.direction` in 4.0.0 per ADR-010), ADR-010 (Status `pending implementation` → `implemented in 4.0.0`), ADR-017 (de-pinned a drifted `gradientsports.py:416` line-number citation). Historical specs/plans/CHANGELOG were intentionally left untouched (immutable point-in-time records; PR-S19 genuinely shipped 19 columns).
+- **TODO.md** — collapsed the bloated multi-paragraph "Last updated" header (which had accreted per-version historical notes) back to a single current-release summary line; relocated the parked `pitch_control_at_ball__spearman`-redesign item from the header into Technical Debt → Blocked or Deferred (and fixed a `>`-at-line-start Markdown blockquote render bug in it).
+
+### Notes
+- **Documentation-only — no library/package code, schema, or behavior change; no model retrain.** The `silly_kicks` package is byte-identical to 4.27.0.
+
 ## [4.27.0] — 2026-06-13
 
 ### Added

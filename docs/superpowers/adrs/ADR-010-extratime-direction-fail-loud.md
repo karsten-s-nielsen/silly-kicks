@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-05-30 |
-| **Status** | Accepted — pending implementation (silly-kicks **4.0.0**) |
+| **Status** | Accepted — implemented in silly-kicks **4.0.0** |
 | **Deciders** | Karsten S. Nielsen, Claude Opus 4.8 (1M); luxury-lakehouse maintainer (2-round spec second-opinion review) |
 
 ## Context
