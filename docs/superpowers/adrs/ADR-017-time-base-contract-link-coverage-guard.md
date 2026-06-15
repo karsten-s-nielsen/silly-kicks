@@ -46,7 +46,7 @@ The linker `link_actions_to_frames` is already **per-period scoped** (groups by 
 - The lakehouse opts **up** to `on_low_coverage="raise"` with `min_link_rate≈0.9` for AC-1 (hard-fail-first UDF semantics) and wires `validate_time_base` at work-unit entry. The library default protects naive callers; strict consumers tighten by policy.
 
 ### Scope note (coverage not overstated)
-The convention-pinning lock tests enforce the contract only for converters whose `time_seconds` arithmetic the library **owns** (**Opta, StatsBomb**). **GradientSports `time_seconds` is a verbatim pass-through (`spadl/gradientsports.py:416`) originating upstream in the lakehouse — it is guarded lakehouse-side (`validate_time_base` at work-unit entry + the lakehouse boundary test), NOT by these library tests.** Sportec/kloppy are also pass-through (lower drift risk; not covered here).
+The convention-pinning lock tests enforce the contract only for converters whose `time_seconds` arithmetic the library **owns** (**Opta, StatsBomb**). **GradientSports `time_seconds` is a verbatim pass-through (in `spadl/gradientsports.py`) originating upstream in the lakehouse — it is guarded lakehouse-side (`validate_time_base` at work-unit entry + the lakehouse boundary test), NOT by these library tests.** Sportec/kloppy are also pass-through (lower drift risk; not covered here).
 
 ## Related
 

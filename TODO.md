@@ -2,9 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-13. **Current release**: silly-kicks 4.27.0 (`orient_frames_to_ltr` — single-sources the frame-LTR orientation contract for consumers building frames from non-kloppy sources; companion to ADR-028; pure composition of `compute_attacking_direction` + `play_left_to_right` with fail-loud guards; additive, no retrain; lakehouse re-materializes metrica/skillcorner after adopting it; ADR-029). Prior: 4.26.0 (tracking geometry now emitted in the per-action SPADL LTR frame — systemic orientation bug fixed at one canonical seam via `tracking/_action_orientation.py`; ~50% of tracking action rows (away-team actions) had wrong `pre_shot_gk_*`/`defensive_line_*`/`team_shape_*`/`pressure_*`/`nearest_defender_distance`/`ghost_gk_*`; `compute_team_shape` made orientation-aware; mirror-symmetry guard; VAEP/tracking-retrain trigger — re-materialize all tracking action-context; ADR-028). Prior: 4.25.0 (GS null-actor duel/foul events emit NaN `team_id`/`player_id` instead of sentinel `0`; GS ids nullable `Int64`; ADR-001-legal canonical-player self-heal; `convert_to_atomic` preserves source id dtype). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
-
-**New (4.24.0): `pitch_control_at_ball__spearman` redesign** — Wicked. The Spearman PPCF is degenerate (0.5 fallback) within ~18 m of the ball (ball beats any player's reaction time to near cells), and the column samples linked-action START points → ~0.5 for every well-linked action in production (informationally dead; declared structural constant in the liveness gate; flagged to the lakehouse in the 4.24.0 changelog). Redesign options: sample at the action END point (ball travel time > 0), an integration window past the reaction time, or a potential-control variant. Touches every PC consumer — needs its own ADR.
+**Last updated**: 2026-06-15. **Current release**: silly-kicks 4.27.1 (docs-only: ADR-code reconciliation sweep — corrected stale prose in ADR-004/005/006/010/017; TODO header trimmed). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -49,6 +47,13 @@ Items are ranked top-to-bottom by specification completeness, then by additional
   WC2022 empirical catalog (the PFF FC Change Log is not a semantic data dictionary); confirm against an
   official PFF codebook if one becomes available, and whether OGs can surface under other event types
   (e.g. `CL` deflection — none seen in WC2022).
+- **`pitch_control_at_ball__spearman` redesign (Wicked; added 4.24.0).** The Spearman PPCF is
+  degenerate (0.5 fallback) within ~18 m of the ball (ball beats any player's reaction time to near
+  cells), and the column samples linked-action START points → ~0.5 for every well-linked action in
+  production (informationally dead; declared structural constant in the liveness gate; flagged to the
+  lakehouse in the 4.24.0 changelog). Redesign options: sample at the action END point (ball travel
+  time strictly positive), an integration window past the reaction time, or a potential-control
+  variant. Touches every PC consumer — needs its own ADR.
 - **ADR-code reconciliation sweep.** Periodically verify that documented ADRs
   (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
   constraints (e.g. "zero Spark imports in domain") hold in practice and that

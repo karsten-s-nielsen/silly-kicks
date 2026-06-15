@@ -38,9 +38,9 @@ follow-up scoping cycles.
 Zero I/O, zero global state mutation. Identical contract to the events
 namespace (per ADR-001 cross-namespace consistency).
 
-### 2. Canonical 19-column long-form schema
+### 2. Canonical 20-column long-form schema
 
-`TRACKING_FRAMES_COLUMNS` — 19 columns; one row per (frame, player); ball
+`TRACKING_FRAMES_COLUMNS` — 20 columns; one row per (frame, player); ball
 as own row with `is_ball=True`. Per-provider dtype variants
 (`KLOPPY_TRACKING_FRAMES_COLUMNS`, `SPORTEC_TRACKING_FRAMES_COLUMNS`,
 `GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS`) follow the events precedent; identifier
@@ -52,6 +52,8 @@ The schema additionally carries:
 - `team_attacking_direction`: `"ltr" | "rtl"`; NaN for ball rows.
 - `speed_source`: `"native" | "derived"` provenance column.
 - `source_provider`: `"gradientsports" | "sportec" | "metrica" | "skillcorner"`.
+- `is_goalkeeper_source`: `"native" | "derived"` provenance column (added PR-S26;
+  the 20th column — see ADR-007).
 
 ### 3. SPADL 105 × 68 m coordinates, bottom-left origin
 
@@ -75,7 +77,7 @@ SkillCorner.
 | SkillCorner           | kloppy gateway   | `silly_kicks/tracking/kloppy.py`            |
 
 Gradient Sports native is preferred over kloppy's Gradient Sports tracking parser for symmetry
-with `silly_kicks.spadl.gradientsports` (PR-S18) and to share the `_direction`
+with `silly_kicks.spadl.gradientsports` (PR-S18) and to share the `direction`
 helper extracted from PR-S18. Sportec must be native because kloppy
 3.18 has no Sportec/IDSSE tracking parser. The kloppy gateway raises
 `NotImplementedError` for `Provider.PFF` and `Provider.SPORTEC` —
@@ -148,14 +150,15 @@ PR-2 (`action_context`) targets silly-kicks 2.8.0 against the locked
   id), no library changes needed. Adding a new tracking provider
   reduces to: new adapter module + new fixture generator + new probe
   entry. Schema is invariant.
-- **Negative:** A 5th provider whose source schema cannot fit the 19-column
+- **Negative:** A 5th provider whose source schema cannot fit the 20-column
   shape would force a schema revision; the four chosen (Gradient Sports / Sportec /
   Metrica / SkillCorner) cover the prevailing heterogeneity (JSON / JSONL
   / CSV / XML; 10/25/30 Hz), so the risk is low for the foreseeable
   expansion path.
-- **Bundled refactor:** The `_direction.py` helper is extracted from
+- **Bundled refactor:** The `direction.py` helper is extracted from
   `silly_kicks/spadl/gradientsports.py` (PR-S18) into
-  `silly_kicks/tracking/_direction.py` so events Gradient Sports, tracking
+  `silly_kicks/tracking/direction.py` (later promoted from `_direction.py` to
+  the public module name; see ADR-010) so events Gradient Sports, tracking
   Gradient Sports, and tracking Sportec adapters share one implementation. Pure refactor —
   zero behaviour change in events.
 

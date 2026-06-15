@@ -66,7 +66,7 @@ Implementation:
 - `ABSOLUTE_FRAME_HOME_RIGHT` -> mirror away-team rows.
 - `PER_PERIOD_ABSOLUTE` -> consult `home_attacks_right_per_period[period]`,
   mirror per (team, period). Implementation re-uses
-  `silly_kicks.tracking._direction.home_attacks_right_per_period`.
+  `silly_kicks.tracking.direction.home_attacks_right_per_period`.
 
 The dispatcher's no-op branch for possession-perspective providers is kept
 explicit (rather than removing the call) so every converter has the same
