@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.29.0] — 2026-06-16
+
+### Fixed — kloppy tracking-gateway y-axis inversion (CS-pin; ADR-031, PR-S94 / T1)
+
+The kloppy **tracking** gateway (`silly_kicks.tracking.kloppy.convert_to_frames`) produced frames with
+a y-axis **inverted** relative to the SPADL action y-axis (`action_y == 68 − frame_y`) for every
+kloppy-based provider (SkillCorner, Metrica, and the IDSSE dev-harness path). The **event** gateway
+pinned the canonical `_SoccerActionCoordinateSystem` (origin `BOTTOM_LEFT`, vertical `BOTTOM_TO_TOP`);
+the tracking gateway never did, retaining each provider's kloppy-native vertical. It is a single-axis
+y mirror (NOT orientation — orthogonal to ADR-028/029); error `|68 − 2y|` is 0 at centre and ~full
+pitch width at the touchlines (why it hid).
+
+- `_SoccerActionCoordinateSystem` extracted to `silly_kicks/spadl/_kloppy_coordinates.py` (with a
+  `socceraction_coordinate_system(metadata)` helper); both gateways import it (DRY). The event-path
+  output is **byte-identical** (the helper reads the same metadata the inline construction did).
+- `tracking/kloppy.py` now pins the coordinate system. **Signature is CS-only** — it drops
+  `to_pitch_dimensions` and relies on the CS's own standardized 0–105/0–68 dimensions, matching the
+  event gateway. (Keeping `to_pitch_dimensions` while adding the CS silently overrides the CS's
+  vertical and leaves y inverted — verified on SkillCorner.) **NOT** a blanket `y = 68 − y` flip
+  (which would double-invert an already-canonical provider; guarded by a no-op test).
+
+**Scope (Gate C):** this fixes the **calibration/pining path + external kloppy-gateway consumers** —
+the lakehouse builds SkillCorner/Metrica frames via its own bronze builders, not this gateway.
+**Retrain trigger:** VAEP + tracking **calibration** consumers for **SkillCorner and Metrica** (both
+were inverted; Gate A). The native sportec/IDSSE path is unaffected (Gate D: y-correct). Gradient
+Sports native and event-only providers (StatsBomb/Wyscout/Opta) unaffected. Decision: ADR-031.
+First of a sequence; the IDSSE/Sportec DFL parse-port single-sourcing (T3) follows in PR-S95.
+
 ## [4.28.0] — 2026-06-15
 
 ### Added — TF-48 post-shot goalmouth crossing geometry (`add_shot_goalmouth`; ADR-030)
