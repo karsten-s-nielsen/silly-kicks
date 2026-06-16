@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-16. **Current release**: silly-kicks 4.29.0 (kloppy tracking-gateway y-axis inversion fix — `tracking/kloppy.py` now pins the canonical `_SoccerActionCoordinateSystem` (extracted to `spadl/_kloppy_coordinates.py`, shared with the event gateway), correcting frames that were y-mirrored vs SPADL actions for SkillCorner/Metrica/IDSSE-dev; calibration retrain trigger for SkillCorner + Metrica; PR-S94 / T1 of ADR-031). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-16. **Current release**: silly-kicks 4.30.0 (DFL parse+shape port — new `silly_kicks/providers/sportec/` (behind `[parse-dfl]`) single-sources the IDSSE/Sportec DFL parser as a verbatim lift of the lakehouse parser, pinned by a golden parity test; the dev loader's y-inverting kloppy IDSSE path is retired in favour of the native converters; IDSSE calibration/pining re-materialize (N6); PR-S95 / T3 of ADR-031). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -27,18 +27,6 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 ---
 
 ## Technical Debt
-
-### Confirmed bugs
-
-- **kloppy-tracking-y follow-ups (the gateway CS-pin shipped 4.29.0 / ADR-031; these remain open).**
-  - **PR-S95 / T3 — single-source the IDSSE/Sportec DFL parser** via a parse+shape port
-    (`silly_kicks/providers/sportec/parse.py`, behind a `[parse-dfl]` extra), retiring the dev loader's
-    kloppy IDSSE path; eliminates the four-layer dev/prod drift (parse / smooth / velocity / convert); the
-    lakehouse adopts the port and deletes its private parser. Spec + plan ready (ADR-031 §4.4 + the
-    `2026-06-16-kloppy-tracking-y-fix.md` plan, PR-S95 section).
-  - **IDSSE ET (P3/P4) native handedness — unverified** (no ET match in the IDSSE set); re-check when an
-    ET-bearing DFL match is available before relying on native ET frames.
-  Background + repro: `docs/research/bug_kloppy_tracking_y_inverted.md`.
 
 ### Blocked or Deferred
 

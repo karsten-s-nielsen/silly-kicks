@@ -141,8 +141,9 @@ def load_matches(
 ) -> Iterator[tuple[str, str, pd.DataFrame, pd.DataFrame, object]]:
     """Yield (provider, match_id, actions, frames, home_team_id) for each requested match.
 
-    ``tracking_limit`` caps frames loaded per match (passed to the kloppy parsers) — essential for
-    the ~419 MB IDSSE tracking file in dev/e2e loops. ``max_per_provider`` caps the NUMBER of
+    ``tracking_limit`` caps frames loaded per match (passed to the kloppy parser for SkillCorner;
+    applied post-parse to the first N frames for the IDSSE DFL parse-port path) — essential for the
+    ~419 MB IDSSE tracking file in dev/e2e loops. ``max_per_provider`` caps the NUMBER of
     matches loaded per provider (after any ``match_ids`` selection) — bounds total memory for the
     TF-24 sweep on a local machine (loading all matches at full depth can OOM; see calibrate CLI
     ``--max-matches-per-provider``). ``cache_dir`` (when set) persists every downloaded artifact
@@ -242,7 +243,7 @@ def _download_artifacts(
 def _build_match(provider, match_id, paths, tracking_limit):
     """Provider dispatch: parse the downloaded artifacts into (actions, frames, home_team_id)."""
     if provider == "idsse":
-        return _build_idsse(paths, tracking_limit)
+        return _build_idsse(paths, match_id, tracking_limit)
     if provider == "skillcorner":
         return _build_skillcorner(paths, match_id, tracking_limit)
     if provider == "gradientsports":
@@ -292,105 +293,68 @@ def _build_skillcorner(paths, match_id, tracking_limit):
     return actions, frames, home_team_id
 
 
-def _build_idsse(paths, tracking_limit):
-    """IDSSE (DFL/Sportec XML): kloppy events (-> SPADL via kloppy gateway) + kloppy-parsed
-    tracking mapped to the silly-kicks frames schema (the silly-kicks tracking kloppy gateway
-    refuses Sportec by ADR-004, so the loader maps the kloppy TrackingDataset directly)."""
-    from kloppy import sportec  # type: ignore[import-not-found]
+def _build_idsse(paths, match_id, tracking_limit):
+    """IDSSE (DFL/Sportec XML) via the silly-kicks DFL parse+shape port (ADR-031 T3).
 
-    from silly_kicks.spadl import kloppy as spadl_kloppy
-
-    ev = sportec.load_event(event_data=str(paths["events"]), meta_data=str(paths["metadata"]))
-    actions, _evt_report = spadl_kloppy.convert_to_actions(ev)
-    tr = sportec.load_tracking(meta_data=str(paths["metadata"]), raw_data=str(paths["tracking"]), limit=tracking_limit)
-    frames, home_team_id = _kloppy_tracking_to_frames(tr)
-    # The Sportec kloppy-gateway SPADL converter leaves game_id None, while the frames carry the DFL
-    # match id from kloppy tracking metadata. Every tracking-feature join (ball carrier, DAS,
-    # defensive line, team shape) keys on (game_id, period_id, frame_id), so a None-vs-id mismatch
-    # silently drops EVERY IDSSE row -> 0 carrier signal -> the provider is excluded by signal_sanity
-    # and never enters the calibration. Stamp the actions with the frames' game_id so the per-match
-    # joins match. (Harness-only: the lakehouse stamps game_id from its bronze tables.)
-    actions = actions.copy()
-    actions["game_id"] = frames["game_id"].iloc[0]
-    return actions, _preprocess(frames), home_team_id
-
-
-def _kloppy_tracking_to_frames(dataset):
-    """Map a kloppy sportec TrackingDataset -> silly-kicks TRACKING_FRAMES_COLUMNS (loader-local;
-    avoids the ADR-004 gateway block for Sportec while still using kloppy's DFL XML parser)."""
-    from kloppy.domain import Dimension, MetricPitchDimensions, Orientation  # type: ignore[import-not-found]
-
-    transformed = dataset.transform(
-        to_pitch_dimensions=MetricPitchDimensions(
-            x_dim=Dimension(0, 105.0),
-            y_dim=Dimension(0, 68.0),
-            standardized=False,
-            pitch_length=105.0,
-            pitch_width=68.0,
-        ),
-        to_orientation=Orientation.HOME_AWAY,
+    Single-sources the DFL parser: ``providers.sportec.parse_dfl_*`` (bytes -> RAW bronze) ->
+    ``shape_*_to_native`` -> the NATIVE silly-kicks ``spadl.sportec`` / ``tracking.sportec``
+    converters. This replaces the former kloppy event + loader-local kloppy tracking path
+    (``_kloppy_tracking_to_frames``), which produced y-INVERTED frames (ADR-031 / the
+    kloppy-tracking-y bug). ``home_team_start_left`` is derived from the DFL ``<KickOff>``
+    events (authoritative). Tracking frames are emitted ``absolute_frame`` (matching the prior
+    harness convention) then preprocessed (smooth + velocities) consumer-side.
+    """
+    from silly_kicks.providers.sportec import (
+        derive_idsse_home_team_start_left,
+        derive_idsse_home_team_start_left_extratime,
+        parse_dfl_events,
+        parse_dfl_match_info,
+        parse_dfl_tracking,
+        shape_events_to_native,
+        shape_tracking_to_native,
     )
-    home_team = transformed.metadata.teams[0]
-    home_team_id = str(home_team.team_id)
-    frame_rate = float(transformed.metadata.frame_rate or 25.0)
-    game_id = str(transformed.metadata.game_id or "idsse")
-    rows: list[dict] = []
-    for period_frame in transformed.records:
-        fid = int(period_frame.frame_id)
-        pid = int(period_frame.period.id) if period_frame.period else 1
-        t_s = float(period_frame.timestamp.total_seconds()) if period_frame.timestamp is not None else fid / frame_rate
-        for player, pdata in period_frame.players_data.items():
-            if pdata.coordinates is None:
-                continue
-            tid = str(player.team.team_id)
-            rows.append(
-                {
-                    "game_id": game_id,
-                    "period_id": pid,
-                    "frame_id": fid,
-                    "time_seconds": t_s,
-                    "frame_rate": frame_rate,
-                    "player_id": str(player.player_id),
-                    "team_id": tid,
-                    "is_ball": False,
-                    "is_goalkeeper": str(player.starting_position or "") == "Goalkeeper",
-                    "x": float(pdata.coordinates.x),
-                    "y": float(pdata.coordinates.y),
-                    "z": 0.0,
-                    "speed": pdata.speed if pdata.speed is not None else float("nan"),
-                    "speed_source": "native" if pdata.speed is not None else None,
-                    "ball_state": "alive",
-                    "team_attacking_direction": "ltr" if tid == home_team_id else "rtl",
-                    "confidence": None,
-                    "visibility": None,
-                    "source_provider": "sportec",
-                }
-            )
-        if period_frame.ball_coordinates is not None:
-            rows.append(
-                {
-                    "game_id": game_id,
-                    "period_id": pid,
-                    "frame_id": fid,
-                    "time_seconds": t_s,
-                    "frame_rate": frame_rate,
-                    "player_id": None,
-                    "team_id": None,
-                    "is_ball": True,
-                    "is_goalkeeper": False,
-                    "x": float(period_frame.ball_coordinates.x),
-                    "y": float(period_frame.ball_coordinates.y),
-                    "z": 0.0,
-                    "speed": float("nan"),
-                    "speed_source": None,
-                    "ball_state": "alive",
-                    "team_attacking_direction": None,
-                    "confidence": None,
-                    "visibility": None,
-                    "source_provider": "sportec",
-                }
-            )
-    return pd.DataFrame(rows), home_team_id
+    from silly_kicks.spadl import sportec as sportec_spadl
+    from silly_kicks.tracking import sportec as sportec_tracking
+
+    bare_id = str(match_id).removeprefix("DFL-MAT-")  # parser expects the bare DFL MatchId
+    mi = parse_dfl_match_info(str(paths["metadata"]))
+
+    # Events: parse -> shape -> derive direction-of-play from the DFL KickOff -> native SPADL.
+    native_evt = shape_events_to_native(parse_dfl_events(str(paths["events"]), match_info=mi, match_id=bare_id))
+    hsl = derive_idsse_home_team_start_left(native_evt, mi.home_team_id)
+    hsl_et = derive_idsse_home_team_start_left_extratime(native_evt, mi.home_team_id)
+    actions, _evt_report = sportec_spadl.convert_to_actions(
+        native_evt,
+        home_team_id="home",  # native_evt.team carries the 'home'/'away' label, not the CLU id
+        home_team_start_left=hsl,
+        home_team_start_left_extratime=hsl_et,
+    )
+    # The native converter echoes the 'home'/'away' label as the SPADL team_id, but the tracking
+    # frames key team by the DFL CLU id. The ADR-028 per-action LTR re-projection joins actions to
+    # frames on team_id, so they MUST share a namespace -- the retired kloppy path used CLU on both
+    # sides. Remap the action team_id back to the CLU id so away-team tracking geometry re-projects
+    # correctly ('unknown'-team rows keep their label and produce NaN geometry, as before).
+    actions["team_id"] = (
+        actions["team_id"].map({"home": mi.home_team_id, "away": mi.away_team_id}).fillna(actions["team_id"])
+    )
+
+    # Tracking: parse -> shape -> native frames. The port parses the FULL positions XML; honour
+    # the dev-loop ``tracking_limit`` by capping to the first N distinct frames AFTER parse (the
+    # whole-file parse is the cost of single-sourcing the DFL parser; the kloppy path capped at
+    # read time). game_id flows from match_id through both native converters, so the prior
+    # game_id-None stamp is no longer needed.
+    native_trk = shape_tracking_to_native(parse_dfl_tracking(str(paths["tracking"]), match_info=mi, match_id=bare_id))
+    if tracking_limit:
+        keep = sorted(native_trk["frame_id"].unique())[:tracking_limit]
+        native_trk = native_trk[native_trk["frame_id"].isin(keep)].reset_index(drop=True)
+    frames, _trk_report = sportec_tracking.convert_to_frames(
+        native_trk,
+        home_team_id=mi.home_team_id,  # native_trk.team_id carries the DFL CLU id
+        home_team_start_left=hsl,
+        home_team_start_left_extratime=hsl_et,
+        output_convention="absolute_frame",
+    )
+    return actions, _preprocess(frames), mi.home_team_id
 
 
 _GS_EVENT_FIELD_MAP = {

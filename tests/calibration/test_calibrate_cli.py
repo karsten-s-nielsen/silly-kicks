@@ -33,7 +33,10 @@ def test_game_id_guard_passes_when_consistent():
 @pytest.mark.parametrize(
     "a_id, f_id",
     [
-        (None, "DFL-MAT-1"),  # the IDSSE regression: spadl_kloppy leaves actions game_id None
+        (None, "DFL-MAT-1"),  # defensive: a None-vs-value game_id mismatch must still fail loud.
+        # (The IDSSE spadl_kloppy path historically left actions game_id None; the PR-S95 native DFL
+        # re-route now derives game_id from match_id on BOTH sides -> IDSSE is consistent. The guard
+        # stays as a generic safety net against any future drop-causing mismatch.)
         ("DFL-MAT-1", "DFL-MAT-2"),  # genuine value mismatch
     ],
 )

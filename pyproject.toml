@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.29.0"
+version = "4.30.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -44,6 +44,12 @@ lightgbm = ["lightgbm>=4.0"]
 # the golden-master extra is only installable on the wider 3.11+ subset.
 golden-master = ["unravelsports>=1.2; python_version >= '3.11'"]
 das = ["accessible-space>=2.0,<3"]
+# PR-S95 (4.30.0, ADR-031 T3): the DFL/Sportec parse+shape port
+# (silly_kicks/providers/sportec/). The port is pure stdlib xml.etree + pandas/numpy
+# (already core deps), so this extra carries no new runtime requirement -- it is the
+# opt-in import handle + the lakehouse's hard-dependency marker on adoption. Add deps
+# here only if the port later needs one.
+parse-dfl = []
 ghost-gk = ["huggingface_hub>=0.20.0"]
 ghost-gk-train = ["skl2onnx>=1.16.0"]
 # TF-17 (PR-B): xCrossAttempt Hub weights download (from_hub). huggingface_hub is lazy-imported.

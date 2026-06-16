@@ -5,6 +5,44 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.30.0] — 2026-06-16
+
+### Added — DFL / Sportec parse+shape port (ADR-031, PR-S95 / T3)
+
+A new `silly_kicks/providers/sportec/` package (behind a `[parse-dfl]` optional extra) **single-sources
+the IDSSE/Sportec DFL parser**, eliminating the dev/prod parser drift and retiring the y-inverting
+loader-local kloppy `_kloppy_tracking_to_frames` from the calibration/pining harness in favour of the
+native `spadl.sportec` / `tracking.sportec` converters.
+
+- **Public surface:** `parse_dfl_match_info` / `parse_dfl_tracking` / `parse_dfl_events` (DFL XML →
+  RAW provider-canonical bronze) + `shape_tracking_to_native` / `shape_events_to_native` (bronze →
+  converter input) + `derive_idsse_home_team_start_left{,_extratime}`; typed returns `MatchInfo` /
+  `SportecTrackingBronze` / `SportecEventBronze` (silly-kicks' own domain names — a versioned cross-repo
+  bronze contract, ADR-031 N1).
+- **Verbatim lift.** Parse/shape function bodies are upstreamed byte-for-byte from luxury-lakehouse @
+  `0efac60`; the only adaptations are the `logger`-arg defaulting, two inlined cross-module helpers
+  (`idsse_native_match_id`, `finalize_bronze_df`), and a materialised 246-column events bronze-column
+  set (the lakehouse derives it from a schema module). Pinned by `tests/datasets/sportec/idsse_slice/SOURCE_SHA`.
+- **Data-quality is consumer-side.** The port emits RAW bronze (no Savitzky-Golay smoothing / velocity
+  derivation); the harness applies `_preprocess` after shaping, and a delete-and-depend lakehouse keeps
+  its own smoothing after the parse.
+- **Golden parity test** (`tests/providers/sportec/test_parse_port_parity.py`) asserts the port
+  reproduces goldens captured by running the **real** lakehouse functions on a reduced real-WC2022 IDSSE
+  slice — a genuine "port reproduces production" guard (sensitivity-proven).
+- **No new tracking aggregator** → the action-coupled aggregator count is unchanged (28). New C4
+  container (`providers.sportec`) feeding both sportec converters.
+
+### Changed — IDSSE harness re-route (N6 retrain trigger)
+
+`scripts/_loader_pining.py::_build_idsse` now parses via the port → native converters. The action↔frame
+y-axis now agrees (acting-player frame-y matches the action `start_y` to ~0.2 m after the ADR-028
+re-projection, vs ~11.8 m on the retired kloppy path), and the action `team_id` is remapped from the
+`"home"/"away"` label to the DFL CLU id so the ADR-028 join aligns with the CLU-keyed frames. **IDSSE
+calibration/pining feature values change → those consumers re-materialize.** Documented by
+`tests/calibration/test_calibration_invariance_e2e.py`. (Gate D: the native sportec converter was
+already y-correct; IDSSE's old misalignment was partial, not the clean SkillCorner-style inversion T1
+fixed.)
+
 ## [4.29.0] — 2026-06-16
 
 ### Fixed — kloppy tracking-gateway y-axis inversion (CS-pin; ADR-031, PR-S94 / T1)

@@ -24,6 +24,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 33-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator. ExpectedThreat facade (byte-identical Singh default)." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness: pure objectives/CV/gates + frozen exogenous xT artifact. scripts/ CLI + pining + Databricks loaders. Recommends infer_ball_carrier / LinkParams.k3 / off-ball-run defaults (carrier accuracy + held-out VAEP Brier) and per-corpus xT KDE bandwidth/resolution (held-out transition-NLL). Does not change library constants." "Python (optional [calibration] extra)" "Library"
+            providers = container "silly_kicks.providers" "Per-provider raw-data parse ports (bytes -> provider-canonical bronze -> converter input). The Sportec/DFL parse+shape port (parse_dfl_* / shape_*_to_native) single-sources the IDSSE/Sportec parser as a verbatim lift of the lakehouse DFL parser, pinned by a golden parity test; emits RAW bronze (data-quality stays consumer-side). Behind the [parse-dfl] extra (ADR-031 T3)." "Python (optional [parse-dfl] extra)" "Library"
         }
 
         // --- Relationships: Context level ---
@@ -74,6 +75,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         calibration -> kloppy "Parses SkillCorner/Sportec provider data via" "kloppy.skillcorner / kloppy.sportec"
         calibration -> pining "Loads SkillCorner/IDSSE/Gradient-Sports matches from" "Bearer -> 302 -> presigned S3"
         calibration -> databricks "Loads bronze tables + the spadl_actions xT corpus from" "databricks-sql-connector"
+
+        // --- Relationships: DFL parse port (ADR-031 T3) ---
+        calibration -> providers "Parses IDSSE/Sportec DFL XML + shapes to native converter input via" "parse_dfl_* / shape_*_to_native"
+        providers -> spadl "Emits silly_kicks.spadl.sportec convert_to_actions input via" "shape_events_to_native (DataFrame contract)"
+        providers -> tracking "Emits silly_kicks.tracking.sportec convert_to_frames input via" "shape_tracking_to_native (DataFrame contract)"
     }
 
     views {

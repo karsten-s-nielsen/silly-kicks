@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-06-16 |
-| **Status** | Accepted (PR-S94 / T1 = CS-pin, shipped here; PR-S95 / T3 = parse port, planned; T2 = no-op) |
+| **Status** | Accepted (PR-S94 / T1 = CS-pin, shipped v4.29.0; PR-S95 / T3 = DFL parse port, shipped v4.30.0; T2 = no-op per Gate D) |
 | **Deciders** | Karsten (with Claude); lakehouse session (cross-session review rounds 2–6) |
 
 ## Context
@@ -76,16 +76,45 @@ distance is y-symmetric (correcting an over-listing). Frame-integrated / x-only 
 (`team_shape`, `defensive_line`) are isometry-immune. **NOT affected:** native sportec/IDSSE
 (Gate D), Gradient Sports native, event-only providers (StatsBomb/Wyscout/Opta).
 
-## PR-S95 (T3, planned) + the C4 release-coupling trade-off
+## PR-S95 (T3, shipped v4.30.0) — the DFL parse+shape port
 
-PR-S95 single-sources the IDSSE/Sportec **parser** via a `silly_kicks/providers/sportec/parse.py`
-parse+shape port (behind a `[parse-dfl]` extra), eliminating the **four-layer** dev/prod drift
-(parse / smooth / velocity / convert); the lakehouse adopts the port and deletes its private parser.
-**Trade-off (chosen):** once the lakehouse depends on `silly-kicks[parse-dfl]`, every future
-DFL-parser change routes through a silly-kicks release (PyPI → wheel → terraform `==` pin → the
-lakehouse's own dep-parity check) instead of a one-repo patch — the right hexagonal direction
-(drift-elimination) at the cost of lakehouse change-latency. Data-quality (smoothing, velocity)
-stays consumer-side, composed explicitly, with a single shared canonical callable.
+PR-S95 single-sources the IDSSE/Sportec **parser** via a new `silly_kicks/providers/sportec/parse.py`
+parse+shape port (behind a `[parse-dfl]` extra), eliminating the dev/prod parser drift; the dev
+harness (`scripts/_loader_pining.py::_build_idsse`) is re-routed onto it and the y-inverting loader-local
+kloppy `_kloppy_tracking_to_frames` is **retired**.
+
+- **Bronze-seam split (verbatim lift).** `parse_dfl_match_info` / `parse_dfl_tracking` /
+  `parse_dfl_events` (bytes → RAW provider-canonical bronze) + `shape_tracking_to_native` /
+  `shape_events_to_native` (bronze → silly-kicks `tracking.sportec` / `spadl.sportec` converter input)
+  + `derive_idsse_home_team_start_left{,_extratime}`. Function bodies are lifted **byte-for-byte** from
+  luxury-lakehouse @ `0efac60` (`ingestion/idsse.py`, `ingestion/utils.py::finalize_bronze_df`,
+  `shared/identifiers.py::idsse_native_match_id`, `action_context/convert.py`, `spadl_adapter.py`);
+  the only adaptations are the dropped `logger` arg-defaulting, the two inlined cross-module helpers,
+  and a **materialised** `_IDSSE_EVENTS_BRONZE_COLS` (the lakehouse derives it from
+  `_dfl_event_schema`; pinned here as a 246-col literal). `MatchInfo` / `SportecTrackingBronze` /
+  `SportecEventBronze` are silly-kicks' own domain names (N1 cross-repo contract).
+- **Data-quality is consumer-side.** The port emits RAW bronze (NO `_smooth_tracking` /
+  `smooth_positions`); the lakehouse keeps its own smoothing after `parse_dfl_tracking`, and the harness
+  applies `_preprocess` (smooth + velocities) after shaping. The port avoids lifting `analytics.smoothing`.
+- **Parity golden (genuine port-reproduces-production).** `tests/providers/sportec/test_parse_port_parity.py`
+  asserts the port reproduces goldens captured by running the **real** lakehouse functions in the lakehouse
+  clone's own venv on a reduced real-WC2022 IDSSE slice (`tests/datasets/sportec/idsse_slice/`, pinned via
+  `SOURCE_SHA`). Sensitivity proven (a 0.5 m perturbation fails it).
+- **team_id namespace (regression fixed during execution).** The native `spadl.sportec` converter
+  (called with `home_team_id="home"`) echoes the `"home"/"away"` label as the SPADL `team_id`, but the
+  tracking frames key team by the DFL **CLU** id — and the ADR-028 per-action LTR re-projection joins
+  actions↔frames on `team_id`. The retired kloppy path used CLU on both sides; the re-route remaps the
+  action `team_id` back to the CLU id in `_build_idsse` so away-team geometry re-projects correctly.
+- **N6 (retrain trigger, documented).** `tests/calibration/test_calibration_invariance_e2e.py`: after the
+  ADR-028 re-projection, the new path's acting-player frame-y matches the action `start_y` to ~0.2 m,
+  versus ~11.8 m on the old kloppy dev path — IDSSE action-anchored tracking-feature values change, so
+  calibration/pining consumers re-materialize. (IDSSE's old misalignment was partial, not the clean full
+  y-inversion PR-S94 measured on SkillCorner — Gate D: native sportec was already y-correct.)
+- **Trade-off (chosen):** once the lakehouse depends on `silly-kicks[parse-dfl]`, every future
+  DFL-parser change routes through a silly-kicks release instead of a one-repo patch — the right
+  hexagonal direction (drift-elimination) at the cost of lakehouse change-latency. Lakehouse adoption
+  (delete-and-depend vs keep-both-and-parity) + the live cross-repo bronze-contract parity test are the
+  lakehouse's choice (copy/paste handoff).
 
 ## Alternatives rejected
 
@@ -97,10 +126,14 @@ stays consumer-side, composed explicitly, with a single shared canonical callabl
 ## Consequences
 
 - **Retrain (scoped):** VAEP + tracking **calibration** consumers for SkillCorner **and** Metrica
-  (both inverted, both fixed). Lakehouse re-materializes only if its own builder check (Gate-C
-  handoff) finds a bug — a separate lakehouse PR.
-- New module `silly_kicks/spadl/_kloppy_coordinates.py`; the event path is byte-identical. **No new
-  action-coupled aggregator → the tracking C4 aggregator count is unchanged (28).**
+  (both inverted, both fixed, T1). PR-S95 (T3) adds an IDSSE calibration/pining re-materialize (N6).
+  Lakehouse re-materializes only if its own builder check (Gate-C handoff) finds a bug — a separate
+  lakehouse PR.
+- T1: new module `silly_kicks/spadl/_kloppy_coordinates.py`; the event path is byte-identical.
+- T3: new top-level package `silly_kicks/providers/sportec/` (the DFL parse-port) behind `[parse-dfl]`
+  — a **new C4 container** feeding both the `spadl` and `tracking` sportec converters (regenerate
+  `docs/c4/architecture.*`). **No new action-coupled aggregator → the tracking C4 aggregator count is
+  unchanged (28).**
 - References (silly-kicks): ADR-004 (gateway split / native adapters), ADR-006 (`output_convention`),
   ADR-019 (id-dtype seams), ADR-028 / ADR-029 (orientation — explicitly distinguished from this
   single-axis y mirror). The lakehouse's own ADR-029 (ET guard) and ADR-046 (terraform dep parity)
