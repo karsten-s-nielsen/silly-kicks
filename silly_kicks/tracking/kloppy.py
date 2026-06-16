@@ -15,12 +15,12 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 from kloppy.domain import (  # type: ignore[reportMissingImports]
-    Dimension,
-    MetricPitchDimensions,
     Orientation,
     Provider,
     TrackingDataset,
 )
+
+from silly_kicks.spadl._kloppy_coordinates import socceraction_coordinate_system
 
 from ._id_compat import same_id
 from .schema import KLOPPY_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
@@ -101,15 +101,14 @@ def convert_to_frames(
     if provider_name is None:
         raise NotImplementedError(f"Provider {provider} not supported in PR-S19")
 
+    # ADR-031: pin the canonical SPADL coordinate system (matches the event gateway), which corrects
+    # the tracking y-axis that was previously inverted vs the SPADL action y. Gate-0 (DGX) established
+    # the signature must be CS-ONLY -- passing `to_pitch_dimensions` alongside silently OVERRIDES the
+    # coordinate system's vertical orientation, leaving y inverted. The CS carries its own standardized
+    # 0-105/0-68 dimensions, so x is byte-identical to the previous explicit `to_pitch_dimensions`.
     transformed = dataset.transform(
-        to_pitch_dimensions=MetricPitchDimensions(
-            x_dim=Dimension(0, 105.0),
-            y_dim=Dimension(0, 68.0),
-            standardized=False,
-            pitch_length=105.0,
-            pitch_width=68.0,
-        ),
         to_orientation=Orientation.HOME_AWAY,
+        to_coordinate_system=socceraction_coordinate_system(dataset.metadata),
     )
 
     home_team = transformed.metadata.teams[0]

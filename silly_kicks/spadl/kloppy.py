@@ -11,8 +11,6 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
     CardType,
     CarryEvent,
     ClearanceEvent,
-    CoordinateSystem,
-    Dimension,
     DuelEvent,
     DuelResult,
     DuelType,
@@ -23,14 +21,11 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
     GoalkeeperActionType,
     GoalkeeperEvent,
     InterceptionResult,
-    MetricPitchDimensions,
     MiscontrolEvent,
     Orientation,
-    Origin,
     PassEvent,
     PassResult,
     PassType,
-    PitchDimensions,
     Provider,
     Qualifier,
     RecoveryEvent,
@@ -39,11 +34,14 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
     ShotResult,
     TakeOnEvent,
     TakeOnResult,
-    VerticalOrientation,
 )
 from packaging import version
 
 from . import config as spadlconfig
+from ._kloppy_coordinates import (
+    _SoccerActionCoordinateSystem,  # noqa: F401  # re-exported for backcompat (ADR-031)
+    socceraction_coordinate_system,
+)
 from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
@@ -195,10 +193,7 @@ def convert_to_actions(
     # Convert the dataset to the SPADL coordinate system
     new_dataset = dataset.transform(  # kloppy API varies by version
         to_orientation=Orientation.HOME_AWAY,
-        to_coordinate_system=_SoccerActionCoordinateSystem(
-            pitch_length=dataset.metadata.coordinate_system.pitch_length,  # type: ignore[reportCallIssue]
-            pitch_width=dataset.metadata.coordinate_system.pitch_width,  # type: ignore[reportCallIssue]
-        ),
+        to_coordinate_system=socceraction_coordinate_system(dataset.metadata),
     )
 
     # Convert the events to SPADL actions
@@ -288,42 +283,6 @@ def convert_to_actions(
         unrecognized_counts=unrecognized_counts,
     )
     return df_actions, report
-
-
-class _SoccerActionCoordinateSystem(CoordinateSystem):
-    def __init__(self, *, pitch_length: float, pitch_width: float) -> None:
-        self._pitch_length = pitch_length
-        self._pitch_width = pitch_width
-
-    @property
-    def provider(self) -> Provider:
-        return "SoccerAction"  # type: ignore[reportReturnType]  # kloppy API varies by version
-
-    @property
-    def origin(self) -> Origin:
-        return Origin.BOTTOM_LEFT
-
-    @property
-    def vertical_orientation(self) -> VerticalOrientation:
-        return VerticalOrientation.BOTTOM_TO_TOP
-
-    @property
-    def pitch_length(self) -> float:  # type: ignore[override]
-        return self._pitch_length
-
-    @property
-    def pitch_width(self) -> float:  # type: ignore[override]
-        return self._pitch_width
-
-    @property
-    def pitch_dimensions(self) -> PitchDimensions:
-        return MetricPitchDimensions(
-            x_dim=Dimension(0, spadlconfig.field_length),
-            y_dim=Dimension(0, spadlconfig.field_width),
-            pitch_length=self._pitch_length,
-            pitch_width=self._pitch_width,
-            standardized=True,
-        )
 
 
 def _get_end_location(event: Event) -> dict[str, float | None]:

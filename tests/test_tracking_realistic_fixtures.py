@@ -168,6 +168,7 @@ def test_kloppy_gk_derivation_fires_when_native_wrong():
     import datetime
 
     from kloppy.domain import (  # type: ignore[import-not-found]
+        CustomCoordinateSystem,
         DatasetFlag,
         Dimension,
         Frame,
@@ -175,6 +176,7 @@ def test_kloppy_gk_derivation_fires_when_native_wrong():
         Metadata,
         MetricPitchDimensions,
         Orientation,
+        Origin,
         Period,
         Player,
         PlayerData,
@@ -184,6 +186,7 @@ def test_kloppy_gk_derivation_fires_when_native_wrong():
         Provider,
         Team,
         TrackingDataset,
+        VerticalOrientation,
     )
 
     from silly_kicks.tracking.kloppy import convert_to_frames
@@ -228,11 +231,20 @@ def test_kloppy_gk_derivation_fires_when_native_wrong():
         pitch_length=105.0,
         pitch_width=68.0,
     )
+    # Real kloppy provider datasets always carry a coordinate_system; the tracking gateway pins the
+    # canonical SPADL CS off it (ADR-031). Declare the synthetic source coords as already-canonical
+    # (BOTTOM_LEFT/BOTTOM_TO_TOP 105x68), so the CS-pin is a no-op and this GK-derivation test (which
+    # asserts on x positions) is unaffected.
+    coord_system = CustomCoordinateSystem(
+        origin=Origin.BOTTOM_LEFT,
+        vertical_orientation=VerticalOrientation.BOTTOM_TO_TOP,
+        pitch_dimensions=pitch,
+    )
     metadata = Metadata(
         teams=[home_team, away_team],
         periods=[period],
         pitch_dimensions=pitch,
-        coordinate_system=None,  # type: ignore[arg-type]
+        coordinate_system=coord_system,
         score=None,
         frame_rate=25.0,
         orientation=Orientation.HOME_AWAY,
