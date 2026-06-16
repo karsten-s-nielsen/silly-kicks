@@ -1,0 +1,45 @@
+<?xml version='1.0' encoding='utf-8'?>
+<PutDataRequest RequestId="7f328859-5e48-4289-b2f9-cb7cfeff0b2f" MessageTime="2023-05-29T07:50:27.942+00:00" TransmissionComplete="true" TransmissionSuspended="false" DataStatus="postmatch"><Event MatchId="DFL-MAT-J03WMX" X-Source-Position="52.50" EventTime="2023-05-27T15:30:12.230+02:00" Y-Source-Position="34.00" EventId="18226500000006" X-Position="52.50" Y-Position="34.00">
+ <KickOff TeamLeft="DFL-CLU-00000G" TeamRight="DFL-CLU-000008" GameSection="firstHalf">
+  <Play SemiField="false" Player="DFL-OBJ-0027G6" Team="DFL-CLU-00000G" FromOpenPlay="false" PenaltyBox="false" FlatCross="false" Height="flat" Distance="medium" PlayOrigin="ownHalf" PlayAngle="179.19" Recipient="DFL-OBJ-0027KL" BallPossessionPhase="6" Evaluation="successfullyCompleted">
+   <Pass FreeKickLayup="false" />
+  </Play>
+ </KickOff>
+</Event>
+<Event MatchId="DFL-MAT-J03WMX" X-Source-Position="38.27" EventTime="2023-05-27T15:30:15.059+02:00" Y-Source-Position="33.80" EventId="18226500000007" X-Position="38.27" Y-Position="33.80">
+ <Play SemiField="false" Player="DFL-OBJ-0027KL" Team="DFL-CLU-00000G" FromOpenPlay="true" PenaltyBox="false" FlatCross="false" Height="high" Distance="long" PlayOrigin="ownHalf" PlayAngle="320.43" BallPossessionPhase="7" Evaluation="unsuccessful">
+  <Pass FreeKickLayup="false" Direction="diagonalBall" />
+ </Play>
+</Event>
+<Event MatchId="DFL-MAT-J03WMX" X-Source-Position="79.65" EventTime="2023-05-27T15:30:33.781+02:00" Y-Source-Position="68.00" EventId="18226500000008" X-Position="79.65" Y-Position="68.00">
+ <ThrowIn Team="DFL-CLU-000008" Side="right" DecisionTimestamp="2023-05-27T15:30:16.916+02:00">
+  <Play SemiField="false" Player="DFL-OBJ-0002BO" Team="DFL-CLU-000008" FromOpenPlay="false" PenaltyBox="false" FlatCross="false" Height="high" Distance="medium" PlayOrigin="ownHalf" PlayAngle="348.75" Recipient="DFL-OBJ-0027KL" BallPossessionPhase="8" Evaluation="unsuccessful">
+   <Pass FreeKickLayup="false" />
+  </Play>
+ </ThrowIn>
+</Event>
+<Event MatchId="DFL-MAT-J03WMX" EventTime="2023-05-27T15:30:34.498+02:00" EventId="18226500000009" X-Position="50.55" Y-Position="59.11">
+ <TacklingGame WinnerTeam="DFL-CLU-00000G" Winner="DFL-OBJ-0027KL" WinnerRole="withoutBallControl" PossessionChange="false" GoalKeeperInvolved="false" Loser="DFL-OBJ-J01BGM" LoserRole="withBallControl" WinnerResult="ballcontactSucceeded" LoserTeam="DFL-CLU-000008" Type="air" />
+</Event>
+<Event MatchId="DFL-MAT-J03WMX" X-Source-Position="49.90" EventTime="2023-05-27T15:30:34.963+02:00" Y-Source-Position="62.08" EventId="18226500000010" X-Position="49.90" Y-Position="62.08">
+ <OtherBallAction Player="DFL-OBJ-0027KL" Team="DFL-CLU-00000G" BallPossessionPhase="10" />
+</Event>
+<Event MatchId="DFL-MAT-J03WMX" X-Source-Position="55.21" EventTime="2023-05-27T15:30:36.890+02:00" Y-Source-Position="55.96" EventId="18226500000011" X-Position="55.21" Y-Position="55.96">
+ <Play SemiField="false" Player="DFL-OBJ-J01B8N" Team="DFL-CLU-00000G" FromOpenPlay="true" PenaltyBox="false" FlatCross="false" Height="flat" Distance="short" PlayOrigin="oppositionHalf" PlayAngle="118.17" Recipient="DFL-OBJ-0002F5" BallPossessionPhase="11" Evaluation="successfullyCompleted">
+  <Pass FreeKickLayup="false" />
+ </Play>
+</Event>
+<Event MatchId="DFL-MAT-J03WMX" EventTime="2023-05-27T15:30:37.446+02:00" EventId="18226500000012" X-Position="56.75" Y-Position="53.22">
+ <TacklingGame WinnerTeam="DFL-CLU-00000G" Winner="DFL-OBJ-J01B8N" WinnerRole="withoutBallControl" PossessionChange="true" GoalKeeperInvolved="false" Loser="DFL-OBJ-0027AX" LoserRole="withBallControl" WinnerResult="ballcontactSucceeded" LoserTeam="DFL-CLU-000008" Type="ground" />
+</Event>
+<Event MatchId="DFL-MAT-J03WMX" X-Source-Position="56.01" EventTime="2023-05-27T15:30:41.036+02:00" Y-Source-Position="31.09" EventId="18226500000013" X-Position="60.72" Y-Position="16.15">
+ <Play SemiField="false" Player="DFL-OBJ-0002AU" Team="DFL-CLU-00000G" FromOpenPlay="true" PenaltyBox="false" FlatCross="false" Height="flat" Distance="medium" PlayOrigin="oppositionHalf" PlayAngle="182.63" Recipient="DFL-OBJ-0027G0" BallPossessionPhase="13" Evaluation="successfullyCompleted">
+  <Pass FreeKickLayup="false" />
+ </Play>
+</Event>
+<Event MatchId="DFL-MAT-J03WMX" X-Source-Position="49.09" EventTime="2023-05-27T15:30:38.600+02:00" Y-Source-Position="44.53" EventId="18226500000024" X-Position="49.09" Y-Position="44.53">
+ <Play SemiField="false" Player="DFL-OBJ-0002F5" Team="DFL-CLU-00000G" FromOpenPlay="true" PenaltyBox="false" FlatCross="false" Height="flat" Distance="short" PlayOrigin="ownHalf" PlayAngle="62.76" Recipient="DFL-OBJ-0002AU" BallPossessionPhase="24" Evaluation="successfullyCompleted">
+  <Pass FreeKickLayup="false" />
+ </Play>
+</Event>
+</PutDataRequest>
