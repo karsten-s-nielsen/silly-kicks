@@ -818,7 +818,14 @@ def pitch_control_at_action(
     if frames is None:
         return _std_pc(actions, None, method=method)
 
-    adapted = actions.rename(columns={"x": "start_x", "y": "start_y"}, errors="ignore")
+    # The standard kernel now samples the action DESTINATION (end_x, end_y) (ADR-032). Atomic SPADL has no
+    # end_*; synthesize it from x,y,dx,dy (mirrors _structural_pass_atomic_endpoints) so the destination
+    # re-aim + ADR-028 reprojection apply uniformly.
+    adapted = actions.copy()
+    adapted["start_x"] = adapted["x"]
+    adapted["start_y"] = adapted["y"]
+    adapted["end_x"] = adapted["x"] + adapted["dx"]
+    adapted["end_y"] = adapted["y"] + adapted["dy"]
     return _std_pc(adapted, frames, links=links, method=method)
 
 
@@ -830,7 +837,7 @@ def add_pitch_control(
     links: pd.DataFrame | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> pd.DataFrame:
-    """Enrich atomic actions with ``pitch_control_at_ball__<method>`` column.
+    """Enrich atomic actions with the ``pitch_control_at_target__<method>`` column (ADR-032).
 
     Examples
     --------
@@ -857,7 +864,7 @@ def atomic_pitch_control_xfns(
     def _pc_helper(actions, frames):
         return pitch_control_at_action(actions, frames, method=method)
 
-    _pc_helper.__name__ = f"pitch_control_at_ball__{method}"
+    _pc_helper.__name__ = f"pitch_control_at_target__{method}"
     return [lift_to_states(_pc_helper)]
 
 

@@ -1864,13 +1864,22 @@ def pitch_control_at_action(
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.Series:
-    """Pitch control value at ball position for the acting team at the linked frame.
+    """Pitch control value at the action DESTINATION for the acting team at the linked frame.
 
-    Returns a Series named ``pitch_control_at_ball__<method>`` with one value per action
-    in [0, 1], representing the attacking team's spatial control at the ball location
-    at the moment of the action.
+    Returns a Series named ``pitch_control_at_target__<method>`` with one value per action
+    in [0, 1], the acting team's spatial control at the action's destination ``(end_x, end_y)``
+    at the moment of the action. Sampling the destination (not the ball) makes the value live:
+    ball-travel-time to the destination is positive, so players can contest it — whereas at the
+    ball the Spearman PPCF is the degenerate ~0.5 reaction-time fallback (ADR-032 retired the old
+    ``pitch_control_at_ball__<method>``). The query is re-projected into the frame's absolute-frame
+    convention so away-team actions sample the correct cell (ADR-028).
 
-    NaN where action couldn't link to a frame or ball position is unavailable.
+    Interpretation varies by action type (a uniform raw feature): for passes/crosses/carries it is
+    open-play control of the destination; for shots the destination is the shot target (GK/defender-
+    dominated), so it reads as target-cell contestation. A model conditions on this via ``type_id``.
+
+    NaN where the action couldn't link to a frame, or ``end_x``/``end_y`` is unavailable. In-place
+    actions (``end ≈ start ≈ ball``) read ~0.5 by construction (no spatial destination — honest).
 
     See NOTICE for full bibliographic citations.
 
@@ -1881,7 +1890,7 @@ def pitch_control_at_action(
     """
     import numpy as np
 
-    col_name = f"pitch_control_at_ball__{method}"
+    col_name = f"pitch_control_at_target__{method}"
 
     # Introspection mode: VAEP fit-time calls with frames=None
     if frames is None:
@@ -1902,6 +1911,23 @@ def pitch_control_at_action(
             frames["vy"] = 0.0
 
     results = np.full(len(actions), np.nan)
+
+    from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
+
+    # Re-aim from the ball (degenerate ~0.5) to the action DESTINATION, re-projected into the frame's
+    # absolute-frame convention so away-team actions sample the correct cell (ADR-028 / ADR-032). The
+    # cached per-frame surface stays absolute-frame (cache key unchanged) -- only the query point flips.
+    #
+    # INVOLUTION (do NOT "simplify" this): reproject_to_action_ltr is the 180-degree reflection
+    # (x->105-x, y->68-y) on rtl rows; the reflection is its own inverse. The action's end point is in
+    # action-LTR; applying the SAME per-action flip lands it on the absolute-frame cell the surface is
+    # keyed in. Applying a "to_ltr"-named helper to ltr points to obtain ABSOLUTE reads backwards but is
+    # correct -- the away ground-truth + multi-action tests go RED if anyone replaces this with a no-op.
+    _flip = acting_team_attacks_rtl(actions, frames)
+    _q = actions[["end_x", "end_y"]].rename(columns={"end_x": "_qx", "end_y": "_qy"}).copy()
+    _q = reproject_to_action_ltr(_q, _flip, x_cols=["_qx"], y_cols=["_qy"])
+    qx = _q["_qx"].to_numpy(dtype="float64")  # positional order == actions row order (== loop order below)
+    qy = _q["_qy"].to_numpy(dtype="float64")
 
     # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns resolve
     # frame_id by position, never .at on a non-unique action_id). Equivalent to the old
@@ -1929,13 +1955,11 @@ def pitch_control_at_action(
         # Compute pitch control for this frame (canonical-frame surface, cached)
         surface = cache.surface(frame_data, team_id, method=method)
 
-        # Query at action start position (proxy for ball position)
-        start_x = action_row["start_x"]
-        start_y = action_row["start_y"]
-        if np.isnan(start_x) or np.isnan(start_y):
+        # Query at the action destination (end), re-projected into the frame's absolute convention.
+        if np.isnan(qx[i]) or np.isnan(qy[i]):
             continue
 
-        results[i] = surface.at_point(start_x, start_y)
+        results[i] = surface.at_point(float(qx[i]), float(qy[i]))
 
     return pd.Series(results, index=actions.index, name=col_name)
 
@@ -1949,7 +1973,7 @@ def add_pitch_control(
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
-    """Enrich actions with ``pitch_control_at_ball__<method>`` column.
+    """Enrich actions with the ``pitch_control_at_target__<method>`` column (ADR-032).
 
     Examples
     --------
@@ -1978,7 +2002,7 @@ def pitch_control_xfns(
     def _pc_helper(actions, frames):
         return pitch_control_at_action(actions, frames, method=method)
 
-    _pc_helper.__name__ = f"pitch_control_at_ball__{method}"
+    _pc_helper.__name__ = f"pitch_control_at_target__{method}"
     return [lift_to_states(_pc_helper)]
 
 

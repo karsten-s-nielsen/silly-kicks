@@ -5,6 +5,33 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.31.0] — 2026-06-16
+
+### Changed — pitch control re-aimed to the action destination; dead at-ball column retired (ADR-032, PR-S96)
+
+**BREAKING column rename.** The informationally-dead `pitch_control_at_ball__<method>` (the Spearman PPCF
+at the ball is the degenerate ~0.5 reaction-time fallback, so the column was ~0.5 for every well-linked
+action) is **retired** and replaced by a live `pitch_control_at_target__<method>` sampled at the action
+**destination** `(end_x, end_y)`, where ball-travel-time is positive so players can contest it.
+
+- **Mandatory ADR-028 re-projection (fixes a latent away-team bug the degeneracy had masked).** The old code
+  sampled the action-LTR `(start_x, start_y)` against an absolute-frame (home-attacks-right) surface with no
+  per-action flip — wrong for away-team actions, harmless only because near-ball is 0.5 in both conventions.
+  The new code re-projects the query via `acting_team_attacks_rtl` + `reproject_to_action_ltr` (the cached
+  per-frame surface + `PitchControlCache` key are unchanged — only the query point flips). Applies to all
+  three methods (`spearman`/`fernandez_bornn`/`voronoi`) and the atomic mirror (synthesizes `end=x+dx,y+dy`).
+- **Per-type semantics (kept uniform):** open-play destination control for passes/crosses/carries;
+  target-cell contestation (GK/defender-dominated) for shots; ~0.5 for in-place actions (no destination —
+  honest). A model conditions on this via `type_id`.
+- **Localized:** other PPCF consumers (`obso`/`cover_shadows`/`gk_influence`/`player_influence`/
+  `space_creation`) sample their own points and are untouched. The dead column's `STRUCTURAL_CONSTANTS`
+  liveness exemption + its near-ball-degeneracy invariant test are removed (the column is now live); a hard
+  off-ball-destination precondition guards the liveness gate's teeth.
+- **VAEP/tracking + calibration retrain trigger** (dead constant → live signal + away-team correction). The
+  silly-kicks calibration feature set + lakehouse consumers re-materialize. **Lakehouse adoption is a
+  breaking column-lifecycle migration (AC + DEFCON), atomic with the pin bump — not a currency bump.** C4-free
+  (aggregator count stays 28).
+
 ## [4.30.0] — 2026-06-16
 
 ### Added — DFL / Sportec parse+shape port (ADR-031, PR-S95 / T3)

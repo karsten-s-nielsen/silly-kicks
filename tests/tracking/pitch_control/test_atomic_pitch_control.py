@@ -98,7 +98,7 @@ class TestAtomicPitchControlAtAction:
         frames = _make_frames()
         result = pitch_control_at_action(actions, frames)
         assert isinstance(result, pd.Series)
-        assert result.name == "pitch_control_at_ball__spearman"
+        assert result.name == "pitch_control_at_target__spearman"
         assert len(result) == 2
 
     def test_values_in_bounds(self):
@@ -117,7 +117,7 @@ class TestAtomicPitchControlAtAction:
         actions = _make_atomic_actions()
         frames = _make_frames()
         result = pitch_control_at_action(actions, frames, method="voronoi")
-        assert result.name == "pitch_control_at_ball__voronoi"
+        assert result.name == "pitch_control_at_target__voronoi"
 
 
 class TestAtomicAddPitchControl:
@@ -125,7 +125,7 @@ class TestAtomicAddPitchControl:
         actions = _make_atomic_actions()
         frames = _make_frames()
         result = add_pitch_control(actions, frames)
-        assert "pitch_control_at_ball__spearman" in result.columns
+        assert "pitch_control_at_target__spearman" in result.columns
 
 
 class TestAtomicXfnFactory:
