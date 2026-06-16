@@ -118,3 +118,31 @@ def defending_gk_from_frames(
             out = out.astype("Int64")
 
     return out
+
+
+def defended_goal_x(frames: pd.DataFrame) -> dict:
+    """(game_id, period_id, team_id) -> defended goal_x (0 or 105).
+
+    N1: GK identification quality is provider-variable (Metrica/SkillCorner were
+    21-50% pre-fix). Prefer mean GK x; fall back to the team's mean outfield x
+    when a (game, period, team) has no GK rows, so a mis-/missing-GK does not
+    silently drop the team from the goal map.
+
+    Extracted byte-identically from ``_xshot_occurrence._defended_goal_x``
+    (TF-48, spec 2026-06-10-shot-goalmouth-psxg-design); xS re-imports via shim.
+
+    Examples
+    --------
+    Resolve each team's defended goal end per (game, period)::
+
+        from silly_kicks.tracking._gk_resolve import defended_goal_x
+        goal_map = defended_goal_x(frames)
+        # goal_map[(game_id, period_id, team_id)] in (0.0, 105.0)
+    """
+    players = frames[~frames["is_ball"].astype(bool)]
+    out: dict = {}
+    for key, grp in players.groupby(["game_id", "period_id", "team_id"], dropna=False):
+        gk_rows = grp[grp["is_goalkeeper"].astype(bool)]
+        ref = gk_rows if len(gk_rows) else grp  # fallback: whole-team mean-x
+        out[key] = 0.0 if float(ref["x"].mean()) < 52.5 else 105.0
+    return out

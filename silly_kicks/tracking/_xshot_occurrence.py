@@ -550,22 +550,9 @@ def _resolve_model(model: XShotOccurrenceModel | str | None) -> XShotOccurrenceM
     raise TypeError(f"Unsupported model type: {type(model)!r}")
 
 
-def _defended_goal_x(frames: pd.DataFrame) -> dict:
-    """(game_id, period_id, team_id) -> defended goal_x (0 or 105).
-
-    N1: GK identification quality is provider-variable (Metrica/SkillCorner were
-    21-50% pre-fix). Prefer mean GK x; fall back to the team's mean outfield x
-    when a (game, period, team) has no GK rows, so a mis-/missing-GK does not
-    silently drop the team from the goal map.
-    """
-    players = frames[~frames["is_ball"].astype(bool)]
-    out: dict = {}
-    for key, grp in players.groupby(["game_id", "period_id", "team_id"], dropna=False):
-        gk_rows = grp[grp["is_goalkeeper"].astype(bool)]
-        ref = gk_rows if len(gk_rows) else grp  # fallback: whole-team mean-x
-        out[key] = 0.0 if float(ref["x"].mean()) < 52.5 else 105.0
-    return out
-
+# Moved byte-identically to _gk_resolve.defended_goal_x (TF-48); shim keeps all
+# internal `_defended_goal_x(...)` call sites working unchanged.
+from silly_kicks.tracking._gk_resolve import defended_goal_x as _defended_goal_x  # noqa: E402
 
 _ATTACKING_THIRD_M = 35.0  # final third = within 35 m of the attacked goal line
 

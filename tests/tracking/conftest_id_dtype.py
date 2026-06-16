@@ -138,6 +138,7 @@ AGGREGATORS = [
     _named(lambda a, f, home_team_id: F.add_pre_shot_gk_angle(a, frames=f), "add_pre_shot_gk_angle"),
     _a(F.add_pre_shot_gk_position, "add_pre_shot_gk_position"),
     _a(F.add_pressure_on_actor, "add_pressure_on_actor"),
+    _a(F.add_shot_goalmouth, "add_shot_goalmouth"),
     _a(F.add_space_creation, "add_space_creation"),
     _ah(F.add_defensive_line, "add_defensive_line", n=4),
     _ah(F.add_line_break, "add_line_break"),

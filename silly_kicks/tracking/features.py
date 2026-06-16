@@ -61,6 +61,7 @@ from ._action_orientation import (
 from ._ball_carrier import infer_ball_carrier
 from ._gk_resolve import defending_gk_from_frames
 from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
+from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
 from ._xcross_attempt import xcross_attempt_xfns
 from ._xshot_occurrence import xshot_occurrence_xfns
@@ -105,6 +106,7 @@ __all__ = [
     "add_pre_shot_gk_position",
     "add_pressure_on_actor",
     "add_shape_graph",
+    "add_shot_goalmouth",
     "add_space_creation",
     "add_team_shape",
     "back_line_high_x",
@@ -156,6 +158,11 @@ __all__ = [
     "reachable_area_team",
     "receiver_zone_density",
     "shape_graph_xfns",
+    "shot_crossing_y",
+    "shot_crossing_z",
+    "shot_on_target_derived",
+    "shot_speed",
+    "shot_time_to_goal_line",
     "space_creation_xfns",
     "team_shape_xfns",
     "tracking_default_xfns",
@@ -5330,3 +5337,128 @@ def add_gk_completion(
         ptr_cols = pointers.set_index("action_id")[provenance_cols]
         out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
     return out
+
+
+# ---------------------------------------------------------------------------
+# TF-48: post-shot goalmouth crossing geometry (ADR-030)
+# ---------------------------------------------------------------------------
+
+
+@nan_safe_enrichment
+def add_shot_goalmouth(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    params: ShotGoalmouthParams | None = None,
+) -> pd.DataFrame:
+    """Add TF-48 post-shot goalmouth crossing columns (shot_crossing_y/z, shot_speed,
+    shot_time_to_goal_line, shot_on_target_derived + provenance shot_crossing_source/
+    confidence/fit_n_frames/fit_rmse/fit_end_reason/z_profile) per shot action; NaN/NA
+    out-of-scope. Pure geometry over the ball trajectory -- NOT a VAEP feature
+    (post-contact outcome leakage; ADR-030 guard). NaN identifiers resolve to
+    "unresolved" rows (ADR-003 -- implemented here, the decorator is marker-only).
+
+    Pointer resolution deliberately uses the add_xt_gk-verbatim path, NOT
+    _resolve_action_frame_context (the context helper additionally builds
+    actor/opponent row joins TF-48 never consumes). Decision recorded in ADR-030.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import add_shot_goalmouth
+    >>> enriched = add_shot_goalmouth(actions, frames)  # doctest: +SKIP
+    >>> enriched[["shot_crossing_y", "shot_crossing_z", "shot_crossing_source"]]  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    out = actions.copy()
+    comp = compute_shot_goalmouth(actions, frames, links=links, params=params)
+    for c in comp.columns:
+        out[c] = comp[c].to_numpy() if comp[c].dtype != "boolean" else comp[c].array
+    # EDGE policy (spec section 4 -- warnings live here, never in the pure engine):
+    # a mostly-unresolvable shot set is a data-quality signal (mirrors on_low_coverage).
+    src = comp["shot_crossing_source"].dropna()
+    if len(src) > 0:
+        bad = float(src.isin(["no_ball_frames", "unresolved"]).mean())
+        if bad > 0.5:
+            _warnings.warn(
+                f"add_shot_goalmouth: {bad:.0%} of shot rows could not be resolved "
+                "(no ball frames / goal-end unresolved) -- check frames coverage and "
+                "the GK map for this match.",
+                stacklevel=2,
+            )
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+        if len(pointers) > 0:
+            ptr_cols = pointers.set_index("action_id")[provenance_cols]
+            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def shot_crossing_y(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Goal-plane crossing y (m, canonical attacked-goal-at-x=105). NaN out-of-scope.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import shot_crossing_y
+    >>> shot_crossing_y(actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return compute_shot_goalmouth(actions, frames)["shot_crossing_y"].rename("shot_crossing_y")
+
+
+def shot_crossing_z(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Goal-plane crossing z (m; bar = 2.44). NaN out-of-scope or when ball z unavailable.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import shot_crossing_z
+    >>> shot_crossing_z(actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return compute_shot_goalmouth(actions, frames)["shot_crossing_z"].rename("shot_crossing_z")
+
+
+def shot_speed(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Fitted initial ball speed at contact (m/s; contact sub-segment -- see ADR-030 M-1;
+    segment-average horizontal components, underestimates true contact speed under drag).
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import shot_speed
+    >>> shot_speed(actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return compute_shot_goalmouth(actions, frames)["shot_speed"].rename("shot_speed")
+
+
+def shot_time_to_goal_line(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Elapsed seconds from (refined) contact to the goal-plane crossing.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import shot_time_to_goal_line
+    >>> shot_time_to_goal_line(actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return compute_shot_goalmouth(actions, frames)["shot_time_to_goal_line"].rename("shot_time_to_goal_line")
+
+
+def shot_on_target_derived(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Series:
+    """Nullable boolean: crossing within posts+bar expanded by the ball-radius tolerance
+    (post/bar physical width folded into the tolerance BY DECISION -- ADR-030). NA unless
+    source is observed/extrapolated and crossing z is available.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking.features import shot_on_target_derived
+    >>> shot_on_target_derived(actions, frames).head()  # doctest: +SKIP
+
+    See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
+    """
+    return compute_shot_goalmouth(actions, frames)["shot_on_target_derived"].rename("shot_on_target_derived")

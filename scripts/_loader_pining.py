@@ -574,6 +574,7 @@ def _build_gradientsports(paths, tracking_limit=None):
                     }
                 )
         for b in fr.get("balls", []):
+            ball_z = b.get("z")
             rows.append(
                 {
                     **base,
@@ -582,6 +583,10 @@ def _build_gradientsports(paths, tracking_limit=None):
                     "is_ball": True,
                     "x_centered": float(b["x"]),
                     "y_centered": float(b["y"]),
+                    # ball z IS in the raw GS feed (probe 2026-06-10: present on 100% of
+                    # ball records); the old base z=0.0 silently flattened it. Players
+                    # keep z=0.0 (no z in GS player records). TF-48 depends on real ball z.
+                    "z": float(ball_z) if ball_z is not None else float("nan"),
                 }
             )
     jersey_frames = pd.DataFrame(rows)
