@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-16. **Current release**: silly-kicks 4.30.0 (DFL parse+shape port — new `silly_kicks/providers/sportec/` (behind `[parse-dfl]`) single-sources the IDSSE/Sportec DFL parser as a verbatim lift of the lakehouse parser, pinned by a golden parity test; the dev loader's y-inverting kloppy IDSSE path is retired in favour of the native converters; IDSSE calibration/pining re-materialize (N6); PR-S95 / T3 of ADR-031). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-16. **Current release**: silly-kicks 4.31.0 (pitch control re-aimed to the action destination — the dead `pitch_control_at_ball__<method>` (~0.5 near-ball Spearman fallback) RETIRED + replaced by the live `pitch_control_at_target__<method>` sampled at `(end_x,end_y)` with the mandatory ADR-028 query re-projection that the degeneracy had masked; breaking column rename, VAEP/tracking+calibration retrain trigger; lakehouse adoption is a breaking AC+DEFCON column-lifecycle migration; PR-S96 / ADR-032). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -47,13 +47,6 @@ Items are ranked top-to-bottom by specification completeness, then by additional
   WC2022 empirical catalog (the PFF FC Change Log is not a semantic data dictionary); confirm against an
   official PFF codebook if one becomes available, and whether OGs can surface under other event types
   (e.g. `CL` deflection — none seen in WC2022).
-- **`pitch_control_at_ball__spearman` redesign (Wicked; added 4.24.0).** The Spearman PPCF is
-  degenerate (0.5 fallback) within ~18 m of the ball (ball beats any player's reaction time to near
-  cells), and the column samples linked-action START points → ~0.5 for every well-linked action in
-  production (informationally dead; declared structural constant in the liveness gate; flagged to the
-  lakehouse in the 4.24.0 changelog). Redesign options: sample at the action END point (ball travel
-  time strictly positive), an integration window past the reaction time, or a potential-control
-  variant. Touches every PC consumer — needs its own ADR.
 - **ADR-code reconciliation sweep.** Periodically verify that documented ADRs
   (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
   constraints (e.g. "zero Spark imports in domain") hold in practice and that

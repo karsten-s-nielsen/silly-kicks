@@ -114,7 +114,7 @@ class TestAddPitchControl:
         actions = _make_actions()
         frames = _make_frames()
         result = add_pitch_control(actions, frames)
-        assert "pitch_control_at_ball__spearman" in result.columns
+        assert "pitch_control_at_target__spearman" in result.columns
 
 
 class TestXfnFactory:

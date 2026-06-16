@@ -176,6 +176,10 @@ def _pc_actions() -> pd.DataFrame:
             "team_id": [1, 1],
             "start_x": [50.0, 55.0],
             "start_y": [34.0, 30.0],
+            # pitch_control_at_action samples the action DESTINATION (ADR-032); end_* is a standard
+            # SPADL column (every action carries it).
+            "end_x": [60.0, 70.0],
+            "end_y": [30.0, 40.0],
             "type_id": [0, 0],
         }
     )

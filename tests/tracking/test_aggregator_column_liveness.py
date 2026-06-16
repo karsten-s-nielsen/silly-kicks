@@ -357,35 +357,34 @@ STRUCTURAL_CONSTANTS: dict[str, dict[str, str]] = {
     # add_space_creation declares none: its structurally-zero columns were RETIRED
     # from the contract entirely (4.24.0 lean contract; resurrection is blocked by
     # test_space_creation.py::TestComputeSpaceCreated::test_retired_columns_never_emitted).
-    "add_pitch_control": {
-        "pitch_control_at_ball__spearman": (
-            "Spearman PPCF is degenerate (0.5 fallback) within ~18 m of the ball: the"
-            " ball reaches near cells before any player's reaction time, so no player"
-            " accrues control there. Sampled at linked-action START points (always near"
-            " the ball), the column is ~0.5 by model construction — flagged to the"
-            " lakehouse in the 4.24.0 changelog; redesign tracked in TODO"
-            " (test_pitch_control_at_ball_near_ball_degeneracy below)"
-        ),
-    },
+    #
+    # add_pitch_control declared none as of ADR-032 (4.31.0): the dead near-ball
+    # `pitch_control_at_ball__spearman` (~0.5 everywhere) was RETIRED and replaced by the LIVE
+    # `pitch_control_at_target__spearman` (sampled at the action destination, ball-travel-time
+    # positive), which passes the standard non-constant liveness check. The off-ball-destination
+    # precondition the gate's teeth rest on is asserted by
+    # test_pitch_control_at_target_fixture_has_offball_destinations below.
 }
 
 
-def test_pitch_control_at_ball_near_ball_degeneracy():
-    """Invariant behind the add_pitch_control STRUCTURAL_CONSTANTS entry: the
-    Spearman surface equals the 0.5 fallback at every linked-action start point
-    on this fixture (all within meters of the frame ball), while the SAME
-    surface deviates far from the ball — the column is near-ball-degenerate by
-    model construction, not by fixture accident."""
+def test_pitch_control_at_target_fixture_has_offball_destinations():
+    """Hard precondition for the add_pitch_control liveness teeth (ADR-032): the fixture MUST have
+    >=2 actions whose destination is off-ball (>R from the frame ball), else at_target is ~0.5
+    everywhere and the non-constant check would pass weakly. Fail loudly on a fixture refactor that
+    accidentally makes every action in-place, rather than silently neutering the gate."""
     import numpy as np
 
-    from silly_kicks.tracking.pitch_control import compute_pitch_control
-
-    frames = _frames()
-    fr = frames[(frames["period_id"] == 1) & (frames["frame_id"] == 250)]
-    s = compute_pitch_control(fr, 5)
-    assert float(s.at_point(58.0, 32.0)) == 0.5  # at the action start (near ball)
-    arr = np.asarray(s.surface)
-    assert (arr != 0.5).any()  # ...but the surface is NOT globally constant
+    actions, frames = _actions(), _frames()
+    offball = 0
+    for _, a in actions.iterrows():
+        # actions link to frames by time within a period; use the period's ball as the off-ball reference.
+        ball = frames[(frames["period_id"] == a["period_id"]) & frames["is_ball"]]
+        if ball.empty or np.isnan(a["end_x"]):
+            continue
+        bx, by = float(ball["x"].iloc[0]), float(ball["y"].iloc[0])
+        if np.hypot(a["end_x"] - bx, a["end_y"] - by) > 10.0:
+            offball += 1
+    assert offball >= 2, f"liveness fixture has only {offball} off-ball-destination actions; gate would lose teeth"
 
 
 def test_meta_surface_complete():
