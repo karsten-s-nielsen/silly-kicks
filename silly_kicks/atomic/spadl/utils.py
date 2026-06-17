@@ -586,14 +586,19 @@ def add_gk_distribution_metrics(
 
     - ``gk_pass_length_m`` — Euclidean distance in metres
       (NaN on non-distribution rows).
-    - ``gk_pass_length_class`` — Categorical ``{"short", "medium", "long"}``
-      keyed off ``short_threshold`` / ``long_threshold``.
+    - ``gk_pass_length_class`` — pandas ``Categorical`` over the fixed
+      categories ``{"short", "medium", "long"}`` (NaN on non-distribution
+      rows), keyed off ``short_threshold`` / ``long_threshold``. A
+      Spark/lakehouse consumer should materialize it as ``StringType`` (the
+      categorical dtype is an in-memory pandas detail, not the contract).
     - ``is_launch`` — bool. True iff length > ``long_threshold`` AND action
       is a deliberate-distribution pass type (``pass``, ``goalkick``,
       ``freekick``). False everywhere else.
-    - ``gk_xt_delta`` — float xT-grid delta from start zone to end zone,
+    - ``gk_xt_delta`` — float xT-grid delta ``xT(end_zone) - xT(start_zone)``,
       computed only when ``xt_grid`` is provided AND the pass succeeded.
-      NaN otherwise.
+      NaN otherwise. Zones are binned on the caller-supplied ``(12, 8)``
+      SPADL-coordinate grid; the helper NEVER fits its own xT — it consumes
+      the grid you pass.
 
     NaN values in caller-supplied identifier columns (e.g. ``player_id``)
     are treated as "not identifiable" for that row's enrichment lookup.
@@ -660,29 +665,31 @@ def add_gk_distribution_metrics(
     if xt_grid is not None and xt_grid.shape != (12, 8):
         raise ValueError(f"add_gk_distribution_metrics: xt_grid must have shape (12, 8), got {xt_grid.shape}")
 
-    if "gk_role" not in actions.columns:
+    # Operate on a sorted COPY -- never mutate the caller's frame (ADR-033). The sort key matches
+    # add_gk_role's internal ordering, so the require_gk_role path is value/order-identical; the
+    # gk_role-present path now returns a sorted copy (it previously assigned the four columns straight
+    # onto the caller's frame -- the motivating in-place-mutation defect).
+    out = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    if "gk_role" not in out.columns:
         if require_gk_role:
-            actions = add_gk_role(actions)
+            out = add_gk_role(out)
         else:
-            actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(
-                drop=True
-            )
-            actions["gk_role"] = pd.Categorical([None] * len(actions), categories=list(_GK_ROLE_CATEGORIES))
+            out["gk_role"] = pd.Categorical([None] * len(out), categories=list(_GK_ROLE_CATEGORIES))
 
-    n = len(actions)
+    n = len(out)
     if n == 0:
-        actions["gk_pass_length_m"] = pd.Series([], dtype=np.float64)
-        actions["gk_pass_length_class"] = pd.Categorical([], categories=list(_GK_PASS_LENGTH_CATEGORIES))
-        actions["is_launch"] = pd.Series([], dtype=bool)
-        actions["gk_xt_delta"] = pd.Series([], dtype=np.float64)
-        return actions
+        out["gk_pass_length_m"] = pd.Series([], dtype=np.float64)
+        out["gk_pass_length_class"] = pd.Categorical([], categories=list(_GK_PASS_LENGTH_CATEGORIES))
+        out["is_launch"] = pd.Series([], dtype=bool)
+        out["gk_xt_delta"] = pd.Series([], dtype=np.float64)
+        return out
 
-    is_distribution = (actions["gk_role"] == "distribution").to_numpy()
+    is_distribution = (out["gk_role"] == "distribution").to_numpy()
 
-    x = actions["x"].to_numpy(dtype=np.float64)
-    y = actions["y"].to_numpy(dtype=np.float64)
-    dx = actions["dx"].to_numpy(dtype=np.float64)
-    dy = actions["dy"].to_numpy(dtype=np.float64)
+    x = out["x"].to_numpy(dtype=np.float64)
+    y = out["y"].to_numpy(dtype=np.float64)
+    dx = out["dx"].to_numpy(dtype=np.float64)
+    dy = out["dy"].to_numpy(dtype=np.float64)
     raw_length = np.sqrt(dx * dx + dy * dy)
     length_m = np.where(is_distribution, raw_length, np.nan)
 
@@ -695,7 +702,7 @@ def add_gk_distribution_metrics(
     length_class[medium_mask] = "medium"
     length_class[long_mask] = "long"
 
-    type_id = actions["type_id"].to_numpy()
+    type_id = out["type_id"].to_numpy()
     launch_type_ids = {spadlconfig.actiontype_id[name] for name in _ATOMIC_GK_LAUNCH_PASS_TYPE_NAMES}
     is_launch_type = np.isin(type_id, list(launch_type_ids))
     is_launch = is_distribution & is_launch_type & (raw_length > long_threshold)
@@ -709,8 +716,8 @@ def add_gk_distribution_metrics(
     next_type = np.full(n, -1, dtype=type_id.dtype)
     next_type[:-1] = type_id[1:]
 
-    game_id = actions["game_id"].to_numpy()
-    period_id = actions["period_id"].to_numpy()
+    game_id = out["game_id"].to_numpy()
+    period_id = out["period_id"].to_numpy()
     next_game = np.full(n, -1, dtype=game_id.dtype)
     next_game[:-1] = game_id[1:]
     next_period = np.full(n, -1, dtype=period_id.dtype)
@@ -735,11 +742,11 @@ def add_gk_distribution_metrics(
             zone_y_end = np.clip((end_y[eligible] / (_PITCH_WIDTH_M / 8.0)).astype(int), 0, 7)
             xt_delta[eligible] = xt_grid[zone_x_end, zone_y_end] - xt_grid[zone_x_start, zone_y_start]
 
-    actions["gk_pass_length_m"] = length_m
-    actions["gk_pass_length_class"] = pd.Categorical(length_class, categories=list(_GK_PASS_LENGTH_CATEGORIES))
-    actions["is_launch"] = is_launch
-    actions["gk_xt_delta"] = xt_delta
-    return actions
+    out["gk_pass_length_m"] = length_m
+    out["gk_pass_length_class"] = pd.Categorical(length_class, categories=list(_GK_PASS_LENGTH_CATEGORIES))
+    out["is_launch"] = is_launch
+    out["gk_xt_delta"] = xt_delta
+    return out
 
 
 _ADD_PRE_SHOT_GK_CONTEXT_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (

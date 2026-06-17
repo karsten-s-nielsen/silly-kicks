@@ -214,7 +214,7 @@ def enrich_invariant(
         add_sync_score,
         add_team_shape,
         link_actions_to_frames,
-        pitch_control_at_action,
+        pitch_control_at_target,
     )
 
     actions = actions.copy()
@@ -237,7 +237,7 @@ def enrich_invariant(
         else:
             raise
     for method in ("spearman", "fernandez_bornn", "voronoi"):  # Steps 5-7
-        s = pitch_control_at_action(actions, frames, links=links, method=method)
+        s = pitch_control_at_target(actions, frames, links=links, method=method)
         actions[s.name] = s.values
     actions = add_defensive_line(actions, frames, links=links, home_team_id=home_team_id)  # Step 8
     for col in _TRIAL_DEPENDENT_COLS[1:]:  # Step 9 SKIPPED (off-ball runs)
@@ -328,7 +328,7 @@ def enrich_full(
         add_sync_score,
         add_team_shape,
         link_actions_to_frames,
-        pitch_control_at_action,
+        pitch_control_at_target,
     )
 
     actions = actions.copy()
@@ -356,7 +356,7 @@ def enrich_full(
         else:
             raise
     for method in ("spearman", "fernandez_bornn", "voronoi"):  # 5-7
-        s = pitch_control_at_action(actions, frames, links=links, method=method)
+        s = pitch_control_at_target(actions, frames, links=links, method=method)
         actions[s.name] = s.values
     actions = add_defensive_line(actions, frames, links=links, home_team_id=home_team_id)  # 8
     actions = add_off_ball_runs(  # 9 INLINE (pre_seconds, min_displacement_m)

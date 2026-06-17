@@ -10,7 +10,7 @@ interpolation, TF-12 pre_shot_gk_angle_* + the shared `preprocess` module.
 PR-S27 ships TF-13 defending_gk_from_frames + TF-14 compute_defensive_line +
 6 per-Series action-coupled features + add_defensive_line + defensive_line_xfns.
 PR-S31 ships TF-7 pitch_control subpackage (Spearman/Fernandez-Bornn/Voronoi) +
-action-coupled VAEP integration (pitch_control_at_action + add_pitch_control +
+action-coupled VAEP integration (pitch_control_at_target + add_pitch_control +
 pitch_control_xfns factory). PR-S33 ships TF-31 team shape envelope
 (compute_team_shape + add_team_shape + team_shape_xfns) + TF-32 Ward-clustering
 line-breaking (detect_line_breaking + add_line_break method="ward" dispatch +
@@ -172,7 +172,7 @@ __all__ = [
     "orient_frames_to_ltr",
     "pausa_xfns",
     "pitch_control",
-    "pitch_control_at_action",
+    "pitch_control_at_target",
     "pitch_control_default_xfns",
     "pitch_control_xfns",
     "play_left_to_right",
@@ -338,7 +338,7 @@ from .features import (
     off_ball_xt_opponent,
     off_ball_xt_team,
     pausa_xfns,
-    pitch_control_at_action,
+    pitch_control_at_target,
     pitch_control_default_xfns,
     pitch_control_xfns,
     player_influence_xfns,

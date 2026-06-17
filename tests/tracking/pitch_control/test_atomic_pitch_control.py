@@ -9,7 +9,7 @@ from silly_kicks.atomic.tracking.features import (
     add_pitch_control,
     atomic_pitch_control_default_xfns,
     atomic_pitch_control_xfns,
-    pitch_control_at_action,
+    pitch_control_at_target,
 )
 
 
@@ -96,7 +96,7 @@ class TestAtomicPitchControlAtAction:
     def test_returns_series_with_correct_name(self):
         actions = _make_atomic_actions()
         frames = _make_frames()
-        result = pitch_control_at_action(actions, frames)
+        result = pitch_control_at_target(actions, frames)
         assert isinstance(result, pd.Series)
         assert result.name == "pitch_control_at_target__spearman"
         assert len(result) == 2
@@ -104,19 +104,19 @@ class TestAtomicPitchControlAtAction:
     def test_values_in_bounds(self):
         actions = _make_atomic_actions()
         frames = _make_frames()
-        result = pitch_control_at_action(actions, frames)
+        result = pitch_control_at_target(actions, frames)
         valid = result.dropna()
         assert (valid >= 0).all() and (valid <= 1).all()
 
     def test_introspection_mode(self):
         actions = _make_atomic_actions()
-        result = pitch_control_at_action(actions, None)
+        result = pitch_control_at_target(actions, None)
         assert result.isna().all()
 
     def test_method_kwarg(self):
         actions = _make_atomic_actions()
         frames = _make_frames()
-        result = pitch_control_at_action(actions, frames, method="voronoi")
+        result = pitch_control_at_target(actions, frames, method="voronoi")
         assert result.name == "pitch_control_at_target__voronoi"
 
 

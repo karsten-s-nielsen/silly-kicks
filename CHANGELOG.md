@@ -5,6 +5,46 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.32.0] — 2026-06-16
+
+### Added — `add_*` input-purity CI gate (ADR-033, PR-S97)
+
+Every public `add_*` enricher must be PURE: it must not mutate any caller-supplied DataFrame/Series/ndarray
+and must return a NEW object. New auto-enumerating gate `tests/test_add_star_purity.py` — one canonical
+`PURITY_ENTRIES` registry covering the full public surface (`spadl`/`atomic.spadl`/`tracking`/
+`atomic.tracking`, including the 15 `atomic.tracking.features` mirrors), build-fresh-owned-inputs-once +
+snapshot-every-array-arg + value-equality + `out is not input`. Two meta-assertions pin the surface to the
+public export (`__all__` UNION `.features.__all__`), so a new `add_*` cannot land unregistered. A best-effort
+AST heuristic nudges toward per-branch coverage; the contributor contract (CLAUDE.md: any column-conditional
+`add_*` registers ≥2 variants) is the real backstop. Joins the auto-enumerating-gate family alongside
+nan-safety / liveness / dup-`action_id` / id-dtype.
+
+### Fixed — `add_gk_distribution_metrics` mutated the caller's frame when `gk_role` was present (ADR-033, PR-S97)
+
+When `gk_role` was already present, both `add_gk_distribution_metrics` implementations (standard +
+atomic-SPADL) assigned their four columns straight onto the caller's input DataFrame and returned it,
+contradicting the documented "Sorted copy" contract (the `gk_role`-absent path always copied, so the old
+column-list mutation guard never caught it). Now hoists `out = actions.sort_values([...]).reset_index(drop=True)`
+to the top and operates on `out`. **Identity + order only, no value miscompute, no recompute:** the sort key
+matches `add_gk_role`'s internal sort (so the `require_gk_role` path is value/order-identical) and derivation
+is per-row vectorized — the lakehouse need not re-materialize. The repo-wide audit found the mutation class is
+otherwise clean (only this helper).
+
+### Changed — `pitch_control_at_action` → `pitch_control_at_target` (BREAKING rename; ADR-033, PR-S97)
+
+The action-coupled function is renamed to match its emitted `pitch_control_at_target__<method>` column base
+(unchanged since 4.31.0) — standard + atomic, plus `__all__`, imports, and callers. Window-justified: no
+released consumer of the 4.31.0 column rename exists yet. The lakehouse keeps its own DEFCON
+`pitch_control_at_action` mart column (different semantics; not silly-kicks').
+
+### Changed — docstring tightening (Part C; ADR-033, PR-S97)
+
+Enumerated emitted columns + dtypes for `add_off_ball_runs` / `add_off_ball_context` / `add_shot_goalmouth`;
+added the `gk_pass_length_class` Categorical/Spark-`StringType` note and the `gk_xt_delta`
+caller-supplied-`(12,8)`-SPADL-grid (never self-fit) note to `add_gk_distribution_metrics` (standard +
+atomic). A doc-accuracy test pins each exhaustive-claim helper's emitted feature set to an explicit
+`frozenset` and asserts the docstring names every column.
+
 ## [4.31.0] — 2026-06-16
 
 ### Changed — pitch control re-aimed to the action destination; dead at-ball column retired (ADR-032, PR-S96)

@@ -319,14 +319,21 @@ def add_gk_distribution_metrics(
 
     - ``gk_pass_length_m`` — Euclidean ``(start, end)`` distance in metres
       (NaN on non-distribution rows).
-    - ``gk_pass_length_class`` — Categorical ``{"short", "medium", "long"}``
-      keyed off ``short_threshold`` / ``long_threshold``.
+    - ``gk_pass_length_class`` — pandas ``Categorical`` over the fixed
+      categories ``{"short", "medium", "long"}`` (NaN on non-distribution
+      rows), keyed off ``short_threshold`` / ``long_threshold``. The dtype is
+      categorical, not ``object``: a Spark/lakehouse consumer materializing
+      this column should map it to ``StringType`` (the category codes are an
+      in-memory pandas detail, not part of the contract).
     - ``is_launch`` — bool. True iff length > ``long_threshold`` AND action
       is a deliberate-distribution pass type (``pass``, ``goalkick``,
       ``freekick_short``, ``freekick_crossed``). False everywhere else.
-    - ``gk_xt_delta`` — float xT-grid delta from start zone to end zone,
+    - ``gk_xt_delta`` — float xT-grid delta ``xT(end_zone) - xT(start_zone)``,
       computed only when ``xt_grid`` is provided AND the pass succeeded
-      (``result_id == "success"``). NaN otherwise.
+      (``result_id == "success"``). NaN otherwise. Zones are binned on the
+      caller-supplied ``(12, 8)`` SPADL-coordinate grid (x→12 bins, y→8 bins);
+      the helper NEVER fits its own xT — it consumes the grid you pass, so the
+      delta is only as meaningful as that grid's provenance.
 
     NaN values in caller-supplied identifier columns (e.g. ``player_id``)
     are treated as "not identifiable" for that row's enrichment lookup.
@@ -401,32 +408,33 @@ def add_gk_distribution_metrics(
     if xt_grid is not None and xt_grid.shape != (12, 8):
         raise ValueError(f"add_gk_distribution_metrics: xt_grid must have shape (12, 8), got {xt_grid.shape}")
 
-    # Apply gk_role internally if needed.
-    if "gk_role" not in actions.columns:
+    # Operate on a sorted COPY -- never mutate the caller's frame (ADR-033). The sort key matches
+    # add_gk_role's internal ordering, so the require_gk_role path is value/order-identical; the
+    # gk_role-present path now returns a sorted copy (it previously assigned the four columns straight
+    # onto the caller's frame -- the motivating in-place-mutation defect).
+    out = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    if "gk_role" not in out.columns:
         if require_gk_role:
-            actions = add_gk_role(actions)
+            out = add_gk_role(out)
         else:
-            actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(
-                drop=True
-            )
-            actions["gk_role"] = pd.Categorical([None] * len(actions), categories=list(_GK_ROLE_CATEGORIES))
+            out["gk_role"] = pd.Categorical([None] * len(out), categories=list(_GK_ROLE_CATEGORIES))
 
-    n = len(actions)
+    n = len(out)
     if n == 0:
-        actions["gk_pass_length_m"] = pd.Series([], dtype=np.float64)
-        actions["gk_pass_length_class"] = pd.Categorical([], categories=list(_GK_PASS_LENGTH_CATEGORIES))
-        actions["is_launch"] = pd.Series([], dtype=bool)
-        actions["gk_xt_delta"] = pd.Series([], dtype=np.float64)
-        return actions
+        out["gk_pass_length_m"] = pd.Series([], dtype=np.float64)
+        out["gk_pass_length_class"] = pd.Categorical([], categories=list(_GK_PASS_LENGTH_CATEGORIES))
+        out["is_launch"] = pd.Series([], dtype=bool)
+        out["gk_xt_delta"] = pd.Series([], dtype=np.float64)
+        return out
 
     # Identify distribution rows.
-    is_distribution = (actions["gk_role"] == "distribution").to_numpy()
+    is_distribution = (out["gk_role"] == "distribution").to_numpy()
 
     # Vectorised length computation (defined for all rows; masked to NaN where not distribution).
-    start_x = actions["start_x"].to_numpy(dtype=np.float64)
-    start_y = actions["start_y"].to_numpy(dtype=np.float64)
-    end_x = actions["end_x"].to_numpy(dtype=np.float64)
-    end_y = actions["end_y"].to_numpy(dtype=np.float64)
+    start_x = out["start_x"].to_numpy(dtype=np.float64)
+    start_y = out["start_y"].to_numpy(dtype=np.float64)
+    end_x = out["end_x"].to_numpy(dtype=np.float64)
+    end_y = out["end_y"].to_numpy(dtype=np.float64)
     dx = end_x - start_x
     dy = end_y - start_y
     raw_length = np.sqrt(dx * dx + dy * dy)
@@ -443,7 +451,7 @@ def add_gk_distribution_metrics(
     length_class[long_mask] = "long"
 
     # is_launch — pass-type AND length > long_threshold.
-    type_id = actions["type_id"].to_numpy()
+    type_id = out["type_id"].to_numpy()
     launch_type_ids = {spadlconfig.actiontype_id[name] for name in _GK_LAUNCH_PASS_TYPE_NAMES}
     is_launch_type = np.isin(type_id, list(launch_type_ids))
     is_launch = is_distribution & is_launch_type & (raw_length > long_threshold)
@@ -452,7 +460,7 @@ def add_gk_distribution_metrics(
     xt_delta = np.full(n, np.nan, dtype=np.float64)
     if xt_grid is not None:
         success_id = spadlconfig.result_id["success"]
-        result_id_arr = actions["result_id"].to_numpy()
+        result_id_arr = out["result_id"].to_numpy()
         # NaN coordinates would crash the .astype(int) zone-binning below.
         # Filter to rows where all four coords are finite (guards against
         # caller data with sparse spatial information). Non-finite rows
@@ -466,11 +474,11 @@ def add_gk_distribution_metrics(
             zone_y_end = np.clip((end_y[eligible] / (_PITCH_WIDTH_M / 8.0)).astype(int), 0, 7)
             xt_delta[eligible] = xt_grid[zone_x_end, zone_y_end] - xt_grid[zone_x_start, zone_y_start]
 
-    actions["gk_pass_length_m"] = length_m
-    actions["gk_pass_length_class"] = pd.Categorical(length_class, categories=list(_GK_PASS_LENGTH_CATEGORIES))
-    actions["is_launch"] = is_launch
-    actions["gk_xt_delta"] = xt_delta
-    return actions
+    out["gk_pass_length_m"] = length_m
+    out["gk_pass_length_class"] = pd.Categorical(length_class, categories=list(_GK_PASS_LENGTH_CATEGORIES))
+    out["is_launch"] = is_launch
+    out["gk_xt_delta"] = xt_delta
+    return out
 
 
 _ADD_PRE_SHOT_GK_CONTEXT_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (

@@ -124,6 +124,22 @@ class TestContract:
         add_gk_distribution_metrics(actions)
         assert list(actions.columns) == cols_before
 
+    def test_does_not_mutate_input_when_gk_role_present(self):
+        """Regression (ADR-033): the gk_role-present path used to assign columns straight onto the
+        caller's frame (only the gk_role-absent path copied). It must return a sorted COPY and leave the
+        input byte-unchanged."""
+        actions = add_gk_role(_save_then_pass_then_outcome())
+        assert "gk_role" in actions.columns
+        before = actions.copy(deep=True)
+        result = add_gk_distribution_metrics(actions)
+        assert before.equals(actions), "input mutated in place"
+        assert result is not actions
+        assert result[["game_id", "period_id", "action_id"]].equals(
+            result[["game_id", "period_id", "action_id"]].sort_values(
+                ["game_id", "period_id", "action_id"], kind="mergesort"
+            )
+        ), "output is not sorted by (game_id, period_id, action_id)"
+
     def test_empty_input(self):
         actions = _df([_make_atomic_action(action_id=0)]).iloc[0:0]
         result = add_gk_distribution_metrics(actions)
