@@ -71,6 +71,31 @@ class TestContract:
         add_gk_distribution_metrics(actions)
         assert list(actions.columns) == cols_before
 
+    def test_does_not_mutate_input_when_gk_role_present(self):
+        """Regression (ADR-033): when ``gk_role`` is ALREADY present the helper used to assign its four
+        columns straight onto the caller's frame (the gk_role-absent path always copied, so the older
+        column-list guard above never caught it). It must return a sorted COPY and leave the input
+        byte-unchanged."""
+        actions = add_gk_role(
+            _df(
+                [
+                    _make_gk_action(action_id=2, keeper_action="keeper_save", player_id=999),
+                    _make_pass_action(action_id=0, player_id=999, time_seconds=1.0),
+                    _make_pass_action(action_id=1, player_id=999, time_seconds=2.0),
+                ]
+            )
+        )
+        assert "gk_role" in actions.columns
+        before = actions.copy(deep=True)
+        result = add_gk_distribution_metrics(actions)
+        assert before.equals(actions), "input mutated in place"
+        assert result is not actions
+        assert result[["game_id", "period_id", "action_id"]].equals(
+            result[["game_id", "period_id", "action_id"]].sort_values(
+                ["game_id", "period_id", "action_id"], kind="mergesort"
+            )
+        ), "output is not sorted by (game_id, period_id, action_id)"
+
     def test_empty_input(self):
         actions = _df([_make_action(action_id=0)]).iloc[0:0]
         result = add_gk_distribution_metrics(actions)

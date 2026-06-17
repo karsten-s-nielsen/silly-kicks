@@ -7,7 +7,7 @@ import pandas as pd
 
 from silly_kicks.tracking.features import (
     add_pitch_control,
-    pitch_control_at_action,
+    pitch_control_at_target,
     pitch_control_default_xfns,
     pitch_control_xfns,
 )
@@ -97,14 +97,14 @@ class TestPitchControlAtAction:
     def test_returns_series(self):
         actions = _make_actions()
         frames = _make_frames()
-        result = pitch_control_at_action(actions, frames)
+        result = pitch_control_at_target(actions, frames)
         assert isinstance(result, pd.Series)
         assert len(result) == 2
 
     def test_values_in_bounds(self):
         actions = _make_actions()
         frames = _make_frames()
-        result = pitch_control_at_action(actions, frames)
+        result = pitch_control_at_target(actions, frames)
         valid = result.dropna()
         assert (valid >= 0).all() and (valid <= 1).all()
 

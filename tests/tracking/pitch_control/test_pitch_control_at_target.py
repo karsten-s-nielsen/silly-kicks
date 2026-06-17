@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from silly_kicks.tracking.features import pitch_control_at_action
+from silly_kicks.tracking.features import pitch_control_at_target
 
 _HOME, _AWAY = "H", "A"
 
@@ -112,7 +112,7 @@ def test_home_action_destination_controlled_by_acting_team_reads_high():
         controller_team=_HOME,
         opp_team=_AWAY,
     )
-    s = pitch_control_at_action(_action(_HOME, 80.0, 20.0), fr, method="spearman")
+    s = pitch_control_at_target(_action(_HOME, 80.0, 20.0), fr, method="spearman")
     assert s.iloc[0] > 0.9, f"home at_target should be ~1.0 (acting team controls destination), got {s.iloc[0]}"
 
 
@@ -126,7 +126,7 @@ def test_away_action_pins_reprojection_direction():
         controller_team=_AWAY,
         opp_team=_HOME,
     )
-    s = pitch_control_at_action(_action(_AWAY, 80.0, 20.0), fr, method="spearman")
+    s = pitch_control_at_target(_action(_AWAY, 80.0, 20.0), fr, method="spearman")
     assert s.iloc[0] > 0.9, (
         f"away at_target should be ~1.0 after the ADR-028 reprojection lands on absolute cell (25,48); "
         f"got {s.iloc[0]} (a ~0.0 value means the projection direction is wrong / not applied)"
@@ -137,8 +137,8 @@ def test_mirror_invariance_home_vs_away():
     # Physically identical: acting team controls its destination in both. Necessary-not-sufficient symmetry guard.
     fh = _frame(300, controllers_xy=[(80, 20)], opponents_xy=[(25, 48)], controller_team=_HOME, opp_team=_AWAY)
     fa = _frame(301, controllers_xy=[(25, 48)], opponents_xy=[(80, 20)], controller_team=_AWAY, opp_team=_HOME)
-    sh = pitch_control_at_action(_action(_HOME, 80.0, 20.0), fh, method="spearman").iloc[0]
-    sa = pitch_control_at_action(_action(_AWAY, 80.0, 20.0), fa, method="spearman").iloc[0]
+    sh = pitch_control_at_target(_action(_HOME, 80.0, 20.0), fh, method="spearman").iloc[0]
+    sa = pitch_control_at_target(_action(_AWAY, 80.0, 20.0), fa, method="spearman").iloc[0]
     assert abs(sh - sa) < 0.05, f"mirrored home/away at_target must agree: {sh} vs {sa}"
 
 
@@ -155,14 +155,14 @@ def test_multi_action_mixed_home_away_each_row_correct():
     )
     actions = pd.concat([_action(_HOME, 80.0, 20.0), _action(_AWAY, 80.0, 20.0)], ignore_index=True)
     actions["action_id"] = [1, 2]
-    s = pitch_control_at_action(actions, fr, method="spearman")
+    s = pitch_control_at_target(actions, fr, method="spearman")
     assert s.iloc[0] > 0.9, f"home row (no flip) should read ~1.0 @ (80,20); got {s.iloc[0]}"
     assert s.iloc[1] > 0.9, f"away row (flipped) should read ~1.0 @ (25,48); got {s.iloc[1]} (flip mis-aligned?)"
 
 
 def test_atomic_mirror_parity_matches_standard():
     """Atomic at_target (samples x+dx, y+dy) equals the standard column on geometry-matched actions."""
-    from silly_kicks.atomic.tracking.features import pitch_control_at_action as atomic_pc
+    from silly_kicks.atomic.tracking.features import pitch_control_at_target as atomic_pc
 
     fr = _frame(
         500,
@@ -171,7 +171,7 @@ def test_atomic_mirror_parity_matches_standard():
         controller_team=_HOME,
         opp_team=_AWAY,
     )
-    std = pitch_control_at_action(_action(_HOME, 80.0, 20.0), fr, method="spearman").iloc[0]
+    std = pitch_control_at_target(_action(_HOME, 80.0, 20.0), fr, method="spearman").iloc[0]
     # atomic action: x,y = start; dx,dy chosen so x+dx, y+dy == the standard end (80, 20).
     atomic_actions = pd.DataFrame(
         [

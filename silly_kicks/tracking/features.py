@@ -18,7 +18,7 @@ Public API:
   max_lateral_gap / back_n_count (actions, frames, *, home_team_id) (PR-S27, TF-14)
 - add_defensive_line(actions, frames, *, home_team_id) -> pd.DataFrame  (PR-S27)
 - defensive_line_xfns(home_team_id) -> list                    (PR-S27)
-- pitch_control_at_action(actions, frames) -> pd.Series        (PR-S31, TF-7)
+- pitch_control_at_target(actions, frames) -> pd.Series        (PR-S31, TF-7)
 - add_pitch_control(actions, frames) -> pd.DataFrame           (PR-S31, TF-7)
 - pitch_control_xfns(method) -> list                           (PR-S31, TF-7)
 - pitch_control_default_xfns: list[FrameAwareTransformer]      (PR-S31, TF-7)
@@ -139,7 +139,7 @@ __all__ = [
     "off_ball_xt_opponent",
     "off_ball_xt_team",
     "pausa_xfns",
-    "pitch_control_at_action",
+    "pitch_control_at_target",
     "pitch_control_default_xfns",
     "pitch_control_xfns",
     "player_influence_xfns",
@@ -1322,6 +1322,18 @@ def add_off_ball_runs(
 ) -> pd.DataFrame:
     """Enrich actions with 4 off-ball-run columns.
 
+    Adds (all ``float64``; NaN when the pre-window has no linked frames):
+
+    - ``n_off_ball_runners_pre_window`` — count of attacking teammates making
+      an off-ball run (displacement > ``min_displacement_m``) in the pre-window.
+    - ``max_off_ball_run_displacement_pre_window`` — largest such displacement (m).
+    - ``mean_off_ball_run_speed_pre_window`` — mean runner speed (m/s).
+    - ``n_off_ball_runners_toward_goal_pre_window`` — count whose run is
+      goalward (toward the attacked goal).
+
+    For all 6 off-ball-run + line-break columns at once use
+    :func:`add_off_ball_context`.
+
     See NOTICE for full bibliographic citations.
 
     Examples
@@ -1417,6 +1429,16 @@ def add_off_ball_context(
     min_displacement_m: float = 3.0,
 ) -> pd.DataFrame:
     """Umbrella: add all 6 off-ball-run + line-break columns.
+
+    Emits the 4 off-ball-run columns of :func:`add_off_ball_runs`
+    (``n_off_ball_runners_pre_window``, ``max_off_ball_run_displacement_pre_window``,
+    ``mean_off_ball_run_speed_pre_window``, ``n_off_ball_runners_toward_goal_pre_window``
+    — all ``float64``) plus the 2 threshold line-break columns of
+    :func:`add_line_break`:
+
+    - ``line_break`` (``bool``) — the action's pass/carry crosses the defending
+      team's ``defensive_line_x``.
+    - ``n_attackers_behind_line`` (``Int64``) — attackers beyond that line.
 
     See NOTICE for full bibliographic citations.
 
@@ -1856,7 +1878,7 @@ def line_breaking_ward_xfns(home_team_id: int | str) -> list:
 # ---------------------------------------------------------------------------
 
 
-def pitch_control_at_action(
+def pitch_control_at_target(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
@@ -1885,8 +1907,8 @@ def pitch_control_at_action(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import pitch_control_at_action
-    >>> pc = pitch_control_at_action(actions, frames, method="spearman")
+    >>> from silly_kicks.tracking.features import pitch_control_at_target
+    >>> pc = pitch_control_at_target(actions, frames, method="spearman")
     """
     import numpy as np
 
@@ -1981,7 +2003,7 @@ def add_pitch_control(
     >>> enriched = add_pitch_control(actions, frames)
     """
     out = actions.copy()
-    s = pitch_control_at_action(actions, frames, links=links, method=method, pitch_control_cache=pitch_control_cache)
+    s = pitch_control_at_target(actions, frames, links=links, method=method, pitch_control_cache=pitch_control_cache)
     out[s.name] = s.values
     return out
 
@@ -2000,7 +2022,7 @@ def pitch_control_xfns(
     """
 
     def _pc_helper(actions, frames):
-        return pitch_control_at_action(actions, frames, method=method)
+        return pitch_control_at_target(actions, frames, method=method)
 
     _pc_helper.__name__ = f"pitch_control_at_target__{method}"
     return [lift_to_states(_pc_helper)]
@@ -5376,10 +5398,25 @@ def add_shot_goalmouth(
     links: pd.DataFrame | None = None,
     params: ShotGoalmouthParams | None = None,
 ) -> pd.DataFrame:
-    """Add TF-48 post-shot goalmouth crossing columns (shot_crossing_y/z, shot_speed,
-    shot_time_to_goal_line, shot_on_target_derived + provenance shot_crossing_source/
-    confidence/fit_n_frames/fit_rmse/fit_end_reason/z_profile) per shot action; NaN/NA
-    out-of-scope. Pure geometry over the ball trajectory -- NOT a VAEP feature
+    """Add TF-48 post-shot goalmouth crossing geometry per shot action; NaN/NA out-of-scope.
+
+    Adds 11 columns (canonical attacked-goal frame, x=105). Metrics:
+
+    - ``shot_crossing_y`` (``float64``) — y where the ball trajectory crosses the goal plane (m).
+    - ``shot_crossing_z`` (``float64``) — height at the crossing (m).
+    - ``shot_speed`` (``float64``) — contact-segment ball speed (m/s).
+    - ``shot_time_to_goal_line`` (``float64``) — flight time contact→goal plane (s).
+    - ``shot_on_target_derived`` (``boolean``) — posts/bar + ball-radius tolerance (width folded in).
+
+    Provenance:
+
+    - ``shot_crossing_source`` (``object``) — ``native`` / ``tracking`` / ``no_ball_frames`` /
+      ``insufficient_frames`` / ``no_crossing`` / ``unresolved``.
+    - ``shot_crossing_confidence`` (``float64``), ``shot_fit_n_frames`` (``int64``),
+      ``shot_fit_rmse`` (``float64``), ``shot_fit_end_reason`` (``object``),
+      ``shot_z_profile`` (``object`` — ``rolling`` / ``airborne`` / ``bounced``).
+
+    Pure geometry over the ball trajectory -- NOT a VAEP feature
     (post-contact outcome leakage; ADR-030 guard). NaN identifiers resolve to
     "unresolved" rows (ADR-003 -- implemented here, the decorator is marker-only).
 

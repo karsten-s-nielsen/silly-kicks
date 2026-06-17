@@ -97,7 +97,7 @@ __all__ = [
     "off_ball_xt_opponent",
     "off_ball_xt_team",
     "pausa_xfns",
-    "pitch_control_at_action",
+    "pitch_control_at_target",
     "player_influence_xfns",
     "pre_shot_gk_angle_off_goal_line",
     "pre_shot_gk_angle_to_shot_trajectory",
@@ -792,11 +792,11 @@ atomic_pressure_default_xfns = [lift_to_states(pressure_on_actor)]
 
 
 # ---------------------------------------------------------------------------
-# PR-S31 -- TF-7: pitch control at action (atomic variant)
+# PR-S31 -- TF-7: pitch control at the action destination (atomic variant; renamed at_target in ADR-033)
 # ---------------------------------------------------------------------------
 
 
-def pitch_control_at_action(
+def pitch_control_at_target(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
@@ -810,10 +810,10 @@ def pitch_control_at_action(
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import pitch_control_at_action
-    >>> pc = pitch_control_at_action(actions, frames)
+    >>> from silly_kicks.atomic.tracking.features import pitch_control_at_target
+    >>> pc = pitch_control_at_target(actions, frames)
     """
-    from silly_kicks.tracking.features import pitch_control_at_action as _std_pc
+    from silly_kicks.tracking.features import pitch_control_at_target as _std_pc
 
     if frames is None:
         return _std_pc(actions, None, method=method)
@@ -845,7 +845,7 @@ def add_pitch_control(
     >>> enriched = add_pitch_control(actions, frames)
     """
     out = actions.copy()
-    s = pitch_control_at_action(actions, frames, links=links, method=method)
+    s = pitch_control_at_target(actions, frames, links=links, method=method)
     out[s.name] = s.values
     return out
 
@@ -862,7 +862,7 @@ def atomic_pitch_control_xfns(
     """
 
     def _pc_helper(actions, frames):
-        return pitch_control_at_action(actions, frames, method=method)
+        return pitch_control_at_target(actions, frames, method=method)
 
     _pc_helper.__name__ = f"pitch_control_at_target__{method}"
     return [lift_to_states(_pc_helper)]

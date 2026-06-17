@@ -176,7 +176,7 @@ def _pc_actions() -> pd.DataFrame:
             "team_id": [1, 1],
             "start_x": [50.0, 55.0],
             "start_y": [34.0, 30.0],
-            # pitch_control_at_action samples the action DESTINATION (ADR-032); end_* is a standard
+            # pitch_control_at_target samples the action DESTINATION (ADR-032); end_* is a standard
             # SPADL column (every action carries it).
             "end_x": [60.0, 70.0],
             "end_y": [30.0, 40.0],
@@ -212,7 +212,7 @@ class TestCrossFamilySharing:
 
         monkeypatch.setattr(cache_mod, "compute_pitch_control", counting)
 
-        from silly_kicks.tracking.features import add_pitch_control, pitch_control_at_action
+        from silly_kicks.tracking.features import add_pitch_control, pitch_control_at_target
 
         frames, actions, links = _pc_frames(), _pc_actions(), _pc_links()
         cache = PitchControlCache()
@@ -223,7 +223,7 @@ class TestCrossFamilySharing:
         assert after_first == 1
 
         # Second consumer, SAME cache + same frame/team/method -> all cache hits.
-        pitch_control_at_action(actions, frames, method="voronoi", links=links, pitch_control_cache=cache)
+        pitch_control_at_target(actions, frames, method="voronoi", links=links, pitch_control_cache=cache)
         assert n["calls"] == after_first, "shared cache should be reused across families"
 
     def test_cache_does_not_change_output(self) -> None:

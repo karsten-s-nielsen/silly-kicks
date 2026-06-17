@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-16. **Current release**: silly-kicks 4.31.0 (pitch control re-aimed to the action destination — the dead `pitch_control_at_ball__<method>` (~0.5 near-ball Spearman fallback) RETIRED + replaced by the live `pitch_control_at_target__<method>` sampled at `(end_x,end_y)` with the mandatory ADR-028 query re-projection that the degeneracy had masked; breaking column rename, VAEP/tracking+calibration retrain trigger; lakehouse adoption is a breaking AC+DEFCON column-lifecycle migration; PR-S96 / ADR-032). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-16. **Current release**: silly-kicks 4.32.0 (`add_*` input-purity CI gate closing the in-place-mutation class repo-wide — fixed `add_gk_distribution_metrics` (standard + atomic) mutating the caller's frame when `gk_role` was present (identity/order only, no recompute); the auto-enumerating gate covers the full public `add_*` surface incl. the 15 `atomic.tracking.features` mirrors via package-`__all__`-UNION-`.features.__all__` discovery; breaking `pitch_control_at_action`→`pitch_control_at_target` rename (function aligns with its 4.31.0 column base); Part C docstring enumeration + doc-accuracy gate; PR-S97 / ADR-033). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
