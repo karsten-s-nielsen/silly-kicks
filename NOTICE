@@ -62,6 +62,14 @@ ADR-004) implements ingestion + linkage primitives across Gradient Sports (forme
 Metrica, and SkillCorner. No new academic methodology beyond the canonical
 ADR.
 
+The geometric frame-LTR orientation net (silly_kicks/tracking/direction.py
+orient_frames_to_ltr_by_geometry, TF-23, ADR-034) is a schema-adapted port of the
+luxury-lakehouse method correct_frames_to_home_ltr (lakehouse ADR-053): per-period
+home-goalkeeper-median-x anchoring with point-reflection of mis-oriented periods,
+idempotent. No external academic citation; cross-repo internal methodology, attributed
+here per the academic-attribution discipline. The SkillCorner/Metrica bronze->frame
+builders (silly_kicks/tracking/skillcorner.py, metrica.py) reuse it; see ADR-034.
+
 The four tracking-aware action-context features in
 silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
 (PR-S20, ADR-005) implement methodologies described in:

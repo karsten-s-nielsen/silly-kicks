@@ -5,6 +5,43 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.33.0] — 2026-06-18
+
+### Added — TF-23 SkillCorner + Metrica bronze→frame builders (ADR-034, PR-S98)
+
+- Two pure, bronze-consuming converters — `tracking.skillcorner.convert_to_frames` and
+  `tracking.metrica.convert_to_frames` — parallel to `tracking.sportec` /
+  `tracking.gradientsports`. They single-source the SkillCorner/Metrica coordinate
+  rescale, period-relative clock, id-namespacing, GK derivation, speed, and LTR
+  orientation that the luxury-lakehouse previously duplicated three ways (the kloppy
+  gateway oracle + two lakehouse builders). Emit the kloppy-variant schema
+  (`SKILLCORNER_TRACKING_FRAMES_COLUMNS` / `METRICA_TRACKING_FRAMES_COLUMNS`).
+- `tracking.orient_frames_to_ltr_by_geometry` — flag-free geometric frame-LTR
+  orientation (per-period home-GK-median-x anchor, point-reflect mis-oriented periods,
+  idempotent), a schema-adapted port of the luxury-lakehouse ADR-053
+  `correct_frames_to_home_ltr`. Retained alongside the flag-based `orient_frames_to_ltr`.
+- SkillCorner `ball_z` recovery — the builder maps the (previously discarded) real ball
+  height into the `z` column, unblocking SkillCorner post-shot height features (TF-48
+  PSxG) that were silently null in production.
+
+### Input contract (Metrica)
+
+- `tracking.metrica.convert_to_frames` requires bronze `y` in **SPADL bottom-to-top**
+  convention (the lakehouse bronze landing already provides this). kloppy's metrica NATIVE
+  coordinate system is top-to-bottom, so a consumer landing bronze straight from a kloppy
+  `TrackingDataset` must flip `y` (`1 − y`) first. Fed contract-honoring bronze, the
+  builder matches `tracking.kloppy.convert_to_frames` byte-for-byte (validated dx=dy=0 on
+  Metrica open-data game 1, incl. LTR orientation).
+
+### Notes
+
+- Additive; no silly-kicks model retrain (new modules + new public orienter; existing
+  converters/gateway untouched; in no default xfn list). The luxury-lakehouse adopts the
+  builders + orienter and retires its two builder copies + its orientation net (its
+  re-materialize trigger, not silly-kicks'); ADR-031 Gate C closes on the shipping path
+  via the event-anchored y-identity gate. GS native-adapter ET orientation is tracked as
+  the TF-23b follow-on.
+
 ## [4.32.0] — 2026-06-16
 
 ### Added — `add_*` input-purity CI gate (ADR-033, PR-S97)

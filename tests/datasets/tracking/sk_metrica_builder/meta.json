@@ -1,0 +1,7 @@
+{
+  "skillcorner_home_team_id": "867",
+  "skillcorner_match_id_native": "2011166",
+  "skillcorner_match_id_surrogate": "869183865098197055",
+  "source": "soccer_analytics.bronze (skillcorner_tracking JOIN skillcorner_matches; spadl_actions), windowed slice around 20 off-centre actions (passes + shots) by both teams across periods 1 and 2",
+  "note": "Metrica is NOT event-anchored here: its builder y is canonical-correct (dx=dy=0 vs the kloppy gateway, see test_builder_kloppy_parity_e2e), but the lakehouse metrica spadl_actions event-y did not co-locate with the canonical tracking ball in a pilot (a lakehouse events data issue, relayed separately). Metrica Gate-C is the kloppy-oracle parity."
+}
