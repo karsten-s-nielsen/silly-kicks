@@ -1,6 +1,15 @@
 # BUG: kloppy-derived tracking frames have an INVERTED y-axis vs SPADL actions (SkillCorner + IDSSE)
 
-**Severity:** HIGH — silently corrupts every tracking-aware feature for all kloppy-based providers
+> **STATUS: RESOLVED in 4.29.0 / 4.30.0 (ADR-031).** The kloppy TRACKING gateway
+> (`tracking/kloppy.py::convert_to_frames`) now pins the canonical SPADL coordinate system via a
+> CS-only `transform()` (T1, PR-S94, 4.29.0), and the y-inverting dev loader
+> `scripts/_loader_pining.py::_kloppy_tracking_to_frames` was retired in favour of the IDSSE/Sportec
+> DFL parse-port (T3, PR-S95, 4.30.0). SkillCorner + Metrica gateway frames are y-corrected; the
+> native sportec/IDSSE path was already y-correct. This document is retained as the historical
+> diagnosis. (NB: the lakehouse builds SC/Metrica via its OWN bronze builders, not the gateway — see
+> ADR-031 and the TF-23 builders, ADR-034.)
+
+**Severity (at discovery):** HIGH — silently corrupts every tracking-aware feature for all kloppy-based providers
 (SkillCorner, IDSSE, and by the same path Metrica). Any feature that combines a SPADL action
 coordinate with a sampled tracking-frame position is computed on a y-mirrored frame.
 **Component:** the silly-kicks **kloppy tracking path** — `silly_kicks/tracking/kloppy.py`

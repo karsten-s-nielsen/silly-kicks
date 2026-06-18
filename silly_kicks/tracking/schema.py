@@ -42,6 +42,15 @@ SPORTEC_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
 """Sportec native output: same shape as kloppy variant --- DFL TeamId / PersonId
 are string identifiers."""
 
+SKILLCORNER_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
+"""SkillCorner native bronze->frame output: object identifiers (SkillCorner numeric
+ids are stringified to match the SPADL ``player_id_native`` convention and the
+kloppy-gateway oracle). Same shape as the kloppy variant."""
+
+METRICA_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
+"""Metrica native bronze->frame output: object identifiers (``"Home"``/``"Away"`` team
+labels + roster-mapped player ids). Same shape as the kloppy variant."""
+
 GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     **TRACKING_FRAMES_COLUMNS,
     "player_id": "Int64",

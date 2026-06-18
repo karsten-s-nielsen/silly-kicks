@@ -20,6 +20,8 @@ line_breaking_ward_xfns).
 __all__ = [
     "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS",
     "KLOPPY_TRACKING_FRAMES_COLUMNS",
+    "METRICA_TRACKING_FRAMES_COLUMNS",
+    "SKILLCORNER_TRACKING_FRAMES_COLUMNS",
     "SPORTEC_TRACKING_FRAMES_COLUMNS",
     "TRACKING_CATEGORICAL_DOMAINS",
     "TRACKING_CONSTRAINTS",
@@ -161,6 +163,7 @@ __all__ = [
     "line_breaking_ward_xfns",
     "link_actions_to_frames",
     "max_lateral_gap",
+    "metrica",
     "nearest_defender_distance",
     "obso_actual",
     "obso_optimal",
@@ -170,6 +173,7 @@ __all__ = [
     "off_ball_xt_opponent",
     "off_ball_xt_team",
     "orient_frames_to_ltr",
+    "orient_frames_to_ltr_by_geometry",
     "pausa_xfns",
     "pitch_control",
     "pitch_control_at_target",
@@ -206,6 +210,7 @@ __all__ = [
     "shot_on_target_derived",
     "shot_speed",
     "shot_time_to_goal_line",
+    "skillcorner",
     "slice_around_event",
     "smooth_frames",
     "snapshot_to_tracking_frames",
@@ -224,7 +229,18 @@ __all__ = [
     "xt_gk_xfns",
 ]
 
-from . import feature_framework, features, gradientsports, pitch_control, preprocess, schema, sportec, utils
+from . import (
+    feature_framework,
+    features,
+    gradientsports,
+    metrica,
+    pitch_control,
+    preprocess,
+    schema,
+    skillcorner,
+    sportec,
+    utils,
+)
 from ._ball_carrier import derive_team_in_possession, infer_ball_carrier
 from ._cover_shadows import (
     CoverShadowParams,
@@ -275,7 +291,7 @@ from ._xshot_occurrence import (
     xshot_occurrence_xfns,
 )
 from ._xt_gk import XtGkParams, XtGkReport, compute_xt_gk
-from .direction import require_et_direction
+from .direction import orient_frames_to_ltr_by_geometry, require_et_direction
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
     actor_arc_length_pre_window,
@@ -395,6 +411,8 @@ from .pressure import (
 from .schema import (
     GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS,
     KLOPPY_TRACKING_FRAMES_COLUMNS,
+    METRICA_TRACKING_FRAMES_COLUMNS,
+    SKILLCORNER_TRACKING_FRAMES_COLUMNS,
     SPORTEC_TRACKING_FRAMES_COLUMNS,
     TRACKING_CATEGORICAL_DOMAINS,
     TRACKING_CONSTRAINTS,

@@ -12,13 +12,21 @@ Pure refactor: zero behaviour change in events.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from silly_kicks.spadl import config as _spadlconfig
+
 from ._id_compat import ids_match
+
+_PITCH_LENGTH_M: float = _spadlconfig.field_length  # 105.0
+_PITCH_WIDTH_M: float = _spadlconfig.field_width  # 68.0
+_PITCH_MID_X: float = _PITCH_LENGTH_M / 2.0  # 52.5
+_LTR_KNOWN_PERIODS: tuple[int, ...] = (1, 2, 3, 4)  # period 5 (PSO) direction undefined
 
 
 def require_et_direction(
@@ -150,4 +158,121 @@ def compute_attacking_direction(
         is_home = ids_match(team_id, home_team_id)
         out.loc[period_mask & is_home] = "ltr" if home_attacks_right else "rtl"
         out.loc[period_mask & ~is_home] = "rtl" if home_attacks_right else "ltr"
+    return out
+
+
+def orient_frames_to_ltr_by_geometry(
+    frames: pd.DataFrame,
+    *,
+    home_team_id: Any,
+    source: str = "",
+    game_id: Any = None,
+) -> pd.DataFrame:
+    """Flag-free geometric frame-LTR orientation: ensure home attacks +x every period.
+
+    Per-period directional anchor = the home goalkeeper's median x. A GK sits deepest
+    in its own half, so in the canonical home-attacks-right (LTR) frame the home GK
+    must sit at LOW x (home defends x=0). Any period whose home-GK median x is on the
+    attacking half (``> 52.5``) is mis-oriented; ALL its rows are point-reflected
+    (``x->105-x``, ``y->68-y``, ``vx->-vx``, ``vy->-vy`` when present; ``speed`` is a
+    magnitude, unchanged). ``team_attacking_direction`` is populated where null.
+
+    Unlike :func:`silly_kicks.tracking.orient_frames_to_ltr` (flag-based), this reads
+    orientation from the DATA, so it is robust to absent/defaulted
+    ``home_team_start_left`` (no bronze field carries it) and to per-feed ET coordinate
+    flips. **Idempotent** --- a no-op on already-correctly-oriented frames (home GK
+    already at low x). Promoted from luxury-lakehouse ADR-053
+    ``correct_frames_to_home_ltr``; see NOTICE.
+
+    Orientation is the builder's owned, normal operation (every match flips ~half its
+    periods), so normal flips are SILENT (unlike ADR-053's correctness-net logging);
+    a period with no GK anchor warns; a ``home_team_id`` matching no player raises
+    (ADR-019 --- mis-orienting is worse than failing).
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Long-form frames. Required: ``x``, ``y``, ``team_id``, ``period_id``,
+        ``is_ball``, ``is_goalkeeper``. ``vx``/``vy`` flipped when present.
+    home_team_id : Any
+        Home-team id matching ``frames["team_id"]`` (compared via ADR-019 ``ids_match``).
+    source, game_id : Any
+        Diagnostic context only (warning messages).
+
+    Returns
+    -------
+    pd.DataFrame
+        New DataFrame in home-attacks-right convention.
+
+    Raises
+    ------
+    ValueError
+        Missing required column, or ``home_team_id`` matches zero player rows.
+
+    Examples
+    --------
+    Orient absolute metrica/skillcorner frames built from bronze::
+
+        from silly_kicks.tracking.direction import orient_frames_to_ltr_by_geometry
+        oriented = orient_frames_to_ltr_by_geometry(frames, home_team_id="Home")
+    """
+    required = {"x", "y", "team_id", "period_id", "is_ball", "is_goalkeeper"}
+    missing = required - set(frames.columns)
+    if missing:
+        raise ValueError(f"orient_frames_to_ltr_by_geometry: required column(s) missing: {sorted(missing)}")
+    if len(frames) == 0:
+        return frames.copy()
+
+    out = frames.copy()
+    is_ball = out["is_ball"].astype(bool)
+    is_player = ~is_ball
+    is_home = ids_match(out["team_id"], home_team_id).fillna(False)
+    is_gk = out["is_goalkeeper"].astype(bool)
+
+    if not bool((is_player & is_home).any()):
+        raise ValueError(
+            f"orient_frames_to_ltr_by_geometry: home_team_id={home_team_id!r} matched ZERO "
+            f"player rows ({source} game={game_id}) --- refusing to guess orientation."
+        )
+
+    x_arr = out["x"].to_numpy(dtype="float64")
+    period_arr = out["period_id"].to_numpy()
+    home_arr = is_home.to_numpy(dtype=bool)
+    player_arr = is_player.to_numpy(dtype=bool)
+    gk_arr = is_gk.to_numpy(dtype=bool)
+
+    def _gk_median(mask: np.ndarray) -> float:
+        vals = x_arr[mask]
+        vals = vals[~np.isnan(vals)]
+        return float(np.median(vals)) if vals.size else float("nan")
+
+    has_vx, has_vy = "vx" in out.columns, "vy" in out.columns
+    for period in pd.Series(period_arr[player_arr]).dropna().unique():
+        psel = player_arr & (period_arr == period)
+        home_gk_x = _gk_median(psel & home_arr & gk_arr)
+        if not np.isnan(home_gk_x):
+            needs_flip = home_gk_x > _PITCH_MID_X
+        else:
+            away_gk_x = _gk_median(psel & ~home_arr & gk_arr)
+            if np.isnan(away_gk_x):
+                warnings.warn(
+                    f"orient_frames_to_ltr_by_geometry: {source} game={game_id} period={period} "
+                    "has no GK anchor (home or away) --- orientation left as-is for this period.",
+                    stacklevel=2,
+                )
+                continue
+            needs_flip = away_gk_x < _PITCH_MID_X
+        if needs_flip:
+            fmask = period_arr == period
+            out.loc[fmask, "x"] = _PITCH_LENGTH_M - x_arr[fmask]
+            out.loc[fmask, "y"] = _PITCH_WIDTH_M - out["y"].to_numpy(dtype="float64")[fmask]
+            if has_vx:
+                out.loc[fmask, "vx"] = -out["vx"].to_numpy(dtype="float64")[fmask]
+            if has_vy:
+                out.loc[fmask, "vy"] = -out["vy"].to_numpy(dtype="float64")[fmask]
+
+    if "team_attacking_direction" in out.columns and out["team_attacking_direction"].isna().all():
+        known = is_player & out["period_id"].isin(_LTR_KNOWN_PERIODS)
+        out.loc[known & is_home, "team_attacking_direction"] = "ltr"
+        out.loc[known & ~is_home, "team_attacking_direction"] = "rtl"
     return out
