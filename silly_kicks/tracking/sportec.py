@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from . import direction
-from ._id_compat import ids_match
 from .schema import SPORTEC_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 
 if TYPE_CHECKING:
@@ -131,37 +130,19 @@ def convert_to_frames(
     out["x"] = out["x_centered"] + 52.5
     out["y"] = out["y_centered"] + 34.0
 
-    # Periods in which the home team attacks RTL in raw input --- in those
-    # periods ALL rows (player + ball) flip so the output frame is
-    # home-team-attacks-LTR. Ball carries NaN direction; flip decisions
-    # therefore key on the period rather than the per-row direction column.
-    direction.require_et_direction(out["period_id"], home_team_start_left_extratime, source="sportec convert_to_frames")
-    home_attacks_right = direction.home_attacks_right_per_period(
+    # Shared orientation tail (ADR-035): ET guard -> per-period flag flip -> period-gated
+    # team_attacking_direction label -> idempotent geometric backstop (self-corrects a wrong
+    # home_team_start_left_extratime from GK geometry; byte-identical no-op on the correct
+    # flag). on_missing_home="warn" preserves this adapter's warn-don't-raise contract.
+    out = direction.finalize_orientation(
+        out,
+        home_team_id=home_team_id,
         home_team_start_left=home_team_start_left,
         home_team_start_left_extratime=home_team_start_left_extratime,
+        source=f"{_PROVIDER_NAME} convert_to_frames",
+        game_id=(out["game_id"].iloc[0] if len(out) else None),
+        on_missing_home="warn",
     )
-    home_rtl_periods = {p for p, attacks_right in home_attacks_right.items() if not attacks_right}
-    flip_mask = out["period_id"].isin(home_rtl_periods).to_numpy()
-    out.loc[flip_mask, "x"] = 105.0 - out.loc[flip_mask, "x"]
-    out.loc[flip_mask, "y"] = 68.0 - out.loc[flip_mask, "y"]
-
-    # Post-flip direction column: home-team rows -> "ltr"; away-team rows ->
-    # "rtl"; ball rows stay NaN. Period 5 (PSO) has undefined direction and
-    # so retains NaN even on player rows.
-    out["team_attacking_direction"] = None
-    is_player = (~out["is_ball"].astype(bool)).to_numpy(dtype=bool)
-    # ADR-019: dtype-safe is_home (raw `==` silently matched zero players for an int home_team_id
-    # vs object-string team_id -> mis-oriented frames; 2026-06-09 fix, mirrors gradientsports).
-    is_home = ids_match(out["team_id"], home_team_id).fillna(False).to_numpy(dtype=bool)
-    if is_player.any() and not (is_player & is_home).any():
-        warnings.warn(
-            f"sportec.convert_to_frames: home_team_id={home_team_id!r} matched ZERO player rows "
-            "(id dtype vs frame team_id mismatch?) -- frame orientation would be wrong.",
-            stacklevel=2,
-        )
-    is_known_period = out["period_id"].isin([1, 2, 3, 4]).to_numpy(dtype=bool)
-    out.loc[is_player & is_home & is_known_period, "team_attacking_direction"] = "ltr"
-    out.loc[is_player & ~is_home & is_known_period, "team_attacking_direction"] = "rtl"
 
     out["speed"] = out["speed_native"].astype("float64")
     speed_source: list[object] = ["native" if pd.notna(v) else None for v in out["speed"]]

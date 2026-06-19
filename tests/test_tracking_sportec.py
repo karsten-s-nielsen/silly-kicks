@@ -68,7 +68,11 @@ def test_tiny_conversion_report_total_input_frames():
     assert report.total_input_frames == TINY["frame_id"].nunique()
 
 
-def test_home_start_left_false_flips_x_versus_true():
+def test_home_start_left_self_corrects_via_geometry():
+    # TF-23b (ADR-035): the geometric backstop makes orientation data-driven, so a correct vs
+    # flipped home_team_start_left converge to the SAME frames when a GK anchor is present (TINY
+    # carries a native home GK) -- the flag no longer drives the final orientation. (Pre-4.34.0
+    # this asserted x_t + x_f == 105, i.e. the flag flipped the output.)
     f_true, _ = convert_to_frames(
         TINY,
         home_team_id="DFL-CLU-0100",
@@ -81,7 +85,9 @@ def test_home_start_left_false_flips_x_versus_true():
     )
     merge_cols = ["period_id", "frame_id", "player_id", "team_id", "is_ball"]
     j = f_true.merge(f_false, on=merge_cols, suffixes=("_t", "_f"))
-    assert ((j["x_t"] + j["x_f"]).round(6) == 105.0).all()
+    assert len(j) > 0
+    assert (j["x_t"].round(6) == j["x_f"].round(6)).all()
+    assert (j["y_t"].round(6) == j["y_f"].round(6)).all()
 
 
 def test_medium_period_flip_consistency():

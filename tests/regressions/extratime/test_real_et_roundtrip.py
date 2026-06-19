@@ -27,91 +27,76 @@ _FIELD_LENGTH = 105.0
 _FIELD_WIDTH = 68.0
 
 
-# --- GS real-data ET round-trip --------------------------------------------
-
-
-def _gs_frames_from_bronze(bronze, *, home_team_id, away_team_id, home_start_left, et_flag):
-    """Flatten the raw-bronze GS ET frames to the GS tracking converter input + convert.
-
-    Roster-independent ET-direction logic (keys on team membership + period +
-    coords), so a synthesized roster is sufficient (none delivered with the
-    fixture). Mirrors ``scripts/_loader_pining.py::_build_gradientsports``.
-    """
-    from silly_kicks.tracking.gradientsports import add_gradientsports_player_ids, convert_to_frames
-
-    df = bronze.copy()
-    is_ball = df["is_ball"].astype(bool)
-    jf = pd.DataFrame(
-        {
-            "game_id": int(df["match_id"].iloc[0]),
-            "period_id": df["period"].astype(int),
-            "frame_id": df["frame_num"].astype(int),
-            "time_seconds": df["period_elapsed_time"].astype(float),
-            "frame_rate": 29.97,
-            "z": 0.0,
-            "speed_native": float("nan"),
-            "ball_state": "alive",
-            "team_side": df["team_side"],
-            "jersey_number": df["jersey_num"].where(~is_ball, None),
-            "is_ball": is_ball.to_numpy(),
-            "x_centered": df["x"].astype(float),
-            "y_centered": df["y"].astype(float),
-        }
-    )
-    players = jf.loc[~jf["is_ball"], ["team_side", "jersey_number"]].drop_duplicates()
-    players["team_id"] = players["team_side"].map({"home": home_team_id, "away": away_team_id})
-    roster = pd.DataFrame(
-        {
-            "team_id": players["team_id"].to_numpy(),
-            "shirt_number": players["jersey_number"].to_numpy(),
-            "player_id": range(1, len(players) + 1),
-            "position_group_type": "MF",
-        }
-    )
-    # One GK per team so the roster join doesn't warn (ET-direction is GK-independent).
-    roster.loc[roster.groupby("team_id").head(1).index, "position_group_type"] = "GK"
-    resolved, _ = add_gradientsports_player_ids(jf, roster, home_team_id=home_team_id, away_team_id=away_team_id)
-    frames, _ = convert_to_frames(
-        resolved,
-        home_team_id=home_team_id,
-        home_team_start_left=home_start_left,
-        home_team_start_left_extratime=et_flag,
-        output_convention="absolute_frame",
-    )
-    return frames
+# --- GS real-data ET round-trip (TF-23b: NATIVE GK + geometric ground truth) ------
+#
+# Fixture: GS WC2022 knockout match 10517, period 3 (first overtime), the RAW tracking-adapter
+# input (x_centered + flags) carrying the NATIVE is_goalkeeper from the roster join — regenerated
+# by scripts/regenerate_gs_et_native_gk.py. We do NOT trust meta.home_team_start_left_extratime
+# (the constant GS-ET placeholder this feature exists to fix; for 10517 P3 it is geometrically
+# WRONG — it leaves the home GK on the attacking half). Ground truth is GEOMETRIC: a defending GK
+# sits deep in its OWN half, so in the canonical home-attacks-right (absolute) frame the home GK
+# belongs at LOW x (<52.5). The backstop must achieve that regardless of the flag.
 
 
 def _gs_inputs():
     frames = pd.read_parquet(GS / "frames.parquet")
     meta = pd.read_parquet(GS / "meta.parquet").iloc[0]
-    home_id = int(meta["home_team_id"])
-    return frames, meta, home_id, home_id + 1  # synthetic away id (membership only)
+    return frames, meta, int(meta["home_team_id"])
 
 
-def test_gs_real_et_roundtrip_correct_orientation():
-    frames, meta, home_id, away_id = _gs_inputs()
-    out = _gs_frames_from_bronze(
+def _home_gk_median_x(out, home_team_id):
+    hg = out[(out["team_id"] == home_team_id) & (out["is_goalkeeper"]) & (~out["is_ball"])]
+    assert len(hg) > 0, "no native home GK rows in converted output"
+    return float(hg["x"].median())
+
+
+def test_gs_real_et_native_gk_geometric_self_correction():
+    """The geometric backstop self-corrects the (unreliable) placeholder ET flag: the native home
+    GK lands on its defended LOW-x half under BOTH the placeholder flag and its negation, and the
+    two converge — orientation is data-driven, not flag-driven."""
+    from silly_kicks.tracking.gradientsports import convert_to_frames
+
+    frames, meta, home_id = _gs_inputs()
+    placeholder = bool(meta["home_team_start_left_extratime"])
+    out_flag, _ = convert_to_frames(
         frames,
         home_team_id=home_id,
-        away_team_id=away_id,
-        home_start_left=bool(meta["home_start_left"]),
-        et_flag=bool(meta["home_team_start_left_extratime"]),
+        home_team_start_left=bool(meta["home_start_left"]),
+        home_team_start_left_extratime=placeholder,
+        output_convention="absolute_frame",
     )
-    et = out[out["period_id"].isin([3, 4])]
-    assert len(et) > 0
-    assert et["x"].between(0, _FIELD_LENGTH).all()
-    assert et["y"].between(0, _FIELD_WIDTH).all()
+    out_neg, _ = convert_to_frames(
+        frames,
+        home_team_id=home_id,
+        home_team_start_left=bool(meta["home_start_left"]),
+        home_team_start_left_extratime=not placeholder,  # deliberately wrong
+        output_convention="absolute_frame",
+    )
+    gk_flag = _home_gk_median_x(out_flag, home_id)
+    gk_neg = _home_gk_median_x(out_neg, home_id)
+    # Both conversions place the home GK on the defended (low-x) half (geometric truth).
+    assert gk_flag < 52.5, f"home GK not on low-x half under placeholder flag: {gk_flag}"
+    assert gk_neg < 52.5, f"home GK not self-corrected under negated flag: {gk_neg}"
+    # And they converge: the flag no longer determines orientation (the net does).
+    assert abs(gk_flag - gk_neg) < 0.01, f"flag still drives orientation: {gk_flag} vs {gk_neg}"
+    # ET coords in SPADL bounds under both.
+    for out in (out_flag, out_neg):
+        et = out[out["period_id"] == 3]
+        assert et["x"].between(0, _FIELD_LENGTH).all()
+        assert et["y"].between(0, _FIELD_WIDTH).all()
 
 
 def test_gs_real_et_raises_without_flag():
-    frames, meta, home_id, away_id = _gs_inputs()
+    from silly_kicks.tracking.gradientsports import convert_to_frames
+
+    frames, meta, home_id = _gs_inputs()
     with pytest.raises(ValueError, match="ET periods"):
-        _gs_frames_from_bronze(
+        convert_to_frames(
             frames,
             home_team_id=home_id,
-            away_team_id=away_id,
-            home_start_left=bool(meta["home_start_left"]),
-            et_flag=None,
+            home_team_start_left=bool(meta["home_start_left"]),
+            home_team_start_left_extratime=None,
+            output_convention="absolute_frame",
         )
 
 

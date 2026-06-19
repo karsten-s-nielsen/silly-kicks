@@ -4,18 +4,28 @@
 
 ## What's here
 
-### `gs_et/` — Gradient Sports A-League ET match
+### `gs_et/` — Gradient Sports **WC2022 knockout** ET match (native GK)
 
-- **Source:** lakehouse `bronze.gradientsports_tracking` + `bronze.spadl_actions` + `bronze.gradientsports_events`, `match_id = 10517`.
-- **Window:** period 3 (first overtime), frames 197541..197999 (459 distinct frames).
+- **Source:** Gradient Sports (PFF FC) WC2022 `match_id = 10517` — a knockout fixture with extra time.
+  (The pre-2026-06-19 version of this file labelled it "A-League"; that was a maintainer typo —
+  GS in this repo is WC2022, A-League tracking is SkillCorner.)
+- **Window:** period 3 (first overtime), the first 500 distinct frames.
+- **Regenerated 2026-06-19** by `scripts/regenerate_gs_et_native_gk.py` (from the pining cache) as the
+  **raw `tracking.gradientsports.convert_to_frames` INPUT** carrying the **native** `is_goalkeeper`
+  from the roster join — so `test_real_et_roundtrip.py` exercises the production GK anchor (TF-23b,
+  ADR-035). No extra restricted fields beyond the adapter input contract are committed.
 
 | File | Rows | Notes |
 |---|---|---|
-| `frames.parquet` | 10,557 | 459 distinct frames × 22 players + 459 ball rows; columns: `match_id`, `period`, `frame_num`, `period_elapsed_time`, `team_side`, `is_ball`, `jersey_num`, `x`, `y`, `z` |
-| `actions.parquet` | 1,838 | Full match across all 4 periods; **415 actions in periods 3/4 (ET)** |
-| `meta.parquet` | 1 | `home_team_id=364`, `home_start_left=True` (RT), `home_team_start_left_extratime=True` (ET) — both flags verifiable against the converter output |
+| `frames.parquet` | 11,500 | 500 frames × 22 players + 500 ball rows; the GS tracking-adapter `EXPECTED_INPUT_COLUMNS` (`game_id`, `period_id`, `frame_id`, `time_seconds`, `frame_rate`, `player_id`, `team_id`, `is_ball`, `is_goalkeeper` [native], `x_centered`, `y_centered`, `z`, `speed_native`, `ball_state`) |
+| `meta.parquet` | 1 | `home_team_id=364`, `away_team_id=363`, `home_start_left=True`, `home_team_start_left_extratime=True` |
 
-The meta carries the **true** ET start direction sourced from `stadiumMetadata.homeTeamStartLeftExtraTime`, so the converter tests can verify orientation correctness, not just no-raise.
+**Do NOT treat `home_team_start_left_extratime` as orientation ground truth.** It is the constant
+GS-ET `stadiumMetadata` placeholder this feature (TF-23b) exists to correct, and for 10517 P3 it is
+geometrically **wrong** (it leaves the home GK on the attacking half — the old bounds-only test
+passed anyway because both orientations are in-bounds). `test_real_et_roundtrip.py` instead asserts
+the **geometric** truth (a defending GK sits deep in its own half → home GK on the LOW-x half in the
+home-attacks-right frame) and that the backstop reaches it under both the flag and its negation.
 
 ### `sportec_idsse_et/` — NOT DELIVERED
 
@@ -41,19 +51,21 @@ Full audit results memo: lakehouse `memory/project_et_direction_section_8_audit.
 | Metrica | 0 | 0 |
 | Gradient Sports | 5 | 3 |
 
+The Gradient Sports row (5 ET in events / **3 in tracking**) bounds the TF-23b retrain scope: the
+backstop is **tracking-only**, so only the ≤3 ET-tracking matches with a wrong placeholder flag can
+change (events converters are untouched). The exact changed set is the ADR-035 G1 non-no-op list.
+
 ## Validation hint
 
-GS fixture quick-check:
+GS fixture quick-check (raw adapter input, native GK):
 
 ```python
 import pandas as pd
 fr = pd.read_parquet("tests/regressions/extratime/gs_et/frames.parquet")
-a  = pd.read_parquet("tests/regressions/extratime/gs_et/actions.parquet")
-m  = pd.read_parquet("tests/regressions/extratime/gs_et/meta.parquet")
-assert (fr["period"] == 3).all()                                            # all period-3 frames
-assert fr["frame_num"].nunique() == 459 and len(fr) == 10557
-assert a[a["period_id"].isin([3, 4])].shape[0] == 415                       # ET actions
-assert m.iloc[0].to_dict() == {                                              # meta truth
-    "home_team_id": 364, "home_start_left": True, "home_team_start_left_extratime": True
-}
+m = pd.read_parquet("tests/regressions/extratime/gs_et/meta.parquet").iloc[0]
+assert (fr["period_id"] == 3).all() and fr["frame_id"].nunique() == 500 and len(fr) == 11500
+# native home GK present (the production anchor the round-trip test exercises)
+hg = fr[(fr["team_id"] == 364) & fr["is_goalkeeper"] & ~fr["is_ball"]]
+assert hg["player_id"].nunique() >= 1
+assert int(m["home_team_id"]) == 364
 ```

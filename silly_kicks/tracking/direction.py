@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -167,6 +167,8 @@ def orient_frames_to_ltr_by_geometry(
     home_team_id: Any,
     source: str = "",
     game_id: Any = None,
+    on_missing_home: Literal["raise", "warn"] = "raise",
+    copy: bool = True,
 ) -> pd.DataFrame:
     """Flag-free geometric frame-LTR orientation: ensure home attacks +x every period.
 
@@ -198,6 +200,16 @@ def orient_frames_to_ltr_by_geometry(
         Home-team id matching ``frames["team_id"]`` (compared via ADR-019 ``ids_match``).
     source, game_id : Any
         Diagnostic context only (warning messages).
+    on_missing_home : {"raise", "warn"}, default "raise"
+        Policy when ``home_team_id`` matches zero player rows (cannot anchor):
+        ``"raise"`` (ADR-019 default --- mis-orienting is worse than failing; used by
+        direct/lakehouse callers); ``"warn"`` emits a ``UserWarning`` and returns the frame
+        un-oriented (the native adapters pass this via ``finalize_orientation`` so their
+        established warn-don't-raise contract holds --- the flag-flip result stands).
+    copy : bool, default True
+        When True, operate on a defensive copy (input never mutated). Callers that already own
+        a fresh frame (e.g. :func:`finalize_orientation`) pass ``False`` to avoid a redundant
+        full-frame copy on tracking-scale data.
 
     Returns
     -------
@@ -223,17 +235,21 @@ def orient_frames_to_ltr_by_geometry(
     if len(frames) == 0:
         return frames.copy()
 
-    out = frames.copy()
+    out = frames.copy() if copy else frames
     is_ball = out["is_ball"].astype(bool)
     is_player = ~is_ball
     is_home = ids_match(out["team_id"], home_team_id).fillna(False)
     is_gk = out["is_goalkeeper"].astype(bool)
 
     if not bool((is_player & is_home).any()):
-        raise ValueError(
+        msg = (
             f"orient_frames_to_ltr_by_geometry: home_team_id={home_team_id!r} matched ZERO "
-            f"player rows ({source} game={game_id}) --- refusing to guess orientation."
+            f"player rows ({source} game={game_id})"
         )
+        if on_missing_home == "raise":
+            raise ValueError(msg + " --- refusing to guess orientation.")
+        warnings.warn(msg + " --- orientation left as-is.", stacklevel=2)
+        return out
 
     x_arr = out["x"].to_numpy(dtype="float64")
     period_arr = out["period_id"].to_numpy()
@@ -248,6 +264,8 @@ def orient_frames_to_ltr_by_geometry(
 
     has_vx, has_vy = "vx" in out.columns, "vy" in out.columns
     for period in pd.Series(period_arr[player_arr]).dropna().unique():
+        if period not in _LTR_KNOWN_PERIODS:  # period 5 (PSO): orientation undefined --- never flip
+            continue
         psel = player_arr & (period_arr == period)
         home_gk_x = _gk_median(psel & home_arr & gk_arr)
         if not np.isnan(home_gk_x):
@@ -275,4 +293,92 @@ def orient_frames_to_ltr_by_geometry(
         known = is_player & out["period_id"].isin(_LTR_KNOWN_PERIODS)
         out.loc[known & is_home, "team_attacking_direction"] = "ltr"
         out.loc[known & ~is_home, "team_attacking_direction"] = "rtl"
+    return out
+
+
+def finalize_orientation(
+    out: pd.DataFrame,
+    *,
+    home_team_id: Any,
+    home_team_start_left: bool,
+    home_team_start_left_extratime: bool | None,
+    source: str,
+    game_id: Any = None,
+    on_missing_home: Literal["raise", "warn"] = "warn",
+) -> pd.DataFrame:
+    """Shared orientation tail for the sportec + gradientsports native tracking adapters.
+
+    Single source of truth for the ET guard, the per-period flag flip, the post-flip
+    period-gated ``team_attacking_direction`` label, and the TF-23b geometric backstop.
+    Expects ``out`` to already carry canonical ``x``/``y`` (105x68 m) plus ``team_id``,
+    ``period_id``, ``is_ball``, ``is_goalkeeper``. **Returns a NEW frame and does not mutate
+    the input** (copy-at-entry). The output is in home-attacks-right (absolute) convention;
+    the caller applies :func:`play_left_to_right` afterward for ``output_convention="ltr"``.
+
+    The geometric backstop (:func:`orient_frames_to_ltr_by_geometry`) self-corrects any period
+    whose home GK sits on the attacking half --- e.g. a wrong ``home_team_start_left_extratime``
+    placeholder. It is idempotent, so on a correct-flag match it is a byte-identical no-op.
+    ``on_missing_home="warn"`` (the adapter default) preserves the adapters' warn-don't-raise
+    contract without re-implementing the net's zero-home condition.
+
+    Parameters
+    ----------
+    out : pd.DataFrame
+        Frames with canonical ``x``/``y`` already constructed.
+    home_team_id : Any
+        Home-team id matching ``out["team_id"]`` (ADR-019 ``ids_match``).
+    home_team_start_left, home_team_start_left_extratime : bool, bool | None
+        Per-period flip flags (see :func:`home_attacks_right_per_period`).
+    source : str
+        Converter identity for guard/warning messages, e.g. ``"sportec convert_to_frames"``.
+    game_id : Any
+        Diagnostic context for the backstop's warnings.
+    on_missing_home : {"raise", "warn"}, default "warn"
+        Backstop zero-home policy (see :func:`orient_frames_to_ltr_by_geometry`).
+
+    Returns
+    -------
+    pd.DataFrame
+        New frame in home-attacks-right convention.
+
+    Examples
+    --------
+    Collapse a native adapter's orientation tail to one call::
+
+        from silly_kicks.tracking import direction
+        out = direction.finalize_orientation(
+            out, home_team_id=home_team_id, home_team_start_left=True,
+            home_team_start_left_extratime=None, source="sportec convert_to_frames",
+        )
+    """
+    out = out.copy()  # clean value semantics --- never mutate the caller's frame
+    require_et_direction(out["period_id"], home_team_start_left_extratime, source=source)
+
+    flips = home_attacks_right_per_period(home_team_start_left, home_team_start_left_extratime)
+    home_rtl_periods = {p for p, attacks_right in flips.items() if not attacks_right}
+    flip_mask = out["period_id"].isin(home_rtl_periods).to_numpy()
+    out.loc[flip_mask, "x"] = _PITCH_LENGTH_M - out.loc[flip_mask, "x"]
+    out.loc[flip_mask, "y"] = _PITCH_WIDTH_M - out.loc[flip_mask, "y"]
+
+    out["team_attacking_direction"] = None
+    is_player = (~out["is_ball"].astype(bool)).to_numpy(dtype=bool)
+    # ADR-019 dtype-safe is_home: a raw `==` silently matched ZERO players when home_team_id was
+    # int and team_id object-string -> every player mislabeled -> play_left_to_right double-flip
+    # -> mis-oriented frames (2026-06-09 fix). Do NOT "simplify" back to ==.
+    is_home = ids_match(out["team_id"], home_team_id).fillna(False).to_numpy(dtype=bool)
+    is_known = out["period_id"].isin(_LTR_KNOWN_PERIODS).to_numpy(dtype=bool)
+    out.loc[is_player & is_home & is_known, "team_attacking_direction"] = "ltr"
+    out.loc[is_player & ~is_home & is_known, "team_attacking_direction"] = "rtl"
+
+    if is_player.any():  # all-ball frame: nothing to anchor; skip the net entirely
+        # copy=False: `out` is already this function's private copy (copy-at-entry), so the
+        # net can mutate in place -- avoids a redundant third full-frame copy (review #1).
+        out = orient_frames_to_ltr_by_geometry(
+            out,
+            home_team_id=home_team_id,
+            source=source,
+            game_id=game_id,
+            on_missing_home=on_missing_home,
+            copy=False,
+        )
     return out

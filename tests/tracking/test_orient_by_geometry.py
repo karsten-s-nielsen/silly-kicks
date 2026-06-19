@@ -142,3 +142,34 @@ def test_already_correct_frames_are_noop():
         frames.drop(columns=["team_attacking_direction"]).reset_index(drop=True),
         check_dtype=False,
     )
+
+
+def test_period5_pso_not_flipped():
+    # Penalty shootout: both teams attack one end, so home-GK x is a meaningless anchor.
+    # The net must NOT flip period 5 even when the home GK sits at the attacking end (x=100).
+    rows = [
+        _frame(5, "H", "hgk", 100.0, 5.0, is_gk=True),
+        _frame(5, "A", "agk", 100.0, 34.0, is_gk=True),
+    ]
+    out = orient_frames_to_ltr_by_geometry(pd.DataFrame(rows), home_team_id="H")
+    assert out[(out.period_id == 5) & (out.player_id == "hgk")].iloc[0].x == pytest.approx(100.0)
+
+
+def test_on_missing_home_warn_returns_unoriented():
+    # home GK on the attacking half in P1 (would normally flip); with a non-matching
+    # home_team_id and on_missing_home="warn", the net must warn and return UN-oriented.
+    frames = _two_period_match(home_gk_x_p1=100.0, home_gk_x_p2=5.0)
+    with pytest.warns(UserWarning, match="matched ZERO"):
+        out = orient_frames_to_ltr_by_geometry(frames, home_team_id="NOPE", on_missing_home="warn")
+    p1 = out[(out.period_id == 1) & (out.player_id == "hgk")].iloc[0]
+    assert p1.x == pytest.approx(100.0)  # un-oriented: no flip applied
+
+
+def test_copy_false_mutates_in_place_and_returns_same_object():
+    # review R1: pin the copy=False optimization as a contract (finalize's 2-copy behavior
+    # depends on it) so a future defensive `frames.copy()` re-add can't silently rot the perf win.
+    df = _two_period_match(home_gk_x_p1=100.0, home_gk_x_p2=5.0)  # P1 home GK on attacking half => flips
+    out = orient_frames_to_ltr_by_geometry(df, home_team_id="H", copy=False)
+    assert out is df  # no defensive copy taken
+    # mutated in place: P1 home GK reflected from x=100 to x=5
+    assert df[(df.period_id == 1) & (df.player_id == "hgk")].iloc[0].x == pytest.approx(5.0)
