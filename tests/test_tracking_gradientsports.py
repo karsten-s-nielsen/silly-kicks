@@ -41,7 +41,11 @@ def test_tiny_coordinate_bounds():
     assert frames["x"].between(lo_x, hi_x).all()
 
 
-def test_home_start_left_false_flips_x():
+def test_home_start_left_self_corrects_via_geometry():
+    # TF-23b (ADR-035): the geometric backstop makes orientation data-driven, so a correct vs
+    # flipped home_team_start_left converge to the SAME frames when a GK anchor is present (TINY
+    # carries a native home GK) -- the flag no longer drives the final orientation. (Pre-4.34.0
+    # this asserted x_t + x_f == 105, i.e. the flag flipped the output.)
     f_t, _ = convert_to_frames(TINY, home_team_id=100, home_team_start_left=True)
     f_f, _ = convert_to_frames(TINY, home_team_id=100, home_team_start_left=False)
     j = f_t.merge(
@@ -49,7 +53,9 @@ def test_home_start_left_false_flips_x():
         on=["period_id", "frame_id", "player_id", "team_id", "is_ball"],
         suffixes=("_t", "_f"),
     )
-    assert ((j["x_t"] + j["x_f"]).round(6) == 105.0).all()
+    assert len(j) > 0
+    assert (j["x_t"].round(6) == j["x_f"].round(6)).all()
+    assert (j["y_t"].round(6) == j["y_f"].round(6)).all()
 
 
 def test_extratime_flag_required_when_period3_present():

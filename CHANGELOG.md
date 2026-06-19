@@ -5,6 +5,24 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.34.0] — 2026-06-19
+
+### Changed — TF-23b geometric frame-LTR backstop on the native tracking adapters (ADR-035, PR-S99)
+
+- The native tracking adapters `tracking.gradientsports.convert_to_frames` and
+  `tracking.sportec.convert_to_frames` now **self-correct a wrong/absent extra-time direction
+  flag from goalkeeper geometry**, via a shared `direction.finalize_orientation` tail that layers
+  the idempotent geometric backstop (`orient_frames_to_ltr_by_geometry`) on top of the per-period
+  flag-flip. Byte-identical no-op on the correct-flag path. Closes ADR-031 **Gate D** (IDSSE-ET
+  handedness). **VAEP/tracking retrain trigger** for the ≤3 GS WC2022 ET-tracking matches + any
+  wrong-flag IDSSE-ET whose ET flag was wrong — see ADR-035 for the exact (G1) changed-match list.
+- Public-net change: `orient_frames_to_ltr_by_geometry` gains `on_missing_home` and `copy`
+  parameters (both additive, default-preserving — direct/lakehouse callers byte-identical), and
+  **no longer orients period-5 / penalty-shootout frames for any caller** (including the TF-23
+  SkillCorner/Metrica builders). PSO frames are excluded from geometric analysis (practical impact
+  nil); the lakehouse self-assesses any SkillCorner/Metrica PSO re-materialization.
+- The backstop's zero-home warning text changed (now emitted by the net via `on_missing_home="warn"`).
+
 ## [4.33.0] — 2026-06-18
 
 ### Added — TF-23 SkillCorner + Metrica bronze→frame builders (ADR-034, PR-S98)
