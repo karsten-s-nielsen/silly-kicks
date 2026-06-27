@@ -360,7 +360,12 @@ The functional forms are the silly-kicks formulation of Eyestone's xT-GK (the
 source deck specifies components and parameter ranges, not closed-form
 equations). Contributed publicly with attribution by Jeffrey Eyestone's
 explicit permission (email 2026-06-06; formula choice + preset publication
-confirmed 2026-06-08).
+confirmed 2026-06-08; PEV/DZV fidelity formulas confirmed 2026-06-27). The
+pressure-escape (PEV) and defensive-zone (DZV) terms operate on the GK-revalued
+surface V_GK = xT * phi(z,d), where phi(z,d) = alpha*(1 - d/D_max)^(-beta) for d
+below the defensive-third threshold (else 1); alpha and beta are canonical
+(Eyestone 2026-06-27). DZV is the published revaluation multiplier's increment on
+the origin possession value.
 
 xT-GK's risk-adjusted term (RAV) draws its pass-completion probability from a
 fitted GK-distribution completion model (silly_kicks/tracking/_gk_completion.py,

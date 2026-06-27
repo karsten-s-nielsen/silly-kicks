@@ -49,14 +49,24 @@ def _fitted_xt():
 
 
 def _gk_realistic_xt():
-    """GK-zone-REALISTIC grid: own third xT ~0.001-0.01 rising toward goal -- REQUIRED by the
-    DZV gate. The flat ramp (_fitted_xt) puts the defensive third at ~0.2, two orders of
-    magnitude above real GK-zone xT (~0.001-0.005) and >> v_def (0.02), which makes the
-    back-pass correction (v_def - xT(z)) go NEGATIVE and the construct gate falsely fail.
-    Do NOT simplify this back to the ramp. (back-pass origin x=25 -> xi=3 -> (3/15)**3 = 0.008
-    < v_def.)"""
+    """GK-zone-REALISTIC grid: own third xT ~0.001-0.01 rising toward goal -- keeps the revalued
+    surface V_GK = xT*phi small in the defensive third (the keeper-zone scale Eyestone's DZV/PEV
+    fidelity terms assume), so per-action DZV lands O(0.01) not O(unity). The flat ramp (_fitted_xt)
+    puts the defensive third at ~0.2, two orders of magnitude above real GK-zone xT (~0.001-0.005),
+    which inflates V_GK and the DZV scale. Do NOT simplify this back to the ramp. (back-pass origin
+    x=25 -> xi=3 -> (3/15)**3 = 0.008.)"""
     xt = ExpectedThreat(l=16, w=12)
     xt.xT = np.tile(np.linspace(0.0, 1.0, 16) ** 3, (12, 1))
+    return xt
+
+
+def _deep_flat_xt():
+    """Raw xT FLAT (~0.005) across the defensive third, rising only past it. On this grid a
+    short deep build-out has ~zero RAW forward gain -- the keeper-zone flatline Eyestone fixes.
+    Revaluation (V_GK = xT*phi) restores a positive gain. Shape (12, 16)."""
+    xt = ExpectedThreat(l=16, w=12)
+    ramp = np.concatenate([np.full(6, 0.005), np.linspace(0.005, 1.0, 10)])  # cols 0-5 flat, then rise
+    xt.xT = np.tile(ramp, (12, 1))
     return xt
 
 
@@ -126,8 +136,10 @@ class TestXtGkParams:
         assert 0.3 <= p.delta <= 0.8
         assert 0.8 <= p.eta <= 0.9
         assert p.phi > 0.0
-        assert p.v_def > 0.0
-        assert p.defensive_third_boundary > 0.0
+        assert p.dzv_alpha == pytest.approx(2.1)  # canonical (Eyestone 2026-06-27)
+        assert p.dzv_beta == pytest.approx(0.8)  # canonical (Eyestone 2026-06-27)
+        assert p.dzv_d_max > 0.0
+        assert p.defensive_third_boundary > 0.0  # = D_threshold
         assert p.pressure_scale > 0.0
         assert p.convolution_sigma >= 0.0
         assert p.pressure_method == "andrienko_oval"
@@ -211,6 +223,27 @@ class TestPureHelpers:
         actions = pd.DataFrame({"team_id": [1, 1, 1], "period_id": [1, 1, 2]})
         np.testing.assert_array_equal(_possession_depth(actions), [0, 1, 0])
 
+    def test_phi_of_d_canonical_values(self):
+        from silly_kicks.tracking._xt_gk import _phi_of_d
+
+        phi = _phi_of_d(np.array([0.0, 5.0, 34.0, 35.0, 60.0]), alpha=2.1, beta=0.8, d_max=105.0, d_threshold=35.0)
+        assert phi[0] == pytest.approx(2.1)  # d=0 -> alpha
+        assert phi[1] == pytest.approx(2.1 * (1 - 5 / 105) ** -0.8)
+        assert phi[2] == pytest.approx(2.1 * (1 - 34 / 105) ** -0.8)
+        assert phi[2] > 2.8  # ~2.9 just below the threshold
+        assert phi[3] == pytest.approx(1.0)  # at threshold -> cliffs to 1
+        assert phi[4] == pytest.approx(1.0)  # outside def third -> 1
+        assert (phi >= 1.0).all()
+
+    def test_phi_grid_is_row_constant_and_matches_phi_of_d(self):
+        from silly_kicks.tracking._xt_gk import _phi_grid, _phi_of_d
+
+        g = _phi_grid((12, 16), alpha=2.1, beta=0.8, d_max=105.0, d_threshold=35.0)
+        assert g.shape == (12, 16)
+        np.testing.assert_allclose(g[0], g[5])  # depends on x (col) only -> rows identical
+        xc = spadlconfig.field_length * (np.arange(16) + 0.5) / 16  # column-centre x
+        np.testing.assert_allclose(g[0], _phi_of_d(xc, 2.1, 0.8, 105.0, 35.0))
+
     def test_grid_value_pinned_to_expected_threat_rate(self):
         """H1 anti-circularity: _grid_value's convention must equal ExpectedThreat.rate's,
         not merely match _xt_gk's own arithmetic. A successful pass's rate() value is
@@ -260,15 +293,19 @@ class TestComponents:
         )
         assert rav[0] == pytest.approx(0.7 * 0.5 - 0.5 * (1 - 0.7) * 0.3)
 
-    def test_dzv_only_in_defensive_third_and_raises_value(self):
-        dzv = _dzv(
-            start_x=np.array([10.0, 60.0]),
-            xt_raw_origin=np.array([0.001, 0.001]),
-            v_def=0.02,
-            boundary=35.0,
-        )
-        assert dzv[0] == pytest.approx(0.02 - 0.001)  # in def third -> positive correction
-        assert dzv[1] == pytest.approx(0.0)  # outside def third -> 0
+    def test_dzv_is_revaluation_increment_in_defensive_third(self):
+        # Option A: DZV = (M-1)*V_GK(z), M = phi(z,d)*(1 - V_GK(z)/max V_GK); gated to def third.
+        from silly_kicks.tracking._xt_gk import _phi_of_d
+
+        vgk_origin = np.array([0.02, 0.02])  # small deep possession value
+        start_x = np.array([10.0, 60.0])  # in def third, outside
+        vgk_max = 1.0
+        out = _dzv(start_x, vgk_origin, vgk_max, alpha=2.1, beta=0.8, d_max=105.0, boundary=35.0)
+        phi0 = _phi_of_d(np.array([10.0]), 2.1, 0.8, 105.0, 35.0)[0]
+        m0 = phi0 * (1 - 0.02 / 1.0)
+        assert out[0] == pytest.approx((m0 - 1.0) * 0.02)  # positive increment in def third
+        assert out[0] > 0.0
+        assert out[1] == pytest.approx(0.0)  # outside def third -> 0
 
     def test_temporal_is_eta_to_the_k(self):
         np.testing.assert_allclose(_temporal(np.array([0, 1, 2]), 0.85), [1.0, 0.85, 0.85**2])
@@ -435,9 +472,9 @@ class TestComputeXtGk:
             compute_xt_gk(actions, frames, xt=unfitted)
 
     def test_backpass_penalty_corrected_upward(self):
-        # composite WITH dzv strictly exceeds composite with dzv disabled (phi*DZV > 0).
-        # MUST use the GK-zone-realistic grid (own third < v_def) -- the flat ramp inverts
-        # the correction (v_def - xT(z) < 0). See _gk_realistic_xt docstring.
+        # DZV raises deep-zone value (phi*DZV > 0): a defensive-third origin gets the published
+        # revaluation increment (M-1)*V_GK(z) > 0 (phi(z,d) > 1 there). Uses the GK-zone-realistic
+        # grid so V_GK stays small and DZV lands O(0.01). See _gk_realistic_xt docstring.
         actions = _gk_actions().iloc[[1]].copy()  # start_x=25 -> defensive third
         frames = _frames_for(actions)
         out = compute_xt_gk(actions, frames, xt=_gk_realistic_xt(), params=XtGkParams(phi=1.0))
@@ -446,6 +483,68 @@ class TestComputeXtGk:
         # without_dzv.xt_gk -- that routes the claim through the composite's xC (can be NaN
         # on a synthetic fixture -> NaN>NaN false-fail). assertion 1 + the P1-3 _composite
         # unit oracle already prove "DZV raises the composite" xC-free.
+
+    def test_pev_reads_revalued_surface_not_raw(self):
+        # CHANGE 1: a short deep build-out (origin x=5 -> dest x=25, both in the flat def third)
+        # has ~zero RAW gain -> PEV ~0 with revaluation OFF; canonical phi lights it up. PEV is
+        # pressure-gated (rho*max(0,progress)), so the GK must face real pressure for PEV to
+        # surface the gain at all -> add two near opponents at the goalkick frame.
+        actions = _gk_actions().iloc[[0]].copy()
+        actions.loc[0, "start_x"] = 5.0
+        actions.loc[0, "end_x"] = 25.0  # stays in the flat defensive third
+        frames = _frames_for(actions)
+        pressers = pd.DataFrame(
+            [
+                dict(
+                    game_id=9,
+                    period_id=1,
+                    frame_id=0,
+                    time_seconds=5.0,
+                    frame_rate=25.0,
+                    team_id=2,
+                    player_id=pid,
+                    is_goalkeeper=False,
+                    is_ball=False,
+                    x=x,
+                    y=y,
+                    vx=-0.5,
+                    vy=0.0,
+                    team_in_possession=1,
+                    source_provider="sportec",
+                    team_attacking_direction="ltr",
+                )
+                for pid, x, y in [(23, 6.0, 35.0), (24, 7.0, 33.0)]
+            ]
+        )
+        frames = pd.concat([frames, pressers], ignore_index=True)
+        off = XtGkParams(dzv_alpha=1.0, dzv_beta=0.0)  # phi == 1 -> V_GK == xT (revaluation disabled)
+        on = XtGkParams()  # canonical alpha=2.1, beta=0.8
+        pev_off = compute_xt_gk(actions, frames, xt=_deep_flat_xt(), params=off).loc[0, "xt_gk_pev"]
+        pev_on = compute_xt_gk(actions, frames, xt=_deep_flat_xt(), params=on).loc[0, "xt_gk_pev"]
+        assert pev_off == pytest.approx(0.0, abs=1e-4)  # raw deep gain flatlines (even under pressure)
+        assert pev_on > pev_off  # type: ignore[operator]  # revaluation restores the gain
+
+    def test_phi_shape_changes_only_pev_and_dzv_not_base_or_rav(self):
+        # The invariant Eyestone fixed: phi enters value via PEV + DZV ONLY. Base + RAV (raw xT*)
+        # must be byte-identical when the phi shape changes.
+        actions = _gk_actions()
+        frames = _frames_for(actions)
+        a = compute_xt_gk(actions, frames, xt=_gk_realistic_xt(), params=XtGkParams(dzv_alpha=2.1, dzv_beta=0.8))
+        b = compute_xt_gk(actions, frames, xt=_gk_realistic_xt(), params=XtGkParams(dzv_alpha=3.5, dzv_beta=1.5))
+        np.testing.assert_array_equal(a["xt_gk_base"].to_numpy(), b["xt_gk_base"].to_numpy())
+        np.testing.assert_array_equal(a["xt_gk_rav"].to_numpy(), b["xt_gk_rav"].to_numpy())
+        assert not np.allclose(  # at least one of PEV/DZV moved (the in-scope, in-def-third rows)
+            np.nan_to_num(a[["xt_gk_pev", "xt_gk_dzv"]].to_numpy()),
+            np.nan_to_num(b[["xt_gk_pev", "xt_gk_dzv"]].to_numpy()),
+        )
+
+    def test_dzv_scale_is_order_hundredth_not_unity(self):
+        # Scale anchor (Eyestone): per-action DZV must land O(0.01), not the literal multiplier
+        # O(2.5). Back-pass origin x=25 is in the defensive third on the realistic grid.
+        actions = _gk_actions().iloc[[1]].copy()
+        frames = _frames_for(actions)
+        dzv = compute_xt_gk(actions, frames, xt=_gk_realistic_xt()).loc[1, "xt_gk_dzv"]
+        assert 0.0 < dzv < 0.5  # type: ignore[operator]  # positive bar, two-plus orders below raw ~2.5
 
     def test_higher_pressure_gives_higher_pev(self):
         actions = _gk_actions().iloc[[0]].copy()

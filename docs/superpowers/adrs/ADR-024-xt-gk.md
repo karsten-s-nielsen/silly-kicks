@@ -1,6 +1,6 @@
 # ADR-024: xT-GK (Eyestone) — pure parametric GK-distribution-value feature
 
-**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4)
+**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4; amended 2026-06-27 — PEV/DZV fidelity fix, Eyestone Q1–Q3, 4.35.0, PR-S100)
 **Deciders:** Karsten (with Claude); collaborator Jeffrey Eyestone (metric author)
 **Related:** ADR-005 (tracking feature surfaces), ADR-019 (id-dtype contract), ADR-020 (frame-aware xfns frame-id resolution), ADR-021 (pluggable xT), ADR-011 (trained-model lifecycle — explicitly NOT applicable here)
 
@@ -208,6 +208,61 @@ goal-kicks (~15% of its GK-distribution rows) + degenerate throw-ins (both varia
 unchanged. No C4 enumeration change (a serve gate on an existing model is not a new aggregator/model/
 backend; count stays 27). `compute_gk_completion` (standalone) is unaffected — it already base-rates
 geometry-unscoreable rows; the gate governs only the in-scope, geometry-resolved RAV path.
+
+## Amendment (4.35.0, 2026-06-27) — PEV/DZV fidelity fix (Eyestone Q1–Q3)
+
+Eyestone reviewed the shipped 4.21.x formulation and answered three open fidelity questions
+(2026-06-27). Two terms were re-derived to match the published framework; **Option B (§5) and RAV
+are unchanged**.
+
+**CHANGE 1 — PEV reads the GK-revalued surface (Q1 + Q2 are one fix).** The pressure-gated rectified
+form is kept exactly: `PEV = ρ·max(0, progress)`. What changed is the surface the forward gain is
+measured on: `progress = V_GK*(z′) − V_GK*(z)` on the **revalued** surface `V_GK = xT ⊙ φ(z,d)`
+(convolved with `convolution_sigma` like `xT*`), **not** raw `xT*`. On the raw grid the keeper-zone
+forward gain is ~0 — the measured PEV inertia — because keepers sit in the flat part of the xT
+surface; revaluing the surface is the whole point (it is *not* tournament-dependent). PEV stays a
+pressure-gated forward **gain** (not a destination level), so RAV remains the sole owner of the
+destination and Option B is untouched — no double-count.
+
+**CHANGE 2 — DZV is the published revaluation multiplier (Q3), scale-reconciled via Option A.** The
+old additive `v_def − xT_raw(z)` back-pass floor is replaced by the deck form
+`M(z) = φ(z,d)·[1 − V_GK(z)/max V_GK]`. A literal `M` is ~2.5/action and would swamp the O(0.01)
+base/RAV/PEV terms (Eyestone's explicit scale anchor: La Liga DZV ≈ +0.27/match ≈ 0.009/action).
+Per his "the multiplier must revalue a small possession base (not be added raw)," DZV is the
+revaluation **increment** on the origin possession value, `(M−1)·V_GK(z)`, gated to the defensive
+third — measured O(0.01) on the unit fixtures (~0.006–0.018 for realistic deep `V_GK` 0.005–0.01).
+**Option A (increment) over B (revalued total) / C (revalue a fixed baseline)** because the
+increment is the value the revaluation *adds*, keeping it orthogonal to `base` (which already
+surrenders the origin's raw threat) — B would re-credit the full revalued origin and partially undo
+Option B's clean "origin surrendered" semantics.
+
+**φ(z,d)** `= α·(1 − d/D_max)^(−β)` for `d < D_threshold`, else `1`; `d` = LTR origin x. `α = 2.1`,
+`β = 0.8` are **canonical**; `D_max = 105`, `D_threshold = 35` (= `defensive_third_boundary`) are
+provisional (labelled like the γ/δ/η presets). `XtGkParams` gains `dzv_alpha` / `dzv_beta` /
+`dzv_d_max`; the now-dead `v_def` is retired. The scalar `phi` param stays the preset-modulated
+overall DZV weight (canonical *shape* lives in the φ grid).
+
+**Invariant (Eyestone's explicit constraint).** φ enters value through **PEV and DZV only** — `base`
+keeps `−xT*(origin)` and RAV keeps `xT*(z′)` / `xT*_counter` on the raw `xT*` surface, so the
+destination is never revalued twice and Option B holds. Guarded behaviorally:
+`test_phi_shape_changes_only_pev_and_dzv_not_base_or_rav` (changing α/β leaves `xt_gk_base` +
+`xt_gk_rav` byte-identical) and `test_pev_reads_revalued_surface_not_raw` (a deep build-out with ~0
+raw gain produces PEV only with revaluation on). The four-term sum identity
+`T·(base + γ·pev + rav) + φ·dzv == xt_gk` is pinned by `test_composite_discounts_threat_terms_only_not_dzv`.
+
+**Post-run verification (Eyestone's "confirm post-run" ask — for the lakehouse re-run report).** Beyond
+the ~0.01 mean: (1) DZV per-action **distribution + by-zone profile** (does it peak toward the top of
+the defensive third, per M(z)?); (2) PEV lights up for the **right** actions — short deep build-out →
+positive PEV; long clearances out of the third may stay ≈0 (origin revalued above destination →
+`max(0,·)=0`); (3) sanity-check the `d=35` φ discontinuity (2.9→1) creates no boundary artifact for
+distributions landing right at the defensive-third line. Forward note (NOT this change): computing PEV
+on `V_GK` is the first half of Eyestone's receiver-pressure extension (adding a receiver-pressure term
+`q`) — future work.
+
+**Consequences.** Not a forced VAEP retrain (xt_gk is opt-in, in no default xfn list) — but an
+`xt_gk` serve-output change: the lakehouse re-materializes `fct_action_context` and re-runs the
+WC2022 cohort/report. No C4 enumeration change (no new aggregator/model/backend). Atomic mirror
+inherits.
 
 ## References
 
