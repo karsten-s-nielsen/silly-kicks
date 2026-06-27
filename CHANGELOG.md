@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.35.0] — 2026-06-27
+
+### Changed — xT-GK PEV/DZV fidelity fix (Eyestone Q1–Q3, ADR-024 amendment, PR-S100)
+
+- **PEV now measures its forward gain on the GK-revalued surface** `V_GK = xT · φ(z,d)`, not raw
+  `xT` (CHANGE 1, Eyestone Q1+Q2). On the raw grid the keeper-zone forward gain is ~0 — the measured
+  PEV inertia — because keepers live in the flat part of the xT surface; revaluing the surface is the
+  point. `progress = V_GK*(z′) − V_GK*(z)`; the pressure-gated rectified form `PEV = ρ·max(0, progress)`
+  is **unchanged**. RAV remains the sole owner of the destination value, so Option B is untouched (no
+  double-count).
+- **DZV is now the published defensive-zone revaluation multiplier** `M(z) = φ(z,d)·[1 − V_GK(z)/max V_GK]`
+  applied as the **revaluation increment** on the origin possession value, `(M−1)·V_GK(z)`, gated to
+  the defensive third (CHANGE 2, Eyestone Q3; Option A). This replaces the old additive `v_def − xT_raw(z)`
+  back-pass floor. The increment (not the revalued total) keeps base — which surrenders the origin's raw
+  threat — orthogonal to DZV. Per-action DZV lands O(0.01) (Jeff's ~0.009 La Liga anchor), not the raw
+  multiplier's O(2.5).
+- **φ(z,d)** `= α·(1 − d/D_max)^(−β)` for `d < D_threshold`, else 1, with `d` = LTR origin x: `α=2.1`,
+  `β=0.8` are **canonical** (Eyestone 2026-06-27); `D_max=105`, `D_threshold=35` (= `defensive_third_boundary`)
+  are provisional. `XtGkParams` gains `dzv_alpha`/`dzv_beta`/`dzv_d_max`; the now-dead `v_def` is retired.
+  The scalar `phi` param stays the preset-modulated overall DZV weight (the canonical shape lives in the
+  φ grid).
+- **Invariant (Eyestone constraint):** φ enters value via PEV and DZV **only** — base keeps `−xT*(origin)`
+  and RAV keeps `xT*(z′)`/`xT*_counter` on the raw `xT*` surface. Guarded behaviorally
+  (`test_phi_shape_changes_only_pev_and_dzv_not_base_or_rav`).
+- **Not a forced VAEP retrain** (xt_gk is opt-in, in no default xfn list) — but an `xt_gk` serve-output
+  change: the lakehouse re-materializes `fct_action_context` and re-runs the WC2022 cohort/report. C4
+  count unchanged (no new aggregator/model/backend; stays 28). Atomic mirror inherits.
+
 ## [4.34.0] — 2026-06-19
 
 ### Changed — TF-23b geometric frame-LTR backstop on the native tracking adapters (ADR-035, PR-S99)

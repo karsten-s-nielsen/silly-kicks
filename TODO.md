@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-19. **Current release**: silly-kicks 4.34.0 (TF-23b geometric frame-LTR backstop on the native tracking adapters — `tracking.{gradientsports,sportec}.convert_to_frames` self-correct a wrong/absent extra-time direction flag from GK geometry via a shared `direction.finalize_orientation` tail layering the idempotent `orient_frames_to_ltr_by_geometry` net on the flag-flip; net gains `on_missing_home` + `copy` params and no longer orients PSO/period-5 for any caller; closes ADR-031 Gate D. The lakehouse can now retire `correct_frames_to_home_ltr` entirely for all four tracking providers — cross-repo, not a silly-kicks TODO. PR-S99 / ADR-035). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-27. **Current release**: silly-kicks 4.35.0 (xT-GK PEV/DZV fidelity fix — PEV now measures its forward gain on the GK-revalued surface `V_GK = xT·φ(z,d)` instead of the keeper-zone-flat raw xT, and DZV becomes Eyestone's published defensive-zone revaluation multiplier `M(z)=φ·[1−V_GK/maxV_GK]` applied as the increment `(M−1)·V_GK(z)` gated to the defensive third; φ canonical α=2.1/β=0.8; the invariant that φ enters value via PEV+DZV only — base/RAV stay on raw xT* — is behaviorally guarded; Option B unchanged. `XtGkParams` gains `dzv_alpha`/`dzv_beta`/`dzv_d_max`, retires `v_def`. Opt-in feature so not a forced VAEP retrain, but an `xt_gk` serve-output change → the lakehouse re-materializes `fct_action_context` + re-runs the WC2022 cohort/report. PR-S100 / ADR-024 amendment). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

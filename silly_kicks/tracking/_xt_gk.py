@@ -101,7 +101,8 @@ class XtGkReport:
 # Deck parameter ranges: gamma 0.1-0.4, delta 0.3-0.8, eta 0.8-0.9.
 # Point values are PROVISIONAL (in-range), per Jeffrey's "ship presets, whatever is
 # easy" delegation + his 2026-06-08 "OK to go with provisional values"; exact table is
-# open. v_def / defensive_third_boundary / pressure_scale are normative intent-set
+# open. dzv_alpha / dzv_beta are CANONICAL (Eyestone 2026-06-27); dzv_d_max /
+# defensive_third_boundary (= D_threshold) / pressure_scale are normative intent-set
 # constants (never calibrated).
 
 
@@ -110,10 +111,13 @@ class XtGkParams:
     # --- interpretive / intent-set (NOT VAEP-calibrated) ---
     gamma: float = 0.25  # PEV pressure-escape sensitivity   (range 0.1-0.4)
     delta: float = 0.55  # RAV risk-aversion                 (range 0.3-0.8)
-    phi: float = 1.0  # DZV defensive-zone weight
+    phi: float = 1.0  # DZV overall weight (preset-modulated; canonical SHAPE is dzv_alpha/dzv_beta)
     eta: float = 0.85  # temporal-sequence discount        (range 0.8-0.9)
-    v_def: float = 0.02  # NORMATIVE: back-pass-penalty-fix baseline value
-    defensive_third_boundary: float = 35.0  # NORMATIVE: x (m) where own defensive third ends (105/3)
+    # --- DZV canonical revaluation phi(z,d) = alpha*(1 - d/D_max)^(-beta) for d < D_threshold else 1 ---
+    dzv_alpha: float = 2.1  # CANONICAL (Eyestone 2026-06-27)
+    dzv_beta: float = 0.8  # CANONICAL (Eyestone 2026-06-27)
+    dzv_d_max: float = 105.0  # provisional; pitch length
+    defensive_third_boundary: float = 35.0  # NORMATIVE: D_threshold = own defensive third end (105/3)
     pressure_scale: float = 50.0  # rho squash scale; intent-set
     # --- structural smoothing (hand-set; one-off sensitivity scan) ---
     convolution_sigma: float = 0.8
@@ -146,6 +150,32 @@ def _convolve_grid(xt_grid: npt.NDArray[np.float64], sigma: float) -> npt.NDArra
     if sigma <= 0:
         return xt_grid
     return gaussian_filter(xt_grid, sigma=sigma, mode="nearest")
+
+
+def _phi_of_d(
+    d: npt.NDArray[np.float64], alpha: float, beta: float, d_max: float, d_threshold: float
+) -> npt.NDArray[np.float64]:
+    """Eyestone's defensive-zone revaluation factor phi(z,d) = alpha*(1 - d/D_max)^(-beta)
+    for d < D_threshold, else 1.0. d = distance from own goal = LTR origin x (team attacks +x).
+    phi >= 1, rising with depth toward the threshold, then cliffing to 1 outside the defensive
+    third. See NOTICE for full bibliographic citations (Eyestone xT-GK)."""
+    d = np.asarray(d, float)
+    active = d < d_threshold
+    # (1 - d/D_max) is strictly positive for d < D_threshold < D_max -> no negative base.
+    raised = alpha * np.power(1.0 - np.where(active, d, 0.0) / d_max, -beta)
+    return np.where(active, raised, 1.0)
+
+
+def _phi_grid(
+    shape: tuple[int, int], alpha: float, beta: float, d_max: float, d_threshold: float
+) -> npt.NDArray[np.float64]:
+    """Per-cell phi(z,d) grid matching an xT grid's (n_rows, n_cols). phi depends on x only
+    (d = column-centre x), so every row is identical. Column c -> x = field_length*(c+0.5)/n_cols
+    (cell centre, matching xthreat's cell convention)."""
+    n_rows, n_cols = shape
+    xc = spadlconfig.field_length * (np.arange(n_cols) + 0.5) / n_cols
+    row = _phi_of_d(xc, alpha, beta, d_max, d_threshold)
+    return np.tile(row, (n_rows, 1))
 
 
 def _grid_value(
@@ -230,9 +260,18 @@ def _rav(p, xt_star_dest, xt_star_counter, delta):
     return p * np.asarray(xt_star_dest, float) - delta * (1.0 - p) * np.asarray(xt_star_counter, float)
 
 
-def _dzv(start_x, xt_raw_origin, v_def, boundary):
-    in_def_third = np.asarray(start_x, float) <= boundary
-    return np.where(in_def_third, v_def - np.asarray(xt_raw_origin, float), 0.0)
+def _dzv(start_x, vgk_star_origin, vgk_star_max, alpha, beta, d_max, boundary):
+    """Eyestone DZV -- defensive-zone revaluation, Option A (the increment over raw credit).
+    M(z) = phi(z,d)*(1 - V_GK(z)/max V_GK) is the published multiplier (~2.5); the composite
+    adds the revaluation GAIN it confers on the origin possession value, (M-1)*V_GK(z), so base
+    (which surrenders raw origin threat, Option B) and DZV stay orthogonal. Gated to the
+    defensive third (phi's active region). See NOTICE (Eyestone xT-GK)."""
+    start_x = np.asarray(start_x, float)
+    vgk = np.asarray(vgk_star_origin, float)
+    phi = _phi_of_d(start_x, alpha, beta, d_max, boundary)
+    m = phi * (1.0 - vgk / vgk_star_max)
+    in_def_third = start_x < boundary
+    return np.where(in_def_third, (m - 1.0) * vgk, 0.0)
 
 
 def _temporal(k, eta):
@@ -431,16 +470,26 @@ def compute_xt_gk(
     sub = actions.loc[mask]
     sub_geom = geom.loc[mask]
 
-    xt_star = _convolve_grid(xt.xT, p.convolution_sigma)
+    xt_star = _convolve_grid(xt.xT, p.convolution_sigma)  # raw -- base + RAV (Option B, unchanged)
+    # GK-revalued surface V_GK = xT (.) phi(z,d); convolved like xT*. PEV + DZV read this; base +
+    # RAV stay raw (the Eyestone invariant: phi enters value via PEV and DZV ONLY).
+    phi_grid = _phi_grid(xt.xT.shape, p.dzv_alpha, p.dzv_beta, p.dzv_d_max, p.defensive_third_boundary)
+    vgk_star = _convolve_grid(np.asarray(xt.xT, float) * phi_grid, p.convolution_sigma)
+    vgk_max = float(np.nanmax(vgk_star))
+
     sx = sub_geom["origin_x"].to_numpy(float)  # RESOLVED origin (derived coords feed compute)
     sy = sub_geom["origin_y"].to_numpy(float)
     ex = sub_geom["dest_x"].to_numpy(float)  # RESOLVED destination
     ey = sub_geom["dest_y"].to_numpy(float)
 
-    dest_star = _grid_value(xt_star, ex, ey)  # hoisted: used by progress and RAV
-    origin_star = _grid_value(xt_star, sx, sy)
-    progress = _progress(dest_star, origin_star)  # forward move value (feeds PEV)
-    base = _base(origin_star)  # Option B: origin-only; RAV owns the destination
+    dest_star = _grid_value(xt_star, ex, ey)  # raw -- RAV owns the destination (Option B)
+    origin_star = _grid_value(xt_star, sx, sy)  # raw -- base (Option B)
+    base = _base(origin_star)
+    # CHANGE 1 (Eyestone Q1+Q2): PEV's forward gain is measured on the revalued surface -- raw xT
+    # flatlines in keeper zones (the measured PEV inertia), so progress is V_GK*(z') - V_GK*(z).
+    dest_vgk = _grid_value(vgk_star, ex, ey)
+    origin_vgk = _grid_value(vgk_star, sx, sy)
+    progress = _progress(dest_vgk, origin_vgk)  # forward move value on the revalued surface (feeds PEV)
 
     # Pressure on the actor at the (resolved) origin: pressure_on_actor locates the actor from
     # start_x/start_y, so feed it the RESOLVED origin -- a NaN-native-origin goalkick must use
@@ -466,7 +515,9 @@ def compute_xt_gk(
     out.loc[mask, "xt_gk_completion_source"] = np.where(is_base, "base_rate", "model")
     rav = _rav(pc, dest_star, _counter_value(xt_star, ex, ey), p.delta)
 
-    dzv = _dzv(sx, _grid_value(xt.xT, sx, sy), p.v_def, p.defensive_third_boundary)  # raw grid
+    # CHANGE 2 (Eyestone Q3): DZV = the published revaluation multiplier's increment on the origin
+    # possession value (Option A), on the revalued surface; gated to the defensive third.
+    dzv = _dzv(sx, origin_vgk, vgk_max, p.dzv_alpha, p.dzv_beta, p.dzv_d_max, p.defensive_third_boundary)
 
     k = _possession_depth(actions)[mask]
     t = _temporal(k, p.eta)
