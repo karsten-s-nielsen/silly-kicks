@@ -5,6 +5,29 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.36.0] — 2026-06-29
+
+### Added — xT-GK resolved-coordinate audit columns (ADR-024 amendment, PR-S101)
+
+- `compute_xt_gk` now emits four resolved-coordinate columns — `xt_gk_origin_x`, `xt_gk_origin_y`,
+  `xt_gk_dest_x`, `xt_gk_dest_y` — exposing the **exact origin/destination the grid lookups used**
+  for every in-scope GK distribution (NaN off-scope). For goal-kicks ~67% of these are *imputed*
+  (the `resolve_gk_geometry` rule-point / tracking-GK origin), not the native `start_x`/`end_x`, so
+  every `xt_gk` row is now externally auditable — anyone can see which coordinates produced each
+  value. Emitted before the not-scoreable early return, so an unresolvable-destination goal-kick
+  still shows its resolved origin (+ NaN dest).
+- The coords are a parallel **`_COORD_COLS`** audit set, deliberately **not** in `_OUTPUT_COLS` —
+  `xt_gk_xfns` does not surface them as per-slot VAEP features (they are provenance, not a metric).
+  They ride through `add_xt_gk` (+ atomic mirror) automatically.
+- Tie-to-value test: `xt_gk_base == −xT*(xt_gk_origin_x, xt_gk_origin_y)` on the convolved grid for a
+  scored row — pins the persisted coords to the computed value.
+- Liveness gate: the four audit coords join the non-constant `provenance` exemption (they are the
+  coords the lookups used, legitimately constant across goal-kicks sharing the `(5.5, 34)` rule-point
+  origin; the non-null check still applies).
+- Additive — **no** behaviour change to any existing `xt_gk_*` value; no retrain trigger. Enables the
+  lakehouse persist-coords schema migration (held on this) and external orientation verification.
+  C4 count unchanged (28). Atomic mirror inherits.
+
 ## [4.35.1] — 2026-06-29
 
 ### Fixed — exclude pandas 3.0.4 (C-layer segfault on py3.11+)

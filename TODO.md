@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-29. **Current release**: silly-kicks 4.35.1 (dependency fix — exclude pandas 3.0.4, which segfaults in its C `take_nd`/`maybe_promote` path when a whole-DataFrame boolean mask carries a datetime64 column on py3.11+, crashing CI via `spadl.orientation.detect_input_convention` on the sportec actions; bisected 3.0.2✓/3.0.3✓/3.0.4✗ in an isolated py3.12 env, so `pandas>=2.1.1,!=3.0.4` excludes only the broken release and adopts a fixed 3.0.5+ automatically; uv.lock regenerated; no library code change; report upstream. PR-S102). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-29. **Current release**: silly-kicks 4.36.0 (xT-GK resolved-coordinate audit columns — `compute_xt_gk` emits `xt_gk_origin_x`/`_y`/`xt_gk_dest_x`/`_y`, the EXACT coords the grid lookups used per in-scope GK distribution, NaN off-scope; for goal-kicks ~67% are the imputed `resolve_gk_geometry` origin, not native `start_x`/`end_x`, so every `xt_gk` row is externally auditable. Parallel `_COORD_COLS` audit set, NOT in `_OUTPUT_COLS` so `xt_gk_xfns` doesn't surface them as VAEP features; ride through `add_xt_gk` + atomic. Tie-to-value test pins `base == −xT*(origin_x,origin_y)`. Additive — no value change, no retrain; enables the held lakehouse persist-coords migration + external orientation verification. PR-S101 / ADR-024 amendment). The prior 4.35.1 (exclude pandas 3.0.4 — C-layer segfault) is in [CHANGELOG.md](CHANGELOG.md). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

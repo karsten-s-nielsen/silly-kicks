@@ -39,6 +39,11 @@ _PASS = spadlconfig.actiontype_id["pass"]  # 0
 _THROW_IN = spadlconfig.actiontype_id["throw_in"]  # 2
 
 _OUTPUT_COLS = ["xt_gk_base", "xt_gk_pev", "xt_gk_rav", "xt_gk_dzv", "xt_gk_pressure", "xt_gk"]
+# Resolved-coordinate AUDIT columns (handoff 2026-06-29): the exact origin/destination the grid
+# lookups used (for goal-kicks ~67% are imputed, NOT the native start_x/end_x). Emitted per in-scope
+# row for external verifiability; deliberately NOT in _OUTPUT_COLS so xt_gk_xfns does not surface them
+# as per-slot VAEP features (they are provenance, not a metric).
+_COORD_COLS = ["xt_gk_origin_x", "xt_gk_origin_y", "xt_gk_dest_x", "xt_gk_dest_y"]
 _PROVENANCE_COLS = [
     "xt_gk_origin_source",
     "xt_gk_dest_source",
@@ -429,6 +434,8 @@ def compute_xt_gk(
         {c: np.full(len(actions), np.nan, dtype=float) for c in _OUTPUT_COLS},
         index=actions.index,
     )
+    for c in _COORD_COLS:
+        out[c] = np.full(len(actions), np.nan, dtype=float)
     out["xt_gk_origin_source"] = np.full(len(actions), None, dtype=object)
     out["xt_gk_dest_source"] = np.full(len(actions), None, dtype=object)
     out["xt_gk_origin_confidence"] = np.full(len(actions), np.nan, dtype=float)
@@ -448,6 +455,13 @@ def compute_xt_gk(
     out.loc[in_scope, "xt_gk_origin_source"] = geom.loc[in_scope, "origin_source"].to_numpy()
     out.loc[in_scope, "xt_gk_dest_source"] = geom.loc[in_scope, "dest_source"].to_numpy()
     out.loc[in_scope, "xt_gk_origin_confidence"] = geom.loc[in_scope, "origin_confidence"].to_numpy()
+    # Resolved-coordinate audit columns (handoff 2026-06-29 item 1): surface the EXACT coords the grid
+    # lookups use, emitted for every in-scope row BEFORE the not-scoreable early return so an
+    # unresolvable-destination goalkick still shows its resolved origin (+ NaN dest) for inspection.
+    out.loc[in_scope, "xt_gk_origin_x"] = geom.loc[in_scope, "origin_x"].to_numpy()
+    out.loc[in_scope, "xt_gk_origin_y"] = geom.loc[in_scope, "origin_y"].to_numpy()
+    out.loc[in_scope, "xt_gk_dest_x"] = geom.loc[in_scope, "dest_x"].to_numpy()
+    out.loc[in_scope, "xt_gk_dest_y"] = geom.loc[in_scope, "dest_y"].to_numpy()
 
     # B2 NaN-safety contract (ADR-003) implemented in the BODY (the @nan_safe_enrichment
     # marker confers no behavior). Route in-scope rows with a NaN identifier to the NaN default.
