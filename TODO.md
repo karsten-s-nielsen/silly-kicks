@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-27. **Current release**: silly-kicks 4.35.0 (xT-GK PEV/DZV fidelity fix — PEV now measures its forward gain on the GK-revalued surface `V_GK = xT·φ(z,d)` instead of the keeper-zone-flat raw xT, and DZV becomes Eyestone's published defensive-zone revaluation multiplier `M(z)=φ·[1−V_GK/maxV_GK]` applied as the increment `(M−1)·V_GK(z)` gated to the defensive third; φ canonical α=2.1/β=0.8; the invariant that φ enters value via PEV+DZV only — base/RAV stay on raw xT* — is behaviorally guarded; Option B unchanged. `XtGkParams` gains `dzv_alpha`/`dzv_beta`/`dzv_d_max`, retires `v_def`. Opt-in feature so not a forced VAEP retrain, but an `xt_gk` serve-output change → the lakehouse re-materializes `fct_action_context` + re-runs the WC2022 cohort/report. PR-S100 / ADR-024 amendment). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-29. **Current release**: silly-kicks 4.35.1 (dependency fix — exclude pandas 3.0.4, which segfaults in its C `take_nd`/`maybe_promote` path when a whole-DataFrame boolean mask carries a datetime64 column on py3.11+, crashing CI via `spadl.orientation.detect_input_convention` on the sportec actions; bisected 3.0.2✓/3.0.3✓/3.0.4✗ in an isolated py3.12 env, so `pandas>=2.1.1,!=3.0.4` excludes only the broken release and adopts a fixed 3.0.5+ automatically; uv.lock regenerated; no library code change; report upstream. PR-S102). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

@@ -5,6 +5,20 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.35.1] — 2026-06-29
+
+### Fixed — exclude pandas 3.0.4 (C-layer segfault on py3.11+)
+
+- **pandas 3.0.4 segfaults (SIGSEGV / exit 139)** in its C `take_nd` → `maybe_promote` path when a
+  whole-DataFrame boolean mask carries a `datetime64` column — reproduced deterministically on
+  Python 3.11+ via `spadl.orientation.detect_input_convention` (the sportec actions carry a datetime
+  column), which crashed the CI test suite. Bisected in an isolated py3.12 env: **3.0.2 ✓, 3.0.3 ✓,
+  3.0.4 ✗** (same numpy 2.4.6 / scipy 1.18.0), so it is purely a pandas-3.0.4 regression.
+- Dependency constraint tightened to `pandas>=2.1.1,!=3.0.4` — excludes **only** the broken release
+  (pip resolves the safe 3.0.3) so a fixed 3.0.5+ is adopted automatically. `uv.lock` regenerated.
+- No library code change; no behaviour change on a non-broken pandas. To be reported upstream
+  (pandas-dev/pandas).
+
 ## [4.35.0] — 2026-06-27
 
 ### Changed — xT-GK PEV/DZV fidelity fix (Eyestone Q1–Q3, ADR-024 amendment, PR-S100)
