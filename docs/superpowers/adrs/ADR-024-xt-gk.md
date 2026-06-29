@@ -230,7 +230,14 @@ old additive `v_def − xT_raw(z)` back-pass floor is replaced by the deck form
 base/RAV/PEV terms (Eyestone's explicit scale anchor: La Liga DZV ≈ +0.27/match ≈ 0.009/action).
 Per his "the multiplier must revalue a small possession base (not be added raw)," DZV is the
 revaluation **increment** on the origin possession value, `(M−1)·V_GK(z)`, gated to the defensive
-third — measured O(0.01) on the unit fixtures (~0.006–0.018 for realistic deep `V_GK` 0.005–0.01).
+third. **Magnitude (corrected 2026-06-29, handoff Item 5):** on the corrected directional **production**
+grid (deep-third raw xT ≈ 0.0085 → deep `V_GK` ≈ 0.02) DZV lands at **≈ +0.02/action** (live WC2022
++0.021). The original "~0.006–0.018 for deep `V_GK` 0.005–0.01" figure described the *unit fixtures*,
+which **understated** the production amplitude (the cube-ramp `_gk_realistic_xt` even gives the goalkick
+origin V_GK = 0 → DZV ≈ 0); the production-realistic `_production_amplitude_xt` fixture + the parity
+audit (`docs/research/xtgk_test_production_parity_audit.md`) reproduce + guard the live scale. The 2× vs
+Jeff's ~0.009 La Liga anchor is **grid amplitude** (our deep third ≈ 2× his implied ~0.004), within his
+"sanity band, not a gate" — the form is faithful, not mis-scaled.
 **Option A (increment) over B (revalued total) / C (revalue a fixed baseline)** because the
 increment is the value the revaluation *adds*, keeping it orthogonal to `base` (which already
 surrenders the origin's raw threat) — B would re-credit the full revalued origin and partially undo

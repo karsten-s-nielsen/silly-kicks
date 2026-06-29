@@ -71,6 +71,20 @@ def _deep_flat_xt():
     return xt
 
 
+def _production_amplitude_xt():
+    """Production-REALISTIC amplitude grid (Item 2 / handoff 2026-06-29): the corrected directional
+    lakehouse grid has the defensive third at raw xT ~= 0.0085 (NOT ~0). With phi ~= 2.2 that yields a
+    deep V_GK ~= 0.02 and DZV ~= +0.02 -- matching the live WC2022 +0.021. The cube-ramp
+    `_gk_realistic_xt` understates this: its goalkick origin (col0) is raw xT = 0 -> V_GK = 0 -> DZV ~= 0.
+    Deep third (x < 35) flattened to 0.0085; rises to 0.20 near goal. Shape (12, 16)."""
+    xt = ExpectedThreat(l=16, w=12)
+    x_centres = spadlconfig.field_length * (np.arange(16) + 0.5) / 16
+    vals = np.linspace(0.0085, 0.20, 16)
+    vals[x_centres < 35.0] = 0.0085  # production deep-third amplitude
+    xt.xT = np.tile(vals, (12, 1))
+    return xt
+
+
 def _gk_actions():
     # Two GK distributions by the GK (player 10, team 1): a forward goalkick + a back-pass.
     return pd.DataFrame(
@@ -683,6 +697,142 @@ class TestXtGkXfns:
         fn = xt_gk_xfns(_fitted_xt(), home_team_id=1)[0]
         res = fn([base, base, base], None)
         assert res["xt_gk_a0"].isna().all()
+
+
+class TestGoldenComposite:
+    """Item 4 (handoff 2026-06-29): a fully hand-worked composite. EVERY input is known —
+    a known small grid (sigma=0 -> xT* == xT), known coords, a stubbed pressure (known rho_raw ->
+    known rho) and a stubbed completion p — so base/pev/rav/dzv/T/composite are derived from the
+    LITERAL formulas (NOT the production helpers) and asserted exact. This is the only test that
+    proves the assembled composite arithmetic end-to-end (unit tests pass without guaranteeing the
+    assembly is right). The pressure kernel + completion model are exercised by their own tests;
+    here they are pinned so the COMPOSITE is the thing under test."""
+
+    def _golden_grid(self):
+        # (w=4, l=5); uniform across rows so the y-row is irrelevant. Per-column raw xT:
+        xt = ExpectedThreat(l=5, w=4)
+        xt.xT = np.tile(np.array([0.01, 0.02, 0.05, 0.12, 0.20]), (4, 1))
+        return xt
+
+    def _golden_frames(self):
+        # one GK (the actor) + a ball at t=5; DAS-valid columns present. Pressure + completion are
+        # monkeypatched, so only the GK row (actor-is-GK) + a time-linkable frame are load-bearing.
+        rows = [
+            dict(
+                game_id=9,
+                period_id=1,
+                frame_id=0,
+                time_seconds=5.0,
+                frame_rate=25.0,
+                team_id=1,
+                player_id=99,
+                is_goalkeeper=True,
+                is_ball=False,
+                x=10.5,
+                y=34.0,
+                vx=0.0,
+                vy=0.0,
+                team_in_possession=1,
+                source_provider="sportec",
+                team_attacking_direction="ltr",
+            ),
+            dict(
+                game_id=9,
+                period_id=1,
+                frame_id=0,
+                time_seconds=5.0,
+                frame_rate=25.0,
+                team_id=-1,
+                player_id=-1,
+                is_goalkeeper=False,
+                is_ball=True,
+                x=10.5,
+                y=34.0,
+                vx=0.0,
+                vy=0.0,
+                team_in_possession=1,
+                source_provider="sportec",
+                team_attacking_direction="ltr",
+            ),
+        ]
+        return pd.DataFrame(rows)
+
+    def test_golden_handworked_composite(self, monkeypatch):
+        from silly_kicks.tracking._gk_completion import GkCompletionModel
+
+        # --- known inputs ---
+        # GK pass: origin col0 (x=10.5, xT 0.01), dest col3 (x=73.5, xT 0.12); counter of dest =
+        # (105-73.5, 68-34) = (31.5, 34) = col1 (xT 0.02). x=10.5 is exactly col0's centre, so the
+        # phi grid value at the origin equals phi_of_d(10.5) (M and V_GK agree).
+        actions = pd.DataFrame(
+            {
+                "game_id": [9],
+                "action_id": [0],
+                "team_id": [1],
+                "player_id": [99],
+                "period_id": [1],
+                "time_seconds": [5.0],
+                "type_id": [0],
+                "start_x": [10.5],
+                "start_y": [34.0],
+                "end_x": [73.5],
+                "end_y": [34.0],
+            }
+        )
+        frames = self._golden_frames()
+
+        # Pin pressure: rho_raw=50 -> rho = 1 - exp(-50/50) = 1 - e^-1. Pin completion p=0.7 + serve "model".
+        monkeypatch.setattr(
+            "silly_kicks.tracking.features.pressure_on_actor",
+            lambda acts, frm, **kw: pd.Series([50.0] * len(acts), index=acts.index),
+        )
+        monkeypatch.setattr("silly_kicks.tracking._xt_gk._completion_p", lambda *a, **k: np.array([0.7]))
+        model = GkCompletionModel.from_variant("default")
+        monkeypatch.setattr(model, "serve_mode_for_types", lambda tids: np.array(["model"] * len(tids)))
+
+        params = XtGkParams(convolution_sigma=0.0)  # sigma=0 -> xT* == xT, V_GK* == xT*phi (exact)
+        out = compute_xt_gk(actions, frames, xt=self._golden_grid(), params=params, completion=model)
+
+        # --- hand-worked expectations (literal formulas, independent of the production helpers) ---
+        phi_o = 2.1 * (1.0 - 10.5 / 105.0) ** -0.8  # phi(z,d) at the origin (d=10.5 < 35)
+        vgk_o = 0.01 * phi_o  # V_GK at origin = raw xT * phi
+        vgk_max = 0.20  # col4 (x>=35 -> phi=1): 0.20 dominates
+        m = phi_o * (1.0 - vgk_o / vgk_max)  # published revaluation multiplier M(z)
+        exp_base = -0.01  # -xT*(origin)
+        exp_rav = 0.7 * 0.12 - 0.55 * (1.0 - 0.7) * 0.02  # p*xT(dest) - delta*(1-p)*xT(counter)
+        exp_dzv = (m - 1.0) * vgk_o  # Option-A increment, def-third gated (10.5 < 35)
+        rho = 1.0 - np.exp(-50.0 / 50.0)  # normalized pressure from rho_raw=50, scale=50
+        progress = 0.12 - vgk_o  # V_GK*(dest, phi=1) - V_GK*(origin)
+        exp_pev = rho * max(0.0, progress)
+        # k(a)=0 for the lone action -> T = eta^0 = 1; gamma=0.25, phi_scalar=1.0 (defaults)
+        exp_composite = 1.0 * (exp_base + 0.25 * exp_pev + exp_rav) + 1.0 * exp_dzv
+
+        assert out.loc[0, "xt_gk_base"] == pytest.approx(exp_base)
+        assert out.loc[0, "xt_gk_rav"] == pytest.approx(exp_rav)
+        assert out.loc[0, "xt_gk_dzv"] == pytest.approx(exp_dzv)
+        assert out.loc[0, "xt_gk_pressure"] == pytest.approx(rho)
+        assert out.loc[0, "xt_gk_pev"] == pytest.approx(exp_pev)
+        assert out.loc[0, "xt_gk"] == pytest.approx(exp_composite)
+
+
+class TestProductionAmplitude:
+    """Item 2 (handoff 2026-06-29): the cube-ramp `_gk_realistic_xt` understates the live deep-zone
+    amplitude — its goalkick origin (col0) is raw xT = 0 -> V_GK = 0 -> DZV ~= 0, whereas the corrected
+    production grid has the defensive third at raw xT ~= 0.0085 -> V_GK ~= 0.02 -> DZV ~= +0.02 (the live
+    WC2022 +0.021). `_production_amplitude_xt` reproduces that scale; this guards the fixture↔production
+    parity the audit (docs/research/xtgk_test_production_parity_audit.md) documents."""
+
+    def test_production_amplitude_reproduces_live_dzv_scale(self):
+        actions = _gk_actions().iloc[[0]].copy()  # goalkick, origin x=5 (col0)
+        frames = _frames_for(actions)
+        dzv_prod = compute_xt_gk(actions, frames, xt=_production_amplitude_xt()).loc[0, "xt_gk_dzv"]
+        dzv_cuberamp = compute_xt_gk(actions, frames, xt=_gk_realistic_xt()).loc[0, "xt_gk_dzv"]
+        # production-amplitude deep third -> DZV at the goalkick origin lands at the live ~+0.02 scale
+        assert 0.012 < dzv_prod < 0.03  # type: ignore[operator]
+        # the cube-ramp fixture badly understates it: col0 raw xT = 0, so V_GK(origin) is ~0 (only a
+        # tiny sigma=0.8 convolution smear from col1) -> DZV ~= 0.0003, two orders below production.
+        assert dzv_cuberamp < 0.005  # type: ignore[operator]
+        assert dzv_prod > dzv_cuberamp + 0.01  # type: ignore[operator]
 
 
 class TestExports:
