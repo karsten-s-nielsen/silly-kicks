@@ -5,6 +5,28 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.36.1] — 2026-06-29
+
+### Added / Docs — xT-GK pre-Jeff verification (handoff Items 2 + 4)
+
+- **Item 4 — golden hand-worked composite test** (`TestGoldenComposite`): a fully-controlled GK
+  distribution (known grid σ=0, known coords, pinned pressure ρ via a known `rho_raw`, stubbed
+  completion p) with `base`/`pev`/`rav`/`dzv`/`T`/`composite` derived from the **literal formulas**
+  (independent of the production helpers) and asserted exact — the first test that proves the assembled
+  composite arithmetic end-to-end (unit tests pass without guaranteeing the assembly is right).
+- **Item 2 — test↔production parity**: added `_production_amplitude_xt` (defensive third raw xT ≈ 0.0085
+  → deep `V_GK` ≈ 0.02) + `TestProductionAmplitude`, reproducing the live WC2022 DZV scale (**+0.02**);
+  the cube-ramp `_gk_realistic_xt` understated it (goalkick origin raw xT = 0 → DZV ≈ 0). Parity audit
+  written to `docs/research/xtgk_test_production_parity_audit.md` (input-contract table, the proven
+  amplitude gap, id-dtype/provider coverage notes, lakehouse-side live-schema confirm flag).
+- **Item 5 doc-fix** (magnitude framing): ADR-024 / CLAUDE.md / the [4.35.0] entry corrected — the
+  earlier "O(0.01) / deep `V_GK` 0.005–0.01" was the *understating unit fixtures*; production deep
+  `V_GK` ≈ 0.02 → DZV ≈ +0.02 (live +0.021); the 2× vs Jeff's ~0.009 La Liga anchor is **grid
+  amplitude** (within his sanity band), the PEV/DZV forms are faithful.
+- Tests + docs only — **no library code change, no behaviour change** to any `xt_gk_*` value; the new
+  fixture is test-only (not a shipped artifact). Released for external visibility. Handoff Item 3's
+  guard-test half remains open (separate).
+
 ## [4.36.0] — 2026-06-29
 
 ### Added — xT-GK resolved-coordinate audit columns (ADR-024 amendment, PR-S101)
@@ -56,8 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applied as the **revaluation increment** on the origin possession value, `(M−1)·V_GK(z)`, gated to
   the defensive third (CHANGE 2, Eyestone Q3; Option A). This replaces the old additive `v_def − xT_raw(z)`
   back-pass floor. The increment (not the revalued total) keeps base — which surrenders the origin's raw
-  threat — orthogonal to DZV. Per-action DZV lands O(0.01) (Jeff's ~0.009 La Liga anchor), not the raw
-  multiplier's O(2.5).
+  threat — orthogonal to DZV. Per-action DZV lands O(0.01), not the raw multiplier's O(2.5). (**Magnitude
+  clarified 2026-06-29 / PR-S103:** that O(0.01) was the *unit fixtures*; on the corrected production grid
+  deep `V_GK` ≈ 0.02 → DZV ≈ **+0.02/action** (live WC2022 +0.021). The 2× vs Jeff's ~0.009 La Liga anchor
+  is grid amplitude, within his sanity band — form faithful. See `docs/research/xtgk_test_production_parity_audit.md`.)
 - **φ(z,d)** `= α·(1 − d/D_max)^(−β)` for `d < D_threshold`, else 1, with `d` = LTR origin x: `α=2.1`,
   `β=0.8` are **canonical** (Eyestone 2026-06-27); `D_max=105`, `D_threshold=35` (= `defensive_third_boundary`)
   are provisional. `XtGkParams` gains `dzv_alpha`/`dzv_beta`/`dzv_d_max`; the now-dead `v_def` is retired.

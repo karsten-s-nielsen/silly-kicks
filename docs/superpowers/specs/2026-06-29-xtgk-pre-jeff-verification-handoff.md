@@ -3,6 +3,43 @@
 **Date:** 2026-06-29 · **From:** xT-GK analysis side (Karsten) · **Status:** Requested. Lakehouse work is HELD
 until this lands (the persist-coords schema migration depends on item 1 here).
 
+---
+
+## ⚑ FOLLOW-UP (2026-06-29, after 4.36.0) — Item 1 shipped; 3 verification items still open
+
+4.36.0 correctly delivered **Item 1** (resolved-coord columns — clean: `_COORD_COLS`, kept out of `_OUTPUT_COLS`,
+tie-to-value test). But the release covered the *enhancement*, not the *audits*. **Item 5 is now closed by the
+analysis side** (below); **Items 2, 4, and the guard-test half of Item 3 are still open.** No formula change is
+involved — this is audit/test work + one doc correction.
+
+**Item 5 (DZV magnitude) — RESOLVED by the analysis side; one doc fix for you.**
+Reconciled against the live corrected grid: keeper-zone DZV computes to ~0.020 (deep `V_GK = xT·φ ≈ 0.019–0.02`),
+matching production **+0.021**. The form is faithful; the 2× vs Jeff's 0.009 is **grid amplitude** — our corrected
+global grid's deep third (raw xT ≈ 0.0085) is ~2× Jeff's implied deep value (~0.004). Not a bug; within his "sanity
+band, not a gate." **Action for you:** the ADR/CHANGELOG say "DZV ~0.009 / measured O(0.01) on unit fixtures
+(realistic deep `V_GK` 0.005–0.01)" — but **production deep `V_GK` ≈ 0.02 and DZV ≈ +0.021**. Correct that framing so
+the docs aren't misleading (and note it's a concrete instance of Item 2).
+
+**Item 2 (test↔production parity) — STILL OPEN.** A concrete gap is already proven: the DZV unit fixtures assume deep
+`V_GK` 0.005–0.01, but the real corrected grid gives ~0.02 (2–4× higher). The fixtures understate production
+amplitude — which is exactly why the ADR's "~0.009" doesn't match the live +0.021. **Do:** add a
+production-realistic-amplitude fixture (deep raw xT ≈ 0.0085, φ ≈ 2.2 → `V_GK` ≈ 0.02), and audit the rest of the
+input contract (action/frame schema, **id dtypes**, coord convention) against what the lakehouse actually feeds
+`compute_xt_gk`.
+
+**Item 4 (golden composite test) — STILL OPEN.** The tie-to-value test checks `base == −xT*(origin)` only. Need a
+full hand-worked composite: one GK distribution, fully-specified inputs (coords, a known small grid, known ρ, known
+p, params), hand-compute `base/pev/rav/dzv/T/composite`, assert exact. Item 1's persisted coords make it easy to seed
+from a real row.
+
+**Item 3 (orientation) — guard-test half STILL OPEN.** The ADR documents the LTR assumption (good), but there's no
+test that a mis-oriented input fails loud. **Do:** add a guard test — a non-LTR / mirrored input is rejected or
+produces an asserted-wrong result — so an orientation regression can't pass silently. (The live end-to-end
+verification is the analysis side's, pending the lakehouse persist-coords migration.)
+
+**When Items 2 + 4 + the 3-guard land, ping the analysis side.** No release strictly required for these (they're
+tests/docs) unless you bundle a fixture change that affects a shipped artifact.
+
 ## Why this exists (read first)
 We are about to take an xT-GK finding to **Jeffrey Eyestone** (the framework's author). Before we involve him,
 Karsten wants 100% confidence that the anomalies we're seeing are **real properties of the metric/data, not
