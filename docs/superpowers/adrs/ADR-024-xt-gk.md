@@ -1,6 +1,6 @@
 # ADR-024: xT-GK (Eyestone) — pure parametric GK-distribution-value feature
 
-**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4; amended 2026-06-27 — PEV/DZV fidelity fix, Eyestone Q1–Q3, 4.35.0, PR-S100)
+**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4; amended 2026-06-27 — PEV/DZV fidelity fix, Eyestone Q1–Q3, 4.35.0, PR-S100; amended 2026-06-29 — resolved-coordinate audit columns, 4.36.0, PR-S101)
 **Deciders:** Karsten (with Claude); collaborator Jeffrey Eyestone (metric author)
 **Related:** ADR-005 (tracking feature surfaces), ADR-019 (id-dtype contract), ADR-020 (frame-aware xfns frame-id resolution), ADR-021 (pluggable xT), ADR-011 (trained-model lifecycle — explicitly NOT applicable here)
 
@@ -263,6 +263,35 @@ on `V_GK` is the first half of Eyestone's receiver-pressure extension (adding a 
 `xt_gk` serve-output change: the lakehouse re-materializes `fct_action_context` and re-runs the
 WC2022 cohort/report. No C4 enumeration change (no new aggregator/model/backend). Atomic mirror
 inherits.
+
+## Amendment (4.36.0, 2026-06-29) — resolved-coordinate audit columns (PR-S101)
+
+Pre-Jeff-verification handoff (analysis side): before taking an xT-GK finding to Eyestone, make every
+`xt_gk` row externally auditable. `compute_xt_gk` now emits four resolved-coordinate columns —
+`xt_gk_origin_x`, `xt_gk_origin_y`, `xt_gk_dest_x`, `xt_gk_dest_y` — the **exact** origin/destination the
+grid lookups (`base`, the PEV gain, RAV, DZV) consumed, for every in-scope GK distribution (NaN
+off-scope). For goal-kicks ~67% of these are the **imputed** `resolve_gk_geometry` origin (in-area
+tracking-GK → `(5.5, 34)` rule-point), not the native `start_x`/`end_x`, so a reader can now see exactly
+which coordinates produced each value — especially the imputed origins.
+
+**Decisions.**
+- **Parallel `_COORD_COLS` set, NOT `_OUTPUT_COLS`.** The coords are provenance/audit, not a metric;
+  keeping them out of `_OUTPUT_COLS` means `xt_gk_xfns` does not surface them as per-slot VAEP features
+  (they'd pollute the feature matrix and the dup-`action_id`/liveness gates). They ride through
+  `add_xt_gk` (it copies every `compute_xt_gk` column) and the atomic mirror automatically.
+- **Emitted before the not-scoreable early return**, for every in-scope row — so an
+  unresolvable-destination goal-kick still shows its resolved origin (+ NaN dest) for inspection.
+- **Tie-to-value gate:** `xt_gk_base == −xT*(xt_gk_origin_x, xt_gk_origin_y)` on the convolved grid for a
+  scored row, pinning the persisted coords to the computed value (they are not decorative).
+- **Liveness gate:** the four audit coords join the non-constant `provenance` exemption — they are the
+  coords the lookups used (not a metric) and are legitimately constant across goal-kicks sharing the
+  `(5.5, 34)` rule-point origin; the non-null check still applies.
+- **`XtGkReport` unchanged:** it aggregates categorical source/variant *counts*; per-row coordinate
+  values are not a count and are inspected directly off the emitted columns.
+
+**Consequences.** Additive — no change to any existing `xt_gk_*` value, no retrain trigger. Unblocks the
+lakehouse persist-coords schema migration (held on this) and the analysis side's end-to-end orientation
+verification against live data. C4 count unchanged (28).
 
 ## References
 

@@ -33,6 +33,7 @@ from silly_kicks.xthreat import ExpectedThreat
 
 _PHILOSOPHIES = ["possession", "counter", "direct", "high_press", "low_block"]
 _XT_GK_COLS = ["xt_gk_base", "xt_gk_pev", "xt_gk_rav", "xt_gk_dzv", "xt_gk_pressure", "xt_gk"]
+_COORD_COLS = ["xt_gk_origin_x", "xt_gk_origin_y", "xt_gk_dest_x", "xt_gk_dest_y"]
 _PROVENANCE_COLS = [
     "xt_gk_origin_source",
     "xt_gk_dest_source",
@@ -386,16 +387,43 @@ class TestComputeXtGk:
         )
         frames = _frames_for(actions)
         out = compute_xt_gk(actions, frames, xt=_fitted_xt())
-        assert list(out.columns) == _XT_GK_COLS + _PROVENANCE_COLS  # value cols + provenance
+        assert list(out.columns) == _XT_GK_COLS + _COORD_COLS + _PROVENANCE_COLS  # value + coords + provenance
         assert len(out) == len(actions)
         assert np.isnan(out.loc[2, "xt_gk"])  # type: ignore[arg-type]  # out-of-scope -> NaN
         assert out.loc[2, "xt_gk_origin_source"] is None  # off-scope -> NaN provenance
+        for c in _COORD_COLS:  # off-scope rows carry NaN resolved coords
+            assert np.isnan(out.loc[2, c])  # type: ignore[arg-type]
+        # in-scope native goalkick: emitted origin == the native start (Item 1 — auditable coords)
+        assert out.loc[0, "xt_gk_origin_x"] == pytest.approx(5.0)
+        assert out.loc[0, "xt_gk_origin_y"] == pytest.approx(34.0)
         assert not np.isnan(out.loc[0, "xt_gk_base"])  # type: ignore[arg-type]  # in-scope -> value
         assert out.loc[0, "xt_gk_origin_source"] == "native"  # native goalkick origin
         # Task 8 provenance: sportec frames -> "gs" variant; scored row -> "model" source; off-scope None.
         assert out.loc[0, "xt_gk_completion_variant"] == "gs"
         assert out.loc[0, "xt_gk_completion_source"] == "model"
         assert out.loc[2, "xt_gk_completion_variant"] is None
+
+    def test_emitted_coords_reconstruct_base(self):
+        # Item 1 tie-to-value (handoff 2026-06-29): the persisted resolved coords are EXACTLY the
+        # ones the grid lookups used, so base == -xT*(origin_x, origin_y) on the convolved grid.
+        # This pins the emitted coords to the computed value (they are not decorative).
+        from silly_kicks.tracking._xt_gk import _convolve_grid, _grid_value
+
+        xt = _fitted_xt()
+        actions = _gk_actions().iloc[[0]].copy()  # goalkick -> scores
+        frames = _frames_for(actions)
+        params = XtGkParams()
+        out = compute_xt_gk(actions, frames, xt=xt, params=params)
+        ox = out["xt_gk_origin_x"].to_numpy()[0]
+        oy = out["xt_gk_origin_y"].to_numpy()[0]
+        base_val = out["xt_gk_base"].to_numpy()[0]
+        assert np.isfinite(ox) and np.isfinite(oy) and np.isfinite(base_val)
+        xt_star = _convolve_grid(xt.xT, params.convolution_sigma)
+        expected_base = -_grid_value(xt_star, np.array([ox]), np.array([oy]))[0]
+        assert base_val == pytest.approx(expected_base)
+        # destination coords are resolved (the goalkick has a native end)
+        assert np.isfinite(out["xt_gk_dest_x"].to_numpy()[0])
+        assert np.isfinite(out["xt_gk_dest_y"].to_numpy()[0])
 
     def test_imputed_origin_goalkick_is_scored_and_tagged(self):
         # NaN-origin goalkick -> derived origin FEEDS compute -> non-NaN composite + tag (m7/m8).
@@ -410,6 +438,10 @@ class TestComputeXtGk:
         assert not np.isnan(out.loc[0, "xt_gk"])  # type: ignore[arg-type]  # scored (was NaN before)
         assert out.loc[0, "xt_gk_origin_source"] == "goalkick_prior"
         assert out.loc[0, "xt_gk_origin_confidence"] < 0.7  # type: ignore[operator]
+        # Item 1: the emitted origin reveals the IMPUTED rule-point (5.5, 34), not the NaN native
+        # start_x -- the headline audit benefit (imputed goal-kick origins are externally visible).
+        assert out["xt_gk_origin_x"].to_numpy()[0] == pytest.approx(5.5)
+        assert out["xt_gk_origin_y"].to_numpy()[0] == pytest.approx(34.0)
 
     def test_unresolvable_destination_routes_to_nan(self):
         # an in-scope goalkick whose destination cannot be resolved (NaN native end AND no
@@ -601,13 +633,15 @@ class TestAddXtGk:
         actions = _gk_actions()
         frames = _frames_for(actions)
         out = add_xt_gk(actions, frames, _fitted_xt(), home_team_id=1)
-        for c in _XT_GK_COLS + _PROVENANCE_COLS:  # value cols + xT-GK provenance
+        for c in _XT_GK_COLS + _COORD_COLS + _PROVENANCE_COLS:  # value + coords + xT-GK provenance
             assert c in out.columns
         assert "frame_id" in out.columns  # linkage provenance
         assert len(out) == len(actions)
         # every in-scope scored row carries a non-null origin/dest source (spec section 6)
         assert out["xt_gk_origin_source"].notna().all()
         assert out["xt_gk_dest_source"].notna().all()
+        # resolved coords ride through the aggregator for in-scope rows (Item 1 audit columns)
+        assert out["xt_gk_origin_x"].notna().all()
 
     def test_idempotent_provenance_on_chained_calls(self):
         actions = _gk_actions()

@@ -417,8 +417,21 @@ def test_aggregator_columns_live(name):
     # columns are exempt: object/bool/int by dtype, plus the four documented
     # linkage-provenance floats (legitimately constant when every action links at
     # offset 0 / quality 1; their merge semantics are gated by the provenance-skip
-    # guard, not here). The check targets metrics.
-    provenance = {"frame_id", "time_offset_seconds", "link_quality_score", "n_candidate_frames"}
+    # guard, not here). The four xT-GK resolved-coordinate AUDIT floats
+    # (xt_gk_origin_x/_y, xt_gk_dest_x/_y) are provenance too — they are the coords the
+    # grid lookups used, NOT a metric, and are legitimately constant across goal-kicks
+    # that share the (5.5, 34) rule-point origin (~67% of real goal-kicks are imputed).
+    # The non-null check above still applies. The check targets metrics.
+    provenance = {
+        "frame_id",
+        "time_offset_seconds",
+        "link_quality_score",
+        "n_candidate_frames",
+        "xt_gk_origin_x",
+        "xt_gk_origin_y",
+        "xt_gk_dest_x",
+        "xt_gk_dest_y",
+    }
     declared = STRUCTURAL_CONSTANTS.get(name, {})
     flat = [
         c
