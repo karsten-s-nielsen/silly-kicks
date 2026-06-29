@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.35.0"
+version = "4.35.1"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -24,7 +24,12 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "pandas>=2.1.1",
+    # pandas 3.0.4 segfaults (SIGSEGV) in its C `take_nd`/`maybe_promote` path when a
+    # whole-DataFrame boolean mask carries a datetime64 column — reproduced deterministically
+    # on py3.11+ (the sportec actions in spadl.orientation.detect_input_convention). 3.0.2/3.0.3
+    # are clean; exclude ONLY the broken release so a fixed 3.0.5+ is adopted automatically.
+    # Report upstream (pandas-dev/pandas). Bisected 2026-06-29.
+    "pandas>=2.1.1,!=3.0.4",
     "numpy>=1.26.0",
     "scikit-learn>=1.3.1",
     "scipy>=1.10.0",
