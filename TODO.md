@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-29. **Current release**: silly-kicks 4.36.1 (xT-GK pre-Jeff verification, handoff Items 2+4 — tests+docs only, no code change: golden hand-worked composite test proving the assembled `base/pev/rav/dzv/T/composite` arithmetic end-to-end from literal formulas; production-amplitude fixture + `TestProductionAmplitude` reproducing the live deep-zone DZV scale ~+0.02 that the cube-ramp fixture understated; test↔production parity audit `docs/research/xtgk_test_production_parity_audit.md`; Item 5 doc-fix correcting the DZV-magnitude framing (production deep V_GK≈0.02 → DZV≈+0.02; 2× vs Jeff's ~0.009 = grid amplitude, form faithful). Item 3 guard-test half remains open. PR-S103). Prior: 4.36.0 (xT-GK resolved-coordinate audit columns, PR-S101/ADR-024) + 4.35.1 (exclude pandas 3.0.4 segfault, PR-S102). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-30. **Current release**: silly-kicks 4.37.0 (SkillCorner keeper-origin resolution — broadcast-tracking domain fix, ADR-024 amendment, PR-S104: provider-aware native-origin trust via a fail-safe allowlist + a detection-aware `±1 s` keeper-origin ladder (GOAL-KICKS ONLY, ADR-028-reprojected; open-play GK passes keep native — validated 0.4 m) behind the opt-in `distrust_native_origin` flag; S4 out-of-region native-goalkick guard + countable flag; S1 layered within-pitch invariant (`derive_goalkeepers` stays the catastrophic player backstop, S1 = thin player band + the sole ball off-pitch signal); C1 removed the mixed-provider `completion=` escape hatch. Full-tracking providers byte-identical; SkillCorner `xt_gk` serve output changes → lakehouse re-materializes). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -30,6 +30,20 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 ### Blocked or Deferred
 
+- **SkillCorner keeper-origin S1/S4 rate-gates (tracked follow-up, ADR-024 4.37.0 amendment / PR-S104).**
+  The per-row warns are the alarm; the standing CI rate-gates are the smoke detector (a count nothing
+  routinely checks is the silent-guard failure mode). **Must land** (not open-ended): (i) measure the
+  SkillCorner off-pitch rate on the pining corpus (DGX) → set the S1 player margin / ball `TOL` + a
+  batch/CI gate that hard-fails when the off-pitch rate exceeds the measured baseline + margin (a
+  123-type transform break); (ii) measure the out-of-region native-goalkick rate → wire a CI gate
+  asserting no provider exceeds a small %. Both reference ADR-024 + the design/plan docs
+  (`docs/superpowers/{specs,plans}/2026-06-30-skillcorner-keeper-origin-resolution*`).
+- **SkillCorner keeper-origin — empirical validation + remaining deferrals (ADR-024 4.37.0 / PR-S104).**
+  On real pining SkillCorner data: confirm goal-kick origins ≈ 100% own-box, pass origins localize, the
+  scatter SD collapses. **Validate-then-maybe:** the open-play own-half misdetection bound — after the
+  fix, check whether pass origins still land in the attacking half; only if they persist, add a generous
+  own-half bound (beyond → `unresolved`/flagged, never clamped). **Measure-before-optimize:** the
+  `_tracking_gk_xy_detected` per-row ±window loop (vectorize only if it shows as a corpus hotspot).
 - **TF-7 cross-family pitch-control cache in VAEP xfns (deferred).** `add_*`
   aggregators accept `pitch_control_cache` (3.25.0); the `*_xfns` VAEP transformers
   do not yet thread a shared cache across feature families in one pass (each keeps

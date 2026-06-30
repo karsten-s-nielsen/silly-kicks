@@ -1,6 +1,6 @@
 # ADR-024: xT-GK (Eyestone) — pure parametric GK-distribution-value feature
 
-**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4; amended 2026-06-27 — PEV/DZV fidelity fix, Eyestone Q1–Q3, 4.35.0, PR-S100; amended 2026-06-29 — resolved-coordinate audit columns, 4.36.0, PR-S101)
+**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4; amended 2026-06-27 — PEV/DZV fidelity fix, Eyestone Q1–Q3, 4.35.0, PR-S100; amended 2026-06-29 — resolved-coordinate audit columns, 4.36.0, PR-S101; amended 2026-06-30 — SkillCorner keeper-origin resolution / broadcast-tracking domain fix, 4.37.0, PR-S104)
 **Deciders:** Karsten (with Claude); collaborator Jeffrey Eyestone (metric author)
 **Related:** ADR-005 (tracking feature surfaces), ADR-019 (id-dtype contract), ADR-020 (frame-aware xfns frame-id resolution), ADR-021 (pluggable xT), ADR-011 (trained-model lifecycle — explicitly NOT applicable here)
 
@@ -299,6 +299,71 @@ which coordinates produced each value — especially the imputed origins.
 **Consequences.** Additive — no change to any existing `xt_gk_*` value, no retrain trigger. Unblocks the
 lakehouse persist-coords schema migration (held on this) and the analysis side's end-to-end orientation
 verification against live data. C4 count unchanged (28).
+
+## Amendment (4.37.0) — SkillCorner keeper-origin resolution (broadcast-tracking domain fix)
+
+**Context.** SkillCorner broadcast tracking records a GK-distribution's SPADL origin as the **ball-detection
+event location, not the keeper's position** (goal-kick `start_x` SD 23.2; own-box rate 51% vs ~100% for
+full-tracking providers; passes 60% own-box). `resolve_gk_geometry` trusted that non-NaN native origin
+(`origin_source=native`, confidence 1.0), corrupting `xt_gk` base/DZV and the keeper pressure/PEV (computed at
+the wrong position). The destination is **not** affected — the broadcast ball *endpoint* is genuinely where the
+ball went; only the origin suffers "ball-location ≠ keeper-location".
+
+**Decision.** Native-origin trust is **provider-dependent**, decided at the `compute_xt_gk` edge (which already
+resolves the single provider for the completion variant) and passed as an explicit opt-in into the geometry engine.
+
+- **Fail-safe allowlist** (`native_origin_is_trusted`, NOT a denylist). Unknown / `None` / future providers →
+  **distrust**; only known full-tracking providers (`gradientsports`, `idsse`, `metrica`, `sportec`, `statsbomb`,
+  `wyscout`) trust the native origin. A denylist would let a new broadcast source silently corrupt origins
+  (mirrors the access_tier privacy default). The regression gate is preserved: every full-tracking provider is
+  allowlisted → frozen native-first path → byte-identical.
+- **Detection-aware ladder — GOAL-KICKS ONLY** (`distrust_native_origin` on `resolve_restart_geometry` /
+  `resolve_gk_geometry`, default-off). Scope narrowed to goal-kicks after real-data validation (below): a
+  goal-kick resolves by (1) keeper **detected within ±1 s** (`visibility`-gated, nearest-in-time
+  ties→at-or-before; window centred on the action clock per ADR-017), **re-projected to action-LTR (ADR-028)**
+  and goal-area-clamped (`x ≤ 16.5`) → `tracking_gk`; else (2) rule-point `(5.5, 34)` → `goalkick_prior`.
+  **Open-play GK passes/throws are NOT distrusted** — they keep their native origin (the ball is AT the keeper
+  when they release it, so native IS the keeper). **`unresolved` is now a rare residual** (a NaN-native open-play
+  pass with no detection). **Origin-only:** a dedicated `origin_eligible` mask locks goal-kicks out of the origin
+  cascade while the destination cascade is untouched (byte-identical destination resolution for all providers).
+- **ADR-028 re-projection (correctness):** the detected keeper is sampled in the frame's home-attacks-right
+  convention but consumed by `compute_xt_gk` in action-LTR; `_tracking_gk_xy_detected` point-reflects it
+  (`x→105−x, y→68−y`) for away-team actions before the clamp/return. Without this, away-team origins land at the
+  wrong end of the pitch (caught only by home-AND-away tests, not the original home-only fixtures).
+- **S4 out-of-region guard** (`flag_native_goalkick_out_of_region`): a native goal-kick origin beyond the penalty
+  area warns + sets the machine-observable per-row flag `xt_gk_native_goalkick_out_of_region` (a provenance
+  column, not a metric — kept out of `_OUTPUT_COLS` like `_COORD_COLS`) + `XtGkReport.n_native_goalkick_out_of_region`.
+  Never reverts/crashes.
+- **S1 within-pitch invariant — LAYERED division of labour** (the contract recorded explicitly): the per-row
+  **catastrophic** hard-fail for player coords is the pre-existing `derive_goalkeepers` raise at
+  `[_SPADL_X_MIN, _SPADL_X_MAX] × [_SPADL_Y_MIN, _SPADL_Y_MAX]` — it protects the positional GK-id algorithm from
+  garbage coords and trips loudly on a sign/origin transform break; **untouched** (softening it to warn would
+  trade a loud crash for a silent wrong-GK across every provider — fail-unsafe). S1's `n_gross_off_pitch`
+  warn+count is (a) a thin observability band a fixed margin **inside** that shared bound for players (expressed
+  relative to the constant so the two never drift), and (b) the **sole** off-pitch signal for the **ball**
+  (`derive_goalkeepers` is player-only). The deferred CI rate-gate is the systematic backstop for both.
+- **C1 (Hyrum-surface):** the mixed-provider `completion=` escape hatch was removed — `compute_xt_gk` now enforces
+  one-call-one-match uniformly across the completion AND geometry paths (a >1-provider frame set raises even with
+  `completion=`). Verified no caller relied on it. The shared resolution is single-sourced in `_resolve_single_provider`.
+
+**Real-data validation (Databricks bronze + pining, owner-run).** On 4 pining SkillCorner matches the goal-kick
+fix collapses the origin scatter exactly as predicted: own-box **57.1% → 100.0%**, origin_x **SD 23.4 → 0.0**. On a
+bronze match (real `is_visible`, 55% detection) the **decisive** native-vs-detected-keeper distance is **0.4 m for
+open-play GK passes** (native IS the keeper → distrust would discard a correct origin → scope narrowed to
+goal-kicks) but **14–20 m for goal-kicks** (native is the downfield broadcast artifact → distrust justified). The
+same run surfaced the ADR-028 orientation bug (away passes 97.6 m off = an exact 180° reflection). S1
+`n_gross_off_pitch = 0` on 935k real frames (no false fires).
+
+**Consequences.** `xt_gk` is opt-in (no default xfn list) → **not** a forced VAEP retrain, but the **`xt_gk`
+serve output for SkillCorner GOAL-KICKS** changes → the lakehouse re-materializes those rows (open-play GK passes
+are **unchanged** — they keep native — so the blast radius collapses onto goal-kicks; `unresolved` is now rare, so
+the lakehouse's `unresolved`→NULL render applies to far fewer rows). Full-tracking providers are byte-identical
+(regression-gated by the default-off flag + a discrimination test). **Deferred
+(empirical, tracked follow-ups, not silent):** the S1 player margin / ball `TOL` + both CI rate-gate thresholds
+(calibrate from the measured bronze + corpus rates on the pining corpus); the open-play own-half misdetection
+bound (validate-then-maybe); the `_tracking_gk_xy_detected` window perf (measure-before-optimize). C4 count
+unchanged (28). **Out of scope (lakehouse L4):** the mart `xt_gk_origin_source` enum, `unresolved`→NULL render,
+`access_tier`, and the `fct_tracking_frames` re-point.
 
 ## References
 

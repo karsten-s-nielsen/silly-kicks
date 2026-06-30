@@ -50,6 +50,7 @@ _PROVENANCE_COLS = [
     "xt_gk_origin_confidence",
     "xt_gk_completion_variant",
     "xt_gk_completion_source",
+    "xt_gk_native_goalkick_out_of_region",  # S4 data-quality flag (CR 2026-06-30); provenance, not a metric
 ]
 
 
@@ -74,6 +75,7 @@ class XtGkReport:
     completion_variant_counts: dict[str, int]
     completion_source_counts: dict[str, int]  # model vs base_rate (per-type serve gate); mirrors value_counts
     spans_multiple_variants: bool
+    n_native_goalkick_out_of_region: int = 0  # S4 (CR 2026-06-30): countable data-quality signal
 
     @classmethod
     def from_frame(cls, df: pd.DataFrame) -> XtGkReport:
@@ -100,6 +102,11 @@ class XtGkReport:
             completion_variant_counts={str(k): int(v) for k, v in cvc.items()},
             completion_source_counts={str(k): int(v) for k, v in csc.items()},
             spans_multiple_variants=bool(len(cvc) > 1),
+            n_native_goalkick_out_of_region=int(
+                df["xt_gk_native_goalkick_out_of_region"].sum()
+                if "xt_gk_native_goalkick_out_of_region" in df.columns
+                else 0
+            ),
         )
 
 
@@ -351,6 +358,22 @@ def _completion_p(
     return model.predict_proba(feats)
 
 
+def _resolve_single_provider(frames: pd.DataFrame) -> str | None:
+    """The single REAL tracking provider for a one-match frame set (``snapshot`` excluded, C3).
+    Raises on >1 (one call = one match = one provider). Returns None when no provider tag is present.
+    Single-sourced (CR 2026-06-30 L1): used by both the completion-variant resolution AND the
+    geometry distrust decision, so the rule lives in one place."""
+    provs = []
+    if "source_provider" in frames.columns:
+        provs = [p for p in pd.unique(frames["source_provider"].dropna()) if str(p).lower() != "snapshot"]
+    if len(provs) > 1:
+        raise ValueError(
+            f"xT-GK: frames span multiple real providers {sorted(map(str, provs))}; one call = one "
+            "match = one provider. Pass an explicit completion= model for a mixed/cross-provider stack."
+        )
+    return str(provs[0]) if provs else None
+
+
 def _resolve_completion_for_frames(frames: pd.DataFrame, completion: GkCompletionModel | None):
     """Resolve the GK-completion model + its variant key for a ``compute_xt_gk`` call (D-S2).
     Returns ``(model, variant_key)`` -- the key feeds the ``xt_gk_completion_variant`` provenance
@@ -363,15 +386,7 @@ def _resolve_completion_for_frames(frames: pd.DataFrame, completion: GkCompletio
 
     if isinstance(completion, GkCompletionModel):
         return completion, (getattr(completion, "shipped_variant", None) or "custom")
-    provs = []
-    if "source_provider" in frames.columns:
-        provs = [p for p in pd.unique(frames["source_provider"].dropna()) if str(p).lower() != "snapshot"]
-    if len(provs) > 1:
-        raise ValueError(
-            f"xT-GK: frames span multiple real providers {sorted(map(str, provs))}; one call = one "
-            "match = one provider. Pass an explicit completion= model for a mixed/cross-provider stack."
-        )
-    key = variant_key_for_provider(provs[0] if provs else None)
+    key = variant_key_for_provider(_resolve_single_provider(frames))
     try:
         return GkCompletionModel.from_variant(key), key
     except FileNotFoundError:
@@ -410,7 +425,11 @@ def compute_xt_gk(
     leakage).
 
     See NOTICE for full bibliographic citations (Eyestone xT-GK)."""
-    from ._gk_geometry import resolve_gk_geometry
+    from ._gk_geometry import (
+        flag_native_goalkick_out_of_region,
+        native_origin_is_trusted,
+        resolve_gk_geometry,
+    )
     from .features import pressure_on_actor  # lazy: avoids an import cycle at module load
     from .utils import link_actions_to_frames
 
@@ -429,6 +448,11 @@ def compute_xt_gk(
     # frame set spanning >1 REAL provider is a linkage/ingestion bug (one call = one match = one
     # provider); `snapshot` is a synthetic frames-only tag, excluded from the uniqueness check (C3).
     completion_model, completion_key = _resolve_completion_for_frames(frames, completion)
+    # Provider-aware native-origin trust (CR 2026-06-30 H1/C1): a broadcast provider's native origin
+    # is a ball-detection artifact, not the keeper -> distrust + route through the detection-aware
+    # ladder. The same single-source provider resolution enforces one-call-one-match uniformly (C1:
+    # a >1-provider frame set now raises here too, even with completion= supplied).
+    distrust = not native_origin_is_trusted(_resolve_single_provider(frames))
 
     out = pd.DataFrame(
         {c: np.full(len(actions), np.nan, dtype=float) for c in _OUTPUT_COLS},
@@ -441,6 +465,7 @@ def compute_xt_gk(
     out["xt_gk_origin_confidence"] = np.full(len(actions), np.nan, dtype=float)
     out["xt_gk_completion_variant"] = np.full(len(actions), None, dtype=object)
     out["xt_gk_completion_source"] = np.full(len(actions), None, dtype=object)
+    out["xt_gk_native_goalkick_out_of_region"] = np.zeros(len(actions), dtype=bool)  # S4 (CR 2026-06-30)
 
     in_scope = _gk_distribution_mask(actions, frames)
     # Link once (reuse caller-supplied pointers): pressure_on_actor + resolve_gk_geometry +
@@ -451,7 +476,12 @@ def compute_xt_gk(
     # NaN native origin gets an imputed origin (in-area tracking-GK -> rule point); a NaN native
     # destination resolves to the in-period next-event start. Provenance + confidence emitted
     # for every in-scope row (off-scope rows stay NaN provenance).
-    geom = resolve_gk_geometry(actions, frames=frames, links=pointers)
+    geom = resolve_gk_geometry(
+        actions,
+        frames=frames,
+        links=pointers,
+        distrust_native_origin=distrust,
+    )
     out.loc[in_scope, "xt_gk_origin_source"] = geom.loc[in_scope, "origin_source"].to_numpy()
     out.loc[in_scope, "xt_gk_dest_source"] = geom.loc[in_scope, "dest_source"].to_numpy()
     out.loc[in_scope, "xt_gk_origin_confidence"] = geom.loc[in_scope, "origin_confidence"].to_numpy()
@@ -462,6 +492,9 @@ def compute_xt_gk(
     out.loc[in_scope, "xt_gk_origin_y"] = geom.loc[in_scope, "origin_y"].to_numpy()
     out.loc[in_scope, "xt_gk_dest_x"] = geom.loc[in_scope, "dest_x"].to_numpy()
     out.loc[in_scope, "xt_gk_dest_y"] = geom.loc[in_scope, "dest_y"].to_numpy()
+    # S4 (CR 2026-06-30): warn + per-row machine-observable flag for an implausible native goal-kick
+    # origin (provider feeding ball-location-as-origin). Never reverts; XtGkReport sums it.
+    out["xt_gk_native_goalkick_out_of_region"] = flag_native_goalkick_out_of_region(actions, geom)
 
     # B2 NaN-safety contract (ADR-003) implemented in the BODY (the @nan_safe_enrichment
     # marker confers no behavior). Route in-scope rows with a NaN identifier to the NaN default.
@@ -487,7 +520,10 @@ def compute_xt_gk(
     xt_star = _convolve_grid(xt.xT, p.convolution_sigma)  # raw -- base + RAV (Option B, unchanged)
     # GK-revalued surface V_GK = xT (.) phi(z,d); convolved like xT*. PEV + DZV read this; base +
     # RAV stay raw (the Eyestone invariant: phi enters value via PEV and DZV ONLY).
-    phi_grid = _phi_grid(xt.xT.shape, p.dzv_alpha, p.dzv_beta, p.dzv_d_max, p.defensive_third_boundary)
+    # explicit 2-tuple: numpy's ``.shape`` types as tuple[int, ...] on some stub versions, which
+    # fails _phi_grid's tuple[int, int] param under the CI pyright (pre-existing cross-version nit).
+    xt_shape = (int(xt.xT.shape[0]), int(xt.xT.shape[1]))
+    phi_grid = _phi_grid(xt_shape, p.dzv_alpha, p.dzv_beta, p.dzv_d_max, p.defensive_third_boundary)
     vgk_star = _convolve_grid(np.asarray(xt.xT, float) * phi_grid, p.convolution_sigma)
     vgk_max = float(np.nanmax(vgk_star))
 

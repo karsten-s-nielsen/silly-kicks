@@ -52,9 +52,27 @@ _TRIPWIRE = {
     "throw_in": lambda x, y: y <= 3.0 or y >= 65.0,
 }
 
+# Provider-aware native-origin trust (CR 2026-06-30 H1). FAIL-SAFE allowlist: unknown / None / future
+# providers default to DISTRUST (route the GK-distribution origin through the detection-aware ladder);
+# only KNOWN full-tracking providers are trusted to carry a real keeper origin in start_x. A denylist
+# would let a new broadcast source silently corrupt origins (mirrors the access_tier privacy default).
+# The regression gate is preserved: every currently-tested full-tracking provider is named here ->
+# frozen native-first path -> byte-identical.
+_NATIVE_ORIGIN_TRUSTED = frozenset({"gradientsports", "idsse", "metrica", "sportec", "statsbomb", "wyscout"})
+
+
+def native_origin_is_trusted(provider: str | None) -> bool:
+    """True iff ``provider`` is a known full-tracking source whose SPADL ``start_x`` is a real keeper
+    position (not a broadcast ball-detection artifact). Unknown / None -> False (distrust)."""
+    return provider is not None and str(provider).lower() in _NATIVE_ORIGIN_TRUSTED
+
 
 def resolve_gk_geometry(
-    actions: pd.DataFrame, *, frames: pd.DataFrame | None, links: pd.DataFrame | None = None
+    actions: pd.DataFrame,
+    *,
+    frames: pd.DataFrame | None,
+    links: pd.DataFrame | None = None,
+    distrust_native_origin: bool = False,
 ) -> pd.DataFrame:
     """Goal-kick coordinate derivation (the frozen pre-promotion contract). Returns a frame indexed
     like ``actions`` with origin_x/origin_y/origin_source/origin_confidence + dest_x/dest_y/
@@ -66,7 +84,13 @@ def resolve_gk_geometry(
     no tripwire (pure engine). The shim then renames to the legacy columns, drops the dest-confidence
     column, and maps ``restart_prior`` -> ``goalkick_prior``. Public API; do NOT change the output
     contract (4 internal callers + the xT-GK completion path depend on it byte-for-byte)."""
-    g = resolve_restart_geometry(actions, frames=frames, links=links, impute_types=(_GOALKICK,))
+    g = resolve_restart_geometry(
+        actions,
+        frames=frames,
+        links=links,
+        impute_types=(_GOALKICK,),
+        distrust_native_origin=distrust_native_origin,
+    )
 
     # Whole-array numpy (no .loc-mask assignment -> index-independent, matches the original style).
     osrc = g["start_coord_source"].to_numpy().astype(object).copy()
@@ -126,6 +150,78 @@ def _tracking_gk_xy(actions: pd.DataFrame, frames: pd.DataFrame, links: pd.DataF
         gx, gy = float(gk.iloc[0]["x"]), float(gk.iloc[0]["y"])
         if gx <= _GOAL_AREA_DEPTH:  # clamp: off-position GK falls through to the rule point
             res[i] = (gx, gy)
+    return res
+
+
+def _tracking_gk_xy_detected(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    links: pd.DataFrame | None,
+    *,
+    window_s: float = 1.0,
+    clamp_goal_area: bool,
+) -> np.ndarray:
+    """Acting-team GK position resolved from a real broadcast detection within +/- ``window_s`` of
+    each action's linked frame (CR 2026-06-30 S3). 'Detected' = the GK's OWN frame row has
+    ``visibility`` truthy (coerced via :func:`_truthy_bool`; never interpolation). Picks
+    nearest-in-time, ties -> at-or-before (origin wants the pre-release keeper position).
+    The detected position is sampled in the FRAME convention (``convert_to_frames`` is
+    home-attacks-right) and **re-projected to action-LTR** (ADR-028) before the clamp/return, since
+    ``compute_xt_gk`` consumes the origin in the acting-team-LTR frame -- the two agree for home
+    actions and are a 180-degree point reflection apart for away actions. Without this, away-team
+    origins land at the wrong end of the pitch. ``clamp_goal_area`` then requires the (re-projected,
+    action-LTR) x <= ``_GOAL_AREA_DEPTH`` (goal-kick semantics) else NaN.
+
+    The window is centred on the action's OWN ``time_seconds`` (ADR-017: actions and frames share the
+    period-relative clock), so resolution does NOT depend on the linker finding an anchor frame -- a GK
+    distribution whose exact frame falls just outside the link tolerance still resolves from a visible
+    detection within +/- ``window_s``."""
+    from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH, acting_team_attacks_rtl
+    from ._id_compat import ids_match
+
+    n = len(actions)
+    res = np.full((n, 2), np.nan, dtype=float)
+    if "time_seconds" not in actions.columns:
+        return res  # no action clock -> cannot window (honest NaN; caller falls through)
+
+    # Restrict to DETECTED (visible) acting-team GK rows for the per-(game,period) window search.
+    gk = frames[
+        frames["is_goalkeeper"].astype(bool) & (~frames["is_ball"].astype(bool)) & _truthy_bool(frames["visibility"])
+    ].copy()
+    if gk.empty:
+        return res
+
+    # ADR-028 per-action re-projection flag (True => acting team attacks RTL in the frames => the
+    # frame-sampled GK position must be point-reflected to land in action-LTR).
+    flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    team_ids = actions["team_id"].to_numpy()
+    act_t = actions["time_seconds"].to_numpy(float)
+    act_period = actions["period_id"].to_numpy() if "period_id" in actions.columns else np.zeros(n)
+    gk_t = gk["time_seconds"].to_numpy(float)
+    gk_period = gk["period_id"].to_numpy() if "period_id" in gk.columns else np.zeros(len(gk))
+
+    for i in range(n):
+        t0 = act_t[i]
+        if not np.isfinite(t0):
+            continue
+        sel = (
+            ids_match(gk["team_id"], team_ids[i]).to_numpy()
+            & (gk_period == act_period[i])
+            & (np.abs(gk_t - t0) <= window_s)
+        )
+        if not sel.any():
+            continue
+        cand = gk[sel]
+        dt = cand["time_seconds"].to_numpy(float) - t0
+        # nearest-in-time; ties -> at-or-before (dt <= 0 preferred). Sort key (|dt|, dt > 0).
+        order = np.lexsort((dt > 0, np.abs(dt)))
+        row = cand.iloc[order[0]]
+        gx, gy = float(row["x"]), float(row["y"])
+        if flip[i]:  # ADR-028: frame home-LTR -> action-LTR for away-team actions
+            gx, gy = FIELD_LENGTH - gx, FIELD_WIDTH - gy
+        if clamp_goal_area and gx > _GOAL_AREA_DEPTH:
+            continue  # off-position -> NaN -> falls to rule point
+        res[i] = (gx, gy)
     return res
 
 
@@ -194,6 +290,7 @@ def resolve_restart_geometry(
     frames: pd.DataFrame | None = None,
     links: pd.DataFrame | None = None,
     impute_types: tuple[int, ...] | None = None,
+    distrust_native_origin: bool = False,
 ) -> pd.DataFrame:
     """General restart-coordinate enrichment. Returns an index-aligned frame with
     enriched_start_x/_y/enriched_end_x/_y + start_coord_source/start_coord_confidence +
@@ -236,14 +333,39 @@ def resolve_restart_geometry(
     osrc = np.where(np.isfinite(sx) & np.isfinite(sy), "native", "unresolved").astype(object)
     oconf = np.where(osrc == "native", 1.0, 0.0).astype(float)
 
-    need = (osrc == "unresolved") & eligible
+    # --- Broadcast distrust (CR 2026-06-30; scope narrowed to GOAL-KICKS ONLY in 4.37.0 after real-data
+    # validation). A goal-kick's native origin is the broadcast ball-detection ~14-20 m DOWNFIELD, not
+    # the keeper -> distrust + resolve via the detection ladder: detected keeper (re-projected to
+    # action-LTR, in-box clamp) -> ``tracking_gk``; else rule-point ``goalkick_prior``. Open-play GK
+    # passes/throws are NOT distrusted -- the ball is AT the keeper when they release it, so the native
+    # origin IS the keeper (validated 0.4 m vs the detected keeper); they keep native via the normal
+    # seed. DESTINATION is unchanged (origin-only), so we never mutate ``eligible`` (the destination
+    # cascade reads it); the origin cascade uses ``origin_eligible``. ---
+    origin_eligible = eligible
+    if distrust_native_origin and is_gk.any():
+        gk_det = (
+            _tracking_gk_xy_detected(actions, frames, links, clamp_goal_area=True)
+            if frames is not None
+            else np.full((n, 2), np.nan)
+        )
+        for i in np.where(is_gk)[0]:
+            if np.isfinite(gk_det[i, 0]):
+                ox[i], oy[i] = gk_det[i]
+                osrc[i], oconf[i] = "tracking_gk", _CONF_TRACKING_GK
+            else:
+                ox[i], oy[i] = _RULE_POINT
+                osrc[i], oconf[i] = "restart_prior", _PRIOR_CONF[_GOALKICK]
+        # lock goal-kicks out of the native-first ORIGIN cascade (destination still uses ``eligible``).
+        origin_eligible = eligible & ~is_gk
+
+    need = (osrc == "unresolved") & origin_eligible
     # tier 2a: goalkick in-area tracking-GK (goalkick ONLY; no tracking_ball for goalkick)
     if frames is not None and (need & is_gk).any():
         gk = _tracking_gk_xy(actions, frames, links)
         use = need & is_gk & np.isfinite(gk[:, 0])
         ox[use], oy[use] = gk[use, 0], gk[use, 1]
         osrc[use], oconf[use] = "tracking_gk", _CONF_TRACKING_GK
-        need = (osrc == "unresolved") & eligible
+        need = (osrc == "unresolved") & origin_eligible
     # tier 2b: tracking-ball (NON-goalkick eligible rows). Skipped entirely on the goalkick-only
     # (frozen) path -- (need & ~is_gk) is empty there, so _tracking_ball_xy is never called.
     if frames is not None and (need & ~is_gk).any():
@@ -251,7 +373,7 @@ def resolve_restart_geometry(
         use = need & ~is_gk & np.isfinite(ball[:, 0])
         ox[use], oy[use] = ball[use, 0], ball[use, 1]
         osrc[use], oconf[use] = "tracking_ball", _CONF_TRACKING_BALL
-        need = (osrc == "unresolved") & eligible
+        need = (osrc == "unresolved") & origin_eligible
     # tier 3: restart rule-points (restart-prior types only). _side_y / _throwin_x computed ONLY
     # when a corner/throw-in actually needs them (avoids wasted _tracking_ball_xy on the frozen path).
     side = _side_y(actions, frames, links) if (need & (is_corner | is_throw)).any() else None
@@ -352,3 +474,23 @@ def apply_restart_tripwire(out: pd.DataFrame) -> int:
     out["enriched_start_x"], out["enriched_start_y"] = sx, sy
     out["start_coord_source"], out["start_coord_confidence"] = ssrc, sconf
     return reverts
+
+
+def flag_native_goalkick_out_of_region(actions: pd.DataFrame, geom: pd.DataFrame) -> np.ndarray:
+    """S4 (CR 2026-06-30): per-row bool flag for a NATIVE goal-kick origin beyond the penalty area
+    (x > ``_GOAL_AREA_DEPTH`` in LTR own-half coords) -- physically implausible (a goal kick is taken
+    from the goal area). Warns (data-quality signal pointing upstream); NEVER reverts/crashes (one bad
+    row must not fail a match). Countable: the caller sums it into an observable report field."""
+    tid = actions["type_id"].to_numpy()
+    ox = geom["origin_x"].to_numpy(float)
+    src = geom["origin_source"].to_numpy().astype(object)
+    flags = (tid == _GOALKICK) & (src == "native") & np.isfinite(ox) & (ox > _GOAL_AREA_DEPTH)
+    n = int(flags.sum())
+    if n:
+        warnings.warn(
+            f"resolve_gk_geometry: {n} native goal-kick origin(s) beyond the penalty area "
+            f"(x > {_GOAL_AREA_DEPTH}); data-quality signal (provider may feed ball-location as "
+            "origin -- route through native_origin_is_trusted/the distrust ladder). Not reverted.",
+            stacklevel=2,
+        )
+    return flags

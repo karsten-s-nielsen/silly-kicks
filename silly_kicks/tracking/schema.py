@@ -130,6 +130,12 @@ class TrackingConversionReport:
     spot-check 'for matches where source=derived, who did we pick?'.
     ADR-007."""
 
+    n_gross_off_pitch: int = 0
+    """Count of player/ball rows whose post-transform coords fell GROSS off-pitch beyond tolerance
+    (CR 2026-06-30 S1). A correct centre-origin -> SPADL transform keeps bodies within the pitch
+    except a tolerance (keepers behind the goal line; out-of-play ball); a non-zero count is a
+    coordinate-transform / ingestion data-quality signal. Warned-and-counted, NEVER clamped."""
+
     @property
     def has_unrecognized(self) -> bool:
         return len(self.unrecognized_player_ids) > 0
