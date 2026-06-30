@@ -5,6 +5,45 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.37.0] — 2026-06-30
+
+### Changed — SkillCorner keeper-origin resolution (broadcast-tracking domain fix, ADR-024 amendment)
+
+SkillCorner broadcast tracking records the GK-distribution origin as the **ball-detection event
+location, not the keeper's position** (goal-kick `start_x` SD 23.2; own-box rate 51% vs ~100% for
+full-tracking providers). `resolve_gk_geometry` previously trusted that non-NaN native origin,
+corrupting `xt_gk` base/DZV and the keeper pressure/PEV. This release makes native-origin trust
+**provider-aware** and resolves SkillCorner keeper origins via a detection-aware ladder.
+
+- **Fail-safe provider allowlist** (`native_origin_is_trusted`): unknown / `None` / future providers
+  default to **distrust** (route through the ladder); only known full-tracking providers
+  (`gradientsports`, `idsse`, `metrica`, `sportec`, `statsbomb`, `wyscout`) trust the native origin.
+- **Detection-aware ladder — GOAL-KICKS ONLY** (opt-in `distrust_native_origin` on
+  `resolve_restart_geometry` / `resolve_gk_geometry`, default-off → byte-identical): a goal-kick's
+  origin resolves by **detected keeper within ±1 s** (`visibility`-gated, nearest-in-time
+  ties→at-or-before), **re-projected to action-LTR (ADR-028)** + in-box clamp → `tracking_gk`; else
+  rule-point `(5.5, 34)` → `goalkick_prior`. **Open-play GK passes/throws keep their native origin**
+  (the ball is at the keeper when they release it → native IS the keeper, validated 0.4 m). Scope
+  narrowed from the CR's all-GK-distributions after real-data validation (`unresolved` now rare).
+  Destination unchanged (origin-only distrust).
+- **S4 out-of-region guard** (`flag_native_goalkick_out_of_region`): a native goal-kick origin
+  beyond the penalty area warns + sets a machine-observable per-row flag
+  (`xt_gk_native_goalkick_out_of_region`) + `XtGkReport.n_native_goalkick_out_of_region`; never
+  reverts/crashes.
+- **S1 within-pitch invariant** (`skillcorner.convert_to_frames`): per-row off-pitch → warn +
+  `TrackingConversionReport.n_gross_off_pitch`, never clamp. **Layered:** the per-row catastrophic
+  hard-fail for player coords stays the pre-existing `derive_goalkeepers` raise (a sign/origin
+  transform break trips it; unchanged); S1 adds a thin observability band a fixed margin **inside**
+  that shared bound for players, and is the **sole** off-pitch signal for the ball
+  (`derive_goalkeepers` is player-only). The deferred CI rate-gate is the systematic backstop.
+- **C1 (Hyrum-surface, named explicitly):** removed the mixed-provider `completion=` escape hatch.
+  `compute_xt_gk` now enforces one-call-one-match uniformly across the completion AND geometry paths
+  (a >1-provider frame set raises even with `completion=`). Verified no caller relied on it.
+
+`xt_gk` is opt-in (in no default xfn list) so this is **not** a forced VAEP retrain, but it changes
+the **`xt_gk` serve output for SkillCorner** GK distributions → the lakehouse re-materializes.
+Full-tracking providers (GS/idsse/metrica/sportec) are byte-identical (regression-gated).
+
 ## [4.36.1] — 2026-06-29
 
 ### Added / Docs — xT-GK pre-Jeff verification (handoff Items 2 + 4)

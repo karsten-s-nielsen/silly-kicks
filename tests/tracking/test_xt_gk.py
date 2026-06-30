@@ -40,6 +40,7 @@ _PROVENANCE_COLS = [
     "xt_gk_origin_confidence",
     "xt_gk_completion_variant",
     "xt_gk_completion_source",
+    "xt_gk_native_goalkick_out_of_region",  # S4 flag (CR 2026-06-30)
 ]
 
 

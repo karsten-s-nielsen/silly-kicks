@@ -11,6 +11,7 @@ that the luxury-lakehouse previously duplicated. See spec
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -22,7 +23,13 @@ import pandas as pd
 # is NOT the metrica cross-wire the review flagged -- metrica.py has its own per-period-min clock.
 from silly_kicks.spadl.skillcorner import _PERIOD_START_SECONDS
 
-from ._gk_identification import derive_goalkeepers
+from ._gk_identification import (
+    _SPADL_X_MAX,
+    _SPADL_X_MIN,
+    _SPADL_Y_MAX,
+    _SPADL_Y_MIN,
+    derive_goalkeepers,
+)
 from .direction import orient_frames_to_ltr_by_geometry, require_et_direction
 from .schema import SKILLCORNER_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 from .utils import _derive_speed, orient_frames_to_ltr
@@ -46,6 +53,39 @@ EXPECTED_INPUT_COLUMNS: tuple[str, ...] = (
     "is_visible",
     "frame_rate",
 )
+
+# S1 within-pitch invariant (CR 2026-06-30, ADR-024 amendment). LAYERED:
+#  * PLAYERS: the per-row CATASTROPHIC backstop is the PRE-EXISTING `derive_goalkeepers` raise at
+#    [_SPADL_X_MIN, _SPADL_X_MAX] x [_SPADL_Y_MIN, _SPADL_Y_MAX] (it protects the positional GK-id
+#    algorithm from garbage coords -- a sign/origin transform break trips it loudly; do NOT soften
+#    it). S1 adds a THIN observability band a fixed margin INSIDE that bound (expressed RELATIVE to
+#    the shared constant so the two never drift): mildly-off-pitch players warn+count before they
+#    would crash. Legit behind-goal keepers (SPADL x ~= -7.5..116) stay inside the band.
+#  * BALL: `derive_goalkeepers` is player-ONLY, so the ball has NO existing guard -- S1's warn+count
+#    is its SOLE off-pitch signal (and correctly never crashes: a long clearance out of play is
+#    legit; only the aggregate rate-gate flags a systematic ball break).
+# The deferred CI rate-gate is the SYSTEMATIC backstop for both. TOL_BALL provisional (re-calibrate
+# from the measured bronze on the pining corpus). The shared SPADL bounds are imported at the top.
+_S1_PLAYER_MARGIN = 3.0  # S1 player band sits this far INSIDE the shared derive_goalkeepers bound
+_TOL_BALL = 30.0  # ball tolerance (m); ball has no existing guard -> S1 is its sole signal
+
+
+def _count_gross_off_pitch(x: pd.Series, y: pd.Series, is_ball: pd.Series) -> int:
+    """Count rows whose SPADL coords fall off-pitch beyond the per-kind S1 tolerance (CR 2026-06-30).
+    Pure; no mutation. Players use the shared ``derive_goalkeepers`` bound minus
+    ``_S1_PLAYER_MARGIN`` (a thin band just inside the catastrophic crash); the ball uses the wider
+    standalone ``_TOL_BALL`` (no existing guard)."""
+    px = x.to_numpy(float)
+    py = y.to_numpy(float)
+    ball = is_ball.to_numpy(bool)
+    px_lo, px_hi = _SPADL_X_MIN + _S1_PLAYER_MARGIN, _SPADL_X_MAX - _S1_PLAYER_MARGIN
+    py_lo, py_hi = _SPADL_Y_MIN + _S1_PLAYER_MARGIN, _SPADL_Y_MAX - _S1_PLAYER_MARGIN
+    x_lo = np.where(ball, -_TOL_BALL, px_lo)
+    x_hi = np.where(ball, 105.0 + _TOL_BALL, px_hi)
+    y_lo = np.where(ball, -_TOL_BALL, py_lo)
+    y_hi = np.where(ball, 68.0 + _TOL_BALL, py_hi)
+    off = (px < x_lo) | (px > x_hi) | (py < y_lo) | (py > y_hi)
+    return int(np.nansum(off))
 
 
 def convert_to_frames(
@@ -155,6 +195,21 @@ def convert_to_frames(
     # clocks.)
     df["time_seconds"] = df["time_seconds"] - df["period_id"].map(_PERIOD_START_SECONDS).fillna(0.0).astype(float)
 
+    # S1 within-pitch invariant (CR 2026-06-30): a correct centre-origin -> SPADL transform keeps
+    # bodies within the pitch except a tolerance for legitimately off-pitch ones (keepers behind the
+    # goal line; out-of-play ball). Per-row GROSS off-pitch -> warn + count; NEVER clamp/crash (one
+    # noisy row must not fail a match). A SYSTEMATIC fraction off-pitch is caught by the deferred CI
+    # rate-gate. TOL provisional -- re-calibrate from the measured bronze range on the pining corpus.
+    n_gross_off_pitch = _count_gross_off_pitch(df["x"], df["y"], df["is_ball"])
+    if n_gross_off_pitch:
+        warnings.warn(
+            f"skillcorner.convert_to_frames: {n_gross_off_pitch} row(s) off-pitch beyond the S1 "
+            "tolerance (player band inside the derive_goalkeepers bound / ball "
+            f"{_TOL_BALL} m) -- possible coordinate-transform or ingestion issue upstream. "
+            "Not clamped (catastrophic player coords are separately raised by derive_goalkeepers).",
+            stacklevel=2,
+        )
+
     df = df.sort_values(["player_id", "frame_id"]).reset_index(drop=True)
     df = _derive_speed(df)
 
@@ -218,5 +273,6 @@ def convert_to_frames(
         unrecognized_player_ids=set(),
         n_teams_gk_derived=n_derived,
         derived_gk_picks=derived_picks,
+        n_gross_off_pitch=n_gross_off_pitch,
     )
     return final, report
