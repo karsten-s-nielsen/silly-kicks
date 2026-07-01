@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-30. **Current release**: silly-kicks 4.37.0 (SkillCorner keeper-origin resolution — broadcast-tracking domain fix, ADR-024 amendment, PR-S104: provider-aware native-origin trust via a fail-safe allowlist + a detection-aware `±1 s` keeper-origin ladder (GOAL-KICKS ONLY, ADR-028-reprojected; open-play GK passes keep native — validated 0.4 m) behind the opt-in `distrust_native_origin` flag; S4 out-of-region native-goalkick guard + countable flag; S1 layered within-pitch invariant (`derive_goalkeepers` stays the catastrophic player backstop, S1 = thin player band + the sole ball off-pitch signal); C1 removed the mixed-provider `completion=` escape hatch. Full-tracking providers byte-identical; SkillCorner `xt_gk` serve output changes → lakehouse re-materializes). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-06-30. **Current release**: silly-kicks 4.38.0 (SkillCorner GK identification — trust the native roster, PR-S105: `skillcorner.convert_to_frames` discarded the clean native roster `is_goalkeeper` and re-derived positionally every call → on the lakehouse's 250-frame batches a transiently goal-parked outfielder gets flagged, union ~15 "keepers"/team → `xt_gk` scored 19–24 players/match. Fix: trust the batch-invariant roster (`is_goalkeeper_source="native"`, skip `derive_goalkeepers`; derive only as fallback when native absent) — real-bronze per-batch union 15/13→1/1; + S2 guard `n_implausible_gk_teams`. SkillCorner-only; `xt_gk` serve output changes → lakehouse re-materializes). Prior: 4.37.0 (PR-S104 keeper-origin resolution, ADR-024). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -30,6 +30,13 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 ### Blocked or Deferred
 
+- **Metrica GK identification — derive once per match, not per batch (follow-up to PR-S105).** The 4.38.0
+  SkillCorner fix trusts the native roster, but Metrica is anonymized (no roster) and **must** derive
+  positionally — so it has the same per-250-frame-batch contamination (a transiently goal-parked outfielder
+  flagged; union grows across the lakehouse's batch builds). Roster-trust can't fix it. Needs a **derive-once-
+  per-full-match** path: a separable silly-kicks API (derive-once / accept pre-derived `is_goalkeeper` picks)
+  + a lakehouse change (derive once, feed `is_goalkeeper` into the per-batch builds). The S2
+  `n_implausible_gk_teams` guard already surfaces it. Spec'd in the PR-S105 CR's out-of-scope note.
 - **SkillCorner keeper-origin S1/S4 rate-gates (tracked follow-up, ADR-024 4.37.0 amendment / PR-S104).**
   The per-row warns are the alarm; the standing CI rate-gates are the smoke detector (a count nothing
   routinely checks is the silent-guard failure mode). **Must land** (not open-ended): (i) measure the

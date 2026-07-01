@@ -5,6 +5,32 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.38.0] — 2026-06-30
+
+### Fixed — SkillCorner GK identification: trust the native roster (batching bug)
+
+`tracking.skillcorner.convert_to_frames` discarded the clean native roster `is_goalkeeper` and
+**re-derived it positionally** via `derive_goalkeepers` on every call. Stable on a full match, but on
+the lakehouse's 250-frame batches a transiently goal-parked outfielder (a defending CB / camped
+forward) gets flagged; across ~164 per-batch builds the **union reached ~15 "keepers"/team** — so
+`xt_gk` (a goalkeeper metric) was computed for **19–24 players/match** (≈ both full squads) on the
+public SkillCorner gold instead of the ~1–2 keepers. (GS / sportec / idsse were immune — their
+converters already trust the native roster.)
+
+- **S1 — trust the roster:** when the input `is_goalkeeper` is a valid native flag (≥1 GK per
+  `(game_id, team_id)`), use it as-is (`is_goalkeeper_source = "native"`) and **skip
+  `derive_goalkeepers`**; derive only as a fallback for a `(game, team)` whose native flag is absent.
+  This makes SkillCorner **batching-immune** (the roster flag is identical in every batch — verified on
+  real bronze: per-batch union **15/13 → 1/1 per team**), matching `gradientsports.py`/`sportec.py`.
+- **S2 — loud, observable guard:** `warnings.warn` + `TrackingConversionReport.n_implausible_gk_teams`
+  when a resolved per-`(game, team)` GK count is implausible (`>2` or `0`). Never fires once the roster
+  is trusted, but guards the derive-fallback path so squad-wide contamination can't recur silently.
+
+Regression: GS / sportec / idsse / **metrica** keeper identification unchanged (SkillCorner-only).
+This is an `xt_gk` serve-output change for SkillCorner (far fewer scored players) → the lakehouse
+re-materializes. **Out of scope (follow-up):** Metrica (no roster) is contaminated the same way and
+needs derive-once-per-match (not per batch) — a separable silly-kicks + lakehouse change.
+
 ## [4.37.0] — 2026-06-30
 
 ### Changed — SkillCorner keeper-origin resolution (broadcast-tracking domain fix, ADR-024 amendment)
