@@ -136,6 +136,12 @@ class TrackingConversionReport:
     except a tolerance (keepers behind the goal line; out-of-play ball); a non-zero count is a
     coordinate-transform / ingestion data-quality signal. Warned-and-counted, NEVER clamped."""
 
+    n_implausible_gk_teams: int = 0
+    """Count of (game_id, team_id) whose resolved is_goalkeeper count is implausible (>2 or 0)
+    (CR 2026-06-30 S2). A reliable per-team GK is ~1 (2 with a sub); a higher count means whole-squad
+    contamination (positional derivation on a small window) and 0 means a missing roster flag. Warned
+    and counted; a machine-observable signal so squad-wide GK contamination cannot recur silently."""
+
     @property
     def has_unrecognized(self) -> bool:
         return len(self.unrecognized_player_ids) > 0

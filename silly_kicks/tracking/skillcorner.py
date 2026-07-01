@@ -213,19 +213,48 @@ def convert_to_frames(
     df = df.sort_values(["player_id", "frame_id"]).reset_index(drop=True)
     df = _derive_speed(df)
 
-    # GK derivation + agreement-based source (mirror the kloppy gateway)
+    # GK identification: TRUST the native roster is_goalkeeper (CR 2026-06-30 S1). SkillCorner ships a
+    # reliable per-player GK role (skillcorner_matches.position_acronym, verified 1/team); use it as-is
+    # and DERIVE ONLY for a (game, team) whose native flag is absent. The previous unconditional
+    # derive_goalkeepers re-derived positionally every call -- stable on a full match but on a 250-frame
+    # batch a transiently goal-parked outfielder gets flagged, and across the lakehouse's per-batch
+    # builds the union reached ~15 "keepers"/team. Trusting the batch-invariant roster makes SkillCorner
+    # batching-immune (and matches gradientsports.py / sportec.py, which already roster-trust).
+    players = df[~df["is_ball"].astype(bool)]
     native_gk = {
-        (str(g), str(t)): set(grp.loc[grp["is_goalkeeper"], "player_id"].dropna().astype(str))
-        for (g, t), grp in df[~df["is_ball"]].groupby(["game_id", "team_id"], sort=False)
+        (str(g), str(t)): set(grp.loc[grp["is_goalkeeper"].astype(bool), "player_id"].dropna().astype(str))
+        for (g, t), grp in players.groupby(["game_id", "team_id"], sort=False)
     }
-    df, derived_picks = derive_goalkeepers(df)
-    n_derived = 0
+    absent = [(g, t) for (g, t), gks in native_gk.items() if not gks]
+    derived_picks: dict[tuple[str, str], list[str]] = {}
+    if absent:  # fallback ONLY for teams with no native GK (a data-quality edge, not the norm)
+        df, derived_picks = derive_goalkeepers(
+            df, teams=pd.MultiIndex.from_tuples(absent, names=["game_id", "team_id"])
+        )
+    n_derived = len(derived_picks)
     df["is_goalkeeper_source"] = None
-    for (g, t), algo in derived_picks.items():
-        source_val = "native" if set(algo) == native_gk.get((g, t), set()) else "derived"
-        n_derived += source_val == "derived"
-        m = (df["game_id"] == g) & (df["team_id"] == t) & ~df["is_ball"]
-        df.loc[m, "is_goalkeeper_source"] = source_val
+    for g, t in native_gk:
+        m = (df["game_id"].astype(str) == g) & (df["team_id"].astype(str) == t) & ~df["is_ball"].astype(bool)
+        df.loc[m, "is_goalkeeper_source"] = "derived" if (g, t) in derived_picks else "native"
+
+    # S2 guard (CR 2026-06-30): a resolved per-(game, team) GK count outside [1, 2] is implausible
+    # (squad-wide contamination, or a missing roster). Warn + count; never fires once the 1/team roster
+    # is trusted, but guards the derive-fallback path + any future provider/path that derives.
+    resolved = df[~df["is_ball"].astype(bool)]
+    gk_count: dict[tuple[str, str], int] = {
+        (str(g), str(t)): int(grp["player_id"].nunique())
+        for (g, t), grp in resolved[resolved["is_goalkeeper"].astype(bool)].groupby(["game_id", "team_id"], sort=False)
+    }
+    over = {f"{g}/{t}": n for (g, t), n in gk_count.items() if n > 2}
+    zero = [f"{g}/{t}" for g, t in native_gk if (g, t) not in gk_count]
+    n_implausible_gk_teams = len(over) + len(zero)
+    if n_implausible_gk_teams:
+        warnings.warn(
+            f"skillcorner.convert_to_frames: {n_implausible_gk_teams} (game, team) with implausible "
+            f"GK count -- >2: {over or '{}'}; 0: {zero or '[]'}. Likely squad-wide GK contamination "
+            "or a missing roster flag.",
+            stacklevel=2,
+        )
 
     final = pd.DataFrame({c: df[c] for c in SKILLCORNER_TRACKING_FRAMES_COLUMNS})
     for c, dt in SKILLCORNER_TRACKING_FRAMES_COLUMNS.items():
@@ -274,5 +303,6 @@ def convert_to_frames(
         n_teams_gk_derived=n_derived,
         derived_gk_picks=derived_picks,
         n_gross_off_pitch=n_gross_off_pitch,
+        n_implausible_gk_teams=n_implausible_gk_teams,
     )
     return final, report
