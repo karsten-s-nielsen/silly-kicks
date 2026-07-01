@@ -14,6 +14,7 @@ Public API:
 - tracking_default_xfns: list[FrameAwareTransformer]
 - pre_shot_gk_default_xfns: list[FrameAwareTransformer]   (PR-S21)
 - defending_gk_from_frames(actions, frames) -> pd.Series       (PR-S27, TF-13)
+- acting_gk_from_frames(actions, frames) -> pd.Series          (PR-S106; mirror + identity fallback)
 - defensive_line_x / back_line_high_x / compactness_x / lateral_width /
   max_lateral_gap / back_n_count (actions, frames, *, home_team_id) (PR-S27, TF-14)
 - add_defensive_line(actions, frames, *, home_team_id) -> pd.DataFrame  (PR-S27)
@@ -59,7 +60,7 @@ from ._action_orientation import (
     reproject_to_action_ltr,
 )
 from ._ball_carrier import infer_ball_carrier
-from ._gk_resolve import defending_gk_from_frames
+from ._gk_resolve import acting_gk_from_frames, defending_gk_from_frames
 from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
@@ -81,6 +82,7 @@ _STANDARD_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot
 
 __all__ = [
     "Method",
+    "acting_gk_from_frames",
     "actor_arc_length_pre_window",
     "actor_displacement_pre_window",
     "actor_pre_window_default_xfns",

@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-06-30. **Current release**: silly-kicks 4.38.0 (SkillCorner GK identification — trust the native roster, PR-S105: `skillcorner.convert_to_frames` discarded the clean native roster `is_goalkeeper` and re-derived positionally every call → on the lakehouse's 250-frame batches a transiently goal-parked outfielder gets flagged, union ~15 "keepers"/team → `xt_gk` scored 19–24 players/match. Fix: trust the batch-invariant roster (`is_goalkeeper_source="native"`, skip `derive_goalkeepers`; derive only as fallback when native absent) — real-bronze per-batch union 15/13→1/1; + S2 guard `n_implausible_gk_teams`. SkillCorner-only; `xt_gk` serve output changes → lakehouse re-materializes). Prior: 4.37.0 (PR-S104 keeper-origin resolution, ADR-024). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-07-01. **Current release**: silly-kicks 4.39.0 (`acting_gk_from_frames` — acting-team GK resolver, PR-S106: public mirror of `defending_gk_from_frames` (TF-13) returning the acting team's GK `player_id` per action, with an **identity fallback** (resolve the roster-stable `is_goalkeeper` identity even when the keeper is undetected at the linked goal-kick frame — ~40% on broadcast) + GK-sub nearest-in-time. Shared body factored → defending byte-identical. Additive, pure resolver — enables the lakehouse's separate goal-kick actor-override handoff, which fixes goal-kick `xt_gk` being credited to 29–35 outfielders/match instead of the keeper). Prior: 4.38.0 (PR-S105 SkillCorner GK roster-trust). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

@@ -12,7 +12,80 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ._id_compat import ids_match
 from .utils import link_actions_to_frames
+
+
+def _gk_from_frames_linked(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    same_team: bool,
+    tolerance_seconds: float,
+) -> pd.Series:
+    """Shared body of the two public resolvers: per-action GK player_id from the LINKED frame.
+
+    Links each action to the nearest frame (within tolerance) and returns the ``is_goalkeeper`` row
+    whose team matches (``same_team=True``, the ACTING team's GK) or differs (``same_team=False``, the
+    OPPOSING/defending GK) from the action's team. Deterministic lowest-player_id tiebreak; output cast
+    to frames' ``player_id`` dtype. ``same_team=False`` reproduces the original
+    ``defending_gk_from_frames`` byte-for-byte (only the team predicate is parameterized)."""
+    pid_dtype = frames["player_id"].dtype
+
+    n = len(actions)
+    out = pd.Series(np.full(n, np.nan), index=actions.index, dtype="object")
+
+    if n == 0 or len(frames) == 0:
+        return out
+
+    pointers, _report = link_actions_to_frames(actions, frames, tolerance_seconds=tolerance_seconds)
+
+    gk_rows = frames[(frames["is_goalkeeper"] == True) & (~frames["is_ball"])].copy()  # noqa: E712
+    if gk_rows.empty:
+        return out
+
+    ptr = pointers.merge(
+        actions[["action_id", "team_id", "period_id"]],
+        on="action_id",
+        how="left",
+    )
+    linked = ptr[ptr["frame_id"].notna()].copy()
+    if linked.empty:
+        return out
+
+    linked["frame_id_int"] = linked["frame_id"].astype("int64")
+    gk_in_frame = linked.merge(
+        gk_rows[["period_id", "frame_id", "team_id", "player_id"]].rename(
+            columns={"team_id": "gk_team_id", "player_id": "gk_player_id"}
+        ),
+        left_on=["period_id", "frame_id_int"],
+        right_on=["period_id", "frame_id"],
+        how="inner",
+    )
+
+    # Team predicate: acting team (==) vs opposing team (!=). NaN action team_id -> comparison False -> dropped.
+    match_team = gk_in_frame["gk_team_id"] == gk_in_frame["team_id"]
+    picked = gk_in_frame[match_team if same_team else ~match_team]
+
+    if picked.empty:
+        return out
+
+    # Deterministic tiebreak: lowest player_id per action
+    best = picked.sort_values("gk_player_id").drop_duplicates("action_id", keep="first")
+
+    action_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
+    for _, row in best.iterrows():
+        aid = row["action_id"]
+        if aid in action_to_idx.index:
+            out.loc[action_to_idx.loc[aid]] = row["gk_player_id"]
+
+    # Cast to match frames dtype if numeric
+    if pid_dtype == np.dtype("int64") or str(pid_dtype) == "Int64":
+        out = pd.to_numeric(out, errors="coerce")
+        if str(pid_dtype) == "Int64":
+            out = out.astype("Int64")
+
+    return out
 
 
 def defending_gk_from_frames(
@@ -55,67 +128,89 @@ def defending_gk_from_frames(
 
     See NOTICE for full bibliographic citations.
     """
-    # Determine output dtype from frames' player_id
-    pid_dtype = frames["player_id"].dtype
+    return _gk_from_frames_linked(actions, frames, same_team=False, tolerance_seconds=tolerance_seconds)
 
-    n = len(actions)
-    out = pd.Series(np.full(n, np.nan), index=actions.index, dtype="object")
 
-    if n == 0 or len(frames) == 0:
+def acting_gk_from_frames(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    tolerance_seconds: float = 0.2,
+) -> pd.Series:
+    """Per-action ACTING-team GK player_id resolved from tracking frames (mirror of
+    :func:`defending_gk_from_frames` with the team predicate inverted, CR 2026-07-01).
+
+    For each action, returns the acting team's goalkeeper ``player_id``. Unlike the pure per-frame link
+    (which returns NaN whenever the keeper is not detected in the linked frame), this adds an **identity
+    fallback**: the acting team's GK is resolved from the roster-stable ``is_goalkeeper`` identity for
+    that ``(game_id, team_id)`` even when the keeper is undetected at the linked frame — essential for
+    goal-kicks on broadcast tracking, where the keeper is missing at ~40% of event frames. When a
+    ``(game, team)`` has more than one ``is_goalkeeper`` identity (a keeper substitution), the one whose
+    frames are **nearest-in-time** to the action is chosen.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions with action_id, period_id, time_seconds, team_id (game_id used when present).
+    frames : pd.DataFrame
+        Long-form tracking frames (TRACKING_FRAMES_COLUMNS shape).
+    tolerance_seconds : float, default 0.2
+        Maximum |time_offset| for the per-frame link (the identity fallback is time-tolerance-free).
+
+    Returns
+    -------
+    pd.Series
+        Aligned with actions.index; dtype matches frames' player_id dtype. NaN only where the acting
+        team has no ``is_goalkeeper`` identity anywhere in the frames, or ``team_id`` is NaN.
+
+    Notes
+    -----
+    Pure resolver — it never mutates ``actions``. Deciding WHEN to apply it (e.g. overriding a
+    goal-kick's NULL taker with the keeper) is the consumer's synthesis step, not this function's.
+
+    See NOTICE for full bibliographic citations.
+    """
+    out = _gk_from_frames_linked(actions, frames, same_team=True, tolerance_seconds=tolerance_seconds)
+    need = out.isna().to_numpy()
+    if not need.any() or len(frames) == 0:
         return out
 
-    pointers, _report = link_actions_to_frames(actions, frames, tolerance_seconds=tolerance_seconds)
-
-    # Build lookup: for each (period_id, frame_id), the GK player_id per team
-    gk_rows = frames[(frames["is_goalkeeper"] == True) & (~frames["is_ball"])].copy()  # noqa: E712
+    gk_rows = frames[(frames["is_goalkeeper"] == True) & (~frames["is_ball"])]  # noqa: E712
     if gk_rows.empty:
         return out
 
-    # Join pointers with actions to get action team_id + period_id
-    ptr = pointers.merge(
-        actions[["action_id", "team_id", "period_id"]],
-        on="action_id",
-        how="left",
-    )
-    # Filter to linked actions only
-    linked = ptr[ptr["frame_id"].notna()].copy()
-    if linked.empty:
-        return out
+    use_game = "game_id" in actions.columns and "game_id" in gk_rows.columns
+    # game arrays are dummy (empty) when use_game is False -- only read inside the ``if use_game`` guard,
+    # but kept as ndarrays (not None) so the game filter stays statically subscriptable.
+    gk_team = gk_rows["team_id"].to_numpy()
+    gk_game = gk_rows["game_id"].to_numpy() if use_game else np.zeros(len(gk_rows))
+    gk_time = gk_rows["time_seconds"].to_numpy(float)
+    gk_pid = gk_rows["player_id"].to_numpy()
 
-    # Join with GK rows on (period_id, frame_id) to find GKs in linked frame
-    linked["frame_id_int"] = linked["frame_id"].astype("int64")
-    gk_in_frame = linked.merge(
-        gk_rows[["period_id", "frame_id", "team_id", "player_id"]].rename(
-            columns={"team_id": "gk_team_id", "player_id": "gk_player_id"}
-        ),
-        left_on=["period_id", "frame_id_int"],
-        right_on=["period_id", "frame_id"],
-        how="inner",
-    )
+    act_team = actions["team_id"].to_numpy()
+    act_game = actions["game_id"].to_numpy() if use_game else np.zeros(len(actions))
+    act_time = actions["time_seconds"].to_numpy(float)
 
-    # Filter to opposing team's GK (gk_team_id != action team_id)
-    # Handle NaN team_id on actions: comparison with NaN is False -> filtered out
-    opposing = gk_in_frame[gk_in_frame["gk_team_id"] != gk_in_frame["team_id"]]
+    # Series views for ids_match, built ONCE (not per loop iteration).
+    gk_team_s = pd.Series(gk_team)
+    gk_game_s = pd.Series(gk_game)
 
-    if opposing.empty:
-        return out
-
-    # Deterministic tiebreak: lowest player_id per action
-    opposing_sorted = opposing.sort_values("gk_player_id")
-    best = opposing_sorted.drop_duplicates("action_id", keep="first")
-
-    # Map back to actions index
-    action_to_idx = pd.Series(actions.index, index=actions["action_id"].to_numpy())
-    for _, row in best.iterrows():
-        aid = row["action_id"]
-        if aid in action_to_idx.index:
-            out.loc[action_to_idx.loc[aid]] = row["gk_player_id"]
-
-    # Cast to match frames dtype if numeric
-    if pid_dtype == np.dtype("int64") or str(pid_dtype) == "Int64":
-        out = pd.to_numeric(out, errors="coerce")
-        if str(pid_dtype) == "Int64":
-            out = out.astype("Int64")
+    for i in np.where(need)[0]:
+        t = act_team[i]
+        if pd.isna(t):
+            continue  # NaN team -> unresolvable (stays NaN)
+        sel = ids_match(gk_team_s, t).to_numpy()
+        if use_game:
+            sel = sel & ids_match(gk_game_s, act_game[i]).to_numpy()
+        if not sel.any():
+            continue  # no acting-team GK identity anywhere
+        cand_pid = gk_pid[sel]
+        distinct = pd.unique(cand_pid)
+        if len(distinct) == 1:
+            out.iloc[i] = distinct[0]
+        else:  # GK sub: nearest-in-time identity
+            cand_time = gk_time[sel]
+            out.iloc[i] = cand_pid[np.abs(cand_time - act_time[i]).argmin()]
 
     return out
 

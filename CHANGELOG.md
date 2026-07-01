@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.39.0] — 2026-07-01
+
+### Added — `acting_gk_from_frames` (acting-team GK resolver, PR-S106)
+
+A public composable resolver (`silly_kicks.tracking.acting_gk_from_frames`) — the **mirror of
+`defending_gk_from_frames`** (TF-13) — returning per action the **acting team's** goalkeeper
+`player_id` from tracking frames. Enables a downstream consumer to override a goal-kick's NULL taker
+(a goal-kick's taker is unambiguously the acting keeper, but the AC layer's ball-carrier fill credits
+whatever outfielder is near the downfield event ball → the value/origin were right, the *credit* was
+spread across 29–35 outfielders/match).
+
+- **Identity fallback:** unlike the pure per-frame link (which returns NaN whenever the keeper isn't
+  detected in the linked frame — ~40% of goal-kicks on broadcast tracking), it resolves the acting
+  GK from the **roster-stable `is_goalkeeper` identity** for that `(game_id, team_id)` even when
+  undetected at the event frame (relies on the 4.38.0 roster-trust that keeps `is_goalkeeper` set on
+  the keeper throughout the match).
+- **GK-sub safety:** a `(game, team)` with >1 keeper identity picks the one **nearest-in-time** to the
+  action.
+- Shared body factored (`_gk_from_frames_linked`, team predicate parameterized) → `defending_gk_from_frames`
+  is **byte-identical** (regression-gated). dtype matches frames' `player_id` (object vs Int64).
+
+Additive — no existing behavior changes; a **pure `player_id` resolver** (never mutates `actions`).
+Deciding *when* to apply it (the goal-kick actor override) is the lakehouse's separate synthesis step.
+
 ## [4.38.0] — 2026-06-30
 
 ### Fixed — SkillCorner GK identification: trust the native roster (batching bug)
