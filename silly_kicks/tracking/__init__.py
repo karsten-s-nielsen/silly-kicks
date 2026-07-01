@@ -66,6 +66,7 @@ __all__ = [
     "XShotOccurrenceModel",
     "XtGkParams",
     "XtGkReport",
+    "acting_gk_from_frames",
     "actor_arc_length_pre_window",
     "actor_displacement_pre_window",
     "actor_pre_window_default_xfns",
@@ -294,6 +295,7 @@ from ._xt_gk import XtGkParams, XtGkReport, compute_xt_gk
 from .direction import orient_frames_to_ltr_by_geometry, require_et_direction
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
+    acting_gk_from_frames,
     actor_arc_length_pre_window,
     actor_displacement_pre_window,
     actor_pre_window_default_xfns,
