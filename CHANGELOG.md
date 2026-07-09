@@ -5,6 +5,32 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.40.0] — 2026-07-09
+
+### Added — xT-GK v2 sub-project 1: honest possession-value surface `V(z,p)` (`silly_kicks/xtgk/`, PR-S107, ADR-036)
+
+A new hexagonal `silly_kicks/xtgk/` package delivering the value function that replaces xT-GK v1's
+flat, destination-only raw-xT surface. `V(z,p)` = expected xG the possessing team generates over the
+remainder of the possession, given the ball in 16×12 zone `z` under pressure level `p∈{1,2,3}`.
+
+- **`MarkovPossessionValue`** (production) — pressure-stratified value iteration reusing
+  `xthreat.value_iteration` verbatim, with (i) an **xG-calibrated first-shot immediate reward**
+  (`E[xG|shot]·P(shot)`; NOT the goal-gated `vaep.labels` surface), (ii) a **goal-kick-inclusive
+  move-set** (the metric scores keeper distributions), (iii) pressure terciles. `fit`/`value`/
+  `surface`/`delta_v` + pickle-free `save`/`load` (npz + JSON + SHA256).
+- **`EmpiricalPossessionValue`** (model-free cross-check, not shipped) — per-action first-shot
+  empirical surface; independent of the Markov estimator so disagreement is diagnostic.
+- **Pre-registered occupied-cell deep-zone gate** (`run_deep_zone_gate`/`GateConfig`) — the
+  make-or-break go/no-go; effect floor, `N_min`, direction, and cross-check tolerance are owner-locked.
+- **`delta_v`** two-factor Shapley split (`ΔV_pressure + ΔV_position = ΔV`) for the metric layer.
+- **Injected `xg_column`** — silly-kicks ships no xG model; the reward is sourced from the lakehouse
+  `fct_shot_xg` mart. `V` is fittable only where a calibrated per-shot xG exists (the fit cohorts).
+
+xtgk-local builders reuse `xthreat`'s low-level seams and modify **no** `xthreat` source — classic xT
+stays byte-identical (parity-gated over random cohorts + the frozen oracle). In **no** default xfn
+list (opt-in). Owner-run real-data gate wired in `scripts/validate_xtgk_possession_value.py`
+(blocked on the locked gate numbers). Attribution: Singh 2018 (xT lineage), Eyestone (xT-GK v2).
+
 ## [4.39.0] — 2026-07-01
 
 ### Added — `acting_gk_from_frames` (acting-team GK resolver, PR-S106)

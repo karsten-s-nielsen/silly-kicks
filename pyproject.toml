@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.39.0"
+version = "4.40.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -164,6 +164,8 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "tests/tracking/test_gradientsports_player_ids_e2e.py" = ["S310"]
 "silly_kicks/atomic/vaep/**/*.py" = ["N803", "N806"]
 "silly_kicks/xthreat/*.py" = ["N803", "N806", "E741"]
+# xtgk mirrors xthreat's (l, w) grid-dimension convention (E741 ambiguous `l`).
+"silly_kicks/xtgk/*.py" = ["N803", "N806", "E741"]
 # Ghost-GK: ML-style uppercase X for feature matrices
 "silly_kicks/tracking/_ghost_gk.py" = ["N803", "N806"]
 # Ghost-GK scripts: ML-style uppercase X, Y

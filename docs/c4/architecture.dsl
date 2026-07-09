@@ -23,6 +23,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, native + kloppy provider adapters, event-frame linkage, spatial + GKDV models (pitch control, OBSO, DAS, ghost-GK, xS/xCross/xT-GK), and 28 action-coupled aggregators." "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 33-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid, with a held-out transition-NLL evaluator." "Python" "Library"
+            xtgk = container "silly_kicks.xtgk" "xT-GK v2 possession value V(z,p): pressure-stratified Markov surface (goal-kick move-set, xG-calibrated first-shot reward) + model-free cross-check + pre-registered deep-zone gate; injected xg." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (pure objectives/CV/gates + frozen exogenous xT artifact) + scripts/ CLI + pining/Databricks loaders. Recommends tuned tracking/xT defaults; never changes library constants." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Per-provider raw-data parse ports (bytes -> provider bronze -> converter input). The Sportec/DFL parse+shape port single-sources the lakehouse DFL parser (golden-pinned). Behind the [parse-dfl] extra." "Python (optional [parse-dfl] extra)" "Library"
         }
@@ -64,6 +65,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         atomic -> vaep "Inherits VAEP pipeline via AtomicVAEP subclass" "Python import"
         atomic -> tracking "Reuses _kernels + lift_to_states from tracking namespace" "Python import"
         xthreat -> spadl "Reads SPADL config and schema from" "Python import"
+
+        // --- Relationships: xT-GK v2 possession value (ADR-036) ---
+        analyst -> xtgk "Fits the possession-value surface V(z,p) with an injected per-shot xg_column via" "MarkovPossessionValue.fit()"
+        xtgk -> xthreat "Reuses value_iteration + low-level transition/grid seams (no xthreat edits) via" "Python import"
+        xtgk -> spadl "Reads SPADL config + action-type ids from" "Python import"
 
         // --- Relationships: Calibration harness (TF-24) ---
         calibration -> ruthless "Drives Optuna TPE studies (CachedObjective fast path) via" "OptunaStrategy"
