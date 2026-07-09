@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 
 from silly_kicks.xtgk._empirical import EmpiricalPossessionValue
 from silly_kicks.xtgk._markov import MarkovPossessionValue
@@ -101,3 +102,37 @@ def run_deep_zone_gate(mk: MarkovPossessionValue, emp: EmpiricalPossessionValue,
         )
     )
     return DeepZoneGateReport(passed, effect, observed, monotone_ok, crosscheck, len(occ), reason)
+
+
+# --- Pre-gate input-QC reports (owner-run, ADR-036 §6 Q3 + §5 G8) --------------
+
+
+def ood_rate_by_source(
+    shot_xg: pd.DataFrame, *, source_col: str = "data_source", ood_col: str = "ood_flag"
+) -> dict[str, float]:
+    """Per-cohort out-of-distribution rate of the injected xG reward (Q3).
+
+    ``ood_flag`` rides on ``fct_shot_xg``; a high rate means the xG model is uncertified on that
+    cohort's shots (RM/SkillCorner is 100% OOD live) -> the gate verdict for that cohort is
+    provisional. Emitted pre-gate by the owner-run alongside the pressure-coverage report.
+    """
+    return {str(src): float(grp[ood_col].mean()) for src, grp in shot_xg.groupby(source_col, sort=False)}
+
+
+def frame_present_null_pressure_count(
+    actions: pd.DataFrame,
+    *,
+    pressure_col: str,
+    frame_present_col: str,
+    source_col: str = "data_source",
+) -> dict[str, int]:
+    """Per-cohort count of genuinely-unpressured restarts (frame present AND pressure null, §5 G8).
+
+    These are signal, not loss: an unpressured goal-kick coalesces to the LOW tercile (kept), not a
+    tracking gap. Reported so the operator sees how much of the deep-zone low tercile is restarts.
+    """
+    null_present = actions[frame_present_col].to_numpy(dtype=bool) & actions[pressure_col].isna().to_numpy()
+    sub = actions[null_present]
+    if source_col not in actions.columns:
+        return {"_all": len(sub)}
+    return {str(src): int(n) for src, n in sub.groupby(source_col, sort=False).size().items()}

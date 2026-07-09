@@ -50,6 +50,7 @@ class MarkovPossessionValue:
         xg_column: str,
         pressure_column: str,
         pressure_levels=None,
+        reward_provenance: dict | None = None,
     ) -> MarkovPossessionValue:
         diag = validate_possession_value_input(actions, xg_column=xg_column, pressure_column=pressure_column)
         if not diag.ok:
@@ -77,6 +78,11 @@ class MarkovPossessionValue:
             "cutpoints": pl.cutpoints,
             "n_actions": len(actions),
         }
+        # Q3 (ADR-036 §6): the caller (owner-run) summarizes the injected reward's quality
+        # (OOD-rate, xg-CI width) from fct_shot_xg and passes it here — silly-kicks records but
+        # never interprets ood_flag/CI semantics (no xG model shipped).
+        if reward_provenance is not None:
+            self.provenance["reward_provenance"] = reward_provenance
         return self
 
     def _solve_level(self, sub: pd.DataFrame, xg_column: str) -> npt.NDArray[np.float64]:

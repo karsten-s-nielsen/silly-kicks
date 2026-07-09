@@ -5,6 +5,29 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.41.0] — 2026-07-09
+
+### Added — xT-GK v2 SP1: Q3 xG-source wiring + G8 frame-aware null-pressure (`silly_kicks/xtgk/`, PR-S108, ADR-036 amendment)
+
+Increment on the 4.40.0 possession-value surface, resolving the two owner-only blockers against the
+live backend (spec rev 4 §5/§6). Additive; no production/xfn change; Phase 11 still wired-but-not-run
+(blocked on Q4 gate numbers only).
+
+- **G8 — frame-aware null-pressure rule.** New pure `coalesce_frame_present_null_pressure(pressure,
+  frame_present)`: a **frame-present + null-pressure** action (a genuinely *unpressured* restart — e.g.
+  a goal-kick with no opponent in the pressure region; 595/595 WC goal-kicks live) coalesces to **0 →
+  LOW tercile (kept)**, while a **frame-absent** null is left null so `PressureLevels.apply`'s fail-loud
+  stays the backstop for genuine tracking gaps. Corrects the original §5 blanket "fail-loud on missing
+  pressure", which would have silently dropped 60% of WC goal-kicks.
+- **Q3 — injected reward provenance.** `MarkovPossessionValue.fit(reward_provenance=)` records a
+  caller-supplied OOD-rate/CI summary from the lakehouse `fct_shot_xg.xg` mart (the injected
+  `xg_column`); silly-kicks never interprets `ood_flag`/CI semantics (ships no xG model). Pre-gate
+  input-QC helpers `ood_rate_by_source` + `frame_present_null_pressure_count` for the owner-run.
+  **Certification note: `fct_shot_xg.ood_flag` = 0 for gradientsports (certified) but 100% for
+  skillcorner (all RM shots OOD) → RM gate verdict is provisional.**
+- Owner-run `scripts/validate_xtgk_possession_value.py` wires the frame-aware prep + reports +
+  provenance (still not run). ADR-036 amended.
+
 ## [4.40.0] — 2026-07-09
 
 ### Added — xT-GK v2 sub-project 1: honest possession-value surface `V(z,p)` (`silly_kicks/xtgk/`, PR-S107, ADR-036)
