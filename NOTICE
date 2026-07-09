@@ -41,6 +41,11 @@ The Expected Threat (xT) grid (silly_kicks/xthreat/) seeds from:
 Singh, K. (2018). "Introducing Expected Threat (xT)." karun.in/blog/expected-threat
 The grid is recomputable from event data; the seed values are reference-only.
 
+The xT-GK v2 possession-value surface V(z,p) (silly_kicks/xtgk/) generalizes Singh's
+Markov value iteration (xT lineage above) to a pressure-stratified, xG-calibrated
+first-shot reward. Metric formulation: J. Eyestone, xT-GK v2 collaboration (2026);
+V(z,p) = E[xG over the remainder of the possession | zone z, pressure p]. See ADR-036.
+
 - Silverman, B. W. (1986). "Density Estimation for Statistics and Data Analysis."
   Chapman & Hall.
   Used by: silly_kicks.xthreat (method="kde_smoothed"), silverman_2d.
