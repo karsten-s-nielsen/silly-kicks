@@ -60,7 +60,7 @@ from ._action_orientation import (
     reproject_to_action_ltr,
 )
 from ._ball_carrier import infer_ball_carrier
-from ._gk_resolve import acting_gk_from_frames, defending_gk_from_frames
+from ._gk_resolve import acting_gk_from_frames, defending_gk_from_frames, gk_distribution_mask
 from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
@@ -126,6 +126,7 @@ __all__ = [
     "ghost_gk_xfns",
     "gk_closing_time_mean_s",
     "gk_closing_time_min_s",
+    "gk_distribution_mask",
     "gk_influence_xfns",
     "gk_pitch_control_share_weighted",
     "gk_reachable_area_m2",

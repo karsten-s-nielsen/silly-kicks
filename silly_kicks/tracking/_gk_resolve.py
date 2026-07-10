@@ -9,11 +9,109 @@ See spec: docs/superpowers/specs/2026-05-04-tf13-tf14-defensive-line-design.md s
 
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
-from ._id_compat import ids_match
+from silly_kicks.spadl import config as spadlconfig
+
+from ._id_compat import canonical_id_series, ids_equal, ids_match
 from .utils import link_actions_to_frames
+
+_GOALKICK = spadlconfig.actiontype_id["goalkick"]
+_PASS = spadlconfig.actiontype_id["pass"]
+_THROW_IN = spadlconfig.actiontype_id["throw_in"]
+
+
+def gk_distribution_mask(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame | None = None,
+    *,
+    resolve_gk: Literal["native", "robust"] = "robust",
+    tolerance_seconds: float = 0.2,
+) -> pd.Series:
+    """Per-action boolean: is this a GK distribution? (goal-kick OR pass/throw-in by the acting GK).
+
+    True for any ``goalkick`` (actor-independent), OR a ``pass``/``throw_in`` whose actor is the
+    acting team's goalkeeper. Returns a bool ``pd.Series`` aligned to ``actions.index``.
+
+    Parameters
+    ----------
+    actions : pd.DataFrame
+        SPADL actions. Required columns: ``type_id``, ``player_id``, ``team_id`` (and
+        ``period_id``/``time_seconds``/``game_id`` used by the frame link when ``frames`` is given).
+    frames : pd.DataFrame | None, default None
+        Long-form tracking frames (TRACKING_FRAMES_COLUMNS). ``None`` -> goal-kicks-only (the GK
+        open-play-pass term is undetectable without frames; both modes degrade to goal-kicks).
+    resolve_gk : {"native", "robust"}, default "robust"
+        ``"robust"`` resolves the acting GK per action via :func:`acting_gk_from_frames` (time-accurate,
+        roster-identity fallback) -- the default and the resolver the lakehouse pins for its goal-kick
+        taker override. ``"native"`` uses a global ``frames[is_goalkeeper]`` (game,team,player)
+        set-membership (reproduces the frozen v1 mask byte-for-byte; used by the v1 shim). For the GK-pass
+        term ``robust`` is a subset of ``native`` (it tightens stale/substituted keepers, never broadens).
+    tolerance_seconds : float, default 0.2
+        Frame-link tolerance passed to :func:`acting_gk_from_frames` (robust only).
+
+    Notes
+    -----
+    Pure (never mutates ``actions``); dtype-safe id matching (ADR-019); NaN actor -> not in scope.
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from silly_kicks.tracking import gk_distribution_mask
+    >>> actions = pd.DataFrame(
+    ...     {"type_id": [22, 0], "player_id": [10, 1], "team_id": [5, 5]}
+    ... )
+    >>> gk_distribution_mask(actions, frames=None).tolist()  # goal-kicks-only without frames
+    [True, False]
+    """
+    missing = [c for c in ("type_id", "player_id", "team_id") if c not in actions.columns]
+    if missing:
+        raise ValueError(f"gk_distribution_mask: actions missing required column(s) {missing}")
+
+    type_id = actions["type_id"].to_numpy()
+    is_goalkick = type_id == _GOALKICK
+    is_open = np.isin(type_id, (_PASS, _THROW_IN))
+
+    if frames is None:
+        return pd.Series(is_goalkick, index=actions.index)
+
+    if resolve_gk == "native":
+        actor_is_gk = _native_actor_is_gk(actions, frames)
+    elif resolve_gk == "robust":
+        acting_gk = acting_gk_from_frames(actions, frames, tolerance_seconds=tolerance_seconds)
+        actor_is_gk = ids_equal(actions["player_id"], acting_gk).to_numpy()
+    else:
+        raise ValueError(f"resolve_gk must be 'native' or 'robust', got {resolve_gk!r}")
+
+    mask = is_goalkick | (is_open & actor_is_gk)
+    return pd.Series(mask, index=actions.index)
+
+
+def _native_actor_is_gk(actions: pd.DataFrame, frames: pd.DataFrame) -> npt.NDArray[np.bool_]:
+    """Positional bool array: is each action's (game,team,player) in the frames' is_goalkeeper set?
+
+    Byte-identical to the frozen v1 ``_gk_distribution_mask`` set-membership block (global over all
+    frames, NOT the linked frame). dtype-safe via ``canonical_id_series`` (ADR-019).
+    """
+    gk = frames[frames["is_goalkeeper"].astype(bool) & (~frames["is_ball"].astype(bool))]
+    keyed_by_game = "game_id" in actions.columns and "game_id" in frames.columns
+
+    gk_team = canonical_id_series(gk["team_id"]).to_numpy()
+    gk_player = canonical_id_series(gk["player_id"]).to_numpy()
+    act_team = canonical_id_series(actions["team_id"]).to_numpy()
+    act_player = canonical_id_series(actions["player_id"]).to_numpy()
+    if keyed_by_game:
+        gk_game = canonical_id_series(gk["game_id"]).to_numpy()
+        act_game = canonical_id_series(actions["game_id"]).to_numpy()
+        gk_set = set(zip(gk_game, gk_team, gk_player, strict=True))
+        return np.array([(g, t, p) in gk_set for g, t, p in zip(act_game, act_team, act_player, strict=True)])
+    gk_set = set(zip(gk_team, gk_player, strict=True))
+    return np.array([(t, p) in gk_set for t, p in zip(act_team, act_player, strict=True)])
 
 
 def _gk_from_frames_linked(

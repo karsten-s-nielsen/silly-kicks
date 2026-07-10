@@ -104,3 +104,40 @@ regardless.
 DROPS the residual frame-absent tracking-gap nulls (the §5 backstop's intent — `PressureLevels.apply` was
 raising on them); (2) a NaN-safe `flat_zones` helper at the four zone-binning seams (real cohorts carry NaN
 start/end coords; `xthreat._get_flat_indexes` int-cast would crash).
+
+## Amendment (2026-07-10, 4.43.0/PR-S110) — public `gk_distribution_mask` + ρ loader `is_gk_distribution`
+
+A lakehouse export request: expose the private GK-distribution domain logic (`_gk_distribution_mask`,
+`tracking/_xt_gk.py`) as a public, stable, **frame-optional** API so the lakehouse pins one function to
+materialize a per-action `is_gk_distribution` column rather than reimplementing it.
+
+- **New public `tracking.gk_distribution_mask(actions, frames=None, *, resolve_gk="robust")`** (in the
+  non-frozen `_gk_resolve.py`, beside `acting_gk_from_frames`). `True` for any goal-kick (actor-independent)
+  OR a pass/throw-in by the acting GK. Returns a bool `pd.Series` aligned to `actions.index`. `frames=None`
+  → goal-kicks-only (the GK open-play-pass term is undetectable without frames).
+- **`resolve_gk` lever.** `"native"` = the frozen global-`frames[is_goalkeeper]` (game,team,player)
+  set-membership. `"robust"` (default) = per-action time-accurate resolution via `acting_gk_from_frames`
+  (linked-frame + roster-identity fallback). **For the GK-pass term `robust ⊆ native`** — it *tightens*
+  stale/substituted keepers (native over-includes a substituted-off keeper whose player is still in the
+  global set), it never broadens. It is also the resolver the lakehouse pins for its goal-kick-taker
+  override, so the domain stays consistent with that override (the reason it is the default). The
+  `~40%-undetected-keeper` figure motivates that *taker override*, NOT the mask's GK-pass term.
+- **v1 freeze preserved (M5).** The frozen `_gk_distribution_mask` becomes a **byte-identical shim** over
+  `gk_distribution_mask(..., resolve_gk="native")` (golden-gated on a fixture containing a native GK
+  open-play pass, so the set-membership branch is actually covered). Its three consumers (v1 compute,
+  completion, features) are unaffected. No import cycle (`_gk_resolve` never imports `_xt_gk`).
+- **Lakehouse contract:** `fct_action_context.is_gk_distribution` (per-action bool) ≡
+  `gk_distribution_mask(actions, frames, resolve_gk="robust")`.
+- **ρ retention loader/trainer** stop reading the shot-scoped `gk_was_distributing` (a misuse of the
+  `add_pre_shot_gk_context` shot feature — that feature is unchanged) and adopt a **self-adapting**,
+  **NULL-coalesced** `is_gk_distribution` domain: `goal-kicks ∪ COALESCE(is_gk_distribution, FALSE)`. The
+  loader probes `fct_action_context` with a **catalog-qualified** existence check
+  (`soccer_analytics.information_schema…`, never a bare `information_schema`) and includes the column only
+  when present — absent/NULL → goal-kicks-only (today's behaviour; bundled `default` ρ model unchanged). The
+  self-adapting probe is **transitional** (collapse to an unconditional read once the column is permanently
+  materialized, alongside the deferred ρ retrain on the broadened domain).
+- **Additive** — no `xt_gk`/VAEP value change, no retrain. C4 count stays 28 (a resolver, not an
+  action-coupled aggregator).
+- **Discovered, out of scope:** `acting_gk_from_frames` compares action-team vs frame-team ids with a raw
+  `==` (`_gk_resolve.py`), dtype-fragile if those ever differ (same-provider dtypes match in practice) —
+  tracked in `TODO.md`, not fixed here (Chesterton's Fence).

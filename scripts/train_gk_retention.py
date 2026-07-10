@@ -26,16 +26,16 @@ def prepare_retention_training_data(
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
     """Build (features, labels, groups) from a full attack-LTR action stream (marts-native).
 
-    Domain = **goal-kicks** (the mart-reliable GK-distribution subset; the acting-GK-pass resolution
-    is frames-based and unavailable in the sanctioned marts) UNION any materialized
-    ``gk_was_distributing`` flag. ``retains`` is computed on the FULL stream then masked. Drops
-    geometry-unscoreable + truncated-window (NaN-label) rows -> observed labels only.
+    Domain = **goal-kicks** (the mart-reliable GK-distribution subset) UNION the materialized
+    ``is_gk_distribution`` flag (= tracking.gk_distribution_mask, resolve_gk="robust"; NULLs coalesced
+    to False -- the rollout population is out of scope, not dropped). ``retains`` is computed on the FULL
+    stream then masked. Drops geometry-unscoreable + truncated-window (NaN-label) rows.
     """
     import silly_kicks.spadl.config as spadlconfig
 
     mask = actions["type_id"].to_numpy() == spadlconfig.actiontype_id["goalkick"]
-    if "gk_was_distributing" in actions.columns:
-        mask = mask | actions["gk_was_distributing"].fillna(False).to_numpy(dtype=bool)
+    if "is_gk_distribution" in actions.columns:
+        mask = mask | actions["is_gk_distribution"].fillna(False).to_numpy(dtype=bool)
     X_full = extract_retention_features(actions, pressure_column=pressure_column)
     y_full = retains(actions).to_numpy(dtype=float)  # 1.0 / 0.0 / NaN (truncated windows)
     domain = np.asarray(mask, dtype=bool)
@@ -68,7 +68,7 @@ def cross_val_oof(X: pd.DataFrame, y: np.ndarray, groups: np.ndarray) -> np.ndar
 
 # --- owner-run trainer (gold marts -> features -> calibrate -> fit -> bundle) ---------------------
 # NOT exercised in CI (needs Databricks read access). Marts-native (tracking-frames deprecated):
-# fct_action_values (geometry/type/result/possession/gk_was_distributing) + fct_action_context (pressure).
+# fct_action_values (geometry/type/result/possession) + fct_action_context (pressure + is_gk_distribution).
 
 
 def main() -> int:

@@ -8,7 +8,7 @@ def test_prepare_retention_training_data_builds_labels_and_features():
     from scripts.train_gk_retention import prepare_retention_training_data
     from tests.xtgk.conftest import three_band_cohort
 
-    actions = three_band_cohort()  # no gk_was_distributing column -> goalkick-only domain fallback
+    actions = three_band_cohort()  # no is_gk_distribution column -> goalkick-only domain fallback
     X, y, groups = prepare_retention_training_data(actions)
     assert len(X) == len(y) == len(groups)
     assert set(np.unique(y)) <= {0, 1}
