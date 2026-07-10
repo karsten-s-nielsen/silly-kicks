@@ -4,8 +4,60 @@ import pytest
 
 from silly_kicks.xtgk._pressure_levels import (
     PressureLevels,
+    band_of_zone,
     coalesce_frame_present_null_pressure,
 )
+from silly_kicks.xthreat._grid import N  # grid length (16)
+
+
+def test_band_of_zone_deep_is_columns_0_and_1():
+    # flat = (w-1-yj)*l + xi ; deep band = xi in {0,1}
+    assert band_of_zone(0, N) == 0  # xi=0
+    assert band_of_zone(1, N) == 0  # xi=1
+    assert band_of_zone(2, N) == 1  # xi=2
+    assert band_of_zone(N + 5, N) == 1  # xi=5 on the next row
+
+
+def test_zone_conditional_terciles_are_within_band():
+    # deep band globally LOW pressure (0..0.2); rest band HIGH (0.6..1.0). Global terciles would push
+    # ALL deep actions into level 1; zone-conditional must give each band its own ~1/3-1/3-1/3.
+    deep_p = np.linspace(0.0, 0.2, 150)
+    rest_p = np.linspace(0.6, 1.0, 150)
+    pressure = pd.Series(np.concatenate([deep_p, rest_p]))
+    zones = np.concatenate([np.zeros(150, dtype=int), np.full(150, 5, dtype=int)])  # deep vs rest
+    pl = PressureLevels(mode="zone_conditional").fit(pressure, zones=zones)
+    lv = pl.apply(pressure, zones=zones)
+    deep_lv, rest_lv = lv[:150], lv[150:]
+    for sub in (deep_lv, rest_lv):
+        assert set(np.unique(sub)) == {1, 2, 3}
+        assert abs((sub == 3).sum() - 50) <= 3  # ~1/3 within band
+
+
+def test_zone_conditional_apply_requires_zones():
+    pressure = pd.Series(np.linspace(0.0, 1.0, 30))
+    zones = np.tile([0, 5], 15)  # both bands populated so fit succeeds
+    pl = PressureLevels(mode="zone_conditional").fit(pressure, zones=zones)
+    with pytest.raises(ValueError, match="zones"):
+        pl.apply(pressure)
+
+
+def test_zone_conditional_meta_roundtrip():
+    pressure = pd.Series(np.concatenate([np.linspace(0, 0.2, 60), np.linspace(0.6, 1.0, 60)]))
+    zones = np.concatenate([np.zeros(60, dtype=int), np.full(60, 5, dtype=int)])
+    pl = PressureLevels(mode="zone_conditional").fit(pressure, zones=zones)
+    meta = pl.to_meta()
+    assert meta["pressure_mode"] == "zone_conditional"
+    pl2 = PressureLevels.from_meta(meta)
+    assert np.array_equal(pl.apply(pressure, zones=zones), pl2.apply(pressure, zones=zones))
+
+
+def test_global_meta_is_byte_identical_form():
+    pl = PressureLevels(mode="global").fit(pd.Series(np.linspace(0, 1, 300)))
+    meta = pl.to_meta()
+    assert "pressure_mode" not in meta and "cutpoints" in meta  # SP1 on-disk form unchanged
+    # absent pressure_mode => global back-compat
+    pl2 = PressureLevels.from_meta({"cutpoints": meta["cutpoints"]})
+    assert pl2.mode == "global"
 
 
 def test_global_terciles_partition_roughly_thirds():

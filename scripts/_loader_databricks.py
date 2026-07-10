@@ -190,3 +190,113 @@ def _convert(provider: str, raw_events: pd.DataFrame, raw_frames: pd.DataFrame):
         "source for skillcorner/idsse/gradientsports. Add the bronze->converter mapping here for "
         "operator-scale runs of this provider (see tracking_player_metadata for home_team_id)."
     )
+
+
+# --- xT-GK v2 gate cohort loader (ADR-036 §Part 1b) ----------------------------------------------
+# Base SPADL from bronze.spadl_actions (result_id/team_id/possession_id_heuristic), bridged to the
+# gold surrogate match_key via dim_matches, LEFT JOIN pressure + frame-present from fct_action_context
+# and the calibrated xG reward from fct_shot_xg. All three keyed on (match_key, action_id); the
+# action_id join is exact (coord-alignment verified 0.0). provider is allowlist-validated; the value
+# is ALSO passed as a bound parameter, never free-form interpolated.
+_XTGK_ACTIONS_SQL = """
+WITH s AS (SELECT * FROM soccer_analytics.bronze.spadl_actions WHERE data_source = %(ds)s),
+     d AS (SELECT match_key, native_match_id FROM soccer_analytics.dev_gold.dim_matches WHERE provider = %(ds)s)
+SELECT
+  s.game_id, s.period_id, s.action_id, s.time_seconds, s.team_id, s.player_id,
+  s.type_id, s.result_id, s.bodypart_id, s.start_x, s.start_y, s.end_x, s.end_y,
+  s.possession_id_heuristic AS possession_id, s.data_source,
+  c.pressure_on_actor__bekkers_pi, c.pressure_on_actor__andrienko_oval,
+  CASE WHEN c.team_shape_n_outfield_players_defending IS NOT NULL THEN true ELSE false END AS frame_present,
+  x.xg, x.ood_flag, x.xg_ci_low, x.xg_ci_high
+FROM s
+LEFT JOIN d ON s.match_id_native = d.native_match_id
+LEFT JOIN soccer_analytics.dev_gold.fct_action_context c ON c.match_key = d.match_key AND c.action_id = s.action_id
+LEFT JOIN soccer_analytics.dev_gold.fct_shot_xg x ON x.match_key = d.match_key AND x.action_id = s.action_id
+ORDER BY s.game_id, s.period_id, s.action_id
+"""
+_XTGK_SHOTXG_SQL = (
+    "SELECT data_source, xg, ood_flag, xg_ci_low, xg_ci_high "
+    "FROM soccer_analytics.dev_gold.fct_shot_xg WHERE data_source = %(ds)s"
+)
+
+
+def load_xtgk_cohort(data_source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Owner-run loader for the xT-GK v2 gate (ADR-036 §Part 1b): returns (actions, shot_xg).
+
+    ``actions`` = attack-LTR SPADL for the cohort with ``xg`` (fct_shot_xg), pressure (both
+    ``pressure_on_actor__bekkers_pi`` [the pinned measure] and ``__andrienko_oval`` [comparison]),
+    ``frame_present``, ``possession_id``, and per-shot ``ood_flag``/``xg_ci_low``/``xg_ci_high``.
+    ``shot_xg`` = the per-shot fct_shot_xg slice for the OOD-rate report. Read-only; provider
+    allowlist-validated + bound-parameterized.
+    """
+    if data_source not in _ALLOWED_PROVIDERS:
+        raise ValueError(f"data_source {data_source!r} not in allowlist {sorted(_ALLOWED_PROVIDERS)}")
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        actions = _query_param(cur, _XTGK_ACTIONS_SQL, {"ds": data_source})
+        shot_xg = _query_param(cur, _XTGK_SHOTXG_SQL, {"ds": data_source})
+    finally:
+        conn.close()
+    # dtypes: nullable gold columns arrive object/None -> coerce the numerics the gate reads.
+    numeric = (
+        "start_x",
+        "start_y",
+        "end_x",
+        "end_y",
+        "pressure_on_actor__bekkers_pi",
+        "pressure_on_actor__andrienko_oval",
+        "xg",
+        "time_seconds",
+    )
+    for col in numeric:
+        actions[col] = pd.to_numeric(actions[col], errors="coerce")
+    for col in ("type_id", "result_id"):
+        actions[col] = pd.to_numeric(actions[col], errors="coerce").astype("int64")
+    actions["frame_present"] = actions["frame_present"].astype(bool)
+    return actions, shot_xg
+
+
+# --- xT-GK v2 retention (rho) cohort loader (ADR-036 §Part 3, marts-native) -----------------------
+# Tracking-frames deprecated: features come from the gold action marts. fct_action_values supplies
+# the base SPADL (geometry/type/result/possession) + the materialized GK-distribution flag
+# (gk_was_distributing); fct_action_context supplies pressure. Keyed on (match_key, action_id).
+_RETENTION_SQL = """
+WITH v AS (SELECT * FROM soccer_analytics.dev_gold.fct_action_values WHERE data_source = %(ds)s)
+SELECT
+  v.match_key AS game_id, v.period AS period_id, v.action_id, v.time_seconds,
+  v.team_id, v.player_id, v.start_x, v.start_y, v.end_x, v.end_y,
+  v.action_type, v.action_result, v.possession_id, v.gk_was_distributing, v.data_source,
+  c.pressure_on_actor__bekkers_pi AS pressure
+FROM v
+LEFT JOIN soccer_analytics.dev_gold.fct_action_context c
+  ON c.match_key = v.match_key AND c.action_id = v.action_id
+ORDER BY v.match_key, v.period, v.time_seconds, v.action_id
+"""
+
+
+def load_retention_cohort(data_source: str) -> pd.DataFrame:
+    """Full attack-LTR action stream for the rho retention trainer (marts-native; NO tracking frames).
+
+    Maps the gold string ``action_type``/``action_result`` to SPADL ``type_id``/``result_id``
+    (unmapped -> -1, harmless: not a shot/move), carries ``gk_was_distributing`` (the GK-distribution
+    domain) + ``pressure``. Sorted by (game_id, period_id, time_seconds, action_id).
+    """
+    import silly_kicks.spadl.config as spadlconfig
+
+    if data_source not in _ALLOWED_PROVIDERS:
+        raise ValueError(f"data_source {data_source!r} not in allowlist {sorted(_ALLOWED_PROVIDERS)}")
+    conn = _connect()
+    try:
+        df = _query_param(conn.cursor(), _RETENTION_SQL, {"ds": data_source})
+    finally:
+        conn.close()
+    df["type_id"] = df["action_type"].map(spadlconfig.actiontype_id).fillna(-1).astype("int64")
+    df["result_id"] = df["action_result"].map(spadlconfig.result_id).fillna(-1).astype("int64")
+    for col in ("start_x", "start_y", "end_x", "end_y", "pressure", "time_seconds"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["gk_was_distributing"] = df["gk_was_distributing"].fillna(False).astype(bool)
+    # retains() requires a finite, non-decreasing clock within (game_id, period_id); drop NaN-time
+    # rows (rare/anomalous, unlabelable) and re-sort stably in pandas.
+    df = df[df["time_seconds"].notna()].copy()
+    return df.sort_values(["game_id", "period_id", "time_seconds", "action_id"], kind="stable").reset_index(drop=True)

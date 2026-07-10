@@ -33,6 +33,7 @@ Direction = Literal["decreasing", "increasing", "either"]
 class GateConfig:
     effect_floor: float
     n_min: int
+    relative_effect_floor: float = 0.0  # primary (B2); 0.0 = not enforced (back-compat)
     min_occupied_cells: int = 2
     crosscheck_rel_tol: float = 0.5
     expected_direction: Direction = "either"
@@ -47,6 +48,7 @@ class DeepZoneGateReport:
     crosscheck_agrees: bool
     n_occupied_cells: int
     stop_reason: str
+    relative_effect: float = 0.0
 
 
 def _occupied(mk: MarkovPossessionValue, cfg: GateConfig) -> list[int]:
@@ -70,9 +72,12 @@ def run_deep_zone_gate(mk: MarkovPossessionValue, emp: EmpiricalPossessionValue,
             len(occ),
             f"insufficient support: {len(occ)} occupied deep cells "
             f"(>= n_min in all terciles) < {cfg.min_occupied_cells}",
+            0.0,
         )
     v1, v2, v3 = _mean(mk.value, occ, 1), _mean(mk.value, occ, 2), _mean(mk.value, occ, 3)
     effect = abs(v1 - v3)
+    rel_effect = abs(v1 - v3) / max(abs(0.5 * (v1 + v3)), 1e-9)
+    rel_ok = rel_effect >= cfg.relative_effect_floor
     nonincreasing = v1 >= v2 >= v3
     nondecreasing = v1 <= v2 <= v3
     observed = "decreasing" if v1 > v3 else ("increasing" if v1 < v3 else "flat")
@@ -85,9 +90,9 @@ def run_deep_zone_gate(mk: MarkovPossessionValue, emp: EmpiricalPossessionValue,
     mk_grad = _mean(mk.value, BUILD_UP_CELLS, 1) - _mean(mk.value, BUILD_UP_CELLS, 3)
     emp_grad = _mean(emp.value, BUILD_UP_CELLS, 1) - _mean(emp.value, BUILD_UP_CELLS, 3)
     same_sign = np.sign(mk_grad) == np.sign(emp_grad)
-    rel_ok = abs(mk_grad - emp_grad) <= cfg.crosscheck_rel_tol * max(abs(mk_grad), abs(emp_grad), 1e-9)
-    crosscheck = bool(same_sign and rel_ok)
-    passed = bool(effect >= cfg.effect_floor and monotone_ok and crosscheck)
+    crosscheck_rel_ok = abs(mk_grad - emp_grad) <= cfg.crosscheck_rel_tol * max(abs(mk_grad), abs(emp_grad), 1e-9)
+    crosscheck = bool(same_sign and crosscheck_rel_ok)
+    passed = bool(effect >= cfg.effect_floor and rel_ok and monotone_ok and crosscheck)
     reason = (
         ""
         if passed
@@ -95,13 +100,81 @@ def run_deep_zone_gate(mk: MarkovPossessionValue, emp: EmpiricalPossessionValue,
             s
             for s, ok in [
                 (f"effect {effect:.4f}<{cfg.effect_floor}", effect >= cfg.effect_floor),
+                (f"relative {rel_effect:.3f}<{cfg.relative_effect_floor}", rel_ok),
                 (f"direction {observed}!={cfg.expected_direction}/non-monotone", monotone_ok),
                 ("cross-check divergent", crosscheck),
             ]
             if not ok
         )
     )
-    return DeepZoneGateReport(passed, effect, observed, monotone_ok, crosscheck, len(occ), reason)
+    return DeepZoneGateReport(passed, effect, observed, monotone_ok, crosscheck, len(occ), reason, rel_effect)
+
+
+# --- Three-rung ladder (§1c) + both-orientations wrapper -----------------------
+
+
+def _fit_pair(actions, *, xg_column, pressure_column, mode):
+    """Fit (Markov, Empirical) sharing one PressureLevels in the given mode."""
+    from silly_kicks.xtgk._possession_value import flat_zones
+    from silly_kicks.xtgk._pressure_levels import PressureLevels
+
+    pl = PressureLevels(mode=mode)
+    if mode == "zone_conditional":
+        zones = flat_zones(actions["start_x"], actions["start_y"])
+        pl.fit(actions[pressure_column], zones=zones)
+    else:
+        pl.fit(actions[pressure_column])
+    mk = MarkovPossessionValue().fit(actions, xg_column=xg_column, pressure_column=pressure_column, pressure_levels=pl)
+    emp = EmpiricalPossessionValue().fit(
+        actions, xg_column=xg_column, pressure_column=pressure_column, pressure_levels=pl
+    )
+    return pl, mk, emp
+
+
+def run_gate_with_ladder(actions, *, xg_column: str, pressure_column: str, cfg: GateConfig) -> dict:
+    """Pre-registered three-rung ladder (§1c): global -> zone_conditional -> STOP.
+
+    Rung 1 = global terciles. If <min_occupied_cells deep cells clear n_min in all three terciles,
+    rung 2 refits zone-conditional terciles (deep-relative). If still short, STOP (inconclusive) --
+    do NOT lower n_min. The winning rung is reported so a rung-2 pass is read as 'deep-relative'."""
+    pl = mk = emp = None
+    for rung in ("global", "zone_conditional"):
+        pl, mk, emp = _fit_pair(actions, xg_column=xg_column, pressure_column=pressure_column, mode=rung)
+        if len(_occupied(mk, cfg)) >= cfg.min_occupied_cells:
+            report = run_deep_zone_gate(mk, emp, cfg)
+            return {"rung": rung, "report": report, "cutpoints": pl.to_meta()}
+    report = run_deep_zone_gate(mk, emp, cfg)  # zone_conditional mk/emp, still short -> STOP verdict
+    return {"rung": "stop", "report": report, "cutpoints": pl.to_meta() if pl is not None else {}}
+
+
+def run_gate_both_orientations(actions, *, xg_column: str, pressure_column: str, cfg: GateConfig) -> dict:
+    """Run the ladder on the fit orientation + mirror_y (equivariance) + mirror_x (rejection check).
+
+    mirror_y preserves attack direction (still attack-LTR) -> the effect must reproduce. mirror_x
+    reverses it -> the fit input validator must reject it (deep/final-third inverted, §M4)."""
+    import silly_kicks.spadl.config as spadlconfig
+    from silly_kicks.xtgk._validate import validate_possession_value_input
+
+    def _mirror_y(a):
+        out = a.copy()
+        out["start_y"] = spadlconfig.field_width - a["start_y"]
+        out["end_y"] = spadlconfig.field_width - a["end_y"]
+        return out
+
+    def _mirror_x(a):
+        out = a.copy()
+        out["start_x"] = spadlconfig.field_length - a["start_x"]
+        out["end_x"] = spadlconfig.field_length - a["end_x"]
+        return out
+
+    result = {"fit": run_gate_with_ladder(actions, xg_column=xg_column, pressure_column=pressure_column, cfg=cfg)}
+    result["mirror_y"] = run_gate_with_ladder(
+        _mirror_y(actions), xg_column=xg_column, pressure_column=pressure_column, cfg=cfg
+    )
+    mx = _mirror_x(actions)
+    diag = validate_possession_value_input(mx, xg_column=xg_column, pressure_column=pressure_column)
+    result["mirror_x"] = {"orientation_rejected": not diag.ok, "problems": list(diag.problems)}
+    return result
 
 
 # --- Pre-gate input-QC reports (owner-run, ADR-036 §6 Q3 + §5 G8) --------------

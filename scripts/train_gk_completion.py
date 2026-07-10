@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _loader_pining import load_matches
 
+from silly_kicks._calibration_metrics import ece as _ece
+from silly_kicks._calibration_metrics import reliability_slope as _reliability_slope
 from silly_kicks.tracking._gk_completion import (
     GK_COMPLETION_FEATURE_NAMES,
     GkCompletionModel,
@@ -45,40 +47,6 @@ _SLOPE_TOL = 0.25  # C1: reliability-slope within [1-tol, 1+tol]; NaN slope (deg
 # retrain (the SkillCorner data-drift retrain shifted coef ~0.47, ~9x this floor); SkillCorner's own
 # frames load whole at any cap so it still matches to ~0.
 _CORPUS_IDENTITY_ATOL = 0.05
-
-
-def _ece(y, p, n_bins=10):
-    """Expected calibration error (binned |mean_pred - mean_obs|, weighted by bin mass)."""
-    y, p = np.asarray(y, float), np.asarray(p, float)
-    edges = np.linspace(0.0, 1.0, n_bins + 1)
-    idx = np.clip(np.digitize(p, edges) - 1, 0, n_bins - 1)
-    e = 0.0
-    for b in range(n_bins):
-        m = idx == b
-        if m.any():
-            e += abs(p[m].mean() - y[m].mean()) * (m.mean())
-    return float(e)
-
-
-def _reliability_slope(y, p, n_bins=10):
-    """Reliability-diagram slope: linear fit of binned mean-observed on binned mean-predicted,
-    weighted by bin mass. A perfectly calibrated model has slope ~1 (the diagonal); a slope < 1 is
-    over-confident, > 1 under-confident. Returns NaN when predictions don't span >1 occupied bin
-    (slope undefined). Complements ECE (magnitude) with a directional shape check (C1)."""
-    y, p = np.asarray(y, float), np.asarray(p, float)
-    edges = np.linspace(0.0, 1.0, n_bins + 1)
-    idx = np.clip(np.digitize(p, edges) - 1, 0, n_bins - 1)
-    mp, mo, w = [], [], []
-    for b in range(n_bins):
-        m = idx == b
-        if m.any():
-            mp.append(p[m].mean())
-            mo.append(y[m].mean())
-            w.append(m.sum())
-    if len(mp) < 2 or np.ptp(mp) < 1e-9:
-        return float("nan")
-    coef = np.polyfit(np.asarray(mp), np.asarray(mo), 1, w=np.sqrt(np.asarray(w, float)))
-    return float(coef[0])
 
 
 def _extract(providers, max_per_provider, tracking_limit):

@@ -2,13 +2,40 @@ import numpy as np
 import pytest
 from sklearn.exceptions import NotFittedError
 
+from silly_kicks.xtgk import PressureLevels
 from silly_kicks.xtgk._markov import MarkovPossessionValue
 from silly_kicks.xtgk._possession_value import State, zone_of
+from silly_kicks.xthreat._grid import M, N, _get_flat_indexes
 from tests.xtgk.conftest import three_band_cohort
 
 
 def _fit():
     return MarkovPossessionValue().fit(three_band_cohort(), xg_column="xg", pressure_column="pressure")
+
+
+def test_markov_fits_under_zone_conditional_and_roundtrips(tmp_path):
+    actions = three_band_cohort()
+    pl = PressureLevels(mode="zone_conditional")
+    zones = _get_flat_indexes(actions.start_x, actions.start_y, N, M).to_numpy()
+    pl.fit(actions["pressure"], zones=zones)
+    mk = MarkovPossessionValue().fit(actions, xg_column="xg", pressure_column="pressure", pressure_levels=pl)
+    v_lo = mk.value(0, 1)  # deep cell, low tercile
+    assert np.isfinite(v_lo)
+
+    mk.save(tmp_path / "surf")
+    reloaded = MarkovPossessionValue.load(tmp_path / "surf")
+    assert reloaded.pressure_levels is not None
+    assert reloaded.pressure_levels.mode == "zone_conditional"
+    assert np.isclose(reloaded.value(0, 1), v_lo)
+
+
+def test_markov_global_metadata_byte_identical(tmp_path):
+    actions = three_band_cohort()
+    mk = MarkovPossessionValue().fit(actions, xg_column="xg", pressure_column="pressure")
+    mk.save(tmp_path / "surf")
+    meta = (tmp_path / "surf" / "metadata.json").read_text()
+    assert "pressure_mode" not in meta  # global form must NOT gain the zone-conditional key
+    assert '"cutpoints"' in meta
 
 
 def test_fit_returns_three_surfaces_of_grid_shape():

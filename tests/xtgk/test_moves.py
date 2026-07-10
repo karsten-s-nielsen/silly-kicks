@@ -1,8 +1,10 @@
 import numpy as np
+import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
 from silly_kicks.xtgk._moves import (
     MOVE_TYPE_IDS,
+    _is_turnover,
     extended_move_actions,
     xtgk_action_prob,
     xtgk_transition_matrix,
@@ -20,6 +22,12 @@ from tests.xtgk.conftest import (
 )
 
 GRID = GridSpec(n_zones_x=16, n_zones_y=12)
+
+
+def test_is_turnover_is_failed_move_only():
+    df = pd.DataFrame({"type_id": [PASS, PASS, SHOT], "result_id": [SUCCESS, FAIL, FAIL]})
+    out = _is_turnover(df)
+    assert list(out) == [False, True, False]  # failed pass=turnover; failed shot is NOT a move-set turnover
 
 
 def test_extended_move_set_includes_goalkick_and_throw_in_not_shots():
