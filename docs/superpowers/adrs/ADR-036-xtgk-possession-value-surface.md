@@ -42,3 +42,12 @@ Ship a new hexagonal `silly_kicks/xtgk/` package: a `PossessionValue` Protocol w
 
 - Phase-2 canonical promotion of `V` into the metric, `ρ`, `V_opp`, and the lakehouse migration are separate sub-projects.
 - Gate numbers (deep-cell set, effect floor, `N_min`, cross-check tolerance, direction) are owner/Eyestone-locked before fitting; `GateConfig` carries them.
+
+## Amendment (2026-07-09, 4.41.0/PR-S108) — Q3 resolved + G8 frame-aware null-pressure
+
+Two owner-only blockers resolved against the live backend; both refined a design detail (spec rev 4 §5/§6).
+
+- **Q3 — injected `xg_column` = `soccer_analytics.dev_gold.fct_shot_xg.xg`** (calibrated pre-shot, grain `(match_key, action_id)`; a *separate* table from `fct_shot_psxg`, so no post-shot leakage). 100% non-null on both cohorts (WC 1473, RM 2596). **Certification caveat: `ood_flag` = 0 for gradientsports (certified) but 100% for skillcorner (all RM shots OOD).** Per-cohort surfaces (G3) contain it — WC reward clean, RM reward populated-but-uncertified (RM verdict provisional). `MarkovPossessionValue.fit(reward_provenance=)` records a caller-supplied OOD-rate/CI summary (the library never interprets `ood_flag`/CI — no xG model shipped); the owner-run emits `ood_rate_by_source` pre-gate. silly-kicks still ships no xG model.
+- **G8 — frame-aware null-pressure rule** (corrects the blanket "fail-loud on missing pressure" in the original §5): distinguish by tracking-frame presence — **frame absent** (genuine gap) → drop/fail-loud (`PressureLevels.apply` backstop); **frame present + `pressure_on_actor` null** (no opponent in the pressure region — a genuinely unpressured restart) → **zero → LOW tercile, keep**. Live: 595/595 GS null-pressure goal-kicks have intact frames; a blanket drop would silently lose 60% of WC goal-kicks (the certified cohort's headline population). Implemented as the pure `coalesce_frame_present_null_pressure(pressure, frame_present)` applied in the owner-run data-prep *before* fit; the unpressured-restart count is reported per cohort (`frame_present_null_pressure_count`) — it is signal, not loss.
+
+No production/xfn change; additive. Phase 11 remains wired-but-not-run, blocked on Q4 (the locked gate numbers) only.

@@ -61,3 +61,38 @@ def test_expected_direction_configurable_and_reported():
         GateConfig(effect_floor=0.005, n_min=3, min_occupied_cells=2, expected_direction="increasing"),
     )
     assert rep.observed_direction == "decreasing" and rep.passed is False
+
+
+# --- Q3 / G8 pre-gate input-QC reports (owner-run, ADR-036 §6) ---
+
+
+def test_ood_rate_by_source():
+    import pandas as pd
+
+    from silly_kicks.xtgk._diagnostics import ood_rate_by_source
+
+    df = pd.DataFrame(
+        {
+            "data_source": ["gradientsports", "gradientsports", "skillcorner", "skillcorner"],
+            "ood_flag": [False, False, True, True],
+        }
+    )
+    rep = ood_rate_by_source(df)
+    assert rep["gradientsports"] == 0.0 and rep["skillcorner"] == 1.0
+
+
+def test_frame_present_null_pressure_count():
+    import numpy as np
+    import pandas as pd
+
+    from silly_kicks.xtgk._diagnostics import frame_present_null_pressure_count
+
+    df = pd.DataFrame(
+        {
+            "data_source": ["gradientsports"] * 4,
+            "pressure": [0.5, np.nan, np.nan, 0.2],
+            "frame_present": [True, True, False, True],  # row1 = unpressured restart; row2 = gap
+        }
+    )
+    rep = frame_present_null_pressure_count(df, pressure_col="pressure", frame_present_col="frame_present")
+    assert rep["gradientsports"] == 1  # only the frame-present + null row counts

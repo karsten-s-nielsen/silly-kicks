@@ -31,6 +31,9 @@ from silly_kicks.xtgk import (
     GateConfig,
     MarkovPossessionValue,
     PressureLevels,
+    coalesce_frame_present_null_pressure,
+    frame_present_null_pressure_count,
+    ood_rate_by_source,
     run_deep_zone_gate,
 )
 
@@ -45,22 +48,58 @@ _GATE_CONFIG_PENDING = GateConfig(
     expected_direction="either",  # TODO(Q2/Eyestone): decreasing? confirm sign
 )
 
-_XG_COLUMN = "xg"  # from fct_shot_xg, joined on (match_key, action_id)
+_XG_COLUMN = "xg"  # fct_shot_xg.xg (calibrated pre-shot), joined on (match_key, action_id) (Q3)
+_OOD_COLUMN = "ood_flag"  # fct_shot_xg per-shot certification flag (RM is 100% OOD live)
+_CI_COLUMNS = ("xg_ci_low", "xg_ci_high")  # fct_shot_xg per-shot CI
 _PRESSURE_COLUMN = "pressure_on_actor__andrienko_oval"  # tracking-derived; pin per §5 gradient check
+_FRAME_PRESENT_COLUMN = "frame_present"  # frame-derived non-null indicator (e.g. team_shape_* IS NOT NULL)
 
 
 def _gate_is_locked(cfg: GateConfig) -> bool:
     return cfg.effect_floor > 0.0 and cfg.n_min > 0
 
 
-def run_gate_on_cohort(actions, *, xg_column: str, pressure_column: str, cfg: GateConfig) -> dict:
-    """Fit V + the cross-check on ONE attack-LTR cohort and run the pre-registered gate.
+def prepare_cohort(actions, *, pressure_column: str, frame_present_column: str):
+    """G8 (§5) frame-aware null-pressure data-prep, applied BEFORE fit.
 
-    ``actions`` must be an attack-LTR SPADL frame carrying ``xg_column`` (from fct_shot_xg) and
-    ``pressure_column`` (tracking-derived), joined on (match_key, action_id) upstream.
+    Coalesces null pressure -> 0 (LOW tercile) for frame-present rows (genuinely unpressured
+    restarts — 595/595 GS goal-kicks live); leaves frame-absent nulls null so PressureLevels.apply
+    fail-loud-drops the genuine tracking gaps. Returns a NEW frame; never mutates input.
+    """
+    out = actions.copy()
+    out[pressure_column] = coalesce_frame_present_null_pressure(out[pressure_column], out[frame_present_column])
+    return out
+
+
+def reward_provenance_summary(shot_xg, *, ood_column: str, ci_columns) -> dict:
+    """Q3 (§6): summarize the injected reward's certification for MarkovPossessionValue.provenance.
+
+    silly-kicks records but never interprets ood_flag/CI semantics (ships no xG model)."""
+    lo, hi = ci_columns
+    return {
+        "xg_source": "fct_shot_xg.xg",
+        "ood_rate": float(shot_xg[ood_column].mean()),
+        "xg_ci_mean_width": float((shot_xg[hi] - shot_xg[lo]).mean()),
+        "n_shots": len(shot_xg),
+    }
+
+
+def run_gate_on_cohort(
+    actions, *, xg_column: str, pressure_column: str, cfg: GateConfig, reward_provenance: dict | None = None
+) -> dict:
+    """Fit V + the cross-check on ONE attack-LTR, frame-aware-prepared cohort and run the gate.
+
+    ``actions`` must be attack-LTR SPADL carrying ``xg_column`` (from fct_shot_xg) + ``pressure_column``,
+    joined on (match_key, action_id), and already run through ``prepare_cohort`` (G8).
     """
     pl = PressureLevels().fit(actions[pressure_column])  # one tercile fit, shared by both estimators
-    mk = MarkovPossessionValue().fit(actions, xg_column=xg_column, pressure_column=pressure_column, pressure_levels=pl)
+    mk = MarkovPossessionValue().fit(
+        actions,
+        xg_column=xg_column,
+        pressure_column=pressure_column,
+        pressure_levels=pl,
+        reward_provenance=reward_provenance,
+    )
     emp = EmpiricalPossessionValue().fit(
         actions, xg_column=xg_column, pressure_column=pressure_column, pressure_levels=pl
     )
@@ -69,6 +108,18 @@ def run_gate_on_cohort(actions, *, xg_column: str, pressure_column: str, cfg: Ga
         "gate": asdict(report),
         "cutpoints": list(pl.cutpoints) if pl.cutpoints else [],
         "support": {p: int(mk.support(p).sum()) for p in (1, 2, 3)},
+        "reward_provenance": mk.provenance.get("reward_provenance"),
+        "tercile_occupancy": pl.occupancy(actions[pressure_column]),
+    }
+
+
+def input_qc_reports(shot_xg, actions) -> dict:
+    """Pre-gate input QC (Q3 OOD-rate + §5 G8 unpressured-restart count), emitted per cohort."""
+    return {
+        "ood_rate_by_source": ood_rate_by_source(shot_xg, ood_col=_OOD_COLUMN),
+        "unpressured_restart_count": frame_present_null_pressure_count(
+            actions, pressure_col=_PRESSURE_COLUMN, frame_present_col=_FRAME_PRESENT_COLUMN
+        ),
     }
 
 

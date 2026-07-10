@@ -47,3 +47,18 @@ def test_delta_v_on_unsupported_corner_is_finite():
     m = _fit()
     dv = m.delta_v(State(191, 1), State(0, 2))  # empty cells solve to 0.0, never NaN
     assert np.isfinite(dv.delta) and np.isfinite(dv.pressure_component)
+
+
+def test_fit_merges_reward_provenance():
+    # Q3 (ADR-036 §6): the owner-run computes an OOD-rate / xg-CI summary from fct_shot_xg and
+    # passes it as reward_provenance; fit records it (silly-kicks never hard-codes ood_flag semantics).
+    prov = {"ood_rate": 1.0, "xg_ci_mean_width": 0.12, "xg_source": "fct_shot_xg.xg"}
+    m = MarkovPossessionValue().fit(
+        three_band_cohort(), xg_column="xg", pressure_column="pressure", reward_provenance=prov
+    )
+    assert m.provenance["reward_provenance"] == prov
+
+
+def test_fit_without_reward_provenance_omits_key():
+    m = _fit()
+    assert "reward_provenance" not in m.provenance

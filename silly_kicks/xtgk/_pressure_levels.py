@@ -16,6 +16,27 @@ import pandas as pd
 Mode = Literal["global", "zone_conditional"]
 
 
+def coalesce_frame_present_null_pressure(
+    pressure: pd.Series[float], frame_present: pd.Series[bool]
+) -> pd.Series[float]:
+    """Frame-aware null-pressure rule (ADR-036 §5, G8): distinguish a genuine tracking gap from a
+    genuinely unpressured restart.
+
+    - **frame present & pressure null** → 0.0 (no opponent in the pressure region — e.g. an
+      unpressured goal-kick; a real zero → LOW tercile, keep it).
+    - **frame absent & pressure null** → left null (a genuine tracking gap; ``PressureLevels.apply``
+      then fail-loud-drops it — the backstop).
+    - non-null → unchanged.
+
+    Pure: returns a new Series, never mutates ``pressure``. Owner-run data-prep applies this BEFORE
+    ``fit`` so the ~60% of WC goal-kicks that are frame-present-null are not silently dropped.
+    """
+    out = pressure.copy()
+    fill_mask = frame_present.to_numpy(dtype=bool) & out.isna().to_numpy()
+    out[fill_mask] = 0.0
+    return out
+
+
 class PressureLevels:
     def __init__(self, *, mode: Mode = "global") -> None:
         self.mode: Mode = mode
