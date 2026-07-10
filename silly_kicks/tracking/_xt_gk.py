@@ -25,7 +25,7 @@ from scipy.ndimage import gaussian_filter
 
 from silly_kicks.spadl import config as spadlconfig
 
-from ._id_compat import canonical_id_series, ids_equal
+from ._id_compat import ids_equal
 
 if TYPE_CHECKING:
     from silly_kicks.xthreat import ExpectedThreat
@@ -33,10 +33,6 @@ if TYPE_CHECKING:
     from ._gk_completion import GkCompletionModel
 
 _PressureMethod = Literal["andrienko_oval", "link_zones", "bekkers_pi"]
-
-_GOALKICK = spadlconfig.actiontype_id["goalkick"]  # 22
-_PASS = spadlconfig.actiontype_id["pass"]  # 0
-_THROW_IN = spadlconfig.actiontype_id["throw_in"]  # 2
 
 _OUTPUT_COLS = ["xt_gk_base", "xt_gk_pev", "xt_gk_rav", "xt_gk_dzv", "xt_gk_pressure", "xt_gk"]
 # Resolved-coordinate AUDIT columns (handoff 2026-06-29): the exact origin/destination the grid
@@ -301,31 +297,12 @@ def _composite(t, base, pev, rav, dzv, gamma, phi):
 # Domain filter
 # --------------------------------------------------------------------------------------
 def _gk_distribution_mask(actions: pd.DataFrame, frames: pd.DataFrame) -> npt.NDArray[np.bool_]:
-    """True for in-scope GK distributions: any goalkick, OR a pass/throw_in whose actor is
-    the acting team's goalkeeper (resolved from frames' is_goalkeeper flag, which
-    derived-GK populates for Metrica/SkillCorner). dtype-safe id matching (ADR-019).
-    Non-GK-distribution rows -> False (pass through unchanged downstream)."""
-    type_id = actions["type_id"].to_numpy()
-    is_goalkick = type_id == _GOALKICK
-    is_open = np.isin(type_id, (_PASS, _THROW_IN))
+    """True for in-scope GK distributions: any goalkick, OR a pass/throw_in whose actor is the acting
+    team's goalkeeper (global frames[is_goalkeeper] set-membership; dtype-safe, ADR-019). Non-GK-distribution
+    rows -> False. Byte-identical shim over the public tracking.gk_distribution_mask (resolve_gk='native')."""
+    from silly_kicks.tracking._gk_resolve import gk_distribution_mask
 
-    gk = frames[frames["is_goalkeeper"].astype(bool) & (~frames["is_ball"].astype(bool))]
-    keyed_by_game = "game_id" in actions.columns and "game_id" in frames.columns
-
-    gk_team = canonical_id_series(gk["team_id"]).to_numpy()
-    gk_player = canonical_id_series(gk["player_id"]).to_numpy()
-    act_team = canonical_id_series(actions["team_id"]).to_numpy()
-    act_player = canonical_id_series(actions["player_id"]).to_numpy()
-    if keyed_by_game:
-        gk_game = canonical_id_series(gk["game_id"]).to_numpy()
-        act_game = canonical_id_series(actions["game_id"]).to_numpy()
-        gk_set = set(zip(gk_game, gk_team, gk_player, strict=True))
-        actor_is_gk = np.array([(g, t, p) in gk_set for g, t, p in zip(act_game, act_team, act_player, strict=True)])
-    else:
-        gk_set = set(zip(gk_team, gk_player, strict=True))
-        actor_is_gk = np.array([(t, p) in gk_set for t, p in zip(act_team, act_player, strict=True)])
-
-    return is_goalkick | (is_open & actor_is_gk)
+    return gk_distribution_mask(actions, frames, resolve_gk="native").to_numpy()
 
 
 # --------------------------------------------------------------------------------------

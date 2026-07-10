@@ -5,6 +5,22 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.43.0] — 2026-07-10
+
+### Added — public `gk_distribution_mask` + ρ loader `is_gk_distribution` (`silly_kicks/tracking/`, PR-S110, ADR-036 amendment)
+
+- **feat(tracking): public `gk_distribution_mask`.** Exports the GK-distribution domain logic as a stable,
+  frame-optional API. `resolve_gk="robust"` (default) resolves the acting GK per action via
+  `acting_gk_from_frames` — **time-accurate**: for the GK-pass term it is a strict **subset** of `"native"`
+  (the frozen global-`is_goalkeeper` set-membership), *tightening* stale/substituted keepers, NOT broadening
+  (do not switch to `native` "for more rows" — those extra rows are stale-keeper noise). `frames=None` →
+  goal-kicks-only. The frozen v1 `_gk_distribution_mask` is now a byte-identical shim over it (golden-gated).
+- **ρ retention loader/trainer** drop the shot-scoped `gk_was_distributing` (a misused `add_pre_shot_gk_context`
+  column — the shot feature itself is unchanged) for a self-adapting, NULL-coalesced `is_gk_distribution` read
+  (lakehouse materializes `fct_action_context.is_gk_distribution = gk_distribution_mask(..., "robust")`); the
+  loader's `pressure` column is unchanged (`pressure_on_actor__bekkers_pi`, pinned in PR-S109).
+- Additive public API; no `xt_gk`/VAEP value change, no retrain. C4 count stays 28.
+
 ## [4.42.0] — 2026-07-10
 
 ### Added — xT-GK v2 completion: gate run + SP2–SP5 in one release (`silly_kicks/xtgk/`, PR-S109, ADR-036 amendment)

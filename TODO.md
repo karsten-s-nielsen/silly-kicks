@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-07-09. **Current release**: silly-kicks 4.41.0 (xT-GK v2 SP1 increment — Q3 xG-source wiring + G8 frame-aware null-pressure, `silly_kicks/xtgk/`, PR-S108, ADR-036 amendment: `coalesce_frame_present_null_pressure` (frame-present null → LOW tercile, keeps the 60% of WC goal-kicks a blanket drop would lose; frame-absent null → `apply` fail-loud backstop); `MarkovPossessionValue.fit(reward_provenance=)` records the injected reward's OOD-rate/CI summary from `fct_shot_xg.xg` (silly-kicks ships no xG model); pre-gate `ood_rate_by_source` + `frame_present_null_pressure_count` reports. **Q3 RESOLVED** (xg_column = `dev_gold.fct_shot_xg.xg`; RM 100% ood → provisional). Owner-run gate still blocked on **Q4 only**. Prior: 4.40.0 (xT-GK v2 SP1 — honest possession-value surface `V(z,p)`, PR-S107, ADR-036: pressure-stratified Markov value iteration with an xG-calibrated first-shot reward + goal-kick-inclusive move-set (`MarkovPossessionValue`); model-free empirical cross-check (`EmpiricalPossessionValue`); pre-registered occupied-cell deep-zone gate; `delta_v` Shapley split; pickle-free `save`/`load`; injected `xg_column` from the lakehouse `fct_shot_xg` mart — silly-kicks ships no xG model. xtgk-local builders modify no `xthreat` source (classic xT byte-identical, parity-gated). In no default xfn list. Owner-run real-data gate wired but blocked on the locked gate numbers). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-07-10. **Current release**: silly-kicks 4.43.0 (public `gk_distribution_mask` + ρ loader `is_gk_distribution`, `silly_kicks/tracking/`, PR-S110, ADR-036 amendment: exports the GK-distribution domain as a stable, frame-optional API with a `native`/`robust` lever (`robust ⊆ native` — time-accurate, tightens stale/substituted keepers); frozen v1 `_gk_distribution_mask` is now a byte-identical shim over it; ρ retention loader/trainer drop the misused shot-scoped `gk_was_distributing` for a self-adapting, NULL-coalesced `is_gk_distribution` read. Additive; no `xt_gk`/VAEP value change, no retrain). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 **xT-GK v2 owner-run steps (code shipped 4.42.0/PR-S109; these two need restricted-cohort data):**
 (1) run the make-or-break gate `scripts/validate_xtgk_possession_value.py` (locked `GateConfig` wired: `effect_floor=0.005`/`relative=0.25`/`n_min=30`/`decreasing`; WC2022-authorising + RM-provisional, both orientations); (2) train + bundle the ρ retention weights via `scripts/train_gk_retention.py` into `silly_kicks/xtgk/_retention_weights/{default,skillcorner}/` (calibration-gated). Lakehouse migration of `xt_gk_v2_*` columns + the optional receiver-pressure `q` (lights up PEV) are separate follow-ups.
@@ -33,6 +33,16 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 ### Blocked or Deferred
 
+- **ρ retrain on the broadened `is_gk_distribution` domain + collapse the transitional loader probe (follow-up to PR-S110).**
+  Once the lakehouse materializes `fct_action_context.is_gk_distribution`, retrain the ρ retention `default`
+  (and re-attempt a SkillCorner variant) on the broadened goal-kicks ∪ acting-GK-passes domain (~3–4× the
+  rows — likely a materially better calibration), and **collapse the self-adapting loader** (`_loader_databricks.py`
+  `should_select_is_gk_distribution` + `_build_retention_sql` probe) to an unconditional `SELECT c.is_gk_distribution`.
+  Blocked on the lakehouse column landing.
+- **`acting_gk_from_frames` team-join dtype safety (discovered in PR-S110, low-risk).** The internal
+  action-team vs frame-team compare in `_gk_resolve.py` (`_gk_from_frames_linked`) is a raw `==`, dtype-fragile
+  if those ever differ (same-provider dtypes match today, so unobserved). Route through `ids_equal`/`same_id`
+  (ADR-019) when convenient. Not this PR's surface (Chesterton's Fence).
 - **Metrica GK identification — derive once per match, not per batch (follow-up to PR-S105).** The 4.38.0
   SkillCorner fix trusts the native roster, but Metrica is anonymized (no roster) and **must** derive
   positionally — so it has the same per-250-frame-batch contamination (a transiently goal-parked outfielder
