@@ -51,3 +51,56 @@ Two owner-only blockers resolved against the live backend; both refined a design
 - **G8 — frame-aware null-pressure rule** (corrects the blanket "fail-loud on missing pressure" in the original §5): distinguish by tracking-frame presence — **frame absent** (genuine gap) → drop/fail-loud (`PressureLevels.apply` backstop); **frame present + `pressure_on_actor` null** (no opponent in the pressure region — a genuinely unpressured restart) → **zero → LOW tercile, keep**. Live: 595/595 GS null-pressure goal-kicks have intact frames; a blanket drop would silently lose 60% of WC goal-kicks (the certified cohort's headline population). Implemented as the pure `coalesce_frame_present_null_pressure(pressure, frame_present)` applied in the owner-run data-prep *before* fit; the unpressured-restart count is reported per cohort (`frame_present_null_pressure_count`) — it is signal, not loss.
 
 No production/xfn change; additive. Phase 11 remains wired-but-not-run, blocked on Q4 (the locked gate numbers) only.
+
+## Amendment (2026-07-09, PR-S109) — v2 completion: gate run + SP2–SP5 in one release
+
+Owner directive: complete v2 in ONE release (build SP2–SP5 **and** wire/run the gate together, rather than gating SP2–5 on the gate result — the components are independently valid). Spec: `docs/superpowers/specs/2026-07-09-xtgk-v2-completion-handoff.md`.
+
+**The metric.** `xT-GK(s,a) = ρ·[V(s′) − V(s)] − (1 − ρ)·[V(s) + κ·V_opp(s,a)]`, assembled by `xtgk._metric.compute_xt_gk_v2` depending only on three ports: `PossessionValue` (SP1), `RetentionModel` (SP3), `TurnoverCost` (SP2). Injection discipline throughout (mirrors `compute_xt_gk`'s `xt=`/`completion=`); V/ρ/V_opp each swappable.
+
+**Gate (Part 1).** `GateConfig` gains a **gate-enforced** `relative_effect_floor` (primary acceptance `|v_lo−v_hi|/mean ≥ 0.25`, alongside the absolute `effect_floor`). **Zone-conditional terciles built for real** (`PressureLevels.mode="zone_conditional"`: per-band cutpoints, deep band = grid columns xi∈{0,1}; `to_meta`/`from_meta` keep the global on-disk form byte-identical, absent `pressure_mode`⇒global back-compat). Pre-registered **three-rung ladder** `run_gate_with_ladder` (global → zone-conditional → STOP; the winning rung is reported, so a rung-2 pass reads as *deep-relative*). Locked Q4 numbers: `effect_floor=0.005`, `relative_effect_floor=0.25`, `n_min=30`, `min_occupied_cells=2`, `expected_direction="decreasing"`. RM (SkillCorner) is INCLUDED as a PROVISIONAL second read (100% OOD), not dropped (owner decision).
+
+**SP2 `V_opp`.** `MirroredTurnoverCost` (production) = `V(mirror_zone(z), policy(p))` on the already-fit V — zero new fitting; `mirror_zone` = 180° point reflection; default pressure-transfer `p_opp = p` (injectable). `EmpiricalTurnoverValue` (cross-check, not shipped) credits the opponent's first post-turnover shot within a bounded window.
+
+**SP3 `ρ`.** `GkRetentionModel` (logistic, pure-numpy serve, JSON+SHA256, per-provider variants) mirrors `GkCompletionModel`. New `retains(actions, *, window_seconds=10.0)` label — retain iff within the window the actor's team keeps the ball (no opponent possession boundary) OR shoots; **truncated-window→NaN** (excluded from training, not falsely-retained). **Marts-native `extract_retention_features`** (8 features: pass geometry + `pressure_on_actor__bekkers_pi`, the pinned pressure measure) sourced from the gold action marts (`fct_action_values` + `fct_action_context`), **NOT tracking frames (deprecated as an active source, owner directive 2026-07-10)** — the frames-only receiver-density feature is dropped and the GK-distribution domain is **goal-kicks** (`gk_was_distributing` unpopulated on GS/SC — lakehouse handoff F1; `gk_role` encodes defensive roles; acting-GK-pass resolution is frames-based → out of scope). **Calibration gate stricter than completion:** every shipped variant must pass `ece ≤ 0.10 AND |reliability_slope − 1| ≤ 0.25` (`silly_kicks/_calibration_metrics.py`, extracted from the completion trainer to an extra-free module so SP3/SP5 don't pull the optuna `[calibration]` extra). **`default` weights BUNDLED** under `xtgk/_retention_weights/default/` via the marts-native `scripts/train_gk_retention.py` + `_loader_databricks.load_retention_cohort`: GS 64-match / 396 goal-kicks, OOF **AUC 0.776, ECE 0.090, slope 1.01** (PASS). **The SkillCorner variant is NOT shipped** — under `bekkers_pi` it is near-chance (AUC 0.54) and fails the calibration gate (slope 0.63, under-calibrated), so `_PROVIDER_VARIANT={}` and every provider falls back to `default` (mirrors SC completion being base-rate-served). **ADR-011 does NOT govern this "trained-light" class** (per ADR-024's completion precedent).
+
+**SP4 decomposition (four coherent additive terms).** `xt_gk_v2 = ρ·ΔV_position + ρ·ΔV_pressure(=PEV) − (1−ρ)·V(s) − (1−ρ)·κ·V_opp`, summing exactly to the metric. Columns namespaced **`xt_gk_v2_*`** (`_position`/`_pev`/`_retention_loss`/`_dzv`/`xt_gk_v2`) — v1's frozen `xt_gk_pev/rav/dzv` (lakehouse-materialized, GK-Analytics-UI-read) must NOT be reused (Hyrum). **PEV is 0 by construction while `p′ = p`** (dormant pending receiver-pressure `q`, Jeff §11). RAV = the total (a label), NOT a separate bar.
+
+**SP5 validation.** `scripts/validate_xtgk_v2.py` (owner-run): out-of-sample construct validity (v2 vs raw completion / destination-only V / v1 composite), cross-competition transfer, ρ calibration; WC2018/Neuer repro stubbed (needs Jeff's old data).
+
+**v1 end-state (M5).** v1 `tracking/_xt_gk.py` is FROZEN alongside v2; removed no earlier than one release after the lakehouse migrates its `xt_gk*` columns. No v2↔v1 imports; `xthreat` + v1 byte-stability regression-gated.
+
+**Open sub-questions flagged to Eyestone (non-blocking):** (1) whether zone-conditional should be the *primary* deep-gate mode (default: fallback rung); (2) confirmation of the PEV/DZV/RAV ↔ four-term acronym mapping. Neither blocks the release.
+
+In **no** default xfn list (opt-in). CI covers the pure/synthetic surfaces; the gate run + weight bundling execute against Databricks gold (owner-run). Additive — no forced VAEP retrain.
+
+## Gate result (owner-run 2026-07-10) — the make-or-break verdict
+
+Ran `scripts/validate_xtgk_possession_value.py` against Databricks gold via the new
+`_loader_databricks.load_xtgk_cohort` (`bronze.spadl_actions ⋈ dim_matches ⋈ dev_gold.fct_action_context`
+[pressure + frame-present] `⋈ dev_gold.fct_shot_xg` [calibrated xG]; action_id join coord-exact). Report:
+`docs/research/xtgk_possession_value/{gate.json, GATE_FINDINGS.md}`.
+
+**Pressure pinned to `bekkers_pi` (§5 Q3).** The initial `andrienko_oval` run STOPped (0 occupied deep
+cells) because **52% of actions had pressure exactly 0**, degenerating the terciles. The lakehouse 3-method
+audit (handoff F2) showed the zero-mass is a **method artifact, not missing data** — exact-zero rate andrienko
+46.9% / link_zones 79.5% / **bekkers_pi 4.7%** — so the gate is pinned to `bekkers_pi` (non-degenerate tail).
+
+**Verdict (bekkers_pi) — GO-leaning, not a STOP:**
+- **WC2022 (authorising, certified): fail** — but a **real decreasing monotone deep gradient** (8 cells,
+  relative effect **0.86**, V_lo≈0.0045→V_hi≈0.0018). The fails are the *absolute* effect (0.0027 < the
+  pre-registered 0.005 floor) and the empirical cross-check divergence.
+- **RM (provisional, 100% OOD): fail (cross-check only)** — same real decreasing gradient (17 cells, relative
+  **1.05**, effect 0.0089 which *clears* the absolute floor); fails only the cross-check.
+
+The make-or-break signal ("keepers separable by pressure") **is present** on both cohorts. The two fails are
+Eyestone-review items, not kills: (1) the 0.005 **absolute floor** looks too high vs the intrinsic deep-zone
+first-shot-xG magnitude (≈0.003–0.005) — the scale-free relative effect (0.86–1.05) is the meaningful read;
+(2) the model-free **cross-check divergence** (high-variance estimator vs. transition structure) warrants an
+audit. **Do NOT lower the pre-registered floor post-hoc.** Per the owner build-ahead directive SP2–SP5 shipped
+regardless.
+
+**Two real bugs surfaced + fixed by the run** (synthetic fixtures had missed them): (1) `prepare_cohort` now
+DROPS the residual frame-absent tracking-gap nulls (the §5 backstop's intent — `PressureLevels.apply` was
+raising on them); (2) a NaN-safe `flat_zones` helper at the four zone-binning seams (real cohorts carry NaN
+start/end coords; `xthreat._get_flat_indexes` int-cast would crash).

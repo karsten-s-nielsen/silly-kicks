@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.41.0"
+version = "4.42.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -202,6 +202,8 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/tracking/_gk_completion.py" = ["N803", "N806"]
 # xT-GK completion trainer: ML-style uppercase X + human-readable run summary (T201).
 "scripts/train_gk_completion.py" = ["N803", "N806", "T201"]
+# xT-GK v2 retention (rho) trainer: ML-style uppercase X + human-readable run summary (T201).
+"scripts/train_gk_retention.py" = ["N803", "N806", "T201"]
 # NOTE (M5): NO blanket S608 for scripts/_loader_databricks.py — match_id is parameterized
 # and provider is allowlist-validated; only the allowlisted table NAME carries a narrow
 # inline `# noqa: S608` on its specific lines.

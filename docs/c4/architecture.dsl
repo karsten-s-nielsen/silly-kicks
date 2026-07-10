@@ -13,7 +13,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         accessibleSpace = softwareSystem "accessible-space" "DAS (Dangerous Accessible Space) surface computation" "External"
         ruthless = softwareSystem "ruthless-efficiency" "Optuna/evolutionary optimization substrate (OptunaStrategy + CachedObjective)" "External"
         pining = softwareSystem "pining-for-the-data" "Gated mock provider REST API (SkillCorner/IDSSE public, Gradient Sports owner-tier) over S3" "External"
-        databricks = softwareSystem "Databricks Lakehouse" "bronze.* SPADL/tracking tables + spadl_actions xT corpus" "External"
+        databricks = softwareSystem "Databricks Lakehouse" "bronze.* SPADL/tracking + spadl_actions xT corpus + dev_gold action/shot marts (fct_action_values/context, fct_shot_xg, dim_matches) for the xT-GK v2 gate + rho retention" "External"
 
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
@@ -23,7 +23,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, native + kloppy provider adapters, event-frame linkage, spatial + GKDV models (pitch control, OBSO, DAS, ghost-GK, xS/xCross/xT-GK), and 28 action-coupled aggregators." "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 33-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid, with a held-out transition-NLL evaluator." "Python" "Library"
-            xtgk = container "silly_kicks.xtgk" "xT-GK v2 possession value V(z,p): pressure-stratified Markov surface (goal-kick move-set, xG-calibrated first-shot reward) + model-free cross-check + pre-registered deep-zone gate; injected xg." "Python" "Library"
+            xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate) + the metric compute_xt_gk_v2 over three injected ports (PossessionValue/RetentionModel/TurnoverCost); bundled rho weights." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (pure objectives/CV/gates + frozen exogenous xT artifact) + scripts/ CLI + pining/Databricks loaders. Recommends tuned tracking/xT defaults; never changes library constants." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Per-provider raw-data parse ports (bytes -> provider bronze -> converter input). The Sportec/DFL parse+shape port single-sources the lakehouse DFL parser (golden-pinned). Behind the [parse-dfl] extra." "Python (optional [parse-dfl] extra)" "Library"
         }
@@ -38,7 +38,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         sillyKicks -> accessibleSpace "Computes DAS surfaces via" "accessible-space API"
         sillyKicks -> ruthless "Runs Optuna calibration studies via" "OptunaStrategy"
         sillyKicks -> pining "Loads calibration match data from" "Bearer -> presigned S3"
-        sillyKicks -> databricks "Loads bronze tables + xT corpus from" "databricks-sql-connector"
+        sillyKicks -> databricks "Loads bronze tables + xT corpus + dev_gold action/shot marts (xT-GK v2 gate + rho retention) from" "databricks-sql-connector"
 
         // --- Relationships: Container level ---
         analyst -> spadl "Converts raw events to SPADL actions and enriches via" "convert_to_actions() + add_*() helper family"

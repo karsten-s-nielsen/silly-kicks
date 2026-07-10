@@ -5,6 +5,54 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.42.0] — 2026-07-10
+
+### Added — xT-GK v2 completion: gate run + SP2–SP5 in one release (`silly_kicks/xtgk/`, PR-S109, ADR-036 amendment)
+
+Completes xT-GK v2 (`xT-GK = ρ·[V(s′)−V(s)] − (1−ρ)·[V(s)+κ·V_opp]`) by assembling the metric on
+three injected ports and wiring/running the make-or-break gate together (owner directive; the
+components are independently valid).
+
+- **Metric assembler** `xtgk.compute_xt_gk_v2(actions, *, possession_value, retention, turnover_cost,
+  kappa=1.0)` depending only on the `PossessionValue`/`RetentionModel`/`TurnoverCost` ports. Four
+  coherent additive decomposition columns summing to the metric: `xt_gk_v2_position`, `xt_gk_v2_pev`
+  (dormant while `p′=p`, pending receiver-pressure `q`), `xt_gk_v2_retention_loss`, `xt_gk_v2_dzv`,
+  and the headline `xt_gk_v2` (= RAV, the total). Namespaced away from v1's frozen `xt_gk_pev/rav/dzv`.
+- **SP2 `V_opp`** (`_turnover.py`): `TurnoverCost` port + `MirroredTurnoverCost` = `V(mirror_zone(z),
+  policy(p))` on the fitted V (zero new fitting; `mirror_zone` 180° reflection; injectable `p_opp=p`)
+  + `EmpiricalTurnoverValue` bounded-window cross-check + `_is_turnover`.
+- **SP3 `ρ`** (`_retention.py`): `RetentionModel` port + `GkRetentionModel` (logistic, pure-numpy
+  serve, JSON+SHA256, provider variants) mirroring `GkCompletionModel`; new `retains(actions, *,
+  window_seconds=10.0)` label (`_retention_labels.py`; truncated-window→NaN excluded); **marts-native
+  `extract_retention_features`** (8 features: geometry + `pressure_on_actor__bekkers_pi` from the
+  gold action marts — tracking-frames deprecated, so the frames-only receiver-density feature is
+  dropped and the domain is goal-kicks); calibration gate `ece≤0.10 AND |reliability_slope−1|≤0.25`
+  via the extra-free `silly_kicks/_calibration_metrics.py`; `scripts/train_gk_retention.py` +
+  `_loader_databricks.load_retention_cohort`. **`default` weights bundled** (GS AUC 0.776/ECE 0.090/
+  slope 1.01, PASS); the SkillCorner variant is not shipped (near-chance + fails calibration under
+  bekkers_pi → all providers fall back to `default`).
+- **Gate (Part 1)**: gate-enforced `GateConfig.relative_effect_floor` (primary `≥0.25`); real
+  zone-conditional terciles (`PressureLevels.mode="zone_conditional"`, per-band cutpoints; global
+  on-disk form byte-identical, absent `pressure_mode`⇒global); three-rung ladder
+  `run_gate_with_ladder` (global→zone-conditional→STOP) + `run_gate_both_orientations`; locked Q4
+  numbers wired into `scripts/validate_xtgk_possession_value.py`; RM included PROVISIONAL (100% OOD).
+- **SP5**: owner-run `scripts/validate_xtgk_v2.py` (out-of-sample construct validity vs completion /
+  destination-only V / v1 composite, transfer, calibration; WC2018/Neuer stubbed).
+
+v1 `tracking/_xt_gk.py` FROZEN alongside v2 (removed ≥1 release after the lakehouse migrates); no
+v2↔v1 imports; `xthreat` + v1 byte-stability regression-gated. In **no** default xfn list (opt-in).
+ADR-011 does not govern the trained-light ρ.
+
+**Make-or-break gate — RUN on Databricks gold** (`_loader_databricks.load_xtgk_cohort`; pressure pinned
+to `pressure_on_actor__bekkers_pi`): **GO-leaning — a real, decreasing, monotone deep-zone pressure
+gradient on both cohorts** (WC2022 relative effect 0.86, 8 cells; RM 1.05, 17 cells). Not a clean PASS:
+WC2022's absolute effect (0.0027) is under the pre-registered 0.005 floor (deep-zone xG is intrinsically
+tiny) and the empirical cross-check diverges — both Eyestone-review items, not the degenerate STOP. The
+pressure measure was pinned to bekkers_pi after the lakehouse 3-method audit (andrienko_oval floors to 0
+for ~47% of actions — an artifact; the initial andrienko run STOPped, superseded). Two bugs the run
+surfaced+fixed: `prepare_cohort` drops frame-absent tracking-gap nulls; NaN-safe `flat_zones` at the
+zone-binning seams. See `docs/research/xtgk_possession_value/{GATE_FINDINGS,LAKEHOUSE_HANDOFF}.md`.
+
 ## [4.41.0] — 2026-07-09
 
 ### Added — xT-GK v2 SP1: Q3 xG-source wiring + G8 frame-aware null-pressure (`silly_kicks/xtgk/`, PR-S108, ADR-036 amendment)

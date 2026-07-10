@@ -76,7 +76,12 @@ class EmpiricalPossessionValue:
 
         pl = pressure_levels or PressureLevels().fit(actions[pressure_column])
         a = actions.reset_index(drop=True).copy()
-        a["_p_level"] = pl.apply(a[pressure_column])
+        zones = None
+        if pl.mode == "zone_conditional":
+            from silly_kicks.xtgk._possession_value import flat_zones
+
+            zones = flat_zones(a.start_x, a.start_y, self.l, self.w)
+        a["_p_level"] = pl.apply(a[pressure_column], zones=zones)
         a["_outcome"] = _possession_outcomes(a, xg_column, aggregation)
         for p in _LEVELS:
             sub = a[a["_p_level"] == p].dropna(subset=["start_x", "start_y"])

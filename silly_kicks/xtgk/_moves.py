@@ -41,6 +41,14 @@ def extended_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     return actions[actions["type_id"].isin(MOVE_TYPE_IDS)]
 
 
+def _is_turnover(actions: pd.DataFrame) -> npt.NDArray[np.bool_]:
+    """A move-set action (pass/dribble/cross/goalkick/throw_in) that did NOT succeed.
+    Single-predicate house pattern (cf. vaep.labels._is_owngoal). See ADR-036 §Part 2."""
+    is_move = actions["type_id"].isin(MOVE_TYPE_IDS).to_numpy()
+    failed = (actions["result_id"] != _SUCCESS).to_numpy()
+    return is_move & failed
+
+
 def _successful(move_actions: pd.DataFrame) -> pd.DataFrame:
     return move_actions[move_actions["result_id"] == _SUCCESS]
 

@@ -1,0 +1,78 @@
+{
+  "wc2022": {
+    "authorising": true,
+    "n_actions_fit": 89909,
+    "n_actions_dropped_gap": 922,
+    "reward_provenance": {
+      "xg_source": "fct_shot_xg.xg",
+      "ood_rate": 0.0,
+      "xg_ci_mean_width": 0.08521523580840368,
+      "n_shots": 1473
+    },
+    "ood_rate_by_source": {
+      "gradientsports": 0.0
+    },
+    "unpressured_restart_count": {
+      "gradientsports": 5598
+    },
+    "fit_rung": "global",
+    "fit_gate": {
+      "passed": false,
+      "effect_size": 0.0027335546403144,
+      "observed_direction": "decreasing",
+      "monotone_ok": true,
+      "crosscheck_agrees": false,
+      "n_occupied_cells": 8,
+      "stop_reason": "effect 0.0027<0.005; cross-check divergent",
+      "relative_effect": 0.8617132159202973
+    },
+    "mirror_y_gate": {
+      "passed": false,
+      "effect_size": 0.002734657397169056,
+      "observed_direction": "decreasing",
+      "monotone_ok": true,
+      "crosscheck_agrees": false,
+      "n_occupied_cells": 8,
+      "stop_reason": "effect 0.0027<0.005; cross-check divergent",
+      "relative_effect": 0.8619434634006907
+    },
+    "mirror_x_rejected": true
+  },
+  "rm": {
+    "authorising": false,
+    "n_actions_fit": 134192,
+    "n_actions_dropped_gap": 568,
+    "reward_provenance": {
+      "xg_source": "fct_shot_xg.xg",
+      "ood_rate": 1.0,
+      "xg_ci_mean_width": 0.06786507395317283,
+      "n_shots": 2596
+    },
+    "ood_rate_by_source": {
+      "skillcorner": 1.0
+    },
+    "unpressured_restart_count": {},
+    "fit_rung": "global",
+    "fit_gate": {
+      "passed": false,
+      "effect_size": 0.008867735971636839,
+      "observed_direction": "decreasing",
+      "monotone_ok": true,
+      "crosscheck_agrees": false,
+      "n_occupied_cells": 17,
+      "stop_reason": "cross-check divergent",
+      "relative_effect": 1.051626772392226
+    },
+    "mirror_y_gate": {
+      "passed": false,
+      "effect_size": 0.008865655540369563,
+      "observed_direction": "decreasing",
+      "monotone_ok": true,
+      "crosscheck_agrees": false,
+      "n_occupied_cells": 17,
+      "stop_reason": "cross-check divergent",
+      "relative_effect": 1.0513230240000455
+    },
+    "mirror_x_rejected": true
+  }
+}

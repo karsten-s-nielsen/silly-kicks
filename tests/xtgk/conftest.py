@@ -221,6 +221,100 @@ def flat_no_shot_cohort(n_per_band=40) -> pd.DataFrame:
     return make_cohort(rows)
 
 
+def deep_low_rest_high_cohort(n_per_cell=20) -> pd.DataFrame:
+    """Deep zone globally LOW pressure (goal-kicks ~0.02..0.18); outfield build-up/shots HIGH
+    (~0.6..0.95). Under GLOBAL terciles the deep high tercile is starved -> the ladder STOPs on
+    rung 1; under ZONE-CONDITIONAL terciles the deep band's own 0.02..0.18 spread splits into thirds
+    -> the two deep cells (deep_y in {24,44}, both xi=0) populate all three terciles -> rung 2 fires."""
+    rows: list[dict] = []
+    pid = 0
+    for dy in (24.0, 44.0):
+        for k in range(n_per_cell):
+            base = 1000 * pid
+            low_p = 0.02 + 0.16 * (k / max(n_per_cell - 1, 1))  # deep-band spread 0.02..0.18
+            hi_p = 0.6 + 0.35 * ((k % 3) / 2)  # outfield 0.60/0.775/0.95
+            xg = 0.4 - 0.3 * (k / max(n_per_cell - 1, 1))  # xg falls as deep pressure rises
+            rows += [
+                _row(
+                    base + 0,
+                    GOALKICK,
+                    SUCCESS,
+                    3.0,
+                    dy,
+                    30.0,
+                    34.0,
+                    possession_id=pid,
+                    pressure=low_p,
+                    time_seconds=base + 0.0,
+                ),
+                _row(
+                    base + 1,
+                    PASS,
+                    SUCCESS,
+                    30.0,
+                    34.0,
+                    55.0,
+                    34.0,
+                    possession_id=pid,
+                    pressure=hi_p,
+                    time_seconds=base + 1.0,
+                ),
+                _row(
+                    base + 2,
+                    PASS,
+                    SUCCESS,
+                    55.0,
+                    34.0,
+                    80.0,
+                    34.0,
+                    possession_id=pid,
+                    pressure=hi_p,
+                    time_seconds=base + 2.0,
+                ),
+                _row(
+                    base + 3,
+                    PASS,
+                    SUCCESS,
+                    80.0,
+                    34.0,
+                    100.0,
+                    34.0,
+                    possession_id=pid,
+                    pressure=hi_p,
+                    time_seconds=base + 3.0,
+                ),
+                _row(
+                    base + 4,
+                    SHOT,
+                    FAIL,
+                    100.0,
+                    34.0,
+                    105.0,
+                    34.0,
+                    possession_id=pid,
+                    pressure=hi_p,
+                    xg=xg,
+                    time_seconds=base + 4.0,
+                ),
+            ]
+            pid += 1
+    return make_cohort(rows)
+
+
+def mixed_shot_and_shotless_cohort(n_per_band=40) -> pd.DataFrame:
+    """Both classes for the construct-validity target: shot-reaching possessions (three_band, y=1)
+    AND shotless possessions (flat_no_shot, y=0), in one game with distinct possession/action ids."""
+    shot = three_band_cohort(n_per_band=n_per_band)
+    noshot = flat_no_shot_cohort(n_per_band=n_per_band).copy()
+    noshot["possession_id"] = noshot["possession_id"] + 100_000
+    noshot["action_id"] = noshot["action_id"] + 10_000_000
+    return (
+        pd.concat([shot, noshot], ignore_index=True)
+        .sort_values(["game_id", "period_id", "action_id"])
+        .reset_index(drop=True)
+    )
+
+
 def mirror_y(actions: pd.DataFrame) -> pd.DataFrame:
     """Vertical reflection y->68-y ONLY. Attack direction (x) is PRESERVED -> still attack-LTR."""
     out = actions.copy()

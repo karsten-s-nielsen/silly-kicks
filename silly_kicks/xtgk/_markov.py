@@ -58,7 +58,12 @@ class MarkovPossessionValue:
         from silly_kicks.xtgk._pressure_levels import PressureLevels
 
         pl = pressure_levels or PressureLevels().fit(actions[pressure_column])
-        levels = pl.apply(actions[pressure_column])
+        zones = None
+        if pl.mode == "zone_conditional":
+            from silly_kicks.xtgk._possession_value import flat_zones
+
+            zones = flat_zones(actions["start_x"], actions["start_y"], self.l, self.w)
+        levels = pl.apply(actions[pressure_column], zones=zones)
         actions = actions.assign(_p_level=levels)
         for p in _LEVELS:
             sub = actions[actions["_p_level"] == p]
@@ -137,9 +142,8 @@ class MarkovPossessionValue:
         from silly_kicks.xtgk._serialize import save_surface
 
         pl = cast("PressureLevels", self.pressure_levels)  # _check() guarantees fitted
-        cut = cast("tuple[float, float]", pl.cutpoints)
         meta = dict(self.provenance)
-        meta["cutpoints"] = list(cut)
+        meta.update(pl.to_meta())  # global: {"cutpoints":[lo,hi]} (byte-identical); zone_cond adds band_cutpoints
         save_surface(directory, surfaces=self._surfaces, support=self._support, metadata=meta)
 
     @classmethod
@@ -154,7 +158,6 @@ class MarkovPossessionValue:
         obj._support = {cast(PressureLevel, p): support[p] for p in (1, 2, 3)}
         obj.provenance = meta
         obj.xg_column = meta.get("xg_column")
-        cut = meta["cutpoints"]
-        obj.pressure_levels = PressureLevels.from_cutpoints((float(cut[0]), float(cut[1])))
+        obj.pressure_levels = PressureLevels.from_meta(meta, l=int(l))
         obj._fitted = True
         return obj
