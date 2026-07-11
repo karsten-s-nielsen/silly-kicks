@@ -1,0 +1,10 @@
+{
+  "auc": 0.6500757496652176,
+  "ece": 0.02027950130471801,
+  "reliability_slope": 0.9229570742593696,
+  "ece_max": 0.1,
+  "slope_tol": 0.25,
+  "n_rows": 5477,
+  "n_games": 108,
+  "provider": "skillcorner"
+}

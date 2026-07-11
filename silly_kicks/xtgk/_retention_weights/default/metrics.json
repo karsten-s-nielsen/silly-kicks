@@ -1,10 +1,10 @@
 {
-  "auc": 0.7762066413129483,
-  "ece": 0.09000135005391928,
-  "reliability_slope": 1.0053139767088615,
+  "auc": 0.7809719502559345,
+  "ece": 0.031439031555942125,
+  "reliability_slope": 0.9983851784565551,
   "ece_max": 0.1,
   "slope_tol": 0.25,
-  "n_rows": 396,
+  "n_rows": 2923,
   "n_games": 64,
   "provider": "gradientsports"
 }

@@ -116,7 +116,7 @@ def main() -> int:
         f"P(retain | GK distribution) for xT-GK v2 (ADR-036 §Part 3). Logistic, pure-numpy serve.\n\n"
         f"- Provider: **{a.provider}** ({len(np.unique(groups))} matches, {len(X)} GK-distribution actions)\n"
         f"- Label: `retains(window_seconds=10)` (truncated windows excluded)\n"
-        f"- Marts-native 8 features (geometry + `pressure_on_actor__andrienko_oval`); tracking-frames "
+        f"- Marts-native 8 features (geometry + `pressure_on_actor__bekkers_pi`); tracking-frames "
         f"deprecated so the frames-only receiver-density feature is absent\n"
         f"- Out-of-fold (GroupKFold by match): **AUC {auc:.3f}**, **ECE {metrics['ece']:.3f}**, "
         f"reliability slope {metrics['reliability_slope']:.2f}\n"

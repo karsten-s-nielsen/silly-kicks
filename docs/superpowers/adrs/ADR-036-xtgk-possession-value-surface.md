@@ -141,3 +141,38 @@ materialize a per-action `is_gk_distribution` column rather than reimplementing 
 - **Discovered, out of scope:** `acting_gk_from_frames` compares action-team vs frame-team ids with a raw
   `==` (`_gk_resolve.py`), dtype-fragile if those ever differ (same-provider dtypes match in practice) —
   tracked in `TODO.md`, not fixed here (Chesterton's Fence).
+
+## Amendment (2026-07-11, 4.44.0/PR-S111) — ρ retrain on the broadened domain + loader collapse + resolver dtype fix
+
+With lakehouse F1 live (`fct_action_context.is_gk_distribution` materialized), the two PR-S110 deferred
+follow-ups + one deferred hardening land together.
+
+- **ρ retrain (Part A).** The ρ domain broadens from goal-kicks-only to the full GK-distribution set
+  (goal-kicks ∪ acting-GK open-play passes — the loader/trainer already OR `is_gk_distribution`). Re-bundled,
+  calibration-gated (auditable metrics manifest, ADR-009):
+  - `default` (gradientsports): **AUC 0.781 / ECE 0.031 / slope 0.998**, n=2923 (64 matches) — improved from
+    goal-kicks-only 0.776 / 0.090 (n=396). The thin-ECE-headroom risk did not materialize.
+  - **SkillCorner variant SHIPS** (reversing the PR-S109 no-bundle): the broadened domain (5477 rows, incl.
+    GK open-play passes) makes it viable — **AUC 0.650 / ECE 0.020 / slope 0.923, GATE=PASS** (vs old
+    near-chance 0.54 on 1189 goal-kicks). `_PROVIDER_VARIANT = {"skillcorner": "skillcorner"}`; other providers
+    fall back to `default`. This is data-driven, held to the SAME gate — no lowered bar.
+- **F1 CI calibration guard.** `tests/xtgk/test_retention_bundle_calibration.py` certifies every bundled
+  variant's recorded `metrics.json` clears the canonical `_ECE_MAX`/`_SLOPE_TOL` (imported, not read from the
+  file) + the recorded thresholds match them — a hand-loosened `metrics.json` can't self-certify. The
+  bundle-only-if-passes discipline is now a CI-enforced invariant guarding all future re-bundles.
+- **Gate scope (unchanged).** The retrained ρ moves the **metric-level construct-validity** (`compute_xt_gk_v2`),
+  NOT the deep-zone make-or-break gate (which reads V, not ρ — already GO-leaning, settled). Owner re-runs
+  `validate_xtgk_v2.py` with the production ρ (CI uses `_ConstRho`); the deep-zone Q4 numbers stay LOCKED.
+- **Loader collapse (Part B).** The transitional self-adapting `is_gk_distribution` probe is retired —
+  it's a HARD dependency now (unconditional `SELECT c.is_gk_distribution`); NULLs `fillna(False)` (warning-free).
+  MODEL_CARD pressure doc-bug fixed (`andrienko_oval` → the actually-used `bekkers_pi`).
+- **Resolver dtype fix (Part C, ADR-019).** Investigation **reframed the PR-S110 premise**: `acting_gk_from_frames`
+  is fallback-protected (NOT fragile); the real defect was `defending_gk_from_frames` returning the acting team's
+  OWN keeper (not the opponent) on a cross-dtype team mismatch. Fix = per-branch `ids_equal` (acting) /
+  `ids_differ` (defending) at the shared `_gk_from_frames_linked` predicate — `ids_differ`'s NA→not-differ
+  preserves the unresolved→NaN semantics AND canonicalizes cross-dtype so defending picks the true opponent.
+  Byte-identical on matched/NA paths (four resolver gates + a non-vacuous NaN-branch anchor).
+- **Version 4.44.0.** `compute_xt_gk_v2` serve output changes → xT-GK v2 retrain trigger (opt-in; not in any
+  default xfn list → NOT a forced VAEP retrain). Lakehouse re-materializes xt_gk_v2 on the 4.44.0 pin.
+  **Nullable heads-up:** F1 shipped `is_gk_distribution` nullable (899 GS / 557 SC NULLs); silly-kicks is
+  defended (`fillna(False)`), relayed for the lakehouse to decide on non-nullable enforcement. C4 count stays 28.
