@@ -5,6 +5,35 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.44.0] — 2026-07-11
+
+### Changed — ρ retrain on the broadened `is_gk_distribution` domain + loader collapse + GK-resolver dtype fix (`silly_kicks/xtgk/` + `tracking/`, PR-S111, ADR-036 amendment)
+
+- **ρ retention retrain (Part A).** With lakehouse F1 live (`fct_action_context.is_gk_distribution`), the ρ
+  domain broadened from goal-kicks-only to the full GK-distribution set (goal-kicks + acting-GK open-play
+  passes). Re-bundled on the broadened domain, calibration-gated (`ece≤0.10 AND |slope−1|≤0.25`):
+  - `default` (gradientsports): **AUC 0.781 / ECE 0.031 / slope 0.998**, n=2923 (64 matches) — improved from
+    the goal-kicks-only 0.776 / 0.090 / 1.005 (n=396).
+  - **`skillcorner` variant NOW SHIPS** (was base-rate/fallback): the broadened domain makes it viable —
+    **AUC 0.650 / ECE 0.020 / slope 0.923**, n=5477 (108 matches), GATE=PASS (vs the old near-chance 0.54 on
+    1189 goal-kicks). `_PROVIDER_VARIANT = {"skillcorner": "skillcorner"}`; other providers still fall back
+    to `default`.
+  - **Serve-output change** for `compute_xt_gk_v2` (new `default` ρ) → xT-GK v2 **retrain trigger** (opt-in;
+    not in any default xfn list, so NOT a forced VAEP retrain). Lakehouse re-materializes xt_gk_v2 on re-pin.
+- **F1 CI calibration guard** (`tests/xtgk/test_retention_bundle_calibration.py`): every bundled variant's
+  recorded `metrics.json` must clear the canonical `_ECE_MAX`/`_SLOPE_TOL` (imported, not read from the file)
+  + recorded thresholds must match them (a hand-loosened `metrics.json` can't self-certify). Turns
+  "bundle-only-if-passes" into an enforced invariant.
+- **Loader collapse (Part B):** the transitional self-adapting `is_gk_distribution` probe is retired —
+  `is_gk_distribution` is a HARD dependency (unconditional `SELECT c.is_gk_distribution`); NULLs coalesced to
+  False (warning-free). MODEL_CARD pressure doc-bug fixed (`andrienko_oval` → the actually-used `bekkers_pi`).
+- **GK-resolver dtype fix (Part C):** the shared `_gk_from_frames_linked` team predicate is now dtype-safe —
+  `ids_equal` (acting) / `ids_differ` (defending). **Investigation reframed the target:** `acting_gk_from_frames`
+  is fallback-protected (not fragile); the real defect was `defending_gk_from_frames` returning the acting
+  team's OWN keeper (not the opponent) on a cross-dtype team mismatch. Byte-identical on matched/NA paths (the
+  four resolver gates + a non-vacuous NaN-branch anchor); cross-dtype defending now returns the true opponent.
+  ADR-019.
+
 ## [4.43.0] — 2026-07-10
 
 ### Added — public `gk_distribution_mask` + ρ loader `is_gk_distribution` (`silly_kicks/tracking/`, PR-S110, ADR-036 amendment)

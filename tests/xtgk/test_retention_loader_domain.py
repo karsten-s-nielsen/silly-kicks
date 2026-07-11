@@ -4,22 +4,18 @@ import numpy as np
 import pandas as pd
 
 
-def test_should_select_is_gk_distribution_present_absent():
-    from scripts._loader_databricks import should_select_is_gk_distribution
+def test_retention_sql_is_unconditional_and_probe_helpers_gone():
+    # Part B: the transitional self-adapting probe is collapsed -- is_gk_distribution is now a HARD
+    # dependency (lakehouse F1 materialized it), selected unconditionally; the probe helpers are removed.
+    import scripts._loader_databricks as L
 
-    assert should_select_is_gk_distribution({"action_id", "is_gk_distribution", "pressure"}) is True
-    assert should_select_is_gk_distribution({"action_id", "pressure"}) is False
-    assert should_select_is_gk_distribution(set()) is False
-
-
-def test_build_retention_sql_conditionally_includes_column():
-    from scripts._loader_databricks import _build_retention_sql
-
-    with_col = _build_retention_sql(include_is_gk_distribution=True)
-    without = _build_retention_sql(include_is_gk_distribution=False)
-    assert "c.is_gk_distribution" in with_col
-    assert "is_gk_distribution" not in without
-    assert "gk_was_distributing" not in with_col and "gk_was_distributing" not in without
+    assert "c.is_gk_distribution" in L._RETENTION_SQL
+    assert "{is_gk_distribution_select}" not in L._RETENTION_SQL  # no template hole
+    assert "gk_was_distributing" not in L._RETENTION_SQL
+    assert not hasattr(L, "should_select_is_gk_distribution")
+    assert not hasattr(L, "_build_retention_sql")
+    assert not hasattr(L, "_IS_GK_DISTRIBUTION_PROBE")
+    assert not hasattr(L, "_RETENTION_SQL_TEMPLATE")
 
 
 def _domain_actions(is_gk_col=None):

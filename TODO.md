@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-07-10. **Current release**: silly-kicks 4.43.0 (public `gk_distribution_mask` + ρ loader `is_gk_distribution`, `silly_kicks/tracking/`, PR-S110, ADR-036 amendment: exports the GK-distribution domain as a stable, frame-optional API with a `native`/`robust` lever (`robust ⊆ native` — time-accurate, tightens stale/substituted keepers); frozen v1 `_gk_distribution_mask` is now a byte-identical shim over it; ρ retention loader/trainer drop the misused shot-scoped `gk_was_distributing` for a self-adapting, NULL-coalesced `is_gk_distribution` read. Additive; no `xt_gk`/VAEP value change, no retrain). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-07-11. **Current release**: silly-kicks 4.44.0 (ρ retrain on the broadened `is_gk_distribution` domain + loader collapse + GK-resolver dtype fix, `silly_kicks/xtgk/` + `tracking/`, PR-S111, ADR-036 amendment: ρ `default` re-bundled on the full GK-distribution domain (GS AUC 0.781/ECE 0.031, n=2923) + **SkillCorner variant NOW SHIPS** (broadened domain makes it viable — AUC 0.650/ECE 0.020, n=5477; `_PROVIDER_VARIANT={"skillcorner":"skillcorner"}`); F1 CI calibration guard on bundled weights; loader probe collapsed to an unconditional `is_gk_distribution` read; `defending_gk_from_frames` cross-dtype fix (`ids_equal`/`ids_differ` — returns the true opponent, not the acting team's own keeper). `compute_xt_gk_v2` serve output changes → xT-GK v2 retrain trigger (opt-in). Prior 4.43.0 (PR-S110) = public `gk_distribution_mask` + shim + ρ loader `is_gk_distribution` move. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 **xT-GK v2 owner-run steps (code shipped 4.42.0/PR-S109; these two need restricted-cohort data):**
 (1) run the make-or-break gate `scripts/validate_xtgk_possession_value.py` (locked `GateConfig` wired: `effect_floor=0.005`/`relative=0.25`/`n_min=30`/`decreasing`; WC2022-authorising + RM-provisional, both orientations); (2) train + bundle the ρ retention weights via `scripts/train_gk_retention.py` into `silly_kicks/xtgk/_retention_weights/{default,skillcorner}/` (calibration-gated). Lakehouse migration of `xt_gk_v2_*` columns + the optional receiver-pressure `q` (lights up PEV) are separate follow-ups.
@@ -33,16 +33,15 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 ### Blocked or Deferred
 
-- **ρ retrain on the broadened `is_gk_distribution` domain + collapse the transitional loader probe (follow-up to PR-S110).**
-  Once the lakehouse materializes `fct_action_context.is_gk_distribution`, retrain the ρ retention `default`
-  (and re-attempt a SkillCorner variant) on the broadened goal-kicks ∪ acting-GK-passes domain (~3–4× the
-  rows — likely a materially better calibration), and **collapse the self-adapting loader** (`_loader_databricks.py`
-  `should_select_is_gk_distribution` + `_build_retention_sql` probe) to an unconditional `SELECT c.is_gk_distribution`.
-  Blocked on the lakehouse column landing.
-- **`acting_gk_from_frames` team-join dtype safety (discovered in PR-S110, low-risk).** The internal
-  action-team vs frame-team compare in `_gk_resolve.py` (`_gk_from_frames_linked`) is a raw `==`, dtype-fragile
-  if those ever differ (same-provider dtypes match today, so unobserved). Route through `ids_equal`/`same_id`
-  (ADR-019) when convenient. Not this PR's surface (Chesterton's Fence).
+- **Owner re-run of the real-ρ xT-GK v2 construct-validity (follow-up to PR-S111).** The retrained `default` ρ
+  changes `compute_xt_gk_v2`; CI validates with a `_ConstRho` stub. Re-run `scripts/validate_xtgk_v2.py`
+  construct-validity with the production ρ — confirm the metric's lift over the raw-completion / destination-V /
+  v1 baselines holds before xT-GK v2 is declared done. Validation, NOT a gate re-tune (the deep-zone Q4 numbers
+  stay locked; ρ does not move that gate). Relay to the lakehouse: re-materialize xt_gk_v2 on the 4.44.0 pin.
+- **Lakehouse `is_gk_distribution` nullability heads-up (relay; non-blocking).** F1 shipped the column **nullable**
+  (899 GS / 557 SC NULLs — LEFT-JOIN misses + gaps); silly-kicks is defended (`fillna(False)` in the loader), so
+  the ρ domain is safe. Relay so the lakehouse can decide whether to enforce non-nullable (their SB360-arm fix
+  would fully populate the tracking arms).
 - **Metrica GK identification — derive once per match, not per batch (follow-up to PR-S105).** The 4.38.0
   SkillCorner fix trusts the native roster, but Metrica is anonymized (no roster) and **must** derive
   positionally — so it has the same per-250-frame-batch contamination (a transiently goal-parked outfielder

@@ -43,6 +43,19 @@ def test_load_detects_tamper(tmp_path):
         GkRetentionModel.load(tmp_path / "ret")
 
 
+def test_skillcorner_variant_bundled_and_routed():
+    # PR-S111: SkillCorner clears the gate on the broadened domain -> its own variant ships.
+    from silly_kicks.xtgk._retention import _PROVIDER_VARIANT, variant_key_for_provider
+
+    assert _PROVIDER_VARIANT.get("skillcorner") == "skillcorner"
+    assert variant_key_for_provider("skillcorner") == "skillcorner"
+    assert variant_key_for_provider("gradientsports") == "gs"  # others still fall back to default
+    m = GkRetentionModel.from_variant("skillcorner")
+    X = pd.DataFrame({c: [0.0] for c in RETENTION_FEATURE_NAMES})
+    p = m.predict_proba(X)
+    assert 0.0 <= float(p[0]) <= 1.0
+
+
 def test_bundled_default_variant_loads_if_present():
     try:
         m = GkRetentionModel.from_variant("default")

@@ -21,11 +21,12 @@ from silly_kicks.xtgk._retention_features import RETENTION_FEATURE_NAMES
 _WEIGHTS_ROOT = Path(__file__).parent / "_retention_weights"
 _VARIANT_CACHE: dict = {}
 _VARIANT_KEY_ALIASES = {"gs": "default"}
-# Only the GS `default` variant ships: SkillCorner goal-kick retention is near-chance (AUC ~0.54) and
-# fails the calibration gate (slope 0.63) under the pinned bekkers_pi pressure, so no SC variant is
-# bundled -- every provider falls back to `default` (ADR-036 §Part 3; mirrors SC completion being
-# base-rate-served). Add a provider key here only when a passing per-provider variant is bundled.
-_PROVIDER_VARIANT: dict[str, str] = {}
+# GS `default` + a SkillCorner variant ship (PR-S111, 4.44.0). SkillCorner goal-kick-only retention was
+# near-chance (AUC ~0.54, calibration-failing); the broadened is_gk_distribution domain (goal-kicks + GK
+# open-play passes, 5477 rows) makes it viable -- AUC 0.650 / ECE 0.020 / slope 0.92, GATE=PASS -- so
+# SkillCorner routes to its own weights; every other provider falls back to `default` (ADR-036 §Part 3).
+# Add a provider key here only when a passing per-provider variant is bundled.
+_PROVIDER_VARIANT: dict[str, str] = {"skillcorner": "skillcorner"}
 
 
 @runtime_checkable
@@ -35,8 +36,8 @@ class RetentionModel(Protocol):
 
 def variant_key_for_provider(source_provider: str | None) -> str:
     """Map a tracking ``source_provider`` to a retention-model variant key (PURE, no IO).
-    Currently every provider -> ``"gs"`` (aliased to the bundled ``default``); only the GS variant
-    calibrates. Extend ``_PROVIDER_VARIANT`` when a passing per-provider variant ships."""
+    ``skillcorner`` -> its own bundled variant; every other provider -> ``"gs"`` (aliased to the bundled
+    ``default``). Extend ``_PROVIDER_VARIANT`` when a passing per-provider variant ships."""
     return _PROVIDER_VARIANT.get(str(source_provider).lower() if source_provider is not None else "", "gs")
 
 

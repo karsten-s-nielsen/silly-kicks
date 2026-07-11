@@ -17,7 +17,7 @@ import pandas as pd
 
 from silly_kicks.spadl import config as spadlconfig
 
-from ._id_compat import canonical_id_series, ids_equal, ids_match
+from ._id_compat import canonical_id_series, ids_differ, ids_equal, ids_match
 from .utils import link_actions_to_frames
 
 _GOALKICK = spadlconfig.actiontype_id["goalkick"]
@@ -161,9 +161,19 @@ def _gk_from_frames_linked(
         how="inner",
     )
 
-    # Team predicate: acting team (==) vs opposing team (!=). NaN action team_id -> comparison False -> dropped.
-    match_team = gk_in_frame["gk_team_id"] == gk_in_frame["team_id"]
-    picked = gk_in_frame[match_team if same_team else ~match_team]
+    # Team predicate, dtype-safe (ADR-019): ids_equal for the acting (same-team) GK, ids_differ for the
+    # opposing (defending) GK. ids_differ requires BOTH ids present (NA -> not-differ -> False), which
+    # preserves the "unresolved -> NaN" semantics for a NaN action team AND fixes cross-dtype (canonicalizes
+    # int-vs-str) so defending picks the true opponent, not the acting team's own keeper. A raw `==` here
+    # left the opposing branch (~match_team over an all-False mismatch) selecting every GK -> own keeper.
+    # Both helpers are POSITIONAL / non-nullable np.bool_; .to_numpy() masks gk_in_frame positionally
+    # (fresh inner-merge -> RangeIndex, so this matches the old index-aligned == on matched dtypes). Do NOT
+    # reindex gk_in_frame above without revisiting this.
+    if same_team:
+        keep = ids_equal(gk_in_frame["gk_team_id"], gk_in_frame["team_id"]).to_numpy()
+    else:
+        keep = ids_differ(gk_in_frame["gk_team_id"], gk_in_frame["team_id"]).to_numpy()
+    picked = gk_in_frame[keep]
 
     if picked.empty:
         return out

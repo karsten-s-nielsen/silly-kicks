@@ -261,46 +261,32 @@ def load_xtgk_cohort(data_source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
 # Tracking-frames deprecated: features come from the gold action marts. fct_action_values supplies
 # the base SPADL (geometry/type/result/possession); fct_action_context supplies pressure AND the
 # GK-distribution domain flag (is_gk_distribution = tracking.gk_distribution_mask, resolve_gk="robust").
-# Keyed on (match_key, action_id). The is_gk_distribution SELECT is self-adapting on schema presence
-# (TRANSITIONAL: collapse to an unconditional read once the column is permanently materialized -- see
-# the retrain follow-up in the spec's Deferred section). pressure = bekkers_pi, pinned in PR-S109.
-_RETENTION_SQL_TEMPLATE = """
+# Keyed on (match_key, action_id). is_gk_distribution is a HARD dependency -- permanently materialized by
+# lakehouse F1 (silly-kicks >= 4.44.0), selected unconditionally; a missing column surfaces as a
+# column-named Databricks error, not a cryptic fault. pressure = bekkers_pi, pinned in PR-S109.
+_RETENTION_SQL = """
 WITH v AS (SELECT * FROM soccer_analytics.dev_gold.fct_action_values WHERE data_source = %(ds)s)
 SELECT
   v.match_key AS game_id, v.period AS period_id, v.action_id, v.time_seconds,
   v.team_id, v.player_id, v.start_x, v.start_y, v.end_x, v.end_y,
   v.action_type, v.action_result, v.possession_id, v.data_source,
-  c.pressure_on_actor__bekkers_pi AS pressure{is_gk_distribution_select}
+  c.pressure_on_actor__bekkers_pi AS pressure,
+  c.is_gk_distribution
 FROM v
 LEFT JOIN soccer_analytics.dev_gold.fct_action_context c
   ON c.match_key = v.match_key AND c.action_id = v.action_id
 ORDER BY v.match_key, v.period, v.time_seconds, v.action_id
 """
 
-# Catalog-qualified so it resolves against soccer_analytics, NEVER the session default catalog
-# (an unqualified information_schema returned false-negatives -> the column would silently never load).
-_IS_GK_DISTRIBUTION_PROBE = """
-SELECT column_name FROM soccer_analytics.information_schema.columns
-WHERE table_schema = 'dev_gold' AND table_name = 'fct_action_context'
-"""
-
-
-def should_select_is_gk_distribution(existing_columns: set[str]) -> bool:
-    """Pure decision: include c.is_gk_distribution in the SELECT iff the column exists (transitional)."""
-    return "is_gk_distribution" in existing_columns
-
-
-def _build_retention_sql(*, include_is_gk_distribution: bool) -> str:
-    frag = ",\n  c.is_gk_distribution" if include_is_gk_distribution else ""
-    return _RETENTION_SQL_TEMPLATE.format(is_gk_distribution_select=frag)
-
 
 def load_retention_cohort(data_source: str) -> pd.DataFrame:
     """Full attack-LTR action stream for the rho retention trainer (marts-native; NO tracking frames).
 
-    Maps the gold string ``action_type``/``action_result`` to SPADL ``type_id``/``result_id``
-    (unmapped -> -1, harmless: not a shot/move), carries ``pressure`` + (when materialized) the
-    ``is_gk_distribution`` GK-distribution domain flag. Sorted by (game_id, period_id, time_seconds, action_id).
+    Requires ``fct_action_context.is_gk_distribution`` (lakehouse F1; silly-kicks >= 4.44.0) -- a HARD
+    dependency, unconditionally selected. Maps the gold string ``action_type``/``action_result`` to SPADL
+    ``type_id``/``result_id`` (unmapped -> -1, harmless: not a shot/move), carries ``pressure`` (bekkers_pi)
+    + the ``is_gk_distribution`` GK-distribution domain flag (NULLs coalesced to False). Sorted by
+    (game_id, period_id, time_seconds, action_id).
     """
     import silly_kicks.spadl.config as spadlconfig
 
@@ -308,18 +294,16 @@ def load_retention_cohort(data_source: str) -> pd.DataFrame:
         raise ValueError(f"data_source {data_source!r} not in allowlist {sorted(_ALLOWED_PROVIDERS)}")
     conn = _connect()
     try:
-        probed = _query_param(conn.cursor(), _IS_GK_DISTRIBUTION_PROBE, {})
-        cols = {r["column_name"] for r in probed.to_dict("records")}
-        include = should_select_is_gk_distribution(cols)
-        df = _query_param(conn.cursor(), _build_retention_sql(include_is_gk_distribution=include), {"ds": data_source})
+        df = _query_param(conn.cursor(), _RETENTION_SQL, {"ds": data_source})
     finally:
         conn.close()
     df["type_id"] = df["action_type"].map(spadlconfig.actiontype_id).fillna(-1).astype("int64")
     df["result_id"] = df["action_result"].map(spadlconfig.result_id).fillna(-1).astype("int64")
     for col in ("start_x", "start_y", "end_x", "end_y", "pressure", "time_seconds"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    if "is_gk_distribution" in df.columns:
-        df["is_gk_distribution"] = df["is_gk_distribution"].fillna(False).astype(bool)
+    # object/None (Databricks nullable bool) -> nullable boolean -> False-coalesced -> numpy bool (no
+    # FutureWarning downcast). NULLs (LEFT-JOIN misses / F1 gaps) -> False (excluded from the rho domain).
+    df["is_gk_distribution"] = df["is_gk_distribution"].astype("boolean").fillna(False).astype(bool)
     # retains() requires a finite, non-decreasing clock within (game_id, period_id); drop NaN-time
     # rows (rare/anomalous, unlabelable) and re-sort stably in pandas.
     df = df[df["time_seconds"].notna()].copy()
