@@ -13,9 +13,15 @@ def main() -> int:
 
     ap = argparse.ArgumentParser(description="xT-GK v2 faithfulness audit (W6): kappa sweep + notes.")
     ap.add_argument("--provider", default="gradientsports")
+    ap.add_argument(
+        "--retention-weights",
+        default=None,
+        help="Path to a rho artifact dir (model.json + SHA256SUMS). Overrides the provider variant "
+        "(ADR-036 two-leg SP5 re-run).",
+    )
     a = ap.parse_args()
 
-    from _loader_databricks import load_xtgk_cohort  # type: ignore[import-not-found]
+    from _loader_databricks import load_xtgk_cohort, resolve_retention_model  # type: ignore[import-not-found]
     from validate_xtgk_possession_value import (  # type: ignore[import-not-found]
         _FRAME_PRESENT_COLUMN,
         _PRESSURE_COLUMN,
@@ -24,11 +30,13 @@ def main() -> int:
     )
     from validate_xtgk_v2 import construct_validity_scores  # type: ignore[import-not-found]
 
-    from silly_kicks.xtgk._retention import GkRetentionModel, variant_key_for_provider
+    from silly_kicks.xtgk._retention import variant_key_for_provider
 
     raw, _ = load_xtgk_cohort(a.provider)
     actions = prepare_cohort(raw, pressure_column=_PRESSURE_COLUMN, frame_present_column=_FRAME_PRESENT_COLUMN)
-    rho = GkRetentionModel.from_variant(variant_key_for_provider(a.provider))
+    rho = resolve_retention_model(a.provider, a.retention_weights)
+    rho_label = a.retention_weights or f"variant:{variant_key_for_provider(a.provider)}"
+    print(f"provider={a.provider} rho={rho_label}")
 
     sweep = {}
     for kappa in (1.0, 1.5, 2.0):

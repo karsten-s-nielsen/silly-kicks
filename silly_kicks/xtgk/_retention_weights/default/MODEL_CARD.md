@@ -2,8 +2,8 @@
 
 P(retain | GK distribution) for xT-GK v2 (ADR-036 §Part 3). Logistic, pure-numpy serve.
 
-- Provider: **gradientsports** (64 matches, 2923 GK-distribution actions)
+- Provider: **gradientsports** (64 matches, 3451 GK-distribution actions)
 - Label: `retains(window_seconds=10)` (truncated windows excluded)
 - Marts-native 8 features (geometry + `pressure_on_actor__bekkers_pi`); tracking-frames deprecated so the frames-only receiver-density feature is absent
-- Out-of-fold (GroupKFold by match): **AUC 0.781**, **ECE 0.031**, reliability slope 1.00
+- Out-of-fold (GroupKFold by match): **AUC 0.798**, **ECE 0.031**, reliability slope 1.00
 - Calibration gate (ECE<=0.10 AND |slope-1|<=0.25): **PASS**

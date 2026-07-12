@@ -260,9 +260,16 @@ def main() -> int:
     # Parse args BEFORE the heavy/connection imports so `--help` short-circuits connection-free.
     ap = argparse.ArgumentParser(description="xT-GK v2 construct-validity with the real bundled rho (SP5).")
     ap.add_argument("--provider", default="gradientsports")
+    ap.add_argument(
+        "--retention-weights",
+        default=None,
+        help="Path to a rho artifact dir (model.json + SHA256SUMS). Overrides the provider variant. "
+        "Used by the ADR-036 two-leg SP5 re-run: leg 1 = corrected coords + PRE-FIX rho; "
+        "leg 2 = corrected coords + retrained rho.",
+    )
     a = ap.parse_args()
 
-    from _loader_databricks import load_xtgk_cohort  # type: ignore[import-not-found]
+    from _loader_databricks import load_xtgk_cohort, resolve_retention_model  # type: ignore[import-not-found]
     from validate_xtgk_possession_value import (  # type: ignore[import-not-found]
         _FRAME_PRESENT_COLUMN,
         _PRESSURE_COLUMN,
@@ -270,14 +277,16 @@ def main() -> int:
         prepare_cohort,
     )
 
-    from silly_kicks.xtgk._retention import GkRetentionModel, variant_key_for_provider
+    from silly_kicks.xtgk._retention import variant_key_for_provider
 
     raw, _ = load_xtgk_cohort(a.provider)
     actions = prepare_cohort(raw, pressure_column=_PRESSURE_COLUMN, frame_present_column=_FRAME_PRESENT_COLUMN)
-    variant = variant_key_for_provider(a.provider)
-    rho = GkRetentionModel.from_variant(variant)
+    # ADR-036 two-leg SP5: the report MUST name which rho produced it, else leg 1 (pre-fix rho) and
+    # leg 2 (retrained rho) are indistinguishable in their own artifacts.
+    variant = a.retention_weights or f"variant:{variant_key_for_provider(a.provider)}"
+    rho = resolve_retention_model(a.provider, a.retention_weights)
     scores = construct_validity_scores(actions, xg_column=_XG_COLUMN, pressure_column=_PRESSURE_COLUMN, retention=rho)
-    print(f"provider={a.provider} variant={variant} n_test_gk={scores['n_test_gk']}")
+    print(f"provider={a.provider} rho={variant} n_test_gk={scores['n_test_gk']}")
     for k in ("xt_gk_v2", "raw_completion", "destination_xt", "v1_stored", "v2_on_v1_rows"):
         print(f"  {k}: AUC={scores[k]['auc']:.4f}" + (f" (n={scores[k]['n']})" if "n" in scores[k] else ""))
     print(f"  LIFT (v2 - max baseline) = {scores['lift']:+.4f}")

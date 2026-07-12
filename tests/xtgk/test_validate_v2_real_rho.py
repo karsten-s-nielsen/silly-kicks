@@ -1,6 +1,7 @@
 """PR-S112: construct_validity_scores real-rho path -- GK-domain restriction + injected retention + v1_stored."""
 
 import numpy as np
+import pytest
 
 from scripts.validate_xtgk_v2 import construct_validity_scores
 
@@ -33,7 +34,11 @@ def _cohort(*, with_domain: bool, with_v1: bool):
 
 def test_real_rho_gk_domain_restriction_and_v1_stored():
     a = _cohort(with_domain=True, with_v1=True)
-    s = construct_validity_scores(a, xg_column="xg", pressure_column="pressure", retention=_FakeRho())
+    # ADR-036 amendment: this fixture is a RAW cohort (no xt_gk_origin_* columns), so its
+    # GK-distribution rows are legitimately unattested. Assert the metric says so out loud rather
+    # than silencing it -- an unflagged raw cohort is the exact defect 4.46.0 fixes.
+    with pytest.warns(UserWarning, match="apply_resolved_gk_geometry"):
+        s = construct_validity_scores(a, xg_column="xg", pressure_column="pressure", retention=_FakeRho())
     n_test = int((a["possession_id"] % 2 == 1).sum())
     assert 0 < s["n_test_gk"] < n_test  # restriction applied (non-vacuous)
     assert np.isfinite(s["xt_gk_v2"]["auc"])  # real features built + scored, no crash

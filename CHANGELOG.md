@@ -5,6 +5,93 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.46.0] — 2026-07-12
+
+### Fixed — xT-GK v2 scored ~24% of its domain at a fabricated grid zone (`silly_kicks/xtgk/`, PR-S113, ADR-036 amendment)
+
+`flat_zones` maps a NaN coordinate to `(0.0, 0.0)` → **flat zone 176** (the own-corner cell). That is
+a **fit-path contract** — safe only because every fitting seam drops NaN-coord rows before a surface
+is solved. It was **false at the one scoring seam**, `_metric.py`, which dropped nothing: a NaN-origin
+goal-kick was scored as a **real number at a location it never had**.
+
+Compounding it, `load_xtgk_cohort` read the **raw** `bronze.spadl_actions.start_x`, while the
+**resolved** keeper origins already existed in `fct_action_context.xt_gk_origin_x/_y` (PR-S101,
+4.36.0) — in the very table the loader already `LEFT JOIN`s. It never `SELECT`ed them. The v1
+comparator in the 4.45.0 head-to-head **did** use resolved origins, so that comparison was never
+apples-to-apples.
+
+**Measured on live gold:** **946 of 3874** Gradient Sports GK-distribution actions (**24.4%**,
+including **60.2% of its goal-kicks**) were scored at zone 176 — 530 had a resolved origin sitting
+unused in gold, 416 were never resolvable and are now honest NaN. Separately, **971 SkillCorner
+goal-kicks** carried a *present-and-wrong* origin: the broadcast **ball** detection, not the keeper
+(ADR-024 / PR-S104). A `fillna` **coalesce** would have fixed Gradient Sports and silently missed
+SkillCorner — the rule is **OVERRIDE, not coalesce**.
+
+### Added
+
+- **`silly_kicks.xtgk.apply_resolved_gk_geometry`** — pure, no I/O, returns a NEW frame. Overrides
+  GK-distribution coordinates from gold's resolved keeper geometry and stamps a 7-value
+  **`gk_geometry_source`** provenance column (`off_domain` / `native` / `resolved_origin` /
+  `resolved_dest` / `resolved_both` / `unresolved` / `unattested`). `unresolved` **wins** whenever any
+  coordinate is still non-finite. Resolved columns absent → warn + no-op + `unattested` (never
+  `native`, which would suppress the metric's warn-once while origins were still raw). Missing domain
+  column → `ValueError`.
+- **`silly_kicks.xtgk.finite_coord_mask`** — the blessed pre-filter for any caller that **scores** on
+  the grid, adjacent to `flat_zones` whose docstring now states the fit-path-only contract.
+- `--retention-weights` on `validate_xtgk_v2.py`, `xtgk_v2_keeper_discrimination.py` and
+  `xtgk_v2_kappa_sweep.py`; every report now names the ρ that produced it.
+
+### Changed
+
+- **`compute_xt_gk_v2`**: non-finite-coordinate rows emit **NaN** across all five outputs and never
+  enter the scoring loop — no zone is ever fabricated. ρ is **no longer scored** on those rows, which
+  closes `GkRetentionModel.predict_proba`'s silent mean-imputation *without* changing its semantics.
+  Adds a **coordinate-coherence check** (recomputes the coordinate-derived ρ features from `actions`
+  and raises on divergence — catching resolved-actions/raw-features, its mirror, and mart-vintage
+  divergence with one rule) and a **warn-once attestation**.
+- **Both Databricks loaders** now `SELECT` `xt_gk_origin_x/_y` + `xt_gk_dest_x/_y` and apply the
+  helper, so all four consumers inherit the fix and ρ features are necessarily built from the
+  resolved frame.
+- **ρ retrained** on the corrected cohort; both variants **PASS** the calibration gate. `default`
+  (gradientsports): 2923 → **3451** rows (the goal-kicks whose NaN origins had excluded them from
+  training entirely), AUC 0.781 → **0.798**. `skillcorner`: **5477 rows, identical** — nothing added
+  or dropped, only the goal-kick *geometry* corrected — AUC 0.650 → **0.662**. `_PROVIDER_VARIANT`
+  unchanged.
+
+### Construct-validity re-run — honest and mixed
+
+Two legs (pre-fix ρ / retrained ρ); metrics, baselines, κ=1 headline and a-priori parameters all
+frozen. Full tables: `docs/research/xtgk_v2_construct_validity/README.md`.
+
+| lens | provider | 4.45.0 (raw) | 4.46.0 |
+|---|---|---|---|
+| outcome-AUC lift | gradientsports | −0.1387 | **−0.1474** |
+| outcome-AUC lift | skillcorner | −0.0720 | **−0.0268** |
+| keeper ICC (v2) | gradientsports | **−0.0020** | **+0.0256** (v1: 0.0193) |
+| keeper ICC (v2) | skillcorner | 0.0109 | **0.0147** (v1: 0.0176) |
+
+**The "keeper-flat" leg of the 4.45.0 verdict does not survive.** Gradient Sports' v2 ICC went from
+−0.0020 (worse than nothing) to **+0.0256**, now **exceeding v1** for the first time — the direction
+predicted before the run, since a fabricated origin is **keeper-independent** and so compresses
+between-keeper variance toward zero. **The outcome-AUC leg stands**: v2 still loses to simple
+baselines. xT-GK v2 remains **not construct-validated by outcome-AUC**, but the interpretation-fork
+decision can now be taken on trustworthy numbers with one of its two supporting findings withdrawn.
+
+### Not re-run
+
+The **deep-zone gate**. Every fit seam drops NaN coords, so the fitted `V` surface and its support are
+clean and the GO-leaning verdict stands — asserted by a regression test with a **non-vacuity
+meta-assertion**, not by prose (`tests/xtgk/test_deep_zone_gate_nan_invariance.py`).
+
+### Consumer impact
+
+**xT-GK v2 re-materialize trigger** (`compute_xt_gk_v2` output and ρ weights both change). **NOT** a
+forced VAEP retrain — v2 is opt-in and in no default xfn list. The lakehouse must call
+`apply_resolved_gk_geometry` before `compute_xt_gk_v2`, **and must keep `is_gk_distribution` (or the
+stamp) on the frame it passes** — the warn-once fires only when a domain column with true rows is
+present, so a pre-filtered slice with the flag dropped would score raw origins in silence. On pandas
+3.0 `gk_geometry_source` materialises as `str` dtype, not `object`.
+
 ## [4.45.0] — 2026-07-11
 
 ### Changed — xT-GK v2 faithful V_opp + full construct-validity + keeper-discrimination validation (`silly_kicks/xtgk/` + `scripts/` + `docs/research/`, PR-S112, ADR-036 amendment)

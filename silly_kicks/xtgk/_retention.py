@@ -74,6 +74,14 @@ class GkRetentionModel:
 
     # ---- serve (pure numpy) ----
     def predict_proba(self, features: pd.DataFrame) -> np.ndarray:
+        """P(retain) per row. Pure numpy; no sklearn at serve.
+
+        Non-finite features are imputed to the **training mean** (neutral post-standardisation).
+        That is deliberate and unchanged — but it means a NaN-geometry row would silently receive a
+        *no-information* rho, which then multiplies every term of the metric. ``compute_xt_gk_v2``
+        therefore masks non-finite-coordinate rows **upstream** and never calls this on them, rather
+        than relying on the imputation. See ADR-036 (4.46.0 amendment).
+        """
         coef, mean, std = self._coef, self._mean, self._std
         if coef is None or mean is None or std is None:
             raise RuntimeError("GkRetentionModel not fitted/loaded.")

@@ -89,6 +89,13 @@ def main() -> int:
 
     ap = argparse.ArgumentParser(description="xT-GK v2 keeper discrimination (W5).")
     ap.add_argument("--provider", default="gradientsports")
+    ap.add_argument(
+        "--retention-weights",
+        default=None,
+        help="Path to a rho artifact dir (model.json + SHA256SUMS). Overrides the provider variant. "
+        "Used by the ADR-036 two-leg SP5 re-run: leg 1 = corrected coords + PRE-FIX rho; "
+        "leg 2 = corrected coords + retrained rho.",
+    )
     a = ap.parse_args()
 
     from _loader_databricks import load_xtgk_cohort  # type: ignore[import-not-found]
@@ -100,7 +107,7 @@ def main() -> int:
     )
 
     from silly_kicks.xtgk import EmpiricalTurnoverValue, MarkovPossessionValue, PressureLevels, compute_xt_gk_v2
-    from silly_kicks.xtgk._retention import GkRetentionModel, variant_key_for_provider
+    from silly_kicks.xtgk._retention import variant_key_for_provider
     from silly_kicks.xtgk._retention_features import extract_retention_features
 
     raw, _ = load_xtgk_cohort(a.provider)
@@ -110,8 +117,12 @@ def main() -> int:
     tc = EmpiricalTurnoverValue(min_support=30).fit(
         full, xg_column=_XG_COLUMN, pressure_column=_PRESSURE_COLUMN, pressure_levels=pl
     )
-    variant = variant_key_for_provider(a.provider)
-    rho = GkRetentionModel.from_variant(variant)
+    from _loader_databricks import resolve_retention_model  # type: ignore[import-not-found]
+
+    # ADR-036 two-leg SP5: every artifact must state WHICH rho produced it, else leg 1 (pre-fix rho)
+    # and leg 2 (retrained rho) are indistinguishable in their own reports.
+    variant = a.retention_weights or f"variant:{variant_key_for_provider(a.provider)}"
+    rho = resolve_retention_model(a.provider, a.retention_weights)
 
     gk = full[full["is_gk_distribution"].fillna(False)].reset_index(drop=True)
     feats = extract_retention_features(gk, pressure_column=_PRESSURE_COLUMN)
@@ -126,6 +137,17 @@ def main() -> int:
     )["xt_gk_v2"].to_numpy()
     keys = gk["player_key"].to_numpy()
     v1 = pd.to_numeric(gk["xt_gk"], errors="coerce").to_numpy()
+
+    # ADR-036 census (B5): the NaN-out count and the resolution provenance have no other scripted
+    # source. NOTE the denominator: this cohort is POST-prepare_cohort (frame-absent null-pressure
+    # rows are already dropped), so it is <= the spec's raw-domain figures.
+    from silly_kicks.xtgk import finite_coord_mask
+    from silly_kicks.xtgk._resolved_geometry import GK_GEOMETRY_SOURCE_COLUMN
+
+    n_nan = int((~finite_coord_mask(gk)).sum())
+    print(f"  census: {len(gk)} GK-distribution actions (POST-prepare_cohort); {n_nan} NaN-coord -> xt_gk_v2=NaN")
+    if GK_GEOMETRY_SOURCE_COLUMN in gk.columns:
+        print(f"  census: gk_geometry_source = {gk[GK_GEOMETRY_SOURCE_COLUMN].value_counts().to_dict()}")
 
     sv2, sv1 = keeper_spread(v2, keys), keeper_spread(v1, keys)
     print(f"provider={a.provider} n_actions={len(gk)} keepers(v2)={sv2['n_keepers']}")

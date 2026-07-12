@@ -224,3 +224,130 @@ they landed and were **NOT retuned to force a pass**.
   any default xfn list → not a forced VAEP retrain). A consumer adopting the faithful injection re-materializes
   `xt_gk_v2_*`. The deep-zone make-or-break gate (reads V, not V_opp) is untouched and stays GO-leaning. C4
   count stays 28.
+
+---
+
+## Amendment (2026-07-12, 4.46.0/PR-S113) — resolved GK-distribution geometry
+
+### The defect
+
+`xtgk._possession_value.flat_zones` maps a NaN coordinate to `(0.0, 0.0)` — i.e. **flat zone 176**,
+the own-corner cell. That is a **FIT-PATH contract, not a general one**: it is safe only because no
+NaN-coord row ever reaches a fitted surface (`_moves.py`, `_xg_reward.py`, `_markov.py`,
+`_empirical.py`, `_turnover.py` drop them *before* calling in; `_markov.py:65`, `_empirical.py:83`
+and `_diagnostics.py:123` pass NaN rows *through* to assign pressure terciles and drop them
+immediately after).
+
+It was **false at the single SCORING seam**, `_metric.py`, which dropped nothing — so a NaN-origin
+goal-kick was scored as a **real number at a location it never had**.
+
+Compounding it, `load_xtgk_cohort` read the **raw** `bronze.spadl_actions.start_x`, while the
+**resolved** keeper origins had been materialised into `fct_action_context.xt_gk_origin_x/_y` by
+PR-S101 (4.36.0) — in the very table the loader already `LEFT JOIN`s. It never `SELECT`ed them. The
+v1 comparator in the 4.45.0 head-to-head (`c.xt_gk`) *did* use resolved origins, so **that
+comparison was never apples-to-apples.**
+
+### Measured blast radius (live gold)
+
+| provider | domain | `native` | `resolved_origin` (was fabricated) | `unresolved` (now honest NaN) |
+|---|---|---|---|---|
+| gradientsports | 3874 | 2928 | **530** | **416** |
+| skillcorner | 5487 | 4516 | **971** | 0 |
+
+**946 GS rows (24.4%, incl. 60.2% of its goal-kicks)** were scored at zone 176. SkillCorner's 971
+goal-kicks carried a *present-and-wrong* origin — the broadcast **ball** detection, not the keeper
+(ADR-024 / PR-S104) — so a `fillna` **coalesce** would have fixed GS and silently missed SkillCorner.
+The rule is **OVERRIDE, not coalesce**.
+
+### Decision
+
+1. **`apply_resolved_gk_geometry`** (new public, pure, no I/O): overrides GK-distribution coords from
+   `xt_gk_origin_x/_y` + `xt_gk_dest_x/_y` and stamps a 7-value `gk_geometry_source` provenance
+   column. `unresolved` **wins** whenever any coordinate is still non-finite (the stamp answers "will
+   this row score?"). Resolved columns absent → warn + no-op + **`unattested`**, never `native`
+   (stamping `native` would suppress the metric's warn-once while origins were still raw). Missing
+   `domain_column` → **`ValueError`** (treating every row as in-domain would overwrite open-play
+   coords with keeper geometry).
+2. **`compute_xt_gk_v2`** gains: a **NaN guard** (non-finite-coord rows emit NaN across all five
+   outputs and never enter the loop — no zone is ever fabricated); ρ is **not scored** on those rows,
+   closing `_retention.py:81`'s silent mean-imputation *without* changing `predict_proba`; a
+   **coordinate-coherence check** that recomputes the coordinate-derived ρ features from `actions`
+   and raises on divergence; and a **warn-once attestation**.
+3. **Both Databricks loaders** apply the helper, so all four consumers inherit it.
+4. **ρ retrained** on the corrected cohort. Both variants PASS the calibration gate: `default`
+   2923→**3451** rows, AUC 0.781→**0.798**; `skillcorner` 5477 rows (identical — only the *geometry*
+   changed), AUC 0.650→**0.662**. `_PROVIDER_VARIANT` unchanged.
+
+**The coherence check compares COORDINATES, not provenance** — so it catches resolved-actions +
+raw-features, its mirror (raw actions + resolved features), *and* mart-vintage divergence, with no
+case table. It must span the **origin**-derived features (`length`/`forwardness`/`dy_abs`): the dest
+override is a **measured no-op** on both cohorts, so a `dest_x`-only check would miss every real
+divergence. The stamp's remaining job is the one thing coordinates can never reveal — that resolution
+was never *attempted* (raw coordinates are perfectly self-consistent).
+
+### ADR-025 interplay (this does NOT breach the never-mutate-canonical fence)
+
+ADR-025's contract is: never mutate canonical `start_x`/`end_x`; emit `enriched_*` side-band columns,
+with canonical promotion an explicitly deferred Phase 2. `apply_resolved_gk_geometry` **overrides
+canonical columns on a copy**, and that is compatible:
+
+- ADR-025's fence protects the **canonical persisted** coordinates — what converters emit and what the
+  lakehouse writes to its marts. This helper produces a **transient scoring-time view**: the overridden
+  frame is handed to `compute_xt_gk_v2` and discarded. **`start_x` is never written back to any mart.**
+- The side-band idiom was **rejected** because it would force `compute_xt_gk_v2` to grow
+  `origin_columns=`/`dest_columns=` parameters, pushing a data-**provenance policy** into the metric
+  **engine**. Policy stays at the edge; the engine stays provenance-free and reads exactly
+  `start_x`/`end_x` (cf. the geometry tripwire kept at the `add_restart_coordinates` edge).
+
+### The deep-zone gate is NOT re-run
+
+Every fit seam drops NaN coords, so the fitted `V` surface, its support counts,
+`EmpiricalPossessionValue` and `EmpiricalTurnoverValue` are all clean. The GO-leaning gate verdict
+**stands**. This is asserted by a **regression test**, not prose:
+`tests/xtgk/test_deep_zone_gate_nan_invariance.py` — which also carries a **non-vacuity
+meta-assertion** (its first draft compared an all-zero surface to an all-zero surface and would have
+"passed" while proving nothing).
+
+**Fourth consumer.** `scripts/validate_xtgk_possession_value.py` (the gate script) also imports
+`load_xtgk_cohort`, so the in-loader override changes **its** input too. Harmless this cycle — the fit
+seams drop NaN rows either way — but **a future gate re-run would fit `V` on different coordinates
+than the 4.42.0 run did**, so its numbers would not be directly comparable to the recorded GO-leaning
+result.
+
+### Construct-validity re-run — honest and mixed
+
+Two legs (pre-fix ρ / retrained ρ), everything else frozen. Full tables in
+`docs/research/xtgk_v2_construct_validity/README.md`.
+
+| lens | provider | 4.45.0 (raw) | 4.46.0 (leg 2) |
+|---|---|---|---|
+| outcome-AUC lift | gradientsports | −0.1387 | **−0.1474** |
+| outcome-AUC lift | skillcorner | −0.0720 | **−0.0268** |
+| keeper ICC (v2) | gradientsports | **−0.0020** | **+0.0256** (v1: 0.0193) |
+| keeper ICC (v2) | skillcorner | 0.0109 | **0.0147** (v1: 0.0176) |
+
+**The "keeper-flat" leg of the 4.45.0 verdict does not survive.** GS's v2 ICC went from −0.0020
+(worse than nothing) to +0.0256 and now **exceeds v1** for the first time — exactly the direction
+predicted before the run, since a fabricated origin is **keeper-independent** and therefore compresses
+between-keeper variance toward zero.
+
+**The outcome-AUC leg stands.** v2 still loses to simple baselines (on GS, `raw_completion` scores
+0.622 while both v1 (0.381) and v2 (0.475) sit below chance on that target). So xT-GK v2 is **still
+not construct-validated by outcome-AUC** — but the interpretation-fork decision (V-reward definition
+vs dormant PEV) can now be taken on **trustworthy** numbers, and one of its two supporting findings
+has been withdrawn.
+
+### Consequences
+
+- **`compute_xt_gk_v2` output changes** (NaN where it previously fabricated; corrected values on the
+  resolved rows) and **ρ weights change** → **xT-GK v2 re-materialize trigger**. NOT a forced VAEP
+  retrain (v2 is opt-in, in no default xfn list).
+- **Cross-repo handoff.** The lakehouse must call `apply_resolved_gk_geometry` before
+  `compute_xt_gk_v2`, and **must keep `is_gk_distribution` (or the `gk_geometry_source` stamp) on the
+  frame it passes** — the warn-once fires only when a domain column with true rows is present, so a
+  pre-filtered slice with the flag dropped would score raw origins in silence. The
+  coordinate-coherence check does **not** cover that case (a uniformly-raw pair is self-consistent).
+- **`GkRetentionModel.predict_proba` is unchanged** (non-finite → training-mean impute, neutral
+  post-standardisation). The metric's upstream mask removes the exposure; documented, not altered.
+- **Hyrum.** On pandas 3.0 the `gk_geometry_source` column materialises as `str` dtype, not `object`.
+- **Version 4.46.0 (MINOR).** C4 count stays 28 (no new action-coupled aggregator).
