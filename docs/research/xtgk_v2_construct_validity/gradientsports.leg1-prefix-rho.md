@@ -1,27 +1,27 @@
 # xT-GK v2 construct-validity — gradientsports (FAITHFUL V_opp)
-- rho variant: `variant:gs` * GK-distribution test rows: **1902** * V_opp = faithful observed-post-turnover, possession-bound, TRAIN-fit
+- rho variant: `C:/Users/Karsten/AppData/Local/Temp/claude/D--Development-karstenskyt--silly-kicks/f8334e52-8c05-466e-8cc5-3158a9eb1c6a/scratchpad/rho_prefix/default` * GK-distribution test rows: **1902** * V_opp = faithful observed-post-turnover, possession-bound, TRAIN-fit
 
 | metric | AUC | n |
 |---|---|---|
-| **xt_gk_v2** | 0.4748 | 1902 |
+| **xt_gk_v2** | 0.4561 | 1902 |
 | raw_completion | 0.6223 | 1902 |
 | destination_xt | 0.5711 | 1902 |
 | v1_stored (c.xt_gk) | 0.3813 | 1710 |
-| xt_gk_v2 (on v1-covered rows) | 0.4748 | 1710 |
+| xt_gk_v2 (on v1-covered rows) | 0.4561 | 1710 |
 
-**LIFT** (v2 - max baseline, full GK-test): **-0.1474**
+**LIFT** (v2 - max baseline, full GK-test): **-0.1661**
 
-**v2 vs v1 (matched rows):** v2 0.4748 vs v1 0.3813 (d +0.0936)
+**v2 vs v1 (matched rows):** v2 0.4561 vs v1 0.3813 (d +0.0749)
 
 ### Component decomposition (did the faithful V_opp un-swamp rho*dV?)
 | term | \|mean\| share |
 |---|---|
-| position | 29% |
+| position | 28% |
 | pev | 0% |
-| retention_loss | 40% |
-| dzv | 31% |
+| retention_loss | 41% |
+| dzv | 32% |
 
-AUC (harness target): **rho*dV alone 0.5476** * +retention 0.4815 * full 0.4748
+AUC (harness target): **rho*dV alone 0.5399** * +retention 0.4595 * full 0.4561
 
 ### R1 deep-cell disentanglement (V_opp, train-fit; mean over terciles)
 | zone | possession-bound (prod) | mirror (proxy) | 10s (sens.) | native n | level |

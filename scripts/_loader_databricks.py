@@ -15,6 +15,8 @@ from collections.abc import Iterator
 
 import pandas as pd
 
+from silly_kicks.xtgk import apply_resolved_gk_geometry
+
 # Allowlist of known bronze providers — the ONLY values interpolated into a table name (M5).
 # match_id is ALWAYS parameterized; provider is validated against this set, never free-form.
 _ALLOWED_PROVIDERS = frozenset({"idsse", "skillcorner", "gradientsports", "metrica", "sportec", "statsbomb", "wyscout"})
@@ -207,6 +209,8 @@ SELECT
   s.possession_id_heuristic AS possession_id, s.data_source,
   c.pressure_on_actor__bekkers_pi, c.pressure_on_actor__andrienko_oval,
   c.is_gk_distribution, c.xt_gk, c.player_key,
+  c.xt_gk_origin_x, c.xt_gk_origin_y, c.xt_gk_dest_x, c.xt_gk_dest_y,
+  c.xt_gk_origin_source, c.xt_gk_dest_source,
   CASE WHEN c.team_shape_n_outfield_players_defending IS NOT NULL THEN true ELSE false END AS frame_present,
   x.xg, x.ood_flag, x.xg_ci_low, x.xg_ci_high
 FROM s
@@ -247,6 +251,10 @@ def load_xtgk_cohort(data_source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         "start_y",
         "end_x",
         "end_y",
+        "xt_gk_origin_x",
+        "xt_gk_origin_y",
+        "xt_gk_dest_x",
+        "xt_gk_dest_y",
         "pressure_on_actor__bekkers_pi",
         "pressure_on_actor__andrienko_oval",
         "xg",
@@ -259,6 +267,13 @@ def load_xtgk_cohort(data_source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         actions[col] = pd.to_numeric(actions[col], errors="coerce").astype("int64")
     actions["frame_present"] = actions["frame_present"].astype(bool)
     actions["is_gk_distribution"] = actions["is_gk_distribution"].astype("boolean").fillna(False).astype(bool)
+    # ADR-036 amendment (4.46.0): the GK-distribution domain's canonical coords are NOT trustworthy
+    # (GS ~60% NaN goal-kick origins; SkillCorner's native origin is the broadcast BALL, not the
+    # keeper). Inject the resolved keeper geometry v1 already computes and the lakehouse persists.
+    # Doing it HERE means all consumers (validate_xtgk_v2 / keeper_discrimination / kappa_sweep /
+    # validate_xtgk_possession_value) inherit it, and rho features are necessarily built from the
+    # resolved frame -- the actions-vs-features coherence hazard is closed by construction.
+    actions = apply_resolved_gk_geometry(actions)
     return actions, shot_xg
 
 
@@ -276,7 +291,9 @@ SELECT
   v.team_id, v.player_id, v.start_x, v.start_y, v.end_x, v.end_y,
   v.action_type, v.action_result, v.possession_id, v.data_source,
   c.pressure_on_actor__bekkers_pi AS pressure,
-  c.is_gk_distribution
+  c.is_gk_distribution,
+  c.xt_gk_origin_x, c.xt_gk_origin_y, c.xt_gk_dest_x, c.xt_gk_dest_y,
+  c.xt_gk_origin_source, c.xt_gk_dest_source
 FROM v
 LEFT JOIN soccer_analytics.dev_gold.fct_action_context c
   ON c.match_key = v.match_key AND c.action_id = v.action_id
@@ -304,12 +321,43 @@ def load_retention_cohort(data_source: str) -> pd.DataFrame:
         conn.close()
     df["type_id"] = df["action_type"].map(spadlconfig.actiontype_id).fillna(-1).astype("int64")
     df["result_id"] = df["action_result"].map(spadlconfig.result_id).fillna(-1).astype("int64")
-    for col in ("start_x", "start_y", "end_x", "end_y", "pressure", "time_seconds"):
+    for col in (
+        "start_x",
+        "start_y",
+        "end_x",
+        "end_y",
+        "xt_gk_origin_x",
+        "xt_gk_origin_y",
+        "xt_gk_dest_x",
+        "xt_gk_dest_y",
+        "pressure",
+        "time_seconds",
+    ):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     # object/None (Databricks nullable bool) -> nullable boolean -> False-coalesced -> numpy bool (no
     # FutureWarning downcast). NULLs (LEFT-JOIN misses / F1 gaps) -> False (excluded from the rho domain).
     df["is_gk_distribution"] = df["is_gk_distribution"].astype("boolean").fillna(False).astype(bool)
+    # ADR-036 amendment (4.46.0): rho MUST train on the same resolved geometry the metric scores on.
+    # Pre-fix, the SkillCorner variant was trained on 1181 goal-kicks whose origin was the broadcast
+    # BALL, not the keeper -- contaminated weights, not merely missing data.
+    df = apply_resolved_gk_geometry(df)
     # retains() requires a finite, non-decreasing clock within (game_id, period_id); drop NaN-time
     # rows (rare/anomalous, unlabelable) and re-sort stably in pandas.
     df = df[df["time_seconds"].notna()].copy()
     return df.sort_values(["game_id", "period_id", "time_seconds", "action_id"], kind="stable").reset_index(drop=True)
+
+
+def resolve_retention_model(provider: str, weights_dir: str | None = None):
+    """Load the rho model for ``provider``, or from an explicit artifact dir.
+
+    ``weights_dir`` exists for the ADR-036 two-leg SP5 re-run: leg 1 scores the CORRECTED cohort
+    under the PRE-FIX rho, leg 2 under the retrained one, so the delta is attributable between
+    "the origins moved" and "rho moved".
+    """
+    from pathlib import Path
+
+    from silly_kicks.xtgk._retention import GkRetentionModel, variant_key_for_provider
+
+    if weights_dir:
+        return GkRetentionModel.load(Path(weights_dir))
+    return GkRetentionModel.from_variant(variant_key_for_provider(provider))

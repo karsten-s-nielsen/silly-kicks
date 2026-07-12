@@ -17,10 +17,16 @@ from silly_kicks.xtgk._possession_value import (
     PossessionValue,
     PressureLevel,
     State,
+    finite_coord_mask,
     mirror_zone,
     zone_of,
 )
 from silly_kicks.xtgk._pressure_levels import PressureLevels, coalesce_frame_present_null_pressure
+from silly_kicks.xtgk._resolved_geometry import (
+    GK_GEOMETRY_SOURCE_COLUMN,
+    GK_GEOMETRY_SOURCES,
+    apply_resolved_gk_geometry,
+)
 from silly_kicks.xtgk._retention import GkRetentionModel, RetentionModel
 from silly_kicks.xtgk._retention_features import extract_retention_features
 from silly_kicks.xtgk._retention_labels import retains
@@ -31,6 +37,8 @@ from silly_kicks.xtgk._validate import (
 )
 
 __all__ = [
+    "GK_GEOMETRY_SOURCES",
+    "GK_GEOMETRY_SOURCE_COLUMN",
     "DeepZoneGateReport",
     "DeltaV",
     "EmpiricalPossessionValue",
@@ -46,9 +54,11 @@ __all__ = [
     "RetentionModel",
     "State",
     "TurnoverCost",
+    "apply_resolved_gk_geometry",
     "coalesce_frame_present_null_pressure",
     "compute_xt_gk_v2",
     "extract_retention_features",
+    "finite_coord_mask",
     "frame_present_null_pressure_count",
     "mirror_zone",
     "ood_rate_by_source",

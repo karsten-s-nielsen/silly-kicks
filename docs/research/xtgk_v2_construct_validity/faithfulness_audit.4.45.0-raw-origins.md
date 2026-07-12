@@ -1,11 +1,11 @@
 # xT-GK v2 secondary faithfulness audit (W6)
 
-## kappa sweep (faithful V_opp, possession-bound; provider `skillcorner`) — REPORTED, not tuned (§3: kappa=1 is the a-priori headline)
+## kappa sweep (faithful V_opp, possession-bound; provider `gradientsports`) — REPORTED, not tuned (§3: kappa=1 is the a-priori headline)
 | kappa | xt_gk_v2 AUC | lift |
 |---|---|---|
-| 1.0 | 0.5572 | -0.0268 |
-| 1.5 | 0.5575 | -0.0264 |
-| 2.0 | 0.5569 | -0.0270 |
+| 1.0 | 0.4836 | -0.1387 |
+| 1.5 | 0.4813 | -0.1410 |
+| 2.0 | 0.4770 | -0.1453 |
 
 > kappa scales the turnover term `dzv = -(1-rho)*kappa*V_opp`. With the faithful (small) V_opp, raising kappa adds more of a term that (per W4) drags the metric below `rho*dV` alone, so a larger kappa does not help; **kappa=1 stays the headline** (not chosen to optimise this, it is the default). The kappa/turnover-weighting is a genuine question for Jeff, given the faithful V_opp shifts the balance.
 
