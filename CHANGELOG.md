@@ -5,6 +5,69 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.45.0] — 2026-07-11
+
+### Changed — xT-GK v2 faithful V_opp + full construct-validity + keeper-discrimination validation (`silly_kicks/xtgk/` + `scripts/` + `docs/research/`, PR-S112, ADR-036 amendment)
+
+The release that closes the xT-GK v2 validation loop. It ships the **faithful** turnover-cost adapter
+(Jeff §2.3: an observed-post-turnover estimate, not the mirror geometric proxy) and the full
+out-of-sample validation instrumentation. Honest-reporting guardrail (§3): the a-priori params were
+fixed before fitting and the numbers are reported as they landed — **NOT retuned to force a pass.**
+
+- **Faithful `EmpiricalTurnoverValue` (`silly_kicks/xtgk/_turnover.py`, library).** Rewrote the model-free
+  turnover-value adapter into the faithful `V_opp`:
+  - **Possession-bound by default** (`window_seconds=None`): the opponent's first-shot xG is scanned from the
+    turnover to the *match* boundary (no fixed-time cap), so a real deep-turnover threat is not truncated by a
+    window. A finite `window_seconds` is retained as a reported sensitivity.
+  - **Support-gated hierarchical bin-widening**: every `(zone, pressure)` cell resolves to the finest estimate
+    with `>= min_support` support — native cell → coarse `coarsen×coarsen` block → global-per-pressure — so a
+    deep cell with 1–2 native turnovers is not a noise estimate. `min_support` defaults to **30** (= the
+    pre-registered deep-zone gate `n_min`). Per-cell `resolution_level(p)` (0 native / 1 block / 2 global /
+    −1 unresolved) + a module-level `surface_divergence(a, b, p)` for auditing two adapters.
+  - **Fail-loud `game_id` guard**: possession-bound scanning requires a match boundary, so `fit` raises if
+    `game_id` is missing/NULL (the possession-bound scope can't be computed without it).
+  - The metric assembler `_metric.py` is **unchanged** — `compute_xt_gk_v2` still injects `turnover_cost` via
+    the port, so this is a better recommended injection, not a forced default change.
+- **Validation harness (`scripts/validate_xtgk_v2.py`, owner-run).** `construct_validity_scores` now
+  train-fits the faithful possession-bound `EmpiricalTurnoverValue` on the possession-parity **train** split
+  and injects it (V out-of-sample, ρ in-sample); GK-distribution-domain restricted (`is_gk_distribution`);
+  reports the component decomposition (position / pev / retention_loss / dzv `|mean|` share) and the R1
+  deep-cell disentanglement (possession-bound vs mirror vs 10s, native-n, resolution level) that separates a
+  genuine mirror over-statement from a window-shrinkage artifact. A `kappa` passthrough enables the W6 sweep.
+- **Keeper-discrimination instrument (`scripts/xtgk_v2_keeper_discrimination.py`, owner-run, NEW).** The real
+  SP5 question (Jeff's Bravo/Navas reranking mode): does v2 separate keepers where v1 was flat? Measured by a
+  one-way random-effects **ICC on action-level values grouped by the resolved `player_key`** (R2: NOT the
+  degenerate CV-on-collapsed-means); CV reported secondary/unstable-near-zero-mean.
+- **Secondary faithfulness audit (`scripts/xtgk_v2_kappa_sweep.py`, owner-run, NEW).** κ sweep (reported for
+  Jeff, κ=1 the a-priori headline — never tuned) + the V-reward interpretation deferral (we use
+  `E[first-shot xG]` vs Jeff §2.1's remainder-of-possession — flagged, not silently changed) + the PEV-dormant
+  note (`p′=p`; receiver-pressure `q` deferred).
+- **Loader (`scripts/_loader_databricks.py`).** The xtgk cohort SQL now selects `c.is_gk_distribution`,
+  `c.xt_gk` (v1 baseline), and `c.player_key` (the resolved keeper — `player_id` is NULL for goal-kicks by
+  SPADL design; convention added to `CLAUDE.md`).
+
+### Findings (owner-run, real Databricks gold; `docs/research/xtgk_v2_construct_validity/`)
+
+- **The faithful V_opp is a genuine correction.** It un-swamped the metric: the deep-turnover `dzv` share
+  fell from ~87–89% (mirror) to **29%**, and `ρ·ΔV` (position) rose from ~8% to **36–42%**. The mirror
+  over-stated deep opponent threat ~10–50× at real support (e.g. GS zone 96: mirror 0.256 vs
+  possession-bound 0.005); the R1 disentanglement confirms this is NOT a window artifact (10s → ~0.0000).
+- **But v2 still does not beat the baselines.** Outcome-AUC lift over `max(raw_completion, destination_xt,
+  v1_stored)`: **GS −0.139, SC −0.072** (v2 AUC 0.484 / 0.513). On v1-covered rows v2 does beat v1
+  head-to-head on GS (0.502 vs 0.381) but not on SC (0.513 vs 0.584).
+- **And v2 does not discriminate keepers.** Action-level ICC (grouped by `player_key`): **v2 −0.002 (GS) /
+  0.011 (SC)** vs **v1 0.019 / 0.018** — both near-zero; v2 is still keeper-flat. (The R2 ICC vindicated
+  itself: CV had suggested v2 24% ≫ v1 6%, but that was a near-zero-mean artifact.)
+- **Verdict (honest, §3): xT-GK v2 is not construct-validated by the outcome-AUC or keeper-discrimination
+  lenses, even with the faithful V_opp.** Reported as-is for the Jeff conversation; open interpretation forks
+  (first-shot vs remainder-of-possession V reward; dormant PEV) are flagged, not silently patched. The
+  faithful V_opp adapter still ships because it is the correct, un-swamped turnover cost regardless of the
+  downstream verdict.
+
+- **Hyrum:** the faithful `EmpiricalTurnoverValue` changes `compute_xt_gk_v2` output vs the mirror proxy; any
+  consumer that adopts the faithful injection (recommended) re-materializes `xt_gk_v2_*`. Opt-in (not in any
+  default xfn list) → not a forced VAEP retrain. C4 count unchanged (28).
+
 ## [4.44.0] — 2026-07-11
 
 ### Changed — ρ retrain on the broadened `is_gk_distribution` domain + loader collapse + GK-resolver dtype fix (`silly_kicks/xtgk/` + `tracking/`, PR-S111, ADR-036 amendment)

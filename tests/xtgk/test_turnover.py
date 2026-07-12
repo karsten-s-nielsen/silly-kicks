@@ -119,7 +119,7 @@ def test_empirical_turnover_credits_the_opponents_post_turnover_shot():
         ),
     ]
     actions = pd.DataFrame(rows)
-    etv = EmpiricalTurnoverValue().fit(actions, xg_column="xg", pressure_column="pressure")
+    etv = EmpiricalTurnoverValue(min_support=1).fit(actions, xg_column="xg", pressure_column="pressure")
     z_loss = zone_of(5.0, 34.0)
     assert etv.value(z_loss, 1) > 0.0  # opponent's post-turnover shot xg credited to the loss zone
 
@@ -169,7 +169,9 @@ def test_empirical_turnover_ignores_shot_outside_time_window():
         ),  # 99s later -> out of window
     ]
     actions = pd.DataFrame(rows)
-    etv = EmpiricalTurnoverValue(window_seconds=10.0).fit(actions, xg_column="xg", pressure_column="pressure")
+    etv = EmpiricalTurnoverValue(window_seconds=10.0, min_support=1).fit(
+        actions, xg_column="xg", pressure_column="pressure"
+    )
     assert etv.value(zone_of(5.0, 34.0), 1) == 0.0
 
 

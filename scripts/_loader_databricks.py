@@ -206,6 +206,7 @@ SELECT
   s.type_id, s.result_id, s.bodypart_id, s.start_x, s.start_y, s.end_x, s.end_y,
   s.possession_id_heuristic AS possession_id, s.data_source,
   c.pressure_on_actor__bekkers_pi, c.pressure_on_actor__andrienko_oval,
+  c.is_gk_distribution, c.xt_gk, c.player_key,
   CASE WHEN c.team_shape_n_outfield_players_defending IS NOT NULL THEN true ELSE false END AS frame_present,
   x.xg, x.ood_flag, x.xg_ci_low, x.xg_ci_high
 FROM s
@@ -225,7 +226,9 @@ def load_xtgk_cohort(data_source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     ``actions`` = attack-LTR SPADL for the cohort with ``xg`` (fct_shot_xg), pressure (both
     ``pressure_on_actor__bekkers_pi`` [the pinned measure] and ``__andrienko_oval`` [comparison]),
-    ``frame_present``, ``possession_id``, and per-shot ``ood_flag``/``xg_ci_low``/``xg_ci_high``.
+    ``frame_present``, ``possession_id``, per-shot ``ood_flag``/``xg_ci_low``/``xg_ci_high``, and (for the
+    SP5 construct-validity harness, PR-S112) the GK-distribution domain marker ``is_gk_distribution`` +
+    the stored v1 composite ``xt_gk`` (NaN where v1 didn't score; the deep-zone gate ignores both).
     ``shot_xg`` = the per-shot fct_shot_xg slice for the OOD-rate report. Read-only; provider
     allowlist-validated + bound-parameterized.
     """
@@ -248,12 +251,14 @@ def load_xtgk_cohort(data_source: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         "pressure_on_actor__andrienko_oval",
         "xg",
         "time_seconds",
+        "xt_gk",  # stored v1 composite; NaN preserved where v1 didn't score (a baseline, not a gate)
     )
     for col in numeric:
         actions[col] = pd.to_numeric(actions[col], errors="coerce")
     for col in ("type_id", "result_id"):
         actions[col] = pd.to_numeric(actions[col], errors="coerce").astype("int64")
     actions["frame_present"] = actions["frame_present"].astype(bool)
+    actions["is_gk_distribution"] = actions["is_gk_distribution"].astype("boolean").fillna(False).astype(bool)
     return actions, shot_xg
 
 
