@@ -176,3 +176,51 @@ follow-ups + one deferred hardening land together.
   default xfn list → NOT a forced VAEP retrain). Lakehouse re-materializes xt_gk_v2 on the 4.44.0 pin.
   **Nullable heads-up:** F1 shipped `is_gk_distribution` nullable (899 GS / 557 SC NULLs); silly-kicks is
   defended (`fillna(False)`), relayed for the lakehouse to decide on non-nullable enforcement. C4 count stays 28.
+
+## Amendment (2026-07-11, 4.45.0/PR-S112) — faithful V_opp + the honest construct-validity verdict
+
+The release that closes the v2 validation loop. It replaces the mirror geometric turnover proxy with the
+**faithful** observed-post-turnover cost (Jeff §2.3) and runs the full out-of-sample validation. Governed by
+the §3 honest-reporting guardrail: the a-priori params were fixed before fitting; the numbers are reported as
+they landed and were **NOT retuned to force a pass**.
+
+- **Faithful `EmpiricalTurnoverValue` (`_turnover.py`).** The production `MirroredTurnoverCost` estimated
+  `V_opp(z) = V(mirror_zone(z))` — a geometric proxy that, on real data, over-stated deep opponent threat
+  ~10–50× at real support (GS zone 96: mirror 0.256 vs faithful 0.005). The faithful adapter estimates the
+  opponent's actual first-shot xG after a turnover, indexed origin-zone × pressure, with (a) **possession-bound
+  scope** (`window_seconds=None`; scan to the match boundary — a `game_id` fail-loud guard because the scope
+  can't be computed without it), and (b) **support-gated hierarchical bin-widening** (native cell → coarse
+  `coarsen×coarsen` block → global-per-pressure; `min_support=30` = the gate `n_min`) so a 1–2-turnover deep
+  cell is not a noise estimate. `resolution_level(p)` + module `surface_divergence` audit the two adapters.
+  `_metric.py` is unchanged — `turnover_cost` stays injected via the port, so the faithful adapter is a better
+  recommended injection, not a forced default change.
+
+- **What the faithful V_opp fixed (genuine correction).** Component decomposition on the metric: the deep
+  `dzv` `|mean|` share fell from ~87–89% (mirror) to **29%**; `ρ·ΔV` (position) rose from ~8% to **36–42%**.
+  The R1 deep-cell disentanglement confirms this is a real mirror over-statement, not a window artifact
+  (possession-bound ≪ mirror at real support; 10s ≪ possession-bound = the artifact, not the finding).
+
+- **What it did NOT fix — the honest verdict.** Even with the faithful V_opp, out-of-sample on real Databricks
+  gold (`docs/research/xtgk_v2_construct_validity/`):
+  - **Outcome-AUC lift** over `max(raw_completion, destination_xt, v1_stored)`: **GS −0.139, SC −0.072** — v2
+    does not beat the baselines. (Head-to-head vs v1 on v1-covered rows: GS +0.121, SC −0.072.)
+  - **Keeper discrimination** (action-level ICC grouped by resolved `player_key`, R2 — not the degenerate
+    CV-on-means): **v2 −0.002 (GS) / 0.011 (SC)** vs **v1 0.019 / 0.018** — both near-zero; v2 is still
+    keeper-flat. The R2 ICC vindicated itself: CV had read v2 24% ≫ v1 6%, a near-zero-mean artifact.
+  - **Verdict: xT-GK v2 is not construct-validated** by either the outcome-AUC or the keeper-discrimination
+    lens. Reported as-is for the Eyestone/Jeff conversation. Open interpretation forks flagged, not patched:
+    the V reward uses `E[first-shot xG]` vs Jeff §2.1's *remainder-of-possession* threat, and PEV is dormant
+    (`p′=p`; receiver-pressure `q` deferred) — both are candidate explanations for the weak signal, but
+    re-implementing V or wiring `q` is out of scope for this release (a separate decision if the forks matter).
+    The faithful adapter ships regardless because it is the correct, un-swamped turnover cost.
+  - The W6 κ sweep (κ∈{1,1.5,2}, reported for Jeff, κ=1 the a-priori headline) confirmed a larger κ only adds
+    more turnover drag (GS AUC 0.484→0.477) — κ=1 was not tuned to this.
+
+- **Data contract (`CLAUDE.md`).** GK-domain consumers use the **resolved `player_key`**, never raw
+  `player_id` (NULL for goal-kicks by SPADL design — the reason `acting_gk_from_frames` exists). The xtgk
+  cohort loader sources it from the gold `fct_action_context`, guarded by `test_player_key_contract.py`.
+
+- **Version 4.45.0 (MINOR).** Library change is the faithful `EmpiricalTurnoverValue` (opt-in adapter; not in
+  any default xfn list → not a forced VAEP retrain). A consumer adopting the faithful injection re-materializes
+  `xt_gk_v2_*`. The deep-zone make-or-break gate (reads V, not V_opp) is untouched and stays GO-leaning. C4
+  count stays 28.

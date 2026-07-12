@@ -2,10 +2,10 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-07-11. **Current release**: silly-kicks 4.44.0 (ρ retrain on the broadened `is_gk_distribution` domain + loader collapse + GK-resolver dtype fix, `silly_kicks/xtgk/` + `tracking/`, PR-S111, ADR-036 amendment: ρ `default` re-bundled on the full GK-distribution domain (GS AUC 0.781/ECE 0.031, n=2923) + **SkillCorner variant NOW SHIPS** (broadened domain makes it viable — AUC 0.650/ECE 0.020, n=5477; `_PROVIDER_VARIANT={"skillcorner":"skillcorner"}`); F1 CI calibration guard on bundled weights; loader probe collapsed to an unconditional `is_gk_distribution` read; `defending_gk_from_frames` cross-dtype fix (`ids_equal`/`ids_differ` — returns the true opponent, not the acting team's own keeper). `compute_xt_gk_v2` serve output changes → xT-GK v2 retrain trigger (opt-in). Prior 4.43.0 (PR-S110) = public `gk_distribution_mask` + shim + ρ loader `is_gk_distribution` move. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-07-11. **Current release**: silly-kicks 4.45.0 (xT-GK v2 faithful V_opp + full construct-validity + keeper-discrimination validation, `silly_kicks/xtgk/` + `scripts/` + `docs/research/`, PR-S112, ADR-036 amendment: `EmpiricalTurnoverValue` rewritten into the faithful turnover cost (Jeff §2.3 — possession-bound `window_seconds=None` + support-gated hierarchical bin-widening, `min_support=30`, `game_id` fail-loud guard), replacing the mirror proxy that over-stated deep opponent threat ~10–50×. **Honest verdict (§3, real gold):** the faithful V_opp genuinely un-swamped the metric (deep `dzv` share 87–89%→29%, `ρ·ΔV` 8%→36–42%) BUT xT-GK v2 is **NOT construct-validated** — outcome-AUC lift over baselines GS −0.139/SC −0.072, action-level keeper-discrimination ICC v2 −0.002/0.011 vs v1 0.019/0.018 (both near-zero, still keeper-flat). Reported as-is (a-priori params fixed, not retuned); faithful adapter ships regardless (the correct turnover cost); deep-zone gate (reads V) untouched. `compute_xt_gk_v2` output changes vs mirror → xT-GK v2 retrain trigger (opt-in). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
-**xT-GK v2 owner-run steps (code shipped 4.42.0/PR-S109; these two need restricted-cohort data):**
-(1) run the make-or-break gate `scripts/validate_xtgk_possession_value.py` (locked `GateConfig` wired: `effect_floor=0.005`/`relative=0.25`/`n_min=30`/`decreasing`; WC2022-authorising + RM-provisional, both orientations); (2) train + bundle the ρ retention weights via `scripts/train_gk_retention.py` into `silly_kicks/xtgk/_retention_weights/{default,skillcorner}/` (calibration-gated). Lakehouse migration of `xt_gk_v2_*` columns + the optional receiver-pressure `q` (lights up PEV) are separate follow-ups.
+**xT-GK v2 — remaining open items (validation loop closed; the metric did not validate):**
+The make-or-break deep-zone gate (GO-leaning) and ρ retention weights (`default`+`skillcorner`, calibration-gated) shipped 4.42.0–4.44.0; the faithful V_opp + full construct-validity ran 4.45.0. **Metric verdict: not construct-validated by outcome-AUC or keeper-discrimination.** Owner/Eyestone decision pending on the flagged interpretation forks (V reward = `E[first-shot xG]` vs Jeff §2.1 remainder-of-possession; dormant PEV pending receiver-pressure `q`) — re-implementing V or wiring `q` is out of scope until that decision. Lakehouse migration of `xt_gk_v2_*` columns is a separate follow-up (re-materialize on the faithful-V_opp injection).
 
 ---
 
@@ -33,11 +33,14 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 
 ### Blocked or Deferred
 
-- **Owner re-run of the real-ρ xT-GK v2 construct-validity (follow-up to PR-S111).** The retrained `default` ρ
-  changes `compute_xt_gk_v2`; CI validates with a `_ConstRho` stub. Re-run `scripts/validate_xtgk_v2.py`
-  construct-validity with the production ρ — confirm the metric's lift over the raw-completion / destination-V /
-  v1 baselines holds before xT-GK v2 is declared done. Validation, NOT a gate re-tune (the deep-zone Q4 numbers
-  stay locked; ρ does not move that gate). Relay to the lakehouse: re-materialize xt_gk_v2 on the 4.44.0 pin.
+- **xT-GK v2 interpretation-fork decision (owner/Eyestone; blocks any further v2 metric work).** The 4.45.0
+  construct-validity (faithful V_opp, production ρ) ran and the metric did **not** validate: outcome-AUC lift
+  GS −0.139 / SC −0.072; keeper-discrimination ICC v2 ≈ v1 ≈ 0 (`docs/research/xtgk_v2_construct_validity/`).
+  Two flagged forks are candidate explanations and need a decision before more v2 work: (1) V reward =
+  `E[first-shot xG]` vs Jeff §2.1 *remainder-of-possession* threat (would require re-implementing V); (2) PEV
+  dormant (`p′=p`) pending the receiver-pressure `q` frames-side feature (would light up the pressure-value
+  term). Both out of scope until the decision. Lakehouse: re-materialize `xt_gk_v2_*` on the faithful-V_opp
+  injection pin (opt-in — not a forced VAEP retrain).
 - **Lakehouse `is_gk_distribution` nullability heads-up (relay; non-blocking).** F1 shipped the column **nullable**
   (899 GS / 557 SC NULLs — LEFT-JOIN misses + gaps); silly-kicks is defended (`fillna(False)` in the loader), so
   the ρ domain is safe. Relay so the lakehouse can decide whether to enforce non-nullable (their SB360-arm fix

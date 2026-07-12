@@ -18,6 +18,22 @@ def test_retention_sql_is_unconditional_and_probe_helpers_gone():
     assert not hasattr(L, "_RETENTION_SQL_TEMPLATE")
 
 
+def test_xtgk_cohort_sql_selects_is_gk_distribution_and_xt_gk():
+    # PR-S112: the construct-validity harness reads the GK-distribution domain + the stored v1 (c.xt_gk).
+    import scripts._loader_databricks as L
+
+    assert "c.is_gk_distribution" in L._XTGK_ACTIONS_SQL
+    assert "c.xt_gk" in L._XTGK_ACTIONS_SQL
+
+
+def test_xtgk_cohort_sql_selects_player_key():
+    # W1 (PR-S112/4.45.0): the resolved keeper surrogate (player_id is null for goal-kicks by SPADL design).
+    import scripts._loader_databricks as L
+
+    assert "c.player_key" in L._XTGK_ACTIONS_SQL
+    assert "s.player_id" in L._XTGK_ACTIONS_SQL  # raw actor still present, but NOT the keeper source for GK dist
+
+
 def _domain_actions(is_gk_col=None):
     # 6 GK-distribution rows EARLY (3 goalkick + 3 GK-pass by player 1) + outfield filler spanning
     # to t=60 so the early rows' 10s retains() windows are fully observed (finite labels). is_gk_col
