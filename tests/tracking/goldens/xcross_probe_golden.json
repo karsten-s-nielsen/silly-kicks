@@ -1,0 +1,10 @@
+{
+ "gk_mean_abs_delta": 0.008762553513298651,
+ "gk_median_abs_delta": 0.0076549924450724505,
+ "gk_p90_abs_delta": 0.015771954617912143,
+ "n_frames_used": 2,
+ "nearest_def_median_abs_delta": 0.0003825550737219796,
+ "random_band_median_abs_delta": 0.00018769293115705743,
+ "tf19_ready": false,
+ "tf19_reason": "GK |\u0394| did not clear ratio>=2.0 x control AND abs-floor>=0.01"
+}

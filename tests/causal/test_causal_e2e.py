@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from silly_kicks._causal.opportunities import GK_BLOCK, PAPER_CONFOUNDERS, build_opportunities
+from silly_kicks.causal.opportunities import GK_BLOCK, PAPER_CONFOUNDERS, build_opportunities
 from silly_kicks.spadl import config as _c
 
 # Reuse the geometry-correct spell-fixture builders (single source -- tests/causal/_fixtures.py, R3-L2).

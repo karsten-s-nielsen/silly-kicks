@@ -6,6 +6,7 @@ import pytest
 
 from silly_kicks.tracking import _xcross_eval as ev
 from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL, XCROSS_GK_BLOCK
+from tests.tracking._probe_fixtures import planted_model, probe_frames
 
 
 def _synth(n=400, seed=0):
@@ -39,91 +40,6 @@ def test_gk_block_ablation_emits_with_without_and_deltas():
     assert len([c for c in X.columns if c not in XCROSS_GK_BLOCK]) == 10
 
 
-def _probe_frames():
-    """Two wide-area frames, ball near the left byline, carrier A1, one defender, a GK, ball row.
-    Attacked goal at x=105 (GK near x~104)."""
-    rows = []
-    for fr, t in [(1, 40.0), (2, 40.4)]:
-        rows += [
-            dict(
-                game_id="g",
-                period_id=1,
-                frame_id=fr,
-                time_seconds=t,
-                team_id="A",
-                player_id="A1",
-                x=96.0,
-                y=8.0,
-                vx=1.0,
-                vy=0.0,
-                is_ball=False,
-                is_goalkeeper=False,
-                ball_state="alive",
-            ),
-            dict(
-                game_id="g",
-                period_id=1,
-                frame_id=fr,
-                time_seconds=t,
-                team_id="A",
-                player_id="A2",
-                x=99.0,
-                y=34.0,
-                vx=0.0,
-                vy=0.0,
-                is_ball=False,
-                is_goalkeeper=False,
-                ball_state="alive",
-            ),
-            dict(
-                game_id="g",
-                period_id=1,
-                frame_id=fr,
-                time_seconds=t,
-                team_id="B",
-                player_id="B1",
-                x=100.0,
-                y=20.0,
-                vx=0.0,
-                vy=0.0,
-                is_ball=False,
-                is_goalkeeper=False,
-                ball_state="alive",
-            ),
-            dict(
-                game_id="g",
-                period_id=1,
-                frame_id=fr,
-                time_seconds=t,
-                team_id="B",
-                player_id="Bgk",
-                x=104.0,
-                y=34.0,
-                vx=0.0,
-                vy=0.0,
-                is_ball=False,
-                is_goalkeeper=True,
-                ball_state="alive",
-            ),
-            dict(
-                game_id="g",
-                period_id=1,
-                frame_id=fr,
-                time_seconds=t,
-                team_id="ball",
-                player_id=None,
-                x=96.0,
-                y=8.0,
-                vx=1.0,
-                vy=0.0,
-                is_ball=True,
-                is_goalkeeper=False,
-                ball_state="alive",
-            ),
-        ]
-    return pd.DataFrame(rows)
-
-
 def _fit_probe_model():
     from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
 
@@ -133,7 +49,7 @@ def _fit_probe_model():
 
 def test_gk_substitution_probe_emits_gk_and_two_controls():
     m = _fit_probe_model()
-    out = ev.gk_substitution_probe(m, _probe_frames(), actions=None, home_team_id="A", n_frames=2, seed=42)
+    out = ev.gk_substitution_probe(m, probe_frames(), actions=None, home_team_id="A", n_frames=2, seed=42)
     for k in (
         "gk_median_abs_delta",
         "nearest_def_median_abs_delta",
@@ -148,10 +64,23 @@ def test_gk_substitution_probe_emits_gk_and_two_controls():
 
 def test_gk_substitution_probe_is_deterministic():
     m = _fit_probe_model()
-    a = ev.gk_substitution_probe(m, _probe_frames(), actions=None, home_team_id="A", n_frames=2, seed=7)
-    b = ev.gk_substitution_probe(m, _probe_frames(), actions=None, home_team_id="A", n_frames=2, seed=7)
+    a = ev.gk_substitution_probe(m, probe_frames(), actions=None, home_team_id="A", n_frames=2, seed=7)
+    b = ev.gk_substitution_probe(m, probe_frames(), actions=None, home_team_id="A", n_frames=2, seed=7)
     assert a["gk_median_abs_delta"] == b["gk_median_abs_delta"]
     assert a["random_band_median_abs_delta"] == b["random_band_median_abs_delta"]
+
+
+def test_probe_report_matches_pre_refactor_golden():
+    import json
+    import pathlib
+
+    golden = json.loads((pathlib.Path(__file__).parent / "goldens" / "xcross_probe_golden.json").read_text())
+    report = ev.gk_substitution_probe(planted_model("mixed"), probe_frames(), home_team_id="A")
+    for k, v in golden.items():
+        if isinstance(v, float):
+            assert report[k] == pytest.approx(v, rel=1e-12), k
+        else:
+            assert report[k] == v, k
 
 
 def test_tf19_ready_reads_pinned_constants(monkeypatch):
@@ -163,6 +92,15 @@ def test_tf19_ready_reads_pinned_constants(monkeypatch):
     assert ev._tf19_ready(gk=0.05, nearest_def=float("nan"), rand=float("nan")) is False  # M2: no control band
     monkeypatch.setattr(ev, "TF19_PROBE_RATIO", 10.0)
     assert ev._tf19_ready(gk=0.05, nearest_def=0.02, rand=0.01) is False  # respects the constant
+
+
+def test_probe_report_carries_report_only_diagnostics():
+    report = ev.gk_substitution_probe(planted_model("mixed"), probe_frames(), home_team_id="A")
+    assert "gk_zero_fraction" in report  # report-only; NOT part of _tf19_ready
+    assert "random_band_zero_fraction" in report  # S5: post-B1 THE diagnostic separating
+    assert "gk_median_abs_delta_at_2m" in report  # 'unmeasurable' from 'clean fail'
+    assert "gk_median_abs_delta_at_4m" in report  # P9: REAL dose diagnostics, not prose
+    # the FROZEN verdict fields are untouched -- golden still green
 
 
 def test_permutation_importance_cv_held_out_and_reports_coverage():

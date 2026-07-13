@@ -28,6 +28,7 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
+from silly_kicks.tracking._id_compat import ids_match
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking.utils import link_actions_to_frames
 
@@ -199,9 +200,13 @@ def extract_xshot_features(
     theta = math.atan2(by - _geo.GOAL_Y, bx) if not math.isnan(bx) else np.nan
     speed = math.hypot(bvx, bvy) if not math.isnan(bvx) else np.nan
 
-    defending = players[(players["team_id"] == gk_team_id) & (~players_is_gk)]
-    attacking = players[players["team_id"] != gk_team_id]
-    gk_rows = players[(players["team_id"] == gk_team_id) & players_is_gk]
+    # ADR-019: dtype-safe team-id identity (Int64(2) vs "2" must match). One computed
+    # mask, three consumers; ids_match resolves NA to False, so NaN-team rows land in
+    # ``attacking`` via the plain complement -- byte-matching the legacy ``!=``.
+    is_gk_team = ids_match(players["team_id"], gk_team_id)
+    defending = players[is_gk_team & (~players_is_gk)]
+    attacking = players[~is_gk_team]
+    gk_rows = players[is_gk_team & players_is_gk]
 
     def_xy = (
         np.column_stack(
@@ -305,6 +310,19 @@ _INT_PARAMS = ("n_estimators", "max_depth", "min_child_weight")
 
 class IntegrityError(Exception):
     """Raised when a model artifact fails SHA-256 verification."""
+
+
+def _chirality_block(model: XShotOccurrenceModel) -> dict:
+    """Behavioral chirality fingerprint (ADR-037): the model's own extractor + predict on
+    the canonical y-asymmetric probe frame. Emitted into save() metadata; a y-mirrored
+    artifact cannot reproduce it (the 4.18.0-weights class of bug)."""
+    from silly_kicks.tracking._chirality import chirality_fingerprint
+
+    def _predict(frame):
+        feats = extract_xshot_features(frame, gk_team_id="B", goal_x=105.0)
+        return model.predict_proba(feats)
+
+    return chirality_fingerprint(_predict)
 
 
 def _pinned_params(overrides: dict | None) -> dict:
@@ -437,6 +455,7 @@ class XShotOccurrenceModel:
             "training_platform": platform.platform(),
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
+            "chirality": _chirality_block(self),
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from silly_kicks._causal import opportunities as O
+from silly_kicks.causal import opportunities as O
 from silly_kicks.spadl import config as _c
 from tests.causal._fixtures import CENTRAL, META, NEAR0, WIDE, actions, frames, spell
 

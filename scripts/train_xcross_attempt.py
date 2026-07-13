@@ -45,14 +45,27 @@ def _iter_matches_from_pining(providers, max_per_provider):
     yield from load_matches(providers=providers, max_per_provider=max_per_provider)
 
 
+def _new_probe_cohort() -> dict:
+    """One TF-19 probe cohort's capture state (M5): bounded frames/actions copies + provenance."""
+    return {"frames": [], "actions": [], "home": None, "matches": [], "match_groups": {}}
+
+
 def _extract(
-    source, horizon_seconds, *, probe_keep=2
-) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, tuple[list, list, object]]:
+    source,
+    horizon_seconds,
+    *,
+    probe_keep=2,
+    probe_providers=("gradientsports",),
+    probe_comparison_providers=("skillcorner",),
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, tuple[dict, dict]]:
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
     from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL, prepare_xcross_training_data
 
     parts_x, parts_y, parts_g, parts_p = [], [], [], []
-    probe_frames, probe_actions, probe_home = [], [], None  # TF-19 substitution-probe sample (M1/M3)
+    # TF-19 substitution-probe samples (M1/M3/M5): the GATED cohort is provider-CONTROLLED
+    # (--probe-providers; default the gradientsports gated cohort); a second reported-not-gated
+    # comparison cohort (--probe-comparison-providers) persists to _probe_sample_comparison/.
+    probe, comparison = _new_probe_cohort(), _new_probe_cohort()
     for prov, mid, actions, frames, home in source:
         X, y, groups = prepare_xcross_training_data(
             frames,
@@ -67,13 +80,18 @@ def _extract(
             parts_y.append(np.asarray(y, int))
             parts_g.append(np.asarray(groups))
             parts_p.append(np.array([prov] * len(X)))
-            if len(probe_frames) < probe_keep:  # M3: capture a COPY before del frames
-                # N3 (memory): keeps up to `probe_keep` matches' frames+actions resident for the whole
-                # loop (deliberate, bounded -- vs the original's immediate del). Fine at tracking scale on
-                # the box; probe_keep=2 caps it. The per-match `del frames` still frees all others.
-                probe_frames.append(frames.copy())
-                probe_actions.append(actions.copy())
-                probe_home = home
+            cohort = probe if prov in probe_providers else comparison if prov in probe_comparison_providers else None
+            if cohort is not None and len(cohort["frames"]) < probe_keep:  # M3: capture a COPY before del frames
+                # N3 (memory): keeps up to `probe_keep` matches' frames+actions resident per cohort for
+                # the whole loop (deliberate, bounded -- vs the original's immediate del). Fine at tracking
+                # scale on the box; probe_keep caps it. The per-match `del frames` still frees all others.
+                cohort["frames"].append(frames.copy())
+                cohort["actions"].append(actions.copy())
+                cohort["home"] = home
+                cohort["matches"].append([prov, str(mid)])
+                # groups == game_id per row (prepare_xcross_training_data contract), recorded so the
+                # gate can compute per-match training-fold membership (M6) + filter the probe frames.
+                cohort["match_groups"][str(mid)] = sorted({str(g) for g in np.asarray(groups).tolist()})
             print(f"  {prov}/{mid}: {len(X)} rows, {int(np.asarray(y).sum())} positives")
         del frames
     if not parts_x:
@@ -84,8 +102,58 @@ def _extract(
         np.concatenate(parts_y),
         np.concatenate(parts_g),
         np.concatenate(parts_p),
-        (probe_frames, probe_actions, probe_home),
+        (probe, comparison),
     )
+
+
+def _write_probe_sample(ps: Path, cohort: dict, provider_filter: list) -> None:
+    """Persist one probe cohort + its provenance meta.json (M5). No-op on an empty cohort
+    (no match from the filtered providers seen). Extracted so the write is unit-testable
+    without Databricks."""
+    if not cohort["frames"]:
+        return
+    ps.mkdir(parents=True, exist_ok=True)
+    pd.concat(cohort["frames"], ignore_index=True).to_parquet(ps / "frames.parquet")
+    pd.concat(cohort["actions"], ignore_index=True).to_parquet(ps / "actions.parquet")
+    meta = {
+        "home_team_id": str(cohort["home"]),
+        "probe_matches": cohort["matches"],  # [[provider, match_id], ...]
+        "probe_providers": list(provider_filter),  # the capture filter used
+        "match_groups": cohort["match_groups"],  # match_id -> [game_id, ...] (M6 fold membership)
+    }
+    json.dump(meta, open(ps / "meta.json", "w"), indent=2)
+
+
+def _gated_probe_matches(meta: dict, admitted: bool) -> list:
+    """Pure M6 gate: the probe matches valid for the GATED tf19 statistic.
+
+    ``admitted`` = the paired test admitted the probe provider into the SHIPPED training
+    corpus. Not admitted -> every probe match is held-out by construction -> all pass
+    through. Admitted -> only matches recorded OUTSIDE the shipped training folds
+    (``meta["in_training_folds"]``; unknown membership counts as in-training) are valid,
+    and the gate FAILS LOUD rather than emit an in-sample tf19_ready: missing provenance
+    (a pre-plan probe sample) and zero held-out matches both refuse.
+    """
+    matches = list(meta.get("probe_matches", []))
+    if not admitted:
+        return matches
+    if not matches:
+        raise SystemExit(
+            "Probe provenance missing from _probe_sample/meta.json (pre-plan probe sample) while "
+            "the paired test ADMITTED the probe provider to training -> held-out status cannot be "
+            "verified. Refusing to emit tf19_ready from potentially in-sample frames. Delete the "
+            "feature cache + probe sample and re-extract."
+        )
+    membership = meta.get("in_training_folds", {})
+    held = [m for m in matches if not membership.get(str(m[1]), True)]
+    if not held:
+        raise SystemExit(
+            "Held-out gated statistic impossible (M6): the paired test admitted the probe provider "
+            f"to training and every probe match {[m[1] for m in matches]} sits in the shipped "
+            "training folds. Refusing to emit tf19_ready from in-sample frames. Re-extract with "
+            "probe matches excluded from training, or ship the public candidate."
+        )
+    return held
 
 
 def _hpo_once(X, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, seed=42) -> dict:
@@ -210,15 +278,32 @@ def main() -> None:
         "(crosses have a healthy base rate -- PA-M4 -- so subsampling is usually unnecessary).",
     )
     ap.add_argument("--seed", type=int, default=42, help="Seed for --negative-subsample (deterministic).")
+    ap.add_argument(
+        "--probe-providers",
+        default="gradientsports",
+        help="Comma list of providers eligible for the TF-19 substitution-probe capture (M5: the "
+        "GATED cohort, persisted to _probe_sample/). Default: the gated gradientsports cohort.",
+    )
+    ap.add_argument(
+        "--probe-comparison-providers",
+        default="skillcorner",
+        help="Comma list captured to _probe_sample_comparison/ -- the reported-not-gated "
+        "same-population comparison leg (M5).",
+    )
     args = ap.parse_args()
     ns, seed = args.negative_subsample, args.seed
+    probe_provs = [p for p in args.probe_providers.split(",") if p]
+    comparison_provs = [p for p in args.probe_comparison_providers.split(",") if p]
+    if set(probe_provs) & set(comparison_provs):
+        raise SystemExit("--probe-providers and --probe-comparison-providers must be disjoint.")
 
     out = Path(args.output_dir)
     art = out / "xcross_attempt_v1"
     cache = art / "_feature_cache"
 
     # --- Phase 1: stream + extract + cache ---
-    probe_bundle = ([], [], None)  # M1: bound on BOTH branches (cache-hit never calls _extract)
+    # M1: bound on BOTH branches (cache-hit never calls _extract).
+    probe_bundle = (_new_probe_cohort(), _new_probe_cohort())
     if (cache / "features.parquet").exists():
         print(f"Loading cached features from {cache}")
         X = pd.read_parquet(cache / "features.parquet")
@@ -231,20 +316,21 @@ def main() -> None:
         else:
             source = _iter_matches_from_dir(Path(args.data_dir))
         t0 = time.time()
-        X, y, groups, providers, probe_bundle = _extract(source, args.horizon_seconds)
+        X, y, groups, providers, probe_bundle = _extract(
+            source,
+            args.horizon_seconds,
+            probe_providers=tuple(probe_provs),
+            probe_comparison_providers=tuple(comparison_provs),
+        )
         print(f"Extracted {len(X)} rows ({int(y.sum())} positives) in {time.time() - t0:.0f}s")
         cache.mkdir(parents=True, exist_ok=True)
         X.to_parquet(cache / "features.parquet")
         np.save(cache / "labels.npy", y)
         np.save(cache / "groups.npy", groups)
         np.save(cache / "providers.npy", providers)
-        pf, pa, ph = probe_bundle  # persist the TF-19 probe sample (fresh-extract only)
-        if pf:
-            ps = cache.parent / "_probe_sample"
-            ps.mkdir(parents=True, exist_ok=True)
-            pd.concat(pf, ignore_index=True).to_parquet(ps / "frames.parquet")
-            pd.concat(pa, ignore_index=True).to_parquet(ps / "actions.parquet")
-            json.dump({"home_team_id": str(ph)}, open(ps / "meta.json", "w"))
+        probe_cohort, comparison_cohort = probe_bundle  # persist the TF-19 probe samples (fresh-extract only)
+        _write_probe_sample(cache.parent / "_probe_sample", probe_cohort, probe_provs)
+        _write_probe_sample(cache.parent / "_probe_sample_comparison", comparison_cohort, comparison_provs)
 
     groups = np.asarray(groups).astype(str)
     provset = {str(p) for p in providers.tolist()}
@@ -380,7 +466,40 @@ def main() -> None:
         )
     pf = pd.read_parquet(ps / "frames.parquet")
     pa = pd.read_parquet(ps / "actions.parquet")
-    phome = json.load(open(ps / "meta.json"))["home_team_id"]
+    probe_meta = json.load(open(ps / "meta.json"))
+    phome = probe_meta["home_team_id"]
+
+    # --- M6: held-out gated statistic. Record each probe match's training-fold membership
+    # (its game ids vs the SHIPPED candidate's training games -- the final fit uses ALL of
+    # them) into meta.json, then gate: when the paired test admitted the probe provider to
+    # training, the probe runs on held-out matches ONLY (fail-loud when none exist).
+    # Pre-plan meta.json files lack the probe fields -> .get defaults, never a KeyError.
+    probe_matches = probe_meta.get("probe_matches", [])
+    match_groups = probe_meta.get("match_groups", {})
+    train_groups = set(groups[ship_mask].tolist())  # groups already astype(str) above
+    in_training = {mid: bool(set(g) & train_groups) for mid, g in match_groups.items()}
+    probe_meta["in_training_folds"] = in_training
+    json.dump(probe_meta, open(ps / "meta.json", "w"), indent=2)
+    shipped_providers = set(candidates[shipped].get("providers", []))
+    probe_provs_seen = {prov for prov, _mid in probe_matches}
+    # Conservative on missing provenance: a two-candidate run cannot verify a pre-plan sample.
+    admitted = bool(two_candidate and (not probe_provs_seen or probe_provs_seen & shipped_providers))
+    gated_matches = _gated_probe_matches(probe_meta, admitted)
+    if admitted:  # the GATED statistic runs on held-out matches only
+        held_groups = {g for _prov, mid in gated_matches for g in match_groups.get(str(mid), [])}
+        pf = pf[pf["game_id"].astype(str).isin(held_groups)]
+        pa = pa[pa["game_id"].astype(str).isin(held_groups)]
+        if pf.empty:
+            raise SystemExit(
+                "Held-out probe matches resolved ZERO frames -- the probe sample is inconsistent "
+                "with meta.json match_groups. Delete the feature cache + probe sample and re-extract."
+            )
+    elif probe_matches and all(in_training.get(str(m[1]), False) for m in probe_matches):
+        print(
+            "NOTE: every probe match sits in the shipped training corpus (single-candidate path) -- "
+            "the substitution-probe statistic below is NOT held-out.",
+            file=sys.stderr,
+        )
     probe = ev.gk_substitution_probe(model, pf, actions=pa, home_team_id=phome, n_frames=200, seed=seed)
 
     metrics.update(
@@ -389,6 +508,9 @@ def main() -> None:
             "gk_substitution_probe": probe,
             "permutation_importance": perm_imp,
             "score_differential_range_probe": sd_probe,
+            "probe_sample_matches": probe_matches,
+            "probe_sample_in_training_folds": in_training,
+            "probe_gated_on_held_out": bool(admitted),
             "tf19_ready": probe.get("tf19_ready", False),
         }
     )

@@ -110,10 +110,13 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   with goalkeeper-position confounders (the paper's confounder set excluded all GK
   variables). The paper's sender-level propensity-score-matching framework
   (ATE/ATT) is reproduced separately in the TF-17 causal validation harness (PR-C):
-  the private silly_kicks/_causal/ port (ADR-015) does propensity-score matching
+  the silly_kicks/causal/ port (ADR-015; private _causal/ until its 4.47.0
+  promotion, ADR-037) does propensity-score matching
   (ATT/ATNT, 1:1 nearest-neighbor with replacement, no caliper, Abadie-Imbens SEs)
   on crosser-anchored opportunity-spell rows, ablating the GK confounder block
-  against a row-permuted-GK placebo null band. It reconstructs the paper's
+  against a placebo null band (row-permuted in the 4.18.0 record; cluster-aware
+  whole-cluster reassignment gates from 4.47.0, row band retained for
+  comparability). It reconstructs the paper's
   sender-level unit; the remaining divergence (tracking-only opportunity detection;
   different league/era corpus) is reported, not hidden. The causal finding is a
   reported research result, never a ship gate.
@@ -457,6 +460,22 @@ The ghost-GK positioning model in silly_kicks/tracking/_ghost_gk.py
 The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).
+
+The GKDV re-gate + physics-arms counterfactuals (the TF-19 cycle, ADR-037;
+silly_kicks/gkdv/ lands in a follow-on PR) build on:
+
+- Le, H. M., Yue, Y., Carr, P. & Lucey, P. (2017). "Data-Driven Ghosting Using
+  Deep Imitation Learning." MIT Sloan Sports Analytics Conference.
+  Data-Driven Ghosting. Used by: the GKDV ghost-substitution counterfactual
+  engine (a league-average "ghost" goalkeeper substituted per frame to measure
+  positioning-as-deterrent). Also cited above for the TF-18 ghost-GK positioning
+  model; the TF-19 usage is the ghosting-counterfactual application.
+
+- Kim, et al. (2025). "Better Prevent than Tackle: Valuing Defense in Soccer
+  Based on Graph Neural Networks." arXiv:2512.10355. DEFCON-GNN.
+  Composable comparator for the GKDV metric (per-defender EPV-reduction
+  defensive-value credit; prevention-focused, not GK-positional). Comparator
+  only -- NOT implemented in silly-kicks.
 
 Third-Party Code Attribution
 ----------------------------

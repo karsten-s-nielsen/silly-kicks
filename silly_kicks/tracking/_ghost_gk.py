@@ -1302,6 +1302,23 @@ def _kde_density_fft_cic(
 # ---------------------------------------------------------------------------
 
 
+def _chirality_block(model: GhostGkModel) -> dict:
+    """Behavioral chirality fingerprint (ADR-037): the model's own extractor + served mean
+    on the canonical y-asymmetric probe frame. Emitted into save() metadata; a y-mirrored
+    artifact cannot reproduce it (the 4.18.0-weights class of bug). Sparse-frame NaN
+    features are fine --- the booster treats NaN as missing and the served (x, y) is
+    deterministic, which is all the fingerprint needs."""
+    from silly_kicks.tracking._chirality import chirality_fingerprint
+
+    def _predict(frame):
+        feats = extract_ghost_gk_features(
+            frame, gk_team_id="B", goal_x=105.0, score_diff=0.0, phase=0, ball_carrier_team_id="A"
+        )
+        return model.predict_mean(feats)
+
+    return chirality_fingerprint(_predict)
+
+
 class GhostGkModel:
     """League-average GK positioning model using RFCDE density estimation.
 
@@ -1668,6 +1685,7 @@ class GhostGkModel:
             "training_platform": self.training_platform,
             "serve_estimator": SERVED_ESTIMATOR,
             "version": "1.2.0",
+            "chirality": _chirality_block(self),
         }
         meta_path = path / "metadata.json"
         with open(meta_path, "w", newline="\n") as f:

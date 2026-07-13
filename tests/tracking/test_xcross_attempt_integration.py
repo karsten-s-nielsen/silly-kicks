@@ -167,6 +167,10 @@ def test_train_script_smoke(tmp_path):
             "3",
             "--horizon-seconds",
             "1.0",
+            # M5: probe capture is provider-CONTROLLED (default = gradientsports, the gated
+            # cohort); the synthetic fixture's provider must be opted in explicitly.
+            "--probe-providers",
+            "synthetic",
         ],
         capture_output=True,
         text=True,
@@ -196,6 +200,14 @@ def test_train_script_smoke(tmp_path):
     assert "tf19_ready" in metrics
     # the substitution probe actually found eligible wide-area frames (the probe sample was saved + read)
     assert probe["n_frames_used"] >= 1
+    # M5/M6 provenance: the probe sample carries its matches, the capture filter, and the
+    # gate-recorded training-fold membership (single-candidate path: recorded, not refused).
+    pm = json.loads((art / "_probe_sample" / "meta.json").read_text())
+    assert pm["probe_providers"] == ["synthetic"]
+    assert pm["probe_matches"] and all(p == "synthetic" for p, _m in pm["probe_matches"])
+    assert "in_training_folds" in pm and set(pm["in_training_folds"]) == {m for _p, m in pm["probe_matches"]}
+    assert metrics["probe_sample_matches"] == pm["probe_matches"]
+    assert metrics["probe_gated_on_held_out"] is False  # single-candidate: no paired test ran
 
 
 @pytest.mark.slow

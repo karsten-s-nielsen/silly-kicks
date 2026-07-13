@@ -7,6 +7,8 @@ GEOMETRY (R2-H1): team 5 ATTACKS x=0 -> team-5 GK at HIGH x (101, defends 105); 
 
 import pandas as pd
 
+from silly_kicks.spadl import config as _c
+
 META = {"cross_types": ["cross"], "carrier_params": {"tolerance_m": 3.0, "beta": 0.0, "gamma": 0.25}}
 WIDE = (12.0, 6.0)  # advanced (x<=35 from goal 0) + wide (y=6<14)
 CENTRAL = (12.0, 34.0)  # advanced but central (14<y<54) -> NOT wide area
@@ -84,3 +86,18 @@ def actions(rows):
             "end_y",
         ],
     )
+
+
+def simple_actions(specs):
+    """Build the full 11-column actions frame from ``(type_name, t[, result_id])`` tuples (P10).
+
+    ``result_id`` defaults to success. All rows are game 1 / period 1 / team 5 (the geometry
+    of :func:`frames`); coordinates are the fixture's standard wide-area pass geometry.
+    ``actions()`` and its callers are untouched -- this is a convenience layer on top of it.
+    """
+    rows = []
+    for aid, spec in enumerate(specs):
+        type_name, t = spec[0], spec[1]
+        result = spec[2] if len(spec) > 2 else _c.result_id["success"]
+        rows.append([1, aid, 1, 5, t, _c.actiontype_id[type_name], result, 20.0, 8.0, 14.0, 6.0])
+    return actions(rows)

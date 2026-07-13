@@ -5,6 +5,59 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.47.0] — 2026-07-12
+
+### Added — TF-19 GKDV attempt-arm re-gate CODE (`silly_kicks/tracking/`, `silly_kicks/causal/`, PR-S114, ADR-037)
+
+PR-1 of the TF-19 GKDV cycle: the code that makes the correctness retrain measurable, the
+new xS substitution probe, the public causal port, and the chirality guard's emission
+half. The shipped xS/xCross weights are **chirality-mis-served** — trained in a y-mirrored
+convention and served on y-correct frames (since ADR-031), so xS reads 12/27 features and
+xCross 3/16 sign-inconsistently on every y-correct provider for consumers opted into
+`pre_shot_gk_full_default_xfns` — a correctness bug `load()` was structurally blind to. The
+retrain lands in PR-2; this release is **code only**. Spec:
+`docs/superpowers/specs/2026-07-12-tf19-gkdv-regate-and-v1-design.md`; decision: ADR-037.
+
+- **`silly_kicks.tracking._model_eval`** (PRIVATE to `tracking/`) — the model-agnostic
+  GK-substitution probe core, a pure evaluator over pre-substituted ghost TARGETS-as-data
+  so `tracking/` never imports the future `gkdv/`. Carries the **registered xS probe
+  rule** (`XS_PROBE_RATIO=2.0`, `XS_PROBE_DOSE_M=2.0`, band `n≥100`, trusted-stratum
+  `n≥50`, 20 paired-vector placebo replicates, cluster-exact game-level dose-response —
+  all locked before any owner run), `evaluate_xs_probe` (dose-banded verdict with the
+  ratio prong strengthened to `≥ 2× max(nearest_def, placebo_p95)`; zero-inflation a
+  reported diagnostic, not a gate), the `PROBE_WRAPPERS` registry, and `regate_verdict`
+  (the §3.5 decision table as a pure, test-parametrized function).
+- **Public `silly_kicks.causal`** — promoted from the private `_causal/` port (ADR-015's
+  anticipated "one move"). `matching.py` estimators unchanged (fit/match/ATT/ATNT/AI-SE
+  byte-identical); `placebo_shift` gains the cluster-aware mode (`cluster_ids` +
+  `_cluster_reassign` whole-cluster reassignment-with-recycling, `permutation_unit`
+  reported); `opportunities.py` gains the full
+  `OpportunityConfig` builder surface incl. a **result-conditioned, anchor-inclusive**
+  outcome axis, making the ADR-037 §3.3 shot arm expressible purely as builder arguments
+  (`shot_arm_config`). Registered in the `test_public_api_examples.py` gate from day one.
+- **`silly_kicks.tracking._chirality`** — a behavioral chirality fingerprint (the model's
+  own outputs on a fixed y-asymmetric frame); all three `save()` paths (xS, xCross,
+  ghost-GK) **emit** it into `metadata.json`. `load()` fail-closed enforcement + a legacy
+  override land in PR-2.
+- Probe-sample provenance (provider + match ids) recorded by the xCross train script,
+  closing the 4.18.0 provenance gap with an assertion.
+
+### Changed
+
+- **`silly_kicks.tracking._xcross_eval`** keeps its public names as a **byte-equivalent**
+  home for the frozen xCross wrapper (internals re-pointed to the `_model_eval` core,
+  golden-pinned); the re-run output gains report-only zero-fraction + dose diagnostics so
+  the verdict table does not compare a diagnostics-rich xS verdict against a
+  diagnostics-blind xCross one.
+- **`extract_xshot_features`** ADR-019 canonical-id hardening (raw team-id `==`/`!=`
+  compares routed through the canonical-id contract) — **VAEP-invariant for matched
+  dtypes**; the ghost-GK extractor's equivalent raw compares are a recorded out-of-scope
+  latent gap (`_ghost_gk.py:488-490`).
+
+**No retrain trigger from this PR alone** — it is code only; the correctness retrain of the
+xS/xCross/ghost-GK weights (a Hyrum/retrain trigger for `pre_shot_gk_full_default_xfns`
+consumers + ghost-GK's `ghost_gk_*`) lands in PR-2. C4 count stays 28.
+
 ## [4.46.0] — 2026-07-12
 
 ### Fixed — xT-GK v2 scored ~24% of its domain at a fabricated grid zone (`silly_kicks/xtgk/`, PR-S113, ADR-036 amendment)
