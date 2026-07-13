@@ -66,6 +66,9 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/calibration/_carrier_objective.py",
     "silly_kicks/calibration/_vaep_brier_objective.py",
     "silly_kicks/calibration/_diagnostics.py",
+    "silly_kicks/causal/__init__.py",
+    "silly_kicks/causal/matching.py",
+    "silly_kicks/causal/opportunities.py",
 )
 
 # Pure-type symbols that don't fit the illustrative-example pattern.
@@ -76,8 +79,10 @@ _SKIP_SYMBOLS = frozenset(
         "BoundaryMetrics",  # TypedDict — fields are the documentation
         "CoverageMetrics",  # TypedDict
         "ConversionReport",  # TypedDict
+        "CausalEstimate",  # frozen dataclass — fields are the documentation (DetectionResult precedent)
         "DetectionResult",  # frozen dataclass — fields are the documentation
         "InputConvention",  # str-Enum — members are the documentation
+        "OpportunityConfig",  # frozen dataclass — fields are the documentation (DetectionResult precedent)
         "PitchControlParams",  # type alias union — components have examples
     }
 )

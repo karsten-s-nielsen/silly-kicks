@@ -1,6 +1,6 @@
 import numpy as np
 
-from silly_kicks._causal import matching as M
+from silly_kicks.causal import matching as M
 
 
 def _toy(n=200, seed=0):

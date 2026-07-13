@@ -139,7 +139,19 @@ def _within_group_sigma2(Y: np.ndarray, Z: np.ndarray, ps: np.ndarray) -> np.nda
 def abadie_imbens_se(Y, Z, matched: dict[int, int], ps, *, target: Target) -> float:
     """Abadie-Imbens (2006) matching SE for ATT/ATNT, 1:1 with replacement (Imbens & Rubin
     2015, Ch. 19): V = (between + reuse) / N1^2, where between = sum (tau_i - tau_bar)^2 and
-    reuse = sum_j K_j(K_j-1) sigma2_j over comparison units used K_j times. Deterministic."""
+    reuse = sum_j K_j(K_j-1) sigma2_j over comparison units used K_j times. Deterministic.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> y = np.array([1.0, 0.0, 2.0, 1.0, 0.5])
+    >>> z = np.array([1, 1, 0, 0, 0])
+    >>> ps = np.array([0.8, 0.7, 0.75, 0.72, 0.68])
+    >>> m = propensity_match(ps, z, target="att")
+    >>> se = abadie_imbens_se(y, z, m, ps, target="att")
+    >>> bool(np.isfinite(se) and se >= 0)
+    True
+    """
     Y = np.asarray(Y, dtype=float)
     Z = np.asarray(Z, dtype=int)
     focal = np.array(sorted(matched.keys()), dtype=int)
@@ -212,16 +224,43 @@ def _att_with_block(X_base: np.ndarray, extra: np.ndarray, Y, Z, *, seed: int) -
     return estimate_att(Y, Z, ps, X).estimate
 
 
-def placebo_shift(X_base, X_gk, Y, Z, *, n_seeds: int, rng_seed: int) -> dict:
-    """Null distribution of the ATT shift from adding a ROW-PERMUTED GK block (H3). Permuting
+def _cluster_reassign(X_gk: np.ndarray, cluster_ids: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Whole-cluster REASSIGNMENT of the GK block (P5): draw ``sigma`` = a permutation of the
+    unique clusters; destination cluster ``d`` receives source cluster ``sigma(d)``'s rows,
+    recycled to ``d``'s size via ``np.resize`` -- each destination cluster gets EXACTLY ONE
+    source cluster's values. Under unequal cluster sizes this is reassignment-with-recycling,
+    NOT a strict row permutation: the null it draws is the cluster-exchangeable one (the point
+    -- a per-destination mapping; concatenating permuted variable-size blocks would straddle
+    destination boundaries and drift the null back toward the row-i.i.d. permutation)."""
+    X_gk = np.asarray(X_gk, dtype=float)
+    ids = np.asarray(cluster_ids)
+    uniq = np.unique(ids)
+    sigma = rng.permutation(len(uniq))
+    out = np.empty_like(X_gk)
+    for d_pos, dest in enumerate(uniq):
+        src_rows = X_gk[ids == uniq[sigma[d_pos]]]
+        dest_mask = ids == dest
+        out[dest_mask] = np.resize(src_rows, (int(dest_mask.sum()), X_gk.shape[1]))
+    return out
+
+
+def placebo_shift(X_base, X_gk, Y, Z, *, n_seeds: int, rng_seed: int, cluster_ids: np.ndarray | None = None) -> dict:
+    """Null distribution of the ATT shift from adding a PERMUTED GK block (H3). Permuting
     the rows of X_gk preserves its marginals + within-block correlation and destroys only its
     alignment with (Z, Y) -- isolating "GK carries Z/Y signal" from "GK columns aren't Gaussian".
     The real GK shift is "real" only if it clears band_p95. Deterministic given rng_seed.
 
+    ``cluster_ids=None`` (default) keeps the legacy row-i.i.d. permutation exactly. When
+    ``cluster_ids`` is given, each seed reassigns X_gk in WHOLE CLUSTERS via
+    ``_cluster_reassign`` (reassignment-with-recycling under unequal sizes, not a strict row
+    permutation) -- the null drawn is the cluster-exchangeable one, preserving within-cluster
+    dependence that a row permutation would destroy.
+
     Note (R2-L3): row-permutation also breaks GK<->X_base correlation, so the null is slightly
     conservative vs a pure Z/Y-alignment null (standard for permutation nulls; see ADR-015).
 
-    Returns ``{"shifts": (n_seeds,), "band_p95": float, "base_att": float}``.
+    Returns ``{"shifts": (n_seeds,), "band_p95": float, "base_att": float,
+    "permutation_unit": "cluster" | "row"}``.
 
     Examples
     --------
@@ -231,8 +270,8 @@ def placebo_shift(X_base, X_gk, Y, Z, *, n_seeds: int, rng_seed: int) -> dict:
     >>> z = (rng.uniform(size=300) < 0.5).astype(int)
     >>> y = rng.normal(size=300)
     >>> out = placebo_shift(xb, xg, y, z, n_seeds=5, rng_seed=0)
-    >>> out["shifts"].shape
-    (5,)
+    >>> out["shifts"].shape, out["permutation_unit"]
+    ((5,), 'row')
     """
     X_base = np.asarray(X_base, dtype=float)
     X_gk = np.asarray(X_gk, dtype=float)
@@ -242,10 +281,14 @@ def placebo_shift(X_base, X_gk, Y, Z, *, n_seeds: int, rng_seed: int) -> dict:
     rng = np.random.default_rng(rng_seed)
     shifts = np.empty(n_seeds)
     for s in range(n_seeds):
-        perm = rng.permutation(n)
-        shifts[s] = _att_with_block(X_base, X_gk[perm], Y, Z, seed=rng_seed + 1 + s) - base
+        if cluster_ids is None:
+            permuted = X_gk[rng.permutation(n)]
+        else:
+            permuted = _cluster_reassign(X_gk, cluster_ids, rng)
+        shifts[s] = _att_with_block(X_base, permuted, Y, Z, seed=rng_seed + 1 + s) - base
     return {
         "shifts": shifts,
         "band_p95": float(np.percentile(np.abs(shifts), PLACEBO_BAND_PERCENTILE)),
         "base_att": float(base),
+        "permutation_unit": "cluster" if cluster_ids is not None else "row",
     }

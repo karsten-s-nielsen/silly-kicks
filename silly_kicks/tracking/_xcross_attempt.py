@@ -377,6 +377,21 @@ def prepare_xcross_training_data(
     return features, y, groups
 
 
+def _chirality_block(model: XCrossAttemptModel) -> dict:
+    """Behavioral chirality fingerprint (ADR-037): the model's own extractor + predict on
+    the canonical y-asymmetric probe frame. Emitted into save() metadata; a y-mirrored
+    artifact cannot reproduce it (the 4.18.0-weights class of bug)."""
+    from silly_kicks.tracking._chirality import chirality_fingerprint
+
+    def _predict(frame):
+        feats = extract_xcross_features(
+            frame, gk_team_id="B", goal_x=105.0, carrier_player_id="A1", score_differential=float("nan")
+        )
+        return model.predict_proba(feats)
+
+    return chirality_fingerprint(_predict)
+
+
 def _pinned_params(overrides: dict | None) -> dict:
     """Pinned-deterministic XGBoost params (mirror xS _pinned_params exactly -- M5)."""
     base = {
@@ -478,6 +493,7 @@ class XCrossAttemptModel:
             "training_platform": platform.platform(),
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
+            "chirality": _chirality_block(self),
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:

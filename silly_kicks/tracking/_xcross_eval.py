@@ -15,15 +15,17 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+# --- Pre-registered TF-19 viability threshold (C1; frozen before the run) -----------------
+# GK median |Δ| must be >= 2x the stronger positional control (TF19_PROBE_RATIO) AND
+# >= 0.01 (1 pp of P(cross)) in absolute terms (TF19_PROBE_ABS_FLOOR). The constants are
+# OWNED by _model_eval (ADR-037) and RE-EXPORTED here: the frozen wrapper surface (and its
+# monkeypatch tests) read them as _xcross_eval module attributes.
+from silly_kicks.tracking._model_eval import TF19_PROBE_ABS_FLOOR, TF19_PROBE_RATIO
 from silly_kicks.tracking._xcross_attempt import (
     XCROSS_FEATURE_NAMES_FAITHFUL,
     XCROSS_GK_BLOCK,
     _pinned_params,
 )
-
-# --- Pre-registered TF-19 viability threshold (C1; frozen before the run) -----------------
-TF19_PROBE_RATIO = 2.0  # GK median |Δ| must be >= 2x the stronger positional control
-TF19_PROBE_ABS_FLOOR = 0.01  # AND GK median |Δ| >= 0.01 (1 pp of P(cross)) in absolute terms
 
 
 def _cv_score(
@@ -115,41 +117,6 @@ def _tf19_ready(gk: float, nearest_def: float, rand: float) -> bool:
     return bool(gk >= TF19_PROBE_RATIO * control and gk >= TF19_PROBE_ABS_FLOOR)
 
 
-def _displacement_panel(goal_x: float) -> list[tuple[str, float, float]]:
-    """Geometrically-matched (dx, dy) panel applied identically to GK / nearest-def / random
-    outfielders so 'same-magnitude' is comparable (A1). 'depth' is signed toward the attacked goal."""
-    toward = 1.0 if goal_x >= 105.0 / 2 else -1.0
-    return [
-        ("lat+2", 0.0, 2.0),
-        ("lat-2", 0.0, -2.0),
-        ("lat+4", 0.0, 4.0),
-        ("lat-4", 0.0, -4.0),
-        ("depth+2", toward * 2.0, 0.0),
-        ("depth-2", -toward * 2.0, 0.0),
-    ]
-
-
-def _abs_delta_for_player(model, grp, *, row_mask, panel, gk_team_id, goal_x, carrier_pid, sd) -> list[float]:
-    """Baseline predict vs each panel-perturbed predict for the single player row(s) in row_mask."""
-    from silly_kicks.tracking._xcross_attempt import extract_xcross_features
-
-    mask = np.asarray(row_mask, dtype=bool)
-    base_feats = extract_xcross_features(
-        grp, gk_team_id=gk_team_id, goal_x=goal_x, carrier_player_id=carrier_pid, score_differential=sd
-    )
-    base_p = float(model.predict_proba(base_feats)[0])
-    deltas = []
-    for _name, dx, dy in panel:
-        pert = grp.copy()
-        pert.loc[mask, "x"] = pert.loc[mask, "x"].to_numpy(float) + dx
-        pert.loc[mask, "y"] = pert.loc[mask, "y"].to_numpy(float) + dy
-        feats = extract_xcross_features(
-            pert, gk_team_id=gk_team_id, goal_x=goal_x, carrier_player_id=carrier_pid, score_differential=sd
-        )
-        deltas.append(abs(float(model.predict_proba(feats)[0]) - base_p))
-    return deltas
-
-
 def gk_substitution_probe(
     model,
     frames: pd.DataFrame,
@@ -164,48 +131,23 @@ def gk_substitution_probe(
     """THE TF-19 viability gate (deterministic). For a fixed sample of wide-area frames, measure
     |P(cross|actual) - P(cross|shifted)| for the GK vs a nearest-defender control vs an averaged
     random-outfielder band, over a geometrically-matched displacement panel. Establishes the
-    surface is GK-RESPONSIVE (necessary for TF-19); NOT causal GK importance (that is PR-C)."""
-    from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
-    from silly_kicks.tracking._xcross_attempt import _build_goal_map, _in_wide_area
+    surface is GK-RESPONSIVE (necessary for TF-19); NOT causal GK importance (that is PR-C).
 
-    rng = np.random.default_rng(seed)
-    cp = dict(getattr(model, "carrier_params", None) or {})
-    carrier = infer_ball_carrier(frames, **cp) if cp else infer_ball_carrier(frames)
-    poss = derive_team_in_possession(frames, carrier)
-    goal_map = _build_goal_map(frames)
+    Since ADR-037 the sampling core lives in ``_model_eval.substitution_deltas`` (arm='xcross',
+    mode='panel' -- byte-equivalent, golden-pinned); this wrapper keeps the frozen report."""
+    from silly_kicks.tracking._model_eval import substitution_deltas
 
-    # Collect eligible (resolvable carrier + GK row + wide-area) frame groups deterministically.
-    groups_list = []
-    for (gid, pid, _fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], sort=False):
-        in_poss = grp["team_in_possession"].dropna()
-        if in_poss.empty:
-            continue
-        poss_team = in_poss.iloc[0]
-        # Defending team(s) = non-ball player rows of the OTHER team. Filter by is_ball (not the
-        # string "ball") so a provider/fixture that encodes the ball's team_id differently can't be
-        # mistaken for a defending team (it would then have no GK row -> the frame would be dropped).
-        non_ball = grp[~grp["is_ball"].astype(bool)]
-        # .dropna() guards a non-ball player row with NA team_id (unresolved GS jersey): `pd.NA !=
-        # poss_team` is NA -> `if` raises "boolean value of NA is ambiguous" (mirrors prepare/compute).
-        defending = [t for t in non_ball["team_id"].dropna().unique() if t != poss_team]
-        if not defending:
-            continue
-        goal_x = goal_map.get((gid, pid, defending[0]))
-        if goal_x is None:
-            continue
-        ball = grp[grp["is_ball"]]
-        bx = float(ball["x"].iloc[0]) if len(ball) else np.nan
-        by = float(ball["y"].iloc[0]) if len(ball) else np.nan
-        if not _in_wide_area(bx, by, goal_x, advance_m):
-            continue
-        cpid = grp["ball_carrier_player_id"].dropna()
-        cpid = cpid.iloc[0] if not cpid.empty else None
-        gk_mask = grp["is_goalkeeper"].astype(bool) & (grp["team_id"] == defending[0])
-        if cpid is None or not gk_mask.any():
-            continue
-        groups_list.append((grp.reset_index(drop=True), defending[0], goal_x, cpid))
-
-    if not groups_list:
+    deltas = substitution_deltas(
+        model,
+        frames,
+        arm="xcross",
+        mode="panel",
+        n_frames=n_frames,
+        n_random=n_random,
+        seed=seed,
+        advance_m=advance_m,
+    )
+    if deltas.empty:
         return {
             "gk_median_abs_delta": float("nan"),
             "nearest_def_median_abs_delta": float("nan"),
@@ -215,53 +157,27 @@ def gk_substitution_probe(
             "n_frames_used": 0,
         }
 
-    # Deterministic sample of up to n_frames.
-    idx = np.arange(len(groups_list))
-    if len(idx) > n_frames:
-        idx = np.sort(rng.choice(idx, size=n_frames, replace=False))
+    # Role-filtered slices preserve the legacy per-frame append order (gk, nearest_def, picks).
+    gk_d = deltas.loc[deltas["actor_role"] == "gk", "delta_p"].to_numpy(float)
+    nd_d = deltas.loc[deltas["actor_role"] == "nearest_def", "delta_p"].to_numpy(float)
+    rb_d = deltas.loc[deltas["actor_role"] == "placebo_out", "delta_p"].to_numpy(float)
+    # Every sampled frame emits GK rows (eligibility requires a GK), so this is the legacy len(idx).
+    n_frames_used = int(
+        deltas.loc[deltas["actor_role"] == "gk", ["game_id", "period_id", "frame_id"]].drop_duplicates().shape[0]
+    )
 
-    gk_d, nd_d, rb_d = [], [], []
-    for i in idx:
-        grp, gk_team, goal_x, cpid = groups_list[i]
-        panel = _displacement_panel(goal_x)
-        sd = float("nan")  # probe measures positional sensitivity; score held at NaN
-        # GK
-        gk_mask = grp["is_goalkeeper"].astype(bool) & (grp["team_id"] == gk_team)
-        gk_d += _abs_delta_for_player(
-            model, grp, row_mask=gk_mask, panel=panel, gk_team_id=gk_team, goal_x=goal_x, carrier_pid=cpid, sd=sd
-        )
-        # Nearest defender to the carrier (control a)
-        carr = grp[grp["player_id"].astype(str) == str(cpid)]
-        defenders = grp[(grp["team_id"] == gk_team) & ~grp["is_ball"].astype(bool) & ~grp["is_goalkeeper"].astype(bool)]
-        if len(carr) and len(defenders):
-            cx, cy = float(carr["x"].iloc[0]), float(carr["y"].iloc[0])
-            d2 = (defenders["x"].to_numpy(float) - cx) ** 2 + (defenders["y"].to_numpy(float) - cy) ** 2
-            nd_id = defenders["player_id"].to_numpy()[int(np.argmin(d2))]
-            nd_mask = grp["player_id"].to_numpy() == nd_id
-            nd_d += _abs_delta_for_player(
-                model, grp, row_mask=nd_mask, panel=panel, gk_team_id=gk_team, goal_x=goal_x, carrier_pid=cpid, sd=sd
-            )
-        # Averaged random-outfielder band (control b)
-        outs = grp[~grp["is_ball"].astype(bool) & ~grp["is_goalkeeper"].astype(bool)]
-        out_ids = outs["player_id"].to_numpy()
-        if len(out_ids):
-            pick = rng.choice(out_ids, size=min(n_random, len(out_ids)), replace=False)
-            for rid in pick:
-                rb_d += _abs_delta_for_player(
-                    model,
-                    grp,
-                    row_mask=grp["player_id"].to_numpy() == rid,
-                    panel=panel,
-                    gk_team_id=gk_team,
-                    goal_x=goal_x,
-                    carrier_pid=cpid,
-                    sd=sd,
-                )
-
-    gk_med = float(np.median(gk_d)) if gk_d else float("nan")
-    nd_med = float(np.median(nd_d)) if nd_d else float("nan")
-    rb_med = float(np.median(rb_d)) if rb_d else float("nan")
+    gk_med = float(np.median(gk_d)) if len(gk_d) else float("nan")
+    nd_med = float(np.median(nd_d)) if len(nd_d) else float("nan")
+    rb_med = float(np.median(rb_d)) if len(rb_d) else float("nan")
     ready = _tf19_ready(gk_med, nd_med, rb_med)
+    # P9 report-only dose diagnostics: median |Δp| at each frozen-panel dose level (the two
+    # displacement_m magnitudes math.hypot() emits, exactly 2.0 m and 4.0 m). These are context,
+    # NEVER inputs to _tf19_ready (which stays on the pooled gk/control medians above).
+    gk_by_dose = deltas.loc[deltas["actor_role"] == "gk"].groupby("displacement_m")["delta_p"].median()
+    med_2m = float(gk_by_dose.get(2.0, float("nan")))
+    med_4m = float(gk_by_dose.get(4.0, float("nan")))
+    # NaN-safe: a zero/NaN 2 m median yields NaN (never a ZeroDivisionError or an inf).
+    dose_ratio_4m_over_2m = med_4m / med_2m if (np.isfinite(med_2m) and med_2m != 0.0) else float("nan")
     if not (np.isfinite(nd_med) and nd_med > 0.0):
         reason = "no control band (nearest-defender |Δ| absent/zero) -- cannot compare; False (M2)"
     elif not ready:
@@ -270,15 +186,23 @@ def gk_substitution_probe(
         reason = "GK |Δ| cleared both controls and the absolute floor"
     return {
         "gk_median_abs_delta": gk_med,
-        "gk_mean_abs_delta": float(np.mean(gk_d)) if gk_d else float("nan"),
-        "gk_p90_abs_delta": float(np.percentile(gk_d, 90)) if gk_d else float("nan"),
+        "gk_mean_abs_delta": float(np.mean(gk_d)) if len(gk_d) else float("nan"),
+        "gk_p90_abs_delta": float(np.percentile(gk_d, 90)) if len(gk_d) else float("nan"),
         "nearest_def_median_abs_delta": nd_med,
         "random_band_median_abs_delta": rb_med,
+        # S5 report-only: zero-fraction of each arm (post-B1, the diagnostic that separates an
+        # 'unmeasurable' all-zero band from a live-controls 'clean fail'); NOT a _tf19_ready input.
+        "gk_zero_fraction": float((gk_d == 0).mean()) if len(gk_d) else float("nan"),
+        "random_band_zero_fraction": float((rb_d == 0).mean()) if len(rb_d) else float("nan"),
+        # P9 report-only dose diagnostics (see the median computation above).
+        "gk_median_abs_delta_at_2m": med_2m,
+        "gk_median_abs_delta_at_4m": med_4m,
+        "gk_dose_ratio_4m_over_2m": dose_ratio_4m_over_2m,
         "tf19_ready": ready,
         "tf19_reason": reason,
         "tf19_probe_ratio": TF19_PROBE_RATIO,
         "tf19_probe_abs_floor": TF19_PROBE_ABS_FLOOR,
-        "n_frames_used": len(idx),
+        "n_frames_used": n_frames_used,
         "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); "
         "nearest-def control is partially self-limiting (floating identity)",
     }

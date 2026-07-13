@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.46.0"
+version = "4.47.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -188,10 +188,12 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/tracking/_xcross_attempt_objective.py" = ["N803", "N806"]
 # TF-17 xCrossAttempt: ML-style uppercase X feature matrices in the PR-B maintainer-eval module.
 "silly_kicks/tracking/_xcross_eval.py" = ["N803", "N806"]
-# TF-17 xCross PR-C causal port: ML-style uppercase X/Y/Z in the matching estimators.
-"silly_kicks/_causal/**/*.py" = ["N803", "N806"]
+# TF-17 xCross PR-C causal port (public since TF-19/ADR-037): ML-style uppercase X/Y/Z in the matching estimators.
+"silly_kicks/causal/**/*.py" = ["N803", "N806"]
 # TF-17 xCross PR-C causal driver: ML-style uppercase X/Y/Z + `matching as M` (N812).
 "scripts/validate_xcross_causal.py" = ["N803", "N806", "N812"]
+# TF-19 shot-arm causal driver (thin clone of the xCross driver): same conventions.
+"scripts/validate_xshot_causal.py" = ["N803", "N806", "N812"]
 # TF-24 CLI prints a human-readable run summary (T201).
 "scripts/calibrate_tracking_defaults.py" = ["T201"]
 # TF-16 xS trainer: ML-style uppercase X + human-readable run summary (T201).
