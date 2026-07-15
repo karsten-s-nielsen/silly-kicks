@@ -82,6 +82,14 @@ def test_ball_z_is_nan():
     assert np.isnan(frames[frames.is_ball].iloc[0].z)
 
 
+def test_ball_state_is_valid_alive_not_none():
+    # 4.48.1: None is schema-invalid and drops every frame from xS/xCross's `== "alive"` filter;
+    # the native path has no dead-ball signal, so default "alive" (same fix class as skillcorner).
+    frames, _ = mt.convert_to_frames(_bronze(), jersey_to_player_id=_roster(), output_convention="absolute_frame")
+    assert None not in frames["ball_state"].tolist()
+    assert set(frames["ball_state"].unique()) == {"alive"}
+
+
 def test_gk_derived_positionally():
     # GK comes from positional derivation, NOT the flat jersey list. Home GK (jersey "1",
     # deepest home player) is flagged.

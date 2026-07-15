@@ -5,6 +5,23 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.48.1] — 2026-07-15
+
+### Fixed — native SkillCorner/Metrica builders emit a valid `ball_state` (`silly_kicks/tracking/skillcorner.py`, `silly_kicks/tracking/metrica.py`)
+
+The native `convert_to_frames` builders (ADR-034) set `ball_state = None` for every frame. `None`
+is not a valid `ball_state` (the schema value-set is `{"alive", "dead"}`), and it makes the strict
+`ball_state == "alive"` domain filter in xShotOccurrence (`_xshot_occurrence.py:644`) and
+xCrossAttempt drop **every** frame — so once the pining loader rerouted SkillCorner onto the native
+builder (4.48.0/PR-S115), those trainers silently extracted **0 rows** from all SkillCorner matches
+(measured: match 1886347 gives 8,071 xS rows once fixed, vs 0 before). The kloppy gateway set real
+`ball_state` values, so this only regressed on the native path. The native feed carries no reliable
+dead-ball signal, so both builders now default to `"alive"` (in-play): a valid schema value that
+makes the alive-filter a no-op for these providers (equivalent to "use all frames"). Surgical —
+`== "dead"` / not-dead consumers are unchanged (`None` and `"alive"` are both non-dead). Regression
+guards added in `test_skillcorner_builder.py` / `test_metrica_builder.py`. **VAEP/GKDV retrain
+trigger** for xS/xCross corpora that include SkillCorner or Metrica (they now contribute rows).
+
 ## [4.48.0] — 2026-07-14
 
 ### Added / Changed — SkillCorner corpus expansion + visibility surfacing (`silly_kicks/spadl/skillcorner.py`, `silly_kicks/tracking/skillcorner.py`, `scripts/`, PR-S115, ADR-038)

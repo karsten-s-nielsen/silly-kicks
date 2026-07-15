@@ -58,6 +58,16 @@ def test_ball_z_recovered_not_nan():
     assert ball.z == pytest.approx(2.0)  # bronze ball_z preserved, NOT NaN
 
 
+def test_ball_state_is_valid_alive_not_none():
+    # 4.48.1 regression guard: the native builder set ball_state=None, which is schema-invalid
+    # (value-set {"alive","dead"}) and made xS/xCross's strict `== "alive"` domain filter drop
+    # EVERY SkillCorner frame -> 0 training rows once the pining loader rerouted to this builder.
+    # The native feed has no dead-ball signal, so default "alive" (in-play).
+    frames, _ = sk.convert_to_frames(_bronze(), home_team_id="31", output_convention="absolute_frame")
+    assert None not in frames["ball_state"].tolist()
+    assert set(frames["ball_state"].unique()) == {"alive"}
+
+
 def test_player_z_is_nan_and_visibility_mapped():
     frames, _ = sk.convert_to_frames(_bronze(), home_team_id="31", output_convention="absolute_frame")
     p = frames[(~frames.is_ball) & (frames.player_id == "421")].iloc[0]

@@ -173,7 +173,10 @@ def convert_to_frames(
     df["period_id"] = df["period_id"].astype(int)
     df["frame_rate"] = frame_rate
     df["source_provider"] = "metrica"
-    df["ball_state"] = None
+    # Default "alive" (in-play): the native path carries no reliable dead-ball signal, and None is
+    # schema-invalid ({"alive","dead"}) + would make xS/xCross's `== "alive"` filter drop every
+    # frame. See tracking/skillcorner.py for the full rationale (same ADR-034 native-builder class).
+    df["ball_state"] = "alive"
     df["team_attacking_direction"] = None
     df["confidence"] = None
     df["speed"] = np.nan
