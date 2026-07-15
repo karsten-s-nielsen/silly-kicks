@@ -190,7 +190,7 @@ def _build_synthetic_parquets(
                 time_seconds=ts,
                 frame_rate=25.0,
                 ball_state="alive",
-                source_provider="test",
+                source_provider="gradientsports",  # classified fully-observed provider (PR-S115 detected-only filter)
                 team_attacking_direction=None,
                 confidence=None,
                 visibility=None,
@@ -301,7 +301,7 @@ class TestRoundTripTrainPredict:
                 time_seconds=ts,
                 frame_rate=25.0,
                 ball_state="alive",
-                source_provider="test",
+                source_provider="gradientsports",  # classified fully-observed provider (PR-S115 detected-only filter)
                 team_attacking_direction=None,
                 confidence=None,
                 visibility=None,

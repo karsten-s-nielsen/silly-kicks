@@ -22,7 +22,7 @@ import os
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 import numpy as np
 import pandas as pd
@@ -204,6 +204,39 @@ _PENALTY_AREA_Y_MIN = (_FIELD_WIDTH - 40.3) / 2.0
 _PENALTY_AREA_Y_MAX = (_FIELD_WIDTH + 40.3) / 2.0
 _VELOCITY_WINDOW_S = 0.5
 _SET_PIECE_DECAY_SECONDS = 10.0
+
+# Which providers' feeds carry a per-player detection flag (spec 4.3).
+# A null `visibility` is AMBIGUOUS: for a fully-observed provider it means "no flag exists and
+# none is needed"; for a detection-aware provider it means "the pipeline DISCARDED the flag"
+# (the kloppy gateway hard-codes visibility=None). Reading the second as the first would train
+# ghost-GK on interpolator output -- ~80% of SkillCorner keeper positions are extrapolated.
+_DETECTION_AWARE_PROVIDERS = frozenset({"skillcorner"})
+# metrica is full optical tracking (all players every frame, NO detection flag) -- fully observed
+# like the native providers. Classifying it here keeps ghost-GK trainable on metrica (a pre-PR
+# capability the always-run detected-only filter would otherwise crash); metrica's exclusion from
+# the registered GKDV corpora is a separate corpus-composition decision (Tier-2 data quality).
+_FULLY_OBSERVED_PROVIDERS = frozenset({"gradientsports", "sportec", "idsse", "metrica"})
+
+
+def keeper_detection_mask(visibility: pd.Series, *, provider: str) -> np.ndarray:
+    """Rows whose keeper was ACTUALLY DETECTED. Fail-closed on the ambiguous null (spec 4.3)."""
+    if provider in _FULLY_OBSERVED_PROVIDERS:
+        return np.ones(len(visibility), dtype=bool)
+    if provider not in _DETECTION_AWARE_PROVIDERS:
+        raise ValueError(
+            f"keeper_detection_mask: unknown provider {provider!r}. Add it to "
+            "_DETECTION_AWARE_PROVIDERS or _FULLY_OBSERVED_PROVIDERS -- an unknown provider is "
+            "NOT assumed observed."
+        )
+    if visibility.isna().all():
+        raise ValueError(
+            f"keeper_detection_mask: provider {provider!r} carries a detection flag, but "
+            "`visibility` is entirely null -- the pipeline discarded it (the kloppy gateway "
+            "hard-codes visibility=None). Build these frames with tracking.skillcorner instead; "
+            "training on undetected keepers means training on the interpolator (spec 4.3)."
+        )
+    return visibility.fillna(False).astype(bool).to_numpy()
+
 
 GHOST_GK_FEATURE_NAMES: list[str] = [
     "ball_x",
@@ -646,8 +679,11 @@ def _extract_all_ghost_gk_features(
     features : pd.DataFrame
         (n_samples, len(GHOST_GK_FEATURE_NAMES)).
     meta : pd.DataFrame
-        (n_samples, 6): game_id, period_id, frame_id, gk_team_id,
-        gk_x_gr, gk_y_gr.
+        (n_samples, 8): game_id, period_id, frame_id, gk_team_id,
+        gk_x_gr, gk_y_gr, gk_player_id, gk_visibility. The last two carry
+        the keeper's identity and per-frame detection flag off the SAME
+        frames row the label came from (spec 4.3: keeper-grouped CV +
+        detected-only targets).
 
     Examples
     --------
@@ -799,6 +835,8 @@ def _extract_all_ghost_gk_features(
                         "gk_team_id": gk_team,
                         "gk_x_gr": gk_x_gr,
                         "gk_y_gr": gk_y_gr,
+                        "gk_player_id": gk_row["player_id"],
+                        "gk_visibility": gk_row.get("visibility"),
                     }
                 )
 
@@ -809,12 +847,47 @@ def _extract_all_ghost_gk_features(
     if not feature_rows:
         return (
             pd.DataFrame(columns=GHOST_GK_FEATURE_NAMES),
-            pd.DataFrame(columns=["game_id", "period_id", "frame_id", "gk_team_id", "gk_x_gr", "gk_y_gr"]),
+            pd.DataFrame(
+                columns=[
+                    "game_id",
+                    "period_id",
+                    "frame_id",
+                    "gk_team_id",
+                    "gk_x_gr",
+                    "gk_y_gr",
+                    "gk_player_id",
+                    "gk_visibility",
+                ]
+            ),
         )
 
     features = pd.concat(feature_rows, ignore_index=True)
     meta = pd.DataFrame(meta_rows)
     return features, meta
+
+
+@overload
+def prepare_ghost_gk_training_data(
+    frames: pd.DataFrame,
+    *,
+    home_team_id: str | int,
+    actions: pd.DataFrame | None = ...,
+    subsample_fps: float | None = ...,
+    carrier_params: dict | None = ...,
+    return_meta: Literal[False] = ...,
+) -> tuple[pd.DataFrame, pd.DataFrame]: ...
+
+
+@overload
+def prepare_ghost_gk_training_data(
+    frames: pd.DataFrame,
+    *,
+    home_team_id: str | int,
+    actions: pd.DataFrame | None = ...,
+    subsample_fps: float | None = ...,
+    carrier_params: dict | None = ...,
+    return_meta: Literal[True],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: ...
 
 
 def prepare_ghost_gk_training_data(
@@ -824,7 +897,8 @@ def prepare_ghost_gk_training_data(
     actions: pd.DataFrame | None = None,
     subsample_fps: float | None = 1.0,
     carrier_params: dict | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    return_meta: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Assemble training features + labels from one game's tracking frames.
 
     Parameters
@@ -845,6 +919,13 @@ def prepare_ghost_gk_training_data(
         compute the ``team_in_possession`` feature. ``None`` uses the library
         default (:data:`DEFAULT_CARRIER_PARAMS`); the trainer passes the same dict
         here and to :meth:`GhostGkModel.fit` so recorded == used (R3, PR-S81).
+    return_meta : bool, default False
+        When True, also return the per-row ``meta`` frame (spec 4.3) so callers
+        can build keeper-grouped CV (``gk_player_id``) and enforce detected-only
+        targets (``gk_visibility`` + :func:`keeper_detection_mask`). ``meta`` is
+        filtered by the SAME masks as ``features``/``labels`` so its rows stay
+        aligned. Default False keeps the documented ``(features, labels)`` shape
+        the four existing call sites depend on.
 
     Returns
     -------
@@ -855,6 +936,10 @@ def prepare_ghost_gk_training_data(
         (n_samples, 2) with columns "gk_x", "gk_y" in goal-relative
         coordinates matching the GhostGkModel training domain
         ([0, 30] x [18, 50]).
+    meta : pd.DataFrame, optional
+        Only when ``return_meta=True``. Row-aligned with ``features``/``labels``;
+        carries ``game_id, period_id, frame_id, gk_team_id, gk_x_gr, gk_y_gr,
+        gk_player_id, gk_visibility``.
 
     Examples
     --------
@@ -887,18 +972,22 @@ def prepare_ghost_gk_training_data(
     )
 
     if len(meta) == 0:
-        return (
-            pd.DataFrame(columns=GHOST_GK_FEATURE_NAMES),
-            pd.DataFrame(columns=["gk_x", "gk_y"]),
-        )
+        empty_features = pd.DataFrame(columns=GHOST_GK_FEATURE_NAMES)
+        empty_labels = pd.DataFrame(columns=["gk_x", "gk_y"])
+        # `meta` here is the 8-column empty frame from _extract_all_ghost_gk_features.
+        if return_meta:
+            return empty_features, empty_labels, meta
+        return empty_features, empty_labels
 
     # Extract labels
     labels = meta[["gk_x_gr", "gk_y_gr"]].rename(columns={"gk_x_gr": "gk_x", "gk_y_gr": "gk_y"})
 
-    # Drop NaN labels (GK not visible)
+    # Drop NaN labels (GK not visible). meta MUST be filtered by the same mask so keeper
+    # identity (gk_player_id) stays aligned with its row (spec 4.3, Known-risks #2).
     valid = labels["gk_x"].notna() & labels["gk_y"].notna()
     features = features[valid.values].reset_index(drop=True)
     labels = labels[valid.values].reset_index(drop=True)
+    meta = meta[valid.values].reset_index(drop=True)
 
     # Validate feature width
     if features.shape[1] != len(GHOST_GK_FEATURE_NAMES):
@@ -920,7 +1009,10 @@ def prepare_ghost_gk_training_data(
         )
         features = features[in_domain.values].reset_index(drop=True)
         labels = labels[in_domain.values].reset_index(drop=True)
+        meta = meta[in_domain.values].reset_index(drop=True)
 
+    if return_meta:
+        return features, labels, meta
     return features, labels
 
 

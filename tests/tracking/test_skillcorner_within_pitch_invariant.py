@@ -29,6 +29,8 @@ def _bronze(extra_player_native_x=None, ball_native_x=0.0):
                 ball_z=0.0,
                 is_visible=True,
                 frame_rate=10.0,
+                pitch_length=105.0,
+                pitch_width=68.0,
             )
         )
     if extra_player_native_x is not None:
@@ -48,6 +50,8 @@ def _bronze(extra_player_native_x=None, ball_native_x=0.0):
                 ball_z=0.0,
                 is_visible=True,
                 frame_rate=10.0,
+                pitch_length=105.0,
+                pitch_width=68.0,
             )
         )
     return pd.DataFrame(base)
@@ -82,7 +86,7 @@ def test_mildly_off_pitch_player_warns_and_counts_but_does_not_crash():
 
 def test_off_pitch_ball_warns_and_counts_and_never_crashes():
     # The ball has NO existing guard (derive_goalkeepers is player-only) -> S1 is its sole signal.
-    # ball native x=-90 -> SPADL -37.5 -> beyond the ball tolerance (30 m) -> warn + count, no crash.
+    # ball native x=-90 -> SPADL -37.5 -> beyond the ball tolerance (15 m) -> warn + count, no crash.
     bronze = _bronze(ball_native_x=-90.0)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -90,6 +94,17 @@ def test_off_pitch_ball_warns_and_counts_and_never_crashes():
     assert any("off-pitch" in str(x.message) for x in w)
     assert report.n_gross_off_pitch >= 1
     assert len(frames) > 0
+
+
+def test_clean_fixture_is_not_geometry_excluded():
+    # The per-row S1 warn (n_gross_off_pitch) and the SYSTEMATIC rate-gate (geometry_excluded) must
+    # stay consistent: a clean fixture trips NEITHER. Pins the new report fields onto the clean path
+    # so the two guards cannot drift apart.
+    bronze = _bronze()
+    _frames, report = skillcorner.convert_to_frames(bronze, home_team_id="31")
+    assert report.geometry_excluded is False
+    assert report.player_off_pitch_rate == 0.0
+    assert report.ball_off_pitch_rate == 0.0
 
 
 # --------------------------------------------------------------------------------------

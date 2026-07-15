@@ -28,7 +28,13 @@ from scripts._loader_pining import (
 )
 from tests._skillcorner_sample import MATCH_IDS, SAMPLE_DIR
 
-_SUFFIXES = ("_match.json", "_tracking_extrapolated.jsonl", "_dynamic_events.csv")
+# suffix -> role: the canonical open-data matches key by filename suffix; _artifact_key's role
+# fallback covers the 2026-07 role-keyed schema (harmless here — these 10 are canonical).
+_SUFFIX_ROLES = {
+    "_match.json": "metadata",
+    "_tracking_extrapolated.jsonl": "tracking",
+    "_dynamic_events.csv": "events",
+}
 
 
 def main() -> int:
@@ -41,8 +47,8 @@ def main() -> int:
         dest.mkdir(parents=True, exist_ok=True)
         for stale in dest.glob("skillcorner_*"):  # sweep interrupted-download temps
             stale.unlink()
-        for suffix in _SUFFIXES:
-            key = _artifact_key(artifacts, suffix=suffix)
+        for suffix, role in _SUFFIX_ROLES.items():
+            key = _artifact_key(artifacts, suffix=suffix, role=role)
             target = dest / str(artifacts[key])  # original filename, ends with suffix
             if target.exists():
                 print(f"  skip {mid}/{target.name} (present)")

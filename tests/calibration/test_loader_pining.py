@@ -135,7 +135,9 @@ def test_load_matches_dispatches_per_provider(monkeypatch, tmp_path):
     monkeypatch.setattr(
         L,
         "_build_match",
-        lambda provider, match_id, paths, tracking_limit: (built["actions"], built["frames"], built["home"]),
+        # _build_match returns a uniform 4-tuple (actions, frames, home, report); report is None for
+        # idsse (no native geometry gate) -> load_matches never excludes it (spec 4.4).
+        lambda provider, match_id, paths, tracking_limit: (built["actions"], built["frames"], built["home"], None),
     )
     rows = list(
         L.load_matches(providers=["idsse"], match_ids={"idsse": ["M1"]}, token="test-token-pining-for-the-data")
@@ -181,7 +183,8 @@ def test_apply_et_direction_noop_when_no_et_periods():
 def test_load_matches_max_per_provider_truncates(monkeypatch):
     monkeypatch.setattr(L, "_list_matches", lambda p, t, b: [{"id": str(i), "artifacts": {}} for i in range(5)])
     monkeypatch.setattr(L, "_download_artifacts", lambda *a, **k: {})
-    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None))
+    # _build_match now returns a uniform 4-tuple (…, report); None report -> never excluded (spec 4.4).
+    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None, None))
     got = [mid for _p, mid, *_ in L.load_matches(providers=["gradientsports"], max_per_provider=2)]
     assert got == ["0", "1"]
 
@@ -189,36 +192,65 @@ def test_load_matches_max_per_provider_truncates(monkeypatch):
 def test_load_matches_no_cap_loads_all(monkeypatch):
     monkeypatch.setattr(L, "_list_matches", lambda p, t, b: [{"id": str(i), "artifacts": {}} for i in range(3)])
     monkeypatch.setattr(L, "_download_artifacts", lambda *a, **k: {})
-    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None))
+    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None, None))
     got = [mid for _p, mid, *_ in L.load_matches(providers=["gradientsports"])]
     assert got == ["0", "1", "2"]
 
 
-def test_build_skillcorner_frames_chains_load_convert_preprocess(monkeypatch):
-    # TF-27: the extracted seam must do skillcorner.load -> convert_to_frames -> _preprocess,
-    # passing limit + include_empty_frames through. Monkeypatched: no kloppy parse, no network.
-    # (function-local imports -> patch the SOURCE module attrs, not L's namespace.)
-    sentinel = pd.DataFrame({"x": [1.0, 2.0]})
+def test_build_skillcorner_frames_chains_bronze_native_preprocess(tmp_path, monkeypatch):
+    # PR-S115 (spec 3.3): the SkillCorner pining path was rerouted OFF the kloppy gateway (which
+    # hard-codes visibility=None and drops ball_z) ONTO the native tracking.skillcorner builder.
+    # The seam must now do: read files -> _skillcorner_bronze -> tracking.skillcorner.convert_to_frames
+    # -> _preprocess, on the 3-arg (paths, match_id, tracking_limit) signature, threading the REAL
+    # match_id (never a path fragment). Monkeypatch only the native builder + preprocess; let the
+    # real _skillcorner_bronze shape the raw JSONL so the bronze contract is exercised.
+    import json
+
+    meta = {
+        "home_team": {"id": 7},
+        "pitch_length": 105.0,
+        "pitch_width": 68.0,
+        "players": [{"id": 10, "team_id": 7, "player_role": {"acronym": "GK"}}],
+    }
+    (tmp_path / "m.json").write_text(json.dumps(meta), encoding="utf-8")
+    (tmp_path / "t.jsonl").write_text(
+        json.dumps(
+            {
+                "period": 1,
+                "frame": 1,
+                "timestamp": 0.0,
+                "player_data": [{"player_id": 10, "x": 0.0, "y": 0.0, "is_detected": True}],
+                "ball_data": {"x": 0.0, "y": 0.0, "z": 1.5},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     seen = {}
 
-    def _fake_load(**kwargs):
-        seen["load_kwargs"] = kwargs
-        return "DS"
+    def _fake_convert(bronze, *, home_team_id, output_convention):
+        seen["bronze"] = bronze
+        seen["home_team_id"] = home_team_id
+        seen["output_convention"] = output_convention
+        return pd.DataFrame({"x": [1.0, 2.0]}), "REPORT"
 
-    def _fake_convert(ds):
-        seen["ds"] = ds
-        return sentinel, None
-
-    monkeypatch.setattr("kloppy.skillcorner.load", _fake_load)
-    monkeypatch.setattr("silly_kicks.tracking.kloppy.convert_to_frames", _fake_convert)
+    monkeypatch.setattr("silly_kicks.tracking.skillcorner.convert_to_frames", _fake_convert)
     monkeypatch.setattr(L, "_preprocess", lambda f: f.assign(_preprocessed=True))
 
-    out = L.build_skillcorner_frames({"metadata": "m.json", "tracking": "t.jsonl"}, 123)
+    frames, report = L.build_skillcorner_frames(
+        {"metadata": str(tmp_path / "m.json"), "tracking": str(tmp_path / "t.jsonl")},
+        "1886347",
+        123,
+    )
 
-    assert seen["ds"] == "DS"  # convert_to_frames received the load() result
-    assert seen["load_kwargs"]["limit"] == 123
-    assert seen["load_kwargs"]["include_empty_frames"] is False
-    assert out["_preprocessed"].all() and list(out["x"]) == [1.0, 2.0]  # preprocess applied to convert output
+    # native builder received the bronze from _skillcorner_bronze, with the REAL match_id threaded
+    assert seen["bronze"]["match_id"].unique().tolist() == ["1886347"]
+    assert seen["bronze"]["is_visible"].tolist() == [True]  # is_detected survived
+    assert seen["bronze"]["ball_z"].iloc[0] == 1.5  # ball_z recovered
+    assert seen["home_team_id"] == "7"  # read from meta before the call
+    assert report == "REPORT"  # the native geometry report is threaded (Task 4's exclusion needs it)
+    assert frames["_preprocessed"].all() and list(frames["x"]) == [1.0, 2.0]  # preprocess applied
 
 
 def test_download_to_temp_cache_hit_skips_network(tmp_path, monkeypatch):

@@ -1,0 +1,13 @@
+
+==============================================================================
+=== NEW 1021404 (private, LaLiga, tracking.json.gz)  (home_team_id=273) ===
+   team  per     n |  IDENTITY rmse |  180-REFLECT rmse |  Y-ONLY-FLIP rmse | verdict
+    262    1   354 |        43.3743 |            0.0000 |           31.2927 | 180-REFLECT (AWAY)
+    262    2   295 |         0.0000 |           47.9750 |           27.5606 | IDENTITY (AWAY)
+    273    1   245 |         0.0000 |           44.6362 |           28.5495 | IDENTITY (HOME)
+    273    2   304 |        42.9150 |            0.0000 |           31.4418 | 180-REFLECT (HOME)
+
+  attacking_side values: ['left_to_right' 'right_to_left']
+  min(identity, 180-reflect) residual: median=0.0000 m  max=0.0000 m  |  <=0.01 m for 100.0% of events
+  >>> Events and tracking share ONE coordinate frame up to a 180-deg team rotation.
+  >>> NO y-inversion: a y-only flip is never the best fit.

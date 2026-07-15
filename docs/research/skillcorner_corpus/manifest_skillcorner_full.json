@@ -1,0 +1,2260 @@
+[
+  {
+    "id": "1886347",
+    "artifacts": {
+      "1886347_dynamic_events": "1886347_dynamic_events.csv",
+      "1886347_match": "1886347_match.json",
+      "1886347_phases_of_play": "1886347_phases_of_play.csv",
+      "1886347_tracking_extrapolated": "1886347_tracking_extrapolated.jsonl"
+    },
+    "date": "2024-11-30",
+    "home": "Auckland FC",
+    "away": "Newcastle",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "1899585",
+    "artifacts": {
+      "1899585_dynamic_events": "1899585_dynamic_events.csv",
+      "1899585_match": "1899585_match.json",
+      "1899585_phases_of_play": "1899585_phases_of_play.csv",
+      "1899585_tracking_extrapolated": "1899585_tracking_extrapolated.jsonl"
+    },
+    "date": "2024-12-07",
+    "home": "Auckland FC",
+    "away": "Wellington P FC",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "1925299",
+    "artifacts": {
+      "1925299_dynamic_events": "1925299_dynamic_events.csv",
+      "1925299_match": "1925299_match.json",
+      "1925299_phases_of_play": "1925299_phases_of_play.csv",
+      "1925299_tracking_extrapolated": "1925299_tracking_extrapolated.jsonl"
+    },
+    "date": "2024-12-21",
+    "home": "Brisbane FC",
+    "away": "Perth Glory",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "1953632",
+    "artifacts": {
+      "1953632_dynamic_events": "1953632_dynamic_events.csv",
+      "1953632_match": "1953632_match.json",
+      "1953632_phases_of_play": "1953632_phases_of_play.csv",
+      "1953632_tracking_extrapolated": "1953632_tracking_extrapolated.jsonl"
+    },
+    "date": "2024-12-31",
+    "home": "CC Mariners",
+    "away": "Melbourne City",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "1996435",
+    "artifacts": {
+      "1996435_dynamic_events": "1996435_dynamic_events.csv",
+      "1996435_match": "1996435_match.json",
+      "1996435_phases_of_play": "1996435_phases_of_play.csv",
+      "1996435_tracking_extrapolated": "1996435_tracking_extrapolated.jsonl"
+    },
+    "date": "2025-02-01",
+    "home": "Sydney FC",
+    "away": "Adelaide United",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "2006229",
+    "artifacts": {
+      "2006229_dynamic_events": "2006229_dynamic_events.csv",
+      "2006229_match": "2006229_match.json",
+      "2006229_phases_of_play": "2006229_phases_of_play.csv",
+      "2006229_tracking_extrapolated": "2006229_tracking_extrapolated.jsonl"
+    },
+    "date": "2025-03-07",
+    "home": "Melbourne City",
+    "away": "Macarthur FC",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "2011166",
+    "artifacts": {
+      "2011166_dynamic_events": "2011166_dynamic_events.csv",
+      "2011166_match": "2011166_match.json",
+      "2011166_phases_of_play": "2011166_phases_of_play.csv",
+      "2011166_tracking_extrapolated": "2011166_tracking_extrapolated.jsonl"
+    },
+    "date": "2025-04-12",
+    "home": "Wellington P FC",
+    "away": "Melbourne V FC",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "2013725",
+    "artifacts": {
+      "2013725_dynamic_events": "2013725_dynamic_events.csv",
+      "2013725_match": "2013725_match.json",
+      "2013725_phases_of_play": "2013725_phases_of_play.csv",
+      "2013725_tracking_extrapolated": "2013725_tracking_extrapolated.jsonl"
+    },
+    "date": "2025-04-27",
+    "home": "Western United",
+    "away": "Sydney FC",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "2015213",
+    "artifacts": {
+      "2015213_dynamic_events": "2015213_dynamic_events.csv",
+      "2015213_match": "2015213_match.json",
+      "2015213_phases_of_play": "2015213_phases_of_play.csv",
+      "2015213_tracking_extrapolated": "2015213_tracking_extrapolated.jsonl"
+    },
+    "date": "2025-05-03",
+    "home": "Western United",
+    "away": "Auckland FC",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "2017461",
+    "artifacts": {
+      "2017461_dynamic_events": "2017461_dynamic_events.csv",
+      "2017461_match": "2017461_match.json",
+      "2017461_phases_of_play": "2017461_phases_of_play.csv",
+      "2017461_tracking_extrapolated": "2017461_tracking_extrapolated.jsonl"
+    },
+    "date": "2025-05-17",
+    "home": "Melbourne V FC",
+    "away": "Auckland FC",
+    "provenance": "redistributed",
+    "source": {
+      "name": "SkillCorner Open Data",
+      "url": "https://github.com/SkillCorner/opendata",
+      "licence": "MIT"
+    },
+    "visibility": "public",
+    "updated_at": "2026-05-04T02:44:12Z"
+  },
+  {
+    "id": "1021404",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:50:23Z",
+    "date": "2023-08-12",
+    "home": "Athletic Bilbao",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1036527",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:50:33Z",
+    "date": "2023-08-19",
+    "home": "UD Almer\u00eda",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1048195",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:50:52Z",
+    "date": "2023-08-25",
+    "home": "Celta Vigo",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1064327",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:51:02Z",
+    "date": "2023-09-02",
+    "home": "Real Madrid",
+    "away": "Getafe CF",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1096879",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:51:11Z",
+    "date": "2023-09-17",
+    "home": "Real Madrid",
+    "away": "Real Sociedad",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1103734",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:51:20Z",
+    "date": "2023-09-20",
+    "home": "Real Madrid",
+    "away": "FC Union Berlin",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1114154",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:51:29Z",
+    "date": "2023-09-24",
+    "home": "Atl\u00e9tico Madrid",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1121546",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:51:38Z",
+    "date": "2023-09-27",
+    "home": "Real Madrid",
+    "away": "UD Las Palmas",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1129394",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:51:48Z",
+    "date": "2023-09-30",
+    "home": "Girona",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1137151",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:51:57Z",
+    "date": "2023-10-03",
+    "home": "Napoli",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1146865",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:52:13Z",
+    "date": "2023-10-07",
+    "home": "Real Madrid",
+    "away": "CA Osasuna",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1184210",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:52:23Z",
+    "date": "2023-10-21",
+    "home": "Sevilla FC",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1193411",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:52:32Z",
+    "date": "2023-10-24",
+    "home": "SC Braga",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1204769",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:52:40Z",
+    "date": "2023-10-28",
+    "home": "FC Barcelona",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1227667",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:52:50Z",
+    "date": "2023-11-05",
+    "home": "Real Madrid",
+    "away": "Rayo Vallecano",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1234494",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:52:58Z",
+    "date": "2023-11-08",
+    "home": "Real Madrid",
+    "away": "SC Braga",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1242274",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:53:07Z",
+    "date": "2023-11-11",
+    "home": "Real Madrid",
+    "away": "Valencia CF",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1281971",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:53:16Z",
+    "date": "2023-11-29",
+    "home": "Real Madrid",
+    "away": "Napoli",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1287842",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:53:26Z",
+    "date": "2023-12-02",
+    "home": "Real Madrid",
+    "away": "Granada CF",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1301584",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:53:35Z",
+    "date": "2023-12-09",
+    "home": "Betis Balompi\u00e9",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1307205",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:53:44Z",
+    "date": "2023-12-12",
+    "home": "FC Union Berlin",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1314538",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:53:53Z",
+    "date": "2023-12-17",
+    "home": "Real Madrid",
+    "away": "Villarreal CF",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1320692",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:54:02Z",
+    "date": "2023-12-21",
+    "home": "Alav\u00e9s",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1340201",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:54:11Z",
+    "date": "2024-01-03",
+    "home": "Real Madrid",
+    "away": "RCD Mallorca",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1365685",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:54:19Z",
+    "date": "2024-01-21",
+    "home": "Real Madrid",
+    "away": "UD Almer\u00eda",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1374493",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:54:29Z",
+    "date": "2024-01-27",
+    "home": "UD Las Palmas",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1380976",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:54:38Z",
+    "date": "2024-02-01",
+    "home": "Getafe CF",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1385604",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:54:47Z",
+    "date": "2024-02-04",
+    "home": "Real Madrid",
+    "away": "Atl\u00e9tico Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1392898",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:54:56Z",
+    "date": "2024-02-10",
+    "home": "Real Madrid",
+    "away": "Girona",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1397483",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:55:05Z",
+    "date": "2024-02-13",
+    "home": "Leipzig",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1404020",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:55:13Z",
+    "date": "2024-02-18",
+    "home": "Rayo Vallecano",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1414465",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:55:23Z",
+    "date": "2024-02-25",
+    "home": "Real Madrid",
+    "away": "Sevilla FC",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1422928",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:55:31Z",
+    "date": "2024-03-02",
+    "home": "Valencia CF",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1429036",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:55:39Z",
+    "date": "2024-03-06",
+    "home": "Real Madrid",
+    "away": "Leipzig",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1434991",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:55:48Z",
+    "date": "2024-03-10",
+    "home": "Real Madrid",
+    "away": "Celta Vigo",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1443283",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:55:56Z",
+    "date": "2024-03-16",
+    "home": "CA Osasuna",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1463749",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:56:05Z",
+    "date": "2024-03-31",
+    "home": "Real Madrid",
+    "away": "Athletic Bilbao",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1481937",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:56:14Z",
+    "date": "2024-04-09",
+    "home": "Real Madrid",
+    "away": "Manchester City",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1486704",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:56:23Z",
+    "date": "2024-04-13",
+    "home": "RCD Mallorca",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1492545",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:56:35Z",
+    "date": "2024-04-17",
+    "home": "Manchester City",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1498966",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:56:43Z",
+    "date": "2024-04-21",
+    "home": "Real Madrid",
+    "away": "FC Barcelona",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1506182",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:56:51Z",
+    "date": "2024-04-26",
+    "home": "Real Sociedad",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1512139",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:56:59Z",
+    "date": "2024-04-30",
+    "home": "Bayern Munchen",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1517179",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:57:07Z",
+    "date": "2024-05-04",
+    "home": "Real Madrid",
+    "away": "CF Cadiz",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1524305",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:57:17Z",
+    "date": "2024-05-08",
+    "home": "Real Madrid",
+    "away": "Bayern Munchen",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1528510",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:57:25Z",
+    "date": "2024-05-11",
+    "home": "Granada CF",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1534700",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:57:34Z",
+    "date": "2024-05-14",
+    "home": "Real Madrid",
+    "away": "Alav\u00e9s",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1543050",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:57:43Z",
+    "date": "2024-05-19",
+    "home": "Villarreal CF",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1552423",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:57:51Z",
+    "date": "2024-05-25",
+    "home": "Real Madrid",
+    "away": "Betis Balompi\u00e9",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1562415",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:58:03Z",
+    "date": "2024-06-01",
+    "home": "Dortmund",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1654689",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:58:12Z",
+    "date": "2024-08-18",
+    "home": "RCD Mallorca",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1669552",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:58:22Z",
+    "date": "2024-08-25",
+    "home": "Real Madrid",
+    "away": "Real Valladolid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1677766",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:58:31Z",
+    "date": "2024-08-29",
+    "home": "UD Las Palmas",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1683776",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:58:40Z",
+    "date": "2024-09-01",
+    "home": "Real Madrid",
+    "away": "Betis Balompi\u00e9",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1712797",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:58:48Z",
+    "date": "2024-09-14",
+    "home": "Real Sociedad",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1720493",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:58:56Z",
+    "date": "2024-09-17",
+    "home": "Real Madrid",
+    "away": "Stuttgart",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1730478",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:59:05Z",
+    "date": "2024-09-21",
+    "home": "Real Madrid",
+    "away": "RCD Espanyol",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1738618",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:59:14Z",
+    "date": "2024-09-24",
+    "home": "Real Madrid",
+    "away": "Alav\u00e9s",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1751837",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:59:23Z",
+    "date": "2024-09-29",
+    "home": "Atl\u00e9tico Madrid",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1759946",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:59:33Z",
+    "date": "2024-10-02",
+    "home": "LOSC Lille",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1766915",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:59:42Z",
+    "date": "2024-10-05",
+    "home": "Real Madrid",
+    "away": "Villarreal CF",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1800127",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:59:51Z",
+    "date": "2024-10-19",
+    "home": "Celta Vigo",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1807855",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T09:59:59Z",
+    "date": "2024-10-22",
+    "home": "Real Madrid",
+    "away": "Dortmund",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1816744",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:00:07Z",
+    "date": "2024-10-26",
+    "home": "Real Madrid",
+    "away": "FC Barcelona",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1839445",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:00:15Z",
+    "date": "2024-11-05",
+    "home": "Real Madrid",
+    "away": "Milan",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1846846",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:00:23Z",
+    "date": "2024-11-09",
+    "home": "Real Madrid",
+    "away": "CA Osasuna",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1876077",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:00:32Z",
+    "date": "2024-11-24",
+    "home": "Legan\u00e9s",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1882238",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:00:40Z",
+    "date": "2024-11-27",
+    "home": "Liverpool",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1889287",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:00:48Z",
+    "date": "2024-12-01",
+    "home": "Real Madrid",
+    "away": "Getafe CF",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1895402",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:00:56Z",
+    "date": "2024-12-04",
+    "home": "Athletic Bilbao",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1900259",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:01:05Z",
+    "date": "2024-12-07",
+    "home": "Girona",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1906819",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:01:15Z",
+    "date": "2024-12-10",
+    "home": "Atalanta",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1913641",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:01:23Z",
+    "date": "2024-12-14",
+    "home": "Rayo Vallecano",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1927275",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:01:32Z",
+    "date": "2024-12-22",
+    "home": "Real Madrid",
+    "away": "Sevilla FC",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1948187",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:01:41Z",
+    "date": "2025-01-03",
+    "home": "Valencia CF",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1974997",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:01:49Z",
+    "date": "2025-01-19",
+    "home": "Real Madrid",
+    "away": "UD Las Palmas",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1980444",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:01:57Z",
+    "date": "2025-01-22",
+    "home": "Real Madrid",
+    "away": "Salzbourg",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1985247",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:02:05Z",
+    "date": "2025-01-25",
+    "home": "Real Valladolid",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1992355",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:02:14Z",
+    "date": "2025-01-29",
+    "home": "Stade Brestois",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "1997707",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:02:24Z",
+    "date": "2025-02-01",
+    "home": "RCD Espanyol",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2002290",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:02:33Z",
+    "date": "2025-02-08",
+    "home": "Real Madrid",
+    "away": "Atl\u00e9tico Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2002870",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:02:41Z",
+    "date": "2025-02-11",
+    "home": "Manchester City",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2003226",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:02:49Z",
+    "date": "2025-02-15",
+    "home": "CA Osasuna",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2003902",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:02:57Z",
+    "date": "2025-02-19",
+    "home": "Real Madrid",
+    "away": "Manchester City",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2004424",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:03:07Z",
+    "date": "2025-02-23",
+    "home": "Real Madrid",
+    "away": "Girona",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2005298",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:03:16Z",
+    "date": "2025-03-01",
+    "home": "Betis Balompi\u00e9",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2005893",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:03:25Z",
+    "date": "2025-03-04",
+    "home": "Real Madrid",
+    "away": "Atl\u00e9tico Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2006572",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:03:34Z",
+    "date": "2025-03-09",
+    "home": "Real Madrid",
+    "away": "Rayo Vallecano",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2007191",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:03:46Z",
+    "date": "2025-03-12",
+    "home": "Atl\u00e9tico Madrid",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2007530",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:03:55Z",
+    "date": "2025-03-15",
+    "home": "Villarreal CF",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2008992",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:04:04Z",
+    "date": "2025-03-29",
+    "home": "Real Madrid",
+    "away": "Legan\u00e9s",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2010130",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:04:13Z",
+    "date": "2025-04-05",
+    "home": "Real Madrid",
+    "away": "Valencia CF",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2010755",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:04:22Z",
+    "date": "2025-04-08",
+    "home": "Arsenal",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2011428",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:04:30Z",
+    "date": "2025-04-13",
+    "home": "Alav\u00e9s",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2011844",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:04:38Z",
+    "date": "2025-04-16",
+    "home": "Real Madrid",
+    "away": "Arsenal",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2012431",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:04:47Z",
+    "date": "2025-04-20",
+    "home": "Real Madrid",
+    "away": "Athletic Bilbao",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2012892",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:04:55Z",
+    "date": "2025-04-23",
+    "home": "Getafe CF",
+    "away": "Real Madrid",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  },
+  {
+    "id": "2014987",
+    "artifacts": {
+      "events": "events.parquet",
+      "freeze_frames": "freeze_frames.parquet",
+      "metadata": "metadata.json",
+      "physical": "physical.parquet",
+      "tracking": "tracking.json.gz"
+    },
+    "visibility": "private",
+    "updated_at": "2026-06-29T10:05:03Z",
+    "date": "2025-05-04",
+    "home": "Real Madrid",
+    "away": "Celta Vigo",
+    "provenance": "original",
+    "source": {
+      "name": "SkillCorner",
+      "url": "",
+      "licence": "Restricted; redistribution not permitted"
+    }
+  }
+]

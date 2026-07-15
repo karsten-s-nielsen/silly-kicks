@@ -5,6 +5,61 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.48.0] — 2026-07-14
+
+### Added / Changed — SkillCorner corpus expansion + visibility surfacing (`silly_kicks/spadl/skillcorner.py`, `silly_kicks/tracking/skillcorner.py`, `scripts/`, PR-S115, ADR-038)
+
+The pining SkillCorner listing grew from 10 to 108 matches. The 98 new ones are **owner-tier**
+(`visibility: "private"`, restricted, all Real Madrid LaLiga+UCL), so the **public arm stays 17
+matches** (10 SkillCorner + 7 IDSSE) and the prior 4.9.0 / 4.18.0 paired verdicts are unaffected;
+the 98 can only expand the owner/full arm 81 → 179. This release makes them reachable and *safely
+classified*, surfaces the `is_detected` flag the pipeline had been discarding, fixes two coordinate
+defects, and **registers** the expanded-corpus retrain protocol. **Code and tests only — no weights.**
+Spec: `docs/superpowers/specs/2026-07-14-skillcorner-corpus-and-visibility-design.md`; evidence:
+`docs/research/skillcorner_corpus/`; decision: ADR-038.
+
+- **Native SkillCorner route (ADR-038 §5).** The pining path builds SkillCorner frames through
+  `tracking.skillcorner.convert_to_frames` (not the kloppy gateway), surfacing **`visibility`**
+  (from the feed's `is_detected`, which the kloppy gateway hard-codes to `None`) and recovering
+  **`ball_z`**. One SkillCorner truth instead of two.
+- **Clamp split (ADR-038 §3).** `spadl/skillcorner.py::_transform_coords` scales THEN clamps —
+  harmless for events (an action is on-pitch by construction), **destructive for tracking**
+  (measured: 11.31% of ball rows snapped, up to 9.00 m; a ball nine metres behind the goal becomes a
+  ball on the goal line, erasing goal-vs-save). The affine part is extracted to `_scale_to_spadl`
+  (no clamp); tracking calls it **directly, never `_transform_coords`**.
+- **Pitch-dimension scaling (ADR-038 §4).** The native builder scaled by a fixed 105×68 offset, so
+  on a non-standard pitch the goal line landed up to **2.0 m** off (4 of the 10 public matches are
+  104/106 m). It now scales via the events converter's own affine transform (single-sourced), keyed
+  on SkillCorner's declared `pitch_length`/`pitch_width`; **missing dimensions RAISE** (fail-closed;
+  `assume_standard_pitch=True` is the explicit opt-in).
+- **Visibility-keyed corpus taxonomy (`scripts/_corpus.py`, ADR-038 §2 — a compliance control).**
+  `_PUBLIC_PROVIDERS` is **deleted** (six sites; one set the shipped label, so a restricted
+  `sc_extended`-shaped run had shipped labelled `"public"`). Public-vs-owner is now keyed on the
+  manifest's `visibility`, fail-closed (unknown/missing ⇒ restricted); the artifact label derives
+  from the ship-mask composition; a red-first CI guard forbids a restricted corpus from ever shipping
+  a `"public"` label.
+- **Registered-protocol machinery.** `scripts/_paired.py` — the fixed-sequence three-candidate
+  (`public`/`sc_extended`/`full`) paired test with tuning **nested inside the outer CV** (so `public`
+  cannot tune on the 17 matches that are its own evaluation universe). `scripts/_ghost_domain.py` —
+  ghost-GK detected-keeper targets, keeper-grouped CV, and a paired sign-consistency admission (the
+  interpolator-tell refusal was retired as dead code → a reported diagnostic). `scripts/_cache.py` —
+  a feature-cache schema guard so a stale cache is a MISS.
+- **S1 recalibration + per-match rate-gate (ADR-038 §6).** `_TOL_BALL` 30 → 15 m (real max ball
+  excursion 9.00 m); the deferred rate-gate is implemented (`player_frac(>3 m) > 0.005` or
+  `ball_frac(>10 m) > 0.0005` → the match is excluded). Its **pinned limitation**: it cannot detect a
+  pitch-dimension error (0.00095 vs a clean-band worst of 0.00086), and neither can action↔frame
+  co-location — the only instruments for pitch dimensions are provenance and asking SkillCorner.
+
+**Detection finding.** Goalkeepers are detected in only **19.6% of frames** (~80% interpolated) —
+the `is_detected` flag was in the feed all along; the kloppy gateway threw it away. This vindicates
+the GS-only GKDV measurement rule and ADR-024/PR-S104's SkillCorner keeper-origin distrust.
+
+**Hyrum events (both flagged):** (1) the **lakehouse re-materializes SkillCorner frames** — geometry
+moves up to **2.0 m** on non-standard pitches (a correctness fix; the previous geometry was wrong);
+(2) the **research-corpus SkillCorner frames change** (native route) → the owner runs the **Stage A
+re-baseline** before any expansion is judged. **No weights ship in this PR** — they land after the
+owner Stage A / Stage B runs (PR-B). C4 count stays 28.
+
 ## [4.47.0] — 2026-07-12
 
 ### Added — TF-19 GKDV attempt-arm re-gate CODE (`silly_kicks/tracking/`, `silly_kicks/causal/`, PR-S114, ADR-037)

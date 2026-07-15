@@ -52,7 +52,7 @@ def test_skillcorner_derived_gk_matches_roster():
         name_map = {str(p["id"]): p.get("short_name", str(p["id"])) for p in meta.get("players", [])}
 
         paths = {"metadata": str(meta_path), "tracking": str(trk_path)}
-        frames = build_skillcorner_frames(paths, _FRAME_CAP)
+        frames, _report = build_skillcorner_frames(paths, mid, _FRAME_CAP)
 
         # Join-key guard (loud, not skip): every rostered GK id must appear in frames,
         # and the overall id overlap must be substantial — a drift on an unprobed match

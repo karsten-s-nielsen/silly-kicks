@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -77,6 +78,24 @@ def _list_matches(provider: str, token: str, base_url: str) -> list[dict]:
         return json.loads(resp.read()).get("matches", [])
 
 
+def match_visibility(
+    providers: list[str], *, token: str | None = None, base_url: str | None = None
+) -> dict[tuple[str, str], str]:
+    """Map (provider, match_id) -> "public" | "private" from the pining manifest (spec 3.2).
+
+    FAIL-CLOSED: a match whose manifest omits ``visibility`` is treated as **private**. A new
+    match can never silently enter the public training arm (the licensing control -- public-vs-
+    owner is keyed on this field, never on the provider name).
+    """
+    tok = _resolve_token(token)
+    base = base_url or _base_url()
+    out: dict[tuple[str, str], str] = {}
+    for provider in providers:
+        for m in _list_matches(provider, tok, base):
+            out[(provider, str(m["id"]))] = str(m.get("visibility", "private"))
+    return out
+
+
 def _download_to_temp(
     provider: str,
     match_id: str,
@@ -86,6 +105,7 @@ def _download_to_temp(
     dest_dir: Path,
     *,
     use_cache: bool = False,
+    filename: str | None = None,
 ) -> Path:
     """Two-step: bearer GET -> 302 Location -> presigned GET (no bearer) -> stream to a file.
 
@@ -95,7 +115,11 @@ def _download_to_temp(
     renamed into place only on a complete stream, so a crashed/retried download never leaves a
     corrupt cache entry (a partial is simply re-fetched on the next attempt).
     """
-    dest = dest_dir / f"{provider}_{match_id}_{artifact_key}"
+    dest = dest_dir / (
+        _dest_name(provider, match_id, artifact_key, filename)
+        if filename is not None
+        else f"{provider}_{match_id}_{artifact_key}"
+    )
     if use_cache and dest.exists() and dest.stat().st_size > 0:
         return dest  # cache hit — no network
     opener = urllib.request.build_opener(_NoRedirect)
@@ -122,12 +146,31 @@ def _download_to_temp(
     return dest
 
 
-def _artifact_key(artifacts: dict, *, suffix: str) -> str:
-    """Resolve an artifact KEY by filename suffix (SkillCorner keys are match-id-prefixed)."""
+def _artifact_key(artifacts: dict, *, suffix: str, role: str) -> str:
+    """Resolve an artifact KEY by filename suffix (canonical schema) or by ROLE (2026-07 schema).
+
+    The canonical SkillCorner open-data matches key artifacts by match-id-prefixed filename
+    (``1886347_match.json``); the owner-tier matches added in 2026-07 key them by role
+    (``metadata`` -> ``metadata.json``). Try the suffix first, then the role.
+    """
     for key, filename in artifacts.items():
         if str(filename).endswith(suffix):
             return key
-    raise KeyError(f"no artifact ending with {suffix!r} in {sorted(artifacts)}")
+    if role in artifacts:
+        return role
+    raise KeyError(f"no artifact ending with {suffix!r} and no role {role!r} in {sorted(artifacts)}")
+
+
+def _dest_name(provider: str, match_id: str, artifact_key: str, filename: str) -> str:
+    """Temp-file name that PRESERVES the artifact's extension.
+
+    kloppy's ``identify_data_version`` sniffs the first byte: a gzipped tracking file under an
+    extensionless name is seen as binary garbage and raises DeserializationError. The manifest's
+    filename carries the extension, so use it. (Safe for IDSSE/GS, which magic-sniff -- but it
+    CHANGES cache keys, so a pre-existing artifact cache is re-downloaded once.)
+    """
+    ext = "".join(Path(str(filename)).suffixes)
+    return f"{provider}_{match_id}_{artifact_key}{ext}"
 
 
 def load_matches(
@@ -151,17 +194,30 @@ def load_matches(
     — the network is paid once, not per re-run (the large IDSSE/GS tracking files dominate the load).
     """
     tok, base_url = _resolve_token(token), _base_url()
+    n_total = 0
+    n_excluded = 0
     for provider in providers:
         manifest = {m["id"]: m for m in _list_matches(provider, tok, base_url)}
         wanted = (match_ids.get(provider) if match_ids else None) or list(manifest)
         if max_per_provider is not None:
             wanted = wanted[:max_per_provider]
         for match_id in wanted:
+            n_total += 1
             artifacts = manifest[match_id]["artifacts"]
-            actions, frames, home = _build_match_with_retry(
+            actions, frames, home, report = _build_match_with_retry(
                 provider, match_id, artifacts, tok, base_url, tracking_limit, cache_dir=cache_dir
             )
+            # S1 geometry rate-gate (spec 4.4): DROP a geometrically-broken skillcorner match rather
+            # than average its garbage coords into the calibration corpus. LIVE -- the loader now
+            # builds skillcorner via the native builder, which returns a TrackingConversionReport.
+            # The getattr default False stays as a defensive guard for any path that yields report=None.
+            if provider == "skillcorner" and getattr(report, "geometry_excluded", False):
+                reason = getattr(report, "geometry_reason", "")  # duck-typed: report is None on kloppy path
+                print(f"  EXCLUDED {provider}/{match_id}: {reason}", file=sys.stderr)
+                n_excluded += 1
+                continue  # <-- the kill-line for the S1 exclusion guard (dormant on the kloppy path)
             yield provider, match_id, actions, frames, home
+    print(f"excluded {n_excluded}/{n_total} matches", file=sys.stderr)
 
 
 def _build_match_with_retry(
@@ -227,27 +283,44 @@ def _download_artifacts(
         roles = {"events": "events", "metadata": "metadata", "roster": "roster", "tracking": "tracking"}
     elif provider == "skillcorner":
         roles = {
-            "events": _artifact_key(artifacts, suffix="_dynamic_events.csv"),
-            "metadata": _artifact_key(artifacts, suffix="_match.json"),
-            "tracking": _artifact_key(artifacts, suffix="_tracking_extrapolated.jsonl"),
+            "events": _artifact_key(artifacts, suffix="_dynamic_events.csv", role="events"),
+            "metadata": _artifact_key(artifacts, suffix="_match.json", role="metadata"),
+            "tracking": _artifact_key(artifacts, suffix="_tracking_extrapolated.jsonl", role="tracking"),
         }
     else:
         raise ValueError(f"unknown pining provider {provider!r}")
     out: dict[str, Path] = {}
     for role, key in roles.items():
         artifact_key = key if key in artifacts else role
-        out[role] = _download_to_temp(provider, match_id, artifact_key, token, base_url, tmp_dir, use_cache=use_cache)
+        out[role] = _download_to_temp(
+            provider,
+            match_id,
+            artifact_key,
+            token,
+            base_url,
+            tmp_dir,
+            use_cache=use_cache,
+            filename=artifacts.get(artifact_key),
+        )
     return out
 
 
 def _build_match(provider, match_id, paths, tracking_limit):
-    """Provider dispatch: parse the downloaded artifacts into (actions, frames, home_team_id)."""
+    """Provider dispatch: parse artifacts into ``(actions, frames, home_team_id, report)``.
+
+    ``report`` is the tracking ``TrackingConversionReport`` for skillcorner (whose native builder
+    runs the S1 geometry rate-gate, spec 4.4); ``None`` for providers with no native gate.
+    ``load_matches`` reads ``report.geometry_excluded`` to DROP a geometrically-broken skillcorner
+    match. The 4-tuple arity is uniform across providers so the retry wrapper + caller unpack cleanly.
+    """
     if provider == "idsse":
-        return _build_idsse(paths, match_id, tracking_limit)
+        actions, frames, home = _build_idsse(paths, match_id, tracking_limit)
+        return actions, frames, home, None
     if provider == "skillcorner":
         return _build_skillcorner(paths, match_id, tracking_limit)
     if provider == "gradientsports":
-        return _build_gradientsports(paths, tracking_limit)
+        actions, frames, home = _build_gradientsports(paths, tracking_limit)
+        return actions, frames, home, None
     raise ValueError(f"unknown pining provider {provider!r}")
 
 
@@ -258,39 +331,140 @@ def _preprocess(frames: pd.DataFrame) -> pd.DataFrame:
     return derive_velocities(smooth_frames(frames))
 
 
-def build_skillcorner_frames(paths, tracking_limit):
-    """Preprocessed silly-kicks frames from SkillCorner artifacts (tracking ds path).
+def _sc_timestamp_seconds(ts) -> float:
+    """Parse a SkillCorner V3 frame ``timestamp`` into continuous-clock SECONDS (float).
 
-    The single SkillCorner frame-construction path: kloppy load -> convert_to_frames
-    -> _preprocess (smooth + velocities), yielding SPADL-bounds (0-105/0-68) frames.
-    Reused by both _build_skillcorner (calibration) and the TF-27 GK-roster e2e.
+    The raw feed ships ``timestamp`` as a broadcast-clock STRING (``"MM:SS.s"`` or
+    ``"H:MM:SS.s"``), NOT seconds -- and it is CONTINUOUS across periods (P2 starts at 45:00 =
+    2700 s), exactly what the native builder expects: it subtracts ``_PERIOD_START_SECONDS`` itself
+    to reach the period-relative clock. Mirrors kloppy's ``_timestamp_from_timestring`` (minus that
+    period subtraction). Numeric input passes through (so float fixtures work); ``None`` -> NaN.
     """
-    from kloppy import skillcorner  # type: ignore[import-not-found]
+    if ts is None:
+        return float("nan")
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    parts = str(ts).split(":")
+    if len(parts) == 2:
+        m, s = parts
+        return 60.0 * float(m) + float(s)
+    if len(parts) == 3:
+        h, m, s = parts
+        return 3600.0 * float(h) + 60.0 * float(m) + float(s)
+    raise ValueError(f"unrecognized SkillCorner timestamp format: {ts!r}")
 
-    from silly_kicks.tracking import kloppy as tracking_kloppy
 
-    ds = skillcorner.load(
-        meta_data=str(paths["metadata"]),
-        raw_data=str(paths["tracking"]),
-        limit=tracking_limit,
-        include_empty_frames=False,
+def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) -> pd.DataFrame:
+    """Shape SkillCorner V3 tracking into the native builder's EXPECTED_INPUT_COLUMNS bronze.
+
+    Replaces the kloppy gateway on the pining path (spec 3.3): kloppy hard-codes
+    ``visibility=None`` (so ``is_detected`` -- which exists in the feed -- is lost), discards
+    ``ball_z``, and scales x on a pitch length that disagrees with our own events converter.
+    """
+    roster = {
+        int(p["id"]): (
+            str(p.get("team_id")),
+            str((p.get("player_role") or {}).get("acronym", "")).upper() == "GK",
+        )
+        for p in meta.get("players", [])
+    }
+    rows = []
+    for rec in raw_frames:
+        bd = rec.get("ball_data") or {}
+        for p in rec.get("player_data") or []:
+            if p.get("x") is None:
+                continue
+            pid = int(p["player_id"])
+            if pid not in roster:
+                # Not on the team-sheet (referee / tracking artifact). The old kloppy path filtered
+                # to the roster; keeping such a row would fabricate a `"None"`-team player and
+                # corrupt every team-based feature (nearest-defender, pitch control, ...).
+                continue
+            team_id, is_gk = roster[pid]
+            rows.append(
+                {
+                    "match_id": match_id,
+                    "period": rec["period"],
+                    "frame": rec["frame"],
+                    "timestamp": _sc_timestamp_seconds(rec["timestamp"]),
+                    "player_id": str(p["player_id"]),
+                    "team_id": team_id,
+                    "is_goalkeeper": is_gk,
+                    "x": float(p["x"]),
+                    "y": float(p["y"]),
+                    "ball_x": bd.get("x"),
+                    "ball_y": bd.get("y"),
+                    "ball_z": bd.get("z"),
+                    "is_visible": p.get("is_detected"),
+                    "frame_rate": 10.0,  # SkillCorner V3 is exactly 10.000 fps (measured)
+                    "pitch_length": float(meta["pitch_length"]),
+                    "pitch_width": float(meta["pitch_width"]),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_skillcorner_frames(paths, match_id, tracking_limit):
+    """Preprocessed silly-kicks frames from SkillCorner artifacts via the NATIVE builder.
+
+    Was: the kloppy gateway (``visibility=None``, no ``ball_z``, and a pitch scale that disagrees
+    with our own events converter by ~0.26 m on a 104 m pitch). Now: the TF-23/ADR-034 native
+    builder, which single-sources the coordinate transform with ``spadl.skillcorner`` (spec 3.3/3.4).
+
+    ``match_id`` is PASSED IN, never parsed from a path -- it becomes ``game_id``, the CV grouping
+    key. Returns ``(frames, TrackingConversionReport)``; the report carries the S1 geometry rate-gate
+    that ``load_matches`` reads to DROP a geometrically-broken match. Reused by both
+    ``_build_skillcorner`` (calibration) and the TF-27 GK-roster e2e.
+    """
+    import gzip
+
+    from silly_kicks.tracking import skillcorner as tracking_sk
+
+    with open(paths["metadata"], encoding="utf-8") as fh:
+        meta = json.load(fh)
+    home_team_id = str(meta["home_team"]["id"])  # required kw-only arg below
+
+    tpath = str(paths["tracking"])
+    opener = gzip.open if tpath.endswith(".gz") else open
+    with opener(tpath, "rt", encoding="utf-8") as fh:  # type: ignore[operator]
+        first = fh.read(1)
+        fh.seek(0)
+        raw = json.load(fh) if first == "[" else [json.loads(line) for line in fh if line.strip()]
+
+    if tracking_limit:
+        raw = raw[:tracking_limit]
+
+    bronze = _skillcorner_bronze(raw, meta, match_id=str(match_id))
+    frames, report = tracking_sk.convert_to_frames(
+        bronze, home_team_id=home_team_id, output_convention="absolute_frame"
     )
-    frames, _report = tracking_kloppy.convert_to_frames(ds)
-    return _preprocess(frames)
+    return _preprocess(frames), report
 
 
 def _build_skillcorner(paths, match_id, tracking_limit):
-    """SkillCorner: kloppy tracking + silly-kicks SkillCorner events converter."""
-    frames = build_skillcorner_frames(paths, tracking_limit)
+    """SkillCorner: NATIVE tracking builder + silly-kicks SkillCorner events converter.
+
+    Returns ``(actions, frames, home_team_id, report)``. ``report`` is the tracking
+    ``TrackingConversionReport`` from the native ``tracking.skillcorner`` builder (which runs the S1
+    geometry rate-gate, spec 4.4); ``load_matches`` reads ``report.geometry_excluded`` to DROP a
+    geometrically-broken match. Task 7 rerouted the frame path off the kloppy gateway (which
+    hard-coded ``visibility=None``, discarded ``ball_z``, and used a pitch scale disagreeing with the
+    events converter) onto the native builder, so this report is now REAL (was ``None`` -- the
+    exclusion was DORMANT).
+    """
+    frames, report = build_skillcorner_frames(paths, match_id, tracking_limit)
     # Events: SkillCorner dynamic-events CSV + match.json -> silly-kicks SkillCorner SPADL converter.
     from silly_kicks.spadl import skillcorner as sk_spadl
 
     with open(paths["metadata"], encoding="utf-8") as fh:
         meta = json.load(fh)
-    home_team_id = str(meta["home_team"]["id"])  # authoritative; matches kloppy tracking team ids
-    raw_events = pd.read_csv(paths["events"], low_memory=False)
+    home_team_id = str(meta["home_team"]["id"])  # authoritative; matches native tracking team ids
+    ev_path = paths["events"]
+    raw_events = (
+        pd.read_parquet(ev_path) if str(ev_path).endswith(".parquet") else pd.read_csv(ev_path, low_memory=False)
+    )
     actions, _evt_report = sk_spadl.convert_to_actions(raw_events, meta)
-    return actions, frames, home_team_id
+    return actions, frames, home_team_id, report
 
 
 def _build_idsse(paths, match_id, tracking_limit):

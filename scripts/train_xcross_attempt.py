@@ -5,10 +5,13 @@ Two match sources:
   --data-dir DIR     parquet dirs DIR/*/{frames,actions}.parquet (smoke / local corpus)
   --providers a,b,c  pining loader (skillcorner,idsse,gradientsports) for the maintainer run
 
-Streams per match, caches features, runs ruthless HPO ONCE per candidate (public / full),
-evaluates the common-public-held-out PAIRED data-effect comparison, computes FAIL-CLOSED
-acceptance gates, and writes a pickle-free artifact ONLY if the gates pass. Quality numbers in
-metrics.json are CV/protocol estimates, not the shipped all-data fit.
+Streams per match, caches features, and (on a public/owner mix with Gradient Sports) runs the
+common-public-held-out PAIRED data-effect comparison over THREE candidates (public / sc_extended
+/ full) with NESTED HPO -- each candidate re-tuned per outer fold with that fold's public games
+excluded (spec 4.1, reviewer M4) -- then selects the shipped corpus via the registered fixed
+sequence (scripts/_paired.py). Computes FAIL-CLOSED acceptance gates, and writes a pickle-free
+artifact ONLY if the gates pass. Quality numbers in metrics.json are CV/protocol estimates, not
+the shipped all-data fit.
 
 Mirror of scripts/train_xshot_occurrence.py. Requires: silly-kicks[train,xgboost]
 (+ [kloppy] for --providers).
@@ -27,7 +30,12 @@ import pandas as pd
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
-_PUBLIC_PROVIDERS = {"skillcorner", "idsse"}
+# Feature-cache schema token (Task 11 / spec 3.2). The load-bearing invalidation is the
+# schema_version bump inside _cache.cache_is_valid -- a pre-Task-11 cache has no cache_meta.json
+# and MISSES. The corpus-mismatch fingerprint is intentionally NOT wired (it would need a live
+# manifest fetch on the cache-hit path, before providers/match_ids are even loaded); a constant
+# token keeps write + check agreeing while the schema check does the real work.
+_CACHE_FINGERPRINT = "schema-v2"
 
 
 def _iter_matches_from_dir(data_dir: Path):
@@ -38,11 +46,11 @@ def _iter_matches_from_dir(data_dir: Path):
         yield prov, game_dir.name, actions, frames, frames["team_id"].dropna().iloc[0]
 
 
-def _iter_matches_from_pining(providers, max_per_provider):
+def _iter_matches_from_pining(providers, max_per_provider, match_ids=None):
     sys.path.insert(0, "scripts")
     from _loader_pining import load_matches
 
-    yield from load_matches(providers=providers, max_per_provider=max_per_provider)
+    yield from load_matches(providers=providers, match_ids=match_ids, max_per_provider=max_per_provider)
 
 
 def _new_probe_cohort() -> dict:
@@ -57,11 +65,11 @@ def _extract(
     probe_keep=2,
     probe_providers=("gradientsports",),
     probe_comparison_providers=("skillcorner",),
-) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, tuple[dict, dict]]:
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[dict, dict]]:
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
     from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL, prepare_xcross_training_data
 
-    parts_x, parts_y, parts_g, parts_p = [], [], [], []
+    parts_x, parts_y, parts_g, parts_p, parts_m = [], [], [], [], []
     # TF-19 substitution-probe samples (M1/M3/M5): the GATED cohort is provider-CONTROLLED
     # (--probe-providers; default the gradientsports gated cohort); a second reported-not-gated
     # comparison cohort (--probe-comparison-providers) persists to _probe_sample_comparison/.
@@ -80,6 +88,7 @@ def _extract(
             parts_y.append(np.asarray(y, int))
             parts_g.append(np.asarray(groups))
             parts_p.append(np.array([prov] * len(X)))
+            parts_m.append(np.array([str(mid)] * len(X)))  # per-row pining match_id (visibility key)
             cohort = probe if prov in probe_providers else comparison if prov in probe_comparison_providers else None
             if cohort is not None and len(cohort["frames"]) < probe_keep:  # M3: capture a COPY before del frames
                 # N3 (memory): keeps up to `probe_keep` matches' frames+actions resident per cohort for
@@ -102,6 +111,7 @@ def _extract(
         np.concatenate(parts_y),
         np.concatenate(parts_g),
         np.concatenate(parts_p),
+        np.concatenate(parts_m),
         (probe, comparison),
     )
 
@@ -213,55 +223,112 @@ def _gates(m: dict) -> dict:
     }
 
 
-def _paired_data_effect(X, y, groups, is_public, *, shared_params, negative_subsample=None, seed=42) -> dict:
-    """Common-public-held-out PAIRED data-effect test at FIXED shared hyperparameters."""
+def _fit_score(X_tr, y_tr, X_te, y_te, params, *, negative_subsample=None, seed=42) -> float:
+    """Fit XGBoost at ``params`` on (X_tr, y_tr); return PR-AUC on (X_te, y_te).
+
+    Module-level extraction of the old ``_paired_data_effect`` closure with ``params`` + the eval
+    slice made EXPLICIT, so ONE path serves both protocols: the candidate's OWN tuned params
+    (nested) and the public params (shared). Degenerate (single-class) folds return NaN (the caller
+    drops them). Preserves the base_score override + train-only negative subsampling. Mirrors the xS
+    twin exactly EXCEPT ``_pinned_params`` comes from ``_xcross_attempt`` (``subsample_negatives`` is
+    single-sourced from ``_xshot_occurrence`` -- xCross has none of its own, as the old closure did).
+    """
+    import numpy as np
     import xgboost as xgb
     from sklearn.metrics import average_precision_score
-    from sklearn.model_selection import StratifiedGroupKFold
 
     from silly_kicks.tracking._xcross_attempt import _pinned_params
     from silly_kicks.tracking._xshot_occurrence import subsample_negatives
 
-    Xp, yp, gp = X[is_public], y[is_public], groups[is_public]
-    n = max(2, min(5, len(np.unique(gp))))
-    skf = StratifiedGroupKFold(n_splits=n, shuffle=True, random_state=42)
-
-    def _fit_score(Xtr, ytr, te_idx):
-        if len(np.unique(ytr)) < 2 or len(np.unique(yp[te_idx])) < 2:
+    if len(np.unique(y_tr)) < 2 or len(np.unique(y_te)) < 2:
+        return float("nan")
+    if negative_subsample:  # TRAIN only; the held-out fold (X_te, y_te) is never subsampled
+        X_tr, y_tr, _ = subsample_negatives(X_tr, y_tr, y_tr, fraction=negative_subsample, seed=seed)
+        if len(np.unique(y_tr)) < 2:
             return float("nan")
-        if negative_subsample:  # TRAIN only; the public held-out fold (te_idx) is never subsampled
-            Xtr, ytr, _ = subsample_negatives(Xtr, ytr, ytr, fraction=negative_subsample, seed=seed)
-            if len(np.unique(ytr)) < 2:
-                return float("nan")
-        p_ = dict(_pinned_params(shared_params))
-        p_["base_score"] = float(ytr.mean())
-        c = xgb.XGBClassifier(**p_)
-        c.fit(Xtr.to_numpy(float), ytr)
-        pr = c.predict_proba(Xp.iloc[te_idx].to_numpy(float))[:, 1]
-        return average_precision_score(yp[te_idx], pr)
-
-    deltas = []
-    for tr, te in skf.split(Xp, yp, gp):
-        train_games = set(np.asarray(gp)[tr].tolist())
-        full_mask = (~is_public) | np.isin(groups, list(train_games))  # GS + public-train only
-        d_pub = _fit_score(Xp.iloc[tr], yp[tr], te)
-        d_full = _fit_score(X[full_mask], y[full_mask], te)
-        if not (np.isnan(d_pub) or np.isnan(d_full)):
-            deltas.append(float(d_full - d_pub))
-    K = len(deltas)
-    n_pos = sum(1 for d in deltas if d > 0)
-    ship_two = K >= 2 and n_pos >= K - 1 and (sum(deltas) / K) > 0.0
-    return {
-        "deltas": deltas,
-        "K": K,
-        "n_positive": n_pos,
-        "ship_two": bool(ship_two),
-        "paired_delta_is_data_effect_shared_params": True,
-        "paired_hpo_nested": False,
-    }
+    p_ = dict(_pinned_params(params))
+    p_["base_score"] = float(y_tr.mean())  # XGBoost's default base_score is wrong for this balance
+    clf = xgb.XGBClassifier(**p_)
+    clf.fit(X_tr.to_numpy(float), y_tr)
+    return float(average_precision_score(y_te, clf.predict_proba(X_te.to_numpy(float))[:, 1]))
 
 
-def main() -> None:
+def _paired_data_effect(
+    X,
+    y,
+    groups,
+    is_public,
+    match_ids,  # accepted for caller-signature symmetry (Task 11 Step 4); masks arrive pre-built
+    *,
+    candidates,
+    n_trials,
+    out_dir,
+    negative_subsample=None,
+    seed=42,
+) -> dict:
+    """Nested-HPO paired comparison on the common public held-out folds (spec 4.1, reviewer M4).
+
+    The historical version tuned HPO ONCE, outside the outer CV, on the public arm -- so `public`
+    tuned on exactly the matches that ARE the evaluation universe (differential leakage favouring
+    `public`, deciding the ship). Here, for each outer fold k, EVERY candidate is tuned on its OWN
+    training data with fold k's public games EXCLUDED, then fitted at those params and scored on
+    fold k. `candidates` maps name -> row mask. Returns, per candidate, per-fold PR-AUC deltas vs
+    `public` under both protocols:
+      * "nested"        -- PRIMARY, decides the ship (each candidate at ITS OWN tuned params)
+      * "shared_params" -- REPORTED for comparability with 4.9.0/4.18.0 (candidate at PUBLIC params)
+    """
+    from sklearn.model_selection import StratifiedGroupKFold
+
+    Xp, yp, gp = X[is_public], y[is_public], groups[is_public]
+    k = max(2, min(5, len(np.unique(gp))))
+    skf = StratifiedGroupKFold(n_splits=k, shuffle=True, random_state=42)
+    out = {name: {"nested": [], "shared_params": []} for name in candidates}
+
+    for fold, (_tr, te) in enumerate(skf.split(Xp, yp, gp)):
+        te_games = set(np.asarray(gp)[te].tolist())
+        trainable = ~(is_public & np.isin(groups, list(te_games)))  # drop fold-k public games from ALL arms
+        X_te, y_te = Xp.iloc[te], yp[te]  # the PUBLIC held-out fold (positional)
+
+        fold_params = {
+            name: _hpo_once(
+                X[mask & trainable],
+                y[mask & trainable],
+                groups[mask & trainable],
+                out_dir,
+                f"{name}_f{fold}",  # real dir + unique tag -> no study-db collision
+                n_trials,
+                negative_subsample=negative_subsample,
+                seed=seed,
+            )
+            for name, mask in candidates.items()
+        }
+        d_pub = _fit_score(
+            X[candidates["public"] & trainable],
+            y[candidates["public"] & trainable],
+            X_te,
+            y_te,
+            fold_params["public"],
+            negative_subsample=negative_subsample,
+            seed=seed,
+        )
+        for name, mask in candidates.items():
+            if name == "public":
+                continue
+            m = mask & trainable
+            d_nested = _fit_score(
+                X[m], y[m], X_te, y_te, fold_params[name], negative_subsample=negative_subsample, seed=seed
+            )
+            d_shared = _fit_score(
+                X[m], y[m], X_te, y_te, fold_params["public"], negative_subsample=negative_subsample, seed=seed
+            )
+            if not (np.isnan(d_pub) or np.isnan(d_nested)):
+                out[name]["nested"].append(float(d_nested - d_pub))
+            if not (np.isnan(d_pub) or np.isnan(d_shared)):
+                out[name]["shared_params"].append(float(d_shared - d_pub))
+    return out
+
+
+def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--data-dir")
@@ -290,7 +357,13 @@ def main() -> None:
         help="Comma list captured to _probe_sample_comparison/ -- the reported-not-gated "
         "same-population comparison leg (M5).",
     )
-    args = ap.parse_args()
+    ap.add_argument(
+        "--match-ids-json",
+        default=None,
+        help="JSON file mapping {provider: [match_id, ...]} -- a per-provider allowlist threaded to "
+        "load_matches(match_ids=) (--providers path only). Default None (load every listed match).",
+    )
+    args = ap.parse_args(argv)
     ns, seed = args.negative_subsample, args.seed
     probe_provs = [p for p in args.probe_providers.split(",") if p]
     comparison_provs = [p for p in args.probe_comparison_providers.split(",") if p]
@@ -300,23 +373,32 @@ def main() -> None:
     out = Path(args.output_dir)
     art = out / "xcross_attempt_v1"
     cache = art / "_feature_cache"
+    sys.path.insert(0, "scripts")
+    from _cache import cache_is_valid, write_cache_meta
 
     # --- Phase 1: stream + extract + cache ---
     # M1: bound on BOTH branches (cache-hit never calls _extract).
+    # Task 11 cache-schema guard: a pre-Task-11 cache (no cache_meta.json, no match_ids.npy) MISSES,
+    # so the DGX-populated caches that predate the visibility taxonomy are never silently reused --
+    # a stale cache would re-introduce the retired provider-name arm split (spec 3.2).
+    # NOTE: the fingerprint is a constant schema token, NOT a per-corpus hash -- it does NOT detect
+    # corpus DRIFT within the same schema. USE A FRESH --output-dir PER CORPUS (ADR-038).
     probe_bundle = (_new_probe_cohort(), _new_probe_cohort())
-    if (cache / "features.parquet").exists():
+    if cache_is_valid(cache, fingerprint=_CACHE_FINGERPRINT) and (cache / "match_ids.npy").exists():
         print(f"Loading cached features from {cache}")
         X = pd.read_parquet(cache / "features.parquet")
         y = np.load(cache / "labels.npy")
         groups = np.load(cache / "groups.npy", allow_pickle=True)
         providers = np.load(cache / "providers.npy", allow_pickle=True)
+        match_ids = np.load(cache / "match_ids.npy", allow_pickle=True)
     else:
         if args.providers:
-            source = _iter_matches_from_pining(args.providers.split(","), args.max_per_provider)
+            allowlist = json.load(open(args.match_ids_json)) if args.match_ids_json else None
+            source = _iter_matches_from_pining(args.providers.split(","), args.max_per_provider, allowlist)
         else:
             source = _iter_matches_from_dir(Path(args.data_dir))
         t0 = time.time()
-        X, y, groups, providers, probe_bundle = _extract(
+        X, y, groups, providers, match_ids, probe_bundle = _extract(
             source,
             args.horizon_seconds,
             probe_providers=tuple(probe_provs),
@@ -328,14 +410,37 @@ def main() -> None:
         np.save(cache / "labels.npy", y)
         np.save(cache / "groups.npy", groups)
         np.save(cache / "providers.npy", providers)
+        np.save(cache / "match_ids.npy", match_ids)
+        # visibility.npy is deliberately NOT persisted: is_public is recomputed live every run from
+        # cached providers + match_ids + the live manifest (below), so a persisted arm split would be
+        # redundant AND could go stale. The schema bump is what invalidates pre-Task-11 caches.
+        write_cache_meta(cache, fingerprint=_CACHE_FINGERPRINT)
         probe_cohort, comparison_cohort = probe_bundle  # persist the TF-19 probe samples (fresh-extract only)
         _write_probe_sample(cache.parent / "_probe_sample", probe_cohort, probe_provs)
         _write_probe_sample(cache.parent / "_probe_sample_comparison", comparison_cohort, comparison_provs)
 
     groups = np.asarray(groups).astype(str)
     provset = {str(p) for p in providers.tolist()}
-    is_public = np.isin(providers, list(_PUBLIC_PROVIDERS))
-    two_candidate = is_public.any() and (~is_public).any() and "gradientsports" in provset
+    sys.path.insert(0, "scripts")
+    from _corpus import artifact_label, assert_public_corpus, is_public_row
+    from _loader_pining import match_visibility
+
+    # Public-vs-owner is keyed on the manifest visibility field, NEVER the provider name (spec 3.2):
+    # the 98 owner-tier SkillCorner matches carry provider `skillcorner` but are non-redistributable.
+    # The manifest is only fetchable on the --providers (pining) path; --data-dir has none -> {} ->
+    # fail-closed all-private (is_public_row's default), which is correct for a local smoke corpus.
+    vis = match_visibility(sorted(set(providers.tolist()))) if args.providers else {}
+    loads_full_public_arm = {"skillcorner", "idsse"} <= set(providers.tolist()) and args.max_per_provider is None
+    assert_public_corpus(vis, expect_full_public_arm=loads_full_public_arm)
+    is_public = is_public_row(providers=providers, match_ids=match_ids, visibility=vis)
+    # Outer gate for the 3-candidate nested paired test (Task 11 Step 4). Kept identical to the
+    # pre-Task-11 predicate (NOT the plan's bare `mix` form): the `gradientsports` clause is what
+    # makes `full` != `sc_extended` (owner GS rows), and it also keeps a public/owner SkillCorner-
+    # only mix -- e.g. the Task-9 slow test's 1-public-game corpus -- out of the paired path, where
+    # StratifiedGroupKFold(2) on a single public group would raise. The real maintainer run always
+    # carries GS, so its behaviour is unchanged; only the paired-test INTERNALS became nested-HPO.
+    # (`run_paired` is also the `admitted`-gate input for the TF-19 held-out probe, further below.)
+    run_paired = bool(is_public.any() and (~is_public).any() and "gradientsports" in provset)
 
     # --- score_differential range probe (B6): guard the clean-4.13.0-GS rebuild prereq ---
     sd = X["score_differential"].to_numpy(dtype=float)
@@ -354,52 +459,68 @@ def main() -> None:
     if sd_fin.size and np.abs(sd_fin).max() > 6:  # SOFT-WARN: a real rout is legitimate
         print(f"WARN score_differential |max|>6 (legit blowout possible): {sd_probe}", file=sys.stderr)
 
-    # --- Phase 2/3: HPO once per candidate; ship decision ---
+    # --- Phase 2/3: nested-HPO paired test (mix) or single-candidate (else); ship decision ---
     candidates: dict = {}
-    if two_candidate:
-        params_public = _hpo_once(
-            X[is_public],
-            y[is_public],
-            groups[is_public],
-            out,
-            "public",
-            args.n_trials,
+    if run_paired:
+        from _paired import fixed_sequence_ship
+
+        is_sc_private = (providers == "skillcorner") & ~is_public  # owner-tier SkillCorner rows
+        cand_masks = {
+            "public": is_public,
+            "sc_extended": is_public | is_sc_private,
+            "full": np.ones(len(X), bool),
+        }
+        paired = _paired_data_effect(
+            X,
+            y,
+            groups,
+            is_public,
+            match_ids,
+            candidates=cand_masks,
+            n_trials=args.n_trials,
+            out_dir=out,
             negative_subsample=ns,
             seed=seed,
         )
-        params_full = _hpo_once(X, y, groups, out, "full", args.n_trials, negative_subsample=ns, seed=seed)
-        candidates["public"] = {
-            "params": params_public,
-            "metrics": _cv_metrics(
-                X[is_public], y[is_public], groups[is_public], params_public, negative_subsample=ns, seed=seed
-            ),
-            "providers": sorted(set(providers[is_public].tolist())),
-        }
-        candidates["full"] = {
-            "params": params_full,
-            "metrics": _cv_metrics(X, y, groups, params_full, negative_subsample=ns, seed=seed),
-            "providers": sorted(provset),
-        }
-        paired = _paired_data_effect(
-            X, y, groups, is_public, shared_params=params_public, negative_subsample=ns, seed=seed
+        full_vs_sc = [f - s for f, s in zip(paired["full"]["nested"], paired["sc_extended"]["nested"], strict=True)]
+        shipped, why = fixed_sequence_ship(
+            sc_extended=paired["sc_extended"]["nested"],
+            full=paired["full"]["nested"],
+            full_vs_sc=full_vs_sc,
         )
-        candidates["paired"] = paired
-        shipped = "full" if paired["ship_two"] else "public"
-        ship_mask = np.ones(len(X), bool) if shipped == "full" else is_public
+        print(f"Fixed-sequence verdict: ship {shipped} -- {why}")
+        ship_mask = cand_masks[shipped]
+        # The paired test DECIDED the corpus; the shipped model is tuned once on ALL of it (the
+        # per-fold params never leave the paired comparison -- they were held-out estimates).
+        shipped_params = _hpo_once(
+            X[ship_mask], y[ship_mask], groups[ship_mask], out, shipped, args.n_trials, negative_subsample=ns, seed=seed
+        )
+        candidates[shipped] = {
+            "params": shipped_params,
+            "metrics": _cv_metrics(
+                X[ship_mask], y[ship_mask], groups[ship_mask], shipped_params, negative_subsample=ns, seed=seed
+            ),
+            "providers": sorted(set(providers[ship_mask].tolist())),
+        }
+        candidates["paired"] = {
+            "nested": {n: paired[n]["nested"] for n in cand_masks},
+            "shared_params": {n: paired[n]["shared_params"] for n in cand_masks},
+            "full_vs_sc": full_vs_sc,
+            "shipped": shipped,
+            "why": why,
+        }
     else:
         params_all = _hpo_once(X, y, groups, out, "single", args.n_trials, negative_subsample=ns, seed=seed)
-        if provset <= _PUBLIC_PROVIDERS:
-            shipped = "public"
-        elif "gradientsports" in provset:
-            shipped = "full"
-        else:
-            shipped = "default"
+        ship_mask = np.ones(len(X), bool)
+        # Label from the SHIP MASK's visibility composition (spec 3.2), never the provider name: a
+        # corpus with ANY restricted row can NEVER be labelled "public" (is_public[ship_mask].all()).
+        ship_provs = set(providers[ship_mask].tolist())
+        shipped = artifact_label(providers=ship_provs, all_public=bool(is_public[ship_mask].all()))
         candidates[shipped] = {
             "params": params_all,
             "metrics": _cv_metrics(X, y, groups, params_all, negative_subsample=ns, seed=seed),
             "providers": sorted(provset),
         }
-        ship_mask = np.ones(len(X), bool)
 
     # --- Fail-closed acceptance gates on the SHIPPED candidate ---
     shipped_metrics = candidates[shipped]["metrics"]
@@ -482,8 +603,8 @@ def main() -> None:
     json.dump(probe_meta, open(ps / "meta.json", "w"), indent=2)
     shipped_providers = set(candidates[shipped].get("providers", []))
     probe_provs_seen = {prov for prov, _mid in probe_matches}
-    # Conservative on missing provenance: a two-candidate run cannot verify a pre-plan sample.
-    admitted = bool(two_candidate and (not probe_provs_seen or probe_provs_seen & shipped_providers))
+    # Conservative on missing provenance: a paired (mix) run cannot verify a pre-plan sample.
+    admitted = bool(run_paired and (not probe_provs_seen or probe_provs_seen & shipped_providers))
     gated_matches = _gated_probe_matches(probe_meta, admitted)
     if admitted:  # the GATED statistic runs on held-out matches only
         held_groups = {g for _prov, mid in gated_matches for g in match_groups.get(str(mid), [])}

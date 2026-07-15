@@ -12,6 +12,7 @@ that the luxury-lakehouse previously duplicated. See spec
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -21,7 +22,7 @@ import pandas as pd
 # nominal period offsets; SK tracking imports the SAME constant so frames match events (kills
 # duplicated-truth #3). SK P2 raw clock starts exactly at the nominal 2700 (verified). NB: this
 # is NOT the metrica cross-wire the review flagged -- metrica.py has its own per-period-min clock.
-from silly_kicks.spadl.skillcorner import _PERIOD_START_SECONDS
+from silly_kicks.spadl.skillcorner import _PERIOD_START_SECONDS, _scale_to_spadl
 
 from ._gk_identification import (
     _SPADL_X_MAX,
@@ -52,6 +53,8 @@ EXPECTED_INPUT_COLUMNS: tuple[str, ...] = (
     "ball_z",
     "is_visible",
     "frame_rate",
+    "pitch_length",
+    "pitch_width",
 )
 
 # S1 within-pitch invariant (CR 2026-06-30, ADR-024 amendment). LAYERED:
@@ -67,7 +70,12 @@ EXPECTED_INPUT_COLUMNS: tuple[str, ...] = (
 # The deferred CI rate-gate is the SYSTEMATIC backstop for both. TOL_BALL provisional (re-calibrate
 # from the measured bronze on the pining corpus). The shared SPADL bounds are imported at the top.
 _S1_PLAYER_MARGIN = 3.0  # S1 player band sits this far INSIDE the shared derive_goalkeepers bound
-_TOL_BALL = 30.0  # ball tolerance (m); ball has no existing guard -> S1 is its sole signal
+# Calibrated 2026-07-14 on the 10 PUBLIC pining matches (10.0M rows, correct transform):
+# the largest real ball excursion is 9.00 m. The previous 30.0 m sat above every real value,
+# so the ball tolerance could never fire. 15.0 m keeps 67% headroom over the worst observed
+# and zero public rows exceed it. (Calibrating on the 98 private matches would be circular --
+# they are the data under validation.) See spec 4.4.
+_TOL_BALL = 15.0  # ball tolerance (m); ball has no existing guard -> S1 is its sole signal
 
 
 def _count_gross_off_pitch(x: pd.Series, y: pd.Series, is_ball: pd.Series) -> int:
@@ -88,6 +96,59 @@ def _count_gross_off_pitch(x: pd.Series, y: pd.Series, is_ball: pd.Series) -> in
     return int(np.nansum(off))
 
 
+# Per-match rate-gate thresholds (spec 4.4), calibrated on the public 10:
+#   worst clean player_frac(>3 m) = 0.00086  ->  0.005 leaves a 5.8x margin
+#   worst clean ball_frac(>10 m)  = 0.00000  ->  0.0005 is the noise floor
+# A catastrophic sign/origin break measures 0.34139 -- it exceeds the player threshold by 68x.
+# A 4 m PITCH-DIMENSION error measures 0.00095 and does NOT trip: this gate cannot see one, and
+# neither can action-frame co-location (events and tracking read the same metadata and move
+# together). That limitation is deliberate, documented, and pinned by a test.
+_PLAYER_OFF_PITCH_RATE_MAX = 0.005
+_BALL_OFF_PITCH_RATE_MAX = 0.0005
+_PLAYER_RATE_TOL = 3.0
+_BALL_RATE_TOL = 10.0
+
+
+@dataclass(frozen=True)
+class GeometryGateReport:
+    """Outcome of the per-match geometry admission gate (spec 4.4)."""
+
+    excluded: bool
+    reason: str
+    player_off_pitch_rate: float
+    ball_off_pitch_rate: float
+
+
+def geometry_rate_gate(frames: pd.DataFrame) -> GeometryGateReport:
+    """Per-match geometry admission (spec 4.4). Pure; no I/O, no mutation.
+
+    EXCLUDES a match whose off-pitch RATE exceeds the public-10-calibrated thresholds. This is
+    the systematic backstop the S1 comment called 'deferred' -- the per-row invariant only warns,
+    which is invisible in a batch log.
+    """
+    x = frames["x"].to_numpy(float)
+    y = frames["y"].to_numpy(float)
+    is_ball = frames["is_ball"].to_numpy(bool)
+    exc = np.maximum(
+        np.maximum(np.maximum(-x, x - 105.0), 0.0),
+        np.maximum(np.maximum(-y, y - 68.0), 0.0),
+    )
+    players, balls = exc[~is_ball], exc[is_ball]
+    p_rate = float((players > _PLAYER_RATE_TOL).mean()) if len(players) else 0.0
+    b_rate = float((balls > _BALL_RATE_TOL).mean()) if len(balls) else 0.0
+    reasons = []
+    if p_rate > _PLAYER_OFF_PITCH_RATE_MAX:
+        reasons.append(f"player off-pitch rate {p_rate:.5f} > {_PLAYER_OFF_PITCH_RATE_MAX}")
+    if b_rate > _BALL_OFF_PITCH_RATE_MAX:
+        reasons.append(f"ball off-pitch rate {b_rate:.5f} > {_BALL_OFF_PITCH_RATE_MAX}")
+    return GeometryGateReport(
+        excluded=bool(reasons),
+        reason="; ".join(reasons),
+        player_off_pitch_rate=p_rate,
+        ball_off_pitch_rate=b_rate,
+    )
+
+
 def convert_to_frames(
     bronze: pd.DataFrame,
     *,
@@ -96,6 +157,7 @@ def convert_to_frames(
     home_team_start_left: bool | None = None,
     home_team_start_left_extratime: bool | None = None,
     preprocess: PreprocessConfig | None = None,
+    assume_standard_pitch: bool = False,
 ) -> tuple[pd.DataFrame, TrackingConversionReport]:
     """Convert post-join SkillCorner bronze tracking to canonical SPADL frames.
 
@@ -106,6 +168,10 @@ def convert_to_frames(
         Required columns: see ``EXPECTED_INPUT_COLUMNS``. ``x``/``y`` are centre-origin
         meters; ``ball_z`` is real ball height; ``timestamp`` is the continuous
         broadcast clock; ``is_goalkeeper`` is the native (roster) flag.
+        ``pitch_length``/``pitch_width`` are the match pitch dimensions (metres) used
+        to SCALE centre-origin metres to the SPADL 105x68 frame -- a fixed offset
+        would land the goal line ~2 m off on a non-105 m pitch (spec 3.4). They are
+        REQUIRED unless ``assume_standard_pitch=True``.
     home_team_id : Any
         Home team id (matches ``team_id`` after stringification).
     output_convention : {"absolute_frame", "ltr"}, default "ltr"
@@ -116,6 +182,12 @@ def convert_to_frames(
         Optional authoritative orientation flags; ``None`` => geometric orientation.
     preprocess : PreprocessConfig | None
         Optional smoothing/velocity; off by default.
+    assume_standard_pitch : bool, default False
+        Explicit opt-in to a 105x68 pitch when ``pitch_length``/``pitch_width`` are
+        absent from ``bronze``. Fail-closed by default (spec 3.4 / reviewer m1): a
+        silent 105x68 default would reproduce the very goal-line defect this fixes, and
+        a warning is invisible in a DGX batch log -- so missing dims RAISE unless this
+        is set. Pass ``True`` only when the pitch is known to be 105x68.
 
     Returns
     -------
@@ -128,9 +200,27 @@ def convert_to_frames(
         from silly_kicks.tracking import skillcorner
         frames, report = skillcorner.convert_to_frames(bronze_df, home_team_id="31")
     """
-    missing = [c for c in EXPECTED_INPUT_COLUMNS if c not in bronze.columns]
+    # Pitch dims are validated separately so an absent dim raises the INFORMATIVE fail-closed
+    # message below (a generic "missing column" would hide WHY it matters).
+    required = [c for c in EXPECTED_INPUT_COLUMNS if not c.startswith("pitch_")]
+    missing = [c for c in required if c not in bronze.columns]
     if missing:
         raise ValueError(f"skillcorner.convert_to_frames: bronze missing column(s): {missing}")
+    if assume_standard_pitch:
+        pitch_length, pitch_width = 105.0, 68.0
+    else:
+        missing_dims = [c for c in ("pitch_length", "pitch_width") if c not in bronze.columns]
+        if missing_dims:
+            # Fail-closed (spec 3.4 / reviewer m1): defaulting to 105x68 silently reproduces the
+            # goal-line defect this fixes, and a warning is invisible in a DGX batch log.
+            raise ValueError(
+                f"skillcorner.convert_to_frames: bronze missing {missing_dims}. Pitch dimensions are "
+                "REQUIRED -- defaulting to 105x68 silently reproduces the goal-line defect this "
+                "fixes (spec 3.4). Pass assume_standard_pitch=True only if you know the pitch is "
+                "105x68."
+            )
+        pitch_length = float(bronze["pitch_length"].iloc[0])
+        pitch_width = float(bronze["pitch_width"].iloc[0])
     if home_team_start_left is not None and output_convention == "ltr":
         require_et_direction(bronze["period"], home_team_start_left_extratime, source="skillcorner convert_to_frames")
 
@@ -143,8 +233,11 @@ def convert_to_frames(
         ["frame", "period", "timestamp", "player_id", "team_id", "is_goalkeeper", "x", "y", "is_visible"]
     ].copy()
     players = players.rename(columns={"frame": "frame_id", "period": "period_id", "timestamp": "time_seconds"})
-    players["x"] = players["x"] + 52.5
-    players["y"] = players["y"] + 34.0
+    # SCALE centre-origin metres -> SPADL 105x68 (NOT a fixed +52.5/+34 offset: on a non-105 m pitch
+    # that lands the goal line ~2 m off, spec 3.4). _scale_to_spadl is the events converter's affine
+    # map WITHOUT its clamp -- tracking is full of legitimately off-pitch positions (a keeper behind
+    # his line, a ball across the goal line, which is what a goal IS); clamping would erase goal-vs-save.
+    players["x"], players["y"] = _scale_to_spadl(players["x"], players["y"], pitch_length, pitch_width)
     players["z"] = np.nan
     players["visibility"] = players.pop("is_visible")
     players["is_ball"] = False
@@ -167,8 +260,8 @@ def convert_to_frames(
             "ball_z": "z",
         }
     )
-    ball["x"] = ball["x"] + 52.5
-    ball["y"] = ball["y"] + 34.0
+    # NEVER clamp: an off-pitch ball across the goal line is what a goal IS (spec 3.4).
+    ball["x"], ball["y"] = _scale_to_spadl(ball["x"], ball["y"], pitch_length, pitch_width)
     ball["player_id"] = None
     ball["team_id"] = None
     ball["is_goalkeeper"] = False
@@ -290,6 +383,13 @@ def convert_to_frames(
         if cfg.derive_velocity:
             final = derive_velocities(final, config=cfg)
 
+    # S1 SYSTEMATIC rate-gate (spec 4.4): the per-row _count_gross_off_pitch invariant above only
+    # WARNS -- a warning is invisible in a DGX batch log. The gate turns a SYSTEMATIC off-pitch
+    # fraction (a sign/origin transform break) into a machine-observable admission decision on the
+    # report; the loader reads report.geometry_excluded to DROP the match. Runs on the final,
+    # oriented frames -- a point-reflection LTR flip is an isometry, so off-pitch magnitude is
+    # orientation-invariant. Report is frozen, so the fields ride the constructor (not a mutation).
+    gate = geometry_rate_gate(final)
     report = TrackingConversionReport(
         provider="skillcorner",
         total_input_frames=int(src[["frame", "period"]].drop_duplicates().shape[0]),
@@ -304,5 +404,9 @@ def convert_to_frames(
         derived_gk_picks=derived_picks,
         n_gross_off_pitch=n_gross_off_pitch,
         n_implausible_gk_teams=n_implausible_gk_teams,
+        geometry_excluded=gate.excluded,
+        geometry_reason=gate.reason,
+        player_off_pitch_rate=gate.player_off_pitch_rate,
+        ball_off_pitch_rate=gate.ball_off_pitch_rate,
     )
     return final, report
