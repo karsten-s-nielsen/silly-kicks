@@ -272,7 +272,13 @@ def convert_to_frames(
     df["game_id"] = game_id
     df["frame_rate"] = frame_rate
     df["source_provider"] = "skillcorner"
-    df["ball_state"] = None
+    # SkillCorner's native feed carries no reliable dead-ball signal, so default to "alive"
+    # (in-play). None is NOT a valid ball_state (schema value-set is {"alive","dead"}) and makes
+    # the strict `== "alive"` domain filter in xS/xCross drop EVERY SkillCorner frame -> 0 training
+    # rows (the kloppy gateway set real states, so this only regressed once the loader rerouted to
+    # this native builder). "alive" makes that filter a no-op for SkillCorner (use all frames);
+    # `== "dead"` / not-dead consumers are unchanged (None and "alive" are both non-dead).
+    df["ball_state"] = "alive"
     df["team_attacking_direction"] = None
     df["confidence"] = None
     df["speed"] = np.nan
