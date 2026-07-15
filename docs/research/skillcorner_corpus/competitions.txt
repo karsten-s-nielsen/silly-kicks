@@ -1,0 +1,57 @@
+
+fetched 98/98 metadata
+
+=== competition x season ===
+   37  LaLiga — 2023/2024
+   34  LaLiga — 2024/2025
+   14  Champions League — 2024/2025
+   13  Champions League — 2023/2024
+
+=== competition_round.potential_overtime  (EXTRA-TIME RISK) ===
+  {False: 85, True: 13}
+
+=== rounds (top 15) ===
+    9  Qualifying Round 1 - 1st Leg
+    8  Qualifying Round 1 - 2nd Leg
+    2  Round 1
+    2  Round 2
+    2  Round 3
+    2  Round 4
+    2  Round 5
+    2  Round 6
+    2  Round 7
+    2  Round 8
+    2  Round 9
+    2  Round 10
+    2  Qualifying Round 2 - 1st Leg
+    2  Round 11
+    2  Round 12
+
+=== pitch dims ===
+  {(105, 68): 91, (101, 67): 2, (103, 67): 2, (103, 68): 2, (101, 68): 1}
+
+=== GOALKEEPERS on team sheets (top 20 by appearances) ===
+   45  team=262    T. Courtois
+   35  team=262    A. Lunin
+   18  team=262    Kepa Arrizabalaga
+    6  team=275    J. Oblak
+    4  team=268    David Soria
+    4  team=348    P. Gazzaniga
+    4  team=259    Sergio Herrera
+    3  team=282    Álex Remiro
+    3  team=257    G. Mamardashvili
+    3  team=285    Vicente Guaita
+    3  team=40     Ederson
+    2  team=273    Unai Simón
+    2  team=274    Luís Maximiano
+    2  team=757    F. Rønnow
+    2  team=289    Álvaro Valles
+    2  team=143    A. Meret
+    2  team=266    Ø. Nyland
+    2  team=218    Matheus
+    2  team=264    M. ter Stegen
+    2  team=284    S. Dimitrievski
+
+  distinct keepers across the cohort: 56
+  Real Madrid (team 262) keepers: [((262, 'T. Courtois'), 45), ((262, 'A. Lunin'), 35), ((262, 'Kepa Arrizabalaga'), 18), ((262, 'Fran González'), 1)]
+  Real Madrid keeper-slots: 99 of 198 total GK team-sheet slots

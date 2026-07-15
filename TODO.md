@@ -80,6 +80,38 @@ Items are ranked top-to-bottom by specification completeness, then by additional
   fix, check whether pass origins still land in the attacking half; only if they persist, add a generous
   own-half bound (beyond → `unresolved`/flagged, never clamped). **Measure-before-optimize:** the
   `_tracking_gk_xy_detected` per-row ±window loop (vectorize only if it shows as a corpus hotspot).
+- **Ask SkillCorner which pitch length their coordinates are normalised against (PR-S115 / ADR-038 §4;
+  2026-07-14).** The metadata declares `pitch_length` (104 m on the affected matches) and our events
+  converter has always used it; kloppy's tracking map is **non-affine** and assumes ~103.5 m effective
+  (measured 103.48 m / a reviewer's 103.71 m — the residual is a fit artefact because the map isn't
+  affine). **Nobody has characterised what kloppy's SkillCorner transform actually does.** If the declared
+  length is NOT the one the coordinates are normalised against, events *and* tracking are both off by the
+  same small factor and this cycle does not fix it. The cheap empirical routes are closed
+  (`image_corners_projection` all-null; no fixed-geometry set-piece landmark in the taxonomy). Provenance
+  is the registered choice until answered; carry it as a question to SkillCorner.
+- **kloppy gateway `visibility: None` limitation for external users (PR-S115 / ADR-038 §5; 2026-07-14).**
+  `tracking/kloppy.py` discards SkillCorner's `is_detected` (hard-codes `visibility=None`), so an external
+  user on the kloppy path gets ~80%-interpolated keeper positions with no way to tell. The **native builder
+  (`tracking.skillcorner.convert_to_frames`) is the supported path** and surfaces it; upstreaming
+  `is_detected` into kloppy is out of scope (documented as a gateway limitation instead).
+- **Cache corpus-drift live-fingerprint (PR-S115 / ADR-038 deviation (a); 2026-07-14).** `scripts/_cache.py`
+  currently fingerprints with a **constant schema token** — it invalidates pre-Task-11 caches (the
+  load-bearing need) but does NOT detect corpus *drift* within the same schema. The live fingerprint
+  (sorted `(provider, match_id, visibility)` triples, computable from cached providers + match_ids +
+  `match_visibility`) is the registered follow-up. Until then the constraint is **a fresh `--output-dir`
+  per corpus** (the DGX runbook does this).
+- **Ghost-GK trainer fail-fast-at-startup for unclassified providers (PR-S115 / ADR-038 deviation (e);
+  2026-07-14).** The detected-only filter correctly fail-closes on an unclassified provider, but mid-run.
+  A startup-time check (validate every provider in the corpus is in `_DETECTION_AWARE_PROVIDERS` ∪
+  `_FULLY_OBSERVED_PROVIDERS` before any fitting) would fail faster. The registered retrain corpus is
+  all-classified (`skillcorner`+`idsse`+`gradientsports`; `metrica` excluded from GKDV corpora), so this
+  is a refinement, not a blocker.
+- **The 98 owner-tier SkillCorner matches — future full-arm corpus expansion (PR-S115 / ADR-038 §1, §7;
+  2026-07-14).** PR-A shipped the machinery (loader + taxonomy + native route + registered protocol) but
+  **no weights**. The actual Stage A re-baseline (81-match, new pipeline, xS+xCross+ghost-GK) → Stage B
+  expansion (the three-candidate paired test on 179 + the ghost-GK detected-keeper keeper-CV pair) run per
+  spec §4 — **owner-run, on the DGX** — and PR-B bundles whatever ships. The 98 are permanently excluded
+  from GKDV *measurement* (keeper confound + 80% interpolated keepers, spec §4.5).
 - **TF-7 cross-family pitch-control cache in VAEP xfns (deferred).** `add_*`
   aggregators accept `pitch_control_cache` (3.25.0); the `*_xfns` VAEP transformers
   do not yet thread a shared cache across feature families in one pass (each keeps

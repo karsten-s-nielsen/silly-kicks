@@ -1,0 +1,186 @@
+probing all 98 new matches x 5 roles ...
+
+    match  metadata     events     freeze  physical    tracking
+  1021404     28,587  1,434,898    811,308     31,551  8,751,602
+  1036527     27,898  1,333,543    761,016     31,333  8,859,862
+  1048195     27,232  1,312,169    751,225     31,098  8,331,483
+  1064327     26,169  1,258,623    721,455     31,301  8,566,882
+  1096879     28,437  1,319,044    760,410     31,148  8,730,266
+  1103734     26,578  1,396,720    801,726     31,001  8,743,558
+  1114154     25,407  1,299,263    737,592     31,373  8,244,965
+  1121546     28,495  1,562,451    900,401     31,334  9,220,827
+  1129394     28,408  1,412,547    820,998     31,205  9,003,167
+  1137151     28,371  1,326,250    755,350     31,341  8,758,349
+  1146865     27,293  1,316,237    754,379     31,166  8,212,391
+  1184210     27,138  1,302,385    741,225     31,096  8,622,727
+  1193411     27,245  1,321,944    751,864     31,131  8,516,548
+  1204769     27,870  1,357,865    793,958     31,219  8,499,212
+  1227667     27,804  1,227,286    714,241     31,181  8,788,663
+  1234494     27,843  1,458,797    859,100     31,380  8,333,388
+  1242274     26,123  1,324,985    749,929     31,381  8,530,369
+  1281971     27,185  1,429,270    825,088    HTTP429    HTTP429  <-- DEGENERATE
+  1287842     27,896  1,436,566    816,068     31,033  8,545,978
+  1301584     25,532  1,444,470    834,238     31,081  8,976,640
+  1307205     26,568  1,461,453    831,752    HTTP429  8,425,737  <-- DEGENERATE
+  1314538     25,481  1,393,969    796,164    HTTP429  8,542,140  <-- DEGENERATE
+  1320692     27,329  1,221,016    697,844     31,180  8,205,008
+  1340201     27,916  1,288,795    HTTP429     31,284  8,574,006  <-- DEGENERATE
+  1365685     27,846  1,213,005    697,981    HTTP429    HTTP429  <-- DEGENERATE
+  1374493     27,374  1,372,318    789,686     31,385  8,468,275
+  1380976     27,332  1,314,354    754,389    HTTP429    HTTP429  <-- DEGENERATE
+  1385604     25,998  1,502,289    842,634     31,153  8,916,984
+  1392898     26,660  1,419,156    826,887    HTTP429    HTTP429  <-- DEGENERATE
+  1397483     29,467  1,429,099    821,791     30,893    HTTP429  <-- DEGENERATE
+  1404020     27,310  1,191,584    HTTP429     31,412  8,166,045  <-- DEGENERATE
+  1414465     26,625  1,343,605    HTTP429    HTTP429  8,945,573  <-- DEGENERATE
+  1422928     28,512  1,360,784    764,023     31,423    HTTP429  <-- DEGENERATE
+  1429036     27,096    HTTP429    715,080    HTTP429  7,844,425  <-- DEGENERATE
+  1434991    HTTP429  1,387,863    800,794    HTTP429    HTTP429  <-- DEGENERATE
+  1443283    HTTP429  1,209,620    HTTP429     31,302    HTTP429  <-- DEGENERATE
+  1463749    HTTP429    HTTP429    786,366    HTTP429  8,839,485  <-- DEGENERATE
+  1481937     27,669    HTTP429    HTTP429    HTTP429  8,454,928  <-- DEGENERATE
+  1486704     29,059  1,262,440    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1492545     27,760  1,773,497  1,055,844    HTTP429 11,614,061  <-- DEGENERATE
+  1498966     29,054  1,309,716    HTTP429     31,090    HTTP429  <-- DEGENERATE
+  1506182    HTTP429    HTTP429    722,870     31,338    HTTP429  <-- DEGENERATE
+  1512139     27,088  1,306,619    HTTP429     31,107    HTTP429  <-- DEGENERATE
+  1517179     28,993    HTTP429    793,932     31,005    HTTP429  <-- DEGENERATE
+  1524305     27,696  1,390,285    HTTP429     31,210    HTTP429  <-- DEGENERATE
+  1528510     27,769    HTTP429    708,703     30,922    HTTP429  <-- DEGENERATE
+  1534700    HTTP429  1,385,421    789,787     31,245    HTTP429  <-- DEGENERATE
+  1543050    HTTP429    HTTP429    863,843     31,298  8,931,893  <-- DEGENERATE
+  1552423     25,436  1,349,579    778,085     30,946  7,876,222
+  1562415     29,380    HTTP429    HTTP429    HTTP429 10,764,185  <-- DEGENERATE
+  1654689    HTTP429    HTTP429    HTTP429    HTTP429  8,944,914  <-- DEGENERATE
+  1669552    HTTP429    HTTP429    HTTP429    HTTP429  8,704,087  <-- DEGENERATE
+  1677766     27,935    HTTP429    763,466    HTTP429    HTTP429  <-- DEGENERATE
+  1683776    HTTP429  1,343,948    792,500     31,402    HTTP429  <-- DEGENERATE
+  1712797    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1720493     26,597  1,282,338    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1730478     27,208  1,250,016    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1738618     27,805  1,324,390    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1751837     27,624    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1759946    HTTP429    HTTP429    770,473    HTTP429    HTTP429  <-- DEGENERATE
+  1766915    HTTP429  1,434,306    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1800127     27,899  1,413,670    HTTP429    HTTP429  8,829,452  <-- DEGENERATE
+  1807855    HTTP429    HTTP429    788,802    HTTP429    HTTP429  <-- DEGENERATE
+  1816744     27,216    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1839445     27,114    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1846846     28,496    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1876077     26,668    HTTP429    HTTP429    HTTP429  8,423,933  <-- DEGENERATE
+  1882238     27,061  1,333,714    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1889287    HTTP429    HTTP429    HTTP429     31,156    HTTP429  <-- DEGENERATE
+  1895402    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1900259    HTTP429    HTTP429    851,747    HTTP429    HTTP429  <-- DEGENERATE
+  1906819    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1913641    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1927275     27,740  1,366,788    791,641     31,135    HTTP429  <-- DEGENERATE
+  1948187    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1974997    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1980444    HTTP429  1,443,586    HTTP429    HTTP429  8,174,035  <-- DEGENERATE
+  1985247    HTTP429  1,271,856    732,602    HTTP429    HTTP429  <-- DEGENERATE
+  1992355     27,180    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  1997707     28,454    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2002290    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2002870    HTTP429    HTTP429    HTTP429     31,211    HTTP429  <-- DEGENERATE
+  2003226    HTTP429    HTTP429    HTTP429    HTTP429  7,548,878  <-- DEGENERATE
+  2003902    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2004424    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2005298    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2005893    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2006572    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2007191    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2007530    HTTP429  1,432,314    831,773     31,313    HTTP429  <-- DEGENERATE
+  2008992    HTTP429  1,197,883    696,752    HTTP429    HTTP429  <-- DEGENERATE
+  2010130    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2010755    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2011428    HTTP429    HTTP429    HTTP429     31,329    HTTP429  <-- DEGENERATE
+  2011844    HTTP429  1,031,236    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2012431    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2012892    HTTP429    HTTP429    HTTP429    HTTP429    HTTP429  <-- DEGENERATE
+  2014987    HTTP429    HTTP429    824,778    HTTP429    HTTP429  <-- DEGENERATE
+
+=== 23/98 matches have ALL 5 roles present + >1 kB ===
+DEGENERATE:
+  1281971 {'metadata': 27185, 'events': 1429270, 'freeze_frames': 825088, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1307205 {'metadata': 26568, 'events': 1461453, 'freeze_frames': 831752, 'physical': 'HTTP429', 'tracking': 8425737}
+  1314538 {'metadata': 25481, 'events': 1393969, 'freeze_frames': 796164, 'physical': 'HTTP429', 'tracking': 8542140}
+  1340201 {'metadata': 27916, 'events': 1288795, 'freeze_frames': 'HTTP429', 'physical': 31284, 'tracking': 8574006}
+  1365685 {'metadata': 27846, 'events': 1213005, 'freeze_frames': 697981, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1380976 {'metadata': 27332, 'events': 1314354, 'freeze_frames': 754389, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1392898 {'metadata': 26660, 'events': 1419156, 'freeze_frames': 826887, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1397483 {'metadata': 29467, 'events': 1429099, 'freeze_frames': 821791, 'physical': 30893, 'tracking': 'HTTP429'}
+  1404020 {'metadata': 27310, 'events': 1191584, 'freeze_frames': 'HTTP429', 'physical': 31412, 'tracking': 8166045}
+  1414465 {'metadata': 26625, 'events': 1343605, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 8945573}
+  1422928 {'metadata': 28512, 'events': 1360784, 'freeze_frames': 764023, 'physical': 31423, 'tracking': 'HTTP429'}
+  1429036 {'metadata': 27096, 'events': 'HTTP429', 'freeze_frames': 715080, 'physical': 'HTTP429', 'tracking': 7844425}
+  1434991 {'metadata': 'HTTP429', 'events': 1387863, 'freeze_frames': 800794, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1443283 {'metadata': 'HTTP429', 'events': 1209620, 'freeze_frames': 'HTTP429', 'physical': 31302, 'tracking': 'HTTP429'}
+  1463749 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 786366, 'physical': 'HTTP429', 'tracking': 8839485}
+  1481937 {'metadata': 27669, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 8454928}
+  1486704 {'metadata': 29059, 'events': 1262440, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1492545 {'metadata': 27760, 'events': 1773497, 'freeze_frames': 1055844, 'physical': 'HTTP429', 'tracking': 11614061}
+  1498966 {'metadata': 29054, 'events': 1309716, 'freeze_frames': 'HTTP429', 'physical': 31090, 'tracking': 'HTTP429'}
+  1506182 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 722870, 'physical': 31338, 'tracking': 'HTTP429'}
+  1512139 {'metadata': 27088, 'events': 1306619, 'freeze_frames': 'HTTP429', 'physical': 31107, 'tracking': 'HTTP429'}
+  1517179 {'metadata': 28993, 'events': 'HTTP429', 'freeze_frames': 793932, 'physical': 31005, 'tracking': 'HTTP429'}
+  1524305 {'metadata': 27696, 'events': 1390285, 'freeze_frames': 'HTTP429', 'physical': 31210, 'tracking': 'HTTP429'}
+  1528510 {'metadata': 27769, 'events': 'HTTP429', 'freeze_frames': 708703, 'physical': 30922, 'tracking': 'HTTP429'}
+  1534700 {'metadata': 'HTTP429', 'events': 1385421, 'freeze_frames': 789787, 'physical': 31245, 'tracking': 'HTTP429'}
+  1543050 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 863843, 'physical': 31298, 'tracking': 8931893}
+  1562415 {'metadata': 29380, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 10764185}
+  1654689 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 8944914}
+  1669552 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 8704087}
+  1677766 {'metadata': 27935, 'events': 'HTTP429', 'freeze_frames': 763466, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1683776 {'metadata': 'HTTP429', 'events': 1343948, 'freeze_frames': 792500, 'physical': 31402, 'tracking': 'HTTP429'}
+  1712797 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1720493 {'metadata': 26597, 'events': 1282338, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1730478 {'metadata': 27208, 'events': 1250016, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1738618 {'metadata': 27805, 'events': 1324390, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1751837 {'metadata': 27624, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1759946 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 770473, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1766915 {'metadata': 'HTTP429', 'events': 1434306, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1800127 {'metadata': 27899, 'events': 1413670, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 8829452}
+  1807855 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 788802, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1816744 {'metadata': 27216, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1839445 {'metadata': 27114, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1846846 {'metadata': 28496, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1876077 {'metadata': 26668, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 8423933}
+  1882238 {'metadata': 27061, 'events': 1333714, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1889287 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 31156, 'tracking': 'HTTP429'}
+  1895402 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1900259 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 851747, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1906819 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1913641 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1927275 {'metadata': 27740, 'events': 1366788, 'freeze_frames': 791641, 'physical': 31135, 'tracking': 'HTTP429'}
+  1948187 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1974997 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1980444 {'metadata': 'HTTP429', 'events': 1443586, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 8174035}
+  1985247 {'metadata': 'HTTP429', 'events': 1271856, 'freeze_frames': 732602, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1992355 {'metadata': 27180, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  1997707 {'metadata': 28454, 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2002290 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2002870 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 31211, 'tracking': 'HTTP429'}
+  2003226 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 7548878}
+  2003902 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2004424 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2005298 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2005893 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2006572 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2007191 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2007530 {'metadata': 'HTTP429', 'events': 1432314, 'freeze_frames': 831773, 'physical': 31313, 'tracking': 'HTTP429'}
+  2008992 {'metadata': 'HTTP429', 'events': 1197883, 'freeze_frames': 696752, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2010130 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2010755 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2011428 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 31329, 'tracking': 'HTTP429'}
+  2011844 {'metadata': 'HTTP429', 'events': 1031236, 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2012431 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2012892 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 'HTTP429', 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+  2014987 {'metadata': 'HTTP429', 'events': 'HTTP429', 'freeze_frames': 824778, 'physical': 'HTTP429', 'tracking': 'HTTP429'}
+metadata       n= 58  min=      25,407  median=      27,624  max=      29,467  total=0.00 GB
+events         n= 55  min=   1,031,236  median=   1,343,605  max=   1,773,497  total=0.07 GB
+freeze_frames  n= 50  min=     696,752  median=     789,686  max=   1,055,844  total=0.04 GB
+physical       n= 42  min=      30,893  median=      31,211  max=      31,551  total=0.00 GB
+tracking       n= 40  min=   7,548,878  median=   8,574,006  max=  11,614,061  total=0.35 GB
+
+TOTAL cohort download: 0.46 GB (compressed on the wire)

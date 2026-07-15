@@ -1,0 +1,34 @@
+=== 1. FULL kloppy load + convert_to_frames (mirrors build_skillcorner_frames) ===
+C:\Users\Karsten\AppData\Local\Temp\claude\D--Development-karstenskyt--silly-kicks-part-deux\e14c809d-84c7-4487-992d-d7b587dcaed0\scratchpad\sc_new_schema\test_e2e.py:32: DeprecationWarning: tracking.kloppy.convert_to_frames called without explicit output_convention. Defaulting to 'absolute_frame' (current behaviour). Pass output_convention='absolute_frame' to silence this warning, or 'ltr' to opt into SPADL LTR output. See ADR-006 (silly-kicks 3.0.0).
+  frames, trep = tk.convert_to_frames(ds)
+  frames: (1051215, 25)  periods=[np.int64(1), np.int64(2)]
+  distinct frame_id: 45,705   frame_rate=[10.]
+  GK derived teams: 0   picks={('1021404', '273'): ['13899'], ('1021404', '262'): ['12248']}
+  is_goalkeeper_source: {'native': 1005510, None: 45705}
+  ball rows with z: 45,705 / 45,705
+  vx/vy present: True
+
+=== 2. SPADL actions ===
+  actions: (1415, 16)  periods=[np.int64(1), np.int64(2)]
+  result_source: {'native': 1383, nan: 30, 'stopgap': 2}
+
+=== 3. link_actions_to_frames (ADR-004/ADR-017) ===
+  linked: 1,415/1,415
+  overall link_rate: 1.000
+  per-period link_rate: {1: 1.0, 2: 1.0}
+  median |time_offset|: 0.000 s
+  median link_quality : 1.000
+
+=== 4. GK DETECTION RATE (the GKDV / visibility question) ===
+  roster GK player ids: [12248, 13899]
+  GK player-frames      : 91,410   is_detected: True=17,915 (19.6%)  False=73,495 (80.4%)
+  outfield player-frames: 914,100   is_detected: True=608,889 (66.6%)  False=305,211 (33.4%)
+
+  >>> The GK is the LEAST-detected player (broadcast camera follows the ball).
+  >>> is_detected EXISTS in the raw feed but kloppy's _get_frame_data_v3 discards it
+  >>> -> silly_kicks frames.visibility is None: 0 non-null of 1051215
+
+=== 5. Which players appear in tracking vs roster (GK substitutions) ===
+  roster players: 44   tracking players: 31
+  tracked GKs: [12248, 13899]  (roster GKs: [12248, 13899])
+  players with a non-zero start_time (subs): 9

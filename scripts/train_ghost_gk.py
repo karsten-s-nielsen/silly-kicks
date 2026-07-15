@@ -86,7 +86,39 @@ def parse_args() -> argparse.Namespace:
         "corpus (887k) is memory-bandwidth-bound and intractable even with n_jobs. Default "
         "150000 (~4x the default variant's whole training set). Set 0 for all rows.",
     )
+    # spec 4.3: keeper-grouped CV over a common keeper domain. Default OFF so the shipped
+    # artifact's headline metrics stay match-grouped and comparable with 4.14.0.
+    parser.add_argument(
+        "--keeper-grouped",
+        action="store_true",
+        default=False,
+        help="CV by KEEPER over the common domain (spec 4.3) instead of StratifiedGroupKFold by "
+        "game_id. The two corpora share keepers (e.g. Courtois), so match-grouped CV leaks a "
+        "keeper across train/test folds. Requires --expansion-keepers. Default OFF.",
+    )
+    parser.add_argument(
+        "--expansion-keepers",
+        type=Path,
+        default=None,
+        help="An .npy of keeper ids present in the 98-match expansion cohort. A --keeper-grouped "
+        "baseline run consumes it to build the common evaluation domain (baseline keepers MINUS "
+        "anyone in the 98). Mandatory when --keeper-grouped is set.",
+    )
     return parser.parse_args()
+
+
+def keeper_detection_mask_or_none(visibility: pd.Series) -> pd.Series | None:
+    """Diagnostic-only detected mask for the selection-bias report (spec 4.3 rev 5).
+
+    Unlike :func:`keeper_detection_mask` (the TRAINING filter, which fail-closes on an all-null
+    ``visibility``), this returns ``None`` so the diagnostic simply SKIPS a match whose flag is
+    entirely null -- the RAISE belongs to the training filter, not the report. Otherwise it mirrors
+    the training mask exactly (``fillna(False).astype(bool)``) so the detected/undetected split
+    matches what the filter would keep.
+    """
+    if visibility.isna().all():
+        return None
+    return visibility.fillna(False).astype(bool)
 
 
 def main() -> None:
@@ -119,7 +151,10 @@ def main() -> None:
 
     print(f"Config: n_estimators={args.n_estimators}, max_depth={args.max_depth}")
     print(f"Data: {args.data_dir}, subsample_fps={args.subsample_fps}")
-    print(f"CV: {args.cv_folds}-fold StratifiedGroupKFold (match+provider)")
+    _cv_regime = (
+        "GroupKFold by keeper (common domain)" if args.keeper_grouped else "StratifiedGroupKFold (match+provider)"
+    )
+    print(f"CV: {args.cv_folds}-fold {_cv_regime}")
     print(f"Output: {args.output_dir}")
 
     # --- 1. Discover tracking parquets ---
@@ -205,14 +240,33 @@ def main() -> None:
     cache_labels = cache_dir / "labels.parquet"
     cache_groups = cache_dir / "groups.npy"
     cache_provs = cache_dir / "providers.npy"
+    cache_keepers = cache_dir / "keepers.npy"
 
-    if cache_feats.exists() and cache_labels.exists() and cache_groups.exists() and cache_provs.exists():
+    # Selection-bias diagnostic accumulators (spec 4.3 rev 5). Defined at a scope visible to BOTH
+    # cache branches: the fresh-extract path fills them (it holds the raw visibility); a cache hit
+    # leaves them empty (raw visibility is not cached), so the diagnostic block is simply omitted.
+    # Two bias axes: keeper DEPTH (gk_x_gr) and BALL-to-keeper distance (both goal-relative).
+    bias_depth_detected: list[float] = []
+    bias_depth_undetected: list[float] = []
+    bias_b2k_detected: list[float] = []
+    bias_b2k_undetected: list[float] = []
+
+    # An old cache lacking keepers.npy is treated as a MISS (a schema-version bump lands later; here
+    # we just require the new array to be present alongside the rest before trusting the cache).
+    if (
+        cache_feats.exists()
+        and cache_labels.exists()
+        and cache_groups.exists()
+        and cache_provs.exists()
+        and cache_keepers.exists()
+    ):
         print(f"\nLoading cached features from {cache_dir}")
         t0 = time.time()
         features = pd.read_parquet(cache_feats)
         labels = pd.read_parquet(cache_labels)
         groups = np.load(cache_groups, allow_pickle=True)
         provider_labels = np.load(cache_provs, allow_pickle=True)
+        keepers = np.load(cache_keepers, allow_pickle=True)
         elapsed = time.time() - t0
         print(f"Loaded {len(features)} samples in {elapsed:.1f}s (cached)")
     else:
@@ -220,11 +274,13 @@ def main() -> None:
         # then delete frames immediately.  Only the extracted feature matrix (small)
         # stays in memory — raw frames (large) are never held simultaneously.
         from silly_kicks.tracking import prepare_ghost_gk_training_data
+        from silly_kicks.tracking._ghost_gk import keeper_detection_mask
 
         all_features: list[pd.DataFrame] = []
         all_labels: list[pd.DataFrame] = []
         all_game_ids: list = []
         all_providers: list[str] = []
+        all_keepers: list[str] = []
         n_skipped = 0
         t0 = time.time()
 
@@ -245,26 +301,64 @@ def main() -> None:
 
                 game_frames = file_frames[file_frames["game_id"] == game_id]
                 game_actions = actions_by_game.get(game_id) if actions_by_game else None
+                # provider is per-file constant; compute BEFORE prepare so the detected-only
+                # filter and the selection-bias diagnostic can key on it.
+                prov = (
+                    str(file_frames["source_provider"].iloc[0])
+                    if "source_provider" in file_frames.columns
+                    else "unknown"
+                )
 
-                feats, labs = prepare_ghost_gk_training_data(
+                # return_meta=True -> the 3-tuple overload; pyright narrows on the Literal flag.
+                feats, labs, meta = prepare_ghost_gk_training_data(
                     game_frames,
                     home_team_id=home,
                     actions=game_actions,
                     subsample_fps=args.subsample_fps,
                     carrier_params=cp,
+                    return_meta=True,
                 )
                 del game_frames  # Release per-game slice
 
-                if len(feats) > 0:
-                    all_features.append(feats)
-                    all_labels.append(labs)
-                    all_game_ids.extend([game_id] * len(feats))
-                    prov = (
-                        str(file_frames["source_provider"].iloc[0])
-                        if "source_provider" in file_frames.columns
-                        else "unknown"
-                    )
-                    all_providers.extend([prov] * len(feats))
+                if not len(feats):
+                    continue  # nothing extracted for this game (meta empty -> skip before masks)
+
+                # --- Selection-bias diagnostic (spec 4.3 rev 5): compute BEFORE the detected-only
+                # filter, because the filter drops the undetected frames the bias compares against.
+                # keeper DEPTH = gk_x_gr (goal-relative x, already in meta); detected vs undetected
+                # by gk_visibility. This is a REPORTED limitation, not a gate.
+                if prov == "skillcorner" and len(meta):
+                    _vis = keeper_detection_mask_or_none(meta["gk_visibility"])
+                    if _vis is not None:
+                        bias_depth_detected.extend(meta.loc[_vis, "gk_x_gr"].tolist())
+                        bias_depth_undetected.extend(meta.loc[~_vis, "gk_x_gr"].tolist())
+                        # Ball-to-keeper distance (the OTHER bias axis). feats.ball_x/ball_y and
+                        # meta.gk_x_gr/gk_y_gr share the SAME goal-relative frame (identical to_gr_x
+                        # flip; y unflipped) and are row-aligned pre-filter, so this is a single
+                        # consistent coordinate system. NaN where the ball is absent -> nanmean below.
+                        _b2k = np.hypot(
+                            feats["ball_x"].to_numpy() - meta["gk_x_gr"].to_numpy(),
+                            feats["ball_y"].to_numpy() - meta["gk_y_gr"].to_numpy(),
+                        )
+                        _vm = _vis.to_numpy()
+                        bias_b2k_detected.extend(_b2k[_vm].tolist())
+                        bias_b2k_undetected.extend(_b2k[~_vm].tolist())
+
+                # --- Detected-keeper targets ONLY (spec 4.3). RAISES if a detection-aware
+                # provider's flag was discarded upstream (fail-closed on the ambiguous null).
+                keep = keeper_detection_mask(meta["gk_visibility"], provider=prov)
+                feats = feats[keep].reset_index(drop=True)
+                labs = labs[keep].reset_index(drop=True)
+                meta = meta[keep].reset_index(drop=True)
+                if not len(feats):
+                    print(f"  SKIP {prov}/{game_id}: no detected-keeper frames")
+                    continue
+
+                all_features.append(feats)
+                all_labels.append(labs)
+                all_game_ids.extend([game_id] * len(feats))
+                all_providers.extend([prov] * len(feats))
+                all_keepers.extend(meta["gk_player_id"].astype(str).tolist())
 
             del file_frames  # Release entire file's frames before loading next
 
@@ -277,6 +371,7 @@ def main() -> None:
         del all_features, all_labels  # Release intermediate lists
         groups = np.array(all_game_ids)
         provider_labels = np.array(all_providers)
+        keepers = np.array(all_keepers, dtype=object)
         elapsed = time.time() - t0
         print(
             f"\nExtracted {len(features)} samples from {len(set(all_game_ids))} games"
@@ -289,6 +384,7 @@ def main() -> None:
         labels.to_parquet(cache_labels)
         np.save(cache_groups, groups)
         np.save(cache_provs, provider_labels)
+        np.save(cache_keepers, keepers)
         print(f"Cached features to {cache_dir}")
 
     # PR-S81: variant axis = sample count -> wheel size. Cap AFTER extraction so the
@@ -301,22 +397,55 @@ def main() -> None:
         labels = labels.iloc[keep].reset_index(drop=True)
         groups = groups[keep]
         provider_labels = provider_labels[keep]
+        keepers = keepers[keep]
         print(f"Subsampled to {len(features)} samples (variant={args.variant}, cap={args.subsample_cap})")
 
-    # --- 5. StratifiedGroupKFold CV ---
-    from sklearn.model_selection import StratifiedGroupKFold
-
+    # --- 5. CV ---
     from silly_kicks.tracking._ghost_gk import GhostGkModel
 
-    cv = StratifiedGroupKFold(
-        n_splits=args.cv_folds,
-        shuffle=True,
-        random_state=42,
-    )
+    # Two CV regimes (spec 4.3):
+    #  - default: StratifiedGroupKFold by game_id (match-grouped; headline metrics comparable
+    #    with 4.14.0).
+    #  - --keeper-grouped: GroupKFold by KEEPER over the common domain (baseline keepers MINUS the
+    #    98-cohort keepers), because the corpora share keepers so a match fold would leak one.
+    dreport = None
+    if args.keeper_grouped:
+        from _ghost_domain import common_keeper_domain, keeper_folds
+
+        if args.expansion_keepers is None:
+            print(
+                "ERROR: --keeper-grouped requires --expansion-keepers (the keeper ids present in "
+                "the 98-match cohort). The common-domain exclusion is mandatory for a "
+                "keeper-grouped run -- see spec 4.3.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        expansion_keepers = set(np.load(args.expansion_keepers, allow_pickle=True).astype(str).tolist())
+        domain, dreport = common_keeper_domain(keepers, expansion_keepers=expansion_keepers, n_splits=args.cv_folds)
+        print(
+            f"Keeper-grouped CV: {dreport.n_domain_keepers} domain keepers "
+            f"({dreport.n_excluded_keepers} excluded as expansion-cohort), "
+            f"underpowered={dreport.underpowered}"
+        )
+        # No test-fold keeper may be in the 98 (the whole point of the common domain).
+        assert not (set(keepers[domain].tolist()) & expansion_keepers), (  # noqa: S101
+            "a domain keeper is in the expansion cohort -- the common-domain exclusion failed"
+        )
+        folds = list(keeper_folds(keepers, domain, n_splits=args.cv_folds))
+    else:
+        from sklearn.model_selection import StratifiedGroupKFold
+
+        cv = StratifiedGroupKFold(
+            n_splits=args.cv_folds,
+            shuffle=True,
+            random_state=42,
+        )
+        folds = list(cv.split(features, provider_labels, groups))
+
     fold_metrics: list[dict] = []
 
     cv_t0 = time.time()
-    for fold, (train_idx, test_idx) in enumerate(cv.split(features, provider_labels, groups)):
+    for fold, (train_idx, test_idx) in enumerate(folds):
         print(f"\n--- Fold {fold + 1}/{args.cv_folds} ---")
         print(f"  Train: {len(train_idx)} samples, Test: {len(test_idx)} samples")
         X_train, X_test = features.iloc[train_idx], features.iloc[test_idx]
@@ -505,7 +634,12 @@ def main() -> None:
         vals = [m["per_provider"].get(prov, np.nan) for m in fold_metrics]
         per_prov_agg[prov] = float(np.nanmean(vals))
 
-    artifact_bytes = sum(f.stat().st_size for f in artifact_dir.rglob("*") if f.is_file())
+    # Measure the SHIPPED file set, not a directory walk (reviewer m3). The feature cache lives
+    # inside ghost_gk_v1/ (~220 MB) and rglob swept it in, making the gate meaningless (2026-07-13
+    # reported FAIL while the real payload was 14.64 MB). The bundled payload is exactly these
+    # files (compare silly_kicks/tracking/_ghost_gk_weights/default/).
+    _SHIPPED = ("rfcde_weights.npz", "metadata.json", "SHA256SUMS")
+    artifact_bytes = sum((artifact_dir / f).stat().st_size for f in _SHIPPED if (artifact_dir / f).exists())
 
     # Derive game/provider counts from groups/provider_labels (always defined in BOTH
     # the fresh-extract and cache-load branches, and subsample-cap-aware) -- all_game_ids/
@@ -539,6 +673,37 @@ def main() -> None:
         },
         "artifact_size_bytes": artifact_bytes,
     }
+
+    # spec 4.3: keeper-grouped CV block (only on a --keeper-grouped run; dreport is None otherwise).
+    if dreport is not None:
+        metrics["keeper_grouped"] = {
+            "n_domain_keepers": dreport.n_domain_keepers,
+            "n_excluded_keepers": dreport.n_excluded_keepers,
+            "underpowered": dreport.underpowered,
+            "per_fold_mae_euclidean": mae_e_vals,
+        }
+
+    # spec 4.3 rev 5: measured selection-bias limitation (REPORTED, not a gate). Only populated on
+    # a fresh SkillCorner extract (the cache-load path does not carry raw visibility).
+    if bias_depth_detected and bias_depth_undetected:
+        metrics["detection_selection_bias"] = {
+            "keeper_depth_detected_mean": float(np.mean(bias_depth_detected)),
+            "keeper_depth_undetected_mean": float(np.mean(bias_depth_undetected)),
+            "ball_to_keeper_dist_detected_mean": float(np.nanmean(bias_b2k_detected)),
+            "ball_to_keeper_dist_undetected_mean": float(np.nanmean(bias_b2k_undetected)),
+            "n_detected": len(bias_depth_detected),
+            "n_undetected": len(bias_depth_undetected),
+            "note": (
+                "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper "
+                "when the ball is near him), so they over-represent the engaged/advanced keeper and "
+                "under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. "
+                "This is a stated limitation, not a gate -- no rule in this cycle detects it. "
+                "Both bias axes are measured here: keeper depth AND ball-to-keeper distance "
+                "(goal-relative; detected frames are expected to show a SMALLER ball-to-keeper "
+                "distance, which IS the selection mechanism). See spec 4.3 rev 5."
+            ),
+        }
+
     metrics_path = args.output_dir / "ghost_gk_v1" / "metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)

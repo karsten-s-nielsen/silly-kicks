@@ -32,13 +32,33 @@ from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output
 
 
+def _scale_to_spadl(
+    x: pd.Series,
+    y: pd.Series,
+    pitch_length: int | float,
+    pitch_width: int | float,
+) -> tuple[pd.Series, pd.Series]:
+    """Affine map from centred metres to the SPADL 105x68 frame. NO clamping.
+
+    This is the single-sourced coordinate truth for SkillCorner: the EVENTS converter calls it
+    via ``_transform_coords`` (which clamps afterwards, safe because an action's location is
+    on-pitch by construction); the TRACKING builder (``tracking/skillcorner.py``) calls it
+    DIRECTLY, because tracking is full of legitimately off-pitch positions -- an out-of-play
+    ball, a keeper behind his line, and decisively a ball that has crossed the goal line, which
+    is what a goal IS. Clamping tracking would erase goal-vs-save. See spec 3.4.
+    """
+    half_length = pitch_length / 2
+    half_width = pitch_width / 2
+    return (x / half_length) * 52.5 + 52.5, (y / half_width) * 34.0 + 34.0
+
+
 def _transform_coords(
     x: pd.Series,
     y: pd.Series,
     pitch_length: int | float,
     pitch_width: int | float,
 ) -> tuple[pd.Series, pd.Series]:
-    """Rescale centered meters to SPADL 0-based frame.
+    """Rescale centered meters to SPADL 0-based frame, clamped to the pitch (EVENTS only).
 
     Parameters
     ----------
@@ -52,14 +72,10 @@ def _transform_coords(
     tuple[pd.Series, pd.Series]
         ``(x_spadl, y_spadl)`` in SPADL [0, 105] x [0, 68] frame.
     """
-    half_length = pitch_length / 2
-    half_width = pitch_width / 2
-    x_out = (x / half_length) * 52.5 + 52.5
-    y_out = (y / half_width) * 34.0 + 34.0
-    # Clamp to SPADL pitch boundaries (raw data can slightly exceed pitch dims)
-    x_out = x_out.clip(lower=0.0, upper=105.0)
-    y_out = y_out.clip(lower=0.0, upper=68.0)
-    return x_out, y_out
+    x_out, y_out = _scale_to_spadl(x, y, pitch_length, pitch_width)
+    # Clamp to SPADL pitch boundaries (raw data can slightly exceed pitch dims).
+    # NEVER reuse this for tracking -- see _scale_to_spadl's docstring.
+    return x_out.clip(lower=0.0, upper=105.0), y_out.clip(lower=0.0, upper=68.0)
 
 
 # SkillCorner's `time_start` is the CONTINUOUS broadcast clock (the 2nd half shows 45:00+,

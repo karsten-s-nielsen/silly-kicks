@@ -1,0 +1,33 @@
+shape=(127788, 9)
+
+time             object
+frame             int64
+period            int64
+player_id         int64
+is_detected        bool
+is_ball            bool
+x               float64
+y               float64
+visible_area     object
+
+           time  frame  period  player_id  is_detected  is_ball      x      y                                                                                                                                                                      visible_area
+0   00:00:03.10     41       1      13899        False    False -38.25   0.84  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+1   00:00:03.10     41       1      13903        False    False -20.35  -5.84  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+2   00:00:03.10     41       1      32276        False    False -20.71   6.49  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+3   00:00:03.10     41       1       8259        False    False  -3.64 -19.77  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+4   00:00:03.10     41       1       4463        False    False -16.72  12.00  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+5   00:00:03.10     41       1      11692        False    False  -9.45   3.61  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+6   00:00:03.10     41       1      25739        False    False -11.20  -3.56  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+7   00:00:03.10     41       1     533061        False    False   1.92  10.85  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+8   00:00:03.10     41       1       4444        False    False  -3.12   0.37  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+9   00:00:03.10     41       1      35342        False    False   3.94 -18.85  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+10  00:00:03.10     41       1       4461        False    False   4.40   1.05  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+11  00:00:03.10     41       1      12248        False    False  42.32   0.32  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+12  00:00:03.10     41       1      12662        False    False  16.28   6.07  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+13  00:00:03.10     41       1       2395        False    False  17.25  -3.90  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+14  00:00:03.10     41       1       2189        False    False  15.00  14.97  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+15  00:00:03.10     41       1      31993        False    False  14.47 -17.56  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+16  00:00:03.10     41       1      12218        False    False   9.87   4.95  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+17  00:00:03.10     41       1      22103        False    False  13.16  -8.83  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+18  00:00:03.10     41       1      12251        False    False   4.91  11.39  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}
+19  00:00:03.10     41       1      24583        False    False   7.94  -7.41  {'x_bottom_left': None, 'x_bottom_right': None, 'x_top_left': None, 'x_top_right': None, 'y_bottom_left': None, 'y_bottom_right': None, 'y_top_left': None, 'y_top_right': None}

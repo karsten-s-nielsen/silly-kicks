@@ -29,6 +29,8 @@ def _bronze_row(frame, period, ts, player, team, x, y, is_gk, is_vis=True):
         "ball_z": 2.0,
         "is_visible": is_vis,
         "frame_rate": 10,
+        "pitch_length": 105.0,
+        "pitch_width": 68.0,
     }
 
 

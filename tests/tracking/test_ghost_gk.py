@@ -73,7 +73,11 @@ def _make_ghost_gk_frames(
         "timestamp": timestamp,
         "ball_state": "alive",
         "time_seconds": timestamp,
-        "source_provider": "test",
+        # A REAL, classified provider (fully-observed): the ghost-GK trainer's detected-only
+        # filter (spec 4.3, PR-S115) calls keeper_detection_mask, which fail-closes on an
+        # unregistered provider. "gradientsports" is a no-op for the filter (all keepers observed),
+        # so these synthetic frames exercise the trainer without a spurious unknown-provider raise.
+        "source_provider": "gradientsports",
     }
     # Ball
     rows.append(
@@ -1025,7 +1029,7 @@ class TestExtractAllFeatures:
         # 5 frames x 2 GKs = 10 rows
         assert features.shape[0] == 10
         assert features.shape[1] == len(GHOST_GK_FEATURE_NAMES)
-        assert meta.shape == (10, 6)
+        assert meta.shape == (10, 8)
         assert list(meta.columns) == [
             "game_id",
             "period_id",
@@ -1033,6 +1037,8 @@ class TestExtractAllFeatures:
             "gk_team_id",
             "gk_x_gr",
             "gk_y_gr",
+            "gk_player_id",
+            "gk_visibility",
         ]
 
     def test_velocity_state_non_nan_after_first(self):

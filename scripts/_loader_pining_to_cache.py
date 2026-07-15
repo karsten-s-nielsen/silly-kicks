@@ -50,12 +50,21 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
+    ap.add_argument(
+        "--match-ids-json",
+        type=Path,
+        default=None,
+        help="JSON file mapping {provider: [match_id, ...]} -- a per-provider allowlist threaded to "
+        "load_matches(match_ids=). Default None (load every listed match).",
+    )
     args = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
 
+    match_ids = json.loads(args.match_ids_json.read_text()) if args.match_ids_json else None
     n = 0
     for provider, match_id, actions, frames, home in load_matches(
         providers=args.providers,
+        match_ids=match_ids,
         max_per_provider=args.max_per_provider,
         tracking_limit=args.tracking_limit,
     ):

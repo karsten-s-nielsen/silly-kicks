@@ -58,7 +58,7 @@ def main() -> None:
                 print(f"SKIP {provider}/{match_id}: missing cached artifact(s)")
                 continue
             try:
-                _actions, frames, _home = _build_match(provider, match_id, paths, args.tracking_limit)
+                _actions, frames, _home, _report = _build_match(provider, match_id, paths, args.tracking_limit)
             except Exception as exc:
                 print(f"ERROR {provider}/{match_id}: {type(exc).__name__}: {exc}")
                 traceback.print_exc()

@@ -626,16 +626,16 @@ def test_publish_verify_only(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
-def test_paired_decision_rule_data_effect():
-    """Direct unit test of the subtle paired-decision helper (P1) — not via subprocess."""
-    from scripts.train_xshot_occurrence import _paired_data_effect
+def _paired_synthetic_corpus(seed=0):
+    """A public/owner mix with a learnable r-signal: 6 public games + 3 owner ("sc") games. Returns
+    (X, y, groups, is_public). sc_extended/full carry strictly MORE data than the public arm."""
     from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL
 
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(seed)
     rows, lab, grp, pub = [], [], [], []
-    for g in range(7):  # last 2 games are "GS" (non-public)
-        is_pub = g < 5
-        for _ in range(60):
+    for g in range(9):  # games 0..5 public, 6..8 owner ("sc")
+        is_pub = g < 6
+        for _ in range(70):
             r = float(rng.uniform(5, 40))
             y_ = int(rng.random() < 1 / (1 + np.exp((r - 18) / 4)))  # closer => more likely
             row = {c: 0.0 for c in XSHOT_FEATURE_NAMES_FAITHFUL}
@@ -645,13 +645,61 @@ def test_paired_decision_rule_data_effect():
             grp.append(g)
             pub.append(is_pub)
     X = pd.DataFrame(rows)[XSHOT_FEATURE_NAMES_FAITHFUL]
-    res = _paired_data_effect(
-        X, np.array(lab), np.array(grp), np.array(pub), shared_params={"max_depth": 3, "n_estimators": 60}
+    return X, np.array(lab), np.array(grp), np.array(pub, dtype=bool)
+
+
+def test_paired_data_effect_three_arm_shape(monkeypatch, tmp_path):
+    """Task 11 (spec 4.1): the nested-HPO paired test returns per-candidate 'nested' + 'shared_params'
+    delta lists for all three arms; 'public' is the baseline (empty lists). `_hpo_once` is monkey-
+    patched to fixed per-tag params so the shape is exercised without a real Optuna sweep."""
+    import scripts.train_xshot_occurrence as tr
+
+    def _fake_hpo(x, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, seed=42):
+        # Distinct params keyed by candidate so nested (own) != shared (public) is DETERMINISTIC.
+        if tag.startswith("sc_extended"):
+            return {"max_depth": 6, "n_estimators": 120}
+        return {"max_depth": 2, "n_estimators": 60}
+
+    monkeypatch.setattr(tr, "_hpo_once", _fake_hpo)
+
+    X, y, groups, is_public = _paired_synthetic_corpus()
+    match_ids = np.array([str(g) for g in groups])
+    is_sc = ~is_public  # every non-public game is "sc" in this synthetic
+    cand_masks = {"public": is_public, "sc_extended": is_public | is_sc, "full": np.ones(len(X), bool)}
+    paired = tr._paired_data_effect(
+        X, y, groups, is_public, match_ids, candidates=cand_masks, n_trials=1, out_dir=tmp_path
     )
-    assert res["paired_delta_is_data_effect_shared_params"] is True
-    assert res["paired_hpo_nested"] is False
-    assert set(res) >= {"deltas", "K", "n_positive", "ship_two"}
-    assert isinstance(res["ship_two"], bool)
+    assert set(paired) == {"public", "sc_extended", "full"}
+    for arm in cand_masks:
+        assert set(paired[arm]) == {"nested", "shared_params"}
+    assert paired["public"]["nested"] == [] and paired["public"]["shared_params"] == []  # baseline arm
+    assert len(paired["sc_extended"]["nested"]) >= 2  # usable folds
+
+
+def test_paired_nested_uses_candidate_params_not_public(monkeypatch, tmp_path):
+    """KILL-LINE (M4): the 'nested' protocol scores each candidate at ITS OWN tuned params, the
+    'shared_params' protocol at the PUBLIC params. With `_hpo_once` forced to distinct params per
+    candidate, sc_extended's two delta series MUST differ. If a refactor scored the nested column at
+    public params too (the leakage the M4 fix removes), they would collapse to identical -> this fails.
+    """
+    import scripts.train_xshot_occurrence as tr
+
+    def _fake_hpo(x, y, groups, out_dir, tag, n_trials, *, negative_subsample=None, seed=42):
+        if tag.startswith("sc_extended"):
+            return {"max_depth": 6, "n_estimators": 200}
+        return {"max_depth": 1, "n_estimators": 40}
+
+    monkeypatch.setattr(tr, "_hpo_once", _fake_hpo)
+
+    X, y, groups, is_public = _paired_synthetic_corpus()
+    match_ids = np.array([str(g) for g in groups])
+    cand_masks = {"public": is_public, "sc_extended": np.ones(len(X), bool), "full": np.ones(len(X), bool)}
+    paired = tr._paired_data_effect(
+        X, y, groups, is_public, match_ids, candidates=cand_masks, n_trials=1, out_dir=tmp_path
+    )
+    assert paired["sc_extended"]["nested"] != paired["sc_extended"]["shared_params"], (
+        "nested and shared_params collapsed -- the candidate was scored at public params (M4 leakage)"
+    )
 
 
 # --- Task A: prepare_xshot_training_data (public API) ---

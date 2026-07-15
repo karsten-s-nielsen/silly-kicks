@@ -142,6 +142,25 @@ class TrackingConversionReport:
     contamination (positional derivation on a small window) and 0 means a missing roster flag. Warned
     and counted; a machine-observable signal so squad-wide GK contamination cannot recur silently."""
 
+    geometry_excluded: bool = False
+    """True when the per-match SYSTEMATIC geometry rate-gate (spec 4.4) excludes this match: a
+    catastrophic sign/origin coordinate break puts a SYSTEMATIC fraction of rows off-pitch (vs a
+    handful of legitimately off-pitch bodies). Machine-observable so a broken match is DROPPED, not
+    silently averaged into a calibration corpus (the per-row n_gross_off_pitch warn is invisible in a
+    batch log). SkillCorner native builder only; default False (other providers run no native gate)."""
+
+    geometry_reason: str = ""
+    """Human-readable reason a match was ``geometry_excluded`` (which threshold(s) it breached with the
+    measured rate); empty when not excluded. Printed to stderr by the loader on exclusion."""
+
+    player_off_pitch_rate: float = 0.0
+    """Fraction of PLAYER rows whose post-transform coords fall >3 m off the pitch (spec 4.4 gate
+    input). ~0 on clean data; a systematic value signals a coordinate-transform break. Default 0.0."""
+
+    ball_off_pitch_rate: float = 0.0
+    """Fraction of BALL rows whose post-transform coords fall >10 m off the pitch (spec 4.4 gate
+    input). ~0 on clean data (the largest real ball excursion measured is 9.0 m). Default 0.0."""
+
     @property
     def has_unrecognized(self) -> bool:
         return len(self.unrecognized_player_ids) > 0
