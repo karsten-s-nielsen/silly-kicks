@@ -27,7 +27,7 @@ _DERIVE_END_TYPE_IDS: frozenset[int] = frozenset(
 )
 
 
-def _derive_end_coordinates(actions: pd.DataFrame) -> pd.DataFrame:
+def _derive_end_coordinates(actions: pd.DataFrame, *, extra_type_ids: frozenset[int] = frozenset()) -> pd.DataFrame:
     """Derive end_x/end_y from next action's start for pass-class types.
 
     Only overwrites rows where the source data did not provide a separate
@@ -36,6 +36,14 @@ def _derive_end_coordinates(actions: pd.DataFrame) -> pd.DataFrame:
     Period-safe: uses ``groupby("period_id").shift(-1)`` so the last action
     per period keeps its original end coordinates.
 
+    ``extra_type_ids`` opt-in extends the derive set for ONE caller (PR-S116:
+    gradientsports passes ``{dribble}`` because its OTB/BC carries ship
+    placeholder ends and it never calls ``_add_dribbles``). The module-level
+    ``_DERIVE_END_TYPE_IDS`` is shared by all eight converters and must not
+    change: the placeholder guard cannot distinguish statsbomb's ~11% genuine
+    stationary carries from placeholders, so a global dribble addition would
+    rewrite recorded data.
+
     Replaces the former ``_fix_clearances`` with a broader type set, a
     source-data guard, and period-boundary safety.
     """
@@ -43,7 +51,7 @@ def _derive_end_coordinates(actions: pd.DataFrame) -> pd.DataFrame:
         return actions
     actions = actions.copy()
 
-    is_pass_class = actions["type_id"].isin(_DERIVE_END_TYPE_IDS)
+    is_pass_class = actions["type_id"].isin(_DERIVE_END_TYPE_IDS | extra_type_ids)
     placeholder_end = (actions["end_x"] == actions["start_x"]) & (actions["end_y"] == actions["start_y"])
     missing_end = actions["end_x"].isna()
     needs_derivation = is_pass_class & (placeholder_end | missing_end)

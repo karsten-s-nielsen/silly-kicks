@@ -5,6 +5,28 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.49.0] — 2026-07-16
+
+### Fixed — Gradient Sports dribbles derive real end coordinates (`silly_kicks/spadl/base.py`, `silly_kicks/spadl/gradientsports.py`)
+
+Every GS dribble shipped with a placeholder `end == start` (verified 850/850 zero-displacement,
+0 m, on the live corpus): the converter maps `OTB`+`BC` ball-carries to SPADL `dribble`,
+initializes `end = start` for every event, derives real ends only for the shared
+`_DERIVE_END_TYPE_IDS` (which excludes `dribble`), and is the only event converter that never
+calls `_add_dribbles`. Fix is **GS-local**: `_derive_end_coordinates` gains a keyword-only
+`extra_type_ids: frozenset[int] = frozenset()` and ONLY `gradientsports.py` passes
+`{dribble}` — the module-level set is untouched because its `placeholder_end` guard cannot
+distinguish statsbomb's ~11% genuine stationary carries from placeholders (a global addition
+would rewrite recorded data). Default-path byte-identity is regression-locked
+(`TestExtraTypeIds::test_default_leaves_dribble_placeholder`); period-last carries honestly
+keep the placeholder. Owner-gated e2e (`test_dribble_ends_derived_on_real_wc2022`) asserts
+>90% of real WC2022 dribbles now carry a derived end. **GS-only retrain trigger:** xT/xtgk
+move-sets include dribbles (GS previously fed zero-displacement transitions into GS-fitted
+transition matrices) and VAEP features consume dribble ends — GS-fitted artifacts should be
+re-fit on next touch; zero delta for the other seven providers. Lakehouse: re-materialize
+GS-derived marts on adoption. ADR-018 amendment; PR-S116. Precursor to TF-49 packing
+(PR-S117), whose dribble-packing channel needs real GS carry geometry.
+
 ## [4.48.1] — 2026-07-15
 
 ### Fixed — native SkillCorner/Metrica builders emit a valid `ball_state` (`silly_kicks/tracking/skillcorner.py`, `silly_kicks/tracking/metrica.py`)

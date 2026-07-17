@@ -77,3 +77,26 @@ def test_real_own_goals_captured_through_converter_no_tripwire_warn():
         assert len(og) == 1, f"g{mid}: expected exactly 1 owngoal for team {team}, got {len(og)}"
         assert (og["type_id"] == spadlconfig.actiontype_id["bad_touch"]).all()
         assert (og["player_id"] == scorer).all()
+
+
+def test_dribble_ends_derived_on_real_wc2022():
+    # PR-S116: real WC2022 GS dribbles must no longer be 100% zero-displacement (the
+    # pre-fix live corpus measured 850/850 start==end). Residual placeholders are
+    # period-last carries only, so >90% must now carry a real derived end.
+    from silly_kicks.spadl import config as spadlconfig
+
+    L = _load_loader()
+    _prov, _m, actions, _frames, _home = next(
+        iter(
+            L.load_matches(
+                providers=["gradientsports"],
+                match_ids={"gradientsports": ["10503"]},
+                tracking_limit=1,
+            )
+        )
+    )
+    dribbles = actions[actions["type_id"] == spadlconfig.actiontype_id["dribble"]]
+    if len(dribbles) == 0:
+        pytest.skip("match has no dribbles")
+    moved = (dribbles["end_x"] != dribbles["start_x"]) | (dribbles["end_y"] != dribbles["start_y"])
+    assert moved.mean() > 0.9, f"only {moved.mean():.0%} of {len(dribbles)} GS dribbles derived an end"
