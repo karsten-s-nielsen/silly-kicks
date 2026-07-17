@@ -95,3 +95,30 @@ consume dribble ends; GS-fitted artifacts re-fit on next touch. Zero delta for t
 providers. Lakehouse re-materializes GS-derived marts on adoption. Precursor to TF-49 packing
 (PR-S117): the dribble-packing channel needs real GS carry geometry, and TF-49's
 degenerate-geometry NaN policy remains as the residual guard (period-last carries).
+
+## Amendment (2026-07-17, silly-kicks 4.50.0, PR-S117): GS ball-carry results from `ballCarryOutcome`
+
+**Found** by the TF-49 packing owner-gated e2e (0/12 dribbles in the packing domain on match
+10503): the GS result dispatch (`_derive_type_result` `result_conds`) had NO success condition
+for `OTB`+`BC` carries — every GS dribble fell through to the `fail` default, structurally
+excluding GS carries from every completion-gated consumer (packing's completion gate, xT/xtgk
+success-filtered move-sets, VAEP result features). StatsBomb dribbles are 100% success — GS was
+the outlier. The 4.49.0 amendment fixed dribble GEOMETRY; this fixes dribble RESULTS — the two
+legs of the same "GS dribbles are invisible" defect.
+
+**Decision — map the native `ballCarryOutcome` (owner-directed in-PR fix, PR-S117):** the field
+was already flattened into `EXPECTED_INPUT_COLUMNS` (`ball_carry_outcome` ← `ballCarryOutcome`)
+but never consulted. Live WC2022 vocabulary probed 2026-07-17 (4 matches, 66 BC rows, field
+present on 100%): **R (retained) → `success`, L (lost) → `fail`**; unknown/absent tokens keep the
+`fail` default — this converter's exact-token allowlist style (pass/cross `"C"`, shot `"G"`).
+Cross-checked empirically on the converted stream: R carries resolve a same-team next touch
+43/43 (100%); L carries are 19/22 opponent-next (the 3 same-team-next L rows are quick regains);
+the fixed converter agrees with the outcome field exactly (success↔R 43/43, fail↔L 22/22).
+Lowest `np.select` priority (card results keep precedence by design). The owner-gated packing e2e gates the in-domain dribble share strictly
+interior — a future feed that drops or renames the field fails loudly, never mass-fails silently.
+
+**Consequences:** GS-only retrain trigger that **folds into the SAME pending re-fit the 4.49.0
+amendment queued** (no additional retrain): GS-fitted xT/xtgk KDE move-sets now include retained
+carries; GS VAEP result features shift. Zero delta for the other seven providers. Lakehouse: GS
+`spadl_actions.result_id` changes on dribble rows — re-materialize on adoption. Cross-ref:
+ADR-039 (packing) records the discovery sequence.

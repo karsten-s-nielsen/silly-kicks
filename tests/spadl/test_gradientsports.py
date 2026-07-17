@@ -819,6 +819,49 @@ class TestGradientsportsClearanceDribbleTouchControl:
         )
         assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["dribble"]
 
+    def test_ball_carry_retained_is_success(self):
+        """ballCarryOutcome 'R' (retained) -> success. Live vocabulary is {R, L}
+        (probed 2026-07-17, 4 WC2022 matches, field on 100% of BC rows); without
+        this condition every GS dribble fell through the result dispatch to fail,
+        structurally excluding GS carries from every completion-gated consumer
+        (PR-S117 e2e finding, ADR-018 amendment)."""
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "BC"
+        df.loc[0, "ball_carry_outcome"] = "R"
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["result_id"] == spadlconfig.result_id["success"]
+
+    def test_ball_carry_lost_is_fail(self):
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "BC"
+        df.loc[0, "ball_carry_outcome"] = "L"
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["result_id"] == spadlconfig.result_id["fail"]
+
+    def test_ball_carry_missing_outcome_is_fail(self):
+        """Absent outcome falls through to fail (the converter's exact-token
+        allowlist style; the owner-gated e2e dribble-domain gate catches a
+        mass-fail if a future feed drops or renames the field)."""
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "BC"
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["result_id"] == spadlconfig.result_id["fail"]
+
     def test_touch_control(self):
         df = _df_minimal_pass()
         df.loc[0, "possession_event_type"] = "TC"
