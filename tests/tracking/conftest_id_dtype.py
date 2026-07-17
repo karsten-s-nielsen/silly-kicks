@@ -144,6 +144,7 @@ AGGREGATORS = [
     _ah(F.add_line_break, "add_line_break"),
     _ah(F.add_off_ball_context, "add_off_ball_context"),
     _ah(F.add_off_ball_runs, "add_off_ball_runs"),
+    _ah(F.add_packing, "add_packing"),
     _ah(F.add_shape_graph, "add_shape_graph"),
     _ah(F.add_structural_pass, "add_structural_pass"),
     _ah(F.add_team_shape, "add_team_shape"),

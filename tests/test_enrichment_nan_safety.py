@@ -41,6 +41,7 @@ _TRACKING_NEEDS_EXTRA = {
     "add_line_break",
     "add_off_ball_context",
     "add_off_ball_runs",
+    "add_packing",
     "add_player_influence",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
@@ -505,6 +506,14 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         "add_structural_pass",
     ):
         out = helper(actions, frames, home_team_id=1)
+    elif name == "add_packing":
+        # The shared fixture carries no result_id (it is not an identifier column);
+        # add_packing's completion gate requires it. Supply a constant success so the
+        # NaN-IDENTIFIER surface (NaN team/player/coords) is what gets fuzzed -- the
+        # add_xt_gk branch's supply-the-contract-columns precedent.
+        acts = actions.copy()
+        acts["result_id"] = 1
+        out = helper(acts, frames, home_team_id=1)
     elif name == "add_xt_gk":
         import numpy as np
 

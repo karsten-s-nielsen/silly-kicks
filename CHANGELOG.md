@@ -5,6 +5,119 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.50.0] — 2026-07-17
+
+### Fixed — Gradient Sports ball-carry results from the native `ballCarryOutcome` (`silly_kicks/spadl/gradientsports.py`; ADR-018 amendment, owner-directed in-PR fix)
+
+The GS result dispatch had NO success condition for `OTB`+`BC` carries — every GS dribble fell
+through to the `fail` default (surfaced by the TF-49 packing e2e: 0/12 dribbles in the packing
+domain on match 10503; statsbomb dribbles are 100% success — GS was the outlier). The converter
+now maps the native `ballCarryOutcome` — live WC2022 vocabulary {R, L}, present on 100% of BC
+rows (probed 2026-07-17, 4 matches, 66 carries; the field was already in
+`EXPECTED_INPUT_COLUMNS`, flattened but never consulted) — **R (retained) → `success`, L (lost)
+→ `fail`**; unknown/absent tokens keep the `fail` default (this converter's exact-token
+allowlist style, matching pass/cross `"C"` and shot `"G"`). Empirically cross-checked: L
+carries are ~86% opponent-next on the converted stream. **GS-only retrain trigger — folds into
+the SAME pending GS re-fit 4.49.0 queued** (GS-fitted xT/xtgk success-filtered move-sets now
+include retained carries — previously they excluded ALL GS dribbles; VAEP result features shift
+on GS; no additional retrain beyond the queued one). The owner-gated packing e2e now gates the
+GS dribble in-domain share strictly interior — a future feed that drops or renames the field
+fails loudly instead of mass-failing silently. Lakehouse: GS `spadl_actions.result_id` changes
+on dribble rows — re-materialize GS-derived marts on adoption.
+
+### Added — TF-49 packing: Impect-faithful bypass counts + goal-threat + secured reception + net variant (`silly_kicks/tracking/_packing.py`, `silly_kicks/tracking/_kernels.py`, `silly_kicks/tracking/features.py`, `silly_kicks/spadl/utils.py`, atomic mirror; PR-S117, ADR-039)
+
+Coach-facing canon packing over tracking frames, built on the TF-45 bypass inequality
+(`start_x < d_x <= end_x`) with the ~15-line defender-extraction/mirror block DELIBERATELY
+duplicated from the frozen `_structural_pass.py` (consolidation trigger = a third consumer;
+byte-equivalence pinned by a non-vacuity-meta-asserted golden identity gate:
+`packing_made == structural_lbs` on completed pass/cross rows, with a failed-row discriminator
+proving the completion gate is the only delta).
+
+- **Geometry kernel** (`_kernels._packing_at_actions`, GEOMETRY-ONLY): per in-domain action
+  (type ∈ `params.action_types` AND result success) at its linked frame — `packing_made`
+  (canon Impect count, outfield-only by default, `include_gk` opt-in), `packing_net`
+  (`football-packing` direction multipliers +1 / `side_multiplier` / `back_multiplier` over the
+  traversed x-interval; θ = atan2(|Δy|, Δx) with 45°/135° bands), `packing_goal_threat`
+  (forward count restricted to `select_back_line_players` back-`back_line_n`; MSC "goal threat
+  packing"), + internal `line_x` (max bypassed-defender x; feeds secured, NOT an output column).
+  Degenerate `start == end` → NaN for DRIBBLES only (placeholder-indistinguishable: pre-4.49.0
+  GS corpora, post-fix period-last carries); pass-class start==end → honest geometric 0.
+- **`spadl.utils.resolve_next_touch_receiver`** (NEW public, packing-agnostic, event-only):
+  next same-team touch's player_id per action, skipping `non_action` AND `foul` rows (neither
+  is a touch: GS emits non-touch rows; the fouler must never resolve as receiver, and an
+  advantage-played opponent foul must not block resolution — execution-review D1);
+  fully POSITIONAL (ADR-019/PR-S110 lesson; safe for non-RangeIndex/duplicate-index callers).
+  Dtype contract (F5): Int64/object pass through; plain int64 AND float64 NaN-coded-int sources
+  pre-convert to Int64; the result NEVER float64-upcasts. The private
+  `_resolve_next_touch_positions` is a stable internal seam consumed by `secured_reception`'s
+  reception-anchored window.
+- **`tracking.secured_reception`** (NEW public): nullable-boolean "ball stays past the line" on
+  the `retains()` skeleton (possession-aware, `add_possessions` self-heal) + the REQUIRED
+  foul-skip (heuristic possessions emit a boundary AT the foul row — verified; a bare boundary
+  rule would flip loss at every foul won) + non_action/NaN-team skips (ADR-027). Window is
+  anchored at the RECEPTION row; a reception that is itself a same-team shot decides True
+  (the literal pass→shot→keeper_save shape); same-team shot → True; opponent possession
+  boundary → False; behind-`line_x` same-team action inside the window → False; empty window
+  extends the shot/boundary tests to the first non-skipped event (`line_x` does NOT extend);
+  truncated window → <NA>. Both keystone protections mutation-probed.
+- **`tracking.add_packing`** (@nan_safe_enrichment, C4 aggregator count 28 → 29): five columns —
+  `packing_made`/`packing_goal_threat` (Int64), `packing_net` (float64),
+  `packing_receiver_player_id` (source-dtype passthrough; <NA> for dribbles/off-domain),
+  `packing_secured` (boolean; <NA> unless receiver resolved AND made ≥ 1).
+  `require_secured=True` gates the numeric columns for receiver-bearing types only (F3:
+  dribbles keep raw counts; made==0 rows keep their 0). Idempotent provenance; `links` accepted.
+- **`tracking.packing_xfns`**: ONE FrameAwareTransformer, 3 numeric columns × 3 slots, 3×-not-9×
+  perf-spied. REJECTS `require_secured=True` (shifted gamestate slots have no valid next-row
+  relationships). **Result-leakage warning (F4, docstring + ADR-039):** every packing column
+  gates on the action's OWN result_id — MUST NOT enter HybridVAEP-class consumers without a0
+  exclusion; a result-free-a0 variant is a recorded fork, not built. In NO default xfn list —
+  enforced by an executable guard (`tests/tracking/test_packing_xfns_leakage_guard.py`,
+  auto-discovering + mutation-verified) mirroring shot_goalmouth/xt_xfns; **no retrain trigger**.
+- **Atomic mirror** (`atomic.tracking.features`): numeric columns only (receival atoms carry
+  receiver identity); `end = x+dx` synthesis + a type-aware synthesized `result_id`
+  (SK-xT-2 precedent: dribble intrinsic; pass-class success iff next atom is `receival` OR a
+  same-team keeper reception — atomic never inserts receival before keeper collections;
+  name-mapped types with collapsed-atom bridging for `_simplify`'s `corner`/`freekick` atoms,
+  atomic-only atoms → std `non_action`); output assembled on a copy of the CALLER's frame (the
+  adapter's rewritten type_id / synthetic result_id never leak); rejects `require_secured=True`.
+- **Adversarial-review hardening (12-agent refute-verified pass over the finished diff; all
+  six findings live-reproduced, fixed in-PR — ADR-039 §Execution-review):** receiver foul-skip
+  (D1); atomic collapsed-atom domain bridging (D2); atomic output purity (D3);
+  `secured_reception` scans in `action_id` order so time-tied positionally-swapped rows resolve
+  identically (D4); atomic same-team keeper receptions synthesize success (D5); an unattested
+  (NA) caller-supplied `possession_id` never decides the secured boundary (D6, ADR-027 class).
+  `retains()` shared the D1/D6 patterns only LATENTLY (live solely on its unused
+  `add_possessions` self-heal path): a read-only probe over the live ρ training cohorts measured
+  ZERO label flips (gold-mart possession ids stay continuous through foul rows; no NA
+  teams/possessions), so **the same hardening was applied to `retains()` in-PR WITHOUT a
+  retrain** — a post-fix gate re-verified the shipped function == the probed variant on all
+  223,718 cohort rows with 0/3451 (GS) + 0/5483 (SkillCorner) training-label changes; bundled ρ
+  weights + recorded metrics untouched. `retains()` additionally gained the canonical
+  `(time_seconds, action_id)` scan order (owner-decided after a dedicated order probe: 9,649
+  GS time-tie pairs exposed positional-order sensitivity; a bare-`action_id` sort was RULED OUT
+  — the GS mart's action_id order disagrees with time_seconds, guard-rejected) — exactly the ρ
+  loader's own sort, gate-verified byte-identical on both full live cohorts; labels are now
+  input-row-order-insensitive. A PR-S117 delta adversarial review then caught that the NaN-team
+  hardening was decider-side only — a NaN-team ANCHOR still got a decisive label (ADR-027
+  violated anchor-side); fixed (NaN-team anchor → NaN), also a no-op on the ρ path (both mart
+  cohorts carry zero NaN-team rows). ADR-036 amendment (2026-07-17) + ADR-039 relay item 1.
+- **Gates:** golden identity, ADR-028 mirror-invariance + asymmetric absolute-count pin,
+  liveness (pre-checked on the multi-domain fixture), purity ×2 variants + atomic, id-dtype,
+  dup-action-id, NaN-safety, Examples, perf spy, a `packing_xfns`-out-of-default-lists leakage
+  guard (auto-discovering + mutation-verified, mirroring shot_goalmouth/xt_xfns), WC2018
+  committed-fixture smoke on ALL CI legs (receiver rate ∈ [0.95, 1.0], dtype, secured tri-state,
+  synthetic non_action injection), owner-gated GS WC2022 e2e (receiver 0.9976 ± 0.02; degenerate
+  dribbles < 10%; GS dribble in-domain share strictly interior; secured rate strictly interior;
+  per-action `packing_made` mean gated to [0.5, 3.0] — validated across 4 real WC2022 matches;
+  MSC practitioner anchors REPORTED).
+- **Recorded, out of scope (ADR-039):** GS `OTB`+`BC` carries all fall through the converter's
+  result dispatch to `fail` → GS dribbles are structurally off-domain for packing's completion
+  gate (statsbomb dribbles are 100% success — GS is the outlier); fixing it is a GS
+  result-semantics change → its own probe/validation + GS-only retrain trigger. Also relayed:
+  `retains()` on heuristic possession ids plausibly flips loss at opponent-foul rows (ρ-label
+  change → ρ retrain if fixed).
+
 ## [4.49.0] — 2026-07-16
 
 ### Fixed — Gradient Sports dribbles derive real end coordinates (`silly_kicks/spadl/base.py`, `silly_kicks/spadl/gradientsports.py`)

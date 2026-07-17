@@ -978,3 +978,92 @@ def _structural_pass_at_actions(
     out["structural_sgm"] = col_sgm
     out["structural_sdi"] = col_sdi
     return out
+
+
+def _packing_at_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    params=None,
+    links: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """packing_made / packing_net / packing_goal_threat / line_x for each in-domain
+    action (type in params.action_types AND result success) at its linked frame.
+
+    GEOMETRY-ONLY (TF-49 review major 7): the event-side assembly (receiver /
+    secured / require_secured) lives in add_packing -- packing_xfns calls this
+    kernel on shifted gamestate slots where next-row relationships are
+    meaningless. Degenerate DRIBBLES (start == end, placeholder-indistinguishable,
+    spec s5.6) -> NaN row; degenerate pass-class -> honest geometric 0. Off-domain
+    / failed / NaN-team / non-finite-coords / unlinked rows -> NaN. Aligned to
+    actions.index; robust to non-unique action_id (positional frame resolution).
+    """
+    import silly_kicks.spadl.config as spadlconfig
+
+    from ._packing import PackingParams, compute_packing_metrics
+
+    if params is None:
+        params = PackingParams()
+
+    n = len(actions)
+    out = pd.DataFrame(
+        {
+            "packing_made": np.full(n, np.nan),
+            "packing_net": np.full(n, np.nan),
+            "packing_goal_threat": np.full(n, np.nan),
+            "line_x": np.full(n, np.nan),
+        },
+        index=actions.index,
+    )
+    if n == 0 or len(frames) == 0:
+        return out
+
+    domain_type_ids = frozenset(spadlconfig.actiontype_id[name] for name in params.action_types)
+    success_id = spadlconfig.result_id["success"]
+    dribble_id = spadlconfig.actiontype_id["dribble"]
+
+    fid_by_pos = resolve_frame_ids_by_position(actions, frames, links=links)
+
+    col_made = np.full(n, np.nan)
+    col_net = np.full(n, np.nan)
+    col_gt = np.full(n, np.nan)
+    col_line = np.full(n, np.nan)
+    frame_groups = frames.groupby(["period_id", "frame_id"])
+
+    for j, (_idx, row) in enumerate(actions.iterrows()):
+        type_id = row.get("type_id")
+        if type_id not in domain_type_ids or row.get("result_id") != success_id:
+            continue
+        tid = row["team_id"]
+        if pd.isna(tid) or np.isnan(fid_by_pos[j]):
+            continue
+        sx, sy = float(row["start_x"]), float(row["start_y"])
+        ex, ey = float(row["end_x"]), float(row["end_y"])
+        if type_id == dribble_id and sx == ex and sy == ey:
+            continue  # placeholder end (pre-PR-S116 corpora; period-last carries) -> unattested
+        pid = int(row["period_id"])  # shift may promote period_id to float
+        fid = int(fid_by_pos[j])
+        try:
+            frame_data = frame_groups.get_group((pid, fid))
+        except KeyError:
+            continue
+
+        m = compute_packing_metrics(
+            frame_data,
+            attacking_team_id=tid,
+            home_team_id=home_team_id,
+            passer_xy=(sx, sy),
+            receiver_xy=(ex, ey),
+            params=params,
+        )
+        col_made[j] = m["packing_made"]
+        col_net[j] = m["packing_net"]
+        col_gt[j] = m["packing_goal_threat"]
+        col_line[j] = m["line_x"]
+
+    out["packing_made"] = col_made
+    out["packing_net"] = col_net
+    out["packing_goal_threat"] = col_gt
+    out["line_x"] = col_line
+    return out

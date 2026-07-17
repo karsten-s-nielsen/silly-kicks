@@ -62,6 +62,7 @@ from ._action_orientation import (
 from ._ball_carrier import infer_ball_carrier
 from ._gk_resolve import acting_gk_from_frames, defending_gk_from_frames, gk_distribution_mask
 from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
+from ._packing import PackingParams, secured_reception
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
 from ._xcross_attempt import xcross_attempt_xfns
@@ -101,6 +102,7 @@ __all__ = [
     "add_obso",
     "add_off_ball_context",
     "add_off_ball_runs",
+    "add_packing",
     "add_pausa",
     "add_pitch_control",
     "add_player_influence",
@@ -141,6 +143,7 @@ __all__ = [
     "off_ball_context_xfns",
     "off_ball_xt_opponent",
     "off_ball_xt_team",
+    "packing_xfns",
     "pausa_xfns",
     "pitch_control_at_target",
     "pitch_control_default_xfns",
@@ -1307,6 +1310,177 @@ def structural_pass_xfns(
     _structural_pass_transformer._frame_aware = True  # type: ignore[attr-defined]
     _structural_pass_transformer.__name__ = "structural_pass"
     return [_structural_pass_transformer]
+
+
+@nan_safe_enrichment
+def add_packing(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    home_team_id: int | str,
+    links: pd.DataFrame | None = None,
+    params: PackingParams | None = None,
+) -> pd.DataFrame:
+    """Append the five TF-49 packing columns (Impect-faithful bypass counts).
+
+    Adds, per action (NaN/<NA> off-domain -- domain = ``params.action_types``
+    AND result success):
+
+    - ``packing_made`` (Int64) -- canon Impect count: eligible opponent
+      defenders with ``start_x < d_x <= end_x`` (outfield-only by default;
+      ``params.include_gk`` adds the keeper). Receiver double-credit is a
+      consumer-side groupby on ``packing_receiver_player_id``.
+    - ``packing_net`` (float64) -- direction-multiplied signed count over the
+      ``(min_x, max_x]`` interval: +1 forward (theta <= ``forward_max_deg``),
+      ``side_multiplier`` sideways, ``back_multiplier`` backward
+      (football-packing multipliers).
+    - ``packing_goal_threat`` (Int64) -- forward count restricted to the
+      defending team's ``select_back_line_players`` back-``back_line_n``
+      (MSC "goal threat packing").
+    - ``packing_receiver_player_id`` -- next same-team touch's player_id
+      (source dtype passthrough, never float64-upcast; ADR-019). <NA> for
+      dribbles (no reception in packing semantics), off-domain rows,
+      opponent-next, period end, or NaN source ids.
+    - ``packing_secured`` (boolean) -- 'ball stays past the line'
+      (:func:`silly_kicks.tracking.secured_reception`). <NA> unless a receiver
+      resolved AND ``packing_made >= 1``.
+
+    ``params.require_secured=True`` gates the three numeric columns on
+    ``packing_secured`` for RECEIVER-BEARING types only (secured False -> 0,
+    secured <NA> -> NaN); dribbles keep their raw counts (secured reception is
+    a pass concept -- TF-49 review F3), and ``packing_made == 0`` rows keep
+    their honest 0.
+
+    Caveats: ``take_on`` (SPADL 7) is excluded -- a point event cannot express
+    bypass under this inequality, so ``dribble`` does NOT cover 1v1s. The
+    completion gate inherits each provider's result semantics (SkillCorner
+    ``result_source`` tiers, sportec eval-allowlist) -- cross-provider
+    ``packing_made`` sums are not provider-comparable without that caveat.
+    Gradient Sports dribbles before silly-kicks 4.49.0 shipped placeholder
+    ends (``start == end``) and are honestly NaN (spec s5.6); post-fix only
+    period-last carries remain placeholders.
+
+    Idempotent provenance columns; accepts caller-supplied ``links``. Returns
+    a NEW frame (ADR-033). See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking import add_packing
+    >>> out = add_packing(actions, frames, home_team_id=1)
+    >>> out[["packing_made", "packing_net", "packing_goal_threat"]].describe()
+    """
+    if params is None:
+        params = PackingParams()
+    from silly_kicks.spadl.utils import _resolve_next_touch_positions, resolve_next_touch_receiver
+
+    batch = _kernels._packing_at_actions(actions, frames, home_team_id=home_team_id, params=params, links=links)
+
+    # Event-only assembly (TF-49 review major 7): receiver + secured live HERE, not in
+    # the kernel -- packing_xfns calls the kernel on shifted gamestate slots where
+    # next-row relationships are meaningless.
+    receiver_pos = _resolve_next_touch_positions(actions)
+    receiver = resolve_next_touch_receiver(actions, positions=receiver_pos)
+
+    domain_ids = frozenset(spadlconfig.actiontype_id[n] for n in params.action_types)
+    dribble_id = spadlconfig.actiontype_id["dribble"]
+    success_id = spadlconfig.result_id["success"]
+    type_arr = actions["type_id"].to_numpy()
+    result_arr = actions["result_id"].to_numpy()
+    receiver_bearing = np.isin(type_arr, list(domain_ids - {dribble_id})) & (result_arr == success_id)
+    receiver = receiver.where(pd.Series(receiver_bearing, index=receiver.index))
+
+    secured = secured_reception(actions, batch["line_x"], receiver_pos, params=params)
+    made_ge1 = batch["packing_made"].to_numpy() >= 1  # NaN compares False
+    secured = secured.where(pd.Series(receiver.notna().to_numpy() & made_ge1, index=secured.index))
+
+    made = batch["packing_made"].copy()
+    net = batch["packing_net"].copy()
+    goal_threat = batch["packing_goal_threat"].copy()
+    if params.require_secured:
+        gate_rows = receiver_bearing & made_ge1
+        secured_false = (~secured.astype("boolean")).fillna(False).to_numpy(dtype=bool)
+        zero_rows = gate_rows & secured_false
+        na_rows = gate_rows & secured.isna().to_numpy()
+        for col in (made, net, goal_threat):
+            col[zero_rows] = 0.0
+            col[na_rows] = np.nan
+
+    out = actions.copy()
+    # House Int64 idiom preserves the 0-vs-NaN distinction on the count columns.
+    out["packing_made"] = made.astype("Int64")
+    out["packing_net"] = net.to_numpy()
+    out["packing_goal_threat"] = goal_threat.astype("Int64")
+    out["packing_receiver_player_id"] = receiver
+    out["packing_secured"] = secured
+    # line_x is kernel-internal (feeds secured); deliberately NOT an output column.
+
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    existing = [c for c in provenance_cols if c in out.columns]
+    if not existing:
+        pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+        if len(pointers) > 0:
+            ptr_cols = pointers.set_index("action_id")[provenance_cols]
+            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def packing_xfns(
+    *,
+    home_team_id: int | str,
+    params: PackingParams | None = None,
+) -> list:
+    """VAEP xfn factory: ONE FrameAwareTransformer emitting packing_made /
+    packing_net / packing_goal_threat x 3 gamestate slots = 9 columns. Calls the
+    SHARED _kernels._packing_at_actions once per slot (3x, not 9x). Receiver id +
+    secured are provenance, excluded (the _COORD_COLS precedent).
+
+    ``params.require_secured=True`` raises ``ValueError``: receiver/secured
+    resolution needs true next-row relationships, which shifted gamestate slots
+    do not have -- secured gating is aggregator-only (ADR-039).
+
+    .. warning::
+
+        Result-leakage (TF-49 review F4, ADR-039): every packing column gates on
+        the action's OWN ``result_id`` -- as an a0-slot feature that is exactly
+        the result-leakage class HybridVAEP exists to strip, and the TF-48
+        auto-discovering guard covers DEFAULT lists only (opt-in factories
+        bypass it). ``packing_xfns`` MUST NOT enter HybridVAEP-class consumers
+        without a0 exclusion. A result-free a0 variant is a recorded fork in
+        ADR-039, not built.
+
+    See NOTICE for full bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking import packing_xfns
+    >>> xfns = packing_xfns(home_team_id=1)
+    >>> len(xfns)
+    1
+    """
+    if params is not None and params.require_secured:
+        raise ValueError(
+            "packing_xfns: params.require_secured=True is not supported -- receiver/secured "
+            "resolution needs true next-row relationships, which shifted gamestate slots do "
+            "not have. Secured gating is aggregator-only (use add_packing). See ADR-039."
+        )
+    col_names = ["packing_made", "packing_net", "packing_goal_threat"]
+
+    def _packing_transformer(states, frames):
+        out = pd.DataFrame(index=states[0].index)
+        if frames is None:
+            for i in range(min(3, len(states))):
+                for col in col_names:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+        for i, slot in enumerate(states[:3]):
+            batch = _kernels._packing_at_actions(slot, frames, home_team_id=home_team_id, params=params)
+            for col in col_names:
+                out[f"{col}_a{i}"] = batch[col].to_numpy()
+        return out
+
+    _packing_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _packing_transformer.__name__ = "packing"
+    return [_packing_transformer]
 
 
 # ---------------------------------------------------------------------------

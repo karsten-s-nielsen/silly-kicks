@@ -353,6 +353,18 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     "tracking:add_obso": _one(_std_inputs, _std_invoke(F.add_obso)),
     "tracking:add_off_ball_context": _one(_std_inputs, _std_invoke(F.add_off_ball_context, home_team_id=5)),
     "tracking:add_off_ball_runs": _one(_std_inputs, _std_invoke(F.add_off_ball_runs, home_team_id=5)),
+    # add_packing branches on params.require_secured (gates its OWN kernel-owned columns,
+    # never caller inputs) -- a non-default-params variant still pins the params path.
+    "tracking:add_packing": [
+        ("defaults", _std_inputs, _std_invoke(F.add_packing, home_team_id=5)),
+        (
+            "nondefault_params",
+            _std_inputs,
+            lambda i: F.add_packing(
+                i[0], i[1], home_team_id=5, params=tracking.PackingParams(include_gk=True, back_line_n=3)
+            ),
+        ),
+    ],
     "tracking:add_pausa": _one(_std_inputs, _std_invoke(F.add_pausa)),
     "tracking:add_pitch_control": _one(_std_inputs, _std_invoke(F.add_pitch_control)),
     "tracking:add_player_influence": _one(_xtf_inputs, _xtf_invoke(F.add_player_influence)),
@@ -411,6 +423,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     "atomic.tracking:add_gk_influence": _one(_axtf_inputs, _xtf_invoke(atf.add_gk_influence)),
+    "atomic.tracking:add_packing": _one(_astd_inputs, _std_invoke(atf.add_packing, home_team_id=5)),
     "atomic.tracking:add_pitch_control": _one(_astd_inputs, _std_invoke(atf.add_pitch_control)),
     "atomic.tracking:add_player_influence": _one(_axtf_inputs, _xtf_invoke(atf.add_player_influence)),
     "atomic.tracking:add_pre_shot_gk_angle": _one(_astd_inputs, lambda i: atf.add_pre_shot_gk_angle(i[0], frames=i[1])),

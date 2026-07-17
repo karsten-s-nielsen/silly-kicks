@@ -31,6 +31,7 @@ __all__ = [
     "opta",
     "play_left_to_right",
     "require_et_direction",
+    "resolve_next_touch_receiver",
     "results_df",
     "skillcorner",
     "statsbomb",
@@ -75,6 +76,7 @@ from .utils import (
     boundary_metrics,
     coverage_metrics,
     play_left_to_right,
+    resolve_next_touch_receiver,
     validate_spadl,
 )
 

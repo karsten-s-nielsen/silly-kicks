@@ -407,6 +407,33 @@ The per-pass structural primitives in silly_kicks/tracking/_structural_pass.py
   owner-gated e2e LBS-AUC is a regression guard, not a reproduction of the
   paper's progression result.
 
+The packing metrics in silly_kicks/tracking/_packing.py (PR-S117, TF-49)
+implement methodologies described in:
+
+- Reinartz, S., & Hegeler, J. (c. 2015). "Packing" (Impect GmbH).
+  (The canon packing count: opponents removed from the defensive phase by a
+  completed pass/carry -- 1 point per bypassed opponent; the
+  defenders-outplayed weighting concept. Receiver double-credit is realized
+  consumer-side by grouping on packing_receiver_player_id.)
+
+- Goes, F. R., Kempe, M., Meerhoff, L. A., & Lemmink, K. A. P. M. (2019).
+  "Not Every Pass Can Be an Assist: A Data-Driven Model to Measure Pass
+  Effectiveness in Professional Soccer Matches." Big Data, 7(1).
+  doi:10.1089/big.2018.0067.
+  (Longitudinal outplayed-defender formalization: the start_x < d_x <= end_x
+  inequality -- identical to TF-45's Line Bypass Score, whose far-touchline
+  1-D caveat is inherited canon.)
+
+- Varadharajan, S. K. "football-packing" (open-source library,
+  github.com/samirak93/football-packing).
+  (The net-packing direction multipliers: +1 forward / +0.5 sideways / -1
+  backward over the traversed x-interval.)
+
+Practitioner rules (the goal-threat last-N back-line restriction, secured
+reception, and the reported per-match anchors) follow the Modern Soccer Coach
+"Packing Data" lesson and the Twelve/Soccermatics Pro course materials; see
+the per-feature docstrings.
+
 The cover shadow features in silly_kicks/tracking/_cover_shadows.py
 (PR-S36, TF-30) implement methodologies described in:
 

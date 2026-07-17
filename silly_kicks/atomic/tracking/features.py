@@ -10,11 +10,15 @@ from __future__ import annotations
 
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.atomic.spadl import config as atomicconfig
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
+from silly_kicks.tracking._id_compat import ids_equal
+from silly_kicks.tracking._packing import PackingParams
 from silly_kicks.tracking._shot_goalmouth import ShotGoalmouthParams
 from silly_kicks.tracking._structural_pass import (
     StructuralPassParams,
@@ -53,6 +57,7 @@ from silly_kicks.tracking.utils import _resolve_action_frame_context
 _ATOMIC_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty"))
 
 __all__ = [
+    "PackingParams",
     "StructuralPassParams",
     "actor_arc_length_pre_window",
     "actor_displacement_pre_window",
@@ -63,6 +68,7 @@ __all__ = [
     "add_cover_shadows",
     "add_ghost_gk",
     "add_gk_influence",
+    "add_packing",
     "add_pitch_control",
     "add_player_influence",
     "add_pre_shot_gk_angle",
@@ -96,6 +102,7 @@ __all__ = [
     "obso_xfns",
     "off_ball_xt_opponent",
     "off_ball_xt_team",
+    "packing_xfns",
     "pausa_xfns",
     "pitch_control_at_target",
     "player_influence_xfns",
@@ -172,6 +179,143 @@ def structural_pass_xfns(*, home_team_id, params=None):
 
     _atomic_transformer._frame_aware = True  # type: ignore[attr-defined]
     _atomic_transformer.__name__ = "structural_pass"
+    return [_atomic_transformer]
+
+
+def _packing_atomic_adapter(actions: pd.DataFrame, params: PackingParams) -> pd.DataFrame:
+    """Synthesize start/end + std type ids + a type-aware result_id from the atomic
+    stream (the SK-xT-2 precedent): dribble success is intrinsic (dribbles are never
+    followed by ``receival``); every other packing-domain type succeeds iff the NEXT
+    atom (same game+period) is a ``receival`` OR a SAME-TEAM keeper reception
+    (``keeper_pick_up`` / ``keeper_claim`` -- atomic never inserts a receival before
+    keeper collections, so a completed back-pass would otherwise synthesize fail;
+    execution-review D5). Non-domain atoms map to std ``non_action`` (off-domain for
+    the kernel; atomic-only ids like receival/out never leak into the std domain).
+
+    Collapsed-atom bridging (execution-review D2): ``convert_to_atomic``'s
+    ``_simplify`` re-types corner_crossed/corner_short -> atomic ``corner`` and
+    freekick_crossed/freekick_short/shot_freekick -> atomic ``freekick``, so the
+    STANDARD set-piece names carry ZERO atomic rows. When a corner/freekick name is
+    in ``params.action_types``, the matching collapsed atom joins the domain (mapped
+    to the first requested std id -- the kernel only tests membership, and the
+    synthesized frame never leaves the mirror). A collapsed ``freekick`` that was a
+    shot_freekick stays off-domain honestly: no receival/keeper-reception follows a
+    shot, so its synthesized result is fail. Name-mapped deliberately -- do NOT
+    "simplify" to raw id passthrough (a future config renumber would silently
+    break it)."""
+    adapted = _structural_pass_atomic_endpoints(actions)
+    n = len(actions)
+    type_id = actions["type_id"].to_numpy()
+
+    std_ids = np.full(n, spadlconfig.actiontype_id["non_action"], dtype="int64")
+    is_domain = np.zeros(n, dtype=bool)
+    for name in params.action_types:
+        mask = type_id == atomicconfig.actiontype_id[name]  # NaN-safe (NaN != int)
+        std_ids[mask] = spadlconfig.actiontype_id[name]
+        is_domain |= mask
+    for collapsed, members in (
+        ("corner", ("corner_crossed", "corner_short")),
+        ("freekick", ("freekick_crossed", "freekick_short")),
+    ):
+        requested = [name for name in members if name in params.action_types]
+        if requested:
+            mask = type_id == atomicconfig.actiontype_id[collapsed]
+            std_ids[mask] = spadlconfig.actiontype_id[requested[0]]
+            is_domain |= mask
+
+    next_type = np.full(n, -1.0)
+    same_gp = np.zeros(n, dtype=bool)
+    if n > 1:
+        next_type[:-1] = type_id[1:]
+        game = actions["game_id"].to_numpy()
+        period = actions["period_id"].to_numpy()
+        same_gp[:-1] = (game[1:] == game[:-1]) & (period[1:] == period[:-1])
+    is_dribble = type_id == atomicconfig.actiontype_id["dribble"]
+    team_s = actions["team_id"].reset_index(drop=True)
+    next_team_same = ids_equal(team_s, team_s.shift(-1)).to_numpy()
+    keeper_reception_ids = [atomicconfig.actiontype_id["keeper_pick_up"], atomicconfig.actiontype_id["keeper_claim"]]
+    is_received = same_gp & (
+        (next_type == atomicconfig.actiontype_id["receival"])
+        | (np.isin(next_type, keeper_reception_ids) & next_team_same)
+    )
+    success = is_domain & (is_dribble | (~is_dribble & is_received))
+
+    adapted["type_id"] = std_ids
+    adapted["result_id"] = np.where(success, spadlconfig.result_id["success"], spadlconfig.result_id["fail"])
+    return adapted
+
+
+def add_packing(actions, frames, *, home_team_id, links=None, params=None):
+    """Atomic-SPADL aggregator for TF-49 packing: the THREE numeric columns only
+    (packing_made / packing_net / packing_goal_threat). Synthesizes end from x+dx /
+    y+dy plus a type-aware result_id (:func:`_packing_atomic_adapter`), delegates to
+    the standard aggregator, then assembles the output on a COPY OF THE CALLER'S
+    frame -- the adapter's rewritten type_id and synthetic result_id never leak into
+    the returned enrichment (execution-review D3). Receiver/secured are omitted --
+    atomic ``receival`` atoms already carry receiver identity explicitly (spec s6).
+    ``params.require_secured=True`` raises ``ValueError``: secured reception is
+    defined on standard streams and its column is not emitted here, so gating counts
+    on a dropped, atom-stream secured label would be a silent semantic trap
+    (ADR-039).
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_packing
+    >>> enriched = add_packing(atomic_actions, frames, home_team_id=1)
+    >>> enriched[["packing_made", "packing_net", "packing_goal_threat"]].head()
+    """
+    from silly_kicks.tracking.features import add_packing as _std
+
+    if params is None:
+        params = PackingParams()
+    if params.require_secured:
+        raise ValueError(
+            "atomic add_packing: params.require_secured=True is not supported -- the atomic "
+            "mirror emits numeric columns only (packing_secured is dropped), so gating counts "
+            "on a dropped, atom-stream secured label would be a silent semantic trap. See ADR-039."
+        )
+    adapted = _packing_atomic_adapter(actions, params)
+    enriched = _std(adapted, frames, home_team_id=home_team_id, links=links, params=params)
+    # Assemble on the CALLER's frame: the delegate ran on the adapter's synthesized
+    # stream, whose type_id/result_id are mirror-internal. Row order is preserved by
+    # the delegate (copy + how='left' provenance merge), so positional .array
+    # assignment keeps the Int64/float dtypes intact.
+    out = actions.copy()
+    for col in ("packing_made", "packing_net", "packing_goal_threat"):
+        out[col] = enriched[col].array
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        for col in provenance_cols:
+            if col in enriched.columns:
+                out[col] = enriched[col].array
+    return out
+
+
+def packing_xfns(*, home_team_id, params=None):
+    """Atomic VAEP factory for packing: each gamestate slot runs through
+    :func:`_packing_atomic_adapter` (endpoint + type-aware result synthesis) before
+    the shared kernel. Numeric columns only; inherits the standard factory's
+    require_secured rejection and its result-leakage warning (TF-49 review F4).
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import packing_xfns
+    >>> xfns = packing_xfns(home_team_id=1)
+    >>> len(xfns)
+    1
+    """
+    from silly_kicks.tracking.features import packing_xfns as _std_xfns
+
+    if params is None:
+        params = PackingParams()
+    inner = _std_xfns(home_team_id=home_team_id, params=params)[0]
+
+    def _atomic_transformer(states, frames):
+        adapted_states = [_packing_atomic_adapter(s, params) for s in states]
+        return inner(adapted_states, frames)
+
+    _atomic_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _atomic_transformer.__name__ = "packing"
     return [_atomic_transformer]
 
 

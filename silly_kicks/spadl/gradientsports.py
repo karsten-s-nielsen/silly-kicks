@@ -254,13 +254,28 @@ def _dispatch_actiontype_resultid(events: pd.DataFrame) -> tuple[np.ndarray, np.
     is_yellow = pd.Series(foul_outcome).str.startswith(("Y", "2Y")).fillna(False).to_numpy()
     is_red = pd.Series(foul_outcome).str.startswith(("R", "SR")).fillna(False).to_numpy()
 
-    result_conds = [pass_success, shot_goal, is_owngoal, is_yellow, is_red]
+    # Ball-carry result from the native ballCarryOutcome (PR-S117, ADR-018 amendment).
+    # Live WC2022 vocabulary is {R, L} (probed 2026-07-17, 4 matches, field present on
+    # 100% of BC rows): R = retained -> success, L = lost -> fail. Cross-checked against
+    # the converted stream's next-touch team. Without this condition every BC carry fell
+    # through to the `fail` default, structurally excluding GS dribbles from every
+    # completion-gated consumer (packing's completion gate; xT/xtgk success-filtered
+    # move-sets; VAEP result features). Unknown/absent tokens fall through to `fail`
+    # (this converter's exact-token allowlist style, matching pass/cross "C" and shot
+    # "G"); the owner-gated packing e2e gates the in-domain dribble share, so a future
+    # feed that drops or renames the field fails loudly there instead of mass-failing
+    # silently. Lowest np.select priority: card results keep precedence by design.
+    carry_outcome = events["ball_carry_outcome"].fillna("").to_numpy()
+    carry_success = (pe == "BC") & (carry_outcome == "R")
+
+    result_conds = [pass_success, shot_goal, is_owngoal, is_yellow, is_red, carry_success]
     result_choices = [
         rs_ids["success"],
         rs_ids["success"],
         rs_ids["owngoal"],
         rs_ids["yellow_card"],
         rs_ids["red_card"],
+        rs_ids["success"],
     ]
     result_id_arr = np.select(result_conds, result_choices, default=rs_ids["fail"]).astype("int64")
 

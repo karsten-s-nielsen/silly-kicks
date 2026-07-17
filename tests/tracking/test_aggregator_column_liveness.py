@@ -329,6 +329,13 @@ ENTRIES: dict[str, object] = {
     "add_obso": _std(F.add_obso),
     "add_off_ball_context": _std(F.add_off_ball_context, home_team_id=5),
     "add_off_ball_runs": _std(F.add_off_ball_runs, home_team_id=5),
+    # TF-49 pre-check (review major 8, run 2026-07-17 before registering): on this fixture
+    # the pass window yields made=0 (honest zero -- no defender in (50, 60]), the goalkick
+    # window made=5/net=5.0/goal_threat=4 with receiver=10 and secured=True (the row-3 shot
+    # IS the reception -> decisive), the cross window made=3/net=1.5 (side band) with a
+    # period-end receiver <NA>. All three numeric columns are live + non-constant; receiver
+    # (Int64) and secured (boolean) are dtype-exempt from non-constant but live.
+    "add_packing": _std(F.add_packing, home_team_id=5),
     "add_pausa": _std(F.add_pausa),
     "add_pitch_control": _std(F.add_pitch_control),
     "add_player_influence": _xtf(F.add_player_influence),

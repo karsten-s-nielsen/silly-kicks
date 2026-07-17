@@ -351,3 +351,51 @@ has been withdrawn.
   post-standardisation). The metric's upstream mask removes the exposure; documented, not altered.
 - **Hyrum.** On pandas 3.0 the `gk_geometry_source` column materialises as `str` dtype, not `object`.
 - **Version 4.46.0 (MINOR).** C4 count stays 28 (no new action-coupled aggregator).
+
+## Amendment (2026-07-17, silly-kicks 4.50.0, PR-S117): retains() hardened to the packing secured-seam rules — probe-verified label no-op, weights untouched
+
+`retains()` (§Part 3) shared two latent bias classes with the seam TF-49's `secured_reception`
+hardened: (a) foul / non_action / NaN-team rows could DECIDE a loss (a foul row carrying a new
+possession id reads as an opponent boundary — winning a foul is not losing the ball; a GS
+null-actor row must never read as "opponent", ADR-027), and (b) the possession-boundary test was
+a raw `!=` (an NA possession id attests a boundary). **Measured before fixing (read-only probe,
+2026-07-17): ZERO training-label flips on both live ρ cohorts** — 0/3451 (GS, 64 matches) and
+0/5483 (SkillCorner, 108 matches), replica parity-asserted — because the gold-mart
+`possession_id` stays continuous through foul rows (2115/2122 GS; 1228/1260 SC) and both cohorts
+carry 0 NaN-team / 0 NA-possession rows; of the 135 (GS) / 136 (SC) anchor windows that reach a
+foul row first, none satisfies the diff-team ∧ diff-poss precondition. The bias is live ONLY on
+the `add_possessions` self-heal path (no production consumer). The hardening (skip
+{non_action, foul} + NaN-team rows; both-present team equality; both-attested possession test)
+therefore shipped WITHOUT a retrain: a post-fix gate re-verified the shipped function ==
+probed variant on all 223,718 cohort rows and 0 training-label changes vs pre-fix (full-stream
+diffs exist only OUTSIDE the training mask — e.g. 7 GS rows at the 7 non-continuous foul
+possessions). Bundled `default` + `skillcorner` ρ weights and their recorded `metrics.json`
+remain exactly valid; the F1 calibration CI guard is unaffected. Red-first unit fixtures pin all
+four rules plus a mart-shaped no-op regression (`tests/xtgk/test_retention_labels.py`).
+Discovered via TF-49 (ADR-039 relay item 1 carries the discovery sequence).
+
+**Delta-review follow-up (same amendment):** the first-cut NaN-team hardening was
+DECIDER-side only — a NaN-team ANCHOR row still got a decisive 0.0/1.0 because
+`not _same(team[gj], team[gi])` is vacuously True when the anchor team is NA, so the unknown
+team satisfied the opponent-boundary prong (ADR-027 violated anchor-side). Fixed: a NaN-team
+anchor is skipped up front → NaN (an unknown team has no knowable "whose team retained"
+answer). Also a no-op on the ρ path (both live mart cohorts carry ZERO NaN-team rows — the
+gold `team_id` is fully attested; the raw-GS null-actor rows this protects are resolved before
+the mart), re-verified by the same sort-noop gate (0 diffs / 223,718 rows). The sibling
+`secured_reception` was audited and already skips NaN-team anchors, so the gap was isolated to
+`retains()` (which labels every row with no domain pre-filter). Found by the PR-S117 delta
+adversarial review; red-first pinned (`test_nan_team_ANCHOR_is_undecidable_not_a_loss`).
+
+Same amendment, part (b) — **canonical (time_seconds, action_id) scan order** (owner-decided
+after a dedicated order probe): `retains()` previously scanned in POSITIONAL order guarded only
+by time-nondecreasing, so time-TIED rows arriving in a different positional order could change
+which events a window sees (a tie WITH the anchor row flips the label — red-first pinned). The
+live exposure surface is real (9,649 tied pairs on the GS cohort, 563 on SC) but the live path
+was never at risk: the ρ loader pins the total order `(game, period, time, action_id)` with
+unique action ids. The probe also RULED OUT the packing-D4-style bare-`action_id` sort: on GS
+the mart's `action_id` order genuinely disagrees with `time_seconds` (the time guard rejects
+it), so `(time_seconds, action_id)` is the only guard-valid canonical key. The internal sort is
+exactly the loader's order → gate-verified byte-identical on both full live cohorts (223,718
+rows, 0 diffs); labels are now input-row-order-insensitive for any caller. Post-sort, the
+time guard degrades to a NaN-time catcher (mis-ordered input is canonicalized, not rejected —
+the deliberate semantics of order-insensitivity).

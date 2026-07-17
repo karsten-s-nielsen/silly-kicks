@@ -1257,6 +1257,80 @@ def boundary_metrics(
     return BoundaryMetrics(precision=precision, recall=recall, f1=f1)
 
 
+def _resolve_next_touch_positions(actions: pd.DataFrame) -> pd.Series:
+    """POSITIONAL index of each action's next same-team touch (or <NA>). Private
+    single-source for resolve_next_touch_receiver + packing's reception-anchored
+    secured window. Skips non_action AND foul rows (neither is a ball touch: the
+    fouler must never resolve as a receiver, and an advantage-played opponent
+    foul must not block resolution -- TF-49 execution-review fix); never crosses
+    a (game_id, period_id) boundary; opponent-next -> <NA>. Returns Int64
+    positions into ``actions``'s positional order, indexed 0..n-1.
+    """
+    non_touch_ids = [spadlconfig.actiontype_id["non_action"], spadlconfig.actiontype_id["foul"]]
+    a = actions.reset_index(drop=True)
+    if len(a) == 0:
+        return pd.Series(pd.NA, index=a.index, dtype="Int64")
+
+    s = a.sort_values(["game_id", "period_id", "action_id"], kind="stable")
+    s_touch = s[~np.isin(s["type_id"].to_numpy(), non_touch_ids)]
+    grp = [s_touch["game_id"].to_numpy(), s_touch["period_id"].to_numpy()]
+
+    pos = pd.Series(s_touch.index.to_numpy(), index=s_touch.index)  # labels == positions
+    next_pos = pos.groupby(grp).shift(-1).astype("Int64")
+    next_team = s_touch.groupby(grp)["team_id"].shift(-1)
+
+    from silly_kicks.tracking._id_compat import ids_equal
+
+    same = ids_equal(s_touch["team_id"], next_team).to_numpy()  # positional ndarray
+    next_pos = next_pos.where(same)  # positional ndarray mask (same order as s_touch)
+
+    out = pd.Series(pd.NA, index=a.index, dtype="Int64")
+    out.loc[next_pos.index] = next_pos  # RangeIndex labels == positions, unique
+    return out
+
+
+def resolve_next_touch_receiver(actions: pd.DataFrame, *, positions: pd.Series | None = None) -> pd.Series:
+    """Per action, the player_id of the NEXT same-team touch (packing-agnostic).
+
+    ``positions`` optionally supplies a precomputed ``_resolve_next_touch_positions``
+    output (one sort/groupby pass per match instead of two -- add_packing does this).
+
+    The next TOUCH strictly after each action within its ``(game_id, period_id)``
+    group (ordered by ``action_id``), skipping ``non_action`` AND ``foul`` rows
+    (neither is a ball touch: Gradient Sports emits non-touch ``non_action`` rows,
+    and an intervening foul -- including an advantage-played opponent foul -- must
+    neither become the receiver nor block resolution).
+    Opponent-next / period-end / NaN source id -> <NA>.
+    Resolution is generic for EVERY action type -- domain masks (e.g. packing's
+    dribble exclusion) belong to consumers. Positional implementation (ADR-019 /
+    PR-S110 lesson); safe for non-RangeIndex and duplicate-index callers.
+
+    Dtype contract (TF-49 review F5): nullable Int64 and object id columns shift
+    natively; a plain int64 source is pre-converted to Int64 (lossless, NA-safe),
+    and so is a float64 source (the NaN-coded-int convention, e.g. HDF5 fixtures
+    and ``defending_gk_player_id``-style columns -- a non-integral float id raises
+    loudly rather than silently rounding); the result NEVER float64-upcasts.
+
+    Examples
+    --------
+    >>> from silly_kicks.spadl.utils import resolve_next_touch_receiver
+    >>> receiver = resolve_next_touch_receiver(actions)
+    >>> receiver.head()
+    """
+    pid = actions["player_id"].reset_index(drop=True)
+    if (
+        pd.api.types.is_integer_dtype(pid.dtype) and not isinstance(pid.dtype, pd.Int64Dtype)
+    ) or pd.api.types.is_float_dtype(pid.dtype):
+        pid = pid.astype("Int64")
+
+    next_pos = positions.reset_index(drop=True) if positions is not None else _resolve_next_touch_positions(actions)
+    out = pd.Series(pd.NA, index=next_pos.index, dtype=pid.dtype, name="receiver_player_id")
+    resolved = next_pos.notna()
+    out.loc[resolved] = pid.iloc[next_pos[resolved].astype("int64")].to_numpy()
+    out.index = actions.index  # positional reattach; duplicate-safe
+    return out
+
+
 class CoverageMetrics(TypedDict):
     """Per-action-type coverage statistics for a SPADL action stream.
 
