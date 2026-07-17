@@ -596,8 +596,15 @@ def convert_to_actions(
     # Derive end_x/end_y from next-action start for pass-class types.
     # Must run BEFORE foul synthesis: synthesized foul rows interleave
     # via 0.5-offset sort key and would intercept the shift(-1) chain.
+    #
+    # PR-S116: GS OTB/BC carries map to SPADL dribble with a placeholder end
+    # (this converter initializes end=start for every event and never runs
+    # _add_dribbles), so dribbles join the derive set GS-LOCALLY via
+    # extra_type_ids. The shared _DERIVE_END_TYPE_IDS is unchanged on purpose:
+    # its placeholder guard cannot distinguish statsbomb's ~11% genuine
+    # stationary carries from placeholders.
     # ------------------------------------------------------------------
-    actions = _derive_end_coordinates(actions)
+    actions = _derive_end_coordinates(actions, extra_type_ids=frozenset({spadlconfig.actiontype_id["dribble"]}))
 
     # ------------------------------------------------------------------
     # Foul row handling (two paths, depending on parent dispatch result)

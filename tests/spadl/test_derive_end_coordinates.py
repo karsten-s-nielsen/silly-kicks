@@ -587,3 +587,58 @@ class TestEdgeCases:
         original_end_x = actions.loc[0, "end_x"]
         _derive_end_coordinates(actions)
         assert actions.loc[0, "end_x"] == original_end_x
+
+
+class TestExtraTypeIds:
+    """PR-S116: opt-in per-converter extension of the derive set (GS dribble fix)."""
+
+    def _dribble_then_pass(self) -> pd.DataFrame:
+        return _make_actions(
+            [
+                {
+                    "action_id": 0,
+                    "type_id": spadlconfig.actiontype_id["dribble"],
+                    "time_seconds": 10.0,
+                    "start_x": 50.0,
+                    "start_y": 30.0,
+                    "end_x": 50.0,
+                    "end_y": 30.0,
+                },
+                {
+                    "action_id": 1,
+                    "type_id": spadlconfig.actiontype_id["pass"],
+                    "time_seconds": 12.0,
+                    "start_x": 62.0,
+                    "start_y": 35.0,
+                    "end_x": 70.0,
+                    "end_y": 40.0,
+                },
+            ]
+        )
+
+    def test_default_leaves_dribble_placeholder(self):
+        """Byte-identity for every existing caller: no extra_type_ids -> no dribble change."""
+        result = _derive_end_coordinates(self._dribble_then_pass())
+        assert result.loc[0, "end_x"] == pytest.approx(50.0)
+        assert result.loc[0, "end_y"] == pytest.approx(30.0)
+
+    def test_extra_type_ids_derives_placeholder_dribble(self):
+        result = _derive_end_coordinates(
+            self._dribble_then_pass(),
+            extra_type_ids=frozenset({spadlconfig.actiontype_id["dribble"]}),
+        )
+        assert result.loc[0, "end_x"] == pytest.approx(62.0)
+        assert result.loc[0, "end_y"] == pytest.approx(35.0)
+
+    def test_native_end_dribble_untouched(self):
+        """The placeholder_end guard: a dribble with a REAL end is never rewritten."""
+        actions = self._dribble_then_pass()
+        actions.loc[0, ["end_x", "end_y"]] = [55.0, 31.0]
+        result = _derive_end_coordinates(actions, extra_type_ids=frozenset({spadlconfig.actiontype_id["dribble"]}))
+        assert result.loc[0, "end_x"] == pytest.approx(55.0)
+
+    def test_period_last_dribble_keeps_placeholder(self):
+        actions = self._dribble_then_pass()
+        actions.loc[1, "period_id"] = 2
+        result = _derive_end_coordinates(actions, extra_type_ids=frozenset({spadlconfig.actiontype_id["dribble"]}))
+        assert result.loc[0, "end_x"] == pytest.approx(50.0)

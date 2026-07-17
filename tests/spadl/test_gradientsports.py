@@ -1266,6 +1266,47 @@ class TestGradientsportsEndCoordinates:
         assert actions.iloc[-1]["end_x"] == pytest.approx(actions.iloc[-1]["start_x"])
         assert actions.iloc[-1]["end_y"] == pytest.approx(actions.iloc[-1]["start_y"])
 
+    def test_dribble_end_is_next_start(self):
+        """PR-S116: OTB/BC carries derive end_x/end_y from the next action's start.
+
+        GS initializes end=start for every event and never runs _add_dribbles, so
+        without the extra_type_ids opt-in every GS dribble ships zero-displacement
+        (verified 850/850 on the live corpus)."""
+        df = pd.concat([_df_minimal_pass(), _df_minimal_pass()], ignore_index=True)
+        df.loc[0, "possession_event_type"] = "BC"
+        df.loc[0, "pass_outcome_type"] = None
+        df.loc[1, "event_id"] = 2
+        df.loc[1, "possession_event_id"] = 2
+        df.loc[1, "ball_x"] = 20.0
+        df.loc[1, "ball_y"] = 5.0
+        df.loc[1, "time_seconds"] = 11.0
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["dribble"]
+        assert actions.iloc[0]["end_x"] == pytest.approx(actions.iloc[1]["start_x"])
+        assert actions.iloc[0]["end_y"] == pytest.approx(actions.iloc[1]["start_y"])
+        # Non-degenerate: the carry genuinely moved.
+        assert actions.iloc[0]["end_x"] != pytest.approx(actions.iloc[0]["start_x"])
+
+    def test_period_final_dribble_keeps_placeholder_end(self):
+        """A period-last carry has no successor — placeholder end survives honestly."""
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "BC"
+        df.loc[0, "pass_outcome_type"] = None
+        actions, _ = gs_mod.convert_to_actions(
+            df,
+            home_team_id=100,
+            home_team_start_left=True,
+            home_team_start_left_extratime=True,
+        )
+        assert actions.iloc[0]["type_id"] == spadlconfig.actiontype_id["dribble"]
+        assert actions.iloc[0]["end_x"] == pytest.approx(actions.iloc[0]["start_x"])
+        assert actions.iloc[0]["end_y"] == pytest.approx(actions.iloc[0]["start_y"])
+
 
 class TestGradientsportsSyntheticMatchE2E:
     """End-to-end conversion against the committed synthetic match fixture."""

@@ -67,3 +67,31 @@ now count in `scores`/`concedes`/xG for **every** provider.
 Shipped alongside the Gradient Sports converter changes (own-goal `RE`+`G` capture, cross-goal `CR`+`G`
 synthetic shot, `nonEvent` voided-event exclusion). ADR number provisional — reconcile against
 `origin/main` at merge (no pre-reserved numbers).
+
+## Amendment (2026-07-16, silly-kicks 4.49.0, PR-S116): GS dribbles derive real end coordinates
+
+**Found** during TF-49 packing spec probes (owner prompt "could this be an existing bug?"): every
+GS dribble shipped `end == start` — verified 850/850 zero-displacement (0 m) on the live corpus,
+while IDSSE/metrica/skillcorner/wyscout dribbles carry real geometry (median 6.2–13.7 m) and
+statsbomb is 89% distinct (11% = genuine stationary carries).
+
+**Root cause chain (all three legs required):** (1) the GS converter maps `OTB`+`BC` ball-carries
+to SPADL `dribble`; (2) it initializes `end = start = ball_x/y` for EVERY event and only
+`_derive_end_coordinates` writes real ends — whose shared `_DERIVE_END_TYPE_IDS` excludes
+`dribble`; (3) GS is the only event converter that never calls `_add_dribbles` (whose synthesized
+dribbles get `start = prev.end`, `end = next.start`).
+
+**Decision — GS-local opt-in, shared set untouched:** `_derive_end_coordinates` gains a
+keyword-only `extra_type_ids: frozenset[int] = frozenset()`; ONLY `gradientsports.py` passes
+`{dribble}`. A global set change was rejected (cross-session review): the `placeholder_end` guard
+cannot distinguish statsbomb's genuine stationary carries from placeholders, so all eight
+converter paths would silently rewrite recorded data. Default-path byte-identity is
+regression-locked; period-last carries honestly keep the placeholder (no successor to derive
+from). Owner-gated e2e asserts >90% of real WC2022 dribbles derive an end.
+
+**Consequences:** GS-only retrain trigger — xT/xtgk move-sets include dribbles (GS previously
+contributed zero-displacement transitions to GS-fitted transition matrices) and VAEP features
+consume dribble ends; GS-fitted artifacts re-fit on next touch. Zero delta for the other seven
+providers. Lakehouse re-materializes GS-derived marts on adoption. Precursor to TF-49 packing
+(PR-S117): the dribble-packing channel needs real GS carry geometry, and TF-49's
+degenerate-geometry NaN policy remains as the residual guard (period-last carries).
