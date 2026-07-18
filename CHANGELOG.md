@@ -5,6 +5,60 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.51.0] — 2026-07-17
+
+### Changed — TF-19 PR-2: corrected default weights + fail-closed chirality `load()` enforcement (`silly_kicks/tracking/_chirality.py`, `_xshot_occurrence.py`, `_xcross_attempt.py`, `_ghost_gk.py`; PR-S118, ADR-040)
+
+The bundled default xS / xCross / ghost-GK weights were **chirality-mis-served** — trained y-mirrored
+before the ADR-031 kloppy-tracking y-fix but served y-correct — a live correctness bug for VAEP
+consumers of `pre_shot_gk_full_default_xfns`. This replaces them with the DGX retrains (trained on
+y-correct frames) and completes ADR-037 §9's deferred chirality enforcement:
+
+- **Corrected default weights.** xS/xCross defaults are now the reproducible **public** arm
+  (SkillCorner + IDSSE, GS-free); the ghost default is the Stage-B 179-match retrain (§4.3-confirmed
+  better generalization). The wheel **shrinks** (ghost 12 MB → 7.2 MB).
+- **`load()` fail-closed chirality enforcement** (all three models): re-runs the model's own
+  `_chirality_block` on the canonical y-asymmetric probe frame and compares to the stored
+  fingerprint. Raises on a **mismatch** and on a **missing** one (every pre-PR-2 artifact = the
+  mis-served ones), with an explicit `legacy_override=True` escape hatch (warns). Cross-platform
+  tolerance `atol=1e-3 / rtol=1e-2` catches a y-mirror while tolerating float noise. Plus a
+  finiteness guard in `chirality_fingerprint`.
+- **`base_score` compatibility guard** (`load_xgb_booster_base_score_safe`). xgboost 3.x serializes
+  `base_score` as a bracketed string `"[X]"` that xgboost 2.x silently drops to the 0.5 default —
+  a mis-served intercept (the enforcement above **caught** this). `load()` now normalizes the
+  bracketed form; the bundled weights are re-saved to clean 2.x scalar format. The library supports
+  `xgboost>=2.0` across the 2.x/3.x boundary.
+- **HF-only `sc_extended` variant** (the Stage-B models trained on the 98 owner SkillCorner matches,
+  which beat public on both arms). `from_variant("sc_extended")` routes to `from_hub`; xS's `from_hub`
+  is now implemented (mirrors xCross) behind the new `[xshot]` extra. The Hub upload is an owner
+  follow-up (`docs/research/tf19_pr2/hf_upload_instructions.md`); the weights themselves are not
+  bundled in the wheel.
+- Ghost-GK model-card prose fixed (the training filter is a purely geometric goal-relative box, not
+  an "active defensive actions" condition); decision-table verdict recorded
+  (`docs/research/tf19_pr2/decision_table.md`).
+- **Weights-bump CI fixture updates** (the new weights legitimately move model outputs): the frozen
+  ghost KDE scipy-oracle golden (`tests/tracking/fixtures/ghost_gk_kde_golden.npz`) is regenerated
+  from the Stage-B model via `scripts/gen_ghost_gk_kde_golden.py` (mean_x 10.69→8.68 m; the
+  cpu-numba/fft==scipy parity property it locks is unchanged). The xCross directional liveness
+  fixture (`tests/datasets/tracking/xcross_directional/frozen_rows.parquet`) was a **degenerate**
+  probe — it held `ball_speed=0` (the model's #1 feature) for every row, so both the old and new
+  models scored it ≈0 and the AUC gate hinged on a razor-thin ordering that flipped between retrains
+  (the new model is provably sound: held-out CV pr_auc 2.85× base rate, all acceptance gates green,
+  AUC 1.0 on a realistic probe). New `scripts/make_xcross_directional_fixture.py` regenerates it with
+  realistic ball speed + varied geometry (AUC 1.0 on both the 4.18.0 and PR-2 models).
+- **Ghost mirror-invariance gate strengthened** (`tests/tracking/test_action_ltr_mirror_invariance.py`).
+  The refit shifted the corrected model's inherent lateral asymmetry on the near-goal-**centre** probe
+  (old 0.20 m → new 0.59 m), where the y-axis was a *vacuous* guard (a y-reprojection flip moved
+  ghost_gk_y by only ~0.1 m). Rather than loosen the tolerance, the probe is now **off-centre** so a
+  y-flip moves y by ~7 m (a real guard), with the durable orientation check on x (both mirrors at the
+  attacked goal) and an explicit non-vacuity assertion. This strengthens, not weakens, the ADR-028
+  construct-validity gate.
+
+**Hyrum / retrain trigger:** the xS/xCross columns of `pre_shot_gk_full_default_xfns` change for
+opted-in VAEP consumers (the corrected weights) — re-materialize. The public default arm is GS-free,
+so it is unaffected by the 4.49/4.50 Gradient Sports dribble fixes. C4 count unchanged (weights +
+a load-guard are not a new model node).
+
 ## [4.50.0] — 2026-07-17
 
 ### Fixed — Gradient Sports ball-carry results from the native `ballCarryOutcome` (`silly_kicks/spadl/gradientsports.py`; ADR-018 amendment, owner-directed in-PR fix)

@@ -44,8 +44,16 @@
     "gamma": 0.25
   },
   "sklearn_version": "1.9.0",
-  "training_commit": "110747491ad08e53f1e87845c9f82fce85f49e4a",
+  "training_commit": "97c74d5825d60a9d2fc7a4b8cadcd391166d3482",
   "training_platform": "dgx-spark-aarch64",
   "serve_estimator": "boosted_mean",
-  "version": "1.2.0"
+  "version": "1.2.0",
+  "chirality": {
+    "version": "chirality-probe-1",
+    "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
+    "outputs": [
+      2.5158482023,
+      32.5933877722
+    ]
+  }
 }

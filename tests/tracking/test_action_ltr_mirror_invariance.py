@@ -20,6 +20,9 @@ HOME, AWAY = 1, 2
 SHOT = spadlconfig.actiontype_id["shot"]
 GOALKICK = spadlconfig.actiontype_id["goalkick"]
 FL, FW = 105.0, 68.0
+# ghost_gk_y mirror-invariance tolerance: sized to the corrected 179-match model's inherent lateral
+# asymmetry on the off-centre probe (measured 1.26 m), with headroom. See test_ghost_gk_mirror_invariant.
+_GHOST_Y_TOL = 3.0
 
 
 def _scenario():
@@ -226,19 +229,72 @@ def test_team_shape_centroids_mirror_invariant():
     )
 
 
+def _ghost_scenario():
+    """A deliberately OFF-CENTRE variant of _scenario() for the ghost mirror test.
+
+    The shared _scenario() puts the ball and the attack on the y=34 centre line, where the
+    ghost model correctly predicts a near-centre keeper for BOTH a config and its mirror --
+    so the y-axis carries almost no signal and a y-reprojection flip would move ghost_gk_y by
+    only ~0.1 m (invisible under any sane tolerance). This scenario lateralizes the attack low
+    (ball + away attackers around y=14-20, still inside the model's trained goal-relative box
+    y in [18,50]) so the model predicts a CLEARLY off-centre ghost_gk_y. That turns the y-axis
+    into a real guard: a flip now moves y by ~7 m (the non-vacuity assertion below), which no
+    tolerance sized to the model's genuine asymmetry could mask.
+    """
+    a, f = _scenario()
+    f = f.copy()
+    # Lateralize the ball and the away attackers (players 61/62) low; nudge the home GK + line low
+    # too. All goal-relative y stay >= 14 (attack) / keeper prediction stays inside [18,50].
+    y_moves = {1: 20.0, 11: 19.0, 12: 24.0, 13: 14.0, 61: 14.0, 62: 20.0}  # player_id -> new frame y
+    for pid, new_y in y_moves.items():
+        f.loc[f["player_id"] == pid, "y"] = new_y
+    f.loc[f["is_ball"], "y"] = 16.0
+    a = a.copy()
+    a.loc[a["action_id"] == 0, "start_y"] = 20.0  # goalkick from the (now low) keeper
+    a.loc[a["action_id"] == 1, "start_y"] = 15.0  # the shot develops from the low flank
+    return a, f
+
+
 def test_ghost_gk_mirror_invariant():
     # Pre-load the model ONCE and share it across both calls (avoids a double ~18s load)
     # and locks the asymmetric ghost transform (x uniform, y per-action flip).
     from silly_kicks.tracking._ghost_gk import GhostGkModel
 
     model = GhostGkModel.from_variant("default")
-    a, f = _scenario()
+    a, f = _ghost_scenario()  # OFF-CENTRE (see _ghost_scenario) so the y-axis is a real guard
     am, fm = _mirror(a, f)
-    base = add_ghost_gk(a, f, home_team_id=HOME, model=model)
-    mir = add_ghost_gk(am, fm, home_team_id=AWAY, model=model)
-    # Tolerance 0.5 m: the trained HGBR is not bit-symmetric under a coordinate mirror
-    # (feature/KDE arithmetic + learned left/right asymmetry), so a sub-metre delta is
-    # model noise, not an orientation leak. The DISCRIMINATING axis is x: a gross
-    # orientation bug puts ghost_gk_x ~90 m away (goal-relative ~13 vs action-LTR ~101),
-    # which this comfortably catches; near-goal-centre y is inherently low-discrimination.
-    _assert_invariant(base, mir, 1, ["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"], tol=0.5)
+    base = add_ghost_gk(a, f, home_team_id=HOME, model=model).set_index("action_id")
+    mir = add_ghost_gk(am, fm, home_team_id=AWAY, model=model).set_index("action_id")
+
+    def _g(df: pd.DataFrame, col: str) -> float:
+        return float(df.loc[1, col])  # type: ignore[arg-type]
+
+    bx, by, bs = _g(base, "ghost_gk_x"), _g(base, "ghost_gk_y"), _g(base, "ghost_gk_density_spread")
+    mx, my, ms = _g(mir, "ghost_gk_x"), _g(mir, "ghost_gk_y"), _g(mir, "ghost_gk_density_spread")
+
+    # (1) ORIENTATION GUARD -- the DURABLE, model-independent correctness check. Both mirrors emit
+    # ghost_gk_x at the ATTACKED goal (x=105); a gross orientation leak puts x ~90 m away
+    # (goal-relative ~13 vs action-LTR ~101). x is the axis that actually catches an orientation bug.
+    assert bx > 95.0 and mx > 95.0, (bx, mx)
+    assert abs(bx - mx) < 0.5, (bx, mx)
+
+    # (2) NON-VACUITY -- the strengthening this fixture exists for. Off-centre, the model predicts a
+    # clearly non-central keeper, so a y-reprojection FLIP (emitting 68-my instead of my) would move
+    # y by ~7 m. The old central probe could NOT catch such a flip (it moved y by only ~0.1 m < the
+    # 0.5 m tol -- the y check was vacuous). The 5.0 m floor is comfortably above _GHOST_Y_TOL (3.0 m),
+    # so a flip would provably trip assertion (3); the floor is absolute (decoupled from the tol) so a
+    # future tol bump can't silently re-vacuate this guard.
+    flip_dy = abs(by - (FW - my))
+    assert flip_dy > 5.0, f"probe not discriminating on y: a y-flip would move only {flip_dy:.2f} m"
+
+    # (3) MIRROR INVARIANCE (y) -- base ~ mir within the CORRECTED 179-match model's inherent lateral
+    # asymmetry on a lateralized probe. Measured 1.26 m (old 81-match: 0.20 m on the central probe;
+    # the y-response, and its asymmetry, both scale with the off-centre signal). This is a soft
+    # model-symmetry bound with churn headroom -- the real orientation guards are (1) and (2). If a
+    # future refit pushes this past the tol while (1)+(2) still hold, re-measure and bump the tol; it
+    # is model asymmetry, not an orientation leak.
+    assert abs(by - my) < _GHOST_Y_TOL, f"ghost_gk_y asymmetry {abs(by - my):.3f} m exceeds {_GHOST_Y_TOL} m"
+    # density_spread is a large-magnitude entropy quantity (~355), so bound it RELATIVELY: the
+    # off-centre model asymmetry is ~0.36%, well inside 1% (the old 0.5 m ABSOLUTE tol was a
+    # central-probe artifact and does not translate to this scale).
+    assert abs(bs - ms) / abs(bs) < 0.01, f"ghost_gk_density_spread rel-diff {abs(bs - ms) / abs(bs):.4f}: {bs} vs {ms}"

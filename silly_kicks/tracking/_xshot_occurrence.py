@@ -466,15 +466,17 @@ class XShotOccurrenceModel:
                 f.write(f"{hashlib.sha256(raw).hexdigest()}  {fname}\n")
 
     @classmethod
-    def load(cls, path: Path) -> XShotOccurrenceModel:
+    def load(cls, path: Path, *, legacy_override: bool = False) -> XShotOccurrenceModel:
         """Load from a local directory, verifying SHA-256. Requires xgboost.
+
+        A behavioral chirality fingerprint is enforced (ADR-037 § 9, TF-19 PR-2): a
+        pre-PR-2 artifact with no fingerprint is REFUSED unless ``legacy_override=True``
+        (which warns), and an output/probe-frame mismatch raises. See ``_chirality``.
 
         Examples
         --------
         >>> # model = XShotOccurrenceModel.load(Path("models/xshot_occurrence_v1"))
         """
-        import xgboost as xgb
-
         path = Path(path)
         sums = path / "SHA256SUMS"
         if not sums.exists():
@@ -516,9 +518,16 @@ class XShotOccurrenceModel:
         model.shot_types = meta.get("shot_types", model.shot_types)
         model.shipped_variant = meta.get("shipped_variant")
         model.provider_list = meta.get("provider_list")
-        booster = xgb.Booster()
-        booster.load_model(str(path / "model.json"))
-        model._booster = booster
+        model._booster = load_xgb_booster_base_score_safe(path / "model.json")
+
+        from silly_kicks.tracking._chirality import verify_chirality
+
+        verify_chirality(
+            _chirality_block(model),
+            meta.get("chirality"),
+            legacy_override=legacy_override,
+            model_name="xShotOccurrence",
+        )
         return model
 
     @classmethod
@@ -538,7 +547,7 @@ class XShotOccurrenceModel:
         weights_dir = _XSHOT_WEIGHTS_ROOT / variant
         if (weights_dir / "SHA256SUMS").exists():
             model = cls.load(weights_dir)
-        elif variant == "public":  # the Hub-hosted variant, when two ship
+        elif variant in ("public", "sc_extended"):  # the Hub-hosted variants
             model = cls.from_hub(_HF_REPO_ID)
         else:
             raise FileNotFoundError(
@@ -550,15 +559,20 @@ class XShotOccurrenceModel:
 
     @classmethod
     def from_hub(cls, repo_id: str = _HF_REPO_ID) -> XShotOccurrenceModel:
-        """Download published weights from HuggingFace Hub. INERT until published.
+        """Download published weights from HuggingFace Hub and load.
+
+        Requires ``pip install silly-kicks[xshot]``.
 
         Examples
         --------
-        >>> # XShotOccurrenceModel.from_hub()  # raises until weights are published
+        >>> # model = XShotOccurrenceModel.from_hub()
         """
-        from huggingface_hub import snapshot_download  # noqa: F401
-
-        raise FileNotFoundError(f"No published xShotOccurrence weights at {repo_id} yet (weights follow-up).")
+        try:
+            from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
+        except ImportError:
+            raise ImportError("xShotOccurrence Hub weights require: pip install silly-kicks[xshot]") from None
+        local_dir = snapshot_download(repo_id=repo_id)
+        return cls.load(Path(local_dir))
 
 
 def _resolve_model(model: XShotOccurrenceModel | str | None) -> XShotOccurrenceModel:
@@ -567,6 +581,31 @@ def _resolve_model(model: XShotOccurrenceModel | str | None) -> XShotOccurrenceM
     if model is None or isinstance(model, str):
         return XShotOccurrenceModel.from_variant(model or "default")  # raises until weights ship
     raise TypeError(f"Unsupported model type: {type(model)!r}")
+
+
+def load_xgb_booster_base_score_safe(model_json_path: Path):
+    """Load an xgboost Booster, defensively normalizing a bracketed ``base_score`` (TF-19 PR-2).
+
+    xgboost 3.x serializes ``learner.learner_model_param.base_score`` as a bracketed STRING
+    (e.g. ``"[2.19E-1]"``). xgboost 2.x cannot parse that and silently drops to the ``0.5``
+    default -> a mis-served intercept (the whole margin is offset, predictions are wrong). The
+    library supports ``xgboost>=2.0`` across the 2.x/3.x boundary, so ``load()`` normalizes the
+    bracketed form to a scalar in-memory before handing it to the Booster. A scalar base_score
+    (2.x-native and already-fixed bundled weights) passes straight through unchanged.
+    """
+    import xgboost as xgb
+
+    booster = xgb.Booster()
+    # xgboost writes model.json as UTF-8; read it as such (a booster with non-ASCII feature names
+    # would raise UnicodeDecodeError under a non-UTF-8 platform default, e.g. cp1252 on Windows).
+    raw = json.loads(Path(model_json_path).read_text(encoding="utf-8"))
+    bs = raw.get("learner", {}).get("learner_model_param", {}).get("base_score")
+    if isinstance(bs, str) and bs.startswith("[") and bs.endswith("]"):
+        raw["learner"]["learner_model_param"]["base_score"] = bs.strip("[]")
+        booster.load_model(bytearray(json.dumps(raw).encode()))
+    else:
+        booster.load_model(str(model_json_path))
+    return booster
 
 
 # Moved byte-identically to _gk_resolve.defended_goal_x (TF-48); shim keeps all

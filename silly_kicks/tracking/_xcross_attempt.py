@@ -28,7 +28,7 @@ from silly_kicks.tracking._ball_carrier import (
 )
 from silly_kicks.tracking._id_compat import align_join_keys, canonical_id, canonical_id_series
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
-from silly_kicks.tracking._xshot_occurrence import IntegrityError
+from silly_kicks.tracking._xshot_occurrence import IntegrityError, load_xgb_booster_base_score_safe
 from silly_kicks.tracking.utils import link_actions_to_frames
 
 XCrossFeatureSet = Literal["faithful", "extended"]
@@ -504,10 +504,13 @@ class XCrossAttemptModel:
                 f.write(f"{hashlib.sha256(raw).hexdigest()}  {fname}\n")
 
     @classmethod
-    def load(cls, path: Path) -> XCrossAttemptModel:
-        """Load from a local directory, verifying SHA-256. Requires xgboost."""
-        import xgboost as xgb
+    def load(cls, path: Path, *, legacy_override: bool = False) -> XCrossAttemptModel:
+        """Load from a local directory, verifying SHA-256. Requires xgboost.
 
+        A behavioral chirality fingerprint is enforced (ADR-037 § 9, TF-19 PR-2): a
+        pre-PR-2 artifact with no fingerprint is REFUSED unless ``legacy_override=True``
+        (which warns), and an output/probe-frame mismatch raises. See ``_chirality``.
+        """
         path = Path(path)
         sums = path / "SHA256SUMS"
         if not sums.exists():
@@ -545,9 +548,16 @@ class XCrossAttemptModel:
         model.cross_types = meta.get("cross_types", model.cross_types)
         model.shipped_variant = meta.get("shipped_variant")
         model.provider_list = meta.get("provider_list")
-        booster = xgb.Booster()
-        booster.load_model(str(path / "model.json"))
-        model._booster = booster
+        model._booster = load_xgb_booster_base_score_safe(path / "model.json")
+
+        from silly_kicks.tracking._chirality import verify_chirality
+
+        verify_chirality(
+            _chirality_block(model),
+            meta.get("chirality"),
+            legacy_override=legacy_override,
+            model_name="xCrossAttempt",
+        )
         return model
 
     @classmethod
@@ -561,7 +571,7 @@ class XCrossAttemptModel:
         weights_dir = _XCROSS_WEIGHTS_ROOT / variant
         if (weights_dir / "SHA256SUMS").exists():
             model = cls.load(weights_dir)
-        elif variant == "public":
+        elif variant in ("public", "sc_extended"):
             model = cls.from_hub(_HF_REPO_ID)
         else:
             raise FileNotFoundError(

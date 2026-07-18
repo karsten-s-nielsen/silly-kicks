@@ -1,7 +1,7 @@
 {
   "shipped_variant": "public",
-  "n_rows": 701210,
-  "n_positive": 11930,
+  "n_rows": 718005,
+  "n_positive": 13451,
   "providers": [
     "gradientsports",
     "idsse",
@@ -10,62 +10,70 @@
   "candidates": {
     "public": {
       "params": {
-        "n_estimators": 151.89251580663714,
-        "max_depth": 2.0101334378588325,
-        "learning_rate": 0.06444616409081405,
-        "min_child_weight": 16.724322339628934,
-        "reg_lambda": 3.2543144219910607
+        "n_estimators": 262.6406981655034,
+        "max_depth": 2.682096494749166,
+        "learning_rate": 0.024303234053346747,
+        "min_child_weight": 19.02882520781333,
+        "reg_lambda": 4.828160165372797
       },
       "metrics": {
-        "pr_auc": 0.06064890371961862,
-        "brier": 0.0171994399279356,
-        "log_loss": 0.08414410799741745,
-        "pr_auc_std": 0.026795866699262823,
+        "pr_auc": 0.08836456435137374,
+        "brier": 0.02949393093585968,
+        "log_loss": 0.1266106739640236,
+        "pr_auc_std": 0.024237507504273476,
         "n_usable_folds": 5,
-        "positive_rate": 0.01765816557189586,
-        "base_rate_brier": 0.017346354760531372
+        "positive_rate": 0.03096705470592711,
+        "base_rate_brier": 0.03000809622876723
       },
       "providers": [
-        "idsse",
-        "skillcorner"
-      ]
-    },
-    "full": {
-      "params": {
-        "n_estimators": 227.35857335910202,
-        "max_depth": 3.8383464485708476,
-        "learning_rate": 0.020429467783126837,
-        "min_child_weight": 19.632633353832997,
-        "reg_lambda": 4.946994595670489
-      },
-      "metrics": {
-        "pr_auc": 0.048932798839643375,
-        "brier": 0.016476022824645043,
-        "log_loss": 0.07960405349731445,
-        "pr_auc_std": 0.003415019471884158,
-        "n_usable_folds": 5,
-        "positive_rate": 0.017013448182427518,
-        "base_rate_brier": 0.01672399076337137
-      },
-      "providers": [
-        "gradientsports",
         "idsse",
         "skillcorner"
       ]
     },
     "paired": {
-      "deltas": [
-        -0.008964918111766269,
-        -0.015389873343696299,
-        -0.017203475007060633,
-        -0.0065194781934956245,
-        -0.06692156605839314
+      "nested": {
+        "public": [],
+        "sc_extended": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "full": [
+          -0.037430812724534746,
+          -0.03113795392414291,
+          -0.05237210591355975,
+          -0.009249593655924385,
+          -0.015360340131582176
+        ]
+      },
+      "shared_params": {
+        "public": [],
+        "sc_extended": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "full": [
+          -0.03707911926594397,
+          -0.03240739513372018,
+          -0.05267057077618985,
+          -0.009683591675907419,
+          -0.016844110165669016
+        ]
+      },
+      "full_vs_sc": [
+        -0.037430812724534746,
+        -0.03113795392414291,
+        -0.05237210591355975,
+        -0.009249593655924385,
+        -0.015360340131582176
       ],
-      "K": 5,
-      "n_positive": 0,
-      "ship_two": false,
-      "paired_delta_is_data_effect_shared_params": true,
-      "paired_hpo_nested": false
+      "shipped": "public",
+      "why": "sc_extended failed the rule; the sequence stops (full cannot ship here)"
     }
   },
   "acceptance": {
@@ -75,22 +83,27 @@
     "log_loss_lt_uniform": true
   },
   "estimates_are_cv_not_shipped_fit": true,
-  "artifact_size_bytes": 117468,
+  "artifact_size_bytes": 296605,
   "gk_block_ablation": {
-    "with_gk_pr_auc": 0.06064890371961862,
-    "without_gk_pr_auc": 0.05951267398360478,
-    "with_gk_log_loss": 0.08414410799741745,
-    "without_gk_log_loss": 0.08341773748397827,
-    "delta_pr_auc": 0.0011362297360138357,
-    "delta_log_loss": 0.000726370513439184,
+    "with_gk_pr_auc": 0.08836456435137374,
+    "without_gk_pr_auc": 0.08635135951089214,
+    "with_gk_log_loss": 0.1266106739640236,
+    "without_gk_log_loss": 0.12705333083868026,
+    "delta_pr_auc": 0.0020132048404816055,
+    "delta_log_loss": -0.00044265687465666614,
     "note": "reported context (marginal predictive value); NOT the tf19_ready gate"
   },
   "gk_substitution_probe": {
-    "gk_median_abs_delta": 0.0010720659047365189,
-    "gk_mean_abs_delta": 0.0016603724825836252,
-    "gk_p90_abs_delta": 0.004192276019603018,
-    "nearest_def_median_abs_delta": 0.0004141763783991337,
+    "gk_median_abs_delta": 0.002417481504380703,
+    "gk_mean_abs_delta": 0.008039536876021885,
+    "gk_p90_abs_delta": 0.023207593336701398,
+    "nearest_def_median_abs_delta": 0.0017175059765577316,
     "random_band_median_abs_delta": 0.0,
+    "gk_zero_fraction": 0.035,
+    "random_band_zero_fraction": 0.8569444444444444,
+    "gk_median_abs_delta_at_2m": 0.0018311664462089539,
+    "gk_median_abs_delta_at_4m": 0.004328629933297634,
+    "gk_dose_ratio_4m_over_2m": 2.363864815379921,
     "tf19_ready": false,
     "tf19_reason": "GK |\u0394| did not clear ratio>=2.0 x control AND abs-floor>=0.01",
     "tf19_probe_ratio": 2.0,
@@ -100,24 +113,24 @@
   },
   "permutation_importance": {
     "importances": {
-      "ball_r": 0.006314796394492911,
-      "ball_theta": 0.005278412650245274,
-      "ball_speed": 0.015341789480040724,
-      "score_differential": 0.021556356629848155,
-      "dist_nearest_def": 0.011258265329314805,
-      "space_controlled": 0.00801084376010723,
-      "dist_nearest_teammate": 0.024665774774568834,
-      "dist_endline": 0.003304594379580244,
-      "box_off_def_ratio": 0.0013457397080016231,
-      "ten_minute_warning": 0.001182099673986473,
-      "gk_r": 0.0020858498447284546,
-      "gk_theta": 0.012549774664090718,
-      "gk_lateral_offset": 0.001269066403735442,
-      "gk_dist_near_post": 0.00022875511820416483,
-      "gk_dist_far_post": 0.007924682990760504,
-      "gk_carrier_side": 0.0017934627932390374
+      "ball_r": 0.007365701980825154,
+      "ball_theta": -0.0006255661325588209,
+      "ball_speed": 0.036686598004181795,
+      "score_differential": -0.003815127527375492,
+      "dist_nearest_def": 0.016878604999981457,
+      "space_controlled": -0.0008957988298231429,
+      "dist_nearest_teammate": 0.02627229900401154,
+      "dist_endline": 0.002023881970685297,
+      "box_off_def_ratio": 0.0038399655656888103,
+      "ten_minute_warning": -0.003280200163485067,
+      "gk_r": -0.0005834775344925673,
+      "gk_theta": 0.0025286428482034964,
+      "gk_lateral_offset": 0.004441260904989211,
+      "gk_dist_near_post": 0.0005593632487192265,
+      "gk_dist_far_post": 0.0035725631259483164,
+      "gk_carrier_side": 0.0029981626381670535
     },
-    "score_differential_importance": 0.021556356629848155,
+    "score_differential_importance": -0.003815127527375492,
     "score_differential_coverage": 1.0,
     "scoring": "average_precision",
     "n_repeats": 10,
@@ -131,5 +144,20 @@
     "max": 6.0,
     "abs_ge_12_count": 0
   },
+  "probe_sample_matches": [
+    [
+      "gradientsports",
+      "10502"
+    ],
+    [
+      "gradientsports",
+      "10503"
+    ]
+  ],
+  "probe_sample_in_training_folds": {
+    "10502": false,
+    "10503": false
+  },
+  "probe_gated_on_held_out": false,
   "tf19_ready": false
 }
