@@ -61,7 +61,10 @@ brainstorm → spec cycle before code.
   hyperparameters were HPO'd on y-defective geometry (ADR-031) and the e2e now feeds
   them corrected frames — a marginal calibration shortfall, the fresh-fit cousin of the
   PR-S114 chirality mis-serve. Expected fix: the TF-19 PR-2 retrain (fresh HPO on
-  corrected geometry, ADR-037); re-run this e2e after PR-2 and remove this entry.
+  corrected geometry, ADR-037). **The PR-2 retrain SHIPPED in 4.51.0 (PR-S118, ADR-040)**
+  — the bundled xS default is now the DGX y-correct `public` refit. **Remaining owner action:**
+  re-run this owner-gated e2e on the corrected weights and, if the Brier gate now passes,
+  remove this entry (the e2e needs real GS data, so it cannot be re-run in CI).
   (Found during PR-1 Task 0, 2026-07-12, owner box.)
 - **xT-GK v2 interpretation-fork decision (owner/Eyestone; blocks any further v2 metric work).**
   **Re-measured in 4.46.0 (PR-S113) on RESOLVED origins** — the 4.45.0 numbers were taken on a cohort where

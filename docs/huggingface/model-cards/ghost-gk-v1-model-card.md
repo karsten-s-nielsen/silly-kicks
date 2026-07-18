@@ -81,9 +81,9 @@ Trained on licensed tracking data from professional football matches:
 | SkillCorner | Multiple leagues | Derived GK identification (ADR-007) |
 | Gradient Sports | FIFA World Cup 2022 | Owner-tier source — only the trained model weights are distributed here; the underlying raw tracking data is **not** redistributed |
 
-The `full` variant is trained on 81 matches / 887k frames across all three providers above; the `default` variant is a lighter 36k-frame subsample. Only the learned model parameters (tree structure, leaf-aggregated GK positions, KDE weights) are published — **no raw provider tracking data is redistributed**.
+The `full` variant is trained on 179 matches / ~1.04M frames across all three providers above (the SkillCorner cohort was expanded to include owner-tier matches — silly-kicks 4.51.0 / TF-19 PR-2); the `default` variant is a lighter 36k-frame subsample. Only the learned model parameters (tree structure, leaf-aggregated GK positions, KDE weights) are published — **no raw provider tracking data is redistributed**.
 
-Training frames are filtered to remove sweeper-rush events (GK outside penalty area during active defensive actions) to ensure the ghost represents normal positioning behavior.
+Training targets are restricted to a fixed goal-relative box — x &isin; [0, 30] m from the defended goal line, y &isin; [18, 50] m — a **purely geometric filter with no action or possession condition**. A keeper that has rushed far upfield (a sweeper action) falls outside this box and is naturally excluded, so the model represents normal in-goal positioning; the exclusion is geometric, not action-based.
 
 **Label domain**: GK (x, y) position in goal-relative coordinates, filtered to the grid region [0, 30] &times; [18, 50].
 

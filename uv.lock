@@ -3623,7 +3623,7 @@ wheels = [
 
 [[package]]
 name = "silly-kicks"
-version = "4.50.0"
+version = "4.51.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -3703,6 +3703,9 @@ xcross = [
 xgboost = [
     { name = "xgboost" },
 ]
+xshot = [
+    { name = "huggingface-hub" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -3712,6 +3715,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'ghost-gk'", specifier = ">=0.20.0" },
     { name = "huggingface-hub", marker = "extra == 'test'", specifier = ">=0.20.0" },
     { name = "huggingface-hub", marker = "extra == 'xcross'", specifier = ">=0.20.0" },
+    { name = "huggingface-hub", marker = "extra == 'xshot'", specifier = ">=0.20.0" },
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "kloppy", marker = "extra == 'kloppy'", specifier = ">=3.18.0" },
     { name = "lightgbm", marker = "extra == 'lightgbm'", specifier = ">=4.0" },
@@ -3744,7 +3748,7 @@ requires-dist = [
     { name = "xgboost", marker = "extra == 'train'", specifier = ">=2.0,<4.0" },
     { name = "xgboost", marker = "extra == 'xgboost'", specifier = ">=2.0.0" },
 ]
-provides-extras = ["kloppy", "numba", "xarray", "xgboost", "catboost", "lightgbm", "golden-master", "das", "parse-dfl", "ghost-gk", "ghost-gk-train", "xcross", "calibration", "test", "train", "dev"]
+provides-extras = ["kloppy", "numba", "xarray", "xgboost", "catboost", "lightgbm", "golden-master", "das", "parse-dfl", "ghost-gk", "ghost-gk-train", "xcross", "xshot", "calibration", "test", "train", "dev"]
 
 [[package]]
 name = "six"

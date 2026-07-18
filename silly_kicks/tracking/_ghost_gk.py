@@ -1795,11 +1795,15 @@ class GhostGkModel:
                 f.write(f"{h}  {fname}\n")
 
     @classmethod
-    def load(cls, path: Path) -> GhostGkModel:
+    def load(cls, path: Path, *, legacy_override: bool = False) -> GhostGkModel:
         """Load from local directory with SHA-256 verification.
 
         No sklearn or onnxruntime needed — tree traversal uses stored
         node arrays with numpy.
+
+        A behavioral chirality fingerprint is enforced (ADR-037 § 9, TF-19 PR-2): a
+        pre-PR-2 artifact with no fingerprint is REFUSED unless ``legacy_override=True``
+        (which warns), and an output/probe-frame mismatch raises. See ``_chirality``.
 
         Examples
         --------
@@ -1908,6 +1912,15 @@ class GhostGkModel:
                 stacklevel=2,
             )
 
+        from silly_kicks.tracking._chirality import verify_chirality
+
+        verify_chirality(
+            _chirality_block(model),
+            metadata.get("chirality"),
+            legacy_override=legacy_override,
+            model_name="GhostGk",
+            error_cls=IntegrityError,  # ghost's own type, so load()'s integrity taxonomy is consistent
+        )
         return model
 
     @classmethod
