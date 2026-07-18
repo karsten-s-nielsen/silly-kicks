@@ -16,6 +16,10 @@ from silly_kicks.tracking._obso import (
     compute_pass_obso,
 )
 
+# ADR-041 opt-out: deliberately exercises the synthetic placeholder EPV path (the default surface is this module's
+# subject).
+pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

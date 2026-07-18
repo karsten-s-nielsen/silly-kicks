@@ -2,7 +2,6 @@
 
 import numpy as np
 import pandas as pd
-from sklearn.exceptions import NotFittedError
 
 import silly_kicks.atomic.spadl.config as atomicspadl
 import silly_kicks.spadl.config as stdspadl
@@ -476,16 +475,16 @@ def xt_xfns(*, model=None) -> list[FeatureTransfomer]:
 
         xfns = [afs.location, *xt_xfns(model=fitted_xt)]
     """
-    if isinstance(model, str):
-        raise NotImplementedError(
-            "xt_xfns: bundled xT grid variants are not shipped yet; pass a fitted ExpectedThreat."
-        )
-    if model is None:
-        raise ValueError("xt_xfns requires a fitted ExpectedThreat (model=...).")
-    if not np.any(model.xT):
-        raise NotFittedError("xt_xfns requires a fitted ExpectedThreat; call model.fit(actions) first.")
+    # Lazy import (ADR-041): a module-level xthreat import closes the
+    # xthreat -> spadl -> tracking -> vaep -> xthreat cycle. See the standard mirror in
+    # silly_kicks/vaep/features/expected_threat.py for the full chain.
+    from silly_kicks.xthreat import require_fitted_xt
 
-    col = f"xt__{model.method}"
+    require_fitted_xt(model, caller="xt_xfns")
+
+    # The guard raises on None/str, but that narrowing is no longer inline for pyright --
+    # same ignore the standard mirror carries.
+    col = f"xt__{model.method}"  # type: ignore[union-attr]
 
     def _xt(states: GameStates) -> Features:
         a0 = states[0]

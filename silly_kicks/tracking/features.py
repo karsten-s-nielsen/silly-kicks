@@ -65,6 +65,7 @@ from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
 from ._packing import PackingParams, secured_reception
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
+from ._warnings import IgnoredSurfaceInputsWarning, SyntheticEPVWarning
 from ._xcross_attempt import xcross_attempt_xfns
 from ._xshot_occurrence import xshot_occurrence_xfns
 from ._xt_gk import XtGkParams, compute_xt_gk
@@ -101,6 +102,7 @@ __all__ = [
     "add_line_break",
     "add_obso",
     "add_off_ball_context",
+    "add_off_ball_run_values",
     "add_off_ball_runs",
     "add_packing",
     "add_pausa",
@@ -141,6 +143,7 @@ __all__ = [
     "obso_peak",
     "obso_xfns",
     "off_ball_context_xfns",
+    "off_ball_run_value_xfns",
     "off_ball_xt_opponent",
     "off_ball_xt_team",
     "packing_xfns",
@@ -1692,6 +1695,298 @@ def off_ball_context_xfns(
     _off_ball_context_transformer._frame_aware = True  # type: ignore[attr-defined]
     _off_ball_context_transformer.__name__ = "off_ball_context"
     return [_off_ball_context_transformer]
+
+
+# ---------------------------------------------------------------------------
+# PR-S119 -- TF-35: off-ball run valuation
+# ---------------------------------------------------------------------------
+
+#: The five wide columns emitted by :func:`add_off_ball_run_values`. Numeric-only
+#: subset (``_RUN_VALUE_XFN_COLS``) feeds the VAEP factory.
+_RUN_VALUE_COLS = [
+    "run_value_target",
+    "n_disruptive_runs",
+    "run_value_disruptive_sum",
+    "n_valued_disruptive_runs",
+    "run_value_enabled_pass",
+]
+
+#: ``n_valued_disruptive_runs`` is EXCLUDED from the VAEP surface: it is a coverage
+#: denominator (how many disruptive runs were observable), not a football quantity, and
+#: as a model feature it would let tracking-visibility stand in for play quality.
+_RUN_VALUE_XFN_COLS = [
+    "run_value_target",
+    "n_disruptive_runs",
+    "run_value_disruptive_sum",
+    "run_value_enabled_pass",
+]
+
+
+def _run_values_at_actions(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt,
+    *,
+    home_team_id: int | str,
+    links: pd.DataFrame | None = None,
+    pitch_control_cache=None,
+    params=None,
+) -> pd.DataFrame:
+    """Shared TF-35 kernel: detect -> value -> collapse to one row per action.
+
+    Positional output aligned to ``actions`` (never keyed on ``action_id``), so the
+    shifted gamestate slots that repeat a boundary action stay safe -- ADR-020.
+    """
+    from ._run_values import RunValuationParams, action_level_context, detect_off_ball_runs, value_off_ball_runs
+
+    if params is None:
+        params = RunValuationParams()
+
+    n = len(actions)
+    target = np.full(n, np.nan)
+    n_disruptive = np.full(n, np.nan)
+    disruptive_sum = np.full(n, np.nan)
+    n_valued = np.full(n, np.nan)
+    enabled = np.full(n, np.nan)
+
+    if n == 0:
+        return pd.DataFrame(
+            {
+                "run_value_target": target,
+                "n_disruptive_runs": n_disruptive,
+                "run_value_disruptive_sum": disruptive_sum,
+                "n_valued_disruptive_runs": n_valued,
+                "run_value_enabled_pass": enabled,
+            },
+            index=actions.index,
+        )
+
+    _receiver, on_domain, credit = action_level_context(actions, xt)
+    # On-domain actions start at an honest 0 ("this pass had no qualifying runs"),
+    # NOT NA ("we could not tell"). Off-domain rows stay NA on all five.
+    target[on_domain] = 0.0
+    n_disruptive[on_domain] = 0.0
+    disruptive_sum[on_domain] = 0.0
+    n_valued[on_domain] = 0.0
+    enabled[on_domain] = credit[on_domain]
+
+    runs = detect_off_ball_runs(actions, frames, home_team_id=home_team_id, params=params)
+    if len(runs) == 0:
+        return pd.DataFrame(
+            {
+                "run_value_target": target,
+                "n_disruptive_runs": n_disruptive,
+                "run_value_disruptive_sum": disruptive_sum,
+                "n_valued_disruptive_runs": n_valued,
+                "run_value_enabled_pass": enabled,
+            },
+            index=actions.index,
+        )
+
+    valued = value_off_ball_runs(
+        runs,
+        actions,
+        frames,
+        xt,
+        links=links,
+        pitch_control_cache=pitch_control_cache,
+        params=params,
+    )
+
+    # Positional collapse keyed on (game_id, action_id): SPADL action_id restarts per
+    # game, so an action_id-only key folds another game's runs into this one -- inflating
+    # n_disruptive_runs and run_value_disruptive_sum (ADR-042 review finding 2).
+    pos_by_key: dict = {}
+    for pos, key in enumerate(zip(actions["game_id"].to_numpy(), actions["action_id"].to_numpy(), strict=True)):
+        pos_by_key.setdefault(key, []).append(pos)
+
+    for key, grp in valued.groupby(["game_id", "action_id"], sort=False):
+        positions = pos_by_key.get(tuple(key))
+        if not positions:
+            continue
+        # NA-safe: `role` is a nullable "string" column and is <NA> for every run whose
+        # action is off-domain, so a bare `== "target"` yields a BooleanArray WITH NA and
+        # `.to_numpy(dtype=bool)` raises. Reached only when a detected run belongs to an
+        # off-domain action -- which the standard fixtures never produced and the atomic
+        # mirror did.
+        has_role = grp["role"].notna().to_numpy()
+        is_target = (grp["role"] == "target").fillna(False).to_numpy(dtype=bool)
+        tgt_vals = grp.loc[is_target, "run_value"].to_numpy(dtype="float64")
+        dis_vals = grp.loc[has_role & ~is_target, "run_value"].to_numpy(dtype="float64")
+        n_dis = len(dis_vals)
+        n_dis_valued = int(np.isfinite(dis_vals).sum())
+        for pos in positions:
+            if not on_domain[pos]:
+                continue
+            if len(tgt_vals):
+                # A detected-but-unvalued target run is NaN, never a fabricated 0.
+                target[pos] = float(tgt_vals[0])
+            n_disruptive[pos] = n_dis
+            n_valued[pos] = n_dis_valued
+            disruptive_sum[pos] = float(np.nansum(dis_vals)) if n_dis else 0.0
+
+    return pd.DataFrame(
+        {
+            "run_value_target": target,
+            "n_disruptive_runs": n_disruptive,
+            "run_value_disruptive_sum": disruptive_sum,
+            "n_valued_disruptive_runs": n_valued,
+            "run_value_enabled_pass": enabled,
+        },
+        index=actions.index,
+    )
+
+
+@nan_safe_enrichment
+def add_off_ball_run_values(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    xt,
+    *,
+    home_team_id: int | str,
+    links: pd.DataFrame | None = None,
+    pitch_control_cache=None,
+    params=None,
+) -> pd.DataFrame:
+    """Append the five TF-35 off-ball-run-value columns (ADR-042).
+
+    Adds, per action (all five ``<NA>``/NaN off-domain -- domain is a completed
+    ``pass``/``cross`` whose next same-team touch resolves to a receiver):
+
+    - ``run_value_target`` (float64) -- value of the RECEIVER's own off-ball run.
+      ``0.0`` when the receiver made no qualifying run; NaN when they made one that
+      could not be valued (a tracking-visibility gap).
+    - ``n_disruptive_runs`` (Int64) -- qualifying runs by non-receiving teammates.
+    - ``run_value_disruptive_sum`` (float64) -- sum of those runs' values, skipping
+      unvalued ones.
+    - ``n_valued_disruptive_runs`` (Int64) -- how many of them actually carried a
+      value.
+    - ``run_value_enabled_pass`` (float64) -- the pass's own floored xT gain, once
+      per action, i.e. the threat the disruptive runs helped unlock.
+
+    .. warning::
+
+        **Mean disruptive value must divide by ``n_valued_disruptive_runs``, never by
+        ``n_disruptive_runs``** (R2-3). The sum skips unvalued runs, so the second
+        denominator silently deflates the mean in exact proportion to how poor the
+        provider's tracking coverage was -- turning a data-quality gradient into an
+        apparent tactical one.
+
+    .. warning::
+
+        Result-leakage (ADR-042, inheriting TF-49 review F4): the domain gates on the
+        action's OWN ``result_id``. As an a0-slot feature that is the leakage class
+        ``HybridVAEP`` exists to strip, so :func:`off_ball_run_value_xfns` MUST NOT
+        enter a HybridVAEP-class consumer without a0 exclusion.
+
+    Provider bias: run detection uses the frames' ``speed`` column when present and
+    falls back to displacement/duration otherwise, which UNDER-states peak speed --
+    see ``peak_speed_source`` on :func:`silly_kicks.tracking.detect_off_ball_runs`
+    for the per-run record of which was used.
+
+    Idempotent provenance columns; accepts caller-supplied ``links`` and
+    ``pitch_control_cache``. Returns a NEW frame (ADR-033). See NOTICE for full
+    bibliographic citations.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking import add_off_ball_run_values
+    >>> out = add_off_ball_run_values(actions, frames, xt, home_team_id=1)
+    >>> out[["run_value_target", "n_disruptive_runs"]].head()
+    """
+    batch = _run_values_at_actions(
+        actions,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        links=links,
+        pitch_control_cache=pitch_control_cache,
+        params=params,
+    )
+
+    out = actions.copy()
+    out["run_value_target"] = batch["run_value_target"].to_numpy()
+    out["run_value_disruptive_sum"] = batch["run_value_disruptive_sum"].to_numpy()
+    out["run_value_enabled_pass"] = batch["run_value_enabled_pass"].to_numpy()
+    # House Int64 idiom preserves the 0-vs-<NA> distinction on the count columns.
+    for col in ("n_disruptive_runs", "n_valued_disruptive_runs"):
+        out[col] = pd.array(
+            [pd.NA if not np.isfinite(v) else int(v) for v in batch[col].to_numpy(dtype="float64")],
+            dtype="Int64",
+        )
+
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+        if len(pointers) > 0:
+            # drop_duplicates before the merge (ADR-020, matching add_obso / add_space_creation):
+            # a non-unique action_id in the pointers FANS OUT the merge, returning more rows
+            # than the caller passed in.
+            ptr_cols = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
+            out = out.merge(ptr_cols, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def off_ball_run_value_xfns(
+    xt,
+    *,
+    home_team_id: int | str,
+    params=None,
+) -> list:
+    """VAEP xfn factory: ONE FrameAwareTransformer emitting 4 numeric TF-35 columns
+    x 3 gamestate slots = 12 columns. ``n_valued_disruptive_runs`` is excluded (it is
+    a coverage denominator, not a football quantity -- see
+    :func:`add_off_ball_run_values`).
+
+    The ``xt`` model is validated at FACTORY time, so an unfitted grid fails when the
+    xfn list is built rather than deep inside a VAEP fit.
+
+    .. note::
+
+        **Role assignment is exact on the a0 slot and approximate on a1/a2.** TF-35 splits
+        runs into ``target`` (the receiver's own run) and ``disruptive`` using the next
+        same-team touch. ``gamestates`` builds slot ``i`` by shifting the stream and filling
+        the leading ``i`` rows with a REPEAT of the first action, so on those fill rows the
+        "next touch" resolves to the action's own actor -- who is excluded from run
+        candidacy, making every run there read as ``disruptive``. Away from the boundary the
+        shifted rows still hold consecutive actions, so resolution is correct. The effect is
+        bounded by ``i`` rows per game per slot. This is the same shifted-slot limitation
+        that makes ``packing_xfns`` refuse ``require_secured`` (ADR-039); TF-35 degrades
+        rather than refuses because the numeric columns remain meaningful.
+
+    .. warning::
+
+        Result-leakage (ADR-042): the TF-35 domain gates on the action's own
+        ``result_id``, so this factory must not enter a HybridVAEP-class consumer
+        without a0 exclusion. It is deliberately in NO default xfn list.
+
+    Examples
+    --------
+    >>> from silly_kicks.tracking import off_ball_run_value_xfns
+    >>> xfns = off_ball_run_value_xfns(xt, home_team_id=1)
+    >>> len(xfns)
+    1
+    """
+    from silly_kicks.xthreat import require_fitted_xt
+
+    require_fitted_xt(xt, caller="off_ball_run_value_xfns")
+
+    def _off_ball_run_value_transformer(states, frames):
+        out = pd.DataFrame(index=states[0].index)
+        if frames is None:
+            for i in range(min(3, len(states))):
+                for col in _RUN_VALUE_XFN_COLS:
+                    out[f"{col}_a{i}"] = np.nan
+            return out
+        for i, slot in enumerate(states[:3]):
+            batch = _run_values_at_actions(slot, frames, xt, home_team_id=home_team_id, params=params)
+            for col in _RUN_VALUE_XFN_COLS:
+                out[f"{col}_a{i}"] = batch[col].to_numpy(dtype="float64")
+        return out
+
+    _off_ball_run_value_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _off_ball_run_value_transformer.__name__ = "off_ball_run_values"
+    return [_off_ball_run_value_transformer]
 
 
 # ---------------------------------------------------------------------------
@@ -4536,7 +4831,73 @@ def _shape_graph_at_actions(
 
 _OBSO_COLUMNS = ("obso_actual", "obso_peak", "obso_optimal")
 
+#: Per-row provenance for the EPV surface an OBSO-family value was computed from.
+#: A warning cannot survive into a mart; this column can (ADR-041).
+_EPV_SOURCE_COLUMN = "obso_epv_source"
+
 _PASS_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("pass", "cross") if n in spadlconfig.actiontype_id)
+
+
+def _resolve_epv_grid(
+    xt: ExpectedThreat | None,
+    epv_grid: np.ndarray | None,
+    *,
+    caller: str,
+    params: object | None = None,
+) -> tuple[np.ndarray | None, str]:
+    """Resolve ``xt=`` / ``epv_grid=`` to ``(grid, source_label)``.
+
+    The CALLER emits the synthetic-surface warning, so ``stacklevel`` is correct per call
+    site; this helper stays warning-free. ``caller`` is the public function name and
+    appears in user-facing messages. ``params`` selects the build geometry -- None uses
+    the default ``ObsoParams``; ``compute_pass_obso`` passes its OWN resolved params so a
+    non-default geometry is honoured.
+
+    Returns ``(None, "synthetic")`` when neither input is supplied, leaving the
+    downstream synthetic fallback in place.
+    """
+    from silly_kicks.xthreat import physical_grid, require_fitted_xt
+
+    from ._obso import ObsoParams
+
+    if xt is not None and epv_grid is not None:
+        raise ValueError(f"{caller}: pass either xt= or epv_grid=, not both")
+    if xt is not None:
+        require_fitted_xt(xt, caller=caller)
+        p = params if params is not None else ObsoParams()
+        # NODE registration, matching every consumer of this grid (ADR-041):
+        #   * compute_pass_obso's index map  x / pitch_length * (grid_nx - 1)
+        #   * PitchControlSurface's          np.linspace(0, 105, grid_cells_x)
+        #   * _interpolate_grid's            np.linspace(0, src - 1, tgt)
+        # An earlier draft built CELL CENTRES ((i + 0.5) * L / n), which is off by up to
+        # +-0.505 m at the edges -- and uncorrected, because building at exactly
+        # (grid_ny, grid_nx) makes _interpolate_grid's identity shortcut return the grid
+        # unresampled. It was invisible on the synthetic path (a pure linear x-ramp barely
+        # notices a half-cell shift) but not for a structured fitted-xT surface.
+        gx = np.linspace(0.0, p.pitch_length, p.grid_nx)  # type: ignore[attr-defined]
+        gy = np.linspace(0.0, p.pitch_width, p.grid_ny)  # type: ignore[attr-defined]
+        return physical_grid(xt, gx, gy), "xt"
+    if epv_grid is not None:
+        return epv_grid, "injected"
+    return None, "synthetic"
+
+
+def _warn_synthetic_epv(caller: str) -> None:
+    """Emit the synthetic-surface notice, attributed to the USER's call site.
+
+    ``stacklevel=3`` because there are exactly two frames between ``warn`` and the caller
+    we want blamed: this helper, then the public aggregator/factory that called it. All
+    six OBSO-family entry points invoke this from their own body, so one constant is
+    correct for every site; ``@nan_safe_enrichment`` is a pure marker that returns ``fn``
+    unwrapped, so it adds no frame. Pointing at ``features.py`` instead of the caller is
+    how a warning becomes noise.
+    """
+    _warnings.warn(
+        f"{caller}: OBSO EPV is the synthetic linspace(0.01, 0.3) placeholder ramp -- "
+        "pass xt= (fitted ExpectedThreat) or epv_grid= for production surfaces.",
+        SyntheticEPVWarning,
+        stacklevel=3,
+    )
 
 
 def obso_actual(
@@ -4675,7 +5036,7 @@ def _precompute_obso_lookup(
 
     Returns dict mapping row position (0-based) to OBSO triplet dict.
     """
-    from ._obso import compute_pass_obso
+    from ._obso import _get_default_grids, compute_pass_obso
     from .pitch_control import PitchControlCache as _PitchControlCache
 
     # One cache across all passes so overlapping pass windows reuse surfaces
@@ -4695,6 +5056,24 @@ def _precompute_obso_lookup(
     # frame_id by position, never .at on a non-unique action_id). Here it gates "is this
     # action linked"; the OBSO window is time-based below.
     fid_by_pos = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
+
+    # --- ADR-028 per-action orientation (ADR-041 amendment; DEFECT A) -------------------
+    # Frames are home-attacks-right; actions are acting-team-LTR. For an RTL-acting team
+    # BOTH of these are needed, and they are jointly invariant at the target itself
+    # (epv_rtl[col(105-x)] == epv[col(x)]) -- what actually moves is WHICH frame location's
+    # pitch control is sampled, plus the orientation of the surface-wide peak/optimal scan:
+    #   (a) the action-LTR target must be point-reflected into frame coordinates, and
+    #   (b) the attack-LTR EPV grid must be POINT-reflected into frame orientation.
+    # transition_grid is orientation-neutral (ball-anchored) and is NOT flipped.
+    #
+    # BOTH axes, not just x (ADR-041 second pass): ADR-028's relation is x->105-x AND
+    # y->68-y, so the grid transform is [::-1, ::-1]. An x-only flip is exact only for a
+    # y-symmetric grid -- which the synthetic ramp default is, and a fitted xT surface
+    # nearly is, so the error hid behind both. Pinned by
+    # tests/tracking/test_obso_orientation.py::TestEpvIsReflectedOnBothAxes.
+    flip_rtl = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    transition_grid, epv_grid = _get_default_grids(transition_grid, epv_grid)
+    epv_grid_rtl = np.ascontiguousarray(np.asarray(epv_grid)[::-1, ::-1])
 
     # Group frames for windowing
     frame_groups = frames.groupby(["period_id", "frame_id"])
@@ -4727,6 +5106,15 @@ def _precompute_obso_lookup(
 
         if pd.isna(target_x) or pd.isna(target_y) or pd.isna(team_id):
             continue
+
+        # Per-action orientation (see the block above the loop). NaN targets are skipped
+        # first, so the reflection only ever runs on real coordinates.
+        if flip_rtl[i]:
+            target_x = FIELD_LENGTH - float(target_x)
+            target_y = FIELD_WIDTH - float(target_y)
+            epv_for_action = epv_grid_rtl
+        else:
+            epv_for_action = epv_grid
 
         # Build frame window around the pass (per-period table precomputed above)
         unique_frame_times = period_frame_times.get(period_id)
@@ -4775,7 +5163,7 @@ def _precompute_obso_lookup(
                 target_position=(float(target_x), float(target_y)),
                 attacking_team_id=team_id,
                 transition_grid=transition_grid,
-                epv_grid=epv_grid,
+                epv_grid=epv_for_action,
                 pitch_control_method=pitch_control_method,
                 pitch_control_cache=cache,
             )
@@ -4801,6 +5189,7 @@ def add_obso(
     home_team_id: int | str = 0,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
+    xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
@@ -4818,25 +5207,39 @@ def add_obso(
     links : pd.DataFrame or None
         Pre-computed link pointers (from ``link_actions_to_frames``).
     home_team_id : int or str
-        Home team identifier (used for LTR orientation consistency).
+        Home team identifier. Retained for signature stability and LTR-consistency
+        checks; per-action orientation is keyed on the frames' own
+        ``team_attacking_direction`` via ``acting_team_attacks_rtl`` (ADR-028), NOT on
+        this parameter. Before ADR-041 it was accepted and never read at all.
     transition_grid : np.ndarray or None
-        Pre-computed ball transition probability grid.
+        Pre-computed ball transition probability grid. Orientation-neutral
+        (ball-anchored), so it is never mirrored per action.
     epv_grid : np.ndarray or None
-        Pre-computed expected possession value grid.
+        Pre-computed expected possession value grid. Mutually exclusive with ``xt``.
+    xt : ExpectedThreat or None
+        A FITTED xT model; its surface is sampled onto the OBSO grid and used as the EPV
+        factor (ADR-041). Mutually exclusive with ``epv_grid``. When neither is supplied
+        the synthetic placeholder ramp is used and a
+        :class:`~silly_kicks.tracking.SyntheticEPVWarning` is emitted.
     pitch_control_method : str
         Pitch control model (default ``"spearman"``).
 
     Returns
     -------
     pd.DataFrame
-        Actions enriched with ``obso_actual``, ``obso_peak``,
-        ``obso_optimal`` columns.
+        Actions enriched with ``obso_actual``, ``obso_peak``, ``obso_optimal`` and the
+        ``obso_epv_source`` provenance column (``"synthetic"`` / ``"xt"`` /
+        ``"injected"``; NA off-domain).
 
     Examples
     --------
     >>> from silly_kicks.tracking.features import add_obso
     >>> enriched = add_obso(actions, frames, home_team_id=1)
     """
+    epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="add_obso")
+    if epv_source == "synthetic":
+        _warn_synthetic_epv("add_obso")
+
     out = actions.copy()
 
     # Provenance skip guard
@@ -4861,12 +5264,22 @@ def add_obso(
 
     for col in _OBSO_COLUMNS:
         out[col] = np.nan
+    # NOTE: seeded SEPARATELY from the _OBSO_COLUMNS float pre-seed on purpose. Folding
+    # this into that `out[col] = np.nan` loop and writing a str via .at upcasts to OBJECT
+    # dtype, not pandas "string". Keep the pd.array(..., dtype="string") seed + .loc fill.
+    # First non-numeric column emitted by a tracking aggregator (ADR-041).
+    out[_EPV_SOURCE_COLUMN] = pd.array([pd.NA] * len(out), dtype="string")
 
     for row_pos, triplet in lookup.items():
         idx = actions.index[row_pos]
         out.at[idx, "obso_actual"] = triplet["actual_obso"]
         out.at[idx, "obso_peak"] = triplet["peak_obso"]
         out.at[idx, "obso_optimal"] = triplet["optimal_obso"]
+
+    # Provenance for every row that actually received a value. Deliberately OUTSIDE the
+    # `links is None` provenance branch below: a caller passing links= (the documented
+    # pipeline optimization) must still receive it.
+    out.loc[out["obso_actual"].notna(), _EPV_SOURCE_COLUMN] = epv_source
 
     # Add provenance if not already present
     if not has_provenance and links is None:
@@ -4891,6 +5304,7 @@ def obso_xfns(
     *,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
+    xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> list:
     """Factory returning 3 FrameAwareTransformers for OBSO features.
@@ -4904,6 +5318,9 @@ def obso_xfns(
         Home team identifier.
     transition_grid, epv_grid : np.ndarray or None
         Pre-computed grids (None uses synthetic defaults).
+    xt : ExpectedThreat or None
+        A FITTED xT model used as the EPV factor (ADR-041); mutually exclusive with
+        ``epv_grid``. Resolved ONCE here, at factory-call time.
     pitch_control_method : str
         Pitch control model.
 
@@ -4919,6 +5336,10 @@ def obso_xfns(
     >>> len(xfns)
     3
     """
+    epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="obso_xfns")
+    if epv_source == "synthetic":
+        _warn_synthetic_epv("obso_xfns")
+
     xfns_out = []
     for col_key, fn in [
         ("obso_actual", obso_actual),
@@ -5038,6 +5459,7 @@ def add_space_creation(
     home_team_id: int | str = 0,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
+    xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
@@ -5058,6 +5480,11 @@ def add_space_creation(
         Home team identifier.
     transition_grid, epv_grid : np.ndarray or None
         Pre-computed grids.
+    xt : ExpectedThreat or None
+        A FITTED xT model used as the EPV factor (ADR-041); mutually exclusive with
+        ``epv_grid``. Emits the shared ``obso_epv_source`` provenance column -- ONE name
+        across the OBSO family, since space creation is OBSO-derived and a consumer
+        joining the two must not meet conflicting columns.
     pitch_control_method : str
         Pitch control model.
 
@@ -5084,6 +5511,10 @@ def add_space_creation(
     >>> from silly_kicks.tracking.features import add_space_creation
     >>> enriched = add_space_creation(actions, frames, home_team_id=1)
     """
+    epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="add_space_creation")
+    if epv_source == "synthetic":
+        _warn_synthetic_epv("add_space_creation")
+
     out = actions.copy()
 
     from .pitch_control import PitchControlCache as _PitchControlCache
@@ -5113,6 +5544,10 @@ def add_space_creation(
 
     for col in _SPACE_CREATION_COLUMNS:
         out[col] = np.nan
+    # Seeded SEPARATELY from the float pre-seed above on purpose -- see the identical
+    # note in add_obso: folding a str into that np.nan loop yields OBJECT dtype, not
+    # pandas "string" (ADR-041).
+    out[_EPV_SOURCE_COLUMN] = pd.array([pd.NA] * len(out), dtype="string")
 
     for i, (_idx, action_row) in enumerate(actions.iterrows()):
         if np.isnan(fid_by_pos[i]):
@@ -5140,6 +5575,10 @@ def add_space_creation(
         for col, val in result.items():
             out.at[idx, col] = val
 
+    # EPV provenance for every valued row; OUTSIDE the links-gated block below so a
+    # caller passing links= still receives it (ADR-041).
+    out.loc[out[_SPACE_CREATION_COLUMNS[0]].notna(), _EPV_SOURCE_COLUMN] = epv_source
+
     if not has_provenance and links is None:
         # drop_duplicates: shifted gamestate slots repeat the boundary action_id, so a
         # raw merge would fan out (ADR: dup-action_id safety). One provenance row per id.
@@ -5161,13 +5600,27 @@ def space_creation_xfns(
     *,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
+    xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> list:
     """Factory returning FrameAwareTransformers for space creation features.
 
     Produces 2 features x 3 gamestates = 6 VAEP columns (lockstep with
     ``_SPACE_CREATION_COLUMNS``): ``space_created_m2`` (attack-side creation)
-    and ``space_denied_m2_opponent`` (rest-defense denial).
+    and ``space_denied_m2_opponent`` (rest-defense denial). The string
+    ``obso_epv_source`` provenance column is deliberately NOT surfaced as a VAEP feature.
+
+    Parameters
+    ----------
+    home_team_id : int or str
+        Home team identifier.
+    transition_grid, epv_grid : np.ndarray or None
+        Pre-computed grids (None uses synthetic defaults).
+    xt : ExpectedThreat or None
+        A FITTED xT model used as the EPV factor (ADR-041); mutually exclusive with
+        ``epv_grid``. Resolved ONCE here, at factory-call time.
+    pitch_control_method : str
+        Pitch control model.
 
     Examples
     --------
@@ -5176,6 +5629,10 @@ def space_creation_xfns(
     >>> len(xfns)
     2
     """
+    epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="space_creation_xfns")
+    if epv_source == "synthetic":
+        _warn_synthetic_epv("space_creation_xfns")
+
     xfns_out = []
     for col_name in _SPACE_CREATION_COLUMNS:
 
@@ -5222,12 +5679,35 @@ def add_pausa(
     home_team_id: int | str = 0,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
+    xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.DataFrame:
     """Enrich pass actions with PAUSA decomposition columns.
 
     Requires OBSO columns (``obso_actual``, ``obso_peak``, ``obso_optimal``).
     If missing, computes them first via ``add_obso``.
+
+    Parameters
+    ----------
+    actions, frames : pd.DataFrame
+        SPADL actions and long-form tracking frames.
+    links : pd.DataFrame or None
+        Pre-computed link pointers.
+    home_team_id : int or str
+        Home team identifier.
+    transition_grid, epv_grid : np.ndarray or None
+        Pre-computed grids, forwarded to ``add_obso``.
+    xt : ExpectedThreat or None
+        A FITTED xT model used as the EPV factor (ADR-041); mutually exclusive with
+        ``epv_grid``. **Ignored when the OBSO columns are already present** -- PAUSA then
+        reuses them and emits an
+        :class:`~silly_kicks.tracking.IgnoredSurfaceInputsWarning`.
+    pitch_control_method : str
+        Pitch control model.
+    pitch_control_cache : PitchControlCache or None
+        Shared surface cache, forwarded to ``add_obso`` (signature symmetry with the
+        other OBSO-family aggregators).
 
     Returns
     -------
@@ -5254,7 +5734,21 @@ def add_pausa(
             home_team_id=home_team_id,
             transition_grid=transition_grid,
             epv_grid=epv_grid,
+            xt=xt,
             pitch_control_method=pitch_control_method,
+            pitch_control_cache=pitch_control_cache,
+        )
+    elif xt is not None or epv_grid is not None or transition_grid is not None:
+        # Reuse path: the supplied surface inputs are never consulted. A caller threading
+        # the SAME xt= through a chained pipeline hits this legitimately, so it is a
+        # warning (with its own category) rather than a raise -- the library cannot tell
+        # that case from the bug case (ADR-041).
+        _warnings.warn(
+            "add_pausa: obso columns already present -- supplied xt=/epv_grid=/"
+            "transition_grid= are ignored (PAUSA reuses the existing columns). Chain "
+            "add_obso with the same surface inputs, or drop the obso columns to recompute.",
+            IgnoredSurfaceInputsWarning,
+            stacklevel=2,
         )
 
     # Apply PAUSA only to rows with OBSO values
@@ -5277,12 +5771,25 @@ def pausa_xfns(
     *,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
+    xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> list:
     """Factory returning 3 FrameAwareTransformers for PAUSA features.
 
     Produces 3 features x 3 gamestates = 9 VAEP columns:
     ``pausa_temporal``, ``pausa_spatial``, ``pausa_composite``.
+
+    Parameters
+    ----------
+    home_team_id : int or str
+        Home team identifier.
+    transition_grid, epv_grid : np.ndarray or None
+        Pre-computed grids (None uses synthetic defaults).
+    xt : ExpectedThreat or None
+        A FITTED xT model used as the EPV factor (ADR-041); mutually exclusive with
+        ``epv_grid``. Resolved ONCE here, at factory-call time.
+    pitch_control_method : str
+        Pitch control model.
 
     Examples
     --------
@@ -5291,6 +5798,10 @@ def pausa_xfns(
     >>> len(xfns)
     3
     """
+    epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="pausa_xfns")
+    if epv_source == "synthetic":
+        _warn_synthetic_epv("pausa_xfns")
+
     col_names = ["pausa_temporal", "pausa_spatial", "pausa_composite"]
     xfns_out = []
     for col_name in col_names:

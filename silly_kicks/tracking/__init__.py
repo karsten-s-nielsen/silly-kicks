@@ -38,6 +38,7 @@ __all__ = [
     "GkCompletionModel",
     "GradientsportsRosterReport",
     "IdDtypeDiagnosis",
+    "IgnoredSurfaceInputsWarning",
     "LaneControlResult",
     "LineBreakingParams",
     "LinkParams",
@@ -52,12 +53,15 @@ __all__ = [
     "PreprocessConfig",
     "PressureParams",
     "RestartCoordinateReport",
+    "RunValuationParams",
+    "RunValueCoverageWarning",
     "ShapeGraph",
     "ShotGoalmouthParams",
     "ShotGoalmouthReport",
     "SpaceCreationParams",
     "SpearmanParams",
     "StructuralPassParams",
+    "SyntheticEPVWarning",
     "TimeBaseDiagnosis",
     "TrackingConversionReport",
     "VoronoiParams",
@@ -86,6 +90,7 @@ __all__ = [
     "add_line_break",
     "add_obso",
     "add_off_ball_context",
+    "add_off_ball_run_values",
     "add_off_ball_runs",
     "add_packing",
     "add_pausa",
@@ -139,6 +144,7 @@ __all__ = [
     "derive_team_in_possession",
     "derive_velocities",
     "detect_line_breaking",
+    "detect_off_ball_runs",
     "elastic_sync_xfns",
     "extract_ball_features",
     "extract_xcross_features",
@@ -175,6 +181,7 @@ __all__ = [
     "obso_peak",
     "obso_xfns",
     "off_ball_context_xfns",
+    "off_ball_run_value_xfns",
     "off_ball_xt_opponent",
     "off_ball_xt_team",
     "orient_frames_to_ltr",
@@ -231,6 +238,7 @@ __all__ = [
     "utils",
     "validate_id_dtypes",
     "validate_time_base",
+    "value_off_ball_runs",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
     "xt_gk_xfns",
@@ -273,12 +281,18 @@ from ._packing import PackingParams, compute_packing_metrics, secured_reception
 from ._pausa import compute_pausa, compute_pausa_batch
 from ._player_influence import PlayerInfluence, compute_player_influence
 from ._restart_report import RestartCoordinateReport
+from ._run_values import RunValuationParams, detect_off_ball_runs, value_off_ball_runs
 from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_positions
 from ._shot_goalmouth import ShotGoalmouthParams, ShotGoalmouthReport, compute_shot_goalmouth
 from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
 from ._structural_pass import StructuralPassParams, compute_structural_pass_metrics
 from ._team_shape import compute_team_shape
+from ._warnings import (
+    IgnoredSurfaceInputsWarning,
+    RunValueCoverageWarning,
+    SyntheticEPVWarning,
+)
 from ._xcross_attempt import (
     XCrossAttemptModel,
     XCrossFeatureSet,
@@ -320,6 +334,7 @@ from .features import (
     add_line_break,
     add_obso,
     add_off_ball_context,
+    add_off_ball_run_values,
     add_off_ball_runs,
     add_packing,
     add_pausa,
@@ -362,6 +377,7 @@ from .features import (
     obso_peak,
     obso_xfns,
     off_ball_context_xfns,
+    off_ball_run_value_xfns,
     off_ball_xt_opponent,
     off_ball_xt_team,
     packing_xfns,

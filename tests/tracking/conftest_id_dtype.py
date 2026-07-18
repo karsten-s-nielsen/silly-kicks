@@ -71,6 +71,9 @@ def make_frames() -> pd.DataFrame:
 
 
 def _frow(pid, team, gk, x, y, t, t_a, *, is_ball=False):
+    # NA-safe: the ball row passes team=pd.NA, and `NA == 5` raises rather than
+    # returning False ("boolean value of NA is ambiguous").
+    _is_home_team = team is not None and not pd.isna(team) and team == 5
     return dict(
         game_id=1,
         period_id=1,
@@ -89,7 +92,10 @@ def _frow(pid, team, gk, x, y, t, t_a, *, is_ball=False):
         vy=0.0,
         speed_source="native",
         ball_state="alive",
-        team_attacking_direction="ltr",
+        # ADR-041: per-TEAM direction. Team 5 is home; a blanket "ltr" labels both teams as
+        # attacking the same way, which is physically impossible and is now rejected by
+        # validate_period_directions.
+        team_attacking_direction="ltr" if _is_home_team else "rtl",
         confidence=None,
         visibility=None,
         source_provider="gradientsports",
@@ -150,6 +156,7 @@ AGGREGATORS = [
     _ah(F.add_team_shape, "add_team_shape"),
     _ah(F.add_ghost_gk, "add_ghost_gk", kde_backend="cpu-numba"),
     _axh(F.add_cover_shadows, "add_cover_shadows"),
+    _axh(F.add_off_ball_run_values, "add_off_ball_run_values"),
     _axh(F.add_gk_influence, "add_gk_influence"),
     _axh(F.add_player_influence, "add_player_influence"),
     _axh(F.add_xt_gk, "add_xt_gk"),

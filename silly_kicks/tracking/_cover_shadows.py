@@ -679,13 +679,19 @@ def _voronoi_threat(
     xx, yy = np.meshgrid(x_coords, y_coords)
     grid_points = np.column_stack([xx.ravel(), yy.ravel()])  # (n_cells, 2)
 
-    # xT grid (interpolated to PC grid coords)
-    xt_interp = xt.interpolator()
-    xt_vals = xt_interp(x_coords, y_coords)  # (ny, nx)
+    # Physically-oriented (ascending-y) threat grid -- ADR-041: the raw xt.interpolator()
+    # output preserves xT's INVERTED row storage (row 0 = TOP of the pitch), which silently
+    # y-mirrored this product against the ascending-y pitch-control surface. Lazy import:
+    # a module-level xthreat import closes a real cycle (see _player_influence.py).
+    from silly_kicks.xthreat import physical_grid
+
+    xt_vals = physical_grid(xt, x_coords, y_coords, require_fitted=False)  # (ny, nx)
     if attacking_toward_high_x:
         threat_grid = xt_vals * surface.surface
     else:
-        threat_grid = xt_vals[:, ::-1] * surface.surface
+        # BOTH axes: ADR-028's relation is a 180-degree point reflection (x->105-x AND
+        # y->68-y), and an x-only mirror is exact only for a y-symmetric grid.
+        threat_grid = xt_vals[::-1, ::-1] * surface.surface
 
     # Voronoi partition over ALL outfield attackers (not just dangerous)
     all_att_pos = attackers_outfield[["x", "y"]].to_numpy(dtype=np.float64)
@@ -979,7 +985,16 @@ def _compute_cover_shadow_dict(
         # Bit-identical to the prior per-(d, receiver) lane_control loop within rtol 1e-10:
         # man-marking is invariant under lane-blocker removal (no ripple), so removing d
         # only drops d's row from the fixed racer set. See spec §2.1 / INV-1.
-        xt_interp = xt.interpolator()  # type: ignore[union-attr]
+        # ADR-041: the RAW interpolator preserves xT's inverted row storage (row 0 = TOP of
+        # pitch), so reading it here y-mirrored every receiver's threat -- and, for an
+        # RTL-attacking team, omitted the 180-degree point reflection entirely, matching
+        # NEITHER orientation. This is the production default branch (`detailed=False`), so
+        # the defect reached `max_single_defender_blocking_score` on every action. Its
+        # sibling `_voronoi_threat` was repaired in the same PR; this read was missed and
+        # found by final-review. `values_at_points` is the per-point authority (exact
+        # `rate()` semantics) -- no grid needed for a handful of receivers.
+        from silly_kicks.xthreat import values_at_points
+
         kept = defenders_outfield[defenders_outfield["player_id"].isin(lane_blocker_ids)]
         lb_pos = kept[["x", "y"]].to_numpy(dtype=np.float64)
         lb_vel = kept[["vx", "vy"]].to_numpy(dtype=np.float64)
@@ -992,7 +1007,9 @@ def _compute_cover_shadow_dict(
         for _, recv_row in dangerous.iterrows():
             recv_x = float(recv_row["x"])
             recv_y = float(recv_row["y"])
-            recv_xt = float(xt_interp(np.array([recv_x]), np.array([recv_y]))[0, 0])
+            # Frame coords -> action-LTR before the lookup (ADR-028 point reflection).
+            q_x, q_y = (recv_x, recv_y) if attacking_toward_high_x else (105.0 - recv_x, 68.0 - recv_y)
+            recv_xt = float(values_at_points(xt, np.array([q_x]), np.array([q_y]), require_fitted=False)[0])
 
             receiver = np.array([recv_x, recv_y], dtype=np.float64)
             pass_vec = receiver - passer

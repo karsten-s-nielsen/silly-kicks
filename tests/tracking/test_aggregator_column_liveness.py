@@ -29,6 +29,10 @@ import silly_kicks.tracking as tracking
 from silly_kicks.tracking import features as F
 from silly_kicks.tracking import link_actions_to_frames
 
+# ADR-041 opt-out: auto-enumerating gate: sweeps EVERY registered aggregator on defaults, so the OBSO family's
+# synthetic-EPV notice is expected and irrelevant here.
+pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
+
 # ---------------------------------------------------------------------------
 # Fixture: 5 action windows, each exercising a distinct feature domain.
 #   t=10 pass (midfield)           -> context/pressure/structural/elastic/...
@@ -55,32 +59,42 @@ _WINDOWS = (
 def make_actions() -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "game_id": [1] * 5,
-            "action_id": [0, 1, 2, 3, 4],
-            "period_id": [1] * 5,
+            "game_id": [1] * 6,
+            "action_id": [0, 1, 2, 3, 4, 5],
+            "period_id": [1] * 6,
             # Event clocks jittered off the 25 fps frame grid (real providers never
             # align perfectly): sync/elastic quality varies instead of saturating.
-            "time_seconds": [10.0, 20.06, 30.0, 40.11, 50.02],
-            "team_id": pd.Series([5, 5, 5, 5, 5], dtype="int64"),
+            # Action 5 (TF-35, ADR-042) is the RECEPTION of the window-4 cross: without
+            # a following same-team touch the cross is the last action in its period, so
+            # resolve_next_touch_receiver returns <NA> and every run-value column would
+            # be off-domain there -- leaving action 0 as the only on-domain row and the
+            # non-constant liveness check with nothing to compare. It sits at t=51.5,
+            # OUTSIDE every frame window on purpose: it exists to make the cross's
+            # receiver resolvable, not to add another linked action.
+            "time_seconds": [10.0, 20.06, 30.0, 40.11, 50.02, 51.5],
+            "team_id": pd.Series([5, 5, 5, 5, 5, 5], dtype="int64"),
             # action 2 is the goalkick by the team-5 GK (player 1)
-            "player_id": pd.Series([10, 11, 1, 10, 11], dtype="int64"),
-            "defending_gk_player_id": pd.Series([2] * 5, dtype="int64"),
-            "start_x": [50.0, 60.0, 8.0, 80.0, 78.0],
-            "start_y": [34.0, 30.0, 34.0, 34.0, 60.0],
-            "end_x": [60.0, 90.0, 45.0, 95.0, 95.0],
-            "end_y": [30.0, 34.0, 30.0, 34.0, 34.0],
-            "type_id": [0, 11, 22, 11, 1],  # pass, shot, goalkick, shot, cross
-            "type_name": ["pass", "shot", "goalkick", "shot", "cross"],
-            "result_id": [1, 1, 1, 1, 1],
-            "result_name": ["success"] * 5,
-            "bodypart_id": [0] * 5,
-            "bodypart_name": ["foot"] * 5,
+            "player_id": pd.Series([10, 11, 1, 10, 11, 12], dtype="int64"),
+            "defending_gk_player_id": pd.Series([2] * 6, dtype="int64"),
+            "start_x": [50.0, 60.0, 8.0, 80.0, 78.0, 95.0],
+            "start_y": [34.0, 30.0, 34.0, 34.0, 60.0, 34.0],
+            "end_x": [60.0, 90.0, 45.0, 95.0, 95.0, 99.0],
+            "end_y": [30.0, 34.0, 30.0, 34.0, 34.0, 30.0],
+            "type_id": [0, 11, 22, 11, 1, 0],  # pass, shot, goalkick, shot, cross, pass
+            "type_name": ["pass", "shot", "goalkick", "shot", "cross", "pass"],
+            "result_id": [1, 1, 1, 1, 1, 1],
+            "result_name": ["success"] * 6,
+            "bodypart_id": [0] * 6,
+            "bodypart_name": ["foot"] * 6,
         }
     )
 
 
 def _frow(pid, team, gk, x, y, t, *, is_ball=False, vx=4.3, vy=0.0):
     speed = float(np.hypot(vx, vy))
+    # NA-safe: the ball row passes team=None/NA, and `NA == 5` raises
+    # "boolean value of NA is ambiguous" rather than returning False.
+    _is_home_team = team is not None and not pd.isna(team) and team == 5
     return dict(
         game_id=1,
         period_id=1,
@@ -99,7 +113,11 @@ def _frow(pid, team, gk, x, y, t, *, is_ball=False, vx=4.3, vy=0.0):
         vy=float(vy),
         speed_source="native",
         ball_state="alive",
-        team_attacking_direction="ltr",
+        # ADR-041: per-TEAM direction. Team 5 is home (all actions are team 5, so the
+        # acting team never flips and every aggregator's values are unchanged); team 6
+        # attacks the other way. A blanket "ltr" is physically impossible -- two teams
+        # cannot attack the same way -- and validate_period_directions now rejects it.
+        team_attacking_direction="ltr" if _is_home_team else "rtl",
         confidence=None,
         visibility=None,
         source_provider="gradientsports",
@@ -133,6 +151,19 @@ def make_frames() -> pd.DataFrame:
         # runs retreat (OBSO declines toward the event: PAUSA's temporal term varies).
         advance = 4.0 + 0.9 * w_idx if w_idx != 4 else -3.0
         actor_gap = actor_gaps[w_idx]
+        # TF-35 (ADR-042): the default off-ball speeds top out at ~4.95 m/s, BELOW the
+        # 5.56 m/s (20 km/h) sprint gate, so every run-value column would be born dead.
+        # Windows 0 and 4 are the two TF-35-on-domain actions (a completed pass and a
+        # completed cross, each with a resolvable receiver); each gets two genuine
+        # sprinters -- the RECEIVER (so run_value_target is live) plus one other
+        # teammate (so the disruptive columns are live). Window 4 gets a SECOND
+        # disruptive sprinter on purpose: with one apiece, both windows' saturated
+        # run values summed to exactly 1.0 and run_value_disruptive_sum was constant
+        # across the fixture -- live but informationally dead, the exact failure mode
+        # the non-constant check exists to catch. Restricted to these two windows so no
+        # other aggregator's geometry moves more than it has to.
+        sprinters = {0: (11, 13), 4: (12, 13, 10)}.get(w_idx, ())
+        sprint_speed = 7.0 + 0.5 * w_idx
         # Nearest defender presses the carrier — except the cross window, where the
         # carrier is ISOLATED (nobody within reach: uniquely-reachable area > 0).
         presser_gap = 2.2 + 0.9 * w_idx if w_idx != 4 else 14.0
@@ -157,6 +188,13 @@ def make_frames() -> pd.DataFrame:
                     # sprints (8.5 m/s) into open space -> unique cells > 0 there.
                     actor_vx = 8.5 if w_idx == 4 else 3.2 + 0.45 * w_idx
                     rows.append(_frow(pid, 5, False, bx - actor_gap, ball_y, t, vx=actor_vx))
+                elif pid in sprinters:
+                    # A real sprint: >= 3 m of displacement AND a stored speed clearing
+                    # the gate. Advance is forward in the acting team's sense (team 5 is
+                    # home, so +x) regardless of which side of the ball they start.
+                    y = 33.0 + (pid % 3) * (2.0 + 0.6 * w_idx)
+                    x = ball_x + dx * scale + sprint_speed * 1.05 * frac
+                    rows.append(_frow(pid, 5, False, x, y, t, vx=sprint_speed, vy=0.3 * (pid % 2)))
                 else:
                     y = 33.0 + (pid % 3) * (2.0 + 0.6 * w_idx)
                     x = ball_x + dx * scale + advance * frac
@@ -328,6 +366,13 @@ ENTRIES: dict[str, object] = {
     "add_line_break": _std(F.add_line_break, home_team_id=5),
     "add_obso": _std(F.add_obso),
     "add_off_ball_context": _std(F.add_off_ball_context, home_team_id=5),
+    # TF-35 (ADR-042): on-domain rows are actions 0 (pass -> receiver 11) and 4
+    # (cross -> receiver 12, resolvable only because action 5 was added); the other
+    # four are off-domain and stay <NA> on all five columns. Both on-domain windows
+    # carry two sprinters, so run_value_target and the disruptive columns are live and
+    # differ between the two rows. n_disruptive_runs / n_valued_disruptive_runs are
+    # Int64 and therefore dtype-exempt from the non-constant check (both are 1).
+    "add_off_ball_run_values": _xtf(F.add_off_ball_run_values),
     "add_off_ball_runs": _std(F.add_off_ball_runs, home_team_id=5),
     # TF-49 pre-check (review major 8, run 2026-07-17 before registering): on this fixture
     # the pass window yields made=0 (honest zero -- no defender in (50, 60]), the goalkick

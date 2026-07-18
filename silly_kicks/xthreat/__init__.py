@@ -18,6 +18,7 @@ from silly_kicks.xthreat._params import (
     XtParams,
     validate_params_for_method,
 )
+from silly_kicks.xthreat._physical import physical_grid, require_fitted_xt, values_at_points
 from silly_kicks.xthreat._transitions import (
     kde_smoothed_transition_matrix,
     silverman_2d,
@@ -37,8 +38,11 @@ __all__ = [
     "compute_holdout_nll_per_group",
     "holdout_split",
     "kde_smoothed_transition_matrix",
+    "physical_grid",
+    "require_fitted_xt",
     "silverman_2d",
     "singh_transition_matrix",
     "validate_params_for_method",
     "value_iteration",
+    "values_at_points",
 ]

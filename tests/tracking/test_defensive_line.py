@@ -96,7 +96,9 @@ def _make_frame_rows(
             x=away_gk_pos[0],
             y=away_gk_pos[1],
             source_provider="sportec",
-            team_attacking_direction="ltr",
+            # ADR-041: away attacks the OTHER way. Labelling both teams "ltr" is
+            # physically impossible and is now rejected by validate_period_directions.
+            team_attacking_direction="rtl",
         )
     )
     pid += 1
@@ -116,7 +118,9 @@ def _make_frame_rows(
                 x=x,
                 y=y,
                 source_provider="sportec",
-                team_attacking_direction="ltr",
+                # ADR-041: away attacks the OTHER way. Labelling both teams "ltr" is
+                # physically impossible and is now rejected by validate_period_directions.
+                team_attacking_direction="rtl",
             )
         )
         pid += 1

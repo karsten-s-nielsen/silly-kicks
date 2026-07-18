@@ -12,9 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
 import pandas as pd
-from sklearn.exceptions import NotFittedError
 
 from silly_kicks.vaep.feature_framework import Actions, Features, FeatureTransfomer, simple
 
@@ -22,33 +20,6 @@ if TYPE_CHECKING:  # ExpectedThreat is only duck-typed at runtime (model.xT/.met
     from silly_kicks.xthreat import ExpectedThreat
 
 __all__ = ["xt_xfns"]
-
-
-def _require_fitted_xt(model: ExpectedThreat | str | None) -> None:
-    """Fail closed unless ``model`` is a fitted ExpectedThreat. See NOTICE for citations.
-
-    Parameters
-    ----------
-    model : ExpectedThreat | str | None
-        The candidate xT model.
-
-    Raises
-    ------
-    NotImplementedError
-        If ``model`` is a ``str`` (a future bundled-variant name; not shipped yet).
-    ValueError
-        If ``model`` is ``None``.
-    NotFittedError
-        If ``model`` is an unfitted ExpectedThreat (all-zero ``.xT``).
-    """
-    if isinstance(model, str):
-        raise NotImplementedError(
-            "xt_xfns: bundled xT grid variants are not shipped yet; pass a fitted ExpectedThreat."
-        )
-    if model is None:
-        raise ValueError("xt_xfns requires a fitted ExpectedThreat (model=...).")
-    if not np.any(model.xT):  # same fitted-check ExpectedThreat.rate() uses
-        raise NotFittedError("xt_xfns requires a fitted ExpectedThreat; call model.fit(actions) first.")
 
 
 def xt_xfns(*, model: ExpectedThreat | str | None = None) -> list[FeatureTransfomer]:
@@ -67,7 +38,7 @@ def xt_xfns(*, model: ExpectedThreat | str | None = None) -> list[FeatureTransfo
     Raises
     ------
     ValueError, NotImplementedError, NotFittedError
-        See :func:`_require_fitted_xt`.
+        See :func:`silly_kicks.xthreat.require_fitted_xt`.
 
     Examples
     --------
@@ -78,7 +49,14 @@ def xt_xfns(*, model: ExpectedThreat | str | None = None) -> list[FeatureTransfo
 
         v = VAEP(xfns=fs.xfns_default + xt_xfns(model=frozen_xt))
     """
-    _require_fitted_xt(model)
+    # Lazy import (ADR-041): a MODULE-level `from silly_kicks.xthreat import ...` closes a
+    # real cycle -- xthreat/_grid imports spadl.config, and spadl/__init__ imports
+    # tracking, which imports vaep.feature_framework, which re-enters this module while
+    # xthreat is still partially initialized. Function-local keeps the single-sourced
+    # guard without the edge (same idiom as tracking/_xt_gk.py's frozen cell-indexer).
+    from silly_kicks.xthreat import require_fitted_xt
+
+    require_fitted_xt(model, caller="xt_xfns")
     col = f"xt__{model.method}"  # type: ignore[union-attr]
 
     def _xt(actions: Actions) -> Features:

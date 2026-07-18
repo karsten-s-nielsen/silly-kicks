@@ -87,7 +87,12 @@ def _reference_max_single(frame_data, passer_xy, attacking_team_id, xt, *, home_
     if not lane_blocker_ids:
         return 0.0
 
-    xt_interp = xt.interpolator()
+    # ADR-041 (final-review): this oracle previously read the RAW interpolator, exactly as
+    # the production code did -- so the parity gate compared the bug to itself and had ZERO
+    # discriminating power on the orientation axis. It now mirrors the corrected production
+    # read (values_at_points on action-LTR coords).
+    from silly_kicks.xthreat import values_at_points
+
     passer = np.array(passer_xy, dtype=np.float64)
     att_pos = attackers[["x", "y"]].to_numpy(dtype=np.float64)
     att_vel = attackers[["vx", "vy"]].to_numpy(dtype=np.float64)
@@ -104,7 +109,8 @@ def _reference_max_single(frame_data, passer_xy, attacking_team_id, xt, *, home_
         for _, recv in dangerous.iterrows():
             recv_x = float(recv["x"])
             recv_y = float(recv["y"])
-            recv_xt = float(xt_interp(np.array([recv_x]), np.array([recv_y]))[0, 0])
+            q_x, q_y = (recv_x, recv_y) if attacking_high else (105.0 - recv_x, 68.0 - recv_y)
+            recv_xt = float(values_at_points(xt, np.array([q_x]), np.array([q_y]), require_fitted=False)[0])
             receiver = np.array([recv_x, recv_y], dtype=np.float64)
             pass_vec = receiver - passer
             pass_dist = np.linalg.norm(pass_vec)

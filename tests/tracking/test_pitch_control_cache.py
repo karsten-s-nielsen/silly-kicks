@@ -45,6 +45,21 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list:
 
 
 class TestPitchControlCache:
+    def test_len_reports_memoized_surface_count(self, calls: list) -> None:
+        """Public size (ADR-041): the honest observable for cache sharing.
+
+        Callers threading a shared cache across feature families assert on ``len``
+        instead of reaching into the private ``_store``.
+        """
+        cache = PitchControlCache()
+        assert len(cache) == 0
+        cache.surface(_frame(100), 1)
+        assert len(cache) == 1
+        cache.surface(_frame(100), 1)  # same key -> hit, no growth
+        assert len(cache) == 1
+        cache.surface(_frame(101), 1)  # distinct frame -> new entry
+        assert len(cache) == 2
+
     def test_same_frame_team_is_cached(self, calls: list) -> None:
         cache = PitchControlCache()
         s1 = cache.surface(_frame(100), 1)

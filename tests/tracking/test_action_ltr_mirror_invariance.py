@@ -11,10 +11,15 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.spadl.utils import add_pre_shot_gk_context
-from silly_kicks.tracking.features import add_defensive_line, add_ghost_gk, add_team_shape
+from silly_kicks.tracking.features import add_defensive_line, add_ghost_gk, add_obso, add_team_shape
+
+# ADR-041 opt-out: the OBSO mirror guard below exercises the synthetic placeholder EPV
+# path deliberately -- it asserts ORIENTATION invariance, not EPV provenance.
+pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
 
 HOME, AWAY = 1, 2
 SHOT = spadlconfig.actiontype_id["shot"]
@@ -23,6 +28,24 @@ FL, FW = 105.0, 68.0
 # ghost_gk_y mirror-invariance tolerance: sized to the corrected 179-match model's inherent lateral
 # asymmetry on the off-centre probe (measured 1.26 m), with headroom. See test_ghost_gk_mirror_invariant.
 _GHOST_Y_TOL = 3.0
+# OBSO mirror tolerance: bounded by PITCH CONTROL's own mirror asymmetry, NOT by orientation
+# and NOT (any longer) by grid discretization.
+#
+# History, because two earlier attributions were wrong and the measurements are the point:
+#   1. First attributed to the int()/FLOOR target indexing in compute_pass_obso (x=15 -> 14 while
+#      its mirror x=90 -> 88, and the mirror of 14 is 89). That off-by-one was real and IS now
+#      fixed (floor -> round, ADR-041), together with a half-cell registration error on the xt=
+#      path -- but fixing both did NOT collapse this tolerance, which falsified that attribution.
+#   2. Measured cause: pitch control is itself not mirror-symmetric at these query points.
+#      compute_pitch_control(attacking_team_id=2) returns EXACTLY 0.5000000000 at frame (90, 34)
+#      -- the documented Spearman degenerate/no-information fallback -- and 1.0000000000 at the
+#      mirrored (15, 34), a clean 2x. The surface is not equal to its own mirror under either an
+#      x-flip or a point reflection.
+# So this bound is a property of the pitch-control model, is PRE-EXISTING, and is out of scope
+# for an OBSO-orientation PR. Max measured base-vs-mirror difference on this fixture: 1.30e-2.
+# 0.02 leaves headroom while a genuine orientation leak moves the value by >= 0.1 (5x the tol);
+# the real orientation guards are the dedicated RED-verified tests in test_obso_orientation.py.
+_OBSO_MIRROR_TOL = 0.02
 
 
 def _scenario():
@@ -298,3 +321,34 @@ def test_ghost_gk_mirror_invariant():
     # off-centre model asymmetry is ~0.36%, well inside 1% (the old 0.5 m ABSOLUTE tol was a
     # central-probe artifact and does not translate to this scale).
     assert abs(bs - ms) / abs(bs) < 0.01, f"ghost_gk_density_spread rel-diff {abs(bs - ms) / abs(bs):.4f}: {bs} vs {ms}"
+
+
+def test_obso_mirror_invariant():
+    """OBSO joins this gate as of ADR-041 (DEFECT A).
+
+    ADR-028 had classified obso as "self-reconciling". It was not: it read the raw
+    action-LTR target against home-attacks-right pitch-control surfaces and applied an
+    always-+x EPV grid, so away actions were sampled at the reflected point AND valued
+    toward their own goal. With the per-action re-projection in place the emitted values
+    must be identical under a physical mirror.
+
+    Uses the away-team OBSO fixture (a pass action with a real frame window) rather than
+    this module's single-frame shot scenario, which carries no pass for OBSO to value.
+    """
+    from tests.tracking.test_obso_orientation import _away_actions, _away_control_at_low_x
+
+    # The low-x variant: the away team holds control at frame x~15, which is where action
+    # 10's action-LTR target (90, 34) re-projects to. On the spread-out variant that cell
+    # is empty and obso_actual is 0.0 -- the invariance would hold vacuously.
+    a, f = _away_actions(), _away_control_at_low_x()
+    am, fm = _mirror(a, f)
+    base = add_obso(a, f, home_team_id=HOME)
+    # After _mirror the team attacking RIGHT is AWAY (see the NOTE above).
+    mir = add_obso(am, fm, home_team_id=AWAY)
+
+    cols = ["obso_actual", "obso_peak", "obso_optimal"]
+    # Non-vacuity: the fixture must actually produce values, or the invariance is trivial.
+    signal = float(base.set_index("action_id").iloc[0]["obso_actual"])
+    assert signal > 0.05, f"OBSO signal {signal:.4g} too small for the tolerance to mean anything"
+    for aid in (10, 11):
+        _assert_invariant(base, mir, aid, cols, tol=_OBSO_MIRROR_TOL)
