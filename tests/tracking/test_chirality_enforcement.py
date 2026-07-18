@@ -246,9 +246,18 @@ def test_load_xgb_booster_base_score_safe_normalizes_bracketed(tmp_path):
     guarded = load_xgb_booster_base_score_safe(mjp).predict(d)
     np.testing.assert_allclose(guarded, correct, atol=1e-9)  # guard normalized -> identical
 
+    # Without the guard, a bracketed base_score is BROKEN under BOTH xgboost conventions -- which is
+    # exactly why the guard exists. xgboost 2.x silently drops it to the 0.5 default (loads, but
+    # mis-serves); xgboost 3.x rejects the bracketed value outright ("Invalid type for base_score
+    # ... got Array" -> XGBoostError). Assert the raw load is broken either way (version-robust:
+    # CI runs xgboost >=2.0,<4.0, so this test must hold on both majors).
     raw = xgb.Booster()
-    raw.load_model(str(mjp))  # raw 2.x load drops the bracketed base_score to the 0.5 default
-    assert not np.allclose(raw.predict(d), correct, atol=1e-6)
+    try:
+        raw.load_model(str(mjp))
+    except xgb.core.XGBoostError:
+        pass  # xgboost 3.x: bracketed base_score is an invalid type -> rejected (guard needed)
+    else:
+        assert not np.allclose(raw.predict(d), correct, atol=1e-6)  # xgboost 2.x: loaded but mis-served
 
 
 # --- Task 5: sc_extended variant routes to the Hub (TF-19 PR-2) ---
