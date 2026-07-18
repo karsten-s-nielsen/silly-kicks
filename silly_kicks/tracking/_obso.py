@@ -25,6 +25,8 @@ import pandas as pd
 from ._id_compat import ids_match
 
 if TYPE_CHECKING:
+    from silly_kicks.xthreat import ExpectedThreat
+
     from .pitch_control import PitchControlCache
 
 # ---------------------------------------------------------------------------
@@ -290,6 +292,7 @@ def compute_pass_obso(
     *,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
+    xt: ExpectedThreat | None = None,
     params: ObsoParams | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
@@ -299,6 +302,16 @@ def compute_pass_obso(
     Evaluates OBSO at the target position across all frames in a
     pre-windowed pass window to determine temporal judgment (when to pass)
     and spatial selection (where to pass).
+
+    .. note::
+        **Coordinate contract (ADR-041):** ``target_position`` and the ``transition_grid``
+        / ``epv_grid`` are all interpreted in the FRAMES' coordinate convention (for
+        canonical converted frames: home-attacks-right). This engine is deliberately
+        orientation-blind. Per-action re-projection of an acting-team-LTR SPADL target,
+        and the matching x-flip of an attack-LTR EPV grid, are the AGGREGATOR's
+        responsibility -- see ``features.add_obso``. Passing a raw action-LTR target here
+        alongside home-attacks-right frames silently samples the reflected point for
+        away-team actions (this was DEFECT A).
 
     Parameters
     ----------
@@ -347,6 +360,28 @@ def compute_pass_obso(
     if params is None:
         params = ObsoParams()
 
+    if xt is not None:
+        if epv_grid is not None:
+            raise ValueError("compute_pass_obso: pass either xt= or epv_grid=, not both")
+        from silly_kicks.xthreat import physical_grid, require_fitted_xt
+
+        require_fitted_xt(xt, caller="compute_pass_obso")
+        # Built at the EFFECTIVE params geometry, never a hardcoded default: this is the
+        # one OBSO entry point that accepts a caller-supplied ObsoParams (ADR-041).
+        #
+        # NODE registration, identical to _resolve_epv_grid (ADR-042 review finding 3).
+        # This site originally built CELL CENTRES ((i + 0.5) * L / n) -- the exact bug
+        # _resolve_epv_grid's comment describes, and uncorrected here for the same reason:
+        # building at exactly (grid_ny, grid_nx) makes _interpolate_grid's identity
+        # shortcut return the grid unresampled, while the index map below reads it as
+        # node-registered. The two entry points disagreed by up to ~0.9% of grid max,
+        # worst at the byline where crosses live.
+        _gx = np.linspace(0.0, params.pitch_length, params.grid_nx)
+        _gy = np.linspace(0.0, params.pitch_width, params.grid_ny)
+        epv_grid = physical_grid(xt, _gx, _gy)
+    # No synthetic-surface warning here: engines stay silent, the aggregator edge owns
+    # that policy (policy-at-edge).
+
     # Canonical-frame surfaces routed through the shared cache so overlapping
     # pass windows (and the event/teammate queries on the same frame) reuse
     # each surface (TF-7 shared surface). compute_pitch_control_at_points is
@@ -374,17 +409,23 @@ def compute_pass_obso(
     transition_interp = _interpolate_grid(transition_grid, (params.grid_ny, params.grid_nx))
     epv_interp = _interpolate_grid(epv_grid, (params.grid_ny, params.grid_nx))
 
-    # Map target to grid indices
+    # Map target to grid indices. NEAREST node, not floor (ADR-041): the index space
+    # `x / pitch_length * (grid_nx - 1)` is NODE-registered (bit-identical to
+    # np.linspace(0, pitch_length, grid_nx)), and for node registration the correct
+    # nearest-neighbour rule is round. int() truncates, which is a systematic half-node
+    # bias toward the origin on every OBSO lookup, and is also why the target->cell map
+    # was not mirror-symmetric (x=15 -> floor 14, mirror x=90 -> floor 88, but the mirror
+    # of column 14 is 89; with round both give 15/88 and 103-15 == 88).
     tx_idx = int(
         np.clip(
-            target_position[0] / params.pitch_length * (params.grid_nx - 1),
+            round(target_position[0] / params.pitch_length * (params.grid_nx - 1)),
             0,
             params.grid_nx - 1,
         )
     )
     ty_idx = int(
         np.clip(
-            target_position[1] / params.pitch_width * (params.grid_ny - 1),
+            round(target_position[1] / params.pitch_width * (params.grid_ny - 1)),
             0,
             params.grid_ny - 1,
         )
@@ -411,16 +452,19 @@ def compute_pass_obso(
         # Reuse the event-frame surface already computed above.
         tm_ppcf = event_surface.at_points(teammate_positions)
         for j in range(len(teammate_positions)):
+            # `round`, matching the target map above: a bare int() TRUNCATES, biasing every
+            # teammate lookup toward the low-index cell by up to a full cell. The two maps
+            # index the SAME node-registered grid, so they must round the same way (ADR-041).
             tm_x_idx = int(
                 np.clip(
-                    teammate_positions[j, 0] / params.pitch_length * (params.grid_nx - 1),
+                    round(teammate_positions[j, 0] / params.pitch_length * (params.grid_nx - 1)),
                     0,
                     params.grid_nx - 1,
                 )
             )
             tm_y_idx = int(
                 np.clip(
-                    teammate_positions[j, 1] / params.pitch_width * (params.grid_ny - 1),
+                    round(teammate_positions[j, 1] / params.pitch_width * (params.grid_ny - 1)),
                     0,
                     params.grid_ny - 1,
                 )

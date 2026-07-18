@@ -25,6 +25,10 @@ from silly_kicks.tracking.features import (
 )
 from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
 
+# ADR-041 opt-out: auto-enumerating gate: sweeps EVERY registered aggregator on defaults, so the OBSO family's
+# synthetic-EPV notice is expected and irrelevant here.
+pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
+
 _PROVENANCE_COLS = {"frame_id", "time_offset_seconds", "link_quality_score", "n_candidate_frames"}
 
 

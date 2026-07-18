@@ -474,8 +474,17 @@ class TestXtOrientation:
         # Different attacking directions should produce different shares
         assert gi_away.pitch_control_share_weighted != gi_home.pitch_control_share_weighted
 
-    def test_flip_is_x_only_not_y(self, fitted_xt):
-        """Flip is [:, ::-1] not [::-1, ::-1] — y-axis preserved."""
+    def test_away_flip_is_a_full_point_reflection(self, fitted_xt):
+        """Away flip is [::-1, ::-1] — BOTH axes (ADR-041).
+
+        This test was previously named ``test_flip_is_x_only_not_y`` and its docstring
+        asserted "y-axis preserved", which is the pre-ADR-041 behaviour and the opposite of
+        what ships. It passed either way -- its only assertion is a [0, 1] range check -- so
+        it never had discriminating power; the name was the entire claim. The real
+        orientation guard is
+        ``tests/tracking/test_threat_grid_orientation_extra.py::TestGkInfluenceThreatGridOrientation``;
+        this one is kept as the no-crash/valid-range check it actually is.
+        """
         from silly_kicks.tracking._gk_influence import compute_gk_influence
         from silly_kicks.xthreat import ExpectedThreat
 
@@ -497,7 +506,7 @@ class TestXtOrientation:
             xt=xt_asym,
             home_team_id=1,
         )
-        # Should produce a valid result (no crash from y-flip mismatch)
+        # Range check only -- see the docstring for where orientation is actually gated.
         assert 0.0 <= gi.pitch_control_share_weighted <= 1.0
 
     def test_interpolated_grid_shape(self, fitted_xt):

@@ -87,7 +87,9 @@ input to feed `xs_substitution_probe` in this PR.
 **This PR records no xS probe result.** No number is fabricated for the shot arm. The shot
 row of the decision table is **PENDING PR-3** — it will be filled in once the `gkdv/`
 ghost-substitution engine lands and can produce the `targets` frame the registered xS probe
-rule (ADR-037 §3, all ten locked constants) consumes.
+rule (ADR-037 §3, all of its locked constants — twelve as registered in
+`PROBE_WRAPPERS["xs"]["rule_constants"]`; the pre-exec-review set of eight grew by four)
+consumes.
 
 | arm | probe verdict | entanglement | decision-table row |
 |---|---|---|---|

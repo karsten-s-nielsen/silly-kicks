@@ -17,6 +17,10 @@ from tests.tracking.conftest_id_dtype import (
     make_frames,
 )
 
+# ADR-041 opt-out: auto-enumerating gate -- it sweeps EVERY registered aggregator on defaults, so the OBSO
+# family's synthetic-EPV notice is expected here and unrelated to what this gate asserts.
+pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
+
 # Entity-id columns we CAST when building the asymmetric variants (input side).
 STRINGIFY_COLS = ["team_id", "player_id", "defending_gk_player_id"]
 

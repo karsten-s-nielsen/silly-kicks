@@ -220,8 +220,15 @@ def compute_space_created(
     # of the team LOO (informationally empty — lakehouse round-2 rejection).
     obso_multiplier_opponent = None
     if include_opponent_perspective:
-        transition_opp = np.flip(transition_interp, axis=1)
-        epv_opp = np.flip(epv_interp, axis=1)
+        # Point reflection (ADR-041): the opponent attacks the other goal AND the y-axis
+        # mirrors with it. Equivalent to the previous axis=1 flip for the y-SYMMETRIC
+        # synthetic grids -- gated to rtol=1e-9 against a pre-change golden in
+        # test_space_creation_mirror.py, where the measured float noise is 3.3e-16 -- but
+        # CORRECT for an injected, y-asymmetric xT-derived surface (ADR-041 wires those in).
+        # NOTE distance_weight below is deliberately NOT mirrored (it stays ball-anchored,
+        # 4.24.0), and the two branches normalize by their OWN maxima; do not "fix" either.
+        transition_opp = np.flip(transition_interp, axis=(0, 1))
+        epv_opp = np.flip(epv_interp, axis=(0, 1))
         effective_transition_opp = transition_opp * distance_weight
         max_trans_opp = np.max(effective_transition_opp)
         if max_trans_opp > 1e-10:

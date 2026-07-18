@@ -434,6 +434,30 @@ reception, and the reported per-match anchors) follow the Modern Soccer Coach
 "Packing Data" lesson and the Twelve/Soccermatics Pro course materials; see
 the per-feature docstrings.
 
+The off-ball run valuation in silly_kicks/tracking/_run_values.py
+(PR-S119, TF-35) implements methodologies described in:
+
+- Sumpter, D., et al. Soccermatics Pro (Twelve Football), module 16.2:
+  "Valuing off-ball runs." A PRACTITIONER anchor, stated as such -- the course
+  frames a run's worth as the threat of the space the runner comes to control,
+  which is the shape this module implements (pitch control x threat, taken as a
+  maximum over the region the runner owns). It is not a peer-reviewed
+  specification and no numeric result is reproduced from it.
+
+- Esposito, U., et al. (2026). "Off-ball movement analysis in elite football."
+  International Journal of Sports Science & Coaching.
+  doi:10.1177/17479541261427153.
+  (FRAMING ONLY: the target-vs-disruptive distinction between the run that
+  receives the ball and the runs that pull defenders elsewhere. No estimator,
+  threshold, or numeric result is taken from this paper.)
+
+The region-influence floor (silly_kicks.tracking.RunValuationParams) is a
+silly-kicks parameter with no published provenance: it exists solely because
+run_value is a maximum over a thresholded region. Its 0.1 default is a
+spec-time starting value and is NOT calibrated -- ADR-042 records the
+sensitivity probe (0.05 / 0.1 / 0.2) as its calibration, still to be run.
+It is not a value carried over from either source above.
+
 The cover shadow features in silly_kicks/tracking/_cover_shadows.py
 (PR-S36, TF-30) implement methodologies described in:
 

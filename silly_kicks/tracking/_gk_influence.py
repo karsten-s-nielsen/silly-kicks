@@ -345,15 +345,21 @@ def compute_gk_influence(
     safe_team = np.where(team_surface < 1e-8, np.inf, team_surface)
     share_grid = np.where(team_surface < 1e-8, 0.0, gk_surface / safe_team)
 
-    # Interpolate xT onto pitch control grid
-    interp = xt.interpolator(kind="linear")
-    threat_grid = interp(surface.grid_x, surface.grid_y)  # (ny, nx)
+    # Physically-oriented (ascending-y) threat grid -- ADR-041. The raw
+    # xt.interpolator() output preserves xT's INVERTED row storage (row 0 = TOP of the
+    # pitch), which silently y-mirrored this fusion against the ascending-y pitch-control
+    # surface; physical_grid neutralizes the inversion once, at xthreat's boundary, and
+    # fail-closes on an unfitted/None model. Lazy import: a module-level xthreat import
+    # here closes a real cycle (see _player_influence.py).
+    from silly_kicks.xthreat import physical_grid
 
-    # xT flip for away-team attack
+    threat_grid = physical_grid(xt, surface.grid_x, surface.grid_y, require_fitted=False)  # (ny, nx)
+
+    # Away-team attack: BOTH axes (ADR-028 is a 180-degree point reflection, x->105-x AND
+    # y->68-y). An x-only mirror is exact only for a y-symmetric grid, which a fitted xT
+    # merely APPROXIMATES -- the same incomplete repair ADR-041 corrected elsewhere.
     if not same_id(attacking_team_id, home_team_id):
-        # Away attacks toward x=0 in LTR frames
-        # Defending team is home -> goal at x=0 -> high threat near x=0
-        threat_grid = threat_grid[:, ::-1]
+        threat_grid = threat_grid[::-1, ::-1]
 
     # Weighted average
     cell_area = surface.cell_area

@@ -20,9 +20,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
 
             spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway, with post-conversion enrichments (possessions, game state, GK analytics, naming) in canonical LTR coordinates." "Python" "Library"
             vaep = container "silly_kicks.vaep" "VAEP action valuation: features, action/possession/time-windowed labels, and gradient-boosted models. HybridVAEP removes result leakage; optional Expected-Threat feature factory." "Python" "Library"
-            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, provider adapters, event-frame linkage, spatial/GKDV models (pitch control, OBSO, DAS, ghost-GK, xS/xCross/xT-GK), 29 action-coupled aggregators. ADR-039, ADR-040." "Python" "Library"
+            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, provider adapters, event-frame linkage, spatial/GKDV models (pitch control, OBSO, DAS, ghost-GK, xS/xCross/xT-GK, run valuation), 30 action-coupled aggregators. ADR-042." "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 33-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
-            xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid, with a held-out transition-NLL evaluator." "Python" "Library"
+            xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator; physical_grid resampling. ADR-041." "Python" "Library"
             xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate), metric compute_xt_gk_v2 over 3 injected ports, resolved-GK-geometry edge (apply_resolved_gk_geometry), bundled rho weights." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (pure objectives/CV/gates + frozen exogenous xT artifact) + scripts/ CLI + pining/Databricks loaders. Recommends tuned tracking/xT defaults; never changes library constants." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Per-provider raw-data parse ports (bytes -> provider bronze -> converter input). The Sportec/DFL parse+shape port single-sources the lakehouse DFL parser (golden-pinned). Behind the [parse-dfl] extra." "Python (optional [parse-dfl] extra)" "Library"
@@ -65,6 +65,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         atomic -> vaep "Inherits VAEP pipeline via AtomicVAEP subclass" "Python import"
         atomic -> tracking "Reuses _kernels + lift_to_states from tracking namespace" "Python import"
         xthreat -> spadl "Reads SPADL config and schema from" "Python import"
+        tracking -> xthreat "Weights pitch control by real threat (OBSO EPV, GK + player influence, cover shadows, run valuation) via" "physical_grid / values_at_points"
 
         // --- Relationships: xT-GK v2 possession value (ADR-036) ---
         analyst -> xtgk "Fits the possession-value surface V(z,p) with an injected per-shot xg_column via" "MarkovPossessionValue.fit()"

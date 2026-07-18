@@ -68,6 +68,7 @@ __all__ = [
     "add_cover_shadows",
     "add_ghost_gk",
     "add_gk_influence",
+    "add_off_ball_run_values",
     "add_packing",
     "add_pitch_control",
     "add_player_influence",
@@ -100,6 +101,7 @@ __all__ = [
     "gk_reachable_area_m2",
     "nearest_defender_distance",
     "obso_xfns",
+    "off_ball_run_value_xfns",
     "off_ball_xt_opponent",
     "off_ball_xt_team",
     "packing_xfns",
@@ -316,6 +318,114 @@ def packing_xfns(*, home_team_id, params=None):
 
     _atomic_transformer._frame_aware = True  # type: ignore[attr-defined]
     _atomic_transformer.__name__ = "packing"
+    return [_atomic_transformer]
+
+
+#: Atomic reception atoms -- the rows that carry receiver identity. Kept as an explicit
+#: name-mapped tuple (not raw ids) so a future config renumber cannot silently break it.
+_RECEPTION_ATOM_NAMES = ("receival", "keeper_pick_up", "keeper_claim")
+
+
+def _restore_reception_touches(actions: pd.DataFrame, adapted: pd.DataFrame) -> pd.DataFrame:
+    """Re-type reception atoms from ``non_action`` to ``bad_touch`` on an adapted stream.
+
+    ``_packing_atomic_adapter`` collapses every non-domain atom to standard
+    ``non_action``, which ``resolve_next_touch_receiver`` skips because a non-action is
+    not a ball touch. That is correct for packing (which drops receiver semantics on the
+    atomic side entirely) and WRONG for any consumer that needs the receiver: it makes the
+    receival atom invisible, so no receiver ever resolves.
+
+    ``bad_touch`` is chosen because it is a real touch (visible to the resolver) that is
+    off-domain for every receiver-consuming feature so far, so a reception can never be
+    mistaken for a valued action in its own right.
+    """
+    out = adapted.copy()
+    reception_ids = [atomicconfig.actiontype_id[name] for name in _RECEPTION_ATOM_NAMES]
+    is_reception = np.isin(actions["type_id"].to_numpy(), reception_ids)
+    if is_reception.any():
+        out.loc[is_reception, "type_id"] = spadlconfig.actiontype_id["bad_touch"]
+    return out
+
+
+def add_off_ball_run_values(actions, frames, xt, *, home_team_id, links=None, pitch_control_cache=None, params=None):
+    """Atomic-SPADL mirror of TF-35 run valuation: the five wide columns (ADR-042).
+
+    Reuses the packing mirror's adapter (:func:`_packing_atomic_adapter`) to synthesize
+    ``end`` from ``x+dx``/``y+dy`` and a type-aware ``result_id`` -- pass/cross succeed
+    iff the NEXT atom is a ``receival`` or a same-team keeper reception -- because TF-35's
+    domain is exactly "completed pass/cross", the same completion question packing asks.
+    The adapter's rewritten ids never leak: the output is assembled on a COPY OF THE
+    CALLER'S frame (execution-review D3 precedent).
+
+    Receiver resolution runs on the SYNTHESIZED standard stream, and that needs one
+    correction the packing mirror does not: the packing adapter maps EVERY non-domain atom
+    to standard ``non_action``, which :func:`resolve_next_touch_receiver` deliberately
+    SKIPS (a non-action is not a touch). Under that mapping the ``receival`` atom -- the
+    very row that identifies the receiver -- becomes invisible, no receiver ever resolves,
+    and all five columns come back <NA> for every action. Reception atoms are therefore
+    re-typed to standard ``bad_touch``: a genuine touch (so the resolver sees it) that is
+    off-domain for TF-35 (so it never becomes a valued action itself).
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import add_off_ball_run_values
+    >>> enriched = add_off_ball_run_values(atomic_actions, frames, fitted_xt, home_team_id=1)
+    >>> enriched[["run_value_target", "n_disruptive_runs"]].head()
+    """
+    from silly_kicks.tracking.features import _RUN_VALUE_COLS
+    from silly_kicks.tracking.features import add_off_ball_run_values as _std
+
+    adapted = _packing_atomic_adapter(actions, PackingParams(action_types=("pass", "cross")))
+    adapted = _restore_reception_touches(actions, adapted)
+    enriched = _std(
+        adapted,
+        frames,
+        xt,
+        home_team_id=home_team_id,
+        links=links,
+        pitch_control_cache=pitch_control_cache,
+        params=params,
+    )
+    out = actions.copy()
+    for col in _RUN_VALUE_COLS:
+        out[col] = enriched[col].array
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols):
+        for col in provenance_cols:
+            if col in enriched.columns:
+                out[col] = enriched[col].array
+    return out
+
+
+def off_ball_run_value_xfns(xt, *, home_team_id, params=None):
+    """Atomic VAEP factory for TF-35: each gamestate slot runs through
+    :func:`_packing_atomic_adapter` before the shared kernel. Inherits the standard
+    factory's fitted-xt check and its opt-in / result-leakage contract (ADR-042) --
+    it is in NO default xfn list.
+
+    Examples
+    --------
+    >>> from silly_kicks.atomic.tracking.features import off_ball_run_value_xfns
+    >>> xfns = off_ball_run_value_xfns(fitted_xt, home_team_id=1)
+    >>> len(xfns)
+    1
+    """
+    from silly_kicks.tracking.features import off_ball_run_value_xfns as _std_xfns
+
+    inner = _std_xfns(xt, home_team_id=home_team_id, params=params)[0]
+    adapter_params = PackingParams(action_types=("pass", "cross"))
+
+    def _atomic_transformer(states, frames):
+        # _restore_reception_touches is NOT optional here: without it the adapter's
+        # non_action mapping hides every receival atom, no receiver resolves, and the
+        # factory returns NaN for every slot -- the same silent-death the aggregator was
+        # fixed for. The leakage guard only checks __name__, and the liveness check calls
+        # the frames=None branch, so no gate covers this path (ADR-042 review finding 1).
+        adapted = [_restore_reception_touches(s, _packing_atomic_adapter(s, adapter_params)) for s in states]
+        return inner(adapted, frames)
+
+    _atomic_transformer._frame_aware = True  # type: ignore[attr-defined]
+    _atomic_transformer.__name__ = "off_ball_run_values"
     return [_atomic_transformer]
 
 

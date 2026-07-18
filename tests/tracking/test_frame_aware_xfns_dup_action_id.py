@@ -16,6 +16,10 @@ import silly_kicks.tracking.features as F
 from silly_kicks.vaep.feature_framework import gamestates
 from tests.tracking.test_defensive_line import _make_frame_rows
 
+# ADR-041 opt-out: auto-enumerating gate: sweeps EVERY registered aggregator on defaults, so the OBSO family's
+# synthetic-EPV notice is expected and irrelevant here.
+pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
+
 
 def _xt():
     from silly_kicks.xthreat import ExpectedThreat

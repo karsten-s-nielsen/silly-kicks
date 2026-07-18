@@ -5,6 +5,113 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.52.0] — 2026-07-18
+
+### Added — real-xT EPV wiring for the OBSO family (`silly_kicks/xthreat/_physical.py`, `tracking/features.py`, `tracking/_warnings.py`; PR-S119, ADR-041)
+
+`add_obso` / `add_pausa` / `add_space_creation` (and their `*_xfns`) accept `xt=` and will use a
+fitted `ExpectedThreat` as the EPV surface. Until now they always multiplied pitch control by a
+synthetic placeholder ramp, and nothing said so.
+
+- **`silly_kicks.xthreat.physical_grid`** — resample xT onto a CONSUMER-SUPPLIED grid in ascending-y
+  physical orientation. `ExpectedThreat.xT` stores rows y-INVERTED (row 0 = top of pitch); `rate()`
+  compensates, `interpolator()` does not. This is the one place that inversion is neutralized.
+- **`silly_kicks.xthreat.values_at_points`** — NaN-tolerant per-point xT with exact
+  `rate(use_interpolation=False)` semantics.
+- **`silly_kicks.xthreat.require_fitted_xt`** — the single fitted-model guard; two divergent copies
+  (`vaep/features/expected_threat.py`, `atomic/vaep/features.py`) now delegate to it.
+- **New `obso_epv_source` column** (`"xt"` / `"synthetic"` / `"injected"`) and a
+  **`SyntheticEPVWarning`** whenever the placeholder is served.
+- **Three public warning categories** in `silly_kicks.tracking`: `SyntheticEPVWarning`,
+  `IgnoredSurfaceInputsWarning`, `RunValueCoverageWarning`.
+- `PitchControlCache.__len__` is now public; `add_pausa` accepts `pitch_control_cache=`.
+
+### Fixed — three per-action orientation defects in the OBSO / influence families (ADR-041, amends ADR-028)
+
+**These change values on every provider, with or without `xt=`.** The OBSO target/EPV reflection is
+away-keyed, so `obso_*` / `pausa_*` home rows are byte-identical — but the y-inversion repair
+(`interpolator()` -> `physical_grid` in `player_influence` / `gk_influence` / `cover_shadows`, and
+`space_creation`'s `axis=(0, 1)` opponent mirror) is a y-MIRROR and moves **home rows too**.
+Re-materializing only away rows would leave stale home values for those families.
+
+- **`add_obso` / `add_pausa` / `add_space_creation` never handled orientation at all.** Frames are
+  home-attacks-right; actions are per-acting-team LTR. The raw action-LTR target was sampled against
+  the frame surface, and the EPV grid always increased toward the HOME team's attacked goal, so away
+  actions were sampled at the reflected point AND valued toward their own goal. `home_team_id` was
+  accepted and never read. ADR-028 had listed OBSO as "self-reconciling"; it was not.
+- **`compute_player_influence` multiplied the raw, y-mirrored `interpolator()` output** instead of a
+  physically-oriented grid. **`compute_gk_influence` and `compute_blocking_score` (cover shadows)
+  carried byte-identical defective code** and are fixed in the same pass — found by an adversarial
+  review of this PR, not by the original sweep.
+- **The reflection was applied on ONE axis.** ADR-028's relation is a 180° point reflection
+  (`x→105−x` AND `y→68−y`), so the grid transform is `[::-1, ::-1]`, not `[:, ::-1]`. An x-only
+  mirror is exact only for a y-symmetric grid — which the synthetic ramp is and a fitted xT nearly
+  is, which is why it survived the first round of (x-axis) tests.
+- **Grid registration + index rounding**: the EPV sample grid now uses node registration matching the
+  OBSO kernel's own indexing, and the kernel's `floor` cell lookup became `round` (±0.505 m at the
+  pitch edges).
+- **`space_creation`'s opponent mirror** `np.flip(..., axis=1)` → `axis=(0, 1)`.
+- **`compute_pass_obso`'s teammate index map truncated** where its target-index sibling rounds —
+  a bare `int()` biased every teammate lookup toward the low-index cell by up to a full cell.
+  Both maps index the same node-registered grid, so `obso_optimal` shifts slightly.
+- **`compute_blocking_score`'s `detailed=False` branch** (the production default) read the raw,
+  y-inverted `interpolator()` with no reflection at all, so `max_single_defender_blocking_score`
+  matched NEITHER orientation. Its frozen parity oracle read the same raw interpolator and so
+  compared the bug to itself; the oracle is corrected too and now has discriminating power.
+
+### Added — TF-35 off-ball run valuation (`silly_kicks/tracking/_run_values.py`; PR-S119, ADR-042)
+
+Values off-ball runs by the threat of the space the runner comes to control, rather than only
+counting them (TF-4).
+
+- **`detect_off_ball_runs`** — geometry only; one row per qualifying `(action, runner)`, positions
+  emitted in SPADL action-LTR, with a `peak_speed_source` provenance column
+  (`"measured"` / `"displacement_rate"`).
+- **`value_off_ball_runs`** — `role` (`"target"` / `"disruptive"`), `is_receiver`, `run_value`,
+  `enabled_pass_credit`. `run_value` is the MAXIMUM of `pitch_control × threat` over the cells the
+  runner controls.
+- **`add_off_ball_run_values`** — five wide columns: `run_value_target`, `n_disruptive_runs`,
+  `run_value_disruptive_sum`, `n_valued_disruptive_runs`, `run_value_enabled_pass`.
+- **`off_ball_run_value_xfns`** — four numeric columns × 3 slots. **Opt-in, in NO default xfn list**:
+  the domain gates on the action's own `result_id`, which is the HybridVAEP result-leakage class
+  (ADR-039 F4). Enforced by an auto-discovering guard.
+- **`RunValuationParams.resolved_region_floor()` fails loud** for any `pitch_control_method` without
+  a recorded floor. The 0.1 default is a spec-time starting value, **not calibrated**.
+- Atomic mirrors for both the aggregator and the factory.
+
+**Read the aggregator docstring before averaging**: mean disruptive value must divide by
+`n_valued_disruptive_runs`, never `n_disruptive_runs` — the sum skips unvalued runs, so the wrong
+denominator turns a tracking-coverage gradient into an apparent tactical one.
+
+### Changed — TF-4 `toward_goal` re-keyed onto the direction authority (ADR-042)
+
+`n_off_ball_runners_toward_goal_pre_window` now derives orientation from the frames'
+`team_attacking_direction` rather than home/away identity. **This is a behaviour change, not a
+refactor**: the two disagree exactly where the acting team has no direction-carrying frame row in
+that period (identity-keying always flips the away team; the direction authority conservatively does
+not). Not a retrain trigger — `off_ball_context_xfns` is absent from `tracking_default_xfns`.
+
+### Added — import-cycle CI gate (`tests/test_no_import_cycles.py`)
+
+Subprocess-imports each public subpackage standalone. The `xthreat` wiring closed a real cycle twice
+during development (`xthreat/_grid → spadl.config → spadl/__init__ → tracking → … → xthreat`), and a
+cycle of that shape is invisible to the ordinary suite, which always imports in a friendly order.
+
+### Notes for downstream consumers
+
+- Re-materialize `fct_action_context`: away-team `obso_*` / `pausa_*` / `space_created_m2` /
+  `space_denied_m2_opponent`, all `player_influence_*` / `gk_*` (GK influence) / `cover_shadow_*`,
+  and TF-4's toward-goal count. Batch this with
+  the already-queued 4.49–4.51 triggers.
+- Five new candidate columns from TF-35, plus `obso_epv_source` and `peak_speed_source`.
+- **`value_off_ball_runs` resolved its frame group with a raw tuple lookup** — dtype-sensitive on
+  `game_id` (ADR-019). On the documented lakehouse shape (actions `int64`, frames native string)
+  runs were DETECTED but every `run_value` came back NaN, with a coverage warning that
+  misattributed the cause to a tracking-visibility gap. Now canonicalized on both sides.
+- **Recorded latent gap (not fixed here):** `PitchControlSurface.player_surface` / `.player_share`
+  compare player ids with a raw `==`, an ADR-019 gap that also makes `_player_influence`'s
+  `except ValueError: → 0.0` silently zero players on dtype-mismatched frames. Tracked in TODO.
+
 ## [4.51.0] — 2026-07-17
 
 ### Changed — TF-19 PR-2: corrected default weights + fail-closed chirality `load()` enforcement (`silly_kicks/tracking/_chirality.py`, `_xshot_occurrence.py`, `_xcross_attempt.py`, `_ghost_gk.py`; PR-S118, ADR-040)

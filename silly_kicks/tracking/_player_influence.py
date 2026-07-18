@@ -114,12 +114,27 @@ def compute_player_influence(
         )
 
     # --- xT interpolation ---
-    interp = xt.interpolator(kind="linear")
-    threat_grid = interp(pc.grid_x, pc.grid_y)  # (ny, nx)
+    # Lazy import (ADR-041): a MODULE-level xthreat import here closes a real cycle --
+    # xthreat/_grid imports spadl.config, spadl/__init__ imports tracking, and
+    # tracking/__init__ imports this module, so `import silly_kicks.xthreat` would re-enter
+    # xthreat while it is still initializing. Same idiom as tracking/_xt_gk.py.
+    from silly_kicks.xthreat import physical_grid
 
-    # xT flip for away-team attack
+    # Physically-oriented (ascending-y) threat grid -- ADR-041. The raw
+    # xt.interpolator() output preserves xT's INVERTED row storage (row 0 = TOP of the
+    # pitch), which silently y-mirrored this fusion against the ascending-y pitch-control
+    # surfaces below; it stayed invisible only because a fitted xT surface is close to
+    # y-symmetric. physical_grid neutralizes the inversion once, at xthreat's boundary,
+    # and also fail-closes on an unfitted/None model.
+    threat_grid = physical_grid(xt, pc.grid_x, pc.grid_y)  # (ny, nx)
+
+    # xT reflection for away-team attack: BOTH axes (ADR-041 second pass). ADR-028's
+    # action-LTR <-> frame relation is x->105-x AND y->68-y, so an x-only mirror is exact
+    # only for a y-symmetric grid -- true of the ramp-style fixtures and nearly true of a
+    # fitted xT, which is how it hid. Pinned by
+    # test_player_influence_orientation.py::test_away_attack_reflects_the_threat_grid_on_BOTH_axes.
     if not same_id(attacking_team_id, home_team_id):
-        threat_grid = threat_grid[:, ::-1]
+        threat_grid = threat_grid[::-1, ::-1]
 
     cell_area = pc.cell_area
 

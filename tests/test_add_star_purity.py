@@ -43,6 +43,7 @@ from silly_kicks.atomic import spadl as asp
 from silly_kicks.atomic import tracking as atr
 from silly_kicks.atomic.tracking import features as atf
 from silly_kicks.tracking import features as F
+from silly_kicks.tracking.pitch_control import PitchControlCache
 
 # Reuse the liveness gate's UNCACHED builders (fresh each call) + the GS jersey
 # fixture. We deliberately do NOT import its cached _frames/_xt/_frames_with_possession
@@ -54,6 +55,10 @@ from tests.tracking.test_aggregator_column_liveness import (
     make_actions,
     make_frames,
 )
+
+# ADR-041 opt-out: auto-enumerating gate -- it sweeps EVERY registered aggregator on defaults, so the OBSO
+# family's synthetic-EPV notice is expected here and unrelated to what this gate asserts.
+pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
 
 
 # ---------------------------------------------------------------------------
@@ -350,11 +355,29 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         lambda i: tracking.add_gradientsports_player_ids(i[0], i[1], home_team_id=5, away_team_id=6)[0],
     ),
     "tracking:add_line_break": _one(_std_inputs, _std_invoke(F.add_line_break, home_team_id=5)),
-    "tracking:add_obso": _one(_std_inputs, _std_invoke(F.add_obso)),
+    # Two variants: ADR-033 requires both branches of the new xt=/epv_grid= input mode
+    # (ADR-041) -- the synthetic-default path and the injected-xT path build the EPV
+    # grid differently and write a different provenance label.
+    "tracking:add_obso": [
+        ("default", _std_inputs, _std_invoke(F.add_obso)),
+        ("xt_supplied", _xtf_inputs, lambda i: F.add_obso(i[0], i[1], xt=i[2])),
+    ],
     "tracking:add_off_ball_context": _one(_std_inputs, _std_invoke(F.add_off_ball_context, home_team_id=5)),
     "tracking:add_off_ball_runs": _one(_std_inputs, _std_invoke(F.add_off_ball_runs, home_team_id=5)),
     # add_packing branches on params.require_secured (gates its OWN kernel-owned columns,
     # never caller inputs) -- a non-default-params variant still pins the params path.
+    # TF-35 (ADR-042): the internal-link and caller-supplied-links branches take
+    # different code paths through the aggregator's provenance merge, and the
+    # pitch_control_cache variant additionally hands in a mutable object the helper
+    # must not corrupt -- two variants per the contributor contract.
+    "tracking:add_off_ball_run_values": [
+        ("internal_link", _xtf_inputs, _xtf_invoke(F.add_off_ball_run_values)),
+        (
+            "supplied_links_and_cache",
+            lambda: [make_actions(), make_frames(), _fresh_xt(), _fresh_links(), PitchControlCache()],
+            lambda i: F.add_off_ball_run_values(i[0], i[1], i[2], home_team_id=5, links=i[3], pitch_control_cache=i[4]),
+        ),
+    ],
     "tracking:add_packing": [
         ("defaults", _std_inputs, _std_invoke(F.add_packing, home_team_id=5)),
         (
@@ -365,7 +388,10 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             ),
         ),
     ],
-    "tracking:add_pausa": _one(_std_inputs, _std_invoke(F.add_pausa)),
+    "tracking:add_pausa": [
+        ("default", _std_inputs, _std_invoke(F.add_pausa)),
+        ("xt_supplied", _xtf_inputs, lambda i: F.add_pausa(i[0], i[1], xt=i[2])),
+    ],
     "tracking:add_pitch_control": _one(_std_inputs, _std_invoke(F.add_pitch_control)),
     "tracking:add_player_influence": _one(_xtf_inputs, _xtf_invoke(F.add_player_influence)),
     "tracking:add_pre_shot_gk_angle": _one(_std_inputs, lambda i: F.add_pre_shot_gk_angle(i[0], frames=i[1])),
@@ -383,7 +409,14 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     "tracking:add_shot_goalmouth": _one(_shot_goalmouth_inputs, lambda i: F.add_shot_goalmouth(i[0], i[1])),
-    "tracking:add_space_creation": _one(_std_inputs, _std_invoke(F.add_space_creation, home_team_id=5)),
+    "tracking:add_space_creation": [
+        ("default", _std_inputs, _std_invoke(F.add_space_creation, home_team_id=5)),
+        (
+            "xt_supplied",
+            _xtf_inputs,
+            lambda i: F.add_space_creation(i[0], i[1], home_team_id=5, xt=i[2]),
+        ),
+    ],
     "tracking:add_structural_pass": _one(_std_inputs, _std_invoke(F.add_structural_pass, home_team_id=5)),
     "tracking:add_sync_score": _one(
         lambda: [make_actions(), _fresh_links()], lambda i: tracking.add_sync_score(i[0], i[1])
@@ -423,6 +456,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     "atomic.tracking:add_gk_influence": _one(_axtf_inputs, _xtf_invoke(atf.add_gk_influence)),
+    "atomic.tracking:add_off_ball_run_values": _one(_axtf_inputs, _xtf_invoke(atf.add_off_ball_run_values)),
     "atomic.tracking:add_packing": _one(_astd_inputs, _std_invoke(atf.add_packing, home_team_id=5)),
     "atomic.tracking:add_pitch_control": _one(_astd_inputs, _std_invoke(atf.add_pitch_control)),
     "atomic.tracking:add_player_influence": _one(_axtf_inputs, _xtf_invoke(atf.add_player_influence)),
@@ -619,6 +653,15 @@ _PROVENANCE = frozenset({"frame_id", "time_offset_seconds", "n_candidate_frames"
 _EXHAUSTIVE_EMITTED: dict[tuple[str, str], frozenset[str]] = {
     ("spadl:add_gk_distribution_metrics", "gk_role_present"): frozenset(
         {"gk_pass_length_m", "gk_pass_length_class", "is_launch", "gk_xt_delta"}
+    ),
+    ("tracking:add_off_ball_run_values", "internal_link"): frozenset(
+        {
+            "run_value_target",
+            "n_disruptive_runs",
+            "run_value_disruptive_sum",
+            "n_valued_disruptive_runs",
+            "run_value_enabled_pass",
+        }
     ),
     ("tracking:add_shot_goalmouth", "default"): frozenset(
         {

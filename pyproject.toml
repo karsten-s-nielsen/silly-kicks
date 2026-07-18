@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.51.0"
+version = "4.52.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -232,4 +232,14 @@ pythonpath = [".", "tests"]
 markers = [
     "e2e: end-to-end tests requiring downloaded datasets",
     "slow: tests that take significant wall-clock time (e.g., model fits)",
+]
+# A NEW call site that silently serves the synthetic placeholder EPV surface must fail
+# CI, not merely warn (ADR-041). The nine modules that legitimately exercise the
+# synthetic path opt out at module level with an explicit reason; that opt-out list IS
+# the inventory of synthetic-EPV call sites. Five of them are the auto-enumerating gates
+# (purity / nan-safety / liveness / dup-action_id / id-dtype), which sweep every
+# aggregator on defaults by design; the other four are the OBSO-family feature tests.
+filterwarnings = [
+    "error::silly_kicks.tracking.SyntheticEPVWarning",
+    "error::silly_kicks.tracking.IgnoredSurfaceInputsWarning",
 ]

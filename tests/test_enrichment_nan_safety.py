@@ -23,6 +23,10 @@ import silly_kicks.spadl.config as spadlcfg
 import silly_kicks.spadl.utils as std_utils
 import silly_kicks.tracking.features as tracking_features
 
+# ADR-041 opt-out: auto-enumerating gate: sweeps EVERY registered aggregator on defaults, so the OBSO family's
+# synthetic-EPV notice is expected and irrelevant here.
+pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.SyntheticEPVWarning")
+
 
 def _discover(module) -> tuple:
     """Return all functions in `module` whose `_nan_safe` attribute is True."""
@@ -50,6 +54,7 @@ _TRACKING_NEEDS_EXTRA = {
     "add_structural_pass",
     "add_team_shape",
     "add_xt_gk",
+    "add_off_ball_run_values",
 }
 _TRACKING_STANDARD_SIG = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ not in _TRACKING_NEEDS_EXTRA)
 _TRACKING_EXTRA_KWARGS = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ in _TRACKING_NEEDS_EXTRA)
@@ -535,6 +540,20 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         frames["vy"] = 0.0
         frames["team_in_possession"] = 1
         out = helper(actions, frames, xt, home_team_id=1)
+    elif name == "add_off_ball_run_values":
+        import numpy as np
+
+        from silly_kicks.xthreat import ExpectedThreat
+
+        # Same supply-the-contract-columns precedent as add_packing: the shared fixture
+        # carries no result_id, and TF-35's domain is "completed pass/cross", so without
+        # one every row is off-domain and the NaN-IDENTIFIER surface (NaN team/player/
+        # coords) -- the thing this gate actually fuzzes -- is never reached.
+        acts = actions.copy()
+        acts["result_id"] = 1
+        xt = ExpectedThreat(l=16, w=12)
+        xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+        out = helper(acts, frames, xt, home_team_id=1)
     elif name in ("add_gk_influence", "add_cover_shadows", "add_player_influence"):
         import numpy as np
 

@@ -43,6 +43,22 @@ class PitchControlCache:
     def __init__(self) -> None:
         self._store: dict = {}
 
+    def __len__(self) -> int:
+        """Number of memoized surfaces (canonical frames only).
+
+        The honest public observable for "was this cache actually shared?" -- callers
+        threading a cache across feature families assert on it instead of reaching into
+        the private store.
+
+        Examples
+        --------
+        >>> from silly_kicks.tracking.pitch_control import PitchControlCache
+        >>> cache = PitchControlCache()
+        >>> len(cache)
+        0
+        """
+        return len(self._store)
+
     def surface(
         self,
         frame: pd.DataFrame,
