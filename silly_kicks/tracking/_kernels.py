@@ -20,8 +20,9 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import align_join_keys, ids_differ, ids_equal
+
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
-from ._id_compat import align_join_keys, ids_differ, ids_equal
 from .feature_framework import ActionFrameContext
 
 if TYPE_CHECKING:

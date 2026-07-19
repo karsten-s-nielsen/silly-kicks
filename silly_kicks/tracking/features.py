@@ -50,6 +50,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.id_compat import align_join_keys, ids_differ, ids_match, restore_id_dtype, same_id
 from silly_kicks.spadl import config as spadlconfig
 
 from . import _kernels
@@ -60,8 +61,20 @@ from ._action_orientation import (
     reproject_to_action_ltr,
 )
 from ._ball_carrier import infer_ball_carrier
-from ._gk_resolve import acting_gk_from_frames, defending_gk_from_frames, gk_distribution_mask
-from ._id_compat import align_join_keys, ids_differ, ids_match, same_id
+from ._das import (
+    DAS_SOURCE_COMPUTED,
+    DAS_SOURCE_TEAM_UNRESOLVED,
+    DAS_SOURCE_UNLINKED,
+    DAS_SOURCE_UNSCOREABLE_CALL,
+    DAS_SOURCE_UNSCOREABLE_FRAME,
+    DasUnscoreableError,
+)
+from ._gk_resolve import (
+    acting_gk_from_frames,
+    defended_goal_x,
+    defending_gk_from_frames,
+    gk_distribution_mask,
+)
 from ._packing import PackingParams, secured_reception
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
@@ -122,6 +135,7 @@ __all__ = [
     "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
+    "defended_goal_x",
     "defenders_in_triangle_to_goal",
     "defending_gk_from_frames",
     "defensive_line_x",
@@ -293,11 +307,8 @@ def ball_carrier_at_action(
         if aid in action_to_idx.index:
             out.loc[action_to_idx.loc[aid]] = row["ball_carrier_player_id"]
 
-    # Cast to match frames dtype if numeric
-    if pid_dtype == np.dtype("int64") or str(pid_dtype) == "Int64":
-        out = pd.to_numeric(out, errors="coerce")
-        if str(pid_dtype) == "Int64":
-            out = out.astype("Int64")
+    # Restore the frames dtype (shared rule -- see restore_id_dtype).
+    out = restore_id_dtype(out, pid_dtype)
 
     return out
 
@@ -2663,9 +2674,10 @@ def _precompute_das_lookup(
     ):
         msg = (
             "team_in_possession is all-NaN in the link-restricted frame subset (dead-ball "
-            "window): DAS is undefined here. add_das degrades these actions to NaN."
+            "window): DAS is undefined here. add_das degrades these actions to NaN "
+            f"(das_source={DAS_SOURCE_UNSCOREABLE_CALL!r})."
         )
-        raise ValueError(msg)
+        raise DasUnscoreableError(msg)
 
     das_frames = get_individual_das(frames, **kwargs)
 
@@ -2687,43 +2699,57 @@ def _map_das_to_actions(
     *,
     links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Map precomputed DAS lookup to actions. Returns 3-column DataFrame."""
+    """Map precomputed DAS lookup to actions. Returns a 4-column DataFrame.
+
+    The 4th column is the ``das_source`` provenance (ADR-043): a NaN DAS value alone
+    cannot say WHY it is NaN, so each row is classified against the closed
+    ``DAS_SOURCE_VALUES`` vocabulary. ``unscoreable_call`` is never produced here --
+    that token belongs to the caller's degrade path, which never reaches this mapper.
+
+    Frame ids resolve POSITIONALLY via ``_kernels.resolve_frame_ids_by_position``
+    (ADR-020), never ``.at`` on an ``action_id`` index: VAEP shifted gamestate slots
+    repeat the boundary action, so that index is legitimately non-unique and ``.at``
+    returns a Series ("truth value of a Series is ambiguous"). ``add_das``'s own path
+    passes unique ids, where the two are byte-equivalent.
+    """
     import numpy as np
 
-    if links is not None:
-        pointers = links
-    else:
-        pointers, _ = link_actions_to_frames(actions, frames)
-    pointer_lookup = pointers.set_index("action_id")
+    frame_ids = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
 
     team_vals = np.full(len(actions), np.nan)
     opp_vals = np.full(len(actions), np.nan)
+    sources = np.full(len(actions), DAS_SOURCE_UNLINKED, dtype=object)
 
     for i, (_idx, row) in enumerate(actions.iterrows()):
-        aid = row["action_id"]
-        if aid not in pointer_lookup.index:
+        fid_raw = frame_ids[i]
+        if np.isnan(fid_raw):
             continue
-        fid_raw = pointer_lookup.at[aid, "frame_id"]
-        if pd.isna(fid_raw):
-            continue
-        key = (row["period_id"], int(float(fid_raw)))  # type: ignore[arg-type]
+        key = (row["period_id"], int(fid_raw))
         if key not in das_lookup:
+            # The action DID link; the frame carries no DAS (accessible-space returned
+            # NaN there, or the _has_simulatable_frame guard NaN-ed the whole subset).
+            sources[i] = DAS_SOURCE_UNSCOREABLE_FRAME
             continue
 
         team_id = row["team_id"]
         # Dtype-safe team match (ADR-019): das_lookup keys are frame-derived (team_in_possession),
         # team_id is action-derived -- canonical match instead of raw dict .get / != .
-        team_vals[i] = next((v for k, v in das_lookup[key].items() if same_id(k, team_id)), np.nan)
+        matched = next((v for k, v in das_lookup[key].items() if same_id(k, team_id)), np.nan)
+        team_vals[i] = matched
         # Football: exactly 2 teams per frame; take the sole opponent.
         opp = [v for k, v in das_lookup[key].items() if not same_id(k, team_id)]
         if opp:
             opp_vals[i] = opp[0]
+        # das_lookup values are finite by construction (_precompute_das_lookup drops NaN
+        # DAS rows before summing), so a NaN here means no lookup team matched the actor.
+        sources[i] = DAS_SOURCE_COMPUTED if not pd.isna(matched) else DAS_SOURCE_TEAM_UNRESOLVED
 
     return pd.DataFrame(
         {
             "das_team": team_vals,
             "das_opponent": opp_vals,
             "das_diff": team_vals - opp_vals,
+            "das_source": sources,
         },
         index=actions.index,
     )
@@ -2738,8 +2764,13 @@ def das_at_action(
 ) -> pd.Series:
     """Team-level DAS at the linked frame for the acting team.
 
-    Returns a Series with one value per action. NaN where action couldn't
-    link to a frame or DAS computation failed.
+    Returns a Series with one value per action. NaN where the action couldn't link to a
+    frame, where the linked frame carries no DAS, or where DAS was unscoreable for the
+    whole call (:class:`~silly_kicks.tracking.DasUnscoreableError`).
+
+    A bare Series carries no provenance, so those three NaN causes are indistinguishable
+    here. Use :func:`add_das`, whose ``das_source`` column names the cause per row
+    (ADR-043). Only ``DasUnscoreableError`` degrades; every other exception propagates.
 
     See NOTICE for full bibliographic citations.
 
@@ -2755,9 +2786,9 @@ def das_at_action(
 
     try:
         lookup = _precompute_das_lookup(frames, chunk_size=chunk_size)
-    except (ValueError, RuntimeError, ImportError, IndexError, TypeError) as exc:
+    except DasUnscoreableError as exc:
         _warnings.warn(
-            f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all actions",
+            f"DAS is unscoreable for these frames ({exc}); returning NaN for all actions",
             UserWarning,
             stacklevel=2,
         )
@@ -2778,7 +2809,34 @@ def add_das(
     chunk_size: int | None = None,
     attacking_direction_col: str | None = None,
 ) -> pd.DataFrame:
-    """Enrich actions with ``das_team``, ``das_opponent``, ``das_diff`` columns.
+    """Enrich actions with ``das_team``, ``das_opponent``, ``das_diff``, ``das_source``.
+
+    ``das_source`` is the provenance column (ADR-043). A NaN DAS value on its own cannot
+    say WHY it is NaN, so every row is tagged with one of the closed
+    :data:`~silly_kicks.tracking.DAS_SOURCE_VALUES` tokens:
+
+    ``computed``
+        A DAS value was resolved for the acting team at the linked frame.
+    ``unlinked``
+        The action resolved to no frame -- DAS is legitimately absent here.
+    ``unscoreable_frame``
+        The FRAMES are why DAS is absent. Either per-action (the action linked to a frame
+        that carries no DAS -- accessible-space returned NaN at that instant, e.g. NaN
+        ``team_in_possession``, or the ball/player-disjoint subset guard fired), or
+        whole-call (every frame declares
+        :data:`~silly_kicks.tracking.SPEED_SOURCE_UNAVAILABLE`, so the ``vx``/``vy`` DAS
+        needs can never exist for this source -- the ``snapshot_to_tracking_frames``
+        freeze-frame shape). An UNMARKED frame set missing ``vx``/``vy`` still RAISES:
+        that is a forgotten ``derive_velocities()``, not a property of the data.
+    ``team_unresolved``
+        The linked frame carries DAS, but none of its teams matched the acting team.
+    ``unscoreable_call``
+        The DAS computation degraded with
+        :class:`~silly_kicks.tracking.DasUnscoreableError` on frames that could in
+        principle have carried DAS (dead-ball window, degenerate Voronoi, NaN
+        coordinates); no action in this call has DAS. Together with
+        ``unscoreable_frame`` these are the only degrades -- every other exception
+        propagates.
 
     Parameters
     ----------
@@ -2838,21 +2896,25 @@ def add_das(
             link_frame_ids=link_frame_ids,
             attacking_direction_col=attacking_direction_col,
         )
-    except (ValueError, RuntimeError, ImportError, IndexError, TypeError) as exc:
+    except DasUnscoreableError as exc:
         _warnings.warn(
-            f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS columns",
+            f"DAS is unscoreable for these frames ({exc}); returning NaN for all DAS columns",
             UserWarning,
             stacklevel=2,
         )
         out["das_team"] = np.nan
         out["das_opponent"] = np.nan
         out["das_diff"] = np.nan
+        # The raiser names its own provenance (default ``unscoreable_call``); a frame source
+        # that structurally cannot carry velocity reports ``unscoreable_frame`` instead.
+        out["das_source"] = exc.das_source
         return out
 
     mapped = _map_das_to_actions(actions, frames, lookup, links=links)
     out["das_team"] = mapped["das_team"].values
     out["das_opponent"] = mapped["das_opponent"].values
     out["das_diff"] = mapped["das_diff"].values
+    out["das_source"] = mapped["das_source"].values
     return out
 
 
@@ -2881,9 +2943,9 @@ def _make_das_transformer():
         # Precompute DAS for ALL frames — single get_das call
         try:
             lookup = _precompute_das_lookup(frames)
-        except (ValueError, RuntimeError, ImportError, IndexError, TypeError) as exc:
+        except DasUnscoreableError as exc:
             _warnings.warn(
-                f"DAS computation failed ({type(exc).__name__}: {exc}); returning NaN for all DAS features",
+                f"DAS is unscoreable for these frames ({exc}); returning NaN for all DAS features",
                 UserWarning,
                 stacklevel=2,
             )

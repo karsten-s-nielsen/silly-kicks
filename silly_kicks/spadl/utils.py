@@ -232,6 +232,9 @@ def add_gk_role(
     prev_keeper_within_k = np.zeros(n, dtype=bool)
     is_keeper_series = pd.Series(is_keeper)
     team_id = sorted_actions["team_id"]
+
+    from silly_kicks.id_compat import ids_isin
+
     for k in range(1, distribution_lookback_actions + 1):
         shifted_keeper = is_keeper_series.shift(k, fill_value=False).to_numpy(dtype=bool)
         shifted_player = player_id.shift(k).to_numpy()
@@ -248,8 +251,11 @@ def add_gk_role(
             cur_team_arr = team_id.to_numpy()
             same_team = cur_team_arr == shifted_team
 
-            # Rule (a) — known-GK match: caller declared a GK player_id set.
-            cur_is_known_gk = pd.Series(cur_player_arr).isin(goalkeeper_ids).to_numpy()
+            # Rule (a) — known-GK match: caller declared a GK player_id set. Routed through
+            # the ADR-019 seam: a raw `.isin` compares by value, so a caller's {"1"} set
+            # against an int64 player_id column (or the reverse) matches NOTHING and the
+            # declaration is silently discarded -- no error, just no distribution rows.
+            cur_is_known_gk = ids_isin(cur_player_arr, goalkeeper_ids).to_numpy()
             match = match | (cur_is_known_gk & same_team)
 
             # Rule (b) — NaN-team fallback: both player_ids unidentifiable
@@ -1279,7 +1285,7 @@ def _resolve_next_touch_positions(actions: pd.DataFrame) -> pd.Series:
     next_pos = pos.groupby(grp).shift(-1).astype("Int64")
     next_team = s_touch.groupby(grp)["team_id"].shift(-1)
 
-    from silly_kicks.tracking._id_compat import ids_equal
+    from silly_kicks.id_compat import ids_equal
 
     same = ids_equal(s_touch["team_id"], next_team).to_numpy()  # positional ndarray
     next_pos = next_pos.where(same)  # positional ndarray mask (same order as s_touch)
@@ -1483,7 +1489,7 @@ def add_names(actions: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame:
+def play_left_to_right(actions: pd.DataFrame, home_team_id: int | str) -> pd.DataFrame:
     """Mirror away-team rows from absolute-frame to SPADL LTR convention.
 
     Public boundary helper for callers who hold actions in
@@ -1504,8 +1510,13 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame
     ----------
     actions : pd.DataFrame
         Actions in absolute-frame-home-right convention.
-    home_team_id : int
-        ID of the home team.
+    home_team_id : int | str
+        ID of the home team. Must be comparable to the ``actions["team_id"]``
+        id domain: ``team_id`` dtype is provider-dependent (``int64`` for
+        StatsBomb / Opta / Wyscout, object-string for the kloppy-family and
+        Sportec, nullable ``Int64`` for Gradient Sports). Comparison is
+        dtype-safe (ADR-019), so a value-equal scalar of either dtype resolves
+        identically -- but the VALUE must identify the home team.
 
     Returns
     -------
@@ -1527,8 +1538,10 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int) -> pd.DataFrame
         ltr = play_left_to_right(absolute_frame_actions, home_team_id=100)
         # All away-team actions now have flipped (start_x, start_y) / (end_x, end_y).
     """
+    from silly_kicks.id_compat import ids_match
+
     ltr_actions = actions.copy()
-    away_idx = actions.team_id != home_team_id
+    away_idx = ~ids_match(actions.team_id, home_team_id)
     for col in ["start_x", "end_x"]:
         ltr_actions.loc[away_idx, col] = spadlconfig.field_length - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
     for col in ["start_y", "end_y"]:

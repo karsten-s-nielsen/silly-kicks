@@ -76,10 +76,57 @@ def test_aggregator_id_dtype_invariant(agg, act_str, frm_str, ht_str):
 
 
 def test_enumerated_surface_equals_registered():  # B3 meta-assertion
-    enumerated = {a.__name__ for a in AGGREGATORS}
+    # `name[variant]` entries are ALTERNATE-METHOD sweeps of an aggregator already registered
+    # under its bare name; strip the suffix so a variant can never stand in for its base.
+    enumerated = {a.__name__.split("[")[0] for a in AGGREGATORS}
     covered = enumerated | set(NON_LINKED_AGGREGATORS)
     assert covered == REGISTERED_AGGREGATORS, (
         "id-dtype gate must cover every registered public aggregator (in AGGREGATORS or, "
         "with a justification, NON_LINKED_AGGREGATORS); "
         f"uncovered: {REGISTERED_AGGREGATORS - covered}"
     )
+
+
+def test_context_masks_resolve_boxed_object_ids():
+    """The action<->frame masks must content-probe object columns, not trust their dtype.
+
+    ``_resolve_action_frame_context`` decided ``player_id_frame`` vs ``player_id_action`` with
+    ``_directly_comparable``, whose both-object arm short-circuits to a raw ``==``. That arm
+    assumes two object id columns are both genuine strings -- false for a boxed-numeric object
+    column (``infer_ball_carrier`` emits exactly that), where a boxed ``10.0`` raw-compares
+    False against the string ``"10"`` and the actor row silently resolves to nothing. The
+    aggregator sweep above cannot see this: it stringifies id columns cleanly, so it never
+    produces a BOXED object column on either side.
+
+    Routed through ``_raw_comparable``, these masks now agree with ``ids_equal``/``ids_differ``
+    on the same inputs -- which is what the module docstring claims of its callers.
+    """
+    from silly_kicks.tracking.utils import _resolve_action_frame_context
+
+    actions = make_actions()
+    # boxed-numeric object ids on the ACTION side, genuine strings on the FRAME side
+    actions["player_id"] = pd.Series([10.0, 11.0], dtype="float64").astype(object)
+    actions["team_id"] = pd.Series([5.0, 5.0], dtype="float64").astype(object)
+    frames = make_frames()
+    frames["player_id"] = frames["player_id"].astype("Int64").astype("string").astype(object)
+    frames["team_id"] = frames["team_id"].astype("Int64").astype("string").astype(object)
+
+    ctx = _resolve_action_frame_context(actions, frames)
+    resolved = ctx.actor_rows["x"].notna().sum()
+    assert resolved == len(actions), (
+        f"actor rows resolved for {resolved}/{len(actions)} actions -- a boxed-numeric object "
+        "id column was raw-compared against genuine strings and matched nothing."
+    )
+
+
+def test_method_variants_do_not_substitute_for_their_base():
+    """A `name[variant]` entry must never be the ONLY coverage of that aggregator.
+
+    Without this, someone could register `add_line_break[ward]` alone, satisfy the
+    suffix-stripping meta-assertion above, and leave the DEFAULT branch unswept -- inverting
+    the very gap Phase 2 exists to close.
+    """
+    names = [a.__name__ for a in AGGREGATORS]
+    bases = {n.split("[")[0] for n in names if "[" in n}
+    missing = sorted(b for b in bases if b not in names)
+    assert not missing, f"method variants registered without their bare-name base: {missing}"

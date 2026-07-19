@@ -27,9 +27,10 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import canonical_id, canonical_id_series, ids_equal
+
 from ..spadl import config as spadlconfig
 from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH, acting_team_attacks_rtl
-from ._id_compat import canonical_id, canonical_id_series, ids_equal
 from ._off_ball_runs import _prepare_run_candidates
 from ._warnings import RunValueCoverageWarning
 

@@ -11,7 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .._id_compat import ids_match
+from silly_kicks.id_compat import ids_match
+
 from ._params import VoronoiParams
 from ._surface import PitchControlSurface
 

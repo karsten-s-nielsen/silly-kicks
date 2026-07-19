@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from ._id_compat import ids_match, same_id
+from silly_kicks.id_compat import ids_match, same_id
 
 # SGM eps-floor on rho (BUG-3 fix, 2026-06-09). A single defender at 3-sigma contributes
 # exp(-(3s)^2 / 2s^2) = exp(-4.5) ~= 0.0111 for any sigma, so flooring rho here caps 1/rho at

@@ -79,7 +79,9 @@ def test_tracking_categorical_domains_keys_subset_of_columns():
 def test_tracking_categorical_domains_values():
     assert TRACKING_CATEGORICAL_DOMAINS["ball_state"] == frozenset({"alive", "dead"})
     assert TRACKING_CATEGORICAL_DOMAINS["team_attacking_direction"] == frozenset({"ltr", "rtl"})
-    assert TRACKING_CATEGORICAL_DOMAINS["speed_source"] == frozenset({"native", "derived"})
+    # "unavailable" (ADR-043) declares kinematics STRUCTURALLY absent for the frame source
+    # -- distinct from a NULL speed_source, which only means "not derived yet".
+    assert TRACKING_CATEGORICAL_DOMAINS["speed_source"] == frozenset({"native", "derived", "unavailable"})
     assert TRACKING_CATEGORICAL_DOMAINS["source_provider"] == frozenset(
         {"gradientsports", "sportec", "metrica", "skillcorner", "snapshot"}
     )

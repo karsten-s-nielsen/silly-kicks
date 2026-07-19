@@ -15,7 +15,7 @@ import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial import ConvexHull, QhullError
 
-from ._id_compat import ids_match
+from silly_kicks.id_compat import ids_match
 
 _RESULT_COLS = [
     "game_id",

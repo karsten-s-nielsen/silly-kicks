@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ._id_compat import align_join_keys
+from silly_kicks.id_compat import align_join_keys
 
 FIELD_LENGTH = 105.0
 FIELD_WIDTH = 68.0

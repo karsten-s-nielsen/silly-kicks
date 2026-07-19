@@ -1,7 +1,26 @@
 """Dangerous Accessible Space adapter (TF-28).
 
-Thin wrapper over the ``accessible-space`` PyPI package (MIT), mapping
-silly-kicks 20-column tracking schema to the library's API.
+Adapter over the ``accessible-space`` PyPI package (MIT), mapping the silly-kicks 20-column
+tracking schema onto that library's API. Not a pass-through: beyond the schema and
+coordinate mapping ([0,105]x[0,68] <-> [-52.5,52.5]x[-34,34]) it owns a **failure taxonomy**
+and a **provenance vocabulary**, because an all-NaN DAS column conflates two different
+facts -- "DAS is genuinely undefined here" and "the computation broke".
+
+**Provenance** (ADR-043). ``add_das`` emits a ``das_source`` column drawn from the closed
+vocabulary ``DAS_SOURCE_VALUES``: ``computed``, ``unlinked`` (the action resolved to no
+frame), ``unscoreable_frame`` (the FRAMES cannot carry DAS -- including a frame source whose
+velocity is structurally unavailable), ``team_unresolved`` (the frame carries DAS but no team
+matched the acting team), and ``unscoreable_call`` (the computation degraded on frames that
+could in principle have carried DAS). Each constant carries its own definition below.
+
+**Exceptions.** :class:`DasUnscoreableError` (a ``ValueError`` subclass, so pre-taxonomy
+consumers catching the broad ``ValueError`` are unaffected) is the ONLY exception the
+``add_das`` / ``das_at_action`` / ``das_xfns`` family degrades on, and it carries the
+``das_source`` token so the reason survives the raise rather than being re-derived from the
+message text. Everything else PROPAGATES by design -- an unmarked frame set missing
+``vx``/``vy``, a missing ``team_in_possession`` column, an output-alignment breach, an
+accessible-space signature drift, and the ``ImportError`` for the optional ``[das]`` extra
+are all defects, not absences. See the class docstring for the exact condition list.
 
 See docs/superpowers/specs/2026-05-06-tf28-tf29-das-vaep-variants-design.md
 See NOTICE for full bibliographic citations.
@@ -10,9 +29,82 @@ See NOTICE for full bibliographic citations.
 from __future__ import annotations
 
 import contextlib
+import inspect
 import warnings
 
 import pandas as pd
+
+from .schema import SPEED_SOURCE_UNAVAILABLE
+
+#: Closed vocabulary for the ``das_source`` provenance column emitted by ``add_das``
+#: (ADR-043). Makes "DAS could not be computed" distinguishable from "DAS is genuinely
+#: absent for this action" -- an all-NaN DAS column alone conflates the two.
+DAS_SOURCE_COMPUTED = "computed"
+#: The action resolved to no frame (no link pointer, or a NaN ``frame_id``).
+DAS_SOURCE_UNLINKED = "unlinked"
+#: The FRAMES, not the computation, are why DAS is absent. Two shapes share this token
+#: because they share that cause:
+#:
+#: * per-action -- the action linked to a frame that carries no DAS (accessible-space
+#:   returned NaN there, e.g. NaN ``team_in_possession`` at that instant, or the
+#:   ball/player-disjoint subset the ``_has_simulatable_frame`` guard catches);
+#: * whole-call -- the frame SOURCE structurally cannot carry the velocity DAS needs
+#:   (every row marked ``speed_source == SPEED_SOURCE_UNAVAILABLE``; see
+#:   ``_velocity_unavailable_by_design``). No re-run and no extra preprocessing can
+#:   change that, which is what separates it from ``unscoreable_call``.
+DAS_SOURCE_UNSCOREABLE_FRAME = "unscoreable_frame"
+#: The linked frame carries DAS, but none of its teams matched the acting team.
+DAS_SOURCE_TEAM_UNRESOLVED = "team_unresolved"
+#: The DAS COMPUTATION degraded (:class:`DasUnscoreableError`) on frames that could in
+#: principle have carried DAS -- a dead-ball window, a degenerate Voronoi, NaN coordinates.
+#: This is the token that was previously indistinguishable from a NaN column.
+DAS_SOURCE_UNSCOREABLE_CALL = "unscoreable_call"
+
+DAS_SOURCE_VALUES = (
+    DAS_SOURCE_COMPUTED,
+    DAS_SOURCE_UNLINKED,
+    DAS_SOURCE_UNSCOREABLE_FRAME,
+    DAS_SOURCE_TEAM_UNRESOLVED,
+    DAS_SOURCE_UNSCOREABLE_CALL,
+)
+
+
+class DasUnscoreableError(ValueError):
+    """DAS is genuinely undefined for these frames -- callers degrade to NaN + provenance.
+
+    This is the ONLY exception ``add_das`` / ``das_at_action`` / ``das_xfns`` degrade on
+    (ADR-043). It subclasses ``ValueError`` so any consumer that predates the taxonomy and
+    catches the broad ``ValueError`` keeps working unchanged.
+
+    Raised for exactly the conditions the DAS catch was actually introduced/widened for:
+
+    * **dead-ball window** -- ``team_in_possession`` is all-NaN, so attacking direction and
+      therefore DAS are undefined (raised by ``_pin_attacking_direction`` and by
+      ``features._precompute_das_lookup``; converts accessible-space's ``AssertionError``).
+    * **degenerate geometry** inside accessible-space -- collinear players / fewer than 3
+      per team produce a degenerate Voronoi tessellation (``IndexError``), and NaN tracking
+      coordinates trip its array arithmetic (``TypeError``). Both are converted at the
+      library seam by ``_call_simulation`` (PR-S60's widening, made explicit).
+    * **velocity structurally unavailable** -- every frame declares
+      ``speed_source == SPEED_SOURCE_UNAVAILABLE``, so the missing ``vx``/``vy`` is a
+      property of the frame source, not a forgotten ``derive_velocities()`` call
+      (``_velocity_unavailable_by_design``).
+
+    Everything else is a defect and PROPAGATES: an UNMARKED frame set missing
+    ``vx``/``vy``, a missing ``team_in_possession`` column (caller contract), an
+    output-alignment breach (``_check_das_output_alignment``), an accessible-space
+    signature drift, and the ``ImportError`` for the optional ``[das]`` extra.
+
+    ``das_source`` carries the provenance token the degrading caller stamps, so the
+    *reason* survives the raise instead of being re-derived from the message text.
+    """
+
+    def __init__(self, *args, das_source: str = DAS_SOURCE_UNSCOREABLE_CALL) -> None:
+        if das_source not in DAS_SOURCE_VALUES:
+            raise ValueError(f"das_source must be one of {DAS_SOURCE_VALUES}, got {das_source!r}")
+        super().__init__(*args)
+        self.das_source = das_source
+
 
 # Coordinate transform constants: silly-kicks [0,105]x[0,68] <-> DAS [-52.5,52.5]x[-34,34]
 _X_OFFSET = 52.5
@@ -112,6 +204,40 @@ def _import_accessible_space():  # type: ignore[return]
         ) from e
 
 
+def _call_simulation(func, *args, entry_point: str, **kwargs):
+    """Call an accessible-space entry point, converting ONLY its degenerate-geometry failures.
+
+    ``IndexError`` (degenerate Voronoi: collinear players / fewer than 3 per team) and
+    ``TypeError`` (NaN tracking coordinates) raised from *inside* the library are the two
+    conditions PR-S60 widened the DAS catch for. Converting them here -- at the seam that
+    knows they came from the simulation -- lets the callers catch the single
+    :class:`DasUnscoreableError` instead of a broad exception tuple that also swallows
+    silly-kicks' own bugs (ADR-043).
+
+    The call is **bound first, outside the guard**, so an accessible-space *signature*
+    change raises its ``TypeError`` loudly rather than being mistaken for the
+    NaN-coordinate ``TypeError`` raised from the function body.
+    """
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):  # pragma: no cover - builtins have no signature
+        signature = None
+    if signature is not None:
+        signature.bind(*args, **kwargs)  # TypeError here = API drift; must propagate
+
+    try:
+        return func(*args, **kwargs)
+    except (IndexError, TypeError) as exc:
+        raise DasUnscoreableError(
+            f"{entry_point}: accessible-space could not simulate these frames "
+            f"({type(exc).__name__}: {exc}; {_frame_context(args[0]) if args else 'no frames'}). "
+            "This is the degenerate-geometry class -- collinear players or fewer than 3 per "
+            "team give a degenerate Voronoi tessellation, and NaN tracking coordinates trip "
+            "the library's array arithmetic. DAS degrades to NaN "
+            f"(das_source={DAS_SOURCE_UNSCOREABLE_CALL!r})."
+        ) from exc
+
+
 def _to_das_coords(frames: pd.DataFrame) -> pd.DataFrame:
     """Shift silly-kicks [0,105]x[0,68] to DAS [-52.5,52.5]x[-34,34]."""
     out = frames.copy()
@@ -120,9 +246,42 @@ def _to_das_coords(frames: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _velocity_unavailable_by_design(frames: pd.DataFrame) -> bool:
+    """True iff EVERY row declares kinematics structurally unavailable.
+
+    Reads the ``speed_source == SPEED_SOURCE_UNAVAILABLE`` marker a frame builder stamps
+    when its source has no per-player temporal history to differentiate (the freeze-frame
+    shape -- see :data:`~silly_kicks.tracking.SPEED_SOURCE_UNAVAILABLE`). Absent the
+    marker, missing ``vx``/``vy`` is a caller bug ("forgot ``derive_velocities()``") and
+    must fail loud; the whole point of the marker is that the two shapes are otherwise
+    byte-identical at this seam.
+
+    ALL rows must be marked, not any: a PARTIALLY marked frame set means some genuine
+    velocity-bearing source is also missing its velocity, which is the caller bug -- so
+    the fail-loud branch wins. An empty frame set is not marked (nothing declared it).
+    """
+    if "speed_source" not in frames.columns or len(frames) == 0:
+        return False
+    return bool((frames["speed_source"] == SPEED_SOURCE_UNAVAILABLE).all())
+
+
 def _validate_das_inputs(frames: pd.DataFrame) -> None:
-    """Validate required columns, raising with actionable messages."""
+    """Validate required columns, raising with actionable messages.
+
+    A missing ``vx``/``vy`` raises the DEGRADABLE :class:`DasUnscoreableError` only when
+    the frames declare velocity structurally unavailable; otherwise it stays a loud
+    ``ValueError``, because absorbing it would re-hide the forgotten-preprocessing bug
+    that the narrowed catch (ADR-043) exists to expose.
+    """
     if "vx" not in frames.columns or "vy" not in frames.columns:
+        if _velocity_unavailable_by_design(frames):
+            raise DasUnscoreableError(
+                f"every frame declares speed_source={SPEED_SOURCE_UNAVAILABLE!r}: this frame "
+                "source has no per-player temporal history, so 'vx'/'vy' can never exist and "
+                "DAS is structurally unavailable. DAS degrades to NaN "
+                f"(das_source={DAS_SOURCE_UNSCOREABLE_FRAME!r}).",
+                das_source=DAS_SOURCE_UNSCOREABLE_FRAME,
+            )
         raise ValueError(
             "DAS requires velocity columns ('vx', 'vy'). Call derive_velocities() or smooth_frames() first."
         )
@@ -132,13 +291,20 @@ def _validate_das_inputs(frames: pd.DataFrame) -> None:
         )
 
 
-def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
+def _prepare_frames(frames: pd.DataFrame, *, player_in_possession_col: str | None = None) -> pd.DataFrame:
     """Validate, transform coordinates, normalise ball rows.
 
     Casts nullable pandas dtypes (Int64, boolean) to numpy equivalents
     because the accessible-space library cannot handle nullable arrays
     (e.g. BooleanArray comparisons produce 2-D structures that crash).
     Gradient Sports is the primary provider affected (Int64 player_id/team_id/team_in_possession).
+
+    ``player_in_possession_col`` is the ALREADY-RESOLVED carrier column
+    (:func:`_resolve_player_in_possession_col` output) that the caller forwards to
+    accessible-space as ``player_in_possession_col``. It is caller-configurable, so the
+    2-D cast below must name the column the caller actually passed rather than the
+    :data:`_DEFAULT_PLAYER_IN_POSSESSION_COL` literal. ``None`` means the carrier is not
+    forwarded (``get_xc``, or a caller that opted out), so no cast is owed.
     """
     _validate_das_inputs(frames)
     out = _to_das_coords(frames)
@@ -154,7 +320,15 @@ def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
     # columns on newer pandas) reject 2-D indexing -> "IndexError: too many indices for array".
     # Force numpy ``object`` so the library always sees a plain ndarray. (Idempotent for the
     # object/int64 columns it already handled.)
-    for col in ("team_id", "team_in_possession", "player_id"):
+    #
+    # The carrier column belongs in this set: with respect_offside on (the DAS default)
+    # accessible-space receives it as PASSERS and 2-D-indexes it exactly like the team
+    # arrays. Omitting it made every DAS call raise -> DasUnscoreableError -> all-NaN DAS
+    # on any pandas that infers a StringDtype for it (pandas 3 / py>=3.11).
+    two_d_indexed = ["team_id", "team_in_possession", "player_id"]
+    if player_in_possession_col is not None:
+        two_d_indexed.append(player_in_possession_col)
+    for col in two_d_indexed:
         if col in out.columns:
             out[col] = out[col].astype(object)
     ball_mask = out["is_ball"] == True  # noqa: E712
@@ -208,6 +382,82 @@ def _nan_das_result(frames: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _frame_context(frames: pd.DataFrame) -> str:
+    """Best-effort provider / game / period context for a fail-loud DAS message.
+
+    Purely diagnostic: never raises, and degrades to an explicit marker when the
+    optional context columns are absent (DAS only contractually requires its own
+    input columns, not the full 20-column tracking schema).
+    """
+    bits: list[str] = []
+    for col in ("source_provider", "game_id", "period_id"):
+        if col not in frames.columns:
+            continue
+        values = pd.unique(frames[col].dropna())
+        if len(values) == 0:
+            continue
+        shown = ", ".join(str(v) for v in values[:3])
+        if len(values) > 3:
+            shown = f"{shown}, ... ({len(values)} distinct)"
+        bits.append(f"{col}={shown}")
+    return "; ".join(bits) if bits else "no source_provider/game_id/period_id columns on frames"
+
+
+def _check_das_output_alignment(values, prepared: pd.DataFrame, *, field: str, entry_point: str) -> None:
+    """Raise when accessible-space's return cannot be aligned onto the input rows.
+
+    ``result[field] = values`` aligns by INDEX LABEL whenever ``values`` carries an
+    index, and accessible-space restores the caller's own labels before returning
+    (``accessible_space/interface.py``, the "reset original index" block). So a
+    *shorter* return is NOT a misalignment: the library legitimately drops rows whose
+    ``team_in_possession`` is NaN, and on real provider data that is most rows
+    (~67% dead-ball on gradientsports). Those rows honestly become NaN.
+
+    What WOULD silently misalign is a return carrying labels the input never had --
+    a positional ``reset_index``, a shifted index, or another frame's index --
+    because such labels either vanish into NaN or, when they collide with unrelated
+    input labels, land a value on the wrong row. Hence a SUBSET assertion, not an
+    equal-length one.
+
+    A ``values`` with no index is assigned POSITIONALLY, so that shape is held to an
+    exact length instead.
+
+    Duplicate labels need no check here: pandas itself raises "cannot reindex on an
+    axis with duplicate labels" on the assignment.
+    """
+    index = getattr(values, "index", None)
+    if index is None:
+        if len(values) == len(prepared):
+            return
+        raise ValueError(
+            f"{entry_point}: accessible-space returned {len(values)} {field!r} values with no "
+            f"index for {len(prepared)} input rows ({_frame_context(prepared)}). An index-less "
+            "return is assigned positionally, so it can only be trusted at exactly the input "
+            "length; DAS refuses to emit a possibly-misaligned column. Check the installed "
+            "accessible-space version and report the discrepancy upstream."
+        )
+
+    known = index.isin(prepared.index)
+    if known.all():
+        return
+
+    unknown = index[~known]
+    sample = ", ".join(repr(label) for label in unknown[:3])
+    if len(unknown) > 3:
+        sample = f"{sample}, ... ({len(unknown)} total)"
+    raise ValueError(
+        f"{entry_point}: accessible-space returned {len(values)} {field!r} values for "
+        f"{len(prepared)} input rows, but {len(unknown)} of the returned index labels are "
+        f"absent from the input index (e.g. {sample}; {_frame_context(prepared)}). Assigning "
+        "them would align by label and silently drop or misplace values, so DAS refuses to "
+        "emit a possibly-misaligned column. A SHORTER return is expected and fine -- rows "
+        "whose 'team_in_possession' is NaN are dropped and honestly become NaN -- but "
+        "accessible-space restores the caller's own index labels, so foreign labels indicate "
+        "a positional reset or a mismatched frame set. Check the installed accessible-space "
+        "version and report the discrepancy upstream."
+    )
+
+
 def get_das(
     frames: pd.DataFrame,
     *,
@@ -250,15 +500,17 @@ def get_das(
     """
     asmod = _import_accessible_space()
     ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
-    prepared = _prepare_frames(frames)
+    prepared = _prepare_frames(frames, player_in_possession_col=ppc)
 
     if not _has_simulatable_frame(prepared):
         warnings.warn(_NO_SIMULATABLE_FRAME_MSG, UserWarning, stacklevel=2)
         return _nan_das_result(frames)
 
     with _suppress_offside_warning():
-        ret = asmod.get_dangerous_accessible_space(
+        ret = _call_simulation(
+            asmod.get_dangerous_accessible_space,
             prepared,
+            entry_point="get_das",
             ball_player_id="ball",
             x_pitch_min=_X_PITCH_MIN,
             x_pitch_max=_X_PITCH_MAX,
@@ -273,13 +525,7 @@ def get_das(
     if ppc is None:
         _warn_no_carrier_once()
 
-    if len(ret.acc_space) != len(prepared):
-        warnings.warn(
-            f"accessible-space returned {len(ret.acc_space)} values for "
-            f"{len(prepared)} input rows; output may be misaligned",
-            UserWarning,
-            stacklevel=2,
-        )
+    _check_das_output_alignment(ret.acc_space, prepared, field="AS", entry_point="get_das")
 
     result = frames.copy()
     result["AS"] = ret.acc_space
@@ -310,14 +556,15 @@ def _pin_attacking_direction(frames: pd.DataFrame) -> pd.DataFrame:
     # Dead-ball window: when team_in_possession is all-NaN (e.g. the ball is out of
     # play and infer_ball_carrier found no carrier), infer_playing_direction asserts
     # ("no non-ball teams in common") — an AssertionError that escapes add_das's
-    # except. Raise the canonical ValueError instead so DAS degrades to NaN here.
-    # Attacking direction is genuinely undefined without a possessing team; silly-kicks
-    # does NOT fabricate possession (ADR / PR-S67 invariant) — supply
+    # except. Raise the canonical DasUnscoreableError instead so DAS degrades to NaN
+    # here. Attacking direction is genuinely undefined without a possessing team;
+    # silly-kicks does NOT fabricate possession (ADR / PR-S67 invariant) — supply
     # attacking_direction_col=... to bypass inference when the direction is known.
     if not frames["team_in_possession"].notna().any():
-        raise ValueError(
+        raise DasUnscoreableError(
             "team_in_possession is all-NaN (dead-ball window): attacking direction is "
-            "undefined, so DAS is undefined here. add_das degrades these actions to NaN."
+            "undefined, so DAS is undefined here. add_das degrades these actions to NaN "
+            f"(das_source={DAS_SOURCE_UNSCOREABLE_CALL!r})."
         )
     from accessible_space.interface import infer_playing_direction
 
@@ -379,15 +626,17 @@ def get_individual_das(
     """
     asmod = _import_accessible_space()
     ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
-    prepared = _prepare_frames(frames)
+    prepared = _prepare_frames(frames, player_in_possession_col=ppc)
 
     if not _has_simulatable_frame(prepared):
         warnings.warn(_NO_SIMULATABLE_FRAME_MSG, UserWarning, stacklevel=2)
         return _nan_das_result(frames)
 
     with _suppress_offside_warning():
-        ret = asmod.get_individual_dangerous_accessible_space(
+        ret = _call_simulation(
+            asmod.get_individual_dangerous_accessible_space,
             prepared,
+            entry_point="get_individual_das",
             ball_player_id="ball",
             x_pitch_min=_X_PITCH_MIN,
             x_pitch_max=_X_PITCH_MAX,
@@ -403,13 +652,7 @@ def get_individual_das(
     if ppc is None:
         _warn_no_carrier_once()
 
-    if len(ret.player_acc_space) != len(prepared):
-        warnings.warn(
-            f"accessible-space returned {len(ret.player_acc_space)} values for "
-            f"{len(prepared)} input rows; output may be misaligned",
-            UserWarning,
-            stacklevel=2,
-        )
+    _check_das_output_alignment(ret.player_acc_space, prepared, field="AS", entry_point="get_individual_das")
 
     result = frames.copy()
     result["AS"] = ret.player_acc_space
@@ -491,9 +734,11 @@ def get_xc(
             result["xC"] = float("nan")
             return result
 
-    ret = asmod.get_expected_pass_completion(
+    ret = _call_simulation(
+        asmod.get_expected_pass_completion,
         prepared_passes,
         prepared_frames,
+        entry_point="get_xc",
         event_frame_col="frame_id",
         event_player_col="player_id",
         event_team_col="team_id",

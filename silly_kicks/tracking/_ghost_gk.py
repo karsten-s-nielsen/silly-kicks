@@ -29,10 +29,10 @@ import pandas as pd
 from scipy.spatial import ConvexHull, QhullError
 from scipy.stats import gaussian_kde
 
+from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as spadlconfig
 
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
-from ._id_compat import same_id
 
 # ---------------------------------------------------------------------------
 # Grid constants (fixed for API stability — see spec Density Grid)
@@ -57,6 +57,36 @@ _GRID_Y = np.linspace(
     GRID_Y_MAX - GRID_RESOLUTION / 2,
     GRID_NY,
 )
+
+
+# ---------------------------------------------------------------------------
+# Warning categories
+# ---------------------------------------------------------------------------
+
+
+class GhostClampWarning(UserWarning):
+    """The served ghost position fell outside the physical pitch and was clamped.
+
+    A dedicated category so a consumer can silence the batch-clamp notice without
+    silencing every ``UserWarning`` from ``tracking`` --- it is emitted from two public
+    entry points (``compute_ghost_gk`` and ``serve_ghost_gk_positions``).
+
+    A clamp is a signal about the INPUT, not a routine rounding step: the served position
+    left the physical pitch, which in practice means the model extrapolated outside its
+    trained label hull (ADR-016) after something upstream mis-flagged ``is_goalkeeper`` and
+    wrong-footed the goal-side flip. Escalating it is the cheap way to catch that.
+
+    Examples
+    --------
+    Make a clamp fatal in a batch job, so bad orientation fails loudly instead of
+    silently serving a pitch-edge position::
+
+        import warnings
+        from silly_kicks.tracking import GhostClampWarning, compute_ghost_gk
+
+        warnings.filterwarnings("error", category=GhostClampWarning)
+        ghost = compute_ghost_gk(frames, home_team_id=home_id)
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -337,12 +367,19 @@ def _build_score_lookup(
 
     goals = goals.sort_values(["game_id", "time_seconds"]).reset_index(drop=True)
 
-    # Build per-game cumulative score arrays
-    home_team_id_norm = str(home_team_id)
+    # Build per-game cumulative score arrays.
+    #
+    # `is_home` MUST route through the ADR-019 seam, not a naive `str(t) == str(home_team_id)`:
+    # the latter renders a float-backed id as "366.0" against a scalar "366", so EVERY goal
+    # falls to the away side. Measured on a 3-goal fixture (2 home, 1 away) with a float64
+    # `team_id`: score_diff came back -3 instead of +1. That feeds `score_diff`, one of the 26
+    # ghost-GK features, so the error is a four-goal swing on a trained-model input rather than
+    # a rounding nuisance. `ids_match` is vectorized, so this is also cheaper than the
+    # per-element Python loop it replaces.
     _lookup: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     for gid, grp in goals.groupby("game_id"):
         times = np.asarray(grp["time_seconds"].values, dtype=np.float64)
-        is_home = np.array([str(t) == home_team_id_norm for t in grp["_scoring_team"]])
+        is_home = ids_match(grp["_scoring_team"], home_team_id).to_numpy()
         home_cum = np.cumsum(is_home.astype(np.float64))
         away_cum = np.cumsum((~is_home).astype(np.float64))
         diffs = home_cum - away_cum
@@ -439,11 +476,11 @@ def _build_phase_lookup(
 def extract_ghost_gk_features(
     frame_data: pd.DataFrame,
     *,
-    gk_team_id: int | str,
+    gk_team_id: float | int | str,
     goal_x: float = 0.0,
     score_diff: float = 0.0,
     phase: int = 0,
-    ball_carrier_team_id: int | str | None = None,
+    ball_carrier_team_id: float | int | str | None = None,
     prev_defensive_line_x: float | None = None,
     prev_defending_centroid_x: float | None = None,
     dt: float = _VELOCITY_WINDOW_S,
@@ -462,16 +499,22 @@ def extract_ghost_gk_features(
     ----------
     frame_data : pd.DataFrame
         All rows for one frame — players + ball.
-    gk_team_id : int | str
-        Team ID of the GK whose ghost position we predict.
+    gk_team_id : float | int | str
+        Team ID of the GK whose ghost position we predict. ``float`` is admitted
+        deliberately, not as a convenience: a float-backed team id is what a merge or an
+        NaN-carrying column leaves behind (``infer_ball_carrier`` emits boxed floats, and
+        the zero-row serve path types ``gk_team_id`` float64), and ``ids_match`` resolves
+        it via ``canonical_id`` -- ``canonical_id(366.0) == canonical_id("366")``. Typing
+        it away would have made the ONE dtype this function must survive unrepresentable.
     goal_x : float
         x-coordinate of the defending goal (0.0 or 105.0).
     score_diff : float
         GK's team score minus opponent.
     phase : int
         0 = open_play, 1 = set_piece, 2 = goal_kick.
-    ball_carrier_team_id : int | str | None
-        Team currently in possession.
+    ball_carrier_team_id : float | int | str | None
+        Team currently in possession. Same id-dtype latitude as ``gk_team_id`` above --
+        this is precisely the column ``infer_ball_carrier`` hands over as boxed floats.
     prev_defensive_line_x : float | None
         Previous frame's defensive line x (for velocity).
     prev_defending_centroid_x : float | None
@@ -518,9 +561,20 @@ def extract_ghost_gk_features(
 
     # --- Player splits ---
     players = frame_data[~frame_data["is_ball"].astype(bool)]
-    defending = players[(players["team_id"] == gk_team_id) & (~players["is_goalkeeper"].astype(bool))]
-    attacking = players[(players["team_id"] != gk_team_id) & (~players["is_goalkeeper"].astype(bool))]
-    gk_rows = players[(players["team_id"] == gk_team_id) & (players["is_goalkeeper"].astype(bool))]
+    # ADR-019: gk_team_id is a caller-supplied scalar and need NOT share the frames'
+    # team_id dtype (GS emits nullable Int64; sportec/kloppy carry object strings). A raw
+    # compare is silently all-False across dtypes -> an EMPTY defending split and a corrupt
+    # feature row rather than an error.
+    #
+    # The attacking split is `~ids_match`, NOT `ids_differ`: ids_differ requires BOTH sides
+    # present, so it would move an NA-team player out of `attacking` (where the original
+    # `!=` put it) into neither split. `~ids_match` reproduces the original NA semantics
+    # exactly -- for an NA player team_id AND for an NA gk_team_id.
+    _is_gk_team = ids_match(players["team_id"], gk_team_id)
+    _is_gk_flag = players["is_goalkeeper"].astype(bool)
+    defending = players[_is_gk_team & ~_is_gk_flag]
+    attacking = players[~_is_gk_team & ~_is_gk_flag]
+    gk_rows = players[_is_gk_team & _is_gk_flag]
 
     # --- Defensive line ---
     if len(defending) > 0:
@@ -580,11 +634,13 @@ def extract_ghost_gk_features(
         compactness = np.nan
 
     ball_in_own_half = 1.0 if (not np.isnan(ball_x) and ball_x < _FIELD_LENGTH / 2) else 0.0
-    try:
-        team_in_poss = 1.0 if ball_carrier_team_id is not None and ball_carrier_team_id == gk_team_id else 0.0
-    except (ValueError, TypeError):
-        # pd.NA comparison raises TypeError; NaN comparison is always False
-        team_in_poss = 0.0
+    # ADR-019 scalar-vs-scalar seam. `ball_carrier_team_id` may reach here from the public
+    # `carrier=` cache kwarg with a dtype the frames do not share, in which case a raw
+    # compare pins team_in_possession to 0 for every row. `same_id` also subsumes the
+    # try/except this replaced: it returns False for None/pd.NA/NaN on either side rather
+    # than raising (the fence's stated reason -- "pd.NA comparison raises TypeError" -- is
+    # handled inside `_canonical`), so the None/NA/NaN behaviour is unchanged.
+    team_in_poss = 1.0 if same_id(ball_carrier_team_id, gk_team_id) else 0.0
     period_clamped = min(int(frame_data["period_id"].iloc[0]), 2)
     time_s = float(frame_data["time_seconds"].iloc[0]) if "time_seconds" in frame_data.columns else 0.0
 
@@ -767,8 +823,11 @@ def _extract_all_ghost_gk_features(
             # extract_ghost_gk_features' defensive_line_x and the stored centroid
             # (median of the back-4 goal-relative x; mean goal-relative x) — see
             # TestExtractionRestriction golden which guards bit-identical velocity.
+            # ADR-019: must use the SAME id-identity rule as extract_ghost_gk_features'
+            # defending split -- the TestExtractionRestriction golden guards that the
+            # velocity state computed here is bit-identical to the extractor's.
             defending = frame_data[
-                (frame_data["team_id"] == gk_team)
+                ids_match(frame_data["team_id"], gk_team)
                 & ~frame_data["is_goalkeeper"].astype(bool)
                 & ~frame_data["is_ball"].astype(bool)
             ]
@@ -2053,11 +2112,75 @@ def compute_ghost_gk(
     >>> from silly_kicks.tracking._ghost_gk import compute_ghost_gk
     >>> result = compute_ghost_gk(frames, home_team_id=1)
     """
-    resolved = _resolve_model(model)
     out = frames.copy()
     out["ghost_gk_x"] = np.nan
     out["ghost_gk_y"] = np.nan
     out["ghost_gk_density_spread"] = np.nan
+
+    resolved, meta, batch_features, positions, _clamped = _serve_positions_core(
+        frames,
+        model=model,
+        home_team_id=home_team_id,
+        actions=actions,
+        carrier=carrier,
+        link_frame_ids=link_frame_ids,
+    )
+
+    if len(positions) == 0:
+        return out
+
+    densities = resolved.predict_density(batch_features, kde_backend=kde_backend)
+
+    # Build result DataFrame from predictions (single merge, not O(n*m) loop)
+    result_df = pd.DataFrame(
+        {
+            "game_id": meta["game_id"].values,
+            "period_id": meta["period_id"].values,
+            "frame_id": meta["frame_id"].values,
+            "team_id": meta["gk_team_id"].values,
+            "ghost_gk_x": positions[:, 0],
+            "ghost_gk_y": positions[:, 1],
+            "ghost_gk_density_spread": [d.spread for d in densities],
+        }
+    )
+
+    # Merge into GK rows via single join
+    gk_mask = out["is_goalkeeper"].astype(bool) & ~out["is_ball"].astype(bool)
+    gk_rows_df = out.loc[gk_mask, ["game_id", "period_id", "frame_id", "team_id"]].copy()
+    gk_rows_df = gk_rows_df.merge(
+        result_df,
+        on=["game_id", "period_id", "frame_id", "team_id"],
+        how="left",
+    )
+    out.loc[gk_mask, "ghost_gk_x"] = gk_rows_df["ghost_gk_x"].values
+    out.loc[gk_mask, "ghost_gk_y"] = gk_rows_df["ghost_gk_y"].values
+    out.loc[gk_mask, "ghost_gk_density_spread"] = gk_rows_df["ghost_gk_density_spread"].values
+
+    return out
+
+
+def _serve_positions_core(
+    frames: pd.DataFrame,
+    *,
+    model: GhostGkModel | GhostGkVariant | None,
+    home_team_id: int | str,
+    actions: pd.DataFrame | None,
+    carrier: pd.DataFrame | None,
+    link_frame_ids: set[int] | None,
+) -> tuple[GhostGkModel, pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray]:
+    """Shared serve: ``(resolved, meta, batch_features, positions, clamped_mask)``.
+
+    Single-sources model resolution, context callbacks, feature extraction, the 4.12.1
+    duplicate-(frame, gk_team) collapse, ``predict_mean`` and the 4.22.1 physical-pitch
+    clamp. Returns the goal-relative positions AND the per-row clamp mask captured
+    BEFORE ``np.clip`` --- the information ``compute_ghost_gk`` discards.
+
+    The resolved model and the extracted features ride along because
+    ``compute_ghost_gk`` needs both for its ``predict_density`` pass, which stays
+    outside this core (it is the ~91% cost driver ``serve_ghost_gk_positions`` skips).
+    Re-resolving or re-extracting in the caller would defeat the point of the seam.
+    """
+    resolved = _resolve_model(model)
 
     # Build context callbacks from actions
     score_fn = _build_score_lookup(actions, home_team_id) if actions is not None else None
@@ -2090,7 +2213,7 @@ def compute_ghost_gk(
     )
 
     if len(batch_features) == 0:
-        return out
+        return resolved, meta, batch_features, np.empty((0, 2), dtype=float), np.empty(0, dtype=bool)
 
     # Collapse duplicate (frame, gk_team) inference samples (4.12.1 fix). Two same-team
     # is_goalkeeper rows in one frame (a rostered backup keeper carried on-pitch
@@ -2109,8 +2232,7 @@ def compute_ghost_gk(
         meta = meta[keep_mask].reset_index(drop=True)
         batch_features = batch_features[keep_mask].reset_index(drop=True)
 
-    # Batch predict: position = served boosted mean (cheap leaf-value traversal);
-    # spread = conditional-density dispersion (the only cost driver here).
+    # Batch predict: position = served boosted mean (cheap leaf-value traversal).
     positions = resolved.predict_mean(batch_features)
 
     # 4.22.1 (lakehouse report 2026-06-11 item 2): clamp the served position to the
@@ -2124,39 +2246,130 @@ def compute_ghost_gk(
     # parity contract (ADR-016).
     _lo = np.array([0.0, 0.0])
     _hi = np.array([_FIELD_LENGTH, _FIELD_WIDTH])
-    if bool(((positions < _lo) | (positions > _hi)).any()):
+    # Captured BEFORE np.clip -- after clipping the per-row information is
+    # unrecoverable, and the probe contract requires a non-null per-row boolean.
+    clamped = np.asarray(((positions < _lo) | (positions > _hi)).any(axis=1), dtype=bool)
+    if bool(clamped.any()):
+        # P7: stacklevel is 3, NOT the original 2. The warning has moved one frame deeper
+        # (user -> compute_ghost_gk -> _serve_positions_core -> warn), so stacklevel=2
+        # would now point at library internals instead of the caller. 3 is correct for
+        # BOTH public entry points, since serve_ghost_gk_positions sits at the same depth.
+        # P8: category added while re-homing. The message is UNCHANGED (Chesterton), but
+        # the warning is now emitted from a SECOND public entry point, and a consumer
+        # wanting to silence the batch-clamp notice should not have to silence every
+        # UserWarning from tracking.
         warnings.warn(
             "ghost-GK: one or more served positions fell outside the physical pitch and "
             "were clamped; suspect upstream tracking quality (e.g. a mis-flagged "
             "is_goalkeeper).",
-            stacklevel=2,
+            GhostClampWarning,
+            stacklevel=3,
         )
         positions = np.clip(positions, _lo, _hi)
-    densities = resolved.predict_density(batch_features, kde_backend=kde_backend)
+    return resolved, meta, batch_features, positions, clamped
 
-    # Build result DataFrame from predictions (single merge, not O(n*m) loop)
-    result_df = pd.DataFrame(
+
+def serve_ghost_gk_positions(
+    frames: pd.DataFrame,
+    *,
+    model: GhostGkModel | GhostGkVariant | None = None,
+    home_team_id: int | str,
+    actions: pd.DataFrame | None = None,
+    carrier: pd.DataFrame | None = None,
+    link_frame_ids: set[int] | None = None,
+) -> pd.DataFrame:
+    """Serve ghost-GK positions ONLY, with per-row clamp / out-of-training-box provenance.
+
+    Positions-only sibling of :func:`compute_ghost_gk`: it skips the KDE density pass
+    (the entire cost driver) and, unlike ``compute_ghost_gk``, returns the per-row
+    ``ghost_clamped`` mask instead of collapsing it into one batch warning. Coordinates
+    are GOAL-RELATIVE (``x`` = distance from the defended goal line) --- the caller does
+    the write-back to frame coordinates.
+
+    ``ghost_out_of_box`` marks positions beyond the ghost's trained label hull
+    (``GRID_X_MAX`` = 30 m) and is evaluated on goal-relative ``x`` BEFORE any flip.
+
+    The goal-relative contract above is prose; the gate that enforces it is
+    ``tests/gkdv/test_engine.py::test_out_of_box_flag_keys_on_GOAL_RELATIVE_x_and_survives_writeback``.
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        LTR-normalized tracking frames (see :func:`compute_ghost_gk`).
+    model, home_team_id, actions, carrier, link_frame_ids
+        As :func:`compute_ghost_gk`.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per ``(game_id, period_id, frame_id, gk_team_id)`` with ``ghost_gr_x``,
+        ``ghost_gr_y``, ``ghost_clamped``, ``ghost_out_of_box``.
+
+    Examples
+    --------
+    >>> out = serve_ghost_gk_positions(frames, home_team_id=1)  # doctest: +SKIP
+    >>> bool(out["ghost_clamped"].notna().all())  # doctest: +SKIP
+    True
+    """
+    _resolved, meta, _batch_features, positions, clamped = _serve_positions_core(
+        frames,
+        model=model,
+        home_team_id=home_team_id,
+        actions=actions,
+        carrier=carrier,
+        link_frame_ids=link_frame_ids,
+    )
+    if len(positions) == 0:
+        # The empty frame's join-key dtypes MUST match the populated path's, or a
+        # pd.concat across a per-match loop where one match has no detected GK silently
+        # degrades period_id/frame_id from int64 to object -- and the caller joins on
+        # exactly these columns (ADR-019 class defect).
+        #
+        # The four join keys are therefore DERIVED FROM THE INPUT, not hard-coded: they
+        # are not fixed by any schema. `game_id`/`team_id` are int64 for a native provider
+        # and object for the kloppy-family ones, so a hard-coded pair is only ever right
+        # for the provider it was written against. It was measured wrong on both:
+        # `game_id` was pinned object while the populated path yields pandas 3's `str`,
+        # and `gk_team_id` was pinned float64 for every provider whose team ids are not.
+        #
+        # The derivation goes through ONE REAL VALUE rather than a zero-row column slice,
+        # because the populated path builds from python scalars (`pd.DataFrame(meta_rows)`)
+        # and that INFERENCE is not always the source column's own dtype: pandas 3 infers
+        # `str` from an object-dtype string column. Round-tripping a single non-null value
+        # through the same construction reproduces the populated dtype by definition; a
+        # slice would silently re-introduce the very mismatch this branch exists to avoid.
+        def _empty_join_key(column: str, fallback: str) -> pd.Series:
+            if column not in frames.columns:
+                return pd.Series(dtype=fallback)
+            observed = frames[column].dropna()
+            if observed.empty:
+                # Nothing to infer from -- the column slice is the closest available truth.
+                return frames[column].iloc[:0].reset_index(drop=True)
+            return pd.DataFrame([{column: observed.iloc[0]}])[column].iloc[:0].reset_index(drop=True)
+
+        return pd.DataFrame(
+            {
+                "game_id": _empty_join_key("game_id", "object"),
+                "period_id": _empty_join_key("period_id", "int64"),
+                "frame_id": _empty_join_key("frame_id", "int64"),
+                # The GK's team id comes off the frames' `team_id` column in the
+                # populated path (`meta["gk_team_id"]` is filled from `gk_row["team_id"]`).
+                "gk_team_id": _empty_join_key("team_id", "float64"),
+                "ghost_gr_x": pd.Series(dtype=float),
+                "ghost_gr_y": pd.Series(dtype=float),
+                "ghost_clamped": pd.Series(dtype=bool),
+                "ghost_out_of_box": pd.Series(dtype=bool),
+            }
+        )
+    return pd.DataFrame(
         {
-            "game_id": meta["game_id"].values,
-            "period_id": meta["period_id"].values,
-            "frame_id": meta["frame_id"].values,
-            "team_id": meta["gk_team_id"].values,
-            "ghost_gk_x": positions[:, 0],
-            "ghost_gk_y": positions[:, 1],
-            "ghost_gk_density_spread": [d.spread for d in densities],
+            "game_id": meta["game_id"].to_numpy(),
+            "period_id": meta["period_id"].to_numpy(),
+            "frame_id": meta["frame_id"].to_numpy(),
+            "gk_team_id": meta["gk_team_id"].to_numpy(),
+            "ghost_gr_x": positions[:, 0],
+            "ghost_gr_y": positions[:, 1],
+            "ghost_clamped": clamped.astype(bool),
+            "ghost_out_of_box": (positions[:, 0] > GRID_X_MAX),
         }
     )
-
-    # Merge into GK rows via single join
-    gk_mask = out["is_goalkeeper"].astype(bool) & ~out["is_ball"].astype(bool)
-    gk_rows_df = out.loc[gk_mask, ["game_id", "period_id", "frame_id", "team_id"]].copy()
-    gk_rows_df = gk_rows_df.merge(
-        result_df,
-        on=["game_id", "period_id", "frame_id", "team_id"],
-        how="left",
-    )
-    out.loc[gk_mask, "ghost_gk_x"] = gk_rows_df["ghost_gk_x"].values
-    out.loc[gk_mask, "ghost_gk_y"] = gk_rows_df["ghost_gk_y"].values
-    out.loc[gk_mask, "ghost_gk_density_spread"] = gk_rows_df["ghost_gk_density_spread"].values
-
-    return out

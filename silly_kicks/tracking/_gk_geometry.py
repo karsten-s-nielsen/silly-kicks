@@ -14,9 +14,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as spadlconfig
-
-from ._id_compat import ids_match
 
 _GOALKICK = spadlconfig.actiontype_id["goalkick"]
 _GOAL_AREA_DEPTH = 16.5  # m from own goal line; tracking-GK beyond this is "off position" (measured 48%)
@@ -176,8 +175,9 @@ def _tracking_gk_xy_detected(
     period-relative clock), so resolution does NOT depend on the linker finding an anchor frame -- a GK
     distribution whose exact frame falls just outside the link tolerance still resolves from a visible
     detection within +/- ``window_s``."""
+    from silly_kicks.id_compat import ids_match
+
     from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH, acting_team_attacks_rtl
-    from ._id_compat import ids_match
 
     n = len(actions)
     res = np.full((n, 2), np.nan, dtype=float)

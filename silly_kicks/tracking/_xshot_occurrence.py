@@ -22,13 +22,13 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.id_compat import ids_match
 from silly_kicks.tracking import _geometry as _geo
 from silly_kicks.tracking._ball_carrier import (
     DEFAULT_CARRIER_PARAMS,
     derive_team_in_possession,
     infer_ball_carrier,
 )
-from silly_kicks.tracking._id_compat import ids_match
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking.utils import link_actions_to_frames
 

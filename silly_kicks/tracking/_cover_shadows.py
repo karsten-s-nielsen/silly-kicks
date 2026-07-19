@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from ._id_compat import ids_match, same_id
+from silly_kicks.id_compat import ids_match, same_id
+
 from .pitch_control import PitchControlCache, PitchControlParams, compute_pitch_control
 from .pitch_control._surface import PitchControlSurface
 
@@ -711,6 +712,69 @@ def _voronoi_threat(
 
     total = sum(per_receiver.values())
     return total, per_receiver
+
+
+def compute_threat_pc(
+    frame: pd.DataFrame,
+    *,
+    attacking_team_id: int | str,
+    xt: ExpectedThreat,
+    home_team_id: int | str,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    params: PitchControlParams | None = None,
+) -> float:
+    """xT-weighted Voronoi pitch-control threat integral for ``frame``.
+
+    The GK-sensitive term inside :func:`compute_blocking_score`, exposed on its own so a
+    counterfactual consumer can difference it across two frames. ``compute_blocking_score``
+    is NOT a substitute: its two legs both re-derive the defender set, so a keeper
+    substitution largely cancels between them.
+
+    Keeper sensitivity is inherited entirely from the pitch-control surface, where
+    ``lambda_gk`` scales the goalkeeper's influence. ``lambda_gk`` exists ONLY on
+    ``SpearmanParams`` -- ``fernandez_bornn`` and ``voronoi`` carry no GK term at all -- so
+    ``method`` must stay ``"spearman"`` for a keeper-aware value.
+
+    Computes the surface DIRECTLY, never via ``PitchControlCache``: the cache key is
+    ``(game_id, period_id, frame_id, team, method, params, ball_position, decompose)`` and
+    excludes player positions, so a caller passing a MODIFIED frame at an unchanged
+    ``frame_id`` would silently be served the canonical frame's surface.
+
+    Parameters
+    ----------
+    frame : pd.DataFrame
+        Single tracking frame, period-normalized (home attacks left-to-right).
+    attacking_team_id : int | str
+        Team whose threat is measured.
+    xt : ExpectedThreat
+        Fitted xT model supplying the per-cell threat weights.
+    home_team_id : int | str
+        Home team identifier (defends x=0), used to orient the xT grid.
+    method : str, default "spearman"
+        Pitch-control method. Keep ``"spearman"`` for a keeper-aware value.
+    params : PitchControlParams | None
+        Pitch-control parameters.
+
+    Returns
+    -------
+    float
+        Total xT-weighted threat summed over the dangerous receivers' Voronoi cells.
+
+    Examples
+    --------
+    >>> compute_threat_pc(frame, attacking_team_id=2, xt=xt, home_team_id=1)  # doctest: +SKIP
+    0.0123
+
+    References
+    ----------
+    Cascioli et al. (2025).
+    """
+    _validate_ltr(frame, caller="compute_threat_pc")
+    surface = compute_pitch_control(frame, attacking_team_id, method=method, params=params)
+    threat, _per_receiver = _voronoi_threat(
+        surface, xt, frame, attacking_team_id=attacking_team_id, home_team_id=home_team_id
+    )
+    return float(threat)
 
 
 # ---------------------------------------------------------------------------

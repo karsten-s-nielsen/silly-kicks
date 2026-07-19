@@ -513,7 +513,7 @@ methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).
 
 The GKDV re-gate + physics-arms counterfactuals (the TF-19 cycle, ADR-037;
-silly_kicks/gkdv/ lands in a follow-on PR) build on:
+the silly_kicks/gkdv/ package itself ships in ADR-043) build on:
 
 - Le, H. M., Yue, Y., Carr, P. & Lucey, P. (2017). "Data-Driven Ghosting Using
   Deep Imitation Learning." MIT Sloan Sports Analytics Conference.
@@ -527,6 +527,32 @@ silly_kicks/gkdv/ lands in a follow-on PR) build on:
   Composable comparator for the GKDV metric (per-defender EPV-reduction
   defensive-value credit; prevention-focused, not GK-positional). Comparator
   only -- NOT implemented in silly-kicks.
+
+The two physics arms are counterfactual differences taken over published
+methodologies rather than new ones, so each arm's underlying method is cited
+here as well as at its own implementation site above:
+
+- Bischofberger, J., & Baca, A. (2026). "Dangerous accessible space: a
+  unified model of space and value in team sports." Journal of Big Data,
+  13, 76. Package: accessible-space on PyPI (MIT).
+  Used by: silly_kicks.gkdv.delta_das, which differences DAS across the
+  factual and ghost-keeper frames via the narrow silly_kicks/gkdv/_das_port.py
+  onto get_individual_das. Also cited above for the TF-28 DAS adapter
+  (silly_kicks/tracking/_das.py); the TF-19 usage is the counterfactual
+  application. DAS was explicitly designed to support hypotheticals.
+
+- Spearman, W. (2018). "Beyond Expected Goals." MIT Sloan Sports Analytics
+  Conference. (Off-ball scoring opportunity / pitch control.)
+- Shaw, L., & Sudarshan, M. (2020). "A Framework for Tactical Analysis and
+  Individual Offensive Production Assessment in Soccer Using Markov Models."
+  (xT and pitch-control integration; source of lambda_gk = 3 * lambda_outfield.)
+  Used by: silly_kicks.gkdv.delta_threat_suppression, which differences the
+  threat-weighted pitch-control integral (silly_kicks.tracking.compute_threat_pc)
+  across the factual and ghost-keeper frames. method="spearman" is a HARD API
+  constraint in GkdvParams because lambda_gk exists only on SpearmanParams --
+  the other pitch-control flavours are GK-blind, which would make the arm
+  measure nothing. Both works are also cited above for TF-7 pitch control and
+  TF-15 GK influence; the TF-19 usage is the counterfactual application.
 
 Third-Party Code Attribution
 ----------------------------

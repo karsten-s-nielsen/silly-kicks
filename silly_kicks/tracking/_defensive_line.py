@@ -14,7 +14,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from ._id_compat import ids_match, same_id
+from silly_kicks.id_compat import ids_match, same_id
 
 
 def select_back_line_players(

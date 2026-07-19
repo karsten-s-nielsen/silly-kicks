@@ -10,46 +10,14 @@ shows (§3) -- if v2 is still keeper-flat, that is the finding.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
-_MIN_N = 20  # a-priori: min distributions per keeper for a stable within-keeper term
+# Delete-and-depend (TF-19 PR-3): the two statistics were lifted VERBATIM into the library
+# so gkdv/ -- which cannot import from scripts/ -- shares one body. `keeper_spread` was
+# renamed `group_spread` at lift time (nothing in it is keeper-specific).
+from silly_kicks._group_metrics import DEFAULT_MIN_N, group_spread
 
-
-def icc_one_way(values: np.ndarray, groups: np.ndarray) -> float:
-    """One-way random-effects ICC(1) from ACTION-level values grouped by keeper: between-keeper variance
-    as a fraction of total. Higher => the metric separates keepers. Partitions variance from the raw
-    action-level values (NOT per-group means -- that has no within-group term)."""
-    df = pd.DataFrame({"v": np.asarray(values, float), "g": np.asarray(groups)}).dropna()
-    g_sizes = df.groupby("g")["v"].transform("size")
-    df = df[g_sizes >= 2]  # a group needs >=2 actions to contribute a within term
-    grp = df.groupby("g")["v"]
-    ng, means = grp.count().to_numpy(float), grp.mean().to_numpy(float)
-    n, g = len(df), len(ng)
-    if g < 2 or n <= g:
-        return float("nan")
-    grand = df["v"].mean()
-    ssb = float((ng * (means - grand) ** 2).sum())
-    ssw = float(grp.apply(lambda s: ((s - s.mean()) ** 2).sum()).sum())
-    msb, msw = ssb / (g - 1), ssw / (n - g)
-    n0 = (n - (ng**2).sum() / n) / (g - 1)  # unbalanced correction
-    denom = msb + (n0 - 1) * msw
-    return float((msb - msw) / denom) if denom != 0 else float("nan")
-
-
-def keeper_spread(values: np.ndarray, keys: np.ndarray, *, min_n: int = _MIN_N) -> dict:
-    """ICC (action-level) + CV (per-keeper means, secondary/unstable) + per-keeper mean ranking."""
-    df = pd.DataFrame({"v": np.asarray(values, float), "k": np.asarray(keys)}).dropna()
-    cnt = df.groupby("k")["v"].transform("size")
-    df = df[cnt >= min_n]
-    if df["k"].nunique() < 2:
-        return {"icc": float("nan"), "cv": float("nan"), "n_keepers": int(df["k"].nunique()), "ranking": []}
-    icc = icc_one_way(df["v"].to_numpy(), df["k"].to_numpy())
-    per = df.groupby("k")["v"].agg(["mean", "count"]).sort_values("mean", ascending=False)
-    m = per["mean"].to_numpy()
-    cv = float(np.std(m) / abs(np.mean(m))) if np.mean(m) != 0 else float("nan")
-    ranking = [(str(k), float(r["mean"]), int(r["count"])) for k, r in per.iterrows()]
-    return {"icc": icc, "cv": cv, "n_keepers": len(per), "ranking": ranking}
+_MIN_N = DEFAULT_MIN_N  # a-priori: min distributions per keeper for a stable within-keeper term
 
 
 def _report(provider: str, variant: str, n_actions: int, v2: dict, v1: dict) -> str:
@@ -149,7 +117,7 @@ def main() -> int:
     if GK_GEOMETRY_SOURCE_COLUMN in gk.columns:
         print(f"  census: gk_geometry_source = {gk[GK_GEOMETRY_SOURCE_COLUMN].value_counts().to_dict()}")
 
-    sv2, sv1 = keeper_spread(v2, keys), keeper_spread(v1, keys)
+    sv2, sv1 = group_spread(v2, keys), group_spread(v1, keys)
     print(f"provider={a.provider} n_actions={len(gk)} keepers(v2)={sv2['n_keepers']}")
     print(f"  v2 ICC={sv2['icc']:.4f} CV={sv2['cv']:.3f} | v1 ICC={sv1['icc']:.4f} CV={sv1['cv']:.3f}")
     print("wrote", _report(a.provider, variant, len(gk), sv2, sv1))

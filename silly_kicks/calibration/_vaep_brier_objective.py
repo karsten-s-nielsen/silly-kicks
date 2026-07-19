@@ -35,6 +35,7 @@ from silly_kicks.calibration._gates import (
     h1_penalty_fires,
     signal_sanity,
 )
+from silly_kicks.tracking import DAS_SOURCE_UNSCOREABLE_CALL
 
 if TYPE_CHECKING:
     from silly_kicks.calibration._xt import FrozenXt
@@ -188,23 +189,44 @@ class AugmentedVaepBrierObjective:
     def prepare(self) -> _Invariant:
         """Build the trial-independent invariant once (per-match enrichment + labels + anchors).
 
+        Call this ONCE per fold, then reuse the returned invariant for every trial. It
+        carries three things a trial must not recompute and must not disagree about: the
+        expensive per-match enrichment, the H1 default-param anchors, and the kept-provider
+        set that fixes the equal-weight denominator for the whole study.
+
         Examples
         --------
-        >>> # inv = obj.prepare()  # then obj.evaluate_patch(inv, candidate)  # doctest: +SKIP
+        The invariant is built once and threaded through every trial::
+
+            obj = AugmentedVaepBrierObjective(
+                fold=fold, xt=frozen.xt, carrier_params=carrier_params, seed=42
+            )
+            invariant = obj.prepare()
+            for candidate in study.candidates():
+                metrics = obj.evaluate_patch(invariant, candidate)
+
+        Two side effects are worth knowing about, because both are decisions the harness
+        makes FOR the study rather than per trial: a provider with no usable label signal is
+        excluded loudly (recorded in ``obj.diagnostics["excluded_providers"]``), and a match
+        whose DAS computation degraded is counted into
+        ``obj.diagnostics["das_degraded"]`` and warned about.
         """
         inv = _Invariant()
         for provider, matches in self._fold.items():
             inv.bases[provider] = []
             inv.das_degraded[provider] = 0
             for match_idx, (actions, frames, home) in enumerate(matches):
-                base, links, das_ok = enrich_invariant(
+                base, links = enrich_invariant(
                     actions=actions,
                     frames=frames,
                     xt=self._xt.xt,
                     home_team_id=home,
                     carrier_params=self._carrier_params,
                 )
-                if not das_ok:
+                # M8 via the PUBLIC das_source provenance (ADR-043), not a private flag:
+                # DAS_SOURCE_UNSCOREABLE_CALL is stamped on every row when the whole
+                # per-match DAS computation degraded.
+                if (base["das_source"] == DAS_SOURCE_UNSCOREABLE_CALL).any():
                     inv.das_degraded[provider] += 1
                 inv.bases[provider].append(
                     {
@@ -285,9 +307,24 @@ class AugmentedVaepBrierObjective:
     def evaluate_patch(self, invariant: _Invariant, candidate: Candidate) -> Metrics:
         """Cheap per-trial Brier: patch only the 2 trial-varying steps on the cached invariant.
 
+        The fast path, and the one a sweep actually runs. It re-runs link_zones pressure and
+        off-ball runs on the cached base; everything else is reused. The returned metrics
+        carry the equal-weight mean under ``"brier"`` plus a per-provider
+        ``"brier__<provider>"`` / ``"brier_se__<provider>"`` breakdown, so a mean that moved
+        because of one provider is visible rather than averaged away.
+
         Examples
         --------
-        >>> # obj.evaluate_patch(inv, candidate)["brier"]  # doctest: +SKIP
+        Score a candidate against a prepared invariant::
+
+            invariant = obj.prepare()
+            metrics = obj.evaluate_patch(invariant, candidate)
+            metrics["brier"]  # equal-weight mean over the KEPT providers
+
+        The result must equal :meth:`evaluate` on the same candidate to 1e-9 — that
+        equivalence is what makes the cache sound, and ``assert_cache_equivalence`` checks
+        it rather than trusting it. If a trial flattens a tuned feature, the H1 gate returns
+        a finite penalty Brier instead: a degenerate trial is steered away, never raised on.
         """
         params = {k: float(candidate.params[k]) for k in ("k3", "pre_seconds", "min_displacement_m")}
         per_provider = self._build_per_provider(invariant, params, use_full=False)  # CACHED base + patch
@@ -297,9 +334,22 @@ class AugmentedVaepBrierObjective:
     def evaluate(self, candidate: Candidate) -> Metrics:
         """Full from-scratch Brier via the independent monolith (the Objective port; H1).
 
+        The slow path, and the ORACLE the fast path is checked against. It re-derives every
+        feature from the original SPADL actions via ``enrich_full`` — deliberately sharing
+        no cached intermediate with :meth:`evaluate_patch`, because a shared intermediate
+        would make the two paths agree by construction and the 1e-9 equivalence check would
+        prove nothing.
+
         Examples
         --------
-        >>> # obj.evaluate(candidate)["brier"]  # equals evaluate_patch to 1e-9  # doctest: +SKIP
+        Verify the cache rather than trusting it::
+
+            fast = obj.evaluate_patch(obj.prepare(), candidate)["brier"]
+            slow = obj.evaluate(candidate)["brier"]  # independent recompute
+            assert abs(fast - slow) < 1e-9
+
+        Use this for the cache-equivalence gate and for spot checks, not for a sweep: it
+        re-runs the whole per-match enrichment for every call.
         """
         invariant = self.prepare()  # anchors + per-match frames/actions/labels (prepare is deterministic)
         params = {k: float(candidate.params[k]) for k in ("k3", "pre_seconds", "min_displacement_m")}

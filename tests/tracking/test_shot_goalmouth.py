@@ -682,7 +682,7 @@ class TestComputeEngine:
         actions, frames = make_match()
         actions["team_id"] = pd.array([pd.NA], dtype="object")
         out = compute_shot_goalmouth(actions, frames)  # ADR-003: never crash
-        # pinned by same_id's contract (_id_compat.py -- "False if either is NA"):
+        # pinned by same_id's contract (id_compat.py -- "False if either is NA"):
         # NaN action team -> neither goal-map team matches -> 2 candidate ends -> unresolved
         assert out.iloc[0]["shot_crossing_source"] == "unresolved"
 

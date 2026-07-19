@@ -135,7 +135,9 @@ def test_constant_columns(actions_3, snapshots_combined):
     assert player_rows["frame_rate"].isna().all()
     assert player_rows["z"].isna().all()
     assert player_rows["speed"].isna().all()
-    assert player_rows["speed_source"].isna().all()
+    # speed_source is NOT NaN (ADR-043): the value is still absent, but its absence is now
+    # DECLARED structural rather than left indistinguishable from "not derived yet".
+    assert (player_rows["speed_source"] == "unavailable").all()
     assert player_rows["confidence"].isna().all()
     assert player_rows["visibility"].isna().all()
     assert (player_rows["ball_state"] == "alive").all()
@@ -288,16 +290,76 @@ def test_downstream_cover_shadows_degrades(actions_3, snapshots_combined):
     assert result["blocking_score"].isna().all()
 
 
+def test_snapshot_frames_mark_velocity_structurally_unavailable(actions_3, snapshots_combined):
+    """Every snapshot row declares the marker -- a freeze-frame has no temporal history."""
+    from silly_kicks.tracking import SPEED_SOURCE_UNAVAILABLE
+    from silly_kicks.tracking._snapshot import snapshot_to_tracking_frames
+
+    frames, _ = snapshot_to_tracking_frames(snapshots_combined, actions_3)
+    assert len(frames) > 0  # non-vacuity: there ARE rows to be marked
+    assert (frames["speed_source"] == SPEED_SOURCE_UNAVAILABLE).all()
+    # Both facets present -- the marker must not be player-only.
+    assert (frames.loc[frames["is_ball"], "speed_source"] == SPEED_SOURCE_UNAVAILABLE).all()
+    assert frames["is_ball"].any() and (~frames["is_ball"]).any()
+    assert SPEED_SOURCE_UNAVAILABLE in TRACKING_CATEGORICAL_DOMAINS["speed_source"]
+
+
 def test_downstream_das_degrades(actions_3, snapshots_combined):
-    """Velocity-dependent add_das returns NaN columns, not raises."""
+    """Velocity-dependent add_das returns NaN columns, not raises.
+
+    ADR-043 non-vacuity: assert the DEGRADE PATH actually executed -- DAS really all-NaN
+    AND ``das_source`` really names the structural cause. An all-NaN column alone would
+    also be produced by a mapper that found no frames, which is a different bug.
+    """
+    from silly_kicks.tracking import DAS_SOURCE_UNSCOREABLE_FRAME
     from silly_kicks.tracking._snapshot import snapshot_to_tracking_frames
     from silly_kicks.tracking.features import add_das
 
     frames, links = snapshot_to_tracking_frames(snapshots_combined, actions_3)
     actions_with_data = actions_3[actions_3["action_id"].isin(links["action_id"])]
-    # DAS requires vx/vy + team_in_possession — should degrade to NaN + warning
-    result = add_das(actions_with_data, frames, links=links)
+    assert len(actions_with_data) > 0  # non-vacuity: there ARE actions to degrade
+    # DAS requires vx/vy — the marker makes this an honest degrade, not a raise.
+    with pytest.warns(UserWarning, match="unscoreable"):
+        result = add_das(actions_with_data, frames, links=links)
     assert "das_team" in result.columns
     assert result["das_team"].isna().all()
     assert result["das_opponent"].isna().all()
     assert result["das_diff"].isna().all()
+    assert (result["das_source"] == DAS_SOURCE_UNSCOREABLE_FRAME).all()
+
+
+def test_unmarked_velocityless_frames_still_raise(actions_3, snapshots_combined):
+    """The other direction: strip the marker and the SAME frames must fail LOUD.
+
+    This is what stops the marker from re-absorbing the genuine caller bug ("forgot
+    derive_velocities()") that the narrowed catch exists to expose. Same frames, same
+    call, only the marker differs -- so a pass here can only come from the marker.
+    """
+    from silly_kicks.tracking._snapshot import snapshot_to_tracking_frames
+    from silly_kicks.tracking.features import add_das
+
+    frames, links = snapshot_to_tracking_frames(snapshots_combined, actions_3)
+    unmarked = frames.copy()
+    unmarked["speed_source"] = None
+    actions_with_data = actions_3[actions_3["action_id"].isin(links["action_id"])]
+    with pytest.raises(ValueError, match="velocity columns"):
+        add_das(actions_with_data, unmarked, links=links)
+
+
+def test_partially_marked_frames_still_raise(actions_3, snapshots_combined):
+    """A PARTIAL marking is a mixed frame set: the unmarked rows are the caller bug."""
+    from silly_kicks.tracking._snapshot import snapshot_to_tracking_frames
+    from silly_kicks.tracking.features import add_das
+
+    frames, links = snapshot_to_tracking_frames(snapshots_combined, actions_3)
+    partial = frames.copy()
+    # `get_loc` returns a slice / boolean mask for a non-unique index, and only a plain
+    # positional int is a valid `.iloc` setitem key. Narrowing it here is not ceremony: a
+    # duplicated `speed_source` column would otherwise unmark SEVERAL columns and the test
+    # would still pass, for the wrong reason.
+    speed_source_pos = frames.columns.get_loc("speed_source")
+    assert isinstance(speed_source_pos, int), "speed_source is not a single unique column"
+    partial.iloc[0, speed_source_pos] = None
+    actions_with_data = actions_3[actions_3["action_id"].isin(links["action_id"])]
+    with pytest.raises(ValueError, match="velocity columns"):
+        add_das(actions_with_data, partial, links=links)

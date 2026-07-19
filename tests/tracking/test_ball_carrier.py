@@ -776,3 +776,82 @@ def test_derive_team_in_possession_preserves_carrier_player_id():
         suffixes=("", "_ref"),
     )
     assert (merged["ball_carrier_player_id"].fillna(-1) == merged["ball_carrier_player_id_ref"].fillna(-1)).all()
+
+
+# ---------------------------------------------------------------------------
+# ADR-043 -- derive_team_in_possession is IDEMPOTENT
+#
+# A bare merge suffixed a pre-existing team_in_possession to _x/_y, and every
+# consumer that re-derives possession (_xshot_occurrence, _xcross_attempt) then
+# died on KeyError: 'team_in_possession'. Live for any pipeline that enriches one
+# frames object for several families -- exactly what `links` / `pitch_control_cache`
+# exist to encourage.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_team_in_possession_is_idempotent():
+    """Second call is a no-op on the COLUMN SET -- no _x/_y suffixes, ever."""
+    from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier
+
+    frames = _tiny_poss_frames()
+    carrier = infer_ball_carrier(frames)
+
+    once = derive_team_in_possession(frames, carrier)
+    twice = derive_team_in_possession(once, carrier)
+
+    assert list(twice.columns) == list(once.columns)
+    assert not any(c.endswith(("_x", "_y")) for c in twice.columns)
+    assert "team_in_possession" in twice.columns
+    # Non-vacuity: the column must actually carry possession, not be an all-NaN husk.
+    assert once["team_in_possession"].notna().any()
+    pd.testing.assert_frame_equal(twice, once)
+
+
+def test_derive_team_in_possession_replaces_stale_column():
+    """A pre-existing column is REPLACED by THIS carrier's answer, never preserved.
+
+    Deliberate (see docstring): the output must always agree with the `carrier`
+    argument just passed; a retained column from an earlier/different carrier is the
+    train-serve-skew shape.
+    """
+    from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier
+
+    frames = _tiny_poss_frames()
+    carrier = infer_ball_carrier(frames)
+
+    stale = frames.copy()
+    stale["team_in_possession"] = 999  # a value THIS carrier can never produce
+    stale["ball_carrier_player_id"] = 999
+
+    out = derive_team_in_possession(stale, carrier)
+    assert (out["team_in_possession"] != 999).all()
+    assert (out["ball_carrier_player_id"].fillna(-1) != 999).all()
+    pd.testing.assert_frame_equal(out, derive_team_in_possession(frames, carrier))
+
+
+def test_double_enriched_frames_survive_xshot_consumer():
+    """Downstream proof: a twice-enriched frames object must not KeyError.
+
+    `prepare_xshot_training_data` re-derives possession internally and then reads
+    `grp["team_in_possession"]` -- precisely where the suffixed column detonated.
+    """
+    from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier
+    from silly_kicks.tracking._xshot_occurrence import prepare_xshot_training_data
+
+    frames = _tiny_poss_frames()
+    carrier = infer_ball_carrier(frames)
+    double = derive_team_in_possession(derive_team_in_possession(frames, carrier), carrier)
+    assert "team_in_possession" in double.columns  # non-vacuity: the enrichment IS present
+
+    shots = pd.DataFrame(
+        {
+            "game_id": [1],
+            "period_id": [1],
+            "team_id": [1],
+            "time_seconds": [0.1],
+            "type_name": ["shot"],
+        }
+    )
+    # MUST NOT raise KeyError: 'team_in_possession'
+    X, y, groups = prepare_xshot_training_data(double, shots, home_team_id=1, attacking_third_only=False)
+    assert len(X) == len(y) == len(groups)

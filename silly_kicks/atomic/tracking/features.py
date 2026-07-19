@@ -15,9 +15,9 @@ import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.atomic.spadl import config as atomicconfig
+from silly_kicks.id_compat import ids_equal
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import _kernels
-from silly_kicks.tracking._id_compat import ids_equal
 from silly_kicks.tracking._packing import PackingParams
 from silly_kicks.tracking._shot_goalmouth import ShotGoalmouthParams
 from silly_kicks.tracking._structural_pass import (

@@ -20,9 +20,9 @@ from kloppy.domain import (  # type: ignore[reportMissingImports]
     TrackingDataset,
 )
 
+from silly_kicks.id_compat import same_id
 from silly_kicks.spadl._kloppy_coordinates import socceraction_coordinate_system
 
-from ._id_compat import same_id
 from .schema import KLOPPY_TRACKING_FRAMES_COLUMNS, TrackingConversionReport
 from .sportec import _resolve_output_convention
 from .utils import _derive_speed

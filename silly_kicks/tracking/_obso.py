@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from ._id_compat import ids_match
+from silly_kicks.id_compat import ids_match
 
 if TYPE_CHECKING:
     from silly_kicks.xthreat import ExpectedThreat
