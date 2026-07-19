@@ -13,11 +13,11 @@ library_name: silly-kicks
 
 # xShotOccurrence v1 (`sc_extended`) &mdash; Shot-Occurrence Propensity from Tracking State
 
-> **Read this first.** This repo serves the **`sc_extended`** variant, which is **NOT the
-> recommended model** and is **NOT the one bundled with the `silly-kicks` wheel**. It is
-> published for reproducibility and independent scrutiny. The recommended model is the
-> bundled `default` (`public` arm), which ships inside the package and needs no download.
-> See [Which variant should I use?](#which-variant-should-i-use).
+> **Read this first.** This repo serves the **`sc_extended`** variant, which is **NOT bundled
+> with the `silly-kicks` wheel** — it is trained on restricted owner-tier data and cannot be
+> redistributed there. That is a **licensing** constraint, not a quality one: `sc_extended`
+> **cleared** its pre-registered paired test. Pick the variant that matches your situation —
+> see [Which variant should I use?](#which-variant-should-i-use).
 
 ## Model Description
 
@@ -38,28 +38,47 @@ distance/bearing, and the 5 nearest defenders + 5 nearest attackers.
 
 | Variant | Corpus | Where it lives | Use it? |
 |---|---|---|---|
-| `default` (`public`) | 17 matches &mdash; SkillCorner + IDSSE, redistributable | **bundled in the wheel** | **Yes** &mdash; this is the shipped model |
-| `sc_extended` | + 98 owner-tier SkillCorner matches (179 total) | **this repo** (HF-only) | Reproducibility / scrutiny only |
+| `default` (`public`) | 17 matches &mdash; SkillCorner + IDSSE, redistributable | **bundled in the wheel** | **Default choice** &mdash; offline, fully reproducible, no restricted data |
+| `sc_extended` | + 98 owner-tier SkillCorner matches (179 total) | **this repo** (HF-only) | Yes, if you can accept a Hub download and the corpus caveats below — it beat `public` on held-out folds |
 
 `sc_extended` is HF-only because it is trained on **restricted** data and cannot be
 redistributed inside the PyPI wheel. Only learned parameters are published here &mdash; **no raw
 provider tracking data**, and no artifact from which raw rows can be reconstructed (every
 booster leaf aggregates ≥ 9 samples by the binding `min_child_weight` floor).
 
-## Why this variant did NOT ship
+## Why this variant is HF-only (it did NOT fail its paired test)
 
-Under the **pre-registered fixed-sequence paired test** (`scripts/_paired.py`, spec 4.1), a
-candidate ships only if its held-out deltas are positive in ≥ K−1 of K folds **and** the mean
-is positive. `sc_extended` recorded deltas of **exactly 0.0 across all 5 folds** &mdash; no
-demonstrated improvement &mdash; so the sequence stopped and `public` shipped:
+**`sc_extended` CLEARED the pre-registered paired test.** It is HF-only because it is trained
+on **restricted owner-tier data and cannot be redistributed inside the PyPI wheel** (ADR-038)
+— a licensing constraint, not a quality verdict.
+
+The Stage-B run's own record:
 
 ```
-"shipped": "public",
-"why": "sc_extended failed the rule; the sequence stops (full cannot ship here)"
+"shipped": "sc_extended",
+"why": "sc_extended clears; full does not dominate it -- ties go to less data"
 ```
 
-The prior 4.9.0 verdict is consistent: owner-tier Gradient Sports data degraded public
-held-out PR-AUC in all 5 folds, so the reproducible public-only model shipped then too.
+Stage-B deltas vs `public`, held out on public folds: `[-0.008, +0.009, +0.005, +0.029,
++0.023]` — positive in 4 of 5 folds, mean **+0.0117**. The registered rule
+(`scripts/_paired.py::clears_rule`: positive in ≥ K−1 of K folds **and** a positive mean)
+returns **True**.
+
+### Do not misread the BUNDLED artifact's paired block
+
+The bundled `default` artifact carries a *different* run's record — **Stage A**, whose corpus
+contained **no owner-tier SkillCorner rows at all**. There,
+`cand_masks["sc_extended"] = is_public | is_sc_private` with `is_sc_private` **empty**, so the
+`sc_extended` candidate was the *same mask* as `public`: the same model scored against itself.
+Its deltas are `[0.0, 0.0, 0.0, 0.0, 0.0]` **by construction** — a degenerate self-comparison,
+not a measured null — and since the rule requires strictly positive values, zero fails and the
+fixed sequence stops. That is why `public` is the bundled default.
+
+Reading those zeros as "`sc_extended` failed" is a trap; an earlier revision of this card fell
+into it. `docs/research/tf19_pr2/decision_table.md` has the Stage A / Stage B split correct.
+
+The separate 4.9.0 verdict — that owner-tier Gradient Sports data degraded public
+held-out PR-AUC in all 5 folds — concerned the `full` arm, not `sc_extended`.
 
 ## Held-out CV (5 folds, out-of-fold)
 
@@ -108,7 +127,7 @@ no `sc_extended` routing).
 
 ## Limitations
 
-- **Not the shipped model.** See above.
+- **Not the bundled model** (restricted corpus, so it cannot ship in the wheel). This is a redistribution limit, not a performance one.
 - **No GK measurement exists for this arm at all** &mdash; see the TF-19 section.
 - Trained on a corpus that is **179 matches, heavily Real Madrid** &mdash; the 98 owner-tier
   additions are one club, so club/style confounding is real and unquantified here.

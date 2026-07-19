@@ -37,6 +37,27 @@ is an AND of both prongs and the absolute-floor prong (>= 0.01) is missed narrow
 0.0097 versus the 0.01 floor. This is a **10% relative miss on the floor prong alone**,
 not the order-of-magnitude gap Stage A showed on both prongs.
 
+## Trap: the BUNDLED artifact's paired block is Stage A, not Stage B
+
+`silly_kicks/tracking/_xcross_weights/default/metrics.json` (and the xS equivalent) record the
+**Stage A** paired test, whose corpus contained **no owner-tier SkillCorner rows**. There
+`cand_masks["sc_extended"] = is_public | is_sc_private` with `is_sc_private` **empty**, so the
+`sc_extended` candidate was the *same row mask* as `public` — the same model scored against
+itself — and its deltas are `[0.0, 0.0, 0.0, 0.0, 0.0]` **by construction**. Since
+`clears_rule` demands strictly positive values, zero fails and the fixed sequence stops, which
+is why `public` is the bundled default.
+
+**Those zeros are a degenerate self-comparison, not a measured null, and NOT a verdict on
+`sc_extended`.** The Stage B run — the one with the owner SkillCorner rows actually present —
+records `sc_extended` deltas `[-0.008, +0.009, +0.005, +0.029, +0.023]` (4/5 positive, mean
++0.0117), `clears_rule = True`, and `"shipped": "sc_extended"`. `sc_extended` is HF-only
+because it is **not redistributable** (ADR-038), not because it lost a test.
+
+Recorded because a reader (2026-07-18) went to the bundled artifact rather than this table,
+misread the zeros as a failure, and published that claim on the public HF model cards before it
+was caught. Corpus sizes are the quickest tell: Stage A xCross is 718,005 rows, Stage B is
+1,209,333.
+
 Both Stage A and Stage B probes were run against the same held-out GS pair
 (`gradientsports` matches `10502` / `10503`); the Stage B run's own `probe_sample_in_training_folds`
 record confirms neither match entered the `sc_extended` training folds (both `false`),
