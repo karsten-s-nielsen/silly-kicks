@@ -116,7 +116,7 @@ def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) 
     return list(pd.concat([f(gs) for f in fs], axis=1).columns)
 
 
-def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
+def play_left_to_right(gamestates: GameStates, home_team_id: int | str) -> GameStates:
     """Mirror away-team atomic gamestate rows from absolute-frame to SPADL LTR.
 
     Public boundary helper for callers who have absolute-frame-home-right
@@ -135,8 +135,13 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
     ----------
     gamestates : GameStates
         Atomic gamestates in absolute-frame-home-right convention.
-    home_team_id : int
-        ID of the home team.
+    home_team_id : int | str
+        ID of the home team. Must be comparable to the ``a0["team_id"]`` id
+        domain: ``team_id`` dtype is provider-dependent (``int64`` for
+        StatsBomb / Opta / Wyscout, object-string for the kloppy-family and
+        Sportec, nullable ``Int64`` for Gradient Sports). Comparison is
+        dtype-safe (ADR-019), so a value-equal scalar of either dtype resolves
+        identically -- but the VALUE must identify the home team.
 
     Returns
     -------
@@ -153,8 +158,10 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int) -> GameStates:
         ltr_states = play_left_to_right(states, home_team_id=100)
         # All away-team rows in each slot now have flipped (x, y) and negated (dx, dy).
     """
+    from silly_kicks.id_compat import ids_match
+
     a0 = gamestates[0]
-    away_idx = a0.team_id != home_team_id
+    away_idx = ~ids_match(a0.team_id, home_team_id)
     for actions in gamestates:
         actions.loc[away_idx, "x"] = atomicspadl.field_length - actions[away_idx]["x"].values  # type: ignore[reportAttributeAccessIssue]
         actions.loc[away_idx, "y"] = atomicspadl.field_width - actions[away_idx]["y"].values  # type: ignore[reportAttributeAccessIssue]

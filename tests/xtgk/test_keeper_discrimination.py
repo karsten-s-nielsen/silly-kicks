@@ -1,8 +1,13 @@
-"""W5 (4.45.0): action-level keeper-discrimination ICC (R2 -- NOT degenerate-on-means)."""
+"""W5 (4.45.0): action-level keeper-discrimination ICC (R2 -- NOT degenerate-on-means).
+
+Re-pointed at ``silly_kicks._group_metrics`` by TF-19 PR-3 (the bodies were lifted out of
+``scripts/`` so gkdv/ can share them); ``keeper_spread`` became ``group_spread`` at lift
+time. These assertions are unchanged, which is what makes them the lift's parity evidence.
+"""
 
 import numpy as np
 
-from scripts.xtgk_v2_keeper_discrimination import icc_one_way, keeper_spread
+from silly_kicks._group_metrics import group_spread, icc_one_way
 
 
 def _grouped(keeper_means, within_sd, n_per=30, seed=0):
@@ -31,7 +36,7 @@ def test_keeper_spread_filters_and_ranks():
     # add a keeper below the min-N filter -> excluded
     v = np.concatenate([v, [0.9, 0.9]])
     k = np.concatenate([k, ["SMALL", "SMALL"]])
-    s = keeper_spread(v, k, min_n=20)
+    s = group_spread(v, k, min_n=20)
     assert s["n_keepers"] == 3  # SMALL (n=2) filtered out
     assert np.isfinite(s["icc"])
     assert [r[0] for r in s["ranking"]][:1] == ["K2"]  # highest mean (0.4) ranked first

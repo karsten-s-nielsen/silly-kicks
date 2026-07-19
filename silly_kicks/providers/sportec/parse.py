@@ -28,7 +28,13 @@ Provenance of the lifted bodies (luxury-lakehouse @ 0efac60):
 
 The bodies are lifted byte-for-byte; the ONLY adaptations are (a) the lakehouse
 ``logger`` argument defaults to this module's logger, (b) the two cross-module helpers
-above are inlined, and (c) the events bronze-column set is materialised. The parse layer
+above are inlined, (c) the events bronze-column set is materialised, and (d) the
+silly-kicks-local hardening helpers marked ``LOCAL HARDENING`` below
+(:func:`_normalize_ball_state` / :func:`_resolve_period_column`), which close two
+*silent-degradation* paths in the lifted bodies. Those helpers are **output-neutral on
+valid input** --- they only add loudness where the lift previously degraded quietly --- so
+the golden parity gate stays the authority on the lift itself. A future re-pin to a newer
+lakehouse SHA must re-apply them, not drop them. The parse layer
 is faithful ``bytes -> RAW bronze``; **data-quality (Savitzky-Golay smoothing, velocity
 derivation) stays consumer-side** --- the lakehouse applies its own ``_smooth_tracking``
 after this parse, and the silly-kicks harness applies ``_preprocess``. The Phase-2.1
@@ -40,6 +46,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import warnings
 import xml.etree.ElementTree as ET  # nosemgrep: use-defused-xml -- trusted local DFL XML files, not untrusted input
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -1051,6 +1058,92 @@ _IDSSE_CONSUMED_COLS = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# LOCAL HARDENING (silly-kicks-local, NOT part of the 0efac60 lift) --- ball_state.
+# ---------------------------------------------------------------------------
+# DFL XML ``BallStatus`` is "0" (dead) / "1" (alive) in IDSSE; legacy feeds carry
+# "Alive"/"Dead". ``infer_ball_carrier`` checks ``bs == "dead"``, so map before
+# lowercasing so both encodings resolve correctly.
+_BALL_STATUS_MAP: dict[str, str] = {"0": "dead", "1": "alive"}
+
+# The schema value set for the produced column. MIRRORS
+# ``silly_kicks.tracking.schema.TRACKING_CATEGORICAL_DOMAINS["ball_state"]`` --- duplicated
+# rather than imported to keep this parse port free of any ``silly_kicks`` runtime import
+# (it is a standalone bytes->bronze layer). The two are pinned equal by
+# ``tests/providers/sportec/test_parse_hardening.py::test_ball_state_domain_matches_tracking_schema``.
+_BALL_STATE_DOMAIN: frozenset[str] = frozenset({"alive", "dead"})
+
+
+def _normalize_ball_state(raw: pd.Series, *, context: str) -> pd.Series:
+    """Map a raw DFL ``ball_status`` column to the ``ball_state`` value domain.
+
+    Closes two silent-degradation paths that the lifted body had:
+
+    **1. dtype.** The lifted body called ``.str.lower()`` directly, which requires a
+    string-like column. The XML parse path always produces one, but this function is
+    also fed by **Databricks Delta round-trips**, where ``ball_status`` can come back
+    as ``int64`` --- or ``float64`` when the column carries nulls. Then ``.map()``
+    against a string-keyed dict yields all-NA and ``.str`` raises a bare
+    ``AttributeError`` pointing at pandas rather than at the schema. Numerically-typed
+    input is therefore routed through nullable ``Int64`` *first*: a naive
+    ``.astype(str)`` on ``float64`` gives ``"0.0"``, which would NOT match the ``"0"``
+    key, whereas ``Int64`` lands both ``int64`` and ``float64`` on ``"0"``/``"1"`` with
+    NA preserved. Genuinely string-like input (``object`` of ``str``, ``StringDtype``)
+    is passed through **untouched** --- that is what keeps the golden parity gate green.
+
+    **2. output domain.** The lifted body's ``.fillna(bs.str.lower())`` passes ANY
+    unmapped token straight through as the ``ball_state`` value. The schema value set is
+    ``{"alive", "dead"}``, and an out-of-set value silently zeroes the column out of
+    downstream domain filters (the 4.48.1 failure class). Produced values are validated
+    against :data:`_BALL_STATE_DOMAIN` and violations are surfaced.
+
+    Missing input is legitimate here (a frame with no BallStatus attribute) and yields
+    NA, which is NOT treated as a domain violation.
+
+    Parameters
+    ----------
+    raw : pd.Series
+        Raw ``ball_status`` column.
+    context : str
+        Human-readable row-class label (e.g. ``"player rows"``) for the warning.
+
+    Returns
+    -------
+    pd.Series
+        ``ball_state`` values; NA where the input was NA.
+    """
+    bs = raw
+    if pd.api.types.is_numeric_dtype(bs):  # covers int64 / float64 / Int64 / Float64 / bool
+        bs = bs.astype("Int64").astype("string")
+    out = bs.map(_BALL_STATUS_MAP).fillna(bs.str.lower()).where(bs.notna(), other=None)  # type: ignore[arg-type]  # None→NA fill is valid at runtime; pandas-stubs over-narrows `other`
+    _warn_unexpected_ball_state(out, context=context)
+    return out
+
+
+def _warn_unexpected_ball_state(state: pd.Series, *, context: str) -> None:
+    """Surface any produced ``ball_state`` outside the schema value set.
+
+    WARN, not raise --- deliberately, and consistent with the sibling DFL-token allowlist
+    idiom ``silly_kicks.spadl.sportec._warn_unexpected_play_eval``: (a) this is an
+    ingestion parse layer, so aborting a whole match over one unknown BallStatus token in
+    one frame would destroy every other correct row in it; (b) the token is named in the
+    message, so an operator can extend :data:`_BALL_STATUS_MAP` --- coercing to NA instead
+    would be a *second* silent transformation that hides which token was seen. The bug
+    being fixed is the **invisibility**, not the value.
+
+    NA is not a violation: a frame with no BallStatus attribute legitimately yields NA.
+    """
+    unexpected = sorted({str(v) for v in pd.Series(state).dropna().unique()} - _BALL_STATE_DOMAIN)
+    if unexpected:
+        warnings.warn(
+            f"sportec parse: unexpected ball_status token(s) {unexpected} on {context} passed "
+            f"through as ball_state, outside the schema value set {sorted(_BALL_STATE_DOMAIN)}. "
+            "Downstream ball_state filters will not match them; verify against the DFL spec and "
+            "extend the BallStatus map.",
+            stacklevel=2,
+        )
+
+
 # --- lifted: convert.py L154-276 (luxury-lakehouse @ 0efac60) ---
 def _bronze_idsse_to_sportec_input(trk_pdf: pd.DataFrame) -> pd.DataFrame:
     """Map bronze ``idsse_tracking`` columns to silly-kicks sportec input schema.
@@ -1107,12 +1200,8 @@ def _bronze_idsse_to_sportec_input(trk_pdf: pd.DataFrame) -> pd.DataFrame:
     players["is_ball"] = False
     players["z"] = np.nan
 
-    # ball_state: DFL XML BallStatus is "0" (dead) / "1" (alive) in IDSSE;
-    # infer_ball_carrier checks `bs == "dead"`.  Map before lowercasing so
-    # both legacy "Alive"/"Dead" and IDSSE "0"/"1" resolve correctly.
-    _ball_status_map = {"0": "dead", "1": "alive"}
-    bs = players["ball_state"]
-    players["ball_state"] = bs.map(_ball_status_map).fillna(bs.str.lower()).where(bs.notna(), other=None)  # type: ignore[arg-type]  # None→NA fill is valid at runtime; pandas-stubs over-narrows `other`
+    # ball_state: see _normalize_ball_state (dtype normalisation + value-domain check).
+    players["ball_state"] = _normalize_ball_state(players["ball_state"], context="player rows")
 
     # ── Synthetic ball rows (one per frame) ──────────────────────
     ball_src = trk_pdf[
@@ -1144,10 +1233,7 @@ def _bronze_idsse_to_sportec_input(trk_pdf: pd.DataFrame) -> pd.DataFrame:
         },
         inplace=True,
     )
-    bs_ball = ball_src["ball_state"]
-    ball_src["ball_state"] = (
-        bs_ball.map(_ball_status_map).fillna(bs_ball.str.lower()).where(bs_ball.notna(), other=None)  # type: ignore[arg-type]  # None→NA fill is valid at runtime; pandas-stubs over-narrows `other`
-    )
+    ball_src["ball_state"] = _normalize_ball_state(ball_src["ball_state"], context="synthetic ball rows")
     ball_src["player_id"] = None
     ball_src["team_id"] = None
     ball_src["is_ball"] = True
@@ -1279,6 +1365,45 @@ def _resolve_idsse_player_from_qualifiers(df: pd.DataFrame) -> None:
         df.loc[has_qual, "player_id"] = df.loc[has_qual, qual_col]
 
 
+# ---------------------------------------------------------------------------
+# LOCAL HARDENING (silly-kicks-local, NOT part of the 0efac60 lift) --- period column.
+# ---------------------------------------------------------------------------
+# Period lives under DIFFERENT names depending on the input shape: ``period_id`` on
+# tracking frames, ``period`` on the DFL events bronze (see
+# ``_IDSSE_EVENTS_DTYPE_OVERRIDES``, and every frame produced by
+# ``shape_events_to_native``). Same both-names precedent as
+# ``silly_kicks.tracking.utils.filter_extratime_frames``.
+_PERIOD_COLUMN_CANDIDATES: tuple[str, ...] = ("period_id", "period")
+
+
+def _resolve_period_column(events: pd.DataFrame, *, context: str) -> str:
+    """Return the period column name, or RAISE if the frame carries none.
+
+    Raising on "no period column at all" is the point of this helper. The lifted body
+    inlined ``"period_id" in events.columns and ...``, which silently evaluates to
+    ``False`` on the events shape --- whose column is ``period`` --- permanently disabling
+    the ET integrity check downstream of it. *"I could not perform the check"* must never
+    be indistinguishable from *"the check passed"*.
+
+    Raises
+    ------
+    RuntimeError
+        Neither ``period_id`` nor ``period`` is present.
+    """
+    for col in _PERIOD_COLUMN_CANDIDATES:
+        if col in events.columns:
+            return col
+    msg = (
+        f"IDSSE {context}: events carry no period column --- looked for "
+        f"{list(_PERIOD_COLUMN_CANDIDATES)} (``period_id`` for tracking-frame shapes, "
+        "``period`` for the DFL events bronze / shape_events_to_native output), found none. "
+        "Cannot determine whether this match has extra-time periods, so the ET integrity "
+        "check cannot be performed --- refusing to report a silent pass. Pass the adapted "
+        "events frame (see shape_events_to_native), not a column subset."
+    )
+    raise RuntimeError(msg)
+
+
 # --- lifted: spadl_adapter.py L438-479 (luxury-lakehouse @ 0efac60) ---
 def derive_idsse_home_team_start_left(events: pd.DataFrame, home_team_id_native: str) -> bool:
     """Derive ``home_team_start_left`` for an IDSSE / Sportec match from bronze.
@@ -1343,8 +1468,9 @@ def derive_idsse_home_team_start_left_extratime(events: pd.DataFrame, home_team_
     events : pd.DataFrame
         IDSSE adapted DataFrame (post ``adapt_idsse_events_for_silly_kicks``).
         Must contain ``event_type``, ``kickoff_game_section``,
-        ``kickoff_team_left``; should contain ``period_id`` for the strict
-        check (treated as no-ET when missing).
+        ``kickoff_team_left``, and a period column --- ``period_id`` (tracking-frame
+        shape) or ``period`` (DFL events bronze / ``shape_events_to_native``
+        output). A frame carrying NEITHER is an error, not a no-ET match.
     home_team_id_native : str
         Home team's DFL native id.
 
@@ -1357,12 +1483,14 @@ def derive_idsse_home_team_start_left_extratime(events: pd.DataFrame, home_team_
     Raises
     ------
     RuntimeError
-        ET periods recorded in ``events["period_id"]`` but no ET KickOff row
-        with non-null ``kickoff_team_left`` found in ``events``.
+        ET periods recorded in the period column but no ET KickOff row with
+        non-null ``kickoff_team_left`` found in ``events``; or ``events``
+        carries no period column at all (the check cannot be performed).
     """
     # No-op: match has no ET periods (zero IDSSE matches in lakehouse bronze
     # have ET as of 2026-05-30; this branch is the steady-state today).
-    has_et_periods = "period_id" in events.columns and events["period_id"].isin([3, 4]).any()
+    period_col = _resolve_period_column(events, context="derive_idsse_home_team_start_left_extratime")
+    has_et_periods = bool(events[period_col].isin([3, 4]).any())
 
     et_kickoffs = events[
         (events["event_type"] == "KickOff")

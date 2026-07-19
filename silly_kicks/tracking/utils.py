@@ -15,14 +15,15 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
-from ._id_compat import (
+from silly_kicks.id_compat import (
     _as_bool,
-    _directly_comparable,
+    _raw_comparable,
     align_join_keys,
     canonical_id_series,
     ids_match,
 )
+
+from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
 from .schema import IdDtypeDiagnosis, LinkReport, TimeBaseDiagnosis
 
 MISMATCH_OVERLAP_FLOOR: float = 0.2
@@ -806,16 +807,22 @@ def _resolve_action_frame_context(
             _canon_cache[col] = canonical_id_series(long[col])
         return _canon_cache[col]
 
+    # `_raw_comparable`, NOT `_directly_comparable`: these compare an ACTION column against a
+    # FRAME column, so the two sides come from different sources and a dtype-level answer is not
+    # enough. `_directly_comparable` short-circuits object-vs-object to a raw `==`, which is the
+    # exact shape that mis-resolved a boxed-numeric object column (an object id column holding
+    # 2.0 raw-compares False against the string "2"). `_raw_comparable` probes content first, so
+    # these masks agree with `ids_equal`/`ids_differ` on every input.
     def _ids_equal_cols(lcol: str, rcol: str) -> pd.Series:
         a, b = long[lcol], long[rcol]
-        if _directly_comparable(a.dtype, b.dtype):
+        if _raw_comparable(a, b):
             return _as_bool((a == b) & a.notna() & b.notna())
         ca, cb = _canon_col(lcol), _canon_col(rcol)
         return _as_bool((ca == cb) & ca.notna() & cb.notna())
 
     def _ids_differ_cols(lcol: str, rcol: str) -> pd.Series:
         a, b = long[lcol], long[rcol]
-        if _directly_comparable(a.dtype, b.dtype):
+        if _raw_comparable(a, b):
             return _as_bool(a.notna() & b.notna() & (a != b))
         ca, cb = _canon_col(lcol), _canon_col(rcol)
         return _as_bool(ca.notna() & cb.notna() & (ca != cb))

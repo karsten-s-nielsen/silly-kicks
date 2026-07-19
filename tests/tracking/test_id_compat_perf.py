@@ -5,10 +5,9 @@ cross-dtype path (the lakehouse reality) each hot id column is canonicalized AT 
 genuine-string (object x object) path never canonicalizes at all. Benchmarks run but do not gate.
 """
 
-import numpy as np  # noqa: F401
 import pandas as pd
 
-from silly_kicks.tracking import _id_compat as idc
+from silly_kicks import id_compat as idc
 from silly_kicks.tracking.utils import _resolve_action_frame_context
 from tests.tracking.conftest_id_dtype import make_actions, make_frames
 

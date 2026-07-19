@@ -20,7 +20,7 @@ See NOTICE for the per-feature methodology citations.
 Examples
 --------
 >>> from silly_kicks.calibration._features import enrich_invariant, patch_trial_columns
->>> # base, links, das_ok = enrich_invariant(actions=a, frames=f, xt=xt, home_team_id=h,
+>>> # base, links = enrich_invariant(actions=a, frames=f, xt=xt, home_team_id=h,
 >>> #     carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0})
 >>> # patched = patch_trial_columns(base_actions=base, frames=f, links=links,
 >>> #     home_team_id=h, k3=1.0, pre_seconds=1.5, min_displacement_m=3.0)
@@ -28,7 +28,6 @@ Examples
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -113,75 +112,35 @@ ALL_FEATURES = _SPADL_FEATURES + _TRACKING_FEATURES
 
 def _compute_das(
     actions: pd.DataFrame, frames: pd.DataFrame, links: pd.DataFrame, carrier_params: dict
-) -> tuple[pd.DataFrame, bool]:
-    """Step 12: DAS team/opponent/diff columns. Returns (actions, das_ok).
+) -> pd.DataFrame:
+    """Step 12: DAS team/opponent/diff + the public ``das_source`` provenance column.
 
-    das_ok is False if DAS degraded to NaN (M8 — calibration must SURFACE silent DAS failures,
-    not absorb them; the caller counts + records them in the manifest).
+    M8 (calibration must SURFACE silent DAS failures, not absorb them) is now served by the
+    public provenance instead of a private ``das_ok`` flag: rows tagged
+    ``DAS_SOURCE_UNSCOREABLE_CALL`` are the degrade the caller counts into the manifest
+    (ADR-043). The private try/except that produced that flag is gone -- ``add_das`` owns
+    the narrowed degrade, and every non-``DasUnscoreableError`` failure now propagates.
+
+    The frames are pre-restricted to the action-linked ``(period_id, frame_id)`` pairs
+    before ``add_das``, so the direction ``add_das`` pins is inferred on exactly the frame
+    set the library would otherwise have inferred it on -- the DAS values are unchanged.
     """
-    from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier
-    from silly_kicks.tracking._das import get_individual_das
+    from silly_kicks.tracking import add_das, derive_team_in_possession, infer_ball_carrier
 
-    das_ok = True
-    try:
-        carrier = infer_ball_carrier(
-            frames,
-            tolerance_m=carrier_params["tolerance_m"],
-            beta=carrier_params["beta"],
-            gamma=carrier_params["gamma"],
-        )
-        frames_with_tip = derive_team_in_possession(frames, carrier)
-        del carrier
-        linked = links[["action_id", "frame_id"]].dropna(subset=["frame_id"])
-        linked = linked.merge(actions[["action_id", "period_id"]], on="action_id", how="left")
-        linked_frame_ids = linked[["period_id", "frame_id"]].drop_duplicates()
-        das_frames = frames_with_tip.merge(linked_frame_ids, on=["period_id", "frame_id"], how="inner")
-        del linked, frames_with_tip
-        das_result = get_individual_das(das_frames, use_progress_bar=False, chunk_size=10)
-        del das_frames
-        player_rows = das_result[das_result["is_ball"] != True]  # noqa: E712
-        valid_rows = player_rows.dropna(subset=["DAS"])
-        das_lookup: dict[tuple, dict] = {}
-        for (_pid, fid, tid), grp in valid_rows.groupby(["period_id", "frame_id", "team_id"]):
-            das_lookup.setdefault((_pid, fid), {})[tid] = float(grp["DAS"].sum())
-        del das_result, player_rows, valid_rows
-        pointer_lookup = links.set_index("action_id")
-        team_vals = np.full(len(actions), np.nan)
-        opp_vals = np.full(len(actions), np.nan)
-        # Positional enumerate (NOT row.Index): team_vals/opp_vals are length-len(actions) arrays
-        # filled by POSITION, so a non-RangeIndex on actions would corrupt label-based indexing.
-        for pos, row in enumerate(actions.itertuples()):
-            aid = row.action_id
-            if aid not in pointer_lookup.index:
-                continue
-            fid_raw = pointer_lookup.at[aid, "frame_id"]
-            if pd.isna(fid_raw):
-                continue
-            key = (row.period_id, int(float(str(fid_raw))))  # float(str(...)) avoids Scalar/complex (pyright)
-            if key not in das_lookup:
-                continue
-            team_id = row.team_id
-            team_vals[pos] = das_lookup[key].get(team_id, np.nan)
-            opp = [v for k, v in das_lookup[key].items() if k != team_id]
-            if opp:
-                opp_vals[pos] = opp[0]
-        actions = actions.copy()
-        actions["das_team"] = team_vals
-        actions["das_opponent"] = opp_vals
-        actions["das_diff"] = team_vals - opp_vals
-    except (IndexError, ValueError, RuntimeError, TypeError):
-        warnings.warn(
-            f"DAS degraded to NaN for this match (carrier_params={carrier_params}) — "
-            "feature columns das_team/das_opponent/das_diff are NaN; recorded in the manifest",
-            UserWarning,
-            stacklevel=2,
-        )
-        das_ok = False
-        actions = actions.copy()
-        actions["das_team"] = np.nan
-        actions["das_opponent"] = np.nan
-        actions["das_diff"] = np.nan
-    return actions, das_ok
+    carrier = infer_ball_carrier(
+        frames,
+        tolerance_m=carrier_params["tolerance_m"],
+        beta=carrier_params["beta"],
+        gamma=carrier_params["gamma"],
+    )
+    frames_with_tip = derive_team_in_possession(frames, carrier)
+    del carrier
+    linked = links[["action_id", "frame_id"]].dropna(subset=["frame_id"])
+    linked = linked.merge(actions[["action_id", "period_id"]], on="action_id", how="left")
+    linked_frame_ids = linked[["period_id", "frame_id"]].drop_duplicates()
+    das_frames = frames_with_tip.merge(linked_frame_ids, on=["period_id", "frame_id"], how="inner")
+    del linked, frames_with_tip
+    return add_das(actions, das_frames, links=links, chunk_size=10)
 
 
 def enrich_invariant(
@@ -191,17 +150,40 @@ def enrich_invariant(
     xt: ExpectedThreat,
     home_team_id: int | str,
     carrier_params: dict,
-) -> tuple[pd.DataFrame, pd.DataFrame, bool]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run the 14 trial-independent enrichment steps; leave the 5 trial cols as NaN.
 
-    Returns ``(base_actions, links, das_ok)``. ``xt`` is a frozen ``ExpectedThreat`` (consumed by
-    gk-influence + cover-shadows only). ``carrier_params`` are the fixed Stage-1 optimum. ``das_ok``
-    is False if DAS degraded for this match (M8).
+    Returns ``(base_actions, links)``. ``xt`` is a frozen ``ExpectedThreat`` (consumed by
+    gk-influence + cover-shadows only). ``carrier_params`` are the fixed Stage-1 optimum.
+    A degraded DAS for this match (M8) is read off the public ``das_source`` column on
+    ``base_actions`` (``DAS_SOURCE_UNSCOREABLE_CALL``), not a private flag (ADR-043).
 
     Examples
     --------
-    >>> # base, links, das_ok = enrich_invariant(actions=a, frames=f, xt=xt,  # doctest: +SKIP
-    >>> #     home_team_id=h, carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0})
+    Run once per match, then reuse the result across every Optuna trial -- the whole point of
+    the invariant/patch split is that these 14 steps do not depend on the trial's parameters::
+
+        base_actions, links = enrich_invariant(
+            actions=actions,
+            frames=frames,
+            xt=frozen.model,                      # the frozen exogenous xT artifact
+            home_team_id=home_team_id,
+            carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0},
+        )
+
+        # per trial: only the 5 trial-dependent columns are recomputed
+        trial_actions = patch_trial_columns(
+            base_actions=base_actions,
+            frames=frames,
+            links=links,
+            home_team_id=home_team_id,
+            k3=1.0,
+            pre_seconds=1.5,
+            min_displacement_m=3.0,
+        )
+
+    A match whose DAS degraded is readable off ``base_actions["das_source"]``
+    (``DAS_SOURCE_UNSCOREABLE_CALL``) rather than a private flag.
     """
     from silly_kicks.spadl.utils import add_pre_shot_gk_context
     from silly_kicks.tracking import (
@@ -244,11 +226,11 @@ def enrich_invariant(
         actions[col] = np.nan
     # Step 10 (line-break) DELETED — not a feature (spec §4a).
     actions = add_team_shape(actions, frames, links=links, home_team_id=home_team_id)  # Step 11
-    actions, das_ok = _compute_das(actions, frames, links, carrier_params)  # Step 12
+    actions = _compute_das(actions, frames, links, carrier_params)  # Step 12
     actions = add_gk_influence(actions, frames, xt, links=links, home_team_id=home_team_id)  # Step 13
     actions = add_cover_shadows(actions, frames, xt, links=links, home_team_id=home_team_id)  # 14
     actions = add_sync_score(actions, links)  # Step 15
-    return actions, links, das_ok
+    return actions, links
 
 
 def patch_trial_columns(
@@ -364,7 +346,7 @@ def enrich_full(
     )
     # Step 10 (line-break) DELETED — not a feature.
     actions = add_team_shape(actions, frames, links=links, home_team_id=home_team_id)  # 11
-    actions, _das_ok = _compute_das(actions, frames, links, carrier_params)  # 12
+    actions = _compute_das(actions, frames, links, carrier_params)  # 12
     actions = add_gk_influence(actions, frames, xt, links=links, home_team_id=home_team_id)  # 13
     actions = add_cover_shadows(actions, frames, xt, links=links, home_team_id=home_team_id)  # 14
     actions = add_sync_score(actions, links)  # 15

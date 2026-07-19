@@ -15,9 +15,9 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from silly_kicks.id_compat import canonical_id_series, ids_differ, ids_equal, ids_match, restore_id_dtype
 from silly_kicks.spadl import config as spadlconfig
 
-from ._id_compat import canonical_id_series, ids_differ, ids_equal, ids_match
 from .utils import link_actions_to_frames
 
 _GOALKICK = spadlconfig.actiontype_id["goalkick"]
@@ -187,11 +187,8 @@ def _gk_from_frames_linked(
         if aid in action_to_idx.index:
             out.loc[action_to_idx.loc[aid]] = row["gk_player_id"]
 
-    # Cast to match frames dtype if numeric
-    if pid_dtype == np.dtype("int64") or str(pid_dtype) == "Int64":
-        out = pd.to_numeric(out, errors="coerce")
-        if str(pid_dtype) == "Int64":
-            out = out.astype("Int64")
+    # Restore the frames dtype (shared rule -- see restore_id_dtype).
+    out = restore_id_dtype(out, pid_dtype)
 
     return out
 
@@ -334,11 +331,16 @@ def defended_goal_x(frames: pd.DataFrame) -> dict:
     Extracted byte-identically from ``_xshot_occurrence._defended_goal_x``
     (TF-48, spec 2026-06-10-shot-goalmouth-psxg-design); xS re-imports via shim.
 
+    Exported publicly as ``silly_kicks.tracking.defended_goal_x`` (4.53.0). It is the pinned
+    goal map: consumers that need a goal side -- including ``gkdv``, per its spec §4.2 -- must
+    call THIS rather than re-derive the rule, because a second implementation is a fork that
+    can disagree with the first.
+
     Examples
     --------
     Resolve each team's defended goal end per (game, period)::
 
-        from silly_kicks.tracking._gk_resolve import defended_goal_x
+        from silly_kicks.tracking import defended_goal_x
         goal_map = defended_goal_x(frames)
         # goal_map[(game_id, period_id, team_id)] in (0.0, 105.0)
     """

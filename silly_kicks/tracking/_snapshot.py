@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .schema import TRACKING_FRAMES_COLUMNS
+from .schema import SPEED_SOURCE_UNAVAILABLE, TRACKING_FRAMES_COLUMNS
 
 
 def snapshot_to_tracking_frames(
@@ -34,7 +34,12 @@ def snapshot_to_tracking_frames(
     tuple[pd.DataFrame, pd.DataFrame]
         (frames, links) where:
         - frames: 20-column TRACKING_FRAMES_COLUMNS schema, one synthetic
-          frame per action that has snapshot data.
+          frame per action that has snapshot data. Every row carries
+          ``speed_source=SPEED_SOURCE_UNAVAILABLE``: a per-event freeze-frame
+          has no per-player temporal history, so ``speed`` and the ``vx``/``vy``
+          that ``derive_velocities`` would produce can never exist. Velocity
+          consumers (e.g. ``add_das``) read that marker and degrade honestly
+          rather than raising.
         - links: Pre-built pointer DataFrame matching the
           link_actions_to_frames output contract (action_id, frame_id,
           time_offset_seconds=0.0, n_candidate_frames=1,
@@ -44,8 +49,36 @@ def snapshot_to_tracking_frames(
 
     Examples
     --------
+    One synthetic frame per action that has snapshot rows, plus links already pointing at it:
+
+    >>> import pandas as pd
     >>> from silly_kicks.tracking import snapshot_to_tracking_frames
-    >>> # See tests/tracking/test_snapshot.py for runnable examples.
+    >>> snapshots = pd.DataFrame(
+    ...     {
+    ...         "action_id": [0, 0],
+    ...         "team_id": [1, 2],
+    ...         "is_goalkeeper": [False, True],
+    ...         "x": [52.5, 3.0],
+    ...         "y": [34.0, 34.0],
+    ...     }
+    ... )
+    >>> actions = pd.DataFrame(
+    ...     {
+    ...         "action_id": [0],
+    ...         "game_id": [7],
+    ...         "period_id": [1],
+    ...         "time_seconds": [12.5],
+    ...         "start_x": [52.5],
+    ...         "start_y": [34.0],
+    ...     }
+    ... )
+    >>> frames, links = snapshot_to_tracking_frames(snapshots, actions)
+    >>> len(frames), links["link_quality_score"].tolist()
+    (3, [1.0])
+
+    The third frame row is the ball, placed at the action's ``start_x``/``start_y``. Every
+    player row carries ``speed_source=SPEED_SOURCE_UNAVAILABLE`` -- a freeze-frame has no
+    temporal history, so velocity consumers degrade rather than raise.
     """
     # --- empty input ---
     if len(snapshots) == 0:
@@ -87,7 +120,13 @@ def snapshot_to_tracking_frames(
             "y": player["y"],
             "z": np.nan,
             "speed": np.nan,
-            "speed_source": np.nan,
+            # A snapshot is ONE synthesised frame per action: there is no second sample of
+            # the same player to differentiate, so speed (and the vx/vy derived from the
+            # same history) can never exist here -- structurally, not "not yet". Velocity
+            # consumers read this marker to degrade honestly instead of either crashing or
+            # silently absorbing a genuine forgotten-derive_velocities() bug. See
+            # SPEED_SOURCE_UNAVAILABLE.
+            "speed_source": SPEED_SOURCE_UNAVAILABLE,
             "ball_state": "alive",
             "team_attacking_direction": "ltr",
             "confidence": np.nan,
@@ -113,7 +152,13 @@ def snapshot_to_tracking_frames(
             "y": action_meta["start_y"].values,
             "z": np.nan,
             "speed": np.nan,
-            "speed_source": np.nan,
+            # A snapshot is ONE synthesised frame per action: there is no second sample of
+            # the same player to differentiate, so speed (and the vx/vy derived from the
+            # same history) can never exist here -- structurally, not "not yet". Velocity
+            # consumers read this marker to degrade honestly instead of either crashing or
+            # silently absorbing a genuine forgotten-derive_velocities() bug. See
+            # SPEED_SOURCE_UNAVAILABLE.
+            "speed_source": SPEED_SOURCE_UNAVAILABLE,
             "ball_state": "alive",
             "team_attacking_direction": "ltr",
             "confidence": np.nan,

@@ -120,8 +120,8 @@ def _named(fn, name):
     return fn
 
 
-def _a(fn, name):  # no home_team_id (teams resolved from id columns internally)
-    return _named(lambda a, f, home_team_id: fn(a, f), name)
+def _a(fn, name, **extra):  # no home_team_id (teams resolved from id columns internally)
+    return _named(lambda a, f, home_team_id: fn(a, f, **extra), name)
 
 
 def _ah(fn, name, **extra):  # keyword-only home_team_id
@@ -132,10 +132,28 @@ def _axh(fn, name):  # positional xt + keyword home_team_id (influence/cover-sha
     return _named(lambda a, f, home_team_id: fn(a, f, _xt(), home_team_id=home_team_id), name)
 
 
+def _das(a, f):
+    """add_das with its contract column supplied, IN THE SWEPT team-id dtype.
+
+    ``team_in_possession`` is not a TRACKING_FRAMES_COLUMNS field (production derives it via
+    ``derive_team_in_possession``), and this fixture's synthetic ball never resolves a carrier,
+    so the shared frames carry none. Broadcasting the frames' OWN first team id keeps the
+    possession value on whatever dtype the sweep is currently applying -- which is the whole
+    point: the acting team's id must reconcile against a frame-derived team id across dtypes.
+
+    Before ADR-043 narrowed the catch, add_das swallowed ``_validate_das_inputs``' missing-column
+    ValueError and returned all-NaN columns, so this gate compared all-NaN to all-NaN and was
+    VACUOUS for add_das. Supplying the column is what gives it teeth.
+    """
+    f = f.copy()
+    f["team_in_possession"] = f["team_id"].dropna().iloc[0]
+    return F.add_das(a, f)
+
+
 AGGREGATORS = [
     _a(F.add_action_context, "add_action_context"),
     _a(F.add_actor_pre_window, "add_actor_pre_window"),
-    _a(F.add_das, "add_das"),
+    _named(lambda a, f, home_team_id: _das(a, f), "add_das"),
     _a(F.add_elastic_sync, "add_elastic_sync"),
     _a(F.add_gk_completion, "add_gk_completion"),
     _a(F.add_obso, "add_obso"),
@@ -160,13 +178,28 @@ AGGREGATORS = [
     _axh(F.add_gk_influence, "add_gk_influence"),
     _axh(F.add_player_influence, "add_player_influence"),
     _axh(F.add_xt_gk, "add_xt_gk"),
+    # --- ALTERNATE-METHOD variants (Phase 2) -------------------------------------------
+    # The registrations above call DEFAULT arguments only, so a method-dispatched branch was
+    # never swept. That is not hypothetical: the ADR-027 defect lived in the Ward branch of
+    # `add_line_break` (a raw `t != action_team`, which both crashed on a NaN team and
+    # silently mis-computed the opponent on Int64-vs-string ids) and THIS GATE MISSED IT --
+    # the behavioural NaN-safety gate caught it instead. Naming convention `name[variant]`;
+    # the meta-assertion strips the suffix so a variant never substitutes for its base.
+    _ah(F.add_line_break, "add_line_break[ward]", method="ward"),
+    _a(F.add_pitch_control, "add_pitch_control[voronoi]", method="voronoi"),
+    _a(F.add_pitch_control, "add_pitch_control[fernandez_bornn]", method="fernandez_bornn"),
+    _a(F.add_pressure_on_actor, "add_pressure_on_actor[bekkers_pi]", methods=("bekkers_pi",)),
+    _a(F.add_pressure_on_actor, "add_pressure_on_actor[link_zones]", methods=("link_zones",)),
 ]
 
 # Public add_* surface -- the meta-assertion (B3) checks AGGREGATORS covers all LINKED ones.
 REGISTERED_AGGREGATORS = {name for name in dir(F) if name.startswith("add_") and callable(getattr(F, name))}
 
 # Aggregators that legitimately compare NO ids. Each entry MUST carry a one-line "compares no
-# ids" justification (N-d). The AST lint (Task 10) is the cross-check.
+# ids" justification (N-d). The cross-check is the enumerated id-scalar registry
+# (tests/invariants/test_public_id_scalar_registry.py), which supersedes the ADR-019 AST lint
+# deleted in 4.53.0 -- an entry parked here that DOES compare an id shows up there as an
+# unaccounted public function rather than passing unnoticed.
 NON_LINKED_AGGREGATORS: dict[str, str] = {
     # "add_xxx": "reason it compares no action/frame/home_team ids",
 }

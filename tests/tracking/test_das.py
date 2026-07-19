@@ -9,6 +9,7 @@ import pytest
 from silly_kicks.tracking._das import (
     _X_OFFSET,
     _Y_OFFSET,
+    DasUnscoreableError,
 )
 
 
@@ -83,6 +84,59 @@ class TestInputValidation:
 
         df = self._minimal_frames()
         _validate_das_inputs(df)
+
+    # -- ADR-043: the velocity-structurally-unavailable marker -------------------
+    #
+    # Both directions matter. The marker exists ONLY to separate "this source can
+    # never have velocity" from "the caller forgot derive_velocities()"; a test that
+    # only proved the degrade would let the marker silently re-absorb the caller bug.
+
+    def test_marked_frames_missing_velocity_raise_degradable_error(self) -> None:
+        from silly_kicks.tracking import SPEED_SOURCE_UNAVAILABLE
+        from silly_kicks.tracking._das import DAS_SOURCE_UNSCOREABLE_FRAME, _validate_das_inputs
+
+        df = self._minimal_frames().drop(columns=["vx", "vy"])
+        df["speed_source"] = SPEED_SOURCE_UNAVAILABLE
+        with pytest.raises(DasUnscoreableError) as excinfo:
+            _validate_das_inputs(df)
+        assert excinfo.value.das_source == DAS_SOURCE_UNSCOREABLE_FRAME
+
+    def test_unmarked_frames_missing_velocity_raise_plain_value_error(self) -> None:
+        from silly_kicks.tracking._das import _validate_das_inputs
+
+        df = self._minimal_frames().drop(columns=["vx", "vy"])
+        df["speed_source"] = None
+        with pytest.raises(ValueError, match="velocity columns") as excinfo:
+            _validate_das_inputs(df)
+        assert not isinstance(excinfo.value, DasUnscoreableError)
+
+    def test_partially_marked_frames_raise_plain_value_error(self) -> None:
+        """ALL rows must be marked: an unmarked row is a genuine velocity-bearing source."""
+        from silly_kicks.tracking import SPEED_SOURCE_UNAVAILABLE
+        from silly_kicks.tracking._das import _validate_das_inputs
+
+        df = pd.concat([self._minimal_frames(), self._minimal_frames()], ignore_index=True)
+        df = df.drop(columns=["vx", "vy"])
+        df["speed_source"] = [SPEED_SOURCE_UNAVAILABLE, None]
+        with pytest.raises(ValueError, match="velocity columns") as excinfo:
+            _validate_das_inputs(df)
+        assert not isinstance(excinfo.value, DasUnscoreableError)
+
+    def test_marker_does_not_excuse_missing_team_in_possession(self) -> None:
+        """The marker speaks for VELOCITY only; every other contract column still fails loud."""
+        from silly_kicks.tracking import SPEED_SOURCE_UNAVAILABLE
+        from silly_kicks.tracking._das import _validate_das_inputs
+
+        df = self._minimal_frames().drop(columns=["team_in_possession"])
+        df["speed_source"] = SPEED_SOURCE_UNAVAILABLE
+        with pytest.raises(ValueError, match="team_in_possession") as excinfo:
+            _validate_das_inputs(df)
+        assert not isinstance(excinfo.value, DasUnscoreableError)
+
+    def test_das_source_token_is_validated(self) -> None:
+        """The carried provenance must stay inside the closed vocabulary."""
+        with pytest.raises(ValueError, match="das_source must be one of"):
+            DasUnscoreableError("boom", das_source="not_a_token")
 
 
 class TestPrepareFramesNumericPlayerId:
@@ -373,7 +427,9 @@ class TestChunkSizePassthrough:
 
         def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
             captured_cs.append(chunk_size)
-            raise ImportError("short-circuit")
+            # ADR-043: DasUnscoreableError is the ONLY exception add_das degrades on, so it
+            # is the only short-circuit that still exercises the NaN-column path.
+            raise DasUnscoreableError("short-circuit")
 
         monkeypatch.setattr(feat_mod, "_precompute_das_lookup", spy_precompute)
 
@@ -387,7 +443,6 @@ class TestChunkSizePassthrough:
         )
         frames = pd.DataFrame({"x": [1.0]})
 
-        # add_das catches ImportError and returns NaN columns
         result = feat_mod.add_das(actions, frames, chunk_size=250)
         assert captured_cs == [250]
         assert "das_team" in result.columns
@@ -400,7 +455,7 @@ class TestChunkSizePassthrough:
 
         def spy_precompute(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
             captured_cs.append(chunk_size)
-            raise ImportError("short-circuit")
+            raise DasUnscoreableError("short-circuit")  # ADR-043: the only degrading exception
 
         monkeypatch.setattr(feat_mod, "_precompute_das_lookup", spy_precompute)
 
@@ -413,41 +468,51 @@ class TestChunkSizePassthrough:
 
 
 class TestDasExceptionGracefulDegradation:
-    """IndexError and TypeError from accessible-space must degrade to NaN, not crash."""
+    """PR-S60's contract, restated under ADR-043's narrowed catch.
+
+    IndexError (degenerate Voronoi: collinear players / <3 per team) and TypeError (NaN
+    tracking coordinates) raised *from inside accessible-space* must still degrade to NaN
+    rather than crash the pipeline. What CHANGED in ADR-043 is where the decision is made:
+    the conversion to ``DasUnscoreableError`` now happens at the ``_das`` library seam, so
+    the callers catch that one type instead of a broad tuple. The same exception types
+    raised from silly-kicks' OWN code are real defects and now PROPAGATE -- pinned by
+    ``TestDasUnscoreableTaxonomy::test_non_unscoreable_exceptions_propagate``, which is the
+    counterpart these tests used to (wrongly) cover.
+    """
+
+    @staticmethod
+    def _patch_library(monkeypatch: pytest.MonkeyPatch, exc_type: type) -> None:
+        import silly_kicks.tracking._das as das_mod
+
+        def behaviour(frames):
+            raise exc_type("degenerate Voronoi tessellation / NaN coordinates")
+
+        monkeypatch.setattr(das_mod, "_import_accessible_space", lambda: _FakeAsModule(behaviour))
 
     @pytest.mark.parametrize("exc_type", [IndexError, TypeError])
     def test_add_das_catches_voronoi_exceptions(self, monkeypatch: pytest.MonkeyPatch, exc_type: type) -> None:
-        """add_das must catch IndexError/TypeError from degenerate Voronoi tessellation."""
-        import silly_kicks.tracking.features as feat_mod
+        """add_das must degrade on IndexError/TypeError from a degenerate tessellation."""
+        from silly_kicks.tracking.features import add_das
 
-        def boom(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
-            raise exc_type("degenerate Voronoi tessellation")
-
-        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", boom)
-
-        actions = pd.DataFrame({"action_id": [1], "game_id": [1], "period_id": [1], "team_id": ["A"]})
-        frames = pd.DataFrame({"x": [1.0]})
-
-        result = feat_mod.add_das(actions, frames)
-        assert "das_team" in result.columns
+        self._patch_library(monkeypatch, exc_type)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = add_das(_das_actions([(1, "Home")]), _live_frames((1,)))
         assert result["das_team"].isna().all()
         assert result["das_opponent"].isna().all()
         assert result["das_diff"].isna().all()
+        # ...and the degrade is now NAMED, not just an all-NaN column (ADR-043).
+        assert (result["das_source"] == "unscoreable_call").all()
 
     @pytest.mark.parametrize("exc_type", [IndexError, TypeError])
     def test_das_at_action_catches_voronoi_exceptions(self, monkeypatch: pytest.MonkeyPatch, exc_type: type) -> None:
-        """das_at_action must catch IndexError/TypeError from degenerate data."""
-        import silly_kicks.tracking.features as feat_mod
+        """das_at_action must degrade on IndexError/TypeError from degenerate data."""
+        from silly_kicks.tracking.features import das_at_action
 
-        def boom(frames, *, chunk_size=None):
-            raise exc_type("NaN coordinates in tracking data")
-
-        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", boom)
-
-        actions = pd.DataFrame({"action_id": [1], "team_id": ["A"]})
-        frames = pd.DataFrame({"x": [1.0]})
-
-        result = feat_mod.das_at_action(actions, frames)
+        self._patch_library(monkeypatch, exc_type)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = das_at_action(_das_actions([(1, "Home")]), _live_frames((1,)))
         assert result.isna().all()
 
 
@@ -1475,3 +1540,496 @@ class TestXcZeroFrameSubsetDegradesToNaN:
             warnings.simplefilter("ignore")
             out = get_xc(passes, frames)  # must NOT raise IndexError
         assert np.isfinite(out["xC"]).all(), "valid pass must yield finite xC even with pyarrow team dtype"
+
+
+class TestDasOutputAlignmentGuard:
+    """The output guard must fail loud on MISALIGNMENT, not on a legitimate shrink.
+
+    ``result["AS"] = ret.acc_space`` aligns by index LABEL, and accessible-space
+    restores the caller's own labels before returning, so a shorter return is
+    correct-by-construction: rows whose ``team_in_possession`` is NaN are dropped
+    (most rows on real provider data) and honestly become NaN. A length comparison
+    therefore rejects every real match. The real hazard is a return carrying labels
+    the input never had -- a positional reset, a shifted index, a foreign frame set --
+    which aligns values onto the wrong rows or into nothing. These tests pin the
+    subset contract in BOTH directions.
+    """
+
+    def _frames(self, n: int = 4) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "game_id": [7] * n,
+                "period_id": [1] * n,
+                "frame_id": list(range(n)),
+                "player_id": ["P1"] * n,
+                "team_id": ["A"] * n,
+                "source_provider": ["gradientsports"] * n,
+                "x": [50.0] * n,
+                "y": [34.0] * n,
+                "vx": [0.0] * n,
+                "vy": [0.0] * n,
+                "is_ball": [False] * n,
+                "team_in_possession": ["A"] * n,
+            }
+        )
+
+    def test_full_length_matching_index_is_silent(self) -> None:
+        """Guard must not over-trigger: the exact input index passes through untouched."""
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4)
+        values = pd.Series([1.0, 2.0, 3.0, 4.0], index=prepared.index)
+        # Must neither raise nor warn.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            _check_das_output_alignment(values, prepared, field="AS", entry_point="get_das")
+
+    def test_legitimate_shrink_is_accepted(self) -> None:
+        """THE regression this guard exists to permit.
+
+        accessible-space drops NaN-``team_in_possession`` rows and restores the
+        caller's labels for the rest. That is a strict index SUBSET and must pass;
+        a length comparison here rejected every real provider match.
+        """
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4)
+        kept = prepared.index[[0, 2]]
+        values = pd.Series([1.0, 3.0], index=kept)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            _check_das_output_alignment(values, prepared, field="AS", entry_point="get_das")
+
+    def test_shrink_on_a_non_default_index_is_accepted(self) -> None:
+        """The subset rule must key on LABELS, not on positions."""
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4).set_axis([100, 101, 102, 103])
+        values = pd.Series([1.0, 3.0], index=pd.Index([101, 103]))
+        _check_das_output_alignment(values, prepared, field="AS", entry_point="get_das")
+
+    def test_foreign_index_raises(self) -> None:
+        """Labels the input never had would align onto nothing (or the wrong row)."""
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4)
+        values = pd.Series([1.0, 2.0, 3.0, 4.0], index=pd.Index([900, 901, 902, 903]))
+        with pytest.raises(ValueError, match="absent from the input index"):
+            _check_das_output_alignment(values, prepared, field="AS", entry_point="get_das")
+
+    def test_positional_reset_on_non_default_index_raises(self) -> None:
+        """A positional ``reset_index`` is the concrete misalignment mode we fear."""
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4).set_axis([100, 101, 102, 103])
+        values = pd.Series([1.0, 2.0, 3.0, 4.0])  # RangeIndex(0..3) -- reset, not restored
+        with pytest.raises(ValueError, match="absent from the input index"):
+            _check_das_output_alignment(values, prepared, field="AS", entry_point="get_das")
+
+    def test_shifted_index_raises(self) -> None:
+        """A partially-overlapping (shifted) index still carries foreign labels."""
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4)
+        values = pd.Series([1.0, 2.0, 3.0, 4.0], index=pd.Index([2, 3, 4, 5]))
+        with pytest.raises(ValueError, match="absent from the input index"):
+            _check_das_output_alignment(values, prepared, field="AS", entry_point="get_das")
+
+    def test_indexless_values_are_held_to_exact_length(self) -> None:
+        """No index -> pandas assigns POSITIONALLY, so only an exact length is safe."""
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4)
+        _check_das_output_alignment(np.arange(4.0), prepared, field="AS", entry_point="get_das")
+        with pytest.raises(ValueError, match="no index"):
+            _check_das_output_alignment(np.arange(2.0), prepared, field="AS", entry_point="get_das")
+
+    def test_message_is_actionable(self) -> None:
+        """Counts, the offending labels, the frame context, and a remedy must appear."""
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4)
+        values = pd.Series([1.0, 2.0], index=pd.Index([900, 901]))
+        with pytest.raises(ValueError) as exc:
+            _check_das_output_alignment(values, prepared, field="AS", entry_point="get_individual_das")
+        msg = str(exc.value)
+        assert "2" in msg and "4" in msg, f"both counts must appear: {msg}"
+        assert "900" in msg, f"an offending label must appear: {msg}"
+        assert "get_individual_das" in msg, f"entry point must appear: {msg}"
+        assert "gradientsports" in msg, f"provider context must appear: {msg}"
+        assert "game_id=7" in msg, f"game context must appear: {msg}"
+        assert "team_in_possession" in msg, f"message must explain the legitimate shrink: {msg}"
+        assert "accessible-space version" in msg, f"remedy must appear: {msg}"
+
+    def test_context_degrades_without_optional_columns(self) -> None:
+        """_frame_context must never raise when the optional context columns are absent."""
+        from silly_kicks.tracking._das import _check_das_output_alignment
+
+        prepared = self._frames(4).drop(columns=["source_provider", "game_id", "period_id"])
+        values = pd.Series([1.0], index=pd.Index([900]))
+        with pytest.raises(ValueError, match="no source_provider/game_id/period_id"):
+            _check_das_output_alignment(values, prepared, field="AS", entry_point="get_das")
+
+    def test_get_das_tolerates_dropped_nan_possession_rows(self) -> None:
+        """Integration: a NaN-possession shrink must NOT raise, and must land as NaN.
+
+        This is the real-provider shape (gradientsports is ~67% dead-ball). The
+        surviving frames must still carry finite DAS -- proving the values landed on
+        the right rows rather than the whole column degrading.
+        """
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import get_das
+
+        rows = []
+        for fid in range(4):
+            poss = None if fid in (1, 3) else "Home"
+            for pid, tid, x in [(10, "Home", 30.0), (20, "Away", 70.0)]:
+                rows.append(
+                    dict(
+                        game_id=7,
+                        period_id=1,
+                        frame_id=fid,
+                        player_id=pid,
+                        team_id=tid,
+                        source_provider="gradientsports",
+                        x=x,
+                        y=34.0,
+                        vx=0.0,
+                        vy=0.0,
+                        is_ball=False,
+                        team_in_possession=poss,
+                        ball_carrier_player_id=10,
+                    )
+                )
+            rows.append(
+                dict(
+                    game_id=7,
+                    period_id=1,
+                    frame_id=fid,
+                    player_id="ball",
+                    team_id=None,
+                    source_provider="gradientsports",
+                    x=30.0,
+                    y=34.0,
+                    vx=0.0,
+                    vy=0.0,
+                    is_ball=True,
+                    team_in_possession=poss,
+                    ball_carrier_player_id=10,
+                )
+            )
+        frames = pd.DataFrame(rows)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_das(frames, player_in_possession_col="ball_carrier_player_id")  # must NOT raise
+
+        assert len(out) == len(frames), "every input row must survive"
+        scored = out["frame_id"].isin([0, 2])
+        assert out.loc[scored, "DAS"].notna().all(), "possession frames must carry a finite DAS"
+        assert out.loc[~scored, "DAS"].isna().all(), (
+            "NaN-possession frames must land as NaN, not as another row's value"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ADR-043 -- DAS unscoreable taxonomy (narrowed catch) + das_source provenance
+# ---------------------------------------------------------------------------
+
+
+def _live_frames(frame_ids: tuple[int, ...] = (1,)) -> pd.DataFrame:
+    """Ball + 5v5 per frame -- a frame set on which DAS genuinely computes."""
+    rows: list[dict] = []
+    for fid in frame_ids:
+        t = float(fid)
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=t,
+                player_id="ball",
+                team_id=None,
+                is_ball=True,
+                x=50.0,
+                y=34.0,
+                vx=0.0,
+                vy=0.0,
+                team_in_possession="Home",
+            )
+        )
+        for i in range(5):
+            rows.append(
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=fid,
+                    time_seconds=t,
+                    player_id=f"H{i}",
+                    team_id="Home",
+                    is_ball=False,
+                    x=30.0 + i,
+                    y=20.0 + i,
+                    vx=1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                )
+            )
+            rows.append(
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=fid,
+                    time_seconds=t,
+                    player_id=f"A{i}",
+                    team_id="Away",
+                    is_ball=False,
+                    x=70.0 - i,
+                    y=20.0 + i,
+                    vx=-1.0,
+                    vy=0.0,
+                    team_in_possession="Home",
+                )
+            )
+    return pd.DataFrame(rows)
+
+
+def _links(pairs: list[tuple[int, object]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "action_id": [a for a, _ in pairs],
+            "frame_id": [f for _, f in pairs],
+            "time_offset_seconds": [0.0] * len(pairs),
+            "n_candidate_frames": [1] * len(pairs),
+            "link_quality_score": [1.0] * len(pairs),
+        }
+    )
+
+
+def _das_actions(rows: list[tuple[int, object]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "action_id": [a for a, _ in rows],
+            "game_id": [1] * len(rows),
+            "period_id": [1] * len(rows),
+            "time_seconds": [1.0] * len(rows),
+            "team_id": [t for _, t in rows],
+        }
+    )
+
+
+class _FakeAsRet:
+    def __init__(self, acc, das) -> None:
+        self.player_acc_space = acc
+        self.player_das = das
+        self.acc_space = acc
+        self.das = das
+
+
+class _FakeAsModule:
+    """Stand-in for accessible-space whose simulation entry point is controllable."""
+
+    def __init__(self, behaviour) -> None:
+        self._behaviour = behaviour
+
+    def get_individual_dangerous_accessible_space(self, frames, **kwargs):
+        return self._behaviour(frames)
+
+    def get_dangerous_accessible_space(self, frames, **kwargs):
+        return self._behaviour(frames)
+
+
+class _NarrowSignatureAsModule:
+    """accessible-space whose API has drifted: no **kwargs, so call binding fails."""
+
+    def get_individual_dangerous_accessible_space(self, frames):
+        raise AssertionError("must never be reached -- binding fails first")
+
+    def get_dangerous_accessible_space(self, frames):
+        raise AssertionError("must never be reached -- binding fails first")
+
+
+class TestDasSourceProvenance:
+    """das_source makes "DAS could not be computed" distinguishable from "NaN here"."""
+
+    def test_vocabulary_is_closed_and_add_das_only_emits_it(self) -> None:
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking import DAS_SOURCE_VALUES, add_das
+
+        frames = _live_frames((1,))
+        # action 1: links to the live frame, real team  -> computed
+        # action 2: no pointer at all                   -> unlinked
+        # action 3: pointer to a frame that has no DAS  -> unscoreable_frame
+        # action 4: links to the live frame, alien team -> team_unresolved
+        actions = _das_actions([(1, "Home"), (2, "Home"), (3, "Home"), (4, "Nowhere")])
+        links = _links([(1, 1), (3, 99), (4, 1)])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = add_das(actions, frames, links=links)
+
+        assert set(out["das_source"]) <= set(DAS_SOURCE_VALUES)
+        by_action = dict(zip(out["action_id"], out["das_source"], strict=True))
+        # Non-vacuity: every branch of the classifier is exercised by this one call.
+        assert by_action == {1: "computed", 2: "unlinked", 3: "unscoreable_frame", 4: "team_unresolved"}
+        # ...and the provenance agrees with the values it describes.
+        vals = dict(zip(out["action_id"], out["das_team"], strict=True))
+        assert np.isfinite(vals[1]), "the 'computed' row must actually carry a finite DAS"
+        assert all(pd.isna(vals[a]) for a in (2, 3, 4))
+
+    def test_unscoreable_call_on_a_genuine_dead_ball_window(self) -> None:
+        """A real dead-ball batch (all-NaN possession) degrades with the CALL-scoped token."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking import add_das
+
+        frames = _live_frames((1,))
+        frames["team_in_possession"] = np.nan
+        actions = _das_actions([(1, "Home")])
+        links = _links([(1, 1)])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = add_das(actions, frames, links=links)
+
+        assert out["das_team"].isna().all(), "non-vacuity: the degrade path must really have run"
+        assert (out["das_source"] == "unscoreable_call").all()
+
+    def test_provenance_survives_the_no_simulatable_frame_guard(self) -> None:
+        """The ball/player-disjoint subset yields NaN without raising -- it must NOT
+        masquerade as "unlinked" (the action DID link; the frame is unscoreable)."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking import add_das
+
+        def _row(fid, pid, team, is_ball, x, y, vx, vy):
+            return dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                time_seconds=float(fid),
+                player_id=pid,
+                team_id=team,
+                is_ball=is_ball,
+                x=x,
+                y=y,
+                vx=vx,
+                vy=vy,
+                team_in_possession="Home",
+            )
+
+        frames = pd.DataFrame(
+            [
+                _row(1, "ball", None, True, 50.0, 34.0, 0.0, 0.0),
+                _row(2, "H0", "Home", False, 40.0, 30.0, 1.0, 0.0),
+                _row(2, "A0", "Away", False, 60.0, 30.0, -1.0, 0.0),
+            ]
+        )
+        actions = _das_actions([(1, "Home"), (2, "Home")])
+        links = _links([(1, 1), (2, 2)])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = add_das(actions, frames, links=links)
+        assert out["das_team"].isna().all()
+        assert (out["das_source"] == "unscoreable_frame").all()
+
+    def test_das_xfns_do_not_leak_the_string_provenance_column(self) -> None:
+        """VAEP feature matrices stay numeric: das_source is an aggregator column only."""
+        from silly_kicks.tracking.features import das_xfns
+        from silly_kicks.vaep.features import feature_column_names
+
+        cols = feature_column_names(das_xfns, nb_prev_actions=3)  # type: ignore[arg-type]
+        assert not any("das_source" in c for c in cols)
+
+
+class TestDasUnscoreableTaxonomy:
+    """Only the three documented unscoreable conditions degrade; everything else propagates."""
+
+    def test_dasunscoreableerror_subclasses_valueerror(self) -> None:
+        from silly_kicks.tracking import DasUnscoreableError
+
+        assert issubclass(DasUnscoreableError, ValueError)
+
+    def test_unexpected_valueerror_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A plain ValueError is NOT the dead-ball degrade -- it must reach the caller."""
+        import silly_kicks.tracking.features as feat_mod
+
+        def boom(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
+            raise ValueError("a real defect, not an unscoreable window")
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", boom)
+        with pytest.raises(ValueError, match="a real defect"):
+            feat_mod.add_das(_das_actions([(1, "Home")]), _live_frames((1,)))
+
+    @pytest.mark.parametrize("exc_type", [IndexError, TypeError, RuntimeError, ImportError])
+    def test_non_unscoreable_exceptions_propagate(self, monkeypatch: pytest.MonkeyPatch, exc_type: type) -> None:
+        """Raised from silly-kicks OWN code (not the accessible-space call), these are bugs."""
+        import silly_kicks.tracking.features as feat_mod
+
+        def boom(frames, *, chunk_size=None, link_frame_ids=None, attacking_direction_col=None):
+            raise exc_type("from silly-kicks own code")
+
+        monkeypatch.setattr(feat_mod, "_precompute_das_lookup", boom)
+        with pytest.raises(exc_type):
+            feat_mod.add_das(_das_actions([(1, "Home")]), _live_frames((1,)))
+
+    def test_missing_velocity_columns_propagate(self) -> None:
+        """A caller-contract violation must fail loud, not become an all-NaN column."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking import add_das
+
+        frames = _live_frames((1,)).drop(columns=["vx"])
+        with pytest.raises(ValueError, match="velocity columns"):
+            add_das(_das_actions([(1, "Home")]), frames)
+
+    @pytest.mark.parametrize("exc_type", [IndexError, TypeError])
+    def test_library_degenerate_geometry_becomes_unscoreable(
+        self, monkeypatch: pytest.MonkeyPatch, exc_type: type
+    ) -> None:
+        """Degenerate Voronoi (IndexError) / NaN coordinates (TypeError) raised INSIDE
+        accessible-space are the widened-for conditions: converted, degraded, tagged."""
+        import silly_kicks.tracking._das as das_mod
+        from silly_kicks.tracking import add_das
+
+        def behaviour(frames):
+            raise exc_type("degenerate tessellation / NaN coordinates")
+
+        monkeypatch.setattr(das_mod, "_import_accessible_space", lambda: _FakeAsModule(behaviour))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = add_das(_das_actions([(1, "Home")]), _live_frames((1,)))
+        assert out["das_team"].isna().all()
+        assert (out["das_source"] == "unscoreable_call").all()
+
+    @pytest.mark.parametrize("exc_type", [IndexError, TypeError])
+    def test_library_degenerate_geometry_raises_the_taxonomy_error(
+        self, monkeypatch: pytest.MonkeyPatch, exc_type: type
+    ) -> None:
+        """At the _das seam the conversion is explicit and chains the original cause."""
+        import silly_kicks.tracking._das as das_mod
+
+        def behaviour(frames):
+            raise exc_type("degenerate tessellation / NaN coordinates")
+
+        monkeypatch.setattr(das_mod, "_import_accessible_space", lambda: _FakeAsModule(behaviour))
+        with pytest.raises(das_mod.DasUnscoreableError) as exc_info:
+            das_mod.get_individual_das(_live_frames((1,)))
+        assert isinstance(exc_info.value.__cause__, exc_type)
+
+    def test_accessible_space_signature_drift_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An API change raises TypeError at CALL BINDING; that must never be mistaken for
+        the NaN-coordinate TypeError raised from inside the function body."""
+        import silly_kicks.tracking._das as das_mod
+
+        monkeypatch.setattr(das_mod, "_import_accessible_space", lambda: _NarrowSignatureAsModule())
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            das_mod.get_individual_das(_live_frames((1,)))
+
+    def test_output_alignment_breach_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The integrity guard rewritten this release must not be swallowed by add_das."""
+        import silly_kicks.tracking._das as das_mod
+        from silly_kicks.tracking import add_das
+
+        def behaviour(frames):
+            foreign = pd.Series(np.zeros(len(frames)), index=range(10_000, 10_000 + len(frames)))
+            return _FakeAsRet(foreign, foreign)
+
+        monkeypatch.setattr(das_mod, "_import_accessible_space", lambda: _FakeAsModule(behaviour))
+        with pytest.raises(ValueError, match="absent from the input index"):
+            add_das(_das_actions([(1, "Home")]), _live_frames((1,)))

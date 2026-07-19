@@ -16,6 +16,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import restore_id_dtype
+
 try:
     from ._ball_carrier_numba import _carrier_loop_numba
 
@@ -323,10 +325,11 @@ def _post_process(
         columns=result_cols,
     )
 
-    if str(pid_dtype) == "Int64":
-        out["ball_carrier_player_id"] = pd.to_numeric(out["ball_carrier_player_id"], errors="coerce").astype("Int64")
-    if str(tid_dtype) == "Int64":
-        out["ball_carrier_team_id"] = pd.to_numeric(out["ball_carrier_team_id"], errors="coerce").astype("Int64")
+    # Restore the SOURCE dtypes. Keying this on the single literal "Int64" (as it once was)
+    # left int64/float64/string sources emitting an object column of boxed numbers -- the
+    # shape that made ``ball_carrier_team_id`` silently un-joinable against frame team ids.
+    out["ball_carrier_player_id"] = restore_id_dtype(out["ball_carrier_player_id"], pid_dtype)
+    out["ball_carrier_team_id"] = restore_id_dtype(out["ball_carrier_team_id"], tid_dtype)
 
     return out
 
@@ -482,6 +485,22 @@ def derive_team_in_possession(
         forwarded to accessible-space as ``player_in_possession_col`` for correct
         offside masking in DAS). Frames with no carrier match get ``NaN``.
 
+    IDEMPOTENT: a ``frames`` that ALREADY carries either output column has it
+    REPLACED, not suffixed. A bare merge produced ``team_in_possession_x`` /
+    ``_y`` instead, and every consumer that re-derives possession
+    (``_xshot_occurrence``, ``_xcross_attempt``) then died on ``KeyError:
+    'team_in_possession'`` — live for exactly the pipeline the ``links`` /
+    ``pitch_control_cache`` kwargs exist to encourage, where one ``frames``
+    object is enriched for several families. Mirrors the "linkage-provenance
+    columns are idempotent" convention the ``add_*`` family already follows.
+
+    REPLACE rather than preserve, deliberately: this function's contract is
+    "possession according to THIS ``carrier``". A retained column from an earlier
+    carrier (different ``tolerance_m``/``beta``/``gamma``, or a different frame
+    slice) would make the output silently disagree with the argument just passed
+    — the train/serve-skew shape. Pass the frames without the column, or reuse the
+    earlier result, if the earlier possession is what you want.
+
     Examples
     --------
     Typical pipeline --- infer carrier, then derive possession::
@@ -494,4 +513,7 @@ def derive_team_in_possession(
     merge_cols = ["game_id", "period_id", "frame_id"]
     carrier_slim = carrier[[*merge_cols, "ball_carrier_team_id", "ball_carrier_player_id"]].copy()
     carrier_slim = carrier_slim.rename(columns={"ball_carrier_team_id": "team_in_possession"})
+    stale = [c for c in ("team_in_possession", "ball_carrier_player_id") if c in frames.columns]
+    if stale:
+        frames = frames.drop(columns=stale)
     return frames.merge(carrier_slim, on=merge_cols, how="left")

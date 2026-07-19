@@ -39,6 +39,7 @@ TRACKING_ENRICHMENTS = _discover(tracking_features)
 # Split: helpers needing only (actions, frames) vs those needing extra kwargs
 _TRACKING_NEEDS_EXTRA = {
     "add_cover_shadows",
+    "add_das",
     "add_defensive_line",
     "add_ghost_gk",
     "add_gk_influence",
@@ -511,6 +512,29 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         "add_structural_pass",
     ):
         out = helper(actions, frames, home_team_id=1)
+    elif name == "add_das":
+        # Same supply-the-contract-columns precedent as add_packing / add_ghost_gk: vx, vy
+        # and team_in_possession are NOT in TRACKING_FRAMES_COLUMNS (derive_velocities /
+        # derive_team_in_possession produce them) and are add_das's documented contract.
+        #
+        # This branch is new in ADR-043 and it is NOT a relaxation -- it is the gate finally
+        # getting teeth. Before the catch was narrowed, add_das swallowed the missing-vx
+        # ValueError and returned an all-NaN column, so this helper passed the NaN-safety
+        # gate VACUOUSLY: it never got past _validate_das_inputs and never touched the
+        # NaN-IDENTIFIER surface (NaN team_id / player_id on the ball rows) the gate exists
+        # to fuzz. Supplying the contract columns is what makes it actually run.
+        frames = frames.copy()
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
+        frames["team_in_possession"] = 1
+        out = helper(actions, frames)
+        # Non-vacuity: prove the simulation really ran (some row scored) AND that the
+        # NaN-identifier row took the documented per-row default (NaN out, named cause)
+        # rather than the whole call degrading.
+        assert (out["das_source"] == "computed").any(), "add_das degraded wholesale; gate is vacuous again"
+        nan_team = actions["team_id"].isna().to_numpy()
+        assert out.loc[nan_team, "das_team"].isna().all()
+        assert (out.loc[nan_team, "das_source"] == "team_unresolved").all()
     elif name == "add_packing":
         # The shared fixture carries no result_id (it is not an identifier column);
         # add_packing's completion gate requires it. Supply a constant success so the

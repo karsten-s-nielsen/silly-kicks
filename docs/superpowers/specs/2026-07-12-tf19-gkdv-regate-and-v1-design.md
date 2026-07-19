@@ -1,11 +1,63 @@
 # TF-19 GKDV — Gate Re-run + Physics-Arms v1 — Design
 
 **Date**: 2026-07-12
-**Status**: Approved design, pre-plan
+**Amended**: 2026-07-18 (see "Amendment 2026-07-18" below)
+**Reviewed**: 2026-07-18, cross-session review **round 1** — 3 blockers + 10 should-fixes,
+ALL accepted and applied (`[REVIEW ROUND 1 …]` tags); the review independently re-verified
+every Chesterton hazard in amendment cause (A) against the shipped code and confirmed each
+holds. **Round 2** — 3 blockers + 3 should-fixes, ALL accepted and applied
+(`[REVIEW ROUND 2 …]` tags). **Round 2's headline: two of round 1's own fixes interacted to
+falsify a third claim** (the B1 outcome change made §2.2's "constructible purely as builder
+arguments" false), and the PR-3/PR-3b split from B2 was fixed at its instance but not
+propagated to §6.4 Layer 4, §7 or §8. Both are recorded in place rather than silently
+corrected, because the failure mode — *a fix that invalidates a verified claim elsewhere* —
+is the one this document's amendment convention is least able to catch on its own.
+**Status**: PR-1 and PR-2 SHIPPED; PR-3 (gkdv package) not started — this document is the
+PR-3 design, amended to current reality and awaiting review
 **Scope decisions (owner)**: re-gate the attempt-probability arms first AND build the
 gate-independent physics arms in parallel; frozen rule governs the xCross probe re-run,
 the new xS probe registers its own rule; Approach A architecture (new `silly_kicks/gkdv/`
 package + pre-planned promotions).
+
+---
+
+## Amendment 2026-07-18 — what changed and why
+
+This spec was written before any of it shipped. **PR-1 landed as 4.47.0 (ADR-037) and PR-2
+as 4.51.0 (ADR-040)**, the xCross decision-table row FIRED, and two pieces of information
+arrived that post-date the document. The sections below are amended in place; every change
+carries an inline **[AMENDED 2026-07-18]** tag so a reviewer can find them without a diff.
+Amendments are grouped by cause:
+
+**(A) The code diverged from the spec during PR-1 — correcting the spec, not the code.**
+Three are Chesterton's-Fence hazards where a PR-3 author following this document literally
+would *undo* a deliberate hardening or duplicate a frozen function: the xS ratio prong was
+STRENGTHENED (§3.1), the decision table lives in `_model_eval.py` and NOT in the
+PR-3-owned `_validate.py` (§3.5), and the probe/engine boundary became a
+**typed cross-package data contract** rather than a function call (§2.2, §4).
+
+**(B) Facts on the ground moved.** The retrains ran and the cross verdict is recorded
+(§3.5, §9); the ghost MAE figures are superseded (§3.1); the C4 aggregator count is 29 after
+TF-49, not 28 (§2.3); the known-failure xS e2e passed on the corrected weights (§9).
+
+**(C) Two mechanisms in §5 were verified against source and found mis-stated** — the channel
+through which the keeper enters the threat arm, and the sufficiency of the DAS pinning guard.
+Both reductions survive; the stated reasons did not. One is a live silent-Δ≡0 hazard.
+
+**(D) A rival hypothesis for the attempt arm's sub-floor result.** The gate's recorded
+consequence assumes **H1: the models are under-featured on GK position.** A sibling
+possession-value metric in this codebase was independently shown to read inert because it
+was **mis-specified** — it rewarded a behaviour good keepers do not perform — and a
+cross-check on our own GS-WC2022 and SkillCorner cohorts reproduced the generalizable half:
+the behaviour that predicts possession retention is not rewarded by our shipped `xt_gk`
+column (per-keeper correlation ≈0 on GS, negative-trending on SkillCorner;
+`docs/research/` cross-check, 2026-07-18). That raises **H2: the deterrent construct is
+measured on the wrong outcome axis** — keepers may not suppress attempt *probability*;
+they may deny space and lanes, with the attempt made anyway from a worse position.
+A code check found this is not idle speculation: **only 2 of the 27 faithful xS features
+respond to keeper position at all** (§3.1). §6 as written cannot distinguish H1 from H2,
+and the shipped verdict function structurally encodes H1. §6 is amended to make the
+distinction a pre-registered read-off rather than a post-hoc argument.
 
 ---
 
@@ -51,6 +103,20 @@ This cycle therefore runs two tracks:
 
 Honest-reporting discipline throughout (ADR-036 precedent): all gate constants locked in
 code before any run; results reported as they land; verdicts recorded either way.
+
+**[AMENDED 2026-07-18] Status of the two tracks.**
+Track 1 (re-gate) is **COMPLETE except the xS probe**. PR-1 shipped 4.47.0; the DGX retrains
+ran; PR-2 shipped 4.51.0 with corrected weights, fail-closed chirality enforcement on
+`load()`, and an xgboost 2.x/3.x `base_score` guard (a real serialization bug the chirality
+golden caught). Prediction (c) held: the frozen xCross probe did NOT flip — it strengthened
+to ratio 2.21× (clearing the ≥2.0 prong) but missed the 0.01 absolute floor at 0.009697, so
+`tf19_ready=false` stands and `regate_verdict(arm='cross', …)` returned **`gated_clean_fail`**.
+The correctness fix, the clean paired test, and a sound instrument are the delivered value,
+exactly as the summary anticipated. **The xS arm remains unmeasured**: its probe is
+dose-banded and consumes ghost targets from the §4 engine, which is PR-3. It is therefore
+*PR-3-gated*, not merely pending.
+Track 2 (physics arms) is **entirely unbuilt** — `silly_kicks/gkdv/` does not exist. PR-3 is
+this document's remaining scope.
 
 ---
 
@@ -214,6 +280,23 @@ silly_kicks/gkdv/
   constants. Full public promotion of the eval home stays deferred until a consumer
   outside `silly_kicks` exists (deliberate, narrower reading of the docstring's
   "2nd consumer" trigger).
+  **[AMENDED 2026-07-18 — SHIPPED SIGNATURE DIFFERS; do not "restore" the one above.]**
+  PR-1 shipped **string dispatch**, not callable injection:
+  `substitution_deltas(model, frames, *, arm: str, mode: str, targets=None, …)` with
+  `arm ∈ {"xcross","xs"}` resolved internally by `_resolve_extractor(arm)` /
+  `_extract_kwargs(arm, …)`, plus a `PROBE_WRAPPERS` registry
+  (`tracking/_model_eval.py`). This is house-style dispatch (matches `xthreat`'s
+  transition family and the pressure-method surface) and it is what keeps the
+  `tracking → gkdv` import direction clean. **Consequence PR-3 must accept:** `gkdv`
+  CANNOT register a new probe arm by passing callables — a future Δattempt arm requires
+  an edit inside `tracking/_model_eval.py`. That is a deliberate cost of the layering
+  rule, not an oversight.
+  **The load-bearing layering contract PR-1 introduced, absent from this document as
+  written:** the probe consumes ghost positions **as DATA** — a `targets` DataFrame that
+  crosses the package boundary and is contract-validated fail-loud — precisely so
+  `tracking/` never imports `gkdv/`. §4 is amended accordingly: the engine does not call
+  the probe and the probe does not call the engine; **the engine emits a frame satisfying
+  `_TARGET_COLUMNS` and the runner (in `scripts/`) joins them.**
 - **`silly_kicks/_causal/` → public `silly_kicks/causal/`** (ADR-015's "one move"):
   `matching.py` unchanged; `opportunities.py` parameterized with the FULL builder
   surface enumerated NOW (the current signature provably cannot express its own second
@@ -225,14 +308,43 @@ silly_kicks/gkdv/
   asserts the parameterized builder reproduces the xCross default byte-identically.
   The newly-public `causal/` registers in the Examples/`_PUBLIC_MODULE_FILES` gate
   from day one — the same treatment §7 mandates for `gkdv/` (no new xtgk-style gap).
+  **[AMENDED 2026-07-18 — SHIPPED COMPLETE in PR-1; this bullet is no longer PR-3 work.
+  Added at review round 1 (S10), which correctly noted the sibling bullet got a SHIPPED
+  tag and this one did not.]** Verified present: `silly_kicks/causal/{__init__,matching,
+  opportunities}.py` (`_causal/` gone), with the **full builder surface** landed as a
+  frozen `OpportunityConfig` plus `xcross_config()` / `shot_arm_config()`; `config=None`
+  reproduces the legacy xCross path byte-identically (regression-gated); and the package
+  is registered in `tests/test_public_api_examples.py::_PUBLIC_MODULE_FILES`. **This
+  matters beyond bookkeeping: §6.4 Layer 2 depends on constructing its configuration
+  purely as builder arguments, and that acceptance criterion is exactly what makes Layer 2
+  buildable without reopening `causal/`.**
+  **[REVIEW ROUND 2 — N1 CORRECTION: the sentence above is now FALSE and is retained only
+  to show what changed.]** Round 1's B1 fix replaced Layer 2's outcome with an
+  unconditional **spatially-filtered** indicator (`Y_close_attempt`), and the shipped
+  `OpportunityConfig` / `_label_outcome` have **no location axis** — verified in source.
+  **Layer 2 therefore DOES reopen `causal/`, by exactly one additive field**
+  (`outcome_max_distance_m: float | None = None`, legacy-preserving), scoped to PR-3b. The
+  rest of the promotion's value stands: treatment, outcome types/results, window,
+  confounders and extractor are all still expressible as builder arguments, so this is a
+  one-field extension rather than a redesign.
 
 ### 2.3 Documentation / infra impact
 
 New ADR-037 (GKDV composition + re-gate policy, covers both tracks). ADR-015 status →
 promoted. C4 DSL edit + regen (new `gkdv` element, same treatment as `xtgk`); gkdv adds
-no `add_*` action-coupled aggregator, so the cap-tested count **stays 28** (definition:
-`len(add_* in tracking.__all__) − 1`, excluding the roster helper
-`add_gradientsports_player_ids` — raw 29 = counted 28). NOTICE
+no `add_*` action-coupled aggregator, so the cap-tested count is **UNCHANGED by this cycle**
+(definition: `len(add_* in tracking.__all__) − 1`, excluding the roster helper
+`add_gradientsports_player_ids`). **[AMENDED 2026-07-18]** the baseline was 28 at spec
+time and is **29** after TF-49 packing (4.50.0, ADR-039). **PR-3 must preserve whatever
+`tracking.__all__` yields at PR-3 time — re-derive it, do not trust any figure written
+here.** **[REVIEW ROUND 1 — B3]** the earlier wording "must PRESERVE 29" is deleted: it
+becomes FALSE if the parallel session's PR-S119 (which adds `add_off_ball_run_values`,
+29→30) lands first. The re-derive instruction is the durable form.
+Measured on the current DSL: the `tracking` container description is **191/200 chars —
+9 characters of headroom** — and contains the literal string `29 action-coupled
+aggregators`; two other boxes sit at **exactly 200**. So adding the gkdv/ADR reference
+means **trimming, not appending** (`test_c4_dsl_description_cap`; that gate has already
+bitten once, in 4.51.0). See §9.1 for the resulting cross-session merge hazard. NOTICE
 entries: Le et al. 2017 (ghosting); DEFCON-GNN comparator. TODO reconciliation rides in
 PR-1 (no standalone doc commits).
 
@@ -252,8 +364,38 @@ plumbing names through the shared loader.
 - Generalized core over attacking-third frames (xS's `_ATTACKING_THIRD_M=35.0`
   predicate), frames-level substitution of the defending-GK row (engine-consistent even
   though xS's GK dependence is only `GK_r`/`GK_theta`).
+- **[AMENDED 2026-07-18] FEATURE-CHANNEL ASYMMETRY — registered as an a-priori
+  expectation BEFORE the xS probe runs. Changes NO threshold; changes how a fail is
+  READ.** A source check confirmed and sharpened the parenthetical above. Of the 27
+  faithful xS features, **exactly 2 respond to keeper position** (`GK_r`, `GK_theta`).
+  `openGoal` is computed from a defender array built as
+  `defending = players[is_gk_team & (~players_is_gk)]` — the keeper is **excluded as an
+  occluder**, which is also physically questionable (a keeper on his line does not
+  reduce "open goal") — and the same GK-excluded array feeds all 10 `DefDist_k` /
+  `DefAngle_k` pairs. **The consequence for the ratio prong is a structural bias against
+  the GK**: the paired-vector nearest-defender control moves a player who enters up to
+  11 of 27 features, while the GK move enters 2 of 27, and prong 1 compares the two
+  medians directly. **Therefore: a low or failing xS reading is PREDICTED BY THE FEATURE
+  DESIGN and must NOT be read as "the keeper does not deter."** It is evidence about the
+  instrument. This is registered here so the reading is pre-committed rather than
+  argued after the number lands; see §6 for how H1 (under-featured) is separated from
+  H2 (wrong outcome axis), and §10 for the `openGoal` keeper-exclusion follow-up (a
+  change there is a full ADR-011 retrain cycle and is NOT in PR-3).
+- **[AMENDED 2026-07-18] Prong asymmetry with the cross arm, never previously stated**:
+  the xS rule has **no absolute-magnitude floor**. xCross gates on ratio AND
+  `TF19_PROBE_ABS_FLOOR = 0.01` — and the floor was the *only* prong it missed
+  (0.009697). xS gates on ratio + dose-response + support floors alone. An xS "pass" and
+  an xCross "pass" are therefore **not the same standard of evidence**, and given the
+  2-of-27 channel above, an xS pass on a relative prong alone should be reported with
+  that caveat attached rather than treated as symmetric corroboration. Do NOT add a
+  floor to xS now — the constants are frozen and pre-registered; record the asymmetry
+  in the report instead.
 - **The accuracy-vs-magnitude paradox (stated up front, it shapes the rule)**: the
-  ghost's held-out MAE is 1.07 m — BELOW the frozen panel's smallest step (2 m). A
+  ghost's held-out MAE is 1.07 m **[AMENDED 2026-07-18: superseded — the Stage-B
+  179-match retrain bundled in 4.51.0 serves 1.108 m (full) / 1.185 m (default). The
+  argument is unaffected and in fact strengthens: both figures remain below the frozen
+  2 m step. Quote the model card at PR-3 time rather than any number in this document.]**
+  — BELOW the frozen panel's smallest step (2 m). A
   ghost good enough to be credible is, by construction, usually too close to the
   actual keeper to move a piecewise-constant boosted surface; retraining the ghost on
   corrected data will shrink typical displacements further. A naive median over all
@@ -262,8 +404,17 @@ plumbing names through the shared loader.
   TAIL where the actual keeper deviates from the league-average ghost.
 - **Registered rule (constants in code, PR-1, before any run). The `ready` boolean is
   the AND of every registered prong below — nothing here is advisory prose**:
-  1. Ratio prong: GK median |ΔP(shot)| ≥ 2.0× the nearest-defender control, on the
-     gated stratum, under paired-vector controls (see 2).
+  1. Ratio prong: **[AMENDED 2026-07-18 — the shipped rule is STRONGER than this
+     registration; the code is correct and MUST NOT be relaxed back to match the
+     original sentence.]** As shipped in PR-1: `gk_med ≥ XS_PROBE_RATIO ×
+     max(nearest_def_median, placebo_p95)` — twice the LARGER of the nearest-defender
+     control and the placebo p95 band, on the gated stratum, under paired-vector
+     controls (see 2). The strengthening is recorded in ADR-037 item (13), which also
+     records that the separate explicit `gk_med > placebo_p95` conjunct was dropped as
+     *implied by* the strengthened form. The original registration read "≥ 2.0× the
+     nearest-defender control" only. `XS_PROBE_RATIO = 2.0` is frozen
+     (`tracking/_model_eval.py`); a PR-3 author who "fixes" the code to match the old
+     prose would silently weaken a pre-registered gate.
   2. **Placebo prong, fully mechanized (the shipped probe's control band is ALREADY
      the degenerate case — `random_band_median_abs_delta = 0.0` in the 4.18.0
      record)**: the nearest-defender control AND the placebo outfielder are displaced
@@ -417,6 +568,32 @@ estimate). GKDV v1 (physics arms) ships regardless of every row below. **The tab
 implemented as a pure function in `_validate.py` with a parametrized test over every
 row** — "mechanical" is a code property, not a prose claim.
 
+**[AMENDED 2026-07-18 — WRONG MODULE, and the mistake is actionable.]** The verdict
+function shipped in PR-1 as **`regate_verdict` in `silly_kicks/tracking/_model_eval.py`**,
+not in `_validate.py`. `_validate.py` is a **different, PR-3-owned module** holding the
+physics arms' per-arm expected-direction constants (ADR-037 item 7) and does not exist
+yet. A PR-3 author reading this line literally would create `_validate.py` and either
+duplicate or re-home an already-frozen, already-tested verdict function. **Do neither:
+`regate_verdict` stays where it is; `_validate.py` is new and separate.**
+
+**[AMENDED 2026-07-18 — STATUS] The `cross | fail | any` row has FIRED.** Stage-B figures:
+`gk_median_abs_delta = 0.009697` vs `nearest_def = 0.004380` → ratio 2.21× (clears the
+≥2.0 prong) but under `TF19_PROBE_ABS_FLOOR = 0.01` → `tf19_ready = false`, and
+`regate_verdict(arm='cross', probe_verdict='fail', entanglement='inside_band')` returns
+**`gated_clean_fail`**. Only the four `shot` rows remain live. **Reproducibility gap PR-3
+must close:** the bundled `_xcross_weights/default/metrics.json` records the *Stage A*
+probe (0.002417 / ratio ≈1.41×), NOT the Stage-B figures that produced the verdict — those
+exist only as prose in `docs/research/tf19_pr2/decision_table.md`, sourced from an SSH read
+of the DGX box. A pre-registered gate whose firing numbers are not reproducible from the
+repository is a provenance hole: **PR-3 must bundle the Stage-B probe record as a
+machine-readable artifact.** **[REVIEW ROUND 1 — S6]** the earlier "…or state explicitly
+which path is authoritative" escape hatch is **deleted**: naming the prose table
+authoritative does not close the hole, because the numbers remain transcribed prose rather
+than something recomputable from the repo — which fails this document's own ADR-036
+honest-reporting discipline. The xgboost-version pin (§6.4 disclosures) rides with this
+artifact: an unpinned probe number is non-citeable given the 2.x/3.x `base_score`
+divergence PR-2 had to guard.
+
 | arm | its probe | GK-confounder entanglement | consequence for that arm |
 |---|---|---|---|
 | shot | pass (registered §3.1 rule, all prongs) | clears | Δattempt shot arm joins the follow-up composition spec |
@@ -430,12 +607,36 @@ row** — "mechanical" is a code property, not a prose claim.
 | cross | pass | inside band | joins, with the same caveat |
 | cross | fail | any | stays gated — the §1.2 expectation; recorded as the clean verdict |
 
+**[AMENDED 2026-07-18] JOINT ROW — the table gates the arms independently and has no
+branch for "both gated". That branch is now LIVE, not hypothetical**: cross is already
+`gated_clean_fail`, so any shot outcome other than a pass realizes it immediately.
+Registered consequence, consistent with what this document already commits to elsewhere
+(line: "GKDV v1 ships regardless of every row below"):
+
+| joint state | registered consequence |
+|---|---|
+| BOTH arms gated (any combination of fail / flat-dose / unmeasurable) | The Δattempt composition follow-up spec is **NOT commissioned**. GKDV v1 ships on the **physics arms alone**, and the attempt track routes wholesale to GK feature engineering (§3.1 feature-channel asymmetry names the first target). This is a registered outcome, not a programme failure — see §6 for the H1/H2 read-off that determines *which kind* of gated it is. |
+
+Optionally expose as a pure `regate_composition(shot_verdict, cross_verdict, …)` beside
+`regate_verdict`; if added, the existing per-arm rows must stay byte-identical and the
+existing frozen enums must not be mutated (both are fail-loud `frozenset`s).
+
 ---
 
 ## 4. Ghost-substitution engine
 
 `build_ghost_frames(frames, *, model, home_team_id, carrier=None, params=GkdvParams())
 → (counterfactual_frames, provenance, GkdvReport)` in `gkdv/_engine.py`.
+
+**[AMENDED 2026-07-18] The engine and the probe are decoupled by a typed DATA contract,
+not by function calls.** PR-1 shipped the probe consuming ghost positions as a `targets`
+DataFrame so that `tracking/` never imports `gkdv/`. Read every "the probe uses the
+engine's provenance" statement below through that lens: **the engine EMITS a frame; a
+runner in `scripts/` passes it to `substitution_deltas(..., mode="targets", targets=…)`.**
+The shipped contract is `_TARGET_COLUMNS` in `tracking/_model_eval.py`, validated
+fail-loud by `_validate_targets`, and it differs from §4.6 below on four points that PR-3
+must reconcile — §4.6 is amended in place. This is the single most load-bearing change
+PR-1 made to this design.
 
 1. **Domain**: alive ball, team in possession attacking, ball within 35 m of the
    attacked goal, defending-team GK row present. Frames with a missing/NaN GK block are
@@ -457,6 +658,18 @@ row** — "mechanical" is a code property, not a prose claim.
    clamp as a drift-prone copy. The gkdv→tracking import surface is an explicit
    allowlist pinned by a test; the dependency direction (gkdv → tracking public
    seams only, never the reverse) is recorded in ADR-037.
+   **[AMENDED 2026-07-18 — the seam must EMIT two flags, not merely apply the clamp.]**
+   None of this exists yet: there is no `serve_ghost_gk_positions`, no `density=` kwarg,
+   and `compute_ghost_gk` applies the 4.22.1 clamp as a whole-array `np.clip` behind a
+   single "one or more" batch warning, discarding which rows were clamped. The probe
+   REQUIRES `ghost_clamped` per row and **non-null** (`_validate_targets` raises on a
+   null, because `bool(NaN)` is `True` and would silently shrink the trusted stratum).
+   Likewise `ghost_out_of_box` does not exist anywhere — `GRID_X_MAX = 30.0` is a bare
+   module constant used only as a training-label filter, and the flag **must be evaluated
+   on goal-relative x BEFORE the write-back flip in (4)**. So the seam's contract is:
+   *serve positions, apply the clamp, and return per-row `ghost_clamped` +
+   `ghost_out_of_box` alongside* — additive provenance in the house `*_source` idiom,
+   no value change, no retrain.
 4. **Write-back**: goal-relative → frame coords: `x = gr_x` if the defended goal is at
    x=0 else `105 − gr_x`; y unchanged. Consumes `compute_ghost_gk`-style goal-relative
    output, never `add_ghost_gk`'s action-LTR columns (ADR-028).
@@ -469,6 +682,14 @@ row** — "mechanical" is a code property, not a prose claim.
    velocity, shrinking the actual-vs-ghost contrast in the ≥2 m band. A
    reported-not-gated sensitivity variant (ghost velocity zeroed and/or scaled, on a
    sample) is registered: stable → recorded; unstable → documented limitation.
+   **[AMENDED 2026-07-18, REVIEW ROUND 1 — S3: this is now GATING, superseding
+   "reported-not-gated" in the sentence above.]** §6.4 row 2 halts on a zeroed-velocity
+   variant that FLIPS the ratio (`physics_velocity_confounded`), and the two statements
+   contradicted each other. Gating is the correct resolution **by this bullet's own
+   analysis**: the bias is concentrated exactly in the gated stratum, so a sign flip there
+   is not a footnote — it means the arm's headline number is an artifact of the velocity
+   policy. Reading: *stable → recorded and continue; FLIPS → halt and re-run under the
+   registered policy; unstable-but-does-not-flip → documented limitation.*
 6. **Provenance per frame**: ghost x/y, |ghost − actual| displacement, GK `player_id` +
    `is_goalkeeper_source`, clamped flag, ghost out-of-training-box flag (goal-relative
    x beyond the 30 m label hull — OOD-served), drop reason. The displacement
@@ -479,10 +700,59 @@ row** — "mechanical" is a code property, not a prose claim.
    the validation script writes them into the `gkdv_v1` artifacts — registration
    without traceability is not registration.
 
+   **[AMENDED 2026-07-18] The provenance frame is NOT itself the targets frame — four
+   concrete mismatches with the shipped `_TARGET_COLUMNS`. PR-3 emits a small ADAPTER
+   (provenance → targets); it must not try to make one frame serve both roles.**
+   1. **Names**: the probe requires `target_x` / `target_y`, not "ghost x/y".
+   2. **Dropped frames**: `_validate_targets` requires `target_x`/`target_y` FINITE on
+      every row — a targets frame containing dropped frames **raises**. Provenance keeps
+      them (it must, for drop accounting); the adapter filters them out.
+   3. **Keying**: the probe requires **exactly one row per `(game_id, period_id,
+      frame_id)`** — three keys, no team. But `compute_ghost_gk` keys per
+      `(frame, gk_team)` and writes ghosts for **BOTH** teams' keepers, so a naive
+      pass-through duplicates every frame and trips the uniqueness check. The adapter
+      must select the **defending-team** keeper per frame, using the §4.2 pinned goal
+      map — not a re-derivation.
+   4. **Displacement is not consumed**: the shipped probe RECOMPUTES `displacement_m`
+      internally as `target − actual GK` read off the frame's own GK row, rather than
+      reading the provenance column. The engine's displacement is therefore a
+      **planning/reporting** quantity (it tells you offline whether the ≥2 m band is
+      populated at all), not a probe input. Do not wire it as one.
+
+   **[REVIEW ROUND 1 — S7 accepted] The adapter is the load-bearing seam; name it and test
+   it.** Everything else in this spec earns a test; the adapter was prose. Register it as
+   **`gkdv._engine.provenance_to_targets`** with a contract test asserting all four points
+   above — column names; `target_x`/`target_y` finite on EVERY row; **exactly one row per
+   `(game_id, period_id, frame_id)`**; defending-team selection via the §4.2 pinned goal
+   map — plus a **red-first test that a naive both-teams pass-through RAISES**. Mismatch #3
+   is the dangerous one: a pass-through either trips the uniqueness check or, worse,
+   silently selects the WRONG keeper. That test is the executable form of this amendment.
+   Note the engine therefore returns **two views**, not one: the full provenance frame
+   (drops included, keyed per frame + gk_team, consumed by `_metric`) and the
+   defending-team-only, drop-free, 3-key-unique targets projection (consumed by the probe).
+
 Rules honored: counterfactual frames NEVER routed through `PitchControlCache` (ADR-008
 canonical-only contract; the factual side may use one); all id seams through
 `_id_compat` (ADR-019); PR-1 hardens `extract_xshot_features`' raw `==` team-id
 compares to canonical ids (latent ADR-019 gap, fixed regardless of TF-19).
+
+**[AMENDED 2026-07-18] The GHOST extractor's raw id compares were NOT hardened and are on
+the PR-3 critical path.** PR-1 fixed `extract_xshot_features`; `extract_ghost_gk_features`
+still uses raw `==`/`!=` on team ids — and §4.3 routes **every ghost position** through it.
+On Gradient Sports frames `team_id` is nullable `Int64` (ADR-027) while other providers
+carry object strings, so a raw compare yields **empty defending/attacking splits and a
+corrupt feature row rather than an error** — the same silent-null shape this cycle exists
+to eliminate. CLAUDE.md records this as an out-of-scope latent gap citing
+`_ghost_gk.py:488-490`; **that citation is line-stale** (the compares now live at 521-523,
+584 and 771). **PR-3 must promote this from "recorded gap" to in-scope work**: route them
+through `_id_compat`, and re-derive the line numbers rather than trusting either source.
+
+**[AMENDED 2026-07-18] Risk ordering in §4.5 is now inverted by evidence.** The velocity
+policy is presented above as the main known distortion in the gated stratum. With the
+§3.1 feature-channel asymmetry confirmed in source (2 of 27 xS features see the keeper)
+and a ghost MAE (~1.1 m) well below the 2 m dose floor, **the dominant risk to the xS arm
+is the feature channel, not ghost momentum.** Both remain registered; the reports must
+state this ordering so a `fail` is not attributed to the velocity policy by default.
 
 ---
 
@@ -496,6 +766,43 @@ deterrent** uniformly.
   both sides. Lazy `[das]` import guard — the arm skips-with-report if accessible-space
   is absent; reuses `_das.py`'s frame preparation (pyarrow/object-dtype handling
   included).
+
+  **[AMENDED 2026-07-18 — PINNING `team_in_possession` IS NOT SUFFICIENT, and the
+  mandated API cannot pin what actually needs pinning. This is a live Δ-corruption
+  hazard, not a nit.]** accessible-space infers playing direction **per period** via a
+  discrete argmin over a position-dependent statistic —
+  `x_mean = groupby(team)[x].mean(); smaller_x_team = x_mean.idxmin()`. Pinning
+  `team_in_possession` supplies the grouping KEY only; it does not constrain the mean-x
+  comparison that produces the DIRECTION. Moving the keeper changes his team's mean x
+  (a 4 m GK displacement shifts an 11-player mean by ~0.36 m), so the factual and ghost
+  legs can infer **different directions** and the resulting Δ is not a counterfactual at
+  all. Required amendment: **(a)** compute the attacking direction ONCE on the factual
+  FULL frames via `_das._pin_attacking_direction` and pass that SAME pinned column to
+  BOTH legs — neither leg may infer; **(b)** route the arm through
+  `get_individual_das(..., attacking_direction_col=…)` summed per team (the established
+  library pattern), OR extend `get_das` with an `attacking_direction_col` passthrough
+  that overrides its hardcoded `infer_attacking_direction=True` — a small `_das.py`
+  change that must be scoped INTO PR-3 if `get_das` is kept.
+
+  **[AMENDED 2026-07-18] What ΔDAS actually measures — an interpretation limit that
+  belongs in the reports.** `is_goalkeeper` is **not passed to accessible-space at all**
+  (`_das.py` `_COLUMN_MAP` forwards x, y, vx, vy, player, team, frame, period,
+  team_in_possession — no keeper flag). accessible-space therefore treats the keeper as a
+  generic player with outfield locomotor parameters, so **ΔDAS is the accessible-space
+  consequence of relocating one anonymous defender who happens to be the keeper**; no
+  keeper-specific reach, handling, or control advantage is modelled. ΔGK-threat-suppression,
+  by contrast, weights the keeper at `lambda_gk = 3.0` inside pitch control. **The two arms
+  are therefore not on a common keeper-modelling footing** — which reinforces the existing
+  decision to report them separately in v1, and any future composite must resolve the
+  asymmetry first. Register `lambda_gk` alongside the DAS stride in `GkdvParams` so both
+  arms' keeper treatment is visible in one place.
+  **[REVIEW ROUND 1 — S9 accepted] Registering `lambda_gk` is not enough — sensitivity-test
+  it.** Since Δthreat's GK sensitivity is inherited ENTIRELY from `lambda_gk = 3.0`, any
+  Δthreat result is partly a statement about that weight, and if the two arms disagree a
+  reader cannot tell a finding from a weight artifact. Register a **reported-not-gated
+  `lambda_gk` sensitivity leg** (e.g. 1.0 / 3.0 / 5.0) alongside the primary — the same
+  idiom §4.5 uses for the velocity policy, applied to the parameter this amendment just
+  identified as governing the arm.
 - **ΔGK-threat-suppression** (renamed from "Δcover-shadow" after source verification —
   the arm is NOT lane-specific and is specced in its algebraically reduced form):
   `compute_blocking_score(…, defenders_to_remove=[gk])` at two GK positions has its
@@ -505,7 +812,20 @@ deterrent** uniformly.
   xT-weighted Voronoi pitch-control threat integral (`_voronoi_threat`), the ONLY
   channel through which the GK enters `compute_blocking_score` at all (the lane/TTI
   model excludes goalkeepers by construction, and the explicit-removal path never ran
-  it anyway). The arm therefore computes `threat_pc` directly on the full actual and
+  it anyway).
+  **[AMENDED 2026-07-18 — THE REDUCTION SURVIVES BUT THIS MECHANISM IS MIS-STATED; a
+  PR-3 author debugging a zero Δ would look in the wrong function.]** `_voronoi_threat`
+  is **not** the channel: its own body selects only ATTACKERS (receiver set, Voronoi
+  seeds, dangerous-receiver filter) and the *defending* keeper — the player GKDV
+  substitutes — appears nowhere in its selection logic. The keeper enters solely through
+  the `surface` argument, i.e. through **`compute_pitch_control`**, where GK rows are
+  retained and up-weighted by `lambda_gk = 3.0`. So the correct statement is:
+  *`threat_pc` is the only GK-sensitive non-cancelling term, and its GK sensitivity is
+  inherited entirely from the pitch-control surface it integrates.* The algebraic
+  reduction to two calls is unaffected; only the reason is corrected. Practical
+  consequence: **the arm's sensitivity is governed by `lambda_gk`**, which is why it is
+  registered in `GkdvParams` above.
+  The arm therefore computes `threat_pc` directly on the full actual and
   ghost frames — two pitch-control surfaces, not four, no removal, no
   `max(…, 0.0)` clamp — via a `compute_threat_pc()` facade added to
   `_cover_shadows.py` (no reimplementation of `_voronoi_threat`; gkdv imports the
@@ -588,7 +908,21 @@ locked in code before the owner run; verdicts to `docs/research/gkdv_v1/`.
    (precedent: `silly_kicks/_calibration_metrics.py`, whose docstring records the same
    lift). Module concept, stated: `_group_metrics.py` = domain-free grouped statistics
    (ICC, spread, permutation band, power sim); `gkdv/_validate.py` = registered
-   constants + verdict logic. Knock-ons: `tests/xtgk/test_keeper_discrimination.py`
+   constants + verdict logic.
+   **[REVIEW ROUND 1 — S8: the stated rationale and the chosen visibility disagree; PR-3
+   must RESOLVE this rather than inherit it.]** The argument for a library home is *"the
+   wheel ships only `silly_kicks/`, so anything the lakehouse imports cannot live in
+   `scripts/`"* — i.e. it is justified **by downstream consumption** — yet the proposed
+   module is underscore-**private**. A private module a downstream consumer imports is a
+   Hyrum contract with no stability promise, and the cited precedent
+   (`_calibration_metrics.py`) has exactly the same shape. Pick one, explicitly:
+   **(a)** make it PUBLIC (`silly_kicks/group_metrics.py`, in `_PUBLIC_MODULE_FILES` + the
+   Examples gate from day one — the treatment §7 already mandates for `gkdv/` and
+   `causal/`) if a lakehouse import is genuinely intended; or **(b)** keep it private and
+   restate the rationale as **gkdv's own** import need (gkdv cannot import from
+   `scripts/`), stating explicitly that the lakehouse must NOT import it. Do not ship the
+   current incoherent pairing.
+   Knock-ons: `tests/xtgk/test_keeper_discrimination.py`
    AND `scripts/xtgk_v2_keeper_discrimination.py` itself are re-pointed in the same PR
    (single-sourcing is the point of the precedent); `keeper_spread` gets a
    group-neutral name at lift time; lift from CURRENT main (4.46.0 modified that
@@ -618,6 +952,10 @@ locked in code before the owner run; verdicts to `docs/research/gkdv_v1/`.
    supportive-only; each arm is an independent pre-registered hypothesis (no
    family-wise claim from the battery).
 3. **Conceded-xG correlation**: exploratory, reported-not-gated (1–7 matches/keeper).
+   **[AMENDED 2026-07-18]** This is the harness's ONLY external outcome axis, and §6.4
+   makes the axis question first-order — so it can no longer carry the whole burden of
+   "does this arm relate to anything outside the model family". §6.4's Layer 2 supplies
+   a properly powered, model-free external test; §6.3 stays exploratory as written.
 
 Domain-shift caveats stated in the reports: (a) if the paired test keeps GS out of
 training, GKDV scores GS frames with SC+IDSSE-trained ghost/attempt models; (b) the
@@ -629,6 +967,285 @@ and truncating training at 30 m biases the ghost conservative — which INCREASE
 |ghost − actual| for aggressive keepers and so preserves the expected-sign test's
 direction, at the cost of the panel's most extreme frames being the least-trusted
 ghost outputs.
+
+### [AMENDED 2026-07-18] 6.4 Separating H1 from H2 — PROPOSED, needs sign-off before registration
+
+> **Review status**: this subsection is NEW and is the one part of this amendment that is
+> a *design proposal* rather than a correction of record. It registers new constants and
+> proposes amending shipped routing. **It must be signed off before any constant is
+> written into code** — that is the whole point of pre-registration.
+> **Review round 2 (2026-07-18) applied**: the outcome definitions were corrected again —
+> `Y_attempt`'s labeller citation was a phantom (N2), `Y_far_attempt` is now an explicit
+> PARTITION so the coherence arithmetic holds on multi-attempt spells (N4), `D` is
+> landmark-defined rather than cohort-derived (N5), and **Layer 2 is NOT constructible from
+> the shipped builder surface — it needs one additive `causal/` field, now scoped to
+> PR-3b** (N1). **Layer 4 moved OUT of this subsection's PR-3b scope into PR-3** (N3(a)),
+> because it guards §6.1's ICC, which ships in PR-3.
+> **Review round 1 (2026-07-18) applied**: the decider's outcome was re-specified after a
+> post-treatment-conditioning error was found in it (B1 — see the callout in Layer 2);
+> Layer 0 gained a training-support precondition (S1); Layer 2 gained a positive control,
+> an overlap diagnostic and a stated estimand (S5); three constants are marked as
+> **placeholders requiring derivation** (S4); the table's precedence is now test-mandated
+> (S2); and the velocity-variant contradiction with §4.5 is resolved in favour of gating
+> (S3). **Still unsigned-off.**
+
+**The problem.** §6.1–6.3 measure whether the *physics arms* discriminate keepers. The
+attempt arm is adjudicated somewhere else entirely — by `evaluate_xs_probe`, a pooled
+median-magnitude/ratio/dose statistic that **never groups by keeper**. So the two arms are
+judged by different instruments, on different statistics, with different groupings, and no
+comparison between them is licensed. Worse, `regate_verdict` structurally encodes **H1**:
+its `fail` row routes unconditionally to "GK feature engineering", and the function's
+signature `(arm, probe_verdict, entanglement)` has no input through which **H2** could ever
+be expressed. As written, this cycle *cannot* return "the axis is wrong" — only "the
+features are thin". Given §3.1's confirmed 2-of-27 feature channel, that is a live risk of
+mis-diagnosis, not a philosophical worry.
+
+**The design principle.** A flat attempt-model probe is **inadmissible** as evidence about
+the world, because it is predicted by the feature contract. H2 must therefore be reachable
+ONLY through a **model-free** test, never from a flat xS or xCross reading. Everything
+below follows from that one commitment.
+
+**Layer 0 — instrument validity, fires before every other gate.** Evaluate each channel at
+three doses on the same frames: *realistic* (ghost − actual, |δ| ≥ 2 m, trusted stratum),
+*ladder* (the existing `XS_PROBE_DOSE_LADDER`), and **saturating** (keeper → goal-line
+centre; keeper → goal-relative x = 30 m — both inside the ghost training hull). Registered
+rule, per arm independently: if the saturating median |Δ| is not ≥ 5× that arm's own
+realistic median **and** not > that arm's own placebo p95 → **`instrument_void`**. This is
+the answer to the shared-low trap: it converts "everything read low" from a threshold
+judgement into a named diagnosis. An instrument that cannot respond to a keeper teleported
+onto his own goal line is broken, and no hypothesis claim may be made from it.
+
+> **[REVIEW ROUND 1 — S1 accepted: the saturating dose can void a HEALTHY instrument.]**
+> "Inside the ghost training hull" is the wrong support test, because **the ghost's hull is
+> not the attempt models' support.** xS/xCross are boosted trees — piecewise-constant and
+> flat-extrapolating — so if the xS training corpus holds few attacking-third frames with
+> the keeper on his own goal line, the tree returns its nearest leaf and the response is
+> flat **for coverage reasons, not brokenness**. Row 0 would then fire `instrument_void` on
+> a working instrument and halt all H1/H2 inference. This is the same OOD-vs-defect
+> confusion §3.1 is careful about everywhere else. **Required:** register a
+> training-support diagnostic at each imposed position (e.g. the count/fraction of training
+> frames within a neighbourhood of the imposed GK location) and make row 0 **conditional on
+> adequate support**. Where support is inadequate the verdict is
+> **`saturating_dose_unsupported`** — a distinct outcome routing to corpus/sampling work —
+> NOT `instrument_void`.
+
+**Layer 1 — responsiveness, comparable but NOT decisive.** Run every channel under two
+registered regimes, assigned in advance so they cannot be swapped post hoc: **Regime I**
+(imposed dose — the discriminating regime) and **Regime O** (observed ghost — the shipped
+metric). Compute one dimensionless statistic per channel by reusing the shipped idiom
+verbatim (`gk_med ≥ RATIO × max(nd_med, placebo_p95)`), extended to the physics arms with
+**paired-vector controls** (nearest defender + R random outfielders displaced by the
+identical per-frame vector). **No cross-axis magnitude comparison, ever** — an
+attempt-probability delta and a square-metre delta are not commensurable, and
+z-normalising them is a category error. Record that as a stated non-goal in the ADR.
+
+**Layer 2 — THE DECIDER: model-free treatment, two outcomes, one matched sample.** This is
+the only construction in which H1 and H2 make *opposite* predictions.
+- **Treatment**: keeper depth at final-third-spell entry, binarised at goal-relative
+  **x = 16.5 m — the penalty-area line**. Law-defined, data-independent, provably untuned.
+  (A ghost-model-derived treatment was considered and rejected: it would trust the very
+  model whose blindness is in question.)
+- **Outcomes**, estimated on the SAME matched sample with the SAME estimator. **BOTH ARE
+  UNCONDITIONAL — defined on every spell, nothing conditioned on a post-treatment
+  variable.**
+  - `Y_attempt` = 1 if a shot attempt occurs in the spell, else 0. **[REVIEW ROUND 2 — N2]
+    Produced by `causal.opportunities._label_outcome`, configured via `OpportunityConfig`
+    — NOT by `_occurrence_labels`.** The earlier citation `causal/_occurrence_labels` was
+    a phantom on both counts: no such module exists in `causal/`, and the real
+    `silly_kicks/tracking/_occurrence_labels.py::_build_occurrence_labels(frames_index,
+    events, *, horizon, frame_team_col, …)` is a **frames-level** label builder for
+    TRAINING the xS/xCross occurrence models — a different package, a different grain, and
+    a different purpose. Wiring it into a spell-level causal ATT would be exactly the class
+    of error §3.5's `_validate.py`-vs-`_model_eval.py` catch exists to prevent. Do not
+    restore the old pointer.
+  - `Y_close_attempt` = 1 if an attempt occurs in-spell **whose SPADL origin
+    (`start_x`,`start_y`) lies within D metres of the attacked goal centre** (action-LTR:
+    `hypot(105 − start_x, 34 − start_y) ≤ D`), else 0 — **and 0 also when no attempt occurs
+    at all.**
+  - **[REVIEW ROUND 2 — N4] `Y_far_attempt` := `Y_attempt ∧ ¬Y_close_attempt`** — stated as
+    an explicit PARTITION, not "the complement". Reported coherence check, not a gate: if
+    `Y_attempt` is null while `Y_close_attempt` is negative, `Y_far_attempt` must be
+    correspondingly positive — attempts displaced outward, not destroyed; close AND far
+    both negative under a null total is incoherent and voids the read. The partition
+    definition is load-bearing because **multi-attempt spells are real here** (§3.3
+    explicitly contemplates rebounds and shot flurries, which is why the outcome window was
+    re-registered twice): under the looser reading "an attempt occurs beyond D", a spell
+    containing both a close and a far attempt would count in BOTH indicators, so
+    `ATT(close) + ATT(far) ≠ ATT(attempt)` and "correspondingly positive" would not be
+    licensed arithmetic.
+  - **No xG** — silly-kicks ships no xG model and the decider must not depend on an
+    unvalidated external artifact. Secondaries reported only:
+    `shot_on_target_derived`, TF-48 `shot_crossing_y/z`.
+  - **[REVIEW ROUND 2 — N1: this outcome is NOT constructible from the shipped builder
+    surface. Layer 2 DOES reopen `causal/`, by one additive field.]** `_label_outcome`
+    (`causal/opportunities.py`) filters on `game_id`, `period_id`, `team_id`, `type_id`, an
+    optional `result_id` and the time window — **there is no spatial predicate**, and
+    `OpportunityConfig` exposes **no location axis** (its fields are types, result ids,
+    window seconds, anchor-inclusivity, exposure/spell seconds, confounders, gk_block,
+    `domain` (a SPELL domain, not an outcome filter), and extractor — all verified in
+    source). `Y_close_attempt` therefore requires outcome geometry INSIDE the labeller.
+    Required work, and it belongs to **PR-3b**:
+    1. add `outcome_max_distance_m: float | None = None` (None = legacy, no spatial
+       filter) to `OpportunityConfig`, plus the corresponding geometry in `_label_outcome`;
+    2. default it so `xcross_config()` / `shot_arm_config()` stay **byte-identical** — the
+       existing `config=None` regression guard already covers this;
+    3. list it in §9's PR-3b scope (done).
+    **Why this was missed, worth recording:** round 1's B1 fix CAUSED it. The original
+    `Y_quality` was a distance measured on the anchor shot's own `start_x/start_y` —
+    computed OUTSIDE the builder, needing no builder support — so §2.2's "constructible
+    purely as builder arguments" claim was TRUE when written. Replacing it with an
+    unconditional spatially-filtered *indicator* pushed the geometry inside
+    `_label_outcome`. **Two correct fixes, taken together, broke a third claim** — and the
+    claim had been verified at the level of "the config class exists with a full surface"
+    rather than "can it express THIS outcome". That is round 1's own rule (quote the
+    assertion body, not the registration) applied to a config surface.
+  - **[REVIEW ROUND 2 — N5] `D` is LANDMARK-defined, not cohort-derived.** Registered
+    primary: **D = 16.5 m**, the penalty-area line — the same Law-defined landmark as the
+    treatment, keeping the ENTIRE decider data-independent, and approximating the
+    inside/outside-the-box distinction that shot-quality analysis conventionally uses.
+    Registered robustness leg: **D = 11 m** (the penalty spot), reported alongside. The
+    earlier "derive from a cohort quantile" instruction is **withdrawn as the primary**:
+    although a marginal quantile is treatment-blind and outcome-contrast-blind (so it was
+    not p-hacking), it would have been the *only* constant in the decider that is not
+    landmark-defined, and it sits on the row that decides H2. The observed close/far split
+    at both radii is still **REPORTED**, as a non-degeneracy diagnostic — never as the
+    means of choosing D.
+
+  > **[REVIEW ROUND 1, 2026-07-18 — B1 accepted; this replaced a mis-identified outcome.]**
+  > The original draft used `Y_quality` = shot distance from goal centre **conditional on
+  > an attempt occurring**. That is a **post-treatment conditioning error**: `attempt` is a
+  > descendant of the treatment, so `E[Y_quality | Z=1, attempt=1] − E[Y_quality | Z=0,
+  > attempt=1]` is not a causal effect of keeper depth on shot quality no matter how well
+  > the confounders are adjusted — it is contaminated by selection into the attempt
+  > stratum. The failure mode points the WRONG WAY and manufactures H2's signature: if a
+  > high keeper suppresses marginal (low-quality) attempts, then among *realised* attempts
+  > the treated group is selected toward higher quality, so a quality "effect" appears with
+  > zero causal effect on quality. Worse, row 7's own precondition springs the trap — a
+  > null `Y_attempt` means "not detectably different from zero", not "zero", and the
+  > selection bias scales with the TRUE attempt effect, not the detected one. So the row
+  > most likely to fire was exactly the row where conditioning looks harmless. The
+  > registered negative control does not cover this (it detects confounding, not
+  > post-treatment selection), and neither Layer 0 nor Layer 3 touches it.
+  > The unconditional joint outcome above is also a **better statement of H2**: the
+  > hypothesis's own mechanism — "the attempt is made anyway from a worse position" —
+  > predicts precisely `Y_attempt` null AND `Y_close_attempt` negative.
+  > If a continuous distance measure is still wanted, keep it as a **reported secondary
+  > with an explicit selection caveat**, or add Lee bounds; it must never be the outcome
+  > row 7 fires on.
+- **Estimator**: `causal/matching.py` ATT + Abadie–Imbens SEs, cluster-aware
+  `placebo_shift` at match level. All shipped, unchanged.
+- **Confounders**: defensive line height and compactness (`compute_defensive_line`, TF-14
+  — the dominant confound: a high line both invites attempts and permits a high keeper);
+  score differential and time remaining; ball r/θ to goal; defenders between ball and goal;
+  carrier pressure (`bekkers_pi`); team fixed effect or a within-match estimand.
+- **Negative control**: the identical ATT with an outcome the keeper's entry position
+  cannot influence (e.g. a throw-in conceded by the attacking team in-window). If it fires,
+  the world test is confounded and the whole leg is VOID.
+- **[REVIEW ROUND 1 — S5 accepted] POSITIVE control + overlap + estimand, all required.**
+  As drafted, the DECIDER had weaker instrument validation than the arms it adjudicates —
+  §3.1 mandates a full discriminating-power meta-test (planted model must pass, GK-blind
+  model must fail) and §3.3 mandates a known-truth positive control, while Layer 2 had only
+  a negative control. Hold Layer 2 to §3.1's standard:
+  (i) a **planted-effect fixture the ATT must DETECT** — a synthetic cohort with a known
+  keeper-depth effect on each outcome, red-first, mirroring `tests/causal/`'s known-truth
+  gates; (ii) a **positivity/overlap diagnostic on the 16.5 m binarisation** (propensity
+  overlap + standardised mean differences before/after matching, the ADR-015 idiom already
+  used by the xCross causal harness — a treatment split with no overlap silently estimates
+  nothing); (iii) an explicit statement of the **target population** the ATT estimates over
+  (treated spells, i.e. high-keeper entries), since that is what the verdict generalises to.
+  §7's rule applies verbatim: every counterfactual needs a non-vacuity assertion that it
+  actually moved something.
+
+**Layer 3 — remedy routing, and it runs FIRST because it is nearly free.** A
+*feature-headroom probe*: append the GK to the xS defender array, recompute
+`openGoal_with_GK` and `DefDist_0_with_GK`, and measure how far the ghost substitution
+moves those **feature values**. Pure geometry, no fitting, no GPU. Registered threshold:
+median |Δ openGoal_with_GK| ≥ 0.02 **(PLACEHOLDER — must be derived before registration;
+see the derivation duty below)**. This answers "is there anything for a retrained model
+to see?" before a GPU is booked.
+
+**Layer 4 — behavioural anchoring (the guard the sibling metric's failure teaches).**
+**[REVIEW ROUND 2 — N3(a): Layer 4 SHIPS IN PR-3, not PR-3b, despite living in this
+subsection.]** It gates a **PR-3** deliverable — §6.1's ICC is the PRIMARY criterion and
+ships in PR-3 — so leaving Layer 4 in PR-3b would have PR-3 ship the primary criterion
+without the guard this spec says must precede its interpretation, and anyone running §6.1
+between the two PRs would get a number the spec forbids interpreting, with nothing saying
+so. Layer 4 is also the cheapest item in §6.4 (terciles plus a mean-signed-δx comparison —
+no causal machinery, no new constants beyond the 0.5 m separation). It therefore moves into
+PR-3 alongside the ICC it guards.
+Before ANY ICC is interpreted: split keepers into terciles by arm value; the top and bottom
+terciles must differ in mean signed goal-relative δx by ≥ 0.5 m. If they do not, the arm is
+not tracking a behaviour keepers actually vary, and its ICC is reported **`uninterpretable`**
+rather than as evidence. This is precisely the check that would have caught a metric
+rewarding a behaviour elite practitioners do not perform.
+
+**Pre-registered decision rule** — pure function `gkdv_discrimination_verdict(...)` in
+`gkdv/_validate.py`, parametrized-tested over every row (the `regate_verdict` discipline).
+Evaluated strictly in order; the first firing row returns. `live` ≡ `|ATT|/SE ≥ 2` AND
+`|ATT| >` its own match-clustered placebo p95.
+
+| # | condition | verdict | routing |
+|---|---|---|---|
+| 0 | any arm's saturating positive control dead | `instrument_void` | fix the instrument; no H1/H2 claim |
+| 1 | physics arm fails tercile separability (≥0.5 m) | `arm_not_behaviourally_anchored` | redesign the arm; do NOT report its ICC |
+| 2 | zeroed-velocity variant flips the ratio | `physics_velocity_confounded` | re-run under the registered velocity policy — **[REVIEW ROUND 1, S3] this is GATING, and §4.5 is amended to match** |
+| 3 | negative-control outcome significant | `world_test_confounded` | redesign Layer 2; H2 neither supported nor refuted |
+| 4 | max ratio < 2.0 on every channel at **imposed** dose | `dose_inadequate` | ghost/sampling work; evidence for nothing |
+| 5 | matched n < N_min **(PLACEHOLDER — derive; see below)** OR plasmode power < 0.80 at ICC 0.015–0.026 | `underpowered` | a null here is NOT evidence |
+| 6 | `Y_attempt` live | **`H1_supported`** | GK feature engineering, **scoped by Layer 3**: headroom ≥0.02 → costed retrain; <0.02 → `H1_supported_remedy_exhausted`, escalate model class |
+| 7 | `Y_attempt` null AND `Y_close_attempt` live-negative (coherence check passes) | **`H2_supported`** | **retire Δattempt from GKDV; ship the physics/quality arms; amend the TF-19 definition.** NOT "fixable by features" |
+| 8 | both null, instrument live, powered | `construct_falsified` | the deterrent construct is refuted at realistic dose — a publishable result |
+| 9 | both live | `both_axes_live` | composition gets its own spec |
+| 10 | otherwise | `indeterminate` | enumerated; no silent fallthrough |
+
+**Registered asymmetry — the single most important line in this subsection.** H2 is
+reachable **only** through row 7. It can never be inferred from a flat xS or xCross probe,
+because §3.1's feature contract predicts that flatness. Encode this as a named constant
+with a docstring citing the GK-excluded defender array.
+
+**Registration disclosures** (the ADR-036 honesty discipline, applied to ourselves):
+- Do **NOT** touch `TF19_PROBE_ABS_FLOOR`. 4.51.0's `gated_clean_fail` stands as the
+  shipping gate. Any new floor is a *separately named* GKDV criterion.
+- If a base-rate-relative criterion is registered, **disclose in the same commit** what it
+  would do to the already-recorded verdict, and record the incommensurability it exposes:
+  a fixed 0.01 floor is ~32% of xCross's positive rate but ~4.6% of xS's, and the xS rule
+  carries no absolute floor at all — so any side-by-side presentation of the two arms'
+  numbers is misleading without that note.
+- **`regate_verdict`'s routing needs amending** (ADR-037): `gated_clean_fail` must stop
+  routing *unconditionally* to GK feature engineering, since that hard-codes H1.
+- Pin the resolved xgboost version into the probe artifact and schema-assert it — the
+  2.x/3.x `base_score` divergence PR-2 guarded makes an unpinned probe number non-citeable.
+
+**[REVIEW ROUND 1 — S4 accepted] DERIVATION DUTY: three constants are placeholders and
+must be derived from measured quantities BEFORE registration.** This spec is otherwise
+rigorous about deriving thresholds (the ICC band ← §1.3's measured 0.015–0.026; the 2 m
+dose ← the ghost's ~1.1 m MAE), and §1.3's own lesson is that *absolute-effect floors must
+be calibrated to the intrinsic magnitude of the quantity before registration*. These three
+were stated bare and are not yet registrable:
+- **`N_min`** (row 5): derive from the plasmode simulator — it already generates real
+  strided frames with injected effects; report the matched-n at which ATT power reaches
+  0.80 at the ICC anchor, and register THAT.
+- **`median |Δ openGoal_with_GK|` threshold** (Layer 3): **state `openGoal`'s units and
+  observed range first** (a reader cannot currently tell whether 0.02 is generous or
+  unreachable), then set the threshold as a stated fraction of that range.
+- ~~**`D`** (the `Y_close_attempt` radius): derive from a cohort quantile.~~
+  **[REVIEW ROUND 2 — N5: WITHDRAWN.]** `D` is now landmark-defined (16.5 m primary, 11 m
+  robustness leg) and is therefore NOT a placeholder — see Layer 2. It is listed here only
+  so the change is visible from the derivation duty. The close/far split remains a
+  reported non-degeneracy diagnostic.
+
+**Sequencing consequence.** Run Layer 3 (geometry only) and Layer 2 (model-free, shipped
+`causal/`) **before** booking the GPU. Either may settle its question outright, and if both
+land first the owner run *confirms* rather than *discovers* — the condition under which
+pre-registration is worth anything.
+
+**[REVIEW ROUND 1 — S2 accepted] The table's PRECEDENCE must be tested, not just its rows.**
+"Parametrized-tested over every row" pins each row's mapping; it does NOT pin the ordering,
+and the conditions genuinely overlap (rows 4 and 5 can both hold; rows 1–2 can co-fire with
+6–7). Add precedence tests built on inputs that satisfy **≥2 rows simultaneously**,
+asserting the earlier row wins. The same duty applies to §3.5's table wherever its rows can
+co-fire. This is the difference between "the table is tested" and "the table's semantics
+are tested".
 
 ---
 
@@ -680,6 +1297,29 @@ ghost outputs.
   recreate it).
 - **Slow-marking**: ADR-023 discipline — platform-invariant smokes/parity may be
   `slow`; golden/numeric and cheap behavioral contracts run on all legs.
+- **[REVIEW ROUND 2 — N3(b)] THIS LIST SPANS BOTH PRs AND MUST BE PARTITIONED.** As
+  written it reads as one undifferentiated block, so a PR-3 author will take all of it as
+  scope. Label every bullet **PR-3** or **PR-3b** at plan time. The split follows the §9
+  item-4 registration: probe meta-test, planted-polarity arm fixture, shared-cache guard,
+  chirality guard, planted-ICC chain, Layer-4 anchoring tests, `provenance_to_targets`
+  contract tests, and the Examples/`_PUBLIC_MODULE_FILES` registration → **PR-3**;
+  `gkdv_discrimination_verdict` row + PRECEDENCE tests, Layer-0 saturating-dose and
+  support-diagnostic tests, Layer-2 planted-effect positive control and overlap diagnostic,
+  Layer-3 headroom probe tests, and the `causal/` legacy-byte-identity check → **PR-3b**.
+  Note the both-sides-band amendment below deliberately spans both.
+- **[AMENDED 2026-07-18] The non-vacuity mandate has a hole at the two §6 statistics that
+  lack a planted counterpart, and it is the anti-conservative direction that is missing.**
+  The match-block null is currently exercised only in the DETECT direction (a planted-ICC
+  fixture must separate *above* the band). There is **no test that the band is correctly
+  SIZED** — i.e. that a genuine no-effect fixture lands *INSIDE* it. Without that, an
+  anti-conservative band ships undetected, which is the exact hazard §6.1 spends a
+  paragraph justifying the match-block design against ("a guaranteed-significant
+  instrument"). Add the null-direction test: no-effect fixture ⇒ inside the band. The same
+  applies to §6.4's placebo bands. **Rule of thumb this cycle keeps re-learning: every
+  band needs a test from BOTH sides, and every counterfactual needs a non-vacuity
+  assertion that it actually moved something** — four separate silent-null defects across
+  this programme (a y-inversion, a fabricated grid origin, an identity-keyed cache, and a
+  mirrored external-provider event frame) have all had this shape.
 
 ## 8. Error handling
 
@@ -687,6 +1327,21 @@ Fail-loud: unfitted/missing `ExpectedThreat` or ghost model; all-null
 `team_attacking_direction` (raise, route caller to the ADR-029 orient helpers);
 two-team guard. Degrade-with-report: zero eligible frames → empty result + report;
 `[das]` absent → DAS arm skipped-with-report; high drop rates warn and are tallied.
+
+**[AMENDED 2026-07-18] Degrade-gap: the ARMS have no "unmeasurable at this dose" analogue.**
+§8 covers *zero eligible frames*, and §3.1 gives the probe an explicit floor-and-return for
+a degenerate counterfactual — but the arms have no run-level guard. A run whose ghost
+displacements are all ≈0 produces arm values ≈0, a full report, and **no warning**; §5's
+minimum-nonzero-observation rule gates keeper *inclusion*, not the run verdict. That is the
+§1.3 support-check lesson in a new place, and it is the same silent-null shape as everything
+else this amendment corrects. Add a run-level degrade verdict for the arms mirroring the
+probe's, and note it composes with §6.4 Layer 0 (which catches the stronger case where even
+a *saturating* dose fails to move the arm).
+**[REVIEW ROUND 2 — N3(c)] What PR-3 ships ALONE**: the run-level arm degrade verdict, on
+the OBSERVED ghost displacements only — **without** the Layer-0 saturating-dose check,
+which lands in PR-3b. So between the two PRs the guard catches "the ghost barely moved" but
+NOT "the arm cannot respond even to a teleported keeper". PR-3's reports must say so rather
+than implying full instrument validation.
 
 ---
 
@@ -722,14 +1377,117 @@ ADR-037 is free, the TODO line-28 collision is resolved, and the
    rule: gkdv tests assert numerics against SYNTHETIC/fixture models only, never the
    bundled `default` weights (else green/red depends on PR-2 merge order); version and
    ADR numbers resolve by rebase order at release time per the no-reservation policy.
+   **[AMENDED 2026-07-18] Keep the parallelism rule; its rationale changed but did not
+   expire.** As a *sequencing* constraint it is spent — PR-2 has merged. As a *design
+   principle* it must be RETAINED, for three reasons this document could not have known:
+   (a) the `sc_extended` variant is **HF-only and the Hub repos do not exist yet**, so any
+   test pinning a non-default variant is still order-dependent on an owner upload;
+   (b) PR-2's `load()` chirality enforcement is **fail-closed**, so a test touching
+   bundled weights now couples gkdv's CI to artifact metadata integrity; (c) the bundled
+   weights will move again if the attempt track routes to GK feature engineering.
+   Synthetic/fixture models keep gkdv's suite independent of all three.
+   **[REVIEW ROUND 1 — B2 accepted: §6.4 roughly DOUBLED this item's scope and the
+   sequencing was never amended to match. PR-3 is therefore SPLIT.]** §6.4 adds, all
+   nominally inside "validation code": Layer 0 saturating-dose machinery per arm; Layer 1
+   dual-regime responsiveness with paired-vector controls extended to the physics arms;
+   Layer 2, a complete causal study (treatment, two outcomes, estimator config, six
+   confounder families, negative AND positive controls, overlap diagnostic); Layer 3 a
+   feature-headroom probe; Layer 4 tercile anchoring; an 11-row
+   `gkdv_discrimination_verdict` with precedence tests; and a plasmode power simulator.
+   That is a second PR's worth of work — and §6.4 is explicitly **unsigned-off**, so it
+   cannot gate the package landing. Registered split:
+   - **PR-3 (package)**: `gkdv/` skeleton, `_engine.py` (incl. the named
+     `provenance_to_targets` adapter + its contract tests), the three `_ghost_gk` serving
+     seams, `_arms.py`, `_metric.py`, the `_group_metrics.py` lift, **§6.1–6.3 validation**,
+     **plus §6.4 Layer 4 (behavioural anchoring) — [REVIEW ROUND 2, N3(a)] it guards §6.1's
+     ICC, which ships here, and is the cheapest item in §6.4**, tests, NOTICE, C4.
+   - **PR-3b (discrimination harness)**: §6.4 Layers **0–3** + `gkdv_discrimination_verdict`
+     (incl. its precedence tests) + the derived constants, **after sign-off** —
+     **plus [REVIEW ROUND 2, N1] the one additive `causal/` field
+     `OpportunityConfig.outcome_max_distance_m` + its `_label_outcome` geometry +
+     the byte-identical-legacy regression check**, which no earlier scope listed. The owner
+     validation run and PR-4 follow PR-3b, not PR-3 — Layers 2 and 3 are the cheap decisive
+     experiments and must precede the GPU booking (§6.4 sequencing).
+   - **[REVIEW ROUND 2 — N6] Both PRs write `gkdv/_validate.py`.** PR-3 ships the §6.1–6.3
+     constants (and Layer 4's) there; **PR-3b EXTENDS that module, it does not rewrite it**,
+     and the constants PR-3 froze stay **byte-identical**. Stated explicitly because §3.5's
+     amendment already had to warn against a PR author re-homing an
+     already-frozen verdict function.
 5. **Owner validation run → PR-4**: `docs/research/gkdv_v1/` findings, gate verdicts,
    TODO/ADR amendments. If the re-gate passed, the Δattempt arm gets its own follow-up
    spec (composition + outcome-value weighting are NOT designed in this cycle).
+
+### [AMENDED 2026-07-18] 9.1 Status, TODO obligations, and a live collision risk
+
+**Status.** Items 1–3 are DONE (PR-1 = 4.47.0; DGX retrains; PR-2 = 4.51.0). Of item 2's
+owner runs, the retrains, the frozen xCross probe re-run and both causal arms have run;
+**only the xS dose-banded probe remains, and it is PR-3-gated** exactly as item 2
+anticipated. Items 4–5 are the remaining work.
+
+**TODO.md obligations for PR-3** (house rule: no standalone doc commits, so these fold
+into the code PR):
+- **Line 50 (GKDV research-program paragraph) carries stale PRE-retrain gate numbers**:
+  it still says the re-gate is "in flight (PR-S114)" and quotes median `0.00107`,
+  "2.59× the nearest-defender control", "misses the absolute floor by ~10×". The
+  authoritative post-PR-2 figures are `0.009697`, ratio ≈2.21×, and a ~10% *relative*
+  miss on the floor prong alone. Keep "the xS arm has never been measured at all" — it
+  is still true — but re-scope it to **PR-3-gated** rather than merely pending.
+- **Lines 58–68 (the known-failure `test_xshot_gradientsports_e2e` entry) have met the
+  entry's own stated removal condition** — it was re-run on 4.51.0 on 2026-07-18 and
+  **PASSED** (1021 s). Remove it, but **record the caveat rather than deleting silently**:
+  the run used local xgboost 2.1.4 while the artifact was produced under 3.2.0, and PR-2
+  shipped a `base_score` 2.x/3.x guard for exactly that skew — so state the xgboost
+  version the pass was obtained under.
+- Header "Current release: silly-kicks 4.50.0" → 4.51.0; the "98 owner-tier SkillCorner
+  matches" entry should become "weights landed 4.51.0; `sc_extended` is HF-only and the
+  Hub upload is the remaining owner action"; the TF-19 entry proper still describes the
+  validation strategy as needing design.
+
+**⚠ COLLISION RISK — highest-severity, needs user mediation before PR-3 starts.** A
+parallel session is taking items from TODO.md's *Course-derived candidates* table. Its
+**"Course-derived validation/QA bundle"** row overlaps PR-3 directly:
+- item (f) proposes adding xGChain "as a near-zero-cost extra baseline for the xT-GK v2
+  construct-validity harness" — that harness is **`scripts/xtgk_v2_keeper_discrimination.py`**,
+  the exact file §6.1 mandates re-pointing at the new `silly_kicks/_group_metrics.py`, in
+  the same PR as the lift;
+- item (c) builds on `silly_kicks/_calibration_metrics.py`, the named precedent the
+  `_group_metrics.py` lift is modelled on.
+Two sessions editing the same script — one re-homing its functions, one adding a baseline
+to it — is a merge conflict on a file whose whole point is single-sourcing. §6.1 already
+requires re-confirming via the user if another xtgk cycle is in flight when PR-3 starts;
+**this is that condition, and it is met.** Resolve ownership of that file before PR-3
+touches it.
+
+**⚠ [REVIEW ROUND 1 — B3] SECOND COLLISION, measured, and this spec could not see it: the
+C4 `tracking` box.** The parallel session is executing **PR-S119** (real-xT EPV wiring +
+TF-35 run valuation, targeting 4.52.0). It adds a new `add_*` aggregator
+(`add_off_ball_run_values`) and its release task takes the C4 count **29 → 30**. Measured
+on the current DSL: the `tracking` container description is **191/200 characters** and
+contains the literal `29 action-coupled aggregators`; two other boxes are at **exactly
+200**. Therefore **both PRs must edit the same near-cap string**: PR-S119 changes 29→30
+(net zero characters), while TF-19 PR-3 must fit a gkdv reference into **9 characters of
+headroom**. The conflict is a merge conflict on a **gate-enforced** line where resolution
+is NOT mechanical — whoever lands second must decide which of the other session's prose to
+delete in order to fit, under a red CI gate.
+Smaller shared surfaces between the two PRs: both append to
+`tests/test_public_api_examples.py::_PUBLIC_MODULE_FILES` (trivial conflict, but both must
+expect it), and both take a next-free version number (no-reservation policy, so fine).
+**Recommended resolution — needs the owner, alongside the collision above**: agree a merge
+ORDER, and agree that whoever lands second **re-derives the aggregator count and re-trims
+the box**, rather than either session pre-writing a number.
 
 ---
 
 ## 10. Out of scope / deferred
 
+- **[AMENDED 2026-07-18] `openGoal` keeper-exclusion**: §3.1 records that the xS
+  `openGoal` feature and all 10 `DefDist`/`DefAngle` pairs are computed from a
+  GK-EXCLUDED defender array, which is both the mechanical cause of the 2-of-27 channel
+  and arguably physically wrong (a keeper on his line does not reduce "open goal").
+  Changing it is a **feature-contract change requiring a full ADR-011 retrain cycle** and
+  is explicitly NOT in PR-3. It is the first-named target if §6.4 returns
+  `H1_supported` with headroom ≥ 0.02. Tracked here so the finding is not lost between
+  cycles.
 - **key_pass arm**: no P(key_pass) model exists and "key pass" is not a SPADL type; a
   derived-label xKeyPass sibling is a full ADR-011 lifecycle — explicitly deferred,
   tracked in the TODO entry.

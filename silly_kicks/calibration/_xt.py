@@ -60,9 +60,29 @@ class FrozenXt:
     def manifest(self) -> dict:
         """Provenance dict for the report (§6 R3) — JSON-serialisable, no grid payload.
 
+        The grid itself is deliberately absent: the manifest goes into the calibration
+        report, where what matters is WHICH grid was used (``sha256``) and what it was fit
+        on, not the values. ``n_excluded`` is the H2 audit number — the count of calibration
+        matches actually removed from the corpus, which is what makes the no-leak claim
+        checkable after the fact rather than merely asserted.
+
         Examples
         --------
-        >>> # frozen.manifest()["sha256"]  # doctest: +SKIP
+        >>> from silly_kicks.calibration._xt import FrozenXt
+        >>> from silly_kicks.xthreat import ExpectedThreat
+        >>> frozen = FrozenXt(
+        ...     xt=ExpectedThreat(),
+        ...     source="bronze.spadl_actions",
+        ...     corpus_match_ids=("g1", "g2"),
+        ...     n_excluded=1,
+        ...     fit_date="2026-07-18",
+        ...     grid_shape=(16, 12),
+        ...     sha256="ab12",
+        ... )
+        >>> frozen.manifest()["n_corpus_matches"]
+        2
+        >>> "xt" in frozen.manifest()  # the grid never enters the report
+        False
         """
         return {
             "source": self.source,
@@ -93,7 +113,29 @@ def fit_frozen_xt(
 
     Examples
     --------
-    >>> # fit_frozen_xt(corpus, exclude_match_ids={"g1"}, source="x")  # doctest: +SKIP
+    Fit once on a corpus that excludes every calibration match, then reuse the frozen grid
+    for every match / fold / trial in the study::
+
+        frozen = fit_frozen_xt(
+            corpus_actions,
+            exclude_match_ids={m.match_id for m in calibration_matches},
+            match_id_col="game_id",
+            source="bronze.spadl_actions",
+            fit_date="2026-07-18",
+        )
+        assert frozen.n_excluded == len(calibration_matches)  # H2 audit
+
+    The exclusion FAILS CLOSED rather than no-opping, because an exclusion that silently
+    matched nothing is indistinguishable from no exclusion at all — and would put the
+    held-out matches straight back into the grid:
+
+    >>> import pandas as pd
+    >>> from silly_kicks.calibration._xt import fit_frozen_xt
+    >>> corpus = pd.DataFrame({"game_id": ["g1", "g2"]})
+    >>> fit_frozen_xt(corpus, exclude_match_ids={"g3"}, source="demo")  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    ValueError: xT-corpus exclusion is unsafe: 1/1 calibration match ids were NOT found...
     """
     excluded = {str(m) for m in exclude_match_ids}
     corpus_ids = {str(m) for m in corpus_actions[match_id_col].unique()}
@@ -129,9 +171,32 @@ def fit_frozen_xt(
 def save_xt(frozen: FrozenXt, path: str | Path) -> None:
     """Serialise a ``FrozenXt`` to ``path`` (npz grid + JSON-sidecar provenance in one file).
 
+    ONE file, two arrays: the grid and the manifest as embedded JSON. Keeping the provenance
+    inside the artifact is what lets :func:`load_xt` re-check the checksum against the grid
+    it actually loaded — a sidecar the caller could lose or swap would make that check
+    meaningless.
+
     Examples
     --------
-    >>> # save_xt(frozen, "calibration_xt.npz")  # doctest: +SKIP
+    >>> import pathlib, tempfile
+    >>> import numpy as np
+    >>> from silly_kicks.calibration._xt import FrozenXt, save_xt
+    >>> from silly_kicks.xthreat import ExpectedThreat
+    >>> xt = ExpectedThreat()
+    >>> xt.xT = np.zeros((16, 12))
+    >>> frozen = FrozenXt(
+    ...     xt=xt,
+    ...     source="bronze.spadl_actions",
+    ...     corpus_match_ids=("g1",),
+    ...     n_excluded=0,
+    ...     fit_date="2026-07-18",
+    ...     grid_shape=(16, 12),
+    ...     sha256="ab12",
+    ... )
+    >>> path = pathlib.Path(tempfile.mkdtemp()) / "calibration_xt.npz"
+    >>> save_xt(frozen, path)
+    >>> sorted(np.load(path, allow_pickle=True).files)
+    ['meta_json', 'xT']
     """
     meta = frozen.manifest()
     np.savez(
@@ -144,9 +209,36 @@ def save_xt(frozen: FrozenXt, path: str | Path) -> None:
 def load_xt(path: str | Path) -> FrozenXt:
     """Load a ``FrozenXt`` from ``path``, re-checking the grid sha256 against the stored value.
 
+    The reloaded ``FrozenXt`` carries a grid-only ``ExpectedThreat``: ``.xT`` is set
+    directly and nothing is re-fit, which is the whole point of freezing. The checksum is
+    verified against the grid as loaded, so a post-fit edit is a REFUSAL, not a quietly
+    different calibration run:
+
     Examples
     --------
-    >>> # frozen = load_xt("calibration_xt.npz")  # doctest: +SKIP
+    >>> import pathlib, tempfile
+    >>> import numpy as np
+    >>> from silly_kicks.calibration._xt import FrozenXt, load_xt, save_xt
+    >>> from silly_kicks.xthreat import ExpectedThreat
+    >>> xt = ExpectedThreat()
+    >>> xt.xT = np.zeros((16, 12))
+    >>> path = pathlib.Path(tempfile.mkdtemp()) / "tampered.npz"
+    >>> save_xt(  # a digest that does not match the grid stands in for a post-fit edit
+    ...     FrozenXt(
+    ...         xt=xt,
+    ...         source="demo",
+    ...         corpus_match_ids=("g1",),
+    ...         n_excluded=0,
+    ...         fit_date="2026-07-18",
+    ...         grid_shape=(16, 12),
+    ...         sha256="ab12",
+    ...     ),
+    ...     path,
+    ... )
+    >>> load_xt(path)  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    ValueError: xT artifact sha256 mismatch (stored ab12, recomputed ...
     """
     data = np.load(path, allow_pickle=True)
     grid = np.asarray(data["xT"], dtype=np.float64)

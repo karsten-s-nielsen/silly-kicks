@@ -23,9 +23,8 @@ import numpy.typing as npt
 import pandas as pd
 from scipy.ndimage import gaussian_filter
 
+from silly_kicks.id_compat import ids_equal
 from silly_kicks.spadl import config as spadlconfig
-
-from ._id_compat import ids_equal
 
 if TYPE_CHECKING:
     from silly_kicks.xthreat import ExpectedThreat

@@ -717,14 +717,33 @@ def compute_shot_goalmouth(
 
     Examples
     --------
-    >>> out = compute_shot_goalmouth(actions, frames)  # doctest: +SKIP
-    >>> out[["shot_crossing_y", "shot_crossing_z", "shot_crossing_source"]]  # doctest: +SKIP
+    The output is index-aligned with ``actions``, so it joins straight back on. Every row is
+    present -- non-shots and unfittable shots carry NaN / NA rather than being dropped::
+
+        out = compute_shot_goalmouth(actions, frames)
+        crossed = out[out["shot_crossing_source"].notna()]
+        crossed[["shot_crossing_y", "shot_crossing_z", "shot_on_target_derived"]]
+
+    Read the provenance before the geometry, because a crossing point is only as good as the
+    fit behind it -- ``shot_fit_end_reason`` says why the window closed and
+    ``shot_crossing_confidence`` scales with the evidence::
+
+        out.loc[out["shot_crossing_confidence"] > 0.5, "shot_crossing_y"]
+
+    ``shot_crossing_y`` / ``_z`` are ALWAYS in the canonical attacked-goal-at-x=105 frame,
+    whichever way the shooting team was playing: the engine resolves goal ends from the GK
+    map, so the caller never has to orient the input or re-orient the output.
+
+    ``shot_on_target_derived`` is deliberately ``pd.NA`` rather than ``False`` when the
+    crossing height is unknown -- an unknowable bar is not a miss::
+
+        on_target_rate = out["shot_on_target_derived"].mean()  # NA rows excluded
 
     See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
     """
+    from silly_kicks.id_compat import same_id
     from silly_kicks.tracking._gk_geometry import _truthy_bool
     from silly_kicks.tracking._gk_resolve import defended_goal_x
-    from silly_kicks.tracking._id_compat import same_id
     from silly_kicks.tracking.utils import slice_around_event
 
     _ = links  # signature parity only; see docstring
@@ -824,7 +843,16 @@ class ShotGoalmouthReport:
 
     Examples
     --------
-    >>> rep = ShotGoalmouthReport.from_frame(enriched)  # doctest: +SKIP
+    Run it over a corpus, not a match: the counts are a distribution check, and the failure
+    it is built to catch -- z-profile misclassification -- is invisible one shot at a time::
+
+        rep = ShotGoalmouthReport.from_frame(add_shot_goalmouth(actions, frames))
+        rep.z_profile_counts  # a bounced share that drifts is the L-3 tell
+        rep.end_reason_counts  # window_cap dominating means fits are running out of frames
+        rep.n_shots  # shots that produced a crossing, NOT shots attempted
+
+    ``n_shots`` counts rows with a resolved crossing source, so comparing it against the
+    number of shot actions gives the coverage rate the ADR-030 floors are stated in.
     """
 
     n_shots: int
@@ -837,9 +865,30 @@ class ShotGoalmouthReport:
     def from_frame(cls, df: pd.DataFrame) -> ShotGoalmouthReport:
         """Build from a ``compute_/add_shot_goalmouth`` frame.
 
+        Reads only the four provenance columns and the on-target flag, so it accepts the
+        engine output, the ``add_*`` output, or a concatenation of many matches. Rows that
+        produced no crossing are counted OUT of every tally: ``n_shots`` is the resolved
+        count, and the value-counts skip nulls, so an unfittable shot never masquerades as a
+        profile or an end reason. ``n_on_target_derived`` counts ``True`` alone -- the
+        ``pd.NA`` of an unknown crossing height is not a miss.
+
         Examples
         --------
-        >>> rep = ShotGoalmouthReport.from_frame(enriched)  # doctest: +SKIP
+        >>> import pandas as pd
+        >>> from silly_kicks.tracking import ShotGoalmouthReport
+        >>> enriched = pd.DataFrame(
+        ...     {
+        ...         "shot_crossing_source": ["fitted", "fitted", None],  # 3rd: no crossing
+        ...         "shot_fit_end_reason": ["plane_straddle", "window_cap", None],
+        ...         "shot_z_profile": ["airborne", "bounced", None],
+        ...         "shot_on_target_derived": pd.array([True, False, pd.NA], dtype="boolean"),
+        ...     }
+        ... )
+        >>> rep = ShotGoalmouthReport.from_frame(enriched)
+        >>> rep.n_shots, rep.n_on_target_derived
+        (2, 1)
+        >>> rep.z_profile_counts
+        {'airborne': 1, 'bounced': 1}
         """
 
         def _counts(col: str) -> dict[str, int]:

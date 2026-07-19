@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import same_id
 from silly_kicks.spadl import config as spadlconfig
 
 from ._defensive_line import select_back_line_players
-from ._id_compat import same_id
 from .pitch_control import PitchControlCache, PitchControlParams, SpearmanParams
 from .pitch_control._spearman import compute_tti
 

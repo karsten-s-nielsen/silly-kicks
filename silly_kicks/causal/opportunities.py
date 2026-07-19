@@ -29,9 +29,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as _spc
 from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
-from silly_kicks.tracking._id_compat import ids_match, same_id
 from silly_kicks.tracking._xcross_attempt import (
     _ADVANCE_M,
     _CONFOUNDERS,

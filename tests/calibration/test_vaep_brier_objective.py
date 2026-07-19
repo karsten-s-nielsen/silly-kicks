@@ -56,7 +56,7 @@ def test_feature_matrix_parity_full_vs_invariant_patch(synth, frozen_xt):
     actions, frames, home = synth
     params = {"k3": 2.0, "pre_seconds": 2.5, "min_displacement_m": 4.0}
     full = enrich_full(actions=actions, frames=frames, xt=frozen_xt.xt, home_team_id=home, carrier_params=_CP, **params)
-    base, links, _das = enrich_invariant(
+    base, links = enrich_invariant(
         actions=actions, frames=frames, xt=frozen_xt.xt, home_team_id=home, carrier_params=_CP
     )
     patched = patch_trial_columns(base_actions=base, frames=frames, links=links, home_team_id=home, **params)

@@ -21,6 +21,7 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     "y": "float64",
     "z": "float64",
     "speed": "float64",
+    # Kinematics provenance: "native" | "derived" | SPEED_SOURCE_UNAVAILABLE (see below).
     "speed_source": "object",
     "ball_state": "object",
     "team_attacking_direction": "object",
@@ -60,6 +61,40 @@ GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
 (matches GRADIENTSPORTS_SPADL_COLUMNS convention from PR-S18; allows NaN on
 ball rows). game_id stays int64."""
 
+SPEED_SOURCE_UNAVAILABLE = "unavailable"
+"""``speed_source`` token: this frame SOURCE structurally cannot carry kinematics.
+
+The frame builder declares, per row, that ``speed`` -- and the ``vx``/``vy`` that
+:func:`silly_kicks.tracking.preprocess.derive_velocities` produces from the same
+positional history -- can NEVER exist for these frames, because the source has no
+per-player temporal sequence to differentiate. The canonical case is
+:func:`silly_kicks.tracking.snapshot_to_tracking_frames`, which synthesises exactly ONE
+frame per action from a per-event freeze-frame (StatsBomb 360): there is no second
+sample to take a derivative against, at any sampling rate, ever.
+
+This is deliberately DISTINCT from a NULL ``speed_source``, which means only "not
+derived YET" -- the normal state of a metrica / skillcorner frame before
+``smooth_frames`` + ``derive_velocities`` run. Without the distinction, a velocity
+consumer cannot tell "this data structurally has no velocity" from "the caller forgot
+to call ``derive_velocities()``", and the two demand opposite responses: the first is
+an honest degrade, the second is a caller bug that must fail loud.
+
+Velocity consumers read it accordingly --- :func:`silly_kicks.tracking.add_das` degrades
+to NaN with ``das_source="unscoreable_frame"`` (warned) when every row is marked, and
+still raises on unmarked frames that are merely missing ``vx``/``vy``.
+
+THIRD-PARTY frame builders may and should set this deliberately::
+
+    from silly_kicks.tracking import SPEED_SOURCE_UNAVAILABLE
+
+    frames["speed_source"] = SPEED_SOURCE_UNAVAILABLE  # freeze-frame source: no history
+
+Scope note: the token asserts BOTH ``speed`` and ``vx``/``vy`` are structurally absent,
+because both come from the same positional history. A hypothetical source carrying a
+NATIVE instantaneous ``speed`` but no differentiable positional history could not be
+expressed with this single token and would need its own marker.
+"""
+
 TRACKING_CONSTRAINTS: dict[str, tuple[float, float]] = {
     "period_id": (1, 5),
     "time_seconds": (0, float("inf")),
@@ -74,7 +109,7 @@ TRACKING_CONSTRAINTS: dict[str, tuple[float, float]] = {
 TRACKING_CATEGORICAL_DOMAINS: dict[str, frozenset[str]] = {
     "ball_state": frozenset({"alive", "dead"}),
     "team_attacking_direction": frozenset({"ltr", "rtl"}),
-    "speed_source": frozenset({"native", "derived"}),
+    "speed_source": frozenset({"native", "derived", SPEED_SOURCE_UNAVAILABLE}),
     "source_provider": frozenset({"gradientsports", "sportec", "metrica", "skillcorner", "snapshot"}),
     "is_goalkeeper_source": frozenset({"native", "derived"}),
 }

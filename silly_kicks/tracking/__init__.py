@@ -18,10 +18,17 @@ line_breaking_ward_xfns).
 """
 
 __all__ = [
+    "DAS_SOURCE_COMPUTED",
+    "DAS_SOURCE_TEAM_UNRESOLVED",
+    "DAS_SOURCE_UNLINKED",
+    "DAS_SOURCE_UNSCOREABLE_CALL",
+    "DAS_SOURCE_UNSCOREABLE_FRAME",
+    "DAS_SOURCE_VALUES",
     "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS",
     "KLOPPY_TRACKING_FRAMES_COLUMNS",
     "METRICA_TRACKING_FRAMES_COLUMNS",
     "SKILLCORNER_TRACKING_FRAMES_COLUMNS",
+    "SPEED_SOURCE_UNAVAILABLE",
     "SPORTEC_TRACKING_FRAMES_COLUMNS",
     "TRACKING_CATEGORICAL_DOMAINS",
     "TRACKING_CONSTRAINTS",
@@ -30,8 +37,10 @@ __all__ = [
     "AndrienkoParams",
     "BekkersParams",
     "CoverShadowParams",
+    "DasUnscoreableError",
     "ElasticSyncParams",
     "FernandezBornnParams",
+    "GhostClampWarning",
     "GhostGkDensity",
     "GhostGkModel",
     "GhostGkVariant",
@@ -130,6 +139,7 @@ __all__ = [
     "compute_space_created",
     "compute_structural_pass_metrics",
     "compute_team_shape",
+    "compute_threat_pc",
     "compute_tti",
     "compute_xcross_attempt",
     "compute_xshot_occurrence",
@@ -137,6 +147,7 @@ __all__ = [
     "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
+    "defended_goal_x",
     "defenders_in_triangle_to_goal",
     "defending_gk_from_frames",
     "defensive_line_x",
@@ -218,6 +229,7 @@ __all__ = [
     "schema",
     "secured_reception",
     "select_back_line_players",
+    "serve_ghost_gk_positions",
     "shape_graph_xfns",
     "shot_crossing_y",
     "shot_crossing_z",
@@ -261,17 +273,31 @@ from ._cover_shadows import (
     CoverShadowParams,
     LaneControlResult,
     compute_blocking_score,
+    compute_threat_pc,
     lane_control,
 )
-from ._das import get_das, get_individual_das, get_xc
+from ._das import (
+    DAS_SOURCE_COMPUTED,
+    DAS_SOURCE_TEAM_UNRESOLVED,
+    DAS_SOURCE_UNLINKED,
+    DAS_SOURCE_UNSCOREABLE_CALL,
+    DAS_SOURCE_UNSCOREABLE_FRAME,
+    DAS_SOURCE_VALUES,
+    DasUnscoreableError,
+    get_das,
+    get_individual_das,
+    get_xc,
+)
 from ._defensive_line import compute_defensive_line, select_back_line_players
 from ._elastic_sync import ElasticSyncParams, align_events_to_frames, extract_ball_features
 from ._ghost_gk import (
+    GhostClampWarning,
     GhostGkDensity,
     GhostGkModel,
     GhostGkVariant,
     compute_ghost_gk,
     prepare_ghost_gk_training_data,
+    serve_ghost_gk_positions,
 )
 from ._gk_completion import GkCompletionModel, compute_gk_completion
 from ._gk_geometry import resolve_gk_geometry, resolve_restart_geometry
@@ -356,6 +382,7 @@ from .features import (
     cover_shadow_xfns,
     das_at_action,
     das_xfns,
+    defended_goal_x,
     defenders_in_triangle_to_goal,
     defending_gk_from_frames,
     defensive_line_x,
@@ -441,6 +468,7 @@ from .schema import (
     KLOPPY_TRACKING_FRAMES_COLUMNS,
     METRICA_TRACKING_FRAMES_COLUMNS,
     SKILLCORNER_TRACKING_FRAMES_COLUMNS,
+    SPEED_SOURCE_UNAVAILABLE,
     SPORTEC_TRACKING_FRAMES_COLUMNS,
     TRACKING_CATEGORICAL_DOMAINS,
     TRACKING_CONSTRAINTS,

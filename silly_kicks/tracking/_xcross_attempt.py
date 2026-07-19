@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.id_compat import align_join_keys, canonical_id, canonical_id_series, same_id
 from silly_kicks.spadl import config as _spc
 from silly_kicks.tracking import _geometry as _geo
 from silly_kicks.tracking._ball_carrier import (
@@ -26,7 +27,6 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
-from silly_kicks.tracking._id_compat import align_join_keys, canonical_id, canonical_id_series
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._xshot_occurrence import IntegrityError, load_xgb_booster_base_score_safe
 from silly_kicks.tracking.utils import link_actions_to_frames
@@ -334,7 +334,9 @@ def prepare_xcross_training_data(
         sd = np.nan  # PA-H1: score differential from the POSSESSING team's perspective
         if score_fn is not None:
             raw = score_fn(gid, float(grp["time_seconds"].iloc[0]))  # home_score - away_score
-            sd = raw if str(poss_team) == str(home_team_id) else -raw
+            # ADR-019: a naive str()==str() renders a float-backed id as "5.0" against a
+            # scalar "5", so the compare is ALWAYS False and every row's sign flips.
+            sd = raw if same_id(poss_team, home_team_id) else -raw
         feat_rows.append(
             extract_xcross_features(
                 grp,
@@ -659,7 +661,8 @@ def compute_xcross_attempt(
         sd = np.nan
         if score_fn is not None:
             raw = score_fn(gid, float(grp["time_seconds"].iloc[0]))
-            sd = raw if str(tip) == str(home_team_id) else -raw
+            # ADR-019: see the sibling site above -- a naive str compare flips every sign.
+            sd = raw if same_id(tip, home_team_id) else -raw
         feat_rows.append(
             extract_xcross_features(
                 grp, gk_team_id=def_team, goal_x=goal_x, carrier_player_id=carrier_pid, score_differential=sd

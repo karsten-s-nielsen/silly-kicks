@@ -5,6 +5,603 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.53.0] — 2026-07-19
+
+### Added — TF-19 GKDV v1: ghost-substitution engine + two gate-independent physics arms (`silly_kicks/gkdv/`; PR-S120, ADR-043)
+
+New `silly_kicks.gkdv` package. GKDV values goalkeeper POSITIONING by counterfactual: how much
+does the actual keeper's position change the attacking team's accessible space and threat, versus
+a league-average "ghost" keeper in the same frame state? Both arms are expressed in
+**attacker-value units as `actual - ghost`, so negative = deterrent** uniformly.
+
+- **`build_ghost_frames`** — substitutes the ghost-GK position into a copy of the frames and
+  returns `(counterfactual_frames, provenance, GkdvReport)`. Never mutates caller input.
+- **`provenance_to_targets`** — turns per-frame provenance into the pre-substituted ghost targets
+  the model-agnostic probe core consumes.
+- **`delta_das`** — accessible-space arm. Pins ONE attacking direction on the FACTUAL frames and
+  passes it to both legs, so the counterfactual cannot silently re-derive a different direction.
+- **`delta_threat_suppression`** — threat-weighted pitch-control arm, via an injected fitted
+  `ExpectedThreat`.
+- **`aggregate_by_keeper`** — per-keeper aggregation keyed on the frames-resolved GK `player_id`.
+  The gold-mart `player_key` is deliberately NOT used: it is an actions-grain lakehouse column,
+  and a pure library module must not depend on a gold join. (CLAUDE.md's "use `player_key`, never
+  raw `player_id`" convention is actions-grain; this aggregation is frames-grain, where every row
+  carries a resolved `player_id`.)
+- **Validation surface** — `behavioural_anchoring_verdict` + the pre-registered `ICC_ANCHORS`,
+  `TERCILE_SEPARATION_M` and `EXPECTED_DIRECTION` constants, re-exported from the package.
+
+**These arms are gate-independent.** The TF-19 *attempt*-arm gate failed cleanly (`tf19_ready:
+false`, `gated_clean_fail`) and remains gated; the physics arms do not depend on it, which is why
+they ship now. §6.4 Layers 0–3 and the xS-arm substitution probe (PR-3b) are NOT in this release.
+
+`gkdv` depends on **public** `tracking` seams, on the repo-wide public `silly_kicks.id_compat`,
+and on exactly ONE private tracking symbol — `_das._pin_attacking_direction`, confined to
+`_das_port.py`, which has no public meaning because it encodes what the optional
+`accessible-space` dependency expects of its input. Never the reverse: `tracking` must not import
+`gkdv`, since the probe consumes ghost targets as data. Both directions — including the single
+allowlisted private import — are pinned by `tests/gkdv/test_import_allowlist.py`.
+
+### Added — supporting surfaces
+
+- **`tracking.serve_ghost_gk_positions`** — positions-only ghost-GK seam with per-row provenance.
+- **`tracking.GhostClampWarning`** — a dedicated warning category for the ADR-016 pitch clamp. The
+  clamp already warned; this makes it *filterable and attributable* rather than one anonymous
+  `UserWarning` among many, so a consumer can escalate exactly this condition to an error.
+- **`tracking.compute_threat_pc`** — threat-weighted pitch-control facade, extracted from
+  `_cover_shadows` and made public so `gkdv.delta_threat_suppression` consumes a supported seam
+  rather than reaching into a private module.
+- **`silly_kicks/_group_metrics.py`** (private) — `icc_one_way` and `group_spread`, lifted from
+  `scripts/` so the between-keeper dispersion statistics live in the library under test rather than
+  in an unversioned script. Deliberately private: the lakehouse computes its own statistical gates
+  (`src/analytics/xg_calibration.py` precedent) and consumes model-validation results as verdicts,
+  not as computations, so there is no downstream consumer to support.
+- **`silly_kicks.id_compat.restore_id_dtype`** — the shared "restore the source dtype where that
+  dtype can represent the result" rule (see Fixed). It lands in the promoted public module below;
+  `tracking/_id_compat.py` is deleted this release, so there is no `tracking._id_compat` path.
+- **`docs/PRIVATE_CONSUMERS.md`** — register of downstream code that knowingly imports silly-kicks
+  private modules or pins their paths. Underscore modules carry no stability promise; this exists
+  so a refactor can see its blast radius. The `_ghost_gk` path pin is the highest-risk entry
+  because it degrades **silently** — no `ImportError`, just a weakened downstream guard.
+
+### Changed — `_id_compat` is promoted to the public `silly_kicks.id_compat` (ADR-019)
+
+**BREAKING (import path).** `silly_kicks/tracking/_id_compat.py` → **`silly_kicks/id_compat.py`**,
+public-named with no underscore. ADR-019 makes routing every id comparison through this module
+*mandatory* for every consumer; a seam consumers are required to use is public API by definition,
+and the underscore was a false signal. It was also structurally wrong: **39 files across 6
+packages** import it — `spadl/`, `vaep/`, `atomic/`, `causal/`, `gkdv/` and `tracking/` — so five
+packages outside `tracking/` were reaching into a private *tracking* submodule, including two
+function-local imports inside `spadl/utils.py` written to dodge a circular import. That reach grew
+during this release: 3 files outside `tracking/` imported it at 4.52.0, and the ADR-019 fixes below
+added the rest, which is the argument for promoting the seam rather than the argument against.
+
+Relocating it to a private `silly_kicks/_id_compat.py` was considered and rejected: it would have
+moved the problem rather than fixed it, and `gkdv` would still have needed a private-import
+allowlist entry. Public naming is what makes the "public seams" claim true rather than restated.
+
+**No compatibility shim, deliberately.** The one known downstream pin is an `import`, which fails
+**loudly** at collection with `ImportError`. The silent-degradation risk `docs/PRIVATE_CONSUMERS.md`
+exists to catch belongs to the *path-string* pin (`exec_visibility.py`), which this does not touch.
+A shim would also have made the promotion cosmetic — nothing would ever migrate. That register's
+`_id_compat` row is retired with its exit condition marked met and the one-line migration recorded.
+
+**`tracking.defended_goal_x` is also now public**, exported through the same
+`_gk_resolve` → `features` → `tracking/__init__` chain its three siblings already use. It is the
+spec §4.2 pinned goal map; consumers must call it rather than re-derive the goal-side rule, and a
+fork is exactly what §4.2 forbids.
+
+### Changed — ADR-019 id-scalar boundary: enumeration replaces heuristic
+
+The AST lint (`tests/tracking/test_id_compat_lint.py`) is **DELETED**, not widened, and replaced
+by `PUBLIC_ID_SCALAR_ENTRIES` — a registry that invokes every public function taking an id-valued
+scalar and requires identical output across value-equal scalars of different dtypes.
+
+The lint had to go rather than grow. It was a NAME heuristic: it missed the ADR-027
+`t != action_team` defect because the operands aren't named `*_id`, and it could not see
+`_ghost_gk`'s `str(t) == home_team_id_norm` because the scalar had been *renamed*. Worse, the safe
+and unsafe cases are the **identical AST** — only the scalar's *provenance* separates a same-column
+compare from a public-parameter compare, and no syntactic rule can see provenance. Widening it
+would flag correct code and breed exemptions; its glob had already missed 17 modules. **Complete by
+ENUMERATION where the lint was incomplete by HEURISTIC**, the same idiom as ADR-003's NaN-safety
+registry and ADR-033's `PURITY_ENTRIES`.
+
+The surface is derived from `inspect.signature` over the `__all__` exports of `spadl/`, `atomic/`,
+`vaep/`, `causal/` and `tracking/`, keyed by defining qualname so re-exports collapse: **102
+functions — 77 exercised directly** (including the four live-defect `play_left_to_right` siblings,
+name-pinned), **22 delegated** to `test_id_dtype_invariance.py` (machine-checked against that
+gate's registered surface, not asserted in prose), and **3 justified non-invariant**
+(`validate_id_dtypes` IS the diagnostic; `add_gradientsports_player_ids` assigns via `.mask` rather
+than comparing; `PitchControlSurface` is a frozen result container). Two meta-assertions pin the
+registry to the public surface in **both** directions, so a newly-exported id-scalar function fails
+CI until registered, delegated or justified — the anti-rot property the lint's glob lacked.
+
+Each entry is exercised on three axes: a matched scalar, a **mismatched-but-value-equal** one
+(`5` vs `"5"`), and a **float** one (`5.0`). The third is not redundant — a naive
+`str(value) == str(scalar)` renders identically for integers, so only the float axis exposes it.
+Mutation-verified in both directions: re-planting the shipped `team_id != home_team_id` turns the
+gate red on `play_left_to_right` alone and reproduces the original signature (on the gate's
+three-row fixture `start_x` comes back `[95, 85, 75]` where the correct mirror gives
+`[10, 20, 75]` — the HOME rows mirrored, not merely away rows missed), and
+planting a naive `str()==str()` is caught by the float axis while the int/str axis passes it.
+Non-vacuity is enforced throughout, with a `live_columns` lever for functions that return their
+input frame plus a computed column. **Tests only — no library behaviour change.**
+
+### Fixed — cross-source id comparisons in the action↔frame context kernels
+
+`tracking/utils.py`'s `_ids_equal_cols` / `_ids_differ_cols` routed through `_directly_comparable`,
+which short-circuits object-vs-object to a raw `==`. But these compare an **action** column against
+a **frame** column — cross-source by construction — which is precisely the shape a boxed-numeric
+object id column mis-resolves. **This was a live correctness gap in a public seam, not stale prose.**
+
+**Value change / re-materialize trigger.** A boxed-numeric object id column that previously
+resolved to *nothing* now resolves correctly, so `_resolve_action_frame_context`'s masks change for
+any consumer feeding one — that is every action↔frame context kernel. Rows that were silently
+unresolved now carry real values. No provider inside silly-kicks was measured to be in this state
+(all eight converter paths are proven dtype-matched), but an external frame builder may be.
+
+`canonical_id_series` also no longer raises on infinities or out-of-int64-range floats: those
+routed into an `Int64` cast that cannot represent them (`OverflowError` / `TypeError`) while the
+scalar `canonical_id` handled them, so the vectorized path now matches the scalar truth as its
+docstring has always claimed. Bounds are exactly-representable float powers of two — **not**
+`float(np.iinfo("int64").max)`, which rounds *up* to 2**63 and would re-open the bug.
+
+### Fixed — ADR-019 id-dtype: two stacked defects that silently emptied id joins
+
+A boxed-numeric object id column (an object column holding `2.0`) could not be matched against the
+same id carried as a number or a string. The failure mode was an **all-False mask — a silent
+all-row join miss, never an error**. `infer_ball_carrier` shipped a live instance of the shape.
+
+- **`canonical_id_series` violated its own contract.** Its docstring promises it "matches
+  `canonical_id` element-wise"; its object branch bare-stringified, rendering `2.0` as `"2.0"`
+  where the scalar truth gives `"2"`. It now probes object CONTENT (`infer_dtype`) and routes
+  boxed-numeric or mixed columns element-wise through the single `_canonical` truth. The
+  genuine-string fast path for sportec/kloppy is preserved and asserted non-vacuously.
+- **`ids_equal` / `ids_differ` / `ids_match` short-circuited object-vs-object to a raw `==`**, on
+  the assumption that two object id columns are both genuine strings. They now content-probe, so
+  they no longer contradict the module's own canonicalization. Measured cost is ~15% of the comparison per probe; `_raw_comparable` probes BOTH sides, so the
+  guard as actually paid costs ~30% of the raw `==` it guards on a 500k-row column.
+
+### Fixed — `infer_ball_carrier` leaked an object column for 3 of 5 source dtypes
+
+Its dtype restoration was keyed on the single literal `"Int64"`, so `int64`, `float64`, `object`
+and `string` sources all fell through and emitted `object` — harmlessly for an `object` source,
+which is already its own dtype, and as a boxed-numeric leak for the other three. All three sibling
+restoration sites
+(`_ball_carrier.py`, `features.py`, `_gk_resolve.py`) now share one `restore_id_dtype` rule.
+
+**Restorability, not blanket casting:** a numpy integer dtype cannot hold NA, so a result with
+unmatched rows deliberately stays float. That NA rule is the long-standing behaviour at the two
+sibling sites and is preserved exactly; the *dtypes* are not — see below.
+
+**BREAKING (observable), precisely:** `ball_carrier_team_id` / `ball_carrier_player_id`, and the
+`player_id` Series returned by `ball_carrier_at_action` / `acting_gk_from_frames` /
+`defending_gk_from_frames`, change dtype for **three of the five** source dtypes. Two are
+byte-unchanged: nullable `Int64` (the one literal the old code handled) and `object` (object *is*
+its source dtype, so there is nothing to restore). The three that move:
+
+- **`int64`** — was `object` at the `_ball_carrier` site and `float64` at the two sibling sites; now
+  `int64` when no row is missing, still `float64` when one is, since numpy ints cannot hold NA.
+- **`string`** — was `object`, now round-trips to `string`.
+- **`float64`** — was `object`, now round-trips to `float64` (with or without a missing row).
+
+### Fixed — ghost-GK scoreline used a naive string id comparison
+
+`_build_score_lookup` classified each goal's scoring team with
+`str(t) == str(home_team_id)`. On a float-backed id that renders `"1.0"` against `"1"`, so **every
+goal fell to the away side**. Measured on a 3-goal fixture (2 home, 1 away): `score_diff` returned
+**−3 instead of +1**, a four-goal swing — and `score_diff` is one of the 26 **trained** ghost-GK
+features. Routed through `ids_match`, which is also vectorized and so cheaper than the per-element
+Python loop it replaces.
+
+**Latent, so no retrain.** The path is opt-in (`actions=None` leaves `score_diff` at 0.0) and no
+shipped provider is float-backed — Gradient Sports emits nullable `Int64` and the kloppy family
+emits object strings, both of which stringify correctly — so the bundled ghost-GK weights were fit
+on correct values. It is a serve-path repair for any external caller supplying float ids.
+
+### Fixed — ghost-GK feature extractor id comparisons (ADR-019)
+
+`extract_ghost_gk_features` compared player and team ids with raw `==` / `!=` at seven sites. On a
+provider whose frame ids differ in dtype from the caller's scalars — the Gradient Sports nullable
+`Int64` case ADR-027 documents — those comparisons silently resolve to False, and the extractor
+then builds features against the wrong keeper or an empty selection. Routed through the mandated
+`_id_compat` seam. VAEP-invariant for matched dtypes, so no retrain.
+
+### Fixed — 180° mirroring on a mismatched `home_team_id` scalar
+
+Six `play_left_to_right`-family sites compared `team_id != home_team_id` with a raw operator
+(`spadl/utils.py`, `atomic/spadl/utils.py`, `vaep/features/core.py`, `atomic/vaep/features.py`,
+`spadl/orientation.py` ×2). On an object-string `team_id` against an int scalar the comparison is
+True for EVERY row, so **home rows were mirrored too**, not merely away rows missed. All six now
+route through `ids_match`, and the four `home_team_id: int` annotations widen to `int | str` —
+the annotation was the actual trap, since absolute-frame actions come from string-id providers.
+
+Measured as a **latent** fix: all eight converter paths were empirically proven dtype-matched, so
+no bundled weights and no current consumer output changes.
+
+### Fixed — DAS output-alignment guard
+
+`_das.py` compared the accessible-space return length against the prepared frame and, on a
+mismatch, emitted a `UserWarning` ("output may be misaligned") and then proceeded with the
+assignment anyway. Because accessible-space legitimately drops rows whose `team_in_possession` is
+NaN — most rows on dead-ball-heavy providers — that warning fired on essentially every real
+provider match. The result was persistent warning noise on correct output, which trains callers to
+ignore the one signal that would matter if alignment ever genuinely broke.
+
+The check is now an **index-subset assertion**: the returned index must be a subset of
+`prepared.index`. A legitimate shrink passes silently, and accessible-space restores caller index
+labels, so the assignment was always label-correct — only the check was wrong.
+
+**BREAKING (observable):** this is also a *strictening*. Where the old code only warned, a foreign,
+shifted or positionally-reset index — and a length mismatch on an index-less return, which is still
+assigned positionally — now raises `ValueError`. A caller relying on the previous
+warn-and-continue behaviour will see an exception instead.
+
+### Fixed — DAS failures are narrowly caught and NAMED, not silently NaN-ed (`silly_kicks/tracking/`, `silly_kicks/calibration/`; PR-S120, ADR-043)
+
+`add_das` / `das_at_action` / `das_xfns` caught a broad
+`(ValueError, RuntimeError, ImportError, IndexError, TypeError)` and degraded to an all-NaN DAS
+column plus a warning. Two defects followed. (1) The tuple swallowed silly-kicks' OWN bugs: a
+missing `vx`/`vy` column, the `_check_das_output_alignment` integrity breach, an accessible-space
+signature drift, and the `ImportError` for the optional `[das]` extra all became "DAS is NaN
+here". (2) An all-NaN column is indistinguishable downstream from legitimately-absent DAS — not
+hypothetical: `calibration/_features.py` carried a private `das_ok` flag, plus a full
+re-implementation of the DAS lookup, purely to work around it. The catch entered in TF-28 with no
+stated rationale and was widened in PR-S60 for degenerate Voronoi + NaN coordinates.
+
+**Narrowed catch.** New `tracking.DasUnscoreableError(ValueError)` is the ONLY exception the three
+entry points degrade on, raised for exactly the conditions the catch existed for: the dead-ball
+window (all-NaN `team_in_possession`, at both `_pin_attacking_direction` and
+`_precompute_das_lookup`) and — converted at the library seam by the new `_das._call_simulation` —
+accessible-space's degenerate-Voronoi `IndexError` and NaN-coordinate `TypeError`.
+`_call_simulation` BINDS the call before entering its guard, so an accessible-space signature
+change raises loudly instead of being mistaken for the NaN-coordinate `TypeError`. Subclassing
+`ValueError` keeps consumers that catch the broad `ValueError` working. Everything else PROPAGATES.
+
+**Provenance.** `add_das` emits a new `das_source` column over the closed
+`tracking.DAS_SOURCE_VALUES` vocabulary — `computed` / `unlinked` / `unscoreable_frame` /
+`team_unresolved` / `unscoreable_call` — so "DAS could not be computed" is distinguishable from
+"DAS is genuinely absent for this action", per row and per cause. `das_at_action` returns a bare
+Series and carries no provenance — its docstring routes callers to `add_das`. `das_xfns`
+deliberately does NOT emit the string column (VAEP feature matrices stay numeric), guarded by a test.
+
+**`das_ok` deleted.** `calibration/_features._compute_das` no longer re-implements the DAS lookup
+behind a private try/except: it pre-restricts frames to the action-linked `(period_id, frame_id)`
+pairs and calls the public `add_das`. **BREAKING (observable):** `calibration.enrich_invariant` —
+public, exported in `calibration/__init__.py`'s `__all__` — returns a **2-tuple**
+`(base_actions, links)` instead of the 3-tuple `(base_actions, links, das_ok)`, so a caller
+unpacking three values now raises `ValueError`. `das_ok` has no replacement value because it has no
+remaining meaning: `_vaep_brier_objective` reads M8 off the per-row `das_source` column instead,
+which distinguishes the causes `das_ok` collapsed into one bool. DAS values are unchanged, pinned by a test that
+replays the removed inline algorithm verbatim as an oracle; the routing does pick up `add_das`'s
+dtype-safe (ADR-019) team match where the deleted code used a raw `dict.get` / `!=`.
+
+**Three CI gates were VACUOUS for DAS and now have teeth.** The broad catch meant `add_das` /
+`das_xfns` returned an all-NaN column before ever reaching the behaviour under test, so the
+ADR-003 NaN-safety gate, the ADR-019 dtype-invariance gate and the ADR-020 dup-`action_id` gate all
+passed without exercising the family. Each now supplies DAS's contract columns
+(`vx`/`vy`/`team_in_possession`). Mutation-verified: reverting the ADR-019 dtype-safe team match to
+a raw `==` now turns the dtype-invariance gate RED, which was previously impossible.
+
+**Hyrum / consumers.** `add_das` gains a column (additive; the lakehouse re-materializes to pick it
+up). A caller passing malformed frames now gets an exception where it previously got a mute NaN
+column — that is the point. Direct `get_individual_das` / `get_das` / `get_xc` callers see the
+library's degenerate-geometry `IndexError`/`TypeError` arrive as `DasUnscoreableError` instead; a
+catch on `ValueError` is unaffected, a catch on `IndexError`/`TypeError` specifically is not. No
+DAS *value* changes, so no model retrain.
+
+### Fixed — velocity-availability contract, ADR-020 retrofit, possession idempotency (PR-S120, ADR-043)
+
+Three further defects surfaced by the narrowed catch above.
+
+**(1) `speed_source` gains a third token `"unavailable"`** (`silly_kicks.tracking.SPEED_SOURCE_UNAVAILABLE`,
+registered in `TRACKING_CATEGORICAL_DOMAINS`): a frame builder DECLARES that its source has no
+per-player temporal history, so `speed` — and the `vx`/`vy` that `derive_velocities` produces from
+that same history — can NEVER exist. Deliberately distinct from a NULL `speed_source` ("not derived
+YET"): without the distinction a velocity consumer cannot separate "this data structurally has no
+velocity" from "the caller forgot `derive_velocities()`", and the two demand opposite responses.
+`snapshot_to_tracking_frames` (the StatsBomb-360 freeze-frame bridge, one synthetic frame per
+action) stamps it on every player AND ball row; THIRD-PARTY builders may set it deliberately — it is
+a public contract, not a snapshot backdoor. `_validate_das_inputs` reads it: ALL rows marked →
+`DasUnscoreableError` → `add_das` degrades to NaN with `das_source="unscoreable_frame"` (warned);
+UNMARKED or PARTIALLY-marked frames missing `vx`/`vy` still RAISE loud (the fail-loud branch wins on
+a mixed frame set), and the marker never excuses a missing `team_in_possession`.
+`DasUnscoreableError` carries a validated `das_source` so the raiser names its own provenance.
+`DAS_SOURCE_UNSCOREABLE_FRAME` accordingly widens from "the linked frame carries no DAS" to "the
+FRAMES, not the computation, are why DAS is absent" (per-action OR structural), leaving
+`unscoreable_call` for the re-runnable failures.
+
+**(2) `das_xfns` dup-`action_id` fix (ADR-020).** `_map_das_to_actions` resolved frame ids via
+`pointer_lookup.at[aid, "frame_id"]`, which returns a Series on the non-unique `action_id` that
+VAEP shifted gamestate slots carry at period boundaries. ADR-020 fixed this exact shape in **8**
+other frame-aware families (`pitch_control` / `obso` / `pausa` / `space_creation` / `pressure` /
+`cover_shadow` / `gk_influence` / `player_influence`) and `das_xfns` was missed — the
+auto-enumerating gate probed it VACUOUSLY, because the pre-ADR-043 broad catch returned all-NaN
+before the bug could surface. Now routed through `_kernels.resolve_frame_ids_by_position` like the
+other 8 (byte-equivalent on `add_das`'s unique-id path).
+
+**(3) `derive_team_in_possession` is IDEMPOTENT.** A `frames` already carrying
+`team_in_possession` / `ball_carrier_player_id` came back with `_x`/`_y` suffixes, and every
+consumer that re-derives possession (`_xshot_occurrence`, `_xcross_attempt`) then died on
+`KeyError: 'team_in_possession'` — live for exactly the multi-family pipeline the `links` /
+`pitch_control_cache` kwargs exist to encourage. Pre-existing columns are now REPLACED (not
+preserved): the contract is "possession according to THIS `carrier`", so a retained column from a
+different carrier config would silently disagree with the argument just passed. Mirrors the
+"linkage-provenance columns are idempotent" `add_*` convention.
+
+### Changed — the public-API Examples gate's module registry is pinned to the real surface
+
+`_PUBLIC_MODULE_FILES` was hand-maintained with nothing tying it to reality, so a newly-added
+public module was **silently missed rather than caught** — it simply never entered the
+parametrization. Same incomplete-by-heuristic class as the AST lint deleted above and the
+non-recursive `gkdv` allowlist glob, and this release proved it live: two public modules were added
+and one was registered only because a human noticed.
+
+The surface is now DERIVED as the union of **P1** — modules that *define* a symbol some package
+exports via `__all__`, which is how underscore-named modules like `tracking/_ghost_gk.py` become
+public in practice — and **P2**, modules reachable by an underscore-free dotted path
+(`spadl/statsbomb.py`, which re-exports nothing and P1 alone would miss). Meta-assertions pin the
+registry in both directions. `test_registered_modules_are_still_public` additionally guards the
+derivation's own health: P1 depends on importing packages, so a package that failed to import would
+otherwise take its re-exported modules out of the surface **silently**, and a shrinking surface
+always stays a subset of what is accounted for — the anti-rot assertion alone cannot see it.
+
+**Vacuous entries removed.** `gkdv/__init__.py` was registered while having zero top-level defs: it
+read as coverage for `gkdv` while all four modules defining its public surface were unchecked. All
+four already carried Examples, so registering them directly took gkdv from **0 to 8 enforced
+symbols**; the identical `causal/__init__.py` entry went the same way, losing no coverage.
+`test_no_registered_entry_is_vacuous` blocks the shape recurring.
+
+Enforcement moves from **56 hand-listed modules carrying 220 public symbols** to a derived
+**118 modules / 354 enforced symbols**, measured from the registry rather than quoted. The
+derivation pulled in **63 further public modules** carrying 359 public symbols, 204 of them
+undocumented; a further **21** undocumented symbols surfaced *inside* the original 56 once the two
+tightenings below landed. All **225** are enumerated in an `_EXAMPLES_DEBT` bucket with a written
+note each rather than quietly documented or quietly ignored. The bucket is
+**self-burning-down**: a meta-assertion requires every entry to still have an undocumented symbol,
+so finishing one turns CI red with an instruction to promote it. It shrinks monotonically and
+cannot silently absorb a new module — a new module lands in neither bucket and fails.
+
+### Added — Examples sections for three newly-public symbols
+
+`_group_metrics.icc_one_way` / `group_spread` and `tracking.GhostClampWarning`. Every documented
+value was verified by execution. The ICC example records two non-obvious properties: ICC(1) is
+**not bounded below at zero** (identical group means with noisy members score ≈ −0.26), and
+singleton groups are dropped rather than allowed to inflate the estimate. `group_spread`'s shows
+that `min_n` filters *before* computing, so `n_keepers` counts survivors, and that a thin cohort
+returns the declared shape with NaN rather than raising. `_group_metrics.py` is deliberately **not**
+registered in the gate: it is private by name, re-exports nothing, and its own docstring states
+that promotion is a deliberate, requested step.
+
+### Fixed — xCross score_differential sign flipped on float-backed ids
+
+`_xcross_attempt` signed `score_differential` with `str(poss_team) == str(home_team_id)` at two
+sites. On a float-backed id that compares `"5.0"` against `"5"` — always False — so **every row's
+sign inverted** (`[0.0, 1.0]` → `[-0.0, -1.0]`). The module already imported the `id_compat` seam;
+these two call sites simply predated it. Both now use `same_id`.
+
+**Found by the new registry gate on its first run**, which is the case for enumeration over
+heuristics: the deleted AST lint could not have seen either site, because the scalar is compared
+through `str()` rather than named as an id. Latent for shipped providers (Gradient Sports emits
+nullable `Int64`, the kloppy family emits object strings), so the bundled xCross weights were fit
+on correctly-signed values and **no retrain is required**.
+
+### Changed — `+SKIP` filler no longer counts as an Examples section
+
+`_has_examples_section` accepted any `>>>` line — and a bare `Examples` header with nothing
+under it — so `>>> f(x)  # doctest: +SKIP` ticked the box while demonstrating nothing runnable.
+**16 of the 354 enforced symbols passed that way**, and the companion escape below accounts for a
+further 74. Replaced by `_has_real_example`, which requires
+either a doctest that would actually execute (not `+SKIP`, not a `...`/`pass` placeholder) or an
+indented illustrative literal block — this package's canonical style, since most entry points need
+a real `actions` frame no docstring can conjure. The rule is stated once in `_REAL_EXAMPLE_RULE`
+and quoted verbatim by the failure message, so whoever trips it is told what to write rather than
+how to silence it.
+
+The illustrative arm is **scoped to the Examples section**, which is load-bearing: a NumPy
+`Parameters` block is indented too, and an unscoped check is rescued by essentially every docstring
+in the repo — during development that silently shrank the offender set from 16 to 13.
+`test_skip_only_rule_is_scoped_to_the_examples_section` pins it.
+
+Fallout split honestly: the **4 offenders in this release's own `gkdv/`** (`delta_threat_suppression`,
+`delta_das`, `build_ghost_frames`, `provenance_to_targets`) got real examples, each teaching its
+failure mode — differencing all frames instead of the `drop_reason.isna()` ones, letting
+accessible-space infer opposite directions per leg, and passing `provenance` straight to the probe
+(which selects the *attacking* keeper). The **12 pre-existing offenders** were given real examples
+too — enumerated in the debt-granularity section below — rather than having the check weakened
+around them.
+
+### Added — `silly_kicks/id_compat.py` ships documented, not in debt
+
+The ADR-019 id-identity module promoted this release carries Examples on all **8** public symbols
+and moves out of `_EXAMPLES_DEBT` into the enforced registry. The examples teach the contract
+rather than the signature: `ids_match` resolving an `Int64` column against a string scalar beside
+the raw `==` that returns an all-False mask **instead of raising**; `ids_equal` shown positional
+against the `ValueError` pandas raises on label-aligned Series; `ids_differ` **not** counting an NA
+as "differs", so it is not `~ids_equal` and the two masks do not partition the frame (the ADR-027
+NaN-actor rows must not read as opponents); `restore_id_dtype` returning `float64` from an `int64`
+source when one row is missing — because numpy ints cannot hold NA — while a nullable `Int64`
+source round-trips exactly; and `align_join_keys` as the fail-loud seam preventing the
+numeric-vs-object merge error. All 48 doctests verified by execution on pandas 2.3.3 **and** 3.0.3.
+
+### Changed — the Examples debt bucket is per-SYMBOL, not per-module
+
+A module-level exemption cost far more than it excused. When the `+SKIP` tightening demoted 12
+filler examples, four whole modules left enforcement and took their **already-documented** symbols
+with them — a net coverage reduction hiding inside a change meant to tighten the gate. Measured
+with the gate's own shipped predicate against the shipped bucket, a module-level key would
+un-enforce **129 already-documented symbols** out of the 354 public symbols in those 42 modules;
+`tracking/features.py` alone carries 30 gaps and would have taken its **54 documented symbols**
+out with it.
+
+`_EXAMPLES_DEBT` is now keyed `"<file>::<qualified_name>"`, every public module is enforced, and an
+exemption costs exactly the symbol it names. Every invariant is preserved and re-pointed at the
+finer granularity: self-burning-down and per-symbol disjointness both land on
+`test_debt_entries_are_really_undocumented` (a documented symbol carrying an exemption is
+enforced-and-excused at once, and fails); full accounting gets its own single-assertion
+`test_every_public_symbol_is_documented_or_excused`; and `test_debt_entries_name_real_public_symbols`
+adds a prong a module-level bucket **structurally could not have** — a symbol renamed or deleted out
+from under a still-valid file entry. A module-level key is rejected by construction.
+
+Shipped alongside: the **12 `+SKIP` offenders are documented rather than bucketed** —
+`calibration/_gates.py` (2), `calibration/_vaep_brier_objective.py` (3), `calibration/_xt.py` (4)
+and `tracking/_shot_goalmouth.py` (3) — seven as runnable doctests with every expected output
+verified by execution (the fail-closed xT-corpus exclusion, the `load_xt` sha256 refusal, the H1
+gate's two *non-firing* anchors). Docstrings only in `calibration/`; no logic or signature change.
+
+### Fixed — two escapes in the Examples gate itself
+
+**(1) A bare import counted as a demonstration.** `_has_runnable_doctest` asked only whether *some*
+doctest line was unskipped, never whether it *showed* anything — so `>>> from x import f` on line
+one let every line demonstrating the call stay behind `# doctest: +SKIP`, and a
+`>>> # see tests/… for a runnable example` comment did the same job. `_demonstrates_something` now
+requires an unskipped statement that is more than an import or a comment, judged by **parsing** the
+reconstructed statement rather than matching text, so a multi-line `from x import (a, b)` is still
+recognised; an import *followed by* a real call is unaffected. The camouflage hid **74** further
+symbols — **4.6× the 16** the `+SKIP` rule caught head-on, which is the measure of how much a rule
+inspecting an example's FORM misses about its CONTENT. Two symbols this release touched got real
+examples; the other 72, all identical at 4.52.0 and all needing a real match's frames, are tracked
+as individual debt entries with written notes.
+
+**(2) An unclearable debt entry.** `_walk_public_definitions` did not skip `@overload`, so the gate
+demanded an Examples section on a stub whose body is `...` — an entry that could never burn down,
+defeating the bucket's core property. `_is_overload_stub` skips them, keyed on **the decorator each
+definition carries rather than on its name**, so an implementation sharing the name stays judged.
+`prepare_ghost_gk_training_data`'s entry is retired — and the gate itself drove the removal, going
+red to say the entry was now clearable. It is the package's only overloaded function — two
+`@overload` stubs on `prepare_ghost_gk_training_data`, the only two in `silly_kicks/`.
+
+**Known gap, measured not guessed:** nothing in CI executes doctests, so the "a doctest that
+actually runs" arm accepts examples nothing verifies. Running `doctest.testmod` over every module
+in `silly_kicks/` gives **531 attempted, 141 failing across 22 modules** — overwhelmingly
+illustrative fragments that reference names bound in a preceding `+SKIP` line, not false claims,
+and overwhelmingly predating this release. A further **5 `calibration/` modules cannot be collected
+at all**: a `# doctest: +SKIP` directive sitting on a commented-out line makes `doctest` itself
+raise `ValueError`, so their examples are neither run nor counted above. Closing this is a body of
+work in its own right rather than a gate tweak.
+
+### Changed — CI installs the `das` extra on every matrix leg
+
+`.github/workflows/ci.yml` installs `.[kloppy,xgboost,das,test]` in place of
+`.[kloppy,xgboost,test]`. The TF-28 DAS suites are all `importorskip`-guarded, so without the
+extra they **skipped rather than failed** — meaning they had never run in CI at all, which is the
+same vacuous-gate shape this release keeps surfacing elsewhere. `gkdv`'s DAS arm is a second
+consumer of that subsystem and its correctness turns on a direction-inference subtlety inside it.
+The arm's own structural direction-pinning guard needs no extra and runs regardless.
+
+### Fixed — the Databricks IDSSE loader fabricated its home team and starting direction
+
+`scripts/_loader_databricks.py` fed **raw** bronze straight into the Sportec converters, took
+`home_team_id` from the modal `team_id` in the frames (an explicit placeholder) and hard-coded
+`home_team_start_left = True`, then dropped extra time to dodge the ADR-010 ET-without-flag raise.
+It now routes through the ADR-031 T3 parse-port shapers (`shape_events_to_native` /
+`shape_tracking_to_native`) and derives direction of play — including ET — from the authoritative
+DFL `<KickOff>` rows, mirroring `scripts/_loader_pining.py::_build_idsse`.
+
+The identifier domains across the two bronze tables are **asymmetric** and are now fed
+accordingly: `bronze.idsse_tracking.team_id` carries the DFL-CLU id, `bronze.idsse_events.team`
+carries the literal `"home"`/`"away"`. `convert_to_actions` therefore gets `"home"`, and
+`actions.team_id` is remapped onto the CLU ids afterwards so the ADR-028 action↔frame join
+resolves — without that remap the join matches nothing and away-team tracking geometry stays 180°
+wrong. A missing or all-null native team id now raises with an actionable message instead of a bare
+`KeyError` deep inside a converter. Calibration-harness path only; no library behaviour change, but
+IDSSE calibration inputs change and prior IDSSE calibration runs are not comparable.
+
+### Changed — `compute_ghost_gk` and `serve_ghost_gk_positions` share one core
+
+The 79-line serving body is extracted to `_serve_positions_core`, so the new positions-only seam
+and the feature-emitting aggregator cannot drift apart. No output golden existed anywhere for the
+ghost path — the five modules calling `compute_ghost_gk` assert structure and behaviour, not
+values, and `test_weights_bundle_golden.py` only import-checks `GhostGkModel` — so a pre-refactor
+oracle was captured first (`scripts/make_ghost_gk_golden.py` →
+`tests/tracking/data/ghost_gk_refactor_golden.npz`) and the equivalence gate compares against it.
+Deliberately a **same-environment** oracle: serving is a sklearn-free numpy reconstruction
+(ADR-016), and the npz is not to be repurposed as a cross-platform pin.
+
+### Added — `id_compat.ids_isin`
+
+The id-COLLECTION sibling of `ids_match`, for a caller-supplied id **set** resolved against an id
+column. Canonicalises both sides so every integral spelling collapses. Deliberately **not**
+`.astype(str).isin(...)`, which renders a float-backed id column as `"999.0"` and matches nothing —
+a shape `canonical_id_series`'s own docstring already documented as wrong. Missing ids never match
+on either side, replacing a raw `.isin()`'s dtype-*dependent* NA-wildcard behaviour (object +
+`{None}` and float64 + `{nan}` matched null rows; `Int64` did not).
+
+### Fixed — `goalkeeper_ids` was resolved with a raw `.isin()` in three places (ADR-019)
+
+**`spadl.wyscout.convert_to_actions`.** The GK aerial-duel reclassification compared a
+caller-supplied id set against `player_id` raw, so a caller holding roster ids as strings
+(`{"999"}`) against an integer `player_id` column matched nothing: the aerial duel silently stayed a
+duel and was **dropped as a `non_action`** instead of becoming `keeper_claim`. No error — the
+caller's declaration was simply discarded. Measured: `{999}` → `type_id=15`, `{"999"}` → **0
+actions**, identical to passing `None`. Matched-dtype callers are byte-identical, and every in-repo
+caller is matched-dtype.
+
+**`spadl.utils.add_gk_role` and its atomic mirror.** The same raw `.isin()` in rule (a)'s known-GK
+match, so a dtype-mismatched set produced **no `distribution` rows at all**. This one was found
+only because the registry's `add_gk_role` fixtures were de-vacuated first — with the fixture fixed,
+both copies immediately failed the dtype-invariance assertion.
+
+**Possible live-data signal, flagged for the lakehouse:**
+`docs/research/xtgk_possession_value/LAKEHOUSE_HANDOFF.md:76` records that materialised `gk_role`
+carries **only defensive roles — zero `distribution`** across 18,165 wyscout and 54,405 statsbomb
+rows. That is precisely the symptom of `goalkeeper_ids` never resolving. If the lakehouse passes a
+set whose dtype differs from its `player_id` column, this fix will start emitting `distribution`
+rows where there were none — the fix working, not a regression, but a re-materialise decision.
+
+### Testing — a differential non-vacuity guard for id-COLLECTION entries
+
+`test_entity_id_collection_is_load_bearing`: emptying the collection must CHANGE the output, or the
+entry's dtype-invariance assertion would hold for a broken `.isin()` too. Both `add_gk_role` entries
+were vacuous exactly this way — the fixture's `same_player` rule already produced `distribution`, so
+`{"1"}`, `{1}`, `None` **and `set()`** all returned an identical `gk_role`, while the fixture
+docstring claimed the opposite. Fixtures corrected (the keeper row is now a different player) rather
+than the assertion weakened.
+
+`ids_isin` also carries five unit tests of its own, because **the registry structurally cannot
+discriminate a canonicalised `.isin` from a naive stringify**: its float-scalar axis fires only on a
+numeric scalar, and a collection entry declares a set. Degrading `ids_isin` to `.astype(str)` passed
+all 103 registry tests — the gap is closed by the direct tests, not by the gate.
+
+### Fixed — `GkdvParams.lambda_gk` is now actually forwarded
+
+It is the only term through which the threat arm sees the keeper — which is what the
+`pitch_control_method` GK-BLIND construction guard defends — but it was never read:
+`delta_threat_suppression` passed no pitch-control params, so `compute_threat_pc` fell back to the
+default. Because `GkdvParams.lambda_gk` and `SpearmanParams.lambda_gk` share the default `3.0`,
+output is **byte-identical at defaults** (no retrain trigger). The defect was that a caller *raising*
+`lambda_gk` silently got the default gain while `GkdvReport` echoed the raised value as though it
+had been used — and `GkdvReport`'s own docstring says "registration without traceability is not
+registration". Guarded on the CALLS, because an output comparison passes on the unforwarded code.
+
+### Removed — `GkdvParams.seed`
+
+Never read. The spec registered a seed **conditionally** — *"if `accessible_space` is stochastic"* —
+and the field took that branch without evaluating the condition. `gkdv/` contains no randomness at
+all, so wiring it would mean inventing some; the identity assertion the seed existed to protect is
+already enforced behaviourally by `test_das_arm_identical_frames_give_exactly_zero`. `gkdv/` is new
+in this release, so no shipped caller can exist.
+
+### Changed — the id-scalar registry discovers modules that declare no `__all__`
+
+Discovery walked `__all__` alone, and **35 walked modules declare none**, so they contributed
+nothing: **13 public id-scalar callables sat in no bucket** — every provider `convert_to_actions`,
+every native `convert_to_frames`, and both `tracking.direction` primitives — while the anti-rot
+meta-assertion reported full coverage. That is the deleted AST lint's defining failure (a discovery
+rule that silently stops looking) reproduced inside the gate built to replace it. 11 are now
+directly enforced; a new fourth bucket `NOT_EXERCISABLE` holds the two for which no
+matched/mismatched pair *exists* (metrica's fixed `'Home'`/`'Away'` literals; kloppy's writer-only
+`game_id`), kept distinct from `NOT_INVARIANT` so the reason is not misreported.
+
+`PitchControlSurface`'s `NOT_INVARIANT` justification is narrowed to state it covers the
+**constructor only**, and names `.player_surface()` / `.player_share()` as a real, OPEN ADR-019 gap
+that this exemption does not close.
+
+### Fixed — provider parse hardening
+
+`providers/sportec/parse.py`: period resolution now raises when neither `period_id` nor `period`
+is present instead of degrading silently, and `ball_state` normalization routes numeric values via
+`Int64` to avoid the `"0.0"` stringification trap, warning on out-of-domain tokens.
+
 ## [4.52.0] — 2026-07-18
 
 ### Added — real-xT EPV wiring for the OBSO family (`silly_kicks/xthreat/_physical.py`, `tracking/features.py`, `tracking/_warnings.py`; PR-S119, ADR-041)

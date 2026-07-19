@@ -29,9 +29,8 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 
+from silly_kicks.id_compat import same_id
 from silly_kicks.spadl import config as spadlconfig
-
-from ._id_compat import same_id
 
 _PASS_CROSS_TYPE_IDS = frozenset(
     spadlconfig.actiontype_id[n] for n in ("pass", "cross") if n in spadlconfig.actiontype_id

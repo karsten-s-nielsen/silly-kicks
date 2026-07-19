@@ -61,7 +61,13 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[kloppy,xgboost,test]"
+      # `das` (accessible-space) is installed on EVERY leg, not just the primary one: the
+      # TF-28 DAS suites are all `importorskip`-guarded, so without the extra they SKIP
+      # rather than fail, and they had therefore never run in CI at all. gkdv's DAS arm
+      # (TF-19 PR-3) is a second consumer of that subsystem, whose correctness depends on a
+      # direction-inference subtlety inside it -- a guard that never runs is not a guard.
+      # The arm's own STRUCTURAL direction-pinning guard needs no extra and runs regardless.
+      - run: pip install -e ".[kloppy,xgboost,das,test]"
       # Bulk suite (serial). xdist `-n auto` was reverted: on the 4-core/7GB CI runners it
       # regressed py3.12 from pass to a memory/JIT-pressure kill (4x heavy ML imports + 4x numba
       # compiles + the ghost-GK suite), the opposite of the 16-core local speedup. The dominant

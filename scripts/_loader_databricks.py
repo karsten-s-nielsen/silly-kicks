@@ -156,36 +156,103 @@ def fetch_idsse_events() -> pd.DataFrame:
         conn.close()
 
 
+def _native_team_id(raw_events: pd.DataFrame, column: str, provider: str) -> str:
+    """Read a match-level native team id (DFL-CLU) off the bronze EVENTS table.
+
+    These are per-match constants stamped on every event row. Fails loud with an actionable
+    message rather than raising a bare ``KeyError`` / ``IndexError`` deep inside the converter,
+    because an absent/empty value silently mis-orients the whole match.
+    """
+    if column not in raw_events.columns:
+        raise ValueError(
+            f"{provider} bronze events missing {column!r}; cannot resolve the native team id "
+            "required to orient tracking frames and derive direction of play."
+        )
+    values = raw_events[column].dropna()
+    if values.empty:
+        raise ValueError(f"{provider} bronze events column {column!r} is entirely null.")
+    return str(values.iloc[0])
+
+
 def _convert(provider: str, raw_events: pd.DataFrame, raw_frames: pd.DataFrame):
     """Convert bronze rows to (actions, frames, home_team_id) via silly-kicks converters.
 
-    Bronze tables are the lakehouse's PARSED provider output (already in silly-kicks-converter
-    input shape). For Sportec/IDSSE this is the ``tracking.sportec.convert_to_frames`` input shape;
-    for the SPADL side it is the ``spadl.sportec.convert_to_actions`` input shape. The home team +
-    starting direction come from ``bronze.tracking_player_metadata`` (NOT events.iloc[0]).
+    Bronze tables are the lakehouse's **RAW** parsed provider output --- NOT converter input
+    shape. For Sportec/IDSSE the ``providers.sportec`` parse-port shapers (ADR-031 T3) bridge
+    the gap: ``shape_tracking_to_native`` (bronze ``match_id/period/frame/x/y/s/ball_status``
+    + denormalized ``ball_*`` -> the 14 ``tracking.sportec.EXPECTED_INPUT_COLUMNS``, synthesizing
+    the ball rows bronze does not carry) and ``shape_events_to_native`` (resolves set-piece /
+    foul team + player from the DFL qualifier columns). Both are mandatory --- the converters
+    raise on the raw bronze shape. This mirrors ``scripts/_loader_pining.py::_build_idsse``.
+
+    Identifier domains are ASYMMETRIC across the two bronze tables, and the converters must be
+    fed the domain each one actually carries:
+
+    * ``bronze.idsse_tracking.team_id``  -> DFL-CLU id (``"DFL-CLU-000008"``)
+    * ``bronze.idsse_events.team``       -> ``"home"`` / ``"away"`` / ``"unknown"``
+      (there is no ``team_id`` on events; the CLU ids live in ``home/away_team_id_native``)
+
+    So ``convert_to_frames`` gets the native CLU id while ``convert_to_actions`` gets the literal
+    ``"home"``. Passing the CLU id to the events converter would match ZERO rows (it compares
+    against ``team``, copied verbatim into ``actions.team_id``) and mirror every home action as
+    away.
+
+    Returned ``home_team_id`` (the 5th ``load_matches`` tuple element) is the **TRACKING /
+    frames-domain DFL-CLU id**. Its consumers (``scripts/calibrate_tracking_defaults.py`` ->
+    ``silly_kicks/calibration/_features.py`` -> ``add_defensive_line`` / ``add_team_shape``)
+    resolve attacking direction from the FRAMES, whose ``team_id`` is CLU. ``actions.team_id`` is
+    remapped ``"home"``/``"away"`` -> CLU below so the ADR-028 per-action LTR re-projection (which
+    joins actions to frames on ``team_id``) aligns; without that remap the join matches nothing
+    and away-team tracking geometry stays 180 degrees wrong.
+
+    Direction of play is DERIVED from the DFL ``<KickOff>`` rows (authoritative source XML), never
+    hard-coded --- including extra time, so ET frames are kept rather than dropped (ADR-010's
+    ET-without-flag raise is satisfied by supplying the flag). ``..._extratime`` returns ``None``
+    for a match with no ET, which the converters accept as "no ET present".
     """
     from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
-    from silly_kicks.tracking.utils import filter_extratime_frames
 
     # IDSSE/sportec bronze is the most common operator path; others can be added as needed.
     if provider in ("idsse", "sportec"):
+        from silly_kicks.providers.sportec import (
+            derive_idsse_home_team_start_left,
+            derive_idsse_home_team_start_left_extratime,
+            shape_events_to_native,
+            shape_tracking_to_native,
+        )
         from silly_kicks.spadl import sportec as sportec_spadl
         from silly_kicks.tracking import sportec as sportec_tracking
 
-        home_team_id = str(raw_frames["team_id"].dropna().mode().iloc[0])  # placeholder; see NOTE
-        home_start_left = True
-        # Calibration only --- AC-1 production sources home_team_start_left_extratime via
-        # MatchMeta (lakehouse Phase A) and NEVER filters ET. Sportec (tracking + events)
-        # RAISES on ET-without-flag in silly-kicks 4.0.0 (ADR-010), so drop ET here.
-        raw_frames = filter_extratime_frames(raw_frames, label=f"{provider} tracking")
-        raw_events = filter_extratime_frames(raw_events, label=f"{provider} events")
-        frames, _r = sportec_tracking.convert_to_frames(
-            raw_frames, home_team_id=home_team_id, home_team_start_left=home_start_left
-        )
+        home_team_id_native = _native_team_id(raw_events, "home_team_id_native", provider)
+        away_team_id_native = _native_team_id(raw_events, "away_team_id_native", provider)
+
+        # Events: shape -> derive direction-of-play from the DFL KickOff -> native SPADL.
+        native_evt = shape_events_to_native(raw_events)
+        home_start_left = derive_idsse_home_team_start_left(native_evt, home_team_id_native)
+        home_start_left_et = derive_idsse_home_team_start_left_extratime(native_evt, home_team_id_native)
         actions, _r2 = sportec_spadl.convert_to_actions(
-            raw_events, home_team_id=home_team_id, home_team_start_left=home_start_left
+            native_evt,
+            home_team_id="home",  # native_evt.team carries the 'home'/'away' label, NOT the CLU id
+            home_team_start_left=home_start_left,
+            home_team_start_left_extratime=home_start_left_et,
         )
-        return actions, derive_velocities(smooth_frames(frames)), home_team_id
+        # Re-namespace the echoed 'home'/'away' action team_id onto the CLU ids the frames use, so
+        # the ADR-028 action<->frame join resolves ('unknown' rows keep their label, as on pining).
+        actions["team_id"] = (
+            actions["team_id"]
+            .map({"home": home_team_id_native, "away": away_team_id_native})
+            .fillna(actions["team_id"])
+        )
+
+        # Tracking: shape (adds the synthetic ball rows) -> native frames, CLU-keyed.
+        frames, _r = sportec_tracking.convert_to_frames(
+            shape_tracking_to_native(raw_frames),
+            home_team_id=home_team_id_native,  # native_trk.team_id carries the DFL CLU id
+            home_team_start_left=home_start_left,
+            home_team_start_left_extratime=home_start_left_et,
+            output_convention="absolute_frame",
+        )
+        return actions, derive_velocities(smooth_frames(frames)), home_team_id_native
 
     raise NotImplementedError(
         f"Databricks _convert for provider {provider!r} not yet wired; pining is the primary "

@@ -24,6 +24,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 33-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator; physical_grid resampling. ADR-041." "Python" "Library"
             xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate), metric compute_xt_gk_v2 over 3 injected ports, resolved-GK-geometry edge (apply_resolved_gk_geometry), bundled rho weights." "Python" "Library"
+            gkdv = container "silly_kicks.gkdv" "GKDV v1 (TF-19): ghost-substitution engine (build_ghost_frames) + two gate-independent physics arms (delta-DAS, delta-threat-suppression) in attacker-value units (negative = deterrent). ADR-043." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (pure objectives/CV/gates + frozen exogenous xT artifact) + scripts/ CLI + pining/Databricks loaders. Recommends tuned tracking/xT defaults; never changes library constants." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Per-provider raw-data parse ports (bytes -> provider bronze -> converter input). The Sportec/DFL parse+shape port single-sources the lakehouse DFL parser (golden-pinned). Behind the [parse-dfl] extra." "Python (optional [parse-dfl] extra)" "Library"
         }
@@ -71,6 +72,12 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         analyst -> xtgk "Fits the possession-value surface V(z,p) with an injected per-shot xg_column via" "MarkovPossessionValue.fit()"
         xtgk -> xthreat "Reuses value_iteration + low-level transition/grid seams (no xthreat edits) via" "Python import"
         xtgk -> spadl "Reads SPADL config + action-type ids from" "Python import"
+
+        // --- Relationships: GKDV v1 (TF-19 PR-3) ---
+        analyst -> gkdv "Values keeper positioning against a league-average ghost via" "build_ghost_frames + delta_das / delta_threat_suppression"
+        gkdv -> tracking "Consumes PUBLIC tracking seams + ONE confined private DAS port (_das_port.py); never the reverse (allowlist-gated)" "Python import"
+        gkdv -> xthreat "Weights the pitch-control field by per-cell threat with an injected fitted model" "ExpectedThreat"
+        gkdv -> accessibleSpace "Sums per-player DAS under ONE direction pinned on the factual frames via" "_das_port / get_individual_das()"
 
         // --- Relationships: Calibration harness (TF-24) ---
         calibration -> ruthless "Drives Optuna TPE studies (CachedObjective fast path) via" "OptunaStrategy"

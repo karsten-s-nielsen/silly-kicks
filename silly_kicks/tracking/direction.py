@@ -19,9 +19,8 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as _spadlconfig
-
-from ._id_compat import ids_match
 
 _PITCH_LENGTH_M: float = _spadlconfig.field_length  # 105.0
 _PITCH_WIDTH_M: float = _spadlconfig.field_width  # 68.0

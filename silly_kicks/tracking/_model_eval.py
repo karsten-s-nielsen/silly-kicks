@@ -298,7 +298,7 @@ def _targets_deltas(model, frames, *, arm, targets, n_placebo_replicates, seed, 
     control by the SAME per-frame vector (paired-vector, spec §3.1(2)). The targets DataFrame
     defines the evaluation set (no n_frames subsample); eligible frames without a target are
     skipped. Placebo replicate r draws with ``default_rng(seed + r)``."""
-    from silly_kicks.tracking._id_compat import canonical_id, canonical_id_series
+    from silly_kicks.id_compat import canonical_id, canonical_id_series
 
     _validate_targets(targets)
     extract_fn = _resolve_extractor(arm)

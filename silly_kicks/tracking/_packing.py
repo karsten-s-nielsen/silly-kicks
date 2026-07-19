@@ -22,9 +22,9 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
+from silly_kicks.id_compat import ids_match, same_id
 
 from ._defensive_line import select_back_line_players
-from ._id_compat import ids_match, same_id
 
 _DEFAULT_ACTION_TYPES: tuple[str, ...] = (
     "pass",

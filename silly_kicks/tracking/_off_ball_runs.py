@@ -12,8 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ._action_orientation import acting_team_attacks_rtl, validate_period_directions
-from ._id_compat import (
+from silly_kicks.id_compat import (
     align_join_keys,
     canonical_id,
     canonical_id_series,
@@ -21,6 +20,8 @@ from ._id_compat import (
     ids_equal,
     same_id,
 )
+
+from ._action_orientation import acting_team_attacks_rtl, validate_period_directions
 
 _OFF_BALL_RUNS_COLS = [
     "n_off_ball_runners_pre_window",

@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from ._id_compat import same_id
+from silly_kicks.id_compat import same_id
+
 from .pitch_control import PitchControlCache, PitchControlParams, PitchControlSurface, SpearmanParams
 from .pitch_control._spearman import compute_tti
 

@@ -200,8 +200,23 @@ def to_spadl_ltr(
 
 def _mirror_absolute_frame(actions: pd.DataFrame, *, home_team_id: int | str) -> pd.DataFrame:
     """Mirror away-team rows by (field_length - x, field_width - y)."""
+    from silly_kicks.id_compat import ids_match
+
     out = actions.copy()
-    away_idx = (out["team_id"] != home_team_id).to_numpy()
+    # Dtype-safe (ADR-019): `team_id` is object-string for every absolute-frame
+    # provider (Sportec / Metrica / Opta / kloppy), so a raw `!= home_team_id`
+    # against an int scalar is True for EVERY row -- mirroring home rows too.
+    #
+    # NA-safe, and DELIBERATELY treats a null `team_id` as AWAY -- matching both the
+    # prior behaviour here and the sibling `_mirror_per_period` below. kloppy can emit
+    # a null team (spadl/kloppy.py: `event.team.team_id if event.team else None`).
+    # `ids_match` resolves NA to False, so `~` sends it to the away branch, exactly as
+    # the previous raw `!=` did (`None != "A"` is True) and exactly as ADR-027's
+    # convention does on the per-period path (NA -> is_home False -> away, preserving
+    # the pre-NaN sentinel-0 behaviour). Do NOT "harden" this by also requiring
+    # `.notna()`: that flips NA rows to unmirrored, silently changing output AND
+    # splitting the two mirror functions' NA semantics apart.
+    away_idx = (~ids_match(out["team_id"], home_team_id)).to_numpy()
     if not away_idx.any():
         return out
     for col in ("start_x", "end_x"):
@@ -225,13 +240,19 @@ def _mirror_per_period(
 
     Rows where attacking direction is RTL (False) get mirrored to LTR.
     """
+    from silly_kicks.id_compat import ids_match
+
     out = actions.copy()
+    # Dtype-safe (ADR-019): `home_team_id` is a caller-supplied scalar whose dtype
+    # need not match the provider-dependent `team_id` column; `ids_match` collapses
+    # both to a canonical id key before comparing.
+    #
     # NA-safe: a nullable-Int64 team_id (Gradient Sports) carries NaN on the
-    # null-actor duel/foul rows. `NA == home_team_id` is NA; collapse it to
-    # False (na_value=False) so the boolean mask is valid AND so those rows keep
+    # null-actor duel/foul rows. `ids_match` resolves NA to False (as the previous
+    # `na_value=False` did) so the boolean mask is valid AND so those rows keep
     # the exact orientation the pre-NaN sentinel 0 produced (0 != home_team_id
     # was also False → treated as away). Non-nullable id columns are unaffected.
-    is_home = (out["team_id"] == home_team_id).to_numpy(dtype=bool, na_value=False)
+    is_home = ids_match(out["team_id"], home_team_id).to_numpy()
 
     periods = out["period_id"].unique()
     missing = [p for p in periods if p not in home_attacks_right_per_period]

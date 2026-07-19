@@ -66,6 +66,32 @@ def _frame():
     return fr
 
 
+#: Families needing a contract column the shared `_frame()` deliberately does NOT carry.
+#:
+#: `team_in_possession` is NOT added to `_frame()` itself: `derive_team_in_possession`
+#: merges its result in without checking for a pre-existing column, so a frame that
+#: already carries it comes back with `team_in_possession_x`/`_y` and every consumer that
+#: re-derives (`_xshot_occurrence`, `_xcross_attempt`) dies on `KeyError:
+#: 'team_in_possession'`. Supplying it per-family keeps this gate probing the dup-action_id
+#: bug instead of that unrelated non-idempotency.
+_NEEDS_TEAM_IN_POSSESSION = {"das_xfns"}
+
+
+def _frame_for(name):
+    """The shared frame, plus whatever contract columns `name` additionally requires.
+
+    ADR-043: `das_xfns` previously swallowed `_validate_das_inputs`' missing-column
+    ValueError and returned NaN, so this auto-enumerating gate probed it VACUOUSLY --
+    the family returned before any frame_id lookup ran, and the dup-action_id bug it
+    carries was therefore never detected here.
+    """
+    fr = _frame()
+    if name in _NEEDS_TEAM_IN_POSSESSION:
+        fr = fr.copy()
+        fr["team_in_possession"] = 1
+    return fr
+
+
 # Construction MUST succeed (no silent skip) -- an unconstructable factory is a gate
 # FAILURE, not a skip, so a family can never go unprobed (no-silent-caps discipline).
 _CONSTRUCT_ALLOWLIST: set[str] = set()  # factories that genuinely cannot construct (none today)
@@ -113,7 +139,7 @@ def _run_family(name):
     Discriminates the target bug from a fixture gap so 5C fixes the bug, not the fixture."""
     states = gamestates(_actions(), nb_prev_actions=3)
     assert states[1]["action_id"].duplicated().any()  # precondition: dup exists
-    frame = _frame()
+    frame = _frame_for(name)
     for t in _build(name):
         if not getattr(t, "_frame_aware", False):
             continue

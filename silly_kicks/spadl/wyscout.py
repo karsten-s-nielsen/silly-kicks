@@ -234,6 +234,10 @@ def convert_to_actions(
         If provided, aerial duels by these player IDs are mapped to
         ``keeper_claim`` instead of the default duel dispatch.  An empty
         set is equivalent to ``None`` (no reclassification).
+        Resolved against ``player_id`` dtype-safely (ADR-019), so a caller
+        holding roster ids as strings (``{"999"}``) matches an integer
+        ``player_id`` column and vice versa.  Ids that are missing, or absent
+        from the column, simply do not match.
     preserve_native : list[str], optional
         Provider-native event fields to preserve alongside the canonical SPADL
         output as extra columns. Each field must be present on the input
@@ -291,10 +295,18 @@ def convert_to_actions(
     # Reclassify aerial duels by known goalkeepers as GK claims before
     # _fix_wyscout_events removes unmatched duels.
     if goalkeeper_ids:
+        # `goalkeeper_ids` is a CALLER-SUPPLIED id set resolved against the provider's
+        # `player_id` column, so it is an ADR-019 boundary and routes through `ids_isin`.
+        # A raw `.isin` compares by value: a caller holding roster ids as strings ({"999"})
+        # against an int64 `player_id` column matched NOTHING, so the aerial duel silently
+        # stayed a duel (dropped as a non_action) instead of becoming `keeper_claim` --
+        # no error, just the caller's declaration discarded.
+        from silly_kicks.id_compat import ids_isin
+
         gk_aerial_mask = (
             (events["type_id"] == _WS_TYPE_DUEL)
             & (events["subtype_id"] == _WS_SUBTYPE_AIR_DUEL)
-            & events["player_id"].isin(goalkeeper_ids)
+            & ids_isin(events["player_id"], goalkeeper_ids).to_numpy()
         )
         events.loc[gk_aerial_mask, "type_id"] = _WS_TYPE_GK
         events.loc[gk_aerial_mask, "subtype_id"] = _WS_SUBTYPE_GK_CLAIM
