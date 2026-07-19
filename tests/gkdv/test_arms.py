@@ -13,6 +13,7 @@ is a **method on a test class**, not an importable module-level helper.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -140,12 +141,16 @@ def test_threat_arm_is_id_dtype_safe(monkeypatch):
     against an id COLUMN is the single most damaging bug shape in this codebase (measured
     live: an object-string ``team_id`` vs an int scalar makes ``!=`` True for EVERY row).
     """
-    kwargs = {"xt": _fitted_xt()}
+    # ONE fitted model, passed by KEYWORD to both legs. Deliberately not splatted from a
+    # dict: a `**kwargs` of uniform value type lets the checker match `ExpectedThreat`
+    # against every remaining keyword-only parameter -- including `params: GkdvParams` --
+    # so the splat both hides the real target and manufactures a type error.
+    xt = _fitted_xt()
     numeric = delta_threat_suppression(
-        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id=2, home_team_id=1, **kwargs
+        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id=2, home_team_id=1, xt=xt
     )
     stringy = delta_threat_suppression(
-        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id="2", home_team_id="1", **kwargs
+        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id="2", home_team_id="1", xt=xt
     )
     assert numeric == stringy
     assert numeric != 0.0, "vacuous: both dtypes agreed only because the value is zero"
@@ -407,3 +412,77 @@ def test_das_arm_is_id_dtype_safe():
     numeric = delta_das(actual, ghost, attacking_team_id=2)
     assert stringy == numeric
     assert stringy != 0.0, "vacuous: both dtypes agreed only because the value is zero"
+
+
+# ---------------------------------------------------------------------------
+# Delta-DAS -- LIVE through real accessible-space
+# ---------------------------------------------------------------------------
+
+#: accessible-space's carrier/offside column, resolved by NAME inside ``_das``.
+_CARRIER_COL = "ball_carrier_player_id"
+
+
+def _das_frames_with_carrier(gk_x: float = 10.0) -> pd.DataFrame:
+    """``_das_frames`` plus the ball-carrier column real frames actually carry.
+
+    The sibling DAS fixtures above carry NO carrier column, so
+    ``_resolve_player_in_possession_col`` returns ``None`` for them and accessible-space's
+    offside path -- which 2-D-indexes the carrier as PASSERS -- never runs. Production
+    frames DO carry it (``derive_team_in_possession`` preserves it), so without this the
+    arm's live behaviour is untested exactly where it is exercised.
+
+    The dtype is pinned EXPLICITLY, not left to inference: pandas 2 infers ``object`` (where
+    the 2-D indexing is harmless) and pandas 3 infers ``StringDtype`` (where it raises).
+    Relying on inference would make this guard silently interpreter-dependent -- which is
+    precisely how the all-NaN defect shipped.
+    """
+    frames = _das_frames(gk_x)
+    # "a2" is a real team-2 player sitting on the ball in this layout.
+    frames[_CARRIER_COL] = pd.Series(["a2"] * len(frames), dtype="string", index=frames.index)
+    return frames
+
+
+def test_das_arm_returns_a_LIVE_FINITE_delta_through_real_accessible_space():
+    """The arm's headline number must be a real one -- NOT a silent all-NaN collapse.
+
+    Every other assertion about the DAS arm either stubs ``_das_port`` or runs on frames
+    with no carrier column, so nothing noticed when accessible-space scored ZERO frames on
+    pandas 3: ``team_das`` sums ``DAS.dropna()``, and the sum of an empty selection is
+    ``0.0``, so BOTH legs degraded to ``0.0`` and the delta came back a tidy, finite,
+    completely fictional zero. Measured: reintroducing the defect leaves the rest of
+    ``tests/gkdv/`` green, all 163 of it.
+
+    So finiteness alone is NOT sufficient here, and the two non-vacuity assertions below
+    are the actual guard:
+
+    * the underlying per-player DAS values must be finite -- the frames really scored;
+    * the delta must be non-zero -- the all-NaN collapse produces exactly ``0.0``.
+    """
+    pytest.importorskip("accessible_space")
+    from silly_kicks.tracking import get_individual_das
+
+    actual, ghost = _das_frames_with_carrier(), _das_frames_with_carrier(_GHOST_GK_X)
+
+    # Fixture non-vacuity: this must really present the dtype that exercises the 2-D
+    # indexing path. Were it to arrive as object, the guard would pass without testing.
+    assert isinstance(actual[_CARRIER_COL].dtype, pd.StringDtype), (
+        "fixture must carry a StringDtype carrier column, else the offside path is untested"
+    )
+
+    # (1) The frames genuinely scored -- not an all-NaN degrade that sums to zero.
+    scored = get_individual_das(actual)
+    finite = scored.loc[~scored["is_ball"].astype(bool), "DAS"]
+    assert finite.notna().any(), (
+        "accessible-space scored NO frame: every underlying DAS is NaN, so any delta built "
+        "from these legs is fictional regardless of how finite it looks"
+    )
+    assert float(finite.dropna().sum()) > 0.0, "a real accessible-space area is strictly positive"
+
+    # (2) The arm's own output, through the real library end to end.
+    delta = delta_das(actual, ghost, attacking_team_id="2")
+    assert np.isfinite(delta), f"delta_das returned a non-finite value: {delta!r}"
+    assert delta != 0.0, (
+        "delta is exactly zero, which is the signature of BOTH legs degrading to all-NaN "
+        "(team_das sums DAS.dropna(), and an empty sum is 0.0) -- not of a keeper who "
+        "changed nothing while relocated 90 m upfield"
+    )

@@ -1938,6 +1938,98 @@ class TestDasSourceProvenance:
         assert not any("das_source" in c for c in cols)
 
 
+class TestForwardedCarrierColumnSurvivesTwoDIndexing:
+    """The forwarded ball-carrier column must be cast for accessible-space's 2-D indexing.
+
+    With ``respect_offside`` on (the DAS default) accessible-space receives the carrier
+    column as PASSERS and indexes it two-dimensionally (``passers[:, None]``) to build the
+    offside mask -- exactly like the team arrays that ``_prepare_frames`` already casts. A
+    pandas ``StringDtype`` / pyarrow-backed column rejects that with "IndexError: too many
+    indices for array"; ``_call_simulation`` converts it to :class:`DasUnscoreableError`,
+    and DAS degrades to **silently all-NaN**.
+
+    That is the failure mode these tests exist for: it is SILENT. Before the cast, every
+    DAS call on pandas 3 (which infers ``StringDtype`` for such a column by default) scored
+    ZERO frames, and nothing in the suite noticed -- the other DAS fixtures carry no carrier
+    column at all, so their ``player_in_possession_col`` resolves to ``None`` and the
+    offside path never runs.
+
+    The dtype is pinned EXPLICITLY rather than left to pandas inference so these guards
+    fail deterministically on every interpreter: on pandas 2 the inferred dtype is already
+    ``object`` and the defect is invisible, which is precisely how it shipped.
+    """
+
+    CARRIER = "ball_carrier_player_id"
+
+    @classmethod
+    def _frames_with_string_carrier(cls, col: str = "") -> pd.DataFrame:
+        """``_live_frames`` plus a StringDtype carrier column naming a real Home player."""
+        frames = _live_frames((1,))
+        frames[col or cls.CARRIER] = pd.Series(["H0"] * len(frames), dtype="string", index=frames.index)
+        return frames
+
+    def test_string_dtype_carrier_still_computes_a_finite_das(self) -> None:
+        """The regression guard: a StringDtype carrier must not collapse DAS to NaN."""
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking import add_das
+
+        frames = self._frames_with_string_carrier()
+        # Non-vacuity: the fixture must really present the dtype that triggers the bug.
+        # Were this to silently arrive as object, the guard would pass without testing.
+        assert isinstance(frames[self.CARRIER].dtype, pd.StringDtype), (
+            "fixture must carry a StringDtype carrier column, else the 2-D indexing path is untested"
+        )
+
+        actions = _das_actions([(1, "Home")])
+        links = _links([(1, 1)])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = add_das(actions, frames, links=links)
+
+        assert (out["das_source"] == "computed").all(), (
+            f"DAS must genuinely compute, not degrade: das_source={sorted(set(out['das_source']))}"
+        )
+        assert np.isfinite(out["das_team"]).all(), "das_team must be finite, not a silent NaN degrade"
+        assert (out["das_team"] > 0).all(), "a real accessible-space area is strictly positive"
+
+    def test_the_cast_follows_the_caller_supplied_column_name(self) -> None:
+        """The cast must name the column the CALLER passed, not the default literal.
+
+        ``player_in_possession_col`` is public and caller-configurable, so hard-coding
+        ``ball_carrier_player_id`` in the cast set would leave every caller who renames it
+        on the original silently-all-NaN path.
+        """
+        pytest.importorskip("accessible_space")
+        from silly_kicks.tracking._das import get_das
+
+        custom = "my_carrier"
+        frames = self._frames_with_string_carrier(custom)
+        assert self.CARRIER not in frames.columns, "the default name must be absent for this to discriminate"
+        assert isinstance(frames[custom].dtype, pd.StringDtype)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = get_das(frames, player_in_possession_col=custom)
+
+        assert out["DAS"].notna().any(), "a caller-renamed carrier column must be cast like the default one"
+
+    def test_opting_out_of_the_carrier_leaves_the_column_uncast(self) -> None:
+        """``player_in_possession_col=None`` forwards no carrier, so no cast is owed.
+
+        Pins the cast to the columns accessible-space actually 2-D-indexes rather than
+        letting it widen into "cast anything that looks like a carrier".
+        """
+        from silly_kicks.tracking._das import _prepare_frames
+
+        frames = self._frames_with_string_carrier()
+        prepared = _prepare_frames(frames, player_in_possession_col=None)
+        assert isinstance(prepared[self.CARRIER].dtype, pd.StringDtype), (
+            "an unforwarded carrier column must be left exactly as the caller supplied it"
+        )
+        # ...while the always-forwarded columns are cast regardless.
+        assert prepared["team_id"].dtype == object
+
+
 class TestDasUnscoreableTaxonomy:
     """Only the three documented unscoreable conditions degrade; everything else propagates."""
 

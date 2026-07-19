@@ -294,7 +294,10 @@ def test_discovery_sees_a_module_that_declares_no___all__(monkeypatch):
     # f"{__module__}.{__qualname__}" -- so without this the plant is discovered under a key
     # that no assertion here names, and the test fails for a reason unrelated to the fallback.
     offending_function.__qualname__ = "offending_function"
-    planted_mod.offending_function = offending_function
+    # setattr, not attribute assignment: a bare `mod.name = ...` on a `types.ModuleType`
+    # is a type error (ModuleType declares no such attribute), and the whole point of the
+    # plant is to add a name a module type cannot statically declare.
+    setattr(planted_mod, "offending_function", offending_function)  # noqa: B010
     assert not hasattr(planted_mod, "__all__"), "the plant must exercise the FALLBACK path"
 
     real_public_modules = C._public_modules
@@ -342,7 +345,7 @@ def test_discovery_fallback_ignores_names_merely_imported_into_a_module():
         return frames
 
     borrowed.__module__ = "silly_kicks.somewhere_else"  # defined ELSEWHERE
-    mod.borrowed = borrowed
+    setattr(mod, "borrowed", borrowed)  # noqa: B010  # see the plant above: ModuleType declares no such attribute
 
     assert "borrowed" not in C._public_names(mod), (
         "_public_names claimed a name this module only imported -- entries would be keyed to the wrong module"
@@ -443,7 +446,13 @@ def test_matched_and_mismatched_scalars_differ_in_dtype_not_value():
     """
     from silly_kicks.id_compat import canonical_id
 
-    def _canon(v):
+    def _canon(v) -> object:
+        # The return type is declared ``object`` because this is a comparison KEY, not a
+        # value: the inferred union (str | tuple | frozenset | NAType) is not ``==``-able as
+        # a whole, since ``pd.NA == pd.NA`` is ``pd.NA`` rather than a bool. No registry
+        # entry carries a missing id -- one that did would blow up here loudly, which is the
+        # correct outcome for a scalar that cannot be value-compared at all.
+        #
         # RECURSIVE: an entry that drives two id params at once declares a tuple, and either
         # slot may itself be an id COLLECTION (metrica/sportec pass `(home_team_id,
         # goalkeeper_ids)`). A one-level version canonicalized the inner set by stringifying

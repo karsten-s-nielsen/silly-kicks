@@ -203,7 +203,10 @@ def _lifted_reference(bs: pd.Series) -> pd.Series:
     must still reproduce on string-like input, so it must not move when the helper does.
     """
     m = {"0": "dead", "1": "alive"}
-    return bs.map(m).fillna(bs.str.lower()).where(bs.notna(), other=None)
+    # The ignore mirrors the one on the expression this oracle copies (``parse.py``):
+    # ``other=None`` is a valid None->NA fill at runtime, and pandas-stubs over-narrows
+    # ``other``. Suppressed rather than rewritten because the copy must stay VERBATIM.
+    return bs.map(m).fillna(bs.str.lower()).where(bs.notna(), other=None)  # type: ignore[arg-type]
 
 
 def test_string_ball_status_is_untouched():

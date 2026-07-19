@@ -476,11 +476,11 @@ def _build_phase_lookup(
 def extract_ghost_gk_features(
     frame_data: pd.DataFrame,
     *,
-    gk_team_id: int | str,
+    gk_team_id: float | int | str,
     goal_x: float = 0.0,
     score_diff: float = 0.0,
     phase: int = 0,
-    ball_carrier_team_id: int | str | None = None,
+    ball_carrier_team_id: float | int | str | None = None,
     prev_defensive_line_x: float | None = None,
     prev_defending_centroid_x: float | None = None,
     dt: float = _VELOCITY_WINDOW_S,
@@ -499,16 +499,22 @@ def extract_ghost_gk_features(
     ----------
     frame_data : pd.DataFrame
         All rows for one frame — players + ball.
-    gk_team_id : int | str
-        Team ID of the GK whose ghost position we predict.
+    gk_team_id : float | int | str
+        Team ID of the GK whose ghost position we predict. ``float`` is admitted
+        deliberately, not as a convenience: a float-backed team id is what a merge or an
+        NaN-carrying column leaves behind (``infer_ball_carrier`` emits boxed floats, and
+        the zero-row serve path types ``gk_team_id`` float64), and ``ids_match`` resolves
+        it via ``canonical_id`` -- ``canonical_id(366.0) == canonical_id("366")``. Typing
+        it away would have made the ONE dtype this function must survive unrepresentable.
     goal_x : float
         x-coordinate of the defending goal (0.0 or 105.0).
     score_diff : float
         GK's team score minus opponent.
     phase : int
         0 = open_play, 1 = set_piece, 2 = goal_kick.
-    ball_carrier_team_id : int | str | None
-        Team currently in possession.
+    ball_carrier_team_id : float | int | str | None
+        Team currently in possession. Same id-dtype latitude as ``gk_team_id`` above --
+        this is precisely the column ``infer_ball_carrier`` hands over as boxed floats.
     prev_defensive_line_x : float | None
         Previous frame's defensive line x (for velocity).
     prev_defending_centroid_x : float | None
@@ -2318,12 +2324,37 @@ def serve_ghost_gk_positions(
         # pd.concat across a per-match loop where one match has no detected GK silently
         # degrades period_id/frame_id from int64 to object -- and the caller joins on
         # exactly these columns (ADR-019 class defect).
+        #
+        # The four join keys are therefore DERIVED FROM THE INPUT, not hard-coded: they
+        # are not fixed by any schema. `game_id`/`team_id` are int64 for a native provider
+        # and object for the kloppy-family ones, so a hard-coded pair is only ever right
+        # for the provider it was written against. It was measured wrong on both:
+        # `game_id` was pinned object while the populated path yields pandas 3's `str`,
+        # and `gk_team_id` was pinned float64 for every provider whose team ids are not.
+        #
+        # The derivation goes through ONE REAL VALUE rather than a zero-row column slice,
+        # because the populated path builds from python scalars (`pd.DataFrame(meta_rows)`)
+        # and that INFERENCE is not always the source column's own dtype: pandas 3 infers
+        # `str` from an object-dtype string column. Round-tripping a single non-null value
+        # through the same construction reproduces the populated dtype by definition; a
+        # slice would silently re-introduce the very mismatch this branch exists to avoid.
+        def _empty_join_key(column: str, fallback: str) -> pd.Series:
+            if column not in frames.columns:
+                return pd.Series(dtype=fallback)
+            observed = frames[column].dropna()
+            if observed.empty:
+                # Nothing to infer from -- the column slice is the closest available truth.
+                return frames[column].iloc[:0].reset_index(drop=True)
+            return pd.DataFrame([{column: observed.iloc[0]}])[column].iloc[:0].reset_index(drop=True)
+
         return pd.DataFrame(
             {
-                "game_id": pd.Series(dtype=object),
-                "period_id": pd.Series(dtype="int64"),
-                "frame_id": pd.Series(dtype="int64"),
-                "gk_team_id": pd.Series(dtype="float64"),
+                "game_id": _empty_join_key("game_id", "object"),
+                "period_id": _empty_join_key("period_id", "int64"),
+                "frame_id": _empty_join_key("frame_id", "int64"),
+                # The GK's team id comes off the frames' `team_id` column in the
+                # populated path (`meta["gk_team_id"]` is filled from `gk_row["team_id"]`).
+                "gk_team_id": _empty_join_key("team_id", "float64"),
                 "ghost_gr_x": pd.Series(dtype=float),
                 "ghost_gr_y": pd.Series(dtype=float),
                 "ghost_clamped": pd.Series(dtype=bool),

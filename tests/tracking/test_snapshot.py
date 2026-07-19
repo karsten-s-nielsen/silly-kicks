@@ -353,7 +353,13 @@ def test_partially_marked_frames_still_raise(actions_3, snapshots_combined):
 
     frames, links = snapshot_to_tracking_frames(snapshots_combined, actions_3)
     partial = frames.copy()
-    partial.iloc[0, partial.columns.get_loc("speed_source")] = None
+    # `get_loc` returns a slice / boolean mask for a non-unique index, and only a plain
+    # positional int is a valid `.iloc` setitem key. Narrowing it here is not ceremony: a
+    # duplicated `speed_source` column would otherwise unmark SEVERAL columns and the test
+    # would still pass, for the wrong reason.
+    speed_source_pos = frames.columns.get_loc("speed_source")
+    assert isinstance(speed_source_pos, int), "speed_source is not a single unique column"
+    partial.iloc[0, speed_source_pos] = None
     actions_with_data = actions_3[actions_3["action_id"].isin(links["action_id"])]
     with pytest.raises(ValueError, match="velocity columns"):
         add_das(actions_with_data, partial, links=links)

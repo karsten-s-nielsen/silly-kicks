@@ -596,6 +596,58 @@ matched/mismatched pair *exists* (metrica's fixed `'Home'`/`'Away'` literals; kl
 **constructor only**, and names `.player_surface()` / `.player_share()` as a real, OPEN ADR-019 gap
 that this exemption does not close.
 
+### Fixed — DAS was silently all-NaN on pandas 3
+
+`_prepare_frames` casts the columns accessible-space indexes two-dimensionally (`arr[:, None]`) to
+numpy `object`, but **omitted the forwarded ball-carrier column** — the one the library receives as
+`PASSERS` on the `respect_offside` path, which is the DAS default. On any pandas that infers a
+`StringDtype` for it (pandas 3 / py≥3.11, i.e. **every CI leg except `ubuntu-3.10`**), the 2-D index
+raised `IndexError`, which `_call_simulation` converted to `DasUnscoreableError` — so **every** DAS
+call degraded to NaN with `das_source == "unscoreable_call"`, and nothing detected it.
+
+The cast now names the column the caller actually supplied via the public `player_in_possession_col`
+kwarg rather than the `ball_carrier_player_id` literal, so a renamed carrier is covered too;
+`get_xc` forwards no carrier and is unchanged.
+
+Measured on the calibration fixture: **py3.12 / pandas 3.0.3 goes 0 → 3 finite DAS rows of 10**;
+**py3.10 / pandas 2.3.3 is byte-identical** (verified by a same-process full-vector A/B, not by
+inspection). This restores `gkdv.delta_das` (the TF-19 PR-3 physics arm shipped in this release),
+`das_xfns` / `add_das`, and the TF-24 calibration DAS features on modern pandas.
+
+**Found by this release's own DAS work.** The old broad exception catch swallowed the `IndexError`
+into a mute NaN column; the narrowed `DasUnscoreableError` plus `das_source` provenance is what made
+a long-standing silent degradation legible — on its first contact with CI.
+
+**No retrain trigger.** No bundled model weights consume DAS-derived features, verified against the
+committed feature lists in every one of the five model families' `metadata.json`/`model.json` (xS,
+xCross, Ghost-GK, `GkCompletionModel`, `GkRetentionModel`); grepping every trainer and extractor for
+`das` / `accessible_space` / `get_das` / `get_xc` returns zero matches. `das_xfns` is in no default
+xfn list and has no atomic mirror.
+
+**pandas-3 consumers must re-materialize:** anyone who opted into `das_xfns` for VAEP; direct
+`add_das` / `get_das` / `get_individual_das` / `das_at_action` callers; TF-24 calibration runs (their
+Brier-CV scores and `das_degraded` diagnostics were computed against all-NaN DAS); and
+`gkdv.delta_das` output. pandas-2 consumers are unaffected — byte-identical.
+
+The new regression guard **pins the carrier dtype explicitly** rather than leaving it to inference,
+so the defect now fails on *every* interpreter instead of only where pandas happens to infer
+`StringDtype`. The B1 oracle gate (`test_compute_das_values_are_unchanged_by_the_public_routing`)
+consequently runs for real on every leg instead of skipping.
+
+### Testing — `delta_das` gains live end-to-end coverage
+
+`test_das_arm_returns_a_LIVE_FINITE_delta_through_real_accessible_space` exercises the arm through
+**real** accessible-space with no `_das_port` stubbing. Every other gkdv DAS assertion either stubs
+the port or runs on frames carrying **no ball-carrier column** — so `_resolve_player_in_possession_col`
+returns `None` and the offside path never runs. Measured: reintroducing the pandas-3 all-NaN defect
+left all **163** pre-existing `tests/gkdv/` tests green.
+
+The gap was silent rather than loud because **`team_das` sums `DAS.dropna()`, and an empty sum is
+`0.0`** — an all-NaN collapse returns a finite, plausible zero from *both* legs, so a finiteness
+assertion alone would have passed. The guard therefore asserts the underlying per-player DAS is
+finite and strictly positive **and** that the delta is non-zero. Mutation-verified red on both
+interpreters.
+
 ### Fixed — provider parse hardening
 
 `providers/sportec/parse.py`: period resolution now raises when neither `period_id` nor `period`

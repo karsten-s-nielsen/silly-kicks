@@ -291,13 +291,20 @@ def _validate_das_inputs(frames: pd.DataFrame) -> None:
         )
 
 
-def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
+def _prepare_frames(frames: pd.DataFrame, *, player_in_possession_col: str | None = None) -> pd.DataFrame:
     """Validate, transform coordinates, normalise ball rows.
 
     Casts nullable pandas dtypes (Int64, boolean) to numpy equivalents
     because the accessible-space library cannot handle nullable arrays
     (e.g. BooleanArray comparisons produce 2-D structures that crash).
     Gradient Sports is the primary provider affected (Int64 player_id/team_id/team_in_possession).
+
+    ``player_in_possession_col`` is the ALREADY-RESOLVED carrier column
+    (:func:`_resolve_player_in_possession_col` output) that the caller forwards to
+    accessible-space as ``player_in_possession_col``. It is caller-configurable, so the
+    2-D cast below must name the column the caller actually passed rather than the
+    :data:`_DEFAULT_PLAYER_IN_POSSESSION_COL` literal. ``None`` means the carrier is not
+    forwarded (``get_xc``, or a caller that opted out), so no cast is owed.
     """
     _validate_das_inputs(frames)
     out = _to_das_coords(frames)
@@ -313,7 +320,15 @@ def _prepare_frames(frames: pd.DataFrame) -> pd.DataFrame:
     # columns on newer pandas) reject 2-D indexing -> "IndexError: too many indices for array".
     # Force numpy ``object`` so the library always sees a plain ndarray. (Idempotent for the
     # object/int64 columns it already handled.)
-    for col in ("team_id", "team_in_possession", "player_id"):
+    #
+    # The carrier column belongs in this set: with respect_offside on (the DAS default)
+    # accessible-space receives it as PASSERS and 2-D-indexes it exactly like the team
+    # arrays. Omitting it made every DAS call raise -> DasUnscoreableError -> all-NaN DAS
+    # on any pandas that infers a StringDtype for it (pandas 3 / py>=3.11).
+    two_d_indexed = ["team_id", "team_in_possession", "player_id"]
+    if player_in_possession_col is not None:
+        two_d_indexed.append(player_in_possession_col)
+    for col in two_d_indexed:
         if col in out.columns:
             out[col] = out[col].astype(object)
     ball_mask = out["is_ball"] == True  # noqa: E712
@@ -485,7 +500,7 @@ def get_das(
     """
     asmod = _import_accessible_space()
     ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
-    prepared = _prepare_frames(frames)
+    prepared = _prepare_frames(frames, player_in_possession_col=ppc)
 
     if not _has_simulatable_frame(prepared):
         warnings.warn(_NO_SIMULATABLE_FRAME_MSG, UserWarning, stacklevel=2)
@@ -611,7 +626,7 @@ def get_individual_das(
     """
     asmod = _import_accessible_space()
     ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
-    prepared = _prepare_frames(frames)
+    prepared = _prepare_frames(frames, player_in_possession_col=ppc)
 
     if not _has_simulatable_frame(prepared):
         warnings.warn(_NO_SIMULATABLE_FRAME_MSG, UserWarning, stacklevel=2)

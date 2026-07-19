@@ -135,7 +135,9 @@ def _goal_actions(team_dtype: str):
             "result_id": [cfg.results.index("success")] * 3,
         }
     )
-    df["team_id"] = df["team_id"].astype(team_dtype)
+    # Resolve the dtype NAME to a real dtype object: `astype` is typed against dtype
+    # objects, not the free-form strings the parametrization carries.
+    df["team_id"] = df["team_id"].astype(pd.api.types.pandas_dtype(team_dtype))
     return df
 
 
