@@ -1,0 +1,5 @@
+vectorized    121.4s  spread[:6]=[364.311  366.4966 366.6346 366.8681 371.335  355.7736]
+fft-cic         0.4s  spread[:6]=[365.3072 367.4945 367.6345 367.8648 372.3332 356.7723]
+             vs vectorized: max rel diff 3.372e-03  median 2.720e-03
+fft             0.4s  spread[:6]=[364.3838 366.5343 366.6537 366.8887 371.2743 355.8158]
+             vs vectorized: max rel diff 3.138e-03  median 3.217e-04

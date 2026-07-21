@@ -172,7 +172,7 @@ AGGREGATORS = [
     _ah(F.add_shape_graph, "add_shape_graph"),
     _ah(F.add_structural_pass, "add_structural_pass"),
     _ah(F.add_team_shape, "add_team_shape"),
-    _ah(F.add_ghost_gk, "add_ghost_gk", kde_backend="cpu-numba"),
+    _ah(F.add_ghost_gk, "add_ghost_gk"),
     _axh(F.add_cover_shadows, "add_cover_shadows"),
     _axh(F.add_off_ball_run_values, "add_off_ball_run_values"),
     _axh(F.add_gk_influence, "add_gk_influence"),

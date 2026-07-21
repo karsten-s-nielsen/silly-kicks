@@ -606,21 +606,31 @@ def main() -> None:
     # --- 7. Save final model ---
     final_model.training_commit = training_commit
     final_model.training_platform = args.training_platform
+    # Aggregate corpus provenance (providers + counts ONLY; spec 2026-07-20 §6). Providers come
+    # from the per-file source_provider column (already collected into provider_labels);
+    # n_games from the training groups; n_rows from the retained sample count. NEVER a per-match
+    # id list, NEVER a public/restricted split (owner decision). No match->registered
+    # classification join is performed, so there is no join to guard.
+    final_model.corpus_provenance = {
+        "providers": sorted({str(p) for p in provider_labels.tolist()}),
+        "n_games": len(set(groups.tolist())),
+        "n_rows": len(features),
+    }
     artifact_dir = args.output_dir / "ghost_gk_v1"
     final_model.save(artifact_dir)
     print(f"\nModel saved to {artifact_dir}")
 
-    # Round-trip verify (compare serialized weights, not KDE predictions —
-    # predict() through KDE is intractable at training scale)
+    # Round-trip verify. Post-2026-07-20 the artifact is parameters-only: the per-sample arrays
+    # are NOT persisted, so a loaded model's _training_* are None by design. Verify the SERIALIZED
+    # PARAMETERS (tree ensembles + baselines) round-trip exactly instead.
     loaded = GhostGkModel.load(artifact_dir)
-    for attr in ("_tree_nodes", "_training_gk_x", "_training_gk_y", "_training_leaves"):
+    for attr in ("_tree_nodes", "_tree_nodes_y"):
         orig = getattr(final_model, attr)
         back = getattr(loaded, attr)
-        if isinstance(orig, list):
-            for i, (a, b) in enumerate(zip(orig, back, strict=True)):
-                np.testing.assert_array_equal(a, b, err_msg=f"{attr}[{i}]")
-        else:
-            np.testing.assert_array_equal(orig, back, err_msg=attr)
+        for i, (a, b) in enumerate(zip(orig, back, strict=True)):
+            np.testing.assert_array_equal(a, b, err_msg=f"{attr}[{i}]")
+    assert loaded._baseline_x == final_model._baseline_x, "baseline_x drift"  # noqa: S101
+    assert loaded._baseline_y == final_model._baseline_y, "baseline_y drift"  # noqa: S101
     assert loaded.carrier_params == cp, f"carrier_params drift: {loaded.carrier_params} != {cp}"  # noqa: S101
     print(f"Round-trip verification: PASS (R3 carrier_params={loaded.carrier_params})")
 

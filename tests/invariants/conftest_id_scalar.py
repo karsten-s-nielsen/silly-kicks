@@ -874,7 +874,7 @@ def _tracking_model_entries() -> list[IdScalarEntry]:
         ),
         _e(
             "silly_kicks.tracking._ghost_gk.compute_ghost_gk",
-            lambda s: T.compute_ghost_gk(ghost_frames(), home_team_id=s, kde_backend="cpu-numba"),
+            lambda s: T.compute_ghost_gk(ghost_frames(), home_team_id=s),
             live_columns=("ghost_gk_x", "ghost_gk_y"),
         ),
         _e(
@@ -1080,7 +1080,7 @@ def _tracking_feature_entries() -> list[IdScalarEntry]:
     entries.append(
         _e(
             "silly_kicks.tracking.features.ghost_gk_xfns",
-            lambda s: _xfn_outputs(F.ghost_gk_xfns(home_team_id=s, kde_backend="cpu-numba"), frames=ghost_frames()),
+            lambda s: _xfn_outputs(F.ghost_gk_xfns(home_team_id=s), frames=ghost_frames()),
         )
     )
     return entries

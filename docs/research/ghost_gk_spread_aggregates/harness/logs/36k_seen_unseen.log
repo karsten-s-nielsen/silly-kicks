@@ -1,0 +1,19 @@
+n_train=36000 n_trees=243 n_queries=480
+[A] distinct training leaf vectors: 35892/36000
+[A] queries whose FULL 243-leaf vector exactly matches a training row: 0/480
+      metrica_slim       n=  71  exact collisions=0
+      skillcorner_slim   n=  76  exact collisions=0
+      sportec_slim       n= 333  exact collisions=0
+
+[B] max trees agreeing with ANY single training row (out of 243):
+      min=149  median=216  p99=232  max=235
+      metrica_slim       median=175  max=199
+      skillcorner_slim   median=218  max=234
+      sportec_slim       median=218  max=235
+
+[C] weight concentration over the 36000-row database:
+      neff:            min=27918 median=32856 max=34492  (uniform would be 36000)
+      neff / n_train:  median=0.9127
+      largest single weight: median=6.148e-05  (uniform = 2.778e-05)
+      mass in top-100 rows:  median=0.0053  (uniform = 0.0028)
+      rows with NONZERO weight: min=35989 median=36000 max=36000

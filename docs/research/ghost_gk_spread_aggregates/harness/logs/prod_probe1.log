@@ -1,0 +1,10 @@
+import s 0.4
+load s 2.64
+training_leaves (1039502, 500) int64 bytes GB 4.16
+leaf traversal 8q s 0.02
+leaf_match_weights q=1: 0.35s  (0.35s/query)  W (1, 1039502) 0.01GB
+   nonzero rows q0: 1039502 frac 1.0
+leaf_match_weights q=2: 0.70s  (0.35s/query)  W (2, 1039502) 0.02GB
+   nonzero rows q0: 1039502 frac 1.0
+leaf_match_weights q=4: 1.40s  (0.35s/query)  W (4, 1039502) 0.03GB
+   nonzero rows q0: 1039502 frac 1.0

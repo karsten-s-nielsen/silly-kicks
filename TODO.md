@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-07-19. **Current release**: silly-kicks 4.53.0 (TF-19 PR-3, ADR-043, PR-S120: new `silly_kicks/gkdv/` package — ghost-substitution engine (`build_ghost_frames` / `provenance_to_targets`) + two **gate-independent** physics arms (`delta_das`, `delta_threat_suppression`, attacker-value units so negative = deterrent) + per-keeper aggregation + behavioural-anchoring validation; plus ADR-019 id-dtype root fixes — `canonical_id_series` probes object CONTENT, the `ids_*` helpers no longer trust the both-object fast path, `infer_ball_carrier` restores its SOURCE dtype instead of leaking `object` for 4 of 5 sources, and the 6 `play_left_to_right`-family sites route through `ids_match`; plus the DAS failure taxonomy — the broad exception catch narrows to the new `tracking.DasUnscoreableError` and `add_das` emits a `das_source` provenance column. **Consumer-visible: (1) `_id_compat` is promoted to the public `silly_kicks.id_compat` — a BREAKING import path with no shim; (2) `add_das` gains the `das_source` column (additive) and now RAISES where it previously warned-and-continued or degraded to a mute all-NaN column; (3) `TRACKING_CATEGORICAL_DOMAINS["speed_source"]` widens with `SPEED_SOURCE_UNAVAILABLE`, so a consumer validating that domain must accept a third token; (4) `ball_carrier_team_id`/`_player_id` dtypes change for int64/float64/string sources; (5) boxed-object id comparisons now resolve, changing `_resolve_action_frame_context`'s masks for any consumer feeding such a column. No DAS or model *value* changes → no retrain; lakehouse re-materializes.**) Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-07-20. **Current release**: silly-kicks 4.54.0 (ADR-044, PR-S121: ghost-GK artifacts are **parameters-only** — `save()` no longer persists the per-sample training arrays, `predict_density` survives only on a locally `fit()` model, `ghost_gk_density_spread` + `kde_backend` retired from the aggregators, artifact format 1.3.0, bundled `default` 7.4 MB → 764 KB by a no-retrain re-save; `predict_mean` byte-identical → no VAEP retrain. Plus a CI name-allowlist over bundled weights + a corpus-provenance metadata block; and the `from_variant("public")` alias fix — it served the restricted `sc_extended` artifact, now maps to the bundled `default`. **Consumer-visible: (1) breaking artifact format 1.2.0 → 1.3.0, no released version reads a 1.3.0 artifact; (2) `ghost_gk_density_spread` retired (9 → 6 ghost VAEP columns), lakehouse re-materializes the passthrough out; (3) `predict_density` raises on a loaded artifact — fit locally to use density.**) Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 **xT-GK v2 — remaining open items (the 4.45.0 verdict was measured on contaminated origins; half of it is withdrawn):**
 The make-or-break deep-zone gate (GO-leaning) and ρ retention weights shipped 4.42.0–4.44.0; the faithful V_opp + construct-validity ran 4.45.0. **4.46.0 (PR-S113) then found that ~24% of the GS GK-distribution domain (60.2% of its goal-kicks) had been scored at a FABRICATED grid zone**, and that SkillCorner's goal-kick origins were the broadcast ball, not the keeper — while the v1 comparator used resolved origins all along. On the corrected cohort: **the "keeper-flat" finding does NOT survive** (GS v2 ICC −0.0020 → **+0.0256**, now above v1's 0.0193), but **the outcome-AUC leg stands** (GS −0.1474, SC −0.0268 — v2 still loses to simple baselines). **Metric verdict: still not construct-validated by outcome-AUC, but no longer keeper-flat.** Owner/Eyestone decision pending on the interpretation forks (V reward = `E[first-shot xG]` vs Jeff §2.1 remainder-of-possession; dormant PEV pending receiver-pressure `q`) — now takeable on trustworthy numbers. Lakehouse re-materializes `xt_gk_v2_*` + adopts `apply_resolved_gk_geometry`.
@@ -163,22 +163,21 @@ brainstorm → spec cycle before code.
   `_FULLY_OBSERVED_PROVIDERS` before any fitting) would fail faster. The registered retrain corpus is
   all-classified (`skillcorner`+`idsse`+`gradientsports`; `metrica` excluded from GKDV corpora), so this
   is a refinement, not a blocker.
-- **Publish the ghost-GK `full` retrain to the HuggingFace Hub (owner-run; PR-S118 / ADR-040
-  follow-up).** The xS/xCross half of this item is **DONE 2026-07-18**:
-  `silly-kicks/xshot-occurrence-v1` and `silly-kicks/xcross-attempt-v1` were created and
-  populated with the Stage-B `sc_extended` artifacts + model cards, and
-  `from_variant("sc_extended")` was verified end-to-end (downloads, passes the fail-closed
-  chirality check, and is provably distinct from the bundled `public` model — 313 vs 263 trees
-  for xCross, 323 vs 217 for xS). **What REMAINS is ghost-GK, and it is a live breakage, not a
-  nice-to-have:** `silly-kicks/ghost-gk-v1` already exists and is public, but its artifact
-  carries **no chirality block**, so under the 4.51.0 fail-closed `load()` a `from_hub` call
-  **raises** for every external consumer. The fix is uploading the 179-match Stage-B retrain,
-  which lives on the DGX (~208 MB) at `~/Development/sk_stageB_448/ghost_full/ghost_gk_v1/`;
-  exclude `_feature_cache/` (training-time cache, not part of the served contract — verify by
-  explicit file list, not a glob). **Open decision:** overwrite the existing `full` in place, or
-  push a new revision and leave the old one reachable? (Leaning overwrite — a revision that
-  raises has no value.) Recipe: `docs/research/tf19_pr2/hf_upload_instructions.md`. Pull the four
-  served files locally and verify hashes BEFORE uploading, rather than piping DGX → HF unverified.
+- **Publish the ghost-GK `full` to the HuggingFace Hub — OWNER-APPROVED SEPARATE WORKSTREAM, gated
+  on the parameters-only PR (4.54.0 / ADR-044).** The xS/xCross half is **DONE 2026-07-18**
+  (`silly-kicks/xshot-occurrence-v1` / `-v1`, `from_variant("sc_extended")` verified end-to-end).
+  Ghost-GK remains, and the artifact to upload is now the **PARAMETERS-ONLY stripped `full`**, NOT
+  the array-carrying one: as of 4.54.0 (ADR-044) `save()` no longer persists the per-sample arrays,
+  so the upload must use a `full` produced by the post-strip `save()` (a stripped, chirality-
+  carrying `full` is staged on the DGX under `~/Development/sk_stageB_448/` per the T-full step of
+  the 4.54.0 work; exclude `_feature_cache/`, verify by explicit file list). This also fixes the
+  `from_hub` breakage: the live `silly-kicks/ghost-gk-v1` artifact has no chirality block, so
+  4.51.0+ `load()` raises for every external consumer. **The HF write itself (overwrite the live
+  `full`, and whether/how to withdraw the existing array-carrying revisions) is part of the live
+  ghost-GK disclosure remediation the owner holds — NOT scheduled by the 4.54.0 PR, which changes
+  only the library + the bundled `default` artifact.** Recipe: `docs/research/tf19_pr2/
+  hf_upload_instructions.md` (updated with a pre-upload parameters-only assertion). Pull the served
+  files locally and verify hashes BEFORE uploading.
 - **TF-7 cross-family pitch-control cache in VAEP xfns (deferred).** `add_*`
   aggregators accept `pitch_control_cache` (3.25.0); the `*_xfns` VAEP transformers
   do not yet thread a shared cache across feature families in one pass (each keeps

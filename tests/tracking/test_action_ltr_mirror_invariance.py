@@ -292,8 +292,8 @@ def test_ghost_gk_mirror_invariant():
     def _g(df: pd.DataFrame, col: str) -> float:
         return float(df.loc[1, col])  # type: ignore[arg-type]
 
-    bx, by, bs = _g(base, "ghost_gk_x"), _g(base, "ghost_gk_y"), _g(base, "ghost_gk_density_spread")
-    mx, my, ms = _g(mir, "ghost_gk_x"), _g(mir, "ghost_gk_y"), _g(mir, "ghost_gk_density_spread")
+    bx, by = _g(base, "ghost_gk_x"), _g(base, "ghost_gk_y")
+    mx, my = _g(mir, "ghost_gk_x"), _g(mir, "ghost_gk_y")
 
     # (1) ORIENTATION GUARD -- the DURABLE, model-independent correctness check. Both mirrors emit
     # ghost_gk_x at the ATTACKED goal (x=105); a gross orientation leak puts x ~90 m away
@@ -317,10 +317,6 @@ def test_ghost_gk_mirror_invariant():
     # future refit pushes this past the tol while (1)+(2) still hold, re-measure and bump the tol; it
     # is model asymmetry, not an orientation leak.
     assert abs(by - my) < _GHOST_Y_TOL, f"ghost_gk_y asymmetry {abs(by - my):.3f} m exceeds {_GHOST_Y_TOL} m"
-    # density_spread is a large-magnitude entropy quantity (~355), so bound it RELATIVELY: the
-    # off-centre model asymmetry is ~0.36%, well inside 1% (the old 0.5 m ABSOLUTE tol was a
-    # central-probe artifact and does not translate to this scale).
-    assert abs(bs - ms) / abs(bs) < 0.01, f"ghost_gk_density_spread rel-diff {abs(bs - ms) / abs(bs):.4f}: {bs} vs {ms}"
 
 
 def test_obso_mirror_invariant():

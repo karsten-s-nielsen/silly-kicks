@@ -305,6 +305,14 @@ _HF_REPO_ID = "silly-kicks/xshot-occurrence-v1"
 _MODEL_VERSION = "1.0.0"
 _XSHOT_WEIGHTS_ROOT = Path(__file__).parent / "_xshot_weights"
 _VARIANT_CACHE: dict = {}  # P3: memoize bundled loads (default-list serve perf)
+# The bundled "default" IS the public arm (its metadata records shipped_variant="public").
+# "public" was a stale alias reserved at 4.9.0 for a public Hub artifact never created; PR-S118
+# added "sc_extended" alongside it in the from_hub branch, so from_variant("public") fell
+# through to the Hub and served the RESTRICTED sc_extended artifact under the "public" key.
+# Resolve the alias BEFORE the cache so the request maps to the reproducible bundled model
+# (spec 2026-07-20 §8).
+_VARIANT_ALIASES = {"public": "default"}
+_HUB_VARIANTS = frozenset({"sc_extended"})
 _INT_PARAMS = ("n_estimators", "max_depth", "min_child_weight")
 
 
@@ -532,7 +540,8 @@ class XShotOccurrenceModel:
 
     @classmethod
     def from_variant(cls, variant: str = "default") -> XShotOccurrenceModel:
-        """Load a bundled variant by name (memoized); fall through to Hub for the public variant.
+        """Load a bundled variant by name (memoized). ``"public"`` aliases to the bundled
+        ``"default"`` (which IS the public arm); only ``"sc_extended"`` falls through to the Hub.
 
         ``"default"`` is bundled in the wheel and SHA-256 verified on first load, then cached —
         an immutable, inference-only instance is safe to share across calls (P3: avoids reloading
@@ -542,12 +551,13 @@ class XShotOccurrenceModel:
         --------
         >>> # XShotOccurrenceModel.from_variant("default")
         """
+        variant = _VARIANT_ALIASES.get(variant, variant)
         if variant in _VARIANT_CACHE:
             return _VARIANT_CACHE[variant]
         weights_dir = _XSHOT_WEIGHTS_ROOT / variant
         if (weights_dir / "SHA256SUMS").exists():
             model = cls.load(weights_dir)
-        elif variant in ("public", "sc_extended"):  # the Hub-hosted variants
+        elif variant in _HUB_VARIANTS:  # the Hub-hosted variants
             model = cls.from_hub(_HF_REPO_ID)
         else:
             raise FileNotFoundError(

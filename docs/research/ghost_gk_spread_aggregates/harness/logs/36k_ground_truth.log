@@ -1,0 +1,34 @@
+[db] n_train=36000 n_trees=243
+[q] n_queries=480 (stratified from 1593)
+__src
+metrica_slim         71
+skillcorner_slim     76
+sportec_slim        333
+[occ] occupied cells=7529 | leaves/tree min=27 max=31
+[occ] cell counts: min=20 p1=21 median=139 mean=1161.91 p99=26240 max=34697
+[occ]   cells with n<2: 0 (0.000%)
+[occ]   cells with n<5: 0 (0.000%)
+[occ]   cells with n<10: 0 (0.000%)
+[occ]   cells with n<20: 0 (0.000%)
+[agg] occupied cells=7529 -> AGG payload 361392 bytes (0.361 MB)
+[route] query leaves (480, 243) in 0.1s
+[agg] reconstructed biased-cov det: min 562.7 median 640.6
+[gt] 48/480  205s
+[gt] 96/480  417s
+[gt] 144/480  623s
+[gt] 192/480  829s
+[gt] 240/480  1036s
+[gt] 288/480  1244s
+[gt] 336/480  1452s
+[gt] 384/480  1664s
+[gt] 432/480  1872s
+[gt] 480/480  2081s
+
+[exact] AGG-vs-true weighted moments (must be ~machine zero):
+  max |mu_x diff| = 7.816e-14   max |mu_y diff| = 3.553e-14
+  max |cov diff|  = 4.034e-12
+[gt] k (nonzero training rows): min=35989 median=36000 max=36000
+[gt] neff_true: min=27918.3 median=32855.7 max=34492.2
+[gt] spread: min=305.736 median=378.151 max=395.236  CV=0.0574 (grid area=960 m2)
+[gt] grid-edge probability mass: median=9.956e-03 p99=2.000e-02 max=2.001e-02
+SAVED gt.npz

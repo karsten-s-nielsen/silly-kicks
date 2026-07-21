@@ -1,0 +1,20 @@
+constant baseline c* = 386.510 m2  -> median rel err 2.211%
+
+--- (1) FREE-b refit by MINIMISING MEDIAN RELATIVE ERROR (same loss as b=0.5) ---
+  loss-matched fit: a=86.9434  b=0.230   (dimensionally coherent b=0.5)
+  FREE-b loss-matched (b=0.23, 2 free params)  median  1.537%   vs constant -0.674 pp [95% CI -1.198,-0.300] -> BEATS constant
+
+--- (2) b=0.5 inflation c fitted LEAVE-ONE-SOURCE-OUT (honest out-of-sample) ---
+    held out metrica_slim      : c fitted on the other sources = 0.075  -> held-out median rel err 2.484%
+    held out skillcorner_slim  : c fitted on the other sources = 0.070  -> held-out median rel err 0.367%
+    held out sportec_slim      : c fitted on the other sources = 0.030  -> held-out median rel err 2.508%
+  GAUSS-GRID b=0.5, c OUT-OF-SAMPLE (LOSO)     median  2.425%   vs constant +0.214 pp [95% CI -2.671,+0.871] -> NOT DISTINGUISHABLE
+
+  (in-sample reference: c=0.070)
+  GAUSS-GRID b=0.5, c IN-SAMPLE                median  1.083%   vs constant -1.128 pp [95% CI -3.288,-0.797] -> BEATS constant
+
+--- context: dynamic range of the target ---
+  truth min 305.74  max 395.24  -> full range is 23.7% of the median
+  a predictor scoring X% median error on a target whose ENTIRE spread is ~24%
+  is competing for a very small amount of explainable variation.
+EXIT=0

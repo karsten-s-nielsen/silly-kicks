@@ -77,6 +77,11 @@ _HF_REPO_ID = "silly-kicks/xcross-attempt-v1"
 _MODEL_VERSION = "1.0.0"
 _XCROSS_WEIGHTS_ROOT = Path(__file__).parent / "_xcross_weights"
 _VARIANT_CACHE: dict = {}
+# See _xshot_occurrence.py for the full rationale: "public" is a stale alias that fell through
+# to the Hub-hosted RESTRICTED sc_extended artifact; the bundled "default" IS the public arm.
+# Resolve the alias BEFORE the cache (spec 2026-07-20 §8).
+_VARIANT_ALIASES = {"public": "default"}
+_HUB_VARIANTS = frozenset({"sc_extended"})
 _INT_PARAMS = ("n_estimators", "max_depth", "min_child_weight")
 
 
@@ -564,16 +569,16 @@ class XCrossAttemptModel:
 
     @classmethod
     def from_variant(cls, variant: str = "default") -> XCrossAttemptModel:
-        """Load a bundled variant by name (memoized); fall through to Hub for the public variant.
-
-        Raises ``FileNotFoundError`` until PR-B bundles weights.
+        """Load a bundled variant by name (memoized). ``"public"`` aliases to the bundled
+        ``"default"`` (which IS the public arm); only ``"sc_extended"`` falls through to the Hub.
         """
+        variant = _VARIANT_ALIASES.get(variant, variant)
         if variant in _VARIANT_CACHE:
             return _VARIANT_CACHE[variant]
         weights_dir = _XCROSS_WEIGHTS_ROOT / variant
         if (weights_dir / "SHA256SUMS").exists():
             model = cls.load(weights_dir)
-        elif variant in ("public", "sc_extended"):
+        elif variant in _HUB_VARIANTS:
             model = cls.from_hub(_HF_REPO_ID)
         else:
             raise FileNotFoundError(

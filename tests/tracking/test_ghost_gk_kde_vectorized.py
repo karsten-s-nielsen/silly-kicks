@@ -12,6 +12,27 @@ from silly_kicks.tracking._ghost_gk import (
 )
 
 
+def _fit_golden_density_model() -> GhostGkModel:
+    """The locally-fit model behind the KDE backend-parity tests.
+
+    The bundled "default" is parameters-only since 4.54.0 and cannot serve ``predict_density``, so
+    the backend-parity tests fit a fresh model here and compute their reference at RUNTIME (the
+    closed-form ``vectorized`` backend on this same model) rather than against a frozen oracle: a
+    fitted-model oracle is not portable across sklearn/numpy versions, so a committed golden
+    false-fails on non-gen CI legs. `vectorized` is scipy-equivalent
+    (test_vectorized_kernel_matches_scipy, 1e-9), so cpu-numba/fft-cic == vectorized is the same
+    end-to-end parity a frozen scipy golden checked; the parity is exact-arithmetic and
+    size-independent. See ADR-044 §9.4.
+    """
+    rng = np.random.default_rng(20260720)
+    X = pd.DataFrame(rng.standard_normal((4000, 26)), columns=GHOST_GK_FEATURE_NAMES)
+    X["phase"] = rng.integers(0, 3, 4000).astype(float)
+    labels = pd.DataFrame({"gk_x": rng.uniform(2, 20, 4000), "gk_y": rng.uniform(25, 45, 4000)})
+    model = GhostGkModel(n_estimators=60)
+    model.fit(X, labels)
+    return model
+
+
 @pytest.fixture(scope="module")
 def small_model() -> tuple[GhostGkModel, pd.DataFrame]:
     rng = np.random.default_rng(7)
@@ -46,19 +67,19 @@ def golden():
     return np.load(_GOLDEN, allow_pickle=True)
 
 
-# predict_density on the bundled 36k-sample "default" model is heavy (the `vectorized`/`scipy`
-# oracle paths are ~4-9s/sample), so every golden gate slices to the first _N_GOLDEN frozen
-# samples — enough spread to lock the grid/mode/spread contract while keeping the CI gate
-# tractable. The main golden runs the production `cpu-numba` backend (~7.8x faster than
-# vectorized); the slow oracle now appears only in the parity tests (test_model_traveling_parity,
-# test_fft_cic_raw_grid_tighter_than_ngp). (Full 24 samples are frozen on disk; raise this to
-# widen coverage at a linear runtime cost.)
+# The golden gate slices to the first _N_GOLDEN frozen samples — enough spread to lock the
+# grid/mode/spread contract while keeping the CI gate tractable. The main golden runs the
+# production `cpu-numba` backend; the slow scipy oracle appears only in the parity tests
+# (test_model_traveling_parity). (Full 24 samples are frozen on disk; raise this to widen
+# coverage at a linear runtime cost.)
 _N_GOLDEN = 4
 
 
 @pytest.fixture(scope="module")
 def default_model_features(golden):
-    model = GhostGkModel.from_variant("default")
+    # Locally-fit model (the bundled default is parameters-only since 4.54.0 and cannot serve
+    # density); identical to the model the golden was generated from (_fit_golden_density_model).
+    model = _fit_golden_density_model()
     cols = [str(c) for c in golden["feature_cols"]]
     X = pd.DataFrame(golden["features"][:_N_GOLDEN], columns=cols)
     return model, X
@@ -73,70 +94,70 @@ def default_model_features(golden):
 #     is circular AND ~116s/call; the frozen npz IS the scipy oracle (gen script + regen-on-bump).
 # cpu-numba == vectorized is locked at 1e-9 on production-scale k (test_numba_loop_matches_numpy_
 # closed_form), so this gate transitively proves cpu-numba == scipy on the real model.
-def test_golden_continuous(golden, default_model_features):
-    """Density grid + mean + spread: rtol/atol + explicit NaN-mask equality.
+def test_golden_continuous(default_model_features):
+    """Density grid + mean + spread: cpu-numba == the closed-form vectorized backend on the SAME
+    fitted model, in the SAME run (rtol/atol + NaN-mask equality).
 
-    NB: this full-path golden gates at rtol=1e-7, looser than the raw-kernel parity
-    (1e-9, Task 3). That is intentional, not slack: predict_density adds the grid-sum
-    renormalization division + the mode/mean/spread derivations on top of the kernel,
-    which amplify floating error by ~2 orders. Do NOT tighten this to 1e-9 — it will flake.
+    Version-robust by construction (4.54.0 / ADR-044): the reference is computed at RUNTIME, not
+    loaded from a frozen oracle. A frozen golden was portable only for the FIXED bundled model;
+    once artifacts are parameters-only the density fixture is a fresh HGBR fit, whose trees are not
+    byte-stable across sklearn/numpy versions, so a cross-leg frozen golden false-fails. `vectorized`
+    is scipy-equivalent (test_vectorized_kernel_matches_scipy, 1e-9), so cpu-numba == vectorized is
+    the same end-to-end parity the frozen scipy oracle checked. rtol=1e-7 (looser than the 1e-9
+    raw-kernel parity) absorbs the grid-sum renorm + mode/mean/spread derivations.
     """
     model, X = default_model_features
-    densities = model.predict_density(X, kde_backend="cpu-numba")
-    probs = np.stack([d.probabilities for d in densities])
-    spread = np.array([d.spread for d in densities])
-    mean_x = np.array([d.mean_x for d in densities])
-    mean_y = np.array([d.mean_y for d in densities])
-    n = _N_GOLDEN
+    ref = model.predict_density(X, kde_backend="vectorized")
+    got = model.predict_density(X, kde_backend="cpu-numba")
+    probs = np.stack([d.probabilities for d in got])
+    ref_probs = np.stack([d.probabilities for d in ref])
+    spread = np.array([d.spread for d in got])
+    mean_x = np.array([d.mean_x for d in got])
+    mean_y = np.array([d.mean_y for d in got])
+    ref_spread = np.array([d.spread for d in ref])
+    ref_mean_x = np.array([d.mean_x for d in ref])
+    ref_mean_y = np.array([d.mean_y for d in ref])
     # NaN-mask equality FIRST (a silent NaN->0 fill must fail here, not pass equal_nan)
-    assert np.array_equal(np.isnan(probs), np.isnan(golden["probs"][:n]))
-    np.testing.assert_allclose(probs, golden["probs"][:n], rtol=1e-7, atol=1e-12, equal_nan=True)
-    np.testing.assert_allclose(spread, golden["spread"][:n], rtol=1e-7, atol=1e-9)
-    np.testing.assert_allclose(mean_x, golden["mean_x"][:n], rtol=1e-7, atol=1e-9)
-    np.testing.assert_allclose(mean_y, golden["mean_y"][:n], rtol=1e-7, atol=1e-9)
+    assert np.array_equal(np.isnan(probs), np.isnan(ref_probs))
+    np.testing.assert_allclose(probs, ref_probs, rtol=1e-7, atol=1e-12, equal_nan=True)
+    np.testing.assert_allclose(spread, ref_spread, rtol=1e-7, atol=1e-9)
+    np.testing.assert_allclose(mean_x, ref_mean_x, rtol=1e-7, atol=1e-9)
+    np.testing.assert_allclose(mean_y, ref_mean_y, rtol=1e-7, atol=1e-9)
 
 
-def test_golden_discrete_mode(golden, default_model_features):
-    """mode_x/y (argmax): cpu-numba within <=1 grid cell of the frozen scipy golden.
+def test_golden_discrete_mode(default_model_features):
+    """mode_x/y (argmax): cpu-numba within <=1 grid cell of the closed-form vectorized backend on
+    the SAME fitted model, same run.
 
-    numba's j-outer/i-inner sequential accumulation vs numpy's pairwise reduction can flip a
-    NEAR-TIE argmax by <=1 grid cell. The density field is the primary check
-    (test_golden_continuous); the mode is derived, so allow a <=GRID_RESOLUTION shift. (The exact
-    vectorized==frozen-scipy mode that this gate held in 4.2.0 is now implied transitively:
-    test_vectorized_kernel_matches_scipy locks the grid at 1e-9, and an exact-1e-9 grid shares
-    scipy's argmax barring an astronomically unlikely <1e-9 tie.)
+    Runtime reference (not a frozen oracle) for the same version-robustness reason as
+    test_golden_continuous (4.54.0 / ADR-044). numba's j-outer/i-inner sequential accumulation vs
+    numpy's pairwise reduction can flip a NEAR-TIE argmax by <=1 grid cell, so allow a
+    <=GRID_RESOLUTION shift; the density field is the primary check (test_golden_continuous).
     """
     from silly_kicks.tracking._ghost_gk import GRID_RESOLUTION
 
     model, X = default_model_features
+    ref = model.predict_density(X, kde_backend="vectorized")
     densities = model.predict_density(X, kde_backend="cpu-numba")
     mode_x = np.array([d.mode_x for d in densities])
     mode_y = np.array([d.mode_y for d in densities])
-    gmx = golden["mode_x"][:_N_GOLDEN]
-    gmy = golden["mode_y"][:_N_GOLDEN]
+    gmx = np.array([d.mode_x for d in ref])
+    gmy = np.array([d.mode_y for d in ref])
     # near-tie argmax can shift <=1 grid cell on numba's different reduction order
     assert np.all(np.abs(mode_x - gmx) <= GRID_RESOLUTION + 1e-9)
     assert np.all(np.abs(mode_y - gmy) <= GRID_RESOLUTION + 1e-9)
 
 
-def test_golden_fft_scalars(golden, default_model_features):
-    """fft scalar fidelity on the REAL bundled "default" model (the production regime) vs the
-    frozen scipy golden: mode <=1 grid cell, mean <1e-2 m, spread rel <5e-3. Locks the real-model
-    fidelity in CI -- the synthetic kernel-parity test uses broad clouds, and the lakehouse harness
-    that measured <=5.5mm mean / <=0.16% spread is not committed here. NOT the raw probabilities
-    grid (fft is scalar-faithful only -- see ADR-014; that is why fft is opt-in)."""
-    model, X = default_model_features
-    densities = model.predict_density(X, kde_backend="fft")
-    n = _N_GOLDEN
-    mode_x = np.array([d.mode_x for d in densities])
-    mode_y = np.array([d.mode_y for d in densities])
-    mean_x = np.array([d.mean_x for d in densities])
-    mean_y = np.array([d.mean_y for d in densities])
-    spread = np.array([d.spread for d in densities])
-    assert np.all(np.abs(mode_x - golden["mode_x"][:n]) <= 0.5 + 1e-9)
-    assert np.all(np.abs(mode_y - golden["mode_y"][:n]) <= 0.5 + 1e-9)
-    assert np.all(np.hypot(mean_x - golden["mean_x"][:n], mean_y - golden["mean_y"][:n]) < 1e-2)
-    assert np.all(np.abs(spread - golden["spread"][:n]) / np.abs(golden["spread"][:n]) < 5e-3)
+@pytest.mark.skip(
+    reason="Real-model fft fidelity retired (spec 2026-07-20 §9.4 / ADR-044). The property is "
+    "unmeasurable once artifacts are parameters-only: the bundled 36k model can no longer serve "
+    "density, and kernel width scales with n_train (neff**(-1/6)) so no practical fitted fixture "
+    "reaches the 36k-sample regime (4000 samples is 1.40x broader). Backend-vs-backend parity is "
+    "retained on the fitted fixture (test_golden_continuous / _discrete_mode / _model_traveling_"
+    "parity). Coverage lost is recorded in ADR-044."
+)
+def test_golden_fft_scalars_RETIRED():
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -940,31 +961,39 @@ def test_fft_cic_raw_grid_tighter_than_ngp(golden, default_model_features):
     assert cic_err < ngp_err, f"CIC grid rel-err {cic_err:.2e} not < NGP {ngp_err:.2e}"
 
 
-def test_golden_fft_cic_scalars(golden, default_model_features):
-    """fft-cic scalars on the bundled 'default' model vs the frozen scipy golden: mode <=1 grid
-    cell, mean <1e-2 m, spread rel <5e-3. Locks the real-model PRODUCTION regime (closes the
-    synthetic-only gap). rtol/cell tolerances -- NOT exact -- so a numpy/scipy bump does not
-    false-fail (cross-version robustness, like the lakehouse goldens). Mirrors
-    test_golden_fft_scalars."""
-    model, X = default_model_features  # fixture -> (from_variant("default") model, X[:_N_GOLDEN])
+def test_golden_fft_cic_scalars(default_model_features):
+    """fft-cic scalars vs the closed-form vectorized backend on the SAME fitted model, same run:
+    mode <=1 grid cell, mean <1e-2 m, spread rel <5e-3.
+
+    Runtime reference (not a frozen oracle), version-robust for the same reason as
+    test_golden_continuous (4.54.0 / ADR-044). fft-cic is an APPROXIMATE binned backend, so the
+    tolerances are loose (scalar-faithful only -- see ADR-014); `vectorized` is scipy-equivalent,
+    so this is the same fft-cic-vs-oracle fidelity the frozen scipy golden checked."""
+    model, X = default_model_features
+    ref = model.predict_density(X, kde_backend="vectorized")
     densities = model.predict_density(X, kde_backend="fft-cic")
-    n = _N_GOLDEN
     mode_x = np.array([d.mode_x for d in densities])
     mode_y = np.array([d.mode_y for d in densities])
     mean_x = np.array([d.mean_x for d in densities])
     mean_y = np.array([d.mean_y for d in densities])
     spread = np.array([d.spread for d in densities])
-    assert np.all(np.abs(mode_x - golden["mode_x"][:n]) <= 0.5 + 1e-9)
-    assert np.all(np.abs(mode_y - golden["mode_y"][:n]) <= 0.5 + 1e-9)
-    assert np.all(np.hypot(mean_x - golden["mean_x"][:n], mean_y - golden["mean_y"][:n]) < 1e-2)
-    assert np.all(np.abs(spread - golden["spread"][:n]) / np.abs(golden["spread"][:n]) < 5e-3)
+    ref_mode_x = np.array([d.mode_x for d in ref])
+    ref_mode_y = np.array([d.mode_y for d in ref])
+    ref_mean_x = np.array([d.mean_x for d in ref])
+    ref_mean_y = np.array([d.mean_y for d in ref])
+    ref_spread = np.array([d.spread for d in ref])
+    assert np.all(np.abs(mode_x - ref_mode_x) <= 0.5 + 1e-9)
+    assert np.all(np.abs(mode_y - ref_mode_y) <= 0.5 + 1e-9)
+    assert np.all(np.hypot(mean_x - ref_mean_x, mean_y - ref_mean_y) < 1e-2)
+    assert np.all(np.abs(spread - ref_spread) / np.abs(ref_spread) < 5e-3)
 
 
-def test_fft_cic_reaches_atomic_add_ghost_gk():
-    """The flat kde_backend string reaches the atomic mirror's add_ghost_gk for free (re-export);
-    no signature change. Smoke test: the param is accepted end-to-end."""
+def test_add_ghost_gk_has_no_kde_backend_after_strip():
+    """kde_backend was retired from the aggregator surface when the density column
+    retired (spec 2026-07-20 §3.1 / §9.3). predict_density still accepts it for
+    locally-fit models; the aggregators no longer serve density."""
     import inspect
 
     from silly_kicks.atomic.tracking.features import add_ghost_gk
 
-    assert "kde_backend" in inspect.signature(add_ghost_gk).parameters
+    assert "kde_backend" not in inspect.signature(add_ghost_gk).parameters

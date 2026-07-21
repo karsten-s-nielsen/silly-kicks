@@ -1,0 +1,9 @@
+--- leave-one-source-out refits (both predictors, same loss) ---
+  held out metrica_slim      : constant c= 388.48 | power law a=67.193 b=0.270  -> held-out err  const  6.106%  power  4.256%
+  held out skillcorner_slim  : constant c= 384.09 | power law a=0.51758 b=1.020  -> held-out err  const  1.139%  power  2.374%
+  held out sportec_slim      : constant c= 367.33 | power law a=0.22762 b=1.150  -> held-out err  const  4.920%  power  3.536%
+
+--- scored against the OUT-OF-SAMPLE constant baseline (equal terms) ---
+  CONSTANT (LOSO) median rel err = 5.193%
+  FREE-b power law, LOSO (2 free params)         median  3.684%  vs constant -1.509 pp [95% CI -2.283,-0.735] -> BEATS constant
+  ORACLE exact-neff (0 free params)              median  2.210%  vs constant -2.983 pp [95% CI -3.978,-2.238] -> BEATS constant

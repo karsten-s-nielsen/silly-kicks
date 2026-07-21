@@ -5,6 +5,47 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.54.0] — 2026-07-20
+
+### Changed — Ghost-GK artifacts are parameters-only (`silly_kicks/tracking/_ghost_gk.py`; PR-S121, ADR-044)
+
+`GhostGkModel.save()` no longer persists the three per-sample training arrays (`training_gk_x`,
+`training_gk_y`, `training_leaves` — the raw per-frame goalkeeper positions of every training
+sample). A distributed model artifact now carries **learned parameters only** — the two
+gradient-boosted tree ensembles and their baselines — not the training corpus. RFCDE density
+estimation needs those responses, so `predict_density` (and the whole KDE capability) survives
+**only on a locally `fit()` model**, never a loaded one; a loaded parameters-only model raises a
+density-specific error. The served position (`predict_mean` / `ghost_gk_x`, `ghost_gk_y`,
+`serve_ghost_gk_positions`, the `gkdv/` engine) is **byte-identical** and the chirality fingerprint
+is unchanged — so this is **not a VAEP retrain**.
+
+- **Breaking (artifact format):** version `1.2.0` → `1.3.0` (`stores_training_data: false`); no
+  released version can read a 1.3.0 artifact (a version-pin consideration for Hub-hosted models).
+  The bundled `default` is migrated by a pure `load(old).save(new)` re-save — **no retrain** —
+  and shrinks **7,376,181 → 764,418 bytes**.
+- **Breaking (column):** `ghost_gk_density_spread` is retired from `compute_ghost_gk`,
+  `add_ghost_gk` and `ghost_gk_xfns` (6 VAEP columns, was 9); `kde_backend` is removed from those
+  signatures (still accepted by `predict_density`). The column has no numeric consumer; the
+  lakehouse re-materializes the passthrough out.
+- **`metadata.json` corpus-provenance block** — providers + counts only, never match ids, never a
+  public/restricted split. Every trained artifact records it from live data; the migrated bundled
+  `default` records what is honestly available at migration.
+- **CI name allowlist** over every bundled weights directory — a new array name fails CI until a
+  human classifies it as parameter-or-per-sample. This anti-rot control is the generalizable win.
+- Retired: three ghost-GK scripts that scored the KDE mode (dead since ADR-016); real-model fft
+  fidelity in CI (unmeasurable once artifacts are parameters-only — see ADR-044).
+
+### Fixed — `from_variant("public")` served the restricted `sc_extended` artifact (xS / xCross; PR-S121)
+
+`XShotOccurrenceModel.from_variant("public")` and `XCrossAttemptModel.from_variant("public")`
+returned the Hub-hosted, owner-tier-restricted `sc_extended` artifact: no bundled `public/`
+directory existed, so the name fell through to `from_hub` and was cached under `"public"`. It was a
+stale alias (4.9.0 reserved the name; PR-S118 added `sc_extended` alongside it without re-auditing).
+Fixed by an explicit `{"public": "default"}` alias resolved **before** the cache — the bundled
+`default` metadata already declares `shipped_variant: "public"`, so the alias is the literal truth.
+A serve-time identity gate pins it; ADR-038's gate operates at training time and cannot observe a
+loader serving a mislabelled artifact. No caller passes `"public"` today.
+
 ## [4.53.0] — 2026-07-19
 
 ### Added — TF-19 GKDV v1: ghost-substitution engine + two gate-independent physics arms (`silly_kicks/gkdv/`; PR-S120, ADR-043)

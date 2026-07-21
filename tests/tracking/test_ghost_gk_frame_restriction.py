@@ -9,7 +9,7 @@ import pytest
 from silly_kicks.tracking._ghost_gk import compute_ghost_gk
 from tests.tracking.test_ghost_gk import _fitted_model, _make_ghost_gk_frames
 
-_GHOST_COLS = ["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]
+_GHOST_COLS = ["ghost_gk_x", "ghost_gk_y"]
 
 
 def _make_goal_flip_velocity_fixture(home_team_id: int = 1, away_team_id: int = 2) -> tuple[pd.DataFrame, set[int]]:
@@ -124,17 +124,24 @@ class TestComputeGhostGkRestriction:
         assert differs
 
     def test_restriction_shrinks_predict_set(self, monkeypatch):
+        # Structural perf guard: spy the feature EXTRACTOR (the dominant remaining cost, ~18x
+        # predict_mean; spec 2026-07-20 §9.5). Post-parameters-only, compute_ghost_gk no longer
+        # runs predict_density; _extract_all_ghost_gk_features receives link_frame_ids and returns
+        # the restricted sample set (_ghost_gk.py:2200-2213), so len(feats) IS the predict set.
+        import silly_kicks.tracking._ghost_gk as _gg
+
         model, _, _ = _fitted_model()
         frames, linked = _make_goal_flip_velocity_fixture()
 
         captured: list[int] = []
-        orig = model.predict_density
+        orig = _gg._extract_all_ghost_gk_features
 
-        def spy(features, **kwargs):
-            captured.append(len(features))
-            return orig(features, **kwargs)
+        def spy(*args, **kwargs):
+            feats, meta = orig(*args, **kwargs)
+            captured.append(len(feats))
+            return feats, meta
 
-        monkeypatch.setattr(model, "predict_density", spy)
+        monkeypatch.setattr(_gg, "_extract_all_ghost_gk_features", spy)
         compute_ghost_gk(frames, model=model, home_team_id=1, link_frame_ids=linked)
         restricted_n = captured[-1]
         captured.clear()
@@ -295,36 +302,6 @@ class TestGhostGkXfnsRestriction:
 
         pd.testing.assert_frame_equal(restricted, full)
 
-    def test_xfns_cpu_numba_matches_default(self):
-        """ghost_gk_xfns(kde_backend="cpu-numba") == default within tolerance.
-
-        Guards the kde_backend threading ghost_gk_xfns -> compute_ghost_gk. The *_x/*_y columns
-        are discrete modes (a near-tie argmax can shift <=1 grid cell on numba's accumulation
-        order); *_spread columns are continuous.
-        """
-        from silly_kicks.tracking._ghost_gk import GRID_RESOLUTION
-        from silly_kicks.tracking.features import ghost_gk_xfns
-
-        model, _, _ = _fitted_model()
-        frames, _ = _make_goal_flip_velocity_fixture()
-        states = self._states()
-
-        (base_xfn,) = ghost_gk_xfns(model=model, home_team_id=1)
-        (nb_xfn,) = ghost_gk_xfns(model=model, home_team_id=1, kde_backend="cpu-numba")
-        base = base_xfn(states, frames)
-        nb = nb_xfn(states, frames)
-
-        assert list(nb.columns) == list(base.columns)
-        for col in base.columns:
-            b = base[col].to_numpy(dtype=float)
-            n = nb[col].to_numpy(dtype=float)
-            assert np.array_equal(np.isnan(b), np.isnan(n))
-            mask = ~np.isnan(b)
-            if col.startswith(("ghost_gk_x", "ghost_gk_y")):  # discrete modes: <=1 grid cell
-                assert np.all(np.abs(b[mask] - n[mask]) <= GRID_RESOLUTION + 1e-9)
-            else:  # ghost_gk_density_spread: continuous
-                np.testing.assert_allclose(n[mask], b[mask], rtol=1e-7, atol=1e-9)
-
 
 def _make_dense_match(
     n_frames: int = 250, home_team_id: int = 1, away_team_id: int = 2
@@ -365,19 +342,26 @@ class TestGhostGkRestrictionStructuralGuard:
             np.testing.assert_array_equal(f_rows[col].to_numpy(), r_rows[col].to_numpy())
 
     def test_predict_set_equals_linked_count(self, monkeypatch):
-        """Structural perf guard (CI-robust): the restricted KDE runs on exactly
-        the linked GK-sample count, far below the full-frame sample count."""
+        """Structural perf guard (CI-robust): the restricted feature extraction runs on exactly
+        the linked GK-sample count, far below the full-frame sample count.
+
+        Spies the feature EXTRACTOR (the dominant remaining cost post-parameters-only, ~18x
+        predict_mean; spec 2026-07-20 §9.5). _extract_all_ghost_gk_features returns the
+        link_frame_ids-restricted sample set (_ghost_gk.py:2200-2213)."""
+        import silly_kicks.tracking._ghost_gk as _gg
+
         model, _, _ = _fitted_model()
         frames, linked = _make_dense_match()
 
         captured: list[int] = []
-        orig = model.predict_density
+        orig = _gg._extract_all_ghost_gk_features
 
-        def spy(features, **kwargs):
-            captured.append(len(features))
-            return orig(features, **kwargs)
+        def spy(*args, **kwargs):
+            feats, meta = orig(*args, **kwargs)
+            captured.append(len(feats))
+            return feats, meta
 
-        monkeypatch.setattr(model, "predict_density", spy)
+        monkeypatch.setattr(_gg, "_extract_all_ghost_gk_features", spy)
         compute_ghost_gk(frames, model=model, home_team_id=1, link_frame_ids=linked)
         restricted_n = captured[-1]
         captured.clear()
