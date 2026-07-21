@@ -4359,12 +4359,11 @@ def add_ghost_gk(
     home_team_id: int | str,
     actions_for_context: pd.DataFrame | None = None,
     carrier: pd.DataFrame | None = None,
-    kde_backend: str = "vectorized",
 ) -> pd.DataFrame:
     """Enrich actions with ghost-GK positioning columns.
 
-    Adds ghost_gk_x, ghost_gk_y, ghost_gk_density_spread per action (defending
-    GK's ghost position at the linked frame).
+    Adds ghost_gk_x, ghost_gk_y per action (defending GK's ghost position at the
+    linked frame).
 
     Only adds ghost-GK columns — does NOT add link provenance columns.
     Callers wanting provenance should call link_actions_to_frames directly.
@@ -4389,13 +4388,6 @@ def add_ghost_gk(
     carrier : pd.DataFrame | None
         Optional precomputed carrier forwarded to ``compute_ghost_gk`` to avoid
         recomputing possession (see its docstring; mirrors ``links``).
-    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
-        KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs the
-        serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the binned-convolution
-        backend (~2000x; NGP binning, can flip the mode on near-tie multimodal grids); "fft-cic"
-        adds CIC (bilinear) binning (~76% fewer multimodal mode flips + tighter raw grid than "fft"
-        at ~2x the bin cost). PREFER "fft-cic" over "fft" for new FFT consumers unless you need
-        NGP's extra speed on known-unimodal data. See ADR-014.
 
     Examples
     --------
@@ -4435,7 +4427,6 @@ def add_ghost_gk(
             actions=actions_for_context,
             carrier=carrier,
             link_frame_ids=link_frame_ids,
-            kde_backend=kde_backend,
         )
 
     # Extract ghost predictions from GK rows
@@ -4443,7 +4434,7 @@ def add_ghost_gk(
         ghost_frames["is_goalkeeper"].astype(bool)
         & ~ghost_frames["is_ball"].astype(bool)
         & ghost_frames["ghost_gk_x"].notna()
-    ][["game_id", "period_id", "frame_id", "team_id", "ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]].copy()
+    ][["game_id", "period_id", "frame_id", "team_id", "ghost_gk_x", "ghost_gk_y"]].copy()
 
     # Build linked lookup
     linked = pointers.merge(
@@ -4468,7 +4459,7 @@ def add_ghost_gk(
     deduped = defending.drop_duplicates(subset=["action_id"], keep="first")
 
     # Join back to actions
-    ghost_cols = deduped.set_index("action_id")[["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]]
+    ghost_cols = deduped.set_index("action_id")[["ghost_gk_x", "ghost_gk_y"]]
     out = out.merge(ghost_cols, left_on="action_id", right_index=True, how="left")
 
     # ADR-028: emit in action-LTR. The model serves goal-relative coords (defended goal
@@ -4490,24 +4481,16 @@ def ghost_gk_xfns(
     model=None,
     home_team_id: int | str,
     carrier: pd.DataFrame | None = None,
-    kde_backend: str = "vectorized",
 ) -> list:
     """Factory returning a FrameAwareTransformer for ghost-GK features.
 
-    3 columns x 3 game states = 9 VAEP columns.
+    2 columns x 3 game states = 6 VAEP columns.
 
     Parameters
     ----------
     carrier : pd.DataFrame | None
         Optional precomputed carrier forwarded to ``compute_ghost_gk`` to avoid
         recomputing possession (see its docstring; mirrors ``links``).
-    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
-        KDE kernel forwarded to ``compute_ghost_gk`` -> ``predict_density``. "cpu-numba" runs the
-        serial @njit fused loop (requires the ``[numba]`` extra); "fft" is the binned-convolution
-        backend (~2000x; NGP binning, can flip the mode on near-tie multimodal grids); "fft-cic"
-        adds CIC (bilinear) binning (~76% fewer multimodal mode flips + tighter raw grid than "fft"
-        at ~2x the bin cost). PREFER "fft-cic" over "fft" for new FFT consumers unless you need
-        NGP's extra speed on known-unimodal data. See ADR-014.
 
     Examples
     --------
@@ -4516,7 +4499,9 @@ def ghost_gk_xfns(
 
     See NOTICE for full bibliographic citations.
     """
-    col_names = ["ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"]
+    # 2 metric columns (density_spread retired, spec 2026-07-20 §3.1); the range(3)
+    # below is the gamestate-SLOT loop (a0/a1/a2), NOT the column count.
+    col_names = ["ghost_gk_x", "ghost_gk_y"]
 
     def _ghost_gk_transformer(states, frames):
         out = pd.DataFrame(index=states[0].index)
@@ -4550,7 +4535,6 @@ def ghost_gk_xfns(
             home_team_id=home_team_id,
             carrier=carrier,
             link_frame_ids=link_frame_ids,
-            kde_backend=kde_backend,
         )
 
         for i, (slot, pointers) in enumerate(zip(states[:3], slot_pointers, strict=False)):

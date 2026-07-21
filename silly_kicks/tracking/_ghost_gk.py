@@ -1501,6 +1501,13 @@ class GhostGkModel:
         self._training_gk_x: np.ndarray | None = None
         self._training_gk_y: np.ndarray | None = None
         self._training_leaves: np.ndarray | None = None
+        # Recorded training-time sklearn version (preserved across load->save so a
+        # parameters-only migration does not launder provenance; spec 2026-07-20 §4).
+        self._sklearn_version: str | None = None
+        # Optional aggregate corpus provenance (providers / n_games / n_rows), recorded
+        # in metadata.json when set; None on a pre-provenance or mechanically-migrated
+        # artifact (spec 2026-07-20 §6). Never a per-match id list, never a visibility split.
+        self.corpus_provenance: dict | None = None
         # Transient sklearn regressors kept after fit() for the parity gate only
         # (NOT serialized — load() reconstructs from the stored tree node arrays).
         self._sk_reg_x = None
@@ -1672,13 +1679,16 @@ class GhostGkModel:
         >>> densities[0].probabilities.sum()
         1.0
         """
-        if (
-            self._tree_nodes is None
-            or self._training_leaves is None
-            or self._training_gk_x is None
-            or self._training_gk_y is None
-        ):
+        if self._tree_nodes is None or self._tree_nodes_y is None:
             msg = "Model not fitted. Call .fit() or .load() first."
+            raise RuntimeError(msg)
+        if self._training_leaves is None or self._training_gk_x is None or self._training_gk_y is None:
+            msg = (
+                "predict_density is not available on a parameters-only artifact "
+                "(distributed artifacts store learned parameters only, not per-sample "
+                "training data; spec 2026-07-20). Fit the model locally with .fit() to "
+                "use the density path."
+            )
             raise RuntimeError(msg)
 
         training_gk_x = self._training_gk_x
@@ -1783,9 +1793,6 @@ class GhostGkModel:
             or self._tree_nodes_y is None
             or self._baseline_x is None
             or self._baseline_y is None
-            or self._training_gk_x is None
-            or self._training_gk_y is None
-            or self._training_leaves is None
         ):
             msg = "Model not fitted. Call .fit() first."
             raise RuntimeError(msg)
@@ -1793,11 +1800,12 @@ class GhostGkModel:
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
 
-        # 1. Weights npz
+        # 1. Weights npz — parameters only (spec 2026-07-20 §2.1). The per-sample training
+        # arrays (training_gk_x/y, training_leaves) are STRUCTURALLY never persisted: a
+        # distributed artifact carries learned parameters, not the training corpus. The
+        # density path (predict_density) needs them and so is available only on a locally
+        # fit() model, never a loaded one.
         save_dict: dict[str, np.ndarray] = {
-            "training_gk_x": self._training_gk_x,
-            "training_gk_y": self._training_gk_y,
-            "training_leaves": self._training_leaves,
             "n_trees": np.array([len(self._tree_nodes)]),
             # Option A: gk_y ensemble + both additive baselines for the boosted reconstruction.
             "n_trees_y": np.array([len(self._tree_nodes_y)]),
@@ -1831,11 +1839,15 @@ class GhostGkModel:
             "n_estimators": self._n_estimators,
             "max_depth": self._max_depth,
             "carrier_params": self.carrier_params,
-            "sklearn_version": sklearn.__version__,
+            # Preserve the recorded training-time version across a load->save migration;
+            # only stamp the runtime version for a genuinely fresh fit (spec §4).
+            "sklearn_version": self._sklearn_version or sklearn.__version__,
             "training_commit": self.training_commit,
             "training_platform": self.training_platform,
+            "corpus_provenance": self.corpus_provenance,
             "serve_estimator": SERVED_ESTIMATOR,
-            "version": "1.2.0",
+            "version": "1.3.0",
+            "stores_training_data": False,
             "chirality": _chirality_block(self),
         }
         meta_path = path / "metadata.json"
@@ -1932,9 +1944,12 @@ class GhostGkModel:
             baseline_x = float(data["baseline_x"][0])
             baseline_y = float(data["baseline_y"][0])
 
-            training_gk_x = np.array(data["training_gk_x"])
-            training_gk_y = np.array(data["training_gk_y"])
-            training_leaves = np.array(data["training_leaves"])
+            # Parameters-only artifacts (v1.3.0+) omit the per-sample arrays; a loaded
+            # model then has no density path (predict_density raises). Older artifacts
+            # still carry them and load unchanged (spec 2026-07-20 §2.2).
+            training_gk_x = np.array(data["training_gk_x"]) if "training_gk_x" in data.files else None
+            training_gk_y = np.array(data["training_gk_y"]) if "training_gk_y" in data.files else None
+            training_leaves = np.array(data["training_leaves"]) if "training_leaves" in data.files else None
 
         model = cls(
             n_estimators=metadata.get("n_estimators", 500),
@@ -1953,6 +1968,8 @@ class GhostGkModel:
         model.carrier_params = metadata.get("carrier_params", dict(DEFAULT_CARRIER_PARAMS))
         model.training_commit = metadata.get("training_commit")
         model.training_platform = metadata.get("training_platform")
+        model._sklearn_version = metadata.get("sklearn_version")
+        model.corpus_provenance = metadata.get("corpus_provenance")
 
         # Informational provenance only (NOT a correctness guard): inference is
         # sklearn-version-independent — it reads stored npz dtype arrays and imports no
@@ -2040,11 +2057,10 @@ def compute_ghost_gk(
     actions: pd.DataFrame | None = None,
     carrier: pd.DataFrame | None = None,
     link_frame_ids: set[int] | None = None,
-    kde_backend: str = "vectorized",
 ) -> pd.DataFrame:
     """Per-frame ghost-GK primitive (batched).
 
-    Adds ghost_gk_x, ghost_gk_y, ghost_gk_density_spread columns.
+    Adds ghost_gk_x, ghost_gk_y columns.
     One prediction per (frame, GK team). Results written to GK rows.
 
     ``ghost_gk_x/y`` are the served boosted-mean position (the exact sklearn HGBR
@@ -2052,15 +2068,11 @@ def compute_ghost_gk(
     (x = distance from the defended goal line), clamped to the physical pitch
     (x in [0, 105], y in [0, 68]; 4.22.1 -- garbage input, e.g. a mis-flagged
     ``is_goalkeeper``, can push the regressor outside its trained domain; a clamp
-    emits a warning and only ever fires on such rows). ``ghost_gk_density_spread``
-    is the conditional-**density** dispersion (entropy-based effective area from
-    :meth:`predict_density`) — it is **NOT** the standard error of the served
-    ``ghost_gk_x/y`` point. The served position (boosted mean) and the spread come
-    from two different read-outs (the boosted regressor vs the KDE density around the
-    mode/cloud), so the rename to ``ghost_gk_density_spread`` makes "density dispersion,
-    not the served point's SE" structural (4.14.0, Option A §3.4; breaking column
-    rename — see CHANGELOG / ADR-016). The density pass is now the only cost driver
-    here; ``predict_mean`` is ~free (leaf-value traversal).
+    emits a warning and only ever fires on such rows). The served position is a pure
+    leaf-value tree traversal (no KDE, no per-sample data), so it works on any loaded
+    parameters-only artifact. The density-dispersion read-out (``predict_density``)
+    was retired from this per-frame surface with the per-sample arrays
+    (spec 2026-07-20 §3.1); it survives only on a locally ``fit()`` model.
 
     Input frames MUST be in LTR-normalized convention (home team attacks
     right in all periods --- standard silly-kicks tracking output).
@@ -2087,25 +2099,18 @@ def compute_ghost_gk(
         (mirrors ``links``). Must be computed on full frames with the model's
         carrier_params for the byte-identical frame-restriction invariant to hold.
     link_frame_ids : set[int] | None, default None
-        When provided, restrict the per-sample KDE (``predict_density``) to GK
-        samples whose ``frame_id`` is in this set. Feature extraction still runs
-        over the FULL frames, so the per-period defending-goal mean-x and the
-        cross-period one-step velocity state are preserved exactly --- the KDE is
-        per-sample independent, so the restricted result is byte-identical to the
-        unrestricted one for the kept frames. When None, every sample is predicted
+        When provided, restrict the served predictions to GK samples whose
+        ``frame_id`` is in this set. Feature extraction still runs over the FULL
+        frames, so the per-period defending-goal mean-x and the cross-period
+        one-step velocity state are preserved exactly --- predictions are per-sample
+        independent, so the restricted result is byte-identical to the unrestricted
+        one for the kept frames. When None, every sample is predicted
         (backward-compatible). See PR-S66 spec sections 2-3.
-    kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
-        KDE kernel forwarded to ``predict_density``. "cpu-numba" runs the serial @njit fused
-        loop (requires the ``[numba]`` extra); "fft" is the binned-convolution backend (~2000x;
-        NGP binning -- can flip the mode on near-tie multimodal grids, raw-grid-approximate);
-        "fft-cic" adds CIC (bilinear) binning (~76% fewer multimodal mode flips + tighter raw grid
-        than "fft" at ~2x the bin cost). PREFER "fft-cic" over "fft" for new FFT consumers unless
-        you need NGP's extra speed on known-unimodal data. See ADR-014.
 
     Returns
     -------
     pd.DataFrame
-        Copy of frames with ghost_gk_x, ghost_gk_y, ghost_gk_density_spread added.
+        Copy of frames with ghost_gk_x, ghost_gk_y added.
 
     Examples
     --------
@@ -2115,9 +2120,8 @@ def compute_ghost_gk(
     out = frames.copy()
     out["ghost_gk_x"] = np.nan
     out["ghost_gk_y"] = np.nan
-    out["ghost_gk_density_spread"] = np.nan
 
-    resolved, meta, batch_features, positions, _clamped = _serve_positions_core(
+    _resolved, meta, _batch_features, positions, _clamped = _serve_positions_core(
         frames,
         model=model,
         home_team_id=home_team_id,
@@ -2129,8 +2133,6 @@ def compute_ghost_gk(
     if len(positions) == 0:
         return out
 
-    densities = resolved.predict_density(batch_features, kde_backend=kde_backend)
-
     # Build result DataFrame from predictions (single merge, not O(n*m) loop)
     result_df = pd.DataFrame(
         {
@@ -2140,7 +2142,6 @@ def compute_ghost_gk(
             "team_id": meta["gk_team_id"].values,
             "ghost_gk_x": positions[:, 0],
             "ghost_gk_y": positions[:, 1],
-            "ghost_gk_density_spread": [d.spread for d in densities],
         }
     )
 
@@ -2154,7 +2155,6 @@ def compute_ghost_gk(
     )
     out.loc[gk_mask, "ghost_gk_x"] = gk_rows_df["ghost_gk_x"].values
     out.loc[gk_mask, "ghost_gk_y"] = gk_rows_df["ghost_gk_y"].values
-    out.loc[gk_mask, "ghost_gk_density_spread"] = gk_rows_df["ghost_gk_density_spread"].values
 
     return out
 
@@ -2175,10 +2175,10 @@ def _serve_positions_core(
     clamp. Returns the goal-relative positions AND the per-row clamp mask captured
     BEFORE ``np.clip`` --- the information ``compute_ghost_gk`` discards.
 
-    The resolved model and the extracted features ride along because
-    ``compute_ghost_gk`` needs both for its ``predict_density`` pass, which stays
-    outside this core (it is the ~91% cost driver ``serve_ghost_gk_positions`` skips).
-    Re-resolving or re-extracting in the caller would defeat the point of the seam.
+    The resolved model rides along so the caller can serve positions without
+    re-resolving. ``batch_features`` is also returned for callers that need the
+    extracted feature set (historically the retired ``predict_density`` pass); the
+    positions themselves come from ``predict_mean(batch_features)`` inside this core.
     """
     resolved = _resolve_model(model)
 
@@ -2197,12 +2197,12 @@ def _serve_positions_core(
         carrier_raw = infer_ball_carrier(frames, **resolved.carrier_params)
         carrier = carrier_raw[["game_id", "period_id", "frame_id", "ball_carrier_team_id"]]
 
-    # PR-S66 §5: restrict BOTH the heavy feature extraction and the per-sample KDE
-    # to the action-linked frames. _extract_all_ghost_gk_features still walks every
-    # frame to maintain the cross-period one-step velocity state and computes the
-    # per-period defending-goal mean-x over the full frames, so the linked-frame
-    # features --- and the per-sample KDE, which has zero cross-sample coupling ---
-    # are byte-identical to the unrestricted compute. See TestExtractionRestriction.
+    # PR-S66 §5: restrict the heavy feature extraction to the action-linked frames.
+    # _extract_all_ghost_gk_features still walks every frame to maintain the
+    # cross-period one-step velocity state and computes the per-period defending-goal
+    # mean-x over the full frames, so the linked-frame features --- and the per-sample
+    # predict_mean, which has zero cross-sample coupling --- are byte-identical to the
+    # unrestricted compute. See TestExtractionRestriction.
     batch_features, meta = _extract_all_ghost_gk_features(
         frames,
         home_team_id=home_team_id,

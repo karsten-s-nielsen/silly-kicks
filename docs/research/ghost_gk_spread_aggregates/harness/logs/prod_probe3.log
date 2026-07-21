@@ -1,0 +1,5 @@
+[A] DGX 36k(243t) predict_density batch=4: 3.48s = 0.87s/query
+[B] row 982228: n_twins=1 spread_seen=360.072282 spread_leave_self_out=360.071426 rel_delta=2.377e-06
+[B] row 649787: n_twins=1 spread_seen=387.921703 spread_leave_self_out=387.919341 rel_delta=6.087e-06
+[B] row 711206: n_twins=1 spread_seen=367.370128 spread_leave_self_out=367.370397 rel_delta=7.322e-07
+[B] peak GB 8.86

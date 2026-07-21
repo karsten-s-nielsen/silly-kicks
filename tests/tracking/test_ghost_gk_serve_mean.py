@@ -160,8 +160,6 @@ class TestComputeServesBoosted:
             ignore_index=True,
         )
         result = gg.compute_ghost_gk(frames, model=model, home_team_id=1)
-        # Renamed column (#8): the emitted spread column is now ghost_gk_density_spread.
-        assert "ghost_gk_density_spread" in result.columns
         assert "ghost_gk_spread" not in result.columns
         gk = result["is_goalkeeper"].astype(bool) & ~result["is_ball"].astype(bool)
         served = sorted(np.round(result.loc[gk, "ghost_gk_x"].dropna().to_numpy(), 5).tolist())
@@ -216,7 +214,7 @@ class TestServeEstimatorMetadata:
             model.save(p)
             meta = json.loads((p / "metadata.json").read_text())
         assert meta["serve_estimator"] == SERVED_ESTIMATOR
-        assert meta["version"] == "1.2.0"
+        assert meta["version"] == "1.3.0"
 
     def test_load_absent_serve_estimator_ok(self):
         """Back-compat: an artifact without serve_estimator loads (defaults)."""

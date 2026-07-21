@@ -62,7 +62,7 @@ def _run(tmp_path: Path, *extra: str) -> dict:
 def test_cli_records_supplied_carrier_params(tmp_path):
     meta = _run(tmp_path, "--carrier-beta", "0.9", "--carrier-gamma", "0.3", "--carrier-tolerance", "2.5")
     assert meta["carrier_params"] == {"tolerance_m": 2.5, "beta": 0.9, "gamma": 0.3}
-    assert meta["version"] == "1.2.0"  # Option A artifact format (gk_y ensemble + baselines)
+    assert meta["version"] == "1.3.0"  # Option A artifact format (gk_y ensemble + baselines)
     assert meta["serve_estimator"] == "boosted_mean"
 
 

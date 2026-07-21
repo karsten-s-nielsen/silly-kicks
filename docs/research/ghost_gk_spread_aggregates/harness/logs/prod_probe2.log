@@ -1,0 +1,8 @@
+peak GB after load+cache 8.33
+COLLISION: 8/8 query leaf-vectors exactly match a training row
+peak GB after collision 8.33
+KDE k=1039502 train_block=1024: 32.68s  peak GB 8.33
+KDE k=1039502 train_block=65536: 36.67s  peak GB 14.72
+predict_density batch=4 rep0: 131.84s total = 32.96s/query  peak GB 14.72
+predict_density batch=4 rep1: 132.27s total = 33.07s/query  peak GB 14.72
+spread[0] 378.79204328019176 mean 13.054792072092798 33.91738064446588

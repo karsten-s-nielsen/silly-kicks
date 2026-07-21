@@ -1,8 +1,11 @@
-"""Regenerate the ghost-GK KDE golden fixture (Phase 0a).
+"""Regenerate the ghost-GK KDE query-feature fixture.
 
-Frozen against scipy 1.15 / numpy 2.x (pinned). A CI bump past those can shift scipy's
-Cholesky / gaussian_kde reduction order enough to fail the 1e-7 golden cross-environment —
-regenerate and review the diff when bumping either dependency.
+As of 4.54.0 / ADR-044 this fixture carries ONLY the deterministic query feature set
+(``features`` / ``feature_cols``) — a seeded, version-independent set of 26-dim inputs. The KDE
+backend-parity tests (``test_golden_continuous`` / ``_discrete_mode`` / ``_fft_cic_scalars``)
+compute their reference at RUNTIME (the closed-form ``vectorized`` backend on a fresh fit), so no
+frozen density oracle is stored: a fitted-model oracle was not portable across sklearn/numpy
+versions once artifacts became parameters-only (the bundled model can no longer serve density).
 
 Run: .venv/Scripts/python.exe scripts/gen_ghost_gk_kde_golden.py
 """
@@ -15,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES, GhostGkModel
+from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES
 
 OUT = Path(__file__).parent.parent / "tests/tracking/fixtures/ghost_gk_kde_golden.npz"
 
@@ -28,31 +31,15 @@ def _seeded_features(n: int = 24) -> pd.DataFrame:
 
 
 def main() -> None:
-    import scipy
-
-    model = GhostGkModel.from_variant("default")
     X = _seeded_features()
-    densities = model.predict_density(X, kde_backend="scipy")
-    probs = np.stack([d.probabilities for d in densities])  # (n, 60, 64)
-    mode_x = np.array([d.mode_x for d in densities])
-    mode_y = np.array([d.mode_y for d in densities])
-    mean_x = np.array([d.mean_x for d in densities])
-    mean_y = np.array([d.mean_y for d in densities])
-    spread = np.array([d.spread for d in densities])
     OUT.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         OUT,
         features=X.values,
         feature_cols=np.array(X.columns, dtype=object),
-        probs=probs,
-        mode_x=mode_x,
-        mode_y=mode_y,
-        mean_x=mean_x,
-        mean_y=mean_y,
-        spread=spread,
     )
-    print(f"wrote {OUT} ({OUT.stat().st_size / 1e6:.2f} MB)")
-    print(f"gen-env: py={sys.version.split()[0]} numpy={np.__version__} scipy={scipy.__version__}")
+    print(f"wrote {OUT} ({OUT.stat().st_size / 1e3:.2f} KB) — query features only, no frozen oracle")
+    print(f"gen-env: py={sys.version.split()[0]} numpy={np.__version__}")
 
 
 if __name__ == "__main__":

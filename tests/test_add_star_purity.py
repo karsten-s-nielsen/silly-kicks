@@ -191,7 +191,6 @@ def _frames_with_ghost():
     gk = f["is_goalkeeper"].astype(bool) & ~f["is_ball"].astype(bool)
     f["ghost_gk_x"] = np.where(gk, 52.5, np.nan)
     f["ghost_gk_y"] = np.where(gk, 34.0, np.nan)
-    f["ghost_gk_density_spread"] = np.where(gk, 1.0, np.nan)
     return f
 
 

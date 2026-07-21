@@ -39,7 +39,7 @@ def test_compute_ghost_gk_output_matches_the_pre_refactor_golden():
     gk = gk.sort_values(["game_id", "period_id", "frame_id", "team_id"])
 
     assert len(gk) == len(ref["ghost_gk_x"]) > 0, "golden is vacuous or the row count moved"
-    for col in ("ghost_gk_x", "ghost_gk_y", "ghost_gk_density_spread"):
+    for col in ("ghost_gk_x", "ghost_gk_y"):
         np.testing.assert_allclose(
             gk[col].to_numpy(dtype=float),
             ref[col],

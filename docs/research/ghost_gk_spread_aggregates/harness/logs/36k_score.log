@@ -1,0 +1,52 @@
+[boot] 4000 block-bootstrap replicates, block=24, source-stratified
+
+=== n=480 queries | sportec_slim=333, skillcorner_slim=76, metrica_slim=71
+=== TRUTH spread: median 378.151 m2  min 305.736  max 395.236
+===   CV 0.0574   IQR/median 0.0655
+===   grid area 960 m2 -> truth occupies 39.4% of the grid
+=== grid-EDGE probability mass: median 9.9555e-03  p99 2.0003e-02  max 2.0012e-02
+
+--- 6. PER-LEAF AGGREGATES vs TRUE WEIGHTED MOMENTS (must be ~machine zero) ---
+  max |mu_x diff| = 7.816e-14
+  max |mu_y diff| = 3.553e-14
+  max |cov diff|  = 4.034e-12
+  relative: max |cov diff| / median |cov| = 6.810e-13
+
+--- 0. NO-MODEL CONSTANT BASELINE (c grid-searched in-sample = maximally generous) ---
+  optimal constant c* = 386.510 m2  (median(truth) = 378.151)
+  CONSTANT = 386.51 m2 (zero information)  median  2.211%  [95% CI  1.664- 5.322]  p90  9.971%  n=480
+
+--- 1. b CONSTRAINED TO 0.5 (dimensionally correct), 1 free dimensionless inflation ---
+  fitted inflation c = 0.070  (exponent on det(S) is exactly 0.5; 1 free param, fitted IN-SAMPLE)
+  GAUSS-GRID b=0.5 (truncation-exact)      median  1.083%  [95% CI  0.805- 2.038]  p90  4.582%  n=480
+                                            vs constant: delta -1.128 pp  [95% CI -3.288,-0.797]  -> BEATS constant
+  GAUSS-ANALYTIC b=0.5 (no truncation)     median 24.013%  [95% CI 21.698-24.540]  p90 31.716%  n=480
+                                            vs constant: delta +21.802 pp  [95% CI +19.059,+22.040]  -> LOSES to constant
+  truncation correction size: median |grid-analytic|/grid = 21.837%
+
+--- 2. ORACLE exact-neff, ZERO free parameters (S4b's BEST POSSIBLE case) ---
+  bandwidth inflation factor neff^(-1/3): min 0.03072 median 0.03122 max 0.03296
+    -> it varies by only 7.19% across the query set,
+       i.e. the exact-neff oracle is barely distinguishable from the fitted constant c=0.070
+  GAUSS-GRID + EXACT neff (0 free params)  median  2.210%  [95% CI  1.691- 2.753]  p90  3.467%  n=480
+                                            vs constant: delta -0.001 pp  [95% CI -3.457,+0.658]  -> NOT DISTINGUISHABLE
+
+--- 3. FREE-b POWER LAW  spread = a*det(S_b)^b  (2 free params, OLS in log space) ---
+  fitted a=0.18578  b=1.1756  [95% CI 0.7896, 1.4170]  (dimensionally coherent b=0.5)
+  FREE-b power law (b=1.176)               median  2.681%  [95% CI  1.802- 3.289]  p90  5.139%  n=480
+                                            vs constant: delta +0.470 pp  [95% CI -2.837,+1.398]  -> NOT DISTINGUISHABLE
+  corr(log det(S_b), log spread) = 0.8305   R2 = 0.6897
+
+--- 5. MULTIMODALITY (aggregates collapse the mode onto the mean) ---
+  local maxima >=20% of peak (permissive >= rule): 1 mode 36.9% | >=2 modes 63.1% | max 4
+  |mode-mean| (m): median 8.054  p75 9.318  p90 10.062  p99 10.554  max 10.673
+    fraction with |mode-mean| > 1 m: 100.0%
+    fraction with |mode-mean| > 2 m: 100.0%
+    fraction with |mode-mean| > 4 m: 95.2%
+    fraction with |mode-mean| > 6 m: 93.5%
+
+--- PER-SOURCE ---
+  metrica_slim       n=  71  truth median  366.12 CV 0.0216  |  const  5.568%  b=0.5  2.134%  oracle  0.699%  free-b  1.563%
+  skillcorner_slim   n=  76  truth median  382.14 CV 0.0262  |  const  1.149%  b=0.5  0.367%  oracle  2.293%  free-b  3.687%
+  sportec_slim       n= 333  truth median  382.10 CV 0.0651  |  const  2.140%  b=0.5  0.990%  oracle  2.433%  free-b  2.954%
+EXIT=0

@@ -81,7 +81,7 @@ Trained on licensed tracking data from professional football matches:
 | SkillCorner | Multiple leagues | Derived GK identification (ADR-007) |
 | Gradient Sports | FIFA World Cup 2022 | Owner-tier source — only the trained model weights are distributed here; the underlying raw tracking data is **not** redistributed |
 
-The `full` variant is trained on 179 matches / ~1.04M frames across all three providers above (the SkillCorner cohort was expanded to include owner-tier matches — silly-kicks 4.51.0 / TF-19 PR-2); the `default` variant is a lighter 36k-frame subsample. Only the learned model parameters (tree structure, leaf-aggregated GK positions, KDE weights) are published — **no raw provider tracking data is redistributed**.
+The `full` variant is trained on 179 matches / ~1.04M frames across all three providers above (the SkillCorner cohort was expanded to include owner-tier matches — silly-kicks 4.51.0 / TF-19 PR-2); the `default` variant is a lighter 36k-frame subsample. Only the learned model parameters are published: the two gradient-boosted tree ensembles (split thresholds, feature indices, leaf values) and their additive baselines. **No per-sample training data and no raw provider tracking data is redistributed** (parameters-only artifact, silly-kicks 4.54.0 — the per-sample density arrays were removed; see ADR-044).
 
 Training targets are restricted to a fixed goal-relative box — x &isin; [0, 30] m from the defended goal line, y &isin; [18, 50] m — a **purely geometric filter with no action or possession condition**. A keeper that has rushed far upfield (a sweeper action) falls outside this box and is naturally excluded, so the model represents normal in-goal positioning; the exclusion is geometric, not action-based.
 
@@ -101,9 +101,15 @@ densities = tracking.compute_ghost_gk(frames, model="full")
 # Action-coupled aggregator for VAEP integration
 actions = tracking.add_ghost_gk(actions, frames, model="full")
 
-# Direct model loading
+# Direct model loading — served POSITIONS (works on the distributed parameters-only artifact)
 model = tracking.GhostGkModel.from_variant("full")
-density = model.predict_density(feature_vector)
+positions = tracking.compute_ghost_gk(frames, model=model, home_team_id=1)  # ghost_gk_x / ghost_gk_y
+
+# The KDE density read-out (predict_density / GhostGkDensity) requires a LOCALLY FIT model:
+# distributed artifacts are parameters-only and do not carry the per-sample data the density
+# needs (silly-kicks 4.54.0, ADR-044). On a loaded artifact predict_density raises.
+local = tracking.GhostGkModel(n_estimators=500).fit(features, labels)
+density = local.predict_density(feature_vector)
 print(f"Mode: ({density.mode_x:.1f}, {density.mode_y:.1f})")
 print(f"Spread: {density.spread:.2f}")
 ```

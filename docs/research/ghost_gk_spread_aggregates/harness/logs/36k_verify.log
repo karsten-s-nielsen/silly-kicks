@@ -1,0 +1,26 @@
+[load] from temp copy: n_train=36000 n_trees=243
+[q] rebuilt n_queries=480 | saved n=480
+[q] source vector matches saved artifact exactly
+[route] leaf routing reproduces saved QL exactly (480, 243)
+[check] re-running production predict_density on 60 random queries
+  [rep] 12/60  51s
+  [rep] 24/60  102s
+  [rep] 36/60  154s
+  [rep] 48/60  204s
+  [rep] 60/60  256s
+
+=== REPRODUCTION vs SAVED gt.npz ===
+  max |spread_repro - spread_saved| = 0.000000e+00  (relative 0.000e+00)
+  max |mode diff|  = 0.000000e+00
+  max |mean diff|  = 0.000000e+00
+  exact bitwise spread match: 60/60
+
+=== MULTIMODALITY on the re-run subset ===
+  permissive (>=) rule : 1 mode 33.3%  >=2 modes 66.7%  max 4
+  STRICT     (> ) rule : 1 mode 33.3%  >=2 modes 66.7%  max 4
+  saved n_modes on same subset: 1 mode 33.3%  >=2 66.7%
+  agreement saved-vs-repro (>= rule): 60/60
+  |mode-mean| (m): median 8.305  p90 9.825  max 10.526
+  grid-edge mass: median 9.7324e-03  max 1.9905e-02
+
+SAVED verify.npz

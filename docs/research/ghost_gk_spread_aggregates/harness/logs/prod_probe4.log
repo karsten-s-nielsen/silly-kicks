@@ -1,0 +1,5 @@
+parent peak GB after load 12.94
+[P] workers=4: 16 queries in 186.5s -> 11.66s/query wall, throughput 309 q/hour, worker peak RSS 5.25 GB
+[P] workers=8: 16 queries in 156.5s -> 9.78s/query wall, throughput 368 q/hour, worker peak RSS 5.25 GB
+[P] workers=16: 16 queries in 111.8s -> 6.99s/query wall, throughput 515 q/hour, worker peak RSS 5.25 GB
+[P] sample spreads [376.512, 381.909, 386.901, 367.949, 384.132]

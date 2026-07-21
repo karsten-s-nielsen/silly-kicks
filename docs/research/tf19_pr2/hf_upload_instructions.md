@@ -175,11 +175,27 @@ loosening — re-upload from the staging paths above rather than patching the ch
 
 The `sc_extended` weights are trained in part on the 98 owner-tier SkillCorner matches
 (restricted visibility, per ADR-038's visibility-keyed corpus taxonomy). The owner has
-approved distributing the **trained model** (learned parameters only — tree structure /
-leaf values / calibration) on the Hub, not the underlying raw tracking data. This mirrors
-the existing Gradient Sports precedent already stated in the ghost-GK model card ("only the
-trained model weights are distributed here; the underlying raw tracking data is not
-redistributed") — the same boundary applies to `sc_extended`'s owner-tier SkillCorner
-matches. Do not attach any raw match/tracking files to these repos; only the four served
+approved distributing the **trained model** (learned parameters only — for the xS/xCross
+boosters, split thresholds / feature indices / leaf values, which store no per-sample data)
+on the Hub, not the underlying raw tracking data.
+
+**Ghost-GK caveat (4.54.0 / ADR-044) — read before any ghost-GK upload.** The ghost-GK RFCDE
+model's `save()` historically persisted the per-sample training keeper positions inside
+`rfcde_weights.npz`; that is NOT "learned parameters only". As of 4.54.0 the artifact is
+**parameters-only** (the per-sample arrays are removed), so:
+
+1. **The `full` upload MUST be produced by the post-strip `save()` (v1.3.0, `stores_training_data:
+   false`).** A stripped, chirality-carrying `full` is staged on the DGX (T-full of the 4.54.0
+   work). Do NOT upload an array-carrying artifact.
+2. **Ordering:** the upload must NOT precede the 4.54.0 parameters-only PR (whose `save()` produces
+   the stripped artifact). The HF write itself — overwriting the live `full` and handling the
+   existing array-carrying revisions — is part of the ghost-GK disclosure remediation the owner
+   holds, not scheduled by the PR.
+3. **Pre-upload assertion — run against the EXACT file you are about to upload:**
+   ```bash
+   python -c "import numpy as np,sys; z=np.load(sys.argv[1],allow_pickle=True); bad={'training_gk_x','training_gk_y','training_leaves'}&set(z.files); assert not bad, f'ABORT: staged artifact carries {bad}'; print('OK: parameters-only')" <staged>/rfcde_weights.npz
+   ```
+
+Do not attach any raw match/tracking files to these repos; only the served
 artifact files (`model.json` / `rfcde_weights.npz`, `metadata.json`, `metrics.json`,
 `SHA256SUMS`) per variant.
