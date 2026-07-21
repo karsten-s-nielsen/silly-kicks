@@ -874,6 +874,13 @@ def infer_positions(
     If ``attacking_direction < 0``, the x-axis is flipped before level assignment,
     so that "B" (back) always refers to the defensive end.
 
+    The lateral label is PITCH-ABSOLUTE: ``y`` is deliberately NOT mirrored for a
+    reversed attacking direction (only ``x`` is negated, which reverses level
+    ORDERING). Settled by default (ADR-045 D5): this function has no in-library
+    consumer, so no behaviour validates either convention. A future consumer that
+    needs TEAM-RELATIVE lateral labels should negate ``y`` AND ``face_centers_y``
+    together (``-y``, a sort-direction negation, not ``68 - y``).
+
     Parameters
     ----------
     shape_graph : ShapeGraph

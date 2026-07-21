@@ -39,7 +39,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from . import config as spadlconfig
+from silly_kicks.reflection import SPADL_REFLECTION_KINDS, reflect
 
 __all__ = [
     "ABSOLUTE_FRAME_HOME_RIGHT",
@@ -219,11 +219,10 @@ def _mirror_absolute_frame(actions: pd.DataFrame, *, home_team_id: int | str) ->
     away_idx = (~ids_match(out["team_id"], home_team_id)).to_numpy()
     if not away_idx.any():
         return out
-    for col in ("start_x", "end_x"):
-        out.loc[away_idx, col] = spadlconfig.field_length - out.loc[away_idx, col].to_numpy()
-    for col in ("start_y", "end_y"):
-        out.loc[away_idx, col] = spadlconfig.field_width - out.loc[away_idx, col].to_numpy()
-    return out
+    # ADR-045 D8: reflect by declared kind so ADR-025 enrichment coordinates mirror
+    # alongside the canonical four. The NA-as-away semantics documented above are
+    # UNCHANGED -- away_idx is computed exactly as before and merely handed to reflect().
+    return reflect(out, away_idx, kinds=SPADL_REFLECTION_KINDS)
 
 
 def _mirror_per_period(
@@ -269,11 +268,9 @@ def _mirror_per_period(
 
     if not mirror_idx.any():
         return out
-    for col in ("start_x", "end_x"):
-        out.loc[mirror_idx, col] = spadlconfig.field_length - out.loc[mirror_idx, col].to_numpy()
-    for col in ("start_y", "end_y"):
-        out.loc[mirror_idx, col] = spadlconfig.field_width - out.loc[mirror_idx, col].to_numpy()
-    return out
+    # ADR-045 D8: reflect by declared kind (enrichment coordinates included). Same seam as
+    # _mirror_absolute_frame; mirror_idx is computed exactly as before.
+    return reflect(out, mirror_idx, kinds=SPADL_REFLECTION_KINDS)
 
 
 # ---------------------------------------------------------------------------

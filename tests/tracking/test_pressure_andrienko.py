@@ -72,6 +72,7 @@ def _build_ctx(
         pointers=pointers,
         actor_rows=actor_rows,
         opposite_rows_per_action=defenders,
+        flip_by_action=pd.Series(dtype=bool),
         defending_gk_rows=pd.DataFrame(),
     )
     return actions["start_x"], actions["start_y"], ctx

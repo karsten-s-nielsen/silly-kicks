@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.55.0] — 2026-07-21
+
+### Fixed — vector quantities are now consistent under coordinate reflection (`silly_kicks/reflection.py`; PR-S122, ADR-045)
+
+A 180° point reflection (ADR-028: `x→105−x` **and** `y→68−y` for away-team actions) must
+point-reflect **points**, **negate vectors** (`vx`/`vy`/`dx`/`dy`), leave **magnitudes** (`speed`)
+alone, and swap **direction labels**. Every reflection helper enumerated an explicit column list,
+so any column not on it — crucially `vx`/`vy`/`x_smoothed`/`y_smoothed`, none of which are in
+`TRACKING_FRAMES_COLUMNS` — rode through untransformed and silently wrong.
+
+New public module **`silly_kicks.reflection`** provides one seam: `reflect()` (registry-driven,
+for schema-bearing tables) and `reflect_columns()` (explicit, kind-aware, for derived/pre-canonical
+frames), over `TRACKING`/`SPADL`/`ATOMIC_SPADL_REFLECTION_KINDS`. `reflect()` defaults
+`on_unknown="warn"`: an undeclared column is treated as `invariant` and warns
+(`UndeclaredGeometricColumnWarning`) only on a geometry-shaped name — fail-closed lives in the CI
+registry-completeness meta-assertion, not the runtime call. Eleven reflection sites migrated onto
+the seam.
+
+Two **live** defects fixed, both in `pressure_on_actor__bekkers_pi` on away-team actions: the
+per-action velocity re-projection (away defenders were modelled running backwards, −38.9%) and the
+never-re-projected ball row. SPADL / atomic outputs are byte-identical; no converter output
+changes.
+
+**Retrain / re-materialize (bundle with the 4.52.0 TF-35 recompute, one ordered pass):** away-team
+`bekkers_pi` values change (home byte-identical) → re-materialize
+`fct_action_context.pressure_on_actor__bekkers_pi` → retrain `ρ` (both variants) → re-run the
+xT-GK v2 deep-zone gate (its GO-leaning verdict was measured on broken pressure).
+
 ## [4.54.0] — 2026-07-20
 
 ### Changed — Ghost-GK artifacts are parameters-only (`silly_kicks/tracking/_ghost_gk.py`; PR-S121, ADR-044)

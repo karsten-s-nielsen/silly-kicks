@@ -282,6 +282,24 @@ class TestInferPositions:
             assert labels_fwd[i].vertical == "B"
             assert labels_rev[i].vertical == "F"
 
+    def test_lateral_label_is_pitch_absolute_not_team_relative(self, positions_442: np.ndarray) -> None:
+        """ADR-045 D5: the lateral (horizontal) label does NOT mirror under a direction
+        flip -- only the vertical (attacking-axis) ORDERING does. Pins the settled-by-default
+        pitch-absolute convention (infer_positions has no in-library consumer). A future
+        team-relative consumer that negates y AND face_centers_y will flip this test RED,
+        which is the intended signal.
+        """
+        sg = compute_shape_graph(positions_442)
+        fwd = infer_positions(sg, positions_442, attacking_direction=1.0)
+        rev = infer_positions(sg, positions_442, attacking_direction=-1.0)
+        # Non-vacuity: some lateral label is non-central, so a mirror WOULD change it.
+        assert any(lbl.horizontal in {"L", "LC", "RC", "R"} for lbl in fwd)
+        for f, r in zip(fwd, rev, strict=True):
+            assert f.horizontal == r.horizontal, (
+                "lateral label mirrored under a direction flip -- that is TEAM-RELATIVE, "
+                "but the settled default is PITCH-ABSOLUTE (ADR-045 D5)"
+            )
+
     def test_position_labels_follow_thesis_matrix(self, positions_442: np.ndarray) -> None:
         sg = compute_shape_graph(positions_442)
         labels = infer_positions(sg, positions_442, attacking_direction=1.0)

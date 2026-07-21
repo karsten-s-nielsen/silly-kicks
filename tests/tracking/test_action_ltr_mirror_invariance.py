@@ -348,3 +348,89 @@ def test_obso_mirror_invariant():
     assert signal > 0.05, f"OBSO signal {signal:.4g} too small for the tolerance to mean anything"
     for aid in (10, 11):
         _assert_invariant(base, mir, aid, cols, tol=_OBSO_MIRROR_TOL)
+
+
+# Task 12b site 4: _reproject_team_shape behavioural gate (ADR-045)
+def test_team_shape_reprojection_is_mirror_invariant_over_ALL_columns():
+    """Site 4 of 4. _reproject_team_shape (features.py:2026) hand-enumerates
+    _TEAM_SHAPE_X_COLS / _TEAM_SHAPE_Y_COLS. GEOMETRIC_NAME CANNOT SEE these infix names
+    (`team_shape_centroid_x_attacking` -> .match() is False -- measured), so unlike sites
+    1-3 this gate must be BEHAVIOURAL, not name-based: under a physical mirror every emitted
+    team-shape column must be invariant in action-LTR. Auto-discovering `added` (not a hand
+    list) is the anti-rot half -- a FUTURE lateral column that _reproject_team_shape forgets
+    to enumerate would break this without any name signal.
+
+    Uses _ghost_scenario (attack lateralised low), NOT _scenario. Measured 2026-07-20: on
+    _scenario the acting-team centroid_y sits ~1 m off the centre line, so 68-y is a near
+    identity and the y-reflection is UNTESTED -- the pre-existing
+    test_team_shape_centroids_mirror_invariant is vacuous on the y-axis (disabling
+    _TEAM_SHAPE_Y_COLS leaves its assertions green). _ghost_scenario's action 1 is an AWAY
+    action (flip=True) with centroid_y ~= 51 (17 m off centre), so the y-axis carries real
+    signal. The both-sides partner below proves it.
+    """
+    from silly_kicks.tracking.features import add_team_shape
+
+    a, f = _ghost_scenario()
+    am, fm = _mirror(a, f)
+    base = add_team_shape(a, f, home_team_id=HOME)  # action 1: away, flip=True (reprojects)
+    mir = add_team_shape(am, fm, home_team_id=AWAY)  # action 1: home, flip=False (raw)
+
+    # NON-VACUITY: the acting-team centroid must be genuinely off the centre line, or the
+    # y-axis is untested exactly as the pre-existing test is. Measured base value ~= 51.
+    b1 = base[base["action_id"] == 1].iloc[0]
+    assert abs(float(b1["team_shape_centroid_y_attacking"]) - FW / 2) > 3.0, (
+        "acting centroid_y is within 3 m of the centre line -- the y-reflection is not "
+        "exercised (this is the vacuity measured in test_team_shape_centroids_mirror_invariant)"
+    )
+
+    # ANTI-ROT: EVERY added column invariant under the mirror. No name pattern. A lateral
+    # column riding through _reproject_team_shape unreflected differs between the flip=True
+    # (base) and flip=False (mir) representations of the same physical scene.
+    #
+    # NA-SAFE by necessity: team-shape emits nullable columns (a degenerate hull / absent
+    # second inter-line gap on this fixture is pd.NA, not np.nan). `pd.isna` covers BOTH; a
+    # bare `np.isnan` raises TypeError on pd.NA, and `pd.NA == pytest.approx(...)` raises
+    # "boolean value of NA is ambiguous" -- measured 2026-07-20, this is a real crash, not a
+    # style note. Two shared-NA columns are skipped; 22 numeric columns are checked.
+    m1 = mir[mir["action_id"] == 1].iloc[0]
+    added = sorted(set(base.columns) - set(a.columns))
+    checked = 0
+    for col in added:
+        bv, mv = b1[col], m1[col]
+        if pd.isna(bv) or pd.isna(mv):
+            assert pd.isna(bv) and pd.isna(mv), (
+                f"team-shape column {col!r} is NA on one side only (base={bv}, mir={mv}) -- "
+                f"a mirror should not create or destroy a value"
+            )
+            continue
+        assert float(bv) == pytest.approx(float(mv), abs=1e-6), (
+            f"team-shape column {col!r} is not mirror-invariant (base={bv}, mir={mv}) -- a "
+            f"lateral quantity is riding through _reproject_team_shape unreflected"
+        )
+        checked += 1
+    assert checked >= 20, f"only {checked} columns actually compared -- fixture may be degenerate"
+
+
+def test_team_shape_gate_fails_when_the_y_reprojection_is_disabled():
+    """BOTH-SIDES partner for site 4, and the executable record of the vacuity finding.
+    Disabling _TEAM_SHAPE_Y_COLS must BREAK the mirror-invariance above; if it does not, the
+    scenario is not y-asymmetric enough and the gate is vacuous. Measured: the ON delta is 0
+    and the OFF delta is ~34 on _ghost_scenario action 1."""
+    import silly_kicks.tracking.features as _F
+    from silly_kicks.tracking.features import add_team_shape
+
+    a, f = _ghost_scenario()
+    am, fm = _mirror(a, f)
+    orig = _F._TEAM_SHAPE_Y_COLS
+    try:
+        _F._TEAM_SHAPE_Y_COLS = []  # a y re-projection that never happens
+        base = add_team_shape(a, f, home_team_id=HOME)
+        mir = add_team_shape(am, fm, home_team_id=AWAY)
+    finally:
+        _F._TEAM_SHAPE_Y_COLS = orig
+    b = float(base[base["action_id"] == 1].iloc[0]["team_shape_centroid_y_attacking"])
+    m = float(mir[mir["action_id"] == 1].iloc[0]["team_shape_centroid_y_attacking"])
+    assert abs(b - m) > 1.0, (
+        "disabling the y re-projection did not break mirror-invariance -- the fixture is not "
+        "y-asymmetric enough, so the site-4 invariance gate is vacuous on the y-axis"
+    )

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.reflection import SPADL_REFLECTION_KINDS, reflect
 
 from . import config as spadlconfig
 from .schema import SPADL_COLUMNS
@@ -1540,13 +1541,16 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int | str) -> pd.Dat
     """
     from silly_kicks.id_compat import ids_match
 
-    ltr_actions = actions.copy()
+    # ADR-045: reflect by declared kind so enrichment coordinate columns (ADR-025
+    # enriched_start_x/_y, enriched_end_x/_y) mirror alongside the canonical four.
+    #
+    # NO .fillna(False) HERE. ids_match ends in _as_bool (id_compat.py:272-274) =
+    # .fillna(False).astype(bool), so it returns non-nullable np.bool_ (a fillna would be
+    # dead); and because NA resolves to False INSIDE ids_match, `~` sends it to the away
+    # branch -- an NA team_id IS mirrored, matching orientation.py:210-218, which warns
+    # explicitly against "hardening" it. Do not add a .notna() guard.
     away_idx = ~ids_match(actions.team_id, home_team_id)
-    for col in ["start_x", "end_x"]:
-        ltr_actions.loc[away_idx, col] = spadlconfig.field_length - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
-    for col in ["start_y", "end_y"]:
-        ltr_actions.loc[away_idx, col] = spadlconfig.field_width - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
-    return ltr_actions
+    return reflect(actions, away_idx, kinds=SPADL_REFLECTION_KINDS)
 
 
 def _finalize_output(

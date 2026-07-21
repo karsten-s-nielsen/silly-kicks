@@ -135,6 +135,7 @@ _ROOT_MODULE = "silly_kicks"
 # Public-API modules whose Examples coverage is ENFORCED. Pinned to the derived surface by
 # `test_derived_surface_is_fully_accounted_for` -- this list can no longer silently rot.
 _PUBLIC_MODULE_FILES = (
+    "silly_kicks/reflection.py",
     "silly_kicks/spadl/utils.py",
     "silly_kicks/spadl/orientation.py",
     "silly_kicks/spadl/schema.py",

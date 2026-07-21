@@ -54,7 +54,11 @@ def ctx_three_defenders():
         }
     )
     return ActionFrameContext(
-        actions=actions, pointers=pointers, actor_rows=actor_rows, opposite_rows_per_action=opposite
+        actions=actions,
+        pointers=pointers,
+        actor_rows=actor_rows,
+        opposite_rows_per_action=opposite,
+        flip_by_action=pd.Series(dtype=bool),
     )
 
 
@@ -115,7 +119,11 @@ def test_defenders_in_triangle_to_goal_kernel():
         }
     )
     ctx = ActionFrameContext(
-        actions=actions, pointers=pointers, actor_rows=actor_rows, opposite_rows_per_action=opposite
+        actions=actions,
+        pointers=pointers,
+        actor_rows=actor_rows,
+        opposite_rows_per_action=opposite,
+        flip_by_action=pd.Series(dtype=bool),
     )
     result = _defenders_in_triangle_to_goal(actions["start_x"], actions["start_y"], ctx)
     assert int(result.iloc[0]) == 1
@@ -140,7 +148,11 @@ def test_unlinked_action_returns_nan():
     actor_rows = pd.DataFrame({"action_id": [1], "x": [float("nan")], "y": [float("nan")], "speed": [float("nan")]})
     opposite = pd.DataFrame({"action_id": [], "x": [], "y": [], "team_id_frame": []}, dtype="float64")
     ctx = ActionFrameContext(
-        actions=actions, pointers=pointers, actor_rows=actor_rows, opposite_rows_per_action=opposite
+        actions=actions,
+        pointers=pointers,
+        actor_rows=actor_rows,
+        opposite_rows_per_action=opposite,
+        flip_by_action=pd.Series(dtype=bool),
     )
     result = _nearest_defender_distance(actions["start_x"], actions["start_y"], ctx)
     assert pd.isna(result.iloc[0])
@@ -166,7 +178,11 @@ def test_receiver_zone_density_zero_when_no_defenders_in_radius():
     # Defender far away: dist = 100 m from end (60, 34)
     opposite = pd.DataFrame({"action_id": [1], "x": [160.0], "y": [34.0], "team_id_frame": [2]})
     ctx = ActionFrameContext(
-        actions=actions, pointers=pointers, actor_rows=actor_rows, opposite_rows_per_action=opposite
+        actions=actions,
+        pointers=pointers,
+        actor_rows=actor_rows,
+        opposite_rows_per_action=opposite,
+        flip_by_action=pd.Series(dtype=bool),
     )
     result = _receiver_zone_density(actions["end_x"], actions["end_y"], ctx, radius=5.0)
     assert int(result.iloc[0]) == 0
@@ -186,6 +202,7 @@ def _stub_ctx(actions, defending_gk_rows):
         pointers=pointers,
         actor_rows=actor_rows,
         opposite_rows_per_action=pd.DataFrame(),
+        flip_by_action=pd.Series(dtype=bool),
         defending_gk_rows=defending_gk_rows,
     )
 

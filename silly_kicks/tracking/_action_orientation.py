@@ -183,22 +183,25 @@ def reproject_to_action_ltr(
     *,
     x_cols: list[str],
     y_cols: list[str],
+    vx_cols: list[str] | None = None,
+    vy_cols: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Return a copy of ``df`` with ``x_cols``/``y_cols`` mirrored where ``flip_mask``.
+    """Return a copy of ``df`` with the named columns re-projected where ``flip_mask``.
 
-    ``x -> 105 - x`` and ``y -> 68 - y`` on flipped rows; NaN is preserved (NaN
-    arithmetic). ``flip_mask`` is reindexed to ``df`` (missing -> False).
+    Positions map ``x -> 105 - x`` / ``y -> 68 - y``; velocity columns are NEGATED
+    (a 180-degree point reflection reverses a vector). NaN is preserved.
+    ``flip_mask`` is reindexed to ``df`` (missing -> False).
+
+    ``vx_cols``/``vy_cols`` exist because a positions-only re-projection silently
+    produced velocity that contradicted its own positions (ADR-045 D1).
     """
-    out = df.copy()
-    mask = flip_mask.reindex(out.index, fill_value=False).to_numpy(dtype=bool)
-    if not mask.any():
-        return out
-    for col in x_cols:
-        if col in out.columns:
-            vals = out[col].to_numpy(dtype="float64")
-            out.loc[mask, col] = FIELD_LENGTH - vals[mask]
-    for col in y_cols:
-        if col in out.columns:
-            vals = out[col].to_numpy(dtype="float64")
-            out.loc[mask, col] = FIELD_WIDTH - vals[mask]
-    return out
+    from silly_kicks.reflection import reflect_columns
+
+    return reflect_columns(
+        df,
+        flip_mask,
+        point_x=x_cols,
+        point_y=y_cols,
+        vector_x=vx_cols or [],
+        vector_y=vy_cols or [],
+    )

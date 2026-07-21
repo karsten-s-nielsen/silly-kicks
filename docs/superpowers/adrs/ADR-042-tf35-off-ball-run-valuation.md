@@ -90,7 +90,7 @@ and RAISE on a miss, so a check-then-call would blow up mid-loop on exactly the 
 ids those helpers exist to serve.
 
 **TF-4's `toward_goal` is re-keyed onto `acting_team_attacks_rtl` — a BEHAVIOUR CHANGE, not a
-no-op.** TF-4 was the last module in the ACTION-COUPLED GEOMETRY layer keyed on home/away identity (other subsystems legitimately key on it -- `_line_break_kernel`'s coordinate resolution and the per-frame influence families take `home_team_id` by design) while the direction authority
+no-op.** TF-4 was re-keyed onto `acting_team_attacks_rtl`; this did NOT eliminate identity-keying from the action-coupled geometry layer — other action-coupled aggregators still take `home_team_id` by design (the earlier "last module keyed on home/away identity" phrasing was wrong; ADR-045 D6). `_line_break_kernel`'s coordinate resolution and the per-frame influence families likewise take `home_team_id` by design, while the direction authority
 already had 7 production call sites. The two disagree exactly where the acting team has no
 direction-carrying frame row in that period: identity-keying always resolves and flips the
 away team, the direction authority conservatively does not flip. Rows like that exist in real

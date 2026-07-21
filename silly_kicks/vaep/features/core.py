@@ -12,7 +12,7 @@ continue to resolve (Hyrum's Law preservation).
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 
-import silly_kicks.spadl.config as spadlcfg
+from silly_kicks.reflection import SPADL_REFLECTION_KINDS, reflect
 from silly_kicks.vaep.feature_framework import (
     Actions,
     Features,
@@ -186,9 +186,16 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int | str) -> GameS
 
     a0 = gamestates[0]
     away_idx = ~ids_match(a0.team_id, home_team_id)
+    # ADR-045: single seam for the transform, but the IN-PLACE contract is preserved --
+    # reflect() is pure, so assign its result back into the caller's own frame. Converting
+    # this to pure would silently break any caller relying on the mutation.
     for actions in gamestates:
-        for col in ["start_x", "end_x"]:
-            actions.loc[away_idx, col] = spadlcfg.field_length - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
-        for col in ["start_y", "end_y"]:
-            actions.loc[away_idx, col] = spadlcfg.field_width - actions[away_idx][col].values  # type: ignore[reportAttributeAccessIssue]
+        reflected = reflect(actions, away_idx, kinds=SPADL_REFLECTION_KINDS)
+        # Assign back ONLY the columns whose kind can change. Writing every column would
+        # upcast untouched integer columns to float (reflect_columns computes in float64) and
+        # would replace every underlying array, which is a Hyrum surface on a function whose
+        # entire contract is that it mutates in place.
+        for col in reflected.columns:
+            if SPADL_REFLECTION_KINDS.get(col) not in ("invariant", "magnitude"):
+                actions[col] = reflected[col]
     return gamestates
