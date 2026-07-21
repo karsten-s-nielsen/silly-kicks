@@ -29,7 +29,7 @@ Key properties:
 - **Density estimation, not regression**: Outputs a 60&times;64 probability grid (3,840 cells at 0.5m resolution), not a single (x, y) point. Captures multimodal positioning (e.g., split between near-post and central when the ball is wide).
 - **No pickle**: Serialized as npz (NumPy arrays) + JSON (metadata) + SHA-256 integrity sidecar. No pickle anywhere in the load/save path.
 - **Vectorized inference**: Tree traversal uses NumPy array operations (no sklearn at inference time). Batch prediction of 1,000 frames completes in under 1 second.
-- **Two variants**: `"default"` (approx. 12 MB, 36k training frames) ships bundled in the wheel; `"full"` (approx. 170 MB, 887k frames) downloads from this Hub repo on first use.
+- **Two variants**: `"default"` (approx. 0.76 MB, 36k-frame subsample) ships bundled in the wheel; `"full"` (approx. 2.4 MB, 179-match corpus) downloads from this Hub repo on first use. Both are **parameters-only** artifacts &mdash; the two trained tree ensembles and their baselines, with no per-sample training data (silly-kicks 4.54.0; ADR-044).
 
 ## Architecture
 
@@ -38,7 +38,7 @@ The model implements RFCDE (Pospisil &amp; Lee 2018) adapted for goalkeeper posi
 1. **Feature extraction**: 26 goal-relative features per frame (ball state, defensive geometry, game context). `phase` is trained **numerically** (not categorical) so the pickle-free numeric tree traversal matches sklearn exactly (4.14.0; ADR-016).
 2. **Leaf assignment**: `HistGradientBoostingRegressor` (500 trees, max depth 8) trained on GK x-coordinate; leaf assignments partition the feature space
 3. **Co-occurrence weighting**: Training frames sharing leaf assignments with the query frame receive higher weight (Dutta et al. 2024 NFL Ghosts approach)
-4. **2D KDE**: Weighted Gaussian KDE over (x, y) positions of weighted training frames produces the density surface (`mode`, `mean`, `density_spread`)
+4. **2D KDE**: Weighted Gaussian KDE over (x, y) positions of weighted training frames produces the density surface (`mode`, `mean`). This step needs the per-sample training positions, so it runs only on a **locally fit** model &mdash; the distributed artifact is parameters-only and does not carry them (silly-kicks 4.54.0; ADR-044).
 5. **Served point estimate**: a second `HistGradientBoostingRegressor` is trained on GK y-coordinate; `ghost_gk_x/y` serve the exact boosted mean of both ensembles, reconstructed pickle-free as `baseline + Σ_trees leaf_value` (no sklearn at inference). 4.14.0; ADR-016.
 
 ### Features (26)
@@ -64,12 +64,12 @@ All coordinates are goal-relative: the defending goal is at x=0, pitch center at
 
 ## Variants
 
-| Variant | Training frames | File size | Source |
+| Variant | Training corpus | File size | Source |
 |---------|----------------|-----------|--------|
-| `default` | 36,000 | 12 MB | Bundled in `pip install silly-kicks` |
-| `full` | 887,000 | 170 MB | Downloaded from this HF repo via `pip install silly-kicks[ghost-gk]` |
+| `default` | 36k-frame subsample | ~0.76 MB | Bundled in `pip install silly-kicks` |
+| `full` | 179 matches / ~1.04M frames | ~2.4 MB | Downloaded from this HF repo via `pip install silly-kicks[ghost-gk]` |
 
-The `default` variant provides nearly identical point-estimate accuracy (mode x/y) with faster density estimation. The `full` variant produces smoother, more detailed density surfaces &mdash; recommended for research applications where the full density shape matters.
+Both variants are **parameters-only** artifacts (no per-sample training data is stored or redistributed). They serve identical point-estimate machinery (`ghost_gk_x/y`); the `full` variant is trained on the larger corpus. The KDE **density** read-out (`predict_density`) is available only on a **locally fit** model &mdash; see Usage.
 
 ## Training Data
 
@@ -154,21 +154,24 @@ stronger estimator and is the only candidate that beats the mode. The mode remai
 `predict_density(...).mode_x/mode_y`. See ADR-016.
 
 **Weights re-fit + re-published (4.14.0).** This is an artifact-format change (the npz now carries the
-gk_y tree ensemble + baselines for the reconstruction; `metadata.version = 1.2.0`,
-`serve_estimator = "boosted_mean"`), and `fit()` now trains `phase` numerically (closing a latent KDE
-categorical-routing capability gap). Both the bundled `default` and this Hub `full` model are re-fit;
-old-format artifacts fail closed on load with a clear "re-fit required" error.
+gk_y tree ensemble + baselines for the reconstruction; `serve_estimator = "boosted_mean"`), and `fit()`
+now trains `phase` numerically (closing a latent KDE categorical-routing capability gap). Both the
+bundled `default` and this Hub `full` model are re-fit; old-format artifacts fail closed on load with a
+clear "re-fit required" error.
 
-> **Breaking:** the emitted spread column is renamed `ghost_gk_spread` → **`ghost_gk_density_spread`**
-> (it is the conditional-density dispersion, not the served point's standard error). Lakehouse consumers
-> must rename on consume + re-materialize `ghost_gk_*`.
+> **Parameters-only (4.54.0; ADR-044).** The artifact format is now `metadata.version = 1.3.0`
+> (`stores_training_data = false`): the per-sample density arrays (`training_gk_x/y`, `training_leaves`)
+> are no longer stored or distributed. The served point estimate (`ghost_gk_x/y` via `predict_mean`) is
+> byte-identical. The emitted `ghost_gk_density_spread` column (renamed from `ghost_gk_spread` in 4.14.0)
+> is **retired** from `compute_ghost_gk` / `add_ghost_gk` / `ghost_gk_xfns`; the KDE density read-out now
+> requires a locally fit model.
 
 ### Serialization Format
 
 ```
 model_dir/
-  rfcde_weights.npz    # NumPy arrays: leaf assignments, training positions, tree structure
-  metadata.json        # Feature names, grid spec, hyperparameters, version
+  rfcde_weights.npz    # NumPy arrays: gk_x + gk_y gradient-boosted tree nodes + additive baselines (parameters only; no per-sample data)
+  metadata.json        # Feature names, grid spec, hyperparameters, version, corpus provenance, chirality fingerprint
   SHA256SUMS           # Integrity checksums (CRLF-normalized for cross-platform safety)
 ```
 
@@ -233,8 +236,8 @@ Features are extracted in **goal-relative coordinates**:
 
 | File | Size | Description |
 |------|------|-------------|
-| `rfcde_weights.npz` | 170 MB | gk_x + gk_y tree structure + baselines, leaf assignments, training GK positions |
-| `metadata.json` | 1 KB | Feature names, grid specification, hyperparameters, `serve_estimator`, version |
+| `rfcde_weights.npz` | ~2.4 MB | gk_x + gk_y gradient-boosted tree nodes + additive baselines (parameters only) |
+| `metadata.json` | ~2 KB | Feature names, grid spec, hyperparameters, `serve_estimator`, version, corpus provenance, chirality fingerprint |
 | `SHA256SUMS` | 164 B | Integrity checksums |
 
 ## More Information
