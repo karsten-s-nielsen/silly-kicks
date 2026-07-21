@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
+from silly_kicks.reflection import ATOMIC_SPADL_REFLECTION_KINDS, reflect
 from silly_kicks.spadl.utils import CoverageMetrics
 
 from . import config as spadlconfig
@@ -1125,13 +1126,11 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int | str) -> pd.Dat
     """
     from silly_kicks.id_compat import ids_match
 
-    ltr_actions = actions.copy()
+    # ADR-045: one seam. This site was already CORRECT -- it is migrated, not fixed, so the
+    # point/vector contract lives in the registry rather than in hand-written copies.
+    # No .fillna(False): ids_match already returns non-nullable bool (see spadl play_left_to_right).
     away_idx = ~ids_match(actions.team_id, home_team_id)
-    ltr_actions.loc[away_idx, "x"] = spadlconfig.field_length - actions[away_idx]["x"].values  # type: ignore[reportAttributeAccessIssue]
-    ltr_actions.loc[away_idx, "y"] = spadlconfig.field_width - actions[away_idx]["y"].values  # type: ignore[reportAttributeAccessIssue]
-    ltr_actions.loc[away_idx, "dx"] = -actions[away_idx]["dx"].values  # type: ignore[reportAttributeAccessIssue]
-    ltr_actions.loc[away_idx, "dy"] = -actions[away_idx]["dy"].values  # type: ignore[reportAttributeAccessIssue]
-    return ltr_actions
+    return reflect(actions, away_idx, kinds=ATOMIC_SPADL_REFLECTION_KINDS)
 
 
 def coverage_metrics(

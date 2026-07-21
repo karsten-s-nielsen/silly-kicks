@@ -920,7 +920,18 @@ def _build_ball_xy_v_per_action(
     pointers_with_period = pointers.merge(actions_with_period, on="action_id", how="left")
     ball_rows = frames.loc[frames["is_ball"], ["period_id", "frame_id", "x", "y", "vx", "vy"]]
     merged = pointers_with_period.merge(ball_rows, on=["period_id", "frame_id"], how="left")
-    return merged[["action_id", "x", "y", "vx", "vy"]]
+    out = merged[["action_id", "x", "y", "vx", "vy"]]
+
+    # ADR-045 D2: the ball never entered ActionFrameContext, so _reproject_rows never
+    # saw it -- it reached _pressure_bekkers in FRAME coordinates while the defenders
+    # were in action-LTR. Position AND velocity both need re-projecting here.
+    #
+    # Read the flip from ctx (Task 5 put it there); do NOT recompute
+    # acting_team_attacks_rtl. One orientation decision, one place -- otherwise the ball
+    # and the players agree only by coincidence, which is the drift this PR removes.
+    row_flip = out["action_id"].map(ctx.flip_by_action).fillna(False).astype(bool)
+    row_flip.index = out.index
+    return reproject_to_action_ltr(out, row_flip, x_cols=["x"], y_cols=["y"], vx_cols=["vx"], vy_cols=["vy"])
 
 
 def pressure_on_actor(

@@ -20,12 +20,24 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks.id_compat import ids_match
+from silly_kicks.reflection import reflect_columns
 from silly_kicks.spadl import config as _spadlconfig
 
 _PITCH_LENGTH_M: float = _spadlconfig.field_length  # 105.0
 _PITCH_WIDTH_M: float = _spadlconfig.field_width  # 68.0
 _PITCH_MID_X: float = _PITCH_LENGTH_M / 2.0  # 52.5
 _LTR_KNOWN_PERIODS: tuple[int, ...] = (1, 2, 3, 4)  # period 5 (PSO) direction undefined
+
+
+def _flip_frames_by_flag(out: pd.DataFrame, flip_mask) -> pd.DataFrame:
+    """Point-reflect flagged rows, vectors included (ADR-045 D4).
+
+    The geometric leg at :284-289 already negates vx/vy. This leg did not, so the two
+    legs had divergent vector semantics. They COMPOSE on a wrong-flag match (flag leg
+    flips, geometric backstop flips back -> net identity), which is correct only when
+    BOTH apply complete reflections.
+    """
+    return reflect_columns(out, flip_mask, point_x=["x"], point_y=["y"], vector_x=["vx"], vector_y=["vy"])
 
 
 def require_et_direction(
@@ -356,8 +368,7 @@ def finalize_orientation(
     flips = home_attacks_right_per_period(home_team_start_left, home_team_start_left_extratime)
     home_rtl_periods = {p for p, attacks_right in flips.items() if not attacks_right}
     flip_mask = out["period_id"].isin(home_rtl_periods).to_numpy()
-    out.loc[flip_mask, "x"] = _PITCH_LENGTH_M - out.loc[flip_mask, "x"]
-    out.loc[flip_mask, "y"] = _PITCH_WIDTH_M - out.loc[flip_mask, "y"]
+    out = _flip_frames_by_flag(out, flip_mask)
 
     out["team_attacking_direction"] = None
     is_player = (~out["is_ball"].astype(bool)).to_numpy(dtype=bool)

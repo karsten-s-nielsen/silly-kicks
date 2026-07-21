@@ -5,6 +5,7 @@ import pandas as pd
 
 import silly_kicks.atomic.spadl.config as atomicspadl
 import silly_kicks.spadl.config as stdspadl
+from silly_kicks.reflection import ATOMIC_SPADL_REFLECTION_KINDS, reflect
 from silly_kicks.vaep.feature_framework import (
     Actions,
     Features,
@@ -162,11 +163,14 @@ def play_left_to_right(gamestates: GameStates, home_team_id: int | str) -> GameS
 
     a0 = gamestates[0]
     away_idx = ~ids_match(a0.team_id, home_team_id)
+    # ADR-045: single seam for the transform, IN-PLACE contract preserved -- reflect() is
+    # pure, so assign its result back into the caller's own frame. dx/dy negation is already
+    # correct here; this is a migration, not a fix.
     for actions in gamestates:
-        actions.loc[away_idx, "x"] = atomicspadl.field_length - actions[away_idx]["x"].values  # type: ignore[reportAttributeAccessIssue]
-        actions.loc[away_idx, "y"] = atomicspadl.field_width - actions[away_idx]["y"].values  # type: ignore[reportAttributeAccessIssue]
-        actions.loc[away_idx, "dx"] = -actions[away_idx]["dx"].values  # type: ignore[reportAttributeAccessIssue]
-        actions.loc[away_idx, "dy"] = -actions[away_idx]["dy"].values  # type: ignore[reportAttributeAccessIssue]
+        reflected = reflect(actions, away_idx, kinds=ATOMIC_SPADL_REFLECTION_KINDS)
+        for col in reflected.columns:
+            if ATOMIC_SPADL_REFLECTION_KINDS.get(col) not in ("invariant", "magnitude"):
+                actions[col] = reflected[col]
     return gamestates
 
 

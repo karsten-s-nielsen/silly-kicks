@@ -134,6 +134,7 @@ def _build_ctx_with_velocities_and_ball(
         pointers=pointers,
         actor_rows=actor_rows,
         opposite_rows_per_action=defender_rows,
+        flip_by_action=pd.Series(dtype=bool),
         defending_gk_rows=pd.DataFrame(),
     )
     if ball_xyvxvy is not None:

@@ -57,6 +57,10 @@ class ActionFrameContext:
         ``actions``, when the ID is NaN, when the action is unlinked, or when
         the GK player is absent from the linked frame (substitution case).
         Consumed by ``silly_kicks.tracking._kernels._pre_shot_gk_position``.
+    flip_by_action : pd.Series
+        Indexed by ``action_id``, True where the acting team attacks right-to-left and the
+        sampled frame geometry must be point-reflected into action-LTR (ADR-028). Computed
+        once here so every consumer re-projects on the SAME decision (ADR-045).
 
     Direct construction of ``ActionFrameContext`` is not part of the public API;
     always build via ``silly_kicks.tracking.utils._resolve_action_frame_context``.
@@ -75,6 +79,11 @@ class ActionFrameContext:
     pointers: pd.DataFrame
     actor_rows: pd.DataFrame
     opposite_rows_per_action: pd.DataFrame
+    # REQUIRED -- no default. An empty flip_by_action means "reflect nothing":
+    # out["action_id"].map(empty) is all-NaN, .fillna(False) makes it all-False, and the
+    # ball is silently never re-projected -- D2 restored, with no error (ADR-045). Declared
+    # before the defaulted defending_gk_rows so it stays positional-required.
+    flip_by_action: pd.Series
     defending_gk_rows: pd.DataFrame = dataclasses.field(default_factory=pd.DataFrame)
 
 

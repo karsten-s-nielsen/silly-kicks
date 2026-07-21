@@ -26,6 +26,7 @@ import sys
 import pytest
 
 _PACKAGES = (
+    "silly_kicks.reflection",
     "silly_kicks.spadl",
     "silly_kicks.tracking",
     "silly_kicks.vaep",

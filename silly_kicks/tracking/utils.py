@@ -22,6 +22,7 @@ from silly_kicks.id_compat import (
     canonical_id_series,
     ids_match,
 )
+from silly_kicks.reflection import TRACKING_REFLECTION_KINDS, reflect
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
 from .schema import IdDtypeDiagnosis, LinkReport, TimeBaseDiagnosis
@@ -170,16 +171,15 @@ def play_left_to_right(frames: pd.DataFrame, home_team_id) -> pd.DataFrame:
     if not rtl_periods:
         return out  # Already period-normalized; no-op
 
-    # Flip ALL rows (player + ball) in periods where home attacks RTL
     period_flip = out["period_id"].isin(rtl_periods).to_numpy()
-    out.loc[period_flip, "x"] = 105.0 - out.loc[period_flip, "x"]
-    out.loc[period_flip, "y"] = 68.0 - out.loc[period_flip, "y"]
 
-    # Swap direction labels for player rows in flipped periods
-    player_in_flip = period_flip & (~is_ball).to_numpy()
-    old_dir = out.loc[player_in_flip, "team_attacking_direction"].copy()
-    out.loc[player_in_flip, "team_attacking_direction"] = old_dir.map({"ltr": "rtl", "rtl": "ltr"})
-    return out
+    # ADR-045: reflect by DECLARED KIND. Previously this transformed x/y only, so vx/vy
+    # (a vector), x_smoothed/y_smoothed (a point pair) and the direction label rode through
+    # untransformed -- none is in TRACKING_FRAMES_COLUMNS, so all were invisible to a
+    # schema-driven author. `direction_label` handles the ltr<->rtl swap: ball rows carry a
+    # null label and _DIRECTION_SWAP.get(None, None) is None, so the swap is already a no-op
+    # on them and no player/ball split is needed.
+    return reflect(out, period_flip, kinds=TRACKING_REFLECTION_KINDS)
 
 
 _ORIENT_REQUIRED_COLUMNS = ("x", "y", "team_id", "period_id", "is_ball", "team_attacking_direction")
@@ -871,7 +871,24 @@ def _resolve_action_frame_context(
         row_flip = rows["action_id"].map(flip_by_action)
         row_flip = row_flip.fillna(False).astype(bool)
         row_flip.index = rows.index
-        return reproject_to_action_ltr(rows, row_flip, x_cols=["x"], y_cols=["y"])
+        # ADR-045: velocities MUST be negated alongside positions. Omitting them made
+        # _pressure_bekkers read action-LTR positions against frame-convention velocity,
+        # modelling away defenders as running backwards (-38.9% on away actions).
+        #
+        # x_smoothed/y_smoothed are enumerated too, and that is NOT belt-and-braces:
+        # derive_velocities REQUIRES them (preprocess/_velocity.py:41 raises without
+        # them), so every frame that carries vx/vy -- i.e. every frame where this fix
+        # matters at all -- also carries the smoothed pair. Enumerating x/y/vx/vy alone
+        # would leave a mirrored position sitting next to an unmirrored copy of itself,
+        # which is D3b reconstituted inside D1's own fix.
+        return reproject_to_action_ltr(
+            rows,
+            row_flip,
+            x_cols=["x", "x_smoothed"],
+            y_cols=["y", "y_smoothed"],
+            vx_cols=["vx"],
+            vy_cols=["vy"],
+        )
 
     actor_rows = _reproject_rows(actor_rows)
     opposite = _reproject_rows(opposite)
@@ -882,6 +899,7 @@ def _resolve_action_frame_context(
         pointers=pointers,
         actor_rows=actor_rows,
         opposite_rows_per_action=opposite,
+        flip_by_action=flip_by_action,
         defending_gk_rows=defending_gk_rows,
     )
 
