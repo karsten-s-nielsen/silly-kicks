@@ -1189,14 +1189,14 @@ NOT_INVARIANT: dict[str, str] = {
         "recorded provenance field (surfaced in `.to_xarray()` attrs), never resolved against an "
         'id column: constructing with 5 vs "5" stores 5 vs "5", a container faithfully recording '
         "its input rather than a comparison. "
-        "EXPLICITLY NOT COVERED: the two METHODS `.player_surface(player_id)` and "
-        "`.player_share(player_id)` DO compare a caller-supplied id scalar against the "
-        "`player_ids` array with a raw `==` (`_surface.py:140,167`), and both RAISE on a miss -- "
-        "so on mixed-dtype ids they fail rather than mis-resolve silently. That is a REAL, OPEN "
-        "ADR-019 gap, recorded in TODO.md (logged while building TF-35/ADR-042, which works "
-        "around it with a local canonical-id `_safe_index_of`). It is NOT justified here and NOT "
-        "closed by this entry; this entry only states that the constructor is invariant. Fixing "
-        "the methods is tracked separately -- do not read this exemption as covering them."
+        "The two METHODS `.player_surface(player_id)` / `.player_share(player_id)` DO compare a "
+        "caller-supplied id scalar against the `player_ids` array, but they now route it through "
+        "`ids_match` (ADR-019) -- dtype-invariant, byte-identical on matched dtypes, and exercised "
+        "by `tests/tracking/pitch_control/test_surface.py::TestPlayerIdDtypeInvariance`. They are "
+        "not auto-discovered here because they are methods, not the constructor "
+        "`inspect.signature(PitchControlSurface)` sees. The `player_team_ids == team_id` compare "
+        "in `player_share` stays a raw `==` on purpose: `team_id` is drawn from `player_team_ids` "
+        "itself (a same-source compare that cannot mismatch by construction, ADR-043 decision 6)."
     ),
 }
 
