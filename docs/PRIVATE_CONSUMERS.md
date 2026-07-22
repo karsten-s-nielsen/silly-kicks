@@ -17,6 +17,13 @@ the module/consumer pairing is the durable part.
 | `tracking/_xt_gk.py` | `XtGkReport` | `src/analytics/action_context/pipeline.py:98` | Aggregate QA type is not re-exported publicly | Same v2 migration; or promote the report type if v2 keeps an equivalent |
 | `tracking/_ghost_gk.py`, `_xt_gk.py`, `_gk_completion.py`, `_gk_geometry.py` | **module PATHS as hardcoded strings** | `src/ingestion/exec_visibility.py:467-472` (their ADR-044 executor-env drift guard) | Needs stable module identities to detect executor-env drift | A public introspection surface for shipped-module identity, **or** an accepted standing pin coordinated on rename. **Highest-risk entry: degrades silently.** |
 
+**In-repo (first-party) consumers** — not the lakehouse, but recorded under the same discipline
+(a permanent CI test coupling to a private module is worth a rename's blast-radius, even in-repo):
+
+| silly-kicks private | What is used | Consumer (in-repo) | Why | Exit condition |
+|---|---|---|---|---|
+| `tracking/_model_eval.py` | probe symbols `xs_substitution_probe`, `evaluate_xs_probe`, `substitution_deltas`, `regate_verdict`, `PROBE_WRAPPERS`, `_validate_targets` (+ gkdv-declared `_TARGET_COLUMNS`) | `tests/gkdv/test_xs_probe_wiring.py` + `tests/scripts/test_validate_xs_probe.py` (permanent CI) and `scripts/validate_xs_probe.py` (TF-19 PR-3b driver) | The registered TF-19 probe is a first-party **research instrument** (in no xfn list); ADR-037 kept `_model_eval` private on purpose (out of production coupling). These are real `import`s, so a rename fails **loudly** at collection, not silently. | Promote to `silly_kicks.tracking.__all__` **only if a cross-package consumer appears** — the lakehouse wanting the verdict, or the Part B §6.4 harness importing the probe. Until then, recording here is sufficient and no promotion is warranted (YAGNI + ADR-037). |
+
 **Retired entries** (kept so the question is not re-asked):
 
 - `tracking/_id_compat.py` → `ids_match`, consumed by the luxury-lakehouse
