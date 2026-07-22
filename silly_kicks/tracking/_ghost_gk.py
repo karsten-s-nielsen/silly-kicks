@@ -120,11 +120,11 @@ class GhostGkDensity:
 
     Examples
     --------
-    >>> density = model.predict_density(features)[0]
-    >>> density.mode_x, density.mode_y
-    (5.25, 34.25)
-    >>> density.probabilities.sum()
-    1.0
+    Inspect the joint 2D mode and total mass of a predicted density::
+
+        density = model.predict_density(features)[0]
+        density.mode_x, density.mode_y  # e.g. (5.25, 34.25)
+        density.probabilities.sum()  # ~1.0
     """
 
     mode_x: float
@@ -193,9 +193,11 @@ def _resolve_model(model: GhostGkModel | GhostGkVariant | None) -> GhostGkModel:
 
     Examples
     --------
-    >>> resolved = _resolve_model(None)  # default bundled weights
-    >>> resolved = _resolve_model("full")  # download from HuggingFace Hub
-    >>> resolved = _resolve_model(my_model)  # pass-through
+    Resolve a model spec to a concrete instance::
+
+        resolved = _resolve_model(None)  # default bundled weights
+        resolved = _resolve_model("full")  # download from HuggingFace Hub
+        resolved = _resolve_model(my_model)  # pass-through
     """
     if isinstance(model, GhostGkModel):
         return model
@@ -323,9 +325,10 @@ def _build_score_lookup(
 
     Examples
     --------
-    >>> fn = _build_score_lookup(actions, home_team_id=1)
-    >>> fn("100", 30.0)
-    1.0
+    Build the score-differential lookup for a match and query it::
+
+        fn = _build_score_lookup(actions, home_team_id=1)
+        fn("100", 30.0)  # e.g. 1.0
     """
 
     # Resolve type/result columns (supports both ID and name DataFrames)
@@ -409,9 +412,10 @@ def _build_phase_lookup(
 
     Examples
     --------
-    >>> fn = _build_phase_lookup(actions)
-    >>> fn("100", 33.0)
-    1
+    Build the phase lookup for a match and query it::
+
+        fn = _build_phase_lookup(actions)
+        fn("100", 33.0)  # e.g. 1 (set_piece)
     """
 
     # Set-piece types (excluding throw_in per spec)
@@ -529,9 +533,10 @@ def extract_ghost_gk_features(
 
     Examples
     --------
-    >>> features = extract_ghost_gk_features(frame, gk_team_id=1, goal_x=0.0)
-    >>> features.shape
-    (1, 26)
+    Extract the 26-column feature row for a single frame::
+
+        features = extract_ghost_gk_features(frame, gk_team_id=1, goal_x=0.0)
+        features.shape  # (1, 26)
     """
     # --- Coordinate transform ---
     flip = goal_x > 50.0
@@ -743,9 +748,10 @@ def _extract_all_ghost_gk_features(
 
     Examples
     --------
-    >>> features, meta = _extract_all_ghost_gk_features(frames, home_team_id=1)
-    >>> features.shape[1]
-    26
+    Batch-extract features and metadata across all frames of a match::
+
+        features, meta = _extract_all_ghost_gk_features(frames, home_team_id=1)
+        features.shape[1]  # 26
     """
     # --- Team ID normalization (§7) ---
     frame_team_dtype = frames["team_id"].dtype
@@ -1002,11 +1008,13 @@ def prepare_ghost_gk_training_data(
 
     Examples
     --------
-    >>> features, labels = prepare_ghost_gk_training_data(
-    ...     frames, home_team_id=1, actions=actions, subsample_fps=1.0
-    ... )
-    >>> model = GhostGkModel()
-    >>> model.fit(features, labels)
+    Prepare training data from a match and fit a model on it::
+
+        features, labels = prepare_ghost_gk_training_data(
+            frames, home_team_id=1, actions=actions, subsample_fps=1.0
+        )
+        model = GhostGkModel()
+        model.fit(features, labels)
     """
     import warnings
 
@@ -1482,10 +1490,12 @@ class GhostGkModel:
 
     Examples
     --------
-    >>> model = GhostGkModel()
-    >>> model.fit(X_train, labels_train)
-    >>> positions = model.predict(X_test)  # shape (n, 2)
-    >>> densities = model.predict_density(X_test)  # list[GhostGkDensity]
+    Fit the model then predict positions and densities::
+
+        model = GhostGkModel()
+        model.fit(X_train, labels_train)
+        positions = model.predict(X_test)  # shape (n, 2)
+        densities = model.predict_density(X_test)  # list[GhostGkDensity]
 
     See NOTICE for full bibliographic citations.
     """
@@ -1542,8 +1552,10 @@ class GhostGkModel:
 
         Examples
         --------
-        >>> model = GhostGkModel()
-        >>> model.fit(X_train, labels_train)
+        Fit the model on prepared training features and labels::
+
+            model = GhostGkModel()
+            model.fit(X_train, labels_train)
         """
         self.carrier_params = dict(carrier_params) if carrier_params else dict(DEFAULT_CARRIER_PARAMS)
         from sklearn.ensemble import HistGradientBoostingRegressor
@@ -1614,8 +1626,9 @@ class GhostGkModel:
 
         Examples
         --------
-        >>> model.predict(X_test).shape
-        (100, 2)
+        Predict served keeper positions for a batch of feature rows::
+
+            model.predict(X_test).shape  # e.g. (100, 2)
         """
         return self.predict_mean(features)
 
@@ -1633,8 +1646,9 @@ class GhostGkModel:
 
         Examples
         --------
-        >>> model.predict_mean(X_test).shape
-        (100, 2)
+        Compute the served mean estimate for a batch of feature rows::
+
+            model.predict_mean(X_test).shape  # e.g. (100, 2)
         """
         if (
             self._tree_nodes is None
@@ -1675,9 +1689,10 @@ class GhostGkModel:
 
         Examples
         --------
-        >>> densities = model.predict_density(X_test)
-        >>> densities[0].probabilities.sum()
-        1.0
+        Compute the full KDE densities for a batch of feature rows::
+
+            densities = model.predict_density(X_test)
+            densities[0].probabilities.sum()  # ~1.0
         """
         if self._tree_nodes is None or self._tree_nodes_y is None:
             msg = "Model not fitted. Call .fit() or .load() first."
@@ -1786,7 +1801,9 @@ class GhostGkModel:
 
         Examples
         --------
-        >>> model.save(Path("models/ghost_gk_v1"))
+        Serialize a fitted model to a directory::
+
+            model.save(Path("models/ghost_gk_v1"))
         """
         if (
             self._tree_nodes is None
@@ -1878,7 +1895,9 @@ class GhostGkModel:
 
         Examples
         --------
-        >>> model = GhostGkModel.load(Path("models/ghost_gk_v1"))
+        Load a previously saved model from disk::
+
+            model = GhostGkModel.load(Path("models/ghost_gk_v1"))
         """
         path = Path(path)
 
@@ -2114,8 +2133,10 @@ def compute_ghost_gk(
 
     Examples
     --------
-    >>> from silly_kicks.tracking._ghost_gk import compute_ghost_gk
-    >>> result = compute_ghost_gk(frames, home_team_id=1)
+    Add ghost-GK columns to a match's frames::
+
+        from silly_kicks.tracking._ghost_gk import compute_ghost_gk
+        result = compute_ghost_gk(frames, home_team_id=1)
     """
     out = frames.copy()
     out["ghost_gk_x"] = np.nan

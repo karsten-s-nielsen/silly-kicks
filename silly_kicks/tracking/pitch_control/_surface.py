@@ -26,11 +26,11 @@ class PitchControlSurface:
 
     Examples
     --------
-    >>> surface = compute_pitch_control(frame, attacking_team_id=1)
-    >>> surface.at_point(50.0, 34.0)  # control at center circle
-    0.52
-    >>> surface.control_in_region(52.5, 105, 0, 68)  # attacking half
-    0.61
+    Build a surface for one frame, then query control at a point and over a region::
+
+        surface = compute_pitch_control(frame, attacking_team_id=1)
+        surface.at_point(50.0, 34.0)  # control at center circle -> 0.52
+        surface.control_in_region(52.5, 105, 0, 68)  # attacking half -> 0.61
     """
 
     grid_x: np.ndarray
@@ -68,8 +68,9 @@ class PitchControlSurface:
 
         Examples
         --------
-        >>> surface.cell_area  # default 50x32 grid
-        4.46
+        Read the per-cell area for the default 50x32 grid::
+
+            surface.cell_area  # -> 4.46
         """
         dx = float(self.grid_x[1] - self.grid_x[0]) if len(self.grid_x) > 1 else 105.0
         dy = float(self.grid_y[1] - self.grid_y[0]) if len(self.grid_y) > 1 else 68.0
@@ -82,8 +83,9 @@ class PitchControlSurface:
 
         Examples
         --------
-        >>> surface.at_point(52.5, 34.0)
-        0.55
+        Interpolate the control value at the halfway line::
+
+            surface.at_point(52.5, 34.0)  # -> 0.55
         """
         return float(self.at_points(np.array([[x, y]]))[0])
 
@@ -92,9 +94,10 @@ class PitchControlSurface:
 
         Examples
         --------
-        >>> pts = np.array([[50, 34], [80, 20]])
-        >>> surface.at_points(pts)
-        array([0.52, 0.71])
+        Batch-interpolate control at several points at once::
+
+            pts = np.array([[50, 34], [80, 20]])
+            surface.at_points(pts)  # -> array([0.52, 0.71])
         """
         from scipy.interpolate import RegularGridInterpolator
 
@@ -116,8 +119,9 @@ class PitchControlSurface:
 
         Examples
         --------
-        >>> surface.control_in_region(52.5, 105, 0, 68)  # attacking half
-        0.61
+        Compute the area-weighted mean control over the attacking half::
+
+            surface.control_in_region(52.5, 105, 0, 68)  # attacking half -> 0.61
         """
         x_mask = (self.grid_x >= x_min) & (self.grid_x <= x_max)
         y_mask = (self.grid_y >= y_min) & (self.grid_y <= y_max)
@@ -134,8 +138,9 @@ class PitchControlSurface:
 
         Examples
         --------
-        >>> surface.player_share(gk_player_id)
-        0.18
+        Read the goalkeeper's share of their team's influence::
+
+            surface.player_share(gk_player_id)  # -> 0.18
         """
         if self.per_player_influence is None or self.player_ids is None:
             raise ValueError("player_share() requires decompose=True when computing the pitch control surface.")
@@ -165,9 +170,10 @@ class PitchControlSurface:
 
         Examples
         --------
-        >>> ps = surface.player_surface(gk_player_id)
-        >>> ps.shape
-        (32, 50)
+        Extract one player's per-cell influence field::
+
+            ps = surface.player_surface(gk_player_id)
+            ps.shape  # -> (32, 50)
         """
         if self.per_player_influence is None or self.player_ids is None:
             raise ValueError("player_surface() requires decompose=True when computing the pitch control surface.")
@@ -185,9 +191,10 @@ class PitchControlSurface:
 
         Examples
         --------
-        >>> da = surface.to_xarray()
-        >>> da.sel(x=50, y=34, method="nearest").item()
-        0.52
+        Convert the surface to a labelled xarray and select a nearest cell::
+
+            da = surface.to_xarray()
+            da.sel(x=50, y=34, method="nearest").item()  # -> 0.52
         """
         try:
             import xarray as xr  # type: ignore[import-not-found]

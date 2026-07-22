@@ -149,9 +149,11 @@ def add_structural_pass(actions, frames, *, home_team_id, links=None, params=Non
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import add_structural_pass
-    >>> enriched = add_structural_pass(atomic_actions, frames, home_team_id=1)
-    >>> enriched[["structural_lbs", "structural_sgm", "structural_sdi"]].head()
+    Enrich atomic actions with the structural-pass primitive columns::
+
+        from silly_kicks.atomic.tracking.features import add_structural_pass
+        enriched = add_structural_pass(atomic_actions, frames, home_team_id=1)
+        enriched[["structural_lbs", "structural_sgm", "structural_sdi"]].head()
     """
     from silly_kicks.tracking.features import add_structural_pass as _std
 
@@ -262,9 +264,11 @@ def add_packing(actions, frames, *, home_team_id, links=None, params=None):
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import add_packing
-    >>> enriched = add_packing(atomic_actions, frames, home_team_id=1)
-    >>> enriched[["packing_made", "packing_net", "packing_goal_threat"]].head()
+    Enrich atomic actions with the packing columns::
+
+        from silly_kicks.atomic.tracking.features import add_packing
+        enriched = add_packing(atomic_actions, frames, home_team_id=1)
+        enriched[["packing_made", "packing_net", "packing_goal_threat"]].head()
     """
     from silly_kicks.tracking.features import add_packing as _std
 
@@ -368,9 +372,11 @@ def add_off_ball_run_values(actions, frames, xt, *, home_team_id, links=None, pi
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import add_off_ball_run_values
-    >>> enriched = add_off_ball_run_values(atomic_actions, frames, fitted_xt, home_team_id=1)
-    >>> enriched[["run_value_target", "n_disruptive_runs"]].head()
+    Enrich atomic actions with the off-ball run-value columns::
+
+        from silly_kicks.atomic.tracking.features import add_off_ball_run_values
+        enriched = add_off_ball_run_values(atomic_actions, frames, fitted_xt, home_team_id=1)
+        enriched[["run_value_target", "n_disruptive_runs"]].head()
     """
     from silly_kicks.tracking.features import _RUN_VALUE_COLS
     from silly_kicks.tracking.features import add_off_ball_run_values as _std
@@ -405,10 +411,12 @@ def off_ball_run_value_xfns(xt, *, home_team_id, params=None):
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import off_ball_run_value_xfns
-    >>> xfns = off_ball_run_value_xfns(fitted_xt, home_team_id=1)
-    >>> len(xfns)
-    1
+    Build the atomic off-ball run-value VAEP transformers::
+
+        from silly_kicks.atomic.tracking.features import off_ball_run_value_xfns
+        xfns = off_ball_run_value_xfns(fitted_xt, home_team_id=1)
+        len(xfns)
+        1
     """
     from silly_kicks.tracking.features import off_ball_run_value_xfns as _std_xfns
 
@@ -436,9 +444,11 @@ def add_xt_gk(actions, frames, xt, *, links=None, home_team_id, params=None):
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import add_xt_gk
-    >>> enriched = add_xt_gk(atomic_actions, frames, fitted_xt, home_team_id=1)
-    >>> enriched[["xt_gk_base", "xt_gk_rav", "xt_gk"]].head()
+    Enrich atomic actions with the xT-GK columns::
+
+        from silly_kicks.atomic.tracking.features import add_xt_gk
+        enriched = add_xt_gk(atomic_actions, frames, fitted_xt, home_team_id=1)
+        enriched[["xt_gk_base", "xt_gk_rav", "xt_gk"]].head()
     """
     from silly_kicks.tracking.features import add_xt_gk as _std
 
@@ -453,10 +463,12 @@ def xt_gk_xfns(xt, *, home_team_id, params=None):
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import xt_gk_xfns
-    >>> xfns = xt_gk_xfns(fitted_xt, home_team_id=1)
-    >>> len(xfns)
-    1
+    Build the atomic xT-GK VAEP transformers::
+
+        from silly_kicks.atomic.tracking.features import xt_gk_xfns
+        xfns = xt_gk_xfns(fitted_xt, home_team_id=1)
+        len(xfns)
+        1
     """
     from silly_kicks.tracking.features import xt_gk_xfns as _std_xfns
 
@@ -1064,8 +1076,10 @@ def pitch_control_at_target(
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import pitch_control_at_target
-    >>> pc = pitch_control_at_target(actions, frames)
+    Compute pitch control at the acting team's action target (atomic SPADL)::
+
+        from silly_kicks.atomic.tracking.features import pitch_control_at_target
+        pc = pitch_control_at_target(actions, frames)
     """
     from silly_kicks.tracking.features import pitch_control_at_target as _std_pc
 
@@ -1095,8 +1109,10 @@ def add_pitch_control(
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import add_pitch_control
-    >>> enriched = add_pitch_control(actions, frames)
+    Enrich atomic actions with the pitch-control-at-target column::
+
+        from silly_kicks.atomic.tracking.features import add_pitch_control
+        enriched = add_pitch_control(actions, frames)
     """
     out = actions.copy()
     s = pitch_control_at_target(actions, frames, links=links, method=method)
@@ -1148,8 +1164,10 @@ def add_cover_shadows(
 
     Examples
     --------
-    >>> from silly_kicks.atomic.tracking.features import add_cover_shadows
-    >>> enriched = add_cover_shadows(atomic_actions, frames, xt, home_team_id=1)
+    Enrich atomic actions with the cover-shadow columns::
+
+        from silly_kicks.atomic.tracking.features import add_cover_shadows
+        enriched = add_cover_shadows(atomic_actions, frames, xt, home_team_id=1)
     """
     from silly_kicks.tracking.features import add_cover_shadows as _std_cs
 

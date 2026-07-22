@@ -52,28 +52,6 @@ brainstorm → spec cycle before code.
 
 ### Blocked or Deferred
 
-- **Nothing in CI executes doctests, so the Examples gate certifies examples no one runs
-  (found 2026-07-19 during 4.53.0 / ADR-043; measured, not estimated).** `pyproject.toml` has
-  no `--doctest-modules` and no `doctest_optionflags` (`git show HEAD:pyproject.toml | grep -i
-  doctest` → 0 hits), yet `tests/test_public_api_examples.py`'s `_has_real_example` accepts
-  "a doctest that would actually execute" as one of its two valid forms. So a
-  `>>> f(2, 3)` claiming `5` passes the gate whether or not it returns `5` — the gate rules on
-  an example's SHAPE while its CONTENT is unverified. **Measured blast radius: executing every
-  doctest in `silly_kicks/` gives 531 attempted, 138 failing across 27 modules.** Worst:
-  `tracking/features.py` 31/104, `_ghost_gk.py` 28/33, `atomic/tracking/features.py` 15/43,
-  `_obso.py` 7/14, `_run_values.py` 6/11. **The 138 are NOT false claims** — the dominant
-  failure is `NameError` (e.g. `_voronoi.compute_voronoi`: `surface` is undefined because it
-  was bound in a preceding `# doctest: +SKIP` line). They are illustrative fragments written
-  in a house style that assumed no runner, and they overwhelmingly predate 4.53.0. **Work
-  involved:** decide the target (execute doctests for the enforced surface only, vs
-  package-wide), then repair ~138 examples — mostly by making fragments self-contained or
-  converting them to the indented literal-block form the gate also accepts, which is the
-  honest form for anything needing a real match's frames. **Cost input:** CI already exceeds
-  15 min wall-clock and is hit twice per release (CI + post-merge), so a package-wide
-  `--doctest-modules` needs a runtime measurement before it is wired in. Until this lands,
-  a doctest's expected output is only as good as whoever wrote it — the 4.53.0 examples were
-  each verified by hand execution, which is exactly the manual step this item removes.
-
 - **RESOLVED (2026-07-18): the `test_xshot_gradientsports_e2e` Brier-gate failure.** The
   known-failure entry met its own stated removal condition and has been retired. The
   owner-gated e2e was re-run on 4.51.0 (PR-S118 / ADR-040 chirality-corrected xS weights)

@@ -145,9 +145,11 @@ def compute_space_created(
 
     Examples
     --------
-    >>> result = compute_space_created(frame, attacking_team_id=1)
-    >>> result.columns.tolist()
-    ['player_id', 'team_id', 'space_created_m2']
+    Compute per-player space creation for a single frame::
+
+        result = compute_space_created(frame, attacking_team_id=1)
+        result.columns.tolist()
+        # ['player_id', 'team_id', 'space_created_m2']
     """
     from ._obso import _get_default_grids, _interpolate_grid
     from .pitch_control import PitchControlCache

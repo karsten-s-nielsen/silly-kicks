@@ -1320,9 +1320,12 @@ def resolve_next_touch_receiver(actions: pd.DataFrame, *, positions: pd.Series |
 
     Examples
     --------
-    >>> from silly_kicks.spadl.utils import resolve_next_touch_receiver
-    >>> receiver = resolve_next_touch_receiver(actions)
-    >>> receiver.head()
+    Resolve the next same-team touch for every SPADL action of a match::
+
+        from silly_kicks.spadl.utils import resolve_next_touch_receiver
+
+        receiver = resolve_next_touch_receiver(actions)
+        receiver.head()
     """
     pid = actions["player_id"].reset_index(drop=True)
     if (

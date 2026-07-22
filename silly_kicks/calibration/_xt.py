@@ -44,9 +44,12 @@ class FrozenXt:
 
     Examples
     --------
-    >>> from silly_kicks.calibration._xt import fit_frozen_xt
-    >>> # frozen = fit_frozen_xt(corpus, exclude_match_ids={"g1"}, source="x")  # doctest: +SKIP
-    >>> # frozen.sha256, frozen.n_excluded, frozen.manifest()  # doctest: +SKIP
+    Fit a frozen xT artifact from a corpus, excluding the calibration matches::
+
+        from silly_kicks.calibration._xt import fit_frozen_xt
+
+        frozen = fit_frozen_xt(corpus, exclude_match_ids={"g1"}, source="x")
+        frozen.sha256, frozen.n_excluded, frozen.manifest()
     """
 
     xt: ExpectedThreat

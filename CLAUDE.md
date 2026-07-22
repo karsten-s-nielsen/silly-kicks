@@ -83,6 +83,18 @@ primitive; see `tests/_perf_structural.py` + the `*_perf_budget.py` files), whic
 never flake on shared runners. (An xdist parallelization was tried and reverted: it
 regressed py3.12 on the 4-core/7GB CI runners — memory/JIT pressure.)
 
+**Doctests: CI executes `--doctest-modules` on the PUBLIC surface only** (`pytest --doctest-modules
+silly_kicks/ --ignore-glob="*/_[!_]*.py"`, every leg; PR-S124). The glob skips single-underscore
+private modules while KEEPING dunder `__init__.py`; private-module examples are kept CORRECT (the
+whole-package sweep is clean) but are NOT executed in CI, to bound wall-clock — the initial
+enforcement scope. Most public examples are the canonical indented RST **literal block** (the honest
+form for anything needing a real match's `actions`/`frames`/`xt` — no docstring can conjure them);
+`tests/test_public_api_examples.py::_has_real_example` accepts a ≥4-space-indented non-`>>>` line in
+the Examples section as a REAL example, so converting a failing `>>> f(actions, ...)` doctest to a
+literal block satisfies BOTH the doctest run (nothing to execute) and the Examples gate. Genuinely
+self-contained examples stay executable `>>>` doctests. Do NOT reintroduce `>>> f(x)  # doctest: +SKIP`
+filler — the gate's `_demonstrates_something` rejects it (the 4.53.0 tightening).
+
 **`@pytest.mark.slow` = expensive AND platform/interpreter-INVARIANT** (does-it-run train-script
 smokes, same-run internal-consistency/parity, calibration cache-equivalence). These run **once on the
 CI primary leg (`ubuntu-3.12`, matrix `primary: true`)**; every other leg runs `-m "not e2e and not

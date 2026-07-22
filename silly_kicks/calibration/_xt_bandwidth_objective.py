@@ -95,8 +95,11 @@ class XtBandwidthObjective:
 
         Examples
         --------
-        >>> # obj.evaluate(Candidate(id="t0",  # doctest: +SKIP
-        >>> #     params={"bandwidth": 1.0, "adaptive": True, "grid": "16x12"}))["xt_holdout_nll"]
+        Score one (bandwidth, adaptive, grid) candidate against the held-out transition NLL::
+
+            obj.evaluate(
+                Candidate(id="t0", params={"bandwidth": 1.0, "adaptive": True, "grid": "16x12"})
+            )["xt_holdout_nll"]
         """
         p = candidate.params
         bandwidth, adaptive, grid_str = float(p["bandwidth"]), bool(p["adaptive"]), str(p["grid"])

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import canonical_id, canonical_id_series, ids_equal
+from silly_kicks.id_compat import canonical_id, canonical_id_series, ids_equal, ids_match
 
 from ..spadl import config as spadlconfig
 from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH, acting_team_attacks_rtl
@@ -228,9 +228,12 @@ def detect_off_ball_runs(
 
     Examples
     --------
-    >>> from silly_kicks.tracking import detect_off_ball_runs
-    >>> runs = detect_off_ball_runs(actions, frames, home_team_id=1)
-    >>> runs[["action_id", "player_id", "displacement_m", "peak_speed_ms"]].head()
+    Detect off-ball runs around each action from a linked match's frames::
+
+        from silly_kicks.tracking import detect_off_ball_runs
+
+        runs = detect_off_ball_runs(actions, frames, home_team_id=1)
+        runs[["action_id", "player_id", "displacement_m", "peak_speed_ms"]].head()
     """
     from .utils import slice_around_event
 
@@ -354,26 +357,18 @@ def _restore_player_id_dtype(runs: pd.DataFrame, frames: pd.DataFrame) -> pd.Dat
 
 
 def _safe_index_of(player_ids: np.ndarray | None, player_id) -> int | None:
-    """Position of ``player_id`` in ``player_ids`` under an ADR-019 canonical compare.
+    """Position of ``player_id`` in ``player_ids`` (ADR-019 dtype-safe), or ``None`` if absent.
 
-    ``PitchControlSurface.player_surface`` / ``.player_share`` use a RAW ``==``
-    (``_surface.py:140,167``), which mis-resolves on exactly the mixed-dtype ids those
-    helpers exist to serve, and RAISES on a miss -- so a check-then-call would blow up
-    mid-loop. Resolving the index once here keeps one authority and lets an absent
-    runner degrade to a NaN value.
+    A thin index-or-``None`` helper over the shared ``ids_match`` seam. The caller needs the
+    *index* to slice ``per_player_influence`` and to degrade an absent runner to a NaN value,
+    whereas ``PitchControlSurface.player_surface`` returns the array and RAISES on a miss. An
+    NA id (e.g. a ball row) matches nothing and yields ``None`` (``ids_match`` resolves an NA
+    scalar to an all-False mask).
     """
     if player_ids is None:
         return None
-    target = canonical_id(player_id)
-    # An NA id can never identify a player: without this guard the loop below would match
-    # the FIRST frame row that also happens to carry an NA id (ball rows do).
-    if pd.isna(target):
-        return None
-    for i, candidate in enumerate(player_ids):
-        cand = canonical_id(candidate)
-        if not pd.isna(cand) and cand == target:
-            return i
-    return None
+    idx = np.where(ids_match(player_ids, player_id).to_numpy())[0]
+    return int(idx[0]) if len(idx) else None
 
 
 def action_level_context(actions: pd.DataFrame, xt: ExpectedThreat) -> tuple[pd.Series, np.ndarray, np.ndarray]:
@@ -390,8 +385,11 @@ def action_level_context(actions: pd.DataFrame, xt: ExpectedThreat) -> tuple[pd.
 
     Examples
     --------
-    >>> from silly_kicks.tracking._run_values import action_level_context
-    >>> receiver, on_domain, credit = action_level_context(actions, xt)
+    Resolve the per-action receiver, on-domain mask and floored pass-threat gain::
+
+        from silly_kicks.tracking._run_values import action_level_context
+
+        receiver, on_domain, credit = action_level_context(actions, xt)
     """
     from ..spadl.utils import resolve_next_touch_receiver
     from ..xthreat import values_at_points
@@ -460,10 +458,13 @@ def value_off_ball_runs(
 
     Examples
     --------
-    >>> from silly_kicks.tracking import detect_off_ball_runs, value_off_ball_runs
-    >>> runs = detect_off_ball_runs(actions, frames, home_team_id=1)
-    >>> valued = value_off_ball_runs(runs, actions, frames, xt)
-    >>> valued[["player_id", "role", "run_value"]].head()
+    Value each detected off-ball run against a fitted expected-threat model::
+
+        from silly_kicks.tracking import detect_off_ball_runs, value_off_ball_runs
+
+        runs = detect_off_ball_runs(actions, frames, home_team_id=1)
+        valued = value_off_ball_runs(runs, actions, frames, xt)
+        valued[["player_id", "role", "run_value"]].head()
     """
     from ..xthreat import physical_grid, require_fitted_xt
     from . import _kernels

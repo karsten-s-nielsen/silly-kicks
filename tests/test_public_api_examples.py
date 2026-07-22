@@ -413,33 +413,13 @@ _EXAMPLES_DEBT: dict[str, str] = {
     "silly_kicks/tracking/_ghost_gk.py::serve_ghost_gk_positions": (
         "Serving helper returning the model's ghost keeper positions for a set of frames."
     ),
-    # --- TF-24 calibration harness (ADR-009). Every entry needs a real multi-match corpus
-    # AND a fitted frozen-xT artifact; the objectives additionally need an Optuna trial.
-    "silly_kicks/calibration/_features.py::patch_trial_columns": (
-        "Overwrites only the 5 trial-dependent columns on a cached invariant base, per Optuna trial."
-    ),
-    "silly_kicks/calibration/_features.py::enrich_full": (
-        "The monolithic 16-step recompute, applying trial params inline at their natural positions."
-    ),
-    "silly_kicks/calibration/_carrier_objective.py::CarrierAccuracyObjective": (
-        "Stage-1 ruthless objective maximizing equal-provider-weight ball-carrier accuracy."
-    ),
-    "silly_kicks/calibration/_carrier_objective.py::CarrierAccuracyObjective.evaluate": (
-        "Scores one (tolerance_m, beta, gamma) candidate across the match-stratified folds."
-    ),
-    "silly_kicks/calibration/_vaep_brier_objective.py::AugmentedVaepBrierObjective": (
-        "Stage-2 ruthless CachedObjective minimizing equal-provider-weight held-out VAEP Brier."
-    ),
+    # --- TF-24 calibration harness (ADR-009). The class XtBandwidthObjective needs a real
+    # multi-match corpus AND a fitted frozen-xT artifact plus an Optuna trial to demonstrate;
+    # the other calibration objective/feature symbols were graduated to illustrative
+    # literal-block call sketches (their demonstrations already lived in the docstrings,
+    # commented out behind a malformed +SKIP; the sketch form is this package's canonical style).
     "silly_kicks/calibration/_xt_bandwidth_objective.py::XtBandwidthObjective": (
         "SK-xT-3 objective minimizing K-fold held-out xT transition NLL over the bandwidth sweep."
-    ),
-    "silly_kicks/calibration/_xt_bandwidth_objective.py::XtBandwidthObjective.evaluate": (
-        "Scores one (bandwidth, adaptive, grid) candidate against the held-out destination likelihood."
-    ),
-    "silly_kicks/calibration/_xt.py::FrozenXt": (
-        "The frozen checksummed xT grid plus provenance for the calibration manifest. Its example "
-        "passed only because line one was an import, with the demonstration commented out behind "
-        "+SKIP -- the exact filler shape the import-only tightening was written to expose."
     ),
     # --- ADR-015 causal harness ---
     "silly_kicks/causal/opportunities.py::build_opportunities": (

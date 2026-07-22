@@ -121,10 +121,15 @@ class AugmentedVaepBrierObjective:
 
     Examples
     --------
-    >>> from silly_kicks.calibration._vaep_brier_objective import AugmentedVaepBrierObjective
-    >>> # obj = AugmentedVaepBrierObjective(fold=fold, xt=frozen.xt,  # doctest: +SKIP
-    >>> #     carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}, seed=42)
-    >>> # from ruthless.strategies.optuna_ import OptunaStrategy  # run via the strategy
+    Build the Stage-2 augmented-VAEP Brier objective for a fold (driven by a ruthless strategy,
+    e.g. ``from ruthless.strategies.optuna_ import OptunaStrategy``)::
+
+        from silly_kicks.calibration._vaep_brier_objective import AugmentedVaepBrierObjective
+
+        obj = AugmentedVaepBrierObjective(
+            fold=fold, xt=frozen.xt,
+            carrier_params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}, seed=42,
+        )
     """
 
     patch_params = frozenset({"k3", "pre_seconds", "min_displacement_m"})

@@ -82,8 +82,10 @@ def compute_pausa_batch(actions: pd.DataFrame) -> pd.DataFrame:
 
     Examples
     --------
-    >>> enriched = compute_pausa_batch(actions_with_obso)
-    >>> enriched[["pausa_temporal", "pausa_spatial", "pausa_composite"]]
+    Compute PAUSA columns from OBSO-enriched actions::
+
+        enriched = compute_pausa_batch(actions_with_obso)
+        enriched[["pausa_temporal", "pausa_spatial", "pausa_composite"]]
     """
     required = {"obso_actual", "obso_peak", "obso_optimal"}
     missing = required - set(actions.columns)

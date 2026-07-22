@@ -250,8 +250,12 @@ def patch_trial_columns(
 
     Examples
     --------
-    >>> # patched = patch_trial_columns(base_actions=base, frames=f, links=links,  # doctest: +SKIP
-    >>> #     home_team_id=h, k3=1.0, pre_seconds=1.5, min_displacement_m=3.0)
+    Patch only the 5 trial-dependent columns onto a cached invariant base::
+
+        patched = patch_trial_columns(
+            base_actions=base, frames=f, links=links,
+            home_team_id=h, k3=1.0, pre_seconds=1.5, min_displacement_m=3.0,
+        )
     """
     from silly_kicks.tracking import LinkParams, add_off_ball_runs, add_pressure_on_actor
 
@@ -294,8 +298,12 @@ def enrich_full(
 
     Examples
     --------
-    >>> # full = enrich_full(actions=a, frames=f, xt=xt, home_team_id=h,  # doctest: +SKIP
-    >>> #     carrier_params=cp, k3=1.0, pre_seconds=1.5, min_displacement_m=3.0)
+    Run the monolithic 16-step recompute with the trial params applied inline::
+
+        full = enrich_full(
+            actions=a, frames=f, xt=xt, home_team_id=h,
+            carrier_params=cp, k3=1.0, pre_seconds=1.5, min_displacement_m=3.0,
+        )
     """
     from silly_kicks.spadl.utils import add_pre_shot_gk_context
     from silly_kicks.tracking import (

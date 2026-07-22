@@ -32,11 +32,12 @@ def compute_voronoi(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.pitch_control._voronoi import compute_voronoi
-    >>> from silly_kicks.tracking.pitch_control._params import VoronoiParams
-    >>> surface = compute_voronoi(frame, attacking_team_id=1, params=VoronoiParams())
-    >>> surface.at_point(50, 34)
-    1.0
+    Compute a Voronoi pitch-control surface and query a cell::
+
+        from silly_kicks.tracking.pitch_control._voronoi import compute_voronoi
+        from silly_kicks.tracking.pitch_control._params import VoronoiParams
+        surface = compute_voronoi(frame, attacking_team_id=1, params=VoronoiParams())
+        surface.at_point(50, 34)  # -> 1.0
     """
     grid_x = np.linspace(0, 105.0, params.grid_cells_x)
     grid_y = np.linspace(0, 68.0, params.grid_cells_y)

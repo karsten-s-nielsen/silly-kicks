@@ -110,12 +110,14 @@ def compute_packing_metrics(
 
     Examples
     --------
-    >>> from silly_kicks.tracking import compute_packing_metrics
-    >>> m = compute_packing_metrics(
-    ...     frame, attacking_team_id=1, home_team_id=1,
-    ...     passer_xy=(50.0, 34.0), receiver_xy=(70.0, 34.0),
-    ... )
-    >>> m["packing_made"]
+    Compute packing metrics for a single pass on a frame::
+
+        from silly_kicks.tracking import compute_packing_metrics
+        m = compute_packing_metrics(
+            frame, attacking_team_id=1, home_team_id=1,
+            passer_xy=(50.0, 34.0), receiver_xy=(70.0, 34.0),
+        )
+        m["packing_made"]
     """
     if params is None:
         params = PackingParams()
@@ -217,9 +219,11 @@ def secured_reception(
 
     Examples
     --------
-    >>> from silly_kicks.tracking import secured_reception
-    >>> secured = secured_reception(actions, line_x)
-    >>> secured.value_counts(dropna=False)
+    Flag whether each pass reception was secured, per action::
+
+        from silly_kicks.tracking import secured_reception
+        secured = secured_reception(actions, line_x)
+        secured.value_counts(dropna=False)
     """
     if params is None:
         params = PackingParams()
