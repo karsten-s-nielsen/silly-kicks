@@ -5,6 +5,25 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.55.4] — 2026-07-22
+
+### Added — TF-19 PR-3b Part A: xS-arm GK-substitution probe RUN + recorded verdict (PR-S126)
+
+First end-to-end run of the xS-arm substitution probe on 64 GS matches — `scripts/validate_xs_probe.py`
+(reported-not-gated; loads GS matches, `build_ghost_frames` → `provenance_to_targets` → the registered
+xS probe, pooling the tidy deltas per match), plus CI-safe seam + orchestration tests and a
+`docs/PRIVATE_CONSUMERS.md` entry for the private probe symbols. **No `silly_kicks/` change — the wheel
+is byte-identical to 4.55.3.**
+
+**Verdict** (`docs/research/tf19_pr3b/`): `no_valid_placebo` → re-gate `unmeasurable_at_dose`. NOT a null
+effect — the GK effect is real and dose-responsive (median |ΔxS| 2 m 0.0154 / 3 m 0.0200 / 4 m 0.0222,
+≈3.1× the nearest-defender control, only 5.3% zero-fraction) and would apparently clear both prongs; the
+blocker is a **degenerate random-outfielder placebo** (`placebo_p95 = 0.0`, 66.5% of placebo deltas zero —
+the aggregate xS features barely respond to a single distant player moving 2 m), so the probe cannot
+certify the apparent effect. Next lever = a GK-appropriate placebo / less-aggregate xS features — a
+methodology gap, not "no signal". `baseline_commit = ed20ac7` (behaviour-identical to 4.55.3 for this arm).
+Spec + plan under `docs/superpowers/{specs,plans}/2026-07-21-tf19-pr3b-xs-arm-probe-run*`.
+
 ## [4.55.3] — 2026-07-22
 
 ### Added — structural guard that the public-surface doctest CI step stays wired (PR-S125)
