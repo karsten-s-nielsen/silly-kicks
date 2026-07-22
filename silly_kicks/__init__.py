@@ -4,6 +4,6 @@ Originally developed as socceraction by Tom Decroos and Pieter Robberechts
 at KU Leuven. This is an independently maintained successor.
 """
 
-__version__ = "4.55.2"
+__version__ = "4.55.3"
 
 __all__ = ["__version__"]
