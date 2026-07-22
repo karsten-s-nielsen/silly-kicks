@@ -84,7 +84,8 @@ never flake on shared runners. (An xdist parallelization was tried and reverted:
 regressed py3.12 on the 4-core/7GB CI runners — memory/JIT pressure.)
 
 **Doctests: CI executes `--doctest-modules` on the PUBLIC surface only** (`pytest --doctest-modules
-silly_kicks/ --ignore-glob="*/_[!_]*.py"`, every leg; PR-S124). The glob skips single-underscore
+silly_kicks/ --ignore-glob="*/_[!_]*.py"`, every leg; PR-S124, wiring guarded by
+`tests/test_ci_doctest_wired.py`). The glob skips single-underscore
 private modules while KEEPING dunder `__init__.py`; private-module examples are kept CORRECT (the
 whole-package sweep is clean) but are NOT executed in CI, to bound wall-clock — the initial
 enforcement scope. Most public examples are the canonical indented RST **literal block** (the honest

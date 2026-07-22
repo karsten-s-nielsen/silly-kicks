@@ -5,6 +5,18 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.55.3] — 2026-07-22
+
+### Added — structural guard that the public-surface doctest CI step stays wired (PR-S125)
+
+`tests/test_ci_doctest_wired.py` parses `.github/workflows/ci.yml` and asserts the semantic wiring
+of the 4.55.2 `--doctest-modules` step (mirroring the rigor of `test_ci_slow_gating_wired.py`): the
+step exists, targets `silly_kicks/`, runs on **every** leg (not gated on `matrix.primary` — doctest
+output is version-sensitive), and its `--ignore-glob` — checked via `fnmatch`, exactly how pytest's
+`--ignore-glob` matches — skips single-underscore private modules while KEEPING dunder `__init__.py`
+and public modules. Without it, silently dropping the step or drifting the glob would stop enforcing
+public examples with no test failing. Test-only; no library change, no new public API, no retrain.
+
 ## [4.55.2] — 2026-07-22
 
 ### Fixed — every doctest across `silly_kicks/` executes cleanly, and the public surface is CI-enforced (PR-S124)
