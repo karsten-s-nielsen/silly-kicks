@@ -134,11 +134,12 @@ def compute_spearman(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.pitch_control._spearman import compute_spearman
-    >>> from silly_kicks.tracking.pitch_control._params import SpearmanParams
-    >>> surface = compute_spearman(frame, attacking_team_id=1, params=SpearmanParams())
-    >>> surface.at_point(52.5, 34.0)
-    0.55
+    Compute a Spearman kinematic pitch-control surface and query a cell::
+
+        from silly_kicks.tracking.pitch_control._spearman import compute_spearman
+        from silly_kicks.tracking.pitch_control._params import SpearmanParams
+        surface = compute_spearman(frame, attacking_team_id=1, params=SpearmanParams())
+        surface.at_point(52.5, 34.0)  # -> 0.55
     """
     grid_x = np.linspace(0, 105.0, params.grid_cells_x)
     grid_y = np.linspace(0, 68.0, params.grid_cells_y)

@@ -233,9 +233,11 @@ class GradientsportsRosterReport:
 
     Examples
     --------
-    >>> _, report = add_gradientsports_player_ids(frames, roster, home_team_id=366, away_team_id=51)
-    >>> report.n_matched
-    4
+    Resolve GS jersey frames to SPADL player ids and read the match count off the report::
+
+        _, report = add_gradientsports_player_ids(frames, roster, home_team_id=366, away_team_id=51)
+        report.n_matched
+        4
     """
 
     n_player_rows: int
@@ -283,11 +285,13 @@ def add_gradientsports_player_ids(
 
     Examples
     --------
-    >>> frames, report = add_gradientsports_player_ids(
-    ...     jersey_frames, roster, home_team_id=366, away_team_id=51
-    ... )
-    >>> report.n_matched >= 0
-    True
+    Join GS tracking jersey frames to the events SPADL ``player_id`` space::
+
+        frames, report = add_gradientsports_player_ids(
+            jersey_frames, roster, home_team_id=366, away_team_id=51
+        )
+        report.n_matched >= 0
+        True
     """
     miss_f = _FRAMES_REQUIRED - set(jersey_frames.columns)
     if miss_f:

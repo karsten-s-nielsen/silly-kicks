@@ -152,10 +152,13 @@ class CarrierAccuracyObjective:
 
     Examples
     --------
-    >>> from silly_kicks.calibration._carrier_objective import CarrierAccuracyObjective
-    >>> from ruthless import Candidate
-    >>> # obj = CarrierAccuracyObjective({"skillcorner": [(actions, frames, home)]})  # doctest: +SKIP
-    >>> # obj.evaluate(Candidate(id="t0", params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}))
+    Build the Stage-1 carrier-accuracy objective over a provider fold and score a candidate::
+
+        from silly_kicks.calibration._carrier_objective import CarrierAccuracyObjective
+        from ruthless import Candidate
+
+        obj = CarrierAccuracyObjective({"skillcorner": [(actions, frames, home)]})
+        obj.evaluate(Candidate(id="t0", params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}))
     """
 
     def __init__(self, fold: dict[str, list[tuple]]) -> None:
@@ -173,8 +176,11 @@ class CarrierAccuracyObjective:
 
         Examples
         --------
-        >>> # obj.evaluate(Candidate(id="t0", params={"tolerance_m": 3.0,  # doctest: +SKIP
-        >>> #     "beta": 0.5, "gamma": 1.0}))["carrier_accuracy"]
+        Score one (tolerance_m, beta, gamma) candidate across the match-stratified folds::
+
+            obj.evaluate(
+                Candidate(id="t0", params={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0})
+            )["carrier_accuracy"]
         """
         p = candidate.params
         tolerance_m, beta, gamma = float(p["tolerance_m"]), float(p["beta"]), float(p["gamma"])

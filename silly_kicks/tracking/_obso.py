@@ -67,9 +67,10 @@ class ObsoSurface:
 
     Examples
     --------
-    >>> surface = compute_obso_surface(pc_surface, (52.5, 34.0))
-    >>> surface.values.shape
-    (68, 104)
+    Build an OBSO surface from a pitch-control surface and ball position::
+
+        surface = compute_obso_surface(pc_surface, (52.5, 34.0))
+        surface.values.shape  # (68, 104)
     """
 
     values: np.ndarray
@@ -232,11 +233,12 @@ def compute_obso_surface(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.pitch_control import compute_pitch_control
-    >>> surface = compute_pitch_control(frame, attacking_team_id=1)
-    >>> obso = compute_obso_surface(surface, (52.5, 34.0))
-    >>> 0 <= obso.values.max() <= 1
-    True
+    Compute an OBSO surface from a single frame's pitch control::
+
+        from silly_kicks.tracking.pitch_control import compute_pitch_control
+        surface = compute_pitch_control(frame, attacking_team_id=1)
+        obso = compute_obso_surface(surface, (52.5, 34.0))
+        0 <= obso.values.max() <= 1  # True
     """
     if params is None:
         params = ObsoParams()
@@ -351,9 +353,10 @@ def compute_pass_obso(
 
     Examples
     --------
-    >>> result = compute_pass_obso(window_frames, 5, (80.0, 30.0), 1)
-    >>> result["peak_obso"] >= result["actual_obso"]
-    True
+    Compute pass OBSO over a window of frames around an event::
+
+        result = compute_pass_obso(window_frames, 5, (80.0, 30.0), 1)
+        result["peak_obso"] >= result["actual_obso"]  # True
     """
     from .pitch_control import PitchControlCache
 

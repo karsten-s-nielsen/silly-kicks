@@ -41,7 +41,7 @@ class CoverShadowParams:
     >>> from silly_kicks.tracking._cover_shadows import CoverShadowParams
     >>> p = CoverShadowParams()
     >>> round(p.k_drag, 5)
-    0.01383
+    0.0138
     """
 
     # Corridor parameterization
@@ -159,7 +159,7 @@ def ball_drag_time(
     >>> from silly_kicks.tracking._cover_shadows import ball_drag_time
     >>> import numpy as np
     >>> t = ball_drag_time(np.array([10.0]))
-    >>> t[0] > 10.0 / 12.0  # drag slows ball
+    >>> bool(t[0] > 10.0 / 12.0)  # drag slows ball
     True
     """
     p = params or CoverShadowParams()

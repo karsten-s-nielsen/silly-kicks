@@ -62,10 +62,11 @@ def compute_pitch_control(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.pitch_control import compute_pitch_control
-    >>> surface = compute_pitch_control(frame, attacking_team_id=1)
-    >>> surface.at_point(52.5, 34.0)
-    0.55
+    Compute the pitch-control surface for a single frame and query it::
+
+        from silly_kicks.tracking.pitch_control import compute_pitch_control
+        surface = compute_pitch_control(frame, attacking_team_id=1)
+        surface.at_point(52.5, 34.0)  # -> 0.55
     """
     # Validate params for method
     validate_params_for_method(method, params)
@@ -149,9 +150,10 @@ def compute_pitch_control_at_points(
 
     Examples
     --------
-    >>> targets = np.array([[50, 34], [80, 20]])
-    >>> compute_pitch_control_at_points(frame, targets, 1)
-    array([0.52, 0.35])
+    Compute pitch control at a set of target points in one call::
+
+        targets = np.array([[50, 34], [80, 20]])
+        compute_pitch_control_at_points(frame, targets, 1)  # -> array([0.52, 0.35])
     """
     if targets.shape[0] == 0:
         return np.empty(0, dtype="float64")

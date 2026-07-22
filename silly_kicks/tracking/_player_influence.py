@@ -89,10 +89,12 @@ def compute_player_influence(
 
     Examples
     --------
-    >>> from silly_kicks.tracking._player_influence import compute_player_influence
-    >>> result = compute_player_influence(
-    ...     frame, xt, attacking_team_id=1, home_team_id=1,
-    ... )
+    Compute per-player off-ball influence metrics for a frame::
+
+        from silly_kicks.tracking._player_influence import compute_player_influence
+        result = compute_player_influence(
+            frame, xt, attacking_team_id=1, home_team_id=1,
+        )
 
     See NOTICE for full bibliographic citations.
     """

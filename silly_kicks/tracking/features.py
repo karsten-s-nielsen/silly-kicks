@@ -1390,9 +1390,11 @@ def add_packing(
 
     Examples
     --------
-    >>> from silly_kicks.tracking import add_packing
-    >>> out = add_packing(actions, frames, home_team_id=1)
-    >>> out[["packing_made", "packing_net", "packing_goal_threat"]].describe()
+    Enrich a linked match's actions with the packing columns::
+
+        from silly_kicks.tracking import add_packing
+        out = add_packing(actions, frames, home_team_id=1)
+        out[["packing_made", "packing_net", "packing_goal_threat"]].describe()
     """
     if params is None:
         params = PackingParams()
@@ -1912,9 +1914,11 @@ def add_off_ball_run_values(
 
     Examples
     --------
-    >>> from silly_kicks.tracking import add_off_ball_run_values
-    >>> out = add_off_ball_run_values(actions, frames, xt, home_team_id=1)
-    >>> out[["run_value_target", "n_disruptive_runs"]].head()
+    Value each action's off-ball runs against a linked match::
+
+        from silly_kicks.tracking import add_off_ball_run_values
+        out = add_off_ball_run_values(actions, frames, xt, home_team_id=1)
+        out[["run_value_target", "n_disruptive_runs"]].head()
     """
     batch = _run_values_at_actions(
         actions,
@@ -1984,10 +1988,11 @@ def off_ball_run_value_xfns(
 
     Examples
     --------
-    >>> from silly_kicks.tracking import off_ball_run_value_xfns
-    >>> xfns = off_ball_run_value_xfns(xt, home_team_id=1)
-    >>> len(xfns)
-    1
+    Build the off-ball run-value VAEP feature transformers::
+
+        from silly_kicks.tracking import off_ball_run_value_xfns
+        xfns = off_ball_run_value_xfns(xt, home_team_id=1)
+        len(xfns)  # -> 1
     """
     from silly_kicks.xthreat import require_fitted_xt
 
@@ -2401,8 +2406,10 @@ def pitch_control_at_target(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import pitch_control_at_target
-    >>> pc = pitch_control_at_target(actions, frames, method="spearman")
+    Sample pitch control at each action's target on a linked match::
+
+        from silly_kicks.tracking.features import pitch_control_at_target
+        pc = pitch_control_at_target(actions, frames, method="spearman")
     """
     import numpy as np
 
@@ -2493,8 +2500,10 @@ def add_pitch_control(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_pitch_control
-    >>> enriched = add_pitch_control(actions, frames)
+    Enrich a linked match's actions with the pitch-control column::
+
+        from silly_kicks.tracking.features import add_pitch_control
+        enriched = add_pitch_control(actions, frames)
     """
     out = actions.copy()
     s = pitch_control_at_target(actions, frames, links=links, method=method, pitch_control_cache=pitch_control_cache)
@@ -2787,8 +2796,10 @@ def das_at_action(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import das_at_action
-    >>> das = das_at_action(actions, frames)
+    Compute dynamic accessible space at each action on a linked match::
+
+        from silly_kicks.tracking.features import das_at_action
+        das = das_at_action(actions, frames)
     """
     import numpy as np
 
@@ -2878,10 +2889,12 @@ def add_das(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_das
-    >>> enriched = add_das(actions, frames)
-    >>> # caller-supplied per-frame numeric direction (skips inference):
-    >>> enriched = add_das(actions, frames, attacking_direction_col="attacking_direction")
+    Enrich a linked match's actions with the DAS columns::
+
+        from silly_kicks.tracking.features import add_das
+        enriched = add_das(actions, frames)
+        # caller-supplied per-frame numeric direction (skips inference):
+        enriched = add_das(actions, frames, attacking_direction_col="attacking_direction")
     """
     import numpy as np
 
@@ -3144,8 +3157,10 @@ def gk_pitch_control_share_weighted(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import gk_pitch_control_share_weighted
-    >>> share = gk_pitch_control_share_weighted(actions, frames, xt, home_team_id=1)
+    Compute the threat-weighted GK pitch-control share per action::
+
+        from silly_kicks.tracking.features import gk_pitch_control_share_weighted
+        share = gk_pitch_control_share_weighted(actions, frames, xt, home_team_id=1)
     """
     col_name = "gk_pitch_control_share_weighted"
     if frames is None:
@@ -3175,8 +3190,10 @@ def gk_reachable_area_m2(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import gk_reachable_area_m2
-    >>> area = gk_reachable_area_m2(actions, frames, xt, home_team_id=1)
+    Compute the GK's uniquely reachable area per action::
+
+        from silly_kicks.tracking.features import gk_reachable_area_m2
+        area = gk_reachable_area_m2(actions, frames, xt, home_team_id=1)
     """
     col_name = "gk_reachable_area_m2"
     if frames is None:
@@ -3206,8 +3223,10 @@ def gk_closing_time_min_s(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import gk_closing_time_min_s
-    >>> ct = gk_closing_time_min_s(actions, frames, home_team_id=1)
+    Compute the GK minimum zone-closing time per action::
+
+        from silly_kicks.tracking.features import gk_closing_time_min_s
+        ct = gk_closing_time_min_s(actions, frames, home_team_id=1)
     """
     col_name = f"gk_closing_time_min_s__{zone_name}"
     if frames is None:
@@ -3236,8 +3255,10 @@ def gk_closing_time_mean_s(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import gk_closing_time_mean_s
-    >>> ct = gk_closing_time_mean_s(actions, frames, home_team_id=1)
+    Compute the GK mean zone-closing time per action::
+
+        from silly_kicks.tracking.features import gk_closing_time_mean_s
+        ct = gk_closing_time_mean_s(actions, frames, home_team_id=1)
     """
     col_name = f"gk_closing_time_mean_s__{zone_name}"
     if frames is None:
@@ -3348,8 +3369,10 @@ def add_gk_influence(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_gk_influence
-    >>> enriched = add_gk_influence(actions, frames, xt, home_team_id=1)
+    Enrich a linked match's actions with the GK-influence columns::
+
+        from silly_kicks.tracking.features import add_gk_influence
+        enriched = add_gk_influence(actions, frames, xt, home_team_id=1)
 
     See NOTICE for full bibliographic citations.
     """
@@ -3597,8 +3620,10 @@ def add_cover_shadows(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_cover_shadows
-    >>> enriched = add_cover_shadows(actions, frames, xt, home_team_id=1)
+    Enrich a linked match's actions with the cover-shadow columns::
+
+        from silly_kicks.tracking.features import add_cover_shadows
+        enriched = add_cover_shadows(actions, frames, xt, home_team_id=1)
 
     See NOTICE for full bibliographic citations.
     """
@@ -3988,8 +4013,10 @@ def actor_reachable_area_m2(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import actor_reachable_area_m2
-    >>> area = actor_reachable_area_m2(actions, frames, xt, home_team_id=1)
+    Compute the actor's uniquely reachable area per action::
+
+        from silly_kicks.tracking.features import actor_reachable_area_m2
+        area = actor_reachable_area_m2(actions, frames, xt, home_team_id=1)
     """
     col_name = "actor_reachable_area_m2"
     if frames is None:
@@ -4022,8 +4049,10 @@ def off_ball_xt_team(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import off_ball_xt_team
-    >>> val = off_ball_xt_team(actions, frames, xt, home_team_id=1)
+    Compute the team's off-ball xT per action::
+
+        from silly_kicks.tracking.features import off_ball_xt_team
+        val = off_ball_xt_team(actions, frames, xt, home_team_id=1)
     """
     col_name = "off_ball_xt_team"
     if frames is None:
@@ -4055,8 +4084,10 @@ def off_ball_xt_opponent(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import off_ball_xt_opponent
-    >>> val = off_ball_xt_opponent(actions, frames, xt, home_team_id=1)
+    Compute the opponent's off-ball xT per action::
+
+        from silly_kicks.tracking.features import off_ball_xt_opponent
+        val = off_ball_xt_opponent(actions, frames, xt, home_team_id=1)
     """
     col_name = "off_ball_xt_opponent"
     if frames is None:
@@ -4089,8 +4120,10 @@ def reachable_area_team(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import reachable_area_team
-    >>> val = reachable_area_team(actions, frames, xt, home_team_id=1)
+    Compute the team's reachable area per action::
+
+        from silly_kicks.tracking.features import reachable_area_team
+        val = reachable_area_team(actions, frames, xt, home_team_id=1)
     """
     col_name = "reachable_area_team"
     if frames is None:
@@ -4124,8 +4157,10 @@ def reachable_area_opponent(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import reachable_area_opponent
-    >>> val = reachable_area_opponent(actions, frames, xt, home_team_id=1)
+    Compute the opponent's reachable area per action::
+
+        from silly_kicks.tracking.features import reachable_area_opponent
+        val = reachable_area_opponent(actions, frames, xt, home_team_id=1)
     """
     col_name = "reachable_area_opponent"
     if frames is None:
@@ -4161,8 +4196,10 @@ def add_player_influence(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_player_influence
-    >>> enriched = add_player_influence(actions, frames, xt, home_team_id=1)
+    Enrich a linked match's actions with the player-influence columns::
+
+        from silly_kicks.tracking.features import add_player_influence
+        enriched = add_player_influence(actions, frames, xt, home_team_id=1)
 
     See NOTICE for full bibliographic citations.
     """
@@ -4402,8 +4439,10 @@ def add_ghost_gk(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_ghost_gk
-    >>> enriched = add_ghost_gk(actions, frames, home_team_id=1)
+    Enrich a linked match's actions with the ghost-GK columns::
+
+        from silly_kicks.tracking.features import add_ghost_gk
+        enriched = add_ghost_gk(actions, frames, home_team_id=1)
 
     See NOTICE for full bibliographic citations.
     """
@@ -4975,8 +5014,10 @@ def obso_actual(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import obso_actual
-    >>> s = obso_actual(actions, frames, home_team_id=1)
+    Compute the actual OBSO value per action on a linked match::
+
+        from silly_kicks.tracking.features import obso_actual
+        s = obso_actual(actions, frames, home_team_id=1)
     """
     col_name = "obso_actual"
     if frames is None:
@@ -5014,8 +5055,10 @@ def obso_peak(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import obso_peak
-    >>> s = obso_peak(actions, frames, home_team_id=1)
+    Compute the peak OBSO value per action on a linked match::
+
+        from silly_kicks.tracking.features import obso_peak
+        s = obso_peak(actions, frames, home_team_id=1)
     """
     col_name = "obso_peak"
     if frames is None:
@@ -5053,8 +5096,10 @@ def obso_optimal(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import obso_optimal
-    >>> s = obso_optimal(actions, frames, home_team_id=1)
+    Compute the optimal OBSO value per action on a linked match::
+
+        from silly_kicks.tracking.features import obso_optimal
+        s = obso_optimal(actions, frames, home_team_id=1)
     """
     col_name = "obso_optimal"
     if frames is None:
@@ -5290,8 +5335,10 @@ def add_obso(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_obso
-    >>> enriched = add_obso(actions, frames, home_team_id=1)
+    Enrich a linked match's actions with the OBSO columns::
+
+        from silly_kicks.tracking.features import add_obso
+        enriched = add_obso(actions, frames, home_team_id=1)
     """
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="add_obso")
     if epv_source == "synthetic":
@@ -5388,10 +5435,11 @@ def obso_xfns(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import obso_xfns
-    >>> xfns = obso_xfns(home_team_id=1)
-    >>> len(xfns)
-    3
+    Build the OBSO VAEP feature transformers::
+
+        from silly_kicks.tracking.features import obso_xfns
+        xfns = obso_xfns(home_team_id=1)
+        len(xfns)  # -> 3
     """
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="obso_xfns")
     if epv_source == "synthetic":
@@ -5565,8 +5613,10 @@ def add_space_creation(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_space_creation
-    >>> enriched = add_space_creation(actions, frames, home_team_id=1)
+    Enrich a linked match's actions with the space-creation columns::
+
+        from silly_kicks.tracking.features import add_space_creation
+        enriched = add_space_creation(actions, frames, home_team_id=1)
     """
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="add_space_creation")
     if epv_source == "synthetic":
@@ -5681,10 +5731,11 @@ def space_creation_xfns(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import space_creation_xfns
-    >>> xfns = space_creation_xfns(home_team_id=1)
-    >>> len(xfns)
-    2
+    Build the space-creation VAEP feature transformers::
+
+        from silly_kicks.tracking.features import space_creation_xfns
+        xfns = space_creation_xfns(home_team_id=1)
+        len(xfns)  # -> 2
     """
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="space_creation_xfns")
     if epv_source == "synthetic":
@@ -5774,8 +5825,10 @@ def add_pausa(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_pausa
-    >>> enriched = add_pausa(actions, frames, home_team_id=1)
+    Enrich a linked match's actions with the PAUSA columns::
+
+        from silly_kicks.tracking.features import add_pausa
+        enriched = add_pausa(actions, frames, home_team_id=1)
     """
     from ._pausa import compute_pausa_batch
 
@@ -5850,10 +5903,11 @@ def pausa_xfns(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import pausa_xfns
-    >>> xfns = pausa_xfns(home_team_id=1)
-    >>> len(xfns)
-    3
+    Build the PAUSA VAEP feature transformers::
+
+        from silly_kicks.tracking.features import pausa_xfns
+        xfns = pausa_xfns(home_team_id=1)
+        len(xfns)  # -> 3
     """
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="pausa_xfns")
     if epv_source == "synthetic":
@@ -5922,8 +5976,10 @@ def add_elastic_sync(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.features import add_elastic_sync
-    >>> enriched = add_elastic_sync(actions, frames)
+    Enrich a linked match's actions with the elastic-sync columns::
+
+        from silly_kicks.tracking.features import add_elastic_sync
+        enriched = add_elastic_sync(actions, frames)
     """
     from ._elastic_sync import ElasticSyncParams, align_events_to_frames
 

@@ -5,6 +5,32 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.55.2] — 2026-07-22
+
+### Fixed — every doctest across `silly_kicks/` executes cleanly, and the public surface is CI-enforced (PR-S124)
+
+The `test_public_api_examples` gate checked example SHAPE but never CONTENT, so 96 doctests
+(91 failing + 5 that did not even parse) had drifted: illustrative `>>> func(actions, frames, xt)`
+fragments referencing match data no docstring can conjure (raising `NameError`), plus malformed
+`# ...  # doctest: +SKIP` comment lines in the calibration objectives. Every one is now either a
+runnable self-contained doctest or the package's canonical indented RST literal block (the honest
+form for anything needing a real match's frames), so the full-package sweep is clean
+(141 passed / 0 failed). CI now runs `--doctest-modules` on the **public surface** (non-underscore
+modules; dunder `__init__` kept) on every leg, so public examples stay executable; private-module
+examples are kept correct but not executed, to bound CI wall-clock. Seven calibration symbols whose
+demonstrations lived commented-out behind the malformed `+SKIP` were graduated to real literal
+blocks and removed from `_EXAMPLES_DEBT` (the self-burning debt shrinks).
+
+### Changed — `_run_values._safe_index_of` delegates to `id_compat.ids_match` (PR-S124)
+
+The TF-35 off-ball-run valuation carried a local canonical-id resolver that existed only because
+`PitchControlSurface.player_share`/`.player_surface` compared ids with a raw `==` (fixed in 4.55.1).
+Now that those methods are dtype-safe, `_safe_index_of` delegates its match to the shared
+`ids_match` seam instead of re-implementing a `canonical_id` loop — behaviour-identical (first
+canonical match, `None` on NA/absent), locked by a dtype-invariance regression test.
+
+No library behaviour change, no new public API, no retrain. C4 count unchanged (30).
+
 ## [4.55.1] — 2026-07-21
 
 ### Fixed — dtype-safe id resolution in the pitch-control decomposition (ADR-019; PR-S123)

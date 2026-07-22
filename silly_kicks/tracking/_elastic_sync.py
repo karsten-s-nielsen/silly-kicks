@@ -72,9 +72,11 @@ def extract_ball_features(
 
     Examples
     --------
-    >>> bf = extract_ball_features(frames)
-    >>> bf.columns.tolist()
-    ['game_id', 'period_id', 'frame_id', 'ball_x', 'ball_y', 'ball_speed', 'ball_accel']
+    Extract per-frame ball kinematics from a match's frames::
+
+        bf = extract_ball_features(frames)
+        bf.columns.tolist()
+        # ['game_id', 'period_id', 'frame_id', 'ball_x', 'ball_y', 'ball_speed', 'ball_accel']
     """
     if params is None:
         params = ElasticSyncParams()
@@ -259,9 +261,11 @@ def align_events_to_frames(
 
     Examples
     --------
-    >>> result = align_events_to_frames(actions, frames)
-    >>> result.columns.tolist()
-    ['action_id', 'elastic_frame_id', 'elastic_confidence', 'elastic_error_seconds']
+    Align a match's actions to frames via elastic ball-feature matching::
+
+        result = align_events_to_frames(actions, frames)
+        result.columns.tolist()
+        # ['action_id', 'elastic_frame_id', 'elastic_confidence', 'elastic_error_seconds']
     """
     if params is None:
         params = ElasticSyncParams()

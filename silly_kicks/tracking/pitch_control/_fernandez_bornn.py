@@ -86,11 +86,12 @@ def compute_fernandez_bornn(
 
     Examples
     --------
-    >>> from silly_kicks.tracking.pitch_control._fernandez_bornn import compute_fernandez_bornn
-    >>> from silly_kicks.tracking.pitch_control._params import FernandezBornnParams
-    >>> surface = compute_fernandez_bornn(frame, 1, FernandezBornnParams())
-    >>> surface.at_point(52.5, 34.0)
-    0.55
+    Compute a Fernandez/Bornn pitch-control surface and query a cell::
+
+        from silly_kicks.tracking.pitch_control._fernandez_bornn import compute_fernandez_bornn
+        from silly_kicks.tracking.pitch_control._params import FernandezBornnParams
+        surface = compute_fernandez_bornn(frame, 1, FernandezBornnParams())
+        surface.at_point(52.5, 34.0)  # -> 0.55
     """
     grid_x = np.linspace(0, 105.0, params.grid_cells_x)
     grid_y = np.linspace(0, 68.0, params.grid_cells_y)

@@ -90,3 +90,11 @@ jobs:
       # single-threaded on the primary leg only so the recorded numbers are clean trend data.
       - if: ${{ matrix.primary }}
         run: pytest tests/ -m "not e2e" --benchmark-only --tb=short
+      # Public-API doctest enforcement (PR-S124). Initial scope: the PUBLIC surface only --
+      # `--ignore-glob="*/_[!_]*.py"` skips single-underscore private modules while KEEPING dunder
+      # `__init__.py`, so runnable examples on non-underscore modules are executed and stay honest.
+      # Private-module examples are kept CORRECT (the whole package sweep is clean) but are
+      # deliberately NOT executed here, to bound CI wall-clock. Runs on EVERY leg because doctest
+      # output (repr) is version-sensitive; verified green on py3.10 + py3.14. No `addopts` in
+      # pyproject, and `testpaths` is ignored when a path is passed, so no `-o` override is needed.
+      - run: pytest --doctest-modules silly_kicks/ --ignore-glob="*/_[!_]*.py" --tb=short

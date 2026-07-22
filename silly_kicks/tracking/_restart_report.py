@@ -26,9 +26,10 @@ class RestartCoordinateReport:
 
         Examples
         --------
-        >>> rep = RestartCoordinateReport.from_frame(enriched)
-        >>> rep.start_source_counts["restart_prior"]  # doctest: +SKIP
-        12
+        Summarize restart-coordinate provenance from an enriched frame::
+
+            rep = RestartCoordinateReport.from_frame(enriched)
+            rep.start_source_counts["restart_prior"]  # e.g. 12
         """
         ssc = {str(k): int(v) for k, v in df["start_coord_source"].value_counts(dropna=True).items()}
         esc = {str(k): int(v) for k, v in df["end_coord_source"].value_counts(dropna=True).items()}

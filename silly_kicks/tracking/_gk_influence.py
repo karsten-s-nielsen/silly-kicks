@@ -187,9 +187,11 @@ def compute_zone_closing_times(
 
     Examples
     --------
-    >>> from silly_kicks.tracking._gk_influence import compute_zone_closing_times, Zone
-    >>> cts = compute_zone_closing_times(frame, gk_player_id=1,
-    ...     zones=[Zone.six_yard_box(goal_x=0.0)])
+    Compute per-zone closing times for a keeper on a frame::
+
+        from silly_kicks.tracking._gk_influence import compute_zone_closing_times, Zone
+        cts = compute_zone_closing_times(frame, gk_player_id=1,
+            zones=[Zone.six_yard_box(goal_x=0.0)])
     """
     players = frame[~frame["is_ball"].astype(bool)].dropna(subset=["x", "y"])
     # ADR-019: caller-supplied gk_player_id vs the frame's player_id column is a cross-source
@@ -283,11 +285,13 @@ def compute_gk_influence(
 
     Examples
     --------
-    >>> from silly_kicks.tracking._gk_influence import compute_gk_influence
-    >>> gi = compute_gk_influence(
-    ...     frame, attacking_team_id=2, gk_player_id=1,
-    ...     xt=fitted_xt, home_team_id=1,
-    ... )
+    Compute GK influence primitives for a keeper on a frame::
+
+        from silly_kicks.tracking._gk_influence import compute_gk_influence
+        gi = compute_gk_influence(
+            frame, attacking_team_id=2, gk_player_id=1,
+            xt=fitted_xt, home_team_id=1,
+        )
 
     See NOTICE for full bibliographic citations.
     """

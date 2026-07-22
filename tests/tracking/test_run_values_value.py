@@ -257,6 +257,30 @@ class TestAggregatorNaRoles:
         assert out["run_value_target"].isna().all()
         assert out["n_disruptive_runs"].isna().all()
 
+
+class TestSafeIndexOfDtype:
+    """ADR-019 regression: ``_safe_index_of`` resolves an id dtype-safely and degrades an
+    absent/NA id to ``None``. Locks the dedup that routed it through ``ids_match`` -- a revert
+    to a raw ``player_ids == player_id`` would miss across dtypes and fail the first case."""
+
+    def test_str_query_resolves_int_ids(self):
+        from silly_kicks.tracking._run_values import _safe_index_of
+
+        assert _safe_index_of(np.array([101, 102, 103]), "102") == 1
+
+    def test_int_query_resolves_object_string_ids(self):
+        from silly_kicks.tracking._run_values import _safe_index_of
+
+        assert _safe_index_of(np.array(["101", "102", "103"], dtype=object), 101) == 0
+
+    def test_absent_na_and_none_degrade_to_none(self):
+        from silly_kicks.tracking._run_values import _safe_index_of
+
+        ids = np.array([101, 102, 103])
+        assert _safe_index_of(ids, 999) is None  # absent
+        assert _safe_index_of(ids, np.nan) is None  # NA id (ball rows) matches nothing
+        assert _safe_index_of(None, 101) is None  # no decomposition
+
     def test_mixed_domain_frame_aggregates_only_the_on_domain_rows(self):
         """Non-vacuity: with one on-domain and one off-domain action, the aggregator
         must value the first and leave the second NA -- not fall over on either."""

@@ -52,9 +52,11 @@ def select_back_line_players(
 
     Examples
     --------
-    >>> from silly_kicks.tracking._defensive_line import select_back_line_players
-    >>> back_line = select_back_line_players(frame, team_id=1, home_team_id=1)
-    >>> back_line[["player_id", "x", "y"]].head()
+    Select the back-line players for a team on a frame::
+
+        from silly_kicks.tracking._defensive_line import select_back_line_players
+        back_line = select_back_line_players(frame, team_id=1, home_team_id=1)
+        back_line[["player_id", "x", "y"]].head()
 
     See NOTICE for full bibliographic citations.
     """

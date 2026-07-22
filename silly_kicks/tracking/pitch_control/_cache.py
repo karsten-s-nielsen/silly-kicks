@@ -32,12 +32,13 @@ class PitchControlCache:
 
     Examples
     --------
-    >>> from silly_kicks.tracking.pitch_control import PitchControlCache
-    >>> cache = PitchControlCache()
-    >>> s1 = cache.surface(frame, attacking_team_id=1)   # computes
-    >>> s2 = cache.surface(frame, attacking_team_id=1)   # cache hit
-    >>> s1 is s2
-    True
+    Repeated queries on the same frame return the memoized surface::
+
+        from silly_kicks.tracking.pitch_control import PitchControlCache
+        cache = PitchControlCache()
+        s1 = cache.surface(frame, attacking_team_id=1)   # computes
+        s2 = cache.surface(frame, attacking_team_id=1)   # cache hit
+        s1 is s2  # -> True
     """
 
     def __init__(self) -> None:
@@ -78,8 +79,10 @@ class PitchControlCache:
 
         Examples
         --------
-        >>> cache = PitchControlCache()
-        >>> surface = cache.surface(frame, 1, method="voronoi")
+        Fetch a cached (or freshly computed) Voronoi surface for a frame::
+
+            cache = PitchControlCache()
+            surface = cache.surface(frame, 1, method="voronoi")
         """
         key = self._key(frame, attacking_team_id, method, params, decompose, ball_position)
         if key is not None and key in self._store:
