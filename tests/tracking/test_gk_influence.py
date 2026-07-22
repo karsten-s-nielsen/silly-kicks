@@ -829,3 +829,35 @@ class TestOffPitchCoordinates:
         )
         assert gi is not None
         assert 0.0 <= gi.pitch_control_share_weighted <= 1.0 or np.isnan(gi.pitch_control_share_weighted)
+
+
+class TestGkPlayerIdDtypeInvariance:
+    """ADR-019: ``compute_gk_influence`` / ``compute_zone_closing_times`` resolve ``gk_player_id``
+    dtype-invariantly. The frame carries int64 ``player_id``, so before the fix a str query matched
+    nothing under the raw ``players['player_id'] == gk_player_id`` and both raised 'not found'
+    (``compute_gk_influence`` also hit the same gap in ``PitchControlSurface.player_surface``)."""
+
+    def test_compute_gk_influence_str_id_matches_int_id(self, standard_frame, fitted_xt):
+        from silly_kicks.tracking._gk_influence import compute_gk_influence
+
+        gi_int = compute_gk_influence(standard_frame, attacking_team_id=2, gk_player_id=1, xt=fitted_xt, home_team_id=1)
+        gi_str = compute_gk_influence(
+            standard_frame, attacking_team_id=2, gk_player_id="1", xt=fitted_xt, home_team_id=1
+        )
+        assert gi_str.pitch_control_share_weighted == pytest.approx(gi_int.pitch_control_share_weighted)
+        assert gi_str.reachable_area_m2 == pytest.approx(gi_int.reachable_area_m2)
+
+    def test_compute_zone_closing_times_str_id_matches_int_id(self, standard_frame):
+        from silly_kicks.tracking._gk_influence import Zone, compute_zone_closing_times
+
+        zones = [Zone.six_yard_box(goal_x=0.0)]
+        cts_int = compute_zone_closing_times(standard_frame, gk_player_id=1, zones=zones)
+        cts_str = compute_zone_closing_times(standard_frame, gk_player_id="1", zones=zones)
+        assert cts_str["six_yard_box"].min_s == pytest.approx(cts_int["six_yard_box"].min_s)
+
+    def test_a_genuinely_absent_gk_id_still_raises_not_found(self, standard_frame, fitted_xt):
+        # Discriminating power: resolve a value-equal id, but do NOT invent a match.
+        from silly_kicks.tracking._gk_influence import compute_gk_influence
+
+        with pytest.raises(ValueError, match="not found"):
+            compute_gk_influence(standard_frame, attacking_team_id=2, gk_player_id="999", xt=fitted_xt, home_team_id=1)

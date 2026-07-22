@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import same_id
+from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as spadlconfig
 
 from ._defensive_line import select_back_line_players
@@ -192,7 +192,10 @@ def compute_zone_closing_times(
     ...     zones=[Zone.six_yard_box(goal_x=0.0)])
     """
     players = frame[~frame["is_ball"].astype(bool)].dropna(subset=["x", "y"])
-    gk_mask = players["player_id"] == gk_player_id
+    # ADR-019: caller-supplied gk_player_id vs the frame's player_id column is a cross-source
+    # compare -- route through ids_match (byte-identical on matched dtypes; resolves an Int64
+    # frame id against a str/int query instead of silently raising 'not found').
+    gk_mask = ids_match(players["player_id"], gk_player_id)
     if not gk_mask.any():
         raise ValueError(f"gk_player_id={gk_player_id!r} not found in frame")
     gk_row = players[gk_mask].iloc[0]
@@ -291,7 +294,10 @@ def compute_gk_influence(
     # --- Validate GK presence ---
     players = frame[~frame["is_ball"].astype(bool)]
     players = players.dropna(subset=["x", "y"])
-    gk_mask = players["player_id"] == gk_player_id
+    # ADR-019: caller-supplied gk_player_id vs the frame's player_id column is a cross-source
+    # compare -- route through ids_match (byte-identical on matched dtypes; resolves an Int64
+    # frame id against a str/int query instead of silently raising 'not found').
+    gk_mask = ids_match(players["player_id"], gk_player_id)
     if not gk_mask.any():
         raise ValueError(
             f"gk_player_id={gk_player_id!r} not found in frame (available: {players['player_id'].tolist()})"

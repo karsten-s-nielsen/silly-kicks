@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from silly_kicks.id_compat import ids_match
+
 
 @dataclass(frozen=True)
 class PitchControlSurface:
@@ -137,11 +139,16 @@ class PitchControlSurface:
         """
         if self.per_player_influence is None or self.player_ids is None:
             raise ValueError("player_share() requires decompose=True when computing the pitch control surface.")
-        idx = np.where(self.player_ids == player_id)[0]
+        # ADR-019: caller-supplied id scalar vs the player_ids array is a cross-source compare
+        # (Int64 frame ids vs a str/int query silently match nothing under a raw ==), so route
+        # it through ids_match. Byte-identical on matched dtypes.
+        idx = np.where(ids_match(self.player_ids, player_id).to_numpy())[0]
         if len(idx) == 0:
             raise ValueError(f"player_id={player_id!r} not found in player_ids {self.player_ids.tolist()}")
         player_total = float(self.per_player_influence[idx[0]].sum())
-        # Denominator: sum over teammates only (same team_id)
+        # Denominator: sum over teammates only (same team_id). team_id is drawn from
+        # player_team_ids itself -- a same-source compare, so a raw == is correct here (ADR-019
+        # governs cross-source id comparisons; this one cannot mismatch by construction).
         if self.player_team_ids is not None:
             team_id = self.player_team_ids[idx[0]]
             team_mask = self.player_team_ids == team_id
@@ -164,7 +171,9 @@ class PitchControlSurface:
         """
         if self.per_player_influence is None or self.player_ids is None:
             raise ValueError("player_surface() requires decompose=True when computing the pitch control surface.")
-        idx = np.where(self.player_ids == player_id)[0]
+        # ADR-019: cross-source id compare -- see player_share() above. Byte-identical on
+        # matched dtypes; resolves a value-equal id of a different dtype instead of raising.
+        idx = np.where(ids_match(self.player_ids, player_id).to_numpy())[0]
         if len(idx) == 0:
             raise ValueError(f"player_id={player_id!r} not found in player_ids {self.player_ids.tolist()}")
         return np.array(self.per_player_influence[idx[0]])

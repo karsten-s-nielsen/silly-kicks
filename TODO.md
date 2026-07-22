@@ -74,19 +74,6 @@ brainstorm → spec cycle before code.
   a doctest's expected output is only as good as whoever wrote it — the 4.53.0 examples were
   each verified by hand execution, which is exactly the manual step this item removes.
 
-- **`PitchControlSurface.player_surface` / `.player_share` compare player ids with a raw
-  `==` (`tracking/pitch_control/_surface.py:140,167`) — an ADR-019 gap.** Recorded while
-  building TF-35 (ADR-042), deliberately NOT fixed there (scope). Two consequences: (a) both
-  helpers RAISE on a miss, so a check-then-call pattern blows up mid-loop on exactly the
-  mixed-dtype ids they exist to serve — TF-35 works around this with a local
-  `_safe_index_of` canonical-id resolve; and (b) `_player_influence.py`'s
-  `except ValueError: -> 0.0` turns that raise into a **silent zero**, so on
-  dtype-mismatched frames players are dropped from the influence decomposition with no
-  warning. Fix: route both through the **public `silly_kicks.id_compat`** (4.53.0/ADR-043
-  promoted the module out of `tracking/_id_compat.py`, which no longer exists — this entry
-  predates the promotion), and reconsider whether the `except ValueError` swallow should
-  survive the change.
-
 - **RESOLVED (2026-07-18): the `test_xshot_gradientsports_e2e` Brier-gate failure.** The
   known-failure entry met its own stated removal condition and has been retired. The
   owner-gated e2e was re-run on 4.51.0 (PR-S118 / ADR-040 chirality-corrected xS weights)

@@ -5,6 +5,27 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.55.1] — 2026-07-21
+
+### Fixed — dtype-safe id resolution in the pitch-control decomposition (ADR-019; PR-S123)
+
+`PitchControlSurface.player_share` / `.player_surface` and `_gk_influence`'s `compute_gk_influence` /
+`compute_zone_closing_times` compared a caller-supplied `player_id` / `gk_player_id` scalar against
+the frame's id column with a raw `==`, which silently matches nothing across dtypes (an `Int64` frame
+id vs a `str`/`int` query) — so on mixed-dtype ids they RAISED `not found` (and `_player_influence`'s
+`except ValueError → 0.0` turned that into a silent zero). Both now route through the public
+`silly_kicks.id_compat.ids_match`. **Byte-identical on matched dtypes** — the live-cohort case, since
+these consumers resolve the keeper from the same frame — so no value change on the shipped path and
+no retrain; the same-source `player_team_ids == team_id` compare stays a raw `==` by design (ADR-043
+decision 6). Closes the ADR-019 gap the id-scalar registry recorded against these methods.
+
+### Changed — Databricks calibration loader is OAuth-native (`scripts/_loader_databricks.py`; PR-S123)
+
+`_connect` now prefers a `DATABRICKS_TOKEN` PAT (CI / legacy) and otherwise authenticates via OAuth
+U2M through a `databricks-sdk` profile (`DATABRICKS_CONFIG_PROFILE`, default `OAUTH`; authenticate
+once with `databricks auth login`) — the workspace moved off PATs. Dev-tooling only, no library API
+change.
+
 ## [4.55.0] — 2026-07-21
 
 ### Fixed — vector quantities are now consistent under coordinate reflection (`silly_kicks/reflection.py`; PR-S122, ADR-045)

@@ -5,7 +5,11 @@ silly-kicks converters (so calibration reflects current output), and yields the 
 (provider, match_id, actions, frames, home_team_id) tuple. Operator-scale / fallback path + the
 bronze.spadl_actions xT-corpus source (IDSSE is public on pining; this is not its only source).
 
-Env: DATABRICKS_HOST, DATABRICKS_HTTP_PATH, DATABRICKS_TOKEN.
+Env: DATABRICKS_HTTP_PATH (always). Auth: DATABRICKS_TOKEN (PAT) if set, else OAuth U2M via a
+databricks-sdk profile (DATABRICKS_CONFIG_PROFILE, default OAUTH; authenticate once with
+`databricks auth login --profile OAUTH`). DATABRICKS_HOST is needed only on the PAT path -- the
+OAuth profile carries its own host. (The workspace moved off PATs; the loader keeps PAT support
+for CI and legacy setups.)
 """
 
 from __future__ import annotations
@@ -36,10 +40,29 @@ def _connect():
         raise RuntimeError(
             "databricks-sql-connector is required for the Databricks loader: pip install databricks-sql-connector"
         ) from exc
+    http_path = os.environ["DATABRICKS_HTTP_PATH"]
+    # Auth: an explicit DATABRICKS_TOKEN (PAT) wins -- CI and legacy setups. Otherwise fall back
+    # to OAuth U2M via a databricks-sdk profile (the workspace moved off PATs; authenticate once
+    # with `databricks auth login`). An empty token string is NOT a usable PAT -> OAuth branch.
+    token = os.environ.get("DATABRICKS_TOKEN")
+    if token:
+        return dbsql.connect(
+            server_hostname=os.environ["DATABRICKS_HOST"].replace("https://", ""),
+            http_path=http_path,
+            access_token=token,
+        )
+    try:
+        from databricks.sdk.core import Config  # type: ignore[import-not-found]
+    except ImportError as exc:  # actionable hint
+        raise RuntimeError(
+            "No DATABRICKS_TOKEN set and databricks-sdk is required for OAuth auth: "
+            "pip install databricks-sdk, then `databricks auth login --profile OAUTH`"
+        ) from exc
+    cfg = Config(profile=os.environ.get("DATABRICKS_CONFIG_PROFILE", "OAUTH"))
     return dbsql.connect(
-        server_hostname=os.environ["DATABRICKS_HOST"].replace("https://", ""),
-        http_path=os.environ["DATABRICKS_HTTP_PATH"],
-        access_token=os.environ["DATABRICKS_TOKEN"],
+        server_hostname=cfg.host.replace("https://", ""),
+        http_path=http_path,
+        credentials_provider=lambda: cfg.authenticate,
     )
 
 

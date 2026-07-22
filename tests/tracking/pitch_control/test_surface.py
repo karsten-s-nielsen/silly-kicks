@@ -120,6 +120,53 @@ class TestPlayerSurface:
             s.player_surface(1)
 
 
+def _make_decomposed(player_ids: np.ndarray) -> PitchControlSurface:
+    """A 2-team decomposed surface with caller-chosen ``player_ids`` dtype (team layout fixed:
+    players 0,1 on team 1 with equal influence; player 2 alone on team 2)."""
+    nx, ny = 10, 7
+    return PitchControlSurface(
+        grid_x=np.linspace(0, 105, nx),
+        grid_y=np.linspace(0, 68, ny),
+        surface=np.full((ny, nx), 0.6),
+        method="spearman",
+        attacking_team_id=1,
+        per_player_influence=np.full((3, ny, nx), 0.2),
+        player_ids=player_ids,
+        player_team_ids=np.array([1, 1, 2]),
+    )
+
+
+class TestPlayerIdDtypeInvariance:
+    """ADR-019: ``player_share`` / ``player_surface`` resolve a caller-supplied id scalar
+    dtype-invariantly. RED before the fix -- a raw ``player_ids == player_id`` matches nothing
+    across dtypes, so both methods RAISED 'not found' on a value-equal id of a different dtype
+    (the recorded ``_surface.py:140,167`` gap)."""
+
+    def test_player_share_int_ids_queried_with_str(self):
+        s = _make_decomposed(np.array([1, 2, 3]))  # int64 ids
+        assert s.player_share("1") == pytest.approx(0.5)  # str "1" -> player 1 (team 1, half)
+        assert s.player_share("3") == pytest.approx(1.0)  # player 3 alone on team 2
+
+    def test_player_share_str_ids_queried_with_int(self):
+        s = _make_decomposed(np.array(["1", "2", "3"], dtype=object))  # object string ids
+        assert s.player_share(1) == pytest.approx(0.5)
+        assert s.player_share(3) == pytest.approx(1.0)
+
+    def test_player_surface_is_dtype_invariant(self):
+        s_int = _make_decomposed(np.array([1, 2, 3]))
+        np.testing.assert_allclose(s_int.player_surface("1"), s_int.player_surface(1))
+        s_str = _make_decomposed(np.array(["1", "2", "3"], dtype=object))
+        np.testing.assert_allclose(s_str.player_surface(1), s_str.player_surface("1"))
+
+    def test_a_genuinely_absent_id_still_raises_not_found(self):
+        # Discriminating power: the fix must resolve a value-equal id, NOT match everything.
+        s = _make_decomposed(np.array([1, 2, 3]))
+        with pytest.raises(ValueError, match="not found"):
+            s.player_share("999")
+        with pytest.raises(ValueError, match="not found"):
+            s.player_surface(999)
+
+
 class TestToXarray:
     def test_raises_without_xarray(self):
         """If xarray not installed, should raise ImportError with message."""
