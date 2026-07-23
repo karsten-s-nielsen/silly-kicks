@@ -18,7 +18,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         // --- The System ---
         sillyKicks = softwareSystem "silly-kicks" "Classifies football actions into SPADL representation and values them via VAEP" {
 
-            spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway, with post-conversion enrichments (possessions, game state, GK analytics, naming) + cross-provider block-detection output columns (shot_blocked / cross_blocked, ADR-046) in canonical LTR coordinates." "Python" "Library"
+            spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway; enrichments (possessions, game state, GK analytics, naming) + block-detection columns (ADR-046); canonical LTR coords." "Python" "Library"
             vaep = container "silly_kicks.vaep" "VAEP action valuation: features, action/possession/time-windowed labels, and gradient-boosted models. HybridVAEP removes result leakage; optional Expected-Threat feature factory." "Python" "Library"
             tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, provider adapters, event-frame linkage, spatial/GKDV models (pitch control, OBSO, DAS, ghost-GK, xS/xCross/xT-GK, run valuation), 30 action-coupled aggregators. ADR-042." "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 33-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
