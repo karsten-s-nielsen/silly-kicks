@@ -40,6 +40,7 @@ TRACKING_ENRICHMENTS = _discover(tracking_features)
 _TRACKING_NEEDS_EXTRA = {
     "add_cover_shadows",
     "add_das",
+    "add_defensive_credit",
     "add_defensive_line",
     "add_ghost_gk",
     "add_gk_influence",
@@ -607,6 +608,22 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         frames["vx"] = 0.0
         frames["vy"] = 0.0
         out = helper(actions, frames, model=m, home_team_id=1)
+    elif name == "add_defensive_credit":
+        import numpy as np
+
+        from silly_kicks.xthreat import ExpectedThreat
+
+        # Supply the xg/block/on-target contract columns (+ a result_id the shared fixture lacks,
+        # like add_packing) so the NaN-IDENTIFIER surface (NaN team/player) is what gets fuzzed.
+        acts = actions.copy()
+        acts["result_id"] = 1
+        acts["xg"] = 0.2
+        acts["shot_blocked"] = pd.array([pd.NA] * len(acts), dtype="boolean")
+        acts["cross_blocked"] = pd.array([pd.NA] * len(acts), dtype="boolean")
+        acts["shot_on_target_derived"] = pd.array([pd.NA] * len(acts), dtype="boolean")
+        xt = ExpectedThreat(l=16, w=12)
+        xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+        out = helper(acts, frames, xg_column="xg", xt=xt)
     elif name == "add_pre_shot_gk_position":
         # Needs defending_gk_player_id column pre-populated
         acts = actions.copy()

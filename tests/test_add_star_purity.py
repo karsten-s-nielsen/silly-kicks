@@ -261,6 +261,19 @@ def _xtf_invoke(fn, **kw):
     return lambda inputs: fn(inputs[0], inputs[1], inputs[2], home_team_id=5, **kw)
 
 
+def _dc_inputs():
+    a = make_actions().copy()
+    a["xg"] = 0.2
+    a["shot_blocked"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    a["cross_blocked"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    a["shot_on_target_derived"] = pd.array([pd.NA] * len(a), dtype="boolean")  # present -> no TF-48 fallback
+    return [a, make_frames(), _fresh_xt()]
+
+
+def _dc_invoke(inputs):
+    return F.add_defensive_credit(inputs[0], inputs[1], xg_column="xg", xt=inputs[2])
+
+
 # ---------------------------------------------------------------------------
 # The ONE canonical registry. Key = "<package>:<add_name>".
 # Variant = (variant_name, build_inputs: () -> list, invoke: (inputs) -> result_df).
@@ -339,6 +352,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: F.add_das(i[0], i[1], links=i[2]),
         ),
     ],
+    "tracking:add_defensive_credit": _one(_dc_inputs, _dc_invoke),
     "tracking:add_defensive_line": _one(_std_inputs, _std_invoke(F.add_defensive_line, home_team_id=5, n=4)),
     "tracking:add_elastic_sync": _one(_std_inputs, _std_invoke(F.add_elastic_sync)),
     # add_ghost_gk branches on `"ghost_gk_x" in frames.columns` (precompute short-circuit aliasing frames)

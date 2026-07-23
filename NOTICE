@@ -451,6 +451,22 @@ The off-ball run valuation in silly_kicks/tracking/_run_values.py
   receives the ball and the runs that pull defenders elsewhere. No estimator,
   threshold, or numeric result is taken from this paper.)
 
+- TF-51 per-event defensive credit/debit family
+  (silly_kicks/tracking/defensive_credit/). Sumpter, D., et al. Soccermatics Pro
+  (Twelve Football), module 16.3: the coach-consulted per-event defensive-credit
+  rules (proximity-gated signed credit to defenders, sized by shot xG or the
+  attacker's threat at a turnover) -- a PRACTITIONER anchor, not a peer-reviewed
+  specification; no numeric result is reproduced from it. The xT(origin) turnover
+  sizing follows the published, validated precedent Bischofberger, J., Bauer, P.,
+  & Baca, A. (2026), "Blame is easier than praise" (arXiv:2606.19931; code
+  github.com/jonas-bischofberger/defensive-network), which derives xDT = -dxT ->
+  +xT(origin) for a failed pass and validates the resulting fault/contribution
+  metrics against market value + FIFA defensive-awareness ratings (consistent with
+  the existing TF-28 accessible-space/DAS citation from the same group). MSC-corpus
+  vocabulary (docstring-grade, not reproduced numerics): the Tigres Femenil
+  "bravery" (% of opponent final actions blocked) metric and the RB Salzburg
+  4-action pressing taxonomy.
+
 The region-influence floor (silly_kicks.tracking.RunValuationParams) is a
 silly-kicks parameter with no published provenance: it exists solely because
 run_value is a maximum over a thresholded region. Its 0.1 default is a

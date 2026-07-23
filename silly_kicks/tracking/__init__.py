@@ -24,6 +24,7 @@ __all__ = [
     "DAS_SOURCE_UNSCOREABLE_CALL",
     "DAS_SOURCE_UNSCOREABLE_FRAME",
     "DAS_SOURCE_VALUES",
+    "DEFENSIVE_CREDIT_RULES",
     "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS",
     "KLOPPY_TRACKING_FRAMES_COLUMNS",
     "METRICA_TRACKING_FRAMES_COLUMNS",
@@ -38,6 +39,7 @@ __all__ = [
     "BekkersParams",
     "CoverShadowParams",
     "DasUnscoreableError",
+    "DefensiveCreditParams",
     "ElasticSyncParams",
     "FernandezBornnParams",
     "GhostClampWarning",
@@ -90,6 +92,7 @@ __all__ = [
     "add_actor_pre_window",
     "add_cover_shadows",
     "add_das",
+    "add_defensive_credit",
     "add_defensive_line",
     "add_elastic_sync",
     "add_ghost_gk",
@@ -123,6 +126,8 @@ __all__ = [
     "ball_carrier_at_action",
     "compactness_x",
     "compute_blocking_score",
+    "compute_bravery",
+    "compute_defensive_credits",
     "compute_defensive_line",
     "compute_ghost_gk",
     "compute_gk_completion",
@@ -339,6 +344,12 @@ from ._xshot_occurrence import (
     xshot_occurrence_xfns,
 )
 from ._xt_gk import XtGkParams, XtGkReport, compute_xt_gk
+from .defensive_credit import (
+    DEFENSIVE_CREDIT_RULES,
+    DefensiveCreditParams,
+    compute_bravery,
+    compute_defensive_credits,
+)
 from .direction import orient_frames_to_ltr_by_geometry, require_et_direction
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
@@ -352,6 +363,7 @@ from .features import (
     add_actor_pre_window,
     add_cover_shadows,
     add_das,
+    add_defensive_credit,
     add_defensive_line,
     add_elastic_sync,
     add_ghost_gk,

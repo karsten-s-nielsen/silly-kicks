@@ -5,6 +5,35 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.57.0] — 2026-07-23
+
+### Added — TF-51 per-event defensive credit/debit family (PR-S128, ADR-047)
+
+New `silly_kicks/tracking/defensive_credit/` sub-package: proximity-gated signed defensive credit
+attributed to individual defenders, sized by shot **xG** or the attacker's **xT at a turnover**
+(`xT(origin)`, the validated Bischofberger/Bauer/Baca arXiv:2606.19931 sizing). Ten named rules
+(three shot rules as a mutually-exclusive on-/off-target/blocked partition, four `xT(origin)`-sized
+turnover rules, three resulting-shot-xG chained rules) + a per-team **bravery** rollup.
+
+- **`compute_defensive_credits(actions, frames, *, xg_column, xt, ...)`** — long-form, one row per
+  (action, credited player, rule); `signed_value` NaN when a rule fired but is unsizable, no row when
+  it did not fire (ADR-043 "missing ≠ 0"). On-/off-target is resolved via a tri-state `_on_target`
+  (goal → on-target; else an injected `on_target_column`; else the frame-based TF-48
+  `shot_on_target_derived` fallback; unknown → the pressure rules abstain, so a **saved** shot is never
+  mis-signed as a miss).
+- **`add_defensive_credit(...)`** — the per-action aggregate (`defensive_credit_net`/`_plus`/`_minus`,
+  `n_defensive_credits`), scoped to the **defending team** (the acting-team `−passer` rows live only in
+  the long-form). The C4 +1 action-coupled aggregator (30 → 31).
+- **`compute_bravery(actions, *, ...)`** — event-only, per-team: `bravery_shots`,
+  `bravery_open_play_crosses`, `bravery_set_piece_crosses = NaN` (v1 column limitation, **exposed** with
+  `n_set_piece_crosses_faced`, not silently dropped), and the known-domain headline
+  `bravery_pct_known_domain`.
+- Ships **no `*_xfns` factory** (F4 result-leakage, ADR-039/042; guarded). No atomic mirror in v1.
+- Consumes the shipped `shot_blocked` / `cross_blocked` columns (4.56.0); a cross-provider
+  `cross_blocked ⊆ cross-type` invariant is added to the block-detection contract suite.
+- **Additive → in no default xfn list → no VAEP retrain.** Owner-gated GS e2e (real WC2022 match 10502)
+  validates the family end-to-end.
+
 ## [4.56.0] — 2026-07-22
 
 ### Added — Block-detection converter columns `shot_blocked` / `cross_blocked` (PR-S127, ADR-046)
