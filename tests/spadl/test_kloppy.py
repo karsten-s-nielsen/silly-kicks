@@ -358,3 +358,24 @@ class TestKloppyDirectionOfPlay:
             f"If you see ~59.3, the SPADL LTR mirror (to_spadl_ltr / ABSOLUTE_FRAME_HOME_RIGHT) "
             f"was NOT applied -- check spadl/kloppy.py."
         )
+
+
+class TestKloppyBlockDetection:
+    """Block-detection columns (TF-51 prereq): shot_blocked from ShotResult.BLOCKED;
+    cross_blocked always pd.NA on the kloppy gateway (BD-2)."""
+
+    def test_shot_blocked_true_on_blocked_shot(self, metrica_dataset):
+        """The metrica_events.json fixture has 3 blocked shots. shot_blocked must be
+        True on exactly those, non-NA on every shot row, and cross_blocked all-NA.
+
+        The sample's ``player`` field is None, so this asserts on the shot_blocked
+        count/non-NA contract, not on player_id. The kloppy gateway strict-projects
+        to the id schema (no ``type_name`` column), so shots are filtered by
+        ``type_id`` over the shot family.
+        """
+        actions, _ = kloppy_mod.convert_to_actions(metrica_dataset)
+        shot_type_ids = {spadlconfig.actiontype_id[t] for t in ("shot", "shot_freekick", "shot_penalty")}
+        shots = actions[actions["type_id"].isin(shot_type_ids)]
+        assert (shots["shot_blocked"] == True).sum() == 3  # noqa: E712
+        assert shots["shot_blocked"].notna().all()
+        assert actions["cross_blocked"].isna().all()

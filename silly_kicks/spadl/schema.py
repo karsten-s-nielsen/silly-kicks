@@ -22,6 +22,11 @@ SPADL_COLUMNS: dict[str, str] = {
     "type_id": "int64",
     "result_id": "int64",
     "bodypart_id": "int64",
+    # Block-detection columns (TF-51 prereq). Nullable "boolean": True/False on shot/cross rows
+    # where the provider encodes a block, pd.NA on non-shot/non-cross rows AND on providers that
+    # cannot encode the signal (Opta, SkillCorner). See the block-detection spec.
+    "shot_blocked": "boolean",
+    "cross_blocked": "boolean",
 }
 
 SPADL_NAME_COLUMNS: dict[str, str] = {

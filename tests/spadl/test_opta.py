@@ -41,6 +41,14 @@ class TestOptaPreserveNative:
             ]
         )
 
+    def test_block_columns_all_na(self):
+        # Opta cannot encode a blocked-shot signal in-repo (deferred) -> both columns all pd.NA.
+        events = self._events_with_extras()
+        actions, _ = opta.convert_to_actions(events, home_team_id=157)
+        for col in ("shot_blocked", "cross_blocked"):
+            assert str(actions[col].dtype) == "boolean"
+            assert actions[col].isna().all()
+
     def test_default_none_unchanged(self):
         events = self._events_with_extras()
         actions, _ = opta.convert_to_actions(events, home_team_id=157)

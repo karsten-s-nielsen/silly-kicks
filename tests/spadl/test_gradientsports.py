@@ -1944,3 +1944,43 @@ class TestGradientsportsTeamAttributionNoSentinel:
         )
         assert int((actions["team_id"] == 0).sum()) == 0, "no team_id sentinel 0 may remain"
         assert int((actions["player_id"] == 0).sum()) == 0, "no player_id sentinel 0 may remain"
+
+
+class TestGradientsportsBlockDetection:
+    """shot_blocked / cross_blocked from GS "B" shotOutcomeType / crossOutcomeType (TF-51 prereq)."""
+
+    def test_shot_blocked_true_on_B_shot(self):
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "SH"
+        df.loc[0, "shot_outcome_type"] = "B"
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        row = actions[actions["type_id"] == spadlconfig.actiontype_id["shot"]].iloc[0]
+        assert row["shot_blocked"] == True  # noqa: E712
+        assert pd.isna(row["cross_blocked"])  # a shot row -> cross_blocked NA
+
+    def test_cross_blocked_true_on_B_cross(self):
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "CR"
+        df.loc[0, "cross_outcome_type"] = "B"
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        row = actions[actions["type_id"] == spadlconfig.actiontype_id["cross"]].iloc[0]
+        assert row["cross_blocked"] == True  # noqa: E712
+        assert pd.isna(row["shot_blocked"])  # a cross row -> shot_blocked NA
+
+    def test_setpiece_cross_blocked_is_na(self):
+        # A set-piece corner delivery (CR + set_piece corner code "C") dispatches to
+        # corner_crossed, which is OUT of open-play cross scope -> cross_blocked stays
+        # pd.NA even with a "B" outcome (spec BD-3; codes per gradientsports.py:193-195).
+        df = _df_minimal_pass()
+        df.loc[0, "possession_event_type"] = "CR"
+        df.loc[0, "set_piece_type"] = "C"  # corner -> corner_crossed
+        df.loc[0, "cross_outcome_type"] = "B"
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        row = actions[actions["type_id"] == spadlconfig.actiontype_id["corner_crossed"]].iloc[0]
+        assert pd.isna(row["cross_blocked"])

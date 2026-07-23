@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from . import config as spadlconfig
+from .utils import _blocked_flag
 from .wyscout import (
     _WS_SUBTYPE_ACCELERATION,
     _WS_SUBTYPE_AIR_DUEL,
@@ -282,6 +283,18 @@ def _create_df_actions(
     df_actions["bodypart_id"] = _vectorized_bodypart_id(df_events)
     df_actions["type_id"] = _vectorized_type_id(df_events)
     df_actions["result_id"] = _vectorized_result_id(df_events)
+    df_actions["shot_blocked"] = _blocked_flag(
+        len(df_actions),
+        applicable=(df_events["type_id"] == _WS_TYPE_SHOT).to_numpy(),
+        blocked=df_events["blocked"].to_numpy(),
+    )
+    df_actions["cross_blocked"] = _blocked_flag(
+        len(df_actions),
+        applicable=(
+            (df_events["type_id"] == _WS_TYPE_PASS) & (df_events["subtype_id"] == _WS_SUBTYPE_CROSS)
+        ).to_numpy(),
+        blocked=df_events["blocked"].to_numpy(),
+    )
 
     df_actions = _remove_non_actions(df_actions)
 

@@ -72,7 +72,7 @@ from . import config as spadlconfig
 from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
-from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
 
 EXPECTED_INPUT_COLUMNS: set[str] = {
     "match_id",
@@ -508,6 +508,12 @@ def _build_raw_actions(
         end_x_arr = np.where(is_pass_gk_distribution, start_x_arr, end_x_arr)
         end_y_arr = np.where(is_pass_gk_distribution, start_y_arr, end_y_arr)
 
+    # Block-detection (TF-51 prereq): a Metrica shot subtype ending in BLOCKED
+    # (exact-token per block-detection spec BD-3; robust to "HEAD-BLOCKED") is a
+    # blocked shot. cross_blocked is structural pd.NA (failed crosses are untyped
+    # BALL LOST events in Metrica).
+    _shot_blocked_mask = np.array([s.endswith("BLOCKED") for s in sub_raw])
+
     actions = pd.DataFrame(
         {
             "game_id": rows["match_id"].astype("object"),
@@ -523,6 +529,8 @@ def _build_raw_actions(
             "type_id": type_ids,
             "result_id": result_ids,
             "bodypart_id": bodypart_ids,
+            "shot_blocked": _blocked_flag(n, applicable=is_shot, blocked=_shot_blocked_mask),
+            "cross_blocked": _blocked_flag(n),
         }
     )
 
@@ -607,6 +615,8 @@ def _synthesize_metrica_gk_pass(
             "type_id": np.full(n_synth, spadlconfig.actiontype_id["pass"], dtype=np.int64),
             "result_id": np.full(n_synth, spadlconfig.result_id["success"], dtype=np.int64),
             "bodypart_id": np.full(n_synth, spadlconfig.bodypart_id["other"], dtype=np.int64),
+            "shot_blocked": _blocked_flag(n_synth),
+            "cross_blocked": _blocked_flag(n_synth),
         }
     )
     synth["_row_order"] = src_indices.astype(np.int64) * 2 + 1

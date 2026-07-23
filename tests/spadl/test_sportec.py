@@ -1435,3 +1435,20 @@ class TestSportecOtherBallAction:
         actions, report = sportec_mod.convert_to_actions(events, home_team_id="T-HOME", home_team_start_left=True)
         assert len(actions) == 3
         assert report.unrecognized_counts == {}
+
+
+def test_shot_blocked_excludes_own_team_deflection():
+    """shot_outcome=="blocked" -> shot_blocked True, EXCEPT own-team deflections.
+
+    The real IDSSE per-period fixture has 4 shot_outcome=="blocked" shots, exactly
+    one an own-team deflection (event 18226500001292, shot_outcome_blocked_by_own_team
+    truthy) -> 3 True, that one False. cross_blocked is all-NA (no DFL blocked-cross field).
+    """
+    from tests.invariants._loaders import load_sportec_native_per_period
+
+    actions, _ = load_sportec_native_per_period()
+    shot_ids = {spadlconfig.actiontype_id[t] for t in ("shot", "shot_freekick", "shot_penalty")}
+    shots = actions[actions["type_id"].isin(shot_ids)]
+    assert (shots["shot_blocked"] == True).sum() == 3  # noqa: E712
+    assert (shots["shot_blocked"] == False).sum() >= 1  # noqa: E712  (incl. the own-team deflection)
+    assert actions["cross_blocked"].isna().all()

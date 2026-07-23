@@ -15,7 +15,7 @@ from .base import (
 )
 from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
-from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
 
 EXPECTED_INPUT_COLUMNS: set[str] = {
     "game_id",
@@ -216,6 +216,9 @@ def convert_to_actions(
     actions["action_id"] = range(len(actions))
     actions = _add_dribbles(actions)
 
+    # Block-detection: Opta's blocked-shot qualifier is unverified in-repo -> all pd.NA (deferred).
+    actions["shot_blocked"] = _blocked_flag(len(actions))
+    actions["cross_blocked"] = _blocked_flag(len(actions))
     actions = _finalize_output(actions, extra_columns=preserve_native)
 
     mapped_counts: dict[str, int] = {}

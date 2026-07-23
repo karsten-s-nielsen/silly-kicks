@@ -755,3 +755,23 @@ class TestMetricaShotCompoundSubtypes:
         assert len(actions) == 1
         assert actions["type_id"].iloc[0] == spadlconfig.actiontype_id["shot"]
         assert actions["result_id"].iloc[0] == spadlconfig.result_id["fail"]
+
+
+# ---------------------------------------------------------------------------
+# Block-detection columns (TF-51 prereq): shot_blocked from BLOCKED subtype;
+# cross_blocked structural pd.NA. Real per-period fixture has exactly 1 BLOCKED
+# shot (event 668, Player5).
+# ---------------------------------------------------------------------------
+
+
+def test_shot_blocked_true_on_blocked_subtype():
+    from tests.invariants._loaders import load_metrica_native_per_period
+
+    actions, _ = load_metrica_native_per_period()
+    # KLOPPY_SPADL_COLUMNS has no type_name column, so select the shot family by type_id
+    # (mirrors the spec's type_name.str.contains("shot")).
+    shot_type_ids = {spadlconfig.actiontype_id[t] for t in spadlconfig.actiontypes if "shot" in t}
+    shots = actions[actions["type_id"].isin(shot_type_ids)]
+    assert (shots["shot_blocked"] == True).sum() == 1  # noqa: E712  (event 668)
+    assert shots["shot_blocked"].notna().all()
+    assert actions["cross_blocked"].isna().all()

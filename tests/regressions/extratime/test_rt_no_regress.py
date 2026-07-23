@@ -37,6 +37,9 @@ def _norm_nulls(df: pd.DataFrame) -> pd.DataFrame:
 def test_rt_only_output_value_identical_to_3_30_golden(case):
     golden = pd.read_parquet(GOLD / f"golden_{case}_rt.parquet")
     current = run_converter(case, et=False, flag=None)  # same RT-only input as capture
+    # The TF-51-prereq block-detection columns (shot_blocked / cross_blocked) are ADDITIVE and
+    # post-date the 3.30 golden; they are not part of this test's existing-value-invariance claim.
+    current = current.drop(columns=["shot_blocked", "cross_blocked"], errors="ignore")
     pd.testing.assert_frame_equal(
         _norm_nulls(current.reset_index(drop=True)),
         _norm_nulls(golden.reset_index(drop=True)),

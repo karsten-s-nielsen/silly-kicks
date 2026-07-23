@@ -1556,6 +1556,37 @@ def play_left_to_right(actions: pd.DataFrame, home_team_id: int | str) -> pd.Dat
     return reflect(actions, away_idx, kinds=SPADL_REFLECTION_KINDS)
 
 
+def _blocked_flag(
+    n: int,
+    *,
+    applicable: "np.ndarray | pd.Series | None" = None,
+    blocked: "np.ndarray | pd.Series | pd.api.extensions.ExtensionArray | None" = None,
+) -> "pd.arrays.BooleanArray":
+    """Build a length-``n`` nullable-boolean ``"boolean"`` block-flag column.
+
+    - ``applicable=None`` -> every row ``pd.NA`` (the provider cannot encode the signal).
+    - otherwise -> ``blocked`` (True/False) on the rows where ``applicable`` is True,
+      ``pd.NA`` everywhere else. A non-shot / non-cross row is *not applicable* -> ``pd.NA``,
+      never ``False`` (block-detection spec §3: ``pd.NA`` = "not a shot/cross OR unknown provider").
+
+    ``applicable`` must be a clean boolean mask; ``blocked`` may carry NA -> it is coerced to
+    ``False`` (a bare ``np.asarray(blocked, dtype=bool)`` would turn NA -> True, the repo's
+    documented ``astype(bool)`` string/NaN trap).
+    """
+    values = np.full(n, None, dtype=object)
+    if applicable is not None:
+        mask = np.asarray(applicable, dtype=bool)
+        # pandas-stubs's `array` overloads reject the `np.ndarray | Series` input type; the runtime
+        # accepts it and coerces NA -> False (NOT True, the `astype(bool)` trap).
+        blocked_clean = (
+            pd.array(blocked, dtype="boolean")  # type: ignore[reportCallIssue, reportArgumentType]
+            .fillna(False)
+            .to_numpy(dtype=bool)
+        )
+        values[mask] = blocked_clean[mask]
+    return pd.array(values, dtype="boolean")
+
+
 def _finalize_output(
     df: pd.DataFrame,
     schema: dict[str, str] | None = None,

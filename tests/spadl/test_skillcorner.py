@@ -246,6 +246,19 @@ def _load_derived_fixture():
     return events, metadata
 
 
+def test_block_columns_all_na_basic_and_derived():
+    # SkillCorner records no shot/cross-block signal (real-data verified) -> both columns all pd.NA.
+    # Cover BOTH fixtures: the derived-actions path exercises the `[actions.columns]` merge that
+    # would crash if the columns were added to the native dict instead of after the concat.
+    from silly_kicks.spadl.skillcorner import convert_to_actions
+
+    for events, meta in (_load_basic_fixture(), _load_derived_fixture()):
+        actions, _ = convert_to_actions(events, meta)
+        for col in ("shot_blocked", "cross_blocked"):
+            assert str(actions[col].dtype) == "boolean"
+            assert actions[col].isna().all()
+
+
 # --- Main converter tests ---
 
 
