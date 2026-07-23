@@ -52,6 +52,18 @@ brainstorm → spec cycle before code.
 
 ### Blocked or Deferred
 
+- **Missing ball-touch detection to enrich event↔frame sync (candidate future enhancement; anchors on
+  TF-43 ELASTIC).** External prior-art **PathCRF** (KDD 2026, arXiv:2602.12080; code
+  `github.com/hyunsungkim-ds/pathcrf`, **MPL-2.0 → reimplement, do NOT lift into MIT**) recovers ball
+  touches that provider event feeds DROP: run **RDP (Ramer-Douglas-Peucker)** on the ball trajectory →
+  direction-change points = candidate touches, then **Needleman-Wunsch** align them to the ELASTIC-synced
+  events and insert the unmatched points as extra touch events. A pure tracking-derived primitive (ball
+  trajectory → candidate-touch timestamps) that fits the hexagonal style and anchors on
+  `tracking/_elastic_sync` (TF-43). **Value:** improves event↔tracking sync / catches dropped touches for
+  **any** provider — independent of the (separately-recorded, lower-priority) tracking-only-ingestion
+  front-end option. Also serves the lakehouse sync layer. **Needs owner scoping** (silly-kicks TF-43
+  enhancement — new TF-number — vs a lakehouse pipeline step); no spec/plan yet. Source + the front-end
+  option recorded in the part-deux session's `reference_pathcrf_event_detection.md`.
 - **RESOLVED (2026-07-18): the `test_xshot_gradientsports_e2e` Brier-gate failure.** The
   known-failure entry met its own stated removal condition and has been retired. The
   owner-gated e2e was re-run on 4.51.0 (PR-S118 / ADR-040 chirality-corrected xS weights)
