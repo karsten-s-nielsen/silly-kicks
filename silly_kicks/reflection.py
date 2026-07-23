@@ -171,6 +171,9 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "type_id": "invariant",
     "result_id": "invariant",
     "bodypart_id": "invariant",
+    # --- block-detection columns (TF-51 prereq): boolean flags, not geometric -> invariant ---
+    "shot_blocked": "invariant",
+    "cross_blocked": "invariant",
     # --- add_names() output. add_names attaches these routinely, and a DECLARED column is
     #     the only one whose kind is guaranteed right, so they belong here. ---
     "type_name": "invariant",
@@ -187,8 +190,9 @@ _SPADL_REFLECTION_KINDS: dict[str, ReflectionKind] = {
 }
 """Transform kind per SPADL action column.
 
-32 columns: the 14 canonical, the 3 ``add_names`` outputs, the 7 provider-variant columns
-(union over ``*_SPADL_COLUMNS``), and the 8 ADR-025 enrichment columns. Completeness is a CI
+34 columns: the 16 canonical (incl. the 2 TF-51-prereq block-detection columns), the 3
+``add_names`` outputs, the 7 provider-variant columns (union over ``*_SPADL_COLUMNS``), and the 8
+ADR-025 enrichment columns. Completeness is a CI
 contract (tests/test_reflection.py), NOT a runtime one -- ``preserve_native``
 (``spadl/utils.py:1651``) lets a caller attach arbitrarily-named provider fields, so the SPADL
 column universe is unbounded by construction and no registry can enumerate it at runtime.

@@ -232,7 +232,7 @@ def test_meta_every_known_spadl_column_declares_a_kind():
         f"columns without a declared reflection kind: {missing}. Under on_unknown='raise' "
         f"these RAISE in production, they do not pass through."
     )
-    assert len(known) == 32, f"expected the measured 32-column surface, got {len(known)}"
+    assert len(known) == 34, f"expected the measured 34-column surface, got {len(known)}"
 
 
 def test_meta_every_known_atomic_spadl_column_declares_a_kind():

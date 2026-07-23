@@ -12,7 +12,6 @@ preserved column — they have no source row to pull a value from.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -65,7 +64,11 @@ def _spadl_row(
 def _spadl_df(rows: list[dict[str, object]]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     for col, dtype in SPADL_COLUMNS.items():
-        df[col] = df[col].astype(np.dtype(dtype))
+        if col not in df.columns:
+            df[col] = pd.NA  # e.g. the block-detection columns, not supplied by _spadl_row
+        # string dtype handles both numpy ("int64") and pandas-extension ("boolean") dtypes;
+        # np.dtype("boolean") would raise.
+        df[col] = df[col].astype(dtype)  # type: ignore[reportCallIssue, reportArgumentType]
     return df
 
 

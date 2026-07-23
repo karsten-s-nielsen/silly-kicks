@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.56.0] — 2026-07-22
+
+### Added — Block-detection converter columns `shot_blocked` / `cross_blocked` (PR-S127, ADR-046)
+
+Prerequisite for TF-51 (per-event defensive credit): two nullable-boolean (`"boolean"`) columns on
+every converter's SPADL output, surfacing the blocked-shot / blocked-cross signal that canonical SPADL
+drops (a blocked shot is otherwise `shot`+`fail`). Registered in `SPADL_COLUMNS` (propagates to all
+provider schemas via `**SPADL_COLUMNS` spread) + a shared `_blocked_flag` helper with 3-valued
+semantics (`True`/`False` on shot/cross rows the provider encodes, `pd.NA` on non-shot/non-cross rows
+AND on providers that cannot encode it — a non-applicable row is unknown, never `False`). Declared
+`"invariant"` in the ADR-045 reflection registry.
+
+**Per-provider coverage** — `shot_blocked`: Gradient Sports (`shot_outcome_type=="B"`, pining-probed),
+StatsBomb (`shot.outcome=="Blocked"`, 12 real blocked shots in fixture 7298), Sportec/DFL
+(`shot_outcome_type=="blocked"` minus own-team deflections), Metrica (`subtype.endswith("BLOCKED")`),
+kloppy gateway (`ShotResult.BLOCKED`), Wyscout (tag 2101; mechanism-only). `cross_blocked`: Gradient
+Sports (`crossOutcomeType=="B"`, open-play `cross` only, pining-probed) + Wyscout (tag 2101,
+mechanism-only). `pd.NA` (unknown) elsewhere: Opta (unverified qualifier), SkillCorner (no signal,
+real-data verified both tiers), StatsBomb `cross_blocked` (deferred, n=1), Sportec / Metrica / kloppy
+`cross_blocked` (infeasible).
+
+**Additive** — no existing column or value changes → **no VAEP/tracking retrain**; atomic-SPADL is
+unaffected (it projects to `ATOMIC_SPADL_COLUMNS`, dropping the two SPADL columns). C4-free. Spec +
+plan under `docs/superpowers/`.
+
 ## [4.55.4] — 2026-07-22
 
 ### Added — TF-19 PR-3b Part A: xS-arm GK-substitution probe RUN + recorded verdict (PR-S126)

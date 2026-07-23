@@ -211,6 +211,7 @@ def convert_to_actions(
             start_x=event.coordinates.x if event.coordinates else None,
             start_y=event.coordinates.y if event.coordinates else None,
             **_get_end_location(event),
+            **_get_blocked_flags(event),
             **_parse_event(event),
         )
         if preserve_native:
@@ -307,6 +308,20 @@ def _get_end_location(event: Event) -> dict[str, float | None]:
     if event.coordinates:
         return {"end_x": event.coordinates.x, "end_y": event.coordinates.y}
     return {"end_x": None, "end_y": None}
+
+
+def _get_blocked_flags(event: Event) -> dict[str, object]:
+    """Per-event block-detection flags (TF-51 prereq).
+
+    ``shot_blocked`` is ``True``/``False`` on shot rows (kloppy
+    ``ShotResult.BLOCKED``), ``pd.NA`` on every non-shot row. ``cross_blocked``
+    is always ``pd.NA`` — the kloppy gateway has no blocked-cross signal (BD-2).
+    ``_finalize_output`` casts the resulting object column to the ``"boolean"``
+    schema dtype.
+    """
+    if isinstance(event, ShotEvent):
+        return {"shot_blocked": event.result == ShotResult.BLOCKED, "cross_blocked": pd.NA}
+    return {"shot_blocked": pd.NA, "cross_blocked": pd.NA}
 
 
 def _parse_event(event: Event) -> dict[str, int]:

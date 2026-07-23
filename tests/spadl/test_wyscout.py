@@ -26,6 +26,64 @@ def _make_pass_event(*, event_id: int, milliseconds: float, **extras: object) ->
     return base
 
 
+def _make_shot_event(*, event_id: int, milliseconds: float, tags: list[dict], **extras: object) -> dict[str, object]:
+    """A minimal valid Wyscout shot event (type 10) with a caller-supplied tags list."""
+    base: dict[str, object] = {
+        "type_id": 10,
+        "subtype_name": "Shot",
+        "tags": tags,
+        "player_id": 300,
+        "positions": [{"y": 50, "x": 90}, {"y": 50, "x": 100}],
+        "game_id": 1,
+        "type_name": "Shot",
+        "team_id": 100,
+        "period_id": 1,
+        "milliseconds": milliseconds,
+        "subtype_id": 100,  # shot on target
+        "event_id": event_id,
+    }
+    base.update(extras)
+    return base
+
+
+def _make_cross_event(*, event_id: int, milliseconds: float, tags: list[dict], **extras: object) -> dict[str, object]:
+    """A minimal valid Wyscout open-play cross event (pass type 8, subtype 80)."""
+    base: dict[str, object] = {
+        "type_id": 8,
+        "subtype_name": "Cross",
+        "tags": tags,
+        "player_id": 200,
+        "positions": [{"y": 80, "x": 90}, {"y": 50, "x": 95}],
+        "game_id": 1,
+        "type_name": "Pass",
+        "team_id": 100,
+        "period_id": 1,
+        "milliseconds": milliseconds,
+        "subtype_id": 80,  # _WS_SUBTYPE_CROSS
+        "event_id": event_id,
+    }
+    base.update(extras)
+    return base
+
+
+def test_shot_and_cross_blocked_from_tag_2101():
+    events = pd.DataFrame(
+        [
+            _make_shot_event(event_id=1, milliseconds=1000.0, tags=[{"id": 2101}]),  # blocked shot
+            _make_cross_event(event_id=2, milliseconds=2000.0, tags=[{"id": 2101}]),  # blocked cross
+            _make_shot_event(event_id=3, milliseconds=3000.0, tags=[]),  # non-blocked shot
+        ]
+    )
+    actions, _ = wy.convert_to_actions(events, home_team_id=100)
+    shots = actions[actions["type_id"] == spadl.actiontype_id["shot"]]
+    crosses = actions[actions["type_id"] == spadl.actiontype_id["cross"]]
+    assert (shots["shot_blocked"] == True).sum() == 1  # noqa: E712  one blocked shot
+    assert (shots["shot_blocked"] == False).sum() == 1  # noqa: E712  one non-blocked shot
+    assert len(crosses) == 1  # non-vacuity: the cross survived conversion
+    assert (crosses["cross_blocked"] == True).all()  # noqa: E712  the cross is blocked
+    assert shots["cross_blocked"].isna().all()  # a shot -> cross_blocked NA
+
+
 # ---------------------------------------------------------------------------
 # Tests that use inline DataFrames (no external fixtures required)
 # ---------------------------------------------------------------------------

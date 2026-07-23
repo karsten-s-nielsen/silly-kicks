@@ -29,7 +29,7 @@ from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
 from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
 from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
-from .utils import _finalize_output
+from .utils import _blocked_flag, _finalize_output
 
 
 def _scale_to_spadl(
@@ -577,7 +577,12 @@ def convert_to_actions(
     )
 
     # --- Finalize output ---
+    # Block-detection: SkillCorner records no shot/cross-block signal (real-data verified, both
+    # tiers) -> all pd.NA. Set AFTER the derived-actions pd.concat above to avoid the
+    # `defensive[actions.columns]` reindex KeyError on frames that lack these columns.
     extra = ["original_event_id"] if preserve_native else None
+    actions["shot_blocked"] = _blocked_flag(len(actions))
+    actions["cross_blocked"] = _blocked_flag(len(actions))
     actions = _finalize_output(actions, SKILLCORNER_SPADL_COLUMNS, extra_columns=extra)
 
     return actions, report

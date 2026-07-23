@@ -78,7 +78,7 @@ from . import config as spadlconfig
 from .base import _derive_end_coordinates
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import GRADIENTSPORTS_SPADL_COLUMNS, ConversionReport
-from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
 
 # ---------------------------------------------------------------------------
 # Required input columns (raise ValueError if any are missing)
@@ -529,6 +529,25 @@ def convert_to_actions(
     bodypart_id_arr = _dispatch_bodypart(events["body_type"])
 
     # ------------------------------------------------------------------
+    # Block-detection masks (TF-51 prereq). Computed from the post-exclusion
+    # `events` (1:1 index-aligned with the dict rows below). GS encodes a block
+    # as a "B" outcome; the flags are True/False on shot / open-play-cross rows,
+    # pd.NA elsewhere (see _blocked_flag).
+    # ------------------------------------------------------------------
+    _pe = events["possession_event_type"].fillna("").to_numpy()
+    _sp = events["set_piece_type"].fillna("").to_numpy()
+    _shot_outcome = events["shot_outcome_type"].fillna("").to_numpy()
+    _cross_outcome = events["cross_outcome_type"].fillna("").to_numpy()
+    _n_ev = len(events)
+    # Open-play cross = a CR possession-event that is NOT a set-piece delivery.
+    # "F" (freekick_crossed) and "C" (corner_crossed) are the same set_piece_type
+    # codes the cross dispatch branches on at gradientsports.py:193-195; those
+    # dispatch OUT of the open-play `cross` type, so their block signal stays
+    # pd.NA (spec BD-3).
+    _setpiece_cross_codes = ("F", "C")
+    _open_play_cross = (_pe == "CR") & ~np.isin(_sp, _setpiece_cross_codes)
+
+    # ------------------------------------------------------------------
     # Coordinate translation (centered → SPADL bottom-left meters)
     # ------------------------------------------------------------------
     actions = pd.DataFrame(
@@ -559,6 +578,11 @@ def convert_to_actions(
             # shots) that share their parent's original_event_id. Real 1:1 rows are False. Lets
             # consumers avoid collapsing/dropping a synthesized row when de-duping on original_event_id.
             "is_synthetic": np.zeros(len(events), dtype=bool),
+            # Block-detection flags (TF-51 prereq): True/False on shot / open-play-cross rows where
+            # GS encodes a block ("B" outcome), pd.NA elsewhere. Synthesized rows are reset to pd.NA
+            # after the synthesis concat below.
+            "shot_blocked": _blocked_flag(_n_ev, applicable=(_pe == "SH"), blocked=(_shot_outcome == "B")),
+            "cross_blocked": _blocked_flag(_n_ev, applicable=_open_play_cross, blocked=(_cross_outcome == "B")),
         }
     )
 
@@ -714,6 +738,11 @@ def convert_to_actions(
         actions = actions.sort_values("__order__").reset_index(drop=True)
         actions["action_id"] = np.arange(len(actions), dtype="int64")
     actions = actions.drop(columns="__order__")
+
+    # Synthesized rows are .copy()'d from their parents, so they inherit the parent's
+    # block flag — but they are converter-injected, NOT real block observations. Reset
+    # to pd.NA. No-op when no synthesized rows are present.
+    actions.loc[actions["is_synthetic"], ["shot_blocked", "cross_blocked"]] = pd.NA
 
     # ------------------------------------------------------------------
     # Per-period direction-of-play normalisation. Routed through the canonical

@@ -21,7 +21,6 @@ equivalence.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -87,7 +86,10 @@ def _spadl_row(
 def _spadl_df(rows: list[dict[str, object]]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     for col, dtype in SPADL_COLUMNS.items():
-        df[col] = df[col].astype(np.dtype(dtype))
+        if col not in df.columns:
+            df[col] = pd.NA  # e.g. the block-detection columns, not supplied by the row builder
+        # string dtype handles both numpy ("int64") and pandas-extension ("boolean") dtypes.
+        df[col] = df[col].astype(dtype)  # type: ignore[reportCallIssue, reportArgumentType]
     return df
 
 

@@ -120,7 +120,7 @@ from . import config as spadlconfig
 from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
-from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
 
 # ---------------------------------------------------------------------------
 # Required input columns (raise ValueError if any are missing)
@@ -1000,6 +1000,15 @@ def _build_raw_actions(
         is_tackle, _opt("tackle_loser_team", np.nan).to_numpy(dtype=object), np.nan
     ).astype(object)
 
+    # --- Block detection (TF-51 prereq) ---
+    # shot_blocked: True on a shot with shot_outcome=="blocked", EXCEPT an own-team
+    # deflection (shot_outcome_blocked_by_own_team truthy), which is not an opponent
+    # block. cross_blocked: pd.NA -- DFL has no blocked-cross field.
+    _own_team_block = (
+        _opt("shot_outcome_blocked_by_own_team", "").fillna("").astype(str).str.lower().eq("true").to_numpy()
+    )
+    _shot_blocked_mask = (shot_outcome == "blocked") & ~_own_team_block
+
     # Assemble main actions DataFrame (1:1 with rows).
     actions = pd.DataFrame(
         {
@@ -1016,6 +1025,8 @@ def _build_raw_actions(
             "type_id": type_ids,
             "result_id": result_ids,
             "bodypart_id": bodypart_ids,
+            "shot_blocked": _blocked_flag(n, applicable=is_shot, blocked=_shot_blocked_mask),
+            "cross_blocked": _blocked_flag(n),
             "tackle_winner_player_id": tackle_winner_player_arr,
             "tackle_winner_team_id": tackle_winner_team_arr,
             "tackle_loser_player_id": tackle_loser_player_arr,
@@ -1135,6 +1146,9 @@ def _synthesize_gk_distribution_actions(
             "type_id": type_ids_synth,
             "result_id": result_ids_synth,
             "bodypart_id": bodypart_ids_synth,
+            # Synthetic GK-distribution rows are never shots/crosses -> pd.NA (TF-51 prereq).
+            "shot_blocked": _blocked_flag(n_synth),
+            "cross_blocked": _blocked_flag(n_synth),
         }
     )
 

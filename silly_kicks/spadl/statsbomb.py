@@ -11,7 +11,7 @@ from . import config as spadlconfig
 from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
-from .utils import _finalize_output, _validate_input_columns, _validate_preserve_native
+from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
 
 _SB_FIELD_LENGTH: int = 120  # StatsBomb internal grid length
 _SB_FIELD_WIDTH: int = 80  # StatsBomb internal grid width
@@ -273,6 +273,12 @@ def convert_to_actions(
     actions["type_id"] = _vectorized_type_id(events)
     actions["result_id"] = _vectorized_result_id(events)
     actions["bodypart_id"] = _vectorized_bodypart_id(events)
+    actions["shot_blocked"] = _blocked_flag(
+        len(actions),
+        applicable=(events["type_name"] == "Shot").to_numpy(),
+        blocked=(events["_shot_outcome"] == "Blocked").to_numpy(),
+    )
+    actions["cross_blocked"] = _blocked_flag(len(actions))  # deferred (BD-2)
 
     actions = (
         actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]

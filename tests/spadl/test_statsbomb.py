@@ -396,3 +396,18 @@ class TestStatsBombGoalkeeperIdsNoOp:
         a_empty, _ = statsbomb.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids=set())
         a_none, _ = statsbomb.convert_to_actions(self._events(), home_team_id=100, goalkeeper_ids=None)
         pd.testing.assert_frame_equal(a_empty, a_none, check_dtype=True)
+
+
+def test_shot_blocked_true_on_real_blocked_shot():
+    from silly_kicks.spadl.utils import add_names
+    from tests.invariants._loaders import load_statsbomb
+
+    actions, _ = load_statsbomb(7298)  # 12 real blocked shots
+    # SPADL output carries type_id, not type_name; add the string names for the filter.
+    actions = add_names(actions)
+    shots = actions[actions["type_name"] == "shot"]
+    assert (shots["shot_blocked"] == True).sum() == 12  # noqa: E712
+    # every shot row is True/False (never NA on a provider that encodes it)
+    assert shots["shot_blocked"].notna().all()
+    # non-shots + the deferred cross column are NA
+    assert actions["cross_blocked"].isna().all()
