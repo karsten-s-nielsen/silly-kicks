@@ -8,10 +8,13 @@ See NOTICE for full bibliographic citations and ADR-005 for the integration cont
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from silly_kicks.tracking.pitch_control import PitchControlCache
 
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.atomic.spadl import config as atomicconfig
@@ -403,11 +406,15 @@ def add_off_ball_run_values(actions, frames, xt, *, home_team_id, links=None, pi
     return out
 
 
-def off_ball_run_value_xfns(xt, *, home_team_id, params=None):
+def off_ball_run_value_xfns(xt, *, home_team_id, params=None, pitch_control_cache=None):
     """Atomic VAEP factory for TF-35: each gamestate slot runs through
     :func:`_packing_atomic_adapter` before the shared kernel. Inherits the standard
     factory's fitted-xt check and its opt-in / result-leakage contract (ADR-042) --
     it is in NO default xfn list.
+
+    ``pitch_control_cache`` (TF-7) is forwarded to the standard factory so a caller can
+    share one canonical-surface cache across feature families. ``None`` (default) is
+    byte-identical to threading nothing.
 
     Examples
     --------
@@ -420,7 +427,7 @@ def off_ball_run_value_xfns(xt, *, home_team_id, params=None):
     """
     from silly_kicks.tracking.features import off_ball_run_value_xfns as _std_xfns
 
-    inner = _std_xfns(xt, home_team_id=home_team_id, params=params)[0]
+    inner = _std_xfns(xt, home_team_id=home_team_id, params=params, pitch_control_cache=pitch_control_cache)[0]
     adapter_params = PackingParams(action_types=("pass", "cross"))
 
     def _atomic_transformer(states, frames):
@@ -1068,11 +1075,16 @@ def pitch_control_at_target(
     *,
     links: pd.DataFrame | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.Series:
     """Pitch control at ball position for the acting team (atomic SPADL).
 
     Adapts atomic column names (``x, y``) to standard (``start_x, start_y``)
     and delegates to the standard implementation.
+
+    ``pitch_control_cache`` (TF-7) is forwarded to the standard implementation so a
+    caller can share one canonical-surface cache across feature families. ``None``
+    (default) is byte-identical to threading nothing.
 
     Examples
     --------
@@ -1084,7 +1096,7 @@ def pitch_control_at_target(
     from silly_kicks.tracking.features import pitch_control_at_target as _std_pc
 
     if frames is None:
-        return _std_pc(actions, None, method=method)
+        return _std_pc(actions, None, method=method, pitch_control_cache=pitch_control_cache)
 
     # The standard kernel now samples the action DESTINATION (end_x, end_y) (ADR-032). Atomic SPADL has no
     # end_*; synthesize it from x,y,dx,dy (mirrors _structural_pass_atomic_endpoints) so the destination
@@ -1094,7 +1106,7 @@ def pitch_control_at_target(
     adapted["start_y"] = adapted["y"]
     adapted["end_x"] = adapted["x"] + adapted["dx"]
     adapted["end_y"] = adapted["y"] + adapted["dy"]
-    return _std_pc(adapted, frames, links=links, method=method)
+    return _std_pc(adapted, frames, links=links, method=method, pitch_control_cache=pitch_control_cache)
 
 
 @nan_safe_enrichment
@@ -1122,8 +1134,14 @@ def add_pitch_control(
 
 def atomic_pitch_control_xfns(
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    *,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """Factory returning pitch control xfn list for atomic SPADL.
+
+    ``pitch_control_cache`` (TF-7): pass one shared :class:`PitchControlCache` to
+    every pitch-control-consuming ``*_xfns`` in a VAEP pass to compute each canonical
+    surface once. ``None`` (default) uses a per-call cache -- byte-identical to today.
 
     Examples
     --------
@@ -1132,7 +1150,7 @@ def atomic_pitch_control_xfns(
     """
 
     def _pc_helper(actions, frames):
-        return pitch_control_at_target(actions, frames, method=method)
+        return pitch_control_at_target(actions, frames, method=method, pitch_control_cache=pitch_control_cache)
 
     _pc_helper.__name__ = f"pitch_control_at_target__{method}"
     return [lift_to_states(_pc_helper)]

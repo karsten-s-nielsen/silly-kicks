@@ -5,6 +5,41 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.59.0] — 2026-07-24
+
+### Added — Feature-column glossary + `describe_level` (PR-S130, ADR-048)
+
+- **`silly_kicks/feature_glossary.py`** — a pure Python registry of every *derived* feature column
+  silly-kicks emits (341 entries: `FeatureColumn(name, definition, unit, emitting_module, attribution,
+  higher_is_better)` keyed by base column name). Documents the `add_*` / `*_xfns` / atomic-mirror / spadl-
+  enricher / vaep surface; **excludes** base schema columns (`SPADL_COLUMNS` etc.). `unit` is a closed
+  `Literal` vocabulary; `emitting_module` names the metric's home/compute module (not the `features.py`
+  monolith). Pure `glossary_to_json` (with `GLOSSARY_SCHEMA_VERSION`) + thin `dump_glossary` writer +
+  `glossary_entry` / `undocumented_columns` accessors. The 171 combinatorial VAEP one-hots are generated
+  from the spadlconfig vocabularies; the ~170 unique features are hand-authored with home modules + NOTICE
+  citations.
+- **`silly_kicks/reporting.py::describe_level(z, *, higher_is_better=True)`** — generic, NaN-safe,
+  direction-aware z-score → verbal band (outstanding/excellent/good/average/below average/poor; NaN →
+  unknown), the seed of the reporting/wordalisation layer.
+- **CI coverage gate** (`tests/test_feature_glossary_coverage.py`): complete-by-construction — producers
+  discovered **by inspection with an `__all__`-less fallback** (not `__all__` alone), every emitted column
+  requires an entry (no undocumented, no stale), `emitting_module` importable + not-`.features`. Plus an
+  `attribution`↔NOTICE hard linkage gate and a dump→reload→`describe_level` roundtrip e2e (both directions).
+- **Additive documentation → no VAEP retrain; C4 count unchanged (31).**
+
+### Changed — TF-7 pitch-control cache threaded through the `*_xfns` path (PR-S130, ADR-008 amendment)
+
+- Every pitch-control-consuming `*_xfns` factory (`pitch_control_xfns`, `obso_xfns`, `space_creation_xfns`,
+  `pausa_xfns`, `cover_shadow_xfns`, `gk_influence_xfns`, `player_influence_xfns`, `off_ball_run_value_xfns`)
+  and the atomic mirrors gain a keyword-only `pitch_control_cache: PitchControlCache | None = None`,
+  threaded into whatever builds the `PitchControlSurface` (caller-injection; `compute_features` untouched).
+  A caller builds one cache and passes it to all factories so a multi-family VAEP pass computes each per-
+  frame surface once. `None` default is **byte-identical to today** (default xfn lists stay cache-`None`) →
+  **no value change, no VAEP retrain.** `xshot_occurrence_xfns`/`xcross_attempt_xfns` are out of scope (their
+  `pitch_control_cache` param is reserved for the deferred `extended` variant). Guarded by an all-family
+  value-identity test, a cross-family mis-keying test, a cross-family compute-once perf guard, and a wiring
+  completeness gate.
+
 ## [4.58.0] — 2026-07-23
 
 ### Added — TF-19 xS-probe placebo v2 (relevance-matched defender null; PR-S129, ADR-037 amendment)

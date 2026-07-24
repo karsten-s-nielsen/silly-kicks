@@ -136,9 +136,21 @@ class TestPitchControlCache:
 
 
 def _pc_frames() -> pd.DataFrame:
-    """One identifiable frame (3v3 + ball) for real (voronoi) pitch control."""
-    rows = []
-    for pid in range(1, 4):
+    """One identifiable frame (5v5 + defending GK + ball) for real pitch control.
+
+    Rich enough to exercise EVERY PC-consuming ``*_xfns`` family, not just the
+    ``pitch_control_at_target`` sampler (TF-7 xfns cache work): attacking teammates
+    both ahead of and behind the ball (so cover shadow finds potential receivers +
+    lane-blockers), a defending goalkeeper near its own goal (so ``gk_influence``
+    resolves a keeper), and per-player velocities + a period-relative clock +
+    ``source_provider`` (so the OBSO time window and the transformers' internal
+    ``link_actions_to_frames`` resolve). Extra columns/players are additive: the
+    aggregator call-count + cache-equality assertions below only key on
+    ``(frame_id, team)`` identity, so they are unaffected.
+    """
+    rows: list[dict] = []
+    # Attacking team (1): teammates AHEAD of the ball (x>50) become cover-shadow receivers.
+    for pid, x, y in [(1, 40.0, 30.0), (2, 55.0, 34.0), (3, 65.0, 40.0), (4, 72.0, 28.0), (5, 80.0, 36.0)]:
         rows.append(
             {
                 "game_id": 1,
@@ -146,13 +158,20 @@ def _pc_frames() -> pd.DataFrame:
                 "frame_id": 500,
                 "player_id": pid,
                 "team_id": 1,
-                "x": 30.0 + pid * 5,
-                "y": 30.0 + pid * 3,
+                "x": x,
+                "y": y,
                 "is_ball": False,
                 "is_goalkeeper": False,
             }
         )
-    for pid in range(4, 7):
+    # Defending team (2): outfield lane-blockers + a goalkeeper near its own goal (x=105).
+    for pid, x, y, gk in [
+        (6, 60.0, 34.0, False),
+        (7, 70.0, 30.0, False),
+        (8, 85.0, 38.0, False),
+        (9, 95.0, 40.0, False),
+        (10, 103.0, 34.0, True),
+    ]:
         rows.append(
             {
                 "game_id": 1,
@@ -160,10 +179,10 @@ def _pc_frames() -> pd.DataFrame:
                 "frame_id": 500,
                 "player_id": pid,
                 "team_id": 2,
-                "x": 70.0 + pid,
-                "y": 30.0 + pid,
+                "x": x,
+                "y": y,
                 "is_ball": False,
-                "is_goalkeeper": False,
+                "is_goalkeeper": gk,
             }
         )
     rows.append(
@@ -179,7 +198,12 @@ def _pc_frames() -> pd.DataFrame:
             "is_goalkeeper": False,
         }
     )
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    df["vx"] = 0.5  # cover shadow's TTI race requires vx/vy
+    df["vy"] = 0.0
+    df["time_seconds"] = 0.0  # single frame; OBSO windows it, transformers link to it
+    df["source_provider"] = "sportec"
+    return df
 
 
 def _pc_actions() -> pd.DataFrame:
@@ -196,6 +220,12 @@ def _pc_actions() -> pd.DataFrame:
             "end_x": [60.0, 70.0],
             "end_y": [30.0, 40.0],
             "type_id": [0, 0],
+            # OBSO/PAUSA window on the event clock; TF-35 run valuation needs a completed
+            # (result_id=1) pass whose next same-team touch resolves a receiver; the actor id
+            # lets that receiver resolution run.
+            "time_seconds": [0.0, 0.5],
+            "result_id": [1, 1],
+            "player_id": [2, 3],
         }
     )
 
