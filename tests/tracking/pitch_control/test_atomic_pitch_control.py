@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pandas as pd
 
@@ -9,8 +11,10 @@ from silly_kicks.atomic.tracking.features import (
     add_pitch_control,
     atomic_pitch_control_default_xfns,
     atomic_pitch_control_xfns,
+    off_ball_run_value_xfns,
     pitch_control_at_target,
 )
+from silly_kicks.tracking.pitch_control import PitchControlCache
 
 
 def _make_atomic_actions():
@@ -141,3 +145,26 @@ class TestAtomicXfnFactory:
         for method in ("spearman", "fernandez_bornn", "voronoi"):
             xfns = atomic_pitch_control_xfns(method)
             assert len(xfns) == 1
+
+
+class TestAtomicPitchControlCache:
+    """TF-7 xfns cache -- atomic mirror threading (signature + byte-identity)."""
+
+    def test_atomic_pitch_control_xfns_accepts_cache(self):
+        assert "pitch_control_cache" in inspect.signature(atomic_pitch_control_xfns).parameters
+
+    def test_atomic_pitch_control_at_target_accepts_cache(self):
+        assert "pitch_control_cache" in inspect.signature(pitch_control_at_target).parameters
+
+    def test_atomic_off_ball_run_value_xfns_accepts_cache(self):
+        assert "pitch_control_cache" in inspect.signature(off_ball_run_value_xfns).parameters
+
+    def test_atomic_pc_xfns_shared_cache_byte_identical_to_none(self):
+        actions, frames = _make_atomic_actions(), _make_frames()
+        gs = [actions]
+        none_out = atomic_pitch_control_xfns("voronoi")[0](gs, frames)
+        cached_out = atomic_pitch_control_xfns("voronoi", pitch_control_cache=PitchControlCache())[0](gs, frames)
+        pd.testing.assert_frame_equal(none_out, cached_out)
+        # Non-vacuity: the atomic PC path actually produced values, so the cache= threading was
+        # genuinely exercised (not an all-NaN no-op).
+        assert any(none_out[c].notna().any() for c in none_out.columns)

@@ -27,6 +27,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             gkdv = container "silly_kicks.gkdv" "GKDV v1 (TF-19): ghost-substitution engine (build_ghost_frames) + two gate-independent physics arms (delta-DAS, delta-threat-suppression) in attacker-value units (negative = deterrent). ADR-043." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (pure objectives/CV/gates + frozen exogenous xT artifact) + scripts/ CLI + pining/Databricks loaders. Recommends tuned tracking/xT defaults; never changes library constants." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Per-provider raw-data parse ports (bytes -> provider bronze -> converter input). The Sportec/DFL parse+shape port single-sources the lakehouse DFL parser (golden-pinned). Behind the [parse-dfl] extra." "Python (optional [parse-dfl] extra)" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 341 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
         }
 
         // --- Relationships: Context level ---
@@ -46,6 +47,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         analyst -> tracking "Converts raw tracking data to long-form frames + enriches via" "convert_to_frames() + add_action_context()"
         analyst -> vaep "Values actions via" "VAEP.fit() / VAEP.rate() / HybridVAEP (with optional frames=)"
         analyst -> xthreat "Computes pitch value surface via" "ExpectedThreat.fit()"
+        analyst -> glossary "Looks up derived-feature-column definitions + buckets z-scores to verbal bands via" "glossary_entry() / describe_level()"
         maintainer -> calibration "Runs the two-stage Optuna sweep (carrier accuracy, then held-out Brier) via" "calibrate_tracking_defaults.py"
 
         pipeline -> spadl "Passes per-game DataFrames to" "lazy import inside UDF"

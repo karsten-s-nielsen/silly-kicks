@@ -154,3 +154,27 @@ the residual is the irreducible per-linked-frame KDE (~4.4 s/eval), not extracti
   validated effort.
 - The VAEP `*_xfns` transformers do not yet share one cache across families in a
   single pass (each keeps its own per-frame precompute); tracked in TODO.
+
+### Amendment (4.59.0 / PR-S130) — `pitch_control_cache` threaded through the `*_xfns` path
+
+The gap above is closed by **caller-injection** (framework-level `compute_features` threading was
+rejected — it would extend the frame-aware xfn contract and touch VAEP core; the only win is auto-sharing
+for ad-hoc default-list users, not the perf-critical lakehouse path). Every pitch-control-consuming
+`*_xfns` factory now takes a keyword-only `pitch_control_cache: PitchControlCache | None = None` and threads
+it into whatever builds the `PitchControlSurface`: `pitch_control_xfns`, `obso_xfns`, `space_creation_xfns`,
+`pausa_xfns`, `cover_shadow_xfns`, `gk_influence_xfns`, `player_influence_xfns`, and
+`off_ball_run_value_xfns` (the last added because its aggregator accepts the cache — the wiring
+completeness gate pins the wired set to the aggregators-that-accept-it, so omitting it would fail). The
+caller builds ONE `PitchControlCache` and passes it to all factories, slotting into the lakehouse's
+existing "pre-build once, pass to all" pipeline. `xcross_attempt_xfns`/`xshot_occurrence_xfns` are NOT
+in scope — their `pitch_control_cache` param is reserved for the deferred `extended` variant; the shipped
+path builds no `PitchControlSurface`. Atomic mirrors thread the param identically.
+
+`None` default ⇒ each family keeps its own local cache ⇒ **byte-identical to today** (the default xfn
+lists stay cache-`None`) → no value change, **no VAEP retrain**, C4-free (count stays 31). Guaranteed by:
+a value-identity test parametrized over ALL PC families (cache-vs-`None` byte-identical); a cross-family
+mis-keying test (pitch_control voronoi + obso spearman over one cache each get their own surface); a
+cross-family perf guard (a second family over a pre-populated shared cache recomputes zero surfaces,
+spying `_cache.compute_pitch_control`); and a wiring completeness gate. Concurrency: a shared
+`PitchControlCache` is a mutable memo, safe single-threaded within one `compute_features` pass (a parallel
+executor gives each worker its own); match-scoped, discarded after the pass.

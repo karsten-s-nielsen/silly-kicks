@@ -1958,6 +1958,7 @@ def off_ball_run_value_xfns(
     *,
     home_team_id: int | str,
     params=None,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """VAEP xfn factory: ONE FrameAwareTransformer emitting 4 numeric TF-35 columns
     x 3 gamestate slots = 12 columns. ``n_valued_disruptive_runs`` is excluded (it is
@@ -1966,6 +1967,10 @@ def off_ball_run_value_xfns(
 
     The ``xt`` model is validated at FACTORY time, so an unfitted grid fails when the
     xfn list is built rather than deep inside a VAEP fit.
+
+    ``pitch_control_cache`` (TF-7): pass one shared :class:`PitchControlCache` to every
+    pitch-control-consuming ``*_xfns`` in a VAEP pass to compute each canonical surface
+    once. ``None`` (default) uses a per-call cache -- byte-identical to today.
 
     .. note::
 
@@ -2006,7 +2011,14 @@ def off_ball_run_value_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
         for i, slot in enumerate(states[:3]):
-            batch = _run_values_at_actions(slot, frames, xt, home_team_id=home_team_id, params=params)
+            batch = _run_values_at_actions(
+                slot,
+                frames,
+                xt,
+                home_team_id=home_team_id,
+                params=params,
+                pitch_control_cache=pitch_control_cache,
+            )
             for col in _RUN_VALUE_XFN_COLS:
                 out[f"{col}_a{i}"] = batch[col].to_numpy(dtype="float64")
         return out
@@ -2513,10 +2525,17 @@ def add_pitch_control(
 
 def pitch_control_xfns(
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    *,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """Factory returning a list with one FrameAwareTransformer for pitch control.
 
     Uses the ``<feature>__<method>`` suffix-naming convention (ADR-005 section 8).
+
+    ``pitch_control_cache`` (TF-7): pass one shared :class:`PitchControlCache` to
+    every pitch-control-consuming ``*_xfns`` in a single VAEP pass to compute each
+    canonical surface once. ``None`` (default) uses a per-call cache -- byte-identical
+    to threading nothing.
 
     Examples
     --------
@@ -2525,7 +2544,7 @@ def pitch_control_xfns(
     """
 
     def _pc_helper(actions, frames):
-        return pitch_control_at_target(actions, frames, method=method)
+        return pitch_control_at_target(actions, frames, method=method, pitch_control_cache=pitch_control_cache)
 
     _pc_helper.__name__ = f"pitch_control_at_target__{method}"
     return [lift_to_states(_pc_helper)]
@@ -3418,6 +3437,7 @@ def gk_influence_xfns(
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     zone_names: list[str] | None = None,
     tau_seconds: float = 1.0,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """Factory returning a list with one FrameAwareTransformer for GK influence.
 
@@ -3442,6 +3462,10 @@ def gk_influence_xfns(
         with resolved goal_x + ball_y.
     tau_seconds : float
         TTI tau parameter, default 1.0.
+    pitch_control_cache : PitchControlCache or None
+        Shared per-frame surface cache (TF-7). Pass one instance to every
+        pitch-control-consuming ``*_xfns`` in a VAEP pass to compute each canonical
+        surface once. ``None`` (default) uses a per-call cache -- byte-identical to today.
 
     Examples
     --------
@@ -3522,6 +3546,7 @@ def gk_influence_xfns(
                     method=method,
                     zones=action_zones,
                     tau_seconds=tau_seconds,
+                    pitch_control_cache=pitch_control_cache,
                 )
             except (ValueError, KeyError) as exc:
                 _warnings.warn(
@@ -3722,11 +3747,16 @@ def cover_shadow_xfns(
     decision_rule: Literal["any", "majority", "all"] = "majority",
     detailed: bool = False,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """Factory returning a list with one FrameAwareTransformer for cover shadows.
 
     5 columns x 3 game states = 15 VAEP columns. Frame-precomputation cache
     keyed on (period_id, frame_id, team_id, rounded_passer_xy).
+
+    ``pitch_control_cache`` (TF-7): pass one shared :class:`PitchControlCache` to
+    every pitch-control-consuming ``*_xfns`` in a VAEP pass to compute each canonical
+    surface once. ``None`` (default) uses a per-call cache -- byte-identical to today.
 
     Parameters
     ----------
@@ -3792,6 +3822,7 @@ def cover_shadow_xfns(
                     decision_rule=decision_rule,
                     detailed=detailed,
                     method=method,
+                    pitch_control_cache=pitch_control_cache,
                 )
                 cache[key] = result_dict
                 return result_dict
@@ -4243,10 +4274,15 @@ def player_influence_xfns(
     home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """Factory returning a FrameAwareTransformer for player influence.
 
     Emits 7 columns x 3 gamestate slots = 21 VAEP columns.
+
+    ``pitch_control_cache`` (TF-7): pass one shared :class:`PitchControlCache` to
+    every pitch-control-consuming ``*_xfns`` in a VAEP pass to compute each canonical
+    surface once. ``None`` (default) uses a per-call cache -- byte-identical to today.
 
     Examples
     --------
@@ -4302,6 +4338,7 @@ def player_influence_xfns(
                     home_team_id=home_team_id,
                     method=method,
                     tau_seconds=tau_seconds,
+                    pitch_control_cache=pitch_control_cache,
                 )
             except (ValueError, KeyError) as exc:
                 _warnings.warn(
@@ -5005,6 +5042,7 @@ def obso_actual(
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.Series:
     """OBSO at the actual pass target at the event frame.
 
@@ -5031,6 +5069,7 @@ def obso_actual(
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
+        pitch_control_cache=pitch_control_cache,
     )
     return pd.Series(
         [lookup.get(i, {}).get("actual_obso", np.nan) for i in range(len(actions))],
@@ -5048,6 +5087,7 @@ def obso_peak(
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.Series:
     """Peak OBSO at the pass target across the frame window.
 
@@ -5072,6 +5112,7 @@ def obso_peak(
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
+        pitch_control_cache=pitch_control_cache,
     )
     return pd.Series(
         [lookup.get(i, {}).get("peak_obso", np.nan) for i in range(len(actions))],
@@ -5089,6 +5130,7 @@ def obso_optimal(
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> pd.Series:
     """Optimal OBSO across all teammate positions at the event frame.
 
@@ -5113,6 +5155,7 @@ def obso_optimal(
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
+        pitch_control_cache=pitch_control_cache,
     )
     return pd.Series(
         [lookup.get(i, {}).get("optimal_obso", np.nan) for i in range(len(actions))],
@@ -5410,6 +5453,7 @@ def obso_xfns(
     epv_grid: np.ndarray | None = None,
     xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """Factory returning 3 FrameAwareTransformers for OBSO features.
 
@@ -5427,6 +5471,10 @@ def obso_xfns(
         ``epv_grid``. Resolved ONCE here, at factory-call time.
     pitch_control_method : str
         Pitch control model.
+    pitch_control_cache : PitchControlCache or None
+        Shared per-frame surface cache (TF-7). Pass one instance to every
+        pitch-control-consuming ``*_xfns`` in a VAEP pass to compute each canonical
+        surface once. ``None`` (default) uses a per-call cache -- byte-identical to today.
 
     Returns
     -------
@@ -5461,6 +5509,7 @@ def obso_xfns(
             _tg=transition_grid,
             _eg=epv_grid,
             _pcm: Literal["spearman", "fernandez_bornn", "voronoi"] = pitch_control_method,
+            _pcc=pitch_control_cache,
         ):
             return _fn(
                 actions,
@@ -5469,6 +5518,7 @@ def obso_xfns(
                 transition_grid=_tg,
                 epv_grid=_eg,
                 pitch_control_method=_pcm,
+                pitch_control_cache=_pcc,
             )
 
         _helper.__name__ = col_key
@@ -5709,6 +5759,7 @@ def space_creation_xfns(
     epv_grid: np.ndarray | None = None,
     xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """Factory returning FrameAwareTransformers for space creation features.
 
@@ -5728,6 +5779,10 @@ def space_creation_xfns(
         ``epv_grid``. Resolved ONCE here, at factory-call time.
     pitch_control_method : str
         Pitch control model.
+    pitch_control_cache : PitchControlCache or None
+        Shared per-frame surface cache (TF-7). Pass one instance to every
+        pitch-control-consuming ``*_xfns`` in a VAEP pass to compute each canonical
+        surface once. ``None`` (default) uses a per-call cache -- byte-identical to today.
 
     Examples
     --------
@@ -5753,6 +5808,7 @@ def space_creation_xfns(
             _tg=transition_grid,
             _eg=epv_grid,
             _pcm: Literal["spearman", "fernandez_bornn", "voronoi"] = pitch_control_method,
+            _pcc=pitch_control_cache,
         ):
             if frames is None:
                 return pd.Series(np.nan, index=actions.index, name=_col)
@@ -5763,6 +5819,7 @@ def space_creation_xfns(
                 transition_grid=_tg,
                 epv_grid=_eg,
                 pitch_control_method=_pcm,
+                pitch_control_cache=_pcc,
             )
             return enriched[_col].rename(_col)
 
@@ -5883,6 +5940,7 @@ def pausa_xfns(
     epv_grid: np.ndarray | None = None,
     xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
     """Factory returning 3 FrameAwareTransformers for PAUSA features.
 
@@ -5900,6 +5958,11 @@ def pausa_xfns(
         ``epv_grid``. Resolved ONCE here, at factory-call time.
     pitch_control_method : str
         Pitch control model.
+    pitch_control_cache : PitchControlCache or None
+        Shared per-frame surface cache (TF-7), forwarded to ``add_pausa`` -> ``add_obso``.
+        Pass one instance to every pitch-control-consuming ``*_xfns`` in a VAEP pass to
+        compute each canonical surface once. ``None`` (default) uses a per-call cache --
+        byte-identical to today.
 
     Examples
     --------
@@ -5926,6 +5989,7 @@ def pausa_xfns(
             _tg=transition_grid,
             _eg=epv_grid,
             _pcm: Literal["spearman", "fernandez_bornn", "voronoi"] = pitch_control_method,
+            _pcc=pitch_control_cache,
         ):
             if frames is None:
                 return pd.Series(np.nan, index=actions.index, name=_col)
@@ -5936,6 +6000,7 @@ def pausa_xfns(
                 transition_grid=_tg,
                 epv_grid=_eg,
                 pitch_control_method=_pcm,
+                pitch_control_cache=_pcc,
             )
             return enriched[_col].rename(_col)
 
