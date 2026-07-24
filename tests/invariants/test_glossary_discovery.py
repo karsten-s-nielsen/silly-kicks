@@ -27,7 +27,7 @@ def test_all_less_module_is_discovered(monkeypatch):
 
     add_planted.__module__ = mod.__name__
     add_planted.__qualname__ = "add_planted"  # module-level function (not the test's <locals> nesting)
-    setattr(mod, "add_planted", add_planted)
+    vars(mod)["add_planted"] = add_planted  # module __dict__ assign (pyright-clean AND ruff-B010-clean)
     monkeypatch.setitem(sys.modules, mod.__name__, mod)
     found = G.discover_public_column_producers(extra_modules=[mod])
     assert "silly_kicks.tracking._planted_glossary_probe.add_planted" in found
