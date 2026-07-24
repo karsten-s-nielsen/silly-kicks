@@ -9,7 +9,7 @@ from tests.tracking._probe_fixtures import planted_model, probe_frames
 
 
 def test_probe_wrappers_registry_lists_both_arms():
-    assert set(me.PROBE_WRAPPERS) == {"xcross", "xs"}
+    assert set(me.PROBE_WRAPPERS) == {"xcross", "xs", "xs_v2"}
     for name, entry in me.PROBE_WRAPPERS.items():
         assert callable(entry["wrapper"]), name
         assert isinstance(entry["rule_constants"], dict) and entry["rule_constants"], name
@@ -20,6 +20,7 @@ def test_registry_meta_every_wrapper_has_a_pinned_rule_test():
     PINNED_RULES = {
         "xcross": {"ratio": 2.0, "abs_floor": 0.01},
         "xs": {"ratio": 2.0, "dose_m": 2.0, "placebo_band_pct": 95.0},
+        "xs_v2": {"ratio": 2.0, "dose_m": 2.0, "placebo_band_pct": 95.0, "placebo_pool": "model_relevant_def"},
     }
     assert set(PINNED_RULES) == set(me.PROBE_WRAPPERS)
     for name, pins in PINNED_RULES.items():

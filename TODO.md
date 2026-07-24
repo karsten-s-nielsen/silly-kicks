@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-07-23. **Current release**: silly-kicks 4.57.0 (PR-S128, ADR-047) — TF-51 per-event defensive credit/debit family: proximity-gated signed defender credit (10 rules) + per-team bravery, in a new `tracking/defensive_credit/` sub-package (`compute_defensive_credits` / `add_defensive_credit` / `compute_bravery`). New action-coupled aggregator (C4 30→31); no xfns → no VAEP retrain. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-07-23. **Current release**: silly-kicks 4.58.0 (PR-S129, ADR-037 amendment) — TF-19 xS-probe placebo v2: a pre-registered `xs_v2` variant of the GK-substitution probe whose only change is a relevance-matched (model-relevant-defender) placebo pool, so the clustered dose-response runs instead of vetoing on a degenerate random-outfielder null; `substitution_deltas(..., placebo=)` + `xs_substitution_probe_v2` + driver `--variant` + auditable lock-commit. Research instrument, C4-free (stays 31), no retrain; ~64-match GS deliverable run is a post-lock owner step. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
