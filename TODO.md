@@ -2,16 +2,17 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-07-23. **Current release**: silly-kicks 4.56.0 (PR-S127) — block-detection converter columns `shot_blocked` / `cross_blocked` (TF-51 prerequisite): two nullable-boolean SPADL output columns surfacing the blocked-shot / blocked-cross signal canonical SPADL drops, emitted by all 8 converters (real masks for 6, `pd.NA` where a provider can't encode it — Opta / SkillCorner + deferred StatsBomb `cross_blocked`). Additive → no retrain; C4-free. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
-
-**xT-GK v2 — remaining open items (the 4.45.0 verdict was measured on contaminated origins; half of it is withdrawn):**
-The make-or-break deep-zone gate (GO-leaning) and ρ retention weights shipped 4.42.0–4.44.0; the faithful V_opp + construct-validity ran 4.45.0. **4.46.0 (PR-S113) then found that ~24% of the GS GK-distribution domain (60.2% of its goal-kicks) had been scored at a FABRICATED grid zone**, and that SkillCorner's goal-kick origins were the broadcast ball, not the keeper — while the v1 comparator used resolved origins all along. On the corrected cohort: **the "keeper-flat" finding does NOT survive** (GS v2 ICC −0.0020 → **+0.0256**, now above v1's 0.0193), but **the outcome-AUC leg stands** (GS −0.1474, SC −0.0268 — v2 still loses to simple baselines). **Metric verdict: still not construct-validated by outcome-AUC, but no longer keeper-flat.** Owner/Eyestone decision pending on the interpretation forks (V reward = `E[first-shot xG]` vs Jeff §2.1 remainder-of-possession; dormant PEV pending receiver-pressure `q`) — now takeable on trustworthy numbers. Lakehouse re-materializes `xt_gk_v2_*` + adopts `apply_resolved_gk_geometry`.
+**Last updated**: 2026-07-23. **Current release**: silly-kicks 4.57.0 (PR-S128, ADR-047) — TF-51 per-event defensive credit/debit family: proximity-gated signed defender credit (10 rules) + per-team bravery, in a new `tracking/defensive_credit/` sub-package (`compute_defensive_credits` / `add_defensive_credit` / `compute_bravery`). New action-coupled aggregator (C4 30→31); no xfns → no VAEP retrain. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
 ## On Deck
 
-Items are ranked top-to-bottom by specification completeness, then by additional implementation effort needed.
+Items are ranked top-to-bottom by specification completeness, then by additional implementation effort
+needed. No blockers — each build still gets its own brainstorm → spec cycle before code. Full
+course-derived detail (exact definitions, verified repo deltas, spec-time decisions, validation plans,
+rejected alternatives) lives in
+[docs/superpowers/specs/2026-07-16-soccermatics-pro-future-work-plan.md](docs/superpowers/specs/2026-07-16-soccermatics-pro-future-work-plan.md).
 
 | Size | What it means |
 |------|---------------|
@@ -19,29 +20,23 @@ Items are ranked top-to-bottom by specification completeness, then by additional
 | **Wicked** | Looks small, surprisingly impactful |
 | **Dunkin'** | Quick run, keeps things moving |
 
-### Course-derived candidates (Soccermatics Pro + Modern Soccer Coach ingestion, 2026-07-16)
-
-Full TODO-ready detail (exact definitions, verified repo deltas, spec-time decisions, validation plans,
-rejected alternatives) lives in
-[docs/superpowers/specs/2026-07-16-soccermatics-pro-future-work-plan.md](docs/superpowers/specs/2026-07-16-soccermatics-pro-future-work-plan.md)
-— the rows below are the action-item register. No blockers; each build still gets its own
-brainstorm → spec cycle before code.
-
 | # | Task | Size | Source | Notes |
 |---|------|------|--------|-------|
+| TF-51 v2 | **Defensive credit/debit v2** (own brainstorm → spec → plan cycle) | Wicked | silly-kicks (ADR-047 v1 deferral) | Features deferred from v1 (ADR-047 / spec §11): atomic-SPADL mirror; an individual `cross_block` credit rule (folds into the DPA model); the reverse-xT "position won" pressing lens; the Paper 2 DPA / role-responsibility marking model (arXiv:2606.19931, replacing v1 nearest-defender attribution); a lane-geometry `shot_block` blocker; a line-break-gated through-ball test. |
+| — | **Canonical `spadlconfig` penalty-area constant** | Dunkin' | silly-kicks (ADR-021) | `_ghost_gk` (20.15), `_xcross_attempt` (20.16) and `defensive_credit/_params` (20.16) each hard-code the box half-width; single-source it into `spadlconfig` to close the 0.01 m drift. No behaviour change. |
+| — | **Metrica GK identification: derive once per match, not per batch** | Wicked | silly-kicks (PR-S105 follow-up) | Metrica is anonymized (no roster) so `is_goalkeeper` **must** derive positionally — giving it the same per-250-frame-batch contamination the 4.38.0 SkillCorner roster-trust fix cannot help (a transiently goal-parked outfielder gets flagged; the union grows across the lakehouse's batch builds). Needs a **derive-once-per-full-match** path: a separable silly-kicks API (derive-once / accept pre-derived `is_goalkeeper` picks) + a lakehouse change (derive once, feed picks into the per-batch builds). The S2 `n_implausible_gk_teams` guard already surfaces it. |
+| — | **SkillCorner keeper-origin: real-data validation + S1/S4 CI rate-gates** | Wicked | silly-kicks (ADR-024 4.37.0 / PR-S104) | On real pining SkillCorner data (DGX): confirm goal-kick origins ≈100% own-box + scatter-SD collapse; **validate-then-maybe** the open-play own-half misdetection bound (add a generous own-half bound only if pass origins still land in the attacking half — beyond → `unresolved`, never clamped); **measure-before-optimize** the `_tracking_gk_xy_detected` ±window loop. Then land the standing CI **rate-gates** (a count nothing routinely checks is the silent-guard failure mode): (i) S1 off-pitch rate → player-margin / ball `TOL` + a batch/CI gate hard-failing above the measured baseline + margin; (ii) out-of-region native-goalkick rate → a CI gate asserting no provider exceeds a small %. Refs `docs/superpowers/{specs,plans}/2026-06-30-skillcorner-keeper-origin-resolution*`. |
+| — | **Cache corpus-drift live-fingerprint** | Dunkin' | silly-kicks (PR-S115 / ADR-038) | `scripts/_cache.py` fingerprints with a **constant schema token** — it invalidates pre-Task-11 caches but does NOT detect corpus *drift* within a schema; until the live fingerprint lands, the constraint is a fresh `--output-dir` per corpus (DGX runbook). Registered follow-up: fingerprint on sorted `(provider, match_id, visibility)` triples (from cached providers + match_ids + `match_visibility`). Part-deux-coordinated. |
+| — | **TF-7 cross-family pitch-control cache in VAEP xfns** | Wicked | silly-kicks (ADR-008) | `add_*` aggregators accept `pitch_control_cache` (3.25.0); the `*_xfns` VAEP transformers do not yet thread a shared `PitchControlCache` across feature families in one pass (each keeps its own per-frame precompute). Wire the VAEP feature framework to inject one shared cache across xfns (additive, no API churn); also extend `pitch_control_cache` to the `player_influence`/`space_creation` shared-pass callers. |
+| — | **Ghost-GK trainer fail-fast at startup for unclassified providers** | Dunkin' | silly-kicks (PR-S115 / ADR-038) | The detected-only filter correctly fail-closes on an unclassified provider, but mid-run; a startup check (every corpus provider ∈ `_DETECTION_AWARE_PROVIDERS` ∪ `_FULLY_OBSERVED_PROVIDERS` before any fitting) fails faster. A refinement (current behaviour is already correct), not a blocker. |
+| — | **ADR-code reconciliation sweep** (recurring, once per minor release) | Dunkin' | silly-kicks | Periodically verify documented ADRs (`docs/superpowers/adrs/ADR-*.md`) still match the codebase — stated constraints (e.g. "zero Spark imports in domain") hold in practice, superseded decisions are updated. |
 | — | **Course-derived validation/QA bundle** (xT solver cross-checks · magnitude anchors · pass-risk calibration · retention diff · repeatability harness · chain-convention check) | Dunkin' | Soccermatics modules 3/8/10/15; Twelve glossary | (a) Test-side exact-solve oracle `np.linalg.solve(I−A, g)` (+ optional seeded MC) vs `value_iteration` on the course's toy chain (A=[[.25,.20,.10],[.10,.25,.20],[.10,.10,.25]], g=[.05,.15,.05] → ≈[.150,.252,.120]) AND a real fitted grid; perturb transition → red; keep monotone-from-below raw-diff convergence untouched. (b) xT magnitude ORDER/ratio plausibility gates from Sumpter's published fit (goalmouth ≈37.7% ≫ deep corner ≈0; GK zone ≈2.5% between own-half 0.5% and mid-pitch 1%) — absolute values doc-only (corpus-dependent). (c) Pass-risk calibration report = `pitch_control_at_target` + `result_id` through the extra-free `_calibration_metrics.py` (AUC/ECE/slope; owner-run script or `@e2e`); flags the "technically complete, functionally lost" low-p tail. (d) Diff `xtgk/_retention_labels.py::retains()` vs the course 5 s reference rules (shot→retain; out-for-set-piece→lost; ignore-list; Twelve 2-touch recovery rule) + optional statsbombpy-gated `@e2e` fixture (WEuro-2025 QF: 76→70 analysable→80.0% retained). NOTE: the packing-seam hardenings (foul/NaN-team skip, both-attested possession) were APPLIED 4.50.0 with a probe-verified zero-training-label-flip gate → no retrain (ADR-036 amendment 2026-07-17); only the course-rules diff remains here. (e) Season-repeatability harness: pure-numpy Type-II/major-axis regression + Pearson r (longitudinal complement to the ICC discipline); **blocked on multi-season data**; documented caution: G−xG ≈ zero year-to-year r — never surface as "finishing skill". (f) Verify VAEP `window="possession"` vs the 2-consecutive-opponent-touch chain-break + foul-stitching convention; confirm whether xGChain is materially covered — else add it as a near-zero-cost extra baseline for the xT-GK v2 construct-validity harness. |
 | TF-53 | **Match-outcome simulation — win probability / xPoints from per-shot xG** | Dunkin' | Twelve match report (Soccermatics module 3) | Injected per-shot xG (port pattern — silly-kicks ships no xG) → per-team goal distribution = **Poisson-binomial** over that team's shots (exact DP convolution; MC optional for parity) → joint under independence (document the assumption; the course's model shares it) → P(win/draw/loss) + xPoints = 3·P(win) + 1·P(draw). Face-validity anchor: Arsenal 33/25/41%, xPoints 1.25, in a match won 1-0 on lower xG (1.57 vs 1.72). Analytic fixtures: probabilities sum to 1; symmetric shot lists → symmetric probs; single-shot edges. Small pure module; event-only; C4: new small container, no aggregator. |
 | TF-54 | **"Van Dijk" territorial-dominance metric — trimmed defensive-area hull + xT into area** | Dunkin' | Sumpter/Twelve Earpiece (Soccermatics module 10.2) | Defensive area = convex hull of the **70% of a player's own-half defensive-action locations nearest their centroid** (trimmed hull; per player per match/season window). Opposition passes targeted into the hull → success/fail (forward flagged) × xT: **xT-conceded** (completed) vs **xT-prevented** (course worked 0.93 in / 0.11 prevented / 0.35 net but never formalized "prevented" — spec pins it; proposal: prevented = xT of failed opposition passes into the hull). Separates "territory opponents can't pass into" from "excellent once the ball arrives" — two orthogonal defensive qualities. Event-only + injected fitted `ExpectedThreat`; scipy `ConvexHull` + point-in-hull; SPADL defensive-action set (tackle/interception/clearance) pinned in spec. |
 | TF-55 | **Glicko-2 duel-rating module (StatsBomb HOPS pattern)** | Dunkin' | Glickman (Glicko-2); StatsBomb HOPS (Soccermatics module 10.1) | Pairwise rating updates (rating + RD + volatility; pure-python ~100 LOC, no new dep) over winner/loser duel outcomes. sportec already emits `tackle_winner_*`/`tackle_loser_*` (ADR-001 — qualifier-derived dedicated columns); SPADL tackle/take_on adjacency (result decides winner) as the derivation helper for other providers; aerial duels are provider-specific (no SPADL type) — start with ground duels, document coverage honestly. Rating period = match. C4: new module, not an action-coupled aggregator. |
-| TF-51 | **Per-event defensive credit/debit family (proximity-gated, xG/xT-signed)** | Wicked | Sumpter (Soccermatics module 16.3, coach-consulted thresholds); Tigres "bravery"; PSG/Luis Enrique webinar; RB Salzburg vocabulary | Thresholds: defender "applies pressure"/holds marking responsibility within **4.5 m outside the box, 3.0 m inside** (frozen params dataclass — admittedly coach-negotiated). Signed rules sized by the danger value: pressure→shot misses + (by shot xG); failed pressure→SoT −; pressure→pass fails + presser/− passer; pressure→recovery **double credit**; failed cross-block − at receipt/+ shot-blocker; failed marking on a high-xT ball − by resulting shot xG (at pass moment); beaten 1v1 −; forced bad touch +. **Synchronized final-third pressure**: credit ALL teammates within 4.5 m when a final-third pass fails. **"Bravery"** (Tigres) = % of opposition final actions (shots+crosses) blocked (worked 32/40 = 80%). Inject xG via the `xg_column` port (silly-kicks ships no xG) + fitted xT for "reverse-xT" sizing (4.24.0 opponent-mirroring precedent). Long-form per-credit table primitive (`action_id, player_id, rule, signed_value`) + per-action `add_*`; ADR-028 re-projection + ADR-019 id-compat + ADR-003 NaN-safety throughout. Optional cue: **pressure-commitment** = proximity + no-deceleration of the approach run (PSG webinar) — a novel dimension over the 3 existing `pressure_on_actor` flavors. Lane-blocking credit deferred (cover-shadow head start). Rule-by-rule ground-truth fixtures. New aggregator → C4 +1; no retrain. |
 | TF-52 | **Event-only team-KPI module (Twelve match-report glossary + Tigres/Clemson practitioner set)** | Wicked | Twelve.football glossary (Soccermatics module 3); Bootcamp Webinar 3 (Tigres Femenil + Clemson); Coventry academy KPI; MSC module 1 | **v1 (Twelve glossary, exact definitions + worked values in the plan doc):** PPDA (opponent passes in their defensive 60% ÷ our defensive actions there; 4.17), defensive intensity (def. actions/min out of possession; 7.16), field tilt % (63%), pass tempo (passes/min of possession; 19.97), defensive-action/recovery/turnover line heights (mean x; 41.15/66.68), time-to-defensive-action/-recovery (7.30/7.69 s), recoveries + within-5s % (14%), possessions-retained-after-5s (62%), conversion chain (poss→final third→box→shot), long-ball % (>32 m own half), high-opportunity shots (npxG>0.15; injected xG), "within 10 s after recovery" windowed family. **v2 (practitioner set):** counter-press window as `seconds=` XOR `passes=` with named presets (Barcelona ~6 s; Coventry regain-5s + **compact-after-7s**; RB Leipzig 10 s-to-shot; **Tigres "Hunt" = regain ≤3 passes**, 60%+ standard); interception-height High/Med/Low (line-relative: High = only opponent back line remains in front); 6-state build-up outcome taxonomy (worked 19→7, 36%); breakout-past-halfway by 3 channels; switch-of-play-conditioned press success; aerial first→second-ball chaining; post-regain security (2nd-pass completion, failed first pass, fwd vs back/side option); compactness-recovery-time (the one tracking-flavored item — `team_shape` consumer); block-classification anchors (high press ⇔ line near halfway; low block ⇔ 18-yard box). Possession attribution + possession-minutes = the definitional spec section (decide once, use everywhere). Boundary: single-source definitions in the library per delete-and-depend. No retrain; C4: no action-coupled aggregator. |
 | TF-50 | **Physical/locomotor metrics (speed bands, HSR/sprint efforts, accel events, PSV-99, distance)** | Wicked | Soccermatics module 13; SkillCorner physical-data glossary (skillcorner.crunch.help); `docs/research/skillcorner_corpus/schema_new_physical.txt` | Constants as taught: running 15–20 / HSR 20–25 / sprint >25 km/h (high-intensity = HSR+sprint); efforts ≥1 s sustained; accel/decel events 1.5–3.0 m/s² sustained ≥0.7 s; **PSV-99** = 99th pct of pooled per-sprint top speeds (robustness construct; raw max unreliable); >12 m/s ⇒ tracking error; m/min; prefer m/s (÷3.6). Build: extend `derive_velocities` with `deriv=2` → `ax`/`ay`/`accel_magnitude` = **vector norm** (never a scalar speed-diff — the exact circulating-reference-code bug the course flags); bout detection via run-length encoding (period + undetected-frame breaks); pure per-(game, player) summary module — **NOT action-coupled, C4 aggregator count unchanged**; frozen params dataclass with `for_provider` promotion; **visibility gating on the native route's `is_detected`** (ADR-038; the kloppy gateway is unusable — hardcodes `visibility: None`) + per-player coverage fraction (total distance weakest under broadcast tracking, PSV-99 most robust — echo in docstrings). Tier-1 validation: recompute the SkillCorner corpus vs the unconsumed **`physical.parquet`** (29×36 per player-match; respect `physical_check_passed`; PR-S86 roster-validation pattern; coordinate with part-deux/Stage B for corpus access). Genre-expansion scope call goes in the ADR. Additive; no retrain. |
 | — | **`describe_level` z-bucket helper + machine-readable feature-column glossary** | Wicked | Soccermatics module 11 (wordalisation); ADR-005 attribution discipline | (1) `describe_level(z)` staircase (z≥1.5 outstanding / ≥1 excellent / ≥0.5 good / ≥−0.5 average / ≥−1 below average / else poor), vectorized + NaN-safe (ADR-003) — tiny, gives downstream report/wordalisation layers one canonical bucketing. (2) Machine-readable glossary of every emitted feature column (name, definition, unit, emitting module, attribution) as a data file + registry with an auto-enumerating CI gate (every registered `add_*`/`*_xfns` output column must have an entry — the house gate pattern). One-time authoring cost (~100+ columns), incremental afterward; doubles as documentation. |
-
-### Tier 6 — Novel synthesis (true research)
-
-| # | Task | Size | Source | Notes |
-|---|------|------|--------|-------|
 | TF-19 | **GKDV — GK Deterrent Value** composition + audit harness | Monstah | Le et al. 2017 (ghosting); arXiv:2505.11841 (causal-crossing); arXiv:2512.10355 (DEFCON-GNN — prevention-focused EPV-reduction); novel synthesis — closes 2026-05-01 deterrent-investigation literature gap | **GKDV Layer 3 — headline metric. STATUS: PARTLY SHIPPED** (physics arms 4.53.0, ADR-043; attempt arm gated). This row tracks **status + remaining work**; the *why*, the arc, the full gate/measurement history and references live in the **GKDV research program** note just below — they complement, not repeat. **Shipped:** the `silly_kicks/gkdv/` gate-independent physics arms (`build_ghost_frames` / `provenance_to_targets` + `delta_das` + `delta_threat_suppression`, attacker-value units so negative = deterrent). **Gated:** the attempt arm — `tf19_ready=false` (a routing decision on GK feature-engineering, not ‘no signal’). **PR-3b RAN 2026-07-22** (`docs/research/tf19_pr3b/`) → `unmeasurable_at_dose`: a real, dose-responsive GK effect a degenerate placebo can’t certify. **REMAINING: (a) owner validation run** — held-out expected-sign test on known sweeper- vs line-keepers (Alisson / Neuer should score strongly negative; Ter Stegen played 0 WC2022 min; Onana is descriptive-only under the ≥2-match rule); **(b) spec §6.4 Layers 0–3**, the composed headline metric that PR-3 excluded (two PR cycles + its own ADR; ~400 LOC + audit notebook + held-out validation set). **Design for the remaining work:** `Δ_attempt(action) = P(action \| actual_GK) − P(action \| ghost_GK)` for action ∈ {shot, cross, key_pass}, weighted by realized-or-expected outcome value and summed across the build-up window (negative ⇒ deterrent); the counterfactual MUST substitute `predict_mean()` (the deterministic boosted HGBR in `ghost_gk_x/y`), **not** the `predict_density` KDE mode, so no train/serve backend pin is needed (ADR-016). **Depends on: TF-15, TF-16, TF-17, TF-18.** |
 
 **GKDV research program (TF-15..TF-19).** TF-15 through TF-19 form a coherent research arc towards the **GK Deterrent Value** metric — a per-frame measure of how much the defending goalkeeper's actual position depresses opponent attempt-probabilities (shot / cross / key pass) relative to a league-average "ghost" GK in the same frame state. Origin: 2026-05-01 deterrent-effect investigation; closes the published-literature gap that no GK-evaluation framework today (StatsBomb four-pillar, Lamberts GVM, Sloan SAC data-driven framework, Anzer & Bauer xGOT, Driblab Goals Prevented) measures positioning-as-deterrent. **Foundation:** TF-7 (pitch control) + TF-13 (frame-based GK ID) + TF-14 (defensive-line geometry). **Layer 1:** TF-15 (threat-weighted GK influence primitives; shipped 3.10.0). **Layer 2:** TF-16 / TF-17 / TF-18 (decision-probability surfaces for shot-occurrence and cross-attempt + ghost-GK regression; **TF-18 fully shipped 3.24.0** — model code 3.19.0, training pipeline 3.20.0, bundled trained weights 3.24.0; **TF-16 FULLY shipped — code 4.1.0, trained weights 4.9.0 (PR-S80): bundled `public` xS model trained on 81 matches against the 4.7.0 carrier defaults; the pre-registered two-candidate test found owner-tier GS data degraded public-held-out PR-AUC in all 5 folds, so the reproducible public-only model shipped**; **TF-17 fully shipped** — code 4.11.0 (PR-A), trained weights + causal ATT/ATNT harness 4.18.0 (PR-B/PR-C); see the Sequencing note below). **Layer 3:** TF-19 (composition + validation harness) — **attempt arm GATED; physics arms SHIPPED (ADR-043, PR-3).** **Re-gate RAN and shipped** (PR-S114 code 4.47.0 + PR-S118 weights 4.51.0; ADR-037 / ADR-040). Cross-arm verdict `gated_clean_fail`; the xS arm was NOT measured (below). The pre-registered TF-19 viability gate (`_xcross_eval.gk_substitution_probe`, ratio ≥ 2.0 **AND** absolute floor ≥ 0.01, frozen before the run) **FAILED** on the real corpus: every figure previously quoted here (median 0.00107, ratio 2.59×, floor miss ~10×) was from the **retired 4.18.0 weights** and is superseded by PR-S118. Measured on the artifacts as of 4.51.0 — **bundled default** (Stage A `public`): `gk_median_abs_delta` **0.002417**, ratio **1.41×** the nearest-defender control, i.e. it **MISSES the ratio prong** (2.0× bar) and sits **4.1×** short of the 0.01 absolute floor; **Stage-B `sc_extended`** (+98 owner SkillCorner matches, NOT bundled): **0.009697**, ratio **2.21×** — it **clears** the ratio prong but misses the floor by ~10% relative. `tf19_ready: false` on BOTH (the gate is an AND). Note the retrain made the GK signal *stronger* absolutely (0.00107→0.002417) yet *worse* on the ratio, because the nearest-defender control grew faster (0.000414→0.001718) — so the earlier “clears the ratio leg” reading is now false for the shipped model. `sc_extended` is **published and independently checkable** as of 2026-07-18 (`silly-kicks/xcross-attempt-v1`, `silly-kicks/xshot-occurrence-v1`; `from_variant("sc_extended")` verified end-to-end through the fail-closed loader). `"tf19_ready": false` is recorded in `silly_kicks/tracking/_xcross_weights/default/metrics.json`, and the ADR-015 causal harness recorded `gk_clears_placebo_band = False` — but that artifact (`docs/research/xcross_causal/metrics.json`) was last written at **4.18.0** and has NOT been re-run against the corrected weights, so it corroborates the *old* model, not the current one. ADR-011 states the consequence: **TF-19 consumption is gated on GK feature-engineering.** The **xS arm is still unmeasured** — its bundled `metrics.json` carries no substitution probe, no GK-block ablation and no permutation importance (contrast xCross, which carries all three). This is now **blocked, not missing**: the registered xS probe rule and its locked constants shipped in PR-1 (`tracking/_model_eval.py::evaluate_xs_probe`, `PROBE_WRAPPERS["xs"]`), but `xs_substitution_probe` consumes ghost-substituted `targets` from the `silly_kicks/gkdv/` engine, which is ADR-037's PR-3 — **shipped in THIS release (ADR-043)**. The probe is therefore unblocked; **PR-3b RAN it 2026-07-22** — `docs/research/tf19_pr3b/` (64 GS matches, baseline `ed20ac7`≡4.55.3 for this arm): verdict **`no_valid_placebo` → re-gate `unmeasurable_at_dose`**, but NOT a null effect — the GK effect is real + **dose-responsive** (median |ΔxS| 2m→0.0154 / 3m→0.0200 / 4m→0.0222, ≈3.1× the nearest-defender control, only 5.3% zero-fraction). The blocker is a **degenerate random-outfielder placebo** (`placebo_p95=0.0`, 66.5% of placebo deltas zero — the aggregate xS features barely respond to a single distant player's 2m move), so the probe can't certify the apparent effect. **Next lever: a GK-appropriate placebo / less-aggregate xS features — a methodology gap, NOT 'no signal'.** A TF-19 spec must not assume either arm is healthy. **Sequencing / status:** the current shipped-vs-remaining state — physics arms shipped 4.53.0; attempt arm gated (`tf19_ready=false`); PR-3b ran → `unmeasurable_at_dose`; owner validation run + spec §6.4 Layers 0–3 outstanding — is tracked in the **TF-19 row above**; this note carries the evidence and rationale behind that status, not a second task list. **External complements:** DAS (Bischofberger & Baca 2026, `accessible-space` on PyPI; TF-28, shipped 3.8.0) provides physics-based counterfactual space valuation; cover shadows (Cascioli et al. 2025; TF-30, shipped 3.11.0) provide lane-specific pass-obstruction metrics. Both can serve as independent cross-checks on the probability-surface decomposition in TF-19.
@@ -64,17 +59,9 @@ brainstorm → spec cycle before code.
   front-end option. Also serves the lakehouse sync layer. **Needs owner scoping** (silly-kicks TF-43
   enhancement — new TF-number — vs a lakehouse pipeline step); no spec/plan yet. Source + the front-end
   option recorded in the part-deux session's `reference_pathcrf_event_detection.md`.
-- **RESOLVED (2026-07-18): the `test_xshot_gradientsports_e2e` Brier-gate failure.** The
-  known-failure entry met its own stated removal condition and has been retired. The
-  owner-gated e2e was re-run on 4.51.0 (PR-S118 / ADR-040 chirality-corrected xS weights)
-  on 2026-07-18 and **PASSED** (1021 s), confirming the diagnosis that the pre-retrain
-  1.2e-4 Brier shortfall came from hyperparameters HPO'd on y-defective geometry (ADR-031).
-  **Caveat, recorded rather than dropped silently:** the passing run used **local xgboost
-  2.1.4** while the shipped artifact was produced under **3.2.0**. PR-2 shipped a
-  `base_score` 2.x/3.x compatibility guard for exactly that skew, so the version gap is
-  handled — but the pass has not been reproduced under 3.2.0, and this e2e needs real
-  Gradient Sports data so it can never run in CI. Re-confirm on a 3.x box if the xS
-  weights are next re-fit.
+- **Re-confirm `test_xshot_gradientsports_e2e` under xgboost 3.x at the next xS re-fit.** The 4.51.0
+  pass ran under local xgboost 2.1.4 vs the shipped 3.2.0 artifact; the `base_score` 2.x/3.x guard
+  handles the skew but the pass hasn't been reproduced under 3.x (owner-run, real GS data, never in CI).
 - **xT-GK v2 interpretation-fork decision (owner/Eyestone; blocks any further v2 metric work).**
   **Re-measured in 4.46.0 (PR-S113) on RESOLVED origins** — the 4.45.0 numbers were taken on a cohort where
   ~24% of the GS GK-distribution domain was scored at a fabricated grid zone, so they are superseded. On the
@@ -89,31 +76,6 @@ brainstorm → spec cycle before code.
   (would light up the pressure-value term). Both out of scope until the decision — which can now be taken on
   trustworthy numbers. Lakehouse: re-materialize `xt_gk_v2_*` + adopt `apply_resolved_gk_geometry` (opt-in —
   not a forced VAEP retrain).
-- **Lakehouse `is_gk_distribution` nullability heads-up (relay; non-blocking).** F1 shipped the column **nullable**
-  (899 GS / 557 SC NULLs — LEFT-JOIN misses + gaps); silly-kicks is defended (`fillna(False)` in the loader), so
-  the ρ domain is safe. Relay so the lakehouse can decide whether to enforce non-nullable (their SB360-arm fix
-  would fully populate the tracking arms).
-- **Metrica GK identification — derive once per match, not per batch (follow-up to PR-S105).** The 4.38.0
-  SkillCorner fix trusts the native roster, but Metrica is anonymized (no roster) and **must** derive
-  positionally — so it has the same per-250-frame-batch contamination (a transiently goal-parked outfielder
-  flagged; union grows across the lakehouse's batch builds). Roster-trust can't fix it. Needs a **derive-once-
-  per-full-match** path: a separable silly-kicks API (derive-once / accept pre-derived `is_goalkeeper` picks)
-  + a lakehouse change (derive once, feed `is_goalkeeper` into the per-batch builds). The S2
-  `n_implausible_gk_teams` guard already surfaces it. Spec'd in the PR-S105 CR's out-of-scope note.
-- **SkillCorner keeper-origin S1/S4 rate-gates (tracked follow-up, ADR-024 4.37.0 amendment / PR-S104).**
-  The per-row warns are the alarm; the standing CI rate-gates are the smoke detector (a count nothing
-  routinely checks is the silent-guard failure mode). **Must land** (not open-ended): (i) measure the
-  SkillCorner off-pitch rate on the pining corpus (DGX) → set the S1 player margin / ball `TOL` + a
-  batch/CI gate that hard-fails when the off-pitch rate exceeds the measured baseline + margin (a
-  123-type transform break); (ii) measure the out-of-region native-goalkick rate → wire a CI gate
-  asserting no provider exceeds a small %. Both reference ADR-024 + the design/plan docs
-  (`docs/superpowers/{specs,plans}/2026-06-30-skillcorner-keeper-origin-resolution*`).
-- **SkillCorner keeper-origin — empirical validation + remaining deferrals (ADR-024 4.37.0 / PR-S104).**
-  On real pining SkillCorner data: confirm goal-kick origins ≈ 100% own-box, pass origins localize, the
-  scatter SD collapses. **Validate-then-maybe:** the open-play own-half misdetection bound — after the
-  fix, check whether pass origins still land in the attacking half; only if they persist, add a generous
-  own-half bound (beyond → `unresolved`/flagged, never clamped). **Measure-before-optimize:** the
-  `_tracking_gk_xy_detected` per-row ±window loop (vectorize only if it shows as a corpus hotspot).
 - **Ask SkillCorner which pitch length their coordinates are normalised against (PR-S115 / ADR-038 §4;
   2026-07-14).** The metadata declares `pitch_length` (104 m on the affected matches) and our events
   converter has always used it; kloppy's tracking map is **non-affine** and assumes ~103.5 m effective
@@ -123,55 +85,11 @@ brainstorm → spec cycle before code.
   same small factor and this cycle does not fix it. The cheap empirical routes are closed
   (`image_corners_projection` all-null; no fixed-geometry set-piece landmark in the taxonomy). Provenance
   is the registered choice until answered; carry it as a question to SkillCorner.
-- **kloppy gateway `visibility: None` limitation for external users (PR-S115 / ADR-038 §5; 2026-07-14).**
-  `tracking/kloppy.py` discards SkillCorner's `is_detected` (hard-codes `visibility=None`), so an external
-  user on the kloppy path gets ~80%-interpolated keeper positions with no way to tell. The **native builder
-  (`tracking.skillcorner.convert_to_frames`) is the supported path** and surfaces it; upstreaming
-  `is_detected` into kloppy is out of scope (documented as a gateway limitation instead).
-- **Cache corpus-drift live-fingerprint (PR-S115 / ADR-038 deviation (a); 2026-07-14).** `scripts/_cache.py`
-  currently fingerprints with a **constant schema token** — it invalidates pre-Task-11 caches (the
-  load-bearing need) but does NOT detect corpus *drift* within the same schema. The live fingerprint
-  (sorted `(provider, match_id, visibility)` triples, computable from cached providers + match_ids +
-  `match_visibility`) is the registered follow-up. Until then the constraint is **a fresh `--output-dir`
-  per corpus** (the DGX runbook does this).
-- **Ghost-GK trainer fail-fast-at-startup for unclassified providers (PR-S115 / ADR-038 deviation (e);
-  2026-07-14).** The detected-only filter correctly fail-closes on an unclassified provider, but mid-run.
-  A startup-time check (validate every provider in the corpus is in `_DETECTION_AWARE_PROVIDERS` ∪
-  `_FULLY_OBSERVED_PROVIDERS` before any fitting) would fail faster. The registered retrain corpus is
-  all-classified (`skillcorner`+`idsse`+`gradientsports`; `metrica` excluded from GKDV corpora), so this
-  is a refinement, not a blocker.
-- **Publish the ghost-GK `full` to the HuggingFace Hub — OWNER-APPROVED SEPARATE WORKSTREAM, gated
-  on the parameters-only PR (4.54.0 / ADR-044).** The xS/xCross half is **DONE 2026-07-18**
-  (`silly-kicks/xshot-occurrence-v1` / `-v1`, `from_variant("sc_extended")` verified end-to-end).
-  Ghost-GK remains, and the artifact to upload is now the **PARAMETERS-ONLY stripped `full`**, NOT
-  the array-carrying one: as of 4.54.0 (ADR-044) `save()` no longer persists the per-sample arrays,
-  so the upload must use a `full` produced by the post-strip `save()` (a stripped, chirality-
-  carrying `full` is staged on the DGX under `~/Development/sk_stageB_448/` per the T-full step of
-  the 4.54.0 work; exclude `_feature_cache/`, verify by explicit file list). This also fixes the
-  `from_hub` breakage: the live `silly-kicks/ghost-gk-v1` artifact has no chirality block, so
-  4.51.0+ `load()` raises for every external consumer. **The HF write itself (overwrite the live
-  `full`, and whether/how to withdraw the existing array-carrying revisions) is part of the live
-  ghost-GK disclosure remediation the owner holds — NOT scheduled by the 4.54.0 PR, which changes
-  only the library + the bundled `default` artifact.** Recipe: `docs/research/tf19_pr2/
-  hf_upload_instructions.md` (updated with a pre-upload parameters-only assertion). Pull the served
-  files locally and verify hashes BEFORE uploading.
-- **TF-7 cross-family pitch-control cache in VAEP xfns (deferred).** `add_*`
-  aggregators accept `pitch_control_cache` (3.25.0); the `*_xfns` VAEP transformers
-  do not yet thread a shared cache across feature families in one pass (each keeps
-  its own per-frame precompute). Wiring the VAEP feature framework to inject one
-  shared `PitchControlCache` across xfns would extend cross-family reuse to the
-  VAEP path. Additive (no API churn). Also extend `pitch_control_cache` to
-  `player_influence`/`space_creation` callers' shared-pass usage (already wired on
-  the aggregators; lakehouse pre-builds one cache like it pre-links).
-- **Gradient Sports own-goal/cross-goal capture — SHIPPED 4.13.0 (ADR-018).** `RE`+`G` → `bad_touch`+
-  `owngoal` (post-LTR geometry tripwire), `CR`+`G` → cross + synthetic shot, `nonEvent` voided-event
-  exclusion, and own goals counted in VAEP labels for all providers. Owner-gated e2e validates the 3 real
-  WC2022 own goals + the g3853 disallowed-goal exclusion. Synthesized rows (cross-goal shot, foul) carry
-  the new `is_synthetic` GS schema column (provenance, shipped in 4.13.0). **Residual follow-up:**
-  **Codebook confirmation** — the `RE`+`G` ≡ own-goal rule + `nonEvent` semantics rest on the full
-  WC2022 empirical catalog (the PFF FC Change Log is not a semantic data dictionary); confirm against an
-  official PFF codebook if one becomes available, and whether OGs can surface under other event types
-  (e.g. `CL` deflection — none seen in WC2022).
+- **Gradient Sports own-goal codebook confirmation (residual from 4.13.0 / ADR-018; blocked on an
+  external artifact).** The shipped `RE`+`G` ≡ own-goal rule + `nonEvent` voided-event semantics rest on
+  the full WC2022 empirical catalog (the PFF FC Change Log is not a semantic data dictionary); confirm
+  against an official PFF **codebook if one becomes available**, and whether own goals can surface under
+  other event types (e.g. `CL` deflection — none seen in WC2022).
 - **`flat_zones` `nan_ok` hardening (deferred from 4.46.0 / PR-S113).** The NaN→zone-176 trap is
   currently closed by a corrected docstring plus `finite_coord_mask` at the one scoring seam. A
   `nan_ok: bool = False` parameter (default raises; the three NaN-tolerant fit seams `_markov.py:65`,
@@ -179,10 +97,6 @@ brainstorm → spec cycle before code.
   hard to enter rather than merely documented. **Deferred because it perturbs the exact fit seams
   whose byte-identity licenses "the deep-zone gate need not be re-run"** (ADR-036 non-goal #1); do it
   in a cycle where that gate is being re-run anyway.
-- **ADR-code reconciliation sweep.** Periodically verify that documented ADRs
-  (`docs/superpowers/adrs/ADR-*.md`) still match the codebase. Check that stated
-  constraints (e.g. "zero Spark imports in domain") hold in practice and that
-  superseded decisions are updated. Frequency: once per minor release cycle.
 
 ---
 

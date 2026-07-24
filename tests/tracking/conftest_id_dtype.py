@@ -150,10 +150,24 @@ def _das(a, f):
     return F.add_das(a, f)
 
 
+def _defensive_credit(a, f):
+    """add_defensive_credit with its xg/block/on-target contract columns supplied (P-2: no home_team_id).
+
+    The defending/attacking split resolves acting-team-vs-frame-team ids across the swept dtypes,
+    so this gate has teeth for the ADR-019 id-compat path (ids_differ in the aggregate)."""
+    a = a.copy()
+    a["xg"] = 0.2
+    a["shot_blocked"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    a["cross_blocked"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    a["shot_on_target_derived"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    return F.add_defensive_credit(a, f, xg_column="xg", xt=_xt())
+
+
 AGGREGATORS = [
     _a(F.add_action_context, "add_action_context"),
     _a(F.add_actor_pre_window, "add_actor_pre_window"),
     _named(lambda a, f, home_team_id: _das(a, f), "add_das"),
+    _named(lambda a, f, home_team_id: _defensive_credit(a, f), "add_defensive_credit"),
     _a(F.add_elastic_sync, "add_elastic_sync"),
     _a(F.add_gk_completion, "add_gk_completion"),
     _a(F.add_obso, "add_obso"),

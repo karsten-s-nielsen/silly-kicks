@@ -6324,3 +6324,52 @@ def shot_on_target_derived(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.Se
     See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
     """
     return compute_shot_goalmouth(actions, frames)["shot_on_target_derived"].rename("shot_on_target_derived")
+
+
+# --- TF-51: per-event defensive credit/debit aggregator (the C4 +1 action-coupled aggregator) ---
+from .defensive_credit._orchestration import (  # noqa: E402 -- module-level, cycle-safe (see _orchestration)
+    _aggregate_defensive_credit,
+)
+
+
+@nan_safe_enrichment
+def add_defensive_credit(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    xg_column: str,
+    xt,
+    blocked_column: str = "shot_blocked",
+    on_target_column: str = "shot_on_target_derived",
+    links: pd.DataFrame | None = None,
+    params=None,
+) -> pd.DataFrame:
+    """Per-action defending-team defensive-credit aggregate (TF-51). See NOTICE for citations.
+
+    No ``home_team_id``: the split derives from ``team_id != acting-team``. Links ONCE and threads
+    the pointers through the aggregate + the provenance merge (single-link perf budget).
+
+    Examples
+    --------
+    Attach per-action defending-team credit columns (needs a fitted ``ExpectedThreat`` and an injected
+    per-shot xG column)::
+
+        out = add_defensive_credit(actions, frames, xg_column="xg", xt=xt)
+        out[["defensive_credit_net", "defensive_credit_plus", "n_defensive_credits"]].head()
+    """
+    pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]  # the ONE link
+    out = _aggregate_defensive_credit(
+        actions,
+        frames,
+        xg_column=xg_column,
+        xt=xt,
+        blocked_column=blocked_column,
+        on_target_column=on_target_column,
+        links=pointers,
+        params=params,
+    )
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols) and len(pointers) > 0:
+        ptr = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
+        out = out.merge(ptr, left_on="action_id", right_index=True, how="left")
+    return out

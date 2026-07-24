@@ -297,6 +297,90 @@ def _run_sync_score():
     return links, add_sync_score(_actions(), links)
 
 
+def _run_defensive_credit():
+    """Self-contained domain scene (P-6): the shared 5-window fixture never puts a defender within
+    threshold of a shot, so no POSITIVE credit fires and defensive_credit_plus is constant-0. This
+    scene has 3 shots + a failed pass, each with a nearby opponent + a distinct xG, so _plus/_minus/
+    _net are all non-constant (kept local rather than mangling make_actions used by 30 aggregators)."""
+    from silly_kicks.spadl import config as spadlconfig
+
+    # (type, result, start_x, start_y, xg, on_target)  -- home team 10 attacks x=105
+    specs = [
+        ("shot", "fail", 95.0, 34.0, 0.2, False),  # pressure_on_missed_shot +0.2
+        ("shot", "fail", 80.0, 40.0, 0.4, False),  # pressure_on_missed_shot +0.4 (differs -> _plus live)
+        ("shot", "fail", 90.0, 30.0, 0.3, True),  # failed_pressure_shot_on_target -0.3 (_minus live)
+        ("pass", "fail", 50.0, 34.0, np.nan, None),  # pressure_pass_fail +xt (another + value)
+    ]
+    arows, frows = [], []
+    for i, (tn, rn, sx, sy, xg, ot) in enumerate(specs):
+        arows.append(
+            dict(
+                game_id="gL",
+                period_id=1,
+                action_id=i,
+                time_seconds=float(i * 10),
+                team_id=10,
+                player_id=100 + i,
+                type_id=spadlconfig.actiontype_id[tn],
+                result_id=spadlconfig.result_id[rn],
+                bodypart_id=spadlconfig.bodypart_id["foot"],
+                start_x=sx,
+                start_y=sy,
+                end_x=sx + 3.0,
+                end_y=sy,
+                xg=xg,
+                shot_blocked=pd.NA,
+                cross_blocked=pd.NA,
+                shot_on_target_derived=ot,
+            )
+        )
+        fc = dict(
+            game_id="gL",
+            period_id=1,
+            frame_id=1000 + i,
+            time_seconds=float(i * 10),
+            vx=0.0,
+            vy=0.0,
+            is_goalkeeper=False,
+            home_team_id=10,
+            source_provider="test",
+        )
+        frows += [
+            {
+                **fc,
+                "team_id": 20,
+                "player_id": 900 + i,
+                "x": sx + 1.0,
+                "y": sy,
+                "is_ball": False,
+                "team_attacking_direction": "rtl",
+            },
+            {
+                **fc,
+                "team_id": 10,
+                "player_id": 800 + i,
+                "x": 52.0,
+                "y": 34.0,
+                "is_ball": False,
+                "team_attacking_direction": "ltr",
+            },
+            {
+                **fc,
+                "team_id": np.nan,
+                "player_id": np.nan,
+                "x": sx,
+                "y": sy,
+                "is_ball": True,
+                "team_attacking_direction": "ltr",
+            },
+        ]
+    a = pd.DataFrame(arows)
+    for c in ("shot_blocked", "cross_blocked", "shot_on_target_derived"):
+        a[c] = pd.array(a[c].tolist(), dtype="boolean")
+    frames = pd.DataFrame(frows)
+    return (a, F.add_defensive_credit(a, frames, xg_column="xg", xt=_xt()))
+
+
 def _run_das():
     return _actions(), F.add_das(_actions(), _frames_with_possession())
 
@@ -357,6 +441,7 @@ ENTRIES: dict[str, object] = {
     "add_actor_pre_window": _std(F.add_actor_pre_window),
     "add_cover_shadows": _xtf(F.add_cover_shadows),
     "add_das": _run_das,
+    "add_defensive_credit": _run_defensive_credit,
     "add_defensive_line": _std(F.add_defensive_line, home_team_id=5, n=4),
     "add_elastic_sync": _std(F.add_elastic_sync),
     "add_ghost_gk": _std(F.add_ghost_gk, home_team_id=5),
