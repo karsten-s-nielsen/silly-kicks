@@ -7,6 +7,8 @@ and change cadence). See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
+from typing import overload
+
 import numpy as np
 import pandas as pd
 
@@ -23,6 +25,12 @@ _FLOOR = "poor"
 _UNKNOWN = "unknown"
 
 
+@overload
+def describe_level(z: float, *, higher_is_better: bool = ...) -> str: ...
+@overload
+def describe_level(z: np.ndarray, *, higher_is_better: bool = ...) -> np.ndarray: ...
+@overload
+def describe_level(z: pd.Series, *, higher_is_better: bool = ...) -> pd.Series: ...
 def describe_level(z, *, higher_is_better: bool = True):
     """Map a z-score (or array/Series of them) to a verbal band, direction-aware and NaN-safe.
 
