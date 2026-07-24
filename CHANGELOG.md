@@ -5,6 +5,38 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.58.0] — 2026-07-23
+
+### Added — TF-19 xS-probe placebo v2 (relevance-matched defender null; PR-S129, ADR-037 amendment)
+
+A pre-registered second variant of the registered xS-arm GK-substitution probe
+(`silly_kicks/tracking/_model_eval.py`), whose ONLY difference from the frozen v1 is the placebo pool.
+TF-19 PR-3b Part A (4.55.4) returned `no_valid_placebo → unmeasurable_at_dose` — not because there is no
+GK effect (it is dose-responsive, ~3.1× the nearest-defender control) but because v1's *random-outfielder*
+placebo was degenerate (`placebo_p95 = 0.0`, 66% zero), and that gate short-circuits before the clustered
+dose-response ever runs. v2 swaps in the **model-relevant defenders** so the test runs and reaches a real,
+citeable verdict.
+
+- **`substitution_deltas(..., placebo=)`** — new keyword: `"random"` (frozen v1 default, byte-identical) or
+  `"model_relevant_def"` (the ball-nearest defenders minus the `nearest_def`, mirroring the xS extractor's
+  5-nearest-defender reference). A distinct-role `attacker_diag` population (≤5 nearest attackers, carrier
+  excluded) is emitted for reporting but NEVER banded by `evaluate_xs_probe`.
+- **`xs_substitution_probe_v2`** + **`PROBE_WRAPPERS["xs_v2"]`** — the v2 wrapper (reuses
+  `evaluate_xs_probe` verbatim, relabels `rule`) and its registry entry (constants identical to v1; the
+  sole difference is `placebo_pool = "model_relevant_def"`, self-documented).
+- **Honest framing (baked into the report generator):** the defender placebo is a *weaker* control than
+  `nearest_def`, so it is **inert in the ratio** (`max()` pins to `nearest_def`); its job is to clear the
+  instrument-validity gate with a principled null and be a reportable fair null — NOT to move the bar. The
+  ratio prong is near-certain to pass; **v2's real decider is the clustered dose-response permutation**, run
+  for the first time.
+- **Driver** `scripts/validate_xs_probe.py` gains `--variant {v1,v2,both}` + `--lock-commit`, writing a
+  two-variant `metrics.json`/`report.md` (v1's `no_valid_placebo` and v2's verdict side by side + the
+  attacker diagnostic) and recording the **lock-commit hash** for auditable blindness.
+- **v1 is byte-identical** (frozen suite + a numeric pin on the pre-refactor random path); `evaluate_xs_probe`
+  and the `xs`/`xcross` registrations are untouched.
+- **Research instrument** — in no default xfn list, no VAEP consumer: **C4-free (count stays 31), no retrain
+  trigger.** The ~64-match GS deliverable run is a post-lock owner step (blindness discipline).
+
 ## [4.57.0] — 2026-07-23
 
 ### Added — TF-51 per-event defensive credit/debit family (PR-S128, ADR-047)

@@ -327,6 +327,48 @@ regime.
   not a runtime feature package — the cycle's one new C4 element is reserved for `gkdv/`
   (PR-3, same treatment as `xtgk`).
 
+## Amendment (4.58.0, PR-S129) — xS-probe placebo v2 (relevance-matched defender null)
+
+**Date:** 2026-07-23. **Status:** Accepted. **Source spec:**
+`docs/superpowers/specs/2026-07-23-tf19-xs-placebo-v2-design.md` (twice cross-session-reviewed); plan
+`docs/superpowers/plans/2026-07-23-tf19-xs-placebo-v2.md`.
+
+**Problem.** TF-19 PR-3b Part A (4.55.4, PR-S126) ran the registered xS-arm GK-substitution probe and
+returned `no_valid_placebo → unmeasurable_at_dose` — not for lack of a GK effect (dose-responsive, ~3.1×
+the nearest-defender control) but because the probe's *secondary* null control, a **random outfielder**, was
+degenerate (`placebo_p95 = 0.0`, zero-fraction 0.66). That gate fires before the clustered dose-response
+ever runs, so the effect's *significance* was never tested.
+
+**Decision.** Register a NEW variant `xs-dose-banded-v2` ALONGSIDE the frozen v1 (v1's rule / constants /
+`evaluate_xs_probe` untouched; the record reports both verdicts). The ONLY change is the placebo pool:
+random outfielder → the **model-relevant defenders** (ball-nearest defenders, minus the carrier-nearest
+`nearest_def`, mirroring the xS extractor's 5-nearest-defender reference). Attackers are excluded from the
+gated pool — the nearest attacker is the shooter, so gating on it would inflate the placebo through
+attacking geometry — but survive as a reported, carrier-excluded, non-gating `attacker_diag` population.
+
+**Honest consequence (settled in review).** The defender placebo is a *weaker* control than `nearest_def`
+(farther from the ball), so it is **inert in the ratio prong** (`gk_med ≥ 2·max(nearest_def, placebo_p95)`
+pins to `nearest_def`). Its role is (1) to clear the instrument-validity `no_valid_placebo` gate with a
+principled, non-degenerate control (which the random pool could not) and (2) to be a reportable fair null —
+NOT to move the bar. With the gate cleared and the ratio near-certain to pass, **v2's genuine open question
+is the clustered dose-response permutation**, which v1 never reached.
+
+**Blindness by discipline, made auditable.** The pool + constants land in a **lock commit**; the ~64-match
+GS run happens only after it and records the lock-commit hash in `metrics.json`, so the git DAG shows
+constants-locked-before-run. The run is a post-lock owner/DGX step (`--variant both`), reported under
+`docs/research/tf19_pr3b_xs_v2/` — NOT part of the lock commit.
+
+**Surfaces.** `substitution_deltas(..., placebo="random"|"model_relevant_def")` (default `"random"` =
+byte-identical v1); private `_model_relevant_def_pool` / `_attacker_diag_pool`; `xs_substitution_probe_v2`
+(reuses `evaluate_xs_probe` verbatim, relabels `rule`); `PROBE_WRAPPERS["xs_v2"]` (constants identical to
+`xs` + `placebo_pool`); driver `scripts/validate_xs_probe.py` `--variant {v1,v2,both}` + `--lock-commit`.
+
+**Scope.** Research instrument in `tracking/_model_eval.py` (stays PRIVATE) — in no default xfn list, no
+VAEP consumer. **C4-free** (no new action-coupled aggregator; the 4.57.0 count of 31 is unchanged) and **no
+retrain trigger** (xS/ghost weights untouched — v2 only re-reads them through a different placebo pool). v1
+is byte-identical (frozen suite + a pre-refactor numeric pin). No new methodological reference (placebo
+redesign within the existing ADR-037 probe; xS attribution arXiv:2512.00203 unchanged).
+
 ## References
 
 Spec: `docs/superpowers/specs/2026-07-12-tf19-gkdv-regate-and-v1-design.md`. Le et al.

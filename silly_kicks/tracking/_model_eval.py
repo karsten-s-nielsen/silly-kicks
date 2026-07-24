@@ -15,6 +15,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import canonical_id, canonical_id_series, ids_match
 from silly_kicks.spadl import config as _spadlconfig
 
 # --- Pitch rectangle (never hardcode 105/68): the registered off-pitch policy (spec §3.1(2),
@@ -206,6 +207,51 @@ def _nearest_def_mask(grp: pd.DataFrame, gk_team, cpid) -> np.ndarray | None:
     return grp["player_id"].to_numpy() == nd_id
 
 
+def _model_relevant_def_pool(grp: pd.DataFrame, gk_team, cpid, *, k: int = 5) -> np.ndarray:
+    """v2 placebo pool (spec §3): the ball-nearest ``k`` DEFENDERS of ``gk_team``, minus the
+    ``nearest_def`` (carrier-nearest, v1's control a) by player_id. Mirrors the xS extractor's
+    model reference (5 nearest defenders to the BALL; ``def_xy`` is already GK-free, so the
+    'minus GK' is a no-op). Returns an array of 0-5 player_ids (4 when nearest_def is among the
+    ball-nearest-k, 5 when it is not, fewer on a sparse-defender frame)."""
+    ball = grp[grp["is_ball"].astype(bool)]
+    if not len(ball):
+        return np.empty(0, dtype=object)
+    bx, by = float(ball["x"].iloc[0]), float(ball["y"].iloc[0])
+    defenders = grp[
+        ids_match(grp["team_id"], gk_team) & ~grp["is_ball"].astype(bool) & ~grp["is_goalkeeper"].astype(bool)
+    ]
+    if not len(defenders):
+        return np.empty(0, dtype=object)
+    d2 = (defenders["x"].to_numpy(float) - bx) ** 2 + (defenders["y"].to_numpy(float) - by) ** 2
+    pool = defenders["player_id"].to_numpy()[np.argsort(d2, kind="stable")[:k]]
+    nd_mask = _nearest_def_mask(grp, gk_team, cpid)
+    if nd_mask is not None:
+        nd_id = grp["player_id"].to_numpy()[nd_mask][0]
+        # nd_id and pool are both from grp["player_id"] (same-source column) -> a raw != is
+        # dtype-safe here (ADR-019 both-column same-source); no cross-source scalar involved.
+        pool = pool[pool != nd_id]
+    return pool
+
+
+def _attacker_diag_pool(grp: pd.DataFrame, gk_team, cpid, *, k: int = 5) -> np.ndarray:
+    """Non-gating diagnostic pool (spec §3): up to ``k`` nearest ATTACKERS (the ~gk_team team,
+    non-GK) to the ball, with the carrier (``cpid``) excluded by id. Reported only (actor_role
+    'attacker_diag'); NEVER banded by evaluate_xs_probe."""
+    ball = grp[grp["is_ball"].astype(bool)]
+    if not len(ball):
+        return np.empty(0, dtype=object)
+    bx, by = float(ball["x"].iloc[0]), float(ball["y"].iloc[0])
+    attackers = grp[
+        ~ids_match(grp["team_id"], gk_team) & ~grp["is_ball"].astype(bool) & ~grp["is_goalkeeper"].astype(bool)
+    ]
+    # carrier id crosses columns (ball_carrier_player_id vs player_id) -> ADR-019 ids_match.
+    attackers = attackers[~ids_match(attackers["player_id"], cpid)]
+    if not len(attackers):
+        return np.empty(0, dtype=object)
+    d2 = (attackers["x"].to_numpy(float) - bx) ** 2 + (attackers["y"].to_numpy(float) - by) ** 2
+    return attackers["player_id"].to_numpy()[np.argsort(d2, kind="stable")[:k]]
+
+
 def _tidy_rows(gid, pid, fid, role, replicate, moves, deltas, off_pitch, ghost_clamped, ghost_out_of_box) -> list[dict]:
     """One tidy row per (move, |delta P|) for a single actor in a single frame. ``off_pitch``
     is the ``_moved_off_pitch`` flag list, parallel to ``moves``/``deltas``."""
@@ -293,13 +339,13 @@ def _validate_targets(targets: pd.DataFrame) -> None:
             )
 
 
-def _targets_deltas(model, frames, *, arm, targets, n_placebo_replicates, seed, advance_m) -> pd.DataFrame:
+def _targets_deltas(
+    model, frames, *, arm, targets, n_placebo_replicates, seed, advance_m, placebo="random"
+) -> pd.DataFrame:
     """Ghost-target substitution: move the GK to the supplied per-frame target; displace each
     control by the SAME per-frame vector (paired-vector, spec §3.1(2)). The targets DataFrame
     defines the evaluation set (no n_frames subsample); eligible frames without a target are
     skipped. Placebo replicate r draws with ``default_rng(seed + r)``."""
-    from silly_kicks.id_compat import canonical_id, canonical_id_series
-
     _validate_targets(targets)
     extract_fn = _resolve_extractor(arm)
     key_cols = ["game_id", "period_id", "frame_id"]
@@ -352,9 +398,13 @@ def _targets_deltas(model, frames, *, arm, targets, n_placebo_replicates, seed, 
             nd_deltas = _delta_for_move(model, grp, nd_mask, moves, extract_fn, kw, base_p=base_p)
             nd_off = _moved_off_pitch(grp, nd_mask, moves)
             rows += _tidy_rows(gid, pid, fid, "nearest_def", 0, moves, nd_deltas, nd_off, ghost_clamped, ghost_oob)
-        outs = grp[~grp["is_ball"].astype(bool) & ~grp["is_goalkeeper"].astype(bool)]
-        out_ids = outs["player_id"].to_numpy()
-        contexts.append((grp, gid, pid, fid, moves, kw, out_ids, ghost_clamped, ghost_oob, base_p))
+        if placebo == "model_relevant_def":
+            out_ids = _model_relevant_def_pool(grp, gk_team, cpid)
+            attacker_ids = _attacker_diag_pool(grp, gk_team, cpid)
+        else:  # "random" -- the frozen v1 pool: all non-ball, non-GK players of BOTH teams
+            out_ids = grp[~grp["is_ball"].astype(bool) & ~grp["is_goalkeeper"].astype(bool)]["player_id"].to_numpy()
+            attacker_ids = None
+        contexts.append((grp, gid, pid, fid, moves, kw, out_ids, attacker_ids, ghost_clamped, ghost_oob, base_p))
 
     # I1: fail LOUD on zero overlap -- a silent empty result would read as "no signal" when the
     # real cause is a disjoint key set (targets built from a different frames feed, or a
@@ -374,14 +424,19 @@ def _targets_deltas(model, frames, *, arm, targets, n_placebo_replicates, seed, 
     # drawn without replacement, displaced by the frame's paired vector.
     for r in range(n_placebo_replicates):
         rng_r = np.random.default_rng(seed + r)
-        for grp, gid, pid, fid, moves, kw, out_ids, ghost_clamped, ghost_oob, base_p in contexts:
-            if not len(out_ids):
-                continue
-            rid = rng_r.choice(out_ids, size=1, replace=False)[0]
-            pl_mask = grp["player_id"].to_numpy() == rid
-            pl_deltas = _delta_for_move(model, grp, pl_mask, moves, extract_fn, kw, base_p=base_p)
-            pl_off = _moved_off_pitch(grp, pl_mask, moves)
-            rows += _tidy_rows(gid, pid, fid, "placebo_out", r, moves, pl_deltas, pl_off, ghost_clamped, ghost_oob)
+        for grp, gid, pid, fid, moves, kw, out_ids, attacker_ids, ghost_clamped, ghost_oob, base_p in contexts:
+            if len(out_ids):  # placebo draw FIRST -> v1 rng stream is byte-identical
+                rid = rng_r.choice(out_ids, size=1, replace=False)[0]
+                pl_mask = grp["player_id"].to_numpy() == rid
+                pl_deltas = _delta_for_move(model, grp, pl_mask, moves, extract_fn, kw, base_p=base_p)
+                pl_off = _moved_off_pitch(grp, pl_mask, moves)
+                rows += _tidy_rows(gid, pid, fid, "placebo_out", r, moves, pl_deltas, pl_off, ghost_clamped, ghost_oob)
+            if attacker_ids is not None and len(attacker_ids):  # v2 only: reported, never banded
+                aid = rng_r.choice(attacker_ids, size=1, replace=False)[0]
+                a_mask = grp["player_id"].to_numpy() == aid
+                a_deltas = _delta_for_move(model, grp, a_mask, moves, extract_fn, kw, base_p=base_p)
+                a_off = _moved_off_pitch(grp, a_mask, moves)
+                rows += _tidy_rows(gid, pid, fid, "attacker_diag", r, moves, a_deltas, a_off, ghost_clamped, ghost_oob)
     return pd.DataFrame(rows, columns=_TIDY_COLUMNS)
 
 
@@ -397,12 +452,16 @@ def substitution_deltas(
     n_placebo_replicates: int = XS_PROBE_PLACEBO_REPLICATES,
     seed: int = 42,
     advance_m: float = 35.0,
+    placebo: str = "random",  # "random" (frozen v1 pool) | "model_relevant_def" (v2, spec §3)
 ) -> pd.DataFrame:
     """Tidy per-(frame, actor, move) |delta P|: columns game_id, period_id, frame_id,
-    actor_role ('gk'|'nearest_def'|'placebo_out'), replicate, displacement_m, delta_p,
-    ghost_clamped, ghost_out_of_box, moved_off_pitch. mode='targets' moves the GK to the
+    actor_role ('gk'|'nearest_def'|'placebo_out'|'attacker_diag'), replicate, displacement_m,
+    delta_p, ghost_clamped, ghost_out_of_box, moved_off_pitch. mode='targets' moves the GK to the
     SUPPLIED target and displaces each control by the SAME per-frame vector (paired-vector
     controls, spec §3.1(2)); placebo replicates re-draw the outfielder, never the vector.
+    ``placebo`` selects the targets-mode placebo pool: 'random' (frozen v1: any outfielder) or
+    'model_relevant_def' (v2, spec §3: the ball-nearest defenders, PLUS non-gating 'attacker_diag'
+    rows the evaluator ignores). Panel mode ignores ``placebo`` (no placebo replicates).
     REGISTERED off-pitch policy: a control pushed off-pitch is scored anyway, never
     clamped (clamping would break the paired-vector guarantee); ``moved_off_pitch`` flags
     it per row and ``evaluate_xs_probe`` reports the control fraction (report-only).
@@ -420,6 +479,8 @@ def substitution_deltas(
         raise ValueError(f"unknown mode: {mode!r} (expected 'panel' or 'targets')")
     if mode == "panel" and targets is not None:
         raise ValueError("targets supplied but ignored in panel mode; use mode='targets' to consume them")
+    if placebo not in ("random", "model_relevant_def"):
+        raise ValueError(f"unknown placebo: {placebo!r} (expected 'random' or 'model_relevant_def')")
     if mode == "targets":
         if targets is None:
             raise ValueError("mode='targets' requires a targets DataFrame (one row per frame triple)")
@@ -431,6 +492,7 @@ def substitution_deltas(
             n_placebo_replicates=n_placebo_replicates,
             seed=seed,
             advance_m=advance_m,
+            placebo=placebo,
         )
     return _panel_deltas(model, frames, arm=arm, n_frames=n_frames, n_random=n_random, seed=seed, advance_m=advance_m)
 
@@ -617,6 +679,22 @@ def xs_substitution_probe(model, frames, targets, *, seed: int = 42) -> dict:
     return out
 
 
+def xs_substitution_probe_v2(model, frames, targets, *, seed: int = 42) -> dict:
+    """The v2 xS probe (ADR-037 amendment): same rule as v1, but the placebo pool is the
+    model-relevant defenders (``placebo='model_relevant_def'``) instead of random outfielders.
+    Reuses ``evaluate_xs_probe`` verbatim; relabels the report ``rule`` (the pure evaluator is
+    unchanged). See docs/superpowers/specs/2026-07-23-tf19-xs-placebo-v2-design.md."""
+    deltas = substitution_deltas(
+        model, frames, arm="xs", mode="targets", targets=targets, seed=seed, placebo="model_relevant_def"
+    )
+    out = evaluate_xs_probe(deltas)
+    out["rule"] = "xs-dose-banded-v2"  # wrapper-level relabel; evaluator emits v1's constant
+    out["placebo_pool"] = "model_relevant_def"
+    gk = deltas[deltas["actor_role"] == "gk"]
+    out["n_frames_used"] = len(gk[["game_id", "period_id", "frame_id"]].drop_duplicates())
+    return out
+
+
 # --- Re-gate verdict (spec §3.5) -----------------------------------------------------------
 _PROBE_VERDICTS = frozenset(
     {
@@ -685,5 +763,13 @@ _register_wrapper(
         "min_game_n": XS_PROBE_MIN_GAME_N,
         "min_games": XS_PROBE_MIN_GAMES,
         "dose_response_permutations": XS_PROBE_DOSE_RESPONSE_PERMUTATIONS,
+    },
+)
+_register_wrapper(
+    "xs_v2",
+    xs_substitution_probe_v2,
+    {
+        **PROBE_WRAPPERS["xs"]["rule_constants"],  # identical numeric rule (spec §2 D3)
+        "placebo_pool": "model_relevant_def",  # the ONE difference, self-documented
     },
 )
