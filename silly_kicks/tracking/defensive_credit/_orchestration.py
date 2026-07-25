@@ -10,7 +10,8 @@ from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
 from silly_kicks.tracking.utils import link_actions_to_frames
 
 from ._chaining import with_possessions
-from ._params import DEFENSIVE_CREDIT_RULES, DefensiveCreditParams
+from ._line_break_signal import precompute_line_break_between_lines
+from ._params import DEFENSIVE_CREDIT_RULES, RULE_FAILED_MARKING_THROUGH_BALL, DefensiveCreditParams
 from ._rules import RULE_REGISTRY, CreditRow, RuleContext
 
 _LONG_COLS = [
@@ -24,6 +25,7 @@ _LONG_COLS = [
     "anchor_type",
     "frame_id",
     "sizing",
+    "resolution",
 ]
 
 _SHOT_TYPE = spadlconfig.actiontype_id["shot"]
@@ -94,6 +96,14 @@ def compute_defensive_credits(
     flip_series = acting_team_attacks_rtl(act, frames)  # ONE reprojection decision per action
 
     enabled = [r for r in DEFENSIVE_CREDIT_RULES if r in params.rules]
+    # Item 3: precompute the between_lines line-break signal ONCE (threading the single link via
+    # fid_by_pos); skip the Ward-clustering cost entirely when the rule is disabled (Q8).
+    if RULE_FAILED_MARKING_THROUGH_BALL in enabled:
+        line_break_between_lines = precompute_line_break_between_lines(
+            act, frames, fid_by_pos=fid_by_pos, flip_by_pos=flip_series.to_numpy()
+        )
+    else:
+        line_break_between_lines = pd.array([pd.NA] * len(act), dtype="boolean")
     rows: list[CreditRow] = []
     for idx in range(len(act)):
         fid = fid_by_pos[idx]
@@ -109,6 +119,7 @@ def compute_defensive_credits(
             frame_id=fid,
             acting_team_id=act.iloc[idx]["team_id"],
             flip=bool(flip_series.iloc[idx]),
+            line_break_between_lines=line_break_between_lines,
         )
         for rule_name in enabled:
             rows.extend(RULE_REGISTRY[rule_name](ctx))
@@ -130,7 +141,7 @@ def _to_long_form(rows: list[CreditRow], act: pd.DataFrame) -> pd.DataFrame:
 
 
 def _empty_long_form(act: pd.DataFrame) -> pd.DataFrame:
-    empty = {c: pd.Series([], dtype="object") for c in _LONG_COLS}
+    empty = {c: pd.Series([], dtype="object") for c in _LONG_COLS}  # resolution stays object
     empty["signed_value"] = pd.Series([], dtype="float64")
     empty["frame_id"] = pd.Series([], dtype="Int64")
     empty["period_id"] = pd.Series([], dtype="int64")

@@ -6438,3 +6438,41 @@ def add_defensive_credit(
         ptr = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
         out = out.merge(ptr, left_on="action_id", right_index=True, how="left")
     return out
+
+
+# --- TF-51 v2 Item 5: pressure-commitment cue (descriptive feature, NOT signed credit) ---
+from ._press_commitment import compute_press_commitment  # noqa: E402 -- module-level, cycle-safe
+
+
+@nan_safe_enrichment
+def add_press_commitment(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    params=None,
+) -> pd.DataFrame:
+    """Attach the per-action pressure-commitment cue (TF-51 v2 Item 5, spec section 6).
+
+    Adds ``press_commitment`` (float, m/s^2; + committing / - containing),
+    ``press_commitment_closing_speed`` (float, m/s) and ``press_commitment_source``. Pure -- returns a
+    NEW frame; links ONCE (threads the pointers) and merges linkage provenance idempotently. NO
+    ``home_team_id`` (the defender->actor axis is a relative vector, direction-agnostic).
+
+    Examples
+    --------
+    Descriptor of whether the pressing defender commits (drives in) vs contains (jockeys)::
+
+        out = add_press_commitment(actions, frames)
+        out[["press_commitment", "press_commitment_source"]].head()
+    """
+    pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+    out = actions.copy()
+    cue = compute_press_commitment(actions, frames, links=pointers, params=params)
+    for c in ("press_commitment", "press_commitment_closing_speed", "press_commitment_source"):
+        out[c] = cue[c]
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols) and len(pointers) > 0:
+        ptr = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
+        out = out.merge(ptr, left_on="action_id", right_index=True, how="left")
+    return out

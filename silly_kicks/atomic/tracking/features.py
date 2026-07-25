@@ -77,6 +77,7 @@ __all__ = [
     "add_player_influence",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
+    "add_press_commitment",
     "add_pressure_on_actor",
     "add_shot_goalmouth",
     "add_structural_pass",
@@ -1209,6 +1210,36 @@ def add_cover_shadows(
         errors="ignore",
     )
     return result
+
+
+@nan_safe_enrichment
+def add_press_commitment(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    params=None,
+) -> pd.DataFrame:
+    """Atomic-SPADL mirror of ``tracking.features.add_press_commitment`` (TF-51 v2 Item 5).
+
+    A pure PASS-THROUGH (N11/P8): ``compute_press_commitment`` reads only ids + ``time_seconds`` +
+    ``team_id`` off the actions and resolves the actor + pressing defender from the linked FRAME --
+    it never reads ``start_x``/``start_y`` -- so, unlike ``add_cover_shadows``, no ``x``->``start_x``
+    rename bridge is needed (a rename that does nothing is worse than none). It exists for API
+    symmetry + discoverability (every ``tracking.features`` aggregator has an ``atomic.tracking``
+    twin); the C4 ``atomic.tracking`` +1 is SYMMETRY, not new capability. Gate-covered by PURITY
+    alone -- the nan-safety / id-dtype / liveness gates are tracking-only (spec section 8).
+
+    Examples
+    --------
+    Atomic actions carry the same ids + ``time_seconds`` + ``team_id`` the cue needs::
+
+        from silly_kicks.atomic.tracking.features import add_press_commitment
+        enriched = add_press_commitment(atomic_actions, frames)
+    """
+    from silly_kicks.tracking.features import add_press_commitment as _std_pc
+
+    return _std_pc(actions, frames, links=links, params=params)
 
 
 # ---------------------------------------------------------------------------

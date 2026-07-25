@@ -7,6 +7,11 @@ from silly_kicks.tracking.defensive_credit import (
     DefensiveCreditParams,
     compute_defensive_credits,
 )
+from silly_kicks.tracking.defensive_credit._params import (
+    ANCHOR_TYPE_VALUES,
+    RESOLUTION_VALUES,
+    SIZING_VALUES,
+)
 from tests.tracking._defensive_credit_fixtures import frame_with_defender, one_action
 
 _LONG_COLS = [
@@ -20,6 +25,7 @@ _LONG_COLS = [
     "anchor_type",
     "frame_id",
     "sizing",
+    "resolution",
 ]
 
 
@@ -40,7 +46,9 @@ def test_long_form_schema_and_values(fitted_xt):
     assert list(out.columns) == _LONG_COLS
     assert (out["rule"] == "pressure_on_missed_shot").all()
     assert out["signed_value"].iloc[0] == pytest.approx(0.2)
-    assert set(out["sizing"]) <= {"xg", "xt"}
+    assert set(out["sizing"]) <= set(SIZING_VALUES)
+    assert set(out["anchor_type"]) <= set(ANCHOR_TYPE_VALUES)
+    assert set(out["resolution"]) <= set(RESOLUTION_VALUES)
 
 
 def test_pressured_saved_shot_is_negative_end_to_end(fitted_xt):

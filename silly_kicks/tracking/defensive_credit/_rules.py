@@ -8,14 +8,23 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
 
 from ._chaining import recovery_after_pass, resulting_shot_in_possession, with_possessions
+from ._line_break_signal import precompute_line_break_between_lines
 from ._params import (
+    ANCHOR_BAD_TOUCH,
+    ANCHOR_CROSS,
+    ANCHOR_PASS,
+    ANCHOR_SHOT,
+    ANCHOR_TAKE_ON,
+    RESOLUTION_ANCHOR_ACTOR,
     RULE_BEATEN_1V1,
     RULE_FAILED_CROSS_BLOCK,
     RULE_FAILED_MARKING_THROUGH_BALL,
@@ -28,10 +37,11 @@ from ._params import (
     RULE_SYNCHRONIZED_FINAL_THIRD_PRESSURE,
     SIZING_XG,
     SIZING_XT,
+    SIZING_XT_PRESSING,
     DefensiveCreditParams,
 )
 from ._resolution import resolve_responsible_defenders
-from ._sizing import extinguished_xt, xg_of_shot
+from ._sizing import sized_xt, xg_of_shot
 
 _SHOT_TYPE = spadlconfig.actiontype_id["shot"]
 _GOAL_RESULT = spadlconfig.result_id["success"]  # a scored shot is on-target by construction
@@ -58,6 +68,7 @@ class CreditRow:
     anchor_type: str
     frame_id: object
     sizing: str
+    resolution: str  # how the credited player was determined (Item 2, RESOLUTION_VALUES)
 
 
 @dataclass
@@ -72,6 +83,10 @@ class RuleContext:
     frame_id: int | None  # resolved linked frame for this action (None when unlinked)
     acting_team_id: object
     flip: bool  # precomputed action-LTR reprojection decision (ADR-028)
+    # per-action between_lines line-break signal (Item 3); a nullable-boolean array of len(actions),
+    # indexed by ctx.idx. True fires rule_failed_marking_through_ball; False / short-circuit-0 / <NA>
+    # do not. Typed Any: it is an ExtensionArray whose element type varies (bool / pd.NA).
+    line_break_between_lines: Any = None
 
     @property
     def action(self) -> pd.Series:
@@ -95,7 +110,12 @@ class RuleContext:
         """Convenience builder for unit tests: single action, single frame."""
         act = with_possessions(actions).reset_index(drop=True)
         fid = int(frames["frame_id"].iloc[0]) if "frame_id" in frames.columns and len(frames) else None
-        flip = bool(acting_team_attacks_rtl(act, frames).iloc[idx])
+        flip_series = acting_team_attacks_rtl(act, frames)
+        # single-frame test path: every action is assumed to link to the one frame (frame_id=fid)
+        fid_by_pos = np.full(len(act), np.nan if fid is None else float(fid))
+        line_break = precompute_line_break_between_lines(
+            act, frames, fid_by_pos=fid_by_pos, flip_by_pos=flip_series.to_numpy()
+        )
         return cls(
             actions=act,
             frames=frames,
@@ -106,7 +126,8 @@ class RuleContext:
             params=params,
             frame_id=fid,
             acting_team_id=act.iloc[idx]["team_id"],
-            flip=flip,
+            flip=bool(flip_series.iloc[idx]),
+            line_break_between_lines=line_break,
         )
 
 
@@ -138,8 +159,18 @@ def _on_target_state(ctx: RuleContext):
     return bool(val)
 
 
-def _xt_at(ctx: RuleContext, x: float, y: float) -> float:
-    return float(extinguished_xt([(x, y)], ctx.xt)[0])
+def _sized_xt(ctx: RuleContext, x: float, y: float) -> float:
+    """xT sizing for the turnover rules, reflecting under the opt-in pressing lens (Item 1).
+
+    The lens-aware successor to the raw origin lookup: ``pressing_lens=False`` (default) is
+    byte-identical to ``extinguished_xt([(x, y)], ctx.xt)[0]``.
+    """
+    return sized_xt(x, y, ctx.xt, pressing_lens=ctx.params.pressing_lens)
+
+
+def _xt_sizing_token(ctx: RuleContext) -> str:
+    """The turnover rows' ``sizing`` provenance token: ``xt_pressing`` under the lens, else ``xt``."""
+    return SIZING_XT_PRESSING if ctx.params.pressing_lens else SIZING_XT
 
 
 def _shot_credit(ctx: RuleContext, *, rule: str, sign: float, mode: str) -> list[CreditRow]:
@@ -158,9 +189,10 @@ def _shot_credit(ctx: RuleContext, *, rule: str, sign: float, mode: str) -> list
                 team_id=d["team_id"],
                 rule=rule,
                 signed_value=sign * xg,
-                anchor_type="shot",
+                anchor_type=ANCHOR_SHOT,
                 frame_id=ctx.frame_id,
                 sizing=SIZING_XG,
+                resolution=d["resolution"],  # the mode that actually resolved (lane / nearest_fallback / nearest)
             )
         )
     return rows
@@ -186,7 +218,8 @@ def rule_failed_pressure_shot_on_target(ctx: RuleContext) -> list[CreditRow]:
 def rule_shot_block(ctx: RuleContext) -> list[CreditRow]:
     if not _is_blocked(ctx):
         return []
-    return _shot_credit(ctx, rule=RULE_SHOT_BLOCK, sign=+1.0, mode="nearest")
+    # Item 2: credit the defender in the shot->goal lane (geometry lives in _resolution).
+    return _shot_credit(ctx, rule=RULE_SHOT_BLOCK, sign=+1.0, mode="lane_blocker")
 
 
 # --- turnover rules (xT(origin)-sized) ---
@@ -197,7 +230,8 @@ def rule_pressure_pass_fail(ctx: RuleContext) -> list[CreditRow]:
     defs = ctx.defenders(anchor_x=a["start_x"], anchor_y=a["start_y"], mode="nearest")
     if defs.empty:
         return []
-    val = _xt_at(ctx, a["start_x"], a["start_y"])  # xT(origin) -- same point for both rows
+    val = _sized_xt(ctx, a["start_x"], a["start_y"])  # xT(origin) -- same point for both rows
+    sizing = _xt_sizing_token(ctx)
     d = defs.iloc[0]
     return [
         CreditRow(
@@ -207,9 +241,10 @@ def rule_pressure_pass_fail(ctx: RuleContext) -> list[CreditRow]:
             d["team_id"],
             RULE_PRESSURE_PASS_FAIL,
             +val,
-            "pass",
+            ANCHOR_PASS,
             ctx.frame_id,
-            SIZING_XT,
+            sizing,
+            d["resolution"],  # +presser: proximity-resolved
         ),
         CreditRow(
             a["game_id"],
@@ -218,9 +253,10 @@ def rule_pressure_pass_fail(ctx: RuleContext) -> list[CreditRow]:
             a["team_id"],
             RULE_PRESSURE_PASS_FAIL,
             -val,
-            "pass",
+            ANCHOR_PASS,
             ctx.frame_id,
-            SIZING_XT,
+            sizing,
+            RESOLUTION_ANCHOR_ACTOR,  # -passer: the acting-team actor, not proximity-resolved
         ),
     ]
 
@@ -232,7 +268,7 @@ def rule_forced_bad_touch(ctx: RuleContext) -> list[CreditRow]:
     defs = ctx.defenders(anchor_x=a["start_x"], anchor_y=a["start_y"], mode="nearest")
     if defs.empty:
         return []
-    val = _xt_at(ctx, a["start_x"], a["start_y"])
+    val = _sized_xt(ctx, a["start_x"], a["start_y"])
     d = defs.iloc[0]
     return [
         CreditRow(
@@ -242,9 +278,10 @@ def rule_forced_bad_touch(ctx: RuleContext) -> list[CreditRow]:
             d["team_id"],
             RULE_FORCED_BAD_TOUCH,
             +val,
-            "bad_touch",
+            ANCHOR_BAD_TOUCH,
             ctx.frame_id,
-            SIZING_XT,
+            _xt_sizing_token(ctx),
+            d["resolution"],
         )
     ]
 
@@ -258,7 +295,8 @@ def rule_synchronized_final_third_pressure(ctx: RuleContext) -> list[CreditRow]:
     defs = ctx.defenders(anchor_x=a["start_x"], anchor_y=a["start_y"], mode="all_within_beyond_nearest")
     if defs.empty:
         return []
-    val = _xt_at(ctx, a["start_x"], a["start_y"])
+    val = _sized_xt(ctx, a["start_x"], a["start_y"])
+    sizing = _xt_sizing_token(ctx)
     return [
         CreditRow(
             a["game_id"],
@@ -267,9 +305,10 @@ def rule_synchronized_final_third_pressure(ctx: RuleContext) -> list[CreditRow]:
             d["team_id"],
             RULE_SYNCHRONIZED_FINAL_THIRD_PRESSURE,
             +val,
-            "pass",
+            ANCHOR_PASS,
             ctx.frame_id,
-            SIZING_XT,
+            sizing,
+            d["resolution"],
         )
         for _, d in defs.iterrows()
     ]
@@ -284,8 +323,10 @@ def rule_recovery_double_credit(ctx: RuleContext) -> list[CreditRow]:
     )  # single resolver (P-3)
     if rec is None:
         return []
-    passer_val = _xt_at(ctx, a["start_x"], a["start_y"])  # -passer at the passer origin
-    rec_val = _xt_at(ctx, float(rec["start_x"]), float(rec["start_y"]))  # +recoverer at the recovery location
+    # each row reflects its OWN sized point under the lens (spec section 3 two-anchor note)
+    passer_val = _sized_xt(ctx, a["start_x"], a["start_y"])  # -passer at the passer origin
+    rec_val = _sized_xt(ctx, float(rec["start_x"]), float(rec["start_y"]))  # +recoverer at the recovery location
+    sizing = _xt_sizing_token(ctx)
     return [
         CreditRow(
             a["game_id"],
@@ -294,9 +335,10 @@ def rule_recovery_double_credit(ctx: RuleContext) -> list[CreditRow]:
             rec["team_id"],
             RULE_RECOVERY_DOUBLE_CREDIT,
             +rec_val,
-            "pass",
+            ANCHOR_PASS,
             ctx.frame_id,
-            SIZING_XT,
+            sizing,
+            RESOLUTION_ANCHOR_ACTOR,  # +recoverer: resolved from the recovery event, not proximity
         ),
         CreditRow(
             a["game_id"],
@@ -305,9 +347,10 @@ def rule_recovery_double_credit(ctx: RuleContext) -> list[CreditRow]:
             a["team_id"],
             RULE_RECOVERY_DOUBLE_CREDIT,
             -passer_val,
-            "pass",
+            ANCHOR_PASS,
             ctx.frame_id,
-            SIZING_XT,
+            sizing,
+            RESOLUTION_ANCHOR_ACTOR,  # -passer: the acting-team actor
         ),
     ]
 
@@ -344,9 +387,10 @@ def rule_beaten_1v1(ctx: RuleContext) -> list[CreditRow]:
             d["team_id"],
             RULE_BEATEN_1V1,
             -xg,
-            "take_on",
+            ANCHOR_TAKE_ON,
             ctx.frame_id,
             SIZING_XG,
+            d["resolution"],
         )
     ]
 
@@ -372,9 +416,10 @@ def rule_failed_cross_block(ctx: RuleContext) -> list[CreditRow]:
                 d["team_id"],
                 RULE_FAILED_CROSS_BLOCK,
                 -xg,
-                "cross",
+                ANCHOR_CROSS,
                 ctx.frame_id,
                 SIZING_XG,
+                d["resolution"],
             )
         )
     # +blocker if the resulting shot was blocked (nearest opp to the shot origin)
@@ -390,9 +435,10 @@ def rule_failed_cross_block(ctx: RuleContext) -> list[CreditRow]:
                     b["team_id"],
                     RULE_FAILED_CROSS_BLOCK,
                     +xg,
-                    "cross",
+                    ANCHOR_CROSS,
                     ctx.frame_id,
                     SIZING_XG,
+                    b["resolution"],
                 )
             )
     return rows
@@ -402,8 +448,12 @@ def rule_failed_marking_through_ball(ctx: RuleContext) -> list[CreditRow]:
     a = ctx.action
     if a["type_id"] != _PASS or a["result_id"] != _SUCCESS:
         return []
-    dxt = _xt_at(ctx, a["end_x"], a["end_y"]) - _xt_at(ctx, a["start_x"], a["start_y"])
-    if not (dxt >= ctx.params.through_ball_delta_xt_min):  # NaN-safe floor
+    # Item 3 (spec section 5): fire on a genuine TF-32 ward line-break, precomputed on the ctx.
+    # "between_lines" = the pass straddled two adjacent SAME-line defenders (threaded THROUGH the
+    # line), NOT "received in the gap between two lines". _is_true collapses the four detector states
+    # -- True fires; False / short-circuit-0 / <NA> (unlinked) do NOT (do NOT write `is True`:
+    # np.bool_(True) is True and pd.NA is True are both False, which would make the rule fire never).
+    if not _is_true(ctx.line_break_between_lines[ctx.idx]):
         return []
     shot = _resulting_shot(ctx)
     if shot is None:
@@ -421,9 +471,10 @@ def rule_failed_marking_through_ball(ctx: RuleContext) -> list[CreditRow]:
             d["team_id"],
             RULE_FAILED_MARKING_THROUGH_BALL,
             -xg,
-            "pass",
+            ANCHOR_PASS,
             ctx.frame_id,
             SIZING_XG,
+            d["resolution"],
         )
     ]
 

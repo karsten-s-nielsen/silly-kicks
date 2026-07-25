@@ -5,6 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+# Sibling constants (acyclic: _params -> spadlconfig only, no back-edge to _sizing).
+from ._params import _FIELD_LENGTH, _FIELD_WIDTH
+
 
 def xg_of_shot(shot_action: pd.Series, *, xg_column: str) -> float:
     """Return the injected per-shot xG. Fail-loud if the column is absent (xtgk/_xg_reward idiom).
@@ -37,3 +40,26 @@ def extinguished_xt(points, xt) -> np.ndarray:
     xs = np.asarray([p[0] for p in points], dtype="float64")
     ys = np.asarray([p[1] for p in points], dtype="float64")
     return values_at_points(xt, xs, ys)
+
+
+def sized_xt(x: float, y: float, xt, *, pressing_lens: bool) -> float:
+    """Value port for the xT-sized turnover rules: xT at (x, y), or at its 180deg reflection
+    under the opt-in "position won" pressing lens (Item 1, spec section 3).
+
+    Primitives only -- takes NO RuleContext (a ctx-typed helper would import RuleContext from
+    _rules, closing a _sizing -> _rules -> _sizing cycle). Default (``pressing_lens=False``) is
+    byte-identical to the raw ``extinguished_xt`` origin lookup. With the lens on, the point is
+    reflected to ``(105 - x, 68 - y)`` -- rewarding regains near the OPPONENT's goal (high press)
+    over danger-prevented.
+
+    .. warning::
+        The lens DIVERGES from the validated ``xT(origin)`` standard (arXiv:2606.19931) and
+        UNDER-VALUES last-ditch defending. Worked examples (the reflection is easy to invert):
+        a deep regain at ``(20, 20)`` reflects to ``(85, 48)`` -- high xT (high press rewarded);
+        a last-ditch clearance at ``(100, 34)`` reflects to ``(5, 34)`` -- near-zero xT (last-ditch
+        under-valued). It is opt-in (``DefensiveCreditParams(pressing_lens=True)``); the default
+        remains the validated origin sizing. See NOTICE for full bibliographic citations.
+    """
+    if pressing_lens:
+        x, y = _FIELD_LENGTH - x, _FIELD_WIDTH - y
+    return float(extinguished_xt([(x, y)], xt)[0])  # the SAME per-point lookup _xt_at uses

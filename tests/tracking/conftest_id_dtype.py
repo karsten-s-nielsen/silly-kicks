@@ -175,6 +175,7 @@ AGGREGATORS = [
     _a(F.add_pitch_control, "add_pitch_control"),
     _named(lambda a, f, home_team_id: F.add_pre_shot_gk_angle(a, frames=f), "add_pre_shot_gk_angle"),
     _a(F.add_pre_shot_gk_position, "add_pre_shot_gk_position"),
+    _a(F.add_press_commitment, "add_press_commitment"),
     _a(F.add_pressure_on_actor, "add_pressure_on_actor"),
     _a(F.add_shot_goalmouth, "add_shot_goalmouth"),
     _a(F.add_space_creation, "add_space_creation"),

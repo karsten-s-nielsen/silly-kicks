@@ -5,6 +5,50 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.61.0] — 2026-07-25
+
+### Changed / Added — TF-51 v2 defensive-credit refinements (PR-S132, ADR-049)
+
+Four bounded refinements to the shipped v1 defensive-credit family (`silly_kicks/tracking/defensive_credit/`)
+plus one bundled v1 bug fix, in one PR. Supersedes the ADR-046/047 **Opta** block-detection status (dropped
+from the roadmap, permanent `pd.NA`).
+
+- **B2 fix — `recovery_after_pass` game/period boundary.** The forward opponent scan is now scoped to the
+  passer's own `(game_id, period_id)` before the search, so a failed pass near a game/period boundary can no
+  longer "recover" into the next match (a foreign team_id read as a real opponent regain). NOT possession-scoped
+  (a recovery *is* a possession change). Fewer false cross-game recoveries; lakehouse re-materializes.
+- **Item 3 — line-break-gated through-ball.** `rule_failed_marking_through_ball` now fires on a genuine TF-32
+  ward `between_lines` line-break (the pass straddling two adjacent same-line defenders), computed
+  `home_team_id`-free in action-LTR via the single extracted `_straddle_core` (shared with `detect_line_breaking`)
+  and precomputed once on `RuleContext` (candidate-gated so Ward clusters only successful passes). The provisional
+  `through_ball_delta_xt_min` ΔxT param is **removed** (frozen dataclass → `TypeError` on the old kwarg). Fires on
+  a different set of passes; lakehouse re-materializes.
+- **Item 2 — lane-geometry `shot_block` blocker.** `rule_shot_block` credits the defender geometrically in the
+  shot→goal corridor (distance-scaled cone, floored) rather than nearest-to-origin; the origin proximity threshold
+  is dropped, the goalkeeper is excluded by both the `is_goalkeeper` flag AND a distance-along-lane cap (the GS
+  flag can be all-False), with a nearest-to-origin fallback. New `lane_blocker` resolution mode +
+  `shot_lane_cone_width_factor` / `shot_lane_max_t` / `shot_lane_min_half_width_m` params. Long-form gains a
+  generic **`resolution`** column (11 cols) recording how each credited player was determined
+  (`nearest` / `all_within` / `all_within_beyond_nearest` / `lane` / `nearest_fallback` / `anchor_actor`).
+  `shot_block` may credit a different player; lakehouse re-materializes.
+- **Item 1 — reverse-xT "position won" pressing lens (opt-in).** `DefensiveCreditParams(pressing_lens=True)`
+  sizes the four xT-sized turnover rules by `xT(105−x, 68−y)` (rewarding regains near the opponent goal) instead
+  of the validated `xT(origin)`; default off → byte-identical. Turnover rows tag `sizing="xt_pressing"`. New
+  `SIZING_VALUES` / `ANCHOR_TYPE_VALUES` / `RESOLUTION_VALUES` closed vocabularies. DIVERGES from the validated
+  standard and UNDER-VALUES last-ditch defending (documented in NOTICE + docstring).
+- **Item 5 — pressure-commitment cue (additive, descriptive).** New `add_press_commitment` aggregator (+ atomic
+  mirror) over `tracking/_press_commitment.py`: per action, whether the pressing defender COMMITS (drives in,
+  positive) vs CONTAINS (jockeys, negative) — the least-squares slope of the defender's closing-speed over the
+  pre-action window, with a closed `press_commitment_source` provenance vocabulary. NOT signed credit, ships
+  aggregator-only (no `*_xfns`), no VAEP retrain. A practitioner concept (PSG / Luis Enrique; Sumpter coaching
+  literature) attributed in NOTICE.
+
+Also: shared `tracking._opponent_resolution.opponents_within` nearest-opponent core (consumed by
+defensive-credit resolution + the press cue); `tracking._velocity_availability.velocity_unavailable_by_design`
+extracted from `_das.py`; three `press_commitment*` feature-glossary entries; owner-gated GS e2e (match 10502)
+extended with the quantitative acceptance table. **No VAEP retrain from any item** (no xfns). C4 action-coupled
+aggregator count 31→32 (`add_press_commitment`).
+
 ## [4.60.0] — 2026-07-24
 
 ### Added — TF-19 xS-probe placebo v2 run result (PR-S131, ADR-037 amendment)

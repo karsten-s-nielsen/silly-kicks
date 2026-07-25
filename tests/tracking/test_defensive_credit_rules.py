@@ -330,8 +330,27 @@ def test_failed_cross_block_pair(fitted_xt):
     assert signs == pytest.approx([-0.3, 0.3])  # -def at receipt, +blocker
 
 
+def _three_line_frame_team20(*, action_time=0.0):
+    """A single frame (frame_with_defender teams: acting=10, opponent=20): team-20 opponents in
+    3 lines at x=50/70/90 + the team-10 acting player + the ball. A team-10 pass from (48,34) to
+    (95,34) threads BETWEEN adjacent same-line defenders across all three lines (between_lines)."""
+    base = frame_with_defender(defender_x=50.0, defender_y=34.0, action_time=action_time)
+    tmpl = base.iloc[[0]]  # the team-20 defender row template
+    extra = [(50.0, 15.0), (50.0, 53.0), (70.0, 15.0), (70.0, 34.0), (70.0, 53.0),
+             (90.0, 10.0), (90.0, 24.0), (90.0, 44.0), (90.0, 58.0)]  # fmt: skip
+    rows = [base]
+    for pid, (x, y) in enumerate(extra, start=901):
+        r = tmpl.copy()
+        r["player_id"] = pid
+        r["x"] = x
+        r["y"] = y
+        rows.append(r)
+    return pd.concat(rows, ignore_index=True)
+
+
 def test_failed_marking_through_ball(fitted_xt):
-    frames = frame_with_defender(defender_x=61.0, defender_y=34.0, action_time=0.0)
+    # Item 3: the through-ball fires on a genuine between_lines break (not a raw ΔxT threshold).
+    frames = _three_line_frame_team20(action_time=0.0)
     ctx = _stream_ctx(
         [
             dict(
@@ -339,11 +358,11 @@ def test_failed_marking_through_ball(fitted_xt):
                 result_name="success",
                 team_id=10,
                 player_id=5,
-                start_x=60.0,
+                start_x=48.0,
                 start_y=34.0,
                 end_x=95.0,
                 end_y=34.0,
-            ),  # big forward ΔxT
+            ),  # threads all 3 lines (between_lines)
             dict(
                 type_name="shot",
                 result_name="fail",
@@ -362,6 +381,40 @@ def test_failed_marking_through_ball(fitted_xt):
     )
     rows = RULE_REGISTRY["failed_marking_through_ball"](ctx)
     assert len(rows) == 1 and rows[0].signed_value == pytest.approx(-0.2) and rows[0].team_id == 20
+
+
+def test_failed_marking_through_ball_no_fire_without_line_break(fitted_xt):
+    # A high-ΔxT forward pass with a single nearby defender (no crossable line) -> no fire under v2.
+    frames = frame_with_defender(defender_x=61.0, defender_y=34.0, action_time=0.0)
+    ctx = _stream_ctx(
+        [
+            dict(
+                type_name="pass",
+                result_name="success",
+                team_id=10,
+                player_id=5,
+                start_x=60.0,
+                start_y=34.0,
+                end_x=95.0,
+                end_y=34.0,
+            ),
+            dict(
+                type_name="shot",
+                result_name="fail",
+                team_id=10,
+                player_id=6,
+                start_x=95.0,
+                start_y=34.0,
+                end_x=105.0,
+                end_y=34.0,
+                xg=0.2,
+            ),
+        ],
+        idx=0,
+        fitted_xt=fitted_xt,
+        frames=frames,
+    )
+    assert RULE_REGISTRY["failed_marking_through_ball"](ctx) == []
 
 
 def test_registry_covers_every_rule():

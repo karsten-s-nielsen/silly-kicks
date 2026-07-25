@@ -409,6 +409,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     "tracking:add_player_influence": _one(_xtf_inputs, _xtf_invoke(F.add_player_influence)),
     "tracking:add_pre_shot_gk_angle": _one(_std_inputs, lambda i: F.add_pre_shot_gk_angle(i[0], frames=i[1])),
     "tracking:add_pre_shot_gk_position": _one(_std_inputs, _std_invoke(F.add_pre_shot_gk_position)),
+    "tracking:add_press_commitment": _one(_std_inputs, _std_invoke(F.add_press_commitment)),
     "tracking:add_pressure_on_actor": _one(_std_inputs, _std_invoke(F.add_pressure_on_actor)),
     # add_shape_graph / add_xcross_attempt / add_xshot_occurrence share the links-optimization branch
     # `links is not None and "frame_id" in links.columns` (body assigns a LOCAL frame-id set, never a
@@ -475,6 +476,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     "atomic.tracking:add_player_influence": _one(_axtf_inputs, _xtf_invoke(atf.add_player_influence)),
     "atomic.tracking:add_pre_shot_gk_angle": _one(_astd_inputs, lambda i: atf.add_pre_shot_gk_angle(i[0], frames=i[1])),
     "atomic.tracking:add_pre_shot_gk_position": _one(_astd_inputs, _std_invoke(atf.add_pre_shot_gk_position)),
+    "atomic.tracking:add_press_commitment": _one(_astd_inputs, _std_invoke(atf.add_press_commitment)),
     "atomic.tracking:add_pressure_on_actor": _one(_astd_inputs, _std_invoke(atf.add_pressure_on_actor)),
     "atomic.tracking:add_shot_goalmouth": _one(_astd_inputs, _std_invoke(atf.add_shot_goalmouth)),
     "atomic.tracking:add_structural_pass": _one(_astd_inputs, _std_invoke(atf.add_structural_pass, home_team_id=5)),
