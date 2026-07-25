@@ -381,6 +381,55 @@ def _run_defensive_credit():
     return (a, F.add_defensive_credit(a, frames, xg_column="xg", xt=_xt()))
 
 
+def _run_press_commitment():
+    """Self-contained domain scene (P-6, like _run_defensive_credit): the shared 5-window fixture's
+    presser holds a CONSTANT vx within each window, so its closing-speed slope is 0 everywhere and
+    press_commitment would be live-but-constant (the informationally-dead failure mode). This scene
+    has 2 actions whose pressing defender's slope DIFFERS (window A committing, window B containing),
+    so press_commitment + closing_speed are live AND non-constant."""
+
+    def _r(t, team, pid, x, y, vx, *, is_ball=False):
+        return dict(
+            game_id="gP", period_id=1, frame_id=round(t * 25), time_seconds=float(t),
+            team_id=team, player_id=pid, x=float(x), y=float(y), vx=float(vx), vy=0.0,
+            is_ball=is_ball, is_goalkeeper=False, speed_source="native", source_provider="test",
+        )  # fmt: skip
+
+    rows = []
+    for t_a, vxs in ((10.0, (1.0, 2.0, 3.0)), (20.0, (3.0, 2.0, 1.0))):
+        for k, off in enumerate((-0.4, -0.2, 0.0)):
+            t = t_a + off
+            rows += [
+                _r(t, 10, 5, 95.0, 34.0, 0.0),  # actor (team 10)
+                _r(t, 20, 20, 94.0, 34.0, vxs[k]),  # presser (team 20; axis = +x, v_close = vx)
+                _r(t, np.nan, np.nan, 90.0, 34.0, 0.0, is_ball=True),
+            ]
+    frames = pd.DataFrame(rows)
+    frames["player_id"] = frames["player_id"].astype("Int64")
+    frames["team_id"] = frames["team_id"].astype("Int64")
+    actions = pd.DataFrame(
+        {
+            "game_id": ["gP", "gP"],
+            "action_id": [0, 1],
+            "period_id": [1, 1],
+            "time_seconds": [10.0, 20.0],
+            "team_id": pd.Series([10, 10], dtype="int64"),
+            "player_id": pd.Series([5, 5], dtype="int64"),
+            "start_x": [95.0, 95.0],
+            "start_y": [34.0, 34.0],
+            "end_x": [100.0, 100.0],
+            "end_y": [34.0, 34.0],
+            "type_id": [0, 0],
+            "type_name": ["pass", "pass"],
+            "result_id": [1, 1],
+            "result_name": ["success", "success"],
+            "bodypart_id": [0, 0],
+            "bodypart_name": ["foot", "foot"],
+        }
+    )
+    return actions, F.add_press_commitment(actions, frames)
+
+
 def _run_das():
     return _actions(), F.add_das(_actions(), _frames_with_possession())
 
@@ -471,6 +520,7 @@ ENTRIES: dict[str, object] = {
     "add_player_influence": _xtf(F.add_player_influence),
     "add_pre_shot_gk_angle": (lambda: (_actions(), F.add_pre_shot_gk_angle(_actions(), frames=_frames()))),
     "add_pre_shot_gk_position": _std(F.add_pre_shot_gk_position),
+    "add_press_commitment": _run_press_commitment,
     "add_pressure_on_actor": _std(F.add_pressure_on_actor),
     "add_shape_graph": _std(F.add_shape_graph, home_team_id=5),
     "add_shot_goalmouth": _run_shot_goalmouth,

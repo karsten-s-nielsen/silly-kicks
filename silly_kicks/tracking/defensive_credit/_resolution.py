@@ -1,4 +1,10 @@
-"""Nearest-opponent(s) resolution within a box-aware threshold, in action-LTR coords."""
+"""Opponent resolution in action-LTR coords: box-aware nearest(s) + the Item-2 shot->goal lane.
+
+A thin adapter over the shared ``tracking._opponent_resolution`` core (N6): the proximity modes call
+``opponents_within`` with the box-aware threshold; ``lane_blocker`` BYPASSES the threshold entirely
+(spec section 4 / Q2) and uses the shot->goal corridor. Every returned frame carries a ``resolution``
+column recording HOW the credited player was determined.
+"""
 
 from __future__ import annotations
 
@@ -7,15 +13,18 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import ids_match
 from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
+from silly_kicks.tracking._opponent_resolution import opponents_action_ltr, opponents_within
 
-from ._params import DefensiveCreditParams
+from ._params import (
+    RESOLUTION_LANE,
+    RESOLUTION_NEAREST_FALLBACK,
+    DefensiveCreditParams,
+)
 
-Mode = Literal["nearest", "all_within", "all_within_beyond_nearest"]
+Mode = Literal["nearest", "all_within", "all_within_beyond_nearest", "lane_blocker"]
 
-_FIELD_LENGTH = 105.0
-_FIELD_WIDTH = 68.0
+_GOAL_XY = (105.0, 34.0)  # attacked goal centre in action-LTR
 
 
 def resolve_responsible_defenders(
@@ -30,46 +39,34 @@ def resolve_responsible_defenders(
     frame_id: int | None = None,
     flip: bool | None = None,
 ) -> pd.DataFrame:
-    """Return opponents within the box-aware threshold of the (anchor_x, anchor_y) action-LTR point.
+    """Return opponents responsible for an action-LTR ``(anchor_x, anchor_y)`` anchor.
 
-    Columns: player_id, team_id, distance_m (ascending). Empty when none are within threshold.
+    Columns: player_id, team_id, distance_m (ascending), resolution. Empty when none qualify.
+    ``mode`` -- ``nearest`` / ``all_within`` / ``all_within_beyond_nearest`` use the box-aware origin
+    threshold; ``lane_blocker`` (Item 2) uses the shot->goal corridor, excludes the GK, and does NOT
+    origin-threshold (with a nearest-to-origin fallback).
     ``frame_id``: the linked frame for the triggering action; if None, uses the single frame present.
     ``flip``: the precomputed action-LTR reprojection decision; if None, computed here (unit-test path).
     """
-    if frame_id is not None:
-        fr = frames[frames["frame_id"] == frame_id]
-    else:
-        fr = frames
-    # opponents only (team_id != acting team) -- dtype-safe (ADR-019); exclude the ball + NaN teams
-    is_opponent = ~ids_match(fr["team_id"], acting_team_id) & fr["team_id"].notna() & ~fr["is_ball"].astype(bool)
-    opp = fr[is_opponent.to_numpy()].copy()
-    if opp.empty:
-        return _empty()
-
-    # reproject opponent positions to action-LTR for THIS action (ADR-028). The orchestrator passes
-    # the precomputed `flip`; the single-action unit path computes it here.
+    fr = frames[frames["frame_id"] == frame_id] if frame_id is not None else frames
     if flip is None:
         flip = bool(acting_team_attacks_rtl(actions, frames).iloc[0])
-    px = _FIELD_LENGTH - opp["x"].to_numpy() if flip else opp["x"].to_numpy()
-    py = _FIELD_WIDTH - opp["y"].to_numpy() if flip else opp["y"].to_numpy()
 
-    dist = np.hypot(px - anchor_x, py - anchor_y)
-    thr = params._proximity_threshold(anchor_x, anchor_y)
-    within = dist <= thr
-    if not within.any():
-        return _empty()
+    if mode == "lane_blocker":
+        return _lane_blocker(fr, acting_team_id, flip, anchor_x, anchor_y, params)
 
-    out = (
-        pd.DataFrame(
-            {
-                "player_id": opp["player_id"].to_numpy()[within],
-                "team_id": opp["team_id"].to_numpy()[within],
-                "distance_m": dist[within],
-            }
-        )
-        .sort_values("distance_m", kind="stable")
-        .reset_index(drop=True)
+    out = opponents_within(
+        fr,
+        anchor_x=anchor_x,
+        anchor_y=anchor_y,
+        acting_team_id=acting_team_id,
+        threshold_m=params._proximity_threshold(anchor_x, anchor_y),
+        flip=flip,
     )
+    if out.empty:
+        return _empty()
+    out = out.copy()
+    out["resolution"] = mode  # "nearest" / "all_within" / "all_within_beyond_nearest"
 
     if mode == "nearest":
         return out.iloc[[0]].reset_index(drop=True)
@@ -78,5 +75,69 @@ def resolve_responsible_defenders(
     return out  # all_within
 
 
+def _lane_blocker(
+    fr: pd.DataFrame, acting_team_id, flip: bool, origin_x: float, origin_y: float, params: DefensiveCreditParams
+) -> pd.DataFrame:
+    """Blocker = the in-corridor, in-front, non-GK defender with minimum perpendicular offset to the
+    shot->goal lane (spec section 4). No origin-proximity threshold (Q2). GK excluded by BOTH the flag
+    AND the distance-along-lane cap (``shot_lane_max_t``) -- the GS flag can be all-False (N5). Falls
+    back to the nearest-to-origin non-GK defender within the box threshold (``nearest_fallback``)."""
+    opp = opponents_action_ltr(fr, acting_team_id, flip, exclude_goalkeeper=False)
+    if opp.empty:
+        return _empty()
+    px = opp["_px"].to_numpy()
+    py = opp["_py"].to_numpy()
+    non_gk = ~opp["is_goalkeeper"].astype(bool).to_numpy()
+
+    gx, gy = _GOAL_XY
+    lane = np.array([gx - origin_x, gy - origin_y], dtype="float64")
+    shot_dist = float(np.hypot(lane[0], lane[1]))
+    if shot_dist < 1e-6:
+        return _empty()  # degenerate: shot from the goal line
+    u = lane / shot_dist
+    dx = px - origin_x
+    dy = py - origin_y
+    t = np.clip((dx * u[0] + dy * u[1]) / shot_dist, 0.0, 1.0)  # fraction along the lane; in-front constraint
+    # corridor half-width scales with lane distance (matches _cover_shadows), FLOORED so it does not
+    # pinch to 0 at the shooter -- a close-range blocker sits at small t (Q4).
+    half_width_at_t = np.maximum(
+        params.shot_lane_cone_width_factor * shot_dist / 2.0 * t, params.shot_lane_min_half_width_m
+    )
+    perp = np.abs(u[0] * dy - u[1] * dx)  # scalar 2-D cross (np.cross on 2-D is deprecated in numpy>=2, Q5)
+    origin_dist = np.hypot(dx, dy)
+    in_corridor = non_gk & (perp <= half_width_at_t) & (t <= params.shot_lane_max_t)
+    if in_corridor.any():
+        cand = np.where(in_corridor)[0]
+        best = cand[np.argmin(perp[cand])]
+        return _single_row(opp, int(best), float(origin_dist[best]), RESOLUTION_LANE)
+    # fallback: nearest non-GK within the box-aware origin threshold (a real xG-sizable block still
+    # deserves an approximate attributee over NaN/no-row, B8) -- recorded as nearest_fallback.
+    thr = params._proximity_threshold(origin_x, origin_y)
+    within = non_gk & (origin_dist <= thr)
+    if within.any():
+        cand = np.where(within)[0]
+        best = cand[np.argmin(origin_dist[cand])]
+        return _single_row(opp, int(best), float(origin_dist[best]), RESOLUTION_NEAREST_FALLBACK)
+    return _empty()
+
+
+def _single_row(opp: pd.DataFrame, pos: int, distance_m: float, resolution: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "player_id": [opp["player_id"].to_numpy()[pos]],
+            "team_id": [opp["team_id"].to_numpy()[pos]],
+            "distance_m": [distance_m],
+            "resolution": [resolution],
+        }
+    )
+
+
 def _empty() -> pd.DataFrame:
-    return pd.DataFrame({"player_id": [], "team_id": [], "distance_m": pd.Series([], dtype="float64")})
+    return pd.DataFrame(
+        {
+            "player_id": [],
+            "team_id": [],
+            "distance_m": pd.Series([], dtype="float64"),
+            "resolution": pd.Series([], dtype="object"),
+        }
+    )

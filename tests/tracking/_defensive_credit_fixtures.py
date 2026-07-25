@@ -19,7 +19,7 @@ def one_action(
     end_y=34.0,
     period_id=1,
     time_seconds=50.0,
-    game_id="g1",
+    game_id: str | int = "g1",
     **extra,
 ) -> pd.DataFrame:
     from silly_kicks.spadl import config as spadlconfig

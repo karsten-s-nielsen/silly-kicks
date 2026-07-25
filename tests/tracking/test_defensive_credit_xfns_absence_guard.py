@@ -52,3 +52,5 @@ def test_no_defensive_credit_xfns_factory_exists():
 
     assert not hasattr(T, "defensive_credit_xfns")
     assert not hasattr(T, "bravery_xfns")
+    # TF-51 v2 Item 5: the pressure-commitment cue ships aggregator-only (spec section 6, T4).
+    assert not hasattr(T, "press_commitment_xfns")

@@ -37,8 +37,16 @@ def recovery_after_pass(actions, pass_idx, *, max_actions):
     The defending team is inferred as the first team != the pass's acting team (two-team match) --
     the SINGLE recovery resolver (P-3: no duplicate in _rules). Returns the recovery row or None.
     """
-    passer_team = actions.iloc[pass_idx]["team_id"]
+    anchor = actions.iloc[pass_idx]
+    passer_team = anchor["team_id"]
     fwd = actions.iloc[pass_idx + 1 : pass_idx + 1 + max_actions]
+    # B2: scope the forward scan to the passer's own game+period BEFORE the opponent search
+    # (spec section 7). Without this, a failed pass near a game/period boundary "recovers" into
+    # the NEXT match -- a foreign team_id reads as a real opponent regain and the pd.isna guard
+    # can't catch it. NOT possession-scoped (N1): a recovery IS a possession change (add_possessions
+    # makes every team-change a boundary), so clamping to the passer's possession_id would make the
+    # opponent-search vacuous -- the rule would fire never, silently.
+    fwd = fwd[(fwd["game_id"] == anchor["game_id"]) & (fwd["period_id"] == anchor["period_id"])]
     for _, r in fwd.iterrows():
         if pd.isna(r["team_id"]):
             continue  # ADR-027: NaN-team rows never decide

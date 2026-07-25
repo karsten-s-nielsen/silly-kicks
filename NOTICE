@@ -462,10 +462,18 @@ The off-ball run valuation in silly_kicks/tracking/_run_values.py
   github.com/jonas-bischofberger/defensive-network), which derives xDT = -dxT ->
   +xT(origin) for a failed pass and validates the resulting fault/contribution
   metrics against market value + FIFA defensive-awareness ratings (consistent with
-  the existing TF-28 accessible-space/DAS citation from the same group). MSC-corpus
+  the existing TF-28 accessible-space/DAS citation from the same group). An OPT-IN
+  reverse-xT "position won" pressing lens (DefensiveCreditParams(pressing_lens=True))
+  sizes the same turnover rules by xT at the 180-degree-reflected point instead --
+  rewarding regains near the opponent goal; it DIVERGES from the validated xT(origin)
+  standard above and UNDER-VALUES last-ditch defending, so it is off by default. MSC-corpus
   vocabulary (docstring-grade, not reproduced numerics): the Tigres Femenil
   "bravery" (% of opponent final actions blocked) metric and the RB Salzburg
-  4-action pressing taxonomy.
+  4-action pressing taxonomy. The TF-51 v2 pressure-commitment cue (whether a
+  pressing defender COMMITS/drives-in vs CONTAINS/jockeys, measured as the slope
+  of the defender's closing-speed) is a PRACTITIONER concept (PSG / Luis Enrique
+  pressing style; Sumpter coaching literature), attributed as such -- no numeric
+  result is reproduced from it.
 
 The region-influence floor (silly_kicks.tracking.RunValuationParams) is a
 silly-kicks parameter with no published provenance: it exists solely because

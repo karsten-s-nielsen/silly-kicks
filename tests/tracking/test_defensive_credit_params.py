@@ -21,7 +21,6 @@ def test_defaults_match_spec():
     assert p.proximity_inside_box_m == 3.0
     assert p.resulting_shot_max_actions == 10
     assert p.recovery_max_actions == 3
-    assert p.through_ball_delta_xt_min == 0.02
     assert p.beaten_1v1_min_shot_xg == 0.05
     # synchronized boundary derived from the pitch third (105 / 3)
     assert p.synchronized_zone_boundary_x == pytest.approx(35.0)
@@ -31,6 +30,12 @@ def test_defaults_match_spec():
 def test_rules_subset_validation():
     with pytest.raises(ValueError, match="unknown rule"):
         DefensiveCreditParams(rules=frozenset({"not_a_rule"}))
+
+
+def test_through_ball_delta_xt_min_removed_is_typeerror():
+    # Item 3 retired the ΔxT gate for a line-break gate; the frozen dataclass rejects the old kwarg.
+    with pytest.raises(TypeError):
+        DefensiveCreditParams(through_ball_delta_xt_min=0.02)  # type: ignore[call-arg]
 
 
 def test_negative_proximity_rejected():

@@ -24,6 +24,7 @@ Unit = Literal[
     "metres",
     "m^2",
     "m/s",
+    "m/s^2",
     "seconds",
     "degrees",
     "radians",
@@ -122,6 +123,7 @@ _M_GK_COMPLETION = "silly_kicks.tracking._gk_completion"
 _M_GHOST_GK = "silly_kicks.tracking._ghost_gk"
 _M_XT_GK = "silly_kicks.tracking._xt_gk"
 _M_DEFENSIVE_CREDIT = "silly_kicks.tracking.defensive_credit._orchestration"
+_M_PRESS_COMMITMENT = "silly_kicks.tracking._press_commitment"
 _M_XSHOT = "silly_kicks.tracking._xshot_occurrence"
 _M_XCROSS = "silly_kicks.tracking._xcross_attempt"
 
@@ -144,6 +146,7 @@ _A_ELASTIC = "arXiv:2508.09238"  # Kim 2025 ELASTIC
 _A_GK_GEOMETRY = "Eyestone, J. (2025)"  # xT-GK
 _A_GHOST_GK = "arXiv:2406.17220"  # Dutta 2024 NFL Ghosts (RFCDE density ghosting)
 _A_DEFENSIVE_CREDIT = "arXiv:2606.19931"  # Bischofberger 2026 xDT turnover sizing
+_A_PRESS_COMMITMENT = "TF-51 v2 pressure-commitment cue"  # practitioner concept (PSG/Luis Enrique; Sumpter)
 _A_XSHOT = "arXiv:2512.00203"  # Pipping 2026 xShotOccurrence
 _A_XCROSS = "arXiv:2505.11841"  # Cao 2025 xCrossAttempt
 
@@ -1481,6 +1484,36 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="count",
         emitting_module=_M_DEFENSIVE_CREDIT,
         attribution=_A_DEFENSIVE_CREDIT,
+    ),
+    # -- Pressure-commitment cue (TF-51 v2 Item 5) ----------------------------------------------
+    FeatureColumn(
+        name="press_commitment",
+        definition=(
+            "Least-squares slope of the pressing defender's closing-speed over the pre-action window; "
+            "positive = COMMITS (drives in), negative = CONTAINS (jockeys/brakes)."
+        ),
+        unit="m/s^2",
+        emitting_module=_M_PRESS_COMMITMENT,
+        attribution=_A_PRESS_COMMITMENT,
+        higher_is_better=None,  # style descriptor -- neither committing nor containing is universally better
+    ),
+    FeatureColumn(
+        name="press_commitment_closing_speed",
+        definition="Pressing defender's closing speed toward the actor at the action frame (context).",
+        unit="m/s",
+        emitting_module=_M_PRESS_COMMITMENT,
+        attribution=_A_PRESS_COMMITMENT,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="press_commitment_source",
+        definition=(
+            "Provenance of the cue: computed / no_pressing_defender / velocity_unavailable / "
+            "window_too_short / degenerate_axis / unlinked."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_PRESS_COMMITMENT,
+        attribution=_A_PRESS_COMMITMENT,
     ),
     # -- Trained state-anchored models (TF-16 / TF-17) ------------------------------------------
     FeatureColumn(

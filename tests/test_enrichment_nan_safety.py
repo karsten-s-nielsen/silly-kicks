@@ -51,6 +51,7 @@ _TRACKING_NEEDS_EXTRA = {
     "add_player_influence",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
+    "add_press_commitment",
     "add_shape_graph",
     "add_space_creation",
     "add_structural_pass",
@@ -634,6 +635,13 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         acts = actions.copy()
         acts["defending_gk_player_id"] = pd.array([200, pd.NA, 200, 200, pd.NA], dtype="Int64")
         out = helper(acts, frames=frames)
+    elif name == "add_press_commitment":
+        # The velocity contract raises loud on missing vx/vy (correct) -- supply them so the
+        # NaN-IDENTIFIER surface (NaN team/player) is what gets fuzzed, not the velocity guard.
+        frames = frames.copy()
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
+        out = helper(actions, frames)
     else:
         out = helper(actions, frames)
     assert isinstance(out, pd.DataFrame), f"{name} returned {type(out).__name__}, expected pd.DataFrame"

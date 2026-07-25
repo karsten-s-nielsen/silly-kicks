@@ -208,20 +208,13 @@ def detect_line_breaking(
         end_x = float(row["end_x"])
         end_y = float(row["end_y"])
 
-        # Pass length check
-        pass_len = np.sqrt((end_x - start_x) ** 2 + (end_y - start_y) ** 2)
-        if pass_len < params.min_pass_length:
-            lb_arr[pos] = 0.0
-            count_arr[pos] = 0
-            continue
-
         # Find opposing team via O(1) lookup
         frame_key = (game_id, period_id, frame_id)
         teams_at_frame = frame_to_teams.get(frame_key, [])
         # ADR-019: dtype-safe id comparison (Int64 action team_id vs object-string
         # frame team_id -- e.g. GS-on-tracking -- where a raw `!=` is always True and
         # silently keeps the actor's OWN team as the "opponent"). action_team is
-        # guaranteed non-NA here (NaN-routed above). Mirrors same_id at line ~250.
+        # guaranteed non-NA here (NaN-routed above). Mirrors same_id below.
         opp_teams = [t for t in teams_at_frame if not same_id(t, action_team)]
 
         if not opp_teams:
@@ -235,19 +228,9 @@ def detect_line_breaking(
         opp_x = valid_opp["x"].to_numpy(dtype="float64")
         opp_y = valid_opp["y"].to_numpy(dtype="float64")
 
-        if len(opp_x) < params.min_opponents:
-            lb_arr[pos] = 0.0
-            count_arr[pos] = 0
-            continue
-
-        # X-spread check
-        x_spread = float(np.max(opp_x) - np.min(opp_x))
-        if x_spread < params.min_x_spread:
-            lb_arr[pos] = 0.0
-            count_arr[pos] = 0
-            continue
-
-        # Convert SPADL action coords to tracking coords for intersection
+        # Convert SPADL action coords to tracking coords for intersection (opponents are
+        # already tracking coords). home attacks x=105 in convert_to_frames coords, so a home
+        # action-LTR point already IS the tracking point; an away action-LTR point reflects.
         if same_id(action_team, home_team_id):
             track_start_x = start_x
             track_start_y = start_y
@@ -259,78 +242,15 @@ def detect_line_breaking(
             track_end_x = 105.0 - end_x
             track_end_y = 68.0 - end_y
 
-        # Ward clustering on 1D x-coordinates
-        n_eff_clusters = min(params.n_clusters, len(opp_x))
-        if n_eff_clusters < 2:
-            lb_arr[pos] = 0.0
-            count_arr[pos] = 0
-            continue
-
-        linkage_matrix = linkage(opp_x.reshape(-1, 1), method="ward")
-        labels = fcluster(linkage_matrix, t=n_eff_clusters, criterion="maxclust")
-
-        # Sort clusters by ascending mean x
-        cluster_ids = np.unique(labels)
-        cluster_means = [float(np.mean(opp_x[labels == c])) for c in cluster_ids]
-        sorted_order = np.argsort(cluster_means)
-        sorted_cluster_ids = cluster_ids[sorted_order]
-
-        # Build segments per cluster and test intersection
-        lines_broken = 0
-        any_through = False
-
-        for cid in sorted_cluster_ids:
-            mask = labels == cid
-            cx = opp_x[mask]
-            cy = opp_y[mask]
-
-            # Sort by y
-            y_order = np.argsort(cy)
-            cx_sorted = cx[y_order]
-            cy_sorted = cy[y_order]
-
-            # Extend to sidelines using nearest-player x
-            points_x = np.concatenate([[cx_sorted[0]], cx_sorted, [cx_sorted[-1]]])
-            points_y = np.concatenate([[params.pitch_y_min], cy_sorted, [params.pitch_y_max]])
-
-            # Test each segment for intersection with pass trajectory
-            cluster_broken = False
-            cluster_has_through = False
-            n_segments = len(points_x) - 1
-
-            for si in range(n_segments):
-                ax, ay = points_x[si], points_y[si]
-                bx, by = points_x[si + 1], points_y[si + 1]
-
-                if _segments_intersect(
-                    track_start_x,
-                    track_start_y,
-                    track_end_x,
-                    track_end_y,
-                    ax,
-                    ay,
-                    bx,
-                    by,
-                ):
-                    cluster_broken = True
-                    # Extension segments are first and last
-                    if si != 0 and si != n_segments - 1:
-                        cluster_has_through = True
-
-            if cluster_broken:
-                lines_broken += 1
-                if cluster_has_through:
-                    any_through = True
-
-        lb_arr[pos] = 1.0 if lines_broken > 0 else 0.0
-        count_arr[pos] = lines_broken
-
-        if lines_broken > 0:
-            # "between_lines" dominates (more tactically significant)
-            if any_through:
-                type_arr[pos] = "between_lines"
-            else:
-                type_arr[pos] = "around_line"
+        # The Ward-cluster + straddle geometry is single-sourced in _straddle_core (N3); the
+        # pass and the opponents are both in tracking coords here, so it returns the same answer
+        # the TF-51 defensive-credit signal gets by feeding it action-LTR coords instead.
+        is_break, break_type, n_lines = _straddle_core(
+            track_start_x, track_start_y, track_end_x, track_end_y, opp_x, opp_y, params
+        )
+        lb_arr[pos] = 1.0 if is_break else 0.0
+        count_arr[pos] = n_lines
+        type_arr[pos] = break_type
 
     return pd.DataFrame(
         {
@@ -346,6 +266,101 @@ def detect_line_breaking(
         },
         index=actions.index,
     )
+
+
+def _straddle_core(
+    pass_start_x: float,
+    pass_start_y: float,
+    pass_end_x: float,
+    pass_end_y: float,
+    opp_x: np.ndarray,
+    opp_y: np.ndarray,
+    params: LineBreakingParams,
+) -> tuple[bool, str | None, int]:
+    """Ward-cluster opponent x-coords into lines and straddle-test the pass trajectory.
+
+    Coordinate-frame agnostic: the pass endpoints AND the opponent points must be in ONE
+    consistent frame (tracking OR action-LTR -- the cross-product straddle test is invariant
+    under a consistent rigid transform). This is the SINGLE straddle implementation (N3): both
+    ``detect_line_breaking`` (tracking coords) and the TF-51 defensive-credit line-break signal
+    (action-LTR) delegate here. Callers own opponent SELECTION and any coordinate flip.
+
+    Returns ``(is_break, break_type, n_lines_broken)``; the min_pass_length / min_opponents /
+    min_x_spread / <2-cluster short-circuits all return ``(False, None, 0)``.
+    """
+    pass_len = np.sqrt((pass_end_x - pass_start_x) ** 2 + (pass_end_y - pass_start_y) ** 2)
+    if pass_len < params.min_pass_length:
+        return False, None, 0
+    if len(opp_x) < params.min_opponents:
+        return False, None, 0
+    x_spread = float(np.max(opp_x) - np.min(opp_x))
+    if x_spread < params.min_x_spread:
+        return False, None, 0
+    n_eff_clusters = min(params.n_clusters, len(opp_x))
+    if n_eff_clusters < 2:
+        return False, None, 0
+
+    # Ward clustering on 1D x-coordinates
+    linkage_matrix = linkage(opp_x.reshape(-1, 1), method="ward")
+    labels = fcluster(linkage_matrix, t=n_eff_clusters, criterion="maxclust")
+
+    # Sort clusters by ascending mean x
+    cluster_ids = np.unique(labels)
+    cluster_means = [float(np.mean(opp_x[labels == c])) for c in cluster_ids]
+    sorted_order = np.argsort(cluster_means)
+    sorted_cluster_ids = cluster_ids[sorted_order]
+
+    # Build segments per cluster and test intersection
+    lines_broken = 0
+    any_through = False
+
+    for cid in sorted_cluster_ids:
+        mask = labels == cid
+        cx = opp_x[mask]
+        cy = opp_y[mask]
+
+        # Sort by y
+        y_order = np.argsort(cy)
+        cx_sorted = cx[y_order]
+        cy_sorted = cy[y_order]
+
+        # Extend to sidelines using nearest-player x
+        points_x = np.concatenate([[cx_sorted[0]], cx_sorted, [cx_sorted[-1]]])
+        points_y = np.concatenate([[params.pitch_y_min], cy_sorted, [params.pitch_y_max]])
+
+        # Test each segment for intersection with pass trajectory
+        cluster_broken = False
+        cluster_has_through = False
+        n_segments = len(points_x) - 1
+
+        for si in range(n_segments):
+            ax, ay = points_x[si], points_y[si]
+            bx, by = points_x[si + 1], points_y[si + 1]
+
+            if _segments_intersect(
+                pass_start_x,
+                pass_start_y,
+                pass_end_x,
+                pass_end_y,
+                ax,
+                ay,
+                bx,
+                by,
+            ):
+                cluster_broken = True
+                # Extension segments are first and last
+                if si != 0 and si != n_segments - 1:
+                    cluster_has_through = True
+
+        if cluster_broken:
+            lines_broken += 1
+            if cluster_has_through:
+                any_through = True
+
+    if lines_broken == 0:
+        return False, None, 0
+    # "between_lines" dominates (more tactically significant)
+    return True, ("between_lines" if any_through else "around_line"), lines_broken
 
 
 def _segments_intersect(

@@ -47,6 +47,32 @@ DEFENSIVE_CREDIT_RULES: tuple[str, ...] = (
 
 SIZING_XG = "xg"
 SIZING_XT = "xt"
+SIZING_XT_PRESSING = "xt_pressing"  # Item 1: reverse-xT "position won" pressing lens (opt-in)
+SIZING_VALUES: tuple[str, ...] = (SIZING_XG, SIZING_XT, SIZING_XT_PRESSING)
+
+# --- closed anchor-type vocabulary (the triggering action's SPADL type) ---
+ANCHOR_SHOT = "shot"
+ANCHOR_PASS = "pass"  # noqa: S105 -- an action type, not a password ("pass" substring)
+ANCHOR_BAD_TOUCH = "bad_touch"
+ANCHOR_CROSS = "cross"
+ANCHOR_TAKE_ON = "take_on"
+ANCHOR_TYPE_VALUES: tuple[str, ...] = (ANCHOR_SHOT, ANCHOR_PASS, ANCHOR_BAD_TOUCH, ANCHOR_CROSS, ANCHOR_TAKE_ON)
+
+# --- closed resolution-mode vocabulary (how the credited player was determined, Item 2) ---
+RESOLUTION_NEAREST = "nearest"
+RESOLUTION_ALL_WITHIN = "all_within"
+RESOLUTION_ALL_WITHIN_BEYOND_NEAREST = "all_within_beyond_nearest"
+RESOLUTION_LANE = "lane"  # Item 2: resolved in the shot->goal corridor
+RESOLUTION_NEAREST_FALLBACK = "nearest_fallback"  # Item 2: no corridor defender -> nearest-to-origin
+RESOLUTION_ANCHOR_ACTOR = "anchor_actor"  # an event-resolved actor (passer / recoverer), not proximity
+RESOLUTION_VALUES: tuple[str, ...] = (
+    RESOLUTION_NEAREST,
+    RESOLUTION_ALL_WITHIN,
+    RESOLUTION_ALL_WITHIN_BEYOND_NEAREST,
+    RESOLUTION_LANE,
+    RESOLUTION_NEAREST_FALLBACK,
+    RESOLUTION_ANCHOR_ACTOR,
+)
 
 
 def _is_inside_attacked_box(x: float, y: float) -> bool:
@@ -71,8 +97,14 @@ class DefensiveCreditParams:
     synchronized_zone_boundary_x: float = field(default_factory=lambda: _FIELD_LENGTH / 3.0)
     resulting_shot_max_actions: int = 10
     recovery_max_actions: int = 3
-    through_ball_delta_xt_min: float = 0.02  # provisional
     beaten_1v1_min_shot_xg: float = 0.05  # provisional
+    # Item 1: opt-in reverse-xT "position won" pressing lens for the xT-sized turnover rules.
+    # Default OFF -> byte-identical to the validated xT(origin) standard (spec section 3).
+    pressing_lens: bool = False
+    # Item 2: shot->goal lane corridor for the geometric shot_block blocker (spec section 4).
+    shot_lane_cone_width_factor: float = 0.2  # matches _cover_shadows (distance-scaled half-width)
+    shot_lane_max_t: float = 0.9  # intent-set, NEVER calibrated: distance-along-lane cap (GK backstop)
+    shot_lane_min_half_width_m: float = 1.0  # intent-set, NEVER calibrated: corridor floor (body reach)
     rules: frozenset[str] = field(default_factory=lambda: frozenset(DEFENSIVE_CREDIT_RULES))
 
     def __post_init__(self) -> None:
@@ -84,6 +116,15 @@ class DefensiveCreditParams:
                 raise ValueError(f"{name} must be > 0, got {val}")
         if self.resulting_shot_max_actions < 1 or self.recovery_max_actions < 1:
             raise ValueError("resulting_shot_max_actions and recovery_max_actions must be >= 1")
+        if not isinstance(self.pressing_lens, bool):
+            raise ValueError(f"pressing_lens must be a bool, got {type(self.pressing_lens).__name__}")
+        for name, val in (
+            ("shot_lane_cone_width_factor", self.shot_lane_cone_width_factor),
+            ("shot_lane_max_t", self.shot_lane_max_t),
+            ("shot_lane_min_half_width_m", self.shot_lane_min_half_width_m),
+        ):
+            if not val > 0:
+                raise ValueError(f"{name} must be > 0, got {val}")
         unknown = set(self.rules) - set(DEFENSIVE_CREDIT_RULES)
         if unknown:
             raise ValueError(f"unknown rule(s): {sorted(unknown)}; allowed: {DEFENSIVE_CREDIT_RULES}")
