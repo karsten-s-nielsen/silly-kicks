@@ -5,6 +5,30 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.60.0] — 2026-07-24
+
+### Added — TF-19 xS-probe placebo v2 run result (PR-S131, ADR-037 amendment)
+
+The post-lock deliverable for the 4.58.0 xS-probe placebo v2 (PR-S129): the ~64-match GradientSports run,
+executed **from the lock commit `78ffc70`** (blindness — `metrics.json` records `lock_commit == run_commit ==
+78ffc70`) on the DGX. **No `silly_kicks/` code change — the wheel is identical to 4.59.0**; this ships only the
+research artifact under `docs/research/tf19_pr3b_xs_v2/`.
+
+- **v1 (frozen random placebo): `no_valid_placebo`** — reproduces the 4.55.4 PR-3b baseline exactly
+  (`placebo_p95 = 0.0`, the random-outfielder null is degenerate).
+- **v2 (model-relevant-defender placebo): `pass` → re-gate `joins_with_caveat`.** The methodology worked as
+  designed: the defender placebo cleared the `no_valid_placebo` gate (`placebo_p95 = 0.00057`, live) yet is
+  **inert in the ratio** (weaker than `nearest_def = 0.00503`, so `max()` pins to it), the ratio prong passed
+  (`gk_med 0.01548 / nearest_def = 3.08×`), and — the genuine decider — the **clustered dose-response permutation
+  is significant: ρ = 0.436, p = 0.001 across all 64 games** (dose-responsive 2 m→4 m: 0.0155→0.0222). The
+  non-gating attacker diagnostic p95 = 0.0.
+- **`joins_with_caveat`** = the shot arm's GK→shot-occurrence effect is real and dose-responsive (probe passes) so
+  it *joins* the TF-19 metric, but with the honest caveat that the banked causal SHOT arm's entanglement was
+  `inside_band` (the GK contribution is not cleanly isolable from the xS positional confounders).
+
+Converts the xS arm from PR-3b's `unmeasurable_at_dose` dead-end into a real, citeable `pass`. Research artifact
+only — no default xfn, no retrain, C4-free (count unchanged).
+
 ## [4.59.0] — 2026-07-24
 
 ### Added — Feature-column glossary + `describe_level` (PR-S130, ADR-048)
