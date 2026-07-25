@@ -369,6 +369,21 @@ retrain trigger** (xS/ghost weights untouched — v2 only re-reads them through 
 is byte-identical (frozen suite + a pre-refactor numeric pin). No new methodological reference (placebo
 redesign within the existing ADR-037 probe; xS attribution arXiv:2512.00203 unchanged).
 
+**Run result (4.60.0, PR-S131) — the deliverable, `docs/research/tf19_pr3b_xs_v2/`.** The ~64-match GS
+probe ran on the DGX **from the lock commit `78ffc70`** (blindness verified: `metrics.json` records
+`lock_commit == run_commit == 78ffc70`). **v1 = `no_valid_placebo`** (reproduces the 4.55.4 PR-3b baseline
+exactly; degenerate random placebo, `placebo_p95 = 0.0`). **v2 = `pass` → re-gate `joins_with_caveat`.** The
+methodology performed as designed: the defender placebo cleared the `no_valid_placebo` gate
+(`placebo_p95 = 0.00057`, live) yet is **inert in the ratio** (weaker than `nearest_def = 0.00503`); the ratio
+prong passed (`gk_med 0.01548`, `3.08×`); and the genuine decider — the **clustered dose-response permutation —
+is significant, ρ = 0.436 / p = 0.001 across all 64 games** (dose-responsive 2 m→4 m: 0.0155→0.0222). The
+`joins_with_caveat` re-gate reflects the banked SHOT causal arm's `inside_band` entanglement: the GK→shot-
+occurrence effect is real and dose-responsive, joining the metric, but not cleanly isolable from the xS
+positional confounders. This converts the xS arm from PR-3b's `unmeasurable_at_dose` dead-end into a real,
+citeable `pass` — a materially more positive read on the attempt axis than the prior "leans H2/abandon"; it
+directly informs the §6.4 Part B go/no-go (still owner-gated). **Deliverable ships the research artifact only —
+no `silly_kicks/` code change; the wheel is byte-identical to 4.59.0.**
+
 ## References
 
 Spec: `docs/superpowers/specs/2026-07-12-tf19-gkdv-regate-and-v1-design.md`. Le et al.
