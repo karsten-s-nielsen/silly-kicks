@@ -20,6 +20,30 @@ import pandas as pd
 #: power curve is reported at all three rather than at a midpoint.
 ICC_ANCHORS: tuple[float, float, float] = (0.015, 0.020, 0.026)
 
+#: Row 5's ATT effect-size anchors: a RANGE, mirroring :data:`ICC_ANCHORS`, expressed as a RELATIVE
+#: change in the outcome's base rate. The ICC anchor does NOT transfer -- it is a keeper-level
+#: variance share, while row 5 gates a spell-level mean difference on a binary outcome, and no
+#: mapping between them exists. Relative rather than absolute per spec §1.3: "scale-free relative
+#: criteria + placebo bands are the honest idiom for small-probability quantities".
+#: ``N_MIN_MATCHED`` is registered at the 0.15 anchor; the curve is reported at all three.
+ATT_RELATIVE_ANCHORS: tuple[float, float, float] = (0.10, 0.15, 0.20)
+
+#: Layer 3's headroom threshold as a fraction of ``openGoal``'s OBSERVED range.
+#: COMMITTED BEFORE the measurement: measuring the range first and choosing the fraction afterwards
+#: would make the threshold tunable to any desired Layer 3 outcome, which is exactly what the
+#: derivation duty exists to prevent. ``openGoal`` is a dimensionless open-goal-mouth fraction
+#: constructively bounded by [0, 1], so on a corpus spanning most of that interval 2 % of the
+#: observed range lands near the 0.02 the spec originally guessed -- the duty is discharged by making
+#: that number derived and interpretable, not by moving it.
+LAYER3_HEADROOM_RANGE_FRACTION: float = 0.02
+
+#: Derived by ``scripts/run_signoff_power.py`` on the locked corpus: the smallest matched-n bin at
+#: which ATT power reaches 0.80 at the 0.15 relative anchor, taken as the MAXIMUM over the two
+#: Layer 2 outcomes (``Y_close_attempt`` has the lower base rate, so an ``N_min`` derived on
+#: ``Y_attempt`` alone would be anti-conservative for the outcome row 7 fires on).
+#: ``None`` until that run lands -- a placeholder VALUE, never a placeholder RULE.
+N_MIN_MATCHED: int | None = None
+
 #: Layer 4: minimum mean signed goal-relative depth separation between outer terciles,
 #: in metres. Below this the arm is not tracking a behaviour keepers actually vary.
 TERCILE_SEPARATION_M: float = 0.5

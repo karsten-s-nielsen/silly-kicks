@@ -377,9 +377,18 @@ methodology performed as designed: the defender placebo cleared the `no_valid_pl
 (`placebo_p95 = 0.00057`, live) yet is **inert in the ratio** (weaker than `nearest_def = 0.00503`); the ratio
 prong passed (`gk_med 0.01548`, `3.08×`); and the genuine decider — the **clustered dose-response permutation —
 is significant, ρ = 0.436 / p = 0.001 across all 64 games** (dose-responsive 2 m→4 m: 0.0155→0.0222). The
-`joins_with_caveat` re-gate reflects the banked SHOT causal arm's `inside_band` entanglement: the GK→shot-
-occurrence effect is real and dose-responsive, joining the metric, but not cleanly isolable from the xS
-positional confounders. This converts the xS arm from PR-3b's `unmeasurable_at_dose` dead-end into a real,
+`joins_with_caveat` re-gate reflects an `inside_band` entanglement input: the GK→shot-occurrence effect is real
+and dose-responsive, joining the metric, but not cleanly isolable from the xS positional confounders.
+
+> **CORRECTION (TF-19 sign-off package, F6).** That entanglement value was **not a measurement of this arm**.
+> `regate_verdict` consults `entanglement` ONLY when the probe verdict is `pass`; every run before v2 expected a
+> fail, so `scripts/validate_xs_probe.py` carried it as a hard-coded default — annotated in its own source as
+> *"inert unless the probe surprises with `pass`"* — carried forward from the CROSS arm's §2 registration. The
+> v2 probe surprised with `pass`, and the parameter documented as inert became the one that decided
+> `joins` vs `joins_with_caveat`. `scripts/validate_xshot_causal.py` measures the quantity properly and had
+> never been run; PR-2's own decision table recorded the shot row as *"(not run — PR-3-gated)"*. Nothing shipped
+> was overclaimed — `joins_with_caveat` is the CONSERVATIVE branch, and a measured `clears` would have produced
+> the stronger `joins` — but the attribution was false and is corrected here. This converts the xS arm from PR-3b's `unmeasurable_at_dose` dead-end into a real,
 citeable `pass` — a materially more positive read on the attempt axis than the prior "leans H2/abandon"; it
 directly informs the §6.4 Part B go/no-go (still owner-gated). **Deliverable ships the research artifact only —
 no `silly_kicks/` code change; the wheel is byte-identical to 4.59.0.**

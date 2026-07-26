@@ -486,3 +486,53 @@ def test_das_arm_returns_a_LIVE_FINITE_delta_through_real_accessible_space():
         "(team_das sums DAS.dropna(), and an empty sum is 0.0) -- not of a keeper who "
         "changed nothing while relocated 90 m upfield"
     )
+
+
+def test_compute_threat_pc_refuses_an_unfitted_xt_rather_than_returning_zero():
+    """MEASURED defect this guards: `compute_threat_pc` types `xt` as a REQUIRED
+    `ExpectedThreat`, but nothing enforced it -- passing None did not raise, it returned **0.0**.
+
+    A caller persisting a threat column would therefore have persisted structural zeros, and an
+    ICC or power curve computed on them is degenerate while looking like a measurement. The
+    threat arm of GKDV is exactly such a caller. Routed through the single shipped
+    `require_fitted_xt` seam (ADR-041), so both bad inputs are refused.
+    """
+    import pandas as pd
+
+    from silly_kicks.tracking import compute_threat_pc
+
+    rows: list[dict] = [
+        dict(
+            game_id=1,
+            period_id=1,
+            frame_id=1,
+            time_seconds=0.0,
+            frame_rate=25.0,
+            player_id=p,
+            team_id=t,
+            is_ball=False,
+            is_goalkeeper=False,
+            x=x,
+            y=34.0,
+            z=0.0,
+            speed=0.0,
+            vx=0.0,
+            vy=0.0,
+            speed_source="native",
+            ball_state="alive",
+            team_attacking_direction="ltr",
+            source_provider="t",
+        )
+        for p, t, x in [(1, 1, 50.0), (2, 2, 60.0)]
+    ]
+    rows.append(dict(rows[0], player_id=None, team_id=None, is_ball=True, x=55.0))
+    frame = pd.DataFrame(rows)
+
+    # The wrong TYPE is the subject of this test, so the ignores are deliberate: pyright already
+    # rejects these statically, and the point is that the RUNTIME does too (it previously did not).
+    with pytest.raises(ValueError, match="fitted ExpectedThreat"):
+        compute_threat_pc(frame, attacking_team_id=1, xt=None, home_team_id=1)  # type: ignore[arg-type]
+
+    # A bundled-variant NAME is also not a fitted model -- refused distinctly, not coerced.
+    with pytest.raises(NotImplementedError):
+        compute_threat_pc(frame, attacking_team_id=1, xt="default", home_team_id=1)  # type: ignore[arg-type]
