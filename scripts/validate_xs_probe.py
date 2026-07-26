@@ -170,7 +170,11 @@ def run(
     metrics = {
         "arm": "xs",
         "variants": results,
-        "entanglement": entanglement,  # inert unless the probe surprises with `pass`
+        # NOT inert: this was written expecting a `fail`, and the v2 probe returned `pass` -- at
+        # which point regate_verdict consults it and it DECIDES joins vs joins_with_caveat. The
+        # default value is a carry-forward from the cross arm's registration, so a run that does not
+        # pass --entanglement is reporting an UNMEASURED input for this arm.
+        "entanglement": entanglement,
         "reconciliation": reconciliation,
         "corpus": {
             "providers": _PROVIDERS,
@@ -287,7 +291,13 @@ def main() -> None:
     ap.add_argument(
         "--entanglement",
         default="inside_band",
-        help="banked shot-arm causal result (docs/research/tf19_causal/xshot/); inert unless probe=pass",
+        help=(
+            "shot-arm GK-confounder entanglement, from scripts/validate_xshot_causal.py "
+            "(docs/research/tf19_causal/xshot/). NOT inert: regate_verdict consults this whenever "
+            "the probe verdict is `pass`, which the xS v2 run returned -- so it DECIDES "
+            "joins vs joins_with_caveat. The default is a carry-forward from the cross arm's "
+            "ADR-037 registration, not a measurement of this arm."
+        ),
     )
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument(

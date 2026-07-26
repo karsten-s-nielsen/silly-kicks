@@ -730,6 +730,52 @@ def regate_verdict(*, arm: str, probe_verdict: str, entanglement: str) -> str:
     return "joins" if entanglement == "clears" else "joins_with_caveat"
 
 
+#: Closed routing vocabulary (the ``DAS_SOURCE_VALUES`` pattern): a consumer CASE/enum pins to this
+#: set rather than to free-text prose in an ADR.
+REGATE_ROUTING_VALUES: tuple[str, ...] = (
+    "pending_layer2",
+    "gk_feature_engineering",
+    "fix_the_instrument",
+    "corpus_or_sampling",
+    "joins_the_metric",
+)
+
+_ROUTING: dict[str, str] = {
+    # ADR-037's routing rule is AMENDED here, against its OWN pre-registered disclosure (TF-19 spec
+    # §6.4 Registration disclosures: "`regate_verdict`'s routing needs amending ... since that
+    # hard-codes H1"). It previously routed `gated_clean_fail` UNCONDITIONALLY to GK feature
+    # engineering, which made H2 unreachable by construction -- the function's whole signature has no
+    # input through which H2 could be expressed. H2 remains reachable ONLY through row 7 of
+    # `gkdv_discrimination_verdict` (PR-3b); this opens the channel without pre-empting the decider.
+    "gated_clean_fail": "pending_layer2",
+    "gated_flat_dose_response": "pending_layer2",
+    "unmeasurable_at_dose": "corpus_or_sampling",
+    "verdict_void": "fix_the_instrument",
+    "joins": "joins_the_metric",
+    "joins_with_caveat": "joins_the_metric",
+}
+
+
+def regate_routing(verdict: str) -> str:
+    """What to DO about a :func:`regate_verdict` result -- deliberately a SEPARATE function.
+
+    The verdict answers "what did the probe say"; the routing answers "what should we do about it".
+    Only the second may legitimately depend on Layer 2, and fusing them is what hard-coded H1.
+    `regate_verdict` is unchanged and stays byte-identical -- every recorded verdict still stands.
+
+    Examples
+    --------
+    >>> regate_routing("gated_clean_fail")
+    'pending_layer2'
+    >>> regate_routing("joins_with_caveat")
+    'joins_the_metric'
+    """
+    try:
+        return _ROUTING[verdict]
+    except KeyError:
+        raise ValueError(f"regate_routing: unknown verdict {verdict!r}") from None
+
+
 # --- Probe-wrapper registry (spec §7): every arm registers its wrapper + rule constants ----
 PROBE_WRAPPERS: dict[str, dict] = {}
 

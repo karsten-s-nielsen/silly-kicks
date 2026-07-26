@@ -44,3 +44,67 @@ def test_every_c4_box_description_is_a_summary():
         f"detail belongs in ADRs/CHANGELOG): "
         + "; ".join(f"{kind} ({n} chars) '{head}...'" for kind, n, head in offenders)
     )
+
+
+# --- Completeness: the model must not silently omit a shipped subpackage -------------------
+#
+# `silly_kicks.causal` went public at 4.47.0 and was NEVER modelled; the gap survived every
+# release until it was found by hand-diffing `ls silly_kicks/*/` against the container list.
+# Nothing pinned the diagram to the package tree, so nothing could have caught it -- the same
+# incomplete-by-heuristic shape this repo has now deleted twice (the AST id-lint, the
+# hand-maintained `_PUBLIC_MODULE_FILES`). Both times the fix was a DERIVED surface plus a
+# meta-assertion, which is what this is.
+
+_CONTAINER = re.compile(r'\w+ = container "([^"]*)"')
+
+#: Subpackages deliberately NOT modelled as their own container, each with a stated reason.
+#: An entry here is a decision on the record; an omission is a bug.
+_UNMODELLED: dict[str, str] = {}
+
+
+def _package_root() -> Path:
+    return Path(__file__).resolve().parents[1] / "silly_kicks"
+
+
+def _shipped_subpackages() -> set[str]:
+    """Every importable subpackage of `silly_kicks` -- derived, never enumerated by hand."""
+    return {
+        p.name
+        for p in _package_root().iterdir()
+        if p.is_dir() and not p.name.startswith((".", "_")) and (p / "__init__.py").is_file()
+    }
+
+
+def _modelled_names() -> set[str]:
+    """Container names reduced to the subpackage they represent.
+
+    A container name may carry extra scope (`silly_kicks.calibration + scripts/`), so the match is
+    on the `silly_kicks.<pkg>` token rather than on string equality.
+    """
+    text = _DSL.read_text(encoding="utf-8")
+    names = set()
+    for raw in _CONTAINER.findall(text):
+        for token in re.findall(r"silly_kicks\.(\w+)", raw):
+            names.add(token)
+    return names
+
+
+def test_every_shipped_subpackage_has_a_c4_container():
+    shipped = _shipped_subpackages()
+    # Meta-assertion: a broken discovery would make this gate pass vacuously.
+    assert len(shipped) >= 8, f"subpackage discovery looks broken, found {sorted(shipped)}"
+
+    missing = sorted(shipped - _modelled_names() - set(_UNMODELLED))
+    assert not missing, (
+        "shipped subpackage(s) have no C4 container -- the diagram no longer describes the "
+        "system. Add a container to docs/c4/architecture.dsl and regenerate architecture.html "
+        f"via the c4 skill; if one is deliberately unmodelled, record it in _UNMODELLED with a "
+        f"reason: {missing}"
+    )
+
+
+def test_unmodelled_entries_are_real_subpackages():
+    """Self-burning-down: an exemption for a package that no longer exists is stale scaffolding."""
+    shipped = _shipped_subpackages()
+    stale = sorted(set(_UNMODELLED) - shipped)
+    assert not stale, f"_UNMODELLED names packages that do not exist: {stale}"
