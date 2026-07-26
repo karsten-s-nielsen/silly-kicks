@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-07-25. **Current release**: silly-kicks 4.62.0 (TF-19 §6.4 sign-off package: plasmode ICC+ATT power, Layer 2's design in the causal builder behind a firewall, derived constants, verdict/routing split). No VAEP retrain; C4 count unchanged (32). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-07-25. **Current release**: silly-kicks 4.63.0 (TF-19 corpus-run tooling: match-partitioned arm-values pass + fail-closed run provenance). No VAEP retrain; C4 count unchanged (32). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
