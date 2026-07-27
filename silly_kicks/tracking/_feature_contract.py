@@ -184,6 +184,15 @@ def verify_feature_contract(
             UnverifiableFeatureContractWarning,
             stacklevel=2,
         )
+    # EXACT float equality, deliberately -- do NOT add a tolerance here. The change this prong
+    # exists to catch is 0.01 m, so any tolerance loose enough to absorb derivation noise is within
+    # an order of magnitude of the signal. It is safe today because both sides evaluate the *same
+    # expression* over the same doubles, which is IEEE-deterministic (so cross-platform too), and
+    # the JSON round trip preserves a float exactly.
+    #
+    # The one way to trip it spuriously: refactor a model to store a constant directly where it
+    # previously derived it (or vice versa), so the two forms differ in the last bit. The fix then
+    # is to RE-STAMP the artifact -- not to loosen this comparison.
     changed = {k: (sto_c[k], rec_c[k]) for k in set(rec_c) & set(sto_c) if rec_c[k] != sto_c[k]}
     if changed:
         if not legacy_override:

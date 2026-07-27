@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Date** | 2026-07-26 |
+| **Date** | 2026-07-27 |
 | **Status** | Accepted |
 | **Deciders** | Karsten S. Nielsen |
 | **Supersedes / amends** | ADR-021 (the tracked "canonical `spadlconfig` penalty-area constant" follow-up); ADR-038 (the deferred live corpus fingerprint); extends ADR-040's fail-closed `load()` guards |
@@ -218,10 +218,24 @@ fix rather than annotate.
 - **The next constant change is a checkable event**, for any constant any model declares — which is the
   whole point, and the reason this ADR is about a mechanism rather than about 1 cm.
 - **C4-free** (no new action-coupled aggregator, model or backend; count stays 32).
-- **Deferred with triggers:** the DGX-vs-x86 `atol` measurement, due before the first DGX-produced
-  fingerprint; and the ghost re-fit, which flips the constant, migrates `_ghost_gk` onto
-  `in_penalty_area_goal_relative` (including its strict-`<` boundary), and should be scheduled into the
-  already-queued lakehouse recompute window rather than paying that drain twice.
+- **One follow-on, and it should be NEXT, not someday.** The ghost re-fit — flip the constant, migrate
+  `_ghost_gk` onto `in_penalty_area_goal_relative` (including its strict-`<` boundary), re-fit, re-stamp
+  — is what actually completes the unification. It is a genuine retrain (new weights, moved outputs), so
+  it is a separate PR from this one, and it is blocked **only on compute**: the 179-match owner corpus
+  needs the DGX and the pining token.
+
+  It should be sequenced **ahead of any downstream recompute**, so the new weights ride that pass instead
+  of forcing a second one. An earlier draft of this ADR had the reasoning exactly inverted — it argued for
+  *waiting for* the recompute window, which is what would cause the double drain. Recorded because the
+  inverted version is the intuitive one and will be re-derived by the next reader otherwise.
+
+  The **DGX-vs-x86 `atol` measurement is a gate inside that re-fit**, not a parallel item: it costs one
+  probe-extractor call per platform, it needs exactly the DGX session the re-fit needs, and it must precede
+  the re-stamp so a too-tight tolerance is not baked into a shipped artifact. Its answer may not be "widen
+  the number" — if the cross-platform delta is large enough that a covering tolerance would also swallow a
+  real 1 cm geometry change, the honest conclusion is that fingerprints are **platform-scoped**: verify on
+  the stamping platform and skip only the fingerprint prong elsewhere, since the constants prong is
+  platform-independent by construction.
 
 ## Alternatives considered
 

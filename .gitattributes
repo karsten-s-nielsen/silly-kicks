@@ -2,3 +2,8 @@
 # Without this, Windows autocrlf could rewrite the bundled model.json and bloat diffs.
 silly_kicks/tracking/_xshot_weights/** binary
 silly_kicks/tracking/_xcross_weights/** binary
+# Ghost-GK was the odd one out until ADR-050 gave it a feature contract; it is now a
+# fingerprint-bearing artifact like the other two and gets the same pin. Its load() path
+# already normalizes CRLF before hashing, so this is churn prevention, not a bug fix --
+# without it the bundled metadata.json flips to CRLF on the next checkout.
+silly_kicks/tracking/_ghost_gk_weights/** binary
