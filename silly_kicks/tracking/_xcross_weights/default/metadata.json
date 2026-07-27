@@ -58,5 +58,32 @@
     "outputs": [
       0.0054975743
     ]
+  },
+  "feature_contract": {
+    "version": "feature-contract-1",
+    "probe_sha256": "9f17a54c10b8237f1f60ac7f84953ac8948b90e92bbc45eabc7bc3378138b398",
+    "fingerprint": [
+      22.0227155455,
+      -0.6889243882,
+      3.1622776602,
+      1.0,
+      11.1803398875,
+      204.0,
+      14.4222051019,
+      21.0,
+      0.25,
+      0.0,
+      2.0615528128,
+      0.2449786631,
+      0.5,
+      3.7397326108,
+      4.6157989558,
+      0.5
+    ],
+    "constants": {
+      "penalty_area_half_width": 20.16,
+      "penalty_area_depth": 16.5,
+      "goal_width": 7.32
+    }
   }
 }

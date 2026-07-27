@@ -19,9 +19,14 @@ CACHE_SCHEMA_VERSION = 2  # 1 -> 2: requires cache_meta.json + match_ids.npy (pr
 def corpus_fingerprint(rows: list[tuple[str, str, str]]) -> str:
     """Stable hash of the (provider, match_id, visibility) triples the cache was built from.
 
-    Deferred (ADR-038): the trainers currently gate on the constant ``CACHE_SCHEMA_VERSION`` token
-    (fresh ``--output-dir`` per corpus is the operating rule); wiring this live per-corpus hash into
-    the cache-validity predicate is the tracked follow-up. Not dead code -- the future drift guard.
+    LIVE as of ADR-050: both the xS and xCross trainers build this from the corpus they request and
+    pass it to :func:`write_cache_meta` / :func:`cache_is_valid`, so a cache built from a different
+    corpus under the same ``--output-dir`` MISSES. The previous constant-token gate could only
+    invalidate a pre-schema cache; "use a fresh ``--output-dir`` per corpus" was a discipline it
+    could not enforce.
+
+    Order-insensitive by construction (the rows are sorted before hashing): the same corpus listed
+    in a different manifest order is the same corpus.
     """
     payload = json.dumps(sorted(rows), separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()[:16]

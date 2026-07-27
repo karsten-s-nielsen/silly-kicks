@@ -66,8 +66,13 @@ XCROSS_FEATURE_NAMES_FAITHFUL = _BALL_FEATURES + _CONFOUNDERS + XCROSS_GK_BLOCK 
 _WIDE_Y_LOW = 14.0  # cross_zone wide corridor (specialty.py:54)
 _WIDE_Y_HIGH = 54.0
 _ADVANCE_M = 35.0  # permissive default (SkillCorner _is_cross start_x>70 == 35 m); PR-B re-selects
-_BOX_DEPTH_M = 16.5  # penalty area depth
-_BOX_HALF_WIDTH_M = 20.16  # penalty area half-width (40.32/2)
+# Canonical penalty-area geometry. Aliased rather than inlined at the `in_box` use site below:
+# that predicate is VECTORIZED over numpy arrays, so it cannot call the scalar
+# `_geometry.in_penalty_area_goal_relative` without a per-element loop -- the single source here
+# is the CONSTANT, not the predicate. Keeping the names also keeps them visible to the geometry
+# constant enumeration gate, which reads module-level assignments.
+_BOX_DEPTH_M = _spc.penalty_area_depth  # 16.5
+_BOX_HALF_WIDTH_M = _spc.penalty_area_half_width  # 20.16 (40.32/2)
 _GOAL_HALF_WIDTH_M = 3.66  # goal width 7.32 / 2
 
 _DEFAULT_CROSS_TYPES = ("cross",)  # open-play only (corner/freekick excluded by default)
@@ -399,6 +404,46 @@ def _chirality_block(model: XCrossAttemptModel) -> dict:
     return chirality_fingerprint(_predict)
 
 
+def _feature_contract_block() -> dict:
+    """Feature contract (ADR-050): this model's FEATURE VECTOR on the fixed probe frame, plus the
+    geometry constants its extractor consumes. Mirror of the xS block; see that docstring for why
+    it takes no model.
+
+    Declares all three constants it actually reads: the box pair drives ``box_off_def_ratio`` and
+    the goal width drives the post distances. The box constants are the canonical
+    ``spadlconfig.penalty_area_*`` values as of ADR-050; ``_GOAL_HALF_WIDTH_M`` remains
+    module-local (unifying goal width is a separate change), but declaring it is what makes that
+    distinction enforceable rather than aspirational.
+
+    Declared from the MODULE ALIASES, not ``_spc.*`` directly: the aliases are what the vectorized
+    ``in_box`` predicate actually evaluates, and reading a different binding here would let the two
+    drift apart silently.
+    """
+    from silly_kicks.tracking._feature_contract import contract_probe_frame, feature_contract
+
+    def _vec():
+        return (
+            extract_xcross_features(
+                contract_probe_frame(),
+                gk_team_id="B",
+                goal_x=105.0,
+                carrier_player_id="A2",
+                score_differential=1.0,
+            )
+            .iloc[0]
+            .to_numpy(dtype=float)
+        )
+
+    return feature_contract(
+        _vec,
+        constants={
+            "penalty_area_half_width": _BOX_HALF_WIDTH_M,
+            "penalty_area_depth": _BOX_DEPTH_M,
+            "goal_width": _GOAL_HALF_WIDTH_M * 2.0,
+        },
+    )
+
+
 def _pinned_params(overrides: dict | None) -> dict:
     """Pinned-deterministic XGBoost params (mirror xS _pinned_params exactly -- M5)."""
     base = {
@@ -501,6 +546,7 @@ class XCrossAttemptModel:
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
+            "feature_contract": _feature_contract_block(),
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
@@ -564,6 +610,16 @@ class XCrossAttemptModel:
             meta.get("chirality"),
             legacy_override=legacy_override,
             model_name="xCrossAttempt",
+        )
+
+        from silly_kicks.tracking._feature_contract import verify_feature_contract
+
+        verify_feature_contract(
+            _feature_contract_block(),
+            meta.get("feature_contract"),
+            legacy_override=legacy_override,
+            model_name="xCrossAttempt",
+            error_cls=IntegrityError,
         )
         return model
 

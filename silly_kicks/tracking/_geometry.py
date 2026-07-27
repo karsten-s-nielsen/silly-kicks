@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import math
 
+import silly_kicks.spadl.config as _spadlconfig
+
 FIELD_LENGTH = 105.0
 GOAL_Y = 34.0  # pitch half-width (68 / 2) --- goal centre y
 
@@ -55,3 +57,43 @@ def to_goal_relative_vx(vx: float, *, goal_x: float) -> float:
     if math.isnan(vx):
         return vx
     return -vx if _flip(goal_x) else vx
+
+
+def in_penalty_area_goal_relative(gr_x: float, y: float) -> bool:
+    """Penalty-area membership in GOAL-RELATIVE coords (the reference goal sits at ``gr_x = 0``).
+
+    Takes NO goal argument on purpose: the caller has already resolved attacked-vs-defended by
+    producing ``gr_x``, so that ambiguity cannot re-enter here. Boundary is non-strict on both
+    axes -- the Law's area includes its own lines.
+
+    Examples
+    --------
+    >>> in_penalty_area_goal_relative(16.5, 34.0)
+    True
+    >>> in_penalty_area_goal_relative(16.51, 34.0)
+    False
+    """
+    # NOTE: no lower bound on gr_x, DELIBERATELY. The shipped xCross predicate is
+    # `gr_x <= _BOX_DEPTH_M` with no `0 <= gr_x` guard, and real tracking carries x beyond the
+    # goal line (gr_x < 0), so adding one would CHANGE xCross behaviour for behind-the-line
+    # players. Whether a behind-the-line point should count as in-box is a separate, measurable
+    # question -- not this cycle's.
+    return bool((gr_x <= _spadlconfig.penalty_area_depth) and (abs(y - GOAL_Y) <= _spadlconfig.penalty_area_half_width))
+
+
+def in_penalty_area_absolute(x: float, y: float, *, attacked_goal_x: float) -> bool:
+    """Penalty-area membership in ABSOLUTE (action-LTR) coords.
+
+    ``attacked_goal_x`` is the absolute x of the goal whose area is being tested (0.0 or 105.0).
+    Named to avoid colliding with this module's ``goal_x``, which means the *defended* goal in the
+    to-goal-relative transforms above.
+
+    Examples
+    --------
+    >>> in_penalty_area_absolute(88.5, 34.0, attacked_goal_x=105.0)
+    True
+    >>> in_penalty_area_absolute(88.49, 34.0, attacked_goal_x=105.0)
+    False
+    """
+    gr_x = abs(float(attacked_goal_x) - float(x))
+    return in_penalty_area_goal_relative(gr_x, y)

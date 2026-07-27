@@ -250,6 +250,14 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   Practitioner documentation of 4-back defensive-line metrics at tournament
   level. Validates the N=4 default and line-height / compactness operationalisation.
 
+- IFAB. "Laws of the Game", Law 1 (The Field of Play).
+  Used by: silly_kicks.spadl.config (penalty_area_half_width, penalty_area_depth).
+  Source of the canonical penalty-area dimensions (40.32 m wide, 16.5 m deep).
+  A dimension rather than a methodology, recorded because the repo previously
+  carried two divergent values (40.3 / 40.32) with neither citing a source
+  (ADR-050). silly_kicks.tracking._ghost_gk deliberately retains 40.3 until its
+  re-fit: its bundled weights were trained on that value.
+
 The off-ball-runs and line-break detection features in
 silly_kicks/tracking/_off_ball_runs.py (PR-S30, TF-4) are novel
 implementations inspired by:

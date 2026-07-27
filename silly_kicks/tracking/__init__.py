@@ -55,6 +55,7 @@ __all__ = [
     "LinkParams",
     "LinkReport",
     "Method",
+    "MissingFeatureContractWarning",
     "ObsoParams",
     "ObsoSurface",
     "PackingParams",
@@ -75,6 +76,7 @@ __all__ = [
     "SyntheticEPVWarning",
     "TimeBaseDiagnosis",
     "TrackingConversionReport",
+    "UnverifiableFeatureContractWarning",
     "VoronoiParams",
     "XCrossAttemptModel",
     "XCrossFeatureSet",
@@ -322,8 +324,10 @@ from ._structural_pass import StructuralPassParams, compute_structural_pass_metr
 from ._team_shape import compute_team_shape
 from ._warnings import (
     IgnoredSurfaceInputsWarning,
+    MissingFeatureContractWarning,
     RunValueCoverageWarning,
     SyntheticEPVWarning,
+    UnverifiableFeatureContractWarning,
 )
 from ._xcross_attempt import (
     XCrossAttemptModel,

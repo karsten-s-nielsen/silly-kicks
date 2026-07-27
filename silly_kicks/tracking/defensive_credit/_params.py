@@ -5,19 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.tracking._geometry import in_penalty_area_absolute
 
 # --- pitch + box geometry (action-LTR: acting team attacks x=105) ---
 _FIELD_LENGTH: float = spadlconfig.field_length  # 105.0
 _FIELD_WIDTH: float = spadlconfig.field_width  # 68.0
-# Penalty-area geometry. spadlconfig ships no canonical box constant (see CLAUDE.md /
-# ADR-019 discussion); the repo duplicates it. We adopt _xcross_attempt.py's values
-# (16.5 depth, 20.16 half-width = 40.32/2). NOTE the cross-module discrepancy: _ghost_gk.py
-# uses 40.3 (half 20.15). 0.01 m apart; neither cites the other. We pick 40.32 (the FIFA
-# Laws figure) and flag it here rather than silently choosing. A canonical spadlconfig
-# penalty-area constant is a tracked cross-cutting follow-up (ADR-021 "pitch dims live in
-# spadlconfig"); see the TF-51 plan's Task 17.
-_BOX_DEPTH_M: float = 16.5
-_BOX_HALF_WIDTH_M: float = 20.16
+# Penalty-area geometry now comes from the canonical `spadlconfig.penalty_area_*` constants via
+# `_geometry.in_penalty_area_absolute` -- this module holds no box constant of its own. NOTE the
+# surviving cross-module divergence: `_ghost_gk.py` still uses 40.3 (half 20.15) because its
+# bundled weights were trained on that value; its artifact records the constant in its feature
+# contract, so flipping it without a re-fit makes `load()` raise rather than skew silently.
 _GOAL_Y_C: float = _FIELD_WIDTH / 2.0  # 34.0
 
 # --- closed rule vocabulary (DAS_SOURCE_VALUES pattern) ---
@@ -77,7 +74,7 @@ RESOLUTION_VALUES: tuple[str, ...] = (
 
 def _is_inside_attacked_box(x: float, y: float) -> bool:
     """True iff (x, y) in action-LTR coords is inside the attacked penalty area (goal at x=105)."""
-    return bool((x >= _FIELD_LENGTH - _BOX_DEPTH_M) and (abs(y - _GOAL_Y_C) <= _BOX_HALF_WIDTH_M))
+    return in_penalty_area_absolute(x, y, attacked_goal_x=_FIELD_LENGTH)
 
 
 @dataclass(frozen=True)
