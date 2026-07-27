@@ -1,8 +1,8 @@
-"""Maintainer driver: persist per-frame GKDV arm values for the §6.1 ICC power leg.
+"""Maintainer driver: persist per-frame GKDV arm values for the S6.1 ICC power leg.
 
 TF-19 sign-off package. `scripts/run_signoff_power.py --arm-values <parquet>` consumes the table
 this writes: one row per SCORED counterfactual frame, carrying the arm value, the keeper it belongs
-to, and the match it occurred in — exactly the (values, groups, blocks) `icc_power_curve` needs.
+to, and the match it occurred in -- exactly the (values, groups, blocks) `icc_power_curve` needs.
 
 Split out as its OWN pass, and run ONCE, because this is the expensive leg: accessible-space plus
 Spearman pitch control on every domain frame, twice (factual and ghost). The power simulator then
@@ -11,11 +11,11 @@ resamples the persisted table rather than recomputing surfaces per replicate.
 TWO CORRECTNESS CONSTRAINTS, both load-bearing:
 
 * **No `PitchControlCache`, ever.** It keys on frame IDENTITY (game/period/frame/team/method/
-  params/ball/decompose) and excludes player positions, so a ghost frame — which carries its twin's
-  identity — would be served the FACTUAL leg's surface and every delta would collapse to exactly
+  params/ball/decompose) and excludes player positions, so a ghost frame -- which carries its twin's
+  identity -- would be served the FACTUAL leg's surface and every delta would collapse to exactly
   zero, silently. The arms deliberately accept no cache; this note exists so nobody adds one.
 * **Dropped frames are dropped, never zero.** `build_ghost_frames` drops-and-counts a frame whose
-  ghost is missing/NaN; scoring those as Δ=0 would read as "no deterrence" and bias every keeper
+  ghost is missing/NaN; scoring those as delta =0 would read as "no deterrence" and bias every keeper
   aggregate toward the null. Only rows with `drop_reason` NaN are scored, and the conservation
   identity (scored + drops == in) is asserted per match.
 
@@ -37,7 +37,7 @@ from pathlib import Path
 
 
 def _frame_slice(frames, gid, per, fid):
-    """One (game, period, frame) slice — the unit both arms consume."""
+    """One (game, period, frame) slice -- the unit both arms consume."""
     return frames[(frames["game_id"] == gid) & (frames["period_id"] == per) & (frames["frame_id"] == fid)]
 
 
@@ -52,11 +52,28 @@ def _attacking_team_id(frame_slice, defending_team_id):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", default=None, help="output dir (not needed with --list-matches)")
     ap.add_argument("--providers", default="gradientsports")
     ap.add_argument("--arm", choices=["das", "threat", "both"], default="das")
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
+    ap.add_argument(
+        "--match-ids-json",
+        default=None,
+        help=(
+            'JSON {"gradientsports": ["10502", ...]} pinning WHICH matches this process handles. '
+            "This is how the corpus pass is PARALLELISED: split the id list N ways and launch N "
+            "processes, each with its own slice and a SHARED --out. Ids are STRINGS in the "
+            "manifest. Without it a second process would re-walk the corpus from the start and "
+            "redo work, because shards are written on COMPLETION, not claimed up front."
+        ),
+    )
+    ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; manifest is marked)")
+    ap.add_argument(
+        "--list-matches",
+        action="store_true",
+        help="print the available match ids as JSON and exit (build the parallel split from this)",
+    )
     args = ap.parse_args()
 
     # The threat arm is REFUSED here, and the reason is a library fact rather than a preference.
@@ -90,6 +107,31 @@ def main() -> None:
     want_threat = args.arm in ("threat", "both")
     totals = {"n_frames_in": 0, "n_frames_scored": 0, "drop_reasons": {}, "n_matches": 0}
 
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    if not args.list_matches and not args.out:
+        raise SystemExit("--out is required unless --list-matches is given")
+
+    # --list-matches writes no artifact, so it is exempt from the clean-tree requirement.
+    prov = (
+        {"commit": "n/a", "dirty": False, "dirty_files": []}
+        if args.list_matches
+        else require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
+    )
+
+    if args.list_matches:
+        # Consumes the loader's own `_list_matches` (private, but the exact call `load_matches`
+        # makes internally, so the id set cannot drift from what a run would actually fetch).
+        # `scripts/_loader_*` is read-only here -- this reads it, never edits it.
+        from scripts._loader_pining import _base_url, _list_matches, _resolve_token
+
+        tok, base = _resolve_token(None), _base_url()
+        ids = {p: [m["id"] for m in _list_matches(p, tok, base)] for p in args.providers.split(",")}
+        print(json.dumps(ids, indent=2))
+        return
+
+    match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
+
     # PER-MATCH SHARDS, written as each match completes. A single accumulate-then-write-once pass
     # over a 64-match corpus is both an OOM risk and unresumable: a crash at match 60 discards
     # everything. Shards also make the run restartable -- an existing shard is skipped, so a
@@ -102,6 +144,7 @@ def main() -> None:
     # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
     for _provider, match_id, _actions, frames, home_team_id in load_matches(
         providers=args.providers.split(","),
+        match_ids=match_ids,
         max_per_provider=args.max_per_provider,
         tracking_limit=args.tracking_limit,
     ):
@@ -114,7 +157,7 @@ def main() -> None:
         # all-NaN column, it now raises -- which is how this surfaced at all.
         #
         # The carrier is computed ONCE and shared by the possession derivation, the engine's
-        # domain filter and its serving seam (spec §4.1 pins the carrier once for exactly this
+        # domain filter and its serving seam (spec S4.1 pins the carrier once for exactly this
         # reason: two carrier definitions would make the domain and the substitution disagree).
         carrier = infer_ball_carrier(frames)
         frames = derive_team_in_possession(frames, carrier)
@@ -211,7 +254,15 @@ def main() -> None:
             "n_nonzero": int((df["arm_value"] != 0).sum()),
         }
 
-    manifest = {**totals, "arms_written": written, "arm_requested": args.arm}
+    # The arm-values table is what the S6.1 ICC number derives from, so it carries its own
+    # provenance -- a clean SHA on the power metrics would otherwise launder a dirty input.
+    manifest = {
+        **totals,
+        "arms_written": written,
+        "arm_requested": args.arm,
+        "run_commit": prov["commit"],
+        "run_tree_dirty": prov["dirty"],
+    }
     (dest / "arm_values_manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
     print(json.dumps(manifest, indent=2, default=str))
 

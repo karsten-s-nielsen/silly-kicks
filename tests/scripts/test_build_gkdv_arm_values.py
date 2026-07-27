@@ -124,3 +124,19 @@ def test_defending_keeper_selection_is_dtype_safe():
 
     scored = pd.DataFrame({"gk_team_id": pd.array([5, 6], dtype="Int64"), "defending_team_id": ["6", "6"]})
     assert int(ids_equal(scored["gk_team_id"], scored["defending_team_id"]).sum()) == 1
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    ["build_gkdv_arm_values", "run_signoff_power", "derive_opengoal_range"],
+)
+def test_driver_source_is_ascii_so_help_works_on_windows(module_name):
+    """`--help` prints the module docstring, and a Windows console is cp1252: a single non-ASCII
+    character (measured: U+0394 in a delta description) makes `--help` die with
+    UnicodeEncodeError before the maintainer can read the usage. Cheap to keep, and it fails on
+    the machine the drivers are actually invoked from."""
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[2] / "scripts" / f"{module_name}.py"
+    offenders = sorted({c for c in src.read_text(encoding="utf-8") if ord(c) > 127})
+    assert not offenders, f"non-ASCII in {module_name}.py breaks --help on cp1252: {offenders}"

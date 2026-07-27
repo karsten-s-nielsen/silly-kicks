@@ -5,6 +5,36 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.63.0] — 2026-07-26
+
+### Added / Fixed — TF-19 corpus-run tooling (PR-S`<NN>`, ADR-037)
+
+Maintainer-driver changes only; `scripts/` is not packaged, so **the wheel is byte-identical to
+4.62.0**. These are the prerequisites for the §6.1/§6.4 corpus runs, landed together so the runs
+execute from one immutable commit.
+
+- **`scripts/_provenance.py` (NEW) — fail-closed run provenance.** `git rev-parse HEAD` returns the
+  same SHA whether or not the tree is modified, so a driver stamping it records a commit that does
+  **not** describe the code that produced the numbers — verifiable-looking and false, which is worse
+  than recording nothing. Measured: a corpus pass was launched from a tree with three modified
+  drivers while HEAD read clean. `require_clean_tree` now REFUSES an artifact-writing run on a dirty
+  tree (naming the dirty files and the SHA that would have been falsely recorded); `--allow-dirty`
+  permits a dev run but the artifact still records `dirty: true`. Absent git counts as dirty, never
+  clean. Wired into all three drivers: `run_signoff_power.py` (which previously stamped a bare SHA)
+  plus `build_gkdv_arm_values.py` and `derive_opengoal_range.py`, whose artifacts previously carried
+  **no** provenance at all — a clean SHA on the power metrics would otherwise have laundered a dirty
+  input, since the arm-values table is what the ICC number derives from.
+- **`build_gkdv_arm_values.py` gains `--match-ids-json` + `--list-matches`**, which is what makes the
+  corpus pass parallelisable: split the id list N ways and run N processes against a shared `--out`.
+  Without it a second process re-walks the corpus from the start and redoes work, because shards are
+  written on COMPLETION rather than claimed up front. Ids are STRINGS in the manifest.
+  `--list-matches` consumes the loader's own `_list_matches`, so the id set cannot drift from what a
+  run would actually fetch. Serial 64-match cost is ~61 h; partitioned it is ~6–8 h.
+- **`--help` no longer crashes on Windows.** All three drivers carried non-ASCII in their module
+  docstrings (`Δ`, `—`, `§`); a cp1252 console raises `UnicodeEncodeError` before printing usage —
+  on the machine the drivers are invoked from. Now ASCII-clean, with a parametrised regression test.
+- `--out` is no longer required for `--list-matches` (listing writes no artifact).
+
 ## [4.62.0] — 2026-07-25
 
 ### Added / Changed — TF-19 §6.4 sign-off package (PR-S`<NN>`, ADR-037 amendment)

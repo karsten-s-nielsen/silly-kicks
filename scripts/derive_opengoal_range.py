@@ -1,6 +1,6 @@
 """Maintainer driver: derive Layer 3's headroom threshold from `openGoal`'s observed range.
 
-TF-19 sign-off package §6. The derivation duty says: "state `openGoal`'s units and observed range
+TF-19 sign-off package S6. The derivation duty says: "state `openGoal`'s units and observed range
 FIRST (a reader cannot currently tell whether 0.02 is generous or unreachable), then set the
 threshold as a stated fraction of that range."
 
@@ -61,13 +61,18 @@ def main() -> None:
     ap.add_argument("--providers", default="gradientsports")
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
+    ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     args = ap.parse_args()
 
     # The boundary, enforced: this derivation must never import the ghost-substitution engine.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
+
     if "silly_kicks.gkdv._engine" in sys.modules:
         raise RuntimeError(
             "derivation must not import the ghost-substitution engine -- measuring the marginal "
-            "distribution is NOT running Layer 3's probe (spec §6). A raise, not an assert: "
+            "distribution is NOT running Layer 3's probe (spec S6). A raise, not an assert: "
             "asserts vanish under -O, and this boundary must hold in every run."
         )
 
@@ -94,6 +99,8 @@ def main() -> None:
             values.extend(np.asarray(feats["openGoal"], dtype=float).tolist())
 
     out = summarise(values)
+    out["run_commit"] = prov["commit"]
+    out["run_tree_dirty"] = prov["dirty"]
     dest = Path(args.out)
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "opengoal_distribution.json").write_text(json.dumps(out, indent=2), encoding="utf-8")

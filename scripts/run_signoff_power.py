@@ -1,8 +1,8 @@
 """Maintainer driver: the TF-19 sign-off power curves (ICC + ATT).
 
-Produces the two curves §6.4 needs to become signable:
+Produces the two curves S6.4 needs to become signable:
 
-* the **ICC** power curve at all three ``ICC_ANCHORS`` -- discharging §6.1's registered precondition
+* the **ICC** power curve at all three ``ICC_ANCHORS`` -- discharging S6.1's registered precondition
   ("the gate is registered only if detection at the anchor ... is >= 0.8"), which shipped in PR-3 as
   a docstring promise no code could keep;
 * the **ATT** power curves at all three ``ATT_RELATIVE_ANCHORS`` for BOTH Layer 2 outcomes, from
@@ -10,7 +10,7 @@ Produces the two curves §6.4 needs to become signable:
   rate, so an ``N_min`` derived on ``Y_attempt`` alone would be anti-conservative for the outcome
   the decider's row 7 fires on).
 
-FIREWALL (spec §5.1): this script NEVER estimates an ATT on the observed outcome. `att_power_curve`
+FIREWALL (spec S5.1): this script NEVER estimates an ATT on the observed outcome. `att_power_curve`
 accepts no outcome vector at all -- only an `InjectionSpec` recipe it draws from itself -- so Layer
 2's real contrast stays unread until PR-3b. Do not add an "and also report the observed ATT" flag.
 
@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 
@@ -49,18 +48,6 @@ def build_design_matrix(spells, confounders):
     return spells.loc[:, list(confounders)].to_numpy(dtype=float)
 
 
-def _git_commit() -> str:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"],  # noqa: S607 -- git from PATH is the house pattern
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except Exception:  # pragma: no cover -- provenance is best-effort, never fatal
-        return "unknown"
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", required=True)
@@ -68,6 +55,7 @@ def main() -> None:
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--lock-commit", default=None, help="the commit the run was registered against")
     ap.add_argument(
         "--arm-values",
@@ -75,6 +63,11 @@ def main() -> None:
         help="parquet of per-action gkdv arm values (arm_value, keeper_key, game_id) for the ICC leg",
     )
     args = ap.parse_args()
+
+    # Provenance FIRST: refuse a dirty tree before any corpus work is paid for.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
     import pandas as pd
 
@@ -161,7 +154,8 @@ def main() -> None:
 
     out = {
         "lock_commit": args.lock_commit,
-        "run_commit": _git_commit(),
+        "run_commit": prov["commit"],
+        "run_tree_dirty": prov["dirty"],
         "n_spells": len(spells),
         "sizes": list(sizes),
         "att": att,
