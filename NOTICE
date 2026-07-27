@@ -121,6 +121,24 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   different league/era corpus) is reported, not hidden. The causal finding is a
   reported research result, never a ship gate.
 
+- Plasmode simulation (silly_kicks/causal/power.py, silly_kicks/_group_metrics.py
+  icc_power_curve; TF-19 sign-off package). "Plasmode" denotes a simulation built on
+  REAL data with a KNOWN effect injected into it, as against a fully synthetic
+  i.i.d. draw — the term and the design are standard in the statistical-methods
+  literature (Vaughan, Sarkar & Ruppert 2009, "Choosing a Plasmode Simulation";
+  Franklin, Schneeweiss, Polinski & Rassen 2014, "Plasmode simulation for the
+  evaluation of pharmacoepidemiologic methods in complex healthcare databases",
+  Computational Statistics & Data Analysis 72:219-226). silly-kicks uses it for the
+  two power analyses TF-19 §6.1/§6.4 register: real per-observation values with their
+  real clustering, an injected keeper-level effect (ICC mode) or treatment effect
+  (ATT mode), and a null that permutes labels WITHIN the real block structure. The
+  reason is the one the source literature gives: an i.i.d. simulation inherits none
+  of the clustering and can report adequate power while the real instrument is
+  simultaneously underpowered and anti-conservative. Abadie & Imbens (2006),
+  "Large Sample Properties of Matching Estimators for Average Treatment Effects",
+  Econometrica 74(1):235-267, supplies the matching standard errors both the harness
+  and its power simulator use.
+
 - Peters, A., Parmar, N., Davies, M., & James, N. (2026). "When Timing Matters:
   Evaluating Temporal Leakage in Machine Learning Models of Football Pass
   Turnovers." Research Quarterly for Exercise and Sport.

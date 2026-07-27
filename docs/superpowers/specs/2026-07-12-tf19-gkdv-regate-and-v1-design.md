@@ -1005,6 +1005,55 @@ the world, because it is predicted by the feature contract. H2 must therefore be
 ONLY through a **model-free** test, never from a flat xS or xCross reading. Everything
 below follows from that one commitment.
 
+> **[AMENDED 2026-07-25 — TF-19 sign-off package. Read before interpreting the xS `pass`.]**
+>
+> **(a) The arms now DIVERGE.** 4.60.0's xS-v2 run returned `pass` / re-gate `joins_with_caveat`
+> (ρ=0.436, p=0.001, ratio 3.08×) while xCross stays `gated_clean_fail`. §6.4 was drafted when
+> the attempt arm read flat for BOTH; that premise no longer holds, and each arm is now treated
+> per-arm rather than under a shared assumption.
+>
+> **(b) THE REGISTERED SYMMETRY — the load-bearing line of this amendment.** The principle above
+> is stated in one direction only, and the missing direction is now the live risk. A **flat**
+> probe is inadmissible because the feature contract predicts flatness. Run forwards, the same
+> argument says: a **LIVE** probe is evidence that *the model responds to keeper position* —
+> Layer 1 responsiveness — and is **NOT support for H1**. Both H1 and H2 remain reachable only
+> through Layer 2's model-free test. Unstated, the xS `pass` invites exactly the mis-reading
+> §6.4 exists to prevent, in the more tempting direction.
+>
+> **(c) Row 5 is re-specified.** Its `"plasmode power < 0.80 at ICC 0.015–0.026"` clause is
+> **STRUCK**: it was imported verbatim from §6.1, where injected *keeper* effects power a
+> keeper-level *ICC* coherently. Row 5 gates a Layer 2 **ATT** — a spell-level mean difference on
+> a binary outcome — and no mapping between a variance share and a mean difference is stated
+> anywhere in this spec. `N_min` therefore carries its OWN anchor, registered as
+> `ATT_RELATIVE_ANCHORS = (0.10, 0.15, 0.20)`: a *relative* change in the outcome base rate, per
+> §1.3's own lesson that "scale-free relative criteria + placebo bands are the honest idiom for
+> small-probability quantities". The ICC anchors stay with §6.1, where they are coherent.
+>
+> **(d) The derivation duty is discharged in code, not prose.**
+> `LAYER3_HEADROOM_RANGE_FRACTION = 0.02` is committed **before** the measurement (fraction
+> first, range second — the reverse order would make the threshold tunable to any desired Layer 3
+> outcome). `N_MIN_MATCHED` is filled from the locked-corpus run as the **maximum** over both
+> Layer 2 outcomes, since `Y_close_attempt`'s lower base rate makes a `Y_attempt`-only derivation
+> anti-conservative for the outcome row 7 actually fires on.
+>
+> **(e) The routing amendment landed**, against this subsection's own pre-registered disclosure.
+> `regate_verdict` is byte-identical (every recorded verdict stands); the new pure
+> `regate_routing` maps `gated_clean_fail` to `pending_layer2` instead of unconditionally to GK
+> feature engineering. H2 stays reachable only through row 7.
+>
+> **(f) Layer 2's DESIGN now exists in code** (`layer2_config`, the covariate-threshold treatment
+> axis, both outcome labellers) — because a power curve is a function of a design, and `N_min`
+> could not otherwise be derived for the design it gates. Layer 2's **STUDY** does not: a FIREWALL
+> in `silly_kicks/causal/power.py` makes the observed-outcome ATT *unrepresentable* —
+> `att_power_curve` accepts no outcome vector at all, only an injection recipe it draws from — so
+> the decider stays unrun until PR-3b.
+>
+> **(g) §6.1's power precondition was never built** and is built here. `ICC_ANCHORS` shipped in
+> PR-3 promising "a power curve is reported at all three" that no code could produce, while §6.1
+> registers that curve as a precondition on the ICC gate. If the real-corpus curve comes back
+> **< 0.8**, §6.1 governs: floors/sampling are adjusted first and the ICC gate is NOT registered —
+> a reportable result, not a number to tune toward.
+
 **Layer 0 — instrument validity, fires before every other gate.** Evaluate each channel at
 three doses on the same frames: *realistic* (ghost − actual, |δ| ≥ 2 m, trusted stratum),
 *ladder* (the existing `XS_PROBE_DOSE_LADDER`), and **saturating** (keeper → goal-line

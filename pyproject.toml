@@ -193,6 +193,8 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/tracking/_xcross_eval.py" = ["N803", "N806"]
 # TF-17 xCross PR-C causal port (public since TF-19/ADR-037): ML-style uppercase X/Y/Z in the matching estimators.
 "silly_kicks/causal/**/*.py" = ["N803", "N806"]
+# TF-19 sign-off power driver: same causal X/Z convention as the estimators it calls.
+"scripts/run_signoff_power.py" = ["N803", "N806"]
 # TF-17 xCross PR-C causal driver: ML-style uppercase X/Y/Z + `matching as M` (N812).
 "scripts/validate_xcross_causal.py" = ["N803", "N806", "N812"]
 # TF-19 shot-arm causal driver (thin clone of the xCross driver): same conventions.

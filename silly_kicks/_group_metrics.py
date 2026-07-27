@@ -27,9 +27,13 @@ GROUP-VARIANCE discrimination (ICC -- does the metric separate keepers?). It is 
 CLASSIFIER discrimination (ROC-AUC) that the same word denotes ~25 times in the lakehouse
 and in our own xG/PSxG gates. Do not conflate them when grepping either repo.
 
-SCOPE, stated so the next reader does not go looking: the spec §6.1 module concept also
-names a permutation band and a power simulator. Those are **PR-3b** and are deliberately
-absent here -- this module holds exactly what PR-3 lifted.
+SCOPE: this module holds domain-free grouped statistics -- ICC, spread, and the ICC POWER
+SIMULATOR (:func:`icc_power_curve`). The power sim was originally deferred to PR-3b, and that
+deferral was **overridden** by the sign-off cycle: TF-19 spec §6.1 registers the power curve as a
+PRECONDITION on the ICC gate ("the gate is registered only if detection at the anchor ... is >=
+0.8"), so ``gkdv/_validate.py`` shipped ``ICC_ANCHORS`` carrying a docstring that promises "a power
+curve is reported at all three" while no code could produce one. The permutation BAND remains
+PR-3b and is deliberately absent.
 """
 
 from __future__ import annotations
@@ -40,6 +44,145 @@ import pandas as pd
 #: A-priori minimum observations per group for a stable within-group term. Single-sourced
 #: here because the consuming script both filters on it AND prints it in its report header.
 DEFAULT_MIN_N = 20
+
+
+def _group_centre(values, groups) -> tuple[np.ndarray, np.ndarray, int]:
+    """Group-centred values + the group index, computed ONCE per corpus.
+
+    ``bincount``, not a per-group boolean scan: the scan form made the CI smoke a 35 s test, and
+    §6.1 mandates a fast one.
+    """
+    vals = np.asarray(values, dtype=float)
+    keys, inv = np.unique(np.asarray(groups), return_inverse=True)
+    sums = np.bincount(inv, weights=vals, minlength=len(keys))
+    counts = np.bincount(inv, minlength=len(keys))
+    return vals - (sums / counts)[inv], inv, len(keys)
+
+
+def _inject_group_effect(centred, inv, n_keys: int, within_var: float, target_icc: float, rng) -> np.ndarray:
+    """Add a group-level effect sized so the between-group variance share equals ``target_icc``.
+
+    Takes the PRE-CENTRED values so the invariant work is hoisted out of the replicate loop.
+    """
+    if target_icc <= 0.0 or within_var <= 0.0:
+        return centred
+    between_var = target_icc / (1.0 - target_icc) * within_var
+    return centred + rng.normal(0.0, np.sqrt(between_var), size=n_keys)[inv]
+
+
+def _icc_fast(values: np.ndarray, codes: np.ndarray, n_codes: int) -> float:
+    """Numpy-only ICC(1), identical in value to :func:`icc_one_way`.
+
+    A dedicated fast path EXISTS because the permutation loop evaluates this thousands of times and
+    ``icc_one_way`` builds a DataFrame plus a ``groupby.apply`` per call. ``icc_one_way`` is shipped,
+    consumer-tested and deliberately UNTOUCHED; equivalence is not assumed but gated by
+    ``test_fast_icc_matches_the_shipped_icc_exactly``.
+    """
+    counts = np.bincount(codes, minlength=n_codes)
+    sums = np.bincount(codes, weights=values, minlength=n_codes)
+    keep = counts >= 2  # a group needs >=2 observations to contribute a within term
+    if keep.sum() < 2:
+        return float("nan")
+    row_keep = keep[codes]
+    v = values[row_keep]
+    ng = counts[keep].astype(float)
+    means = (sums[keep] / counts[keep]).astype(float)
+    n, g = len(v), int(keep.sum())
+    if g < 2 or n <= g:
+        return float("nan")
+    grand = float(v.mean())
+    ssb = float((ng * (means - grand) ** 2).sum())
+    # within-group SS via the per-row group mean -- no per-group Python loop
+    remap = np.full(n_codes, -1, dtype=int)
+    remap[np.flatnonzero(keep)] = np.arange(g)
+    ssw = float(((v - means[remap[codes[row_keep]]]) ** 2).sum())
+    msb, msw = ssb / (g - 1), ssw / (n - g)
+    n0 = (n - (ng**2).sum() / n) / (g - 1)  # unbalanced correction
+    denom = msb + (n0 - 1) * msw
+    return float((msb - msw) / denom) if denom != 0 else float("nan")
+
+
+def _block_permuter(groups, blocks):
+    """Precompute the block -> representative-group-CODE map ONCE.
+
+    Invariant across permutations, so hoisting it out of the replicate loop is what keeps the CI
+    smoke fast (§6.1 mandates one). Integer codes rather than labels keep the permuted grouping
+    directly consumable by :func:`_icc_fast` with no string round-trip.
+    """
+    codes = np.unique(np.asarray(groups), return_inverse=True)[1]
+    blocks = np.asarray(blocks)
+    bkeys, block_inv = np.unique(blocks, return_inverse=True)
+    first_idx = np.zeros(len(bkeys), dtype=int)
+    seen = np.zeros(len(bkeys), dtype=bool)
+    for i, b in enumerate(block_inv):
+        if not seen[b]:
+            seen[b] = True
+            first_idx[b] = i
+    return codes[first_idx], block_inv
+
+
+def _permute_groups_by_block(rep_codes, block_inv, rng) -> np.ndarray:
+    """Match-block label permutation: shuffle which GROUP attaches to each BLOCK, so within-block
+    clustering survives. An i.i.d. shuffle of observations would not."""
+    return rng.permutation(rep_codes)[block_inv]
+
+
+def icc_power_curve(values, groups, blocks, *, anchors, n_replicates, alpha: float = 0.05, rng_seed: int = 0) -> dict:
+    """Plasmode power to DETECT a group-level ICC at each anchor (TF-19 spec §6.1, §5.3).
+
+    Real values, real clustering, injected KNOWN effects -- never an i.i.d. simulation, which would
+    "inherit none of the clustering and could pass while the real instrument is simultaneously
+    underpowered and anti-conservative".
+
+    The input's block structure is load-bearing: if every group sits in exactly one block, the
+    block permutation is a pure relabelling of an identical partition and the null equals the
+    observed statistic exactly, so nothing is detectable at any anchor.
+
+    Returns
+    -------
+    dict
+        ``power`` (anchor -> detected fraction), ``mean_observed_icc``, ``mean_null_icc``,
+        ``mean_observed_icc_at_zero`` (the non-vacuity reference), ``n_replicates``, ``alpha``.
+    """
+    rng = np.random.default_rng(rng_seed)
+    # Everything invariant across replicates is hoisted here (spec §6.1's "fast CI smoke").
+    rep_codes, block_inv = _block_permuter(groups, blocks)
+    centred, inv, n_keys = _group_centre(values, groups)
+    within_var = float(np.var(centred, ddof=0))
+    power: dict[float, float] = {}
+    mean_icc: dict[float, float] = {}
+    mean_null: dict[float, float] = {}
+    zero_iccs: list[float] = []
+    for anchor in anchors:
+        detected, obs, nulls = 0, [], []
+        for _ in range(int(n_replicates)):
+            injected = _inject_group_effect(centred, inv, n_keys, within_var, float(anchor), rng)
+            observed = _icc_fast(injected, inv, n_keys)
+            null = np.array(
+                [_icc_fast(injected, _permute_groups_by_block(rep_codes, block_inv, rng), n_keys) for _ in range(30)]
+            )
+            detected += int(observed > float(np.quantile(null, 1.0 - alpha)))
+            obs.append(observed)
+            nulls.append(float(np.mean(null)))
+        power[anchor] = detected / float(n_replicates)
+        mean_icc[anchor] = float(np.mean(obs))
+        # Reported so the block-structure claim is assertable: an i.i.d. blocking collapses this
+        # toward zero while a real one holds it up (measured 20/20 seeds at both anchors).
+        mean_null[anchor] = float(np.mean(nulls))
+        if float(anchor) == 0.0:
+            zero_iccs = obs
+    if not zero_iccs:
+        zero_iccs = [
+            _icc_fast(_inject_group_effect(centred, inv, n_keys, within_var, 0.0, rng), inv, n_keys) for _ in range(10)
+        ]
+    return {
+        "power": power,
+        "mean_observed_icc": mean_icc,
+        "mean_null_icc": mean_null,
+        "mean_observed_icc_at_zero": float(np.mean(zero_iccs)),
+        "n_replicates": int(n_replicates),
+        "alpha": float(alpha),
+    }
 
 
 def icc_one_way(values: np.ndarray, groups: np.ndarray) -> float:

@@ -196,6 +196,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/calibration/_xt_bandwidth_objective.py",
     "silly_kicks/causal/matching.py",
     "silly_kicks/causal/opportunities.py",
+    "silly_kicks/causal/power.py",
     # gkdv (TF-19 PR-3): the four modules that DEFINE its public surface. The registry
     # previously named `gkdv/__init__.py`, which has zero top-level defs -- a vacuous entry
     # that read as coverage while all four of these were unchecked. `test_no_registered_entry_

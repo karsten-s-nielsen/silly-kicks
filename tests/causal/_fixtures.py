@@ -69,6 +69,69 @@ def spell(team=5, t0=10.0, t1=10.4, dt=0.2, ball=WIDE, *, period=1):
     return frames(poss, xy, period=period)
 
 
+def layer2_frames(*, gk_x=4.0, team=5, t0=10.0, t1=10.6, dt=0.2, ball=CENTRAL, period=1):
+    """An ATTACKING-THIRD spell with a controllable DEFENDING-keeper depth (TF-19 Layer 2, D5).
+
+    Team 5 attacks goal x=0, so team 6's keeper is the defending one and ``gk_x`` IS its
+    goal-relative depth. Layer 2 binarises at 16.5 m, so ``gk_x=4`` is a CONTROL (keeper on his
+    line) and ``gk_x=25`` is TREATED (keeper advanced beyond the penalty area). ``ball=CENTRAL``
+    keeps the spell out of the wide corridor, which the attacking-third domain does not require.
+    """
+    rows, t = [], t0
+    while t <= t1 + 1e-9:
+        bx, by = ball
+        rows.append(frow(10 if team == 5 else 20, team, False, bx, by, t, period=period))
+        # FIVE outfielders per team, not two: `compute_defensive_line` defaults to n=4 back-line
+        # players and returns NaN below that, so a thinner fixture leaves `defensive_line_height`
+        # structurally null and its confounder assertion vacuous.
+        rows += [
+            frow(11, 5, False, 18.0, 40.0, t, period=period),
+            frow(12, 5, False, 15.0, 30.0, t, period=period),
+            frow(13, 5, False, 22.0, 20.0, t, period=period),
+            frow(14, 5, False, 25.0, 48.0, t, period=period),
+            frow(15, 5, False, 30.0, 34.0, t, period=period),
+            frow(21, 6, False, 8.0, 40.0, t, period=period),
+            frow(22, 6, False, 10.0, 30.0, t, period=period),
+            frow(23, 6, False, 9.0, 20.0, t, period=period),
+            frow(24, 6, False, 11.0, 48.0, t, period=period),
+            frow(25, 6, False, 14.0, 34.0, t, period=period),
+            frow(1, 5, True, 101.0, 34.0, t, period=period),  # team-5 GK: attacks 0
+            frow(2, 6, True, float(gk_x), 34.0, t, period=period),  # team-6 GK: DEFENDS 0
+        ]
+        rows.append(frow(pd.NA, pd.NA, False, bx, by, t, is_ball=True, period=period))
+        t += dt
+    f = pd.DataFrame(rows)
+    f["player_id"] = f["player_id"].astype("Int64")
+    f["team_id"] = f["team_id"].astype("Int64")
+    return f
+
+
+def layer2_shot_actions(distances_m=(10.0,), *, t=11.0):
+    """Team-5 shots inside the outcome window, at chosen distances from the ATTACKED goal.
+
+    SPADL is action-LTR, so the attacked goal centre is (105, 34) for both teams regardless of the
+    frame geometry above; a distance of 10 m is a CLOSE attempt and 25 m a FAR one at D=16.5.
+    """
+    rows = []
+    for i, d in enumerate(distances_m):
+        rows.append(
+            [
+                1,
+                i,
+                1,
+                5,
+                t + i * 0.5,
+                _c.actiontype_id["shot"],
+                _c.result_id["success"],
+                105.0 - float(d),
+                34.0,
+                105.0,
+                34.0,
+            ]
+        )
+    return actions(rows)
+
+
 def actions(rows):
     return pd.DataFrame(
         rows,

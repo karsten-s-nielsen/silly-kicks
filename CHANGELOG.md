@@ -57,6 +57,115 @@ constants). So this ships the guard, then the constant.
 **No retrain, no value change.** No weights change and no model output changes. Three `metadata.json` files
 gain a `feature_contract` key and their `SHA256SUMS` change — a consumer pinning artifact checksums will see a
 diff. C4-free (count stays 32).
+## [4.63.0] — 2026-07-26
+
+### Added / Fixed — TF-19 corpus-run tooling (PR-S`<NN>`, ADR-037)
+
+Maintainer-driver changes only; `scripts/` is not packaged, so **the wheel is byte-identical to
+4.62.0**. These are the prerequisites for the §6.1/§6.4 corpus runs, landed together so the runs
+execute from one immutable commit.
+
+- **`scripts/_provenance.py` (NEW) — fail-closed run provenance.** `git rev-parse HEAD` returns the
+  same SHA whether or not the tree is modified, so a driver stamping it records a commit that does
+  **not** describe the code that produced the numbers — verifiable-looking and false, which is worse
+  than recording nothing. Measured: a corpus pass was launched from a tree with three modified
+  drivers while HEAD read clean. `require_clean_tree` now REFUSES an artifact-writing run on a dirty
+  tree (naming the dirty files and the SHA that would have been falsely recorded); `--allow-dirty`
+  permits a dev run but the artifact still records `dirty: true`. Absent git counts as dirty, never
+  clean. Wired into all three drivers: `run_signoff_power.py` (which previously stamped a bare SHA)
+  plus `build_gkdv_arm_values.py` and `derive_opengoal_range.py`, whose artifacts previously carried
+  **no** provenance at all — a clean SHA on the power metrics would otherwise have laundered a dirty
+  input, since the arm-values table is what the ICC number derives from.
+- **`build_gkdv_arm_values.py` gains `--match-ids-json` + `--list-matches`**, which is what makes the
+  corpus pass parallelisable: split the id list N ways and run N processes against a shared `--out`.
+  Without it a second process re-walks the corpus from the start and redoes work, because shards are
+  written on COMPLETION rather than claimed up front. Ids are STRINGS in the manifest.
+  `--list-matches` consumes the loader's own `_list_matches`, so the id set cannot drift from what a
+  run would actually fetch. Serial 64-match cost is ~61 h; partitioned it is ~6–8 h.
+- **`--help` no longer crashes on Windows.** All three drivers carried non-ASCII in their module
+  docstrings (`Δ`, `—`, `§`); a cp1252 console raises `UnicodeEncodeError` before printing usage —
+  on the machine the drivers are invoked from. Now ASCII-clean, with a parametrised regression test.
+- `--out` is no longer required for `--list-matches` (listing writes no artifact).
+
+## [4.62.0] — 2026-07-25
+
+### Added / Changed — TF-19 §6.4 sign-off package (PR-S`<NN>`, ADR-037 amendment)
+
+Makes TF-19 spec §6.4 (the GKDV discrimination harness) **signable**: it registers constants the spec
+forbade registering bare, builds the power simulator its own gate declares a precondition, and splits
+a verdict from the routing that hard-coded one hypothesis. Verifying the three known blockers against
+code surfaced three more, all recorded as findings rather than quietly fixed.
+
+- **Plasmode power simulator, two modes.** `silly_kicks/_group_metrics.icc_power_curve` (domain-free:
+  values / groups / match blocks) discharges §6.1's registered precondition — `ICC_ANCHORS` shipped in
+  PR-3 with a docstring promising "a power curve is reported at all three" that **no code could
+  produce**, while §6.1 states the ICC gate "is registered only if detection at the anchor ... is >=
+  0.8". New PUBLIC `silly_kicks/causal/power.py` supplies the ATT mode. Both are plasmode, never
+  i.i.d.: real values, real clustering, injected known effects. A private numpy-only `_icc_fast`
+  serves the permutation loop (`icc_one_way` is shipped and consumer-tested, so it is UNTOUCHED and
+  the fast path's equivalence is **gated**, not assumed).
+- **THE FIREWALL.** `att_power_curve` accepts **no outcome vector at all** — only an `InjectionSpec`
+  recipe it draws from itself, freshly per replicate. Once Layer 2's design exists in code the same
+  machinery could *run* it, answering TF-19's open question before the sign-off meant to authorise
+  it; the observed outcome is therefore unrepresentable rather than merely refused. A call-count spy
+  on `estimate_att` would be VACUOUS (the harness always calls it), so the guard is provenance, and
+  its non-vacuity is demonstrated: with the guard removed, a fully duck-typed fake runs to completion.
+- **Layer 2's DESIGN lands in the causal builder** (its STUDY does not). `OpportunityConfig` gains a
+  covariate-threshold treatment axis alongside its action-occurrence one, an entry-anchor rule (a
+  covariate treatment has no anchor action, so both arms anchor on spell entry), `outcome_max_distance_m`,
+  and an outcome PARTITION (`Y_attempt` / `Y_close_attempt` / `Y_far_attempt`) computed from ONE
+  labelling pass so the three share identical row masks by construction. `layer2_config()` registers
+  the Law-defined 16.5 m binarisation. **Every shipped config is byte-identical** (all new fields
+  defaulted; guarded per-config, not by the default alone). Treatment depth is `GK_r·cos(GK_theta)`,
+  NOT `GK_r` — they agree only on the goal's centre line, and the wide case is explicitly tested.
+- **`regate_routing`** splits routing from verdict, against §6.4's own pre-registered disclosure:
+  `gated_clean_fail` now routes to `pending_layer2`, not unconditionally to GK feature engineering,
+  which had made H2 unreachable by construction. **`regate_verdict` is byte-identical** — every
+  recorded verdict stands, pinned by a golden over all input combinations.
+- **Registered constants:** `ATT_RELATIVE_ANCHORS = (0.10, 0.15, 0.20)` (row 5's own anchor — the ICC
+  anchor is a variance share and does NOT transfer to a spell-level ATT) and
+  `LAYER3_HEADROOM_RANGE_FRACTION = 0.02`, committed **before** the measurement it multiplies.
+- **Record correction (F6):** 4.60.0's `joins_with_caveat` rested on a **registered default**, not a
+  measurement. `regate_verdict` reads `entanglement` only on a `pass`; the driver hard-coded it,
+  annotated "inert unless the probe surprises with `pass`" — and v2 surprised, so the parameter
+  documented as inert decided the verdict. `scripts/validate_xshot_causal.py` measures it properly and
+  had never been run. Nothing shipped was overclaimed (`joins_with_caveat` is the conservative branch)
+  but the attribution was false; corrected in ADR-037, TODO.md, CLAUDE.md and the CLI help.
+- Also: `causal/_confounders.py` (Layer 2's tracking-confounder join, provenance REGISTERED as
+  frames-computed and refusing a `fct_action_context` source, whose `bekkers_pi` is pre-ADR-045 for
+  away teams until the lakehouse re-materializes); `scripts/run_signoff_power.py` +
+  `scripts/derive_opengoal_range.py`.
+
+- **BEHAVIOUR CHANGE — `compute_threat_pc` now REFUSES an unfitted xT.** Its `xt` parameter is typed
+  as a required `ExpectedThreat`, but nothing enforced it: passing `None` did not raise, it returned
+  **`0.0`**. A caller persisting a threat column would therefore have persisted structural zeros,
+  and an ICC or power curve computed on them is degenerate while looking like a measurement. It now
+  routes through the single shipped `require_fitted_xt` guard (ADR-041), so `None` raises
+  `ValueError` and a bundled-variant NAME raises `NotImplementedError`. **Hyrum:** a consumer
+  relying on the old silent `0.0` now gets an exception — it was never a supported input, and a
+  zero threat is indistinguishable downstream from a real one.
+
+- **`scripts/build_gkdv_arm_values.py`** persists per-frame GKDV arm values for the §6.1 ICC leg —
+  the expensive pass (accessible-space + Spearman pitch control on every domain frame, twice), run
+  ONCE so the power simulator resamples the persisted table. **Per-match shards with resume** (an
+  existing shard is skipped; an empty shard is written deliberately so "not run" stays
+  distinguishable from "ran, scored nothing") — measured at ~5 GB RSS and 2,224 scored frames from
+  175,969 for one WC2022 match, where accumulate-then-write-once would neither fit nor survive a
+  crash. Credits **only the DEFENDING keeper**: the serving seam emits a row per team's keeper and
+  only the defender is substituted, so a naive pass-through doubles every frame and attributes half
+  the deltas to a keeper who never moved — keeper-INDEPENDENT noise that compresses between-keeper
+  variance toward zero, the mechanism behind xT-GK v2's "keeper-flat" reading on fabricated origins
+  (ADR-036/PR-S113). The threat arm is REFUSED rather than defaulted: `ExpectedThreat` has no
+  serialization anywhere (only fit/interpolator/rate), so it needs an in-process fit — a leakage
+  decision for its own cycle.
+
+- **C4:** the missing `silly_kicks.causal` container (public since 4.47.0, never modelled) with four
+  verified relationships, plus a **completeness gate** that derives the subpackage set from the
+  package tree and asserts each has a container. Nothing previously pinned the diagram to the code,
+  which is why the gap survived every release; mutate-to-RED verified.
+
+**No VAEP retrain** (no xfns, no aggregator). C4 count unchanged (32). The DGX runs that fill
+`N_MIN_MATCHED` and the §6.1 curve are owner actions and are **not** in this release.
 
 ## [4.61.0] — 2026-07-25
 

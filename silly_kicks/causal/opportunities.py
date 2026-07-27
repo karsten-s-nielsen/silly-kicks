@@ -80,6 +80,11 @@ class OpportunityConfig:
     gk_block: tuple[str, ...] = tuple(GK_BLOCK)
     domain: str = "wide_area"  # "wide_area" | "attacking_third"
     extractor: str = "xcross"  # "xcross" | "xs" -- threaded via _extract_row adapters
+    # --- TF-19 sign-off package (D3/D5). All defaulted: every shipped config is unchanged. ---
+    outcome_max_distance_m: float | None = None  # D3: None = no spatial filter (legacy)
+    emit_outcome_partition: bool = False  # Layer 2: Y_attempt / Y_close_attempt / Y_far_attempt
+    treatment_covariate: str | None = None  # D5: None = action-occurrence treatment (legacy)
+    treatment_threshold_m: float | None = None
 
 
 def xcross_config(model_metadata: dict) -> OpportunityConfig:
@@ -132,6 +137,65 @@ def shot_arm_config(model_metadata: dict) -> OpportunityConfig:
         extractor="xs",  # P2: the extractor AXIS (see _extract_row)
         confounders=SHOT_ARM_CONFOUNDERS,
         gk_block=("GK_r", "GK_theta"),  # P2: xS GK names -- xcross gk_* don't exist in xS features
+    )
+
+
+#: BUILD-TIME confounders for Layer 2: EXTRACTOR-PRODUCED COLUMNS ONLY.
+#:
+#: ``_row`` reads every ``cfg.confounders`` name straight out of the xS feature dict with a HARD key
+#: lookup, so a name the extractor does not emit raises ``KeyError`` at BUILD time -- not NaN.
+#: VERIFIED against ``XSHOT_FEATURE_NAMES_FAITHFUL``: ``r``/``theta``/``DefDist_0``/``DefDist_1`` are
+#: present; ``defensive_line_height``, ``defensive_line_compactness``,
+#: ``pressure_on_actor__bekkers_pi``, ``score_differential`` and ``time_remaining_s`` are NOT.
+LAYER2_BUILD_CONFOUNDERS: tuple[str, ...] = ("r", "theta", "DefDist_0", "DefDist_1")
+
+#: ANALYSIS-TIME design matrix: the build-time set PLUS what ``causal/_confounders.py`` joins on
+#: afterwards. This is what the propensity model's ``X`` is assembled from -- never
+#: ``cfg.confounders``. Split deliberately: the tracking confounders are per-spell joins, not
+#: extractor features, and forcing them through the extractor contract would mean either a silent
+#: NaN-filling ``_row`` (hiding genuine join failures) or teaching the xS extractor about defensive
+#: lines it has no business knowing. ``score_differential`` is emitted by ``_row`` itself.
+LAYER2_CONFOUNDERS: tuple[str, ...] = (
+    *LAYER2_BUILD_CONFOUNDERS,
+    "defensive_line_height",
+    "defensive_line_compactness",
+    "pressure_on_actor__bekkers_pi",
+    "score_differential",
+    "time_remaining_s",
+)
+
+
+def layer2_config(model_metadata: dict) -> OpportunityConfig:
+    """TF-19 §6.4 Layer 2: the H1-vs-H2 decider's DESIGN (sign-off package D5).
+
+    Treatment is keeper DEPTH at spell entry binarised at the penalty-area line -- Law-defined and
+    data-independent, so the entire decider is untuned. The outcome is an ATTEMPT; contrast
+    :func:`shot_arm_config`, whose outcome is a GOAL and whose treatment is roughly this outcome.
+    That distinction is why a power curve for Layer 2 cannot be borrowed from the shot arm.
+
+    Building this config does NOT run Layer 2 -- see the FIREWALL in :mod:`silly_kicks.causal.power`.
+
+    Examples
+    --------
+    >>> cfg = layer2_config({})
+    >>> cfg.treatment_covariate, cfg.treatment_threshold_m
+    ('gk_depth_x', 16.5)
+    >>> cfg.outcome_result_ids is None  # an ATTEMPT, not a goal
+    True
+    """
+    return OpportunityConfig(
+        treatment_type_names=(),  # unused: the covariate axis supersedes it
+        treatment_covariate="gk_depth_x",
+        treatment_threshold_m=16.5,
+        outcome_type_names=("shot", "shot_freekick", "shot_penalty"),
+        outcome_result_ids=None,
+        outcome_window_anchor_inclusive=True,
+        outcome_max_distance_m=16.5,
+        emit_outcome_partition=True,
+        domain="attacking_third",
+        extractor="xs",
+        confounders=LAYER2_BUILD_CONFOUNDERS,  # NOT LAYER2_CONFOUNDERS -- see the constant's note
+        gk_block=("GK_r", "GK_theta"),
     )
 
 
@@ -227,6 +291,12 @@ def build_opportunities(
 
     rows = [_row(sp, actions, cfg, score_fn, home_team_id) for sp in spells]
     cols = list(cfg.confounders) + list(cfg.gk_block) + _PROV_COLS + ["Z", "Y"]
+    # The column list is EXPLICIT (it fixes ordering and drops anything unregistered), so a config
+    # that emits extra columns must extend it -- otherwise `_row` builds them and `pd.DataFrame`
+    # silently discards them. Caught by the end-to-end build test, never by the unit tests on
+    # `_partition_from_distances`, which is exactly why that test exists.
+    if cfg.emit_outcome_partition:
+        cols += ["Y_attempt", "Y_close_attempt", "Y_far_attempt", "score_differential"]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
@@ -266,8 +336,13 @@ def _row(sp, actions, cfg, score_fn, home_team_id) -> dict:
     feats = _extract_row(cfg, grp, gk_team_id=defending[0], goal_x=goal_x, carrier_pid=carrier_pid, sd=sd)
     row = {c: float(feats[c]) for c in list(cfg.confounders) + list(cfg.gk_block)}
     entry = sp["entry_time"]
-    z, t_anchor = _label_treatment(actions, gid, per, team, cfg, entry, sp["end_time"])
-    anchor = t_anchor if z else entry
+    if cfg.treatment_covariate is not None:
+        # D5: covariate-threshold treatment. No treatment ACTION exists, so there is no anchor to
+        # inherit -- `_resolve_anchor` puts BOTH arms on the spell entry.
+        z, t_anchor = _label_treatment_covariate(feats, cfg.treatment_covariate, cfg.treatment_threshold_m), None
+    else:
+        z, t_anchor = _label_treatment(actions, gid, per, team, cfg, entry, sp["end_time"])
+    anchor = _resolve_anchor(z=z, t_anchor=t_anchor, entry=entry)
     row.update(
         game_id=gid,
         period_id=per,
@@ -280,6 +355,17 @@ def _row(sp, actions, cfg, score_fn, home_team_id) -> dict:
         Z=z,
         Y=_label_outcome(actions, gid, per, team, anchor, cfg),
     )
+    if cfg.emit_outcome_partition:
+        d = _outcome_distances(actions, gid, per, team, anchor, cfg)
+        y_att, y_close, y_far = _partition_from_distances(d, float(cfg.outcome_max_distance_m or 16.5))
+        row.update(Y_attempt=y_att, Y_close_attempt=y_close, Y_far_attempt=y_far)
+        # `sd` is ALREADY computed above and available for every config -- `score_fn` is built
+        # whenever the actions carry results, regardless of extractor. It is simply never EMITTED,
+        # because the xS extractor adapter ignores its `sd` argument (xcross takes
+        # score_differential, xS does not). Emitting it here POPULATES Layer 2's confounder rather
+        # than leaving it all-NaN, which would reach `fit_propensity` and die as
+        # "Input X contains NaN" (measured) during the run.
+        row.update(score_differential=sd)
     return row
 
 
@@ -294,6 +380,47 @@ def _team_period_action_times(actions, gid, per, team, type_names) -> np.ndarray
     return np.sort(actions.loc[sel, "time_seconds"].to_numpy(dtype=float))
 
 
+def _covariate_depth(feats) -> float:
+    """Goal-relative DEPTH (x) of the keeper, from the shipped POLAR GK block.
+
+    TF-19 spec §6.4 registers the binarisation at goal-relative *x* = 16.5 m (the penalty-area line),
+    but the shipped block is polar (``gk_block=("GK_r","GK_theta")``). These agree ONLY on the goal's
+    centre line and diverge off-centre, so thresholding ``GK_r`` directly would silently mis-assign
+    treatment for wide spells while looking entirely reasonable. ``_xshot_occurrence`` builds
+    ``gk_r = hypot(gkx, gky - GOAL_Y)`` and ``gk_theta = atan2(gky - GOAL_Y, gkx)``, so
+    ``gkx == GK_r * cos(GK_theta)`` identically.
+    """
+    return float(feats["GK_r"]) * float(np.cos(float(feats["GK_theta"])))
+
+
+_COVARIATES = {"gk_depth_x": _covariate_depth}
+
+
+def _label_treatment_covariate(feats, covariate: str, threshold: float) -> int:
+    """``Z = 1`` when the covariate is AT OR BEYOND the threshold.
+
+    For ``gk_depth_x`` at 16.5 m that means **treated == the keeper is ADVANCED beyond the
+    penalty-area line** (further from his own goal). Stated this way deliberately: "deep" in football
+    means close to one's OWN goal -- the CONTROL arm here -- and the treated arm's identity flows into
+    the sign of every ATT this design produces.
+    """
+    try:
+        fn = _COVARIATES[covariate]
+    except KeyError:
+        raise ValueError(f"unknown treatment_covariate {covariate!r}") from None
+    return int(fn(feats) >= float(threshold))
+
+
+def _resolve_anchor(*, z: int, t_anchor: float | None, entry: float) -> float:
+    """Entry anchors BOTH arms when there is no treatment action (D5).
+
+    The action path takes its anchor from the treatment action; a covariate treatment has none, so
+    without this a treated row would take ``anchor=None`` and the outcome window would explode. It
+    also removes the treated-vs-control time shift this module's docstring flags for the action arms.
+    """
+    return float(t_anchor) if (z and t_anchor is not None) else float(entry)
+
+
 def _label_treatment(actions, gid, per, team, cfg, entry, end_time) -> tuple[int, float | None]:
     hi = min(entry + cfg.exposure_window_seconds, end_time)  # R3-M1: clamp the Z-window to possession continuity
     ts = _team_period_action_times(actions, gid, per, team, cfg.treatment_type_names)
@@ -301,7 +428,31 @@ def _label_treatment(actions, gid, per, team, cfg, entry, end_time) -> tuple[int
     return (1, float(win[0])) if len(win) else (0, None)
 
 
-def _label_outcome(actions, gid, per, team, anchor, cfg) -> int:
+_GOAL_XY = (105.0, 34.0)  # SPADL action-LTR: the attacked goal centre, for BOTH teams
+
+
+def _outcome_distance_m(start_x: float, start_y: float) -> float:
+    """Distance from an outcome action's SPADL origin to the attacked goal centre (action-LTR)."""
+    return float(np.hypot(_GOAL_XY[0] - float(start_x), _GOAL_XY[1] - float(start_y)))
+
+
+def _partition_from_distances(distances: np.ndarray, d_max: float) -> tuple[int, int, int]:
+    """``(Y_attempt, Y_close_attempt, Y_far_attempt)`` from ONE set of in-window outcome distances.
+
+    ``Y_far := Y_attempt AND NOT Y_close`` is the registered PARTITION (TF-19 spec §6.4 N4), NOT "an
+    attempt beyond D": under the looser reading a spell holding BOTH a close and a far attempt would
+    count in both indicators, so ``ATT(close) + ATT(far) != ATT(attempt)`` and the coherence check
+    §6.4 relies on would be unlicensed arithmetic. Computing all three from a single pass is also
+    what guarantees identical row masks across the three outcomes.
+    """
+    if distances.size == 0:
+        return (0, 0, 0)
+    close = int(bool((distances <= d_max).any()))
+    return (1, close, int(not close))
+
+
+def _outcome_distances(actions, gid, per, team, anchor, cfg) -> np.ndarray:
+    """In-window outcome actions' distances to the attacked goal centre (empty if none)."""
     type_ids = {_spc.actiontype_id[n] for n in cfg.outcome_type_names}
     sel = (
         ids_match(actions["game_id"], gid)
@@ -311,8 +462,21 @@ def _label_outcome(actions, gid, per, team, anchor, cfg) -> int:
     )
     if cfg.outcome_result_ids is not None:
         sel &= actions["result_id"].isin(cfg.outcome_result_ids)
-    ts = actions.loc[sel, "time_seconds"].to_numpy(dtype=float)
+    sub = actions.loc[sel]
+    ts = sub["time_seconds"].to_numpy(dtype=float)
     # Anchor-inclusive (shot arm) vs legacy strictly-post (xCross) -- P1: an own-result
     # 'None' window is banned (control Y would be structurally 0).
     in_window = (ts >= anchor) if cfg.outcome_window_anchor_inclusive else (ts > anchor)
-    return int(bool((in_window & (ts <= anchor + cfg.outcome_window_seconds)).any()))
+    keep = in_window & (ts <= anchor + cfg.outcome_window_seconds)
+    if not keep.any():
+        return np.empty(0, dtype=float)
+    xs = sub.loc[keep, "start_x"].to_numpy(dtype=float)
+    ys = sub.loc[keep, "start_y"].to_numpy(dtype=float)
+    return np.hypot(_GOAL_XY[0] - xs, _GOAL_XY[1] - ys)
+
+
+def _label_outcome(actions, gid, per, team, anchor, cfg) -> int:
+    d = _outcome_distances(actions, gid, per, team, anchor, cfg)
+    if cfg.outcome_max_distance_m is None:
+        return int(d.size > 0)  # legacy: presence only, byte-identical to the pre-D3 form
+    return int(bool((d <= cfg.outcome_max_distance_m).any()))

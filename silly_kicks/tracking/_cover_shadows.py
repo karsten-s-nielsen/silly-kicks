@@ -769,6 +769,14 @@ def compute_threat_pc(
     ----------
     Cascioli et al. (2025).
     """
+    # `xt` is typed as a REQUIRED fitted model, but nothing enforced it: passing None did not
+    # raise, it returned 0.0 -- so a caller persisting a threat column would have silently
+    # persisted structural zeros, and an ICC or a power curve computed on them would be degenerate
+    # while looking like a measurement. Routed through the SINGLE shipped guard rather than a fresh
+    # local check (ADR-041 created `require_fitted_xt` precisely to collapse duplicated copies).
+    from silly_kicks.xthreat import require_fitted_xt
+
+    require_fitted_xt(xt, caller="compute_threat_pc")
     _validate_ltr(frame, caller="compute_threat_pc")
     surface = compute_pitch_control(frame, attacking_team_id, method=method, params=params)
     threat, _per_receiver = _voronoi_threat(
