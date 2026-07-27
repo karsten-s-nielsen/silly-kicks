@@ -173,6 +173,47 @@ def _dest_name(provider: str, match_id: str, artifact_key: str, filename: str) -
     return f"{provider}_{match_id}_{artifact_key}{ext}"
 
 
+def _wanted_for_provider(
+    manifest_ids: list[str],
+    provider: str,
+    match_ids: dict[str, list[str]] | None,
+    max_per_provider: int | None,
+) -> list[str]:
+    """The match ids requested for one provider: explicit allowlist else the whole manifest, capped.
+
+    Extracted so :func:`load_matches` and :func:`select_match_ids` cannot disagree about what the
+    corpus IS -- a corpus fingerprint computed by a second copy of this rule would drift from the
+    extraction it is supposed to describe.
+    """
+    wanted = (match_ids.get(provider) if match_ids else None) or list(manifest_ids)
+    return wanted[:max_per_provider] if max_per_provider is not None else wanted
+
+
+def select_match_ids(
+    *,
+    providers: list[str],
+    match_ids: dict[str, list[str]] | None = None,
+    max_per_provider: int | None = None,
+    token: str | None = None,
+    base_url: str | None = None,
+) -> list[tuple[str, str]]:
+    """The ``(provider, match_id)`` pairs :func:`load_matches` will ATTEMPT, in order.
+
+    Deliberately the *requested* corpus, not the *extracted* one: ``load_matches`` may drop a match
+    at runtime (the S1 geometry gate), and a fingerprint keyed on the extracted set would then never
+    match on a re-run -- a permanent cache miss for any corpus containing an excluded match.
+    """
+    tok = _resolve_token(token)
+    base = base_url or _base_url()
+    out: list[tuple[str, str]] = []
+    for provider in providers:
+        manifest_ids = [str(m["id"]) for m in _list_matches(provider, tok, base)]
+        out.extend(
+            (provider, str(mid)) for mid in _wanted_for_provider(manifest_ids, provider, match_ids, max_per_provider)
+        )
+    return out
+
+
 def load_matches(
     *,
     providers: list[str],
@@ -198,9 +239,7 @@ def load_matches(
     n_excluded = 0
     for provider in providers:
         manifest = {m["id"]: m for m in _list_matches(provider, tok, base_url)}
-        wanted = (match_ids.get(provider) if match_ids else None) or list(manifest)
-        if max_per_provider is not None:
-            wanted = wanted[:max_per_provider]
+        wanted = _wanted_for_provider(list(manifest), provider, match_ids, max_per_provider)
         for match_id in wanted:
             n_total += 1
             artifacts = manifest[match_id]["artifacts"]

@@ -32,6 +32,7 @@ from scipy.stats import gaussian_kde
 from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as spadlconfig
 
+from . import _geometry as _geo
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
 
 # ---------------------------------------------------------------------------
@@ -250,16 +251,34 @@ _DETECTION_AWARE_PROVIDERS = frozenset({"skillcorner"})
 _FULLY_OBSERVED_PROVIDERS = frozenset({"gradientsports", "sportec", "idsse", "metrica"})
 
 
+def validate_provider(provider: str) -> None:
+    """Raise unless ``provider`` is classified as detection-aware or fully observed.
+
+    Single source for the membership rule: both :func:`keeper_detection_mask` and the ghost trainer's
+    startup check call this. Two copies of the set would drift the moment a provider is added --
+    and the failure mode of that drift is silent, because an unclassified provider only surfaces
+    deep inside a training run, after the expensive extraction.
+
+    Raises ``ValueError`` naming the two sets and their current members.
+
+    Examples
+    --------
+    >>> validate_provider("gradientsports")
+    """
+    known = _DETECTION_AWARE_PROVIDERS | _FULLY_OBSERVED_PROVIDERS
+    if provider not in known:
+        raise ValueError(
+            f"unclassified provider {provider!r}: add it to _DETECTION_AWARE_PROVIDERS or "
+            f"_FULLY_OBSERVED_PROVIDERS -- an unknown provider is NOT assumed observed. "
+            f"Known: {sorted(known)}"
+        )
+
+
 def keeper_detection_mask(visibility: pd.Series, *, provider: str) -> np.ndarray:
     """Rows whose keeper was ACTUALLY DETECTED. Fail-closed on the ambiguous null (spec 4.3)."""
+    validate_provider(provider)
     if provider in _FULLY_OBSERVED_PROVIDERS:
         return np.ones(len(visibility), dtype=bool)
-    if provider not in _DETECTION_AWARE_PROVIDERS:
-        raise ValueError(
-            f"keeper_detection_mask: unknown provider {provider!r}. Add it to "
-            "_DETECTION_AWARE_PROVIDERS or _FULLY_OBSERVED_PROVIDERS -- an unknown provider is "
-            "NOT assumed observed."
-        )
     if visibility.isna().all():
         raise ValueError(
             f"keeper_detection_mask: provider {provider!r} carries a detection flag, but "
@@ -1478,6 +1497,44 @@ def _chirality_block(model: GhostGkModel) -> dict:
     return chirality_fingerprint(_predict)
 
 
+def _feature_contract_block() -> dict:
+    """Feature contract (ADR-050): this model's FEATURE VECTOR on the fixed probe frame, plus the
+    geometry constants its extractor consumes. Mirror of the xS/xCross blocks.
+
+    Ghost's declared half-width evaluates to **20.15**, not the canonical 20.16 -- deliberately.
+    Its bundled weights were trained on the 40.3 m box, so unifying the constant without a re-fit
+    would skew ``attackers_in_box``, a real trained feature. Recording the divergence is what turns
+    the "do not unify before the re-fit" instruction from a comment into a mechanism: after this
+    artifact is stamped, flipping the constant makes ``load()`` raise.
+    """
+    from silly_kicks.tracking._feature_contract import contract_probe_frame, feature_contract
+
+    def _vec():
+        return (
+            extract_ghost_gk_features(
+                contract_probe_frame(),
+                gk_team_id="B",
+                goal_x=105.0,
+                score_diff=1,
+                phase=0,
+                ball_carrier_team_id="A",
+                prev_defensive_line_x=90.0,
+                prev_defending_centroid_x=94.0,
+                dt=0.04,
+            )[list(GHOST_GK_FEATURE_NAMES)]
+            .iloc[0]
+            .to_numpy(dtype=float)
+        )
+
+    return feature_contract(
+        _vec,
+        constants={
+            "penalty_area_half_width": (_PENALTY_AREA_Y_MAX - _PENALTY_AREA_Y_MIN) / 2.0,
+            "penalty_area_depth": float(_PENALTY_AREA_X),
+        },
+    )
+
+
 class GhostGkModel:
     """League-average GK positioning model using RFCDE density estimation.
 
@@ -1865,7 +1922,13 @@ class GhostGkModel:
             "serve_estimator": SERVED_ESTIMATOR,
             "version": "1.3.0",
             "stores_training_data": False,
+            # Coordinate/units template. xS and xCross have recorded these since their first
+            # release; ghost did not, so a pitch-dimension change could shift every goal-relative
+            # feature with no signal. Added alongside the feature contract (ADR-050).
+            "pitch_length": _geo.PITCH_LENGTH,
+            "pitch_width": _geo.PITCH_WIDTH,
             "chirality": _chirality_block(self),
+            "feature_contract": _feature_contract_block(),
         }
         meta_path = path / "metadata.json"
         with open(meta_path, "w", newline="\n") as f:
@@ -2007,6 +2070,18 @@ class GhostGkModel:
                 stacklevel=2,
             )
 
+        # Coordinate-change guard, mirroring xS: a pitch-dimension mismatch genuinely skews every
+        # goal-relative feature -> FAIL CLOSED. Guarded on `rec_len is not None` so pre-ADR-050
+        # artifacts (which recorded no dims) are unaffected.
+        rec_len = metadata.get("pitch_length")
+        rec_wid = metadata.get("pitch_width")
+        if rec_len is not None and (rec_len != _geo.PITCH_LENGTH or rec_wid != _geo.PITCH_WIDTH):
+            raise IntegrityError(
+                f"Pitch-dimension mismatch: model trained on {rec_len}x{rec_wid} m, library is "
+                f"{_geo.PITCH_LENGTH}x{_geo.PITCH_WIDTH} m. Goal-relative features would be "
+                "skewed; refusing to load (retrain required)."
+            )
+
         from silly_kicks.tracking._chirality import verify_chirality
 
         verify_chirality(
@@ -2015,6 +2090,16 @@ class GhostGkModel:
             legacy_override=legacy_override,
             model_name="GhostGk",
             error_cls=IntegrityError,  # ghost's own type, so load()'s integrity taxonomy is consistent
+        )
+
+        from silly_kicks.tracking._feature_contract import verify_feature_contract
+
+        verify_feature_contract(
+            _feature_contract_block(),
+            metadata.get("feature_contract"),
+            legacy_override=legacy_override,
+            model_name="GhostGk",
+            error_cls=IntegrityError,
         )
         return model
 
@@ -2031,9 +2116,21 @@ class GhostGkModel:
             ``"default"``: lightweight model (~12 MB, 36 k training samples).
             ``"full"``: high-resolution model (~170 MB, 887 k training samples).
 
+        The bundled ``"default"`` carries a feature contract (ADR-050) and loads clean. ``"full"``
+        is Hub-hosted and pre-contract -- it cannot be re-uploaded under the standing owner hold --
+        so it emits :class:`MissingFeatureContractWarning`. A consumer that escalates that category
+        (as this repo's own CI does) gets an exception on the ``"full"`` path. That is the intended
+        reading: an artifact whose extractor cannot be verified should not be served silently.
+
         Examples
         --------
-        >>> model = GhostGkModel.from_variant("full")
+        Load the bundled default::
+
+            model = GhostGkModel.from_variant("default")
+
+        Load the Hub-hosted full variant (network; warns, having no feature contract)::
+
+            model = GhostGkModel.from_variant("full")
         """
         weights_dir = _WEIGHTS_ROOT / variant
         if (weights_dir / "SHA256SUMS").exists():
@@ -2049,9 +2146,15 @@ class GhostGkModel:
 
         Requires ``pip install silly-kicks[ghost-gk]``.
 
+        The Hub artifact predates the feature contract (ADR-050) and cannot be re-uploaded under
+        the standing owner hold, so this path emits :class:`MissingFeatureContractWarning`; callers
+        escalating that category will see it raise.
+
         Examples
         --------
-        >>> model = GhostGkModel.from_hub()
+        Requires network access::
+
+            model = GhostGkModel.from_hub()
         """
         try:
             from huggingface_hub import snapshot_download  # type: ignore[import-not-found]

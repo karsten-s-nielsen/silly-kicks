@@ -34,6 +34,34 @@ import numpy as np
 import pandas as pd
 
 
+def cache_token() -> str:
+    """Feature-cache identity, DERIVED from the geometry constants the extractor consumes.
+
+    Deriving rather than hand-bumping is the whole point: a literal version string goes stale
+    inside the very re-fit cycle it exists to protect. The re-fit sequence is *extract features,
+    flip the penalty-area constant, re-run* -- and with a bare file-existence cache check the
+    second run silently reuses the first run's 40.3 m features while stamping a 20.16 m feature
+    contract. Deriving the token from the constants makes that impossible with zero discipline.
+    """
+    import silly_kicks.tracking._ghost_gk as gg
+
+    return f"v3-box{gg._PENALTY_AREA_Y_MIN:.4f}-{gg._PENALTY_AREA_Y_MAX:.4f}-{gg._PENALTY_AREA_X:.4f}"
+
+
+def validate_corpus_providers(providers: list[str]) -> None:
+    """Fail on an unclassified provider BEFORE any loading or fitting.
+
+    Without this the check fires inside ``keeper_detection_mask``, i.e. after the full per-game
+    extraction -- the expensive part. Same rule, same single source
+    (``_ghost_gk.validate_provider``); only the moment it fires changes, from "after an hour" to
+    "immediately".
+    """
+    from silly_kicks.tracking._ghost_gk import validate_provider
+
+    for provider in providers:
+        validate_provider(provider)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train Ghost-GK model")
     parser.add_argument("--data-dir", type=Path, required=True, help="Directory of tracking parquets")
@@ -167,6 +195,31 @@ def main() -> None:
         print(f"ERROR: No .parquet files found in {args.data_dir}", file=sys.stderr)
         sys.exit(1)
 
+    # Fail fast on an unclassified provider, BEFORE any extraction or fitting. The membership rule
+    # lives in _ghost_gk.validate_provider (single source); only the moment it fires changes. It
+    # previously fired inside keeper_detection_mask -- i.e. after the full per-game extraction, the
+    # expensive part -- so a typo'd provider cost an hour before anything said so.
+    #
+    # Reads ONE column from ONE row group per file: seconds, against an extraction measured in tens
+    # of minutes. A file with no `source_provider` column contributes nothing here; that case is
+    # already handled downstream (prov = "unknown"), which validate_provider will reject at the
+    # point it becomes real rather than being guessed at now.
+    import pyarrow.parquet as pq
+
+    discovered: set[str] = set()
+    for p in parquets:
+        pf = pq.ParquetFile(p)
+        if "source_provider" not in pf.schema_arrow.names or pf.num_row_groups == 0:
+            continue
+        col = pf.read_row_group(0, columns=["source_provider"])["source_provider"]
+        if len(col):
+            discovered.add(str(col[0].as_py()))
+    if discovered:
+        validate_corpus_providers(sorted(discovered))
+        print(f"Providers validated up front: {sorted(discovered)}")
+    else:
+        print("No source_provider column present; provider validation happens during extraction.")
+
     # Schema validation on first file only (all files share the same pipeline)
     required = {
         "game_id",
@@ -241,6 +294,7 @@ def main() -> None:
     cache_groups = cache_dir / "groups.npy"
     cache_provs = cache_dir / "providers.npy"
     cache_keepers = cache_dir / "keepers.npy"
+    cache_token_path = cache_dir / "cache_token.txt"
 
     # Selection-bias diagnostic accumulators (spec 4.3 rev 5). Defined at a scope visible to BOTH
     # cache branches: the fresh-extract path fills them (it holds the raw visibility); a cache hit
@@ -251,14 +305,18 @@ def main() -> None:
     bias_b2k_detected: list[float] = []
     bias_b2k_undetected: list[float] = []
 
-    # An old cache lacking keepers.npy is treated as a MISS (a schema-version bump lands later; here
-    # we just require the new array to be present alongside the rest before trusting the cache).
+    # A cache is trusted only if every array is present AND its recorded token matches the current
+    # geometry constants. The deferred schema-version bump has landed as `cache_token()`: a missing
+    # or differing token is a MISS, so a cache extracted under a different penalty-area constant
+    # can never be silently reused (that is exactly the re-fit-cycle failure it guards).
+    _recorded_token = cache_token_path.read_text(encoding="utf-8").strip() if cache_token_path.exists() else None
     if (
         cache_feats.exists()
         and cache_labels.exists()
         and cache_groups.exists()
         and cache_provs.exists()
         and cache_keepers.exists()
+        and _recorded_token == cache_token()
     ):
         print(f"\nLoading cached features from {cache_dir}")
         t0 = time.time()
@@ -385,7 +443,11 @@ def main() -> None:
         np.save(cache_groups, groups)
         np.save(cache_provs, provider_labels)
         np.save(cache_keepers, keepers)
-        print(f"Cached features to {cache_dir}")
+        # Written LAST, deliberately: the token is what makes the cache trustworthy, so it must
+        # not exist until every array beside it does. A crash mid-write then leaves a tokenless
+        # directory, which the hit predicate treats as a MISS.
+        cache_token_path.write_text(cache_token(), encoding="utf-8")
+        print(f"Cached features to {cache_dir} (token {cache_token()})")
 
     # PR-S81: variant axis = sample count -> wheel size. Cap AFTER extraction so the
     # bundled "default" stays small while "full" keeps all in-domain samples.

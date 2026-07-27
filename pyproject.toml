@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.61.0"
+version = "4.64.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -239,7 +239,17 @@ markers = [
 # the inventory of synthetic-EPV call sites. Five of them are the auto-enumerating gates
 # (purity / nan-safety / liveness / dup-action_id / id-dtype), which sweep every
 # aggregator on defaults by design; the other four are the OBSO-family feature tests.
+#
+# A trained-model artifact carrying NO feature contract cannot be verified at all, so it must fail
+# CI rather than warn (ADR-050). All three bundled artifacts are stamped, so this needs NO
+# opt-outs: an opt-out appearing here later means an artifact shipped un-stamped, which is the
+# thing to fix rather than annotate. The one legitimate exception would be a network-gated test
+# reaching an HF-hosted variant, which cannot be re-uploaded under the standing owner hold.
+# UnverifiableFeatureContractWarning is deliberately NOT escalated: a probe change must stay a
+# warning, or extending the probe (which declaring a new constant REQUIRES) would brick every
+# not-yet-re-saved artifact.
 filterwarnings = [
     "error::silly_kicks.tracking.SyntheticEPVWarning",
     "error::silly_kicks.tracking.IgnoredSurfaceInputsWarning",
+    "error::silly_kicks.tracking.MissingFeatureContractWarning",
 ]

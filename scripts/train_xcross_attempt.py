@@ -30,12 +30,29 @@ import pandas as pd
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
-# Feature-cache schema token (Task 11 / spec 3.2). The load-bearing invalidation is the
-# schema_version bump inside _cache.cache_is_valid -- a pre-Task-11 cache has no cache_meta.json
-# and MISSES. The corpus-mismatch fingerprint is intentionally NOT wired (it would need a live
-# manifest fetch on the cache-hit path, before providers/match_ids are even loaded); a constant
-# token keeps write + check agreeing while the schema check does the real work.
-_CACHE_FINGERPRINT = "schema-v2"
+
+def _corpus_fingerprint(args) -> str:
+    """Fingerprint of the corpus THIS run requests, for cache validity (ADR-050).
+
+    Mirror of the xS trainer's helper -- see that docstring. Keyed on the REQUESTED corpus via the
+    same ``select_match_ids`` / ``_wanted_for_provider`` rule ``load_matches`` applies, so the
+    fingerprint cannot describe a corpus the extraction never loaded.
+    """
+    sys.path.insert(0, "scripts")
+    from _cache import corpus_fingerprint
+
+    if not args.providers:
+        d = Path(args.data_dir)
+        rows = [("local", p.name, "private") for p in sorted(d.iterdir()) if p.is_dir()]
+        return corpus_fingerprint(rows)
+
+    from _loader_pining import match_visibility, select_match_ids
+
+    providers = args.providers.split(",")
+    allowlist = json.load(open(args.match_ids_json)) if args.match_ids_json else None
+    pairs = select_match_ids(providers=providers, match_ids=allowlist, max_per_provider=args.max_per_provider)
+    vis = match_visibility(providers)
+    return corpus_fingerprint([(p, m, vis.get((p, m), "private")) for p, m in pairs])
 
 
 def _iter_matches_from_dir(data_dir: Path):
@@ -378,13 +395,13 @@ def main(argv=None) -> None:
 
     # --- Phase 1: stream + extract + cache ---
     # M1: bound on BOTH branches (cache-hit never calls _extract).
-    # Task 11 cache-schema guard: a pre-Task-11 cache (no cache_meta.json, no match_ids.npy) MISSES,
-    # so the DGX-populated caches that predate the visibility taxonomy are never silently reused --
-    # a stale cache would re-introduce the retired provider-name arm split (spec 3.2).
-    # NOTE: the fingerprint is a constant schema token, NOT a per-corpus hash -- it does NOT detect
-    # corpus DRIFT within the same schema. USE A FRESH --output-dir PER CORPUS (ADR-038).
+    # Cache-validity guard: a pre-schema cache (no cache_meta.json, no match_ids.npy) MISSES, so the
+    # DGX-populated caches that predate the visibility taxonomy are never silently reused. As of
+    # ADR-050 the fingerprint is a LIVE per-corpus hash, so a cache built from a different corpus
+    # under the same --output-dir also MISSES.
     probe_bundle = (_new_probe_cohort(), _new_probe_cohort())
-    if cache_is_valid(cache, fingerprint=_CACHE_FINGERPRINT) and (cache / "match_ids.npy").exists():
+    _fingerprint = _corpus_fingerprint(args)
+    if cache_is_valid(cache, fingerprint=_fingerprint) and (cache / "match_ids.npy").exists():
         print(f"Loading cached features from {cache}")
         X = pd.read_parquet(cache / "features.parquet")
         y = np.load(cache / "labels.npy")
@@ -414,7 +431,7 @@ def main(argv=None) -> None:
         # visibility.npy is deliberately NOT persisted: is_public is recomputed live every run from
         # cached providers + match_ids + the live manifest (below), so a persisted arm split would be
         # redundant AND could go stale. The schema bump is what invalidates pre-Task-11 caches.
-        write_cache_meta(cache, fingerprint=_CACHE_FINGERPRINT)
+        write_cache_meta(cache, fingerprint=_fingerprint)
         probe_cohort, comparison_cohort = probe_bundle  # persist the TF-19 probe samples (fresh-extract only)
         _write_probe_sample(cache.parent / "_probe_sample", probe_cohort, probe_provs)
         _write_probe_sample(cache.parent / "_probe_sample_comparison", comparison_cohort, comparison_provs)

@@ -333,6 +333,31 @@ def _chirality_block(model: XShotOccurrenceModel) -> dict:
     return chirality_fingerprint(_predict)
 
 
+def _feature_contract_block() -> dict:
+    """Feature contract (ADR-050): this model's FEATURE VECTOR on the fixed probe frame, plus the
+    geometry constants its extractor consumes.
+
+    Model-independent by design -- unlike ``_chirality_block`` it takes no model, because it
+    fingerprints the EXTRACTOR, not the fitted weights. Chirality catches a y-mirror in the output;
+    this catches a geometry change that shifts an input feature, which the output fingerprint can
+    absorb for any feature carrying little weight.
+
+    xS declares ``goal_width`` and nothing else: it consumes NO penalty-area constant (its only
+    geometry constants are the goal mouth, which drives ``openGoal``). Declaring a constant this
+    extractor does not read would make ``load()`` raise on a change that provably moves none of its
+    features -- a guard firing when nothing happened, which is how ``legacy_override`` becomes
+    reflex.
+    """
+    from silly_kicks.tracking._feature_contract import contract_probe_frame, feature_contract
+
+    def _vec():
+        return (
+            extract_xshot_features(contract_probe_frame(), gk_team_id="B", goal_x=105.0).iloc[0].to_numpy(dtype=float)
+        )
+
+    return feature_contract(_vec, constants={"goal_width": GOAL_WIDTH})
+
+
 def _pinned_params(overrides: dict | None) -> dict:
     """Deterministic XGBoost params (matches the calibration house standard).
 
@@ -464,6 +489,7 @@ class XShotOccurrenceModel:
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
+            "feature_contract": _feature_contract_block(),
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
@@ -535,6 +561,16 @@ class XShotOccurrenceModel:
             meta.get("chirality"),
             legacy_override=legacy_override,
             model_name="xShotOccurrence",
+        )
+
+        from silly_kicks.tracking._feature_contract import verify_feature_contract
+
+        verify_feature_contract(
+            _feature_contract_block(),
+            meta.get("feature_contract"),
+            legacy_override=legacy_override,
+            model_name="xShotOccurrence",
+            error_cls=IntegrityError,
         )
         return model
 

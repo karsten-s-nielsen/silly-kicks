@@ -6,6 +6,10 @@ field_length : float
     The length of a pitch (in meters).
 field_width : float
     The width of a pitch (in meters).
+penalty_area_half_width : float
+    Half the width of the penalty area (in meters). FIFA Laws: the area is 40.32 m wide.
+penalty_area_depth : float
+    The depth of the penalty area from the goal line (in meters). FIFA Laws: 16.5 m.
 bodyparts : list(str)
     The bodyparts used in the SPADL language.
 results : list(str)
@@ -27,6 +31,14 @@ import pandas as pd  # type: ignore
 
 field_length: float = 105.0  # unit: meters
 field_width: float = 68.0  # unit: meters
+
+# FIFA Laws of the Game: the penalty area is 40.32 m wide and 16.5 m deep. CANONICAL -- do NOT
+# re-derive these locally. `tracking/_ghost_gk.py` deliberately still uses 40.3 (half-width 20.15)
+# until its re-fit: its bundled weights were trained on that value, and flipping the constant
+# without re-fitting would skew a trained feature. Its artifact records the divergence in its
+# feature contract, so the flip cannot happen silently.
+penalty_area_half_width: float = 20.16
+penalty_area_depth: float = 16.5
 
 bodyparts: list[str] = ["foot", "head", "other", "head/other", "foot_left", "foot_right"]
 results: list[str] = [

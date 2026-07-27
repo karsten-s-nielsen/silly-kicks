@@ -5,6 +5,59 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.64.0] — 2026-07-26
+
+### Added — trained-model feature contract + canonical penalty-area constant (PR-S135, ADR-050)
+
+Two penalty-area half-widths have always existed in this repo (`_xcross_attempt` / `defensive_credit` use
+20.16, `_ghost_gk` uses 20.15) and ADR-047 tracked unifying them. Unifying is **not behaviour-free**:
+`_ghost_gk` uses the constant to compute `attackers_in_box`, one of the 26 `GHOST_GK_FEATURE_NAMES` — a real
+input to bundled trained weights. Measured on a real WC2022 match, 70 of 175,969 frames (0.0398%) can flip it.
+The number is beside the point; the mechanism is the risk — a geometry constant edited far from any model
+silently re-defines that model's inputs, and no existing guard could see it (`chirality` fingerprints model
+OUTPUT, which a low-weight feature can shift without moving; `geometry_version` covers the transform, not the
+constants). So this ships the guard, then the constant.
+
+- **`tracking/_feature_contract.py`** — a sibling of `_chirality.py` recording, per artifact, the feature
+  VECTOR its extractor produces on a fixed probe frame **and** the geometry CONSTANTS that extractor consumes.
+  A missing contract WARNS (pre-contract artifacts are undeclared, not known-bad); a probe change WARNS and
+  skips the fingerprint comparison ONLY; a fingerprint or declared-constant mismatch RAISES with the model's
+  own `IntegrityError`. Constants are compared FIRST and ALWAYS — including when the probe changed, since a
+  sub-probe-resolution change (20.16 → 20.161) moves no feature and only the declared constant can catch it.
+  Tolerance is chosen (`atol=1e-6`, `rtol=0`), not inherited from chirality, whose `rtol=1e-2` would be a
+  0.17 m blind spot on a ~17 m feature.
+- **Two new public warning categories**, `tracking.MissingFeatureContractWarning` and
+  `tracking.UnverifiableFeatureContractWarning`, deliberately independent (neither subclasses the other,
+  test-enforced). Declaring a constant REQUIRES extending the probe, which changes the probe hash for every
+  saved artifact; one umbrella category would make escalating the missing-contract case silently turn every
+  probe extension into a hard failure.
+- **All three bundled artifacts stamped** (ghost, xS, xCross) via the committed, re-runnable
+  `scripts/stamp_feature_contracts.py` — **metadata-only**: verified 654 ghost arrays bit-identical, both
+  boosters byte-identical, all three metadata deltas additive-only. Ghost also gains the `pitch_length` /
+  `pitch_width` fail-closed guard xS and xCross always had.
+- **CI escalates `MissingFeatureContractWarning`** (`pyproject.toml`), adopting the ADR-041
+  `SyntheticEPVWarning` mechanism — with **no** opt-outs, since every bundled artifact is stamped.
+- **`tests/tracking/test_geometry_constant_enumeration.py`** — completeness by ENUMERATION (the ADR-043 idiom):
+  AST-walks the four extractor modules, finds all 14 geometry constants, and requires each to be declared or
+  explicitly exempt with a reason. Reads the BUILT contracts, both directions. This caught a real defect: xS
+  had been declaring `penalty_area_half_width`, a constant it does not consume at all, which would have made
+  the canonical flip raise on every xS load with xS's features provably unchanged.
+- **`spadlconfig.penalty_area_half_width` / `penalty_area_depth`** (FIFA 40.32 / 16.5) + two **frame-explicit**
+  predicates `in_penalty_area_absolute(x, y, *, attacked_goal_x)` and `in_penalty_area_goal_relative(gr_x, y)`.
+  Two entry points because the call sites differ on FRAME, not just strictness, and a shared `goal_x` parameter
+  would mean the *defended* goal in `_geometry` and the *attacked* goal at the xCross site — an 88.5 m error.
+  Migrated the two sites already holding 20.16; **byte-identical**, grid-sweep proven, 159 tests unchanged.
+- **`_ghost_gk` keeps 40.3** — its weights were fit on it. The contract now records that, so flipping it
+  without a re-fit makes `load()` RAISE. (Its depth test is also strict `<` where the canonical helper is `<=`.)
+- **Trainer guards:** ghost's feature cache is keyed on the geometry constants (a hand-bumped literal goes
+  stale inside the very re-fit cycle it protects); the xS/xCross cache fingerprint is now a LIVE per-corpus hash
+  (closing ADR-038's deferral) keyed on the REQUESTED corpus via a selection helper shared with `load_matches`;
+  and unclassified providers fail at trainer startup rather than after the full extraction.
+
+**No retrain, no value change.** No weights change and no model output changes. Three `metadata.json` files
+gain a `feature_contract` key and their `SHA256SUMS` change — a consumer pinning artifact checksums will see a
+diff. C4-free (count stays 32).
+
 ## [4.61.0] — 2026-07-25
 
 ### Changed / Added — TF-51 v2 defensive-credit refinements (PR-S132, ADR-049)

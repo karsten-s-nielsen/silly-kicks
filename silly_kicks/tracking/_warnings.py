@@ -13,8 +13,10 @@ from __future__ import annotations
 
 __all__ = [
     "IgnoredSurfaceInputsWarning",
+    "MissingFeatureContractWarning",
     "RunValueCoverageWarning",
     "SyntheticEPVWarning",
+    "UnverifiableFeatureContractWarning",
 ]
 
 
@@ -53,6 +55,57 @@ class IgnoredSurfaceInputsWarning(UserWarning):
 
         warnings.filterwarnings("ignore", category=SyntheticEPVWarning)
         warnings.filterwarnings("error", category=IgnoredSurfaceInputsWarning)
+    """
+
+
+class MissingFeatureContractWarning(UserWarning):
+    """A trained-model artifact carries NO feature contract, so it cannot be verified at all.
+
+    Additive by design: pre-contract artifacts still load, because an artifact predating the
+    contract is undeclared rather than known-bad. This is the category meant to be ESCALATED by a
+    consumer that wants fail-closed semantics -- and it is escalated in this repo's own CI, where
+    the opt-out list is the inventory of contract-less artifacts.
+
+    Deliberately distinct from :class:`UnverifiableFeatureContractWarning`, which covers a contract
+    that exists but could not be fully checked. Escalating this one must not turn a probe change
+    into a hard failure.
+
+    Examples
+    --------
+    Fail closed on any artifact that cannot be verified::
+
+        import warnings
+        from silly_kicks.tracking import MissingFeatureContractWarning
+
+        warnings.filterwarnings("error", category=MissingFeatureContractWarning)
+    """
+
+
+class UnverifiableFeatureContractWarning(UserWarning):
+    """A contract exists but part of it could not be checked on this load.
+
+    Emitted when the probe itself changed (so the recorded fingerprint is not comparable), when a
+    recorded constant is no longer declared by the library, or when a real mismatch was waved
+    through by ``legacy_override``.
+
+    SEPARATE from :class:`MissingFeatureContractWarning` on purpose. Adding a declared constant
+    requires extending the probe, which changes the probe hash for every previously-saved
+    artifact; those loads must keep working. If one umbrella category covered both, a consumer
+    escalating the missing-contract case would silently turn every probe extension into a hard
+    failure across every artifact not yet re-saved.
+
+    Examples
+    --------
+    Fail closed on a missing contract while a probe change stays a notice::
+
+        import warnings
+        from silly_kicks.tracking import (
+            MissingFeatureContractWarning,
+            UnverifiableFeatureContractWarning,
+        )
+
+        warnings.filterwarnings("error", category=MissingFeatureContractWarning)
+        warnings.filterwarnings("default", category=UnverifiableFeatureContractWarning)
     """
 
 
