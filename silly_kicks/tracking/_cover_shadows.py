@@ -10,7 +10,7 @@ See NOTICE for full bibliographic citations.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -22,6 +22,42 @@ from .pitch_control._surface import PitchControlSurface
 
 if TYPE_CHECKING:
     from silly_kicks.xthreat import ExpectedThreat
+
+
+# ---------------------------------------------------------------------------
+# Numerical tolerances
+#
+# Three DISTINCT quantities at three different scales. They must not share a constant: a tolerance
+# calibrated for one is either blind or over-strict for the others.
+# ---------------------------------------------------------------------------
+
+#: "How negative may numerical integration make the raw THREAT difference?"
+#: This is the floor below which the ``max(..., 0.0)`` clamp in :func:`compute_blocking_score` is
+#: doing nothing but numerical hygiene -- a statement about this module's numerics, which is why it
+#: lives here rather than in a test file. Calibrated against measured threat differences of
+#: order +3.8 on provider fixtures.
+TOL_INVARIANT = 1e-9
+
+#: "How negative may float error make a summed RECEPTION-PROBABILITY difference?"
+#: Distinct from :data:`TOL_INVARIANT`: ``new_recv``/``old_recv`` are probabilities summed over the
+#: three lanes, so they are O(1), not O(3.8).
+TOL_RECEPTION = 1e-12
+
+#: "How small is NOT an attribution?" A different question from :data:`TOL_INVARIANT`, and they must
+#: not silently share a constant: a strict ``<= 0`` test would still name a defender when ``max_def``
+#: is 1e-14.
+#:
+#: CONFIRMED by measurement, not reasoned into place. The concern was that "no attribution" and
+#: "small attribution" might not be separable -- ``score_per_blocker`` sums ``recv_xt * delta``
+#: across receivers and three lanes against threat differences of order +3.8, so the accumulation
+#: noise floor could plausibly have reached 1e-13 or higher. It does not. Measured on 1039 actions
+#: (``scripts/measure_cover_shadow_argmax_agreement.py``): **69 values are exactly 0.0** and the
+#: smallest non-zero is **3.64e-3** (median 0.83). The clusters are nine orders apart, so 1e-12 sits
+#: safely inside the gap and no legitimate small attribution is NA'd out.
+#:
+#: Consumed on the ``detailed=True`` path ONLY -- the cheap path never names a defender (see the
+#: gating note at its ``max_def_pid`` assignment), so this constant does not gate it.
+TOL_ATTRIB = 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -912,6 +948,28 @@ def compute_blocking_score(
 # Per-frame cover-shadow computation (shared by aggregator + VAEP factory)
 # ---------------------------------------------------------------------------
 
+
+class _CoverShadowDict(TypedDict):
+    """Per-action cover-shadow results.
+
+    A TypedDict rather than ``dict[str, float | int]``: adding the identity key made that
+    annotation false, and widening it to include ``str | None`` would have made every NUMERIC
+    consumer unsafe too -- pyright then rejects `assert_allclose`, `>=`, and `<=` on
+    ``blocking_score`` and the counts, which are all still plain numbers. Per-key types keep the
+    numeric keys numeric and confine the identity's nullability to the one key that has it.
+    """
+
+    n_blocked_receivers: int
+    n_potential_receivers: int
+    blocking_score: float
+    blocked_threat_fraction: float
+    max_single_defender_blocking_score: float
+    #: ``None`` on the cheap path ALWAYS (gated by measurement), and wherever no defender earned
+    #: an attribution. Provider ids are ``int`` or ``str`` (ADR-019).
+    max_single_defender_player_id: int | str | None
+
+
+# Numeric columns the VAEP factory consumes -- features.py reads THIS list.
 _CS_COL_NAMES = [
     "n_blocked_receivers",
     "n_potential_receivers",
@@ -919,6 +977,11 @@ _CS_COL_NAMES = [
     "blocked_threat_fraction",
     "max_single_defender_blocking_score",
 ]
+
+# Aggregator-only additions. NEVER append these to ``_CS_COL_NAMES``: ``features.py`` feeds that list
+# straight into ``cover_shadow_xfns``, so a player-id column would put a non-numeric value into VAEP
+# feature matrices. Same split as ``das_source`` (ADR-043).
+_CS_AGGREGATOR_ONLY_COLS = ["max_single_defender_player_id"]
 
 
 def _compute_cover_shadow_dict(
@@ -932,7 +995,8 @@ def _compute_cover_shadow_dict(
     detailed: bool = False,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
-) -> dict[str, float | int] | None:
+    _ungated_cheap_identity: bool = False,
+) -> _CoverShadowDict | None:
     """Compute 5 cover-shadow values for a single frame + passer position.
 
     Returns a dict keyed by _CS_COL_NAMES, or None on degenerate input
@@ -978,6 +1042,8 @@ def _compute_cover_shadow_dict(
             "blocking_score": 0.0,
             "blocked_threat_fraction": 0.0,
             "max_single_defender_blocking_score": 0.0,
+            # No receiver to screen => no defender earned the attribution.
+            "max_single_defender_player_id": None,
         }
 
     # Baseline pass: lane_control per receiver on the FULL frame, used only for the
@@ -1024,6 +1090,8 @@ def _compute_cover_shadow_dict(
             "blocking_score": 0.0,
             "blocked_threat_fraction": 0.0,
             "max_single_defender_blocking_score": 0.0,
+            # Every defender was classified a man-marker => no lane blocker to name.
+            "max_single_defender_player_id": None,
         }
 
     bs_result = compute_blocking_score(
@@ -1039,6 +1107,10 @@ def _compute_cover_shadow_dict(
     # Max single-defender blocking score
     if detailed:
         max_def = 0.0
+        # Sentinel is None, NEVER index 0: `max_def` starts at 0.0 and every candidate score is
+        # clamped non-negative, so a frame where no defender affects anything would otherwise name
+        # `lane_blocker_ids[0]` -- a defender who did nothing.
+        max_def_pid = None
         for d_pid in lane_blocker_ids:
             d_result = compute_blocking_score(
                 frame_data,
@@ -1049,7 +1121,17 @@ def _compute_cover_shadow_dict(
                 method=method,
                 pitch_control_cache=pitch_control_cache,
             )
-            max_def = max(max_def, d_result.blocking_score)
+            # Strict improvement only, so ties keep the FIRST (lowest-index) defender -- matching
+            # `argmax` on the cheap path, whose tie-break is also first-wins.
+            if d_result.blocking_score > max_def:
+                max_def = d_result.blocking_score
+                max_def_pid = d_pid
+        # DELIBERATE deviation from the plan's literal snippet, which applied `TOL_ATTRIB` to the
+        # cheap path only. Both paths must answer "is this an attribution?" the same way, or they
+        # disagree by construction for every `max_def` in (0, TOL_ATTRIB] -- and the agreement
+        # measurement would then be reading a discrepancy this module created, not a real one.
+        if max_def <= TOL_ATTRIB:
+            max_def_pid = None
     else:
         # Lightweight: classify man-markers once (lane_blocker_ids, the fixed racer set),
         # precompute per-player interception probs once per receiver, then a single
@@ -1110,6 +1192,37 @@ def _compute_cover_shadow_dict(
             score_per_blocker += recv_xt * delta
 
         max_def = float(score_per_blocker.max()) if n_lb > 0 else 0.0
+        # GATED TO detailed=True, BY MEASUREMENT. This path CAN name a defender --
+        # `lane_blocker_ids[score_per_blocker.argmax()]` -- and deliberately does not.
+        #
+        # Measured against the exact path on 970 qualifying actions (3 GS WC2022 matches):
+        # agreement 0.157, Wilson 95% [0.135, 0.181], against a pre-registered 0.90 floor. With ~10
+        # lane blockers, chance is ~0.10 -- barely better than random. And the disagreements are not
+        # near-ties: the median names a defender worth 1.6% of the true winner, and at p90 the
+        # nominee's exact-path contribution is EXACTLY ZERO.
+        #
+        # This is not a defect to fix. The cheap path is faithful to a LANE-based definition of
+        # "blocks most" (bit-identical to the prior lane_control loop within rtol 1e-10); the exact
+        # path is a pitch-control Voronoi counterfactual. Two legitimate constructs that rank the
+        # top of the list differently -- which is exactly the part this column would use.
+        # `TestDetailedVsLightweightCorrelation` (rho >= 0.7 on the VALUE) is untouched by this and
+        # remains true; a rank guarantee is near-silent about the argmax.
+        #
+        # A column that confidently names the wrong defender is worse than no column.
+        # Evidence: docs/research/cover_shadow_identity/.
+        #
+        # `_ungated_cheap_identity` is the RE-MEASUREMENT escape hatch, and exists for one reason:
+        # a gate nobody can re-measure is a gate nobody can ever revisit on evidence. Without it,
+        # `scripts/measure_cover_shadow_argmax_agreement.py` would compare `None` against a real id
+        # on every row and report agreement 0.0 -- a number that looks like a measurement of the
+        # cheap path but is actually a measurement of this gate. Private, single caller, and the
+        # public default is pinned by `test_cheap_path_never_names_a_defender`. If the cheap
+        # argmax is ever improved, re-run the script with it and see whether 0.157 has moved.
+        max_def_pid = (
+            lane_blocker_ids[int(score_per_blocker.argmax())]
+            if _ungated_cheap_identity and n_lb > 0 and max_def > TOL_ATTRIB
+            else None
+        )
 
     return {
         "n_blocked_receivers": n_blocked,
@@ -1117,4 +1230,5 @@ def _compute_cover_shadow_dict(
         "blocking_score": bs_result.blocking_score,
         "blocked_threat_fraction": bs_result.blocked_threat_fraction,
         "max_single_defender_blocking_score": max_def,
+        "max_single_defender_player_id": max_def_pid,
     }

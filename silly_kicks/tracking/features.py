@@ -3667,6 +3667,9 @@ def add_cover_shadows(
     col_bs = np.full(n, np.nan)
     col_btf = np.full(n, np.nan)
     col_max_def = np.full(n, np.nan)
+    # object, not a numeric dtype: player ids may be strings on kloppy-family providers, and the
+    # "no attribution" sentinel is None rather than a numeric fill.
+    col_max_def_pid = np.full(n, None, dtype="object")
 
     if links is not None:
         pointers = links
@@ -3713,12 +3716,18 @@ def add_cover_shadows(
         col_bs[j] = cs["blocking_score"]
         col_btf[j] = cs["blocked_threat_fraction"]
         col_max_def[j] = cs["max_single_defender_blocking_score"]
+        col_max_def_pid[j] = cs["max_single_defender_player_id"]
 
     out["n_blocked_receivers"] = pd.array(col_n_blocked, dtype="Int64")
     out["n_potential_receivers"] = pd.array(col_n_potential, dtype="Int64")
     out["blocking_score"] = col_bs
     out["blocked_threat_fraction"] = col_btf
     out["max_single_defender_blocking_score"] = col_max_def
+    # Restore the FRAMES dtype (shared rule -- see restore_id_dtype). The values come from
+    # `frames["player_id"]` via `lane_blocker_ids`, NOT from `actions`; the two may legitimately
+    # disagree (ADR-019), and restoring the actions dtype would feed e.g. string frame ids into a
+    # numeric target. Precedents: _ball_carrier.py, _gk_resolve.py.
+    out["max_single_defender_player_id"] = restore_id_dtype(col_max_def_pid, frames["player_id"].dtype)
 
     # Provenance columns
     provenance_cols = [
@@ -3795,7 +3804,7 @@ def cover_shadow_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
 
-        cache: dict[tuple, dict | None] = {}
+        cache: dict[tuple, _cs_mod._CoverShadowDict | None] = {}
         frame_groups = frames.groupby(["period_id", "frame_id"])
 
         def _get_cs(period_id, frame_id_int, team_id, passer_xy):

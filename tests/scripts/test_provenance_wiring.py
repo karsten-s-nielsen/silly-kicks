@@ -25,6 +25,7 @@ _SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 # `write_text` would sweep in dev utilities whose output nobody cites.
 ARTIFACT_DRIVERS = (
     "build_gkdv_arm_values",
+    "measure_cover_shadow_argmax_agreement",
     "build_layer2_spells",
     "derive_opengoal_range",
     "run_signoff_power",

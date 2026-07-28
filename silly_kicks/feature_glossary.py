@@ -1025,7 +1025,13 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     # -- Cover shadows (TF-30) ------------------------------------------------------------------
     FeatureColumn(
         name="blocking_score",
-        definition="Threat reduction from opponents' cover shadows blocking passing lanes to potential receivers.",
+        definition=(
+            "Threat reduction from opponents' cover shadows blocking passing lanes to potential receivers. "
+            "Non-negative BY CONSTRUCTION (clamped at zero), so it cannot express a defender whose "
+            "positioning made things WORSE -- unlike the paper's SoccerMap-CNN counterfactual, which is "
+            "signed. The underlying unclamped difference is argued non-negative structurally for the "
+            "spearman and voronoi pitch-control methods, and verified empirically for fernandez_bornn."
+        ),
         unit="xT",
         emitting_module=_M_COVER_SHADOWS,
         attribution=_A_CASCIOLI,
@@ -1039,17 +1045,56 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="max_single_defender_blocking_score",
-        definition="Largest blocking-score contribution from any single defender on this action.",
+        definition=(
+            "Largest blocking-score contribution from any single defender on this action. "
+            "Non-negative BY CONSTRUCTION (clamped at zero), so it cannot express a defender whose "
+            "positioning made things WORSE -- unlike the paper's SoccerMap-CNN counterfactual, which is "
+            "signed. The underlying unclamped difference is argued non-negative structurally for the "
+            "spearman and voronoi pitch-control methods, and verified empirically for fernandez_bornn."
+        ),
         unit="xT",
         emitting_module=_M_COVER_SHADOWS,
         attribution=_A_CASCIOLI,
     ),
     FeatureColumn(
         name="blocked_threat_fraction",
-        definition="Fraction of the total receiver threat blocked by opponents' cover shadows.",
+        definition=(
+            "Fraction of the total receiver threat blocked by opponents' cover shadows. "
+            "Non-negative BY CONSTRUCTION (its numerator is the clamped blocking_score), so it cannot "
+            "express a defender whose positioning made things WORSE -- unlike the paper's SoccerMap-CNN "
+            "counterfactual, which is signed. The underlying unclamped difference is argued non-negative "
+            "structurally for the spearman and voronoi pitch-control methods, and verified empirically "
+            "for fernandez_bornn."
+        ),
         unit="ratio",
         emitting_module=_M_COVER_SHADOWS,
         attribution=_A_CASCIOLI,
+    ),
+    FeatureColumn(
+        name="max_single_defender_player_id",
+        definition=(
+            "Identity of the defender producing max_single_defender_blocking_score. "
+            "POPULATED ONLY when add_cover_shadows is called with detailed=True; NA on the default "
+            "detailed=False path, and NA wherever no defender earned an attribution. The cheap path "
+            "can compute an identity but deliberately does not serve one: measured against the exact "
+            "path on 970 qualifying actions it agreed only 0.157 of the time (95% CI [0.135, 0.181]) "
+            "versus ~0.10 by chance, and the disagreements are not near-ties -- the median names a "
+            "defender worth 1.6% of the true winner, and at the 90th percentile the named defender's "
+            "exact contribution is zero. This is not a defect: the cheap path is faithful to a "
+            "lane-based notion of 'blocks most' and the exact path to a pitch-control counterfactual, "
+            "and the two rank the top of the list differently. Evidence: "
+            "docs/research/cover_shadow_identity/."
+        ),
+        # No identifier token exists in the closed Unit vocabulary; "dimensionless" is the
+        # least-wrong fit. Widening the Literal for one column would be a public contract change
+        # (the speed_source -> "unavailable" precedent) that does not earn its cost here.
+        unit="dimensionless",
+        emitting_module=_M_COVER_SHADOWS,
+        attribution=_A_CASCIOLI,
+        # An identity has no direction -- "higher is better" is meaningless for a player id. Decided,
+        # not forgotten; the five sibling cover-shadow columns are None for a different reason
+        # (direction flips by perspective).
+        higher_is_better=None,
     ),
     FeatureColumn(
         name="n_potential_receivers",
