@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-07-27. **Current release**: silly-kicks 4.65.0 (TF-19 corpus legs: `att_power_curve` COUNTS inestimable resamples instead of crashing; the spells and entanglement passes become shardable/resumable/partitionable drivers; upstream-provenance refusal + a CI gate on provenance wiring). No VAEP retrain; C4 count unchanged (32). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-07-27. **Current release**: silly-kicks 4.66.0 (pooled-corpus cluster keys: `_cluster_reassign` groups by hash so mixed-dtype ids cannot crash it, and the shot arm clusters on (provider, game_id) so two providers sharing a game_id are not fused). Prior: 4.65.0 (TF-19 corpus legs: `att_power_curve` COUNTS inestimable resamples instead of crashing; the spells and entanglement passes become shardable/resumable/partitionable drivers; upstream-provenance refusal + a CI gate on provenance wiring). No VAEP retrain; C4 count unchanged (32). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
