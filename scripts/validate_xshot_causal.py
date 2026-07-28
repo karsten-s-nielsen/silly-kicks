@@ -106,6 +106,20 @@ def _entanglement_gate(opp: pd.DataFrame) -> dict:
     }
 
 
+def _cluster_key(opp: pd.DataFrame) -> np.ndarray:
+    """The match-level cluster key, distinguishing providers that share a ``game_id`` value.
+
+    This arm POOLS providers, and `game_id` is only unique WITHIN one. Two providers using the
+    same value -- gradientsports int ``123`` and skillcorner str ``"123"`` -- would land in one
+    cluster under a `game_id`-only key, fusing two unrelated matches and corrupting the
+    cluster-exchangeable null. The composite is built only when `provider` is present, so a
+    single-provider caller (and every existing test) keeps the previous key exactly.
+    """
+    if "provider" not in opp.columns:
+        return opp["game_id"].to_numpy()
+    return (opp["provider"].astype(str) + "\x1f" + opp["game_id"].astype(str)).to_numpy()
+
+
 def analyze(opp: pd.DataFrame, *, seed: int = 0, n_seeds: int = 200) -> dict:
     """Pure: shot-arm opportunity frame -> metrics dict. No I/O. ``n_seeds`` sizes the placebo
     null (200 = the registered owner-run value; tests may shrink it)."""
@@ -136,7 +150,7 @@ def analyze(opp: pd.DataFrame, *, seed: int = 0, n_seeds: int = 200) -> dict:
     # The GATE reads the CLUSTER band (match-level exchangeability -- opportunities within a
     # match are dependent); the row-i.i.d. band is reported for cross-arm comparability with
     # the frozen 4.18.0 xCross record.
-    cluster_ids = opp["game_id"].to_numpy()
+    cluster_ids = _cluster_key(opp)
     placebo_row = M.placebo_shift(X_base, X_gk, Y, Z, n_seeds=n_seeds, rng_seed=seed)
     placebo_cluster = M.placebo_shift(X_base, X_gk, Y, Z, n_seeds=n_seeds, rng_seed=seed, cluster_ids=cluster_ids)
     clears = abs(gk_shift) > max(placebo_cluster["band_p95"], M.GK_ABLATION_MIN_SHIFT)

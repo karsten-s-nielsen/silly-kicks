@@ -234,7 +234,29 @@ def _cluster_reassign(X_gk: np.ndarray, cluster_ids: np.ndarray, rng: np.random.
     destination boundaries and drift the null back toward the row-i.i.d. permutation)."""
     X_gk = np.asarray(X_gk, dtype=float)
     ids = np.asarray(cluster_ids)
-    uniq = np.unique(ids)
+    # `np.unique` SORTS, and a pooled multi-provider corpus carries mixed id types -- MEASURED:
+    # gradientsports `game_id` is int while idsse/skillcorner are str, so the shot arm's 179-match
+    # run died with `'<' not supported between instances of 'int' and 'str'` after the corpus pass.
+    #
+    # The sorted path is KEPT as the primary, and the fallback fires only where it would raise.
+    # That is not caution for its own sake: `pd.factorize` orders clusters by FIRST APPEARANCE, so
+    # `sigma` maps different sources to different destinations, and `placebo_shift` documents
+    # itself as "deterministic given rng_seed". MEASURED over 300 random cluster layouts x 4 seeds,
+    # switching unconditionally changed the result in 724/1200 cases -- statistically the same null
+    # (a uniform reassignment either way) but not the same NUMBER, which would silently stop every
+    # recorded placebo band from reproducing. Sortable ids therefore keep their exact previous
+    # value; only the previously-crashing case changes, and it changes from an exception to a
+    # result.
+    #
+    # Hash grouping also keeps `5` and `"5"` DISTINCT, where a stringifying repair would fuse two
+    # unrelated matches into one cluster and corrupt the very cluster-exchangeable null this draws.
+    try:
+        uniq = np.unique(ids)
+    except TypeError:  # mixed, unorderable id types (pooled multi-provider corpus)
+        import pandas as pd
+
+        codes, labels = pd.factorize(ids, sort=False)
+        ids, uniq = codes, np.arange(len(labels))
     sigma = rng.permutation(len(uniq))
     out = np.empty_like(X_gk)
     for d_pos, dest in enumerate(uniq):

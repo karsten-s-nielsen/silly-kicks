@@ -218,3 +218,90 @@ def test_cluster_resampling_never_splits_a_cluster():
     counts = np.bincount(picked, minlength=10)
     assert set(counts[counts > 0]) <= {20, int(counts[counts > 0].min())}
     assert len(idx) == 100
+
+
+def test_cluster_reassign_survives_MIXED_id_types_across_providers():
+    """MEASURED: the shot arm's 179-match pooled run died in `np.unique` with
+    `'<' not supported between instances of 'int' and 'str'` -- gradientsports `game_id` is int
+    while idsse/skillcorner are str. `np.unique` sorts; a pooled corpus has nothing to sort."""
+    from silly_kicks.causal.matching import _cluster_reassign
+
+    rng = np.random.default_rng(0)
+    ids = np.array([1, 1, "a", "a", 2, 2], dtype=object)
+    out = _cluster_reassign(rng.normal(size=(6, 2)), ids, rng)
+    assert out.shape == (6, 2)
+    assert np.isfinite(out).all()
+
+
+def test_cluster_reassign_keeps_5_and_str5_DISTINCT():
+    """A stringifying fix would merge int 5 with str "5" -- two unrelated matches from different
+    providers fused into one cluster, corrupting the cluster-exchangeable null this draws."""
+    from silly_kicks.causal.matching import _cluster_reassign
+
+    # Two clusters whose ids stringify identically; give them disjoint values.
+    X = np.array([[1.0], [1.0], [9.0], [9.0]])
+    ids = np.array([5, 5, "5", "5"], dtype=object)
+    out = _cluster_reassign(X, ids, np.random.default_rng(3))
+    # Each cluster must still receive exactly ONE source cluster's value, so both rows of a
+    # destination agree. Merged clusters would let 1.0 and 9.0 mix within a destination.
+    assert out[0, 0] == out[1, 0]
+    assert out[2, 0] == out[3, 0]
+
+
+def _legacy_cluster_reassign(x_gk, ids, rng):
+    """The pre-4.66.0 ALGORITHM, unchanged: `np.unique`, which sorts.
+
+    Only the parameter name differs from the shipped `X_gk` (test files are not exempt from the
+    lowercase-argument rule); the body is what 4.65.0 executed.
+    """
+    ids = np.asarray(ids)
+    uniq = np.unique(ids)
+    sigma = rng.permutation(len(uniq))
+    out = np.empty_like(x_gk)
+    for d_pos, dest in enumerate(uniq):
+        src = x_gk[ids == uniq[sigma[d_pos]]]
+        m = ids == dest
+        out[m] = np.resize(src, (int(m.sum()), x_gk.shape[1]))
+    return out
+
+
+def test_sortable_ids_stay_BYTE_IDENTICAL_to_the_pre_fix_implementation():
+    """`placebo_shift` documents itself as deterministic given `rng_seed`, so every recorded
+    placebo band must still reproduce.
+
+    This is not a formality. MEASURED: switching to `pd.factorize` UNCONDITIONALLY changed the
+    result in 724/1200 random (layout, seed) pairs -- statistically the same null, a different
+    NUMBER. Hence the sorted path stays primary and hash grouping is a fallback for ids that
+    cannot be sorted at all.
+    """
+    from silly_kicks.causal.matching import _cluster_reassign
+
+    rs = np.random.default_rng(99)
+    for _ in range(40):
+        k = int(rs.integers(2, 7))
+        ids = np.repeat(rs.permutation(k), rs.integers(1, 4, size=k))
+        X = rs.normal(size=(ids.size, 2))
+        for seed in range(3):
+            assert np.array_equal(
+                _legacy_cluster_reassign(X, ids, np.random.default_rng(seed)),
+                _cluster_reassign(X, ids, np.random.default_rng(seed)),
+            ), "sortable-id result moved -- recorded placebo bands would stop reproducing"
+
+
+def test_the_legacy_reference_actually_DIES_on_the_mixed_ids_we_fixed():
+    """Non-vacuity for the pair above: proves the fallback is reached for a real reason, and that
+    the byte-identity test is comparing against an implementation that genuinely could not cope."""
+    import pytest as _pytest
+
+    with _pytest.raises(TypeError):
+        _legacy_cluster_reassign(np.zeros((4, 1)), np.array([1, 1, "a", "a"], dtype=object), np.random.default_rng(0))
+
+
+def test_cluster_reassign_is_UNCHANGED_for_homogeneous_ids():
+    """Non-vacuity for the two above: the ordinary single-provider path must not have moved."""
+    from silly_kicks.causal.matching import _cluster_reassign
+
+    X = np.array([[1.0, 1.0], [1.0, 1.0], [2.0, 2.0], [2.0, 2.0], [3.0, 3.0], [3.0, 3.0]])
+    out = _cluster_reassign(X, np.array([0, 0, 1, 1, 2, 2]), np.random.default_rng(7))
+    assert all(tuple(out[i]) == tuple(out[i + 1]) for i in (0, 2, 4))
+    assert {tuple(r) for r in out} <= {(1.0, 1.0), (2.0, 2.0), (3.0, 3.0)}

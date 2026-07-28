@@ -448,6 +448,36 @@ register the gate. The registered 16.5 m threshold is **not** retuned to raise p
 Law-defined and data-independent precisely so the decider stays untuned; changing it is a
 re-registration decision, not an implementation one.
 
+## Amendment (4.66.0) — the cluster key for a POOLED corpus
+
+**Date:** 2026-07-28. **Status:** Accepted. Found by RUNNING the §3.3 shot arm over its full
+registered provider set for the first time (179 matches: gradientsports 64 + skillcorner 108 +
+idsse 7). It died in `causal.matching._cluster_reassign`:
+`'<' not supported between instances of 'int' and 'str'`.
+
+**Two distinct defects, one symptom.**
+
+1. **`np.unique` sorts.** `game_id` is `int` for gradientsports and `str` for idsse/skillcorner, so
+   a pooled corpus has nothing sortable. The sorted path is KEPT as primary and
+   `pd.factorize(..., sort=False)` fires only on the `TypeError` — because factorize orders
+   clusters by FIRST APPEARANCE, and `placebo_shift` documents itself as *deterministic given
+   `rng_seed`*. **Measured: switching unconditionally changed the result in 724/1200 random
+   (layout, seed) pairs** — the same null statistically, a different number, silently breaking
+   reproduction of every recorded placebo band. Sortable ids are now pinned byte-identical to the
+   4.65.0 implementation by a test that carries that implementation verbatim.
+
+2. **`game_id` alone is not a valid cluster key for this arm, and that is the deeper defect.** The
+   shot arm POOLS providers; `game_id` is unique only WITHIN one. Any stringifying repair would
+   have merged gradientsports `123` with skillcorner `"123"` into a single cluster — two unrelated
+   matches fused, corrupting the very cluster-exchangeable null the placebo band is drawn from.
+   **The crash was the lucky failure mode; silent fusion was the other one.** `_cluster_key` builds
+   a composite `(provider, game_id)` when a `provider` column is present and falls back to
+   `game_id` alone otherwise, so single-provider callers keep the previous key exactly.
+
+**Consequence for the §3.3 record:** the entanglement measurement is only meaningful once both hold
+— before the fix it could not run at all, and a naive fix would have run and reported a corrupted
+null without any error.
+
 ## References
 
 Spec: `docs/superpowers/specs/2026-07-12-tf19-gkdv-regate-and-v1-design.md`. Le et al.

@@ -176,3 +176,22 @@ def test_out_is_required_unless_listing_matches(monkeypatch):
     with pytest.raises(SystemExit) as e:
         mod.main()
     assert "--out is required" in str(e.value)
+
+
+def test_cluster_key_distinguishes_providers_sharing_a_game_id():
+    """This arm POOLS providers and `game_id` is unique only WITHIN one. A `game_id`-only key
+    would fuse gradientsports int 123 with skillcorner str "123" into a single cluster."""
+    import pandas as pd
+
+    opp = pd.DataFrame({"provider": ["gradientsports", "skillcorner"], "game_id": [123, "123"]})
+    keys = mod._cluster_key(opp)
+    assert keys[0] != keys[1], "two providers' matches collapsed into one cluster"
+
+
+def test_cluster_key_falls_back_to_game_id_without_a_provider_column():
+    """Single-provider callers -- and every pre-existing test -- keep the previous key exactly."""
+    import numpy as np
+    import pandas as pd
+
+    opp = pd.DataFrame({"game_id": ["g1", "g2", "g1"]})
+    assert np.array_equal(mod._cluster_key(opp), np.array(["g1", "g2", "g1"]))

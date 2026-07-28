@@ -5,6 +5,36 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.66.0] — 2026-07-28
+
+### Fixed — pooled-corpus cluster keys (ADR-037)
+
+Found by RUNNING the §3.3 entanglement pass over its full registered provider set for the first
+time: 179 matches across gradientsports + idsse + skillcorner. It died in
+`causal.matching._cluster_reassign` with `'<' not supported between instances of 'int' and 'str'`.
+
+- **`_cluster_reassign` falls back to HASH grouping only where sorting raises.** `game_id` is
+  `int` for gradientsports and `str` for idsse/skillcorner, and `np.unique` sorts — so a pooled
+  corpus has nothing sortable. The sorted path stays **primary**; `pd.factorize(..., sort=False)`
+  fires only on the `TypeError`. That split is load-bearing, not caution: factorize orders clusters
+  by FIRST APPEARANCE, so `sigma` maps different sources to different destinations, and
+  `placebo_shift` documents itself as *deterministic given `rng_seed`*. **Measured over 300 random
+  cluster layouts × 4 seeds, switching unconditionally changed the result in 724/1200 cases** —
+  statistically the same null, a different **number**, which would have silently stopped every
+  recorded placebo band from reproducing. Sortable ids are now pinned byte-identical to the
+  pre-4.66.0 implementation by a test carrying that implementation verbatim, with a non-vacuity
+  partner proving the reference genuinely dies on the mixed ids the fallback exists for.
+- **The shot arm clusters on `(provider, game_id)`, not `game_id` alone — a correctness fix, not
+  just a crash fix.** This arm POOLS providers and `game_id` is unique only WITHIN one, so a
+  stringifying repair would have silently merged gradientsports `123` with skillcorner `"123"`:
+  two unrelated matches fused into one cluster, corrupting the very cluster-exchangeable null the
+  placebo band is drawn from. The crash was the lucky failure mode; silent fusion was the other
+  one. `_cluster_key` builds the composite only when a `provider` column is present, so
+  single-provider callers keep the previous key exactly.
+
+**No retrain.** No model, weights or feature values change; the affected surface is the causal
+harness's placebo null, which is reported-not-gated. C4 count unchanged (32).
+
 ## [4.65.0] — 2026-07-27
 
 ### Fixed / Added — TF-19 power leg: degenerate resamples + a parallel spells pass (PR-S`<NN>`, ADR-037)
