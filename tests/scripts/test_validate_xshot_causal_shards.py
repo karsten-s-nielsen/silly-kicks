@@ -26,7 +26,9 @@ def _opp(n: int, *, resolved: bool = True) -> pd.DataFrame:
     from silly_kicks.causal import SHOT_ARM_CONFOUNDERS, shot_arm_config
 
     rng = np.random.default_rng(0)
-    cols = {c: rng.normal(size=n) for c in SHOT_ARM_CONFOUNDERS}
+    # Explicit value type: the comprehension alone infers dict[str, NDArray[float64]], and the
+    # updates below add bool/int/str columns -- which pyright rejects on the full-tree run.
+    cols: dict[str, object] = {c: rng.normal(size=n) for c in SHOT_ARM_CONFOUNDERS}
     cols.update({c: rng.normal(size=n) for c in shot_arm_config({}).gk_block})
     cols.update(
         {
