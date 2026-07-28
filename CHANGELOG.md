@@ -5,6 +5,80 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.67.0] — 2026-07-28
+
+### Fixed / Added — TF-30 cover shadows: invariant repair, clamp verdict, gated per-defender identity (PR-S136)
+
+Test repair and documentation correction, plus ONE additive aggregator-only column. **No change to
+any shipped column's values, no API change, no retrain, C4 count stays 32.**
+
+- **The monotonicity invariant could not fail.** `compute_blocking_score` clamps
+  `max(threat_unblocked - threat_orig, 0.0)` and the invariant test then asserted `>= -1e-9` on that
+  clamped column — green by construction, never once checking the property it named. It now asserts
+  on the **unclamped** difference and has been **observed RED** against a planted defect
+  (`assert 466.94 - 502.51 >= -1e-09`). The superseded test was deleted, not left beside it.
+
+- **A second clamp is now measured rather than assumed.** `delta = np.maximum(new_recv - old_recv,
+  0.0)` makes `max_single_defender_blocking_score` non-negative by a *second* independent mechanism.
+  Measured across 600 (receiver, blocker) deltas: minimum **+1.62e-12**, so the clamp has never been
+  observed to bind. Three distinct tolerances now exist at three scales (`TOL_INVARIANT` 1e-9 on
+  threat, `TOL_RECEPTION` 1e-12 on summed reception probabilities, `TOL_ATTRIB` 1e-12 on
+  attribution) — deliberately not one shared constant.
+
+- **`fernandez_bornn` non-negativity settled empirically.** Non-negativity is argued structurally
+  only for `spearman`/`voronoi`; for a Gaussian-influence-field model with logistic normalisation
+  the proof is a research task. Minimum raw difference over 9 actions: `spearman` +3.79,
+  `voronoi` +47.16, `fernandez_bornn` +29.43. All three hold, so the decision to keep both clamps
+  stands — with **mixed provenance** (two argued, one measured), which the glossary now says.
+
+- **`test_zero_blocked_implies_low_score` was renamed and repaired — and the repair exposed that it
+  had never run.** The zero-blocked population does not exist on provider frames (~10 lane blockers
+  per action means some lane is always blocked; measured **0/9** actions under *every* decision
+  rule), and the old body `pytest.skip`ped on the empty population. It now asserts the monotone form
+  the data can answer: Spearman rho between `n_blocked_receivers` (lane classifier) and
+  `blocking_score` (Voronoi threat integral) — two independently computed quantities. Measured
+  **rho = 0.935, p = 0.0002**; the asserted floor is 0.5, a gross-breakage catcher deliberately far
+  below the observation and honestly **not** pre-registered.
+
+- **NEW aggregator-only column `max_single_defender_player_id`, GATED to `detailed=True`.** The
+  identity was computed at both call sites and discarded. It is now emitted — but **only** on the
+  exact path. The cheap path can name a defender and deliberately does not: measured against the
+  exact path on **970 qualifying actions**, agreement was **0.157** (Wilson 95% [0.135, 0.181])
+  versus ~0.10 by chance, against a **pre-registered 0.90 floor**. The disagreements are not
+  near-ties — the median names a defender worth 1.6% of the true winner, and at p90 the named
+  defender's exact contribution is **exactly zero**. This is not a defect: the cheap path is
+  faithful to a lane-based notion of "blocks most" and the exact path to a pitch-control
+  counterfactual, and the two rank the top of the list differently (the existing rho >= 0.7
+  value-correlation guarantee is near-silent about the argmax). Opting in costs a measured
+  **2.3-3.2x**. Evidence: `docs/research/cover_shadow_identity/`.
+
+- **The gate itself is guarded.** `test_cheap_path_never_names_a_defender` fails if the cheap path
+  is un-gated — without it, every other test still passes. Its non-vacuity half pins that the same
+  actions DO yield identities under `detailed=True`, so the all-NA is a deliberate gate rather than
+  an empty fixture. The column is **aggregator-only**, never in `cover_shadow_xfns`
+  (`_CS_AGGREGATOR_ONLY_COLS`, the `das_source` precedent) so a player id cannot reach a VAEP
+  feature matrix.
+
+- **The gate is re-measurable.** Gating would otherwise leave the measurement script comparing
+  `None` against a real id on every row, reporting agreement 0.0 — a number that measures the
+  gate, not the cheap path. A private `_ungated_cheap_identity` on `_compute_cover_shadow_dict`
+  (single caller: the script; never forwarded by `features.py`) keeps the decision revisitable on
+  evidence. Guarded both ways — the public default AND that the hatch still functions, since it
+  could otherwise rot silently while the default guard stayed green. Verified end-to-end: the
+  script reproduces **0.1992** on match 10502, matching the pre-gating pilot exactly.
+
+- **`scripts/measure_cover_shadow_argmax_agreement.py`** is new, wired to `_provenance`
+  (`require_clean_tree` in `main()`, `--allow-dirty`, stamps `run_commit`/`run_tree_dirty`) and
+  registered in the artifact-driver gate.
+
+- **Documentation.** The three cover-shadow *scoring* glossary entries now state that non-negativity
+  is **by construction** and that this metric — unlike the paper's signed SoccerMap-CNN
+  counterfactual — **cannot express a defender whose positioning made things worse**. The TF-30
+  design doc gains an appendix recording why RQ3 stays out of scope: its headline 789/822 is
+  circular (positions are optimised *toward* the Cone Corridor, then scored as "is it in the
+  corridor?"), and the non-circular result reduces threat in only ~75% of snapshots, reported as a
+  sign with no magnitude, CI, or placebo.
+
 ## [4.66.0] — 2026-07-28
 
 ### Fixed — pooled-corpus cluster keys (ADR-037)
@@ -34,6 +108,7 @@ time: 179 matches across gradientsports + idsse + skillcorner. It died in
 
 **No retrain.** No model, weights or feature values change; the affected surface is the causal
 harness's placebo null, which is reported-not-gated. C4 count unchanged (32).
+
 
 ## [4.65.0] — 2026-07-27
 

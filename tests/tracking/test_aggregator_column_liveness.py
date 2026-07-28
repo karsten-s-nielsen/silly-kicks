@@ -488,7 +488,11 @@ def _run_shot_goalmouth():
 ENTRIES: dict[str, object] = {
     "add_action_context": _std(F.add_action_context),
     "add_actor_pre_window": _std(F.add_actor_pre_window),
-    "add_cover_shadows": _xtf(F.add_cover_shadows),
+    # detailed=True is REQUIRED here, not incidental: `max_single_defender_player_id` is gated to
+    # the exact path (the cheap path's argmax measured 0.157 agreement, so it never names anyone),
+    # and under the default `detailed=False` that column is 100% NA -- which this gate correctly
+    # rejects. Exercising the config where the column is live is the point.
+    "add_cover_shadows": _xtf(F.add_cover_shadows, detailed=True),
     "add_das": _run_das,
     "add_defensive_credit": _run_defensive_credit,
     "add_defensive_line": _std(F.add_defensive_line, home_team_id=5, n=4),
