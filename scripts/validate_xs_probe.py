@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import warnings
 from pathlib import Path
 from typing import cast
@@ -61,13 +60,6 @@ _VARIANT_PLACEBO = {"v1": "random", "v2": "model_relevant_def"}
 _VARIANT_WRAPPER = {"v1": "xs", "v2": "xs_v2"}
 
 
-def _baseline_commit() -> str:
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()  # noqa: S607
-    except Exception:
-        return "unknown"
-
-
 def _fmt(v):  # absent prongs on the unmeasurable early-return branch read oddly as "None"
     return "n/a (unmeasurable)" if v is None else v
 
@@ -82,7 +74,15 @@ def run(
     seed=42,
     token=None,
     lock_commit=None,
+    provenance=None,
 ):
+    # ENFORCEMENT lives in main(); this records the truth. `run` is called directly by tests, and a
+    # work function that refuses to execute on a dirty checkout cannot be tested without mocking
+    # git -- so the CLI refuses and this always stamps what actually ran.
+    from scripts._provenance import git_provenance
+
+    prov_run = provenance or git_provenance()
+
     from _loader_pining import load_matches  # scripts/ on sys.path at runtime (mirrors the trainer)
 
     variants = ["v1", "v2"] if variant == "both" else [variant]
@@ -185,8 +185,11 @@ def run(
         "seed": seed,
         "tracking_limit": tracking_limit,
         "rng_discipline": "per-match placebo streams (substitution_deltas per match+variant, seed pinned)",
-        "lock_commit": lock_commit or _baseline_commit(),
-        "run_commit": _baseline_commit(),
+        "lock_commit": lock_commit or prov_run["commit"],
+        "run_commit": prov_run["commit"],
+        # The lock commit says what the protocol was REGISTERED against; this says whether the tree
+        # that actually ran matched it. Without the flag the two are indistinguishable in the record.
+        "run_tree_dirty": prov_run["dirty"],
     }
     _write(out, metrics)
     return metrics
@@ -312,7 +315,12 @@ def main() -> None:
         help="the commit that froze the v2 pool+constants (auditable blindness; defaults to HEAD). "
         "Record it so the git DAG shows constants-locked-before-run.",
     )
+    ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     args = ap.parse_args()
+
+    # Provenance FIRST -- before the corpus pass `run` starts, so a dirty tree is refused in
+    # seconds rather than surfacing as an unfalsifiable SHA in a cited metrics.json.
+    from scripts._provenance import git_provenance, require_clean_tree
 
     match_ids = json.loads(args.match_ids_json.read_text(encoding="utf-8")) if args.match_ids_json else None
     m = run(
@@ -323,6 +331,7 @@ def main() -> None:
         entanglement=args.entanglement,
         seed=args.seed,
         lock_commit=args.lock_commit,
+        provenance=require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty),
     )
     v2 = m["variants"].get("v2") or next(iter(m["variants"].values()))
     v1 = m["variants"].get("v1", {}).get("probe", {})

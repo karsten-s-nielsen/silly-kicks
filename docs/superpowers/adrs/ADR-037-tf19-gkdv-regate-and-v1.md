@@ -405,6 +405,49 @@ citeable `pass` — a materially more positive read on the attempt axis than the
 directly informs the §6.4 Part B go/no-go (still owner-gated). **Deliverable ships the research artifact only —
 no `silly_kicks/` code change; the wheel is byte-identical to 4.59.0.**
 
+## Amendment (4.65.0) — an inestimable replicate is COUNTED, and the corpus pass is its own driver
+
+**Date:** 2026-07-27. **Status:** Accepted. Both decisions come from ONE measured failure on the
+first full §6.1 corpus run.
+
+**What happened.** `run_signoff_power.py` built its Layer 2 spells INLINE, walked all 64 matches
+over **8.7h**, then raised in the cheap analysis step immediately after — losing every spell,
+because nothing had been written to disk. The raise came from `fit_propensity`
+(`This solver needs samples of at least 2 classes`): a cluster resample had drawn no treated unit.
+
+**Measured cause, not a silent null.** A 6-match probe returned `gk_finite_frac = 1.0` (the GK
+covariate block is fully populated — no ADR-015-style NaN defect) with `Z` prevalence **0.0039**
+(15 treated of 3,811 spells; keeper depth at spell entry median 3.73 m, p99 14.04 m). At that
+prevalence a 500-row draw has a **14%** chance of containing no treated unit, and the run made
+~1,200 such draws. The treatment is RARE, not absent.
+
+**Decision 1 — degenerate replicates are scored as non-detections and COUNTED.**
+`att_power_curve` returns a new `n_degenerate_by_size`. A single-treatment-class resample is a
+positivity failure at that size: the ATT is not estimable, so it has detected nothing. It stays in
+the DENOMINATOR — excluding it would condition on estimability and inflate the curve exactly where
+the design is weakest — and it is reported, because power 0.2 with most replicates inestimable is a
+different claim from power 0.2 with none. **A size whose degenerate count approaches `n_replicates`
+reports an inestimable design at that n, and must not be read as a weak effect.** Byte-identical on
+any input that was already estimable; the guard only fires where the old code raised.
+
+**Decision 2 — an expensive corpus pass is its own shardable, resumable, partitionable driver.**
+`scripts/build_layer2_spells.py` (per-match shards on completion, `--match-ids-json`,
+`--list-matches`) produces the table; `run_signoff_power.py --spells` consumes it. The arm-values
+pass already had this shape and survived its 64-match run twice; the power pass did not, and that
+asymmetry is what made an 8.7h loss possible. Shared reconciliation lives in `scripts/_partition.py`
+(it has been wrong once already) and now also checks **commit consistency** across workers. Two
+corollaries of N writers on one output dir: combined tables are written via a private temp +
+`os.replace`, and the consumer REFUSES a dirty upstream, a **missing** upstream manifest
+(unprovenanced == dirty), or an upstream blended from different commits — extending the 4.63.0
+provenance control from "this run's tree" to "every artifact this number derives from".
+
+**Consequence for §6.1, stated BEFORE the run.** ~36k spells over 64 matches implies roughly **140
+treated units** corpus-wide. ATT power at the registered relative anchors is likely to come back
+**below 0.8**, in which case §6.1's own rule applies: adjust floors/sampling FIRST and do **not**
+register the gate. The registered 16.5 m threshold is **not** retuned to raise prevalence — it is
+Law-defined and data-independent precisely so the decider stays untuned; changing it is a
+re-registration decision, not an implementation one.
+
 ## References
 
 Spec: `docs/superpowers/specs/2026-07-12-tf19-gkdv-regate-and-v1-design.md`. Le et al.

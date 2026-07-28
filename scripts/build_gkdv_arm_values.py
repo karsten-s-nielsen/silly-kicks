@@ -36,6 +36,25 @@ import json
 from pathlib import Path
 
 
+def _aggregate_manifests(dest) -> dict:
+    """Corpus-wide totals, plus the conservation identity this pass is accountable for.
+
+    The summing itself lives in :mod:`scripts._partition` and is shared with the Layer 2 spells
+    producer -- the last-writer-wins defect it fixes must not be repairable in one producer while
+    still live in the other. What stays HERE is the domain claim: every input frame is either
+    scored or dropped for a named reason, and `drop_reasons` describes frames that produced no row
+    at all, so it can never be recovered from the shard table.
+    """
+    from scripts._partition import aggregate_manifests
+
+    corpus = aggregate_manifests(dest, defaults=("n_frames_in", "n_frames_scored", "n_matches"))
+    corpus.setdefault("drop_reasons", {})
+    scored, dropped = corpus["n_frames_scored"], sum(corpus["drop_reasons"].values())
+    # Conservation across the WHOLE corpus, not merely within one worker.
+    corpus["conservation_holds"] = scored + dropped == corpus["n_frames_in"]
+    return corpus
+
+
 def _frame_slice(frames, gid, per, fid):
     """One (game, period, frame) slice -- the unit both arms consume."""
     return frames[(frames["game_id"] == gid) & (frames["period_id"] == per) & (frames["frame_id"] == fid)]
@@ -120,15 +139,12 @@ def main() -> None:
     )
 
     if args.list_matches:
-        # Consumes the loader's own `_list_matches` (private, but the exact call `load_matches`
-        # makes internally, so the id set cannot drift from what a run would actually fetch).
-        # `scripts/_loader_*` is read-only here -- this reads it, never edits it.
-        from scripts._loader_pining import _base_url, _list_matches, _resolve_token
+        from scripts._partition import list_match_ids
 
-        tok, base = _resolve_token(None), _base_url()
-        ids = {p: [m["id"] for m in _list_matches(p, tok, base)] for p in args.providers.split(",")}
-        print(json.dumps(ids, indent=2))
+        print(json.dumps(list_match_ids(args.providers.split(",")), indent=2))
         return
+
+    from scripts._partition import providers_for_slice
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
 
@@ -143,7 +159,7 @@ def main() -> None:
 
     # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
     for _provider, match_id, _actions, frames, home_team_id in load_matches(
-        providers=args.providers.split(","),
+        providers=providers_for_slice(args.providers.split(","), match_ids),
         match_ids=match_ids,
         max_per_provider=args.max_per_provider,
         tracking_limit=args.tracking_limit,
@@ -234,6 +250,10 @@ def main() -> None:
         ).to_parquet(shard, index=False)
         print(f"  {match_id}: {len(match_rows)} rows -> {shard.name}")
 
+    from scripts._partition import worker_tag as _worker_tag
+    from scripts._partition import write_table_atomically
+
+    worker_tag = _worker_tag(args.match_ids_json)
     shards = sorted(shard_dir.glob("*.parquet"))
     combined = pd.concat([pd.read_parquet(s) for s in shards], ignore_index=True) if shards else pd.DataFrame()
     written = {}
@@ -242,7 +262,10 @@ def main() -> None:
         if not len(df):
             continue
         path = dest / f"arm_values_{arm}.parquet"
-        df.to_parquet(path, index=False)
+        # Atomic: N parallel workers all rebuild this from the SHARED shard dir and write the same
+        # path, so a plain to_parquet has N concurrent writers on one file and can be read -- or
+        # left -- half-written. The 64-match corpus pass got away with it; that is luck, not safety.
+        write_table_atomically(df, path, tag=worker_tag)
         # Reported so a structurally-degenerate ICC input is visible BEFORE the power run:
         # a keeper appearing in one match makes the block permutation a pure relabelling.
         spanning = df.groupby("keeper_key")["game_id"].nunique()
@@ -256,15 +279,36 @@ def main() -> None:
 
     # The arm-values table is what the S6.1 ICC number derives from, so it carries its own
     # provenance -- a clean SHA on the power metrics would otherwise launder a dirty input.
-    manifest = {
+    # PER-WORKER manifest under a DISTINCT name, then aggregate.
+    #
+    # MEASURED defect this replaces: with N parallel workers all writing one shared
+    # `arm_values_manifest.json`, the last writer won -- so `totals` described a SINGLE partition
+    # (n_matches: 8) while `arms_written`, computed from the shared shard dir, covered all 64. The
+    # data was never wrong; the artifact misdescribed its own scope, which for a provenance-bearing
+    # file is the same class of defect as a false commit SHA.
+    #
+    # `drop_reasons` cannot be recovered from the shards (they hold only SCORED rows), so the
+    # corpus totals must come from summing per-worker manifests -- not from re-reading the table.
+    worker_manifest = {
         **totals,
-        "arms_written": written,
         "arm_requested": args.arm,
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
+        "partition": worker_tag,
     }
-    (dest / "arm_values_manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
-    print(json.dumps(manifest, indent=2, default=str))
+    (dest / f"manifest_{worker_tag}.json").write_text(
+        json.dumps(worker_manifest, indent=2, default=str), encoding="utf-8"
+    )
+
+    corpus = _aggregate_manifests(dest)
+    corpus.update(
+        arms_written=written,
+        arm_requested=args.arm,
+        run_commit=prov["commit"],
+        run_tree_dirty=prov["dirty"],
+    )
+    (dest / "arm_values_manifest.json").write_text(json.dumps(corpus, indent=2, default=str), encoding="utf-8")
+    print(json.dumps(corpus, indent=2, default=str))
 
 
 if __name__ == "__main__":

@@ -83,7 +83,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         gkdv -> accessibleSpace "Sums per-player DAS under ONE direction pinned on the factual frames via" "_das_port / get_individual_das()"
 
         // --- Relationships: Causal-validation toolkit (ADR-015; TF-19 sign-off package) ---
-        maintainer -> causal "Measures GK-confounder entanglement + derives the registered N_min power constant via" "validate_xshot_causal.py / run_signoff_power.py"
+        maintainer -> causal "Measures GK-confounder entanglement + derives the registered N_min power constant via" "validate_xshot_causal.py / build_layer2_spells.py -> run_signoff_power.py"
         causal -> tracking "Reuses the xS/xCross feature extractors, carrier inference, defensive line + bekkers_pi pressure via" "Python import"
         causal -> spadl "Reads SPADL config + action-type ids from" "Python import"
         causal -> mlLibs "Fits the logistic propensity model via" "scikit-learn"

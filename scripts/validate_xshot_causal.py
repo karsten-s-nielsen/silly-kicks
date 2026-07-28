@@ -14,10 +14,18 @@ success-shot inside the anchor-inclusive window with no in-spell shot) -- below
 near-zero control conversions re-create P1's control-Y degeneracy as a DATA condition, making
 the ATT shift confounder-insensitive by construction. The rate and count are always reported.
 
+The corpus pass writes PER-MATCH SHARDS on completion, so a crash resumes instead of restarting
+~81 matches, and N processes can split the corpus with disjoint --match-ids-json slices against a
+shared --out. Analysing a single slice would emit a metrics.json indistinguishable from a
+full-corpus one, so partitioned workers pass --build-only and the analysis runs once at the end.
+
 Usage (on the box, scripts/ on sys.path, pining token in env):
+  python scripts/validate_xshot_causal.py --list-matches > all.json
+  # N workers, disjoint slices, shared --out:
+  python scripts/validate_xshot_causal.py --out <DIR> --match-ids-json <SLICE.json> --build-only
+  # once, after the workers finish -- builds nothing new, analyses every shard:
   python scripts/validate_xshot_causal.py --out <DIR> \
-      [--providers skillcorner,idsse,gradientsports] [--carrier-coverage-min 0.6] [--seed 0] \
-      [--max-per-provider N] [--tracking-limit N]
+      [--providers skillcorner,idsse,gradientsports] [--carrier-coverage-min 0.6] [--seed 0]
 
 --help is dep-light: args are parsed before any loader / silly_kicks import (house pattern).
 """
@@ -187,37 +195,106 @@ def analyze(opp: pd.DataFrame, *, seed: int = 0, n_seeds: int = 200) -> dict:
     }
 
 
-def run(
+def build_shards(
     out: Path,
     providers: list[str],
-    carrier_min: float,
-    seed: int,
     *,
+    match_ids=None,
     max_per_provider=None,
     tracking_limit=None,
     token=None,
+    provenance=None,
+    partition_tag: str = "all",
 ) -> dict:
+    """Per-match opportunity shards, written ON COMPLETION so a crash resumes.
+
+    The corpus walk is the whole cost of this driver (~81 matches at minutes each). Building it
+    inline and holding everything in memory until the end is the shape that destroyed an 8.7h
+    power run: one raise after the last match and every opportunity is gone. Shards also make the
+    pass PARTITIONABLE -- N processes with disjoint `--match-ids-json` slices share one `--out`.
+
+    An existing shard is skipped, and a shard is written even when a match yields NO opportunities:
+    absent means "not yet run", present-and-empty means "run, produced nothing". Conflating the two
+    would make every resume silently recompute the barren matches forever.
+    """
     from _loader_pining import load_matches  # scripts/ on sys.path at runtime (mirrors the trainer)
 
+    from scripts._partition import providers_for_slice, write_table_atomically
+    from scripts._provenance import git_provenance
     from silly_kicks.causal.opportunities import build_opportunities, shot_arm_config
 
+    prov = provenance or git_provenance()
+    # A provider with no ids in THIS slice belongs to another worker. Without this the loader reads
+    # an empty/absent slice as "the whole manifest" -- so a run sliced on one provider would have
+    # every worker load the others in full, writing the same shard paths concurrently.
+    providers = providers_for_slice(providers, match_ids)
     meta = _load_model_metadata()
     cfg = shot_arm_config(meta)
-    by_provider: dict[str, list] = {}
-    for provider, _mid, actions, frames, home in load_matches(
-        providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit, token=token
+    dest = Path(out)
+    shard_dir = dest / "shards"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    totals = {"n_matches": 0, "n_opportunities": 0}
+
+    for provider, match_id, actions, frames, home in load_matches(
+        providers=providers,
+        match_ids=match_ids,
+        max_per_provider=max_per_provider,
+        tracking_limit=tracking_limit,
+        token=token,
     ):
+        shard = shard_dir / f"{provider}__{match_id}.parquet"
+        if shard.is_file():
+            print(f"  skip {match_id}: shard exists", flush=True)
+            continue
         o = build_opportunities(frames, actions, home_team_id=home, model_metadata=meta, config=cfg)
-        if not o.empty:
-            by_provider.setdefault(provider, []).append(o)
+        o = o.copy()
+        # The provider is what `coverage` is keyed on, so it must survive the round trip rather than
+        # being re-derived from the filename -- a provider containing "__" would silently mis-split.
+        o["provider"] = str(provider)
+        o["match_id"] = str(match_id)
+        write_table_atomically(o, shard, tag=partition_tag)
+        totals["n_matches"] += 1
+        totals["n_opportunities"] += len(o)
+        print(f"  {match_id}: {len(o)} opportunities -> {shard.name}", flush=True)
+
+    tag = partition_tag
+    (dest / f"manifest_{tag}.json").write_text(
+        json.dumps(
+            {**totals, "run_commit": prov["commit"], "run_tree_dirty": prov["dirty"], "partition": tag},
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    return totals
+
+
+def load_shards(out: Path) -> pd.DataFrame:
+    """Every shard under ``out``, concatenated. Empty frame when none exist."""
+    shards = sorted((Path(out) / "shards").glob("*.parquet"))
+    parts = [pd.read_parquet(s) for s in shards]
+    parts = [p for p in parts if len(p)]
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
+def analyze_shards(out: Path, providers: list[str], carrier_min: float, seed: int, *, provenance=None) -> dict:
+    """Coverage + the entanglement analysis over the persisted shards.
+
+    Separated from the corpus walk so a failure here costs seconds instead of another ~11h pass,
+    and so N partitioned workers can build shards without each producing a partial metrics.json.
+    """
+    from scripts._partition import aggregate_manifests
+    from scripts._provenance import git_provenance
+
+    prov = provenance or git_provenance()
+    allopp = load_shards(out)
 
     coverage, eligible = {}, []
     for provider in providers:
-        parts = by_provider.get(provider, [])
-        if not parts:
+        df = allopp[allopp["provider"] == provider] if len(allopp) else allopp
+        if not len(df):
             coverage[provider] = {"n_opp": 0, "carrier_coverage": 0.0, "included": False}
             continue
-        df = pd.concat(parts, ignore_index=True)
         cov = float(df["carrier_resolved"].mean())
         coverage[provider] = {"n_opp": len(df), "carrier_coverage": cov, "included": cov >= carrier_min}
         if cov >= carrier_min:
@@ -228,8 +305,66 @@ def run(
     else:
         metrics = analyze(pd.concat(eligible, ignore_index=True), seed=seed)
         metrics["coverage"] = coverage
-    _write(out, metrics)
+
+    # SCOPE, recorded explicitly. With partitioned workers the analysis can legitimately run over a
+    # subset, and a metrics.json that does not say how much of the corpus it saw is the same
+    # "artifact misdescribes its own scope" defect as a manifest reporting one partition's totals.
+    corpus = aggregate_manifests(out, defaults=("n_matches", "n_opportunities"))
+    metrics["corpus"] = {
+        "n_matches": corpus["n_matches"],
+        "n_opportunities": corpus["n_opportunities"],
+        "n_partitions": corpus["n_partitions"],
+        "n_shards": len(list((Path(out) / "shards").glob("*.parquet"))),
+        "commit_consistent": corpus["commit_consistent"],
+    }
+    metrics["run_commit"] = prov["commit"]
+    metrics["run_tree_dirty"] = prov["dirty"] or corpus["run_tree_dirty"]
+    _write(Path(out), metrics)
     return metrics
+
+
+def run(
+    out: Path,
+    providers: list[str],
+    carrier_min: float,
+    seed: int,
+    *,
+    match_ids=None,
+    max_per_provider=None,
+    tracking_limit=None,
+    token=None,
+    provenance=None,
+    build_only: bool = False,
+    partition_tag: str = "all",
+) -> dict:
+    """Build any missing shards, then analyse them.
+
+    This artifact IS the S3.3 entanglement measurement that corrects F6 -- the finding that a
+    registered DEFAULT, rather than a measured value, decided the 4.60.0 verdict. Publishing its
+    replacement with no run_commit would be the same failure wearing different clothes.
+
+    ENFORCEMENT of the clean tree lives in main(), not here: `run` is called directly by tests, and
+    a work function that refuses to execute on a dirty checkout is untestable without mocking git.
+    So this records the truth unconditionally while the CLI is what REFUSES.
+    """
+    from scripts._provenance import git_provenance
+
+    prov = provenance or git_provenance()
+    build_shards(
+        out,
+        providers,
+        match_ids=match_ids,
+        max_per_provider=max_per_provider,
+        tracking_limit=tracking_limit,
+        token=token,
+        provenance=prov,
+        partition_tag=partition_tag,
+    )
+    if build_only:
+        # A partitioned worker stops here: analysing its own slice would write a metrics.json that
+        # looks corpus-wide and is not.
+        return {"status": "shards_built", "run_commit": prov["commit"]}
+    return analyze_shards(out, providers, carrier_min, seed, provenance=prov)
 
 
 def _load_model_metadata(variant: str = "default") -> dict:
@@ -267,22 +402,64 @@ def _render(m: dict) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", type=Path, required=True)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--out", type=Path, default=None, help="output dir (not needed with --list-matches)")
     ap.add_argument("--providers", default="skillcorner,idsse,gradientsports")
     ap.add_argument("--carrier-coverage-min", type=float, default=0.6)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
+    ap.add_argument(
+        "--match-ids-json",
+        default=None,
+        help=(
+            'JSON {"gradientsports": ["10502", ...]} pinning WHICH matches this process handles. '
+            "This is how the corpus pass is PARALLELISED: split the id list N ways and launch N "
+            "processes, each with its own slice, a SHARED --out and --build-only."
+        ),
+    )
+    ap.add_argument(
+        "--build-only",
+        action="store_true",
+        help="build shards and stop (partitioned workers use this; analysing one slice would "
+        "write a metrics.json that looks corpus-wide and is not)",
+    )
+    ap.add_argument(
+        "--list-matches",
+        action="store_true",
+        help="print the available match ids as JSON and exit (build the parallel split from this)",
+    )
+    ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     a = ap.parse_args()
-    run(
+
+    if a.list_matches:
+        from scripts._partition import list_match_ids
+
+        print(json.dumps(list_match_ids(a.providers.split(",")), indent=2))
+        return
+    if not a.out:
+        raise SystemExit("--out is required unless --list-matches is given")
+    # Provenance FIRST -- before the corpus walk `run` starts, so a dirty tree costs seconds
+    # instead of hours and never reaches an artifact.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    prov = require_clean_tree(git_provenance(), allow_dirty=a.allow_dirty)
+    from scripts._partition import worker_tag
+
+    match_ids = json.loads(Path(a.match_ids_json).read_text(encoding="utf-8")) if a.match_ids_json else None
+    m = run(
         a.out,
         a.providers.split(","),
         a.carrier_coverage_min,
         a.seed,
+        match_ids=match_ids,
         max_per_provider=a.max_per_provider,
         tracking_limit=a.tracking_limit,
+        provenance=prov,
+        build_only=a.build_only,
+        partition_tag=worker_tag(a.match_ids_json),
     )
+    print(json.dumps({k: m.get(k) for k in ("status", "corpus", "entanglement_verdict")}, indent=2, default=str))
 
 
 if __name__ == "__main__":

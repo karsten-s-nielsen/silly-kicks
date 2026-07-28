@@ -126,17 +126,136 @@ def test_defending_keeper_selection_is_dtype_safe():
     assert int(ids_equal(scored["gk_team_id"], scored["defending_team_id"]).sum()) == 1
 
 
-@pytest.mark.parametrize(
-    "module_name",
-    ["build_gkdv_arm_values", "run_signoff_power", "derive_opengoal_range"],
+def _driver_sources():
+    """Every PUBLIC driver in ``scripts/``, DERIVED rather than listed.
+
+    A hand-maintained list rots: a new driver is added, nobody remembers to register it, and the
+    gate silently covers one file fewer than it claims. Underscore-prefixed modules are excluded
+    because they are imported helpers whose docstrings argparse never prints -- and two of them
+    (`_loader_*`) legitimately carry non-ASCII.
+    """
+    import pathlib
+
+    d = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+    return sorted(p for p in d.glob("*.py") if not p.name.startswith("_"))
+
+
+def _non_ascii(path) -> list[str]:
+    return sorted({c for c in path.read_text(encoding="utf-8") if ord(c) > 127})
+
+
+# PRE-EXISTING debt, pinned EXACTLY (see the both-ways test below), not waved through. Every one of
+# these drivers dies with UnicodeEncodeError on `--help` from a cp1252 console. They are listed
+# rather than fixed here because two of them (`calibrate_*`) sit in a directory this cycle is not
+# permitted to modify, so a blanket repair is not this PR's to make -- and a silent narrowing of the
+# gate to "only the files I happened to touch" would have hidden the other sixteen entirely.
+_KNOWN_NON_ASCII_DRIVERS = frozenset(
+    {
+        "build_worldcup_fixture",
+        "calibrate_tracking_defaults",  # isolation zone: not modifiable from this cycle
+        "calibrate_xt_bandwidth",  # isolation zone: not modifiable from this cycle
+        "download_skillcorner_sample",
+        "extract_paired_idsse_fixture",
+        "extract_provider_fixtures",
+        "gen_ghost_gk_kde_golden",
+        "probe_preprocess_baseline",
+        "regenerate_action_context_baselines",
+        "regenerate_gs_et_native_gk",
+        "train_ghost_gk",
+        "train_gk_completion",
+        "train_gk_retention",
+        "validate_xs_probe",
+        "validate_xtgk_possession_value",
+        "validate_xtgk_v2",
+        "xtgk_v2_kappa_sweep",
+        "xtgk_v2_keeper_discrimination",
+    }
 )
-def test_driver_source_is_ascii_so_help_works_on_windows(module_name):
+
+
+@pytest.mark.parametrize("src", _driver_sources(), ids=lambda p: p.stem)
+def test_driver_source_is_ascii_so_help_works_on_windows(src):
     """`--help` prints the module docstring, and a Windows console is cp1252: a single non-ASCII
     character (measured: U+0394 in a delta description) makes `--help` die with
     UnicodeEncodeError before the maintainer can read the usage. Cheap to keep, and it fails on
     the machine the drivers are actually invoked from."""
-    import pathlib
+    if src.stem in _KNOWN_NON_ASCII_DRIVERS:
+        pytest.skip("pre-existing debt, pinned exactly by test_the_known_offender_list_is_EXACT")
+    assert not _non_ascii(src), f"non-ASCII in {src.name} breaks --help on cp1252: {_non_ascii(src)}"
 
-    src = pathlib.Path(__file__).resolve().parents[2] / "scripts" / f"{module_name}.py"
-    offenders = sorted({c for c in src.read_text(encoding="utf-8") if ord(c) > 127})
-    assert not offenders, f"non-ASCII in {module_name}.py breaks --help on cp1252: {offenders}"
+
+def test_the_known_offender_list_is_EXACT():
+    """Fails in BOTH directions, which is the only thing that stops a debt list from becoming a
+    dumping ground: a NEW offender cannot join silently, and a FIXED one must be removed from the
+    list. A one-sided `actual <= known` would let the gate rot into permanent permission."""
+    actual = {p.stem for p in _driver_sources() if _non_ascii(p)}
+    assert actual == set(_KNOWN_NON_ASCII_DRIVERS), (
+        f"new offenders: {sorted(actual - _KNOWN_NON_ASCII_DRIVERS)}; "
+        f"fixed, remove from the list: {sorted(_KNOWN_NON_ASCII_DRIVERS - actual)}"
+    )
+
+
+def test_the_ascii_gate_actually_covers_the_drivers_it_claims_to():
+    """Meta-assertion: a derived list that silently resolved to nothing would make every
+    parametrised case above vacuous -- and the drivers THIS cycle ships must be actively checked,
+    never skipped as debt."""
+    names = {p.stem for p in _driver_sources()}
+    mine = {"build_gkdv_arm_values", "build_layer2_spells", "run_signoff_power"}
+    assert mine <= names
+    assert not (mine & _KNOWN_NON_ASCII_DRIVERS), "this cycle's own drivers must not be on the debt list"
+    assert not any(n.startswith("_") for n in names)
+
+
+def test_corpus_manifest_AGGREGATES_every_partition(tmp_path):
+    """MEASURED defect this replaces: with 8 parallel workers all writing one shared
+    `arm_values_manifest.json`, the last writer won -- `totals` described a SINGLE partition
+    (n_matches: 8) while `arms_written` covered all 64. The data was never wrong; the artifact
+    misdescribed its own SCOPE, which for a provenance-bearing file is the same class of defect as
+    a false commit SHA.
+
+    `drop_reasons` cannot be recomputed from the shard table (it holds only SCORED rows), so
+    aggregation must read the per-worker manifests.
+    """
+    import json
+
+    for i in range(3):
+        (tmp_path / f"manifest_p{i}.json").write_text(
+            json.dumps(
+                {
+                    "n_frames_in": 100,
+                    "n_frames_scored": 10,
+                    "n_matches": 8,
+                    "drop_reasons": {"no_possession": 60, "ball_far_from_attacked_goal": 30},
+                    "partition": f"p{i}",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    got = mod._aggregate_manifests(tmp_path)
+    assert got["n_matches"] == 24, "must SUM partitions, not report the last writer's 8"
+    assert got["n_frames_in"] == 300
+    assert got["n_frames_scored"] == 30
+    assert got["drop_reasons"] == {"no_possession": 180, "ball_far_from_attacked_goal": 90}
+    assert got["n_partitions"] == 3
+    assert got["partitions"] == ["p0", "p1", "p2"]
+    assert got["conservation_holds"] is True
+
+
+def test_conservation_is_reported_FALSE_when_it_genuinely_fails(tmp_path):
+    """The other side. A conservation flag that only ever reads True is decoration -- it must be
+    able to say no, or a run that lost frames would look healthy."""
+    import json
+
+    (tmp_path / "manifest_p0.json").write_text(
+        json.dumps({"n_frames_in": 100, "n_frames_scored": 10, "n_matches": 1, "drop_reasons": {"x": 5}}),
+        encoding="utf-8",
+    )
+    got = mod._aggregate_manifests(tmp_path)
+    assert got["conservation_holds"] is False, "10 + 5 != 100 must be reported as a failure"
+
+
+def test_aggregate_of_an_empty_dir_is_empty_not_a_crash(tmp_path):
+    got = mod._aggregate_manifests(tmp_path)
+    assert got["n_partitions"] == 0
+    assert got["n_matches"] == 0
