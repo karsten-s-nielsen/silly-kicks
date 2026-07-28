@@ -52,8 +52,8 @@
   },
   "tol_attrib_in_effect": 1e-12,
   "decision": "DO_NOT_SHIP_SILENTLY (agreement 0.1567 < 0.90) -- gate to detailed=True or drop",
-  "run_commit": "6b242cfbd1369500cf65d26a0c4b3fa49c234da6",
-  "run_tree_dirty": true,
+  "run_commit": "748cd1df40a422a95d04216bcd8e5aacbdba098b",
+  "run_tree_dirty": false,
   "corpus": {
     "provider": "gradientsports",
     "n_matches": 3,
