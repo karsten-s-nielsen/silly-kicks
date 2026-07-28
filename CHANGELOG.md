@@ -5,6 +5,103 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.65.0] — 2026-07-27
+
+### Fixed / Added — TF-19 power leg: degenerate resamples + a parallel spells pass (PR-S`<NN>`, ADR-037)
+
+Both changes come from one **measured** failure: the first full corpus power run walked all 64
+matches over 8.7h, then died in the cheap analysis step that followed and lost every spell it had
+built, because nothing had been written to disk.
+
+- **`causal.power.att_power_curve` no longer CRASHES on a single-class resample.** A cluster
+  resample that happens to contain no treated unit is a **positivity failure at that size** — the
+  ATT is not estimable — but it reached `fit_propensity` and raised out of sklearn
+  (`This solver needs samples of at least 2 classes`), killing the whole run. Such a replicate is
+  now scored as a **non-detection** and **counted** in a new `n_degenerate_by_size` return key.
+  Counting is the load-bearing half: power 0.2 with most replicates inestimable is a completely
+  different statement from power 0.2 with none, and dropping them from the **denominator** would
+  condition on estimability and inflate the curve exactly where the design is weakest. A size whose
+  degenerate count approaches `n_replicates` is reporting an inestimable design at that n, not a
+  weak effect. `matched_n_by_size` reports `0` rather than a `nan` for an all-degenerate size.
+  Byte-identical on any input that was already estimable — the guard only fires where the previous
+  code raised.
+- **`scripts/build_layer2_spells.py` (NEW) — the corpus pass is now its own shardable, resumable,
+  partitionable driver**, mirroring `build_gkdv_arm_values.py`: per-match shards written on
+  completion (an existing shard is skipped, so a crash resumes), `--match-ids-json` +
+  `--list-matches` for N-way parallelism against a shared `--out`, fail-closed provenance, and a
+  per-worker manifest. `run_signoff_power.py` gains `--spells <parquet>` to consume it, so a crash
+  in the analysis step now costs seconds to retry instead of another corpus walk. The manifest
+  reports corpus-scope `n_treated` / `treated_prevalence`, because a rare treatment is invisible
+  per match yet decides the entire power curve.
+- **`scripts/_partition.py` (NEW)** extracts the shard/partition/manifest plumbing now shared by
+  both corpus producers. The reconciliation is the part that has already been wrong once — N workers
+  writing one shared manifest let the last writer win, so a 64-match artifact reported a single
+  partition's `n_matches: 8` — and that defect must not be fixable in one producer while still live
+  in the other. Adds a **commit-consistency** check across workers (nothing stops one being launched
+  from a different checkout, which would make the corpus artifact a blend of two code versions while
+  looking like a single run) and OR-s `run_tree_dirty`.
+- **`run_signoff_power.py` records — and refuses — UPSTREAM provenance.** Both its inputs
+  (`--spells`, `--arm-values`) are produced by *other* drivers at *other* times, and the rule this
+  repo already states is that an artifact whose inputs came from another driver needs provenance on
+  **both**, or the clean SHA on the downstream metrics launders the dirty upstream input. It now
+  reads each input's sibling manifest into `upstream_provenance` and exits on a dirty upstream, on a
+  **missing** manifest (unprovenanced is treated exactly like dirty — a first draft early-returned
+  here and silently accepted it, which is why the test asserts the raise), and on an upstream whose
+  workers ran at **different commits** — every one of which is individually clean while the table is
+  a blend of code versions.
+- **Combined tables are written ATOMICALLY (`_partition.write_table_atomically`).** Every worker
+  rebuilds the combined table from the shared shard directory and writes the same path, so N workers
+  means N concurrent writers on one file, which can be read — or left — half-written. Each worker now
+  writes a private temp file and `os.replace`s it into position. The 64-match arm-values pass got
+  away with the old code; that was luck, not safety, and both producers are fixed.
+- **A partition with NO ids for a provider now drops it, instead of silently expanding to the whole
+  corpus (`_partition.providers_for_slice`).** The shared loader resolves a provider's ids as
+  `(match_ids.get(provider) if match_ids else None) or list(manifest_ids)` — and an empty list is
+  falsy while an absent key is `None`, so **both fall through to the ENTIRE manifest**. Verified
+  directly against `_wanted_for_provider`: a slice of `{"idsse": []}` returned all seven manifest
+  ids. That reading is correct for the loader's own callers (no slice means "everything") and
+  exactly inverted for a partitioned one. Concretely: `validate_xshot_causal.py` defaults to three
+  providers, so slicing on `gradientsports` alone would have made **every** worker load the full
+  SkillCorner and IDSSE corpora — N-times duplicated work with N processes writing the **same**
+  per-match shard paths concurrently. The single-provider arm-values pass escaped it only because
+  its slices are never empty. Fixed in the partitioning layer, leaving `scripts/_loader_*`
+  untouched; per-match shard writes are additionally routed through `write_table_atomically`, so
+  even a same-match collision cannot tear a file.
+- **`validate_xshot_causal.py` — the §3.3 entanglement pass — is now shardable, resumable and
+  partitionable too.** It was the last driver still shaped like the failure above: ~81 matches
+  walked serially, held in memory, writing nothing until the end, so any raise in the analysis
+  discarded the entire pass. Now `build_shards` writes a per-match shard on completion (an existing
+  shard is skipped; an EMPTY shard is written deliberately, because absent means "not yet run" and
+  present-and-empty means "run, produced nothing" — conflating them makes every resume recompute
+  the barren matches forever), `analyze_shards` runs the coverage + entanglement analysis over the
+  persisted shards, and `--match-ids-json` + `--build-only` let N workers split the corpus against
+  one `--out`. The provider is stored as a COLUMN rather than parsed back out of the filename,
+  which would mis-split any provider containing the `__` separator. `metrics.json` gains a
+  `corpus` block (`n_matches` / `n_opportunities` / `n_partitions` / `n_shards` /
+  `commit_consistent`) because a partitioned run can legitimately analyse a subset and an artifact
+  that does not state its own scope is the defect this release keeps finding; and a clean analysis
+  over shards built from a DIRTY tree reports `run_tree_dirty: true`, so the analysis SHA cannot
+  launder its input.
+- **Two more drivers wired to the provenance guard, and the wiring is now CI-gated.**
+  `validate_xshot_causal.py` had **no provenance at all** — and it produces the §3.3 entanglement
+  measurement that corrects F6, i.e. a finding whose entire content is *"a registered default was
+  mistaken for a measurement"*, which would have been published with no record of the code that
+  produced it. `validate_xs_probe.py` stamped a bare `git rev-parse HEAD` behind a broad `except` —
+  the exact pattern `_provenance.py` exists to eliminate — into the cited 4.60.0 xS-v2 artifact.
+  Both now refuse a dirty tree from `main()` (enforcement at the entry point; `run()` records the
+  truth unconditionally, so it stays directly testable) and stamp `run_commit` + `run_tree_dirty`.
+  A hand-run audit found these two; `tests/scripts/test_provenance_wiring.py` is what stops the
+  third — every artifact driver must import the helper, offer `--allow-dirty`, never shell out to
+  `rev-parse` (matched via AST, so prose describing the defect is not mistaken for it), and call
+  `require_clean_tree` from `main()`.
+- **The `--help` ASCII gate is now DERIVED from `scripts/*.py`** instead of a hand-listed trio that
+  had silently stopped covering most of the tree. It immediately found **18 pre-existing drivers**
+  that die with `UnicodeEncodeError` on `--help` from a cp1252 console. They are pinned in an
+  **exactly**-asserted debt list (fails both ways: a new offender cannot join silently, a fixed one
+  must be removed) rather than repaired here, because two of them are `calibrate_*` — outside what
+  this cycle may modify. Narrowing the gate to the files this PR touched would have hidden the
+  other sixteen.
+
 ## [4.64.0] — 2026-07-27
 
 ### Added — trained-model feature contract + canonical penalty-area constant (PR-S135, ADR-050)
@@ -57,6 +154,7 @@ constants). So this ships the guard, then the constant.
 **No retrain, no value change.** No weights change and no model output changes. Three `metadata.json` files
 gain a `feature_contract` key and their `SHA256SUMS` change — a consumer pinning artifact checksums will see a
 diff. C4-free (count stays 32).
+
 ## [4.63.0] — 2026-07-26
 
 ### Added / Fixed — TF-19 corpus-run tooling (PR-S`<NN>`, ADR-037)

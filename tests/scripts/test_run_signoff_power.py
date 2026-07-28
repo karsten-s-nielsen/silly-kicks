@@ -31,9 +31,27 @@ def test_design_matrix_returns_columns_in_the_registered_order():
     assert X[0, 0] == 1.0 and X[0, 1] == 0.1  # registered order, not frame order
 
 
-def test_a_partially_nan_confounder_is_allowed_through():
-    """Only an ENTIRELY dead column is refused -- per-row missingness is the estimator's problem,
-    and silently rejecting it here would drop usable spells."""
+def test_a_partially_nan_confounder_is_ALSO_refused_naming_the_count():
+    """SUPERSEDES the earlier "partial missingness is the estimator's problem" reading (R3 MEDIUM 2).
+
+    That rationale rested on a factual claim about the estimator that does not hold. MEASURED
+    directly against the shipped `fit_propensity`::
+
+        X = [[1.0, 0.1], [nan, 0.2], [3.0, 0.3], [4.0, 0.4]]
+        -> ValueError: Input X contains NaN.
+
+    sklearn rejects a SINGLE NaN cell, and every spell belongs to some cluster, so a resample will
+    eventually include the offending row. Letting it through therefore does not preserve usable
+    spells -- it relocates the same fatal error to the middle of a long run, with a message that
+    names no column. Dropping the rows here is rejected for the original reason: that silently
+    redefines the estimation sample, which is a design change rather than error handling.
+    """
     spells = pd.DataFrame({"r": [1.0, np.nan, 3.0], "theta": [0.1, 0.2, 0.3]})
-    X = mod.build_design_matrix(spells, ("r", "theta"))
-    assert X.shape == (3, 2)
+    with pytest.raises(ValueError, match=r"r: 1/3 non-finite"):
+        mod.build_design_matrix(spells, ("r", "theta"))
+
+
+def test_a_fully_finite_design_matrix_is_accepted():
+    """The other side: the guard must not reject a healthy matrix, or it is just an outage."""
+    spells = pd.DataFrame({"r": [1.0, 2.0, 3.0], "theta": [0.1, 0.2, 0.3]})
+    assert mod.build_design_matrix(spells, ("r", "theta")).shape == (3, 2)

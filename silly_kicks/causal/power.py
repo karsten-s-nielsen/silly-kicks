@@ -142,8 +142,11 @@ def att_power_curve(*, Z, injection, X, clusters, sizes, n_replicates, alpha_z=2
     Returns
     -------
     dict
-        ``power_by_size``, ``matched_n_by_size``, ``n_distinct_outcome_draws`` (the per-replicate
-        redraw evidence), ``true_effect``, ``base_rate``, ``n_replicates``.
+        ``power_by_size``, ``matched_n_by_size``, ``n_degenerate_by_size`` (replicates whose
+        resample carried a single treatment class -- scored as non-detections; a size where this
+        approaches ``n_replicates`` reports a design that is INESTIMABLE at that n, not a weak
+        effect), ``n_distinct_outcome_draws`` (the per-replicate redraw evidence), ``true_effect``,
+        ``base_rate``, ``n_replicates``.
 
     Examples
     --------
@@ -179,12 +182,24 @@ def att_power_curve(*, Z, injection, X, clusters, sizes, n_replicates, alpha_z=2
     power: dict[int, float] = {}
     matched: dict[int, int] = {}
     draws: dict[int, int] = {}
+    degen: dict[int, int] = {}
     for size in sizes:
-        detected, m_ns, seen = 0, [], set()
+        detected, m_ns, seen, degenerate = 0, [], set(), 0
         for _ in range(int(n_replicates)):
             idx = _resample_clusters(clusters, ukeys, int(size), rng)
             y = spec.draw(Z[idx], rng)  # FRESH per replicate (spec §5.4)
             seen.add(hash(y.tobytes()))
+            # A resample carrying only ONE treatment class is a POSITIVITY failure at this size:
+            # no ATT is estimable, and `fit_propensity` would raise out of sklearn and kill the
+            # whole run (MEASURED: it did, on the first corpus attempt, after the 8h corpus pass
+            # that preceded it). It is scored as a NON-detection -- power is P(detect | design at
+            # n), and a design that cannot be estimated has detected nothing -- and it is COUNTED,
+            # because power 0.2 with most replicates inestimable means something entirely
+            # different from power 0.2 with none. Dropping them from the DENOMINATOR instead would
+            # condition on estimability and inflate the curve exactly where the design is weakest.
+            if np.unique(Z[idx]).size < 2:
+                degenerate += 1
+                continue
             ps, _ = fit_propensity(X[idx], Z[idx], seed=int(rng.integers(0, 2**31 - 1)))
             est = estimate_att(y, Z[idx], ps, X[idx])
             # est.n_focal is the MATCHED FOCAL (treated) count -- NOT idx.size, which is the
@@ -193,11 +208,15 @@ def att_power_curve(*, Z, injection, X, clusters, sizes, n_replicates, alpha_z=2
             if est.se and np.isfinite(est.se) and est.se > 0:
                 detected += int(abs(est.estimate) / est.se >= alpha_z)
         power[size] = detected / float(n_replicates)
-        matched[size] = int(np.mean(m_ns))
+        # `np.mean([])` is nan with a RuntimeWarning; an all-degenerate size matched nothing, so 0
+        # is the honest matched count -- and `n_degenerate_by_size` is what makes it readable.
+        matched[size] = int(np.mean(m_ns)) if m_ns else 0
         draws[size] = len(seen)
+        degen[size] = degenerate
     return {
         "power_by_size": power,
         "matched_n_by_size": matched,
+        "n_degenerate_by_size": degen,
         "n_distinct_outcome_draws": draws,
         "true_effect": spec.true_effect,
         "base_rate": float(spec.base_rate),

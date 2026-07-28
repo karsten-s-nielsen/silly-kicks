@@ -135,6 +135,77 @@ def test_matched_n_is_the_MATCHED_count_not_the_subsample_size():
     assert out["matched_n_by_size"][200] < out["matched_n_by_size"][400]
 
 
+def _rare_treatment(n: int = 800, n_treated_clusters: int = 8, seed: int = 0) -> dict:
+    """A design whose treatment is RARE -- one treated row in each of a few clusters.
+
+    This is the shape Layer 2 actually has: "the keeper is advanced past the penalty-area line at
+    spell entry" is uncommon, so a small cluster resample frequently contains no treated unit at
+    all. Constructed deterministically rather than drawn, so the degenerate counts below are a
+    property of the design and not of a lucky seed.
+    """
+    rng = np.random.default_rng(seed)
+    clusters = np.repeat(np.arange(n // 20), 20)
+    Z = np.zeros(n, dtype=int)
+    Z[np.arange(n_treated_clusters) * 20] = 1  # one treated row in each of the first k clusters
+    return {"Z": Z, "X": rng.normal(size=(n, 3)), "clusters": clusters}
+
+
+def test_a_single_class_resample_is_COUNTED_not_a_crash():
+    """MEASURED REGRESSION: this raised out of sklearn ("needs samples of at least 2 classes") and
+    killed a corpus run -- after the 8h corpus pass that fed it, none of which was persisted."""
+    s = _rare_treatment()
+    out = att_power_curve(
+        Z=s["Z"],
+        injection=InjectionSpec(base_rate=0.15, relative_effect=0.20),
+        X=s["X"],
+        clusters=s["clusters"],
+        sizes=(100, 800),
+        n_replicates=40,
+        rng_seed=0,
+    )
+    assert out["n_degenerate_by_size"][100] > 0, "no positivity failure was exercised at n=100"
+    # The OTHER side: the full-corpus size carries every treated cluster, so nothing is degenerate
+    # there. Without this the test would pass just as well if the counter fired unconditionally.
+    assert out["n_degenerate_by_size"][800] == 0
+
+
+def test_a_healthy_design_records_zero_degenerate():
+    """Non-vacuity for the counter itself: the ordinary balanced design must never register one."""
+    s = _spells()
+    out = att_power_curve(
+        Z=s["Z"],
+        injection=InjectionSpec(base_rate=0.15, relative_effect=0.20),
+        X=s["X"],
+        clusters=s["clusters"],
+        sizes=(200, 400),
+        n_replicates=10,
+        rng_seed=0,
+    )
+    assert out["n_degenerate_by_size"] == {200: 0, 400: 0}
+
+
+def test_an_inestimable_design_reports_power_ZERO_not_a_nan():
+    """Degenerate replicates count in the DENOMINATOR.
+
+    Excluding them would condition on estimability and inflate the curve exactly where the design
+    is weakest -- and an all-degenerate size would divide by zero, surfacing as a nan power that
+    reads like a missing measurement rather than a design that cannot be estimated at all.
+    """
+    s = _rare_treatment(n_treated_clusters=0)  # no treated unit anywhere
+    out = att_power_curve(
+        Z=s["Z"],
+        injection=InjectionSpec(base_rate=0.15, relative_effect=0.60),
+        X=s["X"],
+        clusters=s["clusters"],
+        sizes=(200,),
+        n_replicates=15,
+        rng_seed=0,
+    )
+    assert out["power_by_size"][200] == 0.0
+    assert out["n_degenerate_by_size"][200] == 15
+    assert out["matched_n_by_size"][200] == 0  # np.mean([]) would be nan
+
+
 def test_cluster_resampling_never_splits_a_cluster():
     """Cluster-preserving resampling is the ATT-side analogue of the match-blocked ICC null."""
     from silly_kicks.causal.power import _resample_clusters
