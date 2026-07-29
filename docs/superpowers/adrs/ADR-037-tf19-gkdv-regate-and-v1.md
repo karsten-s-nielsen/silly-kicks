@@ -390,6 +390,11 @@ and dose-responsive, joining the metric, but not cleanly isolable from the xS po
 > was overclaimed — `joins_with_caveat` is the CONSERVATIVE branch, and a measured `clears` would have produced
 > the stronger `joins` — but the attribution was false and is corrected here.
 >
+> **F6 IS CLOSED (4.68.0)** — see the amendment below. The quantity was measured on 179 matches and came
+> back **`inside_band`**, i.e. EQUAL to the default that had been assumed. The verdict is therefore
+> unchanged; what changed is that it is now earned. That is a weaker claim than "the default was wrong"
+> and a stronger one than "the default was probably fine".
+>
 > **AMENDMENT (4.63.0) — the blindness discipline is now MECHANICALLY ENFORCED, not merely
 > registered.** This ADR's citeability rests on artifacts recording `lock_commit == run_commit`, but
 > nothing checked that the recorded commit described the code that actually ran: `git rev-parse HEAD`
@@ -477,6 +482,69 @@ idsse 7). It died in `causal.matching._cluster_reassign`:
 **Consequence for the §3.3 record:** the entanglement measurement is only meaningful once both hold
 — before the fix it could not run at all, and a naive fix would have run and reported a corrupted
 null without any error.
+
+## Amendment (4.68.0) — the §6.1 / §3.3 corpus runs: RESULTS
+
+**Date:** 2026-07-29. **Status:** Accepted. Artifacts: `docs/research/tf19_signoff_power/`,
+`docs/research/tf19_entanglement/`, `docs/research/tf19_pr3b_xs_v2/*_rerun_clean_provenance.*`.
+All three record `run_tree_dirty: false` — the property 4.65.0's provenance guard exists to make
+checkable rather than asserted.
+
+### §6.1 — the two legs SPLIT, which is the finding
+
+**ICC leg: precondition DISCHARGED, closing F2.** Power **1.0 at all three `ICC_ANCHORS`** on the
+64-match arm-values corpus (123,430 scored frames, 41 keepers, 8 of them single-match and reported
+as structurally undetectable). `mean_observed_icc_at_zero = −0.00034`: with no injected effect the
+estimator returns ~zero, so this is detection rather than an upward-biased statistic flattering
+itself. §6.1 registers the gate only if detection at the anchor is ≥ 0.8; it is met.
+
+**ATT leg: `N_MIN_MATCHED` remains `None` — but the word now means something different.** It no
+longer reads "the run has not happened"; it reads "the run happened and no bin reaches 0.80". Max
+power **0.055** at n=8000 against a required 0.80, at every anchor, for both outcomes, on 37,086
+spells carrying **151 treated** (prevalence 0.0041). The degenerate counts are what make that
+interpretable: **0/200 at n=4000 and n=8000**, so the design is estimable and simply has no power —
+not a positivity failure wearing the costume of one. Per §6.1 the response is to adjust
+floors/sampling FIRST. The 16.5 m Layer 2 threshold is **not** retuned to raise prevalence: it is
+Law-defined precisely so the decider stays untuned, and moving it is a re-registration decision.
+
+**This vindicates F3.** The two estimands it split — a keeper-level ICC variance share and a
+spell-level ATT — return OPPOSITE answers on the same corpus. Merged, one would have wrongly vetoed
+the other in whichever direction the composite happened to resolve.
+
+The 4.65.0 amendment predicted "ATT power may come back below 0.8" before the run. It did. That
+prediction is recorded here as borne out rather than quietly dropped, because a registered
+expectation that is never scored against the outcome is not a prediction.
+
+### §3.3 — entanglement MEASURED, closing F6 by confirmation
+
+179 matches (skillcorner 108 + idsse 7 + gradientsports 64), 98,789 opportunities, carrier coverage
+1.0 on all three so none is excluded. GK ablation shift **−0.006999** against a cluster placebo band
+of **0.004690** and the registered `GK_ABLATION_MIN_SHIFT` of 0.01: it exceeds the permutation null
+but not the absolute floor → **`inside_band`**. R10 never fired (730 control conversions vs a floor
+of 30), so this is a measurement and not a refusal.
+
+`regate_verdict(arm="shot", probe_verdict="pass", entanglement="inside_band")` = **`joins_with_caveat`**.
+**The measured value equals the registered default**, so the recorded verdict does not move. F6's
+complaint was never that the answer was wrong — it was that a parameter documented as inert had
+decided a verdict with nobody measuring it. That is now repaired.
+
+The xS-v2 probe was re-run alongside it with verifiable provenance (`lock_commit 78ffc70`,
+`run_commit d1fc18d`, clean tree) because the cited 4.60.0 artifact stamped a bare
+`git rev-parse HEAD` and carries **no `run_tree_dirty` field at all**. It **reproduces** the
+original: v1 `no_valid_placebo`, v2 `pass`, 123,430 of 123,430 targets used. The original is kept
+beside it, not overwritten — it is what this ADR cites, and its missing provenance field is the
+evidence for why the re-run was necessary.
+
+### Honest limits of these numbers
+
+- The §3.3 corpus is **179 matches, not the ~81 contemplated at registration** — the SkillCorner
+  listing grew 10 → 108 (ADR-038). The registered provider default was run rather than silently
+  narrowed, and the artifact records its scope, but the number is not comparable to a
+  pre-registration expectation formed on the smaller corpus.
+- The entanglement artifact reports `commit_consistent: false` (shards at `6b242cf`, analysis at
+  `d1fc18d`). Benign and checkable: `git diff 6b242cf d1fc18d` over every shard-building module is
+  empty, since 4.66.0 touched only `causal/matching.py`. The flag fires correctly and was left
+  firing rather than silenced by a cosmetic rebuild.
 
 ## References
 

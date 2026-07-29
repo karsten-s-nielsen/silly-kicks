@@ -18,6 +18,15 @@ import pandas as pd
 #: Pre-registered ICC anchor band (spec §1.3, measured 0.015-0.026 across cohorts).
 #: A RANGE, not a point: SkillCorner's 0.0147 sits below a single 0.02 anchor, so a
 #: power curve is reported at all three rather than at a midpoint.
+#:
+#: PRECONDITION DISCHARGED 2026-07-28 (``docs/research/tf19_signoff_power/``): §6.1 registers the
+#: gate only if detection at the anchor is >= 0.8, and the plasmode curve returned **1.0 at all
+#: three** on the 64-match GKDV arm-values corpus (123,430 scored frames, 41 keepers). The
+#: null-calibration check is what makes that credible rather than suspicious:
+#: ``mean_observed_icc_at_zero = -0.00034``, i.e. with NO injected effect the estimator returns
+#: ~zero. 8 of the 41 keepers appear in a single match, for which the block permutation is a pure
+#: relabelling -- reported, not hidden. Until this run the promise "a power curve is reported at
+#: all three" was a docstring no code could keep (ADR-037 F2).
 ICC_ANCHORS: tuple[float, float, float] = (0.015, 0.020, 0.026)
 
 #: Row 5's ATT effect-size anchors: a RANGE, mirroring :data:`ICC_ANCHORS`, expressed as a RELATIVE
@@ -41,7 +50,20 @@ LAYER3_HEADROOM_RANGE_FRACTION: float = 0.02
 #: which ATT power reaches 0.80 at the 0.15 relative anchor, taken as the MAXIMUM over the two
 #: Layer 2 outcomes (``Y_close_attempt`` has the lower base rate, so an ``N_min`` derived on
 #: ``Y_attempt`` alone would be anti-conservative for the outcome row 7 fires on).
-#: ``None`` until that run lands -- a placeholder VALUE, never a placeholder RULE.
+#:
+#: MEASURED 2026-07-28 (``docs/research/tf19_signoff_power/``, run_commit ``6b242cf``, clean tree):
+#: still ``None`` -- but the meaning has CHANGED and the distinction is the point. It no longer
+#: reads "the run has not happened"; it reads "the run happened and NO bin reaches 0.80". Max power
+#: was **0.055** at n=8000, against a required 0.80, at every anchor and for both outcomes -- the
+#: corpus carries only 151 treated spells (prevalence 0.0041). Crucially the degenerate-replicate
+#: counts were **0/200 at n=4000 and n=8000**, so this is an estimable design with no power, NOT a
+#: positivity failure masquerading as one. Per §6.1 the response is to adjust floors/sampling
+#: FIRST; a row-5 threshold is not registered on a corpus that cannot support one, and the 16.5 m
+#: Layer 2 treatment threshold is NOT retuned to raise prevalence (Law-defined, so the decider
+#: stays untuned -- changing it is a re-registration decision).
+#:
+#: Contrast the ICC leg, which the SAME run discharged: power 1.0 at all three ``ICC_ANCHORS``.
+#: The two estimands were conflated until ADR-037 F3 split them, and they answer OPPOSITELY.
 N_MIN_MATCHED: int | None = None
 
 #: Layer 4: minimum mean signed goal-relative depth separation between outer terciles,

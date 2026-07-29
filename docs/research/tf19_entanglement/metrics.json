@@ -1,0 +1,65 @@
+{
+  "status": "ok",
+  "n_opportunities": 98789,
+  "n_treated": 2143,
+  "base_rate_Y": 0.009697435949346586,
+  "control_n": 96646,
+  "control_conversions": 730,
+  "control_y_rate": 0.007553338989715042,
+  "att_without_gk": {
+    "estimate": 0.09519365375641624,
+    "se": 0.007039557286108888
+  },
+  "att_with_gk": {
+    "estimate": 0.08819412039197387,
+    "se": 0.00736828200973307
+  },
+  "atnt_with_gk": {
+    "estimate": 0.08406969765949962,
+    "se": 0.010915292891395598
+  },
+  "gk_ablation_shift": -0.006999533364442367,
+  "placebo_band_p95": 0.004689687354176378,
+  "placebo_band_p95_cluster": 0.004689687354176378,
+  "placebo_band_p95_row": 0.004666355576294912,
+  "placebo_n_clusters": 179,
+  "gk_clears_placebo_band": false,
+  "entanglement": "inside_band",
+  "entanglement_refused": false,
+  "entanglement_refusal_reason": null,
+  "gk_nan_fraction": 0.0,
+  "base_nan_fraction": 0.007237647916265981,
+  "ps_overlap_fraction": 1.0,
+  "smd_max_pre": 0.8813085155616418,
+  "smd_max_post": 0.054839088389365444,
+  "causal_claim_supported": true,
+  "seed": 0,
+  "estimator": "abadie_imbens_2006_with_replacement_J1",
+  "caveat": "GK-confounder ENTANGLEMENT, not causal deterrence: the shot arm measures whether the GK block carries Z/Y-aligned signal beyond the xS positional confounders. Anchor-INCLUSIVE 6 s success-shot outcome (second re-registration, P1); treated/control Y-windows are time-shifted (treated anchored at the in-spell shot, control at entry). The cluster placebo band gates (match-level exchangeability); the row band is reported for comparability.",
+  "coverage": {
+    "skillcorner": {
+      "n_opp": 58308,
+      "carrier_coverage": 1.0,
+      "included": true
+    },
+    "idsse": {
+      "n_opp": 3395,
+      "carrier_coverage": 1.0,
+      "included": true
+    },
+    "gradientsports": {
+      "n_opp": 37086,
+      "carrier_coverage": 1.0,
+      "included": true
+    }
+  },
+  "corpus": {
+    "n_matches": 179,
+    "n_opportunities": 98789,
+    "n_partitions": 9,
+    "n_shards": 179,
+    "commit_consistent": false
+  },
+  "run_commit": "d1fc18d2fe5404cccd5ee9eb34ea7e1049e9f323",
+  "run_tree_dirty": false
+}

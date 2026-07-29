@@ -87,21 +87,52 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
     nothing stops one being launched from a different checkout, which would make the corpus artifact
     a blend of two code versions while looking like a single run. ``run_tree_dirty`` is OR-ed -- one
     dirty worker makes the whole corpus dirty.
+
+    **Only manifests that CONTRIBUTED data vote on commit consistency.** A pass that built nothing
+    -- every shard already present, so every match skipped -- records its own commit but produced no
+    row, and letting it vote makes the flag describe the ANALYSIS's lineage instead of the DATA's.
+    MEASURED: the §3.3 entanglement artifact reported ``commit_consistent: false`` off eight worker
+    manifests unanimously at ``6b242cf`` plus one ``n_matches: 0`` analysis manifest at ``d1fc18d``.
+    The corpus was single-commit; the flag said otherwise. A guard that cries wolf is worse than no
+    guard, because it teaches readers to skim past the one field built to be un-skippable. The
+    analysis commit is not lost -- the driver records it separately as the artifact's top-level
+    ``run_commit``. ``commits_seen`` reports every commit encountered including non-contributors, so
+    an all-zero-contribution aggregate (a full resume) is visibly vacuous rather than quietly
+    ``true``.
     """
     totals: dict[str, int] = {k: 0 for k in defaults}
     counters: dict[str, dict[str, int]] = {}
     partitions: list[str] = []
-    commits: set[str] = set()
+    commits: set[str] = set()  # contributors only -- these decide `commit_consistent`
+    commits_seen: set[str] = set()  # every manifest, contributor or not
     dirty = False
 
     for f in sorted(pathlib.Path(dest).glob("manifest_*.json")):
         m = json.loads(f.read_text(encoding="utf-8"))
         partitions.append(str(m.get("partition", f.stem)))
+        # A manifest loses its vote ONLY by positively declaring that it built nothing. Computed
+        # before the field loop so key ordering cannot change the verdict.
+        #
+        # Fail-SAFE in two directions, both learned from a failing test rather than reasoned:
+        #  * a counter-only manifest (e.g. `drop_reasons` with no `n_matches`) DID do real work on
+        #    real data -- keying the rule to one field name would silently drop its vote;
+        #  * a manifest carrying NO countable field at all cannot prove it built nothing, so it
+        #    KEEPS its vote. Only "declared zero" demotes. Anything else and narrowing the vote
+        #    would quietly disarm the guard on manifests that simply record less.
+        _meta = ("run_commit", "run_tree_dirty", "partition")
+        countable = [
+            v
+            for k, v in m.items()
+            if k not in _meta and (isinstance(v, dict) or (isinstance(v, int) and not isinstance(v, bool)))
+        ]
+        contributed = not countable or any((v > 0 if isinstance(v, int) else bool(v)) for v in countable)
         for k, v in m.items():
             if k == "partition":
                 continue
             if k == "run_commit":
-                commits.add(str(v))
+                commits_seen.add(str(v))
+                if contributed:
+                    commits.add(str(v))
             elif k == "run_tree_dirty":
                 dirty = dirty or bool(v)
             elif isinstance(v, bool):
@@ -120,5 +151,10 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
         "partitions": sorted(partitions),
         "run_commit": (next(iter(commits)) if len(commits) == 1 else sorted(commits)),
         "commit_consistent": len(commits) <= 1,
+        # Every commit in the directory, contributors or not. When this is WIDER than the
+        # contributing set, a pass ran at a commit that built nothing -- benign, but visible rather
+        # than silently absorbed, and the only way an all-resume aggregate's vacuous `true` is
+        # distinguishable from a genuinely single-commit one.
+        "commits_seen": sorted(commits_seen),
         "run_tree_dirty": dirty,
     }
