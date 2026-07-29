@@ -81,6 +81,55 @@ def test_an_empty_dir_yields_declared_defaults_not_a_crash(tmp_path):
     assert got["commit_consistent"] is True  # vacuously: no worker disagreed
 
 
+def test_a_ZERO_CONTRIBUTION_manifest_does_not_vote_on_commit_consistency(tmp_path):
+    """MEASURED false positive this fixes. The §3.3 entanglement artifact reported
+    `commit_consistent: false` from eight worker manifests unanimously at `6b242cf` PLUS one
+    analysis manifest at `d1fc18d` carrying `n_matches: 0` -- it had built nothing, because every
+    shard already existed. The DATA was single-commit; the flag said otherwise.
+
+    A guard that cries wolf is worse than no guard: it teaches readers to skim past the one field
+    built to be un-skippable.
+    """
+    for i in range(8):
+        _write(tmp_path, f"p{i}", {"n_matches": 22, "run_commit": "6b242cf", "run_tree_dirty": False})
+    _write(tmp_path, "all", {"n_matches": 0, "run_commit": "d1fc18d", "run_tree_dirty": False})
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_matches",))
+    assert got["commit_consistent"] is True
+    assert got["run_commit"] == "6b242cf", "the contributing commit is the corpus's commit"
+    # ...but the non-contributor is still VISIBLE, not silently absorbed.
+    assert got["commits_seen"] == ["6b242cf", "d1fc18d"]
+
+
+def test_disagreeing_CONTRIBUTORS_are_still_caught(tmp_path):
+    """The other side, and the whole reason the flag exists: two workers that BOTH built data at
+    different commits must still fail. Narrowing the vote must not disarm it."""
+    _write(tmp_path, "p0", {"n_matches": 10, "run_commit": "aaa1111", "run_tree_dirty": False})
+    _write(tmp_path, "p1", {"n_matches": 10, "run_commit": "bbb2222", "run_tree_dirty": False})
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_matches",))
+    assert got["commit_consistent"] is False
+    assert got["run_commit"] == ["aaa1111", "bbb2222"]
+
+
+def test_an_ALL_RESUME_aggregate_is_visibly_vacuous_not_quietly_true(tmp_path):
+    """If nothing contributed, no manifest votes and the flag is `true` for lack of evidence rather
+    than because of it. `commits_seen` is what makes that case inspectable."""
+    _write(tmp_path, "p0", {"n_matches": 0, "run_commit": "aaa1111"})
+    _write(tmp_path, "p1", {"n_matches": 0, "run_commit": "bbb2222"})
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_matches",))
+    assert got["commit_consistent"] is True
+    assert got["run_commit"] == []  # no contributor claimed it
+    assert got["commits_seen"] == ["aaa1111", "bbb2222"], "two commits ran; the flag alone hides that"
+
+
+def test_a_manifest_contributing_a_COUNTER_only_still_votes(tmp_path):
+    """Contribution is not just `n_matches`: a pass whose only output is a drop-reason counter did
+    real work on real data and must vote. Keying the rule to one field name would miss it."""
+    _write(tmp_path, "p0", {"drop_reasons": {"no_possession": 5}, "run_commit": "aaa1111"})
+    _write(tmp_path, "p1", {"n_matches": 3, "run_commit": "bbb2222"})
+    got = mod.aggregate_manifests(tmp_path)
+    assert got["commit_consistent"] is False, "a counter-only contributor was wrongly ignored"
+
+
 def test_a_provider_with_NO_ids_in_this_slice_is_dropped_not_expanded():
     """MEASURED trap in the shared loader::
 

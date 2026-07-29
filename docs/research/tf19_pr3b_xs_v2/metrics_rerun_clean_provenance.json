@@ -1,0 +1,994 @@
+{
+  "arm": "xs",
+  "variants": {
+    "v1": {
+      "probe": {
+        "rule": "xs-dose-banded-v1",
+        "dose_ladder": {
+          "2.0": 0.015477672219276428,
+          "3.0": 0.02002739068120718,
+          "4.0": 0.0222040805965662
+        },
+        "unbanded_median": 0.0029745474457740784,
+        "trusted_stratum": 123378,
+        "ood_stratum": 52,
+        "gated_band_n": 10180,
+        "gated_band_zero_fraction": 0.053339882121807465,
+        "off_pitch_control_fraction": 0.002971030427888566,
+        "placebo_replicate_medians": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "placebo_p95": 0.0,
+        "placebo_zero_fraction": 0.6648821218074656,
+        "nearest_def_median": 0.005025619640946388,
+        "dose_state": "not_run",
+        "verdict": "no_valid_placebo",
+        "n_frames_used": 123430
+      },
+      "regate_verdict": "unmeasurable_at_dose",
+      "rule_constants": {
+        "ratio": 2.0,
+        "dose_m": 2.0,
+        "min_band_n": 100,
+        "min_stratum_n": 50,
+        "placebo_replicates": 20,
+        "placebo_band_pct": 95.0,
+        "max_placebo_zero_fraction": 0.95,
+        "dose_response_alpha": 0.05,
+        "dose_ladder": [
+          2.0,
+          3.0,
+          4.0
+        ],
+        "min_game_n": 10,
+        "min_games": 8,
+        "dose_response_permutations": 999
+      }
+    },
+    "v2": {
+      "probe": {
+        "rule": "xs-dose-banded-v2",
+        "dose_ladder": {
+          "2.0": 0.015477672219276428,
+          "3.0": 0.02002739068120718,
+          "4.0": 0.0222040805965662
+        },
+        "unbanded_median": 0.0029745474457740784,
+        "trusted_stratum": 123378,
+        "ood_stratum": 52,
+        "gated_band_n": 10180,
+        "gated_band_zero_fraction": 0.053339882121807465,
+        "off_pitch_control_fraction": 0.0013672681257547174,
+        "placebo_replicate_medians": [
+          0.0005706879310309887,
+          0.00041423365473747253,
+          0.0004816502332687378,
+          0.0005031013861298561,
+          0.0005699624307453632,
+          0.0005314722657203674,
+          0.0005085300654172897,
+          0.0005087526515126228,
+          0.0005061235278844833,
+          0.0004786374047398567,
+          0.0005134902894496918,
+          0.0005291490815579891,
+          0.0005551278591156006,
+          0.0005198754370212555,
+          0.00047671981155872345,
+          0.0005328953266143799,
+          0.00048619508743286133,
+          0.0005556866526603699,
+          0.0004690997302532196,
+          0.00042933598160743713
+        ],
+        "placebo_p95": 0.0005699987057596445,
+        "placebo_zero_fraction": 0.4473919449901768,
+        "nearest_def_median": 0.005025619640946388,
+        "gated_band_median": 0.015477672219276428,
+        "dose_response_rho": 0.4361283091408954,
+        "dose_response_p": 0.001,
+        "dose_response_n_games": 64,
+        "dose_state": "ok",
+        "verdict": "pass",
+        "n_frames_used": 123430,
+        "placebo_pool": "model_relevant_def",
+        "attacker_diag_p95": 0.0
+      },
+      "regate_verdict": "joins_with_caveat",
+      "rule_constants": {
+        "ratio": 2.0,
+        "dose_m": 2.0,
+        "min_band_n": 100,
+        "min_stratum_n": 50,
+        "placebo_replicates": 20,
+        "placebo_band_pct": 95.0,
+        "max_placebo_zero_fraction": 0.95,
+        "dose_response_alpha": 0.05,
+        "dose_ladder": [
+          2.0,
+          3.0,
+          4.0
+        ],
+        "min_game_n": 10,
+        "min_games": 8,
+        "dose_response_permutations": 999,
+        "placebo_pool": "model_relevant_def"
+      }
+    }
+  },
+  "entanglement": "inside_band",
+  "reconciliation": {
+    "total_targets": 123430,
+    "n_frames_used": 123430,
+    "n_distinct_games": 64,
+    "gated_band_n": 10180,
+    "targets_to_used_drop_frac": 0.0
+  },
+  "corpus": {
+    "providers": [
+      "gradientsports"
+    ],
+    "n_matches": 64,
+    "match_ids": [
+      "10502",
+      "10503",
+      "10504",
+      "10505",
+      "10506",
+      "10507",
+      "10508",
+      "10509",
+      "10510",
+      "10511",
+      "10512",
+      "10513",
+      "10514",
+      "10515",
+      "10516",
+      "10517",
+      "3812",
+      "3813",
+      "3814",
+      "3815",
+      "3816",
+      "3817",
+      "3818",
+      "3819",
+      "3820",
+      "3821",
+      "3822",
+      "3823",
+      "3824",
+      "3825",
+      "3826",
+      "3827",
+      "3828",
+      "3829",
+      "3830",
+      "3831",
+      "3832",
+      "3833",
+      "3834",
+      "3835",
+      "3836",
+      "3837",
+      "3838",
+      "3839",
+      "3840",
+      "3841",
+      "3842",
+      "3843",
+      "3844",
+      "3845",
+      "3846",
+      "3847",
+      "3848",
+      "3849",
+      "3850",
+      "3851",
+      "3852",
+      "3853",
+      "3854",
+      "3855",
+      "3856",
+      "3857",
+      "3858",
+      "3859"
+    ]
+  },
+  "per_match": [
+    {
+      "match_id": "10502",
+      "n_frames_in": 175969,
+      "n_frames_scored": 2224,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 66544,
+        "no_possession": 51758,
+        "ball_row_missing": 46547,
+        "stride_skipped": 8896
+      },
+      "n_targets": 2224
+    },
+    {
+      "match_id": "10503",
+      "n_frames_in": 178797,
+      "n_frames_scored": 1766,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 74443,
+        "ball_row_missing": 49067,
+        "no_possession": 46458,
+        "stride_skipped": 7063
+      },
+      "n_targets": 1766
+    },
+    {
+      "match_id": "10504",
+      "n_frames_in": 182008,
+      "n_frames_scored": 1943,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 68599,
+        "ball_row_missing": 55330,
+        "no_possession": 48369,
+        "stride_skipped": 7767
+      },
+      "n_targets": 1943
+    },
+    {
+      "match_id": "10505",
+      "n_frames_in": 175545,
+      "n_frames_scored": 1539,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 72658,
+        "ball_row_missing": 55309,
+        "no_possession": 39889,
+        "stride_skipped": 6150
+      },
+      "n_targets": 1539
+    },
+    {
+      "match_id": "10506",
+      "n_frames_in": 233020,
+      "n_frames_scored": 2608,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 95728,
+        "ball_row_missing": 62713,
+        "no_possession": 61547,
+        "stride_skipped": 10424
+      },
+      "n_targets": 2608
+    },
+    {
+      "match_id": "10507",
+      "n_frames_in": 177972,
+      "n_frames_scored": 2476,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 69237,
+        "ball_row_missing": 55013,
+        "no_possession": 41345,
+        "stride_skipped": 9901
+      },
+      "n_targets": 2476
+    },
+    {
+      "match_id": "10508",
+      "n_frames_in": 234874,
+      "n_frames_scored": 2138,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 99655,
+        "ball_row_missing": 72975,
+        "no_possession": 51562,
+        "stride_skipped": 8544
+      },
+      "n_targets": 2138
+    },
+    {
+      "match_id": "10509",
+      "n_frames_in": 176301,
+      "n_frames_scored": 1491,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 62508,
+        "ball_row_missing": 60330,
+        "no_possession": 46013,
+        "stride_skipped": 5959
+      },
+      "n_targets": 1491
+    },
+    {
+      "match_id": "10510",
+      "n_frames_in": 170717,
+      "n_frames_scored": 2306,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 76543,
+        "ball_row_missing": 43347,
+        "no_possession": 39301,
+        "stride_skipped": 9220
+      },
+      "n_targets": 2306
+    },
+    {
+      "match_id": "10511",
+      "n_frames_in": 195468,
+      "n_frames_scored": 1845,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 72276,
+        "ball_row_missing": 67917,
+        "no_possession": 46056,
+        "stride_skipped": 7374
+      },
+      "n_targets": 1845
+    },
+    {
+      "match_id": "10512",
+      "n_frames_in": 180885,
+      "n_frames_scored": 955,
+      "drop_reasons": {
+        "no_possession": 66901,
+        "ball_row_missing": 61648,
+        "ball_far_from_attacked_goal": 47567,
+        "stride_skipped": 3814
+      },
+      "n_targets": 955
+    },
+    {
+      "match_id": "10513",
+      "n_frames_in": 189407,
+      "n_frames_scored": 1969,
+      "drop_reasons": {
+        "ball_row_missing": 71432,
+        "ball_far_from_attacked_goal": 69167,
+        "no_possession": 38966,
+        "stride_skipped": 7873
+      },
+      "n_targets": 1969
+    },
+    {
+      "match_id": "10514",
+      "n_frames_in": 178440,
+      "n_frames_scored": 1656,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 62831,
+        "ball_row_missing": 58183,
+        "no_possession": 49152,
+        "stride_skipped": 6618
+      },
+      "n_targets": 1656
+    },
+    {
+      "match_id": "10515",
+      "n_frames_in": 178477,
+      "n_frames_scored": 1614,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 73631,
+        "ball_row_missing": 56882,
+        "no_possession": 39899,
+        "stride_skipped": 6451
+      },
+      "n_targets": 1614
+    },
+    {
+      "match_id": "10516",
+      "n_frames_in": 176363,
+      "n_frames_scored": 1529,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 68940,
+        "ball_row_missing": 55331,
+        "no_possession": 44451,
+        "stride_skipped": 6112
+      },
+      "n_targets": 1529
+    },
+    {
+      "match_id": "10517",
+      "n_frames_in": 254242,
+      "n_frames_scored": 2686,
+      "drop_reasons": {
+        "ball_row_missing": 101684,
+        "ball_far_from_attacked_goal": 82381,
+        "no_possession": 56760,
+        "stride_skipped": 10731
+      },
+      "n_targets": 2686
+    },
+    {
+      "match_id": "3812",
+      "n_frames_in": 184857,
+      "n_frames_scored": 2311,
+      "drop_reasons": {
+        "ball_row_missing": 61695,
+        "ball_far_from_attacked_goal": 60837,
+        "no_possession": 50775,
+        "stride_skipped": 9239
+      },
+      "n_targets": 2311
+    },
+    {
+      "match_id": "3813",
+      "n_frames_in": 210587,
+      "n_frames_scored": 1818,
+      "drop_reasons": {
+        "ball_row_missing": 83130,
+        "ball_far_from_attacked_goal": 71767,
+        "no_possession": 46604,
+        "stride_skipped": 7268
+      },
+      "n_targets": 1818
+    },
+    {
+      "match_id": "3814",
+      "n_frames_in": 180443,
+      "n_frames_scored": 1265,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 71850,
+        "ball_row_missing": 63401,
+        "no_possession": 38871,
+        "stride_skipped": 5056
+      },
+      "n_targets": 1265
+    },
+    {
+      "match_id": "3815",
+      "n_frames_in": 187924,
+      "n_frames_scored": 2005,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 71253,
+        "ball_row_missing": 58768,
+        "no_possession": 47885,
+        "stride_skipped": 8013
+      },
+      "n_targets": 2005
+    },
+    {
+      "match_id": "3816",
+      "n_frames_in": 198142,
+      "n_frames_scored": 2466,
+      "drop_reasons": {
+        "ball_row_missing": 74952,
+        "ball_far_from_attacked_goal": 61782,
+        "no_possession": 49082,
+        "stride_skipped": 9860
+      },
+      "n_targets": 2466
+    },
+    {
+      "match_id": "3817",
+      "n_frames_in": 183849,
+      "n_frames_scored": 1368,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 65528,
+        "ball_row_missing": 59916,
+        "no_possession": 51572,
+        "stride_skipped": 5465
+      },
+      "n_targets": 1368
+    },
+    {
+      "match_id": "3818",
+      "n_frames_in": 178584,
+      "n_frames_scored": 1893,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 69065,
+        "ball_row_missing": 54145,
+        "no_possession": 45917,
+        "stride_skipped": 7564
+      },
+      "n_targets": 1893
+    },
+    {
+      "match_id": "3819",
+      "n_frames_in": 185923,
+      "n_frames_scored": 1726,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 80635,
+        "ball_row_missing": 57549,
+        "no_possession": 39110,
+        "stride_skipped": 6903
+      },
+      "n_targets": 1726
+    },
+    {
+      "match_id": "3820",
+      "n_frames_in": 176101,
+      "n_frames_scored": 1492,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 72851,
+        "ball_row_missing": 53429,
+        "no_possession": 42364,
+        "stride_skipped": 5965
+      },
+      "n_targets": 1492
+    },
+    {
+      "match_id": "3821",
+      "n_frames_in": 187292,
+      "n_frames_scored": 2135,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 65833,
+        "ball_row_missing": 63679,
+        "no_possession": 47110,
+        "stride_skipped": 8535
+      },
+      "n_targets": 2135
+    },
+    {
+      "match_id": "3822",
+      "n_frames_in": 185459,
+      "n_frames_scored": 2025,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 78093,
+        "ball_row_missing": 48972,
+        "no_possession": 48273,
+        "stride_skipped": 8096
+      },
+      "n_targets": 2025
+    },
+    {
+      "match_id": "3823",
+      "n_frames_in": 179847,
+      "n_frames_scored": 2166,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 64683,
+        "no_possession": 52726,
+        "ball_row_missing": 51610,
+        "stride_skipped": 8662
+      },
+      "n_targets": 2166
+    },
+    {
+      "match_id": "3824",
+      "n_frames_in": 178308,
+      "n_frames_scored": 1942,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 78547,
+        "no_possession": 45094,
+        "ball_row_missing": 44964,
+        "stride_skipped": 7761
+      },
+      "n_targets": 1942
+    },
+    {
+      "match_id": "3825",
+      "n_frames_in": 177731,
+      "n_frames_scored": 1753,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 64549,
+        "ball_row_missing": 56819,
+        "no_possession": 47604,
+        "stride_skipped": 7006
+      },
+      "n_targets": 1753
+    },
+    {
+      "match_id": "3826",
+      "n_frames_in": 183606,
+      "n_frames_scored": 1661,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 69708,
+        "ball_row_missing": 59558,
+        "no_possession": 46036,
+        "stride_skipped": 6643
+      },
+      "n_targets": 1661
+    },
+    {
+      "match_id": "3827",
+      "n_frames_in": 176476,
+      "n_frames_scored": 2043,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 65257,
+        "ball_row_missing": 54774,
+        "no_possession": 46231,
+        "stride_skipped": 8171
+      },
+      "n_targets": 2043
+    },
+    {
+      "match_id": "3828",
+      "n_frames_in": 191573,
+      "n_frames_scored": 2553,
+      "drop_reasons": {
+        "ball_row_missing": 66815,
+        "ball_far_from_attacked_goal": 61323,
+        "no_possession": 50675,
+        "stride_skipped": 10207
+      },
+      "n_targets": 2553
+    },
+    {
+      "match_id": "3829",
+      "n_frames_in": 185355,
+      "n_frames_scored": 1326,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 63926,
+        "ball_row_missing": 59506,
+        "no_possession": 55299,
+        "stride_skipped": 5298
+      },
+      "n_targets": 1326
+    },
+    {
+      "match_id": "3830",
+      "n_frames_in": 180100,
+      "n_frames_scored": 1095,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 68556,
+        "ball_row_missing": 63232,
+        "no_possession": 42839,
+        "stride_skipped": 4378
+      },
+      "n_targets": 1095
+    },
+    {
+      "match_id": "3831",
+      "n_frames_in": 172575,
+      "n_frames_scored": 1988,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 78891,
+        "no_possession": 45624,
+        "ball_row_missing": 38126,
+        "stride_skipped": 7946
+      },
+      "n_targets": 1988
+    },
+    {
+      "match_id": "3832",
+      "n_frames_in": 182167,
+      "n_frames_scored": 1626,
+      "drop_reasons": {
+        "ball_row_missing": 66645,
+        "ball_far_from_attacked_goal": 60417,
+        "no_possession": 46976,
+        "stride_skipped": 6503
+      },
+      "n_targets": 1626
+    },
+    {
+      "match_id": "3833",
+      "n_frames_in": 192581,
+      "n_frames_scored": 2383,
+      "drop_reasons": {
+        "ball_row_missing": 77195,
+        "ball_far_from_attacked_goal": 61464,
+        "no_possession": 42014,
+        "stride_skipped": 9525
+      },
+      "n_targets": 2383
+    },
+    {
+      "match_id": "3834",
+      "n_frames_in": 180198,
+      "n_frames_scored": 1758,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 74134,
+        "ball_row_missing": 56096,
+        "no_possession": 41182,
+        "stride_skipped": 7028
+      },
+      "n_targets": 1758
+    },
+    {
+      "match_id": "3835",
+      "n_frames_in": 183312,
+      "n_frames_scored": 1419,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 61968,
+        "ball_row_missing": 61948,
+        "no_possession": 52304,
+        "stride_skipped": 5673
+      },
+      "n_targets": 1419
+    },
+    {
+      "match_id": "3836",
+      "n_frames_in": 174947,
+      "n_frames_scored": 1369,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 75152,
+        "no_possession": 48127,
+        "ball_row_missing": 44825,
+        "stride_skipped": 5474
+      },
+      "n_targets": 1369
+    },
+    {
+      "match_id": "3837",
+      "n_frames_in": 177972,
+      "n_frames_scored": 1673,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 61220,
+        "ball_row_missing": 56247,
+        "no_possession": 52146,
+        "stride_skipped": 6686
+      },
+      "n_targets": 1673
+    },
+    {
+      "match_id": "3838",
+      "n_frames_in": 181704,
+      "n_frames_scored": 2362,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 68620,
+        "ball_row_missing": 54897,
+        "no_possession": 46379,
+        "stride_skipped": 9446
+      },
+      "n_targets": 2362
+    },
+    {
+      "match_id": "3839",
+      "n_frames_in": 176403,
+      "n_frames_scored": 2079,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 72491,
+        "ball_row_missing": 52877,
+        "no_possession": 40642,
+        "stride_skipped": 8314
+      },
+      "n_targets": 2079
+    },
+    {
+      "match_id": "3840",
+      "n_frames_in": 186313,
+      "n_frames_scored": 2026,
+      "drop_reasons": {
+        "ball_row_missing": 81001,
+        "ball_far_from_attacked_goal": 55794,
+        "no_possession": 39392,
+        "stride_skipped": 8100
+      },
+      "n_targets": 2026
+    },
+    {
+      "match_id": "3841",
+      "n_frames_in": 190577,
+      "n_frames_scored": 2045,
+      "drop_reasons": {
+        "ball_row_missing": 67031,
+        "ball_far_from_attacked_goal": 59013,
+        "no_possession": 54312,
+        "stride_skipped": 8176
+      },
+      "n_targets": 2045
+    },
+    {
+      "match_id": "3842",
+      "n_frames_in": 174242,
+      "n_frames_scored": 2354,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 76261,
+        "ball_row_missing": 44367,
+        "no_possession": 41845,
+        "stride_skipped": 9415
+      },
+      "n_targets": 2354
+    },
+    {
+      "match_id": "3843",
+      "n_frames_in": 185474,
+      "n_frames_scored": 1978,
+      "drop_reasons": {
+        "ball_row_missing": 68053,
+        "ball_far_from_attacked_goal": 63047,
+        "no_possession": 44488,
+        "stride_skipped": 7908
+      },
+      "n_targets": 1978
+    },
+    {
+      "match_id": "3844",
+      "n_frames_in": 185108,
+      "n_frames_scored": 1308,
+      "drop_reasons": {
+        "ball_row_missing": 87107,
+        "ball_far_from_attacked_goal": 52817,
+        "no_possession": 38649,
+        "stride_skipped": 5227
+      },
+      "n_targets": 1308
+    },
+    {
+      "match_id": "3845",
+      "n_frames_in": 178153,
+      "n_frames_scored": 1396,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 63630,
+        "no_possession": 55637,
+        "ball_row_missing": 51909,
+        "stride_skipped": 5581
+      },
+      "n_targets": 1396
+    },
+    {
+      "match_id": "3846",
+      "n_frames_in": 178030,
+      "n_frames_scored": 1934,
+      "drop_reasons": {
+        "ball_row_missing": 63215,
+        "ball_far_from_attacked_goal": 59564,
+        "no_possession": 45587,
+        "stride_skipped": 7730
+      },
+      "n_targets": 1934
+    },
+    {
+      "match_id": "3847",
+      "n_frames_in": 192338,
+      "n_frames_scored": 1889,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 68430,
+        "ball_row_missing": 61919,
+        "no_possession": 52551,
+        "stride_skipped": 7549
+      },
+      "n_targets": 1889
+    },
+    {
+      "match_id": "3848",
+      "n_frames_in": 176309,
+      "n_frames_scored": 2282,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 70717,
+        "no_possession": 49845,
+        "ball_row_missing": 44342,
+        "stride_skipped": 9123
+      },
+      "n_targets": 2282
+    },
+    {
+      "match_id": "3849",
+      "n_frames_in": 188718,
+      "n_frames_scored": 1820,
+      "drop_reasons": {
+        "ball_row_missing": 69983,
+        "ball_far_from_attacked_goal": 69316,
+        "no_possession": 40321,
+        "stride_skipped": 7278
+      },
+      "n_targets": 1820
+    },
+    {
+      "match_id": "3850",
+      "n_frames_in": 178240,
+      "n_frames_scored": 2802,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 74398,
+        "ball_row_missing": 46295,
+        "no_possession": 43543,
+        "stride_skipped": 11202
+      },
+      "n_targets": 2802
+    },
+    {
+      "match_id": "3851",
+      "n_frames_in": 186711,
+      "n_frames_scored": 2376,
+      "drop_reasons": {
+        "ball_row_missing": 72301,
+        "ball_far_from_attacked_goal": 56724,
+        "no_possession": 45807,
+        "stride_skipped": 9503
+      },
+      "n_targets": 2376
+    },
+    {
+      "match_id": "3852",
+      "n_frames_in": 176114,
+      "n_frames_scored": 2167,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 70077,
+        "no_possession": 57724,
+        "ball_row_missing": 37481,
+        "stride_skipped": 8665
+      },
+      "n_targets": 2167
+    },
+    {
+      "match_id": "3853",
+      "n_frames_in": 178018,
+      "n_frames_scored": 1584,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 65407,
+        "ball_row_missing": 58623,
+        "no_possession": 46072,
+        "stride_skipped": 6332
+      },
+      "n_targets": 1584
+    },
+    {
+      "match_id": "3854",
+      "n_frames_in": 176642,
+      "n_frames_scored": 2025,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 74818,
+        "ball_row_missing": 48876,
+        "no_possession": 42830,
+        "stride_skipped": 8093
+      },
+      "n_targets": 2025
+    },
+    {
+      "match_id": "3855",
+      "n_frames_in": 181685,
+      "n_frames_scored": 2914,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 69595,
+        "ball_row_missing": 56049,
+        "no_possession": 41475,
+        "stride_skipped": 11652
+      },
+      "n_targets": 2914
+    },
+    {
+      "match_id": "3856",
+      "n_frames_in": 193822,
+      "n_frames_scored": 2002,
+      "drop_reasons": {
+        "ball_row_missing": 79960,
+        "ball_far_from_attacked_goal": 61151,
+        "no_possession": 42707,
+        "stride_skipped": 8002
+      },
+      "n_targets": 2002
+    },
+    {
+      "match_id": "3857",
+      "n_frames_in": 178138,
+      "n_frames_scored": 2500,
+      "drop_reasons": {
+        "ball_far_from_attacked_goal": 61644,
+        "ball_row_missing": 59669,
+        "no_possession": 44330,
+        "stride_skipped": 9995
+      },
+      "n_targets": 2500
+    },
+    {
+      "match_id": "3858",
+      "n_frames_in": 185665,
+      "n_frames_scored": 1482,
+      "drop_reasons": {
+        "ball_row_missing": 65790,
+        "ball_far_from_attacked_goal": 65262,
+        "no_possession": 47206,
+        "stride_skipped": 5925
+      },
+      "n_targets": 1482
+    },
+    {
+      "match_id": "3859",
+      "n_frames_in": 187017,
+      "n_frames_scored": 2101,
+      "drop_reasons": {
+        "ball_row_missing": 71985,
+        "ball_far_from_attacked_goal": 56828,
+        "no_possession": 47705,
+        "stride_skipped": 8398
+      },
+      "n_targets": 2101
+    }
+  ],
+  "seed": 42,
+  "tracking_limit": null,
+  "rng_discipline": "per-match placebo streams (substitution_deltas per match+variant, seed pinned)",
+  "lock_commit": "78ffc70",
+  "run_commit": "d1fc18d2fe5404cccd5ee9eb34ea7e1049e9f323",
+  "run_tree_dirty": false
+}

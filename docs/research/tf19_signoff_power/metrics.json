@@ -1,0 +1,290 @@
+{
+  "lock_commit": "6b242cfbd1369500cf65d26a0c4b3fa49c234da6",
+  "run_commit": "6b242cfbd1369500cf65d26a0c4b3fa49c234da6",
+  "run_tree_dirty": false,
+  "n_spells": 37086,
+  "n_treated": 151,
+  "treated_prevalence": 0.004071617321900448,
+  "spells_source": "/tmp/layer2_run/layer2_spells.parquet",
+  "upstream_provenance": {
+    "spells": {
+      "path": "/tmp/layer2_run/layer2_spells.parquet",
+      "run_commit": "6b242cfbd1369500cf65d26a0c4b3fa49c234da6",
+      "run_tree_dirty": false,
+      "commit_consistent": true,
+      "manifests": [
+        "/tmp/layer2_run/layer2_spells_manifest.json",
+        "/tmp/layer2_run/manifest_p0.json",
+        "/tmp/layer2_run/manifest_p1.json",
+        "/tmp/layer2_run/manifest_p2.json",
+        "/tmp/layer2_run/manifest_p3.json",
+        "/tmp/layer2_run/manifest_p4.json",
+        "/tmp/layer2_run/manifest_p5.json",
+        "/tmp/layer2_run/manifest_p6.json",
+        "/tmp/layer2_run/manifest_p7.json"
+      ]
+    },
+    "arm_values": {
+      "path": "/tmp/gkdv_run/arm_values_delta_das.parquet",
+      "run_commit": "93ac3ba7c68369ce2f6da229de3b91f237387d25",
+      "run_tree_dirty": false,
+      "commit_consistent": true,
+      "manifests": [
+        "/tmp/gkdv_run/arm_values_manifest.json",
+        "/tmp/gkdv_run/manifest_p0.json",
+        "/tmp/gkdv_run/manifest_p1.json",
+        "/tmp/gkdv_run/manifest_p2.json",
+        "/tmp/gkdv_run/manifest_p3.json",
+        "/tmp/gkdv_run/manifest_p4.json",
+        "/tmp/gkdv_run/manifest_p5.json",
+        "/tmp/gkdv_run/manifest_p6.json",
+        "/tmp/gkdv_run/manifest_p7.json"
+      ]
+    }
+  },
+  "sizes": [
+    500,
+    1000,
+    2000,
+    4000,
+    8000
+  ],
+  "att": {
+    "Y_attempt": {
+      "base_rate": 0.06867820740980424,
+      "anchors": {
+        "0.1": {
+          "power_by_size": {
+            "500": 0.0,
+            "1000": 0.01,
+            "2000": 0.02,
+            "4000": 0.045,
+            "8000": 0.05
+          },
+          "matched_n_by_size": {
+            "500": 2,
+            "1000": 4,
+            "2000": 7,
+            "4000": 16,
+            "8000": 31
+          },
+          "n_degenerate_by_size": {
+            "500": 62,
+            "1000": 25,
+            "2000": 3,
+            "4000": 0,
+            "8000": 0
+          },
+          "n_distinct_outcome_draws": {
+            "500": 200,
+            "1000": 200,
+            "2000": 200,
+            "4000": 200,
+            "8000": 200
+          },
+          "true_effect": 0.006867820740980424,
+          "base_rate": 0.06867820740980424,
+          "n_replicates": 200
+        },
+        "0.15": {
+          "power_by_size": {
+            "500": 0.0,
+            "1000": 0.01,
+            "2000": 0.015,
+            "4000": 0.045,
+            "8000": 0.055
+          },
+          "matched_n_by_size": {
+            "500": 2,
+            "1000": 4,
+            "2000": 7,
+            "4000": 16,
+            "8000": 31
+          },
+          "n_degenerate_by_size": {
+            "500": 62,
+            "1000": 25,
+            "2000": 3,
+            "4000": 0,
+            "8000": 0
+          },
+          "n_distinct_outcome_draws": {
+            "500": 200,
+            "1000": 200,
+            "2000": 200,
+            "4000": 200,
+            "8000": 200
+          },
+          "true_effect": 0.010301731111470635,
+          "base_rate": 0.06867820740980424,
+          "n_replicates": 200
+        },
+        "0.2": {
+          "power_by_size": {
+            "500": 0.005,
+            "1000": 0.01,
+            "2000": 0.015,
+            "4000": 0.05,
+            "8000": 0.05
+          },
+          "matched_n_by_size": {
+            "500": 2,
+            "1000": 4,
+            "2000": 7,
+            "4000": 16,
+            "8000": 31
+          },
+          "n_degenerate_by_size": {
+            "500": 62,
+            "1000": 25,
+            "2000": 3,
+            "4000": 0,
+            "8000": 0
+          },
+          "n_distinct_outcome_draws": {
+            "500": 200,
+            "1000": 200,
+            "2000": 200,
+            "4000": 200,
+            "8000": 200
+          },
+          "true_effect": 0.013735641481960848,
+          "base_rate": 0.06867820740980424,
+          "n_replicates": 200
+        }
+      }
+    },
+    "Y_close_attempt": {
+      "base_rate": 0.0430081432346438,
+      "anchors": {
+        "0.1": {
+          "power_by_size": {
+            "500": 0.0,
+            "1000": 0.005,
+            "2000": 0.01,
+            "4000": 0.005,
+            "8000": 0.04
+          },
+          "matched_n_by_size": {
+            "500": 2,
+            "1000": 4,
+            "2000": 7,
+            "4000": 16,
+            "8000": 31
+          },
+          "n_degenerate_by_size": {
+            "500": 62,
+            "1000": 25,
+            "2000": 3,
+            "4000": 0,
+            "8000": 0
+          },
+          "n_distinct_outcome_draws": {
+            "500": 200,
+            "1000": 200,
+            "2000": 200,
+            "4000": 200,
+            "8000": 200
+          },
+          "true_effect": 0.00430081432346438,
+          "base_rate": 0.0430081432346438,
+          "n_replicates": 200
+        },
+        "0.15": {
+          "power_by_size": {
+            "500": 0.0,
+            "1000": 0.005,
+            "2000": 0.01,
+            "4000": 0.005,
+            "8000": 0.045
+          },
+          "matched_n_by_size": {
+            "500": 2,
+            "1000": 4,
+            "2000": 7,
+            "4000": 16,
+            "8000": 31
+          },
+          "n_degenerate_by_size": {
+            "500": 62,
+            "1000": 25,
+            "2000": 3,
+            "4000": 0,
+            "8000": 0
+          },
+          "n_distinct_outcome_draws": {
+            "500": 200,
+            "1000": 200,
+            "2000": 200,
+            "4000": 200,
+            "8000": 200
+          },
+          "true_effect": 0.0064512214851965705,
+          "base_rate": 0.0430081432346438,
+          "n_replicates": 200
+        },
+        "0.2": {
+          "power_by_size": {
+            "500": 0.0,
+            "1000": 0.005,
+            "2000": 0.015,
+            "4000": 0.005,
+            "8000": 0.045
+          },
+          "matched_n_by_size": {
+            "500": 2,
+            "1000": 4,
+            "2000": 7,
+            "4000": 16,
+            "8000": 31
+          },
+          "n_degenerate_by_size": {
+            "500": 62,
+            "1000": 25,
+            "2000": 3,
+            "4000": 0,
+            "8000": 0
+          },
+          "n_distinct_outcome_draws": {
+            "500": 200,
+            "1000": 200,
+            "2000": 200,
+            "4000": 200,
+            "8000": 200
+          },
+          "true_effect": 0.00860162864692876,
+          "base_rate": 0.0430081432346438,
+          "n_replicates": 200
+        }
+      }
+    }
+  },
+  "n_min_per_outcome": {
+    "Y_attempt": null,
+    "Y_close_attempt": null
+  },
+  "N_MIN_MATCHED": null,
+  "icc": {
+    "power": {
+      "0.015": 1.0,
+      "0.02": 1.0,
+      "0.026": 1.0
+    },
+    "mean_observed_icc": {
+      "0.015": 0.015370622084129218,
+      "0.02": 0.020619223940853394,
+      "0.026": 0.025517858456367462
+    },
+    "mean_null_icc": {
+      "0.015": 0.007246662368304038,
+      "0.02": 0.008709769617018137,
+      "0.026": 0.010382609663310529
+    },
+    "mean_observed_icc_at_zero": -0.00033506729723101593,
+    "n_replicates": 200,
+    "alpha": 0.05,
+    "n_keepers": 41,
+    "n_single_match_keepers": 8
+  },
+  "note": "FIREWALL: no observed-outcome ATT is computed here. att_power_curve accepts no outcome vector -- only an InjectionSpec it draws from."
+}

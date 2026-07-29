@@ -5,6 +5,58 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.68.0] — 2026-07-29
+
+### Added — TF-19 §6.1 / §3.3 corpus-run results (ADR-037)
+
+Research artifacts plus the two registered constants they resolve. **No behaviour change:** the
+only code edits are the `_validate.py` docstrings recording what the runs measured. No model,
+weights or feature values move.
+
+- **`docs/research/tf19_signoff_power/`** — the §6.1 power curves. **The two legs SPLIT.** The
+  **ICC** leg discharges its registered precondition (§6.1 registers the gate only if detection at
+  the anchor is >= 0.8): **power 1.0 at all three anchors**, with
+  `mean_observed_icc_at_zero = -0.00034` confirming the estimator returns ~zero on no injected
+  effect. The **ATT** leg does not: max power **0.055** against a required 0.80, so
+  `N_MIN_MATCHED` stays `None` — and its meaning changes from "the run has not happened" to "the
+  run happened and no bin reaches 0.80". The degenerate counts make that readable: **0/200 at
+  n=4000 and n=8000**, i.e. an estimable design with no power, not a positivity failure wearing its
+  clothes. This vindicates ADR-037 **F3**, which split two estimands the spec had conflated; they
+  answer oppositely.
+- **`docs/research/tf19_entanglement/`** — the §3.3 measurement that closes **F6**. 179 matches,
+  98,789 opportunities, GK ablation shift **-0.006999** against a cluster placebo band of
+  **0.004690** and a registered floor of 0.01 → **`inside_band`**, giving
+  `regate_verdict(shot, pass, inside_band)` = **`joins_with_caveat`**. The measured value **equals
+  the registered default** 4.60.0 had assumed, so F6 closes by confirmation rather than reversal:
+  the verdict is unchanged but now earned. `commit_consistent: false` is reported honestly (shards
+  at `6b242cf`, analysis at `d1fc18d`) and is checkably benign — 4.66.0 touched no shard-building
+  code.
+- **`docs/research/tf19_pr3b_xs_v2/` gains the clean-provenance re-run** alongside the original,
+  which is kept because ADR-037 and TODO cite it. The 4.60.0 artifact stamped a bare
+  `git rev-parse HEAD` and carries **no `run_tree_dirty` field** at all; the re-run records
+  `lock_commit 78ffc70` (constants frozen 2026-07-23, before any v2 data) with
+  `run_commit d1fc18d`, `run_tree_dirty: false`. It **reproduces** the original: v1
+  `no_valid_placebo`, v2 `pass` → `joins_with_caveat`, 123,430 of 123,430 targets used.
+
+- **Fixed — `_partition.aggregate_manifests`: only manifests that CONTRIBUTED data vote on
+  `commit_consistent`.** The §3.3 artifact reported `commit_consistent: false` off eight worker
+  manifests **unanimously at `6b242cf`** (21–23 matches each, 179 total) plus one analysis manifest
+  at `d1fc18d` carrying **`n_matches: 0`** — it had built nothing, every shard already existing. A
+  pass that contributed no data was voting on the data's lineage, so the flag described the
+  *analysis's* commit rather than the *corpus's*. A guard that cries wolf is worse than no guard: it
+  teaches readers to skim past the one field built to be un-skippable. The rule is fail-safe in both
+  directions — a manifest loses its vote only by **positively declaring zero** work; one with no
+  countable field at all, or whose only output is a counter such as `drop_reasons`, keeps it (both
+  learned from a failing test, not from reasoning). New `commits_seen` reports every commit
+  encountered including non-contributors, so an all-resume aggregate's vacuous `true` stays
+  distinguishable from a genuinely single-commit one. The shipped artifact keeps its original
+  `false` — a research artifact records what was computed, and editing the number afterwards is the
+  falsification this cycle exists to prevent; re-aggregating those same manifests with the fixed
+  code yields `commit_consistent: true`, `run_commit: 6b242cf` (verified).
+
+**Net for TF-19:** `joins_with_caveat` now rests on **two measured inputs** instead of one measured
+and one defaulted. C4 count unchanged (32).
+
 ## [4.67.0] — 2026-07-28
 
 ### Fixed / Added — TF-30 cover shadows: invariant repair, clamp verdict, gated per-defender identity (PR-S136)
