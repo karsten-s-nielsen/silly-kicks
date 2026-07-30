@@ -23,7 +23,13 @@ marker. PRs 2-4 then correct one root cause each.
 
 **Run the suite:** `python -m pytest tests/ -m "not e2e" -q --benchmark-skip`
 **Run one test:** `python -m pytest tests/path/test_x.py::test_name -v`
-**Lint before every commit:** `ruff check silly_kicks tests scripts && ruff format --check silly_kicks tests scripts && pyright silly_kicks`
+**Lint before every commit:** `ruff check silly_kicks tests scripts && ruff format --check silly_kicks tests scripts && pyright`
+
+**`pyright` BARE, never `pyright silly_kicks`.** CI runs it over the whole repo **including `tests/`**,
+so a scoped local run passes while CI fails. An earlier revision of this line said `pyright silly_kicks`
+and that is exactly what happened on PR 1: one `list[FrameAwareTransformer]` vs
+`list[FeatureTransfomer]` invariance error in a new test file, invisible to the scoped run, red on CI.
+The repo has hit this before (ADR-036 cycle).
 
 **Branch:** work on a branch, never `main`. One branch per PR group (`pr1-detection`,
 `pr2-cover-shadows`, `pr3-value-corrections`, `pr4-loader-and-weights`).

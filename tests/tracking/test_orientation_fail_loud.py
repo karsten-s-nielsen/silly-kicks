@@ -276,7 +276,12 @@ def test_feature_column_names_probe_is_silent():
     # this test is not about.
     with warnings.catch_warnings():
         warnings.simplefilter("error", OrientationUnresolvedWarning)
-        names = feature_column_names(tracking_default_xfns, 3)
+        # type: ignore[arg-type] -- `fs` is typed `list[FeatureTransfomer]` and `list` is invariant,
+        # so a `list[FrameAwareTransformer]` is rejected even though the function handles it (it
+        # branches on `is_frame_aware`). Same suppression as the existing calls at
+        # tests/tracking/test_das.py:532 and :1937; the production side carries the mirror-image
+        # ignore at vaep/features/core.py:145.
+        names = feature_column_names(tracking_default_xfns, 3)  # type: ignore[arg-type]
     assert names, "probe returned no column names -- it is no longer exercising the transformers"
 
 
