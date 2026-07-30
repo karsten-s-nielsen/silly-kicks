@@ -1,6 +1,9 @@
 # ADR-051 — ADR-028 orientation defect class: precedence, fail-loud, and the mirror registry
 
 **Status:** Accepted (4.69.0, PR-S137 — PR 1 of 5). RC1 corrected in 4.70.0 (PR-S138 — PR 2 of 5).
+RC2 + RC3 corrected in 4.71.0 (PR-S139 — PR 3 of 5; **committed but NOT RELEASED — ships within
+4.72.0 alongside PR 4**, since correcting the serving geometry without retraining
+`GkCompletionModel` would introduce a train/serve skew that does not exist today).
 **Supersedes:** ADR-045 D6 (partially — see D3)
 **Amends:** ADR-028 (its repair table names two aggregators in error), ADR-041
 **Spec:** `docs/superpowers/specs/2026-07-29-adr028-orientation-defect-class-design.md`
@@ -65,8 +68,15 @@ Period-5 shootouts are exempt — `direction.py`'s `_LTR_KNOWN_PERIODS = (1, 2, 
 excludes them because PSO orientation is undefined.
 
 **Warn, do not raise.** Consumers legitimately hold absolute/unlabelled frames (ADR-029) and a raise
-has no reachable remedy inside a converter; fail-closed belongs in CI, where the opt-out list is
-**zero**.
+has no reachable remedy inside a converter; fail-closed belongs in CI.
+
+**Correction (4.71.0): CI does NOT currently escalate this category.** `pyproject.toml`
+`filterwarnings` escalates `SyntheticEPVWarning` / `IgnoredSurfaceInputsWarning` /
+`MissingFeatureContractWarning` only. The PR 1 phrasing "where the opt-out list is zero" stated an
+intent as though it were a state; the in-suite arc did reach zero emitters, but nothing enforces it.
+This matters now because RC2 makes `resolve_restart_geometry` a genuine emitter on unoriented frames:
+escalating the category would turn that into a hard CI failure, so it is a decision to take
+deliberately (PR 4/5), not a property to assume.
 
 ### D3 — `home_team_id` retires by disuse; it is not removed
 
@@ -130,13 +140,52 @@ corpus rates. The three passer-independent columns and every home row are byte-i
 RC1 marker is deleted; Gate B's stays, because `_cover_shadows.py:1030` is still identity-keyed —
 that is D3, a different defect class, not a partial fix of RC1.
 
+**PR 3 (4.71.0) — RC2 + RC3 corrected.** `_gk_geometry`'s two unreprojected samplers and the
+space-creation OBSO multiplier. **Re-materialize trigger** for `xt_gk*`, `gk_completion`, `enriched_*`
+restart coords and both space-creation columns (away rows only). Three strict xfails deleted
+(13 → 10). Two execution findings worth recording:
+
+- **RC2's symptom was a lost tier, not a wrong number.** The goal-area clamp is an action-LTR own-half
+  predicate; against a raw away-team frame x it rejects a correctly-placed keeper, so those goal kicks
+  silently fell through to the rule-point prior rather than emitting a visibly bad coordinate. Order
+  matters: the clamp must follow the reflection.
+- **RC3 is fixed at the GRID seam, not the multiplier.** The plan specified reflecting
+  `obso_multiplier`; that product also contains a ball-anchored `distance_weight` computed in frame
+  coords, which must never be mirrored — the constraint the opponent-perspective branch already
+  documented. Reflecting `transition_grid`/`epv_grid` instead is correct and additionally fixes the
+  opponent multiplier for free, because it is constructed as a flip of those same artifacts. This is
+  the ADR-041 lesson recurring one layer down: the seam you reflect at is itself a correctness choice.
+
+**RC5 — a distinct member of the class, found during PR 3 and FIXED there (4.71.0).**
+`_gk_geometry._next_event_start` borrowed the *next action's* `start_x`/`start_y` guarded only on
+`game_id`/`period_id` — never on `team_id`. SPADL is per-**acting-team** LTR, so when the next action
+belongs to the other team the borrowed coordinate is a 180° point reflection away. Measured: a
+shared physical point the opponent records as `(45.0, 20.0)` is `(60.0, 48.0)` in the anchor's own
+frame — a 15 m x-error and a 28 m y-error. It feeds `enriched_end_*` and `xt_gk_dest_x/y`, hence RAV.
+
+**Why it belongs in PR 3 rather than PR 4, on ordering grounds:** PR 3 is already release-coupled to
+PR 4's `GkCompletionModel` retrain, and a retrain must run against FINAL geometry. Landing this in
+PR 4 would risk retraining against geometry that changes within the same PR. Every geometry
+correction lands in PR 3; PR 4 then retrains once, against a settled surface.
+
+**It is action-vs-action, not frame-vs-action, so every gate in this ADR is structurally blind to
+it** — the mirror registry reflects *frames*, and this defect lives entirely in the action stream.
+Dedicated tests are therefore the only guard, and they assert the *wrong* value is not produced as
+well as that the right one is. The claim that it was "untestable today" (all fixtures use
+`team_id=[1, 1]`) was true of the existing fixtures only; a two-team fixture is four lines.
+
+An **unattested team id never decides**: `ids_differ` is NA-safe-both-present, so an NA on either
+side leaves the borrowed coordinate untouched rather than reflecting it — the ADR-027 / `retains()`
+rule that "cannot tell" must not silently become "reflect".
+
 **Vindicated by the gates themselves:** Gate B found an **eighth** D3 member the audit missed
 (`add_gk_influence`, whose `_gk_influence.py:371-372` applies the correct both-axes reflection keyed
 on the wrong thing), and Gate A found a **chiral goal-relative transform** (`_geometry.py` has no
 `to_goal_relative_y`) deferred to PR 5 as a retrain trigger.
 
-**14 strict xfails** encode every known defect. Strictness is the point: a fix cannot land without
-deleting its own marker.
+**Strict xfails encode every known defect — 14 registered at PR 1, 10 remaining after PR 3.**
+Strictness is the point: a fix cannot land without deleting its own marker, which is why this count
+is stated as a running one rather than an absolute.
 
 ## Alternatives rejected
 

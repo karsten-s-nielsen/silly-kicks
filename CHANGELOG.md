@@ -5,6 +5,111 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.71.0] — NOT RELEASED (ships within 4.72.0 alongside PR 4)
+
+> **Do not tag `v4.71.0`.** This version is committed and traceable but deliberately never published
+> to PyPI. PR 3 corrects the serving geometry that `GkCompletionModel`'s bundled weights were fitted
+> against; releasing it alone would introduce a train/serve skew that does not exist today. PR 4
+> retrains those weights and bumps to 4.72.0, which is the version that ships. See ADR-051 and
+> `docs/superpowers/plans/2026-07-29-adr028-orientation-defect-class.md`.
+
+### Fixed — ADR-028 RC2 + RC3: two per-action orientation corrections (PR-S139, ADR-051)
+
+PR 3 of 5. **Re-materialize trigger, no forced VAEP retrain.** C4 count unchanged (32). No new ADR —
+RC2 and RC3 are both recorded in ADR-051.
+
+**RC2 — `_gk_geometry` wrote frame coordinates into action-LTR quantities.** `_tracking_gk_xy` and
+`_tracking_ball_xy` sampled positions from the linked frame and returned them unreprojected, while
+their own sibling `_tracking_gk_xy_detected` had always applied the ADR-028 point reflection. Both now
+reproject.
+
+**The two halves failed differently, and the distinction is operational.** In `_tracking_gk_xy` the
+failure was a *systematic loss of the tracking tier* rather than a wild coordinate: the goal-area
+clamp (`gx <= 16.5`) is an own-half predicate in *action-LTR* coords, so applied to a raw away-team
+frame x it rejects a correctly-placed keeper (action-LTR x=5 is frame x=100) and the goal kick fell
+through to the rule-point fallback. The clamp is now applied strictly *after* the reflection, and the
+ordering is commented in place so it is not "tidied" back.
+
+`_tracking_ball_xy` has **no clamp**, so there was nothing to catch a mis-projected ball: restart
+origins and destinations moved by up to a full pitch length — spec §2.2 measured a maximum of
+**101.24 m** (GS) / **99.58 m** (IDSSE). A consumer reading `enriched_start_x` saw a plausible
+on-pitch coordinate at the wrong end.
+
+**RC3 — the space-creation OBSO multiplier was applied unrotated.** `compute_space_created` builds its
+multiplier from the attack-LTR `transition_grid`/`epv_grid` and applies it to a frame-LTR
+pitch-control surface. For an away action the two conventions are a 180° point reflection apart, and
+the measured consequence was that the two emitted columns were **exchanged**:
+
+```
+max |base.created - mirrored.denied |  = 4.44e-16   <- the SWAPPED pair agreed to float noise
+max |base.created - mirrored.created|  = 1.20688    <- while like-for-like did not
+```
+
+The fix point-reflects the two **grids** (both axes), not the finished multiplier — the multiplier
+also contains a ball-anchored `distance_weight` computed in frame coords, which must never be
+mirrored. That is the rule the opponent-perspective branch had already followed and documented.
+Reflecting at the grid seam also corrects the opponent multiplier for free, since it is constructed as
+a flip of the same artifacts.
+
+`compute_space_created` and `_compute_space_creation_for_action` gain a keyword-only
+`attacks_rtl: bool = False`. The flip is computed once per call from the **frames**
+(`acting_team_attacks_rtl`) and threaded in; `home_team_id` remains in both signatures and remains
+unread, because it encodes team identity rather than attacking direction (ADR-051 D1). D3 retires that
+parameter by disuse, not by removal. `space_creation_xfns` delegates to `add_space_creation` and
+inherits the fix — it is not a second seam.
+
+**Downstream — measured away-row change rates** (spec §2.2; one-match point estimates per provider,
+not corpus rates):
+
+| Surface | GS 10502 | IDSSE DFL-MAT-J03WMX |
+|---|---|---|
+| `xt_gk` composite | 19.0% | 0% |
+| `gk_completion` | 17.4% | 0% |
+| `space_creation` (both columns) | 47.4%, max 0.140 m² | 60.0%, max 0.880 m² |
+| restart `enriched_start_x` | 2.55%, max **101.24 m** | 1.11%, max **99.58 m** |
+
+The IDSSE zeroes are not an absence of the defect — that rate is governed entirely by ADR-024
+native-origin trust, which keeps IDSSE on the native tier where RC2's imputation ladder is never
+reached.
+
+The changed surface is wider than the two `enriched_*` pairs: **all 8 `add_restart_coordinates`
+columns** move, including the `*_coord_source` / `*_coord_confidence` provenance, so a consumer
+filtering on confidence (as that function's own docstring example does) will see rows appear and
+disappear. Home rows are unaffected throughout.
+
+Three strict xfail markers are deleted (13 → 10); their pre-fix magnitudes (0.125, 7.0 m, 1.207) are
+retained in the tolerance rationales as the signatures a regression would have to reproduce.
+
+**One documented contract is amended, not silently broken.** `resolve_restart_geometry`'s docstring
+promised it was warning-free, so the `resolve_gk_geometry` shim "can never leak a warning onto the
+frozen `compute_xt_gk` path". Resolving orientation requires `acting_team_attacks_rtl`, which emits
+`OrientationUnresolvedWarning` when nothing resolves — so that promise is now false and the docstring
+says so. The warning is intended: unoriented frames mean the re-projection could not happen, which is
+the exact condition RC2 exists to make audible. The flag is computed **once per call** and threaded
+into all five helper call sites, so a call emits at most one such warning instead of five (and the
+redundant per-helper groupby+merge is gone).
+
+**RC5 — the next-event destination proxy ignored `team_id`.** `_next_event_start` borrows the next
+action's `start_x`/`start_y` as a destination proxy, guarded only on `game_id`/`period_id`. SPADL is
+per-**acting-team** LTR, so when the next action belongs to the other team the borrowed coordinate
+describes the same physical point in the opposite convention — a 180° point reflection away.
+Measured: a shared point the opponent records as `(45.0, 20.0)` is `(60.0, 48.0)` in the anchor's own
+frame (15 m x, 28 m y). It now reflects on a cross-team borrow.
+
+This is **action-vs-action**, not frame-vs-action, so the mirror registry is structurally blind to it
+and dedicated tests are the only guard. An **unattested team id never decides** — `ids_differ` is
+NA-safe-both-present, so an NA on either side leaves the coordinate untouched rather than reflecting
+it (the ADR-027 rule that "cannot tell" must not become "reflect"). Found during this PR's review and
+fixed here rather than in PR 4 on ordering grounds: PR 4 retrains `GkCompletionModel`, and a retrain
+must run against final geometry.
+
+### Fixed — two carried defects unrelated to any RC
+
+- **`SECURITY.md`** advertised `3.x` as the supported line, stale since 4.0.0 (2026-05-30).
+- **`TODO.md`'s TF-19 On-Deck row** carried a 424-character span duplicated verbatim, adding one extra
+  table cell via a single unescaped `|`. The row now matches its 16 peers at 6 unescaped pipes, with
+  both legitimate `\|` escapes preserved.
+
 ## [4.70.0] — 2026-07-29
 
 ### Fixed — ADR-028 RC1: the cover-shadow passer was never reprojected (PR-S138, ADR-051)

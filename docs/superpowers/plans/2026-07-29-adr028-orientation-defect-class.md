@@ -1626,6 +1626,46 @@ rows). No forced VAEP retrain: `cover_shadow_xfns` is a factory in no default xf
 > corrects serving geometry while the bundled weights are still the old ones, which INTRODUCES a
 > skew that does not exist today. Do not tag between these two PRs.
 
+## Version numbering for PR 3 + PR 4 (DECIDED 2026-07-30 — do not re-litigate)
+
+**PR 3 bumps to 4.71.0. PR 4 bumps to 4.72.0. Tag ONLY `v4.72.0`.** 4.71.0 is a real, committed,
+traceable version that is deliberately **never published to PyPI**.
+
+PR 3's CHANGELOG heading must carry the marker inline, because that is the exact line someone reads
+immediately before tagging:
+
+```markdown
+## [4.71.0] — NOT RELEASED (ships within 4.72.0 alongside PR 4)
+```
+
+PR 4 then adds its own `## [4.72.0] — YYYY-MM-DD` section above it and leaves PR 3's heading intact
+(the marker is the historical record of why a version was skipped on PyPI). Use an **em dash** in the
+heading, matching every existing entry.
+
+**Merging is not releasing.** The publish workflow triggers on `tags: ["v*"]` ONLY
+(`.github/workflows/publish.yml:3-5`) and builds from `pyproject.toml`; merging PR 3 publishes
+nothing. So both PRs merge normally as ordinary squash commits — **no merge-setting override is
+needed, and none should be made.** The repo is squash-only by decision (`allow_merge_commit: false`,
+`allow_rebase_merge: false`); commit shape was never the constraint.
+
+**Why not `## [Unreleased]` with no bump in PR 3.** It was considered and REJECTED. It is technically
+safe — an audit confirmed nothing in CI, packaging, tests or scripts reads CHANGELOG.md, the version
+is static in `pyproject.toml`, and `[Unreleased]` is canonical Keep a Changelog — but it violates the
+owner's standing rule that **every PR bumps the version**, which exists as a per-PR traceability
+signal independent of consumer impact. Bumping both and tagging once satisfies that rule *and* the
+release constraint.
+
+**Do not repeat the causal error found during that review.** The only prior `## [Unreleased]` on main
+(PR-S51 → 3.18.0, `6afc398`) is recorded as a release incident, but `[Unreleased]` did **not** cause
+it: the first incident (2.9.0, `fc62ebe`) contained zero occurrences of "Unreleased" and failed
+identically. The invariant across both is *(un-bumped `pyproject.toml`) AND (tag push)*. That is the
+thing to avoid.
+
+**Residual risk is human and unguarded.** Nothing in this repo validates that a pushed tag matches
+`pyproject.toml`'s version, so an erroneous `v4.71.0` push during the PR 3 → PR 4 window would build
+4.70.0-or-4.71.0 artifacts and reproduce the incident. Keep the window short; do not tag from main
+between these two merges for any reason.
+
 ## Task 14: RC2 — reproject in `_gk_geometry`
 
 **Files:**
@@ -1774,6 +1814,59 @@ both space-creation columns. **Must not be released without PR 4.**
 
 ---
 
+## Task 15b: Two carried doc fixes (owner-assigned 2026-07-30)
+
+Both surfaced by the 4.70.0 `/final-review` audit, both **pre-existing on main** and unrelated to any
+RC. Assigned here because they are cheap, local, and need no DGX — deliberately NOT PR 5, which is an
+atomic code+retrain+re-stamp unit that unrelated doc churn would make harder to review.
+
+**Files:**
+- Modify: `SECURITY.md:5-7`
+- Modify: `TODO.md` (the `TF-19` On-Deck row)
+
+- [ ] **Step 1: SECURITY.md supported-versions table**
+
+It still advertises `3.x`, stale since 4.0.0 (2026-05-30) and last touched in the 3.x-era PR-S29.
+Replace the table body:
+
+```markdown
+| Version | Supported          |
+|---------|--------------------|
+| 4.x     | :white_check_mark: |
+| < 4.0   | :x:                |
+```
+
+- [ ] **Step 2: De-duplicate the TF-19 On-Deck row**
+
+The row's Notes cell contains a **424**-character span duplicated verbatim. The seam is a **single
+unescaped `|`**, which adds one extra table cell (the other **two** pipes in that cell are
+`\|`-escaped and render literally — do not "fix" those). The row currently ends:
+
+```
+... **Depends on: TF-15, TF-16, TF-17, TF-18.** | actual_GK) − P(action \| ghost_GK)` for action ∈ {shot, cross, key_pass}, weighted by realized-or-expected outcome value and summed across the build-up window (negative ⇒ deterrent); the counterfactual MUST substitute `predict_mean()` (the deterministic boosted HGBR in `ghost_gk_x/y`), **not** the `predict_density` KDE mode, so no train/serve backend pin is needed (ADR-016). **Depends on: TF-15, TF-16, TF-17, TF-18.** |
+```
+
+Delete the duplicate so it ends at the FIRST occurrence:
+
+```
+... **Depends on: TF-15, TF-16, TF-17, TF-18.** |
+```
+
+- [ ] **Step 3: Verify the table parses as 5 columns**
+
+```bash
+python -c "
+line=[l for l in open('TODO.md',encoding='utf-8').read().split('\n') if l.startswith('| TF-19')][0]
+import re
+# count only UNESCAPED pipes -- \| is a literal, not a separator
+print('unescaped pipes:', len(re.findall(r'(?<!\\\\)\|', line)))
+"
+```
+
+Expected: `6` — matching every other row (5 columns). Before the fix it is 7.
+
+---
+
 # PR 4 — RC4 loader + all weights work
 
 ## Task 16: Orient SkillCorner frames in the loader
@@ -1861,6 +1954,70 @@ git push -u origin pr4-loader-and-weights
 
 PR body must state that xS / xCross / ghost are **verified unaffected** (§3.4 — each resolves the
 defended goal geometrically from GK mean-x) and must NOT be retrained on this basis.
+
+---
+
+## Task 17b: Reproject the passer in the cover-shadow measurement driver (owner-assigned 2026-07-30)
+
+Surfaced by the 4.70.0 audit. `scripts/measure_cover_shadow_argmax_agreement.py:116` builds
+`passer_xy = (float(row["start_x"]), float(row["start_y"]))` and **never reprojects** — verified: the
+file contains no `acting_team_attacks_rtl` call at all. It is the same defect PR 2 fixed in
+`features.py`, surviving in a research driver.
+
+**Assigned to PR 4, not PR 2 or 3, for a substantive reason:** this is the RC4 research-harness class
+(§5 already routes RC4 here), and — more importantly — fixing the code raises the question of whether
+to **re-run** the measurement. Re-running needs owner-tier Gradient Sports data plus a pining token,
+i.e. exactly the DGX/owner session PR 4 already requires. Fixing it in a local PR would correct the
+code but strand the measurement question in a PR that cannot answer it.
+
+**Files:**
+- Modify: `scripts/measure_cover_shadow_argmax_agreement.py:116`
+
+- [ ] **Step 1: Reproject, mirroring the PR 2 fix**
+
+Before the per-action loop:
+
+```python
+    _flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+```
+
+Then at `:116`:
+
+```python
+        passer_xy = (float(row["start_x"]), float(row["start_y"]))
+        if _flip[j]:
+            passer_xy = (FIELD_LENGTH - passer_xy[0], FIELD_WIDTH - passer_xy[1])
+```
+
+Import `acting_team_attacks_rtl`, `FIELD_LENGTH`, `FIELD_WIDTH` from
+`silly_kicks.tracking._action_orientation`. Confirm the loop variable is the positional `j` from
+`enumerate(...)`, as in `features.py`.
+
+- [ ] **Step 2: Decide on a re-run — and do NOT silently invalidate the 4.67.0 gate**
+
+The 0.157 cheap-vs-exact argmax agreement that justified gating `max_single_defender_player_id` in
+4.67.0 was measured with RC1 live. The cheap path consumes the passer; the exact path does not — so
+RC1 degraded exactly one arm of that comparison.
+
+**The verdict survives, and the bound is worth recording rather than re-deriving.** Home rows are
+byte-identical under RC1, so even assuming all 152 of the 970 observed agreements sit on home rows
+AND every away row flips from disagree to agree, post-fix agreement is at most
+`(152 + 549) / 970 = 0.723`, still below the pre-registered 0.90 floor. Reaching 0.90 would require
+an away share ≥74.3% — 18pp above the measured not-home share of 801/1414 — *simultaneously* with a
+100% away flip.
+
+So a re-run is **optional, not required to preserve the gate**. If it is run, record the new figure
+in `docs/research/cover_shadow_identity/` alongside the 0.157, and state explicitly that the original
+was RC1-contaminated. Do **not** overwrite the old number without that note — it is the figure cited
+in CLAUDE.md and the 4.67.0 CHANGELOG.
+
+- [ ] **Step 3: Verify the driver still runs**
+
+```bash
+python scripts/measure_cover_shadow_argmax_agreement.py --help
+```
+
+Expected: usage text, no `UnicodeEncodeError` (the cp1252 `--help` gate covers `scripts/*.py`).
 
 ---
 

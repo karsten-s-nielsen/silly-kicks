@@ -15,7 +15,9 @@ the gate can see anything at all:
    reads neither ``home_team_id`` nor the frames, so both gate legs receive identical actions.
 
 2. **A goal-kick whose native origin is absent, under a native-origin-TRUSTED provider.** This is
-   the combination RC2 (spec 3.2) actually lives on, and it was measured, not assumed:
+   the combination RC2 (spec 3.2) lived on, and it was measured, not assumed. RC2 was FIXED in
+   4.71.0, so the bolded figures below are the PRE-FIX signature -- retained because they are what a
+   regression must reproduce, and because they are what sets this group's tolerance ceiling:
 
    =========================  ==================  =====================  ====================
    goal-kick native origin    frames provider     ``add_gk_completion``  ``add_xt_gk``
@@ -28,8 +30,9 @@ the gate can see anything at all:
 
    (max base-vs-mirror difference over the emitted columns.)
 
-   With a native origin present nothing is imputed, so ``_gk_geometry._tracking_gk_xy`` -- the
-   defective sibling -- is never called and both aggregators are exactly mirror-invariant. Real
+   With a native origin present nothing was imputed, so ``_gk_geometry._tracking_gk_xy`` -- the
+   then-defective sibling -- was never called and both aggregators were exactly mirror-invariant
+   even before the fix. That is why the ABSENT row is the one that discriminates. Real
    Gradient Sports data is ~67% NaN native goal-kick origin (spec 3.2), which is why the tracking
    tier runs at all, so the ABSENT row is the honest one to register.
 
@@ -142,8 +145,11 @@ def register() -> None:
             "A deterministic logistic over exactly-reflected geometry; every fixture coordinate is "
             "an integer, and 105-n / 68-n are exact in binary, so the mirrored scene is bit-exact. "
             "The residual is MEASURED, not assumed: on the same scene with a NATIVE goal-kick "
-            "origin (which bypasses RC2's imputation ladder) base-vs-mirror is exactly 0.0. With "
-            "the origin imputed it is 0.125 -- the RC2 defect below."
+            "origin (which bypasses RC2's imputation ladder) base-vs-mirror is exactly 0.0. Under "
+            "RC2, with the origin imputed, it was 0.125; 4.71.0 reprojects the tracking tier so the "
+            "imputed path now matches the native one. That 0.125 is retained deliberately -- it is "
+            "the magnitude a REGRESSION would have to reproduce, and it sets this tolerance's "
+            "ceiling."
         ),
         role="unused",
         non_vacuity=("gk_completion",),
@@ -153,7 +159,6 @@ def register() -> None:
             "n_candidate_frames": _LINKAGE,
             "link_quality_score": _LINKAGE,
         },
-        defect="RC2: _gk_geometry writes frame coords into an action-LTR quantity (spec 3.2)",
     )
 
     _entry(
@@ -191,7 +196,9 @@ def register() -> None:
             "the completion logistic are all deterministic, and the fixture's integer coordinates "
             "reflect bit-exactly. MEASURED, not assumed: on the same scene with a NATIVE goal-kick "
             "origin every emitted column is base-vs-mirror 0.0 on both a trusted and an untrusted "
-            "provider. With the origin imputed the away goal-kick's origin moves 7.0 m -- RC2."
+            "provider. Under RC2, with the origin imputed, the away goal-kick's origin moved 7.0 m; "
+            "4.71.0 reprojects the tracking tier so the imputed path now matches the native one. "
+            "That 7.0 m is retained deliberately -- it is what a REGRESSION would have to reproduce."
         ),
         role="direction_only",
         non_vacuity=("xt_gk", "xt_gk_rav", "xt_gk_origin_y"),
@@ -205,5 +212,4 @@ def register() -> None:
             "n_candidate_frames": _LINKAGE,
             "link_quality_score": _LINKAGE,
         },
-        defect="RC2: _gk_geometry writes frame coords into an action-LTR quantity (spec 3.2)",
     )

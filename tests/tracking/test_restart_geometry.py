@@ -268,3 +268,172 @@ class TestReport:
         )
         rep = RestartCoordinateReport.from_frame(g)
         assert rep.n_tripwire_reversions == 1
+
+
+class TestTrackingBallReprojection:
+    """ADR-028 RC2: `_tracking_ball_xy` returns an ACTION-LTR quantity sampled from FRAME-LTR rows.
+
+    These exist because the fix's ball half had zero coverage when it landed: every other fixture in
+    this module omits ``team_attacking_direction``, so ``acting_team_attacks_rtl`` resolves nothing,
+    ``flip`` is all-False, and the reprojection branch never executes. A test suite that cannot
+    execute a branch cannot guard it.
+
+    Unlike `_tracking_gk_xy` there is NO goal-area clamp here, so an unreprojected away ball is not
+    quietly dropped to a prior -- it moves by up to a full pitch length (spec section 2.2 measured
+    101.24 m on GS, 99.58 m on IDSSE).
+    """
+
+    @staticmethod
+    def _frames(direction_by_team):
+        rows = []
+        for team, direction in direction_by_team.items():
+            rows.append(
+                dict(
+                    game_id=9,
+                    period_id=1,
+                    frame_id=1250,
+                    time_seconds=50.0,
+                    team_id=team,
+                    player_id=100 + team,
+                    is_goalkeeper=False,
+                    is_ball=False,
+                    x=52.5,
+                    y=34.0,
+                    team_attacking_direction=direction,
+                    source_provider="gradientsports",
+                )
+            )
+        return rows
+
+    @staticmethod
+    def _action(team_id):
+        return pd.DataFrame(
+            dict(
+                game_id=[9],
+                period_id=[1],
+                action_id=[7],
+                team_id=[team_id],
+                type_id=[_CORNER_C],
+                time_seconds=[50.0],
+                start_x=[np.nan],
+                start_y=[np.nan],
+                end_x=[np.nan],
+                end_y=[np.nan],
+            )
+        )
+
+    def _ball_xy(self, *, team_id, ball_xy):
+        """Resolve one action against a frame whose ball sits at ``ball_xy`` (FRAME coords)."""
+        frames = pd.DataFrame(
+            [
+                *self._frames({1: "ltr", 2: "rtl"}),
+                dict(
+                    game_id=9,
+                    period_id=1,
+                    frame_id=1250,
+                    time_seconds=50.0,
+                    team_id=np.nan,
+                    player_id=-1,
+                    is_goalkeeper=False,
+                    is_ball=True,
+                    x=ball_xy[0],
+                    y=ball_xy[1],
+                    team_attacking_direction=None,
+                    source_provider="gradientsports",
+                ),
+            ]
+        )
+        out = _tracking_ball_xy(self._action(team_id), frames, None)
+        return float(out[0, 0]), float(out[0, 1])
+
+    def test_home_and_away_mirrored_scenes_agree_in_action_ltr(self):
+        """The SAME physical situation must yield the SAME action-LTR ball position for both teams."""
+        home = self._ball_xy(team_id=1, ball_xy=(30.0, 20.0))
+        # The away team's physically-identical scene is the 180 degree point reflection.
+        away = self._ball_xy(team_id=2, ball_xy=(105.0 - 30.0, 68.0 - 20.0))
+
+        assert home == pytest.approx((30.0, 20.0))
+        assert away == pytest.approx(home), (
+            f"away action-LTR ball {away} must equal the home twin {home}; a raw frame sample would give (75.0, 48.0)"
+        )
+
+    def test_away_result_differs_from_the_raw_frame_value(self):
+        """Non-vacuity: the reprojection must MEASURABLY move the away ball.
+
+        Without this, the test above would still pass if `flip` were all-False and BOTH legs simply
+        returned raw frame coords for a y-symmetric, x-centred scene.
+        """
+        raw = (75.0, 48.0)
+        away = self._ball_xy(team_id=2, ball_xy=raw)
+        assert away != pytest.approx(raw), "reprojection did not fire -- the branch is unexercised"
+        assert away == pytest.approx((30.0, 20.0))
+
+    def test_home_row_is_byte_identical_to_the_raw_frame_value(self):
+        """Home actions must be untouched: RC2 changes away rows only."""
+        assert self._ball_xy(team_id=1, ball_xy=(75.0, 48.0)) == pytest.approx((75.0, 48.0))
+
+
+class TestNextEventCrossTeamReprojection:
+    """ADR-051: `_next_event_start` borrows the NEXT action's coords as a destination proxy.
+
+    SPADL is per-ACTING-team LTR, so a next action belonging to the OTHER team describes the same
+    physical point in the opposite convention. Borrowing it verbatim placed the anchor's destination
+    at the wrong end of the pitch. Fixed 4.71.0.
+
+    This is an ACTION-vs-ACTION mismatch, so the frames-based mirror registry is structurally blind
+    to it -- these tests are the only guard, which is why they assert the wrong value is NOT produced
+    as well as that the right one is.
+    """
+
+    _PHYS = (60.0, 48.0)  # the shared point in the ANCHOR team's action-LTR frame
+    _OPP = (105.0 - 60.0, 68.0 - 48.0)  # the same point as the OPPONENT records it
+
+    @classmethod
+    def _actions(cls, next_team, *, next_xy=None):
+        return pd.DataFrame(
+            dict(
+                game_id=[9, 9],
+                period_id=[1, 1],
+                action_id=[1, 2],
+                team_id=[1, next_team],
+                start_x=[5.5, (next_xy or cls._OPP)[0]],
+                start_y=[34.0, (next_xy or cls._OPP)[1]],
+            )
+        )
+
+    def test_cross_team_next_event_is_reprojected(self):
+        from silly_kicks.tracking._gk_geometry import _next_event_start
+
+        nx, ny = _next_event_start(self._actions(2))
+        assert (nx[0], ny[0]) == pytest.approx(self._PHYS), (
+            "a cross-team next event must be point-reflected into the anchor's frame"
+        )
+        assert (nx[0], ny[0]) != pytest.approx(self._OPP), "borrowed the opponent's raw coords"
+
+    def test_same_team_next_event_is_borrowed_verbatim(self):
+        """Control: no reflection when the teams match -- otherwise the fix would break the common case."""
+        from silly_kicks.tracking._gk_geometry import _next_event_start
+
+        nx, ny = _next_event_start(self._actions(1, next_xy=self._PHYS))
+        assert (nx[0], ny[0]) == pytest.approx(self._PHYS)
+
+    @pytest.mark.parametrize("teams", [(1, None), (None, 2), (None, None)])
+    def test_unattested_team_id_never_decides(self, teams):
+        """ADR-027: an NA team id must NOT trigger a reflection -- "cannot tell" is not "reflect"."""
+        from silly_kicks.tracking._gk_geometry import _next_event_start
+
+        a = self._actions(2)
+        a["team_id"] = pd.array(list(teams), dtype="Int64")
+        nx, ny = _next_event_start(a)
+        assert (nx[0], ny[0]) == pytest.approx(self._OPP), (
+            "an unattested team id must leave the borrowed coordinate untouched"
+        )
+
+    def test_period_boundary_still_nans_the_borrow(self):
+        """The pre-existing boundary guard must survive the reflection change."""
+        from silly_kicks.tracking._gk_geometry import _next_event_start
+
+        a = self._actions(2)
+        a.loc[1, "period_id"] = 2
+        nx, ny = _next_event_start(a)
+        assert np.isnan(nx[0]) and np.isnan(ny[0])
