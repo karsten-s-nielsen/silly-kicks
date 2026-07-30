@@ -110,23 +110,72 @@ def resolve_gk_geometry(
 
 
 def _next_event_start(actions: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """Next row's start coords (the receiver location), positionally. NaN'd across a
-    (game_id, period_id) boundary (a period-/match-final goalkick must NOT take the next
-    period's first action as its destination -> falls to dest_source == 'unresolved')."""
+    """Next row's start coords (the receiver location), positionally, re-projected into the ANCHOR
+    action's frame. NaN'd across a (game_id, period_id) boundary (a period-/match-final goalkick must
+    NOT take the next period's first action as its destination -> falls to dest_source
+    'unresolved').
+
+    ADR-028 / ADR-051, fixed 4.71.0: SPADL is per-ACTING-team LTR, so when the next action belongs to
+    the OTHER team its ``start_x``/``start_y`` describe the same physical point in the opposite
+    convention -- a 180 degree point reflection away. Borrowing it verbatim put the anchor's
+    destination at the wrong end of the pitch (measured: a shared point the opponent records as
+    ``(45.0, 20.0)`` is ``(60.0, 48.0)`` in the anchor's own frame). This is an ACTION-vs-ACTION
+    mismatch, not the frame-vs-action class the mirror registry covers, so no gate here can see it --
+    it is guarded by dedicated tests instead.
+
+    An UNATTESTED team id never decides (ADR-027 / the ADR-036 ``retains()`` rule): if either side's
+    ``team_id`` is NA the reflection is not applied, because "cannot tell" must not silently become
+    "reflect". Those rows keep the pre-4.71.0 value.
+    """
     nx = actions["start_x"].shift(-1).to_numpy(float)
     ny = actions["start_y"].shift(-1).to_numpy(float)
     same = np.ones(len(actions), dtype=bool)
     for col in ("game_id", "period_id"):
         if col in actions.columns:
             same &= actions[col].to_numpy() == actions[col].shift(-1).to_numpy()
+
+    if "team_id" in actions.columns:
+        from silly_kicks.id_compat import ids_differ
+
+        from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH
+
+        # ids_differ is NA-safe-both-present: it is False whenever either side is NA, which is
+        # exactly the "unattested never decides" behaviour we want here.
+        cross_team = ids_differ(actions["team_id"], actions["team_id"].shift(-1)).to_numpy(dtype=bool)
+        nx = np.where(cross_team, FIELD_LENGTH - nx, nx)
+        ny = np.where(cross_team, FIELD_WIDTH - ny, ny)
+
     nx = np.where(same, nx, np.nan)
     ny = np.where(same, ny, np.nan)
     return nx, ny
 
 
-def _tracking_gk_xy(actions: pd.DataFrame, frames: pd.DataFrame, links: pd.DataFrame | None) -> np.ndarray:
+def _resolve_flip(actions: pd.DataFrame, frames: pd.DataFrame, flip: np.ndarray | None) -> np.ndarray:
+    """ADR-028 per-action re-projection flags, computed once and reused.
+
+    ``acting_team_attacks_rtl`` runs a full-frames mask + groupby + dtype-aligned merge, and it also
+    emits :class:`OrientationUnresolvedWarning` when nothing resolves. Recomputing it per helper
+    therefore costs both time AND duplicate warnings, so ``resolve_restart_geometry`` computes it
+    once and threads it -- the same shape as this package's ``links=`` pre-linking optimisation.
+    ``flip=None`` keeps every direct caller (and every existing test) working unchanged.
+    """
+    if flip is not None:
+        return flip
+    from ._action_orientation import acting_team_attacks_rtl
+
+    return acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+
+
+def _tracking_gk_xy(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    links: pd.DataFrame | None,
+    *,
+    flip: np.ndarray | None = None,
+) -> np.ndarray:
     """Acting-team GK position at each goal-kick's linked frame, CLAMPED to the goal area
     (x <= _GOAL_AREA_DEPTH in LTR own-half coords); NaN where unavailable or off-position."""
+    from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH
     from ._kernels import resolve_frame_ids_by_position
 
     n = len(actions)
@@ -134,6 +183,10 @@ def _tracking_gk_xy(actions: pd.DataFrame, frames: pd.DataFrame, links: pd.DataF
     fid = resolve_frame_ids_by_position(actions, frames, links=links)
     fg = frames.groupby("frame_id")
     team_ids = actions["team_id"].to_numpy()
+    # ADR-028 per-action re-projection flag (True => acting team attacks RTL in the frames => the
+    # frame-sampled GK position must be point-reflected to land in action-LTR). Mirrors the sibling
+    # `_tracking_gk_xy_detected`, which has always done this.
+    flip = _resolve_flip(actions, frames, flip)
     for i in range(n):
         if not np.isfinite(fid[i]):
             continue
@@ -147,6 +200,12 @@ def _tracking_gk_xy(actions: pd.DataFrame, frames: pd.DataFrame, links: pd.DataF
         if gk.empty:
             continue
         gx, gy = float(gk.iloc[0]["x"]), float(gk.iloc[0]["y"])
+        if flip[i]:  # ADR-028: frame home-LTR -> action-LTR for away-team actions
+            gx, gy = FIELD_LENGTH - gx, FIELD_WIDTH - gy
+        # The clamp MUST follow the re-projection: it is an own-half predicate in action-LTR coords.
+        # Applied to a raw away-team frame x it rejects a correctly-placed keeper (action-LTR x=5 is
+        # frame x=100), so RC2 lost the whole tracking tier for away goal kicks rather than emitting
+        # a visibly wrong coordinate.
         if gx <= _GOAL_AREA_DEPTH:  # clamp: off-position GK falls through to the rule point
             res[i] = (gx, gy)
     return res
@@ -159,6 +218,7 @@ def _tracking_gk_xy_detected(
     *,
     window_s: float = 1.0,
     clamp_goal_area: bool,
+    flip: np.ndarray | None = None,
 ) -> np.ndarray:
     """Acting-team GK position resolved from a real broadcast detection within +/- ``window_s`` of
     each action's linked frame (CR 2026-06-30 S3). 'Detected' = the GK's OWN frame row has
@@ -177,7 +237,7 @@ def _tracking_gk_xy_detected(
     detection within +/- ``window_s``."""
     from silly_kicks.id_compat import ids_match
 
-    from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH, acting_team_attacks_rtl
+    from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH
 
     n = len(actions)
     res = np.full((n, 2), np.nan, dtype=float)
@@ -193,7 +253,7 @@ def _tracking_gk_xy_detected(
 
     # ADR-028 per-action re-projection flag (True => acting team attacks RTL in the frames => the
     # frame-sampled GK position must be point-reflected to land in action-LTR).
-    flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    flip = _resolve_flip(actions, frames, flip)
     team_ids = actions["team_id"].to_numpy()
     act_t = actions["time_seconds"].to_numpy(float)
     act_period = actions["period_id"].to_numpy() if "period_id" in actions.columns else np.zeros(n)
@@ -237,10 +297,17 @@ def _truthy_bool(s: pd.Series) -> np.ndarray:
     return s.fillna("").astype(str).str.strip().str.lower().isin(("true", "1", "yes")).to_numpy()
 
 
-def _tracking_ball_xy(actions: pd.DataFrame, frames: pd.DataFrame, links: pd.DataFrame | None) -> np.ndarray:
+def _tracking_ball_xy(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    links: pd.DataFrame | None,
+    *,
+    flip: np.ndarray | None = None,
+) -> np.ndarray:
     """Ball position at each action's linked frame; NaN where unavailable. The ball IS the dead-ball
     restart spot. ADR-019: ``is_ball`` is coerced via :func:`_truthy_bool` (a bare ``.astype(bool)``
     on an object/string column mis-selects -- ``"False"`` is truthy)."""
+    from ._action_orientation import FIELD_LENGTH, FIELD_WIDTH
     from ._kernels import resolve_frame_ids_by_position
 
     n = len(actions)
@@ -249,6 +316,11 @@ def _tracking_ball_xy(actions: pd.DataFrame, frames: pd.DataFrame, links: pd.Dat
     is_ball = _truthy_bool(frames["is_ball"])  # coerce (ADR-019; never .astype(bool) a string)
     ball_frames = frames[is_ball]
     fg = ball_frames.groupby("frame_id")
+    # ADR-028: the ball row is frame-LTR like every other frame quantity; the restart spot this
+    # feeds is an action-LTR quantity. NOTE there is deliberately NO clamp here (unlike
+    # `_tracking_gk_xy`), so an unreprojected away ball moved by up to a full pitch length rather
+    # than falling through to a prior -- spec section 2.2 measured 101.24 m (GS) / 99.58 m (IDSSE).
+    flip = _resolve_flip(actions, frames, flip)
     for i in range(n):
         if not np.isfinite(fid[i]):
             continue
@@ -258,28 +330,31 @@ def _tracking_ball_xy(actions: pd.DataFrame, frames: pd.DataFrame, links: pd.Dat
             continue
         if fr.empty:
             continue
-        res[i] = (float(fr.iloc[0]["x"]), float(fr.iloc[0]["y"]))
+        bx, by = float(fr.iloc[0]["x"]), float(fr.iloc[0]["y"])
+        if flip[i]:  # ADR-028: frame home-LTR -> action-LTR for away-team actions
+            bx, by = FIELD_LENGTH - bx, FIELD_WIDTH - by
+        res[i] = (bx, by)
     return res
 
 
-def _side_y(actions: pd.DataFrame, frames, links) -> np.ndarray:
+def _side_y(actions: pd.DataFrame, frames, links, *, flip: np.ndarray | None = None) -> np.ndarray:
     """Y used to pick a corner/throw-in side: native end_y -> next-event start_y -> tracking-ball y.
     NaN where none resolves (caller leaves the row unresolved -- never guess a side)."""
     side = actions["end_y"].to_numpy(float).copy()
     _, ny = _next_event_start(actions)
     side = np.where(np.isfinite(side), side, ny)
     if frames is not None:
-        ball = _tracking_ball_xy(actions, frames, links)
+        ball = _tracking_ball_xy(actions, frames, links, flip=flip)
         side = np.where(np.isfinite(side), side, ball[:, 1])
     return side
 
 
-def _throwin_x(actions: pd.DataFrame, frames, links) -> np.ndarray:
+def _throwin_x(actions: pd.DataFrame, frames, links, *, flip: np.ndarray | None = None) -> np.ndarray:
     """X along the touchline for a throw-in: next-event start_x -> tracking-ball x. NaN if none."""
     nx, _ = _next_event_start(actions)
     x = nx.copy()
     if frames is not None:
-        ball = _tracking_ball_xy(actions, frames, links)
+        ball = _tracking_ball_xy(actions, frames, links, flip=flip)
         x = np.where(np.isfinite(x), x, ball[:, 0])
     return x
 
@@ -294,10 +369,20 @@ def resolve_restart_geometry(
 ) -> pd.DataFrame:
     """General restart-coordinate enrichment. Returns an index-aligned frame with
     enriched_start_x/_y/enriched_end_x/_y + start_coord_source/start_coord_confidence +
-    end_coord_source/end_coord_confidence. NEVER mutates ``actions``. PURE: emits no warnings and
-    applies no tripwire (the tripwire is a feature-policy step applied at the
-    ``add_restart_coordinates`` edge; spec section 6) -- so the ``resolve_gk_geometry`` shim that
-    delegates here can never leak a warning onto the frozen ``compute_xt_gk`` path.
+    end_coord_source/end_coord_confidence. NEVER mutates ``actions``, and applies no tripwire (the
+    tripwire is a feature-policy step applied at the ``add_restart_coordinates`` edge; spec
+    section 6).
+
+    WARNINGS (amended 4.71.0, ADR-051 RC2): this engine emits no *policy* warning of its own, but it
+    is no longer warning-FREE. Resolving ADR-028 orientation requires ``acting_team_attacks_rtl``,
+    which emits :class:`~silly_kicks.tracking.OrientationUnresolvedWarning` when no action's
+    direction resolves -- so the ``resolve_gk_geometry`` shim CAN now surface that warning on the
+    ``compute_xt_gk`` path when it is handed unoriented frames. That is intended: unoriented frames
+    mean the re-projection silently could not happen, which is precisely the condition RC2 exists to
+    make audible, and it is exactly the state the geometry is unreliable in. The flag is computed
+    ONCE per call and threaded, so a call emits at most one such warning rather than one per helper.
+    Callers who cannot tolerate it should orient their frames (``orient_frames_to_ltr``) rather than
+    filter the warning.
 
     PRECONDITION: ``actions`` is in chronological ``(game_id, period_id, action_id)`` order (the
     ``next_event`` ``shift(-1)`` is positional). The public ``add_restart_coordinates`` sorts first;
@@ -341,10 +426,16 @@ def resolve_restart_geometry(
     # origin IS the keeper (validated 0.4 m vs the detected keeper); they keep native via the normal
     # seed. DESTINATION is unchanged (origin-only), so we never mutate ``eligible`` (the destination
     # cascade reads it); the origin cascade uses ``origin_eligible``. ---
+    # ADR-028 (RC2): resolve the per-action re-projection flags ONCE for the whole call and thread
+    # them into every frame-sampling helper below. Computing them per helper would repeat a
+    # full-frames groupby+merge up to five times AND emit up to five duplicate
+    # OrientationUnresolvedWarnings for a single call.
+    _flip = _resolve_flip(actions, frames, None) if frames is not None else None
+
     origin_eligible = eligible
     if distrust_native_origin and is_gk.any():
         gk_det = (
-            _tracking_gk_xy_detected(actions, frames, links, clamp_goal_area=True)
+            _tracking_gk_xy_detected(actions, frames, links, clamp_goal_area=True, flip=_flip)
             if frames is not None
             else np.full((n, 2), np.nan)
         )
@@ -361,7 +452,7 @@ def resolve_restart_geometry(
     need = (osrc == "unresolved") & origin_eligible
     # tier 2a: goalkick in-area tracking-GK (goalkick ONLY; no tracking_ball for goalkick)
     if frames is not None and (need & is_gk).any():
-        gk = _tracking_gk_xy(actions, frames, links)
+        gk = _tracking_gk_xy(actions, frames, links, flip=_flip)
         use = need & is_gk & np.isfinite(gk[:, 0])
         ox[use], oy[use] = gk[use, 0], gk[use, 1]
         osrc[use], oconf[use] = "tracking_gk", _CONF_TRACKING_GK
@@ -369,15 +460,15 @@ def resolve_restart_geometry(
     # tier 2b: tracking-ball (NON-goalkick eligible rows). Skipped entirely on the goalkick-only
     # (frozen) path -- (need & ~is_gk) is empty there, so _tracking_ball_xy is never called.
     if frames is not None and (need & ~is_gk).any():
-        ball = _tracking_ball_xy(actions, frames, links)
+        ball = _tracking_ball_xy(actions, frames, links, flip=_flip)
         use = need & ~is_gk & np.isfinite(ball[:, 0])
         ox[use], oy[use] = ball[use, 0], ball[use, 1]
         osrc[use], oconf[use] = "tracking_ball", _CONF_TRACKING_BALL
         need = (osrc == "unresolved") & origin_eligible
     # tier 3: restart rule-points (restart-prior types only). _side_y / _throwin_x computed ONLY
     # when a corner/throw-in actually needs them (avoids wasted _tracking_ball_xy on the frozen path).
-    side = _side_y(actions, frames, links) if (need & (is_corner | is_throw)).any() else None
-    twx = _throwin_x(actions, frames, links) if (need & is_throw).any() else None
+    side = _side_y(actions, frames, links, flip=_flip) if (need & (is_corner | is_throw)).any() else None
+    twx = _throwin_x(actions, frames, links, flip=_flip) if (need & is_throw).any() else None
     for i in np.where(need)[0]:
         t = int(tid[i])
         if t == _GOALKICK:
@@ -414,7 +505,7 @@ def resolve_restart_geometry(
         dneed = (dsrc == "unresolved") & eligible
     # tier 3: tracking-ball dest (NON-goalkick eligible rows). Empty on the goalkick-only path.
     if frames is not None and (dneed & ~is_gk).any():
-        ball = _tracking_ball_xy(actions, frames, links)
+        ball = _tracking_ball_xy(actions, frames, links, flip=_flip)
         use = dneed & ~is_gk & np.isfinite(ball[:, 0])
         dx[use], dy[use] = ball[use, 0], ball[use, 1]
         dsrc[use], dconf[use] = "tracking_ball", _CONF_TRACKING_BALL_DEST

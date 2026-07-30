@@ -5237,6 +5237,14 @@ def _precompute_obso_lookup(
     #   (b) the attack-LTR EPV grid must be POINT-reflected into frame orientation.
     # transition_grid is orientation-neutral (ball-anchored) and is NOT flipped.
     #
+    # NOTE (4.71.0) -- `compute_space_created` reads this SAME public parameter the OTHER way: it
+    # treats transition_grid as attack-LTR and point-reflects it. That divergence pre-dates RC3 (its
+    # opponent branch has always flipped it), and RC3 made that module internally consistent rather
+    # than introducing the split. Latent on the default grid, which is symmetric to 4.44e-16, but a
+    # caller injecting an ASYMMETRIC transition_grid into both aggregators will see them disagree.
+    # Reconciling them is a deliberate follow-up, not a silent tidy-up: either direction changes
+    # shipped values for one of the two.
+    #
     # BOTH axes, not just x (ADR-041 second pass): ADR-028's relation is x->105-x AND
     # y->68-y, so the grid transform is [::-1, ::-1]. An x-only flip is exact only for a
     # y-symmetric grid -- which the synthetic ramp default is, and a fitted xT surface
@@ -5576,6 +5584,7 @@ def _compute_space_creation_for_action(
     frame: pd.DataFrame,
     *,
     home_team_id: int | str,
+    attacks_rtl: bool = False,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
@@ -5587,6 +5596,16 @@ def _compute_space_creation_for_action(
     yields both live measurements from the same frame and grid, so
     ``space_created_m2`` and ``space_denied_m2_opponent`` share an identical
     NaN mask by construction.
+
+    ``attacks_rtl`` is the ADR-028 re-projection flag and is REQUIRED for
+    correctness on away-team actions (RC3): without it the attack-LTR EPV /
+    transition artifacts are applied unrotated to a frame-LTR pitch-control
+    surface, which exchanges the two emitted columns.  It must be computed from
+    the FRAMES by the caller (``acting_team_attacks_rtl``) and passed in —
+    ``home_team_id`` encodes team IDENTITY, not attacking DIRECTION, and
+    deriving orientation from it is the D3 defect class (ADR-051 D1).
+    ``home_team_id`` is retained in the signature but deliberately unread; D3
+    retires it by disuse rather than by removal.
     """
     from ._space_creation import _unique_team_ids, compute_space_created
 
@@ -5618,6 +5637,7 @@ def _compute_space_creation_for_action(
         pitch_control_method=pitch_control_method,
         pitch_control_cache=pitch_control_cache,
         include_opponent_perspective=True,
+        attacks_rtl=attacks_rtl,
     )
 
     actor_row = result[ids_match(result["player_id"], player_id)]
@@ -5725,6 +5745,10 @@ def add_space_creation(
     fid_by_pos = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
+    # ADR-028 (RC3) per-action re-projection flag, computed ONCE for the whole call and derived from
+    # the FRAMES -- never from `home_team_id`, which carries identity rather than direction (D1).
+    _flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+
     for col in _SPACE_CREATION_COLUMNS:
         out[col] = np.nan
     # Seeded SEPARATELY from the float pre-seed above on purpose -- see the identical
@@ -5748,6 +5772,7 @@ def add_space_creation(
             action_row,
             frame,
             home_team_id=home_team_id,
+            attacks_rtl=bool(_flip[i]),
             transition_grid=transition_grid,
             epv_grid=epv_grid,
             pitch_control_method=pitch_control_method,

@@ -24,9 +24,12 @@ add_obso             obso_actual / _peak                5.55e-17     0
 add_obso             obso_optimal                       4.996e-16    0
 add_pausa            pausa_spatial / _composite         1.22e-15     0
 add_pausa            pausa_temporal                     0            0
-add_space_creation   space_created_m2                   **1.20688**  0
-add_space_creation   space_denied_m2_opponent           **1.20688**  0
+add_space_creation   space_created_m2                   4.44e-16     0
+add_space_creation   space_denied_m2_opponent           4.44e-16     0
 ===================  ================================  ===========  ===========
+
+The two space-creation rows read **1.20688** until 4.71.0, when RC3 was fixed. That pre-fix value is
+the magnitude a regression must reproduce and is retained in the entry comment below.
 """
 
 from __future__ import annotations
@@ -156,8 +159,9 @@ def register() -> None:
     )
 
     # ------------------------------------------------------------------
-    # add_space_creation -- RC3. Gate A xfails; Gate B PASSES (delta 0), which is the measured
-    # evidence for spec 3.3's "the parameter is dead" claim.
+    # add_space_creation -- RC3, FIXED in 4.71.0. Gate B still PASSES with delta 0, which remains the
+    # measured evidence for spec 3.3's "the `home_team_id` parameter is dead" claim: the fix threads
+    # a frames-derived `attacks_rtl` rather than reading that parameter, so it stays dead by design.
     # ------------------------------------------------------------------
     _entry(
         "add_space_creation",
@@ -172,14 +176,15 @@ def register() -> None:
         basis=_PC_FAMILY_BASIS,
         role="direction_only",
         # Both columns are non-null on BOTH away rows (1.685 / 0.906 created, 0.478 / 0.777
-        # denied), so the xfail below is a real failing comparison, not an empty one.
+        # denied), so this is a real comparison, not an empty one.
         non_vacuity=("space_created_m2", "space_denied_m2_opponent"),
         exempt={"obso_epv_source": _EPV_SOURCE_REASON, **_provenance_exempt()},
-        # Measured shape of the failure: the two columns are EXCHANGED between the legs, which is
-        # exactly spec 3.3's "structurally the two emitted columns are exchanged for away actions".
-        #   max |base.created - mir.denied|  = 4.44e-16
+        # Pre-fix RC3 signature, retained because it is what a REGRESSION must reproduce: the two
+        # columns were EXCHANGED between the legs, exactly spec 3.3's "the two emitted columns are
+        # exchanged for away actions".
+        #   max |base.created - mir.denied|  = 4.44e-16   <- the SWAPPED pair agreed to float noise
         #   max |base.denied  - mir.created| = 2.22e-16
-        #   max |base.created - mir.created| = 1.20688   <- the delta this xfail records
-        # i.e. the swapped comparison agrees to float noise while the like-for-like one does not.
-        defect="RC3: unrotated EPV multiplier at _space_creation.py:216 (spec 3.3)",
+        #   max |base.created - mir.created| = 1.20688    <- while like-for-like did not
+        # 4.71.0 reflects the attack-LTR transition/EPV grids into frame coords, so like-for-like now
+        # agrees and the swap is gone. A re-introduced RC3 would flip those two magnitudes back.
     )

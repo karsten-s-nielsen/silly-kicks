@@ -85,6 +85,7 @@ def compute_space_created(
     obso_sigma_y: float = 17.0,
     pitch_control_cache: PitchControlCache | None = None,
     include_opponent_perspective: bool = False,
+    attacks_rtl: bool = False,
 ) -> pd.DataFrame:
     """Per-player space creation via leave-one-out differential OBSO.
 
@@ -95,9 +96,9 @@ def compute_space_created(
     With ``include_opponent_perspective=True``, the SAME leave-one-out is
     additionally evaluated on the opposing team's OBSO surface (the player
     acting as a defender of that surface), weighed by the opponent's OWN
-    attacking geometry: the same transition/EPV grid artifacts MIRRORED along
-    x to the goal the opponent attacks (the ball-distance weight stays
-    ball-anchored). Grid resolution, sigmas, and pitch-control method are
+    attacking geometry: the same transition/EPV grid artifacts POINT-REFLECTED
+    (both axes) to the goal the opponent attacks (the ball-distance weight
+    stays ball-anchored). Grid resolution, sigmas, and pitch-control method are
     shared, so ``*_m2`` magnitudes are directly comparable — but the mirrored
     weighting makes the opponent LOO a genuine independent measurement (an
     unmirrored shared multiplier degenerates it to the exact pointwise
@@ -136,6 +137,16 @@ def compute_space_created(
         When True, also emit ``space_denied_m2_opponent`` (see above) and
         REQUIRE the frame to contain exactly two team ids (raises
         ``ValueError`` otherwise — corrupt input fails loud).
+    attacks_rtl : bool
+        ADR-028 re-projection flag: True when the attacking team attacks
+        right-to-left *in the frame's* coordinate convention, so the attack-LTR
+        ``transition_grid``/``epv_grid`` must be point-reflected (both axes) to
+        align with the frame-LTR pitch-control surface.  Callers must derive
+        this from the FRAMES via
+        :func:`~silly_kicks.tracking._action_orientation.acting_team_attacks_rtl`
+        — never from ``home_team_id``, which encodes identity, not direction
+        (ADR-051 D1).  Default False preserves the pre-4.71.0 behaviour for
+        already-attack-oriented callers.
 
     Returns
     -------
@@ -204,6 +215,21 @@ def compute_space_created(
     transition_interp = _interpolate_grid(transition_grid, (ny, nx))
     epv_interp = _interpolate_grid(epv_grid, (ny, nx))
 
+    # ADR-028 (RC3): `transition_grid` / `epv_grid` are ATTACK-LTR artifacts (value increases toward
+    # the goal the acting team attacks), while the pitch-control surface and `distance_weight` below
+    # are FRAME-LTR. Point-reflect the attack-LTR pair into frame coords when the acting team attacks
+    # RTL, BOTH axes (ADR-041: an x-only mirror is exact only on a y-symmetric grid).
+    #
+    # Reflect the two GRIDS, never the finished `obso_multiplier`: that product also contains
+    # `distance_weight`, which is anchored at the real ball position in frame coords and must never
+    # be mirrored -- the same rule the opponent branch below already follows and says so at its
+    # NOTE. Doing it here also makes the opponent multiplier correct for free: it is built as
+    # flip(transition_interp), so under a flipped input it correctly resolves back to the
+    # unreflected artifacts (the opponent attacks the other goal).
+    if attacks_rtl:
+        transition_interp = np.flip(transition_interp, axis=(0, 1))
+        epv_interp = np.flip(epv_interp, axis=(0, 1))
+
     ball_x, ball_y = ball_position
     xx, yy = np.meshgrid(grid_x, grid_y)
     distance_weight = np.exp(
@@ -216,7 +242,7 @@ def compute_space_created(
     obso_multiplier = effective_transition * epv_interp  # (ny, nx) -- constant
 
     # Opponent perspective: the opponent's OWN attacking geometry — the SAME
-    # transition/EPV artifacts mirrored along x (the opponent attacks the other
+    # transition/EPV artifacts point-reflected on BOTH axes (the opponent attacks the other
     # goal); the ball-distance weight stays ball-anchored. Without the mirror the
     # complementary PC surface makes the opponent LOO the exact pointwise negation
     # of the team LOO (informationally empty — lakehouse round-2 rejection).
@@ -306,7 +332,7 @@ def _analytical_leave_one_out(
     With ``include_opponent=True``, the opponent-attacking surface is the
     exact complement of the same decomposition (Spearman: def/(att+def);
     F&B: sigmoid(def-att)) — zero extra PC computations — but it is weighed by
-    ``obso_multiplier_opponent`` (the x-MIRRORED transition/EPV geometry of the
+    ``obso_multiplier_opponent`` (the POINT-REFLECTED transition/EPV geometry of the
     goal the opponent attacks). The mirror is what decouples the opponent LOO
     from the team LOO: under the shared unmirrored multiplier the complement
     made it the exact pointwise negation (4.23.0 defect).
