@@ -1526,7 +1526,7 @@ git commit -m "docs: correct the ADR-028 repair claim for space_creation + cover
 
 ```bash
 python -m pytest tests/ -m "not e2e" -q --benchmark-skip
-ruff check silly_kicks tests scripts && ruff format --check silly_kicks tests scripts && pyright silly_kicks
+ruff check silly_kicks tests scripts && ruff format --check silly_kicks tests scripts && pyright
 git push -u origin pr1-detection
 gh pr create --title "test(tracking): ADR-028 detection -- fixtures, fail-loud seam, 33-aggregator mirror registry" --body "See docs/superpowers/specs/2026-07-29-adr028-orientation-defect-class-design.md PR 1. Test-only + one warning category; no shipped value changes."
 ```
@@ -1592,7 +1592,9 @@ Verify the `_get_cs(pid, fid, tid, passer_xy)` call receives the reprojected tup
 
 - [ ] **Step 4: Delete the xfail marker**
 
-Remove `defect="RC1: ..."` from the `add_cover_shadows` entry in `tests/tracking/_mirror_registry.py`.
+Remove `defect="RC1: ..."` from the `add_cover_shadows` entry. PR 1 split the entries out of
+`_mirror_registry.py` into the `tests/tracking/_mirror_entries/` package, so the edit lands in
+`tests/tracking/_mirror_entries/influence_family.py`. Leave `defect_b=` in place — that is D3.
 
 - [ ] **Step 5: Run**
 

@@ -1,6 +1,6 @@
 # ADR-051 — ADR-028 orientation defect class: precedence, fail-loud, and the mirror registry
 
-**Status:** Accepted (4.69.0, PR-S137 — PR 1 of 5)
+**Status:** Accepted (4.69.0, PR-S137 — PR 1 of 5). RC1 corrected in 4.70.0 (PR-S138 — PR 2 of 5).
 **Supersedes:** ADR-045 D6 (partially — see D3)
 **Amends:** ADR-028 (its repair table names two aggregators in error), ADR-041
 **Spec:** `docs/superpowers/specs/2026-07-29-adr028-orientation-defect-class-design.md`
@@ -118,8 +118,17 @@ tolerance nobody can revisit on evidence is a number, not a decision.
 
 ## Consequences
 
-**This PR:** no shipped feature value changes, no retrain, C4 unchanged (32). One new public warning
-category.
+**PR 1 (4.69.0):** no shipped feature value changes, no retrain, C4 unchanged (32). One new public
+warning category.
+
+**PR 2 (4.70.0) — RC1 corrected:** the cover-shadow passer is reprojected into frame coords at both
+seams. **Re-materialize trigger, no forced VAEP retrain** (`cover_shadow_xfns` is in no default xfn
+list). The two affected columns were measured separately and do NOT share a rate: on away rows
+`n_blocked_receivers` changed on 77.8% (GS 10502) / 85.0% (IDSSE DFL-MAT-J03WMX), cheap-path
+`max_single_defender_blocking_score` on 90.7% / 100% — one-match point estimates per §2.2, not
+corpus rates. The three passer-independent columns and every home row are byte-identical. Gate A's
+RC1 marker is deleted; Gate B's stays, because `_cover_shadows.py:1030` is still identity-keyed —
+that is D3, a different defect class, not a partial fix of RC1.
 
 **Vindicated by the gates themselves:** Gate B found an **eighth** D3 member the audit missed
 (`add_gk_influence`, whose `_gk_influence.py:371-372` applies the correct both-axes reflection keyed

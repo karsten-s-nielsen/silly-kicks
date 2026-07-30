@@ -3678,6 +3678,13 @@ def add_cover_shadows(
     pointer_lookup = pointers.set_index("action_id")
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
+    # ADR-028 (RC1): `start_x`/`start_y` are ACTION-LTR, while every position `passer_xy` is
+    # compared against below -- defenders, receivers, the ball -- is FRAME-LTR. Reproject the
+    # PASSER into frame coords, not the frame into action-LTR: everything downstream of this
+    # tuple is frame-convention, and the one place that steps out to action-LTR (the xT lookup
+    # at `_cover_shadows.py:1164`) already reprojects itself. Computed ONCE per call.
+    _flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+
     for j, (_idx, row) in enumerate(actions.iterrows()):
         aid = row["action_id"]
         tid = row["team_id"]
@@ -3696,6 +3703,8 @@ def add_cover_shadows(
             continue
 
         passer_xy = (float(row["start_x"]), float(row["start_y"]))
+        if _flip[j]:
+            passer_xy = (FIELD_LENGTH - passer_xy[0], FIELD_WIDTH - passer_xy[1])
 
         cs = _cs_mod._compute_cover_shadow_dict(
             frame_data,
@@ -3850,6 +3859,9 @@ def cover_shadow_xfns(
             # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns
             # resolve frame_id by position, never .at on a non-unique action_id).
             fid_by_pos = _kernels.resolve_frame_ids_by_position(slot, frames)
+            # ADR-028 (RC1), per SLOT: each gamestate slot is its own action frame, so the flip
+            # is resolved against that slot rather than the a0 slot.
+            slot_flip = acting_team_attacks_rtl(slot, frames).to_numpy(dtype=bool)
 
             for j, (_idx, row) in enumerate(slot.iterrows()):
                 tid = row["team_id"]
@@ -3862,7 +3874,12 @@ def cover_shadow_xfns(
                     float(row["start_x"]),
                     float(row["start_y"]),
                 )
+                if slot_flip[j]:
+                    passer_xy = (FIELD_LENGTH - passer_xy[0], FIELD_WIDTH - passer_xy[1])
 
+                # NOTE: `_get_cs` rounds `passer_xy` INTO its cache key, so the reprojection must
+                # happen BEFORE this call. Reprojecting after would serve a home-oriented surface
+                # to an away action while looking correct at the call site.
                 cs = _get_cs(pid, fid, tid, passer_xy)
                 if cs is None:
                     continue

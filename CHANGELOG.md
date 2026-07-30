@@ -5,6 +5,48 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.70.0] — 2026-07-29
+
+### Fixed — ADR-028 RC1: the cover-shadow passer was never reprojected (PR-S138, ADR-051)
+
+PR 2 of 5. **Re-materialize trigger, no forced VAEP retrain.**
+
+- **`add_cover_shadows` and `cover_shadow_xfns` compared an ACTION-LTR passer against FRAME-LTR
+  positions.** Both seams built `passer_xy = (row["start_x"], row["start_y"])` and differenced it
+  against defenders, receivers and the ball — all of which are frame-convention — without ever
+  calling `acting_team_attacks_rtl`. For an away-team action the two conventions are a 180° point
+  reflection apart (ADR-028), so the passer entered the geometry at the wrong end of the pitch.
+  `_cover_shadows.py:1164-1168` is the defect in one screenshot: it reprojects the RECEIVER to
+  action-LTR for the xT lookup, then two lines later differences a raw frame-coordinate receiver
+  against the action-LTR passer. The module knew the distinction and mixed conventions anyway.
+- **The passer is reprojected INTO frame coords, not the frame into action-LTR** — everything
+  downstream of that tuple is frame-convention, and the one place that steps out (the xT lookup)
+  already reprojects itself. The flip is computed once per call (per *slot* in the xfns path, since
+  each gamestate slot is its own action frame).
+- **In the xfns path the reprojection must precede `_get_cs`**, which rounds `passer_xy` into its
+  cache key. Reprojecting after the key is built would serve a home-oriented surface to an away
+  action while looking correct at the call site.
+
+**Scope, measured per column:** `n_blocked_receivers` and — cheap path only —
+`max_single_defender_blocking_score` change. `blocking_score`, `blocked_threat_fraction` and
+`n_potential_receivers` are passer-independent and are byte-identical; under `detailed=True` the
+max-single column comes from the pitch-control counterfactual and is also unaffected. Home-team rows
+are byte-identical throughout. The two affected columns were measured **separately**, and they do not
+share a rate — on away rows, `n_blocked_receivers` changed on **77.8%** (GS match 10502) / **85.0%**
+(IDSSE DFL-MAT-J03WMX), and cheap-path `max_single_defender_blocking_score` on **90.7%** / **100%**.
+Per the spec these are one-match point estimates per provider, not corpus rates. The atomic mirror at
+`atomic/tracking/features.py:1169` is a thin rename-and-delegate adapter and inherits the fix rather
+than being a third site.
+
+**No forced VAEP retrain:** `cover_shadow_xfns` is a factory in no default xfn list. Consumers
+persisting the two affected columns re-materialize. C4 count unchanged (32). No new ADR — RC1 is
+already recorded in ADR-051, and agreeing with a recorded decision does not need one.
+
+**Gate A's strict xfail for RC1 is deleted, not flipped to xpass.** Gate B's marker *stays*:
+`_cover_shadows.py:1030` still keys `attacking_toward_high_x` on identity rather than direction. That
+is D3, which the spec keeps out of this cycle (byte-identical on converter output), and it is a
+different defect class from RC1 — not a partial fix of the same one.
+
 ## [4.69.0] — 2026-07-29
 
 ### Added — ADR-028 orientation defect class: DETECTION (PR-S137, ADR-051)
