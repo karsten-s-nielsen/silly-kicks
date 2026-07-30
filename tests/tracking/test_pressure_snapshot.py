@@ -34,6 +34,18 @@ EXPECTED_SHAS = {
 
 
 def _build_fixture():
+    # ADR-028 orientation labelling. The frames are the canonical home-attacks-right
+    # convention, so the team named "home" carries "ltr" and "away" carries "rtl";
+    # ball rows carry None, matching what convert_to_frames emits (acting_team_attacks_rtl
+    # filters ball rows out anyway).
+    #
+    # pressure_on_actor takes no home_team_id, and the low-x-half tie-break does not
+    # discriminate here: defenders are generated as actor +/- U(-8, 8), so both teams
+    # occupy the same x distribution (mean ~50). The team NAMES are the only signal.
+    #
+    # Every action in this fixture is by "home", so the resolved flip is all-False and the
+    # snapshot values are unchanged -- but it is now all-False because the direction
+    # RESOLVED to "no flip for a home-team action", not because the lookup silently failed.
     np.random.seed(42)
     n_actions = 50
     n_defenders_per_action = 5
@@ -68,6 +80,7 @@ def _build_fixture():
                 "vx": 0.0,
                 "vy": 0.0,
                 "speed": 0.0,
+                "team_attacking_direction": "ltr",
                 "source_provider": "synthetic",
             }
         )
@@ -85,6 +98,7 @@ def _build_fixture():
                 "vx": 0.0,
                 "vy": 0.0,
                 "speed": 0.0,
+                "team_attacking_direction": None,
                 "source_provider": "synthetic",
             }
         )
@@ -107,6 +121,7 @@ def _build_fixture():
                     "vx": d_vx,
                     "vy": d_vy,
                     "speed": float(np.hypot(d_vx, d_vy)),
+                    "team_attacking_direction": "rtl",
                     "source_provider": "synthetic",
                 }
             )

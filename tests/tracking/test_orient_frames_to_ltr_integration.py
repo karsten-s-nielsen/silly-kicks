@@ -11,6 +11,7 @@ resolution. Pure synthetic -> intentionally NOT marked @pytest.mark.e2e (concern
 """
 
 import pandas as pd
+import pytest
 
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import orient_frames_to_ltr
@@ -114,8 +115,18 @@ def test_oriented_gk_clusters_at_attacked_goal():
 
 
 def test_unoriented_control_is_bimodal():
-    """Sanity: WITHOUT orient, the away-team shot's GK is at the wrong end."""
-    enriched = add_pre_shot_gk_position(_actions(), _abs_frames())
+    """Sanity: WITHOUT orient, the away-team shot's GK is at the wrong end.
+
+    This is the NEGATIVE control for the orientation helper, so it deliberately feeds absolute
+    (unoriented) frames. ADR-028 D2 makes that audible: asserted with ``pytest.warns`` rather
+    than filtered, so the control keeps announcing itself. If this path ever goes silent again,
+    this test fails -- which is the point, since a silent unoriented path is the defect the whole
+    seam exists to surface.
+    """
+    from silly_kicks.tracking import OrientationUnresolvedWarning
+
+    with pytest.warns(OrientationUnresolvedWarning):
+        enriched = add_pre_shot_gk_position(_actions(), _abs_frames())
     gk_x = enriched.set_index("action_id")["pre_shot_gk_x"]
     # One near the attacked goal, one far -> bimodal (the bug).
     assert max(gk_x[1], gk_x[2]) >= 95.0

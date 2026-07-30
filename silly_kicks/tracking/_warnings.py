@@ -14,6 +14,7 @@ from __future__ import annotations
 __all__ = [
     "IgnoredSurfaceInputsWarning",
     "MissingFeatureContractWarning",
+    "OrientationUnresolvedWarning",
     "RunValueCoverageWarning",
     "SyntheticEPVWarning",
     "UnverifiableFeatureContractWarning",
@@ -106,6 +107,35 @@ class UnverifiableFeatureContractWarning(UserWarning):
 
         warnings.filterwarnings("error", category=MissingFeatureContractWarning)
         warnings.filterwarnings("default", category=UnverifiableFeatureContractWarning)
+    """
+
+
+class OrientationUnresolvedWarning(UserWarning):
+    """``acting_team_attacks_rtl`` could not resolve a direction and returned an all-False flip.
+
+    An all-False flip means NO ADR-028 re-projection is applied, so every away-team action's
+    geometry silently mixes coordinate conventions: an action-LTR anchor against frame-LTR
+    positions. Measured on one canonical away action, labelled frames vs the same frames with the
+    direction column dropped -- ``nearest_defender_distance`` 7.6158 -> 19.6977,
+    ``receiver_zone_density`` 1 -> 0.
+
+    Not hypothetical: the pining loader shipped SkillCorner frames with
+    ``team_attacking_direction`` null on 100% of rows, so an entire provider's action-coupled
+    geometry was computed unoriented with no signal of any kind.
+
+    WARN rather than raise, deliberately. Consumers legitimately hold absolute/unlabelled frames
+    (ADR-029) and a raise has no reachable remedy inside a converter; fail-closed belongs in CI.
+    The one silent case is "there were no actions to flip" -- deliberately narrower than "either
+    input was empty", because empty frames with live actions is a caller error.
+
+    Examples
+    --------
+    Treat an unresolved orientation as fatal in a production pipeline::
+
+        import warnings
+        from silly_kicks.tracking import OrientationUnresolvedWarning
+
+        warnings.filterwarnings("error", category=OrientationUnresolvedWarning)
     """
 
 

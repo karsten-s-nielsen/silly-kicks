@@ -147,6 +147,19 @@ def _pc_frames() -> pd.DataFrame:
     ``link_actions_to_frames`` resolve). Extra columns/players are additive: the
     aggregator call-count + cache-equality assertions below only key on
     ``(frame_id, team)`` identity, so they are unaffected.
+
+    ``team_attacking_direction`` is set per non-ball row so ``acting_team_attacks_rtl``
+    (ADR-028) can actually RESOLVE a direction instead of silently defaulting to
+    "no flip". Team 1 is ``"ltr"`` and team 2 is ``"rtl"``, which is the only reading
+    the rest of the fixture supports: the consumers pass ``home_team_id=1``, team 1
+    occupies the low-x half (40-80 m vs team 2's 60-103 m), and team 2's goalkeeper
+    stands at x=103 -- i.e. team 2 DEFENDS the x=105 goal, so team 2 attacks
+    right-to-left. Ball rows carry ``None``, the convention ``convert_to_frames``
+    emits (and ``acting_team_attacks_rtl`` filters them out anyway).
+
+    Both fixture actions are taken by team 1 (``"ltr"``), so the resolved flip mask is
+    still all-False and no computed value moves -- but it is now all-False because the
+    frames SAY so, not because the orientation was unresolvable.
     """
     rows: list[dict] = []
     # Attacking team (1): teammates AHEAD of the ball (x>50) become cover-shadow receivers.
@@ -162,6 +175,7 @@ def _pc_frames() -> pd.DataFrame:
                 "y": y,
                 "is_ball": False,
                 "is_goalkeeper": False,
+                "team_attacking_direction": "ltr",
             }
         )
     # Defending team (2): outfield lane-blockers + a goalkeeper near its own goal (x=105).
@@ -183,6 +197,7 @@ def _pc_frames() -> pd.DataFrame:
                 "y": y,
                 "is_ball": False,
                 "is_goalkeeper": gk,
+                "team_attacking_direction": "rtl",
             }
         )
     rows.append(
@@ -196,6 +211,7 @@ def _pc_frames() -> pd.DataFrame:
             "y": 34.0,
             "is_ball": True,
             "is_goalkeeper": False,
+            "team_attacking_direction": None,
         }
     )
     df = pd.DataFrame(rows)

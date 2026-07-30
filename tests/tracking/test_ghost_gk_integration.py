@@ -115,7 +115,13 @@ def _build_synthetic_parquets(
     tmpdir: Path,
     n_games: int = 3,
 ) -> tuple[Path, Path, Path]:
-    """Build synthetic tracking + actions parquets + home_teams.json."""
+    """Build synthetic tracking + actions parquets + home_teams.json.
+
+    ORIENTED (ADR-028), matching ``_make_ghost_gk_frames``: team "1" keeps its GK at
+    x=5 (defends x=0) so it attacks x=105 -> "ltr"; team "2" keeps its GK at x=100 so
+    it attacks x=0 -> "rtl". ``home_teams.json`` names "1" as home, so this is the
+    canonical home-attacks-right frame convention.
+    """
     tracking_dir = tmpdir / "tracking"
     actions_dir = tmpdir / "actions"
     tracking_dir.mkdir()
@@ -134,7 +140,6 @@ def _build_synthetic_parquets(
                 frame_rate=25.0,
                 ball_state="alive",
                 source_provider="gradientsports",  # classified fully-observed provider (PR-S115 detected-only filter)
-                team_attacking_direction=None,
                 confidence=None,
                 visibility=None,
                 is_goalkeeper_source="native",
@@ -152,6 +157,7 @@ def _build_synthetic_parquets(
                     "speed": 2.0,
                     "is_ball": True,
                     "is_goalkeeper": False,
+                    "team_attacking_direction": None,
                 }
             )
             rows.append(
@@ -166,6 +172,7 @@ def _build_synthetic_parquets(
                     "speed": 0.0,
                     "is_ball": False,
                     "is_goalkeeper": True,
+                    "team_attacking_direction": "ltr",
                 }
             )
             for i, (px, py) in enumerate([(20, 25), (22, 30), (21, 38), (23, 45)]):
@@ -181,6 +188,7 @@ def _build_synthetic_parquets(
                         "speed": 0.5,
                         "is_ball": False,
                         "is_goalkeeper": False,
+                        "team_attacking_direction": "ltr",
                     }
                 )
             for i, (px, py) in enumerate([(40, 30), (45, 34), (38, 40), (50, 34)]):
@@ -196,6 +204,7 @@ def _build_synthetic_parquets(
                         "speed": 1.0,
                         "is_ball": False,
                         "is_goalkeeper": False,
+                        "team_attacking_direction": "rtl",
                     }
                 )
             rows.append(
@@ -210,6 +219,7 @@ def _build_synthetic_parquets(
                     "speed": 0.0,
                     "is_ball": False,
                     "is_goalkeeper": True,
+                    "team_attacking_direction": "rtl",
                 }
             )
 
@@ -233,7 +243,10 @@ class TestRoundTripTrainPredict:
     def test_round_trip(self):
         from silly_kicks.tracking import prepare_ghost_gk_training_data
 
-        # Build multi-frame fixture
+        # Build multi-frame fixture. ORIENTED (ADR-028): team 1's GK at x=5 defends
+        # x=0 so team 1 attacks x=105 ("ltr"); team 2's GK at x=100 defends x=105 so
+        # team 2 attacks x=0 ("rtl"). home_team_id=1 below, so this is the canonical
+        # home-attacks-right frame convention.
         rows = []
         for fid in range(1, 11):
             ts = float(fid) * 0.04
@@ -245,7 +258,6 @@ class TestRoundTripTrainPredict:
                 frame_rate=25.0,
                 ball_state="alive",
                 source_provider="gradientsports",  # classified fully-observed provider (PR-S115 detected-only filter)
-                team_attacking_direction=None,
                 confidence=None,
                 visibility=None,
                 is_goalkeeper_source="native",
@@ -263,6 +275,7 @@ class TestRoundTripTrainPredict:
                     "speed": 2.0,
                     "is_ball": True,
                     "is_goalkeeper": False,
+                    "team_attacking_direction": None,
                 }
             )
             rows.append(
@@ -277,6 +290,7 @@ class TestRoundTripTrainPredict:
                     "speed": 0.0,
                     "is_ball": False,
                     "is_goalkeeper": True,
+                    "team_attacking_direction": "ltr",
                 }
             )
             for i, (px, py) in enumerate([(20, 25), (22, 30), (21, 38), (23, 45)]):
@@ -292,6 +306,7 @@ class TestRoundTripTrainPredict:
                         "speed": 0.5,
                         "is_ball": False,
                         "is_goalkeeper": False,
+                        "team_attacking_direction": "ltr",
                     }
                 )
             for i, (px, py) in enumerate([(40, 30), (45, 34), (38, 40), (50, 34)]):
@@ -307,6 +322,7 @@ class TestRoundTripTrainPredict:
                         "speed": 1.0,
                         "is_ball": False,
                         "is_goalkeeper": False,
+                        "team_attacking_direction": "rtl",
                     }
                 )
             rows.append(
@@ -321,6 +337,7 @@ class TestRoundTripTrainPredict:
                     "speed": 0.0,
                     "is_ball": False,
                     "is_goalkeeper": True,
+                    "team_attacking_direction": "rtl",
                 }
             )
 

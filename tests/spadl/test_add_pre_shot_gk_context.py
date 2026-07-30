@@ -648,6 +648,33 @@ class TestFramesKwargNanSafety:
                     visibility=None,
                     source_provider="test",
                 ),
+                # The ACTING team's row. Not decorative: acting_team_attacks_rtl derives the
+                # ADR-028 flip from the ACTING team's team_attacking_direction, so without a
+                # team-200 row this frame resolves no direction at all and the helper returns
+                # an all-False flip (OrientationUnresolvedWarning) rather than a decided one.
+                # Direction/geometry mirror the sibling _build_frames_for_pr_s21_actions
+                # fixture; the flip stays False, so every emitted value is unchanged.
+                dict(
+                    game_id=1,
+                    period_id=1,
+                    frame_id=3000,
+                    time_seconds=10.0,
+                    frame_rate=25.0,
+                    player_id=701,
+                    team_id=200,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=90.0,
+                    y=34.0,
+                    z=float("nan"),
+                    speed=2.0,
+                    speed_source="native",
+                    ball_state="alive",
+                    team_attacking_direction="ltr",
+                    confidence=None,
+                    visibility=None,
+                    source_provider="test",
+                ),
             ]
         )
         out = add_pre_shot_gk_context(actions, frames=frames)

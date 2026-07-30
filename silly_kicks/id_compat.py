@@ -192,6 +192,28 @@ def _raw_comparable(a: pd.Series, b: pd.Series) -> bool:
     return _directly_comparable(a.dtype, b.dtype)
 
 
+def _boxed_object_pair(a: pd.Series, b: pd.Series) -> bool:
+    """Both sides object, but at least one holds BOXED NON-STRINGS -> a merge silently misses.
+
+    Dtype alone cannot license an object-vs-object merge, for exactly the reason
+    :func:`_raw_comparable` content-probes the object-vs-object COMPARISON: a boxed ``10.0``
+    is not equal to the string ``"10"``, so pandas merges the pair happily and matches NOTHING.
+    ``infer_ball_carrier`` emits object columns of floats, so this pair occurs in practice.
+
+    Until this guard, :func:`align_join_keys` treated every object pair as a no-op fast path
+    while ``ids_equal`` canonicalized the same pair -- the module contradicted itself. Surfaced
+    by the ADR-028 fail-loud seam: ``acting_team_attacks_rtl`` merges actions to frames on
+    ``team_id``, and on this dtype pair the merge matched zero rows, giving an all-False
+    re-projection flip and away-team geometry left in the wrong convention.
+
+    Costs one ``infer_dtype`` probe per side, and ONLY on object-vs-object pairs -- every
+    numeric path short-circuits before reaching here.
+    """
+    if a.dtype.kind != "O" or b.dtype.kind != "O":
+        return False
+    return not (_all_genuine_strings(a) and _all_genuine_strings(b))
+
+
 _NULLABLE_INT_NAMES = ("Int64", "Int32", "Int16", "Int8", "UInt64", "UInt32", "UInt16", "UInt8")
 
 
@@ -463,10 +485,16 @@ def align_join_keys(left: pd.DataFrame, right: pd.DataFrame, keys: list):
     ``pd.merge(left_on=..., right_on=...)`` allows but a same-name aligner could not
     bridge without pair support).
 
-    Per key: if both sides are merge-compatible (both numeric, OR both object -- pandas
-    merges those fine) -> no-op (fast path, zero cost); else (numeric vs object) coerce
-    both to canonical string. Returns (left, right) copies ready for the merge. Prevents
-    the ValueError pandas raises on a numeric-vs-object merge key (ADR-019).
+    Per key: if both sides are merge-compatible AND not a boxed-object pair -> no-op (fast
+    path); else coerce both to canonical string. Returns (left, right) copies ready for the
+    merge. Prevents the ValueError pandas raises on a numeric-vs-object merge key (ADR-019).
+
+    "Both object" is NOT automatically safe, and an earlier revision of this docstring said it
+    was ("pandas merges those fine"). Pandas does merge them -- it just matches NOTHING when one
+    side holds boxed numerics and the other genuine strings, because ``10.0 != "10"``. That case
+    is now content-probed by :func:`_boxed_object_pair`, mirroring what :func:`_raw_comparable`
+    already did for comparisons; before it, this function contradicted ``ids_equal`` on the very
+    same pair of columns.
 
     Examples
     --------
@@ -503,7 +531,7 @@ def align_join_keys(left: pd.DataFrame, right: pd.DataFrame, keys: list):
         lk, rk = (k, k) if isinstance(k, str) else (k[0], k[1])
         if lk not in left.columns or rk not in right.columns:
             continue
-        if _merge_compatible(left[lk].dtype, right[rk].dtype):
+        if _merge_compatible(left[lk].dtype, right[rk].dtype) and not _boxed_object_pair(left[lk], right[rk]):
             continue
         left[lk] = canonical_id_series(left[lk])
         right[rk] = canonical_id_series(right[rk])

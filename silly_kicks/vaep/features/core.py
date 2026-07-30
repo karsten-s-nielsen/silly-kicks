@@ -122,12 +122,29 @@ def feature_column_names(fs: list[FeatureTransfomer], nb_prev_actions: int = 3) 
             dummy_actions[c] = dummy_actions[c].astype(str)
     gs = gamestates(dummy_actions, nb_prev_actions)  # type: ignore
     empty_frames = _empty_tracking_frames()
+
+    # This is a NAME probe: every transformer below is called purely so its output COLUMNS can be
+    # read at the return, and the values are discarded. Frame-aware transformers therefore run
+    # against deliberately empty frames, which makes `acting_team_attacks_rtl` emit
+    # OrientationUnresolvedWarning (ADR-028 D2) -- ~12 of them per `VAEP.fit` on a frame-aware
+    # xfn list. That warning is a real signal about VALUES, and this call reads none, so it is
+    # noise HERE and only here. Scoped to this loop, never package-wide: a consumer escalating the
+    # category must still hear it from every path that actually computes geometry.
+    #
+    # Function-local import, matching vaep/base.py:177 -- keeps vaep -> tracking off the
+    # import-time graph.
+    import warnings as _warnings
+
+    from silly_kicks.tracking import OrientationUnresolvedWarning as _OrientWarn
+
     parts = []
-    for f in fs:
-        if is_frame_aware(f):
-            parts.append(f(gs, empty_frames))  # type: ignore[call-arg]  # frame-aware xfn has wider signature than FeatureTransfomer alias
-        else:
-            parts.append(f(gs))
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore", _OrientWarn)
+        for f in fs:
+            if is_frame_aware(f):
+                parts.append(f(gs, empty_frames))  # type: ignore[call-arg]  # frame-aware xfn has wider signature than FeatureTransfomer alias
+            else:
+                parts.append(f(gs))
     return list(pd.concat(parts, axis=1).columns.values)
 
 

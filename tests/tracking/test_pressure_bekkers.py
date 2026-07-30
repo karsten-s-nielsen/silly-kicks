@@ -289,7 +289,11 @@ def test_bekkers_no_ball_rows_anywhere_falls_back_to_player_only() -> None:
             "type_id": [0],
         }
     )
-    # Frames with NO is_ball=True rows
+    # Frames with NO is_ball=True rows.
+    # team_attacking_direction is declared (ADR-028): these are home-attacks-right frames,
+    # so "home" -> "ltr" and "away" -> "rtl". The acting team is "home", so the per-action
+    # flip resolves to False and no re-projection applies -- but it now resolves from the
+    # data instead of falling out of an unresolvable-direction default.
     frames = pd.DataFrame(
         [
             {
@@ -297,6 +301,7 @@ def test_bekkers_no_ball_rows_anywhere_falls_back_to_player_only() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": "home",
+                "team_attacking_direction": "ltr",
                 "player_id": 10,
                 "is_ball": False,
                 "x": 50.0,
@@ -311,6 +316,7 @@ def test_bekkers_no_ball_rows_anywhere_falls_back_to_player_only() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": "away",
+                "team_attacking_direction": "rtl",
                 "player_id": 100,
                 "is_ball": False,
                 "x": 52.0,
@@ -348,6 +354,7 @@ def test_bekkers_no_ball_rows_with_opt_out_succeeds() -> None:
             "type_id": [0],
         }
     )
+    # home-attacks-right frames (ADR-028): "home" -> "ltr", "away" -> "rtl".
     frames = pd.DataFrame(
         [
             {
@@ -355,6 +362,7 @@ def test_bekkers_no_ball_rows_with_opt_out_succeeds() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": "home",
+                "team_attacking_direction": "ltr",
                 "player_id": 10,
                 "is_ball": False,
                 "x": 50.0,
@@ -369,6 +377,7 @@ def test_bekkers_no_ball_rows_with_opt_out_succeeds() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": "away",
+                "team_attacking_direction": "rtl",
                 "player_id": 100,
                 "is_ball": False,
                 "x": 52.0,
@@ -412,6 +421,9 @@ def test_bekkers_per_action_ball_absence_falls_back_to_player_only() -> None:
             "type_id": [0, 0],
         }
     )
+    # home-attacks-right frames (ADR-028): "home" -> "ltr", "away" -> "rtl",
+    # ball rows None (the convention convert_to_frames emits; acting_team_attacks_rtl
+    # filters is_ball rows out before building its direction lookup).
     frames = pd.DataFrame(
         [
             # Action 1 frame: ball PRESENT
@@ -420,6 +432,7 @@ def test_bekkers_per_action_ball_absence_falls_back_to_player_only() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": "home",
+                "team_attacking_direction": "ltr",
                 "player_id": 10,
                 "is_ball": False,
                 "x": 50.0,
@@ -434,6 +447,7 @@ def test_bekkers_per_action_ball_absence_falls_back_to_player_only() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": None,
+                "team_attacking_direction": None,
                 "player_id": None,
                 "is_ball": True,
                 "x": 50.0,
@@ -448,6 +462,7 @@ def test_bekkers_per_action_ball_absence_falls_back_to_player_only() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": "away",
+                "team_attacking_direction": "rtl",
                 "player_id": 100,
                 "is_ball": False,
                 "x": 52.0,
@@ -463,6 +478,7 @@ def test_bekkers_per_action_ball_absence_falls_back_to_player_only() -> None:
                 "period_id": 1,
                 "time_seconds": 1.0,
                 "team_id": "home",
+                "team_attacking_direction": "ltr",
                 "player_id": 11,
                 "is_ball": False,
                 "x": 50.0,
@@ -477,6 +493,7 @@ def test_bekkers_per_action_ball_absence_falls_back_to_player_only() -> None:
                 "period_id": 1,
                 "time_seconds": 1.0,
                 "team_id": "away",
+                "team_attacking_direction": "rtl",
                 "player_id": 101,
                 "is_ball": False,
                 "x": 52.0,
@@ -537,6 +554,8 @@ def test_bekkers_raises_on_missing_velocity_cols() -> None:
             "type_id": [0],
         }
     )
+    # Oriented like the other fixtures ("home" -> "ltr", "away" -> "rtl") so the ONLY
+    # defect in this frame is the missing velocity schema, not an unresolvable direction.
     frames = pd.DataFrame(
         [
             {
@@ -544,6 +563,7 @@ def test_bekkers_raises_on_missing_velocity_cols() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": "home",
+                "team_attacking_direction": "ltr",
                 "player_id": 10,
                 "is_ball": False,
                 "x": 50.0,
@@ -556,6 +576,7 @@ def test_bekkers_raises_on_missing_velocity_cols() -> None:
                 "period_id": 1,
                 "time_seconds": 0.0,
                 "team_id": "away",
+                "team_attacking_direction": "rtl",
                 "player_id": 100,
                 "is_ball": False,
                 "x": 52.0,

@@ -225,6 +225,15 @@ class TestAddGkCompletion:
             (21, 2, False, 55.0, 30.0),
             (-1, -1, False, 6.0, 34.0),
         ]
+        # ADR-028 orientation is DECLARED, not left null: without team_attacking_direction
+        # acting_team_attacks_rtl returns an all-False flip for the "frames make no
+        # orientation claim" reason, so this fixture exercised the no-flip path by accident
+        # rather than by geometry. Team 1 occupies the low-x half (GK x=5.0, outfielder
+        # x=30.0) => it defends the x=0 goal => it attacks LEFT-TO-RIGHT in these frames.
+        # Team 2 (GK x=100.0, outfielder x=55.0) is the mirror, so "rtl". Ball rows carry
+        # None, matching what convert_to_frames emits (acting_team_attacks_rtl filters
+        # is_ball rows out anyway).
+        direction = {1: "ltr", 2: "rtl"}
         return pd.DataFrame(
             [
                 dict(
@@ -239,6 +248,7 @@ class TestAddGkCompletion:
                     is_ball=(pid == -1),
                     x=x,
                     y=y,
+                    team_attacking_direction=(None if pid == -1 else direction[team]),
                     source_provider="sportec",
                 )
                 for pid, team, gk, x, y in rows

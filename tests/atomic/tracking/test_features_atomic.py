@@ -298,6 +298,30 @@ def test_atomic_pre_shot_gk_recognizes_shot_penalty():
         }
     )
     rows = [
+        # Acting team (team_id=1) MUST be present with a direction label, or
+        # acting_team_attacks_rtl cannot resolve the ADR-028 flip. Mirrors the
+        # shared `atomic_shot_actions_and_frames_with_gk` fixture above.
+        dict(
+            game_id=1,
+            period_id=1,
+            frame_id=3000,
+            time_seconds=10.0,
+            frame_rate=25.0,
+            player_id=11,
+            team_id=1,
+            is_ball=False,
+            is_goalkeeper=False,
+            x=90.0,
+            y=34.0,
+            z=float("nan"),
+            speed=2.0,
+            speed_source="native",
+            ball_state="alive",
+            team_attacking_direction="ltr",
+            confidence=None,
+            visibility=None,
+            source_provider="test",
+        ),
         dict(
             game_id=1,
             period_id=1,

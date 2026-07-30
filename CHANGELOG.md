@@ -5,6 +5,74 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.69.0] — 2026-07-29
+
+### Added — ADR-028 orientation defect class: DETECTION (PR-S137, ADR-051)
+
+PR 1 of 5. **Test-only plus one public warning category — no shipped feature value changes, no
+retrain.** This lands the gate *before* the corrections, so it is observed failing on real defects
+rather than arriving green: the anti-rot meta-assertion went red listing all 33 aggregators before
+a single entry existed, and every known defect ships as a strict xfail whose fix is forced to delete
+its own marker.
+
+- **`silly_kicks.tracking.OrientationUnresolvedWarning`** (new public category) —
+  `acting_team_attacks_rtl` returned an all-False re-projection flip **silently** on four distinct
+  unresolvable inputs, so away-team geometry mixed coordinate conventions with no signal. Measured
+  on one canonical away action, labelled frames vs the same frames unlabelled:
+  `nearest_defender_distance` **7.6158 → 19.6977**, `receiver_zone_density` **1 → 0**. Specified by
+  OUTCOME, not by enumerated condition — any all-False return that is not "there were no actions to
+  flip" warns. That framing matters: an enumerated fix missed the join-key branch, and a *fifth*
+  branch (the post-merge "nothing resolved" case, reachable when the acting team is absent from the
+  frames or the id spellings differ) was found only after the first implementation shipped. Period-5
+  shootouts are exempt (orientation is undefined there by design). Warn rather than raise, because
+  consumers legitimately hold absolute frames (ADR-029) and a raise has no reachable remedy inside a
+  converter. **CI can escalate it with an opt-out list of zero.**
+- **`tests/tracking/test_mirror_registry.py` + `_mirror_entries/`** — a registry-driven pair of gates
+  over **all 33** registered tracking `add_*`, with two meta-assertions pinning the registry to
+  `tracking.__all__` in both directions. **Gate A** is the ADR-028 physical mirror (detects
+  convention mixing). **Gate B** varies `home_team_id` over `{home, away, nonsense}` on FIXED frames
+  (detects identity-keyed direction). Two gates because one instrument cannot see both classes:
+  swapping `home_team_id` restores the very invariant identity-keying assumes, so Gate A is
+  *structurally blind* to that defect class — which is exactly how Gate B found an eighth D3 member
+  the audit missed.
+- **Fixture repair** — `synthesize_actions` stamped `start_x`/`start_y` from raw FRAME positions, so
+  its away actions were in frame convention: an ADR-028 passer defect was **unexpressible** on it and
+  a *correct* implementation would have failed. Measured 9/10 actions equal to the raw frame position
+  and **0/10** to the point reflection. Now emits action-LTR unconditionally, with team balance as an
+  opt-in `balance_teams` parameter (sampling policy belongs at the call site; correctness does not).
+  `gradientsports` attacking direction is derived from geometry instead of a hardcoded `"ltr"` scalar
+  that labelled both teams the same way.
+
+### Fixed
+
+- **`align_join_keys` treated every object-vs-object key pair as merge-safe** — but a boxed-numeric
+  object (`10.0`) against a genuine string (`"10"`) merges happily and matches **nothing**. The module
+  contradicted itself: `ids_equal` already content-probes this exact pair via `_raw_comparable`
+  (ADR-043). Now probed identically, at cost only on object-vs-object pairs. Found by the new
+  orientation seam, whose action→frame merge was silently resolving zero rows on that dtype pair.
+- **`_xshot_occurrence` merged with a raw `.astype(str)`** where int64 `1` becomes `"1"` and float64
+  `1.0` becomes `"1.0"`, so the join missed every row and `add_xshot_occurrence` returned **all-NaN**
+  while `compute_xshot_occurrence` returned real values on the same frames. Routed through
+  `align_join_keys`, reconciling it with its structural twin `_xcross_attempt`.
+- **`vaep.features.core.feature_column_names`** is a NAME probe — it calls every frame-aware
+  transformer against deliberately empty frames purely to read output column names, discarding the
+  values. It emitted ~12 orientation warnings per `VAEP.fit`; suppression is scoped to that loop
+  only, never package-wide.
+- **CLAUDE.md's ADR-028 repair table was wrong about two of the six aggregators it names** —
+  `space_creation` was never reprojected (its `home_team_id` is a dead parameter), and
+  `cover_shadows` is only half reprojected (the receiver, never the passer). A third,
+  `gk_influence`, reprojects correctly but keys on team IDENTITY rather than attacking DIRECTION.
+
+### Known defects, registered as strict xfails (not fixed here)
+
+14 markers: 4 for the RC1/RC2/RC3 value corrections (PRs 2–3), 8 for the D3 identity-keying re-key
+targets (the seven predicted by the spec **plus `add_gk_influence`**, found by Gate B), and 2 for a
+chiral goal-relative transform deferred to PR 5 — `_geometry.py` has no `to_goal_relative_y`, so the
+two ends of the pitch use frames of opposite handedness and every bearing feature negates (xS 12/27
+features, xCross 3/16). See `docs/superpowers/specs/2026-07-29-adr028-orientation-defect-class-design.md`.
+
+C4 count unchanged (32): no new action-coupled aggregator.
+
 ## [4.68.0] — 2026-07-29
 
 ### Added — TF-19 §6.1 / §3.3 corpus-run results (ADR-037)

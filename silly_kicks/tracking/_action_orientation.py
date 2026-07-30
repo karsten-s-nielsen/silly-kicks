@@ -118,6 +118,43 @@ def validate_period_directions(frames: pd.DataFrame, *, caller: str) -> None:
             )
 
 
+def _is_shootout_only(actions: pd.DataFrame) -> bool:
+    """True iff EVERY action is period 5 (PSO), where orientation is undefined by design.
+
+    ``direction.py``'s ``_LTR_KNOWN_PERIODS = (1, 2, 3, 4)`` already excludes period 5 because
+    shootout direction has no meaning, and ``test_off_ball_runs_orientation.py`` pins period-5
+    frames as an ACCEPTED unoriented shape. Warning about it would be noise, not signal.
+
+    Requires EVERY action to be period 5: a call mixing a shootout with real play still has
+    resolvable rows, so it must still warn.
+    """
+    if "period_id" not in actions.columns or len(actions) == 0:
+        return False
+    return bool((actions["period_id"] == 5).all())
+
+
+def _warn_unresolved(reason: str) -> None:
+    """One message for every silent-failure exit (ADR-028 D2).
+
+    Specified by OUTCOME, not by enumerated condition: any all-False return that is not "there
+    were no actions to flip" warns. An enumerated fix rots the next time a branch is added --
+    which is exactly how the join-key branch was missed when this fix was first specified as
+    "absent or all-null".
+    """
+    import warnings
+
+    from ._warnings import OrientationUnresolvedWarning
+
+    warnings.warn(
+        f"acting_team_attacks_rtl: returning an all-False flip ({reason}). No ADR-028 "
+        "re-projection will be applied, so away-team geometry will silently mix coordinate "
+        "conventions. Orient the frames first -- convert_to_frames(output_convention='ltr') "
+        "or tracking.orient_frames_to_ltr().",
+        OrientationUnresolvedWarning,
+        stacklevel=3,
+    )
+
+
 def acting_team_attacks_rtl(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
@@ -141,9 +178,19 @@ def acting_team_attacks_rtl(
         Boolean Series index-aligned to ``actions``.
     """
     flip = pd.Series(False, index=actions.index)
-    if len(actions) == 0 or len(frames) == 0:
+    if len(actions) == 0:
+        return flip  # nothing to flip -- the ONE legitimate silent no-op
+    # Period-5 (PSO) orientation is undefined by design, so an unresolved direction there is
+    # expected rather than a defect. Suppresses the WARNING only; the all-False return below is
+    # unchanged, so no behaviour moves.
+    _quiet = _is_shootout_only(actions)
+    if len(frames) == 0:
+        if not _quiet:
+            _warn_unresolved("frames is empty")
         return flip
     if "team_attacking_direction" not in frames.columns:
+        if not _quiet:
+            _warn_unresolved("frames has no team_attacking_direction column")
         return flip
 
     # Adapt the join keys to whatever team-direction identity is present on BOTH frames
@@ -152,11 +199,15 @@ def acting_team_attacks_rtl(
     # it -- the linker itself keys on (period_id, frame_id), not game_id).
     keys = [k for k in ("game_id", "period_id", "team_id") if k in actions.columns and k in frames.columns]
     if "team_id" not in keys or "period_id" not in keys:
+        if not _quiet:
+            _warn_unresolved("actions and frames do not share the team_id + period_id join keys")
         return flip
 
     players = frames[~frames["is_ball"].astype(bool)]
     players = players[players["team_attacking_direction"].notna()]
     if players.empty:
+        if not _quiet:
+            _warn_unresolved("team_attacking_direction is present but entirely null")
         return flip
 
     # One direction per key tuple: first non-null (constant within a period).
@@ -174,6 +225,19 @@ def acting_team_attacks_rtl(
     left, lookup = align_join_keys(left, lookup, keys)
     keyed = left.merge(lookup, on=keys, how="left")
     keyed.index = actions.index
+
+    # THE ESCAPE ROUTE the early-exit branches cannot see (ADR-028 D2). `.fillna(False)` below
+    # turns an all-NaN merge into an all-False flip with no signal, so frames that are labelled
+    # and keyed can still silently no-op: the acting team may simply be absent from the frames,
+    # or the join keys may carry different id spellings (measured during the D2 sweep --
+    # actions keyed `game_id="idsse_J03WMX"` against frames keyed `"J03WMX"`). Both looked
+    # oriented and were not.
+    #
+    # The signal is NOTHING RESOLVED, not nothing flipped: a legitimately all-home action set
+    # also yields an all-False flip and must stay silent. A PARTIAL miss is silent too -- ADR-027
+    # NaN-team rows never resolve, and warning on those would fire on healthy GS data every call.
+    if not _quiet and not keyed["_dir"].notna().any():
+        _warn_unresolved("no action's join key matched any frame row (team absent, or id spellings differ)")
     return (keyed["_dir"] == "rtl").fillna(False)
 
 

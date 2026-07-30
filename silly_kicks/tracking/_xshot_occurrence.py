@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
-from silly_kicks.id_compat import ids_match
+from silly_kicks.id_compat import align_join_keys, ids_match
 from silly_kicks.tracking import _geometry as _geo
 from silly_kicks.tracking._ball_carrier import (
     DEFAULT_CARRIER_PARAMS,
@@ -951,11 +951,16 @@ def add_xshot_occurrence(
     ].copy()
     linked = pointers.merge(actions[["action_id", "game_id", "period_id", "team_id"]], on="action_id", how="left")
     # P2: align BOTH game_id AND team_id dtypes (provider asymmetry: int64 vs object).
-    for col_name in ("game_id", "team_id"):
-        if len(linked) and len(xcol) and linked[col_name].dtype != xcol[col_name].dtype:
-            linked[col_name] = linked[col_name].astype(str)
-            xcol[col_name] = xcol[col_name].astype(str)
-    merged = linked.merge(xcol, on=["game_id", "period_id", "frame_id", "team_id"], how="left")
+    #
+    # Routed through align_join_keys, NOT a raw .astype(str). The bare cast was an ADR-019
+    # violation that silently emptied this merge: an int64 team_id 1 stringifies to "1" while a
+    # float64 1.0 stringifies to "1.0", so the keys never matched and `add_xshot_occurrence`
+    # returned all-NaN while `compute_xshot_occurrence` on the same frames returned real values.
+    # `canonical_id_series` collapses the integral float; `str()` does not. The structural twin
+    # `_xcross_attempt.py:799` already used this seam -- the two have been reconciled.
+    merge_keys = ["game_id", "period_id", "frame_id", "team_id"]
+    linked, xcol = align_join_keys(linked, xcol, merge_keys)
+    merged = linked.merge(xcol, on=merge_keys, how="left")
     deduped = merged.drop_duplicates(subset=["action_id"], keep="first")
     col = deduped.set_index("action_id")["xshot_occurrence"]
     out = out.merge(col.rename("xshot_occurrence"), left_on="action_id", right_index=True, how="left")
