@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from silly_kicks.tracking._action_orientation import (
     FIELD_LENGTH,
@@ -36,8 +37,18 @@ def test_acting_team_attacks_rtl_home_false_away_true():
 
 
 def test_acting_team_unknown_direction_defaults_false():
+    """An acting team absent from the frames defaults to no-flip -- and now SAYS SO.
+
+    The default is unchanged (ADR-028 D2 added a warning, not a behaviour change), but it was
+    previously silent, which is how a genuinely mis-keyed join looked identical to a healthy
+    all-home action set. Asserted via ``pytest.warns`` so the announcement is part of the
+    contract rather than incidental.
+    """
+    from silly_kicks.tracking import OrientationUnresolvedWarning
+
     actions = pd.DataFrame([dict(game_id=1, period_id=1, action_id=0, team_id=999)])
-    flip = acting_team_attacks_rtl(actions, _frames())
+    with pytest.warns(OrientationUnresolvedWarning):
+        flip = acting_team_attacks_rtl(actions, _frames())
     assert flip.tolist() == [False]
 
 

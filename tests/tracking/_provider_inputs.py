@@ -68,7 +68,13 @@ def load_provider_frames(provider: str) -> pd.DataFrame:
                     dtype="object",
                 ),
                 "ball_state": df["ball_state"],
-                "team_attacking_direction": "ltr",
+                # DERIVED, not hardcoded (ADR-028 spec D5). The old scalar "ltr" labelled BOTH
+                # teams the same way, so acting_team_attacks_rtl returned all-False and no GS
+                # fixture could exercise ADR-028 at all. Derived from geometry: team 100's keeper
+                # sits at x~20.5 and team 200's at x~60.5 in BOTH periods (outfield medians
+                # 32.5 / 72.5), so 100 defends the low end and attacks ltr; 200 is the mirror.
+                # This synthetic fixture does NOT swap ends at half-time.
+                "team_attacking_direction": df["team_id"].map({100: "ltr", 200: "rtl"}),
                 "confidence": pd.NA,
                 "visibility": pd.NA,
                 "source_provider": "gradientsports",
@@ -79,7 +85,55 @@ def load_provider_frames(provider: str) -> pd.DataFrame:
     return frames[[c for c in frames.columns if c in _FRAME_KEEP_COLS]].copy()
 
 
-def synthesize_actions(frames: pd.DataFrame, n_actions: int = N_ACTIONS_PER_PROVIDER) -> pd.DataFrame:
+def _to_action_ltr(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.DataFrame:
+    """Point-reflect action coords for teams attacking RTL in ``frames`` (ADR-028, spec D4).
+
+    :func:`synthesize_actions` stamps coordinates from raw frame rows, which are frame-LTR (home
+    attacks +x). SPADL actions are action-LTR (the ACTING team attacks +x), so an away-team action
+    must be point-reflected: ``x -> 105-x`` AND ``y -> 68-y``. BOTH axes -- an x-only mirror is
+    exact only for a y-symmetric scene, which is how ADR-041's incomplete repair survived its own
+    tests.
+
+    Frames with no direction label are left UNCHANGED: this helper cannot invent an orientation,
+    and silently guessing one is the very failure mode (RC4) that the ADR-028 cycle exists to fix.
+    """
+    from silly_kicks.tracking._action_orientation import FIELD_LENGTH, FIELD_WIDTH
+
+    players = frames[~frames["is_ball"].astype(bool)].copy()
+    players = players[players["team_attacking_direction"].notna()]
+    if players.empty:
+        return actions
+
+    players["_team"] = players["team_id"].astype(str)
+    rtl = {
+        (period, str(team))
+        for (period, team), grp in players.groupby(["period_id", "_team"])
+        if grp["team_attacking_direction"].iloc[0] == "rtl"
+    }
+    mask = pd.Series(
+        [(p, str(t)) in rtl for p, t in zip(actions["period_id"], actions["team_id"], strict=True)],
+        index=actions.index,
+    )
+    if not mask.any():
+        return actions
+
+    out = actions.copy()
+    for col, extent in (
+        ("start_x", FIELD_LENGTH),
+        ("end_x", FIELD_LENGTH),
+        ("start_y", FIELD_WIDTH),
+        ("end_y", FIELD_WIDTH),
+    ):
+        out.loc[mask, col] = extent - out.loc[mask, col]
+    return out
+
+
+def synthesize_actions(
+    frames: pd.DataFrame,
+    n_actions: int = N_ACTIONS_PER_PROVIDER,
+    *,
+    balance_teams: bool = False,
+) -> pd.DataFrame:
     """Pick (period_id, frame_id, player_id) triples from real frames; stamp synthetic actions.
 
     Mirror of the synthesize step in scripts/regenerate_action_context_baselines.py.
@@ -100,7 +154,34 @@ def synthesize_actions(frames: pd.DataFrame, n_actions: int = N_ACTIONS_PER_PROV
     candidates = frames[(~frames["is_ball"]) & (~frames["is_goalkeeper"])].copy()
     if len(candidates) < n_actions:
         candidates = frames[~frames["is_ball"]].copy()
-    sample = candidates.drop_duplicates(["period_id", "frame_id"]).head(n_actions).reset_index(drop=True)
+    if balance_teams:
+        # Dedupe per (frame, TEAM) rather than per frame. The default dedupes per frame and keeps
+        # whichever player sorts first, which is the same team in every frame -- so the pool is
+        # already single-team by the time any round-robin could run.
+        #
+        # NULL-team rows are dropped FIRST: the slim frames carry non-ball, non-GK rows with no
+        # team (552 of them on sportec -- a third of the pool), and a round-robin faithfully
+        # treats "None" as a third team, producing actions with no actor. Filtered only on this
+        # branch, so the default path stays byte-identical and every existing baseline holds.
+        named = candidates[candidates["team_id"].notna()]
+        pool = named.assign(_team=named["team_id"].astype(str))
+        pool = pool.drop_duplicates(["period_id", "frame_id", "_team"]).reset_index(drop=True)
+    else:
+        pool = candidates.drop_duplicates(["period_id", "frame_id"]).reset_index(drop=True)
+    if balance_teams:
+        # Round-robin across teams (ADR-028 spec D4, opt-in). The default path takes the
+        # first-listed player per frame, which is team-BLIND and lands ~9:1 on whichever team
+        # sorts first -- an artifact of frame row order, not of the data. An orientation gate
+        # needs a real away population, so it opts in; every existing caller keeps the default
+        # and therefore keeps its baseline byte-identical.
+        groups = [g.reset_index(drop=True) for _, g in pool.groupby("_team")]
+        rows = []
+        for i in range(max((len(g) for g in groups), default=0)):
+            for g in groups:
+                if i < len(g):
+                    rows.append(g.iloc[i])
+        pool = pd.DataFrame(rows).drop(columns=["_team"]).reset_index(drop=True)
+    sample = pool.head(n_actions).reset_index(drop=True)
     pass_id = spadlconfig.actiontype_id["pass"]
     keeper_save_id = spadlconfig.actiontype_id["keeper_save"]
     shot_id = spadlconfig.actiontype_id["shot"]
@@ -141,7 +222,7 @@ def synthesize_actions(frames: pd.DataFrame, n_actions: int = N_ACTIONS_PER_PROV
     save_time = min(float(gk_row["time_seconds"]), float(last_frame["time_seconds"]) - 2.0)
     shot_time = float(last_frame["time_seconds"])
 
-    return pd.DataFrame(
+    built = pd.DataFrame(
         {
             "game_id": [frames["game_id"].iloc[0]] * len(sample),
             "original_event_id": [str(i + 1) for i in range(len(sample))],
@@ -191,6 +272,9 @@ def synthesize_actions(frames: pd.DataFrame, n_actions: int = N_ACTIONS_PER_PROV
             "bodypart_id": [foot_id] * n_passes + [other_id, foot_id],
         }
     )
+    # ADR-028 (spec D4): coords above come from RAW frame rows (frame-LTR). SPADL actions are
+    # action-LTR, so away-team rows must be point-reflected before this leaves the builder.
+    return _to_action_ltr(built, frames)
 
 
 def synthesize_actions_per_period_dense(frames: pd.DataFrame, n_per_period: int = 5) -> pd.DataFrame:

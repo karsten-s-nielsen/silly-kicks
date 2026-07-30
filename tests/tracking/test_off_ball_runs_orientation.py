@@ -158,10 +158,20 @@ class TestUnorientedFramesAreAccepted:
     """
 
     def test_all_null_direction_is_accepted(self):
-        """absolute_frame convention: no orientation asserted."""
+        """absolute_frame convention: no orientation asserted -- accepted, but now AUDIBLE.
+
+        ADR-028 D2 made the unresolved orientation warn instead of passing silently. Accepting
+        the shape and announcing it are not in tension: the values are unchanged, and a consumer
+        who cannot tolerate unoriented geometry can escalate the category. Asserted with
+        ``pytest.warns`` rather than filtered, so the warning is part of the pinned contract --
+        if a future change makes this path silent again, this test fails.
+        """
+        from silly_kicks.tracking import OrientationUnresolvedWarning
+
         frames = _frames()
         frames["team_attacking_direction"] = None
-        out = _off_ball_runs_kernel(_action(_AWAY, 20), frames, home_team_id=_HOME)
+        with pytest.warns(OrientationUnresolvedWarning):
+            out = _off_ball_runs_kernel(_action(_AWAY, 20), frames, home_team_id=_HOME)
         assert out["n_off_ball_runners_pre_window"].iloc[0] >= 1
 
     def test_uniform_label_is_accepted(self):
@@ -187,9 +197,14 @@ class TestUnorientedFramesAreAccepted:
         not. Both authorities are arbitrary here -- this test records WHICH arbitrary
         answer the shipped code gives, so a future change to it is visible.
         """
+        from silly_kicks.tracking import OrientationUnresolvedWarning
+
         oriented = _off_ball_runs_kernel(_action(_AWAY, 20), _frames(), home_team_id=_HOME)
         unoriented_frames = _frames()
         unoriented_frames["team_attacking_direction"] = None
-        unoriented = _off_ball_runs_kernel(_action(_AWAY, 20), unoriented_frames, home_team_id=_HOME)
+        # The unoriented leg warns by design (ADR-028 D2); the oriented leg above must NOT, which
+        # is what makes this pairing a real discriminator rather than a blanket tolerance.
+        with pytest.warns(OrientationUnresolvedWarning):
+            unoriented = _off_ball_runs_kernel(_action(_AWAY, 20), unoriented_frames, home_team_id=_HOME)
         assert oriented["n_off_ball_runners_toward_goal_pre_window"].iloc[0] == 1
         assert unoriented["n_off_ball_runners_toward_goal_pre_window"].iloc[0] == 0

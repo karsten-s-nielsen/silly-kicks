@@ -40,20 +40,57 @@ def test_suffix_naming_per_method() -> None:
             "type_id": [0],
         }
     )
-    # Minimal frames with required schema columns (linker projects ['period_id',
-    # 'frame_id', 'time_seconds', 'source_provider']; needs them even with 0 rows).
+    # Minimal LINKABLE frames carrying the required schema columns.
+    #
+    # ADR-028 honesty: this fixture used to be a 0-row DataFrame, which meant
+    # `acting_team_attacks_rtl` could never resolve an orientation (it short-circuits on
+    # empty frames) and the naming contract was only ever asserted on a degenerate,
+    # never-linked code path. Real rows + an explicit `team_attacking_direction` make the
+    # scene an actually-oriented one. No `home_team_id` is passed here, so the acting
+    # team is identified by its literal id: the action's team_id is "home", and frames are
+    # home-attacks-right by convention (ADR-028) -> "home" is "ltr", "away" is "rtl". That
+    # is also consistent with the low-x reading (the "home" actor sits at x=50, deeper than
+    # the "away" defender at x=52, i.e. nearer the goal it defends). Ball rows carry None,
+    # matching what `convert_to_frames` emits.
     frames = pd.DataFrame(
-        {
-            "period_id": pd.Series([], dtype="int64"),
-            "frame_id": pd.Series([], dtype="int64"),
-            "time_seconds": pd.Series([], dtype="float64"),
-            "source_provider": pd.Series([], dtype="object"),
-            "team_id": pd.Series([], dtype="object"),
-            "player_id": pd.Series([], dtype="object"),
-            "is_ball": pd.Series([], dtype="bool"),
-            "x": pd.Series([], dtype="float64"),
-            "y": pd.Series([], dtype="float64"),
-        }
+        [
+            {
+                "period_id": 1,
+                "frame_id": 0,
+                "time_seconds": 0.0,
+                "source_provider": "synthetic",
+                "team_id": "home",
+                "player_id": 10,
+                "is_ball": False,
+                "x": 50.0,
+                "y": 34.0,
+                "team_attacking_direction": "ltr",
+            },
+            {
+                "period_id": 1,
+                "frame_id": 0,
+                "time_seconds": 0.0,
+                "source_provider": "synthetic",
+                "team_id": "away",
+                "player_id": 100,
+                "is_ball": False,
+                "x": 52.0,
+                "y": 34.0,
+                "team_attacking_direction": "rtl",
+            },
+            {
+                "period_id": 1,
+                "frame_id": 0,
+                "time_seconds": 0.0,
+                "source_provider": "synthetic",
+                "team_id": None,
+                "player_id": None,
+                "is_ball": True,
+                "x": 50.0,
+                "y": 34.0,
+                "team_attacking_direction": None,
+            },
+        ]
     )
     for m in ["andrienko_oval", "link_zones"]:
         s = pressure_on_actor(actions, frames, method=m)  # type: ignore[arg-type]
@@ -158,8 +195,36 @@ def test_nan_safe_x_frame_aware_decorator_composition() -> None:
     # Frames with valid coords -- the only way the lifted xfn could produce a
     # finite result on all-NaN states is by consuming frames (which it should NOT,
     # because the kernel anchors on action.start_x/start_y -- those are NaN).
+    #
+    # ADR-028 honesty: the acting team (team_id 1) had NO row here, so
+    # `acting_team_attacks_rtl` could not resolve a direction for it and the fixture only
+    # ever exercised the no-flip path. Team 1's actor (player 10, the acting player) is now
+    # present WITH a `team_attacking_direction`, so the orientation is genuinely resolved.
+    # This also strengthens leg (c): with the actor at a valid frame position, a kernel that
+    # wrongly anchored on frame coords instead of the NaN action coords would now produce a
+    # finite value and trip the all-NaN assertion below.
+    #
+    # No `home_team_id` is passed, so "ltr" is assigned by the low-x rule: team 1's player
+    # sits at x=20 (its own defensive half, i.e. it attacks toward x=105 -> "ltr") while
+    # team 2's sits at x=50, so team 2 is "rtl". Ball rows carry None, matching
+    # `convert_to_frames`.
     frames = pd.DataFrame(
         [
+            {
+                "frame_id": 100,
+                "period_id": 1,
+                "time_seconds": 10.0,
+                "team_id": 1,
+                "player_id": 10,
+                "is_ball": False,
+                "x": 20.0,
+                "y": 34.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "speed": 0.0,
+                "source_provider": "synthetic",
+                "team_attacking_direction": "ltr",
+            },
             {
                 "frame_id": 100,
                 "period_id": 1,
@@ -173,6 +238,7 @@ def test_nan_safe_x_frame_aware_decorator_composition() -> None:
                 "vy": 0.0,
                 "speed": 0.0,
                 "source_provider": "synthetic",
+                "team_attacking_direction": "rtl",
             },
             {
                 "frame_id": 100,
@@ -187,6 +253,7 @@ def test_nan_safe_x_frame_aware_decorator_composition() -> None:
                 "vy": 0.0,
                 "speed": 0.0,
                 "source_provider": "synthetic",
+                "team_attacking_direction": None,
             },
         ]
     )
@@ -241,10 +308,33 @@ def test_auto_discovered_method_xfns_emit_suffixed_column_names() -> None:
             "dy": [0.0],
         }
     )
-    # Single linkable frame containing one defender + one ball row, satisfying
+    # Single linkable frame containing the actor + one defender + one ball row, satisfying
     # all method preconditions (Bekkers needs vx/vy + at least one is_ball row).
+    #
+    # ADR-028 honesty: the acting team ("home") had no row here, so
+    # `acting_team_attacks_rtl` could not resolve its direction and the fixture only ever
+    # exercised the no-flip path. The actor row is now present and every non-ball row
+    # carries an explicit `team_attacking_direction`. No `home_team_id` is passed, so the
+    # acting team is identified by its literal id: the actions' team_id is "home" and frames
+    # are home-attacks-right by convention (ADR-028) -> "home" is "ltr", "away" is "rtl".
+    # Ball rows carry None, matching `convert_to_frames`.
     minimal_frames = pd.DataFrame(
         [
+            {
+                "period_id": 1,
+                "frame_id": 0,
+                "time_seconds": 0.0,
+                "source_provider": "synthetic",
+                "team_id": "home",
+                "player_id": 10,
+                "is_ball": False,
+                "x": 50.0,
+                "y": 34.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "speed": 0.0,
+                "team_attacking_direction": "ltr",
+            },
             {
                 "period_id": 1,
                 "frame_id": 0,
@@ -258,6 +348,7 @@ def test_auto_discovered_method_xfns_emit_suffixed_column_names() -> None:
                 "vx": 0.0,
                 "vy": 0.0,
                 "speed": 0.0,
+                "team_attacking_direction": "rtl",
             },
             {
                 "period_id": 1,
@@ -272,6 +363,7 @@ def test_auto_discovered_method_xfns_emit_suffixed_column_names() -> None:
                 "vx": 0.0,
                 "vy": 0.0,
                 "speed": 0.0,
+                "team_attacking_direction": None,
             },
         ]
     )

@@ -191,6 +191,15 @@ def _make_pausa_actions_and_frames():
             "bodypart_name": ["foot", "foot"],
         }
     )
+    # Frames are the canonical home-attacks-right convention: the callers below pass
+    # ``home_team_id=1``, so team 1 attacks x=105 ("ltr") and team 2 attacks x=0 ("rtl").
+    # Ball rows carry None -- that is what ``convert_to_frames`` emits, and
+    # ``acting_team_attacks_rtl`` filters them out anyway.
+    #
+    # Before this was set the fixture had NO ``team_attacking_direction`` at all, so
+    # ``acting_team_attacks_rtl`` returned an all-False flip and action_id=1 (team 2, the
+    # AWAY team) was scored on the unoriented path. PAUSA delegates to ``add_obso``, so it
+    # inherited the same defect; it now exercises the real ADR-028 re-projection.
     frame_rows = []
     for fid in range(50):
         t = fid / 25.0
@@ -211,6 +220,7 @@ def _make_pausa_actions_and_frames():
                         "vy": 0.0,
                         "is_ball": False,
                         "is_goalkeeper": j == 0,
+                        "team_attacking_direction": "ltr" if tid == 1 else "rtl",
                     }
                 )
         frame_rows.append(
@@ -228,6 +238,7 @@ def _make_pausa_actions_and_frames():
                 "vy": 0.0,
                 "is_ball": True,
                 "is_goalkeeper": False,
+                "team_attacking_direction": None,
             }
         )
     frames = pd.DataFrame(frame_rows)

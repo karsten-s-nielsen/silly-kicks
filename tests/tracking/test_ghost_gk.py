@@ -64,7 +64,19 @@ def _make_ghost_gk_frames(
     game_id: str = "100",
     timestamp: float = 1.0,
 ) -> pd.DataFrame:
-    """Synthetic frames with ball, GK, defenders, attackers."""
+    """Synthetic frames with ball, GK, defenders, attackers.
+
+    ORIENTED (ADR-028): every non-ball row carries ``team_attacking_direction``, so
+    ``acting_team_attacks_rtl`` can resolve a real per-action flip. The scene is
+    home-attacks-right (frame-LTR): the home GK sits at x=5 defending the x=0 goal,
+    so the home team attacks x=105 -> "ltr"; the away GK sits at x=100 defending the
+    x=105 goal, so the away team attacks x=0 -> "rtl". Ball rows carry None, which is
+    what ``convert_to_frames`` emits and what the helper filters out anyway.
+
+    Before this column existed the fixture always took the all-False no-flip path, so
+    every away-team action it fed to ``add_ghost_gk`` / ``ghost_gk_xfns`` silently
+    mixed coordinate conventions and was never exercised against ADR-028.
+    """
     rows = []
     base = {
         "game_id": game_id,
@@ -92,9 +104,10 @@ def _make_ghost_gk_frames(
             "speed": 2.0,
             "is_ball": True,
             "is_goalkeeper": False,
+            "team_attacking_direction": None,
         }
     )
-    # Home GK (defending goal at x=0)
+    # Home GK (defending goal at x=0 -> home attacks x=105 -> "ltr")
     rows.append(
         {
             **base,
@@ -107,6 +120,7 @@ def _make_ghost_gk_frames(
             "speed": 0.0,
             "is_ball": False,
             "is_goalkeeper": True,
+            "team_attacking_direction": "ltr",
         }
     )
     # Home defenders (4)
@@ -123,6 +137,7 @@ def _make_ghost_gk_frames(
                 "speed": 0.5,
                 "is_ball": False,
                 "is_goalkeeper": False,
+                "team_attacking_direction": "ltr",
             }
         )
     # Away attackers (4)
@@ -139,9 +154,10 @@ def _make_ghost_gk_frames(
                 "speed": 1.0,
                 "is_ball": False,
                 "is_goalkeeper": False,
+                "team_attacking_direction": "rtl",
             }
         )
-    # Away GK
+    # Away GK (defending goal at x=105 -> away attacks x=0 -> "rtl")
     rows.append(
         {
             **base,
@@ -154,6 +170,7 @@ def _make_ghost_gk_frames(
             "speed": 0.0,
             "is_ball": False,
             "is_goalkeeper": True,
+            "team_attacking_direction": "rtl",
         }
     )
     return pd.DataFrame(rows)
@@ -731,7 +748,13 @@ def _make_multi_frame_fixture(
     game_id: str = "100",
     fps: float = 25.0,
 ) -> pd.DataFrame:
-    """Build multi-frame fixture suitable for shared helper tests."""
+    """Build multi-frame fixture suitable for shared helper tests.
+
+    ORIENTED (ADR-028), same scene as ``_make_ghost_gk_frames``: home GK at x=5
+    defends the x=0 goal so home attacks x=105 ("ltr"); away GK at x=100 defends the
+    x=105 goal so away attacks x=0 ("rtl"). Ball rows stay None. Previously the whole
+    column was None, so ``acting_team_attacks_rtl`` could never resolve a flip.
+    """
     rows = []
     for fid in range(1, n_frames + 1):
         ts = fid / fps
@@ -743,7 +766,6 @@ def _make_multi_frame_fixture(
             "frame_rate": fps,
             "ball_state": "alive",
             "source_provider": "test",
-            "team_attacking_direction": None,
             "confidence": None,
             "visibility": None,
             "is_goalkeeper_source": "native",
@@ -762,9 +784,10 @@ def _make_multi_frame_fixture(
                 "speed": 2.0,
                 "is_ball": True,
                 "is_goalkeeper": False,
+                "team_attacking_direction": None,
             }
         )
-        # Home GK
+        # Home GK (defends x=0 -> home attacks x=105 -> "ltr")
         rows.append(
             {
                 **base,
@@ -777,6 +800,7 @@ def _make_multi_frame_fixture(
                 "speed": 0.0,
                 "is_ball": False,
                 "is_goalkeeper": True,
+                "team_attacking_direction": "ltr",
             }
         )
         # Home defenders
@@ -793,6 +817,7 @@ def _make_multi_frame_fixture(
                     "speed": 0.5,
                     "is_ball": False,
                     "is_goalkeeper": False,
+                    "team_attacking_direction": "ltr",
                 }
             )
         # Away attackers
@@ -809,9 +834,10 @@ def _make_multi_frame_fixture(
                     "speed": 1.0,
                     "is_ball": False,
                     "is_goalkeeper": False,
+                    "team_attacking_direction": "rtl",
                 }
             )
-        # Away GK
+        # Away GK (defends x=105 -> away attacks x=0 -> "rtl")
         rows.append(
             {
                 **base,
@@ -824,6 +850,7 @@ def _make_multi_frame_fixture(
                 "speed": 0.0,
                 "is_ball": False,
                 "is_goalkeeper": True,
+                "team_attacking_direction": "rtl",
             }
         )
     return pd.DataFrame(rows)

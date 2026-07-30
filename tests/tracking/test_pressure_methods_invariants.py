@@ -11,7 +11,21 @@ from silly_kicks.tracking.features import pressure_on_actor
 
 
 def _make_one_action_frame(actor_xy, defender_xy_v):
-    """Build minimal actions+frames for a single (actor, single defender) test."""
+    """Build minimal actions+frames for a single (actor, single defender) test.
+
+    The frames declare ``team_attacking_direction`` (ADR-028): without it
+    ``acting_team_attacks_rtl`` cannot resolve a direction, silently returns an
+    all-False flip and warns ``OrientationUnresolvedWarning`` -- i.e. the fixture
+    would only ever exercise the un-oriented path.
+
+    ``pressure_on_actor`` takes no ``home_team_id``, so the direction is read off
+    the scene: the acting team ("home") sits at the LOW-x side of the encounter
+    (actor x=50.0 vs. defender x=50.0+d, d>0 in every parametrization), so "home"
+    attacks x=105 -> "ltr" and "away" attacks x=0 -> "rtl". That also makes the
+    defender goal-side of the actor, which is the physically normal pressing
+    geometry. Ball rows carry None, matching what ``convert_to_frames`` emits
+    (``acting_team_attacks_rtl`` filters them out anyway).
+    """
     actions = pd.DataFrame(
         {
             "action_id": [1],
@@ -38,6 +52,7 @@ def _make_one_action_frame(actor_xy, defender_xy_v):
                 "vx": 0.0,
                 "vy": 0.0,
                 "speed": 0.0,
+                "team_attacking_direction": "ltr",
                 "source_provider": "synthetic",
             },
             {
@@ -52,6 +67,7 @@ def _make_one_action_frame(actor_xy, defender_xy_v):
                 "vx": 0.0,
                 "vy": 0.0,
                 "speed": 0.0,
+                "team_attacking_direction": None,
                 "source_provider": "synthetic",
             },
             {
@@ -66,6 +82,7 @@ def _make_one_action_frame(actor_xy, defender_xy_v):
                 "vx": defender_xy_v[2],
                 "vy": defender_xy_v[3],
                 "speed": math.hypot(defender_xy_v[2], defender_xy_v[3]),
+                "team_attacking_direction": "rtl",
                 "source_provider": "synthetic",
             },
         ]

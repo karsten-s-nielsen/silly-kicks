@@ -58,6 +58,7 @@ __all__ = [
     "MissingFeatureContractWarning",
     "ObsoParams",
     "ObsoSurface",
+    "OrientationUnresolvedWarning",
     "PackingParams",
     "PitchControlSurface",
     "PlayerInfluence",
@@ -325,6 +326,7 @@ from ._team_shape import compute_team_shape
 from ._warnings import (
     IgnoredSurfaceInputsWarning,
     MissingFeatureContractWarning,
+    OrientationUnresolvedWarning,
     RunValueCoverageWarning,
     SyntheticEPVWarning,
     UnverifiableFeatureContractWarning,

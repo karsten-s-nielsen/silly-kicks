@@ -17,19 +17,56 @@ import pytest
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.spadl.sportec import convert_to_actions
 from silly_kicks.spadl.utils import add_pre_shot_gk_context
+from silly_kicks.tracking.direction import compute_attacking_direction
 
 _IDSSE_DIR = Path(__file__).parent.parent / "datasets" / "idsse"
 _PAIRED_TRACKING = _IDSSE_DIR / "paired_tracking.parquet"
 
+#: Match metadata shared by the events + tracking halves of the paired fixture.
+#: ``home_team_start_left=False`` == "home does NOT start on the left", i.e. home
+#: DEFENDS the high-x goal in P1 and therefore ATTACKS toward x=0 in P1 (see
+#: ``tests/datasets/idsse/README.md``: "Home attacks LEFT in P1").
+_HOME_TEAM_ID = "home"
+_HOME_TEAM_START_LEFT = False
 
-def _load_tracking_frames() -> pd.DataFrame:
+
+def _load_tracking_frames(*, game_id: str) -> pd.DataFrame:
     """Load paired tracking fixture and reshape for defending_gk_from_frames.
 
     This is a PARTIAL reshape — only the columns accessed by
-    defending_gk_from_frames / link_actions_to_frames are mapped.
-    The fixture is NOT fully SPORTEC_TRACKING_FRAMES_COLUMNS compliant
-    (missing z, ball_state, team_attacking_direction, confidence,
-    visibility, is_goalkeeper_source, speed_source).
+    defending_gk_from_frames / link_actions_to_frames / ADR-028 orientation
+    are mapped. The fixture is NOT fully SPORTEC_TRACKING_FRAMES_COLUMNS
+    compliant (missing z, ball_state, confidence, visibility,
+    is_goalkeeper_source, speed_source).
+
+    ``team_attacking_direction`` (ADR-028) IS populated, because without it
+    ``acting_team_attacks_rtl`` silently returns an all-False flip and every
+    frame-sampled position this fixture feeds ``add_pre_shot_gk_context``
+    lands in the WRONG coordinate convention for half the actions.
+
+    These frames are PER-PERIOD ABSOLUTE (raw DFL orientation carried through
+    the lakehouse ``fct_tracking_frames`` mart), NOT the canonical
+    home-attacks-right convention ``convert_to_frames`` emits — so the honest
+    label is period-dependent, not a blanket ``home="ltr"``. Measured on the
+    fixture itself:
+
+    * P1 — away GK median x = 1.75 (lowest of all 22 players), home GK median
+      x = 96.28 (highest). Home defends the high-x goal, so home attacks
+      RIGHT-TO-LEFT: home ``"rtl"``, away ``"ltr"``.
+    * P2 — teams swap: home GK median x = 39.32 (lowest), away GK median
+      x = 118.60 (highest). Home ``"ltr"``, away ``"rtl"``.
+
+    Corroborated by event/ball co-location: the P1 home shot at action-LTR
+    (90.87, 26.08) sits at tracking-ball (-0.7, 44.3) — i.e. at
+    (105 - 90.87, 68 - 26.08) = (14.1, 41.9) modulo the ball crossing the
+    goal line — and the P1 home pass origin (93.28, 3.61) sits at
+    tracking-ball (13.4, 62.1) vs the reflection (11.7, 64.4). The P1 AWAY
+    pass, by contrast, matches its UNreflected action-LTR end (48.69, 52.86)
+    at tracking-ball (54.2, 47.7). In P2 every home action matches unreflected
+    (e.g. shot at LTR x=79.12 -> ball x=89.9), never the reflection.
+
+    That is exactly ``compute_attacking_direction`` for the UNFLIPPED raw
+    input, which is what this helper calls rather than hard-coding a table.
     """
     raw = pd.read_parquet(_PAIRED_TRACKING)
     # Lakehouse column names -> silly-kicks tracking schema.
@@ -64,13 +101,31 @@ def _load_tracking_frames() -> pd.DataFrame:
     if "is_ball" not in frames.columns:
         frames["is_ball"] = False
     # Ensure dtypes match schema expectations.
-    frames["game_id"] = frames["game_id"].astype(str)
+    # game_id is taken from the ACTIONS, not from the tracking fixture's own
+    # match_id: the tracking half carries "J03WMX" while the events converter
+    # emits "idsse_J03WMX". acting_team_attacks_rtl joins on
+    # (game_id, period_id, team_id) whenever BOTH sides carry game_id, so the
+    # mismatched value would make every direction lookup miss -> an all-False
+    # flip that is NOT covered by OrientationUnresolvedWarning (the warning
+    # fires on the pre-merge conditions only). link_actions_to_frames never
+    # reads game_id, so this is inert for the linkage this fixture exercises.
+    frames["game_id"] = str(game_id)
     frames["period_id"] = frames["period_id"].astype("int64")
     frames["frame_id"] = frames["frame_id"].astype("int64")
     frames["time_seconds"] = frames["time_seconds"].astype("float64")
     frames["player_id"] = frames["player_id"].astype(str)
     frames["team_id"] = frames["team_id"].astype(str)
     frames["is_goalkeeper"] = frames["is_goalkeeper"].astype(bool)
+    # ADR-028 orientation ground truth. Ball rows get None (the convention
+    # convert_to_frames produces); this fixture has no ball rows — the ball is
+    # carried as ball_x/ball_y columns on the player rows.
+    frames["team_attacking_direction"] = compute_attacking_direction(
+        team_id=frames["team_id"],
+        period_id=frames["period_id"],
+        is_ball=frames["is_ball"],
+        home_team_id=_HOME_TEAM_ID,
+        home_team_start_left=_HOME_TEAM_START_LEFT,
+    )
     return frames
 
 
@@ -86,11 +141,13 @@ def paired_data():
         gk_ids = set(events.loc[events["play_goal_keeper_action"].notna(), "player_id"].dropna().astype(str).tolist())
     actions, _report = convert_to_actions(
         events,
-        home_team_id="home",
-        home_team_start_left=False,  # home attacks LEFT in P1
+        home_team_id=_HOME_TEAM_ID,
+        home_team_start_left=_HOME_TEAM_START_LEFT,  # home attacks LEFT in P1
         goalkeeper_ids=gk_ids,
     )
-    frames = _load_tracking_frames()
+    game_ids = actions["game_id"].dropna().unique()
+    assert len(game_ids) == 1, f"paired fixture must be a single match, got {game_ids!r}"
+    frames = _load_tracking_frames(game_id=str(game_ids[0]))
     return actions, frames
 
 

@@ -288,6 +288,45 @@ def test_align_join_keys_object_object_noop():  # N-c: object x object is mergea
     assert l2["game_id"].dtype == object and r2["game_id"].dtype == object
 
 
+def test_align_join_keys_boxed_object_vs_string_object_merges():
+    """BOTH-object is not automatically merge-safe: one side may be BOXED NUMERICS.
+
+    ``align_join_keys`` decided on DTYPE alone (``_merge_compatible``) and treated any
+    object-vs-object pair as a no-op fast path -- "pandas merges those fine". Pandas does merge
+    them; it just MATCHES NOTHING, because a boxed ``10.0`` is not equal to the string ``"10"``.
+
+    That is the exact hazard ``_raw_comparable`` already content-probes for on the COMPARISON
+    side (ADR-043): ``infer_ball_carrier`` emits object columns of floats. The module therefore
+    contradicted itself -- ``ids_equal`` canonicalized this pair while ``align_join_keys`` did not.
+
+    Found via the ADR-028 fail-loud seam: ``acting_team_attacks_rtl`` merges actions to frames on
+    ``team_id``, and on this dtype pair the merge silently matched zero rows, yielding an
+    all-False re-projection flip and away-team geometry in the wrong convention.
+    """
+    left = pd.DataFrame({"team_id": pd.Series([10.0, 11.0], dtype="float64").astype(object), "v": [1, 2]})
+    right = pd.DataFrame({"team_id": pd.Series(["10", "11"], dtype="object"), "w": [3, 4]})
+
+    # Non-vacuity: the RAW merge must genuinely lose the rows, or this proves nothing.
+    raw = left.merge(right, on="team_id", how="left")
+    assert raw["w"].isna().all(), "raw merge already matched -- fixture does not exercise the hazard"
+
+    l2, r2 = idc.align_join_keys(left, right, ["team_id"])
+    out = l2.merge(r2, on="team_id", how="left")
+    assert out["w"].tolist() == [3, 4]
+
+
+def test_align_join_keys_genuine_string_pair_stays_a_noop():
+    """The fast path survives: two genuine-string object columns are still left ALONE.
+
+    Non-vacuity partner for the test above -- without it, the fix could be "canonicalize every
+    object pair", which would pay the probe AND the coercion on the common case for no gain.
+    """
+    left = pd.DataFrame({"team_id": pd.Series(["a", "b"], dtype="object")})
+    right = pd.DataFrame({"team_id": pd.Series(["a", "b"], dtype="object")})
+    l2, r2 = idc.align_join_keys(left, right, ["team_id"])
+    assert l2["team_id"].tolist() == ["a", "b"] and r2["team_id"].tolist() == ["a", "b"]
+
+
 def test_align_join_keys_pair_names():  # A3: differently-named keys (frame_id_int vs frame_id)
     left = pd.DataFrame({"frame_id_int": pd.Series([1, 2], dtype="int64"), "v": [10, 20]})
     right = pd.DataFrame({"frame_id": pd.Series(["1", "2"], dtype="object"), "w": [100, 200]})

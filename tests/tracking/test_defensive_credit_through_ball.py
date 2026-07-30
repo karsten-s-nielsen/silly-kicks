@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from silly_kicks.tracking.defensive_credit import DefensiveCreditParams, compute_defensive_credits
 from tests.tracking._defensive_credit_fixtures import one_action
@@ -111,6 +112,17 @@ def test_through_ball_no_fire_on_genuine_short_circuit(fitted_xt):
 def test_through_ball_no_fire_on_unlinked_action(fitted_xt):
     # Q3: the between_lines geometry WOULD fire if linked, but the action is in a period with no
     # frames -> genuine <NA> -> no fire (proves the precompute leaves unlinked rows NA, not True).
+    #
+    # The action is unlinkable BY CONSTRUCTION: `_scene` exposes `period_id` and `frame_period` as
+    # independent knobs, and this is the only one of the four tests here that splits them. Because
+    # period is then the sole non-matching component of the (game_id, period_id, team_id)
+    # orientation join key, ADR-028's seam also cannot resolve a direction and warns
+    # (OrientationUnresolvedWarning). That is correct: an unlinkable action has no frame to orient
+    # against. Asserted rather than filtered, so the warning stays part of the pinned contract --
+    # the acting team IS present and labelled here, so if this ever stops warning it means the
+    # period split stopped taking effect and the test would silently be measuring the linked case.
+    from silly_kicks.tracking import OrientationUnresolvedWarning
+
     actions, frames = _scene(
         away_xs=[50.0, 50.0, 50.0, 70.0, 70.0, 70.0, 90.0, 90.0, 90.0, 90.0],
         away_ys=[15.0, 34.0, 53.0, 15.0, 34.0, 53.0, 10.0, 24.0, 44.0, 58.0],
@@ -119,4 +131,6 @@ def test_through_ball_no_fire_on_unlinked_action(fitted_xt):
         period_id=2,
         frame_period=1,
     )
-    assert not _fired(_run(actions, frames, fitted_xt))
+    with pytest.warns(OrientationUnresolvedWarning):
+        result = _run(actions, frames, fitted_xt)
+    assert not _fired(result)

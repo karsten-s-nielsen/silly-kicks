@@ -24,6 +24,17 @@ from silly_kicks.tracking.features import (
     pressure_on_actor as std_pressure,
 )
 
+# ``_build_fixture`` stamps ADR-028 ``team_attacking_direction`` on its frames ("home"
+# -> "ltr", "away" -> "rtl", ball -> None). That is load-bearing HERE, not incidental:
+# without it ``acting_team_attacks_rtl`` cannot resolve a direction, silently returns an
+# all-False flip and warns ``OrientationUnresolvedWarning``, so the pressure parity tests
+# below would only ever compare the UN-oriented path. Do not drop it from the builder.
+#
+# Every action in this fixture is taken by "home", so the resolved flip is all-False BY
+# CONSTRUCTION and the parity values are byte-identical to the pre-labelling ones
+# (verified across all three pressure methods). The fixture is therefore honest but does
+# not yet DISCRIMINATE the re-projection branch -- that needs an away-team action, which
+# belongs to the shared builder in test_pressure_snapshot.py.
 from .test_pressure_snapshot import _build_fixture
 
 
