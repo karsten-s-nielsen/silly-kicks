@@ -137,12 +137,14 @@ def register() -> None:
     # ------------------------------------------------------------------
     # add_cover_shadows
     # ------------------------------------------------------------------
-    # GATE A FAILS (RC1) and is xfailed strictly. Measured: n_blocked_receivers moves by 3 and
-    # max_single_defender_blocking_score by 0.304. The passer-independent columns are clean --
-    # blocking_score 2.84e-14, blocked_threat_fraction 1.11e-16, n_potential_receivers exactly 0 --
-    # which matches spec 3.1's per-column scope exactly.
+    # GATE A PASSES as of 4.70.0 (PR-S138). It FAILED under RC1, where the raw action-LTR passer
+    # moved n_blocked_receivers by 3 and max_single_defender_blocking_score by 0.304, while the
+    # passer-independent columns stayed clean -- blocking_score 2.84e-14, blocked_threat_fraction
+    # 1.11e-16, n_potential_receivers exactly 0 -- matching spec 3.1's per-column scope exactly.
+    # Those pre-fix magnitudes are retained deliberately: they are what a REGRESSION would have to
+    # reproduce, and they set the tolerance ceiling below.
     #
-    # GATE B FAILS (D3) and is xfailed strictly: blocking_score moves 148.83.
+    # GATE B STILL FAILS (D3) and is xfailed strictly: blocking_score moves 148.83.
     #
     # max_single_defender_player_id is EXEMPT: it is a player identity, and PR-S136 gated it to
     # detailed=True, so on the default cheap path it is all-NaN (verified: 0/4 non-null).
@@ -166,8 +168,8 @@ def register() -> None:
             f"{_PC_SYMMETRY_NOTE}. Measured Gate A residual on the two passer-INDEPENDENT float "
             "columns -- blocking_score 2.84e-14 (magnitude 148.8) and blocked_threat_fraction "
             "1.11e-16 -- so 1e-6 is ~8 orders of headroom there. It must NOT be loosened past the "
-            "0.304 that max_single_defender_blocking_score actually moves under RC1, or the strict "
-            "xfail would xpass and the defect would stop being visible."
+            "0.304 that max_single_defender_blocking_score moved under RC1: Gate A now PASSES, so "
+            "that ceiling is what keeps an RC1 REGRESSION detectable rather than silently absorbed."
         ),
         role="direction_only",
         non_vacuity=("blocking_score", "n_potential_receivers"),
@@ -181,7 +183,13 @@ def register() -> None:
             "n_candidate_frames": _PROVENANCE_REASON,
             "link_quality_score": _PROVENANCE_REASON,
         },
-        defect="RC1: raw action-LTR passer at features.py:3698 / :3861 (spec 3.1)",
+        # RC1 FIXED in PR 2 (spec 3.1): the passer is now reprojected into frame coords at both
+        # seams, so Gate A passes and its marker is GONE -- strict xfail makes that deletion
+        # mandatory rather than optional.
+        #
+        # Gate B's marker STAYS: `_cover_shadows.py:1030` still keys `attacking_toward_high_x` on
+        # `same_id(attacking_team_id, home_team_id)`. That is D3, which spec section 9 keeps out
+        # of this cycle (byte-identical on converter output), NOT part of RC1.
         defect_b="D3 re-key pending: identity-keyed direction (spec 4.3)",
     )
 
