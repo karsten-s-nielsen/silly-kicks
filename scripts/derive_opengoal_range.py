@@ -77,17 +77,14 @@ def main() -> None:
         )
 
     import numpy as np
+    import pandas as pd
 
+    from scripts._driver import for_each, shard_path
     from scripts._loader_pining import load_matches
     from silly_kicks.tracking._xshot_occurrence import prepare_xshot_training_data
 
-    values: list[float] = []
-    # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
-    for _provider, _match_id, actions, frames, home_team_id in load_matches(
-        providers=args.providers.split(","),
-        max_per_provider=args.max_per_provider,
-        tracking_limit=args.tracking_limit,
-    ):
+    def _work(item):
+        _provider, _match_id, actions, frames, home_team_id = item
         # Returns (features, labels, groups); only the FEATURES are read here -- this measures the
         # marginal distribution of a shipped feature, it does not train or probe anything.
         feats, _labels, _groups = prepare_xshot_training_data(
@@ -95,12 +92,58 @@ def main() -> None:
             actions,
             home_team_id=home_team_id,  # type: ignore[arg-type]  -- loader yields `object`
         )
-        if "openGoal" in feats.columns:
-            values.extend(np.asarray(feats["openGoal"], dtype=float).tolist())
+        if "openGoal" not in feats.columns:
+            return None  # still writes an EMPTY shard: "ran, produced nothing"
+        return pd.DataFrame({"open_goal": np.asarray(feats["openGoal"], dtype=float)})
+
+    # STREAMED, not inverted onto `select_match_ids`. The per-item cost here is
+    # `prepare_xshot_training_data` -- a full feature extraction over the match's frames -- so the
+    # shard check already skips the expensive half. Inverting would additionally skip the loader on
+    # resume, but the load/work ratio for this extractor has not been measured, and optimising an
+    # unmeasured ratio is what `measure-before-optimize` forbids. (`calibrate_xt_bandwidth` WAS
+    # inverted because its work is an `.assign` plus a column projection -- unambiguously trivial
+    # next to a download, no measurement needed to see it.)
+    res = for_each(
+        load_matches(
+            providers=args.providers.split(","),
+            max_per_provider=args.max_per_provider,
+            tracking_limit=args.tracking_limit,
+        ),
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        shard_root=Path(args.out) / "shards",
+        # `--tracking-limit` DETERMINES content: it caps the frames the extractor sees, so a
+        # different cap yields a different marginal distribution from the same match. `--providers`
+        # and `--max-per-provider` only choose WHICH matches are walked, and the key already
+        # separates them.
+        token_inputs={
+            "extractor": "prepare_xshot_training_data",
+            "feature": "openGoal",
+            "tracking_limit": args.tracking_limit,
+        },
+        tag="opengoal",
+        label="match",
+    )
+    if res.failures:
+        # Loud, and AFTER every successful shard is on disk, so re-invoking retries only these. A
+        # threshold derived from a corpus that silently lost matches is a number with no warning
+        # label on it.
+        raise RuntimeError(f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only them.")
+
+    # Combined from THIS PASS'S keys -- `res.keys`, reported by the pass itself so no second copy
+    # of the key rule can drift -- and deliberately not `_driver.reconcile`: see its docstring, the
+    # whole-generation read needs a partition surface and this driver has none, so it would inherit
+    # matches from a wider earlier run over the same --out.
+    values: list[float] = []
+    for k in res.keys:
+        shard = pd.read_parquet(shard_path(res.shard_dir, k))
+        if len(shard):  # an empty shard has no columns to read
+            values.extend(shard["open_goal"].tolist())
 
     out = summarise(values)
     out["run_commit"] = prov["commit"]
     out["run_tree_dirty"] = prov["dirty"]
+    out["run_tree_state"] = prov["tree_state"]
     dest = Path(args.out)
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "opengoal_distribution.json").write_text(json.dumps(out, indent=2), encoding="utf-8")

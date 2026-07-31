@@ -64,6 +64,58 @@ def _fmt(v):  # absent prongs on the unmeasurable early-return branch read oddly
     return "n/a (unmeasurable)" if v is None else v
 
 
+#: Joins a match id to a drop reason inside a FLAT counter dict. `_driver._merge_counters` sums ints
+#: and merges `{str: int}` dicts; it cannot carry a dict OF dicts, so the per-match breakdown is
+#: encoded on a composite key and split back out on read.
+_BY_MATCH_SEP = "::"
+
+
+def _flatten_by_match(match_id, reasons) -> dict[str, int]:
+    """`{reason: n}` for one match -> `{"<match_id>::<reason>": n}`, refusing an ambiguous component.
+
+    Validated rather than trusted, for the same reason `_driver.join_key` validates its components:
+    a component containing the separator makes the split ambiguous, and the resulting mis-attributed
+    counts would be silent -- a plausible per-match breakdown assembled from the wrong rows.
+    """
+    out: dict[str, int] = {}
+    for reason, n in dict(reasons).items():
+        if _BY_MATCH_SEP in str(match_id) or _BY_MATCH_SEP in str(reason):
+            raise ValueError(
+                f"{_BY_MATCH_SEP!r} appears in match_id={match_id!r} or reason={reason!r}; the "
+                f"per-match counter key would split ambiguously and mis-attribute drop reasons"
+            )
+        out[f"{match_id}{_BY_MATCH_SEP}{reason}"] = int(n)
+    return out
+
+
+def _per_match_records(counters: dict) -> list[dict]:
+    """Rebuild `metrics["per_match"]` from the pass's counters.
+
+    Sourced from the counters rather than from the combined frame because a match that produced NO
+    deltas still has a record -- `n_targets == 0` is exactly what `n_contributing` counts -- and an
+    empty shard carries no columns to recover it from.
+    """
+    by_match: dict[str, dict] = {}
+    for key, n in counters.get("drop_reasons_by_match", {}).items():
+        mid, _, reason = key.partition(_BY_MATCH_SEP)
+        by_match.setdefault(mid, {})[reason] = n
+    targets = counters.get("n_targets_by_match", {})
+    frames_in = counters.get("n_frames_in_by_match", {})
+    frames_scored = counters.get("n_frames_scored_by_match", {})
+    return [
+        {
+            "match_id": mid,
+            "n_frames_in": frames_in.get(mid),
+            "n_frames_scored": frames_scored.get(mid),
+            "drop_reasons": by_match.get(mid, {}),
+            "n_targets": targets[mid],
+        }
+        # Sorted so the artifact is stable across a resume, where the shard order is the KEY order
+        # rather than the order the loader happened to yield matches in on the first pass.
+        for mid in sorted(targets)
+    ]
+
+
 def run(
     out,
     *,
@@ -89,11 +141,18 @@ def run(
     ghost_model = GhostGkModel.from_variant("default")  # INSTANCE so build_ghost_frames honors carrier_params
     xs_model = XShotOccurrenceModel.from_variant("default")  # GS-free public weights
 
-    per_variant_deltas: dict[str, list] = {v: [] for v in variants}
-    per_match = []
-    for _provider, match_id, _actions, frames, home_team_id in load_matches(
-        providers=_PROVIDERS, match_ids=match_ids, token=token, tracking_limit=tracking_limit
-    ):
+    from scripts._driver import for_each, shard_path
+
+    # Per-match metadata that the tidy delta frame CANNOT carry: it comes from `build_ghost_frames`'s
+    # report and from `targets`, neither of which is a column. `for_each` calls `work(item)` and then
+    # `counters(item, frame)` for the SAME item, in that order, so stashing it here is well-defined.
+    # Since 4.72.0 `for_each` persists each item's counters beside its shard and replays them on a
+    # skip, so this metadata survives a resume -- without that, a resumed pass would report a corpus
+    # of zero matches into a cited artifact.
+    _meta: dict = {}
+
+    def _work(item):
+        _provider, match_id, _actions, frames, home_team_id = item
         htid = cast("int | str", home_team_id)  # loader yields `object`; the engine wants int | str
         _cf, prov, report = build_ghost_frames(frames, model=ghost_model, home_team_id=htid)
         targets = provenance_to_targets(prov, frames=frames, home_team_id=htid)
@@ -101,30 +160,74 @@ def run(
         # gk/nearest_def rows is ~13% redundant but keeps each variant's placebo_out population in its OWN
         # frame, so evaluate_xs_probe never sees v1's random AND v2's defender placebo together. Keep only
         # the TIDY deltas -> peak memory is one match.
-        for v in variants:
-            per_variant_deltas[v].append(
-                substitution_deltas(
-                    xs_model,
-                    frames,
-                    arm="xs",
-                    mode="targets",
-                    targets=targets,
-                    seed=seed,
-                    placebo=_VARIANT_PLACEBO[v],
-                )
-            )
-        per_match.append(
+        parts = [
+            substitution_deltas(
+                xs_model,
+                frames,
+                arm="xs",
+                mode="targets",
+                targets=targets,
+                seed=seed,
+                placebo=_VARIANT_PLACEBO[v],
+            ).assign(variant=v)
+            for v in variants
+        ]
+        _meta.clear()
+        _meta.update(
             {
-                "match_id": match_id,
-                "n_frames_in": report.n_frames_in,
-                "n_frames_scored": report.n_frames_scored,
-                "drop_reasons": report.drop_reasons,
-                "n_targets": len(targets),
+                "n_matches": 1,
+                # `_merge_counters` sums ints and merges FLAT {str: int} dicts -- it cannot carry a
+                # dict of dicts, so the per-match breakdown is keyed on a composite. Preserved rather
+                # than aggregated corpus-wide because `metrics["per_match"]` is a published field of
+                # a cited artifact, and quietly coarsening it is a schema break wearing a refactor's
+                # clothes.
+                "n_frames_in_by_match": {str(match_id): report.n_frames_in},
+                "n_frames_scored_by_match": {str(match_id): report.n_frames_scored},
+                "n_targets_by_match": {str(match_id): len(targets)},
+                "drop_reasons_by_match": _flatten_by_match(match_id, report.drop_reasons),
             }
         )
+        return pd.concat(parts, ignore_index=True) if parts else None
 
+    res = for_each(
+        load_matches(providers=_PROVIDERS, match_ids=match_ids, token=token, tracking_limit=tracking_limit),
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        counters=lambda _item, _frame: dict(_meta),
+        shard_root=Path(out) / "shards",
+        # What determines a shard's CONTENT: the two models whose substitution produces the deltas,
+        # the placebo pool each variant draws, the seed pinning those draws, and the frame cap the
+        # engine sees. `--match-ids-json` only chooses WHICH matches are walked (the key separates
+        # them), and `--entanglement` is consumed downstream by the verdict, not by the deltas.
+        token_inputs={
+            "ghost_model": "default",
+            "xs_model": "default",
+            "variants": list(variants),
+            "placebos": [_VARIANT_PLACEBO[v] for v in variants],
+            "seed": seed,
+            "tracking_limit": tracking_limit,
+        },
+        tag="xs_probe",
+        label="match",
+    )
+    if res.failures:
+        # Loud, and AFTER every successful shard is on disk. This is the 14-hour driver: a re-run
+        # retries only the failures, so refusing costs minutes rather than the corpus.
+        raise RuntimeError(f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only them.")
+
+    per_match = _per_match_records(res.counters)
     if not per_match:
         raise SystemExit("no GS matches loaded — check PINING_FOR_THE_DATA_TOKEN / --match-ids-json")
+
+    # Combined from THIS PASS'S keys, not `_driver.reconcile`: that helper's whole-generation read
+    # requires a partition surface, and `--match-ids-json` here is a reproducibility PIN, not a
+    # worker slice (no `providers_for_slice`, no `worker_tag`). A whole-generation read would fold
+    # in matches from a wider earlier run over the same --out.
+    shards = [pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys]
+    combined = pd.concat([f for f in shards if len(f)], ignore_index=True)
+    per_variant_deltas = {
+        v: [combined[combined["variant"] == v].drop(columns="variant").reset_index(drop=True)] for v in variants
+    }
 
     # Distinct game_id per match is a LOAD-BEARING premise (dose-response groups by game_id + needs
     # MIN_GAMES=8; the evaluator's duplicate-key guard raises on shared (game_id,period_id,frame_id)).
@@ -190,6 +293,7 @@ def run(
         # The lock commit says what the protocol was REGISTERED against; this says whether the tree
         # that actually ran matched it. Without the flag the two are indistinguishable in the record.
         "run_tree_dirty": prov_run["dirty"],
+        "run_tree_state": prov_run["tree_state"],
     }
     _write(out, metrics)
     return metrics

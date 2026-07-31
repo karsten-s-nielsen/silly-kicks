@@ -140,3 +140,85 @@ def test_keeper_detection_mask_still_rejects_an_unknown_provider():
 
     with _pytest.raises(ValueError, match="provider"):
         keeper_detection_mask(pd.Series([True, False]), provider="nope")
+
+
+# ---------------------------------------------------------------------------
+# Ghost-GK shard packing (ADR-052): one game's features + labels + side arrays as ONE tidy frame
+# ---------------------------------------------------------------------------
+
+
+def test_ghost_shard_pack_unpack_round_trips_features_labels_and_side_arrays():
+    """The migration's load-bearing claim: sharding changes WHERE the training matrix is held, not
+    WHAT it is.
+
+    The deliberately-extra feature column is the point of the test, not padding: `_unpack`
+    reconstructs the feature frame by REMOVAL, and a version that selected
+    ``GHOST_GK_FEATURE_NAMES`` instead would pass every other assertion here while silently
+    training a narrower model the day the extractor widens.
+    """
+    import pandas as pd
+
+    t = _load("train_ghost_gk")
+    feats = pd.DataFrame({"ball_x": [1.0, 2.0], "phase": [0, 1], "a_future_feature": [7.0, 8.0]})
+    labs = pd.DataFrame({"gk_x": [3.0, 4.0], "gk_y": [5.0, 6.0]})
+
+    packed = t._pack(feats, labs, game_id="g1", provider="skillcorner", keepers=pd.Series(["k1", "k2"]))
+    out_f, out_l, groups, provs, keepers = t._unpack(packed)
+
+    pd.testing.assert_frame_equal(out_f, feats)
+    pd.testing.assert_frame_equal(out_l, labs)
+    assert groups.tolist() == ["g1", "g1"]
+    assert provs.tolist() == ["skillcorner", "skillcorner"]
+    assert keepers.tolist() == ["k1", "k2"]
+    # Dtype, not just contents: `keepers` feeds the keeper-grouped CV domain and `provider_labels`
+    # is the stratification target, so a storage decision must not change what they see.
+    assert keepers.dtype == object
+
+
+def test_ghost_shard_packing_REFUSES_a_feature_that_shadows_a_reserved_column():
+    import pandas as pd
+    import pytest as _pytest
+
+    t = _load("train_ghost_gk")
+    labs = pd.DataFrame({"gk_x": [3.0], "gk_y": [5.0]})
+    for shadow in ("_provider", "_lab_gk_x"):
+        feats = pd.DataFrame({"ball_x": [1.0], shadow: [99.0]})
+        with _pytest.raises(ValueError, match="collide"):
+            t._pack(feats, labs, game_id="g", provider="p", keepers=pd.Series(["k"]))
+
+
+def test_the_collision_GUARD_is_not_decorative():
+    """Non-vacuity. Pack the same shadowed frame WITHOUT the guard and the feature is gone: the
+    round trip drops it as if it were the side column it is named after, and the model is fitted on
+    a silently narrower matrix. That is the failure the guard converts into a raise."""
+    import pandas as pd
+
+    t = _load("train_ghost_gk")
+    feats = pd.DataFrame({"ball_x": [1.0], "_provider": [99.0]})
+    labs = pd.DataFrame({"gk_x": [3.0], "gk_y": [5.0]})
+    unchecked = pd.concat([feats, labs.add_prefix(t._LABEL_PREFIX)], axis=1).assign(
+        _game_id="g", _provider="skillcorner", _keeper="k"
+    )
+
+    out_f, _, _, provs, _ = t._unpack(unchecked)
+
+    assert "_provider" not in out_f.columns, "the shadowed feature survived -- rewrite this test"
+    assert provs.tolist() == ["skillcorner"], "and it was read as the side column, not as a feature"
+
+
+def test_the_shipped_feature_names_pass_the_collision_guard():
+    """The other side of the guard: it must be silent on the real 26, or it is unusable."""
+    from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES
+
+    _load("train_ghost_gk")._assert_no_column_collision(GHOST_GK_FEATURE_NAMES)
+
+
+def test_ghost_bias_means_are_reconstructed_from_summed_counters():
+    """The selection-bias diagnostic is pooled as (sum, count) so it survives a partial resume.
+    An empty population must report NaN, exactly as `np.mean([])` did -- never 0.0, which would
+    read as a measured absence of bias."""
+    import math
+
+    t = _load("train_ghost_gk")
+    assert t._mean_from_counters(10.0, 4) == 2.5
+    assert math.isnan(t._mean_from_counters(0.0, 0))

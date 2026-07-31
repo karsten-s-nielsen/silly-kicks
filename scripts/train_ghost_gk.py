@@ -48,6 +48,79 @@ def cache_token() -> str:
     return f"v3-box{gg._PENALTY_AREA_Y_MIN:.4f}-{gg._PENALTY_AREA_Y_MAX:.4f}-{gg._PENALTY_AREA_X:.4f}"
 
 
+#: One game's labels ride its shard under this prefix, so a game is ONE tidy frame -- the shape
+#: `_driver.for_each` persists. Stripped again on read.
+_LABEL_PREFIX = "_lab_"
+
+#: Per-row arrays that ride the same shard as columns. Underscore-prefixed, and collision-checked
+#: against the real feature names before any assembly: a feature named `_lab_gk_x` would be read
+#: back as the LABEL and the model would be fitted on its own target. The 26 GHOST_GK_FEATURE_NAMES
+#: carry no leading underscore today -- `_assert_no_column_collision` proves that per run rather
+#: than trusting it, because the extractor is free to widen.
+_SIDE_COLS = ("_game_id", "_provider", "_keeper")
+
+#: The selection-bias diagnostic, carried as (sum, count) pairs through `for_each`'s `counters`
+#: channel. See `_work` in `main` for why it cannot ride the frame, and why a list would be wrong.
+_BIAS_COUNTERS = (
+    "bias_depth_detected_sum",
+    "bias_depth_detected_n",
+    "bias_depth_undetected_sum",
+    "bias_depth_undetected_n",
+    "bias_b2k_detected_sum",
+    "bias_b2k_detected_n",
+    "bias_b2k_undetected_sum",
+    "bias_b2k_undetected_n",
+)
+
+
+def _assert_no_column_collision(feature_columns) -> None:
+    """Refuse to pack a feature whose name is indistinguishable from a label or a side column."""
+    bad = sorted(c for c in feature_columns if c in _SIDE_COLS or str(c).startswith(_LABEL_PREFIX))
+    if bad:
+        raise ValueError(
+            f"feature column(s) {bad} collide with the shard's reserved names "
+            f"({_LABEL_PREFIX!r} prefix, {list(_SIDE_COLS)}). Unpacking would treat a FEATURE as a "
+            f"label, and the model would be fitted on its own target. Rename the reserved columns."
+        )
+
+
+def _pack(feats: pd.DataFrame, labs: pd.DataFrame, *, game_id, provider: str, keepers: pd.Series) -> pd.DataFrame:
+    """One game's features + labels + per-row side data as a single tidy frame."""
+    _assert_no_column_collision(feats.columns)
+    return pd.concat([feats, labs.add_prefix(_LABEL_PREFIX)], axis=1).assign(
+        _game_id=game_id, _provider=provider, _keeper=keepers.to_numpy()
+    )
+
+
+def _unpack(combined: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
+    """Invert :func:`_pack` over the combined table.
+
+    The feature frame is reconstructed by REMOVAL, never by selecting ``GHOST_GK_FEATURE_NAMES``:
+    the pre-migration code concatenated whatever ``prepare_ghost_gk_training_data`` returned, so a
+    positive selection would silently change what the model is fitted on the day the extractor
+    widens -- a different model from the same code, with nothing saying so.
+
+    The three arrays are rebuilt via ``np.array(<list>)`` rather than ``Series.to_numpy()`` so their
+    dtypes match the pre-migration ones exactly (``np.array(["a"])`` is a ``<U1`` array, not object);
+    ``groups`` and ``provider_labels`` reach ``StratifiedGroupKFold`` and ``keepers`` reaches the
+    keeper-domain code, none of which should see a dtype change from a storage decision.
+    """
+    lab_cols = [c for c in combined.columns if str(c).startswith(_LABEL_PREFIX)]
+    if not lab_cols:
+        raise ValueError(f"no {_LABEL_PREFIX!r} columns in the combined shards -- labels were lost in packing")
+    features = combined.drop(columns=[*lab_cols, *_SIDE_COLS]).reset_index(drop=True)
+    labels = combined[lab_cols].rename(columns=lambda c: c[len(_LABEL_PREFIX) :]).reset_index(drop=True)
+    groups = np.array(combined["_game_id"].tolist())
+    provider_labels = np.array(combined["_provider"].astype(str).tolist())
+    keepers = np.array(combined["_keeper"].astype(str).tolist(), dtype=object)
+    return features, labels, groups, provider_labels, keepers
+
+
+def _mean_from_counters(total: float, n: float) -> float:
+    """``sum / n``, or NaN on an empty population -- matching what ``np.mean([])`` reports."""
+    return float(total) / float(n) if n else float("nan")
+
+
 def validate_corpus_providers(providers: list[str]) -> None:
     """Fail on an unclassified provider BEFORE any loading or fitting.
 
@@ -132,6 +205,12 @@ def parse_args() -> argparse.Namespace:
         "baseline run consumes it to build the common evaluation domain (baseline keepers MINUS "
         "anyone in the 98). Mandatory when --keeper-grouped is set.",
     )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Train from a modified working tree. The run still records run_tree_dirty=true in "
+        "metrics.json -- the hatch permits a dev run, it never launders the fact.",
+    )
     return parser.parse_args()
 
 
@@ -154,12 +233,29 @@ def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
 
     args = parse_args()
+
+    # FIRST, before any parquet is read or any model is fitted. This trainer stamps
+    # `training_commit` into the SHIPPED artifact's metadata.json, and it used to read that SHA
+    # from a bare `git rev-parse HEAD` -- which returns the same commit whether or not the tree is
+    # modified. A bundled weights file therefore carried a verifiable-looking claim about code that
+    # may never have existed at that commit, which is strictly worse than carrying none.
+    #
+    # This is the one trainer with that specific defect: the others stamp no commit at all, so they
+    # make no false claim. Refusing by default is what makes `training_commit` true by
+    # construction, so the artifact's own field needs no new schema to be trustworthy;
+    # `--allow-dirty` still records the fact in metrics.json beside it.
+    #
+    # `run_prov`, not `prov`: `main` already binds `prov` twice as a per-provider loop variable
+    # (the CV per-provider MAE, and the metrics aggregation), and the first CLI run after this was
+    # written died on `TypeError: string indices must be integers` -- the loop had rebound it to a
+    # provider name by the time the metrics dict was built.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    run_prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # PR-S81: resolve ONE carrier cp from CLI (default = library) and pass the SAME dict
     # to both prepare (compute) and fit (record) so metadata records exactly what was used.
-    import subprocess
-
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
 
     cp = dict(DEFAULT_CARRIER_PARAMS)
@@ -171,11 +267,13 @@ def main() -> None:
         cp["gamma"] = args.carrier_gamma
     print(f"Carrier params (single source, recorded + used): {cp}")
 
-    try:
-        training_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()  # noqa: S607
-    except Exception:
-        training_commit = None
-    print(f"training_commit={training_commit}, training_platform={args.training_platform}")
+    # `None` rather than the helper's "unknown" sentinel, so metadata.json keeps the `str | None`
+    # shape that `GhostGkModel.load` and the published artifacts already carry.
+    training_commit = None if run_prov["commit"] == "unknown" else run_prov["commit"]
+    print(
+        f"training_commit={training_commit} (tree_dirty={run_prov['dirty']}), "
+        f"training_platform={args.training_platform}"
+    )
 
     print(f"Config: n_estimators={args.n_estimators}, max_depth={args.max_depth}")
     print(f"Data: {args.data_dir}, subsample_fps={args.subsample_fps}")
@@ -296,19 +394,44 @@ def main() -> None:
     cache_keepers = cache_dir / "keepers.npy"
     cache_token_path = cache_dir / "cache_token.txt"
 
-    # Selection-bias diagnostic accumulators (spec 4.3 rev 5). Defined at a scope visible to BOTH
-    # cache branches: the fresh-extract path fills them (it holds the raw visibility); a cache hit
-    # leaves them empty (raw visibility is not cached), so the diagnostic block is simply omitted.
-    # Two bias axes: keeper DEPTH (gk_x_gr) and BALL-to-keeper distance (both goal-relative).
-    bias_depth_detected: list[float] = []
-    bias_depth_undetected: list[float] = []
-    bias_b2k_detected: list[float] = []
-    bias_b2k_undetected: list[float] = []
+    # Selection-bias diagnostic (spec 4.3 rev 5), carried as (sum, count) pairs. Defined at a scope
+    # visible to BOTH cache branches: the fresh-extract path fills it (it holds the raw
+    # visibility); a whole-corpus cache hit leaves it empty (raw visibility is not cached), so the
+    # diagnostic block is simply omitted. Two bias axes: keeper DEPTH (gk_x_gr) and BALL-to-keeper
+    # distance (both goal-relative).
+    bias: dict[str, float] = {}
+    bias_unrecorded = 0
 
-    # A cache is trusted only if every array is present AND its recorded token matches the current
-    # geometry constants. The deferred schema-version bump has landed as `cache_token()`: a missing
-    # or differing token is a MISS, so a cache extracted under a different penalty-area constant
-    # can never be silently reused (that is exactly the re-fit-cycle failure it guards).
+    # WHAT THE RECORDED TOKEN COVERS -- widened here, and the widening is a bug fix. It used to be
+    # `cache_token()` alone (the penalty-area geometry), so a re-run with a different
+    # `--subsample-fps`, different `--carrier-*`, or `--actions-dir` newly supplied silently reused
+    # the previous run's feature matrix while `metadata.json` recorded the NEW carrier params. That
+    # is the recorded==used invariant PR-S81 exists to hold, broken by the cache underneath it.
+    # The token is now the shard GENERATION digest, which folds in `cache_token()` plus every other
+    # declared input, so the two layers can no longer disagree about what the features are.
+    #
+    # `token_inputs` is built once and used twice (here and by `for_each` below) so the two cannot
+    # drift into naming different generations for the same run.
+    from scripts._driver import generation_dir
+
+    extraction_inputs: dict[str, object] = {
+        "extractor": "prepare_ghost_gk_training_data",
+        "geometry": cache_token(),
+        "subsample_fps": args.subsample_fps,
+        "carrier_params": dict(cp),
+        # Presence only. The score/phase context depends on the actions THEMSELVES, which no digest
+        # this driver can afford would capture; `generation_dir` states that ceiling -- a token
+        # closes silent omission, not mis-declaration.
+        "with_actions": bool(actions_by_game),
+        "detected_targets_only": True,
+    }
+    shard_root = cache_dir / "shards"
+    generation = generation_dir(shard_root, token_inputs=extraction_inputs)
+
+    # A cache is trusted only if every array is present AND its recorded token matches this run's
+    # generation. A missing or differing token is a MISS, so a cache extracted under different
+    # geometry constants -- or different extraction parameters -- can never be silently reused
+    # (that is exactly the re-fit-cycle failure it guards).
     _recorded_token = cache_token_path.read_text(encoding="utf-8").strip() if cache_token_path.exists() else None
     if (
         cache_feats.exists()
@@ -316,7 +439,7 @@ def main() -> None:
         and cache_groups.exists()
         and cache_provs.exists()
         and cache_keepers.exists()
-        and _recorded_token == cache_token()
+        and _recorded_token == generation.name
     ):
         print(f"\nLoading cached features from {cache_dir}")
         t0 = time.time()
@@ -331,109 +454,181 @@ def main() -> None:
         # Following lakehouse TC-3 pattern: load frames per-file, extract features,
         # then delete frames immediately.  Only the extracted feature matrix (small)
         # stays in memory — raw frames (large) are never held simultaneously.
+        from scripts._driver import for_each, shard_path
         from silly_kicks.tracking import prepare_ghost_gk_training_data
-        from silly_kicks.tracking._ghost_gk import keeper_detection_mask
+        from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES, keeper_detection_mask
 
-        all_features: list[pd.DataFrame] = []
-        all_labels: list[pd.DataFrame] = []
-        all_game_ids: list = []
-        all_providers: list[str] = []
-        all_keepers: list[str] = []
+        # Fail before a single 4M-row parquet is read, not on the first packed game.
+        _assert_no_column_collision(GHOST_GK_FEATURE_NAMES)
+
         n_skipped = 0
         t0 = time.time()
 
-        for pq_idx, pq_path in enumerate(parquets):
-            file_frames = pd.read_parquet(pq_path)
-            game_ids_in_file = sorted(file_frames["game_id"].unique())
-            print(
-                f"  [{pq_idx + 1}/{len(parquets)}] {pq_path.name}:"
-                f" {len(game_ids_in_file)} game(s), {len(file_frames)} rows"
-            )
+        def _items():
+            """Yield one ``(provider, game_id, frames, home)`` item at a time.
 
-            for game_id in game_ids_in_file:
-                home = home_team_map.get(str(game_id))
-                if home is None:
-                    print(f"    SKIP game {game_id}: no home_team_id in mapping")
-                    n_skipped += 1
-                    continue
+            A GENERATOR, not a materialised list: `for_each` streams, so at most ONE file's frames
+            are alive -- today's memory profile exactly. Enumerating ``(file, game)`` pairs up
+            front was rejected because a game id is only knowable from inside the file, so `work`
+            would have to read the parquet itself and a multi-game file would be read once PER GAME.
 
-                game_frames = file_frames[file_frames["game_id"] == game_id]
-                game_actions = actions_by_game.get(game_id) if actions_by_game else None
-                # provider is per-file constant; compute BEFORE prepare so the detected-only
-                # filter and the selection-bias diagnostic can key on it.
+            The consequence, stated rather than hidden: a RESUMED extraction still re-READS every
+            parquet, because `for_each` resumes ``work``, not the production of its items. What it
+            skips is the extraction, which is the expensive half here (the provider fail-fast above
+            exists precisely because the per-game extraction is what costs an hour). The
+            whole-corpus feature cache above remains the fast path for a run that already finished.
+            """
+            nonlocal n_skipped
+            for pq_idx, pq_path in enumerate(parquets):
+                file_frames = pd.read_parquet(pq_path)
+                game_ids_in_file = sorted(file_frames["game_id"].unique())
+                print(
+                    f"  [{pq_idx + 1}/{len(parquets)}] {pq_path.name}:"
+                    f" {len(game_ids_in_file)} game(s), {len(file_frames)} rows"
+                )
+                # provider is a per-file constant, so it is read once here rather than once per
+                # game; the pre-migration code recomputed the same file-level value inside the game
+                # loop. It is needed BEFORE prepare so the detected-only filter and the
+                # selection-bias diagnostic can key on it.
                 prov = (
                     str(file_frames["source_provider"].iloc[0])
                     if "source_provider" in file_frames.columns
                     else "unknown"
                 )
+                for game_id in game_ids_in_file:
+                    home = home_team_map.get(str(game_id))
+                    if home is None:
+                        print(f"    SKIP game {game_id}: no home_team_id in mapping")
+                        n_skipped += 1
+                        continue
+                    yield prov, game_id, file_frames[file_frames["game_id"] == game_id], home
+                del file_frames  # Release entire file's frames before loading next
 
-                # return_meta=True -> the 3-tuple overload; pyright narrows on the Literal flag.
-                feats, labs, meta = prepare_ghost_gk_training_data(
-                    game_frames,
-                    home_team_id=home,
-                    actions=game_actions,
-                    subsample_fps=args.subsample_fps,
-                    carrier_params=cp,
-                    return_meta=True,
-                )
-                del game_frames  # Release per-game slice
+        # Per-item bias sums the tidy frame CANNOT carry: they are measured BEFORE the
+        # detected-only filter, so they have a different row count than the shard's rows. They ride
+        # the `counters` channel instead, as (sum, count) pairs -- summable, so `for_each` replays
+        # them from the counters sidecar and a PARTIALLY resumed pass still reports means over the
+        # whole corpus. A list accumulator here would have been silently wrong on resume: the
+        # reported means would describe only the games this pass happened to redo, while looking
+        # exactly like a corpus figure. (The whole-corpus cache branch is different and safe: it is
+        # all-or-nothing, so it omits the block entirely rather than narrowing it.)
+        _bias: dict[str, float] = {}
 
-                if not len(feats):
-                    continue  # nothing extracted for this game (meta empty -> skip before masks)
+        def _work(item):
+            prov, game_id, game_frames, home = item
+            game_actions = actions_by_game.get(game_id) if actions_by_game else None
 
-                # --- Selection-bias diagnostic (spec 4.3 rev 5): compute BEFORE the detected-only
-                # filter, because the filter drops the undetected frames the bias compares against.
-                # keeper DEPTH = gk_x_gr (goal-relative x, already in meta); detected vs undetected
-                # by gk_visibility. This is a REPORTED limitation, not a gate.
-                if prov == "skillcorner" and len(meta):
-                    _vis = keeper_detection_mask_or_none(meta["gk_visibility"])
-                    if _vis is not None:
-                        bias_depth_detected.extend(meta.loc[_vis, "gk_x_gr"].tolist())
-                        bias_depth_undetected.extend(meta.loc[~_vis, "gk_x_gr"].tolist())
-                        # Ball-to-keeper distance (the OTHER bias axis). feats.ball_x/ball_y and
-                        # meta.gk_x_gr/gk_y_gr share the SAME goal-relative frame (identical to_gr_x
-                        # flip; y unflipped) and are row-aligned pre-filter, so this is a single
-                        # consistent coordinate system. NaN where the ball is absent -> nanmean below.
-                        _b2k = np.hypot(
-                            feats["ball_x"].to_numpy() - meta["gk_x_gr"].to_numpy(),
-                            feats["ball_y"].to_numpy() - meta["gk_y_gr"].to_numpy(),
-                        )
-                        _vm = _vis.to_numpy()
-                        bias_b2k_detected.extend(_b2k[_vm].tolist())
-                        bias_b2k_undetected.extend(_b2k[~_vm].tolist())
+            # return_meta=True -> the 3-tuple overload; pyright narrows on the Literal flag.
+            feats, labs, meta = prepare_ghost_gk_training_data(
+                game_frames,
+                home_team_id=home,
+                actions=game_actions,
+                subsample_fps=args.subsample_fps,
+                carrier_params=cp,
+                return_meta=True,
+            )
+            # Zeroed, not merely cleared: `counters` runs for every ATTEMPTED item, and a
+            # non-skillcorner game must contribute an explicit 0 rather than a missing key.
+            _bias.clear()
+            _bias.update(dict.fromkeys(_BIAS_COUNTERS, 0.0))
 
-                # --- Detected-keeper targets ONLY (spec 4.3). RAISES if a detection-aware
-                # provider's flag was discarded upstream (fail-closed on the ambiguous null).
-                keep = keeper_detection_mask(meta["gk_visibility"], provider=prov)
-                feats = feats[keep].reset_index(drop=True)
-                labs = labs[keep].reset_index(drop=True)
-                meta = meta[keep].reset_index(drop=True)
-                if not len(feats):
-                    print(f"  SKIP {prov}/{game_id}: no detected-keeper frames")
-                    continue
+            if not len(feats):
+                return None  # nothing extracted (meta empty -> stop before the masks)
 
-                all_features.append(feats)
-                all_labels.append(labs)
-                all_game_ids.extend([game_id] * len(feats))
-                all_providers.extend([prov] * len(feats))
-                all_keepers.extend(meta["gk_player_id"].astype(str).tolist())
+            # --- Selection-bias diagnostic (spec 4.3 rev 5): compute BEFORE the detected-only
+            # filter, because the filter drops the undetected frames the bias compares against.
+            # keeper DEPTH = gk_x_gr (goal-relative x, already in meta); detected vs undetected
+            # by gk_visibility. This is a REPORTED limitation, not a gate.
+            if prov == "skillcorner" and len(meta):
+                _vis = keeper_detection_mask_or_none(meta["gk_visibility"])
+                if _vis is not None:
+                    _depth = meta["gk_x_gr"].to_numpy(dtype=float)
+                    # Ball-to-keeper distance (the OTHER bias axis). feats.ball_x/ball_y and
+                    # meta.gk_x_gr/gk_y_gr share the SAME goal-relative frame (identical to_gr_x
+                    # flip; y unflipped) and are row-aligned pre-filter, so this is a single
+                    # consistent coordinate system. NaN where the ball is absent.
+                    _b2k = np.hypot(
+                        feats["ball_x"].to_numpy() - meta["gk_x_gr"].to_numpy(),
+                        feats["ball_y"].to_numpy() - meta["gk_y_gr"].to_numpy(),
+                    )
+                    _vm = _vis.to_numpy()
+                    _bias.update(
+                        {
+                            # PLAIN sum + row count for depth: the report takes a mean (not a
+                            # nanmean) of these, so a NaN must still poison it rather than vanish.
+                            "bias_depth_detected_sum": float(np.sum(_depth[_vm])),
+                            "bias_depth_detected_n": int(_vm.sum()),
+                            "bias_depth_undetected_sum": float(np.sum(_depth[~_vm])),
+                            "bias_depth_undetected_n": int((~_vm).sum()),
+                            # nansum over a NON-NaN count reproduces nanmean exactly.
+                            "bias_b2k_detected_sum": float(np.nansum(_b2k[_vm])),
+                            "bias_b2k_detected_n": int((~np.isnan(_b2k[_vm])).sum()),
+                            "bias_b2k_undetected_sum": float(np.nansum(_b2k[~_vm])),
+                            "bias_b2k_undetected_n": int((~np.isnan(_b2k[~_vm])).sum()),
+                        }
+                    )
 
-            del file_frames  # Release entire file's frames before loading next
+            # --- Detected-keeper targets ONLY (spec 4.3). RAISES if a detection-aware
+            # provider's flag was discarded upstream (fail-closed on the ambiguous null).
+            keep = keeper_detection_mask(meta["gk_visibility"], provider=prov)
+            feats = feats[keep].reset_index(drop=True)
+            labs = labs[keep].reset_index(drop=True)
+            meta = meta[keep].reset_index(drop=True)
+            if not len(feats):
+                print(f"  SKIP {prov}/{game_id}: no detected-keeper frames")
+                return None  # an EMPTY shard: "ran, produced no usable row", so it is not redone
+            return _pack(feats, labs, game_id=game_id, provider=prov, keepers=meta["gk_player_id"].astype(str))
 
-        if not all_features:
+        res = for_each(
+            _items(),
+            # Provider first, mirroring every other migrated driver: providers in this corpus
+            # demonstrably share game ids. The parquet FILENAME is deliberately not a component --
+            # in the tc3 layout every file is named `frames.parquet`, so it distinguishes nothing.
+            #
+            # `home` is the THIRD component, and it belongs in the KEY rather than in
+            # `token_inputs`, because it is a PER-ITEM input while the token is per-PASS.
+            # `home_team_id` drives the goal-relative flip of every feature and label in the shard,
+            # so a corrected mapping must invalidate the games it corrects -- but declaring the whole
+            # `{game_id: home}` map would invalidate EVERY shard the moment one match is added to
+            # `--data-dir`, which is exactly the over-invalidation the selector rule exists to avoid.
+            # Per-item input -> per-item identity. Still injective: one home per game per run.
+            #
+            # The asymmetry this closes: ADDING a previously-missing mapping was always safe (the
+            # game was skipped, so no shard existed), but CHANGING an existing one was silent -- the
+            # shard was skipped, the correction never reached the features, and because the
+            # whole-corpus cache token is this generation's digest, the cache accepted it too. The
+            # model would have trained on wrong-handed data with no signal anywhere.
+            key=lambda item: (str(item[0]), str(item[1]), str(item[3])),
+            work=_work,
+            counters=lambda _item, _frame: dict(_bias),
+            shard_root=shard_root,
+            token_inputs=extraction_inputs,
+            tag="ghost_gk_features",
+            label="game",
+        )
+        if res.failures:
+            raise RuntimeError(
+                f"{len(res.failures)} game(s) failed during extraction: {res.failures}. "
+                f"Re-run to retry only those -- the games that succeeded are already sharded."
+            )
+
+        # Combined from THIS PASS'S keys, not `_driver.reconcile`: this driver has no partition
+        # surface, so a whole-generation read would fold in games from a wider earlier `--data-dir`.
+        parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+        if not parts:
             print("ERROR: No training samples extracted.", file=sys.stderr)
             sys.exit(1)
 
-        features = pd.concat(all_features, ignore_index=True)
-        labels = pd.concat(all_labels, ignore_index=True)
-        del all_features, all_labels  # Release intermediate lists
-        groups = np.array(all_game_ids)
-        provider_labels = np.array(all_providers)
-        keepers = np.array(all_keepers, dtype=object)
+        combined = pd.concat(parts, ignore_index=True)
+        del parts
+        features, labels, groups, provider_labels, keepers = _unpack(combined)
+        del combined
+        bias = dict(res.counters)
+        bias_unrecorded = res.counters_unrecorded
         elapsed = time.time() - t0
         print(
-            f"\nExtracted {len(features)} samples from {len(set(all_game_ids))} games"
-            f" ({n_skipped} skipped) in {elapsed:.1f}s"
+            f"\nExtracted {len(features)} samples from {len(set(groups.tolist()))} games"
+            f" ({n_skipped} skipped, {res.skipped} already sharded) in {elapsed:.1f}s"
         )
 
         # Save cache for subsequent runs
@@ -446,8 +641,8 @@ def main() -> None:
         # Written LAST, deliberately: the token is what makes the cache trustworthy, so it must
         # not exist until every array beside it does. A crash mid-write then leaves a tokenless
         # directory, which the hit predicate treats as a MISS.
-        cache_token_path.write_text(cache_token(), encoding="utf-8")
-        print(f"Cached features to {cache_dir} (token {cache_token()})")
+        cache_token_path.write_text(generation.name, encoding="utf-8")
+        print(f"Cached features to {cache_dir} (generation {generation.name})")
 
     # PR-S81: variant axis = sample count -> wheel size. Cap AFTER extraction so the
     # bundled "default" stays small while "full" keeps all in-domain samples.
@@ -726,6 +921,12 @@ def main() -> None:
         "variant": args.variant,
         "carrier_params": cp,
         "training_commit": training_commit,
+        # The artifact's own metadata.json records only the SHA. These two say whether that SHA
+        # describes the code that ran: `--allow-dirty` permits a dev run, and this is where the
+        # fact survives instead of living in someone's memory of how the run was invoked.
+        "run_commit": run_prov["commit"],
+        "run_tree_dirty": run_prov["dirty"],
+        "run_tree_state": run_prov["tree_state"],
         "hyperparameters": {
             "n_estimators": args.n_estimators,
             "max_depth": args.max_depth,
@@ -756,15 +957,30 @@ def main() -> None:
         }
 
     # spec 4.3 rev 5: measured selection-bias limitation (REPORTED, not a gate). Only populated on
-    # a fresh SkillCorner extract (the cache-load path does not carry raw visibility).
-    if bias_depth_detected and bias_depth_undetected:
+    # a fresh SkillCorner extract (the cache-load path does not carry raw visibility). Computed
+    # from summed (sum, count) counters rather than pooled lists, so a resumed extraction still
+    # reports the whole corpus; `n_games_counters_unrecorded` says when that is not true.
+    if bias.get("bias_depth_detected_n") and bias.get("bias_depth_undetected_n"):
         metrics["detection_selection_bias"] = {
-            "keeper_depth_detected_mean": float(np.mean(bias_depth_detected)),
-            "keeper_depth_undetected_mean": float(np.mean(bias_depth_undetected)),
-            "ball_to_keeper_dist_detected_mean": float(np.nanmean(bias_b2k_detected)),
-            "ball_to_keeper_dist_undetected_mean": float(np.nanmean(bias_b2k_undetected)),
-            "n_detected": len(bias_depth_detected),
-            "n_undetected": len(bias_depth_undetected),
+            "keeper_depth_detected_mean": _mean_from_counters(
+                bias["bias_depth_detected_sum"], bias["bias_depth_detected_n"]
+            ),
+            "keeper_depth_undetected_mean": _mean_from_counters(
+                bias["bias_depth_undetected_sum"], bias["bias_depth_undetected_n"]
+            ),
+            "ball_to_keeper_dist_detected_mean": _mean_from_counters(
+                bias["bias_b2k_detected_sum"], bias["bias_b2k_detected_n"]
+            ),
+            "ball_to_keeper_dist_undetected_mean": _mean_from_counters(
+                bias["bias_b2k_undetected_sum"], bias["bias_b2k_undetected_n"]
+            ),
+            "n_detected": int(bias["bias_depth_detected_n"]),
+            "n_undetected": int(bias["bias_depth_undetected_n"]),
+            # Non-zero means some skipped game's counters could not be replayed (a pre-sidecar
+            # shard generation, or a sidecar truncated by a kill), so the four means above
+            # UNDER-cover the corpus. Reported rather than left to be inferred from a figure that
+            # looks complete.
+            "n_games_counters_unrecorded": int(bias_unrecorded),
             "note": (
                 "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper "
                 "when the ball is near him), so they over-represent the engaged/advanced keeper and "

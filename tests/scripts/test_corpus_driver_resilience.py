@@ -62,6 +62,32 @@ _DRIVER_API = {
 _CONSERVATION = "assert_conservation"
 #: The OTHER primitive it must call -- conservation alone is satisfiable by a lossy run.
 _INJECTIVE = "_require_injective"
+#: Primitives that mean "this driver runs a PER-ITEM pass and writes shards".
+#:
+#: `cohort_cache` is deliberately NOT among them, and neither is `prune_stale_generations`. A
+#: Shape-B driver -- one uncached whole-cohort query, no per-item loop -- adopts the seam purely by
+#: routing that query through `cohort_cache`, and demanding `assert_conservation` from it is not a
+#: strict reading of the rule but an UNDEFINED one: there are no items to conserve, no keys to be
+#: injective over, and no shard the count could be compared against. The only way to satisfy such a
+#: demand is to call a conservation check on an empty key list, which asserts nothing and would
+#: teach the next contributor that these calls are boilerplate to be appeased rather than invariants
+#: to be meant.
+#:
+#: Found by execution: Task 15 gave the four loop-free xT-GK drivers `--cohort-cache` and the two
+#: escape-hatch cases below went red for all four at once. The plan predicted "all pass".
+_SHARD_PRIMITIVES = {
+    "for_each",
+    "generation_dir",
+    "shard_path",
+    "write_shard",
+    "already_done",
+    "assert_conservation",
+    "reconcile",
+}
+
+
+def _runs_a_per_item_pass(tree: ast.AST) -> bool:
+    return bool(_called_names(tree) & _SHARD_PRIMITIVES)
 
 
 def _called_names(tree: ast.AST) -> set[str]:
@@ -136,30 +162,10 @@ def _population() -> dict[str, ast.AST]:
 
 
 #: Drivers not yet migrated, each with the reason. Asserted EXACTLY, both ways (see the test below):
-#: a new offender cannot join silently and a migrated one must be removed. Emptied by Task 17.
-_NOT_YET_MIGRATED: dict[str, str] = {
-    "build_gkdv_arm_values": "step 3 -- already resumable via _partition; behaviour-preserving migration",
-    "build_layer2_spells": "step 3 -- the reference migration",
-    "calibrate_tracking_defaults": "step 7 -- 3 corpus loops; primitives path",
-    "calibrate_xt_bandwidth": "step 4 -- 4 corpus loops; THE primitives-path proof",
-    "derive_opengoal_range": "step 7 -- accumulate-then-write",
-    "measure_cover_shadow_argmax_agreement": "step 7 -- another session's file, goes last",
-    "run_signoff_power": "step 7 -- accumulate-then-write, 2 loops",
-    "train_ghost_gk": "step 5 -- own _feature_cache + cache_token",
-    "train_gk_completion": "step 5 -- accumulate-then-write",
-    "train_gk_retention": "step 8 -- marts/loader hybrid; cohort cache only",
-    "train_xcross_attempt": "step 5 -- uses _cache.py",
-    "train_xshot_occurrence": "step 5 -- uses _cache.py",
-    "tune_structural_pass_sigma": "step 7 -- sweep driver",
-    "validate_shot_goalmouth_sb": "step 7 -- owner-gated SB acceptance harness",
-    "validate_xcross_causal": "step 7 -- the frozen 4.18.0 causal harness",
-    "validate_xs_probe": "step 6 -- 14h SERIAL, unresumable, silent. THE driver this gate exists for.",
-    "validate_xshot_causal": "step 3 -- already resumable via _partition",
-    "validate_xtgk_possession_value": "step 7 -- xT-GK gate script",
-    "validate_xtgk_v2": "step 8 -- xT-GK v2 construct-validity harness; cohort cache only",
-    "xtgk_v2_kappa_sweep": "step 8 -- kappa sweep; cohort cache only",
-    "xtgk_v2_keeper_discrimination": "step 8 -- keeper-ICC harness; cohort cache only",
-}
+#: a new offender cannot join silently and a migrated one must be removed. EMPTY as of ADR-052 --
+#: every in-population driver adopts the seam. It stays as the mechanism, not as a list: a new
+#: unmigrated driver has somewhere to be recorded WITH a reason, and cannot arrive silently.
+_NOT_YET_MIGRATED: dict[str, str] = {}
 
 
 @pytest.mark.parametrize("name", sorted(_population()))
@@ -184,6 +190,8 @@ def test_an_ESCAPE_HATCH_driver_still_asserts_conservation(name):
     tree = _population()[name]
     if _uses_for_each(tree) or not _adopts(tree):
         pytest.skip("uses for_each (which asserts internally) or is covered by the adoption test")
+    if not _runs_a_per_item_pass(tree):
+        pytest.skip("cohort-cache-only adopter: no per-item pass, so conservation is undefined")
     assert _CONSERVATION in _called_names(tree), (
         f"{name}.py uses the primitives directly but never calls {_CONSERVATION}. Then neither the "
         f"static gate nor the runtime invariant covers it."
@@ -205,6 +213,8 @@ def test_an_ESCAPE_HATCH_driver_still_checks_key_injectivity(name):
     tree = _population()[name]
     if _uses_for_each(tree) or not _adopts(tree):
         pytest.skip("uses for_each (which checks inline) or is covered by the adoption test")
+    if not _runs_a_per_item_pass(tree):
+        pytest.skip("cohort-cache-only adopter: no per-item keys, so injectivity is undefined")
     assert _INJECTIVE in _called_names(tree), (
         f"{name}.py uses the primitives directly but never calls {_INJECTIVE}. A non-injective key "
         f"would then be silent AND self-certifying: the duplicate is skipped as 'already done' and "
@@ -264,3 +274,42 @@ def test_the_accumulation_predicate_sees_more_than_append():
     ):
         assert _accumulates(ast.parse(src)), f"missed accumulation in: {src!r}"
     assert not _accumulates(ast.parse("for m in matches:\n    print(m)\n"))
+
+
+def test_the_cohort_cache_EXEMPTION_does_not_become_a_blanket_escape():
+    """Both sides of the exemption, because a one-sided version is how a gate rots into permission.
+
+    A cohort-cache-only driver has no per-item pass, so conservation over "items" is undefined and
+    it is exempt. A driver that writes SHARDS is running exactly the pass conservation exists to
+    check -- adding `cohort_cache` alongside must not buy it an exemption it has not earned.
+    """
+    cache_only = ast.parse(
+        "from scripts._driver import cohort_cache\n"
+        "def main():\n"
+        "    df = cohort_cache(args.cohort_cache, build=lambda: load_xtgk_cohort('gs'))\n"
+    )
+    assert _adopts(cache_only)
+    assert not _runs_a_per_item_pass(cache_only)
+
+    shard_writer = ast.parse(
+        "from scripts._driver import cohort_cache, generation_dir, write_shard\n"
+        "def main():\n"
+        "    df = cohort_cache(args.cohort_cache, build=lambda: load_xtgk_cohort('gs'))\n"
+        "    gen = generation_dir(d, token_inputs={'v': 1})\n"
+        "    for m in matches:\n"
+        "        write_shard(gen / f'{m}.parquet', f(m), tag='t')\n"
+    )
+    assert _runs_a_per_item_pass(shard_writer), "a shard-writing driver must NOT inherit the exemption"
+
+
+def test_every_exempt_driver_really_has_no_shard_pass():
+    """Meta-assertion over the LIVE population, not a plant: the exemption must be justified for
+    each driver it actually fires on, or it is silently covering a real escape-hatch adopter."""
+    exempt = [
+        n for n, t in _population().items() if _adopts(t) and not _uses_for_each(t) and not _runs_a_per_item_pass(t)
+    ]
+    assert exempt, "no driver exercises the exemption -- the two cases above are then vacuous"
+    for name in exempt:
+        called = _called_names(_population()[name])
+        assert "cohort_cache" in called, f"{name} is exempt but does not even use the cohort cache"
+        assert not (called & _SHARD_PRIMITIVES), f"{name} writes shards yet was exempted"

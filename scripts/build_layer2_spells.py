@@ -87,10 +87,9 @@ def main() -> None:
         print(json.dumps(list_match_ids(args.providers.split(",")), indent=2))
         return
 
-    import pandas as pd
-
+    from scripts._driver import for_each, reconcile
     from scripts._loader_pining import load_matches
-    from scripts._partition import providers_for_slice, worker_tag, write_table_atomically
+    from scripts._partition import providers_for_slice, worker_tag
     from silly_kicks.causal import build_opportunities, layer2_config
     from silly_kicks.causal._confounders import join_layer2_confounders
 
@@ -98,49 +97,72 @@ def main() -> None:
     # A provider absent from THIS slice belongs to another worker; the loader would otherwise read
     # that as "the whole manifest" (see providers_for_slice for the measured behaviour).
     providers = providers_for_slice(args.providers.split(","), match_ids)
-    tag = worker_tag(args.match_ids_json)  # BEFORE the loop: the shard write uses it per match
+    tag = worker_tag(args.match_ids_json)
     dest = Path(args.out)
-    shard_dir = dest / "shards"
-    shard_dir.mkdir(parents=True, exist_ok=True)
-    totals = {"n_matches": 0, "n_spells": 0, "n_treated": 0}
 
     # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
-    for provider, match_id, actions, frames, home_team_id in load_matches(
-        providers=providers,
-        match_ids=match_ids,
-        max_per_provider=args.max_per_provider,
-        tracking_limit=args.tracking_limit,
-    ):
-        shard = shard_dir / f"{provider}__{match_id}.parquet"
-        if shard.is_file():
-            print(f"  skip {match_id}: shard exists", flush=True)
-            continue
-
+    def _work(item):
+        _provider, _match_id, actions, frames, home_team_id = item
         sp = build_opportunities(
             frames, actions, home_team_id=home_team_id, model_metadata={}, config=layer2_config({})
         )
         if len(sp):
             sp = join_layer2_confounders(sp, frames=frames, actions=actions, home_team_id=home_team_id)
             sp = sp.copy()
-            sp["provider"] = str(provider)
-            sp["match_id"] = str(match_id)
-            totals["n_treated"] += int(sp["Z"].sum())
-        totals["n_matches"] += 1
-        totals["n_spells"] += len(sp)
+            sp["provider"] = str(_provider)
+            sp["match_id"] = str(_match_id)
+        return sp
 
-        # Written even when EMPTY: an absent shard means "not yet run", a present empty one means
-        # "run, produced no spell". Conflating them would make a resume silently recompute.
-        write_table_atomically(sp, shard, tag=tag)
-        print(f"  {match_id}: {len(sp)} spells -> {shard.name}", flush=True)
+    def _counters(_item, frame):
+        return {
+            "n_matches": 1,
+            "n_spells": len(frame),
+            "n_treated": int(frame["Z"].sum()) if len(frame) else 0,
+        }
 
-    shards = sorted(shard_dir.glob("*.parquet"))
-    frames_in = [pd.read_parquet(s) for s in shards]
-    combined = pd.concat([f for f in frames_in if len(f)], ignore_index=True) if frames_in else pd.DataFrame()
-    if len(combined):
-        write_table_atomically(combined, dest / "layer2_spells.parquet", tag=tag)
+    res = for_each(
+        load_matches(
+            providers=providers,
+            match_ids=match_ids,
+            max_per_provider=args.max_per_provider,
+            tracking_limit=args.tracking_limit,
+        ),
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        counters=_counters,
+        shard_root=dest / "shards",
+        # Layer 2 spells are produced by the opportunity builder and its config. `matching.py` is
+        # NOT declared: it runs in the downstream analysis, which re-reads these shards on every
+        # invocation. Declare what determines the CONTENT, not what consumes it.
+        token_inputs={
+            "layer2_config": "v1",
+            "build_opportunities": "v1",
+            "join_layer2_confounders": "v1",
+            # Declared for the same reason `run_signoff_power`'s inline twin declares it (its
+            # comment says it "Mirrors `build_layer2_spells`' declaration" -- it did not, until
+            # now): the frame cap changes which spells exist AND what their confounders are.
+            # Worse here than elsewhere because this driver combines with `reconcile`, a
+            # WHOLE-GENERATION read, so one capped worker's shards reach every worker's table.
+            "tracking_limit": args.tracking_limit,
+        },
+        tag=tag,
+        label="match",
+    )
+
+    combined = reconcile(res.shard_dir, dest / "layer2_spells.parquet", tag=tag)
     (dest / f"manifest_{tag}.json").write_text(
         json.dumps(
-            {**totals, "run_commit": prov["commit"], "run_tree_dirty": prov["dirty"], "partition": tag},
+            {
+                **res.counters,
+                # `res.manifest()`, not a bare `manifest_fields(...)`: only the method threads
+                # `counters_unrecorded`, and a hand-written call silently defaults it to 0 -- so a
+                # resumed worker whose sidecars were missing would report a complete corpus.
+                **res.manifest(),
+                "run_commit": prov["commit"],
+                "run_tree_dirty": prov["dirty"],
+                "run_tree_state": prov["tree_state"],
+                "partition": tag,
+            },
             indent=2,
             default=str,
         ),

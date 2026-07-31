@@ -81,6 +81,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=Path("docs/research/xtgk_possession_value/gate.json"))
     parser.add_argument("--force-unlocked", action="store_true", help="run with placeholder GateConfig")
+    parser.add_argument(
+        "--cohort-cache",
+        default=None,
+        help=(
+            "DIRECTORY for the per-cohort parquet caches; fetch each cohort once and reuse it. "
+            "Absent = fetch every run (today's behaviour). A directory rather than a single path "
+            "because this driver loads two cohorts and two frames each. Explicitly named because a "
+            "mart re-materializes and a cached cohort has no token this can verify -- so reuse must "
+            "be the operator's decision, never automatic."
+        ),
+    )
     args = parser.parse_args()
 
     if not _gate_is_locked(_GATE_CONFIG_LOCKED) and not args.force_unlocked:
@@ -106,9 +117,30 @@ def main() -> int:
         "wc2022": {"data_source": "gradientsports", "authorising": True},
         "rm": {"data_source": "skillcorner", "authorising": False},  # provisional (100% OOD)
     }
+    from scripts._driver import cohort_cache
+
+    # `load_xtgk_cohort` returns TWO frames from ONE query, and `cohort_cache` caches one parquet
+    # per path -- so the two cached halves would otherwise cost two full queries. This memo makes
+    # the second `cohort_cache` call reuse the first's result. On a cache HIT neither call reaches
+    # `build`, so no query runs at all; on a MISS exactly one does.
+    _query_memo: dict = {}
+
+    def _query(src):
+        if src not in _query_memo:
+            _query_memo[src] = load_xtgk_cohort(src)
+        return _query_memo[src]
+
+    cache_dir = Path(args.cohort_cache) if getattr(args, "cohort_cache", None) else None
+
     report: dict = {}
     for name, spec in cohorts.items():
-        raw, shot_xg = load_xtgk_cohort(spec["data_source"])
+        src = spec["data_source"]
+        raw = cohort_cache(
+            cache_dir / f"{name}_actions.parquet" if cache_dir else None, build=lambda s=src: _query(s)[0]
+        )
+        shot_xg = cohort_cache(
+            cache_dir / f"{name}_shot_xg.parquet" if cache_dir else None, build=lambda s=src: _query(s)[1]
+        )
         # count the frame-present unpressured restarts on the RAW frame (prepare_cohort coalesces them
         # to 0, so the count must precede prep); then prep drops the frame-absent tracking gaps.
         unpressured = frame_present_null_pressure_count(

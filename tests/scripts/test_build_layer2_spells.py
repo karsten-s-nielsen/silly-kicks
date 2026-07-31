@@ -77,8 +77,12 @@ def test_main_walks_a_match_end_to_end_and_writes_its_shard(tmp_path, monkeypatc
 
     mod.main()
 
-    shard = tmp_path / "shards" / "gradientsports__m1.parquet"
-    assert shard.is_file(), "the per-match shard was never written"
+    # `rglob`, not a hard-coded path: since the `_driver` migration the shard lives inside a
+    # GENERATION directory (`shards/<token>/…`) whose name is a digest of the declared inputs.
+    # Pinning that token here would turn every future change to the declaration into a test edit,
+    # and the token's value is not what this test is about.
+    shards = list((tmp_path / "shards").rglob("gradientsports__m1.parquet"))
+    assert shards, "the per-match shard was never written"
     assert (tmp_path / "layer2_spells.parquet").is_file()
     assert not list(tmp_path.glob("**/*.tmp*")), "atomic temp file left behind"
 

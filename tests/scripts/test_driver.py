@@ -8,6 +8,9 @@ that path inputs are normalised before they reach the digest.
 
 from __future__ import annotations
 
+import pathlib
+import re
+import warnings
 from pathlib import PurePosixPath, PureWindowsPath
 
 import pandas as pd
@@ -239,9 +242,8 @@ def test_progress_reports_index_total_and_label(capsys):
 
 
 def test_progress_renders_an_UNKNOWN_total_as_a_question_mark(capsys):
-    """The ONLY branch `for_each` takes. It streams, so it has no total and passes `n=None` at all
-    three call sites (skip, failure, success) -- while the `2/64` case above is exercised only by the
-    primitives path. Without this, a typo rendering `[3/None]` ships green."""
+    """The branch `for_each` takes for a STREAMED corpus: a generator has no length. Without this,
+    a typo rendering `[3/None]` ships green."""
     mod.progress("match", 3, None, elapsed_s=1.0)
     out = capsys.readouterr().out
     assert "[3/?]" in out, f"unknown total must render as '?', got: {out!r}"
@@ -378,10 +380,22 @@ def test_manifest_fields_carry_the_generation_token(tmp_path):
     makes the ambiguity visible rather than structural -- the way `commits_seen` already surfaces a
     multi-commit corpus."""
     gen = mod.generation_dir(tmp_path, token_inputs={"v": "v1"})
-    fields = mod.manifest_fields(gen, attempted=3, failed=1)
+    fields = mod.manifest_fields(gen, attempted=3, failed=1, counters_unrecorded=0)
     assert fields["generation"] == gen.name
     assert fields["n_attempted"] == 3
     assert fields["n_failed"] == 1
+
+
+def test_manifest_fields_REFUSES_to_default_the_unrecorded_count():
+    """It used to default to 0, and all three drivers migrated before the sidecar existed took that
+    default -- so a resumed worker reported `n_counters_unrecorded: 0` beside totals it had not
+    been able to replay. `res.manifest()` is the form drivers should use; this makes the hand-written
+    form state the quantity rather than silently claim the healthy value."""
+    import inspect
+
+    with pytest.raises(TypeError):
+        mod.manifest_fields("gen", attempted=1, failed=0)  # type: ignore[call-arg]
+    assert inspect.signature(mod.manifest_fields).parameters["counters_unrecorded"].default is inspect.Parameter.empty
 
 
 def _items(n):
@@ -566,6 +580,153 @@ def test_for_each_does_NOT_materialise_the_corpus(tmp_path):
     assert res.attempted == 5
 
 
+def _counted(tmp_path, **kw):
+    return mod.for_each(
+        [("m1", 10), ("m2", 20)],
+        key=lambda it: it[0],
+        work=lambda it: pd.DataFrame({"v": [it[1]]}),
+        counters=lambda it, frame: {"n_frames_in": it[1], "n_matches": 1},
+        shard_root=tmp_path,
+        token_inputs={"v": "v1"},
+        **kw,
+    )
+
+
+def test_counters_SURVIVE_a_full_resume(tmp_path):
+    """MEASURED defect. `counters` is called only for items a pass ATTEMPTS, so a fully resumed
+    worker returned `{}` and wrote `{'n_frames_in': 0, 'n_matches': 0}` into its manifest -- while
+    `build_gkdv_arm_values` states in-source that "corpus totals must come from summing per-worker
+    manifests -- not from re-reading the table". Any partitioned run in which a worker resumed
+    therefore produced a corpus artifact under-reporting the corpus, with nothing to show for it.
+
+    Pass-scoped counts are asserted alongside, because they must NOT be replayed: a resumed pass
+    genuinely attempted nothing, and `aggregate_manifests` depends on it being able to say so."""
+    first = _counted(tmp_path)
+    second = _counted(tmp_path)
+    assert first.counters == {"n_frames_in": 30, "n_matches": 2}
+    assert second.skipped == 2 and second.attempted == 0, "the second pass must be a full resume"
+    assert second.counters == first.counters, "a resumed pass must report the same CORPUS counters"
+    assert second.manifest()["n_attempted"] == 0, "pass-scoped counts must NOT be replayed"
+    assert second.counters_unrecorded == 0
+
+
+def test_a_PRE_SIDECAR_generation_is_counted_UNRECORDED_not_ZERO(tmp_path):
+    """The other side of the band, and the reason this is not merely `.get(k, 0)`.
+
+    A generation built before the sidecar existed has shards but no counters. Replaying zero there
+    would report a smaller corpus in a field that looks complete -- the same silent under-report the
+    sidecar exists to end. So the shortfall is COUNTED and lands in the manifest."""
+    _counted(tmp_path)
+    for sidecar in pathlib.Path(mod.generation_dir(tmp_path, token_inputs={"v": "v1"})).glob("*.counters.json"):
+        sidecar.unlink()  # exactly what a pre-sidecar generation looks like on disk
+
+    resumed = _counted(tmp_path)
+    assert resumed.skipped == 2
+    assert resumed.counters == {}, "no sidecar means no counters -- never a fabricated zero"
+    assert resumed.counters_unrecorded == 2
+    assert resumed.manifest()["n_counters_unrecorded"] == 2, "the shortfall must reach the artifact"
+
+
+def test_a_TRUNCATED_counters_sidecar_is_unrecorded_rather_than_fatal(tmp_path):
+    """A kill mid-write leaves a partial sidecar. It is unknown, not zero and not a crash -- a pass
+    that already survived a kill must not then refuse to resume over its own debris."""
+    _counted(tmp_path)
+    gen = pathlib.Path(mod.generation_dir(tmp_path, token_inputs={"v": "v1"}))
+    next(iter(gen.glob("*.counters.json"))).write_text('{"n_frames_in": 1', encoding="utf-8")
+
+    resumed = _counted(tmp_path)
+    assert resumed.counters_unrecorded == 1
+    assert resumed.counters == {"n_frames_in": 20, "n_matches": 1} or resumed.counters == {
+        "n_frames_in": 10,
+        "n_matches": 1,
+    }, f"the intact sidecar must still replay: {resumed.counters}"
+
+
+def test_the_counters_sidecar_is_invisible_to_every_parquet_glob(tmp_path):
+    """It shares the generation directory with the shards, which four separate globs walk
+    (`reconcile`, `assert_conservation`, and the drivers' own combines). A `.parquet` sidecar would
+    have been concatenated into the combined table as data."""
+    res = _counted(tmp_path)
+    assert sorted(p.name for p in res.shard_dir.glob("*.parquet")) == ["m1.parquet", "m2.parquet"]
+    assert len(list(res.shard_dir.glob("*.counters.json"))) == 2
+    combined = mod.reconcile(res.shard_dir, tmp_path / "combined.parquet", tag="t")
+    assert len(combined) == 2, "the sidecars must not reach the combined table"
+
+
+def test_for_each_reports_THIS_PASS_S_keys_including_SKIPS(tmp_path):
+    """`res.keys` is what a non-partitioned driver combines from, so it must list every key the pass
+    COVERED -- not merely the ones it attempted.
+
+    A resumed pass attempts nothing and skips everything. If `keys` tracked attempts, its combine
+    would read zero shards and the driver would report an empty corpus from a complete run: a
+    plausible number from work that had, in fact, all been done. Asserted on the SECOND pass, which
+    is the one that can express the bug."""
+    items = [("m1", 1), ("m2", 2)]
+    first = mod.for_each(
+        items,
+        key=lambda it: it[0],
+        work=lambda it: pd.DataFrame({"v": [it[1]]}),
+        shard_root=tmp_path,
+        token_inputs={"v": "v1"},
+    )
+    assert first.keys == ("m1", "m2")
+    assert first.attempted == 2 and first.skipped == 0
+
+    second = mod.for_each(
+        items,
+        key=lambda it: it[0],
+        work=lambda it: pd.DataFrame({"v": [it[1]]}),
+        shard_root=tmp_path,
+        token_inputs={"v": "v1"},
+    )
+    assert second.attempted == 0 and second.skipped == 2, "the second pass must be a full resume"
+    assert second.keys == ("m1", "m2"), "a resumed pass must still report the keys it covered"
+    # The combine those keys drive must find every shard -- the property the field exists for.
+    assert all(mod.shard_path(second.shard_dir, k).is_file() for k in second.keys)
+
+
+def test_for_each_renders_a_REAL_total_for_a_SIZED_corpus(tmp_path, capsys):
+    """A list of ids -- what a driver that inverted its walk onto `select_match_ids` holds -- has a
+    length, so the operator gets `[2/3]` rather than `[2/?]`.
+
+    Observability is half of what this seam exists for, and on a detached multi-hour pass the
+    question is not "is it alive" but "when does it end". Reading `len` off something already
+    `Sized` costs nothing and consumes nothing.
+    """
+    mod.for_each(
+        [("m1", 1), ("m2", 2), ("m3", 3)],
+        key=lambda it: it[0],
+        work=lambda it: pd.DataFrame({"v": [it[1]]}),
+        shard_root=tmp_path,
+        token_inputs={"v": "v1"},
+    )
+    out = capsys.readouterr().out
+    assert "[1/3]" in out and "[3/3]" in out, f"a sized corpus must render its real total: {out!r}"
+    assert "/?" not in out
+
+
+def test_for_each_still_renders_a_QUESTION_MARK_for_a_STREAMED_corpus(tmp_path, capsys):
+    """The other side of the band, and the reason the total is read via `isinstance(..., Sized)`
+    rather than `len(list(items))`: a generator must keep streaming, so it keeps the `?`. Without
+    this, "render the total" quietly becomes "materialise the corpus" -- the exact defect
+    `test_for_each_does_NOT_materialise_the_corpus` guards from the other direction."""
+
+    def source():
+        for i in range(3):
+            yield (f"m{i}", i)
+
+    mod.for_each(
+        source(),
+        key=lambda it: it[0],
+        work=lambda it: pd.DataFrame({"v": [it[1]]}),
+        shard_root=tmp_path,
+        token_inputs={"v": "v1"},
+    )
+    out = capsys.readouterr().out
+    assert "[1/?]" in out, f"a streamed corpus has no total and must render '?': {out!r}"
+    assert "None" not in out
+
+
 def test_for_each_collects_per_item_counters(tmp_path):
     res = mod.for_each(
         _items(2),
@@ -606,3 +767,89 @@ def test_cohort_cache_fails_FAST_when_no_parquet_engine_is_available(tmp_path, m
     monkeypatch.setattr(mod.importlib.util, "find_spec", lambda name: None)
     with pytest.raises(ValueError, match="parquet engine"):
         mod.cohort_cache(tmp_path / "c.parquet", build=lambda: pd.DataFrame())
+
+
+def test_for_each_merges_DICT_counters_not_just_ints(tmp_path):
+    """`for_each`'s docstring promises the manifest contract that `aggregate_manifests` implements
+    -- "sums ints and merges dict counters". The int half worked; the dict half raised
+    `unsupported operand type(s) for +: 'int' and 'dict'`.
+
+    Found by the FIRST real driver that needed it: `build_gkdv_arm_values` accumulates
+    `drop_reasons`, a per-reason counter dict, alongside its integer totals. Without this the
+    migration could not express the driver's existing manifest at all."""
+    res = mod.for_each(
+        _items(3),
+        key=lambda it: it[0],
+        work=lambda it: pd.DataFrame({"v": [it[1]]}),
+        counters=lambda it, frame: {
+            "n_matches": 1,
+            "drop_reasons": {"no_gk": 2, "offside": 1} if it[1] else {"no_gk": 5},
+        },
+        shard_root=tmp_path,
+        token_inputs={"v": "v1"},
+    )
+    assert res.counters["n_matches"] == 3
+    assert res.counters["drop_reasons"] == {"no_gk": 9, "offside": 2}
+
+
+def test_for_each_REFUSES_a_counter_that_changes_kind(tmp_path):
+    """An int under one key and a dict under the same key on the next item is a driver bug, and
+    silently coercing it would corrupt the manifest a corpus artifact is built from."""
+    with pytest.raises(TypeError, match="counter 'x'"):
+        mod.for_each(
+            _items(2),
+            key=lambda it: it[0],
+            work=lambda it: pd.DataFrame({"v": [it[1]]}),
+            counters=lambda it, frame: {"x": 1} if it[1] == 0 else {"x": {"a": 1}},
+            shard_root=tmp_path,
+            token_inputs={"v": "v1"},
+        )
+
+
+def test_a_PRE_GENERATION_shard_set_is_reported_not_silently_ignored(tmp_path):
+    """Every driver that had shards before this seam wrote them FLAT in `shard_root`. The
+    generation directory is a path-prefix change, so a resume simply stops seeing them and the pass
+    recomputes the whole corpus -- silently, expensively, and looking exactly like a healthy first
+    run. Measured stake: a 64-match, multi-hour arm-values pass."""
+    root = tmp_path / "shards"
+    root.mkdir()
+    (root / "gradientsports__10502.parquet").write_bytes(b"old")
+    (root / "gradientsports__10503.parquet").write_bytes(b"old")
+
+    with pytest.warns(UserWarning, match="will be IGNORED"):
+        gen = mod.generation_dir(root, token_inputs={"v": 1})
+
+    assert gen.is_dir()
+    # The message must name the DESTINATION, or the operator cannot act on it.
+    with pytest.warns(UserWarning, match=re.escape(str(gen))):
+        mod.generation_dir(root, token_inputs={"v": 1})
+
+
+def test_a_CLEAN_shard_root_warns_about_NOTHING(tmp_path):
+    """The other side of the band. A guard that fires on a healthy first run is one the next person
+    silences, and then it protects nothing."""
+    root = tmp_path / "shards"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning at all fails this test
+        mod.generation_dir(root, token_inputs={"v": 1})
+
+    # ...and it stays silent once the generation exists and holds the shards properly.
+    gen = mod.generation_dir(root, token_inputs={"v": 1})
+    (gen / "gradientsports__10502.parquet").write_bytes(b"new")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        mod.generation_dir(root, token_inputs={"v": 1})
+
+
+def test_a_NON_shard_file_in_the_root_does_not_trigger_the_flat_warning(tmp_path):
+    """`shard_root` is caller-supplied and legitimately holds other things -- a combined table, a
+    manifest. Only `*.parquet` directly in the root reads as a pre-generation shard, and even that
+    is reported rather than moved: silently relocating data on a guess is worse than the recompute."""
+    root = tmp_path / "shards"
+    root.mkdir()
+    (root / "notes.txt").write_text("keep me", encoding="utf-8")
+    (root / "manifest_all.json").write_text("{}", encoding="utf-8")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        mod.generation_dir(root, token_inputs={"v": 1})

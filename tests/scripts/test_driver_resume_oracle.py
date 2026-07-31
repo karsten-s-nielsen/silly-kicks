@@ -105,3 +105,48 @@ def test_the_oracle_would_CATCH_a_broken_resume(tmp_path, monkeypatch, stub_laye
     _run(tmp_path, monkeypatch)
 
     assert len(stub_layer2) > first, "the oracle cannot detect a lost resume -- it is vacuous"
+
+
+def _manifest(tmp_path) -> dict:
+    import json
+
+    return json.loads((tmp_path / "manifest_all.json").read_text(encoding="utf-8"))
+
+
+def test_layer2_manifest_REPORTS_counters_it_could_not_replay(tmp_path, monkeypatch, stub_layer2):
+    """Corpus totals in a worker manifest come from the per-item counters sidecars on a resume.
+    When a sidecar is absent -- a pre-sidecar generation, or one truncated by a kill -- the
+    manifest has to SAY the totals under-report the corpus, instead of printing a smaller number
+    that reads as complete. `_partition.aggregate_manifests` sums these across workers, so one
+    silent worker is enough to mis-state a corpus artifact.
+
+    The only thing holding this up is the driver calling `res.manifest()`: a hand-written
+    `manifest_fields(shard_dir, attempted=..., failed=...)` defaults `counters_unrecorded` to 0 and
+    is indistinguishable, in the artifact, from a run that replayed everything.
+    """
+    _run(tmp_path, monkeypatch)
+    clean = _manifest(tmp_path)
+    assert clean["n_counters_unrecorded"] == 0
+    assert clean["n_matches"] == 2, "the first pass attempted both, so its totals are complete"
+
+    for sidecar in tmp_path.rglob("*.counters.json"):
+        sidecar.unlink()
+    _run(tmp_path, monkeypatch)
+
+    resumed = _manifest(tmp_path)
+    assert resumed["n_counters_unrecorded"] == 2, "the manifest hid that it could replay neither"
+    # And the totals it does print are honestly ABSENT rather than a smaller-looking corpus.
+    assert resumed.get("n_matches", 0) == 0
+
+
+def test_the_sidecar_replay_is_what_keeps_a_resumed_manifest_complete(tmp_path, monkeypatch, stub_layer2):
+    """The other side. Leave the sidecars in place and the SAME resumed pass -- which attempts
+    nothing -- still reports the full corpus. Without this half, the test above passes on a build
+    that lost counter replay entirely."""
+    _run(tmp_path, monkeypatch)
+    _run(tmp_path, monkeypatch)
+
+    resumed = _manifest(tmp_path)
+    assert resumed["n_counters_unrecorded"] == 0
+    assert resumed["n_matches"] == 2, "a fully resumed pass lost the corpus totals"
+    assert resumed["n_attempted"] == 0, "and it must still declare it BUILT nothing this pass"

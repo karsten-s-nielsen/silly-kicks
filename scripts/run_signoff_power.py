@@ -179,26 +179,54 @@ def main() -> None:
     else:
         # Imported HERE, not at the top: the `--spells` path must not require the pining loader (or
         # its credentials) merely to re-run the cheap analysis on an already-built table.
+        from scripts._driver import for_each, shard_path
         from scripts._loader_pining import load_matches
         from silly_kicks.causal import build_opportunities, layer2_config
         from silly_kicks.causal._confounders import join_layer2_confounders
 
-        spells_all = []
         # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
-        for _provider, _match_id, actions, frames, home_team_id in load_matches(
-            providers=args.providers.split(","),
-            max_per_provider=args.max_per_provider,
-            tracking_limit=args.tracking_limit,
-        ):
+        def _work(item):
+            _provider, _match_id, actions, frames, home_team_id = item
             sp = build_opportunities(
                 frames, actions, home_team_id=home_team_id, model_metadata={}, config=layer2_config({})
             )
             if not len(sp):
-                continue
-            sp = join_layer2_confounders(sp, frames=frames, actions=actions, home_team_id=home_team_id)
-            spells_all.append(sp)
+                return None  # still writes an EMPTY shard: "ran, produced no spell"
+            return join_layer2_confounders(sp, frames=frames, actions=actions, home_team_id=home_team_id)
 
-        spells = pd.concat(spells_all, ignore_index=True)
+        # This is the 8.7-hour path the module docstring warns about: it walked 64 matches, raised in
+        # the cheap analysis below, and lost every one of them. Sharding it means the SAME crash now
+        # costs a re-read. `--spells` remains the preferred route -- that driver is also
+        # partitionable -- but the fallback must not stay the trap it was.
+        res = for_each(
+            load_matches(
+                providers=args.providers.split(","),
+                max_per_provider=args.max_per_provider,
+                tracking_limit=args.tracking_limit,
+            ),
+            key=lambda item: (str(item[0]), str(item[1])),
+            work=_work,
+            shard_root=Path(args.out) / "shards",
+            # Mirrors `build_layer2_spells`' declaration, because it is the same computation: the
+            # opportunity builder, its Layer-2 config, and the confounder join determine a spell.
+            # `matching.py` is NOT declared -- the analysis below re-reads these shards on every
+            # invocation, so it consumes the content rather than determining it.
+            token_inputs={
+                "layer2_config": "v1",
+                "build_opportunities": "v1",
+                "join_layer2_confounders": "v1",
+                "tracking_limit": args.tracking_limit,
+            },
+            tag="signoff_spells",
+            label="match",
+        )
+        if res.failures:
+            raise RuntimeError(f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only them.")
+        # Combined from THIS PASS'S keys, not `_driver.reconcile`: this driver has no partition
+        # surface (no --match-ids-json, no worker tag), so a whole-generation read would fold in
+        # matches from a wider earlier run over the same --out. See `reconcile`'s docstring.
+        parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+        spells = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     X = build_design_matrix(spells, LAYER2_CONFOUNDERS)
     Z = spells["Z"].to_numpy(dtype=int)
     clusters = spells["game_id"].to_numpy()
@@ -270,6 +298,7 @@ def main() -> None:
         "lock_commit": args.lock_commit,
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
+        "run_tree_state": prov["tree_state"],
         "n_spells": len(spells),
         "n_treated": n_treated,
         "treated_prevalence": prevalence,

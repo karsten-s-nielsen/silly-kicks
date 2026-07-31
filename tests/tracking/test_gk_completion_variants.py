@@ -274,7 +274,19 @@ def test_train_skillcorner_smoke(tmp_path, monkeypatch):
 
     monkeypatch.setattr(train, "_SKILLCORNER_WEIGHTS_DIR", tmp_path / "skillcorner")
     monkeypatch.setattr(train, "_WEIGHTS_ROOT", tmp_path)
-    rc = train._train_skillcorner(Namespace(max_per_provider=2, tracking_limit=10, cache_features=str(cache)))
+    rc = train._train_skillcorner(
+        Namespace(
+            max_per_provider=2,
+            tracking_limit=10,
+            cache_features=str(cache),
+            # ADR-052: bundling now declares WHICH question it is asking and WHY. A smoke run over
+            # a synthetic corpus with no committed weights is a first bundle, i.e. `rebundle`.
+            mode="rebundle",
+            reason="synthetic smoke",
+            feature_space=None,
+            probe_old=None,
+        )
+    )
     assert rc == 0
     # a decision artifact was written under tmp (bundle -> skillcorner/metrics.json; else root report);
     # the real bundled weights are untouched (nothing written outside tmp_path).

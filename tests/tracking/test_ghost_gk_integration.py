@@ -390,6 +390,9 @@ class TestTrainScriptSmoke:
                     "3",
                     "--subsample-fps",
                     "25.0",
+                    # The trainer refuses a dirty tree (it stamps training_commit into a shipped
+                    # artifact); a test run is by definition a dev run.
+                    "--allow-dirty",
                 ],
                 capture_output=True,
                 text=True,

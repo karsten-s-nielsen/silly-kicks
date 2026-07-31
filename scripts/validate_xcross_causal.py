@@ -147,28 +147,63 @@ def run(
 ) -> dict:
     from _loader_pining import load_matches  # scripts/ on sys.path at runtime (mirrors the trainer)
 
+    from scripts._driver import for_each, shard_path
     from silly_kicks.causal.opportunities import build_opportunities
 
     meta = _load_model_metadata()
-    by_provider: dict[str, list] = {}
-    for provider, _mid, actions, frames, home in load_matches(
-        providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit, token=token
-    ):
+
+    def _work(item):
+        provider, _mid, actions, frames, home = item
         o = build_opportunities(frames, actions, home_team_id=home, model_metadata=meta)
-        if not o.empty:
-            by_provider.setdefault(provider, []).append(o)
+        if o.empty:
+            return None  # still writes an EMPTY shard: "ran, produced no opportunity"
+        # The per-provider grouping below was a dict key in memory; persisted, it has to be a
+        # COLUMN or a resumed pass cannot rebuild it. `build_opportunities` emits no `provider`
+        # column of its own (verified), so this neither shadows nor duplicates one.
+        return o.assign(provider=str(provider))
+
+    res = for_each(
+        load_matches(
+            providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit, token=token
+        ),
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        shard_root=Path(out) / "shards",
+        # What determines an opportunity row: the builder and the model metadata whose confounders
+        # it joins, plus the frame cap the spell state machine sees. `--providers` /
+        # `--max-per-provider` only choose WHICH matches are walked; `--carrier-min` and `--seed`
+        # are consumed by the ANALYSIS below, which re-runs from these shards on every invocation.
+        token_inputs={
+            "build_opportunities": "v1",
+            "model_metadata": meta,
+            "tracking_limit": tracking_limit,
+        },
+        tag="xcross_causal",
+        label="match",
+    )
+    if res.failures:
+        raise RuntimeError(f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only them.")
+
+    # Combined from THIS PASS'S keys, not `_driver.reconcile`: no partition surface here (no
+    # --match-ids-json, no worker tag), so a whole-generation read would fold in matches from a
+    # wider earlier run over the same --out. See `reconcile`'s docstring.
+    shards = [pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys]
+    opportunities = [f for f in shards if len(f)]
+    all_opp = pd.concat(opportunities, ignore_index=True) if opportunities else pd.DataFrame(columns=["provider"])
 
     coverage, eligible = {}, []
     for provider in providers:
-        parts = by_provider.get(provider, [])
-        if not parts:
+        df = all_opp[all_opp["provider"] == str(provider)]
+        if df.empty:
             coverage[provider] = {"n_opp": 0, "carrier_coverage": 0.0, "included": False}
             continue
-        df = pd.concat(parts, ignore_index=True)
         cov = float(df["carrier_resolved"].mean())
         coverage[provider] = {"n_opp": len(df), "carrier_coverage": cov, "included": cov >= carrier_min}
         if cov >= carrier_min:
-            eligible.append(df[df["carrier_resolved"]])
+            # `provider` is dropped again here: it exists only to survive the shard round-trip, and
+            # `analyze` must see exactly the frame the in-memory version handed it. Carrying an
+            # extra column into a frozen causal harness is a change nobody asked for.
+            eligible.append(df[df["carrier_resolved"]].drop(columns="provider"))
 
     if not eligible:
         metrics = {"status": "no_eligible_provider", "coverage": coverage}

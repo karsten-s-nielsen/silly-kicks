@@ -25,10 +25,24 @@ _SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 # `write_text` would sweep in dev utilities whose output nobody cites.
 ARTIFACT_DRIVERS = (
     "build_gkdv_arm_values",
+    "calibrate_xt_bandwidth",
     "measure_cover_shadow_argmax_agreement",
     "build_layer2_spells",
     "derive_opengoal_range",
     "run_signoff_power",
+    # --- The five weight TRAINERS, enrolled together in 4.72.0 (ADR-052) ---
+    # `train_ghost_gk` stamped `training_commit` into the SHIPPED metadata.json from a bare
+    # `git rev-parse HEAD`, which reads identically on a modified tree: a bundled weights file
+    # carrying a verifiable-looking claim about code that may never have existed at that commit.
+    # The other four made no false claim -- they recorded NOTHING -- which is a different failure
+    # and not a lesser one: an artifact nobody can trace back to a commit cannot be reproduced or
+    # audited. Enrolled in ONE go deliberately. A partial roll-out is exactly how the prose version
+    # of this rule failed twice, and it is why this gate exists at all.
+    "train_ghost_gk",
+    "train_gk_completion",
+    "train_gk_retention",
+    "train_xcross_attempt",
+    "train_xshot_occurrence",
     "validate_xs_probe",
     "validate_xshot_causal",
 )

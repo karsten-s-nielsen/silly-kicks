@@ -261,6 +261,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="xT-GK v2 construct-validity with the real bundled rho (SP5).")
     ap.add_argument("--provider", default="gradientsports")
     ap.add_argument(
+        "--cohort-cache",
+        default=None,
+        help=(
+            "parquet path; fetch the cohort once and reuse it. Absent = fetch every run (today's "
+            "behaviour). Explicitly named because a mart re-materializes and a cached cohort has no "
+            "token this can verify -- so reuse must be the operator's decision, never automatic."
+        ),
+    )
+    ap.add_argument(
         "--retention-weights",
         default=None,
         help="Path to a rho artifact dir (model.json + SHA256SUMS). Overrides the provider variant. "
@@ -277,9 +286,10 @@ def main() -> int:
         prepare_cohort,
     )
 
+    from scripts._driver import cohort_cache
     from silly_kicks.xtgk._retention import variant_key_for_provider
 
-    raw, _ = load_xtgk_cohort(a.provider)
+    raw = cohort_cache(a.cohort_cache, build=lambda: load_xtgk_cohort(a.provider)[0])
     actions = prepare_cohort(raw, pressure_column=_PRESSURE_COLUMN, frame_present_column=_FRAME_PRESENT_COLUMN)
     # ADR-036 two-leg SP5: the report MUST name which rho produced it, else leg 1 (pre-fix rho) and
     # leg 2 (retrained rho) are indistinguishable in their own artifacts.

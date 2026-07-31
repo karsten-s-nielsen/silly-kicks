@@ -233,7 +233,8 @@ def build_shards(
     """
     from _loader_pining import load_matches  # scripts/ on sys.path at runtime (mirrors the trainer)
 
-    from scripts._partition import providers_for_slice, write_table_atomically
+    from scripts._driver import for_each
+    from scripts._partition import providers_for_slice
     from scripts._provenance import git_provenance
     from silly_kicks.causal.opportunities import build_opportunities, shot_arm_config
 
@@ -245,36 +246,65 @@ def build_shards(
     meta = _load_model_metadata()
     cfg = shot_arm_config(meta)
     dest = Path(out)
-    shard_dir = dest / "shards"
-    shard_dir.mkdir(parents=True, exist_ok=True)
-    totals = {"n_matches": 0, "n_opportunities": 0}
 
-    for provider, match_id, actions, frames, home in load_matches(
-        providers=providers,
-        match_ids=match_ids,
-        max_per_provider=max_per_provider,
-        tracking_limit=tracking_limit,
-        token=token,
-    ):
-        shard = shard_dir / f"{provider}__{match_id}.parquet"
-        if shard.is_file():
-            print(f"  skip {match_id}: shard exists", flush=True)
-            continue
+    def _work(item):
+        provider, match_id, actions, frames, home = item
         o = build_opportunities(frames, actions, home_team_id=home, model_metadata=meta, config=cfg)
         o = o.copy()
         # The provider is what `coverage` is keyed on, so it must survive the round trip rather than
         # being re-derived from the filename -- a provider containing "__" would silently mis-split.
         o["provider"] = str(provider)
         o["match_id"] = str(match_id)
-        write_table_atomically(o, shard, tag=partition_tag)
-        totals["n_matches"] += 1
-        totals["n_opportunities"] += len(o)
-        print(f"  {match_id}: {len(o)} opportunities -> {shard.name}", flush=True)
+        return o
+
+    res = for_each(
+        load_matches(
+            providers=providers,
+            match_ids=match_ids,
+            max_per_provider=max_per_provider,
+            tracking_limit=tracking_limit,
+            token=token,
+        ),
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        counters=lambda _item, frame: {"n_matches": 1, "n_opportunities": len(frame)},
+        shard_root=dest / "shards",
+        # What determines a shard's CONTENT: the opportunity builder, the shot-arm config, and the
+        # model metadata the config is derived from. `causal/matching.py` is deliberately NOT
+        # declared -- it runs in `_entanglement_analysis`, which re-reads these shards on every
+        # invocation, so it consumes the content rather than determining it.
+        token_inputs={
+            "build_opportunities": "v1",
+            "shot_arm_config": "v1",
+            "model_metadata": meta,
+            # The sibling this file's docstring calls its "thin clone" source
+            # (`validate_xcross_causal`) declares this with the rationale "plus the frame cap the
+            # spell state machine sees". The clone dropped it. A capped dev smoke would otherwise
+            # be skipped-into by the real pass, and the S3.3 entanglement verdict -- cited by the
+            # 4.60.0 `joins_with_caveat` decision -- would publish under a clean run_commit.
+            "tracking_limit": tracking_limit,
+        },
+        tag=partition_tag,
+        label="match",
+    )
+    totals = dict(res.counters)
 
     tag = partition_tag
     (dest / f"manifest_{tag}.json").write_text(
         json.dumps(
-            {**totals, "run_commit": prov["commit"], "run_tree_dirty": prov["dirty"], "partition": tag},
+            {
+                **totals,
+                # Records the generation token, which `load_shards` reads back to find THIS
+                # generation's directory instead of blindly globbing every generation on disk.
+                # `res.manifest()`, not a bare `manifest_fields(...)`: only the method threads
+                # `counters_unrecorded`, and a hand-written call silently defaults it to 0 -- so a
+                # resumed worker whose sidecars were missing would report a complete corpus.
+                **res.manifest(),
+                "run_commit": prov["commit"],
+                "run_tree_dirty": prov["dirty"],
+                "run_tree_state": prov["tree_state"],
+                "partition": tag,
+            },
             indent=2,
             default=str,
         ),
@@ -283,9 +313,41 @@ def build_shards(
     return totals
 
 
+def _generation_dir(out: Path) -> Path:
+    """The shard directory of the CURRENT generation, read back from the manifests.
+
+    Since the `_driver` migration shards live in ``shards/<token>/``, where the token is a digest of
+    the declared inputs. A bare ``rglob`` would therefore concatenate EVERY generation on disk --
+    two values for the same match, with the row count inflated by exactly the number of stale
+    generations. That is the defect the directory form exists to make unrepresentable, and it would
+    have been reintroduced here at the READ side. `manifest_fields` records the token for exactly
+    this lookup.
+
+    Mixed generations across workers are REFUSED rather than merged: a corpus assembled from two
+    token generations is not a corpus, and `aggregate_manifests` reports the same condition as
+    `generation_consistent`.
+
+    Falls back to the flat layout when no manifest carries a generation, so a PRE-migration shard
+    set still loads instead of silently reading as empty.
+    """
+    root = Path(out) / "shards"
+    generations = set()
+    for m in sorted(Path(out).glob("manifest_*.json")):
+        gen = json.loads(m.read_text(encoding="utf-8")).get("generation")
+        if gen:
+            generations.add(str(gen))
+    if len(generations) > 1:
+        raise SystemExit(
+            f"shards under {root} span multiple generations {sorted(generations)}: the declared "
+            f"inputs changed between workers, so these shards do not describe one corpus. Re-run "
+            f"the build, or prune the stale generation."
+        )
+    return root / generations.pop() if generations else root
+
+
 def load_shards(out: Path) -> pd.DataFrame:
-    """Every shard under ``out``, concatenated. Empty frame when none exist."""
-    shards = sorted((Path(out) / "shards").glob("*.parquet"))
+    """Every shard of the CURRENT generation under ``out``, concatenated. Empty when none exist."""
+    shards = sorted(_generation_dir(Path(out)).glob("*.parquet"))
     parts = [pd.read_parquet(s) for s in shards]
     parts = [p for p in parts if len(p)]
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
@@ -328,7 +390,7 @@ def analyze_shards(out: Path, providers: list[str], carrier_min: float, seed: in
         "n_matches": corpus["n_matches"],
         "n_opportunities": corpus["n_opportunities"],
         "n_partitions": corpus["n_partitions"],
-        "n_shards": len(list((Path(out) / "shards").glob("*.parquet"))),
+        "n_shards": len(list(_generation_dir(Path(out)).glob("*.parquet"))),
         "commit_consistent": corpus["commit_consistent"],
     }
     metrics["run_commit"] = prov["commit"]

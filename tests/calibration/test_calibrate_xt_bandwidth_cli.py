@@ -99,8 +99,8 @@ def test_scores_per_game_does_not_leak_goal_across_game_boundary():
     assert y[0] == 0  # game A's pass is NOT credited with game B's goal (would be 1 if leaked)
 
 
-def test_load_corpus_pining_requests_minimal_tracking(monkeypatch):
-    # N8: the pining corpus load must pass tracking_limit=1 (NOT 0 — 0 is falsy and loads all frames).
+def test_load_corpus_pining_requests_minimal_tracking(monkeypatch, tmp_path):
+    # N8: the pining corpus load must pass tracking_limit=1 (NOT 0 - 0 is falsy and loads all frames).
     import pandas as pd
 
     import scripts._loader_pining as loader
@@ -109,27 +109,26 @@ def test_load_corpus_pining_requests_minimal_tracking(monkeypatch):
     captured = {}
     cols = ["game_id", "start_x", "start_y", "end_x", "end_y", "type_id", "result_id"]
 
-    def _fake_load_matches(*, providers, tracking_limit=None, max_per_provider=None, cache_dir=None):
+    def _fake_load_matches(*, providers, match_ids=None, tracking_limit=None, max_per_provider=None, cache_dir=None):
         captured["tracking_limit"] = tracking_limit
         captured["cache_dir"] = cache_dir
+        captured["match_ids"] = match_ids
         yield "skillcorner", "m1", pd.DataFrame([[1, 50.0, 34.0, 60.0, 34.0, 0, 1]], columns=cols), None, None
 
     monkeypatch.setattr(loader, "load_matches", _fake_load_matches)
-    args = type(
-        "A",
-        (),
-        {
-            "source": "pining",
-            "providers": ["skillcorner"],
-            "max_matches_per_provider": None,
-            "cache_dir": None,
-            "corpus_cache": None,
-            "subsample_games": None,
-            "seed": 42,
-        },
-    )()
+    monkeypatch.setattr(loader, "select_match_ids", lambda **kw: [("skillcorner", "m1")])
+    args = _corpus_args(
+        providers=["skillcorner"],
+        max_matches_per_provider=None,
+        cache_dir=None,
+        report_out=str(tmp_path / "r"),
+        shard_dir=None,
+    )
     actions, ids = _load_corpus(args)
     assert captured["tracking_limit"] == 1
+    # The walk is INVERTED onto select_match_ids: load_matches is asked for one named match, which
+    # is what puts the download+parse behind the shard check rather than in front of it.
+    assert captured["match_ids"] == {"skillcorner": ["m1"]}
     assert "skillcorner" in ids
     # provider-qualified unique string game_id (guards mixed-dtype + cross-provider id collision)
     assert list(actions["game_id"].unique()) == ["skillcorner:m1"]
@@ -196,39 +195,236 @@ def test_assemble_corpus_canonicalizes_for_parquet(tmp_path, monkeypatch):
         "original_event_id",
     ]
 
-    def _fake_load(*, providers, tracking_limit=None, max_per_provider=None, cache_dir=None):
+    # One row per match, keyed the way the INVERTED walk asks for them: one named match per call.
+    rows = {
         # provider A: int team_id + int original_event_id
-        yield (
-            "skillcorner",
-            "m1",
-            pd.DataFrame([[1, 1, 0.0, 10, 100, 0, 0, 1, 1.0, 1.0, 2.0, 2.0, 5]], columns=cols),
-            None,
-            None,
-        )
+        ("skillcorner", "m1"): pd.DataFrame([[1, 1, 0.0, 10, 100, 0, 0, 1, 1.0, 1.0, 2.0, 2.0, 5]], columns=cols),
         # provider B: str team_id + str original_event_id -> heterogeneous object columns on concat
-        yield (
-            "gradientsports",
-            "g1",
-            pd.DataFrame([["x", 1, 0.0, "TB", "P9", 0, 0, 1, 3.0, 3.0, 4.0, 4.0, "e9"]], columns=cols),
-            None,
-            None,
-        )
+        ("gradientsports", "g1"): pd.DataFrame(
+            [["x", 1, 0.0, "TB", "P9", 0, 0, 1, 3.0, 3.0, 4.0, 4.0, "e9"]], columns=cols
+        ),
+    }
+
+    def _fake_load(*, providers, match_ids=None, tracking_limit=None, max_per_provider=None, cache_dir=None):
+        (provider,) = providers
+        # `or {}` for the type checker, not for behaviour: the INVERTED walk always names its
+        # match, so an absent slice must KeyError rather than quietly load the whole manifest.
+        for mid in (match_ids or {})[provider]:
+            yield provider, mid, rows[(provider, mid)], None, None
 
     monkeypatch.setattr(loader, "load_matches", _fake_load)
-    args = type(
-        "A",
-        (),
-        {
-            "source": "pining",
-            "providers": ["skillcorner", "gradientsports"],
-            "max_matches_per_provider": None,
-            "cache_dir": None,
-        },
-    )()
+    monkeypatch.setattr(loader, "select_match_ids", lambda **kw: sorted(rows))
+    args = _corpus_args(
+        providers=["skillcorner", "gradientsports"],
+        max_matches_per_provider=None,
+        cache_dir=None,
+        report_out=str(tmp_path / "r"),
+        shard_dir=None,
+    )
     df = cli._assemble_corpus(args)
     assert "original_event_id" not in df.columns  # heterogeneous provider extra dropped
     assert df["team_id"].map(type).eq(str).all()  # asymmetric ids string-cast  # type: ignore[arg-type]
+    assert set(df["game_id"]) == {"skillcorner:m1", "gradientsports:g1"}
     df.to_parquet(tmp_path / "c.parquet")  # must NOT raise pyarrow ArrowTypeError
+
+
+def _shardable_corpus(monkeypatch, *, loaded, yields=None, raises=()):
+    """Patch the pining loader with a per-match fake that RECORDS every match it is asked to load.
+
+    ``yields`` names the matches that produce a row; anything absent yields nothing, which is how
+    `load_matches` reports an S1-geometry exclusion. ``raises`` names matches that blow up, which is
+    how a transient fetch failure arrives after `_build_match_with_retry` has given up.
+    """
+    import pandas as pd
+
+    import scripts._loader_pining as loader
+
+    cols = ["game_id", "period_id", "time_seconds", "team_id", "player_id", "start_x", "type_id", "result_id"]
+    pairs = [("skillcorner", "m1"), ("idsse", "M2")]
+    yields = set(pairs) if yields is None else set(yields)
+    raises = set(raises)
+
+    def _fake_load(*, providers, match_ids=None, tracking_limit=None, max_per_provider=None, cache_dir=None):
+        (provider,) = providers
+        # `or {}` for the type checker, not for behaviour: the INVERTED walk always names its
+        # match, so an absent slice must KeyError rather than quietly load the whole manifest.
+        for mid in (match_ids or {})[provider]:
+            loaded.append((provider, mid))
+            if (provider, mid) in raises:
+                raise OSError(f"transient fetch failure for {provider}/{mid}")
+            if (provider, mid) in yields:
+                yield provider, mid, pd.DataFrame([[1, 1, 0.0, 10, 100, 5.0, 0, 1]], columns=cols), None, None
+
+    monkeypatch.setattr(loader, "load_matches", _fake_load)
+    monkeypatch.setattr(loader, "select_match_ids", lambda *, providers, **kw: [p for p in pairs if p[0] in providers])
+    return pairs
+
+
+def test_a_RESUMED_corpus_pass_does_not_reload_an_already_sharded_match(monkeypatch, tmp_path):
+    """The whole point of inverting the walk onto `select_match_ids`.
+
+    `for_each` skips `work(item)`, never the production of `item` -- so had the driver kept
+    streaming `load_matches`, a resumed run would re-download and re-parse every match in order to
+    then skip a set of trivial writes. This asserts the loader is not entered at all on the second
+    pass, and (non-vacuity) that the second pass nonetheless returns the same corpus rather than
+    nothing: an implementation that simply produced an empty frame would satisfy the call count.
+    """
+    import scripts.calibrate_xt_bandwidth as cli
+
+    loaded: list = []
+    _shardable_corpus(monkeypatch, loaded=loaded)
+    args = _corpus_args(
+        providers=["skillcorner", "idsse"],
+        max_matches_per_provider=None,
+        cache_dir=None,
+        report_out=str(tmp_path / "r"),
+        shard_dir=None,
+    )
+
+    first = cli._assemble_corpus(args)
+    assert sorted(loaded) == [("idsse", "M2"), ("skillcorner", "m1")]
+
+    loaded.clear()
+    second = cli._assemble_corpus(args)
+    assert loaded == [], f"resume re-entered the loader for {loaded}"
+    assert set(second["game_id"]) == set(first["game_id"]) == {"skillcorner:m1", "idsse:M2"}
+    assert len(second) == len(first) == 2
+
+
+def test_a_CHANGED_declared_input_starts_a_NEW_generation_and_reloads(monkeypatch, tmp_path):
+    """The other side of the band: resume must NOT serve shards built under different inputs.
+
+    `_CORPUS_COLS` is a declared `token_inputs` entry precisely because it determines shard content.
+    Changing it must land the pass in a different generation directory, so every match is loaded
+    again -- the inverse of the test above, and the reason a stale shard is unrepresentable here
+    rather than merely guarded.
+    """
+    import scripts.calibrate_xt_bandwidth as cli
+
+    loaded: list = []
+    _shardable_corpus(monkeypatch, loaded=loaded)
+    args = _corpus_args(
+        providers=["skillcorner", "idsse"],
+        max_matches_per_provider=None,
+        cache_dir=None,
+        report_out=str(tmp_path / "r"),
+        shard_dir=None,
+    )
+
+    cli._assemble_corpus(args)
+    loaded.clear()
+    monkeypatch.setattr(cli, "_CORPUS_COLS", [c for c in cli._CORPUS_COLS if c != "player_id"])
+    cli._assemble_corpus(args)
+    assert sorted(loaded) == [("idsse", "M2"), ("skillcorner", "m1")], "a changed token reused stale shards"
+
+    shard_root = tmp_path / "r_corpus" / "shards"
+    generations = sorted(p.name for p in shard_root.iterdir() if p.is_dir())
+    assert len(generations) == 2, f"expected two generation dirs side by side, found {generations}"
+
+
+def test_an_EXCLUDED_match_writes_an_EMPTY_shard_and_is_not_retried(monkeypatch, tmp_path):
+    """`load_matches` DROPS a geometrically-broken skillcorner match: it yields nothing for it.
+
+    That decision is deterministic for a given artifact, so it is recorded as an empty shard --
+    "ran, produced nothing" -- rather than left absent, which would make every resume pay the
+    download and the parse again to reach the same verdict.
+    """
+    import scripts.calibrate_xt_bandwidth as cli
+
+    loaded: list = []
+    _shardable_corpus(monkeypatch, loaded=loaded, yields=[("idsse", "M2")])
+    args = _corpus_args(
+        providers=["skillcorner", "idsse"],
+        max_matches_per_provider=None,
+        cache_dir=None,
+        report_out=str(tmp_path / "r"),
+        shard_dir=None,
+    )
+
+    first = cli._assemble_corpus(args)
+    assert set(first["game_id"]) == {"idsse:M2"}
+    shard_root = tmp_path / "r_corpus" / "shards"
+    (generation,) = [p for p in shard_root.iterdir() if p.is_dir()]
+    assert (generation / "skillcorner__m1.parquet").is_file(), "the excluded match left no shard"
+
+    loaded.clear()
+    second = cli._assemble_corpus(args)
+    assert loaded == [], "the excluded match was re-attempted on resume"
+    assert set(second["game_id"]) == {"idsse:M2"}
+
+
+def test_a_NARROWED_corpus_does_not_inherit_the_previous_run_s_matches(monkeypatch, tmp_path):
+    """The corpus must be THIS run's requested matches, never the whole generation directory.
+
+    `--providers` and `--max-matches-per-provider` are corpus SELECTORS, deliberately absent from
+    `token_inputs` so that narrowing the corpus reuses the shards it can instead of re-downloading
+    them. That makes the generation directory a SUPERSET of any one run -- so combining it with
+    `_driver.reconcile`, whose whole-generation read is right for a partitioned driver, silently
+    returns matches nobody asked for. MEASURED against that implementation: a `--providers
+    skillcorner` run following a two-provider run returned ['idsse:M2', 'skillcorner:m1'].
+
+    The first assertion is the non-vacuity partner: the wide run must genuinely have deposited an
+    idsse shard, or the narrow run has nothing to inherit and this passes for the wrong reason.
+    """
+    import scripts.calibrate_xt_bandwidth as cli
+
+    loaded: list = []
+    _shardable_corpus(monkeypatch, loaded=loaded)
+    wide = cli._assemble_corpus(
+        _corpus_args(
+            providers=["skillcorner", "idsse"],
+            max_matches_per_provider=None,
+            cache_dir=None,
+            report_out=str(tmp_path / "r"),
+            shard_dir=None,
+        )
+    )
+    assert set(wide["game_id"]) == {"skillcorner:m1", "idsse:M2"}
+
+    loaded.clear()
+    narrow = cli._assemble_corpus(
+        _corpus_args(
+            providers=["skillcorner"],
+            max_matches_per_provider=None,
+            cache_dir=None,
+            report_out=str(tmp_path / "r"),
+            shard_dir=None,
+        )
+    )
+    assert set(narrow["game_id"]) == {"skillcorner:m1"}, "the narrowed run inherited a shard it did not request"
+    assert loaded == [], "narrowing re-loaded a match whose shard already existed"
+
+
+def test_a_FAILED_match_raises_but_KEEPS_the_shards_the_pass_did_write(monkeypatch, tmp_path):
+    """`for_each` records a failing item and carries on, which is right for a corpus pass and wrong
+    for a corpus that feeds a cited recommendation: silently dropping a match moves the sweep with
+    nothing in the manifest to show for it. So the driver persists everything, then refuses.
+
+    The second half is what makes the refusal cheap: the successful match's shard survives, so the
+    re-run retries ONLY the failure. Asserted by call record, not by inference.
+    """
+    import pytest
+
+    import scripts.calibrate_xt_bandwidth as cli
+
+    loaded: list = []
+    _shardable_corpus(monkeypatch, loaded=loaded, raises=[("idsse", "M2")])
+    args = _corpus_args(
+        providers=["skillcorner", "idsse"],
+        max_matches_per_provider=None,
+        cache_dir=None,
+        report_out=str(tmp_path / "r"),
+        shard_dir=None,
+    )
+
+    with pytest.raises(RuntimeError, match="failed to load"):
+        cli._assemble_corpus(args)
+    assert sorted(loaded) == [("idsse", "M2"), ("skillcorner", "m1")]
+
+    loaded.clear()
+    with pytest.raises(RuntimeError, match="failed to load"):
+        cli._assemble_corpus(args)
+    assert loaded == [("idsse", "M2")], f"the re-run should retry only the failure, it loaded {loaded}"
 
 
 def test_subsample_games_reduces_corpus(monkeypatch):

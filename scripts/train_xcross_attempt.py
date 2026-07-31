@@ -75,23 +75,36 @@ def _new_probe_cohort() -> dict:
     return {"frames": [], "actions": [], "home": None, "matches": [], "match_groups": {}}
 
 
+#: The four per-row arrays `_extract` returns alongside the feature matrix, carried as COLUMNS so
+#: one match is one tidy shard. Underscore-prefixed and collision-checked: a feature named `_y`
+#: would be silently overwritten, and the model would train on its own label.
+_SIDE_COLS = ("_y", "_group", "_provider", "_match_id")
+
+
 def _extract(
     source,
     horizon_seconds,
     *,
+    shard_root,
     probe_keep=2,
     probe_providers=("gradientsports",),
     probe_comparison_providers=("skillcorner",),
-) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[dict, dict]]:
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[dict, dict, int]]:
+    from scripts._driver import for_each, shard_path
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
     from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL, prepare_xcross_training_data
 
-    parts_x, parts_y, parts_g, parts_p, parts_m = [], [], [], [], []
+    collision = set(_SIDE_COLS) & set(XCROSS_FEATURE_NAMES_FAITHFUL)
+    if collision:
+        raise ValueError(f"side columns {sorted(collision)} collide with feature names")
+
     # TF-19 substitution-probe samples (M1/M3/M5): the GATED cohort is provider-CONTROLLED
     # (--probe-providers; default the gradientsports gated cohort); a second reported-not-gated
     # comparison cohort (--probe-comparison-providers) persists to _probe_sample_comparison/.
     probe, comparison = _new_probe_cohort(), _new_probe_cohort()
-    for prov, mid, actions, frames, home in source:
+
+    def _work(item):
+        prov, mid, actions, frames, home = item
         X, y, groups = prepare_xcross_training_data(
             frames,
             actions,
@@ -100,36 +113,65 @@ def _extract(
             wide_area_only=True,
             carrier_params=DEFAULT_CARRIER_PARAMS,  # 4.7.0 values; shared constant (anti-drift)
         )
-        if len(X):
-            parts_x.append(X)
-            parts_y.append(np.asarray(y, int))
-            parts_g.append(np.asarray(groups))
-            parts_p.append(np.array([prov] * len(X)))
-            parts_m.append(np.array([str(mid)] * len(X)))  # per-row pining match_id (visibility key)
-            cohort = probe if prov in probe_providers else comparison if prov in probe_comparison_providers else None
-            if cohort is not None and len(cohort["frames"]) < probe_keep:  # M3: capture a COPY before del frames
-                # N3 (memory): keeps up to `probe_keep` matches' frames+actions resident per cohort for
-                # the whole loop (deliberate, bounded -- vs the original's immediate del). Fine at tracking
-                # scale on the box; probe_keep caps it. The per-match `del frames` still frees all others.
-                cohort["frames"].append(frames.copy())
-                cohort["actions"].append(actions.copy())
-                cohort["home"] = home
-                cohort["matches"].append([prov, str(mid)])
-                # groups == game_id per row (prepare_xcross_training_data contract), recorded so the
-                # gate can compute per-match training-fold membership (M6) + filter the probe frames.
-                cohort["match_groups"][str(mid)] = sorted({str(g) for g in np.asarray(groups).tolist()})
-            print(f"  {prov}/{mid}: {len(X)} rows, {int(np.asarray(y).sum())} positives")
+        if not len(X):
+            del frames
+            return None  # still writes an EMPTY shard: "ran, produced no usable row"
+        cohort = probe if prov in probe_providers else comparison if prov in probe_comparison_providers else None
+        if cohort is not None and len(cohort["frames"]) < probe_keep:  # M3: capture a COPY before del frames
+            # N3 (memory): keeps up to `probe_keep` matches' frames+actions resident per cohort for
+            # the whole loop (deliberate, bounded -- vs the original's immediate del). Fine at tracking
+            # scale on the box; probe_keep caps it. The per-match `del frames` still frees all others.
+            cohort["frames"].append(frames.copy())
+            cohort["actions"].append(actions.copy())
+            cohort["home"] = home
+            cohort["matches"].append([prov, str(mid)])
+            # groups == game_id per row (prepare_xcross_training_data contract), recorded so the
+            # gate can compute per-match training-fold membership (M6) + filter the probe frames.
+            cohort["match_groups"][str(mid)] = sorted({str(g) for g in np.asarray(groups).tolist()})
+        out = X.assign(
+            _y=np.asarray(y, int),
+            _group=np.asarray(groups),
+            _provider=str(prov),
+            _match_id=str(mid),  # per-row pining match_id (visibility key)
+        )
         del frames
-    if not parts_x:
+        return out
+
+    res = for_each(
+        source,
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        shard_root=shard_root,
+        # Mirrors the xS trainer: extractor, horizon, domain filter, carrier params. The probe
+        # provider filters are NOT declared -- they select which matches are COPIED into the gate
+        # cohort, not what a feature row contains.
+        token_inputs={
+            "extractor": "prepare_xcross_training_data",
+            "horizon_seconds": horizon_seconds,
+            "wide_area_only": True,
+            "carrier_params": dict(DEFAULT_CARRIER_PARAMS),
+        },
+        tag="xcross_features",
+        label="match",
+    )
+    if res.failures:
+        raise RuntimeError(f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only them.")
+
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    if not parts:
         raise SystemExit("No usable training data.")
-    X = pd.concat(parts_x, ignore_index=True)[XCROSS_FEATURE_NAMES_FAITHFUL]
+    combined = pd.concat(parts, ignore_index=True)
     return (
-        X,
-        np.concatenate(parts_y),
-        np.concatenate(parts_g),
-        np.concatenate(parts_p),
-        np.concatenate(parts_m),
-        (probe, comparison),
+        combined[XCROSS_FEATURE_NAMES_FAITHFUL],
+        combined["_y"].to_numpy(int),
+        combined["_group"].to_numpy(),
+        combined["_provider"].to_numpy(),
+        combined["_match_id"].to_numpy(),
+        # `res.skipped` rides along because the probe cohort CANNOT be rebuilt from the shards: it
+        # holds whole tracking frames, which no tidy shard carries. A resumed pass therefore returns
+        # an EMPTY cohort, and `_write_probe_sample` no-ops on empty -- so without this count the
+        # TF-19 gate cohort would silently never be written. The caller turns that into a raise.
+        (probe, comparison, res.skipped),
     )
 
 
@@ -380,7 +422,20 @@ def main(argv=None) -> None:
         help="JSON file mapping {provider: [match_id, ...]} -- a per-provider allowlist threaded to "
         "load_matches(match_ids=) (--providers path only). Default None (load every listed match).",
     )
+    ap.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Train from a modified working tree. The run still records run_tree_dirty=true in "
+        "metrics.json -- the hatch permits a dev run, it never launders the fact.",
+    )
     args = ap.parse_args(argv)
+
+    # FIRST, before any corpus work. This trainer writes BUNDLED weights, and an artifact whose
+    # provenance is unknown is one nobody can reproduce or audit later. ADR-052 enrolled all five
+    # trainers at once, deliberately: a partial roll-out is how the same rule failed twice before.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    run_prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
     ns, seed = args.negative_subsample, args.seed
     probe_provs = [p for p in args.probe_providers.split(",") if p]
     comparison_provs = [p for p in args.probe_comparison_providers.split(",") if p]
@@ -399,7 +454,7 @@ def main(argv=None) -> None:
     # DGX-populated caches that predate the visibility taxonomy are never silently reused. As of
     # ADR-050 the fingerprint is a LIVE per-corpus hash, so a cache built from a different corpus
     # under the same --output-dir also MISSES.
-    probe_bundle = (_new_probe_cohort(), _new_probe_cohort())
+    probe_bundle = (_new_probe_cohort(), _new_probe_cohort(), 0)
     _fingerprint = _corpus_fingerprint(args)
     if cache_is_valid(cache, fingerprint=_fingerprint) and (cache / "match_ids.npy").exists():
         print(f"Loading cached features from {cache}")
@@ -418,6 +473,9 @@ def main(argv=None) -> None:
         X, y, groups, providers, match_ids, probe_bundle = _extract(
             source,
             args.horizon_seconds,
+            # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so
+            # the "fresh --output-dir per corpus" discipline the fingerprint enforces covers them.
+            shard_root=art / "shards",
             probe_providers=tuple(probe_provs),
             probe_comparison_providers=tuple(comparison_provs),
         )
@@ -432,9 +490,24 @@ def main(argv=None) -> None:
         # cached providers + match_ids + the live manifest (below), so a persisted arm split would be
         # redundant AND could go stale. The schema bump is what invalidates pre-Task-11 caches.
         write_cache_meta(cache, fingerprint=_fingerprint)
-        probe_cohort, comparison_cohort = probe_bundle  # persist the TF-19 probe samples (fresh-extract only)
-        _write_probe_sample(cache.parent / "_probe_sample", probe_cohort, probe_provs)
-        _write_probe_sample(cache.parent / "_probe_sample_comparison", comparison_cohort, comparison_provs)
+        probe_cohort, comparison_cohort, n_skipped = probe_bundle  # TF-19 probe samples (fresh-extract only)
+        # The probe cohort holds whole TRACKING FRAMES, which no tidy shard carries -- so a resumed
+        # pass returns it EMPTY, and `_write_probe_sample` no-ops on empty. Left unguarded, resuming
+        # a crashed extraction would silently produce a run with no TF-19 gate cohort at all: the
+        # numbers would look complete and the gate would have nothing to stand on. Refuse instead,
+        # unless the earlier pass already wrote the sample (in which case there is nothing to lose).
+        for ps, cohort, provs in (
+            (cache.parent / "_probe_sample", probe_cohort, probe_provs),
+            (cache.parent / "_probe_sample_comparison", comparison_cohort, comparison_provs),
+        ):
+            if provs and n_skipped and not cohort["frames"] and not (ps / "meta.json").is_file():
+                raise RuntimeError(
+                    f"{n_skipped} match(es) were resumed from shards, so the probe cohort for "
+                    f"{sorted(provs)} could not be captured and {ps} does not already exist. The "
+                    f"probe needs whole tracking frames, which the shards do not carry. Re-run "
+                    f"against a fresh --output-dir to rebuild it, or restore the earlier sample."
+                )
+            _write_probe_sample(ps, cohort, provs)
 
     groups = np.asarray(groups).astype(str)
     provset = {str(p) for p in providers.tolist()}
@@ -574,6 +647,11 @@ def main(argv=None) -> None:
     )
 
     metrics = {
+        # ADR-052: the artifact records WHICH CODE produced it. `--allow-dirty` permits a dev
+        # run; the flag survives into the artifact rather than living in someone's memory.
+        "run_commit": run_prov["commit"],
+        "run_tree_dirty": run_prov["dirty"],
+        "run_tree_state": run_prov["tree_state"],
         "shipped_variant": shipped,
         "n_rows": len(X),
         "n_positive": int(y.sum()),

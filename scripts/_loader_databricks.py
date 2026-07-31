@@ -41,16 +41,41 @@ def _connect():
             "databricks-sql-connector is required for the Databricks loader: pip install databricks-sql-connector"
         ) from exc
     http_path = os.environ["DATABRICKS_HTTP_PATH"]
-    # Auth: an explicit DATABRICKS_TOKEN (PAT) wins -- CI and legacy setups. Otherwise fall back
-    # to OAuth U2M via a databricks-sdk profile (the workspace moved off PATs; authenticate once
-    # with `databricks auth login`). An empty token string is NOT a usable PAT -> OAuth branch.
+    # Auth precedence. `DATABRICKS_AUTH` selects the branch explicitly; UNSET preserves the historic
+    # behaviour (a non-empty token wins), so CI and legacy setups are untouched -- this is an opt-in
+    # override, not a behaviour change. An empty token string is NOT a usable PAT -> OAuth branch.
+    #
+    # The override exists because the historic rule takes the PAT branch on ANY non-empty token,
+    # so an unusable one pre-empts the working OAuth fallback below it and the resulting error
+    # names the WORKSPACE rather than the environment variable that chose the branch. Measured on
+    # the maintainer's machine: a dead 36-char `dapi` PAT in `DATABRICKS_TOKEN`, no
+    # `DATABRICKS_CONFIG_PROFILE`, every Databricks-backed driver failing for a reason none of them
+    # reported.
+    auth = os.environ.get("DATABRICKS_AUTH", "").strip().lower()
+    if auth not in ("", "pat", "oauth"):
+        # Refused rather than ignored: falling through on a typo would reinstate exactly the silent
+        # precedence this variable exists to end, one line further down.
+        raise RuntimeError(f"DATABRICKS_AUTH must be 'pat', 'oauth' or unset; got {auth!r}")
     token = os.environ.get("DATABRICKS_TOKEN")
-    if token:
-        return dbsql.connect(
-            server_hostname=os.environ["DATABRICKS_HOST"].replace("https://", ""),
-            http_path=http_path,
-            access_token=token,
-        )
+    if auth == "pat" and not token:
+        raise RuntimeError("DATABRICKS_AUTH=pat but DATABRICKS_TOKEN is unset or empty")
+    if token and auth != "oauth":
+        try:
+            return dbsql.connect(
+                server_hostname=os.environ["DATABRICKS_HOST"].replace("https://", ""),
+                http_path=http_path,
+                access_token=token,
+            )
+        except Exception as exc:
+            # Name the precedence AND both of its causes. This branch fails for a stale PAT and for
+            # an expired short-lived bearer alike -- the lakehouse deliberately puts a ~299 s minted
+            # OAuth bearer in this same variable -- so a message naming only one mis-diagnoses half
+            # the cases.
+            raise RuntimeError(
+                "Databricks PAT auth failed. A non-empty DATABRICKS_TOKEN took priority over the "
+                "OAuth profile; the token may be a STALE PAT or an EXPIRED short-lived bearer. "
+                "Unset DATABRICKS_TOKEN, re-mint it, or set DATABRICKS_AUTH=oauth."
+            ) from exc
     try:
         from databricks.sdk.core import Config  # type: ignore[import-not-found]
     except ImportError as exc:  # actionable hint
@@ -87,9 +112,27 @@ def _query_param(cursor, sql: str, params=None) -> pd.DataFrame:
 
 
 def load_matches(
-    *, providers: list[str], match_ids: dict[str, list[str]] | None = None
+    *,
+    providers: list[str],
+    match_ids: dict[str, list[str]] | None = None,
+    tracking_limit: int | None = None,
+    max_per_provider: int | None = None,
 ) -> Iterator[tuple[str, str, pd.DataFrame, pd.DataFrame, object]]:
-    """Yield (provider, match_id, actions, frames, home_team_id) from bronze."""
+    """Yield (provider, match_id, actions, frames, home_team_id) from bronze.
+
+    ``tracking_limit`` and ``max_per_provider`` mirror `_loader_pining.load_matches`, and that
+    parity is a bug fix rather than symmetry for its own sake: `calibrate_tracking_defaults`
+    chooses between the two loaders at runtime and calls whichever it picked with ONE kwarg set, so
+    every ``--source databricks`` (and ``--source auto``) invocation died on
+    ``TypeError: load_matches() got an unexpected keyword argument 'tracking_limit'`` before
+    reading a row -- the driver's databricks path could not run at all. Dropping the kwargs at the
+    call site instead would have made the two memory bounds silently inert on the loader that most
+    needs them.
+
+    ``tracking_limit`` caps frames per match POST-QUERY (the pining path's IDSSE behaviour), so it
+    bounds memory downstream, not the query. ``max_per_provider`` caps the number of matches after
+    any ``match_ids`` selection.
+    """
     conn = _connect()
     try:
         cur = conn.cursor()
@@ -102,11 +145,15 @@ def load_matches(
                     r[0]
                     for r in _query_param(cur, f"SELECT DISTINCT match_id FROM {t_tracking}").itertuples(index=False)  # noqa: S608
                 ]
+            if max_per_provider is not None:
+                ids = list(ids)[:max_per_provider]
             for mid in ids:
                 # Table from allowlist; match_id PARAMETERIZED (M5) — never f-string-interpolated.
                 raw_frames = _query_param(cur, f"SELECT * FROM {t_tracking} WHERE match_id = %(mid)s", {"mid": mid})  # noqa: S608
                 raw_events = _query_param(cur, f"SELECT * FROM {t_events} WHERE match_id = %(mid)s", {"mid": mid})  # noqa: S608
                 actions, frames, home = _convert(provider, raw_events, raw_frames)
+                if tracking_limit is not None:
+                    frames = frames.head(tracking_limit)
                 yield provider, str(mid), actions, frames, home
         cur.close()
     finally:
