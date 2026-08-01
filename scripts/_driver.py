@@ -222,7 +222,13 @@ def write_shard(path, frame, *, tag: str) -> None:
     An absent shard means "not yet run"; a present empty one means "ran, produced nothing".
     Conflating them makes every barren item recompute on every resume, forever -- which is exactly
     the trap the 14-hour driver this module exists for would fall into, since it has barren items
-    (``validate_xs_probe:133`` counts them). The distinction is the resume check's entire input.
+    (``validate_xs_probe``'s ``n_contributing`` counts them). The distinction is the resume check's
+    entire input.
+
+    Cited by SYMBOL, not by line: the original pin read ``validate_xs_probe:133``, which was already
+    stale by the time this shipped -- the counter now sits at ``:236`` and line 133 is an unrelated
+    comment. ``docs/PRIVATE_CONSUMERS.md`` records that PATH pins fail silently; LINE pins fail the
+    same way and rot faster, since any edit above them moves the target.
     """
     import pandas as pd
 

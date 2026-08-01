@@ -11,7 +11,11 @@ self-description in a provenance-bearing file -- the same class of defect as a f
 and it must not be possible to fix it in one producer and leave it broken in the other.
 
 `scripts/_loader_*` is READ-ONLY from here: this module reads the loader's own listing helper so a
-partition can never name a match a real run would not fetch, and never edits it.
+partition can never name a match a real run would not fetch, and never edits it. That is a property
+of THIS module, not a repo-wide fence -- the TF-19 partition cycle that wrote it was declaring its
+own scope, and ADR-052 subsequently changed `_loader_databricks.load_matches` (it accepted neither
+`tracking_limit` nor `max_per_provider`, so `calibrate_tracking_defaults --source databricks` died
+on a `TypeError` before reading a row).
 """
 
 from __future__ import annotations
@@ -52,8 +56,10 @@ def providers_for_slice(providers: list[str], match_ids: dict | None) -> list[st
     per-match shard paths concurrently.
 
     The loader's behaviour is right for its own callers (no slice means "everything"); it is this
-    partitioning layer that must read "no ids for me" as "nothing for me". Fixing it here also
-    keeps `scripts/_loader_*` untouched, which this cycle may not modify.
+    partitioning layer that must read "no ids for me" as "nothing for me". Fixing it here rather
+    than in the loader is therefore the correct SEAM, not a scope restriction -- the TF-19
+    partition cycle's "may not modify" phrasing described that cycle, and ADR-052 has since
+    changed the loader for an unrelated defect.
     """
     if not match_ids:
         return list(providers)

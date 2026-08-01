@@ -5,6 +5,97 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.72.0] — 2026-07-31
+
+> **Tag readiness is inherited from `main`, not from anything in this release.** 4.72.0 is
+> `scripts/`-only and the wheel is byte-identical to its predecessor, so it adds no release
+> hazard of its own. It does sit on top of the committed-but-unreleased 4.71.0, whose RC2 + RC3
+> correct the serving geometry `GkCompletionModel`'s bundled weights were fitted against — so the
+> first tag cut above 4.71.0, whatever its number, publishes that pairing. See ADR-051; the
+> retrain that clears it is tracked there.
+
+### Added / Fixed — the shared corpus-driver seam `scripts/_driver.py` (PR-S140, ADR-052)
+
+Twenty-one `scripts/` drivers walk a corpus; **three survived a crash and fourteen held every
+result in memory and wrote once at the end.** Measured cost: a power-analysis driver spent **8.7
+hours** walking 64 matches, raised in the cheap analysis step that followed, and lost all of it.
+Four partial mechanisms already existed (`_partition.py`, `_cache.py`, `train_ghost_gk`'s own
+feature cache, `calibrate_xt_bandwidth`'s `--corpus-cache`) covering seven drivers, split exactly
+**resume XOR staleness** — and **none of them owned the loop**, which is why resume and progress
+kept being the parts omitted.
+
+`for_each` owns the loop: it streams its corpus, writes one shard per item into a
+**generation DIRECTORY** named by a `ruthless.fingerprint` digest of the DECLARED inputs, skips an
+item whose shard exists, prints a flushed `[i/n]` line, records failures instead of losing the pass,
+and asserts conservation over its own keys. Individual primitives remain as the escape hatch, and a
+driver on that path must call `assert_conservation` **and** `_require_injective` (conservation alone
+is satisfiable by a lossy run: a colliding key makes two items share one shard, so `present` counts
+it twice and the relation balances on a run that dropped an item). Adoption is CI-gated over a
+structurally-derived population; the debt list is now **empty**.
+
+**No library behaviour, no weights, no retrain, and the wheel is unchanged from its predecessor**
+(`pyproject.toml` packages `silly_kicks` only, and `scripts/` is not shipped). C4-free — the
+diagram models `silly_kicks` subpackages, and the action-coupled aggregator count stays **32**.
+Corrections shipped alongside:
+
+- **`train_ghost_gk`'s feature cache was stale-blind on three axes.** Its recorded token was the
+  penalty-area geometry alone, so a re-run at a different `--subsample-fps` or `--carrier-*`
+  silently reused the previous run's feature matrix while `metadata.json` recorded the NEW carrier
+  params — the recorded==used invariant PR-S81 exists to hold, broken by the cache beneath it. The
+  token is now the shard generation digest, which folds in every declared input. **The cache
+  invalidates once; the next run re-extracts.**
+- **`train_ghost_gk` stamped false provenance into a SHIPPED artifact.** `training_commit` came
+  from a bare `git rev-parse HEAD`, which reads identically on a modified tree. It now refuses a
+  dirty tree by default (`--allow-dirty` records `run_tree_dirty` in `metrics.json`) and joins
+  `tests/scripts/test_provenance_wiring.py`. The other trainers stamp no commit at all, so they
+  make no false claim — whether they should carry provenance is **surfaced, not decided**.
+- **`measure_cover_shadow_argmax_agreement` carried a live ADR-028 RC1 defect.** It builds
+  `passer_xy` from raw action-LTR `start_x`/`start_y` and passes it beside frame-LTR positions, with
+  no home-only filter. 4.70.0 fixed the `features.py` callers; this driver imports
+  `_compute_cover_shadow_dict` DIRECTLY, so it was never a registered site. It does **not** cancel
+  between the two arms it compares — only the CHEAP path consumes the passer — so
+  `docs/research/cover_shadow_identity/`'s **0.1992 is a pre-RC1 number** needing an owner re-run.
+  **The `detailed=True` gating verdict survives without one, by arithmetic:** 0.157 × 970 = 152
+  agreements against a 0.90 floor needing 873; even if every away row flipped to agreeing the
+  ceiling is 637/970 = **0.657**.
+- **`calibrate_tracking_defaults --source databricks` could not run at all.** The driver calls
+  whichever loader `--source` selects with one kwarg set, and `_loader_databricks.load_matches`
+  accepted neither `tracking_limit` nor `max_per_provider`, so every such invocation died on
+  `TypeError` before reading a row. The bronze loader now implements both.
+- **Provenance is now three-state.** `git_provenance` returns `tree_state` ∈
+  `{clean, dirty, unknown}` **beside** the existing boolean, and **14 stamp sites across 13 drivers**
+  record `run_tree_state` in their artifacts. `dirty: true` is a positive claim that uncommitted
+  modifications EXIST; on a tarball checkout or a box without git that claim is false, and an
+  artifact asserting something untrue about its own provenance is the defect this module exists
+  to prevent, one level down. **The boolean is unchanged and the two are deliberately not
+  merged:** `run_tree_dirty` is already published and is OR-ed across workers, and
+  `bool("clean")` is **truthy**, so a tri-state string in the boolean's slot would silently
+  invert every aggregate. `run_tree_state` is stamped only where a driver records its OWN run,
+  never at the three sites that aggregate — OR-ing `clean`/`dirty`/`unknown` has no defined
+  meaning. **Additive**, but `git_provenance`'s key set widened, so a consumer pinning that shape
+  sees a new field.
+- **`n_counters_unrecorded` was hard-zero in three migrated drivers.** They called
+  `manifest_fields(...)` by hand and took its default, so a resumed worker whose counter sidecars
+  were missing wrote `n_counters_unrecorded: 0` beside `n_matches: 0` — a corpus artifact reporting
+  a corpus of nothing and asserting the report was complete. The parameter now has **no default**
+  and drivers use `CorpusPassResult.manifest()`.
+- **`train_gk_completion` bundling declares its question.** `--mode {rebundle,retrain}` and
+  `--reason` are REQUIRED with no default; `metrics.json` records both plus the superseded
+  coefficients. A retrain asserts the **served predictions** moved, keyed on behaviour rather than
+  parameter deltas (`mean`/`std` are raw-feature statistics in metres, so a coordinate correction
+  moves them while standardisation absorbs it exactly and every served probability is identical).
+  The signature takes **two** probes, measured: a single shared probe asks whether two functions
+  agree on one input, when the question is whether each model behaves the same on the coordinates
+  IT sees. `--feature-space moved` currently always REFUSES, because the weights directory stores
+  no design matrix — a loud refusal naming why beats silently answering the wrong question.
+  **Investigated and REVERSED, not deferred:** the plan called the re-bundle's corpus-identity
+  check a "mirror defect" and specified re-keying it onto served predictions. Measured, the premise
+  is inverted — *committed-on-OLD vs fresh-on-NEW* is 1.7e-16 (identical, and irrelevant), but a
+  re-bundle **ships the COMMITTED weights** and production serves them on the **NEW** features:
+  **0.72** in probability. So the abort is correct, the right action after a feature-space move is
+  `--mode retrain`, and **`_CORPUS_IDENTITY_ATOL` is untouched**. Pinned by
+  `test_a_rebundle_across_a_MOVED_feature_space_must_still_abort`, which records both numbers.
+
 ## [4.71.0] — NOT RELEASED (ships within 4.72.0 alongside PR 4)
 
 > **Do not tag `v4.71.0`.** This version is committed and traceable but deliberately never published

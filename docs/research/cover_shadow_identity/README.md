@@ -1,8 +1,31 @@
 # TF-30 — `max_single_defender_player_id` agreement measurement
 
+> ## ⚠ The POINT ESTIMATES below are PRE-RC1 and need an owner re-run. The VERDICT stands.
+>
+> Measured 2026-07-31 (ADR-052): the producing driver,
+> `scripts/measure_cover_shadow_argmax_agreement.py`, carried the ADR-028 **RC1** defect at the time
+> this ran — it built `passer_xy` from raw **action-LTR** `start_x`/`start_y` and passed it beside
+> **frame-LTR** defenders, receivers and ball, with no home-only filter. 4.70.0 fixed the two
+> `features.py` callers; this driver imports `_compute_cover_shadow_dict` **directly**, so it was
+> never a registered RC1 site and the defect stayed live until ADR-052 fixed it here.
+>
+> **It does not cancel between the two arms.** The CHEAP path consumes the passer and the EXACT
+> path does not, so the defect degraded precisely the comparison being measured — and RC1 measured
+> the cheap-path column changing on **90.7% / 100%** of away rows. Roughly the away half of the
+> 970-action sample was scored with the passer at the wrong end of the pitch.
+>
+> **Why the decision is nonetheless unchanged, by arithmetic rather than assumption:** 0.157 × 970
+> = **152** agreements; the 0.90 floor needs **873**. Even if *every* away row flipped to agreeing,
+> the ceiling is 637/970 = **0.657 < 0.90**. So the gate-to-`detailed=True` decision cannot be
+> overturned by the re-run; only the reported rate, the Wilson interval, the harm distribution and
+> `TOL_ATTRIB`'s supporting figures move.
+>
+> Re-run with the fixed driver to restore precision. Until then treat every number below as a
+> lower-bound-quality estimate, not a citable rate.
+
 **Verdict: the cheap path cannot support an identity column.** Agreement between the default
-(`detailed=False`) argmax and the exact (`detailed=True`) argmax is **0.157**, against a
-pre-registered floor of 0.90.
+(`detailed=False`) argmax and the exact (`detailed=True`) argmax is **0.157** (pre-RC1; see above),
+against a pre-registered floor of 0.90.
 
 **Decision taken: GATE.** `max_single_defender_player_id` ships, but is populated **only** under
 `detailed=True`; the cheap path returns `None` unconditionally and never names a defender. The exact
