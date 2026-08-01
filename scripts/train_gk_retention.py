@@ -78,12 +78,36 @@ def main() -> int:
 
     from _loader_databricks import load_retention_cohort  # type: ignore[import-not-found]
 
+    from scripts._driver import cohort_cache
+
     ap = argparse.ArgumentParser(description="Train + bundle the GK retention (rho) model (marts-native).")
     ap.add_argument("--provider", required=True)
+    ap.add_argument(
+        "--cohort-cache",
+        default=None,
+        help=(
+            "parquet path; fetch the cohort once and reuse it. Absent = fetch every run (today's "
+            "behaviour). Explicitly named because a mart re-materializes and a cached cohort has no "
+            "token this can verify -- so reuse must be the operator's decision, never automatic."
+        ),
+    )
     ap.add_argument("--variant", required=True, help="weights dir under _retention_weights/ (default|skillcorner)")
+    ap.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Train from a modified working tree. The run still records run_tree_dirty=true in "
+        "metrics.json -- the hatch permits a dev run, it never launders the fact.",
+    )
     a = ap.parse_args()
 
-    actions = load_retention_cohort(a.provider)
+    # FIRST, before any corpus work. This trainer writes BUNDLED weights, and an artifact whose
+    # provenance is unknown is one nobody can reproduce or audit later. ADR-052 enrolled all five
+    # trainers at once, deliberately: a partial roll-out is how the same rule failed twice before.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    run_prov = require_clean_tree(git_provenance(), allow_dirty=a.allow_dirty)
+
+    actions = cohort_cache(a.cohort_cache, build=lambda: load_retention_cohort(a.provider))
     print(f"loaded {len(actions)} actions ({actions['game_id'].nunique()} matches) for {a.provider}")
     X, y, groups = prepare_retention_training_data(actions)
     print(f"\nCORPUS rows={len(X)} pos={int(y.sum())} ({y.mean():.3f}) n_games={len(np.unique(groups))}")
@@ -106,7 +130,17 @@ def main() -> int:
     model.save(wdir)
     (wdir / "metrics.json").write_text(
         json.dumps(
-            {"auc": auc, **metrics, "n_rows": len(X), "n_games": len(np.unique(groups)), "provider": a.provider},
+            {
+                "auc": auc,
+                **metrics,
+                "n_rows": len(X),
+                "n_games": len(np.unique(groups)),
+                "provider": a.provider,
+                # ADR-052: which code produced these weights.
+                "run_commit": run_prov["commit"],
+                "run_tree_dirty": run_prov["dirty"],
+                "run_tree_state": run_prov["tree_state"],
+            },
             indent=2,
         ),
         encoding="utf-8",

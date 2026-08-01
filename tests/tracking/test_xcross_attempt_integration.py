@@ -159,6 +159,9 @@ def test_train_script_smoke(tmp_path):
         [
             sys.executable,
             "scripts/train_xcross_attempt.py",
+            # ADR-052: the trainer refuses a dirty tree (it writes bundled weights); a test
+            # run is by definition a dev run. The artifact still records run_tree_dirty.
+            "--allow-dirty",
             "--data-dir",
             str(data_dir),
             "--output-dir",
@@ -226,6 +229,9 @@ def test_train_script_fail_closed_writes_no_artifact(tmp_path):
         [
             sys.executable,
             "scripts/train_xcross_attempt.py",
+            # ADR-052: the trainer refuses a dirty tree (it writes bundled weights); a test
+            # run is by definition a dev run. The artifact still records run_tree_dirty.
+            "--allow-dirty",
             "--data-dir",
             str(data_dir),
             "--output-dir",

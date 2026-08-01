@@ -144,16 +144,31 @@ def _non_ascii(path) -> list[str]:
     return sorted({c for c in path.read_text(encoding="utf-8") if ord(c) > 127})
 
 
-# PRE-EXISTING debt, pinned EXACTLY (see the both-ways test below), not waved through. Every one of
-# these drivers dies with UnicodeEncodeError on `--help` from a cp1252 console. They are listed
-# rather than fixed here because two of them (`calibrate_*`) sit in a directory this cycle is not
-# permitted to modify, so a blanket repair is not this PR's to make -- and a silent narrowing of the
-# gate to "only the files I happened to touch" would have hidden the other sixteen entirely.
+# PRE-EXISTING debt, pinned EXACTLY (see the both-ways test below), not waved through. Listed
+# rather than repaired all at once because a blanket edit of eighteen unrelated drivers is not one
+# PR's to make -- but a silent narrowing of the gate to "only the files I happened to touch" would
+# have hidden the rest entirely, so the list is exact and shrinks as drivers are touched.
+#
+# TWO CORRECTIONS, both measured, to what this comment used to assert ("every one of these drivers
+# dies with UnicodeEncodeError on `--help` from a cp1252 console"):
+#   1. argparse prints the module docstring only when the parser is handed it. Measured across the
+#      list: **4 of 18** pass `__doc__` to `ArgumentParser`; the other 14 never print it, so no
+#      console encoding can make their `--help` raise.
+#   2. NON-ASCII is not NON-cp1252. Measured: an em dash (U+2014) encodes fine in cp1252 and raises
+#      on cp437 and ascii; U+0394 raises on all three; U+2265 raises on cp1252 but encodes on cp437.
+#      `calibrate_xt_bandwidth` held em dashes ONLY, so it never had the failure on the console the
+#      story named -- it was reachable on cp437 or a redirected ascii stdout.
+# The gate stays: ASCII-only source is the rule that holds under EVERY console encoding, which is
+# the property worth having. Only the justification was wrong, and a gate defended by a claim its
+# own population falsifies is one an inconvenienced contributor deletes.
+#
+# The `calibrate_*` pair also carried a "not modifiable from this cycle" note that is no longer
+# true: the owner ruled (2026-07-29) that the corpus-driver cycle has NO isolation exclusions, and
+# `calibrate_xt_bandwidth` was cleaned when that cycle migrated it. `calibrate_tracking_defaults`
+# follows when its own migration lands.
 _KNOWN_NON_ASCII_DRIVERS = frozenset(
     {
         "build_worldcup_fixture",
-        "calibrate_tracking_defaults",  # isolation zone: not modifiable from this cycle
-        "calibrate_xt_bandwidth",  # isolation zone: not modifiable from this cycle
         "download_skillcorner_sample",
         "extract_paired_idsse_fixture",
         "extract_provider_fixtures",
@@ -175,13 +190,17 @@ _KNOWN_NON_ASCII_DRIVERS = frozenset(
 
 @pytest.mark.parametrize("src", _driver_sources(), ids=lambda p: p.stem)
 def test_driver_source_is_ascii_so_help_works_on_windows(src):
-    """`--help` prints the module docstring, and a Windows console is cp1252: a single non-ASCII
-    character (measured: U+0394 in a delta description) makes `--help` die with
-    UnicodeEncodeError before the maintainer can read the usage. Cheap to keep, and it fails on
-    the machine the drivers are actually invoked from."""
+    """A driver whose `--help` prints its module docstring dies with UnicodeEncodeError the moment
+    that docstring holds a character the console cannot encode -- measured: U+0394 in a delta
+    description, on cp1252.
+
+    ASCII-only is the rule rather than cp1252-safe because which characters survive depends on the
+    console: an em dash encodes on cp1252 and raises on cp437, U+2265 does the opposite (both
+    measured; see `_KNOWN_NON_ASCII_DRIVERS`). ASCII is the only set that holds under all of them,
+    and it needs no per-file reasoning about which parser prints what."""
     if src.stem in _KNOWN_NON_ASCII_DRIVERS:
         pytest.skip("pre-existing debt, pinned exactly by test_the_known_offender_list_is_EXACT")
-    assert not _non_ascii(src), f"non-ASCII in {src.name} breaks --help on cp1252: {_non_ascii(src)}"
+    assert not _non_ascii(src), f"non-ASCII in {src.name} can break --help on a non-UTF-8 console: {_non_ascii(src)}"
 
 
 def test_the_known_offender_list_is_EXACT():

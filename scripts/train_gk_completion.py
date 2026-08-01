@@ -49,25 +49,50 @@ _SLOPE_TOL = 0.25  # C1: reliability-slope within [1-tol, 1+tol]; NaN slope (deg
 _CORPUS_IDENTITY_ATOL = 0.05
 
 
-def _extract(providers, max_per_provider, tracking_limit):
-    frames_seen = 0
-    parts = []
-    for prov, mid, actions, frames, _home in load_matches(
-        providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit
-    ):
+def _extract(providers, max_per_provider, tracking_limit, *, shard_root):
+    from scripts._driver import for_each, shard_path
+
+    def _work(item):
+        prov, mid, actions, frames, _home = item
         try:
             X, y, groups = prepare_gk_completion_training_data(actions, frames=frames)
         except ValueError as exc:  # a single near-degenerate match shouldn't kill the run
+            # Returned as an EMPTY shard rather than re-raised: `for_each` would otherwise record it
+            # as a FAILURE and three in a row would abort the pass, whereas this has always been a
+            # skip. An empty shard also stops a resume re-deciding the same degenerate match.
             print(f"  {prov}/{mid}: skipped ({exc})", flush=True)
-            continue
+            return None
         X = X.copy()
         X["_y"] = y
         X["_group"] = groups
-        parts.append(X)
-        frames_seen += len(frames)
-        print(f"  {prov}/{mid}: {len(X)} rows", flush=True)
-    df = pd.concat(parts, ignore_index=True)
-    return df
+        return X
+
+    res = for_each(
+        load_matches(providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit),
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        shard_root=shard_root,
+        # What determines a shard's CONTENT: the extractor and the frame depth it sees.
+        # `--tracking-limit` is load-bearing here and NOT merely a cap -- SK-91 measured that a small
+        # cap starves the SkillCorner derived-GK, over-flagging keepers and inflating the frame-derived
+        # GK-pass domain (461 vs 542 on full frames). A capped run and a full run are DIFFERENT corpora
+        # and must never share a generation.
+        token_inputs={
+            "extractor": "prepare_gk_completion_training_data",
+            "tracking_limit": tracking_limit,
+        },
+        tag="gk_completion",
+        label="match",
+    )
+    if res.failures:
+        raise RuntimeError(f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only them.")
+
+    # Combined from THIS PASS'S keys, not `_driver.reconcile`: no partition surface, so a
+    # whole-generation read would fold in matches from a wider earlier run. See its docstring.
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    if not parts:
+        raise SystemExit("No usable training data.")
+    return pd.concat(parts, ignore_index=True)
 
 
 def _bootstrap_auc_ci(y, p, n_boot=2000, lo=2.5, seed=0):
@@ -113,6 +138,87 @@ def _per_type_gate_from_oof(oof: np.ndarray, y_all: np.ndarray, X_all) -> tuple[
     return serve_mode, metrics
 
 
+def predictions_moved(old: dict, new: dict, *, probe_old, probe_new, atol: float = 1e-6) -> bool:
+    """Did the SERVED probabilities change -- each model evaluated on the coordinates IT sees?
+
+    Keyed on behaviour, not on parameter deltas, following the house pattern: `_chirality.py`
+    fingerprints model OUTPUT on a fixed probe frame and `_feature_contract.py` fingerprints the
+    feature vector on one. A parameter-delta rule is wrong in BOTH directions, and both are
+    measured in ``tests/scripts/test_train_gk_completion.py``: a pure translation moves ``mean`` by
+    metres while standardisation absorbs it exactly, so every served probability is identical and a
+    max-over-arrays guard reads it as a retrain; and a change confined to standardisation moves
+    served probabilities while the coefficients sit byte-still, which a coefficients-only guard
+    reads as no change.
+
+    TWO probes, not one. ``probe_old`` is the design matrix the committed model was fit on and
+    ``probe_new`` the one the fresh fit was; they are the SAME array whenever the feature space did
+    not move, which is the ordinary case. A single shared probe was drafted first and MEASURED
+    unable to express the property -- it asks whether two functions agree on one input, when the
+    question is whether the model behaves the same on the data each version actually sees.
+
+    The probe should be the model's own design matrix, never synthetic noise: a probe that does not
+    exercise the region a retrain changed would report "no movement" for a real retrain.
+    """
+
+    def _serve(w: dict, p) -> np.ndarray:
+        z = (np.asarray(p, dtype=float) - np.asarray(w["mean"], dtype=float)) / np.asarray(w["std"], dtype=float)
+        return 1.0 / (1.0 + np.exp(-(z @ np.asarray(w["coef"], dtype=float) + float(w["intercept"]))))
+
+    return not np.allclose(_serve(old, probe_old), _serve(new, probe_new), atol=atol, rtol=0.0)
+
+
+def _as_weights(m) -> dict:
+    """The four served parameters of a `GkCompletionModel`, as `predictions_moved` wants them."""
+    return {"coef": m._coef, "intercept": m._intercept, "mean": m._mean, "std": m._std}
+
+
+def _superseded_coef(committed, feats) -> dict | None:
+    """The coefficients this run replaces, recorded in metrics.json. ``None`` on a first bundle.
+
+    A weights change is reviewable six months later only if the thing it replaced is written down;
+    the artifact itself keeps no history, and git shows the npz as a binary blob.
+    """
+    if committed is None or committed._coef is None:
+        return None
+    return dict(zip(feats, [float(v) for v in committed._coef], strict=True))
+
+
+def _validate_bundling_args(args) -> None:
+    """Refuse the retrain cases whose right instrument the artifact format cannot supply.
+
+    With no probe persisted beside the weights today, ``--feature-space moved`` ALWAYS refuses. That
+    is the point: a loud refusal naming why the comparison is impossible beats silently answering
+    the wrong question, which is what ``probe_old = probe_new = X_all`` would do.
+    """
+    if args.mode != "retrain":
+        return
+    if args.feature_space is None:
+        raise SystemExit("--mode retrain requires --feature-space {unchanged,moved}; see --help.")
+    if args.feature_space == "moved" and args.probe_old is None:
+        raise SystemExit(
+            "--feature-space moved requires --probe-old: the committed weights directory stores "
+            "coef/intercept/mean/std but NOT a design matrix, so the pre-change feature space "
+            "cannot be reconstructed from the artifact. Without it this guard would serve the "
+            "committed model on coordinates it never saw, report a difference caused by the "
+            "coordinate change alone, and stamp the artifact `retrained` when nothing behavioural "
+            "moved -- the exact defect it exists to catch. Persist a probe sample beside the "
+            "weights (ADR-011 follow-up) or re-run with the pre-change extractor."
+        )
+
+
+def _assert_retrain_moved_predictions(args, committed, model, X_all, feats) -> None:
+    """`--mode retrain`: the fresh fit must SERVE differently from the committed weights."""
+    if committed is None:
+        return  # first-ever bundle: there is nothing to have moved away from
+    probe_old = pd.read_parquet(args.probe_old)[feats] if args.probe_old else X_all
+    if not predictions_moved(_as_weights(committed), _as_weights(model), probe_old=probe_old, probe_new=X_all):
+        raise SystemExit(
+            "RETRAIN produced the committed model's served predictions unchanged -- the input "
+            "change never reached the model. Shipping this as a retrain would be a false claim. "
+            f"(reason given: {args.reason!r})"
+        )
+
+
 def _train_skillcorner(args) -> int:
     """D-S1 GS-transfer re-measurement on the CORRECTED native label + the SkillCorner gate (D-S3/C1).
 
@@ -121,6 +227,13 @@ def _train_skillcorner(args) -> int:
     on the native-completion label (training is native-only via the F1/G1 filter). Per sub-domain
     (overall / goal-kick / GK-pass), reports SkillCorner-fit OOF vs GS-transfer AUC (+bootstrap LCB)
     and ECE. Gate: GK-pass AUC LCB > 0.70 AND ECE <= tol."""
+    # Read, not re-checked: `main()` already REFUSED a dirty tree before dispatching here, so
+    # this only recovers the same facts for the artifact. A direct call (the smoke test) still
+    # gets truthful values rather than a missing key.
+    from scripts._provenance import git_provenance
+
+    run_prov = git_provenance()
+
     from sklearn.metrics import roc_auc_score
     from sklearn.model_selection import GroupKFold
 
@@ -130,7 +243,9 @@ def _train_skillcorner(args) -> int:
         df = pd.read_parquet(cache)
     else:
         print("=== extracting SkillCorner GK distributions (native-label-filtered, F1/G1) ===", flush=True)
-        df = _extract(["skillcorner"], args.max_per_provider, args.tracking_limit)
+        df = _extract(
+            ["skillcorner"], args.max_per_provider, args.tracking_limit, shard_root=Path(args.shard_dir) / "skillcorner"
+        )
         if cache:
             Path(cache).parent.mkdir(parents=True, exist_ok=True)
             df.to_parquet(cache)
@@ -224,6 +339,9 @@ def _train_skillcorner(args) -> int:
     print(f"\nDECISION: {decision}  (GK-pass floor {_GKPASS_AUC_FLOOR}, ECE tol {_ECE_TOL})", flush=True)
 
     bundled = False
+    # Bound OUTSIDE the branch: on a no-bundle decision nothing is loaded, and the metrics dict
+    # below still has to answer "what did this supersede" with a definite None.
+    committed_before = None
     if decision.startswith("bundle_skillcorner"):
         # `model` = fresh full-data fit, used as the CORPUS-IDENTITY PROBE only. The SERVED artifact is
         # the committed model (its bytes), so the OOF gate provably describes the served model AND
@@ -232,16 +350,25 @@ def _train_skillcorner(args) -> int:
         model = GkCompletionModel().fit(X_all, pd.Series(y_all))
         sm, gm = _per_type_gate_from_oof(oof, y_all, X_all)
         try:
-            served = GkCompletionModel.load(_SKILLCORNER_WEIGHTS_DIR)  # committed coef = the served bytes
+            committed = GkCompletionModel.load(_SKILLCORNER_WEIGHTS_DIR)  # committed coef = the served bytes
+        except FileNotFoundError:
+            committed = None
+        committed_before = committed
+        if committed is None:
+            served = model  # first-ever bundle: nothing committed to preserve -> ship the fresh fit
+        elif args.mode == "rebundle":
+            # KEPT on parameters, deliberately -- see the block comment on _CORPUS_IDENTITY_ATOL.
             # fit()/load() populate the coef arrays above; narrow off Optional for the type checker.
             assert model._coef is not None and model._mean is not None and model._std is not None  # noqa: S101
-            assert served._coef is not None and served._mean is not None and served._std is not None  # noqa: S101
-            np.testing.assert_allclose(model._coef, served._coef, atol=_CORPUS_IDENTITY_ATOL)
-            np.testing.assert_allclose([model._intercept], [served._intercept], atol=_CORPUS_IDENTITY_ATOL)
-            np.testing.assert_allclose(model._mean, served._mean, atol=_CORPUS_IDENTITY_ATOL)
-            np.testing.assert_allclose(model._std, served._std, atol=_CORPUS_IDENTITY_ATOL)
-        except FileNotFoundError:
-            served = model  # first-ever bundle: nothing committed to preserve -> ship the fresh fit
+            assert committed._coef is not None and committed._mean is not None and committed._std is not None  # noqa: S101
+            np.testing.assert_allclose(model._coef, committed._coef, atol=_CORPUS_IDENTITY_ATOL)
+            np.testing.assert_allclose([model._intercept], [committed._intercept], atol=_CORPUS_IDENTITY_ATOL)
+            np.testing.assert_allclose(model._mean, committed._mean, atol=_CORPUS_IDENTITY_ATOL)
+            np.testing.assert_allclose(model._std, committed._std, atol=_CORPUS_IDENTITY_ATOL)
+            served = committed
+        else:
+            _assert_retrain_moved_predictions(args, committed, model, X_all, feats)
+            served = model  # a retrain SHIPS the fresh fit
         served.shipped_variant = "skillcorner"
         served.provider_list = ["skillcorner"]
         served._type_serve_mode, served._type_gate_metrics = sm, gm
@@ -259,6 +386,14 @@ def _train_skillcorner(args) -> int:
 
     metrics = {
         "variant": "skillcorner",
+        # ADR-052: the artifact records WHICH CODE produced it. `--allow-dirty` permits a dev
+        # run; the flag survives into the artifact rather than living in someone's memory.
+        "run_commit": run_prov["commit"],
+        "run_tree_dirty": run_prov["dirty"],
+        "run_tree_state": run_prov["tree_state"],
+        "mode": args.mode,
+        "reason": args.reason,
+        "superseded_coef": _superseded_coef(committed_before, feats),
         "decision": decision,
         "bundled": bundled,
         "n_rows": len(df),
@@ -291,8 +426,62 @@ def main() -> int:
         "for a quick dev smoke, never to (re-)bundle.",
     )
     ap.add_argument("--variant", default="default", choices=["default", "skillcorner"])
+    ap.add_argument(
+        "--mode",
+        required=True,
+        choices=["rebundle", "retrain"],
+        help="REQUIRED, no default. `rebundle` re-attaches fresh gate metadata to the COMMITTED "
+        "weights and asserts the fresh fit still reproduces them. `retrain` ships the fresh fit and "
+        "asserts the SERVED PREDICTIONS moved -- a retrain that reproduces the old behaviour means "
+        "the input change never reached the model, and shipping it as 'retrained on X' is a false "
+        "claim. Neither is reachable by accident.",
+    )
+    ap.add_argument(
+        "--reason",
+        required=True,
+        help="REQUIRED. Why this run is bundling -- recorded verbatim in metrics.json. A weights "
+        "change with no stated cause is unreviewable six months later.",
+    )
+    ap.add_argument(
+        "--feature-space",
+        choices=["unchanged", "moved"],
+        default=None,
+        help="REQUIRED with --mode retrain. `unchanged` = more data or new hyperparameters, so both "
+        "models are validly served on the same design matrix. `moved` = a geometry/coordinate "
+        "correction changed the raw features, so the committed model must be served on the "
+        "PRE-change matrix or the comparison is meaningless. There is no safe default: the two "
+        "choices need opposite instruments.",
+    )
+    ap.add_argument(
+        "--probe-old",
+        default=None,
+        help="parquet of the pre-change design matrix; required for --feature-space moved.",
+    )
     ap.add_argument("--cache-features", default=None, help="parquet path to cache/reuse extracted features (owner-run)")
+    ap.add_argument(
+        "--shard-dir",
+        default="gk_completion_shards",
+        help=(
+            "dir for the resumable per-match extraction shards. This driver writes its weights to a "
+            "hardcoded path and has no --output-dir, so the shards need a home of their own; a "
+            "capped --tracking-limit run lands in a different generation (see _extract)."
+        ),
+    )
+    ap.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Train from a modified working tree. The run still records run_tree_dirty=true in "
+        "metrics.json -- the hatch permits a dev run, it never launders the fact.",
+    )
     args = ap.parse_args()
+    _validate_bundling_args(args)
+
+    # FIRST, before any corpus work. This trainer writes BUNDLED weights, and an artifact whose
+    # provenance is unknown is one nobody can reproduce or audit later. ADR-052 enrolled all five
+    # trainers at once, deliberately: a partial roll-out is how the same rule failed twice before.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    run_prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
     if args.variant == "skillcorner":
         return _train_skillcorner(args)
@@ -301,7 +490,9 @@ def main() -> int:
     from sklearn.model_selection import GroupKFold
 
     print(f"=== extracting GK distributions ({args.providers}) ===", flush=True)
-    df = _extract(args.providers, args.max_per_provider, args.tracking_limit)
+    df = _extract(
+        args.providers, args.max_per_provider, args.tracking_limit, shard_root=Path(args.shard_dir) / "default"
+    )
     feats = GK_COMPLETION_FEATURE_NAMES
     X_all = df[feats]
     y_all = df["_y"].to_numpy(int)
@@ -358,16 +549,25 @@ def main() -> int:
     model = GkCompletionModel().fit(X_all, pd.Series(y_all))
     sm, gm = _per_type_gate_from_oof(oof, y_all, X_all)
     try:
-        served = GkCompletionModel.load(_WEIGHTS_DIR)
+        committed = GkCompletionModel.load(_WEIGHTS_DIR)
+    except FileNotFoundError:
+        committed = None
+    if committed is None:
+        served = model  # first-ever bundle: nothing committed to preserve
+    elif args.mode == "rebundle":
+        # KEPT on parameters, deliberately -- see the block comment on _CORPUS_IDENTITY_ATOL.
         # fit()/load() populate the coef arrays above; narrow off Optional for the type checker.
         assert model._coef is not None and model._mean is not None and model._std is not None  # noqa: S101
-        assert served._coef is not None and served._mean is not None and served._std is not None  # noqa: S101
-        np.testing.assert_allclose(model._coef, served._coef, atol=_CORPUS_IDENTITY_ATOL)
-        np.testing.assert_allclose([model._intercept], [served._intercept], atol=_CORPUS_IDENTITY_ATOL)
-        np.testing.assert_allclose(model._mean, served._mean, atol=_CORPUS_IDENTITY_ATOL)
-        np.testing.assert_allclose(model._std, served._std, atol=_CORPUS_IDENTITY_ATOL)
-    except FileNotFoundError:
-        served = model  # first-ever bundle: nothing committed to preserve
+        assert committed._coef is not None and committed._mean is not None and committed._std is not None  # noqa: S101
+        np.testing.assert_allclose(model._coef, committed._coef, atol=_CORPUS_IDENTITY_ATOL)
+        np.testing.assert_allclose([model._intercept], [committed._intercept], atol=_CORPUS_IDENTITY_ATOL)
+        np.testing.assert_allclose(model._mean, committed._mean, atol=_CORPUS_IDENTITY_ATOL)
+        np.testing.assert_allclose(model._std, committed._std, atol=_CORPUS_IDENTITY_ATOL)
+        served = committed
+    else:
+        # A retrain SHIPS the fresh fit, and must prove the fresh fit BEHAVES differently.
+        _assert_retrain_moved_predictions(args, committed, model, X_all, feats)
+        served = model
     served.shipped_variant = "default"
     served.provider_list = list(args.providers)
     served._type_serve_mode, served._type_gate_metrics = sm, gm
@@ -376,6 +576,9 @@ def main() -> int:
     np.testing.assert_allclose(served.predict_proba(X_all), reloaded.predict_proba(X_all), atol=1e-9)
 
     metrics = {
+        "mode": args.mode,
+        "reason": args.reason,
+        "superseded_coef": _superseded_coef(committed, feats),
         "n_rows": len(df),
         "n_native": n_native,
         "base_rate": float(y_all.mean()),
@@ -386,6 +589,11 @@ def main() -> int:
         "density_finite_rate": density_finite,
         "label_split": label_split,
         "providers": list(args.providers),
+        # ADR-052: the artifact records WHICH CODE produced it. `--allow-dirty` permits a dev
+        # run; the flag survives into the artifact rather than living in someone's memory.
+        "run_commit": run_prov["commit"],
+        "run_tree_dirty": run_prov["dirty"],
+        "run_tree_state": run_prov["tree_state"],
         "coef": dict(zip(feats, model._coef.tolist(), strict=True)),  # type: ignore[reportOptionalMemberAccess]
     }
     (_WEIGHTS_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")

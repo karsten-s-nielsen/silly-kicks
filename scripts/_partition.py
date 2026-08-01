@@ -11,7 +11,11 @@ self-description in a provenance-bearing file -- the same class of defect as a f
 and it must not be possible to fix it in one producer and leave it broken in the other.
 
 `scripts/_loader_*` is READ-ONLY from here: this module reads the loader's own listing helper so a
-partition can never name a match a real run would not fetch, and never edits it.
+partition can never name a match a real run would not fetch, and never edits it. That is a property
+of THIS module, not a repo-wide fence -- the TF-19 partition cycle that wrote it was declaring its
+own scope, and ADR-052 subsequently changed `_loader_databricks.load_matches` (it accepted neither
+`tracking_limit` nor `max_per_provider`, so `calibrate_tracking_defaults --source databricks` died
+on a `TypeError` before reading a row).
 """
 
 from __future__ import annotations
@@ -52,8 +56,10 @@ def providers_for_slice(providers: list[str], match_ids: dict | None) -> list[st
     per-match shard paths concurrently.
 
     The loader's behaviour is right for its own callers (no slice means "everything"); it is this
-    partitioning layer that must read "no ids for me" as "nothing for me". Fixing it here also
-    keeps `scripts/_loader_*` untouched, which this cycle may not modify.
+    partitioning layer that must read "no ids for me" as "nothing for me". Fixing it here rather
+    than in the loader is therefore the correct SEAM, not a scope restriction -- the TF-19
+    partition cycle's "may not modify" phrasing described that cycle, and ADR-052 has since
+    changed the loader for an unrelated defect.
     """
     if not match_ids:
         return list(providers)
@@ -78,8 +84,15 @@ def write_table_atomically(df, path, *, tag: str) -> None:
 def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
     """Sum every per-worker ``manifest_*.json`` in ``dest`` into corpus-wide totals.
 
-    Integer fields SUM, dict fields merge as counters, and ``partition`` names are collected. The
-    per-worker files are the only possible source for counters describing work that produced NO
+    Integer fields SUM and dict fields merge as counters. ``partition``, ``run_commit``,
+    ``run_tree_dirty`` and ``generation`` are handled BY NAME. **Anything else is NOT aggregated**
+    -- a bare string matches neither branch, and a stray bool is skipped because ``bool`` is an
+    ``int`` subclass and summing flags is meaningless. Such keys are reported in ``dropped_fields``
+    rather than vanishing: a field that must reach the corpus artifact needs a named case HERE, not
+    merely a place in the per-worker manifest. That rule has caught this cycle twice (``generation``
+    and ``run_tree_state``), which is why the report exists.
+
+    The per-worker files are the only possible source for counters describing work that produced NO
     output row (drop reasons, exclusions), which is why aggregation cannot simply re-read the shard
     table.
 
@@ -105,6 +118,8 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
     partitions: list[str] = []
     commits: set[str] = set()  # contributors only -- these decide `commit_consistent`
     commits_seen: set[str] = set()  # every manifest, contributor or not
+    generations: set[str] = set()
+    dropped: set[str] = set()  # keys that reached no accumulating branch -- reported, not silent
     dirty = False
 
     for f in sorted(pathlib.Path(dest).glob("manifest_*.json")):
@@ -119,7 +134,10 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
         #  * a manifest carrying NO countable field at all cannot prove it built nothing, so it
         #    KEEPS its vote. Only "declared zero" demotes. Anything else and narrowing the vote
         #    would quietly disarm the guard on manifests that simply record less.
-        _meta = ("run_commit", "run_tree_dirty", "partition")
+        # `generation` joins the meta list so a future widening of `countable` cannot let a
+        # staleness token vote on whether this manifest contributed. A no-op today: a `str`
+        # already fails both isinstance checks below.
+        _meta = ("run_commit", "run_tree_dirty", "partition", "generation")
         countable = [
             v
             for k, v in m.items()
@@ -135,14 +153,25 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
                     commits.add(str(v))
             elif k == "run_tree_dirty":
                 dirty = dirty or bool(v)
+            elif k == "generation":
+                generations.add(str(v))
             elif isinstance(v, bool):
-                continue  # bool is an int subclass -- summing flags would be meaningless
+                # bool is an int subclass -- summing flags would be meaningless. Reported anyway:
+                # it is discarded, and a discarded field the reader cannot see is the trap above.
+                dropped.add(k)
             elif isinstance(v, int):
                 totals[k] = totals.get(k, 0) + v
             elif isinstance(v, dict):
                 c = counters.setdefault(k, {})
                 for kk, vv in v.items():
                     c[kk] = c.get(kk, 0) + int(vv)
+            else:
+                # Not meta, not an int to sum, not a dict to merge. Dropping is CORRECT -- a named
+                # case carries per-field semantics (`run_commit` is contributor-gated,
+                # `run_tree_dirty` is OR-ed, `generation` is a set plus a consistency flag) and one
+                # generic collector would give all of them one wrong semantic. Reporting it is what
+                # was missing.
+                dropped.add(k)
 
     return {
         **totals,
@@ -156,5 +185,14 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
         # than silently absorbed, and the only way an all-resume aggregate's vacuous `true` is
         # distinguishable from a genuinely single-commit one.
         "commits_seen": sorted(commits_seen),
+        # The staleness token each worker ran under. The combined table beside the shard root is
+        # whichever generation finished LAST -- `write_table_atomically` makes that atomic, not
+        # attributable. Surfacing the set buys DETECTION of a mixed-generation corpus, which is
+        # what a reader needs before trusting the table. Absent reads as consistent.
+        "generations_seen": sorted(generations),
+        "generation_consistent": len(generations) <= 1,
+        # Manifest keys that reached no accumulating branch. Empty is the healthy case; a name
+        # here means a driver writes a field that never reaches the corpus artifact.
+        "dropped_fields": sorted(dropped),
         "run_tree_dirty": dirty,
     }

@@ -186,3 +186,72 @@ def test_run_empty_corpus_raises_systemexit(monkeypatch, tmp_path):
     monkeypatch.setattr(mod.XShotOccurrenceModel, "from_variant", staticmethod(lambda v="default": object()))
     with pytest.raises(SystemExit):
         mod.run(tmp_path)
+
+
+def _patch_probe_env(monkeypatch, *, calls):
+    """The `run()` fixture above, with the loader RECORDING every match it is asked to build."""
+    _gids = iter(range(100, 200))
+
+    def fake_load_matches(**kwargs):
+        for mid in ("m0", "m1"):
+            yield ("gradientsports", mid, pd.DataFrame(), pd.DataFrame(), 1)
+
+    def fake_build(frames, **k):
+        calls.append("build")
+        return (None, pd.DataFrame(), _FakeReport())
+
+    fake_loader = type(sys)("_loader_pining")
+    monkeypatch.setitem(sys.modules, "_loader_pining", fake_loader)
+    monkeypatch.setattr(fake_loader, "load_matches", fake_load_matches, raising=False)
+    monkeypatch.setattr(mod.GhostGkModel, "from_variant", staticmethod(lambda v="default": object()))
+    monkeypatch.setattr(mod.XShotOccurrenceModel, "from_variant", staticmethod(lambda v="default": object()))
+    monkeypatch.setattr(mod, "build_ghost_frames", fake_build)
+    monkeypatch.setattr(mod, "provenance_to_targets", lambda prov, **k: pd.DataFrame({"x": [0]}))
+    monkeypatch.setattr(mod, "substitution_deltas", lambda *a, **k: _fake_deltas(next(_gids)))
+    monkeypatch.setattr(mod, "evaluate_xs_probe", lambda d: {"verdict": "unmeasurable_at_dose", "gated_band_n": 0})
+
+
+def test_a_RESUMED_probe_run_recomputes_NOTHING_and_still_reports_the_corpus(monkeypatch, tmp_path):
+    """THE motivating driver: ~80 matches, 14 hours serial, one write at the end.
+
+    Two properties in one place because they fail independently. (1) The second pass must not
+    re-enter `build_ghost_frames` -- that is resume. (2) It must still report `n_matches == 2` and a
+    full `per_match` block -- that is the counters sidecar, without which a resumed pass writes a
+    cited artifact claiming a corpus of zero matches while every shard sits on disk beside it.
+    """
+    calls: list[str] = []
+    _patch_probe_env(monkeypatch, calls=calls)
+    first = mod.run(tmp_path, seed=7)
+    assert calls == ["build", "build"]
+    assert first["corpus"]["n_matches"] == 2
+
+    calls.clear()
+    second = mod.run(tmp_path, seed=7)
+    assert calls == [], f"a resumed pass re-entered the engine for {calls}"
+    assert second["corpus"]["n_matches"] == 2, "resume lost the corpus record"
+    assert [m["match_id"] for m in second["per_match"]] == [m["match_id"] for m in first["per_match"]]
+    assert [m["n_targets"] for m in second["per_match"]] == [m["n_targets"] for m in first["per_match"]]
+    assert second["reconciliation"]["total_targets"] == first["reconciliation"]["total_targets"]
+
+
+def test_per_match_drop_reasons_survive_the_flat_counter_round_trip():
+    """`_merge_counters` carries ints and FLAT {str: int} dicts only, so the per-match breakdown is
+    encoded on a composite key. `metrics["per_match"]` is a published field of a cited artifact --
+    coarsening it corpus-wide would be a schema break, so the round trip is pinned."""
+    flat = {}
+    flat.update(mod._flatten_by_match("m0", {"no_gk": 3, "ball_dead": 1}))
+    flat.update(mod._flatten_by_match("m1", {"no_gk": 2}))
+    records = mod._per_match_records({"drop_reasons_by_match": flat, "n_targets_by_match": {"m0": 5, "m1": 0}})
+    assert [r["match_id"] for r in records] == ["m0", "m1"]
+    assert records[0]["drop_reasons"] == {"no_gk": 3, "ball_dead": 1}
+    assert records[1]["drop_reasons"] == {"no_gk": 2}
+    # A zero-target match KEEPS its record: `n_contributing` counts exactly those, and its shard is
+    # empty so the combined frame cannot recover it.
+    assert records[1]["n_targets"] == 0
+
+
+def test_an_AMBIGUOUS_match_id_is_REFUSED_rather_than_mis_attributed():
+    """The other side: a component holding the separator would split wrong and silently attribute
+    one match's drop reasons to another. Same discipline as `_driver.join_key`."""
+    with pytest.raises(ValueError, match="split ambiguously"):
+        mod._flatten_by_match("a::b", {"no_gk": 1})

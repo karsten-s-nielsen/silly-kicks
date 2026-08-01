@@ -181,3 +181,81 @@ def test_two_workers_writing_CONCURRENTLY_never_collide_on_the_temp_path(tmp_pat
 def test_worker_tag_names_the_partition_after_its_id_list(tmp_path):
     assert mod.worker_tag(str(tmp_path / "slice_03.json")) == "slice_03"
     assert mod.worker_tag(None) == "all"
+
+
+def test_a_MIXED_generation_corpus_is_visible_in_the_aggregate(tmp_path):
+    """MEASURED before the fix: 'generation' in aggregate -> False. A `str` matches neither the
+    int-sum nor the dict-merge branch, so the field was silently dropped and two workers running
+    against DIFFERENT staleness tokens produced an artifact that looked single-generation."""
+    _write(tmp_path, "w0", {"generation": "aaa", "n_attempted": 4, "run_commit": "c1", "run_tree_dirty": False})
+    _write(tmp_path, "w1", {"generation": "bbb", "n_attempted": 4, "run_commit": "c1", "run_tree_dirty": False})
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_attempted",))
+    assert got["generations_seen"] == ["aaa", "bbb"]
+    assert got["generation_consistent"] is False
+
+
+def test_a_single_generation_corpus_reports_consistent(tmp_path):
+    """The other side of the band. Without it, an implementation hard-coding False would pass."""
+    _write(tmp_path, "w0", {"generation": "aaa", "n_attempted": 4, "run_commit": "c1", "run_tree_dirty": False})
+    _write(tmp_path, "w1", {"generation": "aaa", "n_attempted": 4, "run_commit": "c1", "run_tree_dirty": False})
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_attempted",))
+    assert got["generations_seen"] == ["aaa"]
+    assert got["generation_consistent"] is True
+
+
+def test_manifests_WITHOUT_a_generation_still_aggregate(tmp_path):
+    """Every pre-cycle manifest on disk lacks the field. Absent must not read as inconsistent."""
+    _write(tmp_path, "w0", {"n_matches": 4, "run_commit": "c1", "run_tree_dirty": False})
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_matches",))
+    assert got["generations_seen"] == []
+    assert got["generation_consistent"] is True
+
+
+def test_an_UNNAMED_string_field_is_REPORTED_not_silently_dropped(tmp_path):
+    """The trap this seam keeps springing. A `str` matches neither the int-sum nor the dict-merge
+    branch, so an unnamed string field vanishes between the per-worker manifest and the corpus
+    artifact. It caught this cycle twice -- `generation` and `run_tree_state`.
+
+    Dropping stays the behaviour: a named case carries per-field SEMANTICS (`run_commit` is
+    contributor-gated, `run_tree_dirty` is OR-ed, `generation` is a set-plus-consistency-flag), and
+    a generic collector would give all of them one wrong semantic. What changes is that the drop is
+    now VISIBLE in the output rather than silent."""
+    _write(tmp_path, "w0", {"n_matches": 4, "some_new_field": "v1", "run_commit": "c1"})
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_matches",))
+    assert got["dropped_fields"] == ["some_new_field"]
+    assert "some_new_field" not in got, "reported, but still not aggregated -- semantics are per-field"
+
+
+def test_named_fields_are_NOT_reported_as_dropped(tmp_path):
+    """Non-vacuity: `dropped_fields` must name the unhandled, not everything."""
+    _write(
+        tmp_path,
+        "w0",
+        {"generation": "aaa", "n_matches": 4, "run_commit": "c1", "run_tree_dirty": False, "partition": "w0"},
+    )
+    assert mod.aggregate_manifests(tmp_path, defaults=("n_matches",))["dropped_fields"] == []
+
+
+def test_a_FULL_RESUME_pass_does_not_re_arm_the_commit_false_alarm(tmp_path):
+    """B3, and the regression this cycle would otherwise introduce.
+
+    MEASURED: with `n_attempted: 64` on a pass that skipped all 64, `commit_consistent` flips to
+    False -- reproducing the section 3.3 entanglement false alarm that `_partition.py` exists to
+    prevent. `manifest_fields` is therefore called with `attempted=res.attempted` (true attempts),
+    never `res.attempted + res.skipped`. The non-contributor still appears in `commits_seen`, so its
+    lineage is recorded rather than erased."""
+    _write(
+        tmp_path,
+        "w0",
+        {"generation": "aaa", "n_attempted": 8, "n_failed": 0, "run_commit": "AAA", "run_tree_dirty": False},
+    )
+    # every item skipped -- this pass built nothing and must not vote
+    _write(
+        tmp_path,
+        "resume",
+        {"generation": "aaa", "n_attempted": 0, "n_failed": 0, "run_commit": "BBB", "run_tree_dirty": False},
+    )
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_attempted",))
+    assert got["commit_consistent"] is True, "a pass that built nothing must not vote"
+    assert got["commits_seen"] == ["AAA", "BBB"], "but its commit is still recorded"
+    assert got["run_commit"] == "AAA"

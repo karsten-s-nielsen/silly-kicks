@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silly-kicks"
-version = "4.71.0"
+version = "4.72.0"
 description = "Classify and value on-ball football actions using SPADL and VAEP"
 readme = "README.md"
 license = "MIT"
@@ -65,9 +65,13 @@ xshot = ["huggingface_hub>=0.20.0"]
 # TF-24 (3.28.0): Optuna calibration harness (silly_kicks/calibration/). xgboost upper-bounded
 # because the 1e-9 cache-equivalence gate rides on tree_method="hist" determinism, which a
 # future major could change. ruthless-efficiency provides the Optuna optimisation substrate;
-# >=0.2.1 floor fixes a warm_start off-by-one (a fresh warm-started study ran n_trials-1 trials).
+# the >=0.2.1 floor fixed a warm_start off-by-one (a fresh warm-started study ran n_trials-1
+# trials) and that reason still holds. RAISED to >=0.4.0 because `ruthless.fingerprint` -- the
+# structural, fail-closed digest `scripts/_driver.py` keys shard generations on -- became public
+# in 0.4.0. The old floor permitted a resolve where `from ruthless import fingerprint` raises
+# ImportError; uv.lock happened to resolve 0.4.0 and hid it.
 calibration = [
-    "ruthless-efficiency[optuna]>=0.2.1",
+    "ruthless-efficiency[optuna]>=0.4.0",
     "xgboost>=2.0,<4.0",
     # numba compiles the infer_ball_carrier + pitch-control kernels the Stage-1/Stage-2
     # objectives call once per trial. Without it those run as pure-Python loops — the
@@ -102,7 +106,7 @@ test = [
     "hypothesis>=6.0",
     # TF-24 calibration harness deps so CI exercises ruthless[optuna] + xgboost (the
     # cache-equivalence + Optuna-smoke tests in tests/calibration/).
-    "ruthless-efficiency[optuna]>=0.2.1",
+    "ruthless-efficiency[optuna]>=0.4.0",
     "xgboost>=2.0,<4.0",
     # pyyaml backs the CI-gating tripwire (tests/test_ci_slow_gating_wired.py), which parses
     # .github/workflows/ci.yml. Declared directly so the guard never rides a transitive edge
@@ -113,7 +117,7 @@ test = [
 # (TF-16 xShotOccurrence + others) — same pins as [calibration]. Inference of a
 # trained model gates on its own runtime extra (e.g. [xgboost]), NOT this one.
 train = [
-    "ruthless-efficiency[optuna]>=0.2.1",
+    "ruthless-efficiency[optuna]>=0.4.0",
     "xgboost>=2.0,<4.0",
     "pyarrow>=14.0.0",  # trainer caches the extracted feature matrix to parquet (per-match streaming)
 ]

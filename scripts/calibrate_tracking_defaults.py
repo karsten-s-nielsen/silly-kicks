@@ -1,4 +1,4 @@
-"""TF-24 calibration CLI — orchestrates the two Optuna studies + diagnostics.
+"""TF-24 calibration CLI -- orchestrates the two Optuna studies + diagnostics.
 
 Pure objectives/CV/gates live in silly_kicks.calibration; this script owns I/O (loaders), study
 orchestration, the frozen-xT artifact, and the report + data/version manifest.
@@ -12,7 +12,7 @@ Usage (all three providers come from pining: SkillCorner+IDSSE public, GS via ow
 
 The frozen-xT corpus (bronze.spadl_actions) is fetched via Databricks regardless of --source
 (it is the disjoint exogenous corpus, not calibration data) unless --xt-corpus-source pining is
-used (default — id-space-safe held-out fit); DATABRICKS_* env vars are needed only for the
+used (default -- id-space-safe held-out fit); DATABRICKS_* env vars are needed only for the
 databricks xT corpus, not for the pining match loads.
 """
 
@@ -36,7 +36,7 @@ _XT_COLS = ["game_id", "start_x", "start_y", "end_x", "end_y", "type_id", "resul
 
 
 def build_manifest(*, source, seed, n_trials, match_ids, xt, stage, diagnostics=None) -> dict:
-    """Data + version manifest for auditability (spec §6 R3)."""
+    """Data + version manifest for auditability (spec section 6 R3)."""
     manifest = {
         "stage": stage,
         "source": source,
@@ -56,7 +56,7 @@ def build_manifest(*, source, seed, n_trials, match_ids, xt, stage, diagnostics=
 
 
 def run_stage(*, stage, fold, n_trials, seed, store_path, xt, carrier_params):
-    """Run one Optuna stage on an already-loaded fold (the testable seam — no I/O).
+    """Run one Optuna stage on an already-loaded fold (the testable seam -- no I/O).
 
     Returns (result, objective) so the caller can read objective.diagnostics (M1/M8) for the
     manifest and the Stage-1 best params for the carrier_best.json handoff (M9).
@@ -92,7 +92,7 @@ def _assert_match_game_id_consistent(provider: str, mid: str, actions, frames) -
 
     Every tracking-feature join (ball carrier, DAS, defensive line, team shape) keys on
     ``(game_id, period_id, frame_id)``. A mismatch silently drops EVERY row for the match, so the
-    provider contributes ~0 signal and is quietly excluded by ``signal_sanity`` — calibrating on
+    provider contributes ~0 signal and is quietly excluded by ``signal_sanity`` -- calibrating on
     fewer providers than the operator requested (the IDSSE ``game_id=None`` regression). Surface it
     instead of degrading the fold in silence; the loader must stamp a consistent game_id on both.
     """
@@ -108,7 +108,18 @@ def _assert_match_game_id_consistent(provider: str, mid: str, actions, frames) -
 
 
 def _load_fold(args):
-    """Wire the chosen loader into the {provider: [(actions, frames, home)]} fold + match_ids."""
+    """Wire the chosen loader into the {provider: [(actions, frames, home)]} fold + match_ids.
+
+    WHY THIS LOOP HAS NO SHARDS, unlike every other corpus walk in `scripts/` (ADR-052). What it
+    accumulates is not a RESULT -- it is the Optuna objective's INPUT. ``fold`` holds the raw
+    ``(actions, frames, home)`` triples, which `CachedObjective` prepares once and then re-reads on
+    every trial; there is no per-match output to persist, so a shard here would be a second copy of
+    the tracking corpus in a second format, and resuming it would still have to hand the whole
+    thing to the objective. The resilience this loop can actually have is paying the DOWNLOAD only
+    once, which is what ``--cache-dir`` does through the loader's own artifact cache; the xT-corpus
+    walk in `_load_xt_corpus_pining` is the one whose per-match result IS a table, and that is the
+    one that shards.
+    """
     if args.source == "pining":
         import scripts._loader_pining as loader
     else:
@@ -122,6 +133,9 @@ def _load_fold(args):
         tracking_limit=getattr(args, "tracking_limit", None),
         max_per_provider=getattr(args, "max_matches_per_provider", None),
     )
+    # Pining-only: the artifact cache is a downloaded-file store, which bronze has no analogue for.
+    if args.source == "pining" and getattr(args, "cache_dir", None):
+        load_kwargs["cache_dir"] = args.cache_dir
     fold: dict[str, list[tuple]] = {}
     used_ids: dict[str, list[str]] = {}
     for provider, mid, actions, frames, home in loader.load_matches(**load_kwargs):  # type: ignore[reportArgumentType]
@@ -168,25 +182,76 @@ def _resolve_xt(args, fold, used_ids):
 
 
 def _load_xt_corpus_pining(args, calib_ids) -> tuple[pd.DataFrame, set[str]]:
-    """Load actions from pining matches NOT in the calibration set (id-space-safe corpus, N1)."""
+    """Load actions from pining matches NOT in the calibration set (id-space-safe corpus, N1).
+
+    Walked as an ID LIST rather than as a stream, deliberately (ADR-052). `for_each` resumes
+    ``work``, never the PRODUCTION of its items -- and a streamed ``load_matches`` downloads and
+    parses a match INSIDE the generator, before yielding it. Here ``work`` is a column slice, i.e.
+    unambiguously trivial next to the load, so streaming would make a resumed run re-pay the whole
+    corpus in order to skip a handful of trivial writes. The manifest listing that yields the ids
+    already happens, so inverting costs nothing.
+    """
+    from pathlib import Path
+
     import scripts._loader_pining as pining_loader
+    from scripts._driver import for_each, shard_path
 
     token, base_url = pining_loader._resolve_token(None), pining_loader._base_url()
-    parts, corpus_ids = [], set()
     per_provider_cap = 8  # bound the corpus; enough matches for a stable xT grid
+    items: list[tuple[str, str]] = []
     for provider in args.providers:
         manifest = pining_loader._list_matches(provider, token, base_url)
         held_out = [m["id"] for m in manifest if str(m["id"]) not in calib_ids][:per_provider_cap]
-        for _p, mid, actions, _frames, _home in pining_loader.load_matches(
-            providers=[provider], match_ids={provider: held_out}, token=token, tracking_limit=50
+        items.extend((provider, str(mid)) for mid in held_out)
+
+    def _work(item):
+        provider, mid = item
+        for _p, _mid, actions, _frames, _home in pining_loader.load_matches(
+            providers=[provider],
+            match_ids={provider: [mid]},
+            token=token,
+            tracking_limit=50,
+            cache_dir=getattr(args, "cache_dir", None),
         ):
-            parts.append(actions[[c for c in _XT_COLS if c in actions.columns]])
+            return actions[[c for c in _XT_COLS if c in actions.columns]]
+        # The loader yielded nothing -- a geometry-excluded skillcorner match. An EMPTY shard, so a
+        # resume records "walked, contributed nothing" instead of re-downloading it every time.
+        return None
+
+    res = for_each(
+        items,
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        shard_root=Path(f"{args.report_out}_xt_corpus_shards"),
+        # What determines a shard's CONTENT: the columns kept, and the frame cap the loader parses
+        # under. The held-out SELECTION is not declared -- it is derived from the calibration set,
+        # so narrowing the calibration corpus widens this one, and re-downloading a match that is
+        # already on disk purely because a different match joined the set would be pure waste.
+        token_inputs={"xt_cols": list(_XT_COLS), "tracking_limit": 50},
+        tag="xt_corpus",
+        label="match",
+    )
+    if res.failures:
+        raise RuntimeError(f"{len(res.failures)} xT-corpus match(es) failed: {res.failures}")
+
+    # Combined from THIS PASS'S keys (no partition surface here -- see `reconcile`'s precondition).
+    # `corpus_ids` counts matches that CONTRIBUTED ACTIONS, where it previously counted matches the
+    # loader yielded. The two differ only for a held-out match whose actions are empty, and the set
+    # feeds one disjointness assertion over ids that exclude `calib_ids` by construction -- a match
+    # contributing zero actions is not in the corpus in the sense that check is about.
+    parts, corpus_ids = [], set()
+    for k, (_provider, mid) in zip(res.keys, items, strict=True):
+        frame = pd.read_parquet(shard_path(res.shard_dir, k))
+        if len(frame):
+            parts.append(frame)
             corpus_ids.add(str(mid))
+    if not parts:
+        raise ValueError("the held-out xT corpus is empty -- no match contributed any actions")
     return pd.concat(parts, ignore_index=True), corpus_ids
 
 
 def _load_xt_corpus_databricks() -> pd.DataFrame:
-    """Load the xT-fit corpus from bronze.spadl_actions — ONLY the columns ExpectedThreat needs (N3)."""
+    """Load the xT-fit corpus from bronze.spadl_actions -- ONLY the columns ExpectedThreat needs (N3)."""
     import scripts._loader_databricks as databricks_loader
 
     conn = databricks_loader._connect()
@@ -231,6 +296,14 @@ def main() -> None:
         default=None,
         help="Cap frames loaded per match (passed to the kloppy parsers; bounds memory).",
     )
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Persist every downloaded pining artifact here and reuse it on re-runs. The "
+        "calibration fold cannot be sharded (it IS the objective's input, see _load_fold), so "
+        "this is the resilience that loop can have: a crashed sweep re-reads from disk instead "
+        "of re-downloading the tracking corpus. Ignored for --source databricks.",
+    )
     args = ap.parse_args()
 
     fold, used_ids = _load_fold(args)
@@ -243,7 +316,7 @@ def main() -> None:
             carrier_params = json.load(fh)
         missing = {"tolerance_m", "beta", "gamma"} - set(carrier_params)  # N4a: validate up front
         if missing:
-            raise ValueError(f"carrier_best.json missing keys {sorted(missing)} — run Stage 1 first")
+            raise ValueError(f"carrier_best.json missing keys {sorted(missing)} -- run Stage 1 first")
 
     result, objective = run_stage(
         stage=int(args.stage) if args.stage != "diagnostics" else "diagnostics",

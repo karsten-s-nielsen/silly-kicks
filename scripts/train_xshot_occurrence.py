@@ -78,12 +78,25 @@ def _iter_matches_from_pining(providers, max_per_provider, match_ids=None):
     yield from load_matches(providers=providers, match_ids=match_ids, max_per_provider=max_per_provider)
 
 
-def _extract(source, horizon_seconds) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+#: The four per-row arrays `_extract` returns alongside the feature matrix, carried as COLUMNS so
+#: one match is one tidy shard. Underscore-prefixed and collision-checked below: a feature named
+#: `_y` would be silently overwritten, and the model would train on the label.
+_SIDE_COLS = ("_y", "_group", "_provider", "_match_id")
+
+
+def _extract(
+    source, horizon_seconds, *, shard_root
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    from scripts._driver import for_each, shard_path
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
     from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL, prepare_xshot_training_data
 
-    parts_x, parts_y, parts_g, parts_p, parts_m = [], [], [], [], []
-    for prov, mid, actions_or_shots, frames, home in source:
+    collision = set(_SIDE_COLS) & set(XSHOT_FEATURE_NAMES_FAITHFUL)
+    if collision:
+        raise ValueError(f"side columns {sorted(collision)} collide with feature names")
+
+    def _work(item):
+        prov, mid, actions_or_shots, frames, home = item
         X, y, groups = prepare_xshot_training_data(
             frames,
             actions_or_shots,
@@ -93,22 +106,52 @@ def _extract(source, horizon_seconds) -> tuple[pd.DataFrame, np.ndarray, np.ndar
             carrier_params=DEFAULT_CARRIER_PARAMS,  # 4.7.0 values; shared constant (anti-drift)
         )
         del frames
-        if len(X):
-            parts_x.append(X)
-            parts_y.append(np.asarray(y, int))
-            parts_g.append(np.asarray(groups))
-            parts_p.append(np.array([prov] * len(X)))
-            parts_m.append(np.array([str(mid)] * len(X)))  # per-row pining match_id (visibility key)
-            print(f"  {prov}/{mid}: {len(X)} rows, {int(np.asarray(y).sum())} positives")
-    if not parts_x:
+        if not len(X):
+            return None  # still writes an EMPTY shard: "ran, produced no usable row"
+        return X.assign(
+            _y=np.asarray(y, int),
+            _group=np.asarray(groups),
+            _provider=str(prov),
+            _match_id=str(mid),  # per-row pining match_id (visibility key)
+        )
+
+    # The `_cache.py` layer above this is a WHOLE-CORPUS fast path -- all-or-nothing, and it only
+    # helps a run that already completed once. These shards make the extraction ITSELF resumable, so
+    # the two nest rather than compete (same arrangement as `cohort_cache` over `for_each` in
+    # `calibrate_xt_bandwidth`). A crash at match 70 of 80 now costs 10 matches, not 80.
+    res = for_each(
+        source,
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        shard_root=shard_root,
+        # What determines a shard's CONTENT: the extractor, the label horizon, the domain filter,
+        # and the carrier params the features are built against. `--providers` /
+        # `--max-per-provider` / `--match-ids-json` only choose WHICH matches are walked, and the
+        # key separates them; the HPO and the gates consume these rows downstream.
+        token_inputs={
+            "extractor": "prepare_xshot_training_data",
+            "horizon_seconds": horizon_seconds,
+            "attacking_third_only": True,
+            "carrier_params": dict(DEFAULT_CARRIER_PARAMS),
+        },
+        tag="xshot_features",
+        label="match",
+    )
+    if res.failures:
+        raise RuntimeError(f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only them.")
+
+    # Combined from THIS PASS'S keys, not `_driver.reconcile`: no partition surface here, so a
+    # whole-generation read would fold in matches from a wider earlier run. See its docstring.
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    if not parts:
         raise SystemExit("No usable training data.")
-    X = pd.concat(parts_x, ignore_index=True)[XSHOT_FEATURE_NAMES_FAITHFUL]
+    combined = pd.concat(parts, ignore_index=True)
     return (
-        X,
-        np.concatenate(parts_y),
-        np.concatenate(parts_g),
-        np.concatenate(parts_p),
-        np.concatenate(parts_m),
+        combined[XSHOT_FEATURE_NAMES_FAITHFUL],
+        combined["_y"].to_numpy(int),
+        combined["_group"].to_numpy(),
+        combined["_provider"].to_numpy(),
+        combined["_match_id"].to_numpy(),
     )
 
 
@@ -333,7 +376,20 @@ def main(argv=None) -> None:
         help="JSON file mapping {provider: [match_id, ...]} -- a per-provider allowlist threaded to "
         "load_matches(match_ids=) (--providers path only). Default None (load every listed match).",
     )
+    ap.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Train from a modified working tree. The run still records run_tree_dirty=true in "
+        "metrics.json -- the hatch permits a dev run, it never launders the fact.",
+    )
     args = ap.parse_args(argv)
+
+    # FIRST, before any corpus work. This trainer writes BUNDLED weights, and an artifact whose
+    # provenance is unknown is one nobody can reproduce or audit later. ADR-052 enrolled all five
+    # trainers at once, deliberately: a partial roll-out is how the same rule failed twice before.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    run_prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
     ns, seed = args.negative_subsample, args.seed
 
     out = Path(args.output_dir)
@@ -363,7 +419,9 @@ def main(argv=None) -> None:
         else:
             source = _iter_matches_from_dir(Path(args.data_dir))
         t0 = time.time()
-        X, y, groups, providers, match_ids = _extract(source, args.horizon_seconds)
+        # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so the
+        # "fresh --output-dir per corpus" discipline the fingerprint enforces covers them too.
+        X, y, groups, providers, match_ids = _extract(source, args.horizon_seconds, shard_root=art / "shards")
         print(f"Extracted {len(X)} rows ({int(y.sum())} positives) in {time.time() - t0:.0f}s")
         cache.mkdir(parents=True, exist_ok=True)
         X.to_parquet(cache / "features.parquet")
@@ -508,6 +566,11 @@ def main(argv=None) -> None:
     )
 
     metrics = {
+        # ADR-052: the artifact records WHICH CODE produced it. `--allow-dirty` permits a dev
+        # run; the flag survives into the artifact rather than living in someone's memory.
+        "run_commit": run_prov["commit"],
+        "run_tree_dirty": run_prov["dirty"],
+        "run_tree_state": run_prov["tree_state"],
         "shipped_variant": shipped,
         "n_rows": len(X),
         "n_positive": int(y.sum()),

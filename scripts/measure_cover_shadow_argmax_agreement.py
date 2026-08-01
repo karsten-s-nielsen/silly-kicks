@@ -50,9 +50,15 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts._driver import for_each, shard_path
 from scripts._loader_pining import load_matches
 from scripts._provenance import git_provenance, require_clean_tree
 from silly_kicks.tracking import link_actions_to_frames
+from silly_kicks.tracking._action_orientation import (
+    FIELD_LENGTH,
+    FIELD_WIDTH,
+    acting_team_attacks_rtl,
+)
 from silly_kicks.tracking._cover_shadows import (
     TOL_ATTRIB,
     _compute_cover_shadow_dict,
@@ -100,8 +106,28 @@ def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[d
     pointer_lookup = pointers.set_index("action_id")
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
+    # ADR-028 (RC1). `start_x`/`start_y` are ACTION-LTR while every position they are compared
+    # against inside `_compute_cover_shadow_dict` -- defenders, receivers, the ball -- is FRAME-LTR,
+    # so an AWAY passer used to enter the geometry a 180-degree point reflection away, at the wrong
+    # END of the pitch. 4.70.0/PR-S138 fixed the two `features.py` callers; this driver imports
+    # `_compute_cover_shadow_dict` DIRECTLY (see the import block above), so it was never a
+    # registered site and the defect stayed live on main. `_cover_shadows.py` itself contains no
+    # `acting_team_attacks_rtl` at all -- the module never reprojects, its callers must.
+    #
+    # It does NOT cancel between the two arms this script compares: the CHEAP path consumes the
+    # passer and the EXACT (pitch-control counterfactual) path does not, so the defect degraded
+    # exactly the agreement being measured. `docs/research/cover_shadow_identity/`'s 0.1992 is
+    # therefore a PRE-RC1 number and needs an owner re-run; the gating verdict itself survives by
+    # arithmetic (0.157 x 970 = 152 agreements against a 0.90 floor needing 873 -- even if every
+    # away row flipped to agreeing, the ceiling is 637/970 = 0.657 < 0.90).
+    #
+    # Reproject the PASSER into frame coords, not the frame into action-LTR: everything downstream
+    # of this tuple is frame-convention, and the one place that steps out (the xT lookup at
+    # `_cover_shadows.py:1164`) already reprojects itself. Computed ONCE per match.
+    flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+
     records: list[dict] = []
-    for _idx, row in actions.iterrows():
+    for j, (_idx, row) in enumerate(actions.iterrows()):
         aid, tid = row["action_id"], row["team_id"]
         if pd.isna(tid) or aid not in pointer_lookup.index:
             continue
@@ -114,6 +140,8 @@ def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[d
             continue
 
         passer_xy = (float(row["start_x"]), float(row["start_y"]))
+        if flip[j]:
+            passer_xy = (FIELD_LENGTH - passer_xy[0], FIELD_WIDTH - passer_xy[1])
         common = dict(home_team_id=home_team_id)
         # `_ungated_cheap_identity=True` is REQUIRED: production gates the cheap identity to
         # None, so without it every row would compare None against a real id and this script
@@ -269,13 +297,46 @@ def main() -> int:
     xt = ExpectedThreat()
     xt.fit(pd.concat(all_actions, ignore_index=True))
 
-    records: list[dict] = []
-    for match_id, actions, frames, home in loaded:
-        rec = measure_match(actions, frames, home, xt, match_id=match_id)
-        print(f"  {match_id}: {len(rec)} scored actions", file=sys.stderr)
-        records.extend(rec)
+    # WHY THIS DRIVER CANNOT STREAM ITS CORPUS, unlike its neighbours. The xT surface is fit ONCE
+    # on every loaded match's actions -- deliberately, so the identity comparison is not confounded
+    # by a per-match threat surface -- which is a genuine cross-item barrier: no match can be
+    # measured until all of them have been read. So `loaded` stays materialised (today's memory
+    # profile, unchanged) and `for_each` walks it. The load is therefore re-paid on a resume; the
+    # per-match MEASUREMENT is what it skips, and that is where the time goes -- the exact path was
+    # measured at 98-125 ms per action over ~1000 actions a match.
+    res = for_each(
+        loaded,
+        key=lambda item: (str(args.provider), str(item[0])),
+        work=lambda item: pd.DataFrame.from_records(measure_match(item[1], item[2], item[3], xt, match_id=item[0])),
+        shard_root=Path(args.out).parent / "shards" if args.out else Path("cover_shadow_argmax_shards"),
+        # Unlike every other driver in this cycle, the corpus SELECTORS belong in the token here,
+        # and the reason is specific: the xT surface above is fit on exactly this corpus and is an
+        # input to both scored paths. A `--max-matches 8` run reusing shards computed against a
+        # 4-match surface would silently mix two threat models in one agreement rate. The match ids
+        # are declared rather than the selector so the digest describes what was actually loaded
+        # (`--max-matches` picks the first N, and an excluded match changes the set).
+        #
+        # `passer_reprojected` is declared because ADR-028 RC1 changes the CHEAP path's nominee on
+        # away rows: shards written before this fix must not be reused after it.
+        token_inputs={
+            "provider": args.provider,
+            "match_ids": sorted(str(m) for m, _a, _f, _h in loaded),
+            "tracking_limit": args.tracking_limit,
+            "xt_surface": "corpus-fit",
+            "tol_attrib": TOL_ATTRIB,
+            "passer_reprojected": "adr028-rc1",
+        },
+        tag="cover_shadow_argmax",
+        label="match",
+    )
+    if res.failures:
+        print(f"{len(res.failures)} match(es) failed: {res.failures}", file=sys.stderr)
+        return 1
 
-    df = pd.DataFrame.from_records(records)
+    # Combined from THIS PASS'S keys rather than `_driver.reconcile`: there is no partition surface
+    # here, so a whole-generation read would fold in matches from a wider earlier run.
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if df.empty:
         print("no scoreable actions", file=sys.stderr)
         return 1
@@ -283,6 +344,7 @@ def main() -> int:
     report = summarize(df)
     report["run_commit"] = prov["commit"]
     report["run_tree_dirty"] = prov["dirty"]
+    report["run_tree_state"] = prov["tree_state"]
     report["corpus"] = {
         "provider": args.provider,
         "n_matches": len(loaded),

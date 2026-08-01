@@ -499,6 +499,29 @@ class _KernelTracer:
         return wrapped
 
 
+def _json_default(v):
+    """The ONE conversion a match bundle is allowed to make on its way to a shard.
+
+    Deliberately not ``default=str``, which the final report uses and which is wrong HERE: it
+    renders ``pd.NA`` as the string ``"<NA>"``, and the debug block asks
+    ``pd.isna(r["on_target_derived"])`` -- True for NA, False for the string -- so a shot with an
+    unknown on-target verdict would come back from a shard reported as a MISS. Missing has to
+    round-trip as ``None``. Anything else unknown RAISES here rather than being stringified into a
+    plausible-looking value, which is the same reason `_settle_votes` records its fallback.
+    """
+    if isinstance(v, np.generic):
+        return v.item()
+    if v is pd.NA or v is pd.NaT:
+        return None
+    raise TypeError(f"{type(v).__name__} is not JSON-native and has no declared shard encoding: {v!r}")
+
+
+def _shard_root(out_path: str) -> Path:
+    """``--out`` is a FILE here (unlike the ``--out DIR`` drivers), so the shards get a sibling."""
+    out = Path(out_path)
+    return out.parent / f"{out.stem}_shards"
+
+
 def run(
     matches: str,
     out_path: str,
@@ -512,6 +535,7 @@ def run(
     from statsbombpy import sb  # type: ignore[import-not-found]  # importorskip-guarded optional dep
 
     import silly_kicks.tracking._shot_goalmouth as sgm
+    from scripts._driver import for_each, shard_path
     from silly_kicks.spadl import config as spadlconfig
     from silly_kicks.tracking._gk_geometry import _truthy_bool
     from silly_kicks.tracking._gk_resolve import defended_goal_x
@@ -536,23 +560,64 @@ def run(
     }[matches]
 
     shot_ids = [spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty")]
-    rows, reports, unmatched_all = [], {}, []
-    sweep_rows, zcmp_rows = [], []
-    debug_store: dict[tuple[str, int], dict] = {}
-    seen_vocab: set = set()
-    for _provider, match_id, actions, frames, home_id in load_matches(
-        providers=["gradientsports"],
-        match_ids={"gradientsports": list(wanted)},
-        tracking_limit=tracking_limit,
-        cache_dir=cache_dir,
-    ):
+
+    def _work(item) -> pd.DataFrame:
+        """One match -> its whole contribution, as a ONE-ROW ``(match_id, payload)`` frame.
+
+        WHY A JSON PAYLOAD RATHER THAN A TIDY TABLE. This match loop produces SIX heterogeneous
+        outputs -- matched-shot rows, unmatched rows, a per-match report, sweep rows, a z-compare
+        row, and the deeply-nested ``--debug-shots`` kernel capture -- and `for_each`'s contract is
+        one tidy frame per item plus SUMMABLE counters. None of the five side outputs is summable
+        (they are per-match records, not totals), and the debug capture is not tabular at all.
+        Carrying only the shot rows and rebuilding the rest in memory was the alternative, and it
+        is the shape that fails silently: a resumed pass would write a report whose
+        ``per_match_reports`` / ``unmatched`` / ``sweep`` / ``debug_shots`` covered only the
+        matches this pass happened to redo, while looking exactly like a full run. (It would also
+        hard-fail on a spurious L-4 violation, since ``seen_vocab`` is filled here.)
+
+        So the shard's tidy unit is the MATCH, and its payload is the bundle. Nothing here is lost
+        on resume; the encoding is the one place that has to be exact, which is `_json_default`.
+        """
+        _provider, match_id, actions, frames, home_id = item
+        rows: list[dict] = []
+        unmatched_all: list[dict] = []
+        sweep_rows: list[dict] = []
+        zcmp_rows: list[dict] = []
+        debug_store: dict[str, dict] = {}
+        seen_vocab: set = set()
         if debug_shots:
             with _KernelTracer(sgm) as tracer:
                 enriched = add_shot_goalmouth(actions, frames)
         else:
             enriched = add_shot_goalmouth(actions, frames)
         gs_shots = enriched[enriched["type_id"].isin(shot_ids)]
-        reports[match_id] = dict(ShotGoalmouthReport.from_frame(gs_shots).__dict__)
+        report = dict(ShotGoalmouthReport.from_frame(gs_shots).__dict__)
+
+        def _bundle() -> pd.DataFrame:
+            """This match's whole contribution, ready to shard. Called at every exit."""
+            return pd.DataFrame(
+                [
+                    {
+                        "match_id": match_id,
+                        "payload": json.dumps(
+                            {
+                                "rows": rows,
+                                "report": report,
+                                "unmatched": unmatched_all,
+                                "sweep": sweep_rows,
+                                "zcmp": zcmp_rows,
+                                "debug": debug_store,
+                                # Rides the bundle because `_assert_vocab_corpus` reads it AFTER the
+                                # walk: a fully resumed run would otherwise observe an empty
+                                # vocabulary and abort on a spurious L-4 violation.
+                                "vocab": sorted(seen_vocab),
+                            },
+                            default=_json_default,
+                        ),
+                    }
+                ]
+            )
+
         if debug_shots:
             called = gs_shots[~gs_shots["shot_crossing_source"].isin(["unresolved", "no_ball_frames"])]
             if len(called) != len(tracer.records):
@@ -561,15 +626,17 @@ def run(
                     f"shots vs {len(tracer.records)} traced calls -- the source-based mapping "
                     "contract in _KernelTracer's docstring no longer holds"
                 )
+            # Keyed by action id ALONE (as a string): the match is already the shard's identity, and
+            # a JSON object cannot take the old `(match_id, action_id)` tuple as a key.
             for aid, rec in zip(called["action_id"], tracer.records, strict=True):
-                debug_store[(match_id, int(aid))] = rec
+                debug_store[str(int(aid))] = rec
 
         man = by_id[match_id]
         ht, at = man["home"].lower().strip(), man["away"].lower().strip()
         cand = sb_matches[sb_matches["_key"] == f"{ht}|{at}"]
         if cand.empty:
             unmatched_all.append({"match_id": match_id, "reason": "no_sb_match_mapping", "key": f"{ht}|{at}"})
-            continue
+            return _bundle()
         sb_shots = _sb_shots_for(sb, int(cand.iloc[0]["match_id"]), seen_vocab)
         # team name -> GS team id: home from the loader; away = the other id among the
         # SHOT rows (shooters are always real teams -- the full actions frame can carry a
@@ -585,7 +652,7 @@ def run(
                     "shot_team_ids": [str(t) for t in sorted(shot_team_ids)],
                 }
             )
-            continue
+            return _bundle()
         name_to_gs = {ht: type(gs_shots["team_id"].iloc[0])(home_id), at: away_ids[0]}
         sb_shots["_team_gs_id"] = sb_shots["team"].str.lower().str.strip().map(name_to_gs)
 
@@ -668,6 +735,67 @@ def run(
                         "dz_max_m": float(dz.max()) if len(dz) else None,
                     }
                 )
+        return _bundle()
+
+    res = for_each(
+        load_matches(
+            providers=["gradientsports"],
+            match_ids={"gradientsports": list(wanted)},
+            tracking_limit=tracking_limit,
+            cache_dir=cache_dir,
+        ),
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        shard_root=_shard_root(out_path),
+        # What determines a bundle's CONTENT. The three optional passes are declared because each
+        # ADDS records to the bundle: without them, a `--sweep` run over a directory built without
+        # it would reuse those shards and report an EMPTY sweep -- a missing measurement that reads
+        # as a completed one. `--tracking-limit` is declared for the same reason (it truncates the
+        # frames the fit sees, so a dev smoke must never be mistaken for a real run), and
+        # `z_compare` is declared as the pass that ACTUALLY ran, since it is silently inert
+        # without --cache-dir.
+        #
+        # `--matches` (pilot/holdout/all) is deliberately NOT declared: it selects WHICH matches
+        # are walked, and the key already separates them, so a holdout run reuses a pilot match's
+        # shard rather than re-fetching it. That is also why the combine below reads this pass's
+        # own keys instead of `_driver.reconcile` -- see its precondition.
+        token_inputs={
+            "enrichment": "add_shot_goalmouth",
+            "sb_competition": _SB_COMPETITION_ID,
+            "sb_season": _SB_SEASON_ID,
+            "clock_tol_s": _CLOCK_TOL_S,
+            "ambiguity_gap_s": _AMBIGUITY_GAP_S,
+            "sweep": bool(sweep),
+            "z_compare": bool(z_compare and cache_dir),
+            "debug_shots": bool(debug_shots),
+            "tracking_limit": tracking_limit,
+        },
+        tag="shot_goalmouth_sb",
+        label="match",
+    )
+    if res.failures:
+        raise RuntimeError(
+            f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only those -- "
+            f"the matches that succeeded are already sharded."
+        )
+
+    rows, reports, unmatched_all = [], {}, []
+    sweep_rows, zcmp_rows = [], []
+    debug_store: dict[tuple[str, int], dict] = {}
+    seen_vocab: set = set()
+    for k in res.keys:
+        shard = pd.read_parquet(shard_path(res.shard_dir, k))
+        for rec in shard.to_dict("records"):
+            bundle = json.loads(rec["payload"])
+            mid = rec["match_id"]
+            rows.extend(bundle["rows"])
+            reports[mid] = bundle["report"]
+            unmatched_all.extend(bundle["unmatched"])
+            sweep_rows.extend(bundle["sweep"])
+            zcmp_rows.extend(bundle["zcmp"])
+            seen_vocab |= set(bundle["vocab"])
+            for aid, dbg in bundle["debug"].items():
+                debug_store[(mid, int(aid))] = dbg
 
     _assert_vocab_corpus(seen_vocab)
     df = pd.DataFrame(rows)

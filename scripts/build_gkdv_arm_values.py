@@ -153,21 +153,18 @@ def main() -> None:
     # everything. Shards also make the run restartable -- an existing shard is skipped, so a
     # re-invocation resumes rather than recomputing surfaces that already cost hours.
     dest = Path(args.out)
-    shard_dir = dest / "shards"
-    shard_dir.mkdir(parents=True, exist_ok=True)
     xt_model = None  # unreachable-with-a-value today: the threat arm is refused above
 
+    # Per-item counters that are NOT in the returned frame. `for_each`'s contract hands `counters`
+    # the item and the tidy frame, but these come from `build_ghost_frames`'s REPORT -- frames seen,
+    # frames scored, per-reason drops -- which the frame cannot carry. `for_each` calls `work(item)`
+    # and then `counters(item, frame)` for the SAME item, in that order, so stashing the report here
+    # is well-defined rather than a race.
+    _last_report: dict = {}
+
     # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
-    for _provider, match_id, _actions, frames, home_team_id in load_matches(
-        providers=providers_for_slice(args.providers.split(","), match_ids),
-        match_ids=match_ids,
-        max_per_provider=args.max_per_provider,
-        tracking_limit=args.tracking_limit,
-    ):
-        shard = shard_dir / f"{_provider}__{match_id}.parquet"
-        if shard.is_file():
-            print(f"  skip {match_id}: shard exists")
-            continue
+    def _work(item):
+        _provider, match_id, _actions, frames, home_team_id = item
         # The arms route through DAS, which REQUIRES `team_in_possession`; raw loader frames do
         # not carry it. Since ADR-043 removed the broad except that used to swallow this into an
         # all-NaN column, it now raises -- which is how this surfaced at all.
@@ -182,11 +179,15 @@ def main() -> None:
             home_team_id=home_team_id,  # type: ignore[arg-type]
             carrier=carrier,
         )
-        totals["n_frames_in"] += report.n_frames_in
-        totals["n_frames_scored"] += report.n_frames_scored
-        for reason, n in report.drop_reasons.items():
-            totals["drop_reasons"][reason] = totals["drop_reasons"].get(reason, 0) + n
-        totals["n_matches"] += 1
+        _last_report.clear()
+        _last_report.update(
+            {
+                "n_frames_in": report.n_frames_in,
+                "n_frames_scored": report.n_frames_scored,
+                "drop_reasons": dict(report.drop_reasons),
+                "n_matches": 1,
+            }
+        )
 
         # Conservation (the engine guarantees it): a silent shortfall means frames vanished.
         # A raise, not an assert: asserts vanish under -O, and a frame that is neither scored nor
@@ -243,17 +244,56 @@ def main() -> None:
                     }
                 )
 
-        # Written even when EMPTY: an absent shard means "not yet run", a present empty one means
-        # "run, scored nothing". Conflating them would make a resume silently recompute.
-        pd.DataFrame(
-            match_rows, columns=["keeper_key", "game_id", "period_id", "frame_id", "arm", "arm_value"]
-        ).to_parquet(shard, index=False)
-        print(f"  {match_id}: {len(match_rows)} rows -> {shard.name}")
+        # An EMPTY frame still writes a shard (see `_driver.write_shard`): absent means "not yet
+        # run", present-and-empty means "run, scored nothing". Conflating them would make a resume
+        # silently recompute.
+        return pd.DataFrame(match_rows, columns=["keeper_key", "game_id", "period_id", "frame_id", "arm", "arm_value"])
 
+    # `reconcile` is deliberately NOT used here: this driver writes TWO per-arm tables
+    # (`arm_values_delta_das` / `_delta_threat`) from one shard set, and `reconcile` writes a
+    # single combined path. Its own per-arm loop below stays, on `write_table_atomically`.
+    from scripts._driver import for_each
     from scripts._partition import worker_tag as _worker_tag
     from scripts._partition import write_table_atomically
 
     worker_tag = _worker_tag(args.match_ids_json)
+    res = for_each(
+        load_matches(
+            providers=providers_for_slice(args.providers.split(","), match_ids),
+            match_ids=match_ids,
+            max_per_provider=args.max_per_provider,
+            tracking_limit=args.tracking_limit,
+        ),
+        key=lambda item: (str(item[0]), str(item[1])),
+        work=_work,
+        counters=lambda _item, _frame: dict(_last_report),
+        shard_root=dest / "shards",
+        # What determines an arm VALUE: the ghost model that positions the counterfactual keeper,
+        # the pitch-control method the arms integrate over, and the carrier parameters that pin the
+        # domain. The downstream ICC/power analysis is NOT declared -- it re-reads these shards on
+        # every invocation, so it consumes the content rather than determining it.
+        token_inputs={
+            # `ghost_model` is the BUNDLED default: this driver exposes no --ghost-model flag, so
+            # `build_ghost_frames` resolves it internally. Declared as a literal rather than read
+            # off `args` (an earlier draft wrote `args.ghost_model`, which does not exist and would
+            # have raised AttributeError on the first real run). If a variant flag is ever added,
+            # thread it here -- that is exactly the kind of change the token has to see.
+            "ghost_model": "default",
+            "pitch_control_method": "spearman",
+            "arms": sorted(a for a, want in (("delta_das", want_das), ("delta_threat", want_threat)) if want),
+            # `--tracking-limit` TRUNCATES the frames every downstream computation sees, so a
+            # capped smoke run and a full run are DIFFERENT corpora and must never share a
+            # generation. Omitting it let a smoke pass poison the real one: every match reports
+            # "skip (shard exists)", the combined table is rebuilt from truncated shards, and the
+            # replayed counters make `conservation_holds` corroborate a corpus never walked.
+            "tracking_limit": args.tracking_limit,
+        },
+        tag=worker_tag,
+        label="match",
+    )
+    totals.update(res.counters)
+
+    shard_dir = res.shard_dir
     shards = sorted(shard_dir.glob("*.parquet"))
     combined = pd.concat([pd.read_parquet(s) for s in shards], ignore_index=True) if shards else pd.DataFrame()
     written = {}
@@ -291,9 +331,16 @@ def main() -> None:
     # corpus totals must come from summing per-worker manifests -- not from re-reading the table.
     worker_manifest = {
         **totals,
+        # Carries the generation token, so a reader can tell whether the arm tables beside
+        # this manifest came from the generation directory beside them. `res.manifest()`, not a
+        # bare `manifest_fields(...)`: only the method threads `counters_unrecorded`, and a
+        # hand-written call silently defaults it to 0 -- so a resumed worker whose sidecars were
+        # missing would report a complete corpus, which is the very defect the sidecar closed.
+        **res.manifest(),
         "arm_requested": args.arm,
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
+        "run_tree_state": prov["tree_state"],
         "partition": worker_tag,
     }
     (dest / f"manifest_{worker_tag}.json").write_text(
@@ -301,12 +348,15 @@ def main() -> None:
     )
 
     corpus = _aggregate_manifests(dest)
-    corpus.update(
-        arms_written=written,
-        arm_requested=args.arm,
-        run_commit=prov["commit"],
-        run_tree_dirty=prov["dirty"],
-    )
+    # `run_commit` / `run_tree_dirty` are DELIBERATELY not re-stamped here. `aggregate_manifests`
+    # derives them ACROSS WORKERS -- `run_tree_dirty` is an OR and `run_commit` is contributor-gated
+    # against `commits_seen` -- and overwriting them with THIS process's values destroys exactly
+    # that: a corpus whose last-finishing worker happened to be clean would record
+    # `run_tree_dirty: false` while another worker's slice was built from a dirty tree. This
+    # process's own values are already recorded, correctly, in its own `manifest_<tag>.json` above.
+    # `build_layer2_spells` never did this; the two producers `_partition.py` exists to keep
+    # identical had diverged on precisely the field its OR is for.
+    corpus.update(arms_written=written, arm_requested=args.arm)
     (dest / "arm_values_manifest.json").write_text(json.dumps(corpus, indent=2, default=str), encoding="utf-8")
     print(json.dumps(corpus, indent=2, default=str))
 

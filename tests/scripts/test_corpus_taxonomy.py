@@ -172,7 +172,9 @@ def test_a_restricted_corpus_NEVER_ships_a_public_label(tmp_path, monkeypatch):
         },
     )
     out = tmp_path / "run"
-    tr.main(["--providers", "skillcorner", "--output-dir", str(out), "--n-trials", "1"])
+    # `--allow-dirty`: ADR-052 enrolled all five weight trainers in the clean-tree guard, and a
+    # test run is by definition a dev run. The artifact still records run_tree_dirty=true.
+    tr.main(["--providers", "skillcorner", "--output-dir", str(out), "--n-trials", "1", "--allow-dirty"])
 
     metrics = json.loads((out / "xshot_occurrence_v1" / "metrics.json").read_text())
     assert metrics["shipped_variant"] != "public", (
