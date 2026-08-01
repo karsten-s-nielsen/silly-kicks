@@ -7,3 +7,11 @@ silly_kicks/tracking/_xcross_weights/** binary
 # already normalizes CRLF before hashing, so this is churn prevention, not a bug fix --
 # without it the bundled metadata.json flips to CRLF on the next checkout.
 silly_kicks/tracking/_ghost_gk_weights/** binary
+# GK-completion (4.73.0), pinned NARROWLY -- only the SHA-verified pair, not the whole directory
+# like the three above. Its `_sha` normalizes CRLF before hashing, so verification was never at risk;
+# the pin exists to stop model.json flipping to CRLF on the next checkout and producing a spurious
+# diff. `metrics.json` and `MODEL_CARD.md` are deliberately LEFT AS TEXT: `superseded_coef` is
+# recorded in metrics.json precisely so a weights change is reviewable later, and a binary pin would
+# make exactly that unreadable in review.
+silly_kicks/tracking/_gk_completion_weights/*/model.json binary
+silly_kicks/tracking/_gk_completion_weights/*/SHA256SUMS binary

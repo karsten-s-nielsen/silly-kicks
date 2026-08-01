@@ -634,3 +634,416 @@ consume the chiral transform.
    the incomplete-repair pattern this repo has shipped before. **OWNED: PR 1 item 5** — the registry
    enumerates it and its consumers as a single D3 unit, so a partial re-key fails the gate. This is no
    longer an unowned risk.
+
+---
+
+## 11. AMENDMENT (2026-08-01) — PR 4 re-planned after ADR-052 / 4.72.0
+
+PR 4 was implemented, reviewed, **parked**, and is now **re-planned from scratch on merged main**.
+Two things happened between the original decomposition and today: an adversarial `/final-review`
+falsified several of PR 4's own claims, and a parallel session shipped ADR-052 (4.72.0), which
+independently built four of PR 4's five work items — three of them better.
+
+This section records what changed. §§1–10 are left as written: they are what was believed at spec
+time, and §2.5 already establishes that convention.
+
+### 11.1 A FABRICATED measurement, and the retraction it caused
+
+PR 4's implementation extended RC4 from SkillCorner to **IDSSE**, reporting
+*"IDSSE 1.0000 → 0.0000 unlabelled, flip fraction 0.3155"* **as measured. It was not.**
+
+`sportec.py:137` calls `finalize_orientation` **unconditionally, BEFORE** the `output_convention`
+branch at `:194`. IDSSE frames were therefore always labelled; `absolute_frame` and `ltr` are
+byte-identical there, at 0.0% unlabelled. Independently reproduced on the committed IDSSE slice.
+
+The mechanism of the error: the smoke test ran only **after** the loader was changed, so it measured
+the post-fix side and the pre-fix side was **assumed** from SkillCorner's, because both call sites
+carried the same override keyword. **§3.4 of this spec was correct all along** — its title and its
+consumer table name SkillCorner alone. The extension was invented at implementation time.
+
+Worse, §2.2's own IDSSE datum — *"On IDSSE flip is True on exactly 718/718"* — is impossible if those
+frames were unlabelled, and was never checked. On the fabricated premise PR 4 **retracted the §2.2
+IDSSE column as "provisional"**, propagating that retraction into CHANGELOG, CLAUDE.md, TODO.md,
+ADR-051, a research findings doc, a loader comment, a test docstring and a commit message.
+
+**§2.2's IDSSE column stands. The retraction is withdrawn.** Rule carried forward: an `X → Y` claim
+requires both sides measured; a sibling call site is not evidence; and retracting someone else's
+measurement demands a stronger instrument than asserting a new one.
+
+**CLOSED by measurement (2026-08-01).** §2.2's "718/718" is no longer merely un-refuted — it has been
+independently reproduced. A full-frame run of both sides
+(`docs/research/adr028_rc4_orientation/`, `tracking_limit=None`) returns IDSSE **`n_flip_true: 718`
+of 1,363 actions = `0.5267791636096845`, byte-identical before and after RC4**. Two instruments, one
+number.
+
+**And it explains where `0.3155` came from, which is worth more than the vindication.** That figure
+was never invented — it is `430/1363`, the *real* IDSSE flip **under a `tracking_limit=3000` cap**
+that the measurement did not record. The orientation lookup groups non-ball frame rows by
+`(game_id, period_id, team_id)`, and an action whose key is missing **defaults to no-flip silently**
+(`OrientationUnresolvedWarning` fires only when *nothing* resolves), so a truncated frame set
+*depresses* the flip fraction. The fabrication of §11.1 was therefore a **real number attached to an
+invented transition** — the harder variant to catch, because the digits survive any check that only
+asks "does this number exist somewhere?".
+
+The same cap silently understated the RC4 headline: SkillCorner's post-fix flip is **0.4728**, not
+the 0.2398 first published. The corrected value also stops being anomalous — 0.4728 sits with IDSSE
+0.5268 and GS 0.5665 as an ordinary away share, where 0.2398 was half of anything else measured and
+should itself have prompted the question.
+
+### 11.2 Four of five work items are superseded by ADR-052
+
+| PR 4 item | Disposition |
+|---|---|
+| `--mode {rebundle,retrain}` on `train_gk_completion.py` | **Superseded** — main's is stronger |
+| Provenance wiring + `ARTIFACT_DRIVERS` registration | **Superseded** — main enrolled all five trainers |
+| Startup provenance capture (commit `1c81099`) | **Superseded** — main already does it, plus `run_tree_state` |
+| Task 17b (`measure_cover_shadow_argmax_agreement` passer) | **Superseded** — on main line-for-line (`2424608`) |
+| **RC4 SkillCorner half** | **SURVIVES** — `_loader_pining.py` untouched by 4.72.0 |
+
+The `--mode` collision is the instructive one, and main's basis is **better**: it asserts the
+**served probabilities** moved (`predictions_moved`, reconstructing the sigmoid over two probe design
+matrices), where PR 4 asserted a **parameter delta**. PR 4's own reviewers had already found that
+defective — `max()` over `coef/intercept/mean/std` lets a *translation* move `mean` by metres and
+pass with a coefficient delta of ~3.5e-17. Standardisation absorbs a translation exactly, so served
+output is unchanged. A pure coordinate correction is precisely that case, i.e. **exactly the class
+this cycle produces.** Main's docstring argues a parameter rule "is wrong in BOTH directions" and
+tests both sides.
+
+Four small items of PR 4's remain genuinely additive and may be carried as a follow-up:
+`metrics.json` recording the **served** coefficients rather than the probe's (main still writes
+`model._coef` while `served` may be `committed`); an actionable `SystemExit` on rebundle drift
+instead of a bare `assert_allclose`; `weight_deltas`/`coefficients_changed` in metrics; and test
+coverage of the real `save`/`load` branches (main's trainer tests are entirely duck-typed and import
+no model).
+
+### 11.3 The retrain must now declare `--feature-space moved`
+
+Main gates `--mode retrain` behind `--feature-space {unchanged,moved}`, and `moved` requires
+`--probe-old`: the design matrix the **committed** model was fit on. Its help defines `moved` as
+*"a geometry/coordinate correction changed the raw features"* — i.e. feature **values**, not columns.
+
+**This cycle's retrain is unambiguously `moved`.** Two consequences:
+
+1. **The parked weights are not reproducible under main's trainer** and must be regenerated. They
+   were produced under a CLI that no longer exists.
+2. `--probe-old` cannot be reconstructed from the artifact — `to_dict()` persists only
+   `coef/intercept/mean/std/base_rates/gate`, no design matrix. It must be re-extracted from a
+   pre-change commit.
+
+**The probe's VINTAGE is the hard part, and "pre-RC2" is the wrong answer** (part-deux review 1).
+`--probe-old` must be the design matrix the **committed weights** were fit under. Those coefficients
+were fit at **`e3d5e92`** — 2026-06-09, **4.21.0**, the original bundling — roughly fifty releases
+before RC2, with several geometry changes in between (ADR-024 amendments, PR-S104 SkillCorner
+keeper-origin). A pre-RC2 checkout yields "just before the most recent change", which is not the same
+thing. Get it wrong and `predictions_moved` compares the committed model against coordinates **it
+never saw either** — meaningless, and nothing reports it.
+
+**A CORRECTION worth reading, because it is this cycle's own failure shape** (part-deux review 2).
+Revision 1 of this section named `7e875c8` (4.21.4) as where the weights were "last written",
+inferred from `git log -1 -- model.json`. That finds the last **touch**, not the last **fit**:
+`7e875c8`'s diff on `model.json` is **purely additive** — `version` 1.0.0→1.1.0 plus
+`type_serve_mode`/`type_gate_metrics` — with **no `coef` line changed**. Only two commits have ever
+touched that file, and the same holds for `skillcorner/model.json`, so the trap applies to both
+variants. A proxy was reported as the thing, exactly as in §11.1.
+
+**`7e875c8` remains admissible — by VALIDATION, not by recency**, and the distinction is the lesson.
+CLAUDE.md's PR-S91 bullet records that 4.21.4 attached the gate onto the *loaded committed* model with
+coefficients **byte-unchanged**, the fresh fit serving only as a corpus-identity probe. So the
+validation this section proposes was already executed there, and already passed.
+
+**How to validate a candidate vintage.** At the candidate commit, **run the trainer** and let its
+corpus-identity assertion decide. Do **not** write `--mode rebundle`: that flag is 4.72.0's and does
+not exist at 4.21.x (measured at `7e875c8`: 0 occurrences of `--mode`, 0 of `rebundle`). The mechanism
+is there regardless — `_CORPUS_IDENTITY_ATOL` appears 9 times and the identity assertion runs
+**unconditionally**, because at 4.21.4 rebundle is the only behaviour. Applying HEAD's vocabulary to
+an old checkout without executing it there is the same class of error as §11.1.
+
+**And that settles WHICH commit, more sharply than "admissible by validation" did — execution found
+it, reading did not.** The validation was attempted at `e3d5e92` first, since that is where the
+coefficients were fit and therefore the most faithful probe. It cannot run there:
+`_CORPUS_IDENTITY_ATOL` occurs **0 times** at `e3d5e92` and **9** at `7e875c8`, because
+**`7e875c8` is the commit that INTRODUCED the assertion** (`git log -S`, `scripts/train_gk_completion.py`
+— only two commits ever touch it: `7e875c8`, then ADR-052's driver migration). At 4.21.0 the trainer
+simply fits and saves; there is no instrument to disagree with, so a run there produces neither a
+verdict nor — since the script does not dump the design matrix — a probe.
+
+So `7e875c8` is not merely *an* admissible vintage. It is the **earliest commit at which the check
+exists at all**, it is where that check was originally run against these very coefficients, and it
+passed. Reading `git log` could establish that `7e875c8` was additive; only running it established
+that `e3d5e92` is **unvalidatable**. The paragraph above still holds — do not apply HEAD's vocabulary
+to an old checkout — with the corollary that an old checkout may not carry the instrument the
+technique depends on. **Check that the instrument is present before trusting a run that uses it**, or
+a vacuous pass is indistinguishable from a real one.
+
+#### 11.3.1 THE VINTAGE TARGET ABOVE IS WRONG — `probe_old` must be ROW-ALIGNED with `probe_new`
+
+**Everything from "The probe's VINTAGE is the hard part" down to here identifies the wrong artifact,
+and the correction comes from running `predictions_moved` rather than reading it.** The function ends
+in
+
+```python
+np.allclose(_serve(old, probe_old), _serve(new, probe_new), atol=atol, rtol=0.0)
+```
+
+which is **element-wise**. Handing it a 1666-row historical matrix against the current corpus's
+~3491 rows does not produce a wrong answer — it raises
+`ValueError: operands could not be broadcast together with shapes (1666,) (3491,)`. The retrain would
+crash at the guard, after paying for the whole corpus pass.
+
+So `probe_old` is **not** "the matrix the committed weights were fit on" in the archaeological sense
+this section spent three revisions pursuing. Two independent things in the codebase say so:
+
+1. The docstring's own next clause — *"they are the SAME array whenever the feature space did not
+   move, which is the ordinary case."* A historical training matrix can never be the same array as
+   the current `X_all`; only a same-corpus extraction can.
+2. The registered test `test_a_rebundle_across_a_MOVED_feature_space_must_still_abort` constructs
+   the moved case as `X_new = X_old + 5.0` — **same rows, shifted geometry**, never a different
+   corpus.
+
+**The correct probe is: the SAME corpus as the fresh fit, extracted under the PRE-CHANGE geometry.**
+The guard asks a *serving* question — "does what production emits change?" — so the two legs are
+what production emitted yesterday and what it will emit tomorrow, over one population of actions.
+Fitting provenance is a different question that this guard does not ask.
+
+Which means **"pre-RC2", the answer §11.3 opens by calling wrong, is right** — though not for the
+reason it was originally offered, and the original objection was sound on its own terms. The
+objection was that the committed weights would be compared "against coordinates it never saw". True,
+and unavoidable: those weights have been served against every geometry change since 4.21.0, so
+"coordinates it never saw" is simply the production reality this PR is correcting. The probe vintage
+is therefore **`641dadf` (4.70.0)** — the commit immediately before RC2/RC3/RC5 landed in `89dd9af`
+(4.71.0) — extracted on the same Gradient Sports corpus the retrain uses. RC1 (4.70.0) is safely
+inside that baseline: it reprojects the cover-shadow passer, and no `GK_COMPLETION_FEATURE_NAMES`
+entry reads cover shadows.
+
+**Two alignment properties must be verified, not assumed, and only one of them is loud.** A row-COUNT
+mismatch raises. A row-ORDER mismatch does not: it silently compares action *i*'s old prediction
+against action *j*'s new one, which will almost certainly differ and so reports `moved=True` — the
+guard passes, for a reason that has nothing to do with the model. ADR-052 changed extraction to
+sharded `for_each`, so ordering across the two vintages is exactly the kind of thing that could have
+shifted underneath.
+
+**VERIFIED, by reading the two orderings rather than paying for a second corpus pass:**
+
+1. HEAD's `_extract` combines `[... for k in res.keys]` — **this pass's own keys, deliberately not
+   `_driver.reconcile`** (whose `sorted(glob("*.parquet"))` *would* have re-ordered by filename, and
+   GS ids mix widths — `"10502" < "3857"` lexicographically but not numerically). `for_each`
+   accumulates `own_keys.append(k)` inside the iteration loop, and its docstring states `keys` is
+   "every joined shard key THIS pass covered, **in order**".
+2. `641dadf`'s pre-ADR-052 `_extract` appends inside the same `load_matches(...)` loop.
+3. The **entire** `641dadf..4b15365` diff to `scripts/_loader_pining.py` is the RC4 SkillCorner
+   change — 18 insertions, all in `build_skillcorner_frames`. The Gradient Sports path is untouched,
+   so `load_matches(providers=["gradientsports"], ...)` yields the same matches in the same order at
+   both commits.
+
+Within a match, row order follows the selection in action order, which the corrections do not
+reorder. So ORDER agrees by construction; the row COUNT does **not**, and an earlier draft of this
+paragraph claimed it did.
+
+**Membership is NOT invariant by construction — that claim was wrong.** The trainer's filter is not
+`_gk_distribution_mask` alone. `prepare_gk_completion_training_data` computes
+`keep = geom_ok & id_ok`, where
+`geom_ok = np.isfinite(X["length"]) & np.isfinite(X["dest_x"])` — and `length`/`dest_x` derive from
+the **resolved** geometry that RC2 rewrites. A coordinate that was NaN and resolves finite (or the
+reverse, e.g. a goal-kick falling from the tracking-GK tier to the rule-point prior) adds or removes
+a row. So the count is an **empirical** question and the reasoning must not pretend otherwise.
+
+Which is fine, because the check is loud and free: compare `probe_old`'s `n_rows` against the `N=`
+the trainer prints. **Do not rely on the broadcast error to catch a mismatch** — that is true only
+of shapes that fail to broadcast (1666 vs 3491 does; a **1-row probe does NOT**, it broadcasts and
+answers silently, measured). `_assert_retrain_moved_predictions` compares row counts explicitly,
+which matters because ADR-052's own follow-up proposes persisting a fixed probe *sample*. The
+probe dump keeps `_group` anyway (`--probe-old` selects `[feats]`, so extra columns ride along
+harmlessly) so the claim stays falsifiable later.
+
+**Confirmed on SkillCorner — but be precise about WHICH comparison shows what.** Two distinct
+identities landed, and only the second bears on the corrections:
+
+1. `641dadf` probe at `--max-per-provider 10` → **`n_rows: 542`, `n_groups: 10`**, matching the
+   committed variant's **`n_rows: 542`, `n_matches: 10`**. **Both legs are PRE-correction** (the
+   committed weights were fit at 4.21.4 geometry, the probe ran at 4.70.0), so this says the cap
+   selects the corpus the committed weights were fit on — and *nothing whatever* about RC2/RC4. An
+   earlier draft cited it as evidence that "the domain is unchanged by the corrections", which it
+   structurally cannot be.
+2. `641dadf` probe (542) vs the retrain's own `N=542` at `4b15365`. **This one straddles the
+   corrections**, and it is the row-count identity the alignment argument actually needs.
+
+It is also a **count** identity, not a corpus identity — 542 rows over 10 groups could in principle
+be a different 542. The `_group` order digest is dumped for exactly that reason, and the same
+skepticism this section applies to Gradient Sports applies here.
+
+Separately, it shows the corpus-drift problem is **GS-specific**: SkillCorner's committed corpus and
+its current public arm are the same ten matches, while GS grew 30 → 64.
+
+The extraction emitted the RC4 defect live while running — `OrientationUnresolvedWarning:
+acting_team_attacks_rtl: returning an all-False flip (team_attacking_direction is present but
+entirely null)` — which is exactly the state `probe_old` is supposed to capture, and independent
+evidence that the PYTHONPATH guard did its job rather than silently resolving HEAD's corrected code.
+
+**Cost of the error, recorded because it is the reusable part:** ~30 minutes of DGX compute — one
+cap-64 vintage run to completion (~26 min) plus a cap-30 run killed early once the premise collapsed — chasing a corpus-size discrepancy that was real but irrelevant. The
+discriminator table added to the plan caught the *symptom* (N=3491 vs a committed 1666) and correctly
+refused to read the failure as a vintage verdict; it could not catch the *premise*, because it was
+built on the same wrong target. The check that would have caught it in seconds was calling
+`predictions_moved` with two mismatched shapes — one line, no corpus, no DGX.
+
+**The check is ONE-SIDED, and both directions must be stated** (part-deux review 2, their own
+correction to phrasing this section had adopted verbatim). A **pass** is strong: code and corpus must
+*both* reproduce the committed weights. A **fail is ambiguous** — wrong vintage *or* corpus drift. The
+corpus is not frozen (4.49.0 and 4.50.0 each shipped GS-only retrain triggers: dribble end-derivation
+and `ballCarryOutcome` results), and `_CORPUS_IDENTITY_ATOL` is `0.05`, loose enough that a pass means
+something but a fail does not localise. Do not let a first failure send someone hunting a vintage
+problem that may not exist.
+
+**Long-term fix, and the right moment to take it:** ADR-052 records *"persist a fixed probe sample
+beside the weights"* as an ADR-011 follow-up. Every future geometry correction otherwise repeats this
+archaeology. Since this PR regenerates the artifact anyway, persisting the probe belongs here.
+
+**But NOT inside the artifact — ADR-044 forbids it** (part-deux review 2; the ADR-052 follow-up was
+written without checking it). `ADR-044:25`: *"Distributed model artifacts carry **learned parameters
+only, not per-sample training data.**"* A persisted design matrix is per-sample training data. ADR-044
+is titled ghost-scoped, so this is a tension to reconcile rather than a rule already broken — but
+silence would be the wrong resolution.
+
+**Decision: persist OUT-OF-BAND.** The probe lives under `docs/research/`, referenced from
+`metrics.json` by path **and SHA256**. That keeps the wheel parameters-only (ADR-044 intact), keeps
+the citation resolvable, and keeps the artifact's integrity envelope honest. The alternatives were
+in-artifact with an explicit ADR-044 amendment — defensible, since a fixed ~100-row probe is not a
+corpus, but it needs the ADR edit rather than silence — or an explicit defer. Recorded here so the
+choice is visible rather than dropped under "optional".
+
+Note either way: adding a file to the weights directory changes `SHA256SUMS`, so a checksum-pinning
+consumer sees a diff with no value change — the ADR-050 precedent, where three `metadata.json` gained
+`feature_contract` and the sums moved.
+
+### 11.4 Sequencing constraint: COMMIT RC4 (on the branch) before any trainer run
+
+ADR-052 shards `_extract` per match, keyed on
+`token_inputs={"extractor": <literal name>, "tracking_limit": ...}`. **That token captures neither
+geometry nor library version** — `_driver.generation_dir`'s own docstring says the token cannot be
+checked for completeness.
+
+The handoff framed this as a pre-RC2 hazard. That precondition is **unconstructible**: shards did not
+exist at RC2 (the mechanism arrived *in* 4.72.0), and none exist on disk. **The live hazard is
+pre-RC4** — run the trainer on rebased main *before* applying RC4 and that run mints a generation;
+apply RC4 afterwards and the SkillCorner frames change while the token does not, so the retrain reads
+stale features silently. The only signal is a per-item `skip (shard exists)`, and `metrics.json`
+records `run_commit` but no generation digest, so a clean SHA would describe the fit and not the
+extraction.
+
+**Decision: commit RC4 first — on the BRANCH, not merged to main.** That makes the failure
+*unreachable* rather than guarded, and costs
+nothing because no shards exist yet. A fresh `--shard-dir` per run is the hand-maintained discipline
+`train_ghost_gk`'s own docstring records going stale inside the cycle it protects. Adding a derived
+geometry entry to `token_inputs` is worth doing as well, but as defence in depth, not as the primary
+control — note `cache_token()` reads penalty-area constants and would have missed **both** RC2 and
+RC4.
+
+Also: **do not pass `--cache-features` on an RC4 run.** It is a bare `Path(cache).exists()` check
+that bypasses the generation directory entirely, so no token fix can protect it.
+
+### 11.5 Superseded measurement: the cover-shadow argmax agreement
+
+4.72.0 fixed the RC1 defect in `measure_cover_shadow_argmax_agreement.py` — a site that imports
+`_compute_cover_shadow_dict` directly and so was never a registered RC1 site — and re-measured from a
+clean tree:
+
+| | pre-RC1-fix | post |
+|---|---|---|
+| agreement | 0.1567 | **0.0443** |
+| vs ~0.10 chance | 1.6× | **0.44× — worse than random** |
+
+**The defect had been inflating the number.** The 4.67.0 verdict (gate
+`max_single_defender_player_id` to `detailed=True`) is unchanged and better supported: the upper CI
+bound is 0.059 against a 0.90 floor. Any prose citing **0.157 / 0.1992 / 0.723** is stale in **digit
+and direction**.
+
+Main was itself stale in two places — its shipped 4.72.0 CHANGELOG and its CLAUDE.md `PR-S136`
+bullet. **The part-deux session has taken that correction as PR #190** (docs-only, CHANGELOG +
+CLAUDE.md), on the principle that a release's own error is that release's to fix, which also
+removes a conflict from this diff. Their handling of 4.67.0 is the right call and worth copying:
+the shipped entry is left **unedited** and flagged with a superseded-by note, because rewriting a
+shipped release note is worse than leaving it, while leaving it unmarked invites a forward
+citation.
+
+**Still ours:** `0.723` survives on main at
+`docs/superpowers/plans/2026-07-29-adr028-orientation-defect-class.md` (search `0.723`; the line number moves as the plan grows) — Task 17b's
+worst-case bound, written in PR 3 and merged. The reviewer searched CHANGELOG and CLAUDE.md and
+did not find it; it is in the plan. It rests on the pre-fix 0.157 and is stale in the same
+direction.
+
+### 11.6 Register and tag state
+
+4.72.0 and PR-S140 are **taken**. This PR is **4.73.0 / PR-S141**. No new ADR — ADR-051 already
+scopes "PR 4 of 5".
+
+**Both 4.71.0 and 4.72.0 are unreleased** (latest tag `v4.70.0`). The window did not close; it
+widened. The first tag pushed from here ships RC2+RC3 *and* ADR-052 without the paired
+`GkCompletionModel` retrain — so this PR is still what makes a tag safe. ADR-051's status header and
+CHANGELOG's 4.71.0 note both still say "ships within 4.72.0 alongside PR 4", which is now false and
+must be corrected here.
+
+### 11.7 TF-24 is RC4's second consumer — a STATED no-op, not silence
+
+§3.4's verified table names **two** affected consumers: `train_gk_completion` **and
+`calibrate_tracking_defaults` (TF-24)**. The first draft of this amendment mentioned TF-24 zero times
+(part-deux review, finding 1). Since §3.4's own analysis put it in the blast radius, silence is the
+one disposition not available.
+
+**Disposition: RC4 changes NO shipped TF-24-calibrated constant.** Evidence, per stage:
+
+- **Stage 1's params ARE shipped, and PARTLY TF-24-calibrated** — `infer_ball_carrier`'s
+  `tolerance_m=3.0, beta=0.0, gamma=0.25`. Precisely: the docstring
+  (`_ball_carrier.py:352-353`, *"The `beta` and `gamma` defaults are Optuna-calibrated (TF-24) at the
+  held `tolerance_m=3.0`"*) records only **two** of the three as calibrated; `tolerance_m` was HELD,
+  making it an engineering default. An earlier draft of this bullet called all three calibrated.
+  They were calibrated against a
+  3-provider fold that **included the unoriented SkillCorner frames**. They are nonetheless
+  unaffected, because carrier inference is **orientation-invariant**: measured, 40/40 identical
+  carrier assignments under an exact point reflection, carrier distance unchanged to <1e-9, and
+  (the figure once quoted here as `1.01e-14` does not reproduce -- the registered test's own
+  fixture gives ~1e-14 at a scale that depends on the fixture, so the assertion is stated as a
+  bound rather than a digit), and
+  `_ball_carrier.py` contains no orientation reads at all. The unoriented frames gave the same answer,
+  so the calibration stands.
+- **Stage 2's params are NOT TF-24-set.** `k3` (`pressure.py:61`) and `min_displacement_m`
+  (`_off_ball_runs.py:100`, `_run_values.py:121`) ship as **engineering** defaults — `pressure.py:50`
+  says so in as many words — consistent with the standing rule that TF-24 recommends and never changes
+  library constants.
+
+So RC4 invalidates a Stage-2 *recommendation that was never run on corrected frames and never
+applied*, which is already tracked as the deferred TF-24 item. **No re-sweep trigger; no shipped value
+moves.** Recorded here so the **No** verdict is auditable rather than absent.
+
+### 11.8 Merge strategy: a MERGE COMMIT, not a squash
+
+`metrics.json` records `run_commit`. **A squash merge breaks that citation** — the SHA never exists on
+`main`. The part-deux session hit this on #189 and landed it as a merge commit for exactly this
+reason.
+
+**The repo now allows merge commits** — verified `allow_merge_commit: true`. It was squash-only until
+2026-08-01, so any memory, habit or doc saying "squash-only" is stale. This PR must merge with
+`--merge` explicitly rather than take a default, and verify afterwards:
+
+    git merge-base --is-ancestor <the SHA metrics.json records> origin/main
+
+**ONE merge, not several.** The multi-commit structure (RC4, then weights, then docs) exists so the
+trainer executes against RC4-corrected code and so ``run_commit`` names a real commit — both are
+satisfied on the BRANCH. A merge commit preserves those commits, which is the whole reason this PR
+does not squash.
+
+Merging RC4 to main on its own would be actively wrong: it would put corrected serving geometry on
+main **without** the paired retrained weights — a smaller instance of exactly the train/serve skew
+that left 4.71.0 untagged. It would widen the open window rather than close it.
+
+### 11.9 The RC4 guard needs strengthening, not just porting
+
+PR 4's AST guard on `_loader_pining.py` had two holes its own review found:
+
+- **A third call site is invisible to it.** `_build_gradientsports` omits `output_convention`
+  *entirely*, so there is no keyword for a keyword-matcher to see. (Behaviourally benign — GS resolves
+  via the same unconditional `finalize_orientation` — but the guard cannot say so.)
+- **Its non-vacuity partner does not exercise the guard.** It re-implements a weaker matcher inline,
+  dropping the `name != "convert_to_frames"` filter, so it passes even if the guard is dead.
+
+The re-planned guard must assert on the **resolved convention per builder**, not on the presence of a
+literal keyword, and its non-vacuity test must call the guard's own body.

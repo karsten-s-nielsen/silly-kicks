@@ -11,15 +11,22 @@ own variant (GS does not transfer; see that variant's card).
 native completion outcome (Gradient Sports event `result`; Sportec/IDSSE via the kloppy gateway's DFL
 `play_evaluation`).
 
-**Training corpus + gate.** 30 WC2022 Gradient Sports matches. **Green gate = native-origin pooled
-out-of-fold calibration:** AUC **0.838**, CI95 [0.81, 0.86], n_native 1395, Brier 0.122 < base 0.171;
-density-feature finite 96%. See `metrics.json`.
+**Training corpus + gate.** 64 WC2022 Gradient Sports matches (the full pining manifest).
+**Green gate = native-origin pooled out-of-fold calibration:** AUC **0.855**, CI95 [0.838, 0.872],
+n_native 2953 of 3491 rows, Brier 0.119 < base 0.176; density-feature finite 99%. See `metrics.json`.
+
+**Retrained 4.73.0 (PR-S141, ADR-051).** These weights replace a set fitted against pre-ADR-028
+geometry. RC2/RC5 (4.71.0) corrected `_gk_geometry`'s frame-coordinate reprojection and the
+cross-team next-event borrow, both of which reach these features through
+`prepare_gk_completion_training_data → resolve_gk_geometry`. The same run widened the corpus from 30
+matches (n_rows 1666, AUC 0.838) to 64, so **the change is geometry AND corpus, not geometry alone** —
+the two are not separable after the fact. Superseded coefficients are recorded in `metrics.json`.
 
 **Per-type serve gate (4.21.4, SK-91).** A per-type `_type_serve_mode` (artifact version 1.1.0) is
 baked into `model.json`: serve the model where the held-out AUC LCB > 0.5, else the calibrated
-`base_rate`. For GS, **goal-kicks stay `model`-scored** (held-out AUC **0.836**, LCB 0.798 — unlike
-SkillCorner, GS goal-kick completion *is* predictable from geometry); GK-passes `model` (AUC 0.834);
-the near-empty throw-in sub-domain (n=1) base-rates by construction. `load()` fail-opens (a pre-gate
+`base_rate`. For GS, **goal-kicks stay `model`-scored** (held-out AUC **0.835**, LCB 0.809, n=936 — unlike
+SkillCorner, GS goal-kick completion *is* predictable from geometry); GK-passes `model` (AUC 0.855,
+LCB 0.836, n=2553); the near-empty throw-in sub-domain (n=2) base-rates by construction. `load()` fail-opens (a pre-gate
 artifact serves all types `model`).
 
 **Missing-value policy.** Per-feature density NaN → training-mean impute (neutral after
@@ -27,7 +34,11 @@ standardization). Whole-row geometry-unscoreable → per-type base rate (in the 
 `compute_gk_completion`; the RAV path NaNs unresolvable-destination rows honestly).
 
 **Provenance + reproduction.** Reproduce with `python scripts/train_gk_completion.py --providers
-gradientsports --max-per-provider 30` — the script now defaults to **full-match frames**
+gradientsports --max-per-provider 64 --mode retrain --feature-space moved --probe-old <matrix>.parquet
+--reason "<what moved>"`. `metrics.json` records `run_commit` and `run_tree_state` (this bundle was
+produced from a clean tree). The `--probe-old` matrix is the SAME corpus extracted at the commit just
+BEFORE the change under test — it is compared element-wise, so it must be row-aligned; see the ADR-052
+amendment. The script defaults to **full-match frames**
 (`--tracking-limit None`, SK-91). A small `--tracking-limit` does **not** reproduce these weights —
 GS matches are ~162 k frames and the density feature needs the full match. (The 4.21.4 re-bundle
 attaches the per-type gate onto the committed coefficients within a tolerance that absorbs the

@@ -36,6 +36,23 @@ MIT license with full attribution preserved.
 - **VAEP** -- Valuing Actions by Estimating Probabilities: a framework for
   quantifying the value of individual actions
 - **Atomic SPADL** -- continuous (non-discretized) action representation
+- **xT** -- Expected Threat with a pluggable transition family (Singh counts /
+  KDE-smoothed) and value iteration on a variable-resolution grid, plus a
+  held-out transition-NLL evaluator
+- **xT-GK** -- goalkeeper-distribution value. **v1** (`tracking/_xt_gk.py`) is a parametric
+  per-action metric whose RAV term consumes the bundled `GkCompletionModel`; **v2** (`xtgk/`) is a
+  pressure-stratified possession-value surface `V(z, p)` and the metric built on it
+- **GKDV** -- GK Deterrent Value: counterfactual valuation of keeper *positioning*
+  against a league-average "ghost" keeper in the same frame state
+- **Causal** -- a propensity-score matching harness (ATT/ATNT with Abadie-Imbens standard errors)
+  used to validate feature claims rather than assert them. Adds **no new dependency** -- pure
+  numpy/scikit-learn, no R -- which is not the same as dependency-free
+- **Feature glossary** -- a machine-readable registry of every derived column the
+  library emits, CI-gated for completeness and linked to `NOTICE` attributions
+- **Providers** -- raw-data parse ports (bytes → bronze → converter input). Currently **one**:
+  Sportec/DFL, behind the `[parse-dfl]` extra
+- **Calibration** -- an Optuna harness that *recommends* tuned defaults and never
+  changes library constants
 
 ## Installation
 

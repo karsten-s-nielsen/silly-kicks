@@ -1,0 +1,38 @@
+{
+  "_provenance": {
+    "label": "postfix",
+    "commit": "4b153655f2388c4c1f4009d5abb0955b114222f1",
+    "commit_requested": "4b15365",
+    "tracking_limit": null,
+    "max_per_provider": 1,
+    "note": "tracking_limit=None (full frames). The FIRST RC4 measurement used tracking_limit=3000 and did not record it; a truncated frame set silently depresses flip_true_fraction because actions whose (game_id, period_id, team_id) key is missing from the orientation lookup default to no-flip, and the OrientationUnresolvedWarning fires only when NOTHING resolves. unlabelled_fraction was unaffected by the cap."
+  },
+  "skillcorner": {
+    "match_id": "1886347",
+    "n_frames": 43458,
+    "player_rows": 956076,
+    "unlabelled_fraction": 0.0,
+    "distinct_labels": [
+      "ltr",
+      "rtl"
+    ],
+    "n_actions": 1197,
+    "n_flip_true": 566,
+    "flip_true_fraction": 0.4728487886382623,
+    "orientation_warnings": 0
+  },
+  "idsse": {
+    "match_id": "DFL-MAT-J03WMX",
+    "n_frames": 145967,
+    "player_rows": 3211274,
+    "unlabelled_fraction": 0.0,
+    "distinct_labels": [
+      "ltr",
+      "rtl"
+    ],
+    "n_actions": 1363,
+    "n_flip_true": 718,
+    "flip_true_fraction": 0.5267791636096845,
+    "orientation_warnings": 0
+  }
+}

@@ -1169,7 +1169,7 @@ evidence — so both are recorded here with the executed evidence.
    | Shape | Produced by | Is it an error? |
    |---|---|---|
    | Uniform `"ltr"` for both teams | `_snapshot.py:92,118` (public `snapshot_to_tracking_frames`) | **No** -- snapshot frames are ALREADY action-LTR, so "never flip" is correct |
-   | All-null direction | `skillcorner.py:282` / `metrica.py:180` under `output_convention="absolute_frame"`; documented at `skillcorner.py:180`; fed to the training corpora by `scripts/_loader_pining.py:439,529` | **No** -- unoriented, i.e. no orientation asserted |
+   | All-null direction | `skillcorner.py` / `metrica.py` under `output_convention="absolute_frame"`; documented at `skillcorner.py:180`. **STALE as of 4.73.0 (ADR-051 RC4):** the pining loader no longer feeds this to the training corpora — `build_skillcorner_frames` requested `absolute_frame`, which left `team_attacking_direction` NULL on 100% of rows and silently no-opped the whole ADR-028 re-projection layer; it now requests `"ltr"`. The row below still describes a REACHABLE converter state for a direct caller, just not one the corpora hit. | **No** -- unoriented, i.e. no orientation asserted |
    | Period-5 unlabelled | `direction.py:29` `_LTR_KNOWN_PERIODS=(1,2,3,4)`; `:267` "PSO: orientation undefined --- never flip" | **No** -- undefined by nature |
    | One team carrying BOTH directions | (nothing legitimate) | **Yes** -- the only impossible state |
 

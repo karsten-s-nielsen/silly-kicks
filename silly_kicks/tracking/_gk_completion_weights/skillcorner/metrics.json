@@ -1,5 +1,20 @@
 {
   "variant": "skillcorner",
+  "run_commit": "4b153655f2388c4c1f4009d5abb0955b114222f1",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "mode": "retrain",
+  "reason": "ADR-051 RC4 + RC2/RC5: the pining loader shipped SkillCorner frames UNORIENTED (team_attacking_direction NULL on 100% of rows), so the ADR-028 per-action re-projection silently no-opped and the committed weights were fitted against mixed-convention geometry; _gk_geometry reprojection and the cross-team next-event borrow moved the design matrix further. Corpus is the 10-match PUBLIC arm (ADR-038); the other 98 SkillCorner matches are non-redistributable Real Madrid fixtures.",
+  "superseded_coef": {
+    "length": -0.36394084068721805,
+    "forwardness": 0.4684687633815231,
+    "dy_abs": 1.0308869481113412,
+    "dest_x": -0.05148050986210171,
+    "dest_y_off": 0.3964470358207553,
+    "dest_defender_density": -0.039539182459226344,
+    "is_goalkick": -0.07952432559877323,
+    "is_throw_in": 0.19674953291627217
+  },
   "decision": "bundle_skillcorner",
   "bundled": true,
   "n_rows": 542,
@@ -8,34 +23,41 @@
     "overall": {
       "n": 542,
       "base": 0.8062730627306273,
-      "sc_auc": 0.6892884384875231,
-      "sc_lcb": 0.6251480840428193,
-      "sc_ece": 0.038652091082810355,
-      "gs_auc": 0.4502778685845047,
-      "gs_lcb": 0.37834239671058195,
-      "gs_ece": 0.11299507451188652
+      "sc_auc": 0.6943663506592568,
+      "sc_lcb": 0.6317257848887357,
+      "sc_ece": 0.04937985179818928,
+      "sc_slope": 0.7972412618745376,
+      "gs_auc": 0.451214994006756,
+      "gs_lcb": 0.38079013518957977,
+      "gs_ece": 0.10698929707654742,
+      "gs_slope": 0.33409384457710256
     },
     "goalkick": {
       "n": 81,
       "base": 0.7654320987654321,
-      "sc_auc": 0.432937181663837,
-      "sc_lcb": 0.2766022659966313,
-      "sc_ece": 0.16977361737109603,
-      "gs_auc": 0.5458404074702886,
-      "gs_lcb": 0.40291810951227003,
-      "gs_ece": 0.17452071497356836
+      "sc_auc": 0.4609507640067912,
+      "sc_lcb": 0.30557134420904997,
+      "sc_ece": 0.15793809373005874,
+      "sc_slope": -0.026612060292791673,
+      "gs_auc": 0.5314091680814941,
+      "gs_lcb": 0.3897691020852786,
+      "gs_ece": 0.1740297532303099,
+      "gs_slope": -0.32223489413190115
     },
     "gk_pass": {
       "n": 461,
       "base": 0.8134490238611713,
-      "sc_auc": 0.7385426356589146,
-      "sc_lcb": 0.6722398579042134,
-      "sc_ece": 0.03627147569885047,
-      "gs_auc": 0.41187596899224804,
-      "gs_lcb": 0.33700211750764664,
-      "gs_ece": 0.1107556627025761
+      "sc_auc": 0.7396279069767442,
+      "sc_lcb": 0.6727867127845789,
+      "sc_ece": 0.04499395817275341,
+      "sc_slope": 1.0076494215192726,
+      "gs_auc": 0.4183255813953488,
+      "gs_lcb": 0.34317615306667565,
+      "gs_ece": 0.10581021092875262,
+      "gs_slope": 0.39796998931821287
     }
   },
   "gkpass_auc_floor": 0.7,
-  "ece_tol": 0.1
+  "ece_tol": 0.1,
+  "slope_tol": 0.25
 }

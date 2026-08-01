@@ -49,3 +49,43 @@ models/
 # Hypothesis property-test database (regenerated locally; never committed)
 .hypothesis/
 calibration_runs/
+
+# Resumable per-item driver shards (ADR-052). Derived data -- re-running the driver rebuilds them.
+#
+# This is a PROVENANCE fix, not tidiness. The CRITERION, rather than a count: any driver whose shard
+# root resolves to a RELATIVE path on a default invocation writes scratch into the repo. A count is
+# given nowhere here on purpose -- an earlier version said FIVE, then SIX, and both were stale within
+# the same change set (the second omitted a driver added by that very PR). Re-derive it when you need
+# it; these are the ones that existed when the rule was written:
+#
+#   train_gk_completion.py                    --shard-dir default `gk_completion_shards`
+#   measure_cover_shadow_argmax_agreement.py  `cover_shadow_argmax_shards` when --out is omitted
+#   tune_structural_pass_sigma.py             `tune_structural_pass_sigma_shards/shards`
+#   calibrate_tracking_defaults.py            `<--report-out>_xt_corpus_shards`
+#   calibrate_xt_bandwidth.py                 `<--report-out>_corpus/shards`
+#   validate_shot_goalmouth_sb.py             `<--out stem>_shards`, default at the repo root
+#   measure_rc4_orientation.py                --shard-dir default `rc4_orientation_shards`
+#
+# Deliberately no line numbers: an earlier version of this block cited
+# `train_gk_completion.py:503`, which was stale before that same session ended -- and quoting the
+# replacement number here went stale again within it. Cite the flag, not the line.
+# Cite the flag, not the line.
+#
+# Untracked files count as dirty by design (`scripts/_provenance.py` treats "??" lines as dirty), so
+# for the drivers that gate on the tree the NEXT artifact-writing run refuses, caused entirely by its
+# predecessor's own scratch. That is not hypothetical: it is the loop hit while retraining the
+# `default` and `skillcorner` variants back to back. The likely operator response is `--allow-dirty`,
+# which stamps `run_tree_dirty: true` onto a run whose CODE was clean -- laundering the exact fact
+# ADR-052 wired the gate to preserve.
+#
+# `calibrate_xt_bandwidth` needs its own line: its shards land under `<--report-out>_corpus/shards/`,
+# whose top-level directory ends in `_corpus`, so the glob does NOT match it (verified with
+# `git check-ignore -v`). Only the DEFAULT report name is listed -- a `*_corpus/` glob would be far
+# too broad -- so a custom `--report-out` is still the operator's problem.
+#
+# ANCHORED to the repo root with a leading slash: every producer above writes its shard root as a
+# top-level relative path, and an unanchored `*_shards/` would additionally silence any such
+# directory at ANY depth -- including inside the package and the committed fixture/research trees,
+# where a future intentionally-tracked path could vanish from `git status` with no error.
+/*_shards/
+/xt_bandwidth_report_corpus/

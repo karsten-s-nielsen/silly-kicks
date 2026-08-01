@@ -125,15 +125,17 @@ def test_per_type_gate_from_oof_smoke():
 
 def test_bundled_skillcorner_goalkick_is_base_rate():
     # Real-artifact lock (review M3): the committed skillcorner gate routes goal-kicks to base_rate
-    # (goal-kick AUC ~0.433 < chance). Stronger than an owner e2e -- the variable is committed.
+    # (goal-kick AUC 0.461 < chance, retrained 4.73.0; 0.433 pre-RC4). Stronger than an owner e2e --
+    # the variable is committed. Only the MODE is asserted, so a retrain that keeps the mode is fine.
     m = GkCompletionModel.from_variant("skillcorner")
     assert m._type_serve_mode.get("goalkick") == "base_rate"
-    assert m._type_serve_mode.get("other") == "model"  # GK-passes stay model-scored (AUC 0.737)
+    assert m._type_serve_mode.get("other") == "model"  # GK-passes stay model-scored (AUC 0.740)
 
 
 def test_bundled_gs_default_goalkick_mode_is_locked():
     # Measured-value golden (review-2 L-A): the GS goal-kick mode is "model" -- GS goal-kick completion
-    # IS predictable from geometry (owner-run OOF AUC 0.836, LCB 0.798 > 0.5 floor), unlike SkillCorner.
+    # IS predictable from geometry (OOF AUC 0.835, LCB 0.809 > 0.5 floor after the 4.73.0 retrain;
+    # 0.836/0.798 before it), unlike SkillCorner.
     # Permanent regression lock set from the SK-91 owner-run re-bundle.
     m = GkCompletionModel.from_variant("default")
     assert m._type_serve_mode.get("goalkick") == "model"

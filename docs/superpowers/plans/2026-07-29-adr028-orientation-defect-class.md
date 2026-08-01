@@ -1626,26 +1626,40 @@ rows). No forced VAEP retrain: `cover_shadow_xfns` is a factory in no default xf
 > corrects serving geometry while the bundled weights are still the old ones, which INTRODUCES a
 > skew that does not exist today. Do not tag between these two PRs.
 
-## Version numbering for PR 3 + PR 4 (DECIDED 2026-07-30 — do not re-litigate)
+## Version numbering for PR 3 + PR 4 (DECIDED 2026-07-30 — see the 2026-08-01 correction below)
 
-**PR 3 bumps to 4.71.0. PR 4 bumps to 4.72.0. Tag ONLY `v4.72.0`.** 4.71.0 is a real, committed,
-traceable version that is deliberately **never published to PyPI**.
+> **⚠ CORRECTED 2026-08-01 — PR 4 is 4.73.0, and "Tag ONLY `v4.72.0`" is now WRONG.**
+> A concurrent session took **4.72.0** for ADR-052 and shipped it **without** the retrain, so the
+> numbers below are off by one release and the tagging instruction, followed literally, would publish
+> the very skew this section exists to prevent. Read every "4.72.0" below as **4.73.0**.
+>
+> The invariant was never the number. It is: **no tag between 4.71.0 and the retrain.** That has
+> held — `v4.71.0` and `v4.72.0` were both left untagged — so 4.73.0 is the first tag since
+> `v4.70.0` and is what publishes the pairing. A version number in a plan is a prediction; the
+> *ordering constraint* is the decision, which is why the heading no longer says
+> "do not re-litigate" about a figure that a parallel branch can invalidate.
+
+**PR 3 bumps to 4.71.0. PR 4 bumps to 4.73.0. Tag ONLY `v4.73.0`.** 4.71.0 and 4.72.0 are real,
+committed, traceable versions that are deliberately **never published to PyPI**.
 
 PR 3's CHANGELOG heading must carry the marker inline, because that is the exact line someone reads
 immediately before tagging:
 
 ```markdown
-## [4.71.0] — NOT RELEASED (ships within 4.72.0 alongside PR 4)
+## [4.71.0] — NOT RELEASED (ships within 4.73.0 alongside PR 4)
 ```
 
-PR 4 then adds its own `## [4.72.0] — YYYY-MM-DD` section above it and leaves PR 3's heading intact
+PR 4 then adds its own `## [4.73.0] — YYYY-MM-DD` section above it and leaves PR 3's heading intact
 (the marker is the historical record of why a version was skipped on PyPI). Use an **em dash** in the
 heading, matching every existing entry.
 
 **Merging is not releasing.** The publish workflow triggers on `tags: ["v*"]` ONLY
 (`.github/workflows/publish.yml:3-5`) and builds from `pyproject.toml`; merging PR 3 publishes
 nothing. So both PRs merge normally as ordinary squash commits — **no merge-setting override is
-needed, and none should be made.** The repo is squash-only by decision (`allow_merge_commit: false`,
+needed, and none should be made.** *(STALE as of 2026-08-01: the repo now allows merge commits —
+`allow_merge_commit: true`. That does not change PR 3's reasoning, which was about tag/release
+coupling and not commit shape; but PR 4 DOES need `--merge`, see its exit criteria and spec §11.8.)*
+The repo was squash-only at the time (`allow_merge_commit: false`,
 `allow_rebase_merge: false`); commit shape was never the constraint.
 
 **Why not `## [Unreleased]` with no bump in PR 3.** It was considered and REJECTED. It is technically
@@ -1947,6 +1961,7 @@ Report; do not auto-apply — TF-24 recommends, it does not change library const
 - [ ] **Step 4: Commit + PR**
 
 ```bash
+# DO NOT COPY THIS -- bare directory adds. See the re-planned Task 18 Step 6.
 git add silly_kicks/tracking/_gk_completion_weights/ docs/research/
 git commit -m "chore(weights): retrain GkCompletionModel on ADR-028-corrected geometry"
 git push -u origin pr4-loader-and-weights
@@ -2011,6 +2026,29 @@ in `docs/research/cover_shadow_identity/` alongside the 0.157, and state explici
 was RC1-contaminated. Do **not** overwrite the old number without that note — it is the figure cited
 in CLAUDE.md and the 4.67.0 CHANGELOG.
 
+> **RESOLVED — the re-run happened, and `0.723` is now superseded by a measurement.** The post-fix
+> agreement is **0.0443** (`docs/research/cover_shadow_identity/agreement.json`,
+> `agreement_rate: 0.0443298969072165`), against ~0.10 by chance — so the corrected cheap path agrees
+> with the exact argmax **less than random**, and RC1 had been *inflating* the figure. The gating
+> verdict from 4.67.0 is unchanged and now better supported: `0.0443 ≪ 0.723 ≪ 0.90`.
+>
+> The bound above is left in place deliberately: it was **sound reasoning that reached the right
+> verdict without the measurement**, and the measurement landing an order of magnitude inside it is
+> evidence the reasoning was conservative in the correct direction. Keeping both makes that legible;
+> deleting the bound would leave only the number and none of the argument. What is *not* left standing
+> is its conclusion that a re-run is optional — it was run, so the live figure is 0.0443 and any
+> forward citation should use it.
+>
+> **Two different ceilings were published for this one argument, and neither is live.** This plan
+> derives **0.723** = `(152+549)/970` from the *measured* not-home share `801/1414 = 56.6%`, while
+> main's shipped 4.72.0 `CHANGELOG.md:61` and `docs/research/cover_shadow_identity/README.md:22` both
+> publish **0.657** = `(152+485)/970`, i.e. a flat 50% away assumption. So a reader who searches for
+> the *argument* rather than the string `0.723` finds a different number and no cross-reference. The
+> shipped entries are **left unedited** — the house rule is that rewriting a released note is worse
+> than letting it stand — and both are superseded by the same measurement: **0.0443**, which is below
+> either ceiling and below chance. Cite 0.0443; treat 0.723 and 0.657 as two drafts of a bound that
+> the measurement retired.
+
 - [ ] **Step 3: Verify the driver still runs**
 
 ```bash
@@ -2050,3 +2088,408 @@ exact aggregator list and the worked example it follows.
 `tolerance_basis`, `home_team_id_role`, `non_vacuity`, `exempt_reasons`, `known_defect`) are used
 identically in Tasks 7-11. `_entry(...)` keyword names match the dataclass. `canonical_scene()`,
 `mirror_frames()`, `away_mask()` and `gate_xt()` are defined once and referenced consistently.
+
+---
+
+# PR 4 — RE-PLANNED 2026-08-01 (supersedes Tasks 16, 17, 17b above)
+
+> **Everything under "PR 4 — RC4 loader + all weights work" above is SUPERSEDED.** Tasks 16/17/17b
+> were implemented on branch `pr-s140-rc4-and-weights`, reviewed, and **parked**; four of the five
+> work items were then independently shipped by ADR-052 / 4.72.0, three of them better. That branch
+> is **abandoned** — kept on origin as a record. Do not rebase it. Start fresh from `main`.
+>
+> **The stashed weights are DROPPED, deliberately.** A stash is one `git stash clear` or one
+> fresh clone from gone, and is invisible to everyone but one machine (part-deux review: "either
+> tag it or drop it — either is better than a stash"). Dropping is the right half: those weights
+> must be regenerated under `--feature-space moved` regardless (§11.3), so they are not merely
+> superseded but **unusable**, and keeping them invites resurrection. The branch on origin already
+> records what was built.
+>
+> Rationale and evidence: **spec §11**. Read §11.1 before writing any RC4 prose — a fabricated IDSSE
+> measurement propagated into eight files last time.
+
+**Version:** 4.73.0 / PR-S141. No new ADR (ADR-051 already scopes "PR 4 of 5").
+**Base:** `main` @ `5a67212` (4.72.0 + PR #190's docs correction).
+
+**What survives from the parked branch:** the RC4 **SkillCorner** fix only. Everything else reverts
+to main.
+
+---
+
+## Task 16 (re-planned): RC4 — orient SkillCorner frames in the pining loader
+
+**Files:**
+- Modify: `scripts/_loader_pining.py` (`build_skillcorner_frames`, the PUBLIC frame builder at
+  :446 — **not** `_build_skillcorner` at :498, which merely delegates and carries no
+  `output_convention`; the two names differ by one underscore, which is exactly the shape of a silent
+  path pin)
+- Create: `tests/scripts/test_loader_orientation.py`
+
+- [ ] **Step 1: Branch from main**
+
+```bash
+git checkout main && git pull --ff-only
+git checkout -b pr-s141-rc4-and-retrain
+```
+
+- [ ] **Step 2: Measure the PRE-FIX state and record it**
+
+This is not optional bookkeeping — it is the step whose absence produced the fabrication in §11.1.
+Run the loader **before** editing it, on one SkillCorner match, and record the unlabelled fraction
+and the `acting_team_attacks_rtl` flip fraction. Expect `1.0000` unlabelled and a `0.0000` flip.
+
+**Do NOT extend the claim to any other provider without measuring that provider pre-fix.** IDSSE is
+NOT affected: `sportec.py:137` calls `finalize_orientation` unconditionally before the
+`output_convention` branch, and spec §2.2 independently records "On IDSSE flip is True on exactly
+718/718".
+
+- [ ] **Step 3: Fix the SkillCorner builder ONLY**
+
+Change that one call's `output_convention="absolute_frame"` to `"ltr"`. The `"ltr"` branch falls back
+to `orient_frames_to_ltr_by_geometry` (ADR-035) when `home_team_start_left` is absent, which is the
+case on this path — verify by reading `silly_kicks/tracking/skillcorner.py` before relying on it.
+
+Leave `_build_idsse` and `_build_gradientsports` alone.
+
+- [ ] **Step 4: Re-measure post-fix; both numbers now exist**
+
+Expect unlabelled `0.0000`, both direction labels present, and a **non-zero** flip fraction (the
+re-projection firing for the first time). Only now may a `X → Y` claim be written, and only for
+SkillCorner.
+
+- [ ] **Step 5: The guard — assert the RESOLVED CONVENTION, not a keyword**
+
+Per spec §11.9, the parked guard had two holes. Requirements:
+
+1. It must detect a builder that **omits** `output_convention` as well as one that passes
+   `absolute_frame` — `_build_gradientsports` omits it entirely and was invisible to a keyword
+   matcher.
+2. Its non-vacuity partner must **call the guard's own body**, not re-implement a weaker matcher
+   inline.
+3. `scripts/_loader_pining.py` is a **library, not a corpus driver** — settled by
+   `test_corpus_driver_resilience.py`'s own population logic, which skips underscore-prefixed files.
+   No `_driver` migration or provenance obligation attaches to this edit.
+
+- [ ] **Step 6: Prove the guard is red on the pre-fix source, then commit**
+
+Restore the pre-fix line, confirm the guard fails, restore the fix. Commit RC4 **alone** — it must
+land before any trainer run (Task 17 Step 1 explains why).
+
+---
+
+## Task 17 (re-planned): regenerate the probe, then retrain under main's CLI
+
+- [ ] **Step 1: Understand the ordering constraint before running anything**
+
+ADR-052 shards `_extract` per match on a token that captures **neither geometry nor library
+version**. If a trainer run happens on rebased main *before* RC4 lands, it mints a generation; RC4
+then changes the SkillCorner frames while the token does not, and the retrain silently reads stale
+features. The only signal is a per-item `skip (shard exists)`.
+
+**RC4 must already be committed before the first extraction.** That makes the failure unreachable
+rather than guarded. Also: **do not pass `--cache-features`** — it is a bare `Path.exists()` check
+that bypasses the generation directory entirely.
+
+Optional defence in depth: add a derived orientation entry to `token_inputs`. Note `cache_token()`
+would have missed both RC2 and RC4, so copy ghost's *discipline*, not its body.
+
+> ## ⚠ STEP 2 BELOW IS SUPERSEDED — read this box first (spec §11.3.1)
+>
+> **The whole of Step 2 aims at the wrong artifact.** `predictions_moved` ends in an ELEMENT-WISE
+> `np.allclose`, so `probe_old` and `probe_new` must be **row-aligned**. The 4.21.0 training matrix
+> (1666 rows) against the current corpus (~3491) does not answer wrongly — it raises
+> `ValueError: operands could not be broadcast together with shapes (1666,) (3491,)`, at the guard,
+> after the whole corpus pass is paid for.
+>
+> **`probe_old` = the SAME corpus as the fresh fit, extracted under PRE-CHANGE geometry** — i.e.
+> commit **`641dadf`** (4.70.0), immediately before RC2/RC3/RC5 landed in `89dd9af` (4.71.0). The
+> guard asks a *serving* question ("does what production emits change?"), not a fitting-provenance
+> one. The docstring says as much in its next clause — *"they are the SAME array whenever the feature
+> space did not move"* — and the registered test builds the moved case as `X_new = X_old + 5.0`,
+> same rows, shifted geometry.
+>
+> So **"pre-RC2", which Step 2 opens by calling wrong, is right** — for the row-alignment reason,
+> not the one originally offered. Keep Step 2's *discipline* (validate, do not infer; a fail is
+> ambiguous; check `N` before reading a verdict) and discard its target. The vintage archaeology it
+> prescribes cost ~50 min of DGX compute and could have been pre-empted by one line: calling
+> `predictions_moved` with two mismatched shapes, no corpus required.
+>
+> Alignment is verified in spec §11.3.1: both vintages concat in `load_matches` order (HEAD combines
+> from `res.keys`, explicitly **not** `reconcile`, whose filename sort would have re-ordered), and
+> the entire `641dadf..4b15365` loader diff is the SkillCorner-only RC4 change, so the GS order is
+> unchanged. The remaining check is the row COUNT, which is loud.
+
+- [ ] **Step 2 (SUPERSEDED — see the box above): Produce `--probe-old` from a VINTAGE-VALIDATED commit (not merely pre-RC2)**
+
+Main's `--mode retrain` requires `--feature-space {unchanged,moved}`, and this case is **`moved`**
+(the flag means feature *values* changed, which a geometry correction does). `moved` requires
+`--probe-old`: the design matrix the **committed** model was fit on. It cannot be reconstructed from
+the artifact — `to_dict()` persists no design matrix.
+
+**"Pre-RC2" is the WRONG target.** The probe must be the matrix the **committed weights** were fit
+under. Those coefficients were fit at **`e3d5e92`** (2026-06-09, **4.21.0**) — ~50 releases before
+RC2, with several geometry changes in between (ADR-024 amendments, PR-S104). Get the vintage wrong
+and `predictions_moved` compares the committed model against coordinates *it never saw either* —
+meaningless, and nothing reports it.
+
+**Do NOT identify the vintage with `git log -1 -- model.json`.** That finds the last **touch**, not
+the last **fit**, and it is how revision 1 of this plan got it wrong: `7e875c8` (4.21.4) touched
+`model.json` additively only — version bump plus the gate fields, **no `coef` change**. `7e875c8` is
+nonetheless an admissible vintage, but *by validation* (its corpus-identity probe was run and passed,
+CLAUDE.md PR-S91) rather than by recency. Verify, do not infer.
+
+**Validate a candidate vintage by RUNNING THE TRAINER there** — not by passing `--mode rebundle`,
+which does not exist at 4.21.x (measured at `7e875c8`: 0 occurrences of `--mode`). At that vintage
+the corpus-identity assertion runs **unconditionally** (`_CORPUS_IDENTITY_ATOL`, 9 occurrences),
+because rebundle is the only behaviour there.
+
+**The check is ONE-SIDED — read a failure carefully.** A **pass** is strong: code and corpus both
+reproduce the committed weights. A **fail is ambiguous** — wrong vintage *or* corpus drift (4.49.0
+and 4.50.0 each shipped GS-only retrain triggers), and `_CORPUS_IDENTITY_ATOL = 0.05` is loose enough
+that a pass means something while a fail does not localise. Do not start a vintage hunt on a single
+failure.
+
+**And there IS a concrete discriminator — check it BEFORE interpreting the verdict, because the run
+can manufacture the ambiguity by itself.** The committed `default/metrics.json` records
+`n_rows: 1666`, `n_native: 1395`, consistent with CLAUDE.md's "30 WC2022 matches" (~55 rows/match).
+The pining GS manifest **now offers 64**, and `--max-per-provider` defaults to 64 at *both* the
+vintage and HEAD — so an unqualified run loads roughly **twice** the original corpus and the fresh
+fit differs for a reason that has nothing to do with vintage. The trainer prints `N=` on startup, so
+read it first:
+
+| observed `N` | what the assertion result means |
+|---|---|
+| ≈ **1666** | corpus matches — the verdict is a genuine vintage check, both ways |
+| ≫ 1666 (≈3550) | corpus differs — the verdict is **uninterpretable as a vintage check**, whichever way it lands |
+
+A **pass** at N≫1666 would be the more dangerous outcome of the two: it would look like a clean
+validation while proving only that the tolerance is loose. Note also that re-running with
+`--max-per-provider 30` recovers the *count* but not necessarily the *same thirty matches*, since
+nothing pins selection order across releases — so treat a corpus mismatch as a reason to widen the
+evidence (compare `n_native`, `base_rate`, `label_split` against `metrics.json`), not as something a
+single flag reliably fixes.
+
+Then run the extraction at the validated commit and dump `X_all` to parquet. `--cache-features` is
+wired only into `_train_skillcorner`, not `main()`, so the `default` variant needs its own small dump.
+
+**Do NOT pass `--feature-space unchanged` to get past the guard.** That declares something false and
+makes the guard compare the committed model against coordinates it never saw.
+
+- [ ] **Step 3: Persist the probe OUT-OF-BAND (not inside the artifact)**
+
+ADR-052 records this as an ADR-011 follow-up, and this PR regenerates the artifact anyway, so it is
+the natural moment. **But not in the weights directory:** `ADR-044:25` states that distributed model
+artifacts carry *"learned parameters only, not per-sample training data"*, and a design matrix is
+per-sample training data (part-deux review 2 — the ADR-052 follow-up was written without checking
+ADR-044).
+
+**Decision: the probe lives under `docs/research/`, referenced from `metrics.json` by path AND
+SHA256.** Wheel stays parameters-only; the citation stays resolvable. A fixed sample, not a corpus.
+
+Note regardless: adding any file to the weights directory moves `SHA256SUMS`, so a checksum-pinning
+consumer sees a diff with no value change (the ADR-050 precedent).
+
+- [ ] **Step 4: Retrain `default` from a CLEAN tree**
+
+`--mode retrain --feature-space moved --probe-old <parquet> --reason "<what changed>"`, no
+`--allow-dirty`. The reason string must name **RC2/RC5** — *not* RC4: the `default` variant is
+gradientsports-only and RC4 touches only the SkillCorner builder. The parked run's reason string got
+this wrong.
+
+Gate: `ece <= 0.10` and `|slope - 1| <= 0.25`. If it fails, do not ship.
+
+- [ ] **Step 5: Re-assess the SkillCorner variant**
+
+It IS in RC4's blast radius (unlike `default`). Expect main's `predictions_moved` guard to be the
+arbiter. The 4.42.0 precedent stands: if it fails its gate, drop the variant rather than ship it.
+
+**Use `--max-per-provider 10`, and the reason is COMPLIANCE, not corpus-matching.** ADR-038 grew the
+pining SkillCorner listing 10 → 108, and the 98 additions are owner-tier. **Measured** — these are
+the manifest's own `visibility` strings via `match_visibility`, not a judgement about the data:
+
+```
+gradientsports :  64 matches -- manifest says "private"   (see the caveat below)
+skillcorner    :  10 "public" + 98 "private"
+select_match_ids(providers=["skillcorner"], max_per_provider=10)
+    -> ['1886347','1899585','1925299','1953632','1996435','2006229','2011166','2013725','2015213','2017461']
+    -> visibility: ['public']   (all ten)
+```
+
+So the cap selects exactly the public arm — verified, not assumed, and it also happens to match the
+committed variant's `n_matches: 10`.
+
+**The two `"private"` labels do NOT mean the same thing, and only one of them is an access
+restriction.** The SkillCorner 98 are genuinely restricted — ADR-038 records them as *"owner-tier,
+restricted, all Real Madrid LaLiga+UCL"* — so a defaulted cap-64 run would pull 54 access-restricted
+matches into a **distributed wheel artifact**, and that is the reason for the cap.
+
+**Gradient Sports is a situation the manifest simply cannot express, and the label reads as far more
+restrictive than the reality.** The data is **publicly obtainable by anyone** — it sits in a public
+Google Drive folder behind a free signup — and the provider's own site *encourages people to share
+the work*. What is unresolved is the precise open-source **licence wording**, not who may read it,
+and not whether the provider wants it used. The project's practice of not republishing the raw data
+is a **deliberate conservative choice by the owner**, not a constraint imposed by the provider, and
+it costs nothing because anyone can fetch the same files directly.
+
+So `is_public_row` being fail-closed remains the right default for an automated redistribution
+decision — a machine should not infer licence terms — but **do not read the GS `"private"` label as
+evidence of secrecy or of a provider restriction, and do not cite it as one.** Treating the two
+labels as equivalent would over-restrict GS work for no benefit while under-describing why the
+SkillCorner cap actually matters.
+
+**`train_gk_completion.py` has NO ADR-038 enforcement** — `is_public_row` / `artifact_label` /
+`assert_public_corpus` appear only in `train_xcross_attempt.py` and `train_xshot_occurrence.py`.
+So nothing in this trainer would have refused that run, or labelled its output restricted. Wiring
+the taxonomy in is a **follow-up, not this PR**: it would dirty the tree that the retrain requires
+clean, and it belongs with the other trainers rather than bolted onto one.
+
+**Not a concern, and worth saying so plainly:** the `default` variant is trained entirely on Gradient
+Sports data and has been bundled since 4.21.0 under ADR-024. Given that the data is publicly
+obtainable and the provider encourages the work being shared, bundling *learned parameters* fit on it
+raises no real issue — and ADR-044's parameters-only rule bounds it further by keeping per-sample
+training data out of the artifact entirely. This retrain changes the corpus size but not its
+character (30 GS matches → 64, same provider, same terms).
+
+It sits oddly beside xS/xCross, which shipped their `public` arms and rejected `full` — but those
+rejections were driven by **measured held-out degradation**, not by any compliance rule, so they set
+no precedent that constrains this variant.
+
+- [ ] **Step 6: DGX prerequisite**
+
+`~/Development/silly-kicks/.venv` has `ruthless-efficiency 0.2.1`; `pyproject.toml` now requires
+`>=0.4.0` (`scripts/_driver.py` keys generations on `ruthless.fingerprint`, public only from 0.4.0).
+Symptom if skipped: `ImportError: cannot import name 'fingerprint'`, which surfaces as dozens of test
+failures from one cause. Install before anything else.
+
+---
+
+## Task 18 (new): correct the stale records this PR is responsible for
+
+- [ ] **Step 1: The 4.71.0 note, in two places**
+
+`CHANGELOG.md`'s 4.71.0 heading and `ADR-051`'s status header both still say "ships within 4.72.0
+alongside PR 4". 4.72.0 shipped **without** the retrain. Correct both.
+
+**THREE sites, not two.** This plan's own "Version numbering for PR 3 + PR 4" section carries the
+same staleness — including a literal **"Tag ONLY `v4.72.0`"** instruction, which is worse than a
+stale note because following it publishes the skew. It was missed on the first pass because the
+section is headed "do not re-litigate", and because an edit six lines below it (the merge-settings
+STALE note) left the version numbers untouched. Enumerate by search, not by memory:
+`grep -rn '4\.72\.0' CHANGELOG.md TODO.md docs/superpowers/ | grep -v 'ADR-052\|4\.72\.0\] —'`.
+
+- [ ] **Step 2: Withdraw the IDSSE retraction**
+
+Spec §2.2's IDSSE column was retracted as "provisional" on a fabricated premise (§11.1). That
+retraction propagated into CHANGELOG, CLAUDE.md, TODO.md and ADR-051 on the abandoned branch — none
+of which reached main, so **verify** rather than assume, and remove any that did.
+
+- [ ] **Step 3: Correct `0.723` in THIS plan — the main-side fix is already taken**
+
+**PR #190 (part-deux) corrects the 4.72.0 CHANGELOG and CLAUDE.md.** Do not duplicate it; that is
+their release's error and taking it there removes a conflict from this diff. Copy their 4.67.0
+handling as precedent: leave the shipped entry **unedited** with a superseded-by note, since
+rewriting a shipped release note is worse than leaving it while leaving it unmarked invites a forward
+citation.
+
+**What IS ours:** `0.723` at line ~2005 of this plan — Task 17b's worst-case bound, written in PR 3
+and merged to main. The reviewer searched CHANGELOG and CLAUDE.md and did not find it; it lives here.
+It is derived from the pre-fix `0.157` and is stale in the same direction (the post-fix agreement is
+`0.0443`, i.e. **0.44× chance, worse than random** — the defect was *inflating* it). The gating
+verdict is unchanged and better supported.
+
+- [ ] **Step 4: Record the TF-24 disposition explicitly (do not leave it silent)**
+
+§3.4 names TF-24 as RC4's second affected consumer, so a **No** verdict must be stated, not implied.
+Per spec §11.7 the evidence is: Stage 1's shipped params are TF-24-calibrated but carrier inference is
+orientation-INVARIANT (measured 40/40, delta 1.01e-14), and Stage 2's params ship as **engineering**
+defaults TF-24 never set. **No re-sweep trigger; no shipped value moves.** One line in the CHANGELOG
+and the ADR is enough — but it must be there.
+
+- [ ] **Step 5: Optional — carry the four additive trainer improvements**
+
+From spec §11.2: served-vs-probe coefficients in `metrics.json`; an actionable `SystemExit` on
+rebundle drift; `weight_deltas`/`coefficients_changed` in metrics; real `save`/`load` test coverage
+(main's trainer tests import no model). Small, independent, and each stands alone — drop any that
+complicate the diff.
+
+> **RESOLVED — the list was written against the ABANDONED branch's trainer, and main has moved.**
+> Checked against `scripts/train_gk_completion.py` on main before building anything:
+>
+> - **#1 and #3 are already there in substance.** `metrics.json` records `run_commit`,
+>   `run_tree_dirty`, `mode`, `reason` and **`superseded_coef`** — the full replaced coefficient
+>   vector, on **both** the default and SkillCorner paths. Any `weight_delta` is derivable from it,
+>   so adding one would persist a computed quantity beside its own inputs. **Not built.**
+> - **#2 built.** The two rebundle sites were byte-identical four-line `np.testing.assert_allclose`
+>   blocks raising a float diff with no remedy, at the end of a half-hour corpus pass — and
+>   `assert_allclose` short-circuits on `coef`, so it never reports the `mean`/`std` drift that is
+>   precisely the signature of a feature-space move. Extracted to `_assert_rebundle_reproduces`,
+>   which reports all four and names the retrain command. Three tests, both sides, one asserting the
+>   **message** (asserting only "it raised" would pass on the old behaviour).
+> - **#4 built.** Every existing test used plain dicts, so `_as_weights` — which reads four *private*
+>   attributes off a real `GkCompletionModel` — was never run against one. Three tests: the real
+>   artifact contract with shapes tied to the feature list, a save/load round trip, and a
+>   non-vacuity partner. Teeth proven by planting a 0.01 coefficient corruption into a round-tripped
+>   model: caught by both prongs.
+>
+> **Sequencing note, which turned out not to bite.** Under the two-commit structure the retrain runs
+> against *already-committed* code, so anything that changes `metrics.json` fields could not reach
+> this artifact without a third commit. That would have forced a real choice — but since #1 and #3
+> were the only artifact-changing items and both were already satisfied, #2 and #4 land cleanly:
+> one touches a failure path not taken by a successful retrain, the other is tests only. The shipped
+> `run_commit` therefore records the RC4 commit, which is exactly right — it names the code that ran.
+
+---
+
+- [ ] **Step 6: Stage by PATH, never by bare directory**
+
+`docs/research/` holds **15** entries as of `4b15365` — 13 directories plus 2 standalone `.md` files, so
+count with `find docs/research -maxdepth 1 -mindepth 1 | wc -l`, not `ls -d */`, which sees only 13.
+This cycle's own `adr028_rc4_orientation/` was the 15th. So a bare
+`git add docs/research/` sweeps whatever else happens to be dirty. The part-deux session nearly swept
+an unrelated `_partition.py` into a commit exactly this way, and the superseded Task 17 Step 4 above
+still shows the bad form.
+
+Name the paths, and check before committing:
+
+```bash
+git add --dry-run <each path>     # read the list before it becomes a commit
+git status --porcelain            # nothing unexpected staged
+```
+
+The weights artifact is the one place this matters most: `model.json`, `metrics.json` and
+`SHA256SUMS` must move **together**, and the out-of-band probe under `docs/research/` must move with
+them or `metrics.json`'s SHA256 reference dangles.
+
+---
+
+## PR 4 exit criteria
+
+**COMMIT STRUCTURE — exactly two commits, and the second is the last thing that happens.**
+
+1. **RC4 alone**, already committed. Separate *only* because the sequencing constraint requires it:
+   the trainer must execute against RC4-corrected code, or ADR-052's shard token silently serves
+   stale SkillCorner features (§11.4).
+2. **Everything else in ONE commit** — weights, research artifacts, doc corrections, and the
+   five-site version bump — made **after** `/final-review` has run and every finding is fixed in the
+   working tree. Do not commit and then review: the fixes become extra commits, and this PR merges
+   with `--merge`, so they persist on main rather than being squashed away.
+
+Then ONE merge. Never merge RC4 to main on its own — that would put corrected serving geometry on
+main without the paired retrained weights, a smaller instance of the very skew that left 4.71.0
+untagged (§11.8).
+
+- RC4 SkillCorner fixed, with **both** sides of the claim measured and the guard proven red pre-fix.
+- `default` retrained under `--feature-space moved` with a persisted probe, from a clean tree, gate green.
+- SkillCorner variant assessed; dropped rather than shipped if it fails.
+- 4.73.0 / PR-S141 in all five version sites (`uv lock`, do not hand-edit).
+- Stale 4.71.0 notes and the superseded cover-shadow figure corrected.
+- **`/final-review` runs BEFORE the commit, not after.** Everything it finds is fixed in the working
+  tree, and only then is the commit made. Reviewing a commit and then fixing it produces
+  fix-the-fix commits — which a `--merge` PR then preserves in history permanently, unlike a squash.
+  Given this cycle's history, treat any `X → Y` claim in the review output as unverified until both
+  sides are shown.
+- **Merge with `--merge`, NOT a squash.** `metrics.json` records `run_commit`; a squash mints a new
+  SHA and the citation stops resolving. The repo now allows merge commits (`allow_merge_commit: true`
+  as of 2026-08-01 — it was squash-only, so the habit is stale). Verify afterwards:
+  `git merge-base --is-ancestor <the SHA metrics.json records> origin/main`.
+- Then **tag** — this PR is what makes the first tag since `v4.70.0` safe.
