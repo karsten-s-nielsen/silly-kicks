@@ -1,0 +1,23 @@
+{
+  "skillcorner": {
+    "match_id": "1886347",
+    "player_rows": 63008,
+    "unlabelled_fraction": 1.0,
+    "distinct_labels": [],
+    "n_actions": 1197,
+    "flip_true_fraction": 0.0,
+    "orientation_warnings": 1
+  },
+  "idsse": {
+    "match_id": "DFL-MAT-J03WMX",
+    "player_rows": 66000,
+    "unlabelled_fraction": 0.0,
+    "distinct_labels": [
+      "ltr",
+      "rtl"
+    ],
+    "n_actions": 1363,
+    "flip_true_fraction": 0.31548055759354365,
+    "orientation_warnings": 0
+  }
+}
