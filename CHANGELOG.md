@@ -54,10 +54,15 @@ Corrections shipped alongside:
   no home-only filter. 4.70.0 fixed the `features.py` callers; this driver imports
   `_compute_cover_shadow_dict` DIRECTLY, so it was never a registered site. It does **not** cancel
   between the two arms it compares — only the CHEAP path consumes the passer — so
-  `docs/research/cover_shadow_identity/`'s **0.1992 is a pre-RC1 number** needing an owner re-run.
-  **The `detailed=True` gating verdict survives without one, by arithmetic:** 0.157 × 970 = 152
-  agreements against a 0.90 floor needing 873; even if every away row flipped to agreeing the
-  ceiling is 637/970 = **0.657**.
+  `docs/research/cover_shadow_identity/`'s numbers were pre-RC1. **The re-measurement shipped in
+  this same release** (`ff1948d`), from a clean tree at `7475a27`, same corpus: agreement
+  **0.1567 → 0.0443**, i.e. **0.44× the ~0.10 chance rate — WORSE than random**, where it had read
+  1.6× better. **The defect had been INFLATING agreement, not suppressing it**; the ceiling argument
+  drafted before the re-run ("even if every away row flipped to agreeing, ≤0.657") held, but its
+  implied direction was wrong. The `detailed=True` gating verdict is unchanged and considerably
+  better supported — the Wilson upper bound is **0.059** against a 0.90 floor. The `max_def`
+  distribution is byte-identical across both runs (that column comes from the EXACT path, which
+  never consumes the passer), confirming the fix moved the cheap path alone.
 - **`calibrate_tracking_defaults --source databricks` could not run at all.** The driver calls
   whichever loader `--source` selects with one kwarg set, and `_loader_databricks.load_matches`
   accepted neither `tracking_limit` nor `max_per_provider`, so every such invocation died on
@@ -424,6 +429,11 @@ any shipped column's values, no API change, no retrain, C4 count stays 32.**
   evidence. Guarded both ways — the public default AND that the hatch still functions, since it
   could otherwise rot silently while the default guard stayed green. Verified end-to-end: the
   script reproduces **0.1992** on match 10502, matching the pre-gating pilot exactly.
+  > **SUPERSEDED by 4.72.0.** Every agreement figure in this 4.67.0 entry (0.157, 0.1992, the
+  > 1.6×-chance framing) was measured while the producing driver carried the ADR-028 RC1 passer
+  > defect. Post-fix the rate is **0.0443**, i.e. **0.44× chance**. Left unedited because a shipped
+  > release note records what was measured at the time; see `docs/research/cover_shadow_identity/`
+  > for the current numbers. **The GATE decision this entry describes is unchanged.**
 
 - **`scripts/measure_cover_shadow_argmax_agreement.py`** is new, wired to `_provenance`
   (`require_clean_tree` in `main()`, `--allow-dirty`, stamps `run_commit`/`run_tree_dirty`) and
