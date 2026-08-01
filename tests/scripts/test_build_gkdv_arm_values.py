@@ -169,7 +169,6 @@ def _non_ascii(path) -> list[str]:
 _KNOWN_NON_ASCII_DRIVERS = frozenset(
     {
         "build_worldcup_fixture",
-        "calibrate_tracking_defaults",
         "download_skillcorner_sample",
         "extract_paired_idsse_fixture",
         "extract_provider_fixtures",

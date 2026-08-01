@@ -1,21 +1,21 @@
 {
   "n_actions_scored": 1039,
   "n_qualifying": 970,
-  "agreement_rate": 0.15670103092783505,
+  "agreement_rate": 0.0443298969072165,
   "agreement_wilson95": [
-    0.13518342594212235,
-    0.1809271201672244
+    0.0330755563489453,
+    0.059179282631028444
   ],
-  "n_agree": 152,
-  "n_disagree": 818,
+  "n_agree": 43,
+  "n_disagree": 927,
   "disagreement_harm_exact_units": {
-    "n": 790,
-    "median": 0.8174805792821194,
-    "p90": 1.596723879770231,
+    "n": 898,
+    "median": 0.8459257732756482,
+    "p90": 1.607432251355809,
     "max": 8.612181884071026
   },
   "disagreement_harm_as_fraction_of_max": {
-    "median": 0.9836885135237563,
+    "median": 0.9880128443034359,
     "p90": 1.0
   },
   "max_def_distribution": {
@@ -51,9 +51,10 @@
     }
   },
   "tol_attrib_in_effect": 1e-12,
-  "decision": "DO_NOT_SHIP_SILENTLY (agreement 0.1567 < 0.90) -- gate to detailed=True or drop",
-  "run_commit": "748cd1df40a422a95d04216bcd8e5aacbdba098b",
+  "decision": "DO_NOT_SHIP_SILENTLY (agreement 0.0443 < 0.90) -- gate to detailed=True or drop",
+  "run_commit": "7475a2781dc01cd01eb06b305b15168931fe24a9",
   "run_tree_dirty": false,
+  "run_tree_state": "clean",
   "corpus": {
     "provider": "gradientsports",
     "n_matches": 3,

@@ -1,31 +1,38 @@
 # TF-30 — `max_single_defender_player_id` agreement measurement
 
-> ## ⚠ The POINT ESTIMATES below are PRE-RC1 and need an owner re-run. The VERDICT stands.
+> ## RE-MEASURED post-RC1 on 2026-07-31. Agreement FELL 0.157 → **0.0443**; the verdict is unchanged.
 >
-> Measured 2026-07-31 (ADR-052): the producing driver,
-> `scripts/measure_cover_shadow_argmax_agreement.py`, carried the ADR-028 **RC1** defect at the time
-> this ran — it built `passer_xy` from raw **action-LTR** `start_x`/`start_y` and passed it beside
-> **frame-LTR** defenders, receivers and ball, with no home-only filter. 4.70.0 fixed the two
-> `features.py` callers; this driver imports `_compute_cover_shadow_dict` **directly**, so it was
-> never a registered RC1 site and the defect stayed live until ADR-052 fixed it here.
+> The producing driver, `scripts/measure_cover_shadow_argmax_agreement.py`, carried the ADR-028
+> **RC1** defect when the original numbers were taken — it built `passer_xy` from raw **action-LTR**
+> `start_x`/`start_y` and passed it beside **frame-LTR** defenders, receivers and ball, with no
+> home-only filter. 4.70.0 fixed the two `features.py` callers; this driver imports
+> `_compute_cover_shadow_dict` **directly**, so it was never a registered RC1 site and the defect
+> stayed live until ADR-052 (4.72.0) fixed it here. Re-run from a clean tree at commit `7475a27`,
+> same corpus (GS `10502`/`10503`/`10504`, `tracking_limit=40000`, 1039 scored / 970 qualifying).
 >
-> **It does not cancel between the two arms.** The CHEAP path consumes the passer and the EXACT
-> path does not, so the defect degraded precisely the comparison being measured — and RC1 measured
-> the cheap-path column changing on **90.7% / 100%** of away rows. Roughly the away half of the
-> 970-action sample was scored with the passer at the wrong end of the pitch.
+> | | pre-RC1 | post-RC1 |
+> |---|---|---|
+> | agreement | 0.1567 | **0.0443** |
+> | agree / disagree | 152 / 818 | **43 / 927** |
+> | Wilson 95% | [0.135, 0.181] | **[0.033, 0.059]** |
+> | harm median (exact units) | 0.817 | 0.846 |
+> | `max_def` zero / non-zero | 69 / 970 | **69 / 970 (identical)** |
 >
-> **Why the decision is nonetheless unchanged, by arithmetic rather than assumption:** 0.157 × 970
-> = **152** agreements; the 0.90 floor needs **873**. Even if *every* away row flipped to agreeing,
-> the ceiling is 637/970 = **0.657 < 0.90**. So the gate-to-`detailed=True` decision cannot be
-> overturned by the re-run; only the reported rate, the Wilson interval, the harm distribution and
-> `TOL_ATTRIB`'s supporting figures move.
+> **The defect had been INFLATING agreement, not suppressing it.** The earlier note reasoned about
+> a *ceiling* — "even if every away row flipped to agreeing, ≤0.657" — and framed the correction as
+> something that could only help. It went the other way: correcting the passer made the cheap path
+> agree *less*. The bound held, but its implied direction was wrong, and that is worth recording
+> rather than quietly replacing the number.
 >
-> Re-run with the fixed driver to restore precision. Until then treat every number below as a
-> lower-bound-quality estimate, not a citable rate.
+> **Internal check that the fix touched only what it should:** the `max_def` distribution is
+> byte-identical across the two runs (69 exactly-zero, 970 non-zero, smallest non-zero
+> 0.0036426529 in both). That column comes from the EXACT path, which does not consume the passer —
+> so `TOL_ATTRIB`'s supporting figures stand unchanged, and the RC1 fix is confirmed to have moved
+> the cheap path alone.
 
 **Verdict: the cheap path cannot support an identity column.** Agreement between the default
-(`detailed=False`) argmax and the exact (`detailed=True`) argmax is **0.157** (pre-RC1; see above),
-against a pre-registered floor of 0.90.
+(`detailed=False`) argmax and the exact (`detailed=True`) argmax is **0.0443**, against a
+pre-registered floor of 0.90.
 
 **Decision taken: GATE.** `max_single_defender_player_id` ships, but is populated **only** under
 `detailed=True`; the cheap path returns `None` unconditionally and never names a defender. The exact
@@ -34,7 +41,7 @@ path's identity is correct by construction — it is the argmax over the same
 `max_single_defender_blocking_score`, pinned by
 `test_identity_is_the_argmax_over_all_lane_blockers`. The gate itself is guarded by
 `test_cheap_path_never_names_a_defender`, so removing it fails CI rather than silently restoring a
-column that is wrong 84% of the time.
+column that is wrong **95.6%** of the time.
 
 The cost of opting in was measured: **2.3–3.2×** (39–42 ms/action cheap vs 98–125 ms/action exact,
 warmed, both orderings). Not the order of magnitude an initial unwarmed measurement suggested.
@@ -75,16 +82,17 @@ Corpus: 3 Gradient Sports WC2022 matches, `--tracking-limit 40000`.
 |---|---|
 | Actions scored | 1039 |
 | Qualifying (>= 2 lane blockers, exact `max_def > TOL_ATTRIB`) | **970** |
-| Agreement | **0.1567** |
-| Wilson 95% CI | **[0.135, 0.181]** |
-| Agree / disagree | 152 / 818 |
+| Agreement | **0.0443** |
+| Wilson 95% CI | **[0.033, 0.059]** |
+| Agree / disagree | **43 / 927** |
 
 `n` clears the >= 100 requirement by an order of magnitude, and the interval's **upper** bound is
-0.181 — the floor is not merely missed, it is out of reach. A single-match pilot gave 0.1992, so the
-result is stable across corpus size.
+**0.059** — the floor is not merely missed, it is out of reach by more than a factor of fifteen.
 
-With roughly 10 lane blockers per action, chance agreement is ~0.10. The cheap path's argmax is about
-**1.6x better than random**.
+With roughly 10 lane blockers per action, chance agreement is ~0.10, so the cheap path's argmax is
+**0.44x chance — WORSE than picking a lane blocker at random.** The pre-RC1 measurement read 1.6x
+BETTER than random; correcting the passer reversed that reading. The earlier single-match pilot
+figure of 0.1992 was taken under the same defect and is likewise superseded.
 
 ## The disagreements are not near-ties
 
@@ -95,13 +103,13 @@ magnitude whether or not the argmax agrees. Both terms must share one scale.)
 
 | Harm at disagreements | Value |
 |---|---|
-| median (exact units) | 0.817 |
-| p90 | 1.597 |
+| median (exact units) | 0.846 |
+| p90 | 1.607 |
 | max | 8.612 |
-| **median, as a fraction of the exact maximum** | **0.984** |
+| **median, as a fraction of the exact maximum** | **0.988** |
 | p90, as a fraction | **1.0** |
 
-The median disagreement gives up **98.4%** of the true winner's blocking score, and at p90 the
+The median disagreement gives up **98.8%** of the true winner's blocking score, and at p90 the
 fraction is **1.0** — the cheap path names a defender whose exact-path contribution is **exactly
 zero**. These are not two near-equal defenders being ordered differently; the cheap path routinely
 names someone who did nothing.
@@ -114,7 +122,7 @@ of "which defender blocks most", never to the pitch-control Voronoi counterfactu
 legitimately different constructs.
 
 The existing `TestDetailedVsLightweightCorrelation` asserts Spearman rho >= 0.7 between the two paths
-on the **value**. That is entirely compatible with the **argmax** disagreeing 84% of the time: the
+on the **value**. That is entirely compatible with the **argmax** disagreeing **95.6%** of the time: the
 cheap path ranks *how much* blocking happened without identifying *who* did it. Both facts are true
 and neither is a defect — but together they mean an identity column served from the default path
 would be wrong most of the time.
@@ -133,7 +141,12 @@ reasoning — it is confirmed by the distribution it was supposed to be set from
 
 ## Provenance
 
-The recorded run is marked `run_tree_dirty: true` — it was produced from a working tree with the
-TF-30 changes uncommitted. That is recorded rather than laundered: `git rev-parse HEAD` returns the
-same SHA dirty or clean, so a bare SHA would describe code that did not run. Re-run from a clean tree
-(without `--allow-dirty`) to produce a citable artifact.
+The recorded run is `run_commit: 7475a2781dc0`, `run_tree_dirty: false`, `run_tree_state: clean` —
+produced from a clean tree, so the SHA genuinely describes the code that ran. This is a **citable**
+artifact.
+
+The previous version of this file said the opposite (`run_tree_dirty: true`, "re-run from a clean
+tree to produce a citable artifact"), because the original numbers were taken with the TF-30 changes
+uncommitted. That re-run is what this file now reports. The ordering was forced rather than chosen:
+ADR-052 made this driver REFUSE a dirty tree, so the re-measurement could not happen until the
+cycle's own commits landed — the guard doing exactly its job, on its author.
