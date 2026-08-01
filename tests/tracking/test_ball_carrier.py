@@ -6,6 +6,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def _make_carrier_frame(
@@ -855,3 +856,159 @@ def test_double_enriched_frames_survive_xshot_consumer():
     # MUST NOT raise KeyError: 'team_in_possession'
     X, y, groups = prepare_xshot_training_data(double, shots, home_team_id=1, attacking_third_only=False)
     assert len(X) == len(y) == len(groups)
+
+
+# ---------------------------------------------------------------------------
+# Carrier inference is ORIENTATION-INVARIANT (ADR-051 / TF-24 disposition)
+# ---------------------------------------------------------------------------
+
+
+def _point_reflect(frames: pd.DataFrame) -> pd.DataFrame:
+    """ADR-028's 180 degree point reflection, applied per ADR-045's kind rules.
+
+    Positions point-reflect (``x -> 105 - x``, ``y -> 68 - y``); velocities NEGATE; the direction
+    LABEL swaps. Reflecting positions while leaving velocities alone would model every player running
+    backwards -- the exact D1 defect ADR-045 records -- and would make this test measure that bug
+    instead of the property it claims to check.
+    """
+    out = frames.copy()
+    out["x"] = 105.0 - out["x"]
+    out["y"] = 68.0 - out["y"]
+    for v in ("vx", "vy"):
+        if v in out.columns:
+            out[v] = -out[v]
+    if "team_attacking_direction" in out.columns:
+        out["team_attacking_direction"] = out["team_attacking_direction"].map({"ltr": "rtl", "rtl": "ltr"})
+    return out
+
+
+def _contest(i: int, rng) -> list[dict]:
+    """Two contenders arranged so the carrier VARIES at both betas and velocity DECIDES at beta>0.
+
+    Sensitivity is the whole point, and an earlier draft had none. With one clearly-nearest player the
+    distance term dominates and the velocity term never flips the winner -- MEASURED: a
+    `_point_reflect` that forgets to negate velocities (the ADR-045 D1 defect) produced an identical
+    carrier series, so the test passed against a planted bug. A second draft placed the two exactly
+    equidistant, which made the carrier CONSTANT at the shipped `beta=0.0` (deterministic tie-break)
+    and tripped this test's own non-vacuity guard.
+
+    The arrangement below, per frame, with `lead = i % 2`:
+
+    * `lead` sits NEARER (1.0 m) and is stationary  -> wins on distance alone.
+    * the other sits FARTHER (1.6 m) but closes at 4 m/s -> wins once `beta * v_toward` counts
+      (`1.6 - 1.5*4 = -4.4` beats `1.0`).
+
+    So at `beta=0.0` the nearer contender wins and at `beta=1.5` the closing one does -- the winner
+    alternates with frame parity in BOTH cases, and at `beta=1.5` it is the velocity term that picks
+    it. Under a correct point reflection the velocities negate too, `v_toward` is preserved, and the
+    winner is unchanged; under a reflection that moves positions only, `v_toward` flips sign and the
+    winner changes -- which is exactly the defect this test must catch.
+    """
+    bx, by = 20.0 + 1.5 * i, 34.0 + 8.0 * np.sin(i / 3.0)
+    lead = i % 2
+    players = []
+    for j in (0, 1):
+        near = j == lead
+        # Place both on the -x side of the ball so "closing" is +x for both; distance differs.
+        dist = 1.0 if near else 1.6
+        players.append(
+            {
+                "pid": 100 + j,
+                "tid": 1,
+                "x": float(np.clip(bx - dist, 0.5, 104.5)),
+                "y": float(np.clip(by, 0.5, 67.5)),
+                "vx": 0.0 if near else 4.0,  # the farther one closes hard
+                "vy": 0.0,
+            }
+        )
+    for j in range(2, 6):
+        players.append(
+            {
+                "pid": 100 + j,
+                "tid": 1 if j < 3 else 2,
+                "x": float(np.clip(bx + rng.normal(0, 9), 0.5, 104.5)),
+                "y": float(np.clip(by + rng.normal(0, 15), 0.5, 67.5)),
+                "vx": float(rng.normal(0, 3)),
+                "vy": float(rng.normal(0, 3)),
+            }
+        )
+    return players
+
+
+@pytest.mark.parametrize("beta", [0.0, 1.5], ids=["shipped-beta-0", "velocity-live"])
+def test_carrier_inference_is_orientation_invariant(beta):
+    """The measured basis for ADR-051's TF-24 "no re-sweep trigger" verdict.
+
+    That disposition rests on `infer_ball_carrier`'s shipped params surviving the ADR-028 corrections
+    even though they were TF-24-calibrated on a fold that included the unoriented SkillCorner frames.
+    The argument is that carrier inference reads no orientation at all, so a mis-oriented fold gave
+    the same answer. It was stated as a measurement in four documents with **no artifact, script or
+    test anywhere in the repo** -- so it is asserted here, where CI can keep it true.
+
+    BOTH betas are exercised, and that is not padding. The shipped default is `beta=0.0`
+    (`DEFAULT_CARRIER_PARAMS`), which reduces `scores[ci] = cand_dists[ci] - beta * v_toward` to pure
+    distance -- so at the shipped setting the velocity columns are INERT and the `_point_reflect`
+    helper's velocity negation is never exercised. Measured: negating velocities changes nothing at
+    `beta=0.0` and changes the carrier at `beta=1.5`. The first version of this test ran only the
+    default, so it verified the positional half of the reflection and silently skipped the vector
+    half -- exactly the ADR-045 rule it was written to respect. `beta=0.0` pins the production
+    configuration; `beta=1.5` pins the invariance where velocity actually participates.
+    """
+    from silly_kicks.tracking import infer_ball_carrier
+
+    rng = np.random.default_rng(0)
+    frames = _concat_frames(
+        *[
+            _make_carrier_frame(
+                frame_id=i,
+                ball_x=float(20.0 + 1.5 * i),
+                ball_y=float(34.0 + 8.0 * np.sin(i / 3.0)),
+                # The player nearest the ball ROTATES with the frame index, so the carrier varies
+                # instead of being one constant id. A constant answer would make the equality below
+                # compare two constant Series and pass for almost any implementation.
+                players=_contest(i, rng),
+            )
+            for i in range(40)
+        ]
+    )
+
+    # NOTHING is asserted about warnings here, and that is deliberate after two failed attempts.
+    # A `filterwarnings("ignore", ".*vx/vy.*")` sat here first and was INERT -- `_contest` sets vx/vy
+    # on every player, so it could never match. It was then replaced by an
+    # `OrientationUnresolvedWarning` assertion, which is EQUALLY inert: `_ball_carrier.py` contains
+    # zero orientation references (that is the very property this test exists to demonstrate), so
+    # the warning cannot be emitted and the assertion cannot fail. Swapping one unfalsifiable guard
+    # for another is not a fix.
+    #
+    # The real guards are below and they can all fail: >=30 carriers resolved, >=2 distinct ids, the
+    # series equality, and the <1e-9 distance bound -- plus the planted-defect check recorded in
+    # `_contest`'s docstring.
+    original = infer_ball_carrier(frames, beta=beta)
+    reflected = infer_ball_carrier(_point_reflect(frames), beta=beta)
+
+    assert len(original) == len(reflected) == 40, "fixture did not yield one row per frame"
+
+    # NON-VACUITY, two ways. (a) carriers must actually resolve; (b) the answer must VARY across
+    # frames, or the comparison is between two constant Series and proves nothing.
+    ids = original["ball_carrier_player_id"]
+    assert ids.notna().sum() >= 30, f"only {ids.notna().sum()}/40 frames resolved a carrier"
+    # >= 2 is exactly "not constant", which is the property that keeps the equality below meaningful.
+    # The contested fixture alternates two contenders by frame parity, so 2 is the designed answer;
+    # demanding 3 would be an arbitrary bar the design cannot meet.
+    assert ids.dropna().nunique() >= 2, (
+        f"carrier is CONSTANT ({ids.dropna().nunique()} distinct id) -- the equality below is vacuous"
+    )
+
+    pd.testing.assert_series_equal(
+        original["ball_carrier_player_id"].reset_index(drop=True),
+        reflected["ball_carrier_player_id"].reset_index(drop=True),
+        check_names=False,
+    )
+    # Unconditional: `ball_carrier_distance_m` is in this file's own _RESULT_COLS, so a membership
+    # check would be dead today and would silently DELETE this assertion if the column were renamed.
+    delta = float(
+        np.nanmax(
+            np.abs(original["ball_carrier_distance_m"].to_numpy() - reflected["ball_carrier_distance_m"].to_numpy())
+        )
+    )
+    assert delta < 1e-9, f"carrier distance moved by {delta:g} under a pure reflection"

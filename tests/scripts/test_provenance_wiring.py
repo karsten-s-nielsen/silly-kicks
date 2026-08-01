@@ -30,6 +30,10 @@ ARTIFACT_DRIVERS = (
     "build_layer2_spells",
     "derive_opengoal_range",
     "run_signoff_power",
+    # Enrolled 4.73.0 (PR-S141). Its predecessor was an ad-hoc pass that shipped a
+    # `tracking_limit=3000` cap recorded NOWHERE, halving a published headline -- so the artifact was
+    # cited, uncheckable, and wrong. A committed driver with real provenance is the fix.
+    "measure_rc4_orientation",
     # --- The five weight TRAINERS, enrolled together in 4.72.0 (ADR-052) ---
     # `train_ghost_gk` stamped `training_commit` into the SHIPPED metadata.json from a bare
     # `git rev-parse HEAD`, which reads identically on a modified tree: a bundled weights file

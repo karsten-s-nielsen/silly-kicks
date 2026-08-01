@@ -5,6 +5,146 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.73.0] — 2026-08-01
+
+> **This is the release that publishes the 4.71.0 pairing, and the first tag since `v4.70.0`.**
+> 4.71.0 corrected the serving geometry `GkCompletionModel`'s bundled weights were fitted against;
+> this release retrains those weights, closing the skew. 4.71.0 and 4.72.0 were both deliberately
+> left untagged — on this repo `publish.yml` triggers on `tags: ["v*"]` only, so an untagged version
+> publishes nothing — and `v4.73.0` ships 4.71.0 + 4.72.0 + 4.73.0 together.
+
+### Fixed — ADR-028 RC4: the pining loader shipped UNORIENTED SkillCorner frames (PR-S141, ADR-051)
+
+PR 4 of 5. **Research-corpus + bundled-weights change; no library API change.** C4 count unchanged
+(32). No new ADR — RC4 is recorded in ADR-051.
+
+**RC4.** `scripts/_loader_pining.py::build_skillcorner_frames` forced
+`output_convention="absolute_frame"`, leaving `team_attacking_direction` **NULL on every row**.
+`acting_team_attacks_rtl` then resolved nothing, returned an all-False flip, and the **entire ADR-028
+per-action re-projection layer silently no-opped** — so every away-team action in the research corpus
+carried mixed-convention geometry while looking healthy. The converter's own default is `"ltr"`; the
+override was never a decision. Measured on match `1886347` at full frame depth, **both sides**
+(`docs/research/adr028_rc4_orientation/`): `unlabelled_fraction` **1.0000 → 0.0000**,
+`flip_true_fraction` **0.0000 → 0.4728** (0 → 566 of 1,197 actions), orientation warnings **1 → 0**.
+
+**IDSSE is the control and is deliberately unchanged** — `sportec.py` calls `finalize_orientation`
+unconditionally before its convention branch, so those frames are already labelled: **718 of 1,363
+actions flipped, `0.5267791636096845` to all 17 digits, identical on both sides.** That also confirms
+spec §2.2's independent "718/718" with a second instrument.
+
+**A first measurement of this was CAPPED at `tracking_limit=3000` and recorded it nowhere** — a cap
+presented as a corpus, caught in review by arithmetic (66,000 IDSSE player rows is exactly
+3,000 frames × 22). A truncated frame set leaves `(game_id, period_id, team_id)` keys out of the
+orientation lookup and those actions **default to no-flip silently**, so the capped figures
+(SkillCorner 0.2398, IDSSE 0.3155) were **lower bounds**. `unlabelled_fraction` was unaffected — a cap
+cannot make labels appear — so the defect itself never depended on it, only its magnitude. Both JSON
+artifacts now carry a `_provenance` block recording `tracking_limit`, `max_per_provider` and the
+resolved commit.
+
+### Changed — `GkCompletionModel` retrained on corrected geometry (both bundled variants)
+
+Retrained through main's explicit `--mode retrain --feature-space moved --probe-old`, from a **clean
+tree** (`run_tree_state: clean`, no `--allow-dirty`), each variant in its own worktree at the RC4
+commit so neither run's output could dirty the other's provenance.
+
+**`default` (Gradient Sports, 64 matches).** `N=3491`, `n_native=2953` (85%),
+`native_auc` **0.8375 → 0.8549** (CI95 [0.8377, 0.8717]), Brier 0.1195 vs base 0.1756; all three gate
+prongs green. Per-type serve modes unchanged: goal-kicks stay **`model`** (AUC 0.835, LCB 0.809 —
+GS goal-kick completion *is* geometry-predictable), degenerate throw-ins stay `base_rate`. **Cause is
+RC2 + RC5, not RC4** — RC4 is SkillCorner-only and cannot touch a Gradient Sports fit; what moved this
+design matrix is `_gk_geometry`'s frame-coordinate reprojection and the cross-team next-event borrow,
+both shipped in 4.71.0, reaching the features through
+`prepare_gk_completion_training_data → resolve_gk_geometry`. This run **also widens the corpus** from
+the committed ~30 matches (`n_rows` 1666) to all 64 now in the manifest, so the weight change is
+geometry **and** corpus — stated because the two are not separable after the fact.
+
+**`skillcorner` (10-match public arm).** `N=542` (81 goal-kicks + 461 GK-passes), gate
+`bundle_skillcorner`: GK-pass AUC **0.740** (LCB 0.673), ECE 0.045, slope 1.01; goal-kicks stay
+`base_rate` (AUC 0.461). **This is a train/serve-consistency fix, not a quality improvement, and the
+evidence says so plainly**: the max coefficient delta is **0.0149**, essentially all of it in `dest_defender_density`, the only feature computed DIRECTLY from frame positions at extraction time. The five coordinate features do read frames INDIRECTLY via `resolve_gk_geometry` -- an earlier claim that density was "the only frame-reading feature" was wrong -- but for SkillCorner they barely move, because **461 of 542 rows are open-play GK passes whose origin is NATIVE** (ADR-024/PR-S104: the ball at release IS the keeper, measured 0.4 m), leaving only the 81 goal-kicks frame-resolved. Density is recomputed from frames on every row, and it carries the smallest-magnitude coefficient in the model. It also lands *below* `_CORPUS_IDENTITY_ATOL` (0.05), so a `--mode rebundle`
+would have declared "nothing changed" and shipped stale weights against moved features — the exact gap
+ADR-052's mode split exists to catch, demonstrated on live data.
+
+**Corpus is capped at the 10 public matches deliberately.** ADR-038 grew the pining SkillCorner
+listing to 108, and the 98 additions are non-redistributable; `train_gk_completion.py` has **no
+ADR-038 taxonomy enforcement**, so nothing in the trainer would have refused a defaulted run that
+pulled restricted matches into a distributed wheel artifact. Wiring the guard in is tracked in
+`TODO.md`, not bolted on here.
+
+**Hyrum / re-materialize:** every consumer of `gk_completion` — and `xt_gk`'s RAV term, which consumes
+it — sees changed served probabilities for both providers.
+
+### Changed — TF-24 calibration: NO re-sweep trigger (stated, not implied)
+
+RC4's blast-radius analysis names `calibrate_tracking_defaults` as a second consumer, so a **No**
+verdict must be recorded rather than left silent. Stage 1's `infer_ball_carrier` params were fitted on
+a fold that included the unoriented SkillCorner frames — precisely, `beta` and `gamma` are
+Optuna-calibrated at a *held* `tolerance_m=3.0`, itself an engineering default — but carrier inference
+is **orientation-invariant**, so the mis-oriented fold returned the same answer. That invariance is now
+asserted by `tests/tracking/test_ball_carrier.py::test_carrier_inference_is_orientation_invariant`
+(40/40 identical assignments under an exact ADR-045-correct point reflection, distances unchanged to
+<1e-9); it had previously been stated as a measurement in four documents with no artifact, script or
+test behind it. Stage 2's `k3` and `min_displacement_m` ship as engineering defaults TF-24 never set.
+**No shipped constant moves.** A refresh of the harness's *recommendations* on corrected geometry is
+tracked in `TODO.md`.
+
+### Fixed — the re-bundle guard accepted NaN drift, and had no shape check (ADR-052 amended)
+
+`_assert_rebundle_reproduces` (extracted this release from two byte-identical
+`np.testing.assert_allclose` blocks so they cannot drift apart) initially **accepted a NaN** in
+`intercept`, `mean` or `std` where the calls it replaced rejected all four: `max()` is order-dependent
+under NaN — every comparison is `False`, so it keeps whichever key it was holding, and only `coef`
+aborted, by accident of dict order. Non-finite drift now aborts unconditionally. A changed feature
+**count** now aborts with its own message instead of a raw numpy broadcast `ValueError` mid-pass. The
+abort reports all four parameters (`assert_allclose` short-circuits on `coef` and never reports the
+`mean`/`std` drift that is the signature of a feature-space move) and names the retrain command.
+Tolerance semantics are documented: max-absolute drift against `_CORPUS_IDENTITY_ATOL`, dropping
+`assert_allclose`'s default `rtol=1e-7`, which contributes ~1e-7 against a 0.05 floor.
+
+**ADR-052 is amended** with this and with the `probe_old` correction: its two-probe design is right,
+but its arity was left implicit, and "the design matrix the committed model was fit on" reads as a
+historical artifact. `predictions_moved` compares **element-wise**, so the probes must be
+**row-aligned** — meaning `probe_old` is the *same corpus* under pre-change geometry, not a
+vintage training matrix. A mismatched one usually raises on broadcast — but **not always**: a 1-row
+probe broadcasts and answers silently (measured), so the trainer now compares row counts explicitly
+rather than relying on numpy. Row
+order agrees by construction; row **count** does not (the trainer filters on
+`isfinite(length) & isfinite(dest_x)`, both derived from the corrected geometry) and must be observed
+by comparing the probe's `n_rows` to the trainer's printed `N=`.
+
+### Added — `metrics.json` records its own corpus bounds (forward-looking)
+
+`max_per_provider`, `tracking_limit`, `feature_space` and the `--probe-old` basename now land in
+`metrics.json` on both trainer paths. An unrecorded cap is indistinguishable from a full run and
+silently biases every number beside it — the failure this same cycle hit on the RC4 measurement,
+where `tracking_limit=3000` went unrecorded and halved a headline figure.
+
+**Honest limit: the two artifacts shipped here do NOT carry these fields.** The retrain runs against
+already-committed code, so the change reaches the *next* bundle, not this one. This run's bounds are
+recorded in the two `MODEL_CARD.md` files (64 GS matches / 10 SkillCorner public matches, full-match
+frames) and in each artifact's `reason` string.
+
+### Added — test coverage the guards lacked
+
+- Per-parameter isolation over all four served parameters (the drift tests moved only `coef`/`mean`,
+  so a guard that stopped checking `std` stayed green — verified by planting exactly that mutant).
+- Non-finite-drift and changed-feature-count regression tests.
+- `_as_weights` against a real bundled `GkCompletionModel` plus a save/load round trip — every prior
+  test used plain dicts, so the four *private* attributes it reads were never exercised on a real
+  model. Teeth proven by planting a 0.01 coefficient corruption.
+- `tests/scripts/test_loader_orientation.py` resolves each builder's `convert_to_frames` argument from
+  the AST and pins the whole mapping; an explicit `None` no longer collides with an omitted kwarg.
+
+### Fixed — `.gitignore` silences driver shard roots (provenance, not tidiness)
+
+**Five** drivers resolve a shard root to a relative path on a default invocation, so the run writes
+scratch into the repo; untracked files count as dirty by design, so for the three that gate on the
+tree the *next* artifact-writing run refuses — caused entirely by its predecessor's scratch, with
+`--allow-dirty` the tempting response, which would stamp `run_tree_dirty: true` on a run whose code was
+clean. Globs are **root-anchored**, so a `*_shards/` directory nested inside the package or the
+committed research tree is not silently masked. `calibrate_xt_bandwidth` needs its own entry: its
+shards land under `<--report-out>_corpus/shards/`, which the glob does not match.
+
 ## [4.72.0] — 2026-07-31
 
 > **Tag readiness is inherited from `main`, not from anything in this release.** 4.72.0 is
@@ -101,13 +241,19 @@ Corrections shipped alongside:
   `--mode retrain`, and **`_CORPUS_IDENTITY_ATOL` is untouched**. Pinned by
   `test_a_rebundle_across_a_MOVED_feature_space_must_still_abort`, which records both numbers.
 
-## [4.71.0] — NOT RELEASED (ships within 4.72.0 alongside PR 4)
+## [4.71.0] — NOT RELEASED (ships within 4.73.0 alongside PR 4)
 
 > **Do not tag `v4.71.0`.** This version is committed and traceable but deliberately never published
 > to PyPI. PR 3 corrects the serving geometry that `GkCompletionModel`'s bundled weights were fitted
 > against; releasing it alone would introduce a train/serve skew that does not exist today. PR 4
-> retrains those weights and bumps to 4.72.0, which is the version that ships. See ADR-051 and
-> `docs/superpowers/plans/2026-07-29-adr028-orientation-defect-class.md`.
+> retrains those weights, and **the first tag cut above 4.71.0 publishes the pairing**. See ADR-051
+> and `docs/superpowers/plans/2026-07-29-adr028-orientation-defect-class.md`.
+>
+> **Corrected 2026-08-01:** this note originally said PR 4 "bumps to 4.72.0, which is the version that
+> ships". That is no longer true — **4.72.0 shipped without the retrain** (ADR-052, corpus-driver
+> resilience, a concurrent session), so the skew this note exists to prevent is still open on main and
+> PR 4 is **4.73.0**. The number was never the point: what matters is that no tag is cut between
+> 4.71.0 and the retrain, and none has been.
 
 ### Fixed — ADR-028 RC2 + RC3: two per-action orientation corrections (PR-S139, ADR-051)
 

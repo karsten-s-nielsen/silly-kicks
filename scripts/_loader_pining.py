@@ -479,7 +479,8 @@ def build_skillcorner_frames(paths, match_id, tracking_limit):
     # nothing, returns an all-False flip, and the ENTIRE per-action re-projection layer silently
     # no-ops -- so every away-team action in the research corpus carried mixed-convention geometry
     # while looking healthy. MEASURED pre-fix on match 1886347: unlabelled 1.0000, flip 0.0000, one
-    # OrientationUnresolvedWarning (docs/research/adr028_rc4_orientation/prefix_measurement.json).
+    # OrientationUnresolvedWarning (docs/research/adr028_rc4_orientation/prefix_measurement.json);
+    # post-fix on the same match: unlabelled 0.0000, flip 0.4728 (566 of 1197 actions), zero warnings.
     #
     # The converter's own default is "ltr"; forcing absolute here was an override, never a decision.
     # No ``home_team_start_left`` is available on this path and none is needed -- the "ltr" branch
@@ -488,9 +489,9 @@ def build_skillcorner_frames(paths, match_id, tracking_limit):
     #
     # SKILLCORNER ONLY. ``_build_idsse`` is NOT affected and must NOT be "fixed" to match: sportec
     # calls ``finalize_orientation`` UNCONDITIONALLY before its own convention branch, so IDSSE
-    # frames are already labelled. Measured in the same run: unlabelled 0.0000, flip 0.3155, zero
-    # warnings -- i.e. identical before and after. A previous cycle changed it anyway on an assumed
-    # (never measured) premise; spec section 11.1 records that.
+    # frames are already labelled. Measured in the same run: unlabelled 0.0000, flip 0.5268 (718 of
+    # 1363 actions), zero warnings -- i.e. identical before and after. A previous cycle changed it
+    # anyway on an assumed (never measured) premise; spec section 11.1 records that.
     frames, report = tracking_sk.convert_to_frames(bronze, home_team_id=home_team_id, output_convention="ltr")
     return _preprocess(frames), report
 

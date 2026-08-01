@@ -1,6 +1,6 @@
 # ADR-052 — The shared corpus-driver seam: resume, staleness, progress
 
-**Status:** Accepted (4.72.0, PR-S140)
+**Status:** Accepted (4.72.0, PR-S140). Amended 4.73.0 (PR-S141) — `probe_old` row-alignment + the re-bundle gate's non-finite/shape fail-closed; see the Amendment at the end.
 **Spec:** `docs/superpowers/specs/2026-07-29-corpus-driver-resilience-design.md`
 **Plan:** `docs/superpowers/plans/2026-07-29-corpus-driver-resilience.md`
 
@@ -333,7 +333,8 @@ denominator would reintroduce the materialisation `for_each` exists to avoid.
   while standardisation absorbs it exactly and every served probability is identical. The signature
   takes TWO probes, measured: a single shared probe asks whether two functions agree on one input,
   when the question is whether each model behaves the same on the coordinates IT sees.
-  `--feature-space moved` currently ALWAYS refuses, because the weights directory stores
+  `--feature-space moved` refuses when `--probe-old` is ABSENT (see the 4.73.0 amendment: it was
+  written here as "ALWAYS refuses", which was already wrong), because the weights directory stores
   `coef/intercept/mean/std` but no design matrix — a loud refusal naming why beats silently
   answering the wrong question. **Follow-up for ADR-011's artifact format: persist a fixed probe
   sample beside the weights.**
@@ -378,3 +379,65 @@ Derive the population structurally; make the VERDICT behavioural or adoption-bas
 **And a fix's own new parameter is where the next defect lives.** Every round-4 finding was a
 consequence of a round-3 fix, sitting on the parameter that fix introduced. After changing a
 signature, grep its call sites and ask which argument is now unsatisfiable.
+
+## Amendment (4.73.0, PR-S141) — `probe_old` is ROW-ALIGNED, and the re-bundle gate fails closed on NaN
+
+The first real use of the `--mode retrain --feature-space moved` path (the ADR-051 RC2/RC5 geometry
+correction) found two things this ADR's decisions did not say.
+
+**1. `probe_old` must be ROW-ALIGNED with `probe_new`, so it is the SAME corpus under pre-change
+geometry — not the matrix the committed weights were historically fit on.** The Consequences above
+describe the two-probe design correctly but leave its arity implicit, and the natural reading of
+"the design matrix the committed model was fit on" sent this cycle after a 4.21.0-vintage matrix.
+`predictions_moved` ends in an **element-wise** `np.allclose`, so a 1666-row historical matrix
+against a 3491-row current corpus raises `ValueError: operands could not be broadcast together`, at
+the guard, after the whole corpus pass is paid for.
+
+**Do NOT rely on that raise — it is an accident of those particular numbers.** Measured: a **1-row**
+probe BROADCASTS against any corpus and returns a verdict *silently*. That shape is not exotic; the
+follow-up recorded above proposes persisting a fixed probe **sample**, and a one-row sample is
+exactly what slips through. `_assert_retrain_moved_predictions` therefore compares row counts
+explicitly (4.73.0) rather than depending on numpy to object. Two things in the code already implied the right answer and were read past: the docstring's
+own next clause ("they are the SAME array whenever the feature space did not move" — a historical
+matrix can never be that array), and `test_a_rebundle_across_a_MOVED_feature_space_must_still_abort`,
+which constructs the moved case as `X_new = X_old + 5.0`, i.e. same rows, shifted geometry.
+
+The guard asks a **serving** question — does what production emits change — not a fitting-provenance
+one. So the probe vintage is the commit immediately before the change under test (here `641dadf`,
+4.70.0), extracted over the same corpus the fresh fit uses. Row **order** agrees by construction
+(both vintages concat in `load_matches` order; HEAD combines from `res.keys`, explicitly not
+`reconcile`, whose filename sort would re-order). Row **count** does not agree by construction and
+must be observed: `prepare_gk_completion_training_data` filters on `isfinite(length) & isfinite(dest_x)`,
+both derived from the geometry a correction rewrites, so membership can shift. Compare `probe_old`'s
+`n_rows` against the trainer's printed `N=`. Cost of learning this the other way: ~30 minutes of
+corpus compute, where one call to `predictions_moved` with two mismatched shapes would have settled it
+in seconds.
+
+The ADR-011 follow-up above — *persist a fixed probe sample beside the weights* — stands, and is now
+better specified: what must be persisted is a row-aligned design matrix under a **declared** geometry
+vintage, not merely "a sample".
+
+**2. The re-bundle parameter check now fails closed on non-finite drift and on a changed feature
+count.** D-level decision unchanged — the check stays keyed on parameters, for the measured reason
+recorded above. But extracting the two byte-identical `np.testing.assert_allclose` blocks into one
+`_assert_rebundle_reproduces` introduced a regression the extraction made easy to miss: selecting the
+worst-drifting parameter with `max(drift, key=...)` is **order-dependent under NaN**, because every
+comparison against NaN is `False`, so `max` keeps whichever key it was already holding. Measured: a
+**one-sided** NaN — a fresh-fit NaN against finite committed weights — in `intercept`, `mean` or
+`std` was **accepted**, while the `assert_allclose` calls it replaced rejected it in all four
+positions; only `coef` aborted, and only because it happens to be first.
+
+The new form is also **stricter** than what it replaced, in exactly the case its abort message names.
+`assert_allclose` defaults to `equal_nan=True` and treats matched same-signed infs as equal, so a
+NaN at the **same index on both sides** — a committed artifact carrying NaN met by a fresh fit that
+reproduces it — was accepted by the original in all four positions too (measured), and
+`GkCompletionModel.load` has no finiteness check to rule it out upstream. An earlier draft of this
+paragraph claimed the predecessor "rejected all four" without that qualifier; it is true one-sided
+and false both-sided.
+
+NaN weights are a degenerate fit, and accepting them ships the committed model while reporting that
+the fresh fit reproduced it — the worst available direction for a bundling gate. Non-finite drift now
+aborts unconditionally, a changed feature **count** aborts with its own message instead of a raw numpy
+broadcast error mid-pass, and coverage is parameterized over all four served parameters **and over
+both sides**, so the strengthening is pinned by a test rather than asserted in a comment (the
+pre-existing tests moved only `coef`/`mean`, so a guard that stopped checking `std` stayed green).

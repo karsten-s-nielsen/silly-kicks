@@ -2,8 +2,19 @@
 
 **Status:** Accepted (4.69.0, PR-S137 — PR 1 of 5). RC1 corrected in 4.70.0 (PR-S138 — PR 2 of 5).
 RC2 + RC3 corrected in 4.71.0 (PR-S139 — PR 3 of 5; **committed but NOT RELEASED — ships within
-4.72.0 alongside PR 4**, since correcting the serving geometry without retraining
+4.73.0 alongside PR 4**, since correcting the serving geometry without retraining
 `GkCompletionModel` would introduce a train/serve skew that does not exist today).
+RC4 corrected + `GkCompletionModel` retrained in 4.73.0 (PR-S141 — PR 4 of 5), which is therefore the
+first tag since `v4.70.0` and the release that publishes the 4.71.0 pairing.
+
+> **Corrected 2026-08-01 — this header read "ships within 4.72.0".** 4.72.0 was taken by a concurrent
+> session (ADR-052, corpus-driver resilience) and shipped **without** the retrain, so the skew
+> remained open across it. No harm followed, because `v4.72.0` was never tagged either — and on this
+> repo an untagged version is not a release at all (`publish.yml` triggers on `tags: ["v*"]` only),
+> so 4.72.0 merged without publishing anything. The invariant that actually protects the pairing is
+> *no tag between 4.71.0 and the retrain*, not any particular version number. Recorded because a stale "ships within X" reads as discharged once X
+> exists, which is exactly the state that would have let a tag through.
+
 **Supersedes:** ADR-045 D6 (partially — see D3)
 **Amends:** ADR-028 (its repair table names two aggregators in error), ADR-041
 **Spec:** `docs/superpowers/specs/2026-07-29-adr028-orientation-defect-class-design.md`
@@ -186,6 +197,45 @@ on the wrong thing), and Gate A found a **chiral goal-relative transform** (`_ge
 **Strict xfails encode every known defect — 14 registered at PR 1, 10 remaining after PR 3.**
 Strictness is the point: a fix cannot land without deleting its own marker, which is why this count
 is stated as a running one rather than an absolute.
+
+**PR 4 (4.73.0) — RC4 corrected + `GkCompletionModel` retrained.** `scripts/_loader_pining.py`'s
+`build_skillcorner_frames` forced `output_convention="absolute_frame"`, leaving
+`team_attacking_direction` NULL on every row, so `acting_team_attacks_rtl` resolved nothing, returned
+an all-False flip, and the entire ADR-028 re-projection layer **silently no-opped** across the whole
+research corpus. Measured on match 1886347 at full frame depth, **both sides**
+(`docs/research/adr028_rc4_orientation/`): unlabelled `1.0000 → 0.0000`, flip
+`0.0000 → 0.4728487886382623` (0 → 566 of 1,197 actions), orientation warnings `1 → 0`.
+
+**IDSSE is the control and is deliberately NOT changed.** `sportec.py` calls `finalize_orientation`
+unconditionally *before* its convention branch, so its frames are already labelled: measured
+byte-identical across the fix — 718 flipped actions of 1,363, `0.5267791636096845` to all 17 digits,
+zero warnings, both runs. An earlier attempt changed it anyway on an assumed — never measured —
+premise; this control is what would have caught that, and it is retained for exactly that reason. It
+also **confirms §2.2's independent "718/718"** with a second instrument.
+
+**These figures replace a CAPPED first measurement** that ran at `tracking_limit=3000` without
+recording it — the cycle's own named failure mode, caught in review by arithmetic (66,000 IDSSE player
+rows is exactly 3,000 frames × 22). A truncated frame set leaves `(game_id, period_id, team_id)` keys
+absent from the orientation lookup, and those actions **default to no-flip silently**, so the capped
+flip fractions (SkillCorner 0.2398, IDSSE 0.3155) were **lower bounds**. `unlabelled_fraction` was
+unaffected — a cap cannot make labels appear — so the defect itself was never in question, only its
+magnitude.
+
+**TF-24's disposition is NO re-sweep trigger, and it is stated rather than left silent** because the
+blast-radius analysis names `calibrate_tracking_defaults` as RC4's second consumer. Per stage:
+Stage 1's `infer_ball_carrier` params were fitted against a fold that included the unoriented
+SkillCorner frames — precisely, `beta` and `gamma` are Optuna-calibrated **at a held
+`tolerance_m=3.0`**, which is itself an engineering default and not a calibrated one
+(`_ball_carrier.py:352-353`). But carrier inference is **orientation-invariant**, so a mis-oriented
+fold returned the same answer and the calibration stands. That invariance is now asserted by
+`tests/tracking/test_ball_carrier.py::test_carrier_inference_is_orientation_invariant`
+(40/40 identical assignments under an exact ADR-045-correct point reflection, carrier distance
+unchanged to <1e-9) rather than by prose: it had been stated as a measurement in four documents with
+no artifact, script or test behind it anywhere. Stage 2's `k3` and `min_displacement_m` ship as
+**engineering** defaults TF-24 never set. RC4 therefore invalidates a Stage-2 *recommendation that was
+never run on corrected frames and never applied*, which is tracked in `TODO.md` as a recommendation
+refresh. **No shipped constant moves.** A silent omission here would have been indistinguishable from
+an oversight.
 
 ## Alternatives rejected
 

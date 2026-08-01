@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-07-27 |
-| **Status** | Accepted |
+| **Status** | Accepted; amended 4.73.0 (PR-S141) — the contract is blind to an UPSTREAM-RESOLUTION change; see the Amendment at the end |
 | **Deciders** | Karsten S. Nielsen |
 | **Supersedes / amends** | ADR-021 (the tracked "canonical `spadlconfig` penalty-area constant" follow-up); ADR-038 (the deferred live corpus fingerprint); extends ADR-040's fail-closed `load()` guards |
 
@@ -249,3 +249,37 @@ fix rather than annotate.
 - **Unify the predicate as well as the constant at every site.** Not possible at `_xcross_attempt.py:209`
   (vectorized) without a per-element loop, and not safe at `_ghost_gk.py:608` (strict `<`, trained
   weights). Recorded rather than half-done.
+
+## Amendment (4.73.0, PR-S141) — the contract is blind to an UPSTREAM-RESOLUTION change
+
+ADR-051's RC2/RC5 is a worked example of the failure this ADR exists to prevent — *"a geometry change
+silently moving a bundled trained model's design matrix"* — occurring on `GkCompletionModel`, and the
+mechanism recorded here **would not have caught it**. That is a scope boundary, not a bug, and it was
+not stated.
+
+**Why.** The contract fingerprints an EXTRACTOR's output on a fixed probe. `GkCompletionModel`'s
+extractor, `extract_gk_completion_features`, takes **already-resolved geometry** (`origin_x/y`,
+`dest_x/y`, `type_id`). RC2/RC5 changed `_gk_geometry.py` — 113 insertions, and **zero lines of
+`_gk_completion.py`** (`git show 89dd9af --stat`). A fixed geometry probe therefore yields a
+byte-identical feature vector across the correction, and the fingerprint never fires. The constants
+prong is equally inert: that extractor reads none of the declared geometry constants.
+
+**So the model is deliberately NOT stamped, and stamping it would be worse than leaving it bare** —
+an artifact carrying a green contract through a change that moved its real design matrix is a
+stronger false assurance than an artifact carrying none.
+
+**The generalisation, which is the reusable part.** The contract covers a model exactly to the extent
+its extractor is the *first* transform applied to raw frames. For any model whose extractor consumes
+a RESOLVED intermediate — geometry resolution, carrier inference, orientation, linkage — the guard
+sits downstream of the layer most likely to move, and its silence means nothing about that layer.
+`xS`, `xCross` and `ghost` are stamped because they extract from frames directly; that is the
+property that makes the stamp meaningful, not their status as trained models.
+
+**What actually protects this class**, and did here: `--mode retrain --feature-space moved` with a
+row-aligned `probe_old` extracted before the change (ADR-052, amended 4.73.0). That compares SERVED
+PREDICTIONS across the resolution change rather than features across a fixed probe, so it sees
+exactly what the contract cannot. The two are complementary; neither subsumes the other.
+
+**Not tracked as follow-up work.** There is no "stamp `GkCompletionModel` later" item, because the
+analysis above says the stamp would not do the job. If the extractor is ever refactored to consume
+raw frames, revisit this.

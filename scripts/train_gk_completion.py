@@ -150,11 +150,24 @@ def predictions_moved(old: dict, new: dict, *, probe_old, probe_new, atol: float
     served probabilities while the coefficients sit byte-still, which a coefficients-only guard
     reads as no change.
 
-    TWO probes, not one. ``probe_old`` is the design matrix the committed model was fit on and
-    ``probe_new`` the one the fresh fit was; they are the SAME array whenever the feature space did
-    not move, which is the ordinary case. A single shared probe was drafted first and MEASURED
-    unable to express the property -- it asks whether two functions agree on one input, when the
-    question is whether the model behaves the same on the data each version actually sees.
+    TWO probes, not one. ``probe_old`` carries the PRE-change feature space and ``probe_new`` the
+    post-change one; they are the SAME array whenever the feature space did not move, which is the
+    ordinary case. A single shared probe was drafted first and MEASURED unable to express the
+    property -- it asks whether two functions agree on one input, when the question is whether the
+    model behaves the same on the data each version actually sees.
+
+    ``probe_old`` is NOT "the matrix the committed weights were fit on" in the archaeological sense,
+    and reading it that way cost this cycle ~50 minutes of corpus compute. The comparison below is
+    ELEMENT-WISE, so the two probes must be ROW-ALIGNED. A historical training matrix from the
+    original fit (1666 rows) against the current corpus (~3491) raises
+    ``ValueError: operands could not be broadcast together`` -- but do NOT rely on that: it is an
+    accident of those particular numbers. A **1-row probe BROADCASTS** against any corpus and returns
+    a verdict SILENTLY (measured). `_assert_retrain_moved_predictions` therefore compares row counts
+    explicitly before calling this. The correct probe is the SAME corpus as the fresh fit, extracted
+    under the pre-change geometry -- which is also why the sentence above says "the SAME array
+    whenever the feature space did not move": only a same-corpus extraction can ever be that array.
+    The question is about
+    SERVING (does what production emits change), not about fitting provenance.
 
     The probe should be the model's own design matrix, never synthetic noise: a probe that does not
     exercise the region a retrain changed would report "no movement" for a real retrain.
@@ -186,9 +199,17 @@ def _superseded_coef(committed, feats) -> dict | None:
 def _validate_bundling_args(args) -> None:
     """Refuse the retrain cases whose right instrument the artifact format cannot supply.
 
-    With no probe persisted beside the weights today, ``--feature-space moved`` ALWAYS refuses. That
-    is the point: a loud refusal naming why the comparison is impossible beats silently answering
-    the wrong question, which is what ``probe_old = probe_new = X_all`` would do.
+    ``--feature-space moved`` refuses only when ``--probe-old`` is ABSENT (the weights directory
+    stores no design matrix, so it cannot be reconstructed from the artifact). An earlier draft said
+    this ALWAYS refuses, which was already wrong when written. A loud refusal naming why the
+    comparison is impossible beats silently answering the wrong question, which is what
+    ``probe_old = probe_new = X_all`` would do.
+
+    NOT CLAIMED HERE: how the shipped 4.73.0 bundles were produced. `feature_space` and `probe_old`
+    are recorded in `metrics.json` from this release ONWARD, but both bundles were produced at
+    4b15365, before that recording landed, so neither artifact can attest to its own invocation. The
+    corpus and reason are in the two MODEL_CARD.md files; the invocation is not checkable from the
+    artifact, and saying so is better than an unverifiable assurance in a docstring.
     """
     if args.mode != "retrain":
         return
@@ -201,22 +222,162 @@ def _validate_bundling_args(args) -> None:
             "cannot be reconstructed from the artifact. Without it this guard would serve the "
             "committed model on coordinates it never saw, report a difference caused by the "
             "coordinate change alone, and stamp the artifact `retrained` when nothing behavioural "
-            "moved -- the exact defect it exists to catch. Persist a probe sample beside the "
-            "weights (ADR-011 follow-up) or re-run with the pre-change extractor."
+            "moved -- the exact defect it exists to catch. Re-extract the probe with the pre-change "
+            "extractor over THIS SAME corpus: it must be row-aligned with this run's design matrix, "
+            "which the next guard checks. (ADR-011's follow-up is sometimes paraphrased as "
+            "'persist a probe SAMPLE beside the weights' -- do not read it that way here: a sample "
+            "has the wrong row count, and a 1-row one would broadcast and answer silently.)"
         )
 
 
 def _assert_retrain_moved_predictions(args, committed, model, X_all, feats) -> None:
-    """`--mode retrain`: the fresh fit must SERVE differently from the committed weights."""
+    """`--mode retrain`: the fresh fit must SERVE differently from the committed weights.
+
+    ROW ALIGNMENT IS CHECKED HERE, EXPLICITLY, and the reason is a measured near-miss. The comparison
+    inside `predictions_moved` is element-wise, and it was believed that a mismatched probe therefore
+    "raises rather than answering the wrong question". That is true of the shape this cycle actually
+    hit (1666 historical rows against a 3491-row corpus -> ValueError) and FALSE in general: numpy
+    BROADCASTS a 1-row probe against any corpus and returns a verdict silently. ADR-052's own
+    follow-up says to "persist a fixed probe SAMPLE beside the weights" -- and a sample of one row is
+    exactly the shape that slips through. Relying on the broadcast error was relying on an accident
+    of the numbers involved.
+    """
     if committed is None:
         return  # first-ever bundle: there is nothing to have moved away from
     probe_old = pd.read_parquet(args.probe_old)[feats] if args.probe_old else X_all
+    if len(probe_old) != len(X_all):
+        raise SystemExit(
+            f"--probe-old has {len(probe_old)} rows but this run's design matrix has {len(X_all)}. "
+            "The two probes are compared ELEMENT-WISE, so they must describe the SAME rows: "
+            "probe_old is this corpus under the PRE-change geometry, not a historical training "
+            "matrix and not a sample. A broadcastable mismatch (notably a 1-row probe) would not "
+            "even raise -- it would answer, silently and wrongly."
+        )
     if not predictions_moved(_as_weights(committed), _as_weights(model), probe_old=probe_old, probe_new=X_all):
         raise SystemExit(
             "RETRAIN produced the committed model's served predictions unchanged -- the input "
             "change never reached the model. Shipping this as a retrain would be a false claim. "
             f"(reason given: {args.reason!r})"
         )
+
+
+def _assert_rebundle_reproduces(model, committed) -> None:
+    """`--mode rebundle`: the fresh fit must reproduce the committed parameters.
+
+    Kept on PARAMETERS, deliberately -- see the block comment on `_CORPUS_IDENTITY_ATOL`.
+
+    This exists as a named function for one reason: the bare `np.testing.assert_allclose` it replaces
+    raised an `AssertionError` carrying a float diff and no remedy, at the end of a corpus pass that
+    costs half an hour. The drift it reports is nearly always the SAME situation -- the feature space
+    moved under a re-bundle -- and the correct response is a specific command, so the failure says so
+    rather than leaving the operator to rediscover it. Both call sites were byte-identical, so this
+    also stops them drifting apart.
+
+    TOLERANCE SEMANTICS DIFFER FROM THE ORIGINAL, DELIBERATELY. `assert_allclose` applies
+    `atol + rtol * |desired|` with a default `rtol=1e-7`; this compares max-absolute-drift against
+    `_CORPUS_IDENTITY_ATOL` alone. At the scales involved that is a distinction without a difference
+    -- the coefficients are O(1), so the relative term contributes ~1e-7 against a 0.05 floor -- and
+    an absolute-only rule is what the block comment on `_CORPUS_IDENTITY_ATOL` actually describes.
+    Recorded because dropping a default silently is how a tolerance stops meaning what its comment
+    says.
+
+    TWO of `assert_allclose`'s defaults are dropped, not one. The second is `equal_nan=True`, and it
+    is a SEMANTIC divergence rather than a numeric one: the original ACCEPTED a NaN -- or a
+    same-signed inf -- at the SAME index on BOTH sides, measured on all four parameters. That is
+    exactly the case the non-finite block below aborts on, so on that side this function is STRICTER
+    than what it replaced.
+    """
+    # fit()/load() populate the coef arrays; narrow off Optional for the type checker.
+    assert model._coef is not None and model._mean is not None and model._std is not None  # noqa: S101
+    assert committed._coef is not None and committed._mean is not None and committed._std is not None  # noqa: S101
+
+    # SHAPE FIRST. `assert_allclose` reports a shape mismatch as a readable assertion; a raw
+    # subtraction raises `ValueError: operands could not be broadcast together` out of the middle of
+    # a corpus pass, naming numpy rather than the feature-count change that actually happened.
+    pairs = (
+        ("coef", np.asarray(model._coef), np.asarray(committed._coef)),
+        ("mean", np.asarray(model._mean), np.asarray(committed._mean)),
+        ("std", np.asarray(model._std), np.asarray(committed._std)),
+    )
+    for name, fresh, old in pairs:
+        if fresh.size == 0 or old.size == 0:
+            # (0,) == (0,) passes the shape check below and then `np.max` on an empty array raises a
+            # bare numpy ValueError naming neither the model nor the parameter. A degenerate artifact
+            # is not "reproduces the committed model" either, so abort with the reason.
+            raise SystemExit(
+                f"REBUNDLE aborted: `{name}` is EMPTY (fresh {fresh.shape}, committed {old.shape}). "
+                "One of these artifacts has no parameters -- a degenerate fit or a truncated file. "
+                "Investigate before shipping anything."
+            )
+        if fresh.shape != old.shape:
+            raise SystemExit(
+                f"REBUNDLE aborted: `{name}` has shape {fresh.shape} but the committed weights have "
+                f"{old.shape}. The FEATURE SET changed, which no tolerance can reconcile -- the two "
+                "models do not describe the same input space. A re-bundle is meaningless here; "
+                "re-fit and ship the fresh model."
+            )
+
+    drift = {name: float(np.max(np.abs(fresh - old))) for name, fresh, old in pairs}
+    # `intercept` is a scalar, so it has no shape to check -- but it DOES need the same None guard the
+    # three arrays get above, or `abs(None - x)` raises a TypeError instead of naming the problem.
+    if model._intercept is None or committed._intercept is None:
+        raise SystemExit(
+            "REBUNDLE aborted: `intercept` is None on "
+            f"{'the fresh fit' if model._intercept is None else 'the committed weights'} -- the "
+            "artifact is incomplete, so 'reproduces the committed model' cannot be answered."
+        )
+    drift["intercept"] = float(abs(model._intercept - committed._intercept))
+
+    # NON-FINITE DRIFT ABORTS UNCONDITIONALLY: part regression guard, part STRENGTHENING.
+    #
+    # REGRESSION half -- the `max(...)`/`<=` form below is order-dependent under NaN: every comparison
+    # against NaN is False, so `max` keeps whichever key it happened to be holding and a NaN sitting
+    # anywhere but first is silently discarded. MEASURED: a ONE-SIDED NaN (fresh fit NaN against
+    # finite committed weights) in `intercept`, `mean` or `std` was ACCEPTED here, while the
+    # `np.testing.assert_allclose` calls this replaced rejected it in all four positions.
+    #
+    # STRENGTHENING half -- that comparison holds only one-sided, and an earlier draft of this comment
+    # overstated it. `assert_allclose` defaults to `equal_nan=True` and treats matched same-signed
+    # infs as equal, so a NaN/inf at the SAME index on BOTH sides -- precisely what the abort message
+    # below names, a committed artifact carrying NaN met by a fresh fit that reproduces it -- was
+    # ACCEPTED by the original in all four positions too. MEASURED both directions. So this function
+    # is STRICTER than what it replaced on that side, not equal to it; do not "restore parity" with
+    # `assert_allclose` on the way past. NaN weights mean a degenerate fit, which must never be waved
+    # through as "reproduces the committed model", whichever side carries them.
+    nonfinite = sorted(k for k, v in drift.items() if not np.isfinite(v))
+    if nonfinite:
+        raise SystemExit(
+            f"REBUNDLE aborted: non-finite drift in {nonfinite}. Either the fresh fit or the "
+            "committed weights contain NaN/inf, so 'reproduces the committed model' is not a "
+            "question that can be answered. Investigate the fit before shipping anything."
+        )
+
+    worst = max(drift, key=lambda k: drift[k])
+    if drift[worst] <= _CORPUS_IDENTITY_ATOL:
+        return
+
+    raise SystemExit(
+        "REBUNDLE aborted: the fresh fit does not reproduce the committed weights.\n"
+        + "".join(f"  max |{k}| drift = {v:.6g}\n" for k, v in drift.items())
+        + f"  tolerance = {_CORPUS_IDENTITY_ATOL} (exceeded by {worst!r})\n"
+        "\n"
+        "A re-bundle SHIPS THE COMMITTED WEIGHTS, so production would then serve them against "
+        "whatever features the current extractor produces. If the extractor moved -- a geometry or "
+        "coordinate correction, a provider fix, a corpus change -- that is a train/serve skew, and "
+        "re-bundling would hide it behind a byte-identical model.json.\n"
+        "\n"
+        "If the feature space MOVED, the right action is a retrain, which ships the fresh fit:\n"
+        "  --mode retrain --feature-space moved --probe-old <pre-change design matrix>.parquet "
+        '--reason "<what moved>"\n'
+        "The probe is the SAME corpus as this run, extracted at the commit just BEFORE the change "
+        "under test -- not the vintage the committed weights were originally fit on, and not a "
+        "sample. The two probes are compared element-wise, so they must be ROW-ALIGNED; the trainer "
+        "checks that explicitly, because numpy does not always: a 1-row probe BROADCASTS against any "
+        "corpus and answers silently rather than raising.\n"
+        "\n"
+        "If the feature space did NOT move, this drift is real corpus drift and needs investigating "
+        "before anything is shipped -- do not widen the tolerance to make it pass."
+    )
 
 
 def _train_skillcorner(args) -> int:
@@ -357,14 +518,7 @@ def _train_skillcorner(args) -> int:
         if committed is None:
             served = model  # first-ever bundle: nothing committed to preserve -> ship the fresh fit
         elif args.mode == "rebundle":
-            # KEPT on parameters, deliberately -- see the block comment on _CORPUS_IDENTITY_ATOL.
-            # fit()/load() populate the coef arrays above; narrow off Optional for the type checker.
-            assert model._coef is not None and model._mean is not None and model._std is not None  # noqa: S101
-            assert committed._coef is not None and committed._mean is not None and committed._std is not None  # noqa: S101
-            np.testing.assert_allclose(model._coef, committed._coef, atol=_CORPUS_IDENTITY_ATOL)
-            np.testing.assert_allclose([model._intercept], [committed._intercept], atol=_CORPUS_IDENTITY_ATOL)
-            np.testing.assert_allclose(model._mean, committed._mean, atol=_CORPUS_IDENTITY_ATOL)
-            np.testing.assert_allclose(model._std, committed._std, atol=_CORPUS_IDENTITY_ATOL)
+            _assert_rebundle_reproduces(model, committed)
             served = committed
         else:
             _assert_retrain_moved_predictions(args, committed, model, X_all, feats)
@@ -393,6 +547,17 @@ def _train_skillcorner(args) -> int:
         "run_tree_state": run_prov["tree_state"],
         "mode": args.mode,
         "reason": args.reason,
+        # CORPUS BOUNDS, recorded IN the artifact. An unrecorded cap is indistinguishable from a
+        # full run and silently biases every number beside it -- the failure this cycle hit on the
+        # ADR-028 RC4 measurement, where `tracking_limit=3000` went unrecorded and halved a headline
+        # figure. `--feature-space` and `--probe-old` ride along because both are load-bearing for
+        # the retrain verdict: `moved` without a probe is refused, and the probe decides what
+        # `predictions_moved` actually compared. Only the probe's BASENAME is stored -- an absolute
+        # home-directory path is noise in a committed artifact.
+        "max_per_provider": args.max_per_provider,
+        "tracking_limit": args.tracking_limit,
+        "feature_space": args.feature_space,
+        "probe_old": Path(args.probe_old).name if args.probe_old else None,
         "superseded_coef": _superseded_coef(committed_before, feats),
         "decision": decision,
         "bundled": bundled,
@@ -555,14 +720,7 @@ def main() -> int:
     if committed is None:
         served = model  # first-ever bundle: nothing committed to preserve
     elif args.mode == "rebundle":
-        # KEPT on parameters, deliberately -- see the block comment on _CORPUS_IDENTITY_ATOL.
-        # fit()/load() populate the coef arrays above; narrow off Optional for the type checker.
-        assert model._coef is not None and model._mean is not None and model._std is not None  # noqa: S101
-        assert committed._coef is not None and committed._mean is not None and committed._std is not None  # noqa: S101
-        np.testing.assert_allclose(model._coef, committed._coef, atol=_CORPUS_IDENTITY_ATOL)
-        np.testing.assert_allclose([model._intercept], [committed._intercept], atol=_CORPUS_IDENTITY_ATOL)
-        np.testing.assert_allclose(model._mean, committed._mean, atol=_CORPUS_IDENTITY_ATOL)
-        np.testing.assert_allclose(model._std, committed._std, atol=_CORPUS_IDENTITY_ATOL)
+        _assert_rebundle_reproduces(model, committed)
         served = committed
     else:
         # A retrain SHIPS the fresh fit, and must prove the fresh fit BEHAVES differently.
@@ -578,6 +736,17 @@ def main() -> int:
     metrics = {
         "mode": args.mode,
         "reason": args.reason,
+        # CORPUS BOUNDS, recorded IN the artifact. An unrecorded cap is indistinguishable from a
+        # full run and silently biases every number beside it -- the failure this cycle hit on the
+        # ADR-028 RC4 measurement, where `tracking_limit=3000` went unrecorded and halved a headline
+        # figure. `--feature-space` and `--probe-old` ride along because both are load-bearing for
+        # the retrain verdict: `moved` without a probe is refused, and the probe decides what
+        # `predictions_moved` actually compared. Only the probe's BASENAME is stored -- an absolute
+        # home-directory path is noise in a committed artifact.
+        "max_per_provider": args.max_per_provider,
+        "tracking_limit": args.tracking_limit,
+        "feature_space": args.feature_space,
+        "probe_old": Path(args.probe_old).name if args.probe_old else None,
         "superseded_coef": _superseded_coef(committed, feats),
         "n_rows": len(df),
         "n_native": n_native,
