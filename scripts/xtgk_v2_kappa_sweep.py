@@ -1,7 +1,7 @@
 """W6 (4.45.0): secondary faithfulness audit report -- kappa sweep (reported for Jeff, NOT tuned) +
 V-reward interpretation (deferred) + PEV dormant note. Owner-run; writes faithfulness_audit.md.
 
-Per Jeff §3 / the honest-reporting guardrail: kappa=1 is the a-priori HEADLINE; the [1,2] sweep is
+Per Jeff S3 / the honest-reporting guardrail: kappa=1 is the a-priori HEADLINE; the [1,2] sweep is
 evidence for the Jeff kappa/turnover-weighting question -- never used to pick the headline.
 """
 
@@ -59,22 +59,22 @@ def main() -> int:
     lines = [
         "# xT-GK v2 secondary faithfulness audit (W6)\n",
         "\n## kappa sweep (faithful V_opp, possession-bound; provider "
-        f"`{a.provider}`) — REPORTED, not tuned (§3: kappa=1 is the a-priori headline)\n",
+        f"`{a.provider}`) -- REPORTED, not tuned (S3: kappa=1 is the a-priori headline)\n",
         "| kappa | xt_gk_v2 AUC | lift |\n|---|---|---|\n"
         + "".join(f"| {k} | {auc:.4f} | {lift:+.4f} |\n" for k, (auc, lift) in sweep.items()),
         "\n> kappa scales the turnover term `dzv = -(1-rho)*kappa*V_opp`. With the faithful (small) V_opp, "
         "raising kappa adds more of a term that (per W4) drags the metric below `rho*dV` alone, so a larger "
         "kappa does not help; **kappa=1 stays the headline** (not chosen to optimise this, it is the default). "
         "The kappa/turnover-weighting is a genuine question for Jeff, given the faithful V_opp shifts the balance.\n",
-        "\n## V reward interpretation — DEFERRED (flagged for owner/Jeff, not re-implemented here)\n",
-        '> V uses **`E[first-shot xG]`** (our Singh-spirit reading); Jeff §2.1 says *"expected threat over '
+        "\n## V reward interpretation -- DEFERRED (flagged for owner/Jeff, not re-implemented here)\n",
+        '> V uses **`E[first-shot xG]`** (our Singh-spirit reading); Jeff S2.1 says *"expected threat over '
         'the remainder of the possession."* First-shot vs cumulative-remainder is a real interpretation '
         "fork that may relate to V's weak realized-xG out-of-sample correlation (Spearman 0.03-0.06). "
         "**Deferred**: re-implementing V is out of scope for this release (a separate decision if it "
-        "matters) — surfaced for the Jeff conversation, not silently changed.\n",
+        "matters) -- surfaced for the Jeff conversation, not silently changed.\n",
         "\n## PEV dormant (note)\n",
-        "> PEV is 0 (`p'=p`; receiver-pressure `q` deferred per Jeff §8-step-7), so the metric currently "
-        "carries no pressure-value-added term — faithful to his sequencing, noted for completeness.\n",
+        "> PEV is 0 (`p'=p`; receiver-pressure `q` deferred per Jeff S8-step-7), so the metric currently "
+        "carries no pressure-value-added term -- faithful to his sequencing, noted for completeness.\n",
     ]
     out = (
         Path(__file__).resolve().parent.parent

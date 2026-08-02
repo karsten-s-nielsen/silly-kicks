@@ -166,26 +166,15 @@ def _non_ascii(path) -> list[str]:
 # true: the owner ruled (2026-07-29) that the corpus-driver cycle has NO isolation exclusions, and
 # `calibrate_xt_bandwidth` was cleaned when that cycle migrated it. `calibrate_tracking_defaults`
 # follows when its own migration lands.
-_KNOWN_NON_ASCII_DRIVERS = frozenset(
-    {
-        "build_worldcup_fixture",
-        "download_skillcorner_sample",
-        "extract_paired_idsse_fixture",
-        "extract_provider_fixtures",
-        "gen_ghost_gk_kde_golden",
-        "probe_preprocess_baseline",
-        "regenerate_action_context_baselines",
-        "regenerate_gs_et_native_gk",
-        "train_ghost_gk",
-        "train_gk_completion",
-        "train_gk_retention",
-        "validate_xs_probe",
-        "validate_xtgk_possession_value",
-        "validate_xtgk_v2",
-        "xtgk_v2_kappa_sweep",
-        "xtgk_v2_keeper_discrimination",
-    }
-)
+# EMPTIED IN PR 5 (TODO L35 closed). All 16 pinned drivers are now ASCII-only. The debt was
+# 62 characters across 5 distinct code points -- 43 em dashes, 15 section signs, 2 arrows, one
+# U+0394 and one U+00F7 -- substituted `--` / `S` / `->` / `delta` / `/`. The feared readability
+# cost of de-mathing comments did not materialise: exactly two of the 62 were maths symbols.
+#
+# Keep this frozenset EMPTY. `test_the_known_offender_list_is_EXACT` fails in both directions, so
+# a new offender cannot join silently -- but an empty list is only self-maintaining while nobody
+# re-adds an entry instead of fixing the file. Fix the file.
+_KNOWN_NON_ASCII_DRIVERS: frozenset[str] = frozenset()
 
 
 @pytest.mark.parametrize("src", _driver_sources(), ids=lambda p: p.stem)

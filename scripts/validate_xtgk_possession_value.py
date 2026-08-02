@@ -1,8 +1,8 @@
-"""Owner-run real-data gate for xT-GK v2 -- the make-or-break deep-zone gradient (ADR-036 §8).
+"""Owner-run real-data gate for xT-GK v2 -- the make-or-break deep-zone gradient (ADR-036 S8).
 
 GateConfig numbers are owner/Eyestone-LOCKED (Q4) and the loader is wired to Databricks gold
-(`_loader_databricks.load_xtgk_cohort` = `bronze.spadl_actions ⋈ dim_matches ⋈ dev_gold.fct_action_context`
-[pressure + frame-present] `⋈ dev_gold.fct_shot_xg` [calibrated xG], keyed on (match_key, action_id)).
+(`_loader_databricks.load_xtgk_cohort` = `bronze.spadl_actions |><| dim_matches |><| dev_gold.fct_action_context`
+[pressure + frame-present] `|><| dev_gold.fct_shot_xg` [calibrated xG], keyed on (match_key, action_id)).
 
 RESULT (run 2026-07-10; see docs/research/xtgk_possession_value/GATE_FINDINGS.md): WC2022 STOP,
 RM (100% OOD) FAIL-crosscheck -- root cause is a 52% pressure-exactly-0 mass degenerating the tercile
@@ -10,8 +10,8 @@ stratification. Per the owner build-ahead directive SP2-5 shipped regardless (th
 degeneracy); escalated to Eyestone for a pressure-zero-stratum fix.
 
 Cohort scope (owner decision):
-  - WC2022 (gradientsports): certified in `fct_shot_xg` (ood_flag=False) → the AUTHORISING cohort.
-  - SkillCorner (RM): `ood_flag=True` (uncertified) → INCLUDE as a PROVISIONAL second read (not dropped),
+  - WC2022 (gradientsports): certified in `fct_shot_xg` (ood_flag=False) -> the AUTHORISING cohort.
+  - SkillCorner (RM): `ood_flag=True` (uncertified) -> INCLUDE as a PROVISIONAL second read (not dropped),
     reported separately, tagged provisional because 100% OOD.
 """
 
@@ -40,7 +40,7 @@ _GATE_CONFIG_LOCKED = GateConfig(
 _XG_COLUMN = "xg"  # fct_shot_xg.xg (calibrated pre-shot), joined on (match_key, action_id) (Q3)
 _OOD_COLUMN = "ood_flag"  # fct_shot_xg per-shot certification flag (RM is 100% OOD live)
 _CI_COLUMNS = ("xg_ci_low", "xg_ci_high")  # fct_shot_xg per-shot CI
-# Pinned to bekkers_pi (§5 Q3, resolved by the lakehouse 3-method audit 2026-07-10): andrienko_oval
+# Pinned to bekkers_pi (S5 Q3, resolved by the lakehouse 3-method audit 2026-07-10): andrienko_oval
 # floors to exactly 0 for ~47% of actions (link_zones ~80%) -- a parameterization artifact that
 # degenerates the pressure terciles; bekkers_pi has a non-degenerate tail (~5% zero) and is the
 # trustworthy measure. See docs/research/xtgk_possession_value/LAKEHOUSE_HANDOFF.md (F2).
@@ -53,10 +53,10 @@ def _gate_is_locked(cfg: GateConfig) -> bool:
 
 
 def prepare_cohort(actions, *, pressure_column: str, frame_present_column: str):
-    """G8 (§5) frame-aware null-pressure data-prep, applied BEFORE fit.
+    """G8 (S5) frame-aware null-pressure data-prep, applied BEFORE fit.
 
     Coalesces null pressure -> 0 (LOW tercile) for frame-present rows (genuinely unpressured
-    restarts), then DROPS the residual frame-absent nulls (genuine tracking gaps — the §5 backstop;
+    restarts), then DROPS the residual frame-absent nulls (genuine tracking gaps -- the S5 backstop;
     ``PressureLevels.apply`` would otherwise fail loud on them). Returns a NEW frame; never mutates input.
     """
     out = actions.copy()
@@ -65,7 +65,7 @@ def prepare_cohort(actions, *, pressure_column: str, frame_present_column: str):
 
 
 def reward_provenance_summary(shot_xg, *, ood_column: str, ci_columns) -> dict:
-    """Q3 (§6): summarize the injected reward's certification for MarkovPossessionValue.provenance.
+    """Q3 (S6): summarize the injected reward's certification for MarkovPossessionValue.provenance.
 
     silly-kicks records but never interprets ood_flag/CI semantics (ships no xG model)."""
     lo, hi = ci_columns

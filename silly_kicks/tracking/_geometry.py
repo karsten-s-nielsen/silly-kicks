@@ -5,6 +5,14 @@ LTR and RTL frames map to identical feature values (doubling effective data
 and removing direction asymmetry). ``goal_x`` is the absolute x of the
 defended goal: 0.0 for the goal at the low-x end, 105.0 for the high-x end.
 
+That identity holds because the two ends differ by a 180-degree POINT REFLECTION
+``(x, y) -> (105 - x, 68 - y)`` -- a ROTATION, not an x mirror. It is enforced by
+``tests/tracking/test_pr5_chirality_gates.py``. Before PR 5 the y counterpart was MISSING, so
+``goal_x=105`` was an x-only mirror (determinant -1) against an identity (+1) at the other end:
+the claim above was FALSE for every signed-y feature, with every radial byte-identical and every
+bearing negated (measured: xS 12 of 27 features, xCross 3 of 16). Adding a signed-y quantity
+without routing it through :func:`to_goal_relative_y` reintroduces exactly that defect.
+
 See NOTICE for full bibliographic citations.
 """
 
@@ -22,7 +30,7 @@ PITCH_WIDTH = GOAL_Y * 2.0  # 68.0 m
 # Bump when the goal-relative transform's NUMERIC output changes (NOT for a pure origin
 # translation like TF-38, which is invariant). Consumed by trained-model metadata as the
 # coordinate-change fail-closed guard. See the TF-16 weights spec S6.
-GEOMETRY_VERSION = "goal-relative-1"
+GEOMETRY_VERSION = "goal-relative-2"  # PR 5: x-only mirror -> 180-degree point reflection
 
 
 def _flip(goal_x: float) -> bool:
@@ -57,6 +65,47 @@ def to_goal_relative_vx(vx: float, *, goal_x: float) -> float:
     if math.isnan(vx):
         return vx
     return -vx if _flip(goal_x) else vx
+
+
+def to_goal_relative_y(y: float, *, goal_x: float) -> float:
+    """Map absolute pitch y to goal-relative y (mirrored when the defended goal is at high x).
+
+    Paired with :func:`to_goal_relative_x` this is the 180-degree POINT REFLECTION
+    ``(x, y) -> (105 - x, 68 - y)``, so the two goal ends differ by a ROTATION rather than a
+    reflection. Before PR 5 there was no y counterpart: ``goal_x=105`` was an x-only mirror
+    (determinant -1) while ``goal_x=0`` was the identity (+1), so the ends used frames of OPPOSITE
+    handedness -- every RADIAL feature stayed byte-identical and every BEARING negated (measured:
+    xS 12 of 27 features, xCross 3 of 16).
+
+    Examples
+    --------
+    >>> to_goal_relative_y(20.0, goal_x=0.0)
+    20.0
+    >>> to_goal_relative_y(20.0, goal_x=105.0)
+    48.0
+    """
+    if math.isnan(y):
+        return y
+    return (PITCH_WIDTH - y) if _flip(goal_x) else y
+
+
+def to_goal_relative_vy(vy: float, *, goal_x: float) -> float:
+    """Map absolute y-velocity to goal-relative y-velocity (negated when flipped).
+
+    Added for symmetry with :func:`to_goal_relative_vx`. NOTE that BOTH are currently unused in
+    production: no shipped feature consumes a directional velocity (xS's ``bvx``/``bvy`` and
+    xCross's feed only ``hypot``), so neither is exercised by the PR 5 feature-identity gate.
+
+    Examples
+    --------
+    >>> to_goal_relative_vy(2.0, goal_x=0.0)
+    2.0
+    >>> to_goal_relative_vy(2.0, goal_x=105.0)
+    -2.0
+    """
+    if math.isnan(vy):
+        return vy
+    return -vy if _flip(goal_x) else vy
 
 
 def in_penalty_area_goal_relative(gr_x: float, y: float) -> bool:

@@ -151,6 +151,12 @@ e2e tests require dataset fixtures not committed to the repo. Tests with
 fixtures committed to the repo should not be marked e2e — they run in
 the regular suite.
 
+**Lint at the CI scope, never `.`** — `python -m ruff check silly_kicks/ tests/ scripts/` and
+`python -m ruff format --check silly_kicks/ tests/ scripts/`, matching `ci.yml`. `ruff check .`
+walks `.venv/` and `calibration_runs/` and reports ~234 vendored errors that are not the repo's,
+which is enough noise to hide the real ones. `pyright` runs **bare** (config-driven include), and
+neither tool is on PATH — use `python -m`.
+
 CI runs a bulk suite step serial (`--benchmark-skip`) on every matrix leg and a benchmark
 *measurements* step single-threaded (`--benchmark-only`) on the primary leg only (see the
 slow-test-gating note below for the per-leg split). There are no wall-clock

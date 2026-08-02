@@ -71,11 +71,16 @@ def _iter_matches_from_dir(data_dir: Path):
         yield prov, game_dir.name, shots, frames, frames["team_id"].dropna().iloc[0]
 
 
-def _iter_matches_from_pining(providers, max_per_provider, match_ids=None):
+def _iter_matches_from_pining(providers, max_per_provider, match_ids=None, cache_dir=None):
     sys.path.insert(0, "scripts")
     from _loader_pining import load_matches
 
-    yield from load_matches(providers=providers, match_ids=match_ids, max_per_provider=max_per_provider)
+    yield from load_matches(
+        providers=providers,
+        match_ids=match_ids,
+        max_per_provider=max_per_provider,
+        cache_dir=cache_dir,
+    )
 
 
 #: The four per-row arrays `_extract` returns alongside the feature matrix, carried as COLUMNS so
@@ -377,6 +382,14 @@ def main(argv=None) -> None:
         "load_matches(match_ids=) (--providers path only). Default None (load every listed match).",
     )
     ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Persist downloaded pining artifacts under CACHE_DIR/{provider}/{match_id}/ and reuse "
+        "them on later runs over the same corpus. Default None re-downloads every run (~24-90 s per "
+        "match). The cache is keyed on (provider, match_id) ONLY, so it would serve stale bytes if "
+        "an upstream artifact were ever revised; these are immutable historical matches.",
+    )
+    ap.add_argument(
         "--allow-dirty",
         action="store_true",
         help="Train from a modified working tree. The run still records run_tree_dirty=true in "
@@ -415,7 +428,9 @@ def main(argv=None) -> None:
     else:
         if args.providers:
             allowlist = json.load(open(args.match_ids_json)) if args.match_ids_json else None
-            source = _iter_matches_from_pining(args.providers.split(","), args.max_per_provider, allowlist)
+            source = _iter_matches_from_pining(
+                args.providers.split(","), args.max_per_provider, allowlist, cache_dir=args.cache_dir
+            )
         else:
             source = _iter_matches_from_dir(Path(args.data_dir))
         t0 = time.time()

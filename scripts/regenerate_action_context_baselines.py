@@ -2,15 +2,15 @@
 
 For each provider:
   1. Load committed slim parquet (Tier-3 lakehouse-derived for sportec/metrica/skillcorner;
-     synthetic medium_halftime for gradientsports). Frames only — actions in slim are placeholder rows
+     synthetic medium_halftime for gradientsports). Frames only -- actions in slim are placeholder rows
      with NULL identifiers per the lakehouse fct_action_values asymmetry. Mirrors the PR-S20
      _load_frames + _synthesize_actions pattern in tests/tracking/test_action_context_cross_provider.py.
   2. Synthesize 10 actions anchored on real (period_id, frame_id, player_id) triples from the
      committed frame slice; assign type_id=pass_id (synthesized actions are non-shots).
   3. Run silly_kicks.spadl.utils.add_pre_shot_gk_context(actions) to populate
      defending_gk_player_id (events-only step; produces NaN for non-shots).
-  4. Run add_action_context(actions, frames) → 4 PR-S20 features + 4 provenance columns.
-  5. Run add_pre_shot_gk_position(actions, frames) → 4 GK-position columns (all NaN since
+  4. Run add_action_context(actions, frames) -> 4 PR-S20 features + 4 provenance columns.
+  5. Run add_pre_shot_gk_position(actions, frames) -> 4 GK-position columns (all NaN since
      synthesized actions are non-shots; verifies the all-NaN regression path).
   6. Project to expected schema and write {provider}_expected.parquet.
   7. Compute p25/p50/p75/p99 per feature (per provider); populate JSON null slots.

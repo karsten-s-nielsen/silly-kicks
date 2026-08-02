@@ -49,7 +49,41 @@ _SLOPE_TOL = 0.25  # C1: reliability-slope within [1-tol, 1+tol]; NaN slope (deg
 _CORPUS_IDENTITY_ATOL = 0.05
 
 
-def _extract(providers, max_per_provider, tracking_limit, *, shard_root):
+def _corpus_taxonomy(providers: list[str], max_per_provider: int | None) -> tuple[str, bool]:
+    """The ADR-038 label for the artifact this run will write, plus its all-public verdict.
+
+    Keyed on the manifest ``visibility`` field, **never** the provider name: the 98 owner-tier
+    SkillCorner matches carry provider ``skillcorner`` and are non-redistributable, so a
+    provider-name allowlist would label a restricted run ``public`` -- the exact defect ADR-038
+    deleted ``_PUBLIC_PROVIDERS`` to prevent.
+
+    Derived from the REQUESTED corpus (``select_match_ids``), not the extracted one, for the same
+    reason that helper gives: ``load_matches`` may drop a match at runtime. It also makes the label
+    identical on a fresh extraction and on a ``--cache-features`` resume, which never sees the keys.
+
+    FAIL-CLOSED on an empty corpus: ``ndarray.all()`` is vacuously True on an empty array, which
+    would let a zero-match run claim ``public``.
+    """
+    sys.path.insert(0, "scripts")
+    from _corpus import artifact_label, assert_public_corpus, is_public_row
+    from _loader_pining import match_visibility, select_match_ids
+
+    pairs = select_match_ids(providers=providers, max_per_provider=max_per_provider)
+    vis = match_visibility(providers)
+    # Subset gate, unconditional: nothing unregistered may call itself public (a LICENSING failure).
+    assert_public_corpus(vis)
+    all_public = bool(
+        len(pairs)
+        and is_public_row(
+            providers=np.asarray([p for p, _ in pairs]),
+            match_ids=np.asarray([m for _, m in pairs]),
+            visibility=vis,
+        ).all()
+    )
+    return artifact_label(providers=set(providers), all_public=all_public), all_public
+
+
+def _extract(providers, max_per_provider, tracking_limit, *, shard_root, cache_dir=None):
     from scripts._driver import for_each, shard_path
 
     def _work(item):
@@ -68,7 +102,12 @@ def _extract(providers, max_per_provider, tracking_limit, *, shard_root):
         return X
 
     res = for_each(
-        load_matches(providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit),
+        load_matches(
+            providers=providers,
+            max_per_provider=max_per_provider,
+            tracking_limit=tracking_limit,
+            cache_dir=cache_dir,
+        ),
         key=lambda item: (str(item[0]), str(item[1])),
         work=_work,
         shard_root=shard_root,
@@ -405,7 +444,11 @@ def _train_skillcorner(args) -> int:
     else:
         print("=== extracting SkillCorner GK distributions (native-label-filtered, F1/G1) ===", flush=True)
         df = _extract(
-            ["skillcorner"], args.max_per_provider, args.tracking_limit, shard_root=Path(args.shard_dir) / "skillcorner"
+            ["skillcorner"],
+            args.max_per_provider,
+            args.tracking_limit,
+            shard_root=Path(args.shard_dir) / "skillcorner",
+            cache_dir=args.cache_dir,
         )
         if cache:
             Path(cache).parent.mkdir(parents=True, exist_ok=True)
@@ -506,7 +549,7 @@ def _train_skillcorner(args) -> int:
     if decision.startswith("bundle_skillcorner"):
         # `model` = fresh full-data fit, used as the CORPUS-IDENTITY PROBE only. The SERVED artifact is
         # the committed model (its bytes), so the OOF gate provably describes the served model AND
-        # coef stay byte-identical (spec v3 §5 + the additive-only re-bundle check). Re-fit is NEVER
+        # coef stay byte-identical (spec v3 S5 + the additive-only re-bundle check). Re-fit is NEVER
         # persisted on a re-bundle.
         model = GkCompletionModel().fit(X_all, pd.Series(y_all))
         sm, gm = _per_type_gate_from_oof(oof, y_all, X_all)
@@ -538,8 +581,15 @@ def _train_skillcorner(args) -> int:
             flush=True,
         )
 
+    sc_label, sc_all_public = _corpus_taxonomy(["skillcorner"], args.max_per_provider)
     metrics = {
         "variant": "skillcorner",
+        # ADR-038: the tier this artifact was fit on, derived from the manifest ship mask rather
+        # than assigned by hand. Previously absent from this trainer entirely, so a defaulted
+        # --max-per-provider 64 run could pull 54 restricted SkillCorner matches into a
+        # distributable artifact with nothing refusing it or labelling the result.
+        "artifact_label": sc_label,
+        "all_public": sc_all_public,
         # ADR-052: the artifact records WHICH CODE produced it. `--allow-dirty` permits a dev
         # run; the flag survives into the artifact rather than living in someone's memory.
         "run_commit": run_prov["commit"],
@@ -580,6 +630,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--providers", nargs="+", default=["gradientsports"])
     ap.add_argument("--max-per-provider", type=int, default=64)
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Persist downloaded pining artifacts under CACHE_DIR/{provider}/{match_id}/ and reuse "
+        "them on later runs over the same corpus. Default None re-downloads every run (~24-90 s per "
+        "match). Deliberately NOT part of the shard token_inputs: it caches DOWNLOADS, not extracted "
+        "features, so it cannot change a shard's content.",
+    )
     ap.add_argument(
         "--tracking-limit",
         type=int,
@@ -656,7 +714,11 @@ def main() -> int:
 
     print(f"=== extracting GK distributions ({args.providers}) ===", flush=True)
     df = _extract(
-        args.providers, args.max_per_provider, args.tracking_limit, shard_root=Path(args.shard_dir) / "default"
+        args.providers,
+        args.max_per_provider,
+        args.tracking_limit,
+        shard_root=Path(args.shard_dir) / "default",
+        cache_dir=args.cache_dir,
     )
     feats = GK_COMPLETION_FEATURE_NAMES
     X_all = df[feats]
@@ -710,7 +772,7 @@ def main() -> int:
 
     # ---- final fit on ALL kept rows (native + imputed) ----
     # `model` = corpus-identity PROBE; the SERVED artifact is the committed model + the OOF gate, so
-    # coef stay byte-identical and the gate provably describes the served model (spec v3 §5).
+    # coef stay byte-identical and the gate provably describes the served model (spec v3 S5).
     model = GkCompletionModel().fit(X_all, pd.Series(y_all))
     sm, gm = _per_type_gate_from_oof(oof, y_all, X_all)
     try:
@@ -733,6 +795,7 @@ def main() -> int:
     reloaded = GkCompletionModel.load(_WEIGHTS_DIR)
     np.testing.assert_allclose(served.predict_proba(X_all), reloaded.predict_proba(X_all), atol=1e-9)
 
+    default_label, default_all_public = _corpus_taxonomy(list(args.providers), args.max_per_provider)
     metrics = {
         "mode": args.mode,
         "reason": args.reason,
@@ -758,6 +821,13 @@ def main() -> int:
         "density_finite_rate": density_finite,
         "label_split": label_split,
         "providers": list(args.providers),
+        # ADR-038: the tier this artifact was fit on, derived from the manifest ship mask rather
+        # than assigned by hand. For the default (Gradient Sports) corpus this is "full" -- the
+        # most restricted tier -- where previously no label was recorded at all. Owner decision
+        # 2026-08-02: ship it. Those coefficients already ship, so the label documents an existing
+        # situation rather than changing what is distributed.
+        "artifact_label": default_label,
+        "all_public": default_all_public,
         # ADR-052: the artifact records WHICH CODE produced it. `--allow-dirty` permits a dev
         # run; the flag survives into the artifact rather than living in someone's memory.
         "run_commit": run_prov["commit"],

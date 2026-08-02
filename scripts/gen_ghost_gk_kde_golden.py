@@ -1,7 +1,7 @@
 """Regenerate the ghost-GK KDE query-feature fixture.
 
 As of 4.54.0 / ADR-044 this fixture carries ONLY the deterministic query feature set
-(``features`` / ``feature_cols``) — a seeded, version-independent set of 26-dim inputs. The KDE
+(``features`` / ``feature_cols``) -- a seeded, version-independent set of 26-dim inputs. The KDE
 backend-parity tests (``test_golden_continuous`` / ``_discrete_mode`` / ``_fft_cic_scalars``)
 compute their reference at RUNTIME (the closed-form ``vectorized`` backend on a fresh fit), so no
 frozen density oracle is stored: a fitted-model oracle was not portable across sklearn/numpy
@@ -38,7 +38,7 @@ def main() -> None:
         features=X.values,
         feature_cols=np.array(X.columns, dtype=object),
     )
-    print(f"wrote {OUT} ({OUT.stat().st_size / 1e3:.2f} KB) — query features only, no frozen oracle")
+    print(f"wrote {OUT} ({OUT.stat().st_size / 1e3:.2f} KB) -- query features only, no frozen oracle")
     print(f"gen-env: py={sys.version.split()[0]} numpy={np.__version__}")
 
 

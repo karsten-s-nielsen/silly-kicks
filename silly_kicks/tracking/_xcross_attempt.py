@@ -101,19 +101,40 @@ def _nearest_dist(origin_xy, pts_xy) -> float:
     return float(min(math.hypot(px - ox, py - oy) for px, py in pts_xy))
 
 
+def _grid_centres(length: float, res: float) -> np.ndarray:
+    """Cell centres tiling ``length`` symmetrically about its midpoint.
+
+    ``a = L/2 - (n-1)*res/2`` yields 1.5 for (105, 3) -- byte-identical to the shipped x grid --
+    and 1.0 for (68, 3), and stays mirror-symmetric for ANY ``res``. The previous
+    ``arange(res/2, L, res)`` is symmetric only when ``L`` divides evenly by ``res``: true for
+    105/3, FALSE for 68/3, which centred the y grid on 34.5 instead of 34.0. A scene and its
+    left-right mirror at the SAME goal end then differed by 5.4% in ``space_controlled`` --
+    xCross model feature #3, on the left-wing/right-wing axis, in a CROSS model.
+
+    Do not "simplify" back to ``res/2``: the failure inverts with ``res``. At ``res=2.0`` it is the
+    X grid that becomes asymmetric (centres 1, 3, ..., 103; ``105 - 1 = 104`` is not a centre), so
+    a res-specific comment would be actively misleading -- and ``res`` has already moved once.
+    """
+    n = round(length / res)
+    anchor = length / 2.0 - (n - 1) * res / 2.0
+    return anchor + res * np.arange(n)
+
+
 def _dominant_region_area(carrier_xy, all_xy, *, res: float = 3.0) -> float:
     """Cache-free 'space controlled' proxy: fraction of pitch grid cells whose nearest player is
     the carrier x pitch area. numpy-only nearest-player Voronoi approximation; NO pitch-control
     cache (locks the TF-19 counterfactual guarantee).
 
-    PA-L2 perf note: builds a full-pitch meshgrid PER FRAME (~1800 cells x ~22 players at res=3.0).
+    PA-L2 perf note: builds a full-pitch meshgrid PER FRAME (~805 cells x ~22 players at res=3.0;
+    35 x 23). The former "~1800" was stale -- it describes res=2.0 (52 x 34 = 1768) and went out of
+    date when ``res`` moved to 3.0.
     The perf guard is structural (call-count), not wall-clock; PR-B must add a real-data wall-clock
     sanity check and coarsen ``res`` if this dominates. It is the only non-vectorized feature.
     """
     if carrier_xy is None or not all_xy:
         return np.nan
-    xs = np.arange(res / 2, _geo.PITCH_LENGTH, res)
-    ys = np.arange(res / 2, _geo.PITCH_WIDTH, res)
+    xs = _grid_centres(_geo.PITCH_LENGTH, res)
+    ys = _grid_centres(_geo.PITCH_WIDTH, res)
     gx, gy = np.meshgrid(xs, ys)
     pts = np.asarray(all_xy, dtype=float)  # (P, 2)
     d2 = (gx[..., None] - pts[:, 0]) ** 2 + (gy[..., None] - pts[:, 1]) ** 2
@@ -156,7 +177,11 @@ def extract_xcross_features(
     team = canonical_id_series(f["team_id"]).fillna(na_fill).to_numpy()
     pid = canonical_id_series(f["player_id"]).fillna(na_fill).to_numpy()
     gr_x = np.array([_geo.to_goal_relative_x(x, goal_x=goal_x) for x in f["x"].to_numpy()])
-    y = f["y"].to_numpy(dtype=float)
+    # y is GOAL-RELATIVE from here down (PR 5). Paired with gr_x this is the 180-degree point
+    # reflection; before PR 5 y rode through untransformed, so `atan2(y - GOAL_Y, gr_x)` negated
+    # every bearing between the two goal ends while every radial stayed byte-identical. The local
+    # name is kept because every consumer below already reads `y`.
+    y = np.array([_geo.to_goal_relative_y(v, goal_x=goal_x) for v in f["y"].to_numpy(dtype=float)])
 
     out: dict[str, float] = {name: np.nan for name in XCROSS_FEATURE_NAMES_FAITHFUL}
 

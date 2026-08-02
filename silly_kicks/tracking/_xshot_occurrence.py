@@ -177,24 +177,32 @@ def extract_xshot_features(
             "TF-16 weights/TF-19 follow-up."
         )
 
-    def gx(x: float) -> float:
-        return _geo.to_goal_relative_x(float(x), goal_x=goal_x)
+    # Goal-relative ONCE, for every consumer below: the 180-degree point reflection
+    # (x, y) -> (105 - x, 68 - y) when the defended goal is at high x. Do NOT reintroduce a
+    # per-site helper. `gx` was x-only while y was read at FOUR independent sites (ball, defenders,
+    # attackers, keeper), so before PR 5 every bearing negated between the two goal ends while every
+    # radial stayed byte-identical -- and a per-site fix leaves "no call site can be missed" an
+    # assertion rather than a property. `assign` returns a NEW frame (ADR-033: never mutate the
+    # caller's).
+    fd = frame_data.assign(
+        x=frame_data["x"].map(lambda v: _geo.to_goal_relative_x(float(v), goal_x=goal_x)),
+        y=frame_data["y"].map(lambda v: _geo.to_goal_relative_y(float(v), goal_x=goal_x)),
+    )
 
-    is_ball = frame_data["is_ball"].astype(bool)
-    is_gk = frame_data["is_goalkeeper"].astype(bool)
-    ball = frame_data[is_ball]
-    players = frame_data[~is_ball]
+    is_ball = fd["is_ball"].astype(bool)
+    is_gk = fd["is_goalkeeper"].astype(bool)
+    ball = fd[is_ball]
+    players = fd[~is_ball]
     players_is_gk = is_gk[~is_ball]
 
     if len(ball) > 0:
-        bx_raw = float(ball["x"].iloc[0])
+        bx = float(ball["x"].iloc[0])
         by = float(ball["y"].iloc[0])
         bvx = float(ball["vx"].iloc[0]) if "vx" in ball.columns else np.nan
         bvy = float(ball["vy"].iloc[0]) if "vy" in ball.columns else np.nan
         bz = float(ball["z"].iloc[0]) if "z" in ball.columns else np.nan
     else:
-        bx_raw = by = bvx = bvy = bz = np.nan
-    bx = gx(bx_raw)
+        bx = by = bvx = bvy = bz = np.nan
 
     r = math.hypot(bx, by - _geo.GOAL_Y) if not math.isnan(bx) else np.nan
     theta = math.atan2(by - _geo.GOAL_Y, bx) if not math.isnan(bx) else np.nan
@@ -211,7 +219,7 @@ def extract_xshot_features(
     def_xy = (
         np.column_stack(
             [
-                defending["x"].map(gx).to_numpy(dtype=float),
+                defending["x"].to_numpy(dtype=float),
                 defending["y"].to_numpy(dtype=float),
             ]
         )
@@ -221,7 +229,7 @@ def extract_xshot_features(
     atk_xy = (
         np.column_stack(
             [
-                attacking["x"].map(gx).to_numpy(dtype=float),
+                attacking["x"].to_numpy(dtype=float),
                 attacking["y"].to_numpy(dtype=float),
             ]
         )
@@ -232,7 +240,7 @@ def extract_xshot_features(
     open_goal = _open_goal_fraction((bx, by), def_xy)
 
     if len(gk_rows) > 0:
-        gkx = gx(gk_rows["x"].iloc[0])
+        gkx = float(gk_rows["x"].iloc[0])
         gky = float(gk_rows["y"].iloc[0])
         gk_r = math.hypot(gkx, gky - _geo.GOAL_Y)
         gk_theta = math.atan2(gky - _geo.GOAL_Y, gkx)

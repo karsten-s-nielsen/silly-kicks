@@ -25,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 EVENTS_PATH = REPO_ROOT / "tests" / "datasets" / "idsse" / "per_period_match.parquet"
 OUT_PATH = REPO_ROOT / "tests" / "datasets" / "idsse" / "paired_tracking.parquet"
 
-# Time windows (period, start_ts, end_ts) — each covers a shot + surrounding events.
+# Time windows (period, start_ts, end_ts) -- each covers a shot + surrounding events.
 # P1 first shot at ts=102.3 (preceded by 2 passes at ts=95.3, 99.0)
 # P2 first shot at ts=636.8 (preceded by passes/tackles at ts=627-635)
 TIME_WINDOWS = [
@@ -94,7 +94,7 @@ def main() -> int:
                       AND period = {period}
                       AND timestamp_seconds BETWEEN {ts_start} AND {ts_end}
                     ORDER BY frame, player_id
-                    """  # noqa: S608 — one-shot extraction script, not user-facing
+                    """  # noqa: S608 -- one-shot extraction script, not user-facing
                 )
                 cols = [d[0] for d in cur.description]  # type: ignore[reportOptionalIterable]
                 rows = cur.fetchall()
@@ -112,7 +112,7 @@ def main() -> int:
 
     combined = pd.concat(frames, ignore_index=True)
 
-    # Keep original match_id (J03WMX) — DFL DataHub free-sample license
+    # Keep original match_id (J03WMX) -- DFL DataHub free-sample license
     # permits non-commercial redistribution (same as per_period_match.parquet).
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(OUT_PATH, index=False)

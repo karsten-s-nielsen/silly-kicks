@@ -5,7 +5,7 @@ on the FAITHFUL metric: does xt_gk_v2 separate keepers where v1 was flat? Descri
 FULL cohort, R4). Discrimination = ICC on the ACTION-level values grouped by player_key (within-keeper
 replication), NOT collapsed per-keeper means (that would be degenerate, R2). Per-keeper mean is used only
 for the ranking. CV is reported secondary (unstable near zero mean). Honest-reporting: report whatever it
-shows (§3) -- if v2 is still keeper-flat, that is the finding.
+shows (S3) -- if v2 is still keeper-flat, that is the finding.
 """
 
 from __future__ import annotations
@@ -27,16 +27,16 @@ def _report(provider: str, variant: str, n_actions: int, v2: dict, v1: dict) -> 
         return "".join(f"| {i + 1} | `{k}` | {mean:+.4f} | {n} |\n" for i, (k, mean, n) in enumerate(rows[:top]))
 
     lines = [
-        f"# xT-GK v2 keeper discrimination — {provider} (FAITHFUL V_opp)\n",
+        f"# xT-GK v2 keeper discrimination -- {provider} (FAITHFUL V_opp)\n",
         f"- rho variant: `{variant}` * GK-distribution actions: **{n_actions}** * min {_MIN_N} dist/keeper * "
         f"V_opp fit on FULL cohort (descriptive spread)\n",
         "\n| metric | ICC (action-level) | CV (means, unstable) | n keepers |\n|---|---|---|---|\n",
         f"| **xt_gk_v2** | **{v2['icc']:.4f}** | {v2['cv']:.3f} | {v2['n_keepers']} |\n",
         f"| v1 (c.xt_gk) | {v1['icc']:.4f} | {v1['cv']:.3f} | {v1['n_keepers']} |\n",
-        "\n> ICC = between-keeper variance ÷ total (action-level; NOT per-keeper means). Higher = separates "
+        "\n> ICC = between-keeper variance / total (action-level; NOT per-keeper means). Higher = separates "
         "keepers more. CV = std/|mean| of per-keeper means (secondary; unstable when the metric mean ~ 0). "
-        "**§3: report whatever it shows** — if v2's ICC ~ v1's, v2 is still keeper-flat on the faithful metric.\n",
-        "\n### xt_gk_v2 top keepers (per-action mean; face validity — the owner's coaching eye)\n"
+        "**S3: report whatever it shows** -- if v2's ICC ~ v1's, v2 is still keeper-flat on the faithful metric.\n",
+        "\n### xt_gk_v2 top keepers (per-action mean; face validity -- the owner's coaching eye)\n"
         "| # | player_key | v2 mean | n |\n|---|---|---|---|\n" + _rank(v2["ranking"]),
     ]
     out = (
