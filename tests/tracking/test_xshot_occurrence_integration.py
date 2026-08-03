@@ -149,19 +149,83 @@ def test_objective_cache_equivalence_with_train_subsample():
     assert_cache_equivalence(obj, candidates)  # type: ignore[arg-type]
 
 
-def test_bundled_model_is_live_not_degenerate():
-    """LIVENESS tripwire (H2/N2/P4): the bundled model is not dead/constant — it ranks the
-    cherry-picked imminent (near-goal) extremes above the quiet (far) ones. NOT a quality
-    measure (the frozen rows are maximally separable in `r`); real quality lives in the e2e
-    gates. Scale-free AUC, no magic margin; arch-robust (the model is ARM-trained)."""
-    from sklearn.metrics import roc_auc_score
+#: The frozen directional rows. Regenerate with scripts/make_xshot_directional_fixture.py.
+_FROZEN = "tests/datasets/tracking/xshot_directional/frozen_rows.parquet"
 
+
+def _frozen_rows():
+    return pd.read_parquet(_FROZEN)
+
+
+def test_frozen_fixture_is_not_degenerate():
+    """PRECONDITION the liveness gate's teeth rest on -- the ADR-032 idiom (a gate whose fixture
+    is unverified is a gate that can pass on nothing).
+
+    Two properties, both of which were VIOLATED before PR 5 and are why the previous assertion
+    could not distinguish a good model from an inverted one:
+
+    * every row IN-DOMAIN. `prepare_xshot_training_data(attacking_third_only=True)` keeps only
+      frames within `_ATTACKING_THIRD_M` of the attacked goal, so rows beyond it are pure
+      extrapolation. The old fixture put its whole FAR class at r ~= 101 m, ~3x outside.
+    * `speed` NOT CONSTANT. The generator used to zero vx/vy, pinning ball speed to 0 on every
+      row -- the same degeneracy PR-S118 found and fixed in the xCross fixture and left here. A
+      pinned feature cannot contribute, and 0 routes down a different XGBoost branch than
+      missing, so the gate was scoring inputs production never produces.
+    """
+    from silly_kicks.tracking import _xshot_occurrence as xs
+
+    df = _frozen_rows()
+    assert len(df) >= 40, f"only {len(df)} frozen rows -- too few to separate two similar models"
+    assert df["r"].max() <= xs._ATTACKING_THIRD_M, (
+        f"frozen rows reach r={df['r'].max():.1f} > {xs._ATTACKING_THIRD_M} -- out of the trained "
+        "domain, so the model's output there is extrapolation, not prediction"
+    )
+    assert df["speed"].nunique() > 1, "ball speed is CONSTANT across the fixture (the PR-S118 bug)"
+
+
+def test_bundled_model_is_live_not_degenerate():
+    """LIVENESS tripwire (H2/N2/P4): the bundled model is not dead or constant.
+
+    Liveness here is the repo's standard definition -- non-NaN and NON-CONSTANT -- applied to a
+    model instead of an aggregator column (see tests/tracking/test_aggregator_column_liveness.py).
+    Quality is deliberately NOT asserted: it lives in the e2e gates and the trainer's fail-closed
+    acceptance gates.
+
+    RETIRED IN PR 5 (do not resurrect): this used to assert `roc_auc_score(near_vs_far) >= 0.9`,
+    i.e. that the model ranks near-goal rows above far ones. That premise is FALSE for the models
+    it guards -- measured `corr(r, p)` is +0.89 for the pre-PR-5 bundled model and +0.94 for the
+    current one, both rising with distance (plausible: xS predicts a shot ATTEMPT within ~1 s, and
+    25-34 m is prime open-play shooting range). It passed only because two defects compensated:
+    out-of-domain FAR rows and a ball speed pinned to 0. With either one fixed the old model
+    scores ~0.47, i.e. chance. Same retire-and-replace treatment ADR-032 gave the dead
+    `pitch_control_at_ball__spearman`, with the reason recorded in place so it is not reinstated.
+    """
     from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL, XShotOccurrenceModel
 
-    df = pd.read_parquet("tests/datasets/tracking/xshot_directional/frozen_rows.parquet")
+    df = _frozen_rows()
+    p = XShotOccurrenceModel.from_variant("default").predict_proba(df[XSHOT_FEATURE_NAMES_FAITHFUL])
+    assert np.isfinite(p).all(), "bundled model produced non-finite probabilities"
+    assert ((p >= 0.0) & (p <= 1.0)).all(), "probabilities out of [0, 1]"
+    assert len(np.unique(np.round(p, 9))) > 1, "bundled model output is CONSTANT -- dead model"
+
+
+def test_bundled_model_responds_to_geometry():
+    """The model-level analogue of non-constant: output must MOVE when a driving feature moves.
+
+    A frozen/degenerate model can still emit varied values across varied rows (that is what the
+    test above catches); this catches one that IGNORES its geometry. Direction is deliberately
+    unasserted -- see the retirement note above -- only that the response is real.
+    """
+    from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL, XShotOccurrenceModel
+
+    base = _frozen_rows()[XSHOT_FEATURE_NAMES_FAITHFUL].median().to_frame().T
     m = XShotOccurrenceModel.from_variant("default")
-    p = m.predict_proba(df[XSHOT_FEATURE_NAMES_FAITHFUL])
-    assert roc_auc_score(df["label"].to_numpy(), p) >= 0.9
+    probs = []
+    for r in (5.0, 12.0, 20.0, 28.0, 34.0):  # swept INSIDE the trained domain
+        row = base.copy()
+        row["r"] = r
+        probs.append(float(m.predict_proba(row)[0]))
+    assert max(probs) - min(probs) > 1e-3, f"output flat across r: {probs}"
 
 
 def test_from_variant_default_loads_and_predicts_in_bounds():

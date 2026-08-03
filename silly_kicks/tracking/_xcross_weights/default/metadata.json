@@ -28,9 +28,9 @@
     "gamma": 0.25
   },
   "params": {
-    "n_estimators": 263,
+    "n_estimators": 292,
     "max_depth": 3,
-    "learning_rate": 0.024303234053346747,
+    "learning_rate": 0.02427372604249366,
     "tree_method": "hist",
     "n_jobs": 1,
     "subsample": 1.0,
@@ -38,14 +38,14 @@
     "random_state": 42,
     "eval_metric": "logloss",
     "verbosity": 0,
-    "min_child_weight": 19,
-    "reg_lambda": 4.828160165372797
+    "min_child_weight": 17,
+    "reg_lambda": 3.2289713387920482
   },
   "version": "1.0.0",
   "pitch_length": 105.0,
   "pitch_width": 68.0,
-  "geometry_version": "goal-relative-1",
-  "xgboost_version": "3.2.0",
+  "geometry_version": "goal-relative-2",
+  "xgboost_version": "3.3.0",
   "training_platform": "Linux-6.14.0-1015-nvidia-aarch64-with-glibc2.39",
   "shipped_variant": "public",
   "provider_list": [
@@ -56,7 +56,7 @@
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      0.0054975743
+      0.0046812715
     ]
   },
   "feature_contract": {
@@ -64,18 +64,18 @@
     "probe_sha256": "9f17a54c10b8237f1f60ac7f84953ac8948b90e92bbc45eabc7bc3378138b398",
     "fingerprint": [
       22.0227155455,
-      -0.6889243882,
+      0.6889243882,
       3.1622776602,
       1.0,
       11.1803398875,
-      204.0,
+      195.1304347826,
       14.4222051019,
       21.0,
       0.25,
       0.0,
       2.0615528128,
-      0.2449786631,
-      0.5,
+      -0.2449786631,
+      -0.5,
       3.7397326108,
       4.6157989558,
       0.5
