@@ -192,7 +192,7 @@ rule that "cannot tell" must not silently become "reflect".
 **Vindicated by the gates themselves:** Gate B found an **eighth** D3 member the audit missed
 (`add_gk_influence`, whose `_gk_influence.py:371-372` applies the correct both-axes reflection keyed
 on the wrong thing), and Gate A found a **chiral goal-relative transform** (`_geometry.py` has no
-`to_goal_relative_y`) deferred to PR 5 as a retrain trigger.
+`to_goal_relative_y`) deferred to PR 5 as a retrain trigger. **CLOSED — see "Closure: PR 5" below.**
 
 **Strict xfails encode every known defect — 14 registered at PR 1, 10 remaining after PR 3.**
 Strictness is the point: a fix cannot land without deleting its own marker, which is why this count
@@ -236,6 +236,42 @@ no artifact, script or test behind it anywhere. Stage 2's `k3` and `min_displace
 never run on corrected frames and never applied*, which is tracked in `TODO.md` as a recommendation
 refresh. **No shipped constant moves.** A silent omission here would have been indistinguishable from
 an oversight.
+
+## Closure: PR 5 — the chiral transform AND the grid re-anchor
+
+The deferral above is discharged. PR 5 corrected **two** geometry defects, not one, and the second was
+not in the original finding.
+
+**Axis A — the transform.** `to_goal_relative_y` / `to_goal_relative_vy` added, so
+`(x, y) -> (105-x, 68-y)` at the high-x goal and the two ends differ by a ROTATION rather than by
+opposite handedness. Measured on 804 real frames: only bearings moved, and only at the high-x end
+(`theta` 2.620 rad, `GK_theta` 0.786 rad); every radial held to <= 1.4e-14, and `GK_r` and
+`gk_depth_x` are invariant EXACTLY -- `hypot(a, -b) == hypot(a, b)` and `cos` is even.
+
+**Axis B — the dominant-region grid.** `_dominant_region_area`'s y centres were
+`arange(1.5, 68.0, 3.0)` -> 23 cells spanning 1.50-67.50, centred on **34.50**. `_grid_centres` gives
+1.00-67.00, centred on **34.00**. The x axis is byte-identical (105 divides evenly by 3). This is
+independent of `goal_x` and moves `space_controlled` at BOTH goal ends.
+
+**Why axis B matters beyond a 5.4% bias, and this is the durable part.** The re-anchored grid is
+**closed under the ADR-028 point reflection** -- old centres map `1.5 -> 66.5`, which is not a grid
+centre; new centres map `1.0 -> 67.0`, which is. So the dominant-region surface now **commutes** with
+the reflection, and that commutation is *why* `space_controlled` is exactly chirality-invariant rather
+than approximately so. A future `res` change, or an off-centre anchor, silently breaks it.
+
+**It is guarded, in two places, and neither is new to PR 5's fixture work:**
+
+- `tests/tracking/test_pr5_chirality_gates.py::test_grid_centres_are_mirror_symmetric` asserts
+  `set(centres) == set(length - centres)` -- the closure property itself, parametrized over both axes.
+  Its docstring records that the x half is already green and only y landed red, so "landed red" is not
+  over-claimed for a gate half that structurally cannot fail.
+- `::test_dominant_region_is_left_right_mirror_invariant` asserts the behavioural consequence:
+  `space_controlled` invariant under a fixed-end left-right mirror.
+
+**Retrain.** Both bundled models were re-fit on the corrected geometry and re-stamped; their
+fail-closed chirality and feature-contract prongs made a code-only PR impossible by construction --
+the wheel's own weights would have refused to load.
+
 
 ## Alternatives rejected
 

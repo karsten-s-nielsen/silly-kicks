@@ -30,6 +30,16 @@ ARTIFACT_DRIVERS = (
     "build_layer2_spells",
     "derive_opengoal_range",
     "run_signoff_power",
+    # Enrolled 4.74.0 (PR 5). It wrote docs/research/xcross_causal/metrics.json with NO
+    # run_commit and NO run_tree_dirty -- the third instance of the class this gate exists for,
+    # and one the gate could not see because ARTIFACT_DRIVERS is hand-maintained and its only
+    # anti-rot assertion is a FLOOR (>= 6 against 14 entries). Cycle B replaces that floor.
+    "validate_xcross_causal",
+    # Enrolled 4.74.0 (PR 5). Two NEW drivers, both written in commit 3 and both run in
+    # commit 4 -- a driver cannot run in the same commit that introduces it, because writing
+    # it is what makes the tree dirty.
+    "measure_covariate_invariance",
+    "measure_platform_probe",
     # Enrolled 4.73.0 (PR-S141). Its predecessor was an ad-hoc pass that shipped a
     # `tracking_limit=3000` cap recorded NOWHERE, halving a published headline -- so the artifact was
     # cited, uncheckable, and wrong. A committed driver with real provenance is the fix.
