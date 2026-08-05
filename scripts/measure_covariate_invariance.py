@@ -119,7 +119,13 @@ def _extract_arm(*, old_grid: bool) -> dict[str, dict[str, list[float]]]:
     from silly_kicks.tracking import _xcross_attempt as _xc
     from silly_kicks.tracking import _xshot_occurrence as _xs
 
-    original_grid = _xc._grid_centres
+    # `_grid_centres` was ADDED by the fix commit, so the BASELINE tree does not have it -- it
+    # anchors its grid inline. Probing with getattr is therefore load-bearing, not defensive: an
+    # AttributeError here is what the baseline arm legitimately looks like, and treating it as fatal
+    # would make the driver unable to measure the very diff it exists for. (It is also the clearest
+    # proof the isolation is real: if the subprocess had resolved `silly_kicks` to the CURRENT tree,
+    # the attribute WOULD be present and the arms would silently share a grid.)
+    original_grid = getattr(_xc, "_grid_centres", None)
     if old_grid:
         _xc._grid_centres = lambda length, res: np.arange(res / 2.0, length, res)
     try:
@@ -129,7 +135,10 @@ def _extract_arm(*, old_grid: bool) -> dict[str, dict[str, list[float]]]:
         # the OLD grid, axis B would measure exactly 0.0, and the artifact would assert that the
         # grid re-anchor moved nothing -- the very claim the three-arm design exists to test. The
         # positive control does NOT catch it, because axis A still moves.
-        _xc._grid_centres = original_grid
+        if original_grid is not None:
+            _xc._grid_centres = original_grid
+        elif hasattr(_xc, "_grid_centres"):
+            del _xc._grid_centres  # never existed here; do not leave one behind
     out["_geometry_version"] = getattr(_geo, "GEOMETRY_VERSION", "<absent>")
     return out
 
