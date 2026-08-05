@@ -230,7 +230,15 @@ def run(out: Path, baseline_tree: Path) -> dict:
             axis_a = _max_abs(old_grid[end][col], parent[end][col])
             axis_b = _max_abs(current[end][col], old_grid[end][col])
             total = _max_abs(current[end][col], parent[end][col])
-            if max(axis_a, axis_b, total) <= 1e-12:
+            # NaN FIRST. A NaN delta means the covariate could not be compared at all -- here
+            # `score_differential` is all-NaN by construction, since the slim fixtures carry no score
+            # context and `_extract_arm` passes np.nan. Without this branch every NaN comparison below
+            # is False and the covariate falls through to "B", so the artifact would assert that the
+            # grid re-anchor moved a confounder it never measured. A wrong axis on a causal covariate
+            # is worse than an absent one.
+            if not (np.isfinite(axis_a) and np.isfinite(axis_b) and np.isfinite(total)):
+                axis = "not-measurable"
+            elif max(axis_a, axis_b, total) <= 1e-12:
                 axis = "none"
             elif axis_a > 1e-12 and axis_b > 1e-12:
                 axis = "A+interaction"
@@ -297,14 +305,17 @@ def run(out: Path, baseline_tree: Path) -> dict:
     # POSITIVE control -- an all-zero table is what a FAILED baseline isolation looks like, and two
     # `== 0` assertions would pass on it. This is the assertion that can fail.
     numeric = [r for r in rows if "total" in r]
-    if not any(abs(float(r["total"])) > 1e-6 for r in numeric):
+    if not any(np.isfinite(r["total"]) and abs(float(r["total"])) > 1e-6 for r in numeric):
         breaches.append("all-zero table: the baseline arm did not isolate (nothing moved anywhere)")
     # AXIS-B control. A leaked `_grid_centres` patch makes every axis-B delta 0.0 while axis A still
     # moves, so the "any delta moved" control above passes on a contaminated run. `space_controlled`
     # is the one covariate the grid re-anchor is KNOWN to move; if it did not, the arms are not what
     # they claim to be.
     if not any(
-        r.get("covariate") == "space_controlled" and abs(float(r.get("axis_b_grid", 0.0))) > 1e-6 for r in numeric
+        r.get("covariate") == "space_controlled"
+        and np.isfinite(r.get("axis_b_grid", float("nan")))
+        and abs(float(r["axis_b_grid"])) > 1e-6
+        for r in numeric
     ):
         breaches.append(
             "axis B moved nothing on space_controlled: the old_grid patch likely leaked into the "
