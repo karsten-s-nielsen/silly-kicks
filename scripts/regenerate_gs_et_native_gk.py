@@ -4,11 +4,11 @@ The prior committed `tests/regressions/extratime/gs_et/frames.parquet` carried n
 `is_goalkeeper`/roster, so the round-trip test had to synthesize a roster. This script
 re-extracts Gradient Sports **WC2022** match 10517, period 3, from the pining-for-the-data
 cache as the **raw tracking-adapter input** (`x_centered`/`y_centered` + flags) carrying the
-**native** `is_goalkeeper` from the roster join — so `test_real_et_roundtrip.py` exercises the
+**native** `is_goalkeeper` from the roster join -- so `test_real_et_roundtrip.py` exercises the
 production GK anchor and self-corrects a negated ET flag against a geometric ground truth.
 
-Mirrors `scripts/_loader_pining._build_gradientsports`'s bronze→`resolved` path (the input to
-`convert_to_frames`); it does NOT call `convert_to_frames` — the fixture must be raw input so the
+Mirrors `scripts/_loader_pining._build_gradientsports`'s bronze->`resolved` path (the input to
+`convert_to_frames`); it does NOT call `convert_to_frames` -- the fixture must be raw input so the
 test can feed it a negated flag. Reads the cached artifacts (no network/token needed):
 ``<cache>/gradientsports/<match>/gradientsports_<match>_{metadata,roster,tracking,events}``.
 
@@ -30,7 +30,7 @@ import pandas as pd
 
 from silly_kicks.tracking.gradientsports import EXPECTED_INPUT_COLUMNS, add_gradientsports_player_ids
 
-# This match's documented identity (tripwire — fail loud if the loaded match disagrees).
+# This match's documented identity (tripwire -- fail loud if the loaded match disagrees).
 _EXPECTED_MATCH_ID = 10517
 _EXPECTED_HOME_TEAM_ID = 364
 _PERIOD = 3
@@ -53,7 +53,7 @@ def _gradientsports_adapter_input(match_dir: Path, match_id: int) -> tuple[pd.Da
     """Parse cached GS bronze -> the raw `convert_to_frames` input (native is_goalkeeper).
 
     A faithful lift of `_loader_pining._build_gradientsports` up to (not including) the
-    `convert_to_frames` call — the `resolved` DataFrame is exactly the adapter input.
+    `convert_to_frames` call -- the `resolved` DataFrame is exactly the adapter input.
     """
     prefix = f"gradientsports_{match_id}_"
     paths = {role: match_dir / f"{prefix}{role}" for role in ("metadata", "roster", "tracking", "events")}
@@ -155,7 +155,7 @@ def main() -> None:
         )
     match_dir = args.cache_dir.expanduser() / "gradientsports" / str(args.match_id)
     if not match_dir.is_dir():
-        raise SystemExit(f"match {args.match_id} not found in pining cache at {match_dir} — fail loud, no fallback.")
+        raise SystemExit(f"match {args.match_id} not found in pining cache at {match_dir} -- fail loud, no fallback.")
 
     resolved, meta_out = _gradientsports_adapter_input(match_dir, args.match_id)
 
@@ -163,7 +163,7 @@ def main() -> None:
     if meta_out["home_team_id"] != _EXPECTED_HOME_TEAM_ID:
         raise SystemExit(
             f"home_team_id={meta_out['home_team_id']} != documented {_EXPECTED_HOME_TEAM_ID} "
-            f"for match {args.match_id} — wrong match loaded; aborting."
+            f"for match {args.match_id} -- wrong match loaded; aborting."
         )
 
     et = resolved[resolved["period_id"] == _PERIOD].copy()
@@ -185,7 +185,7 @@ def main() -> None:
     # Native GK must be present (the whole point of the regen).
     home_gk = et[(et["team_id"] == meta_out["home_team_id"]) & (et["is_goalkeeper"]) & (~et["is_ball"])]
     if home_gk["player_id"].nunique() < 1:
-        raise SystemExit("no native home goalkeeper in the period-3 slice — regen would not exercise the GK anchor.")
+        raise SystemExit("no native home goalkeeper in the period-3 slice -- regen would not exercise the GK anchor.")
 
     out_dir = args.out_dir.expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)

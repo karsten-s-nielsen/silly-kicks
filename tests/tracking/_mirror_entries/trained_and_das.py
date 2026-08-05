@@ -9,28 +9,29 @@ per entry rather than smoothed into one tolerance:
     ``n_angles=30``. Tolerance sized above the measurement, still far below the swap the
     gate exists to catch.
 ``add_xshot_occurrence`` / ``add_xcross_attempt``
-    Genuinely NOT mirror-invariant, and the cause is silly-kicks' own goal-relative
-    transform. Registered at the exact tolerance with no defect marker, because that is a
-    FINDING for this cycle to rule on -- see the module note below.
+    Mirror-invariant as of PR 5, at the exact tolerance. They were NOT, and the cause was
+    silly-kicks' own goal-relative transform -- see the resolved note below.
 
-NOTE (finding, deliberately NOT xfail-ed): ``_geometry.py``'s docstring claims "LTR and RTL
-frames map to identical feature values (doubling effective data and removing direction
-asymmetry)". Measured on ``canonical_scene()``, that is FALSE for every signed-y feature.
-The transform is x-only (``to_goal_relative_x`` / ``to_goal_relative_vx``; there is no
-``to_goal_relative_y``), so the two ends use frames of OPPOSITE handedness: the
-``goal_x == 105`` map ``(x, y) -> (105 - x, y)`` has determinant -1, the ``goal_x == 0`` map
-is the identity. Composing that with ADR-028's 180-degree point reflection leaves every
-radial feature byte-identical and NEGATES every bearing:
+RESOLVED IN PR 5 (was: "finding, deliberately NOT xfail-ed"; then a strict xfail on both
+entries through PRs 1-4). ``_geometry.py`` had ``to_goal_relative_x``/``_vx`` and no
+``to_goal_relative_y``, so ``goal_x == 105`` mapped ``(x, y) -> (105 - x, y)`` -- determinant
+-1 -- while ``goal_x == 0`` was the identity: the two ends used frames of OPPOSITE handedness.
+Composed with ADR-028's point reflection that left every radial byte-identical and NEGATED
+every bearing:
 
-* xS  -- 12 of 27 features flip sign (``theta``, ``GK_theta``, ``OffAngle_0..4``,
+* xS  -- 12 of 27 features flipped sign (``theta``, ``GK_theta``, ``OffAngle_0..4``,
   ``DefAngle_0..4``); model output 0.01113238 -> 0.01293222 (+16.2%).
-* xCross -- 3 of 16 flip sign (``gk_theta``, ``ball_theta``, ``gk_lateral_offset``);
+* xCross -- 3 of 16 flipped (``gk_theta``, ``ball_theta``, ``gk_lateral_offset``);
   model output 0.00168395 -> 0.00112845 (-33.0%).
 
-Those are exactly the "12/27 and 3/16 sign-inconsistent" counts ADR-037 records, reached
-here from the ADR-028 side: the same property that made the pre-4.51.0 weights
-chirality-mis-served ALSO means one physical scene scores differently depending on which
-end the acting team attacks.
+Those are exactly the "12/27 and 3/16 sign-inconsistent" counts ADR-037 records, reached here
+from the ADR-028 side: the property that made the pre-4.51.0 weights chirality-mis-served ALSO
+meant one physical scene scored differently depending which end the acting team attacked.
+
+PR 5 made the transform the 180-degree point reflection, so both entries now hold WITHOUT a
+defect marker and the markers were deleted with the fix (strict xfail: an XPASS fails the
+build, so they could not have survived it). The live invariant is gated directly, per feature
+rather than per aggregate, in ``tests/tracking/test_pr5_chirality_gates.py``.
 """
 
 from __future__ import annotations
@@ -158,11 +159,6 @@ def register() -> None:
         # feature is byte-identical. 12 of 27 xS features flip sign; output 0.01113 -> 0.01293.
         # Cannot ride in this cycle: the artifact carries chirality AND feature_contract stamps,
         # both fail-closed, so the fix, the retrain and the re-stamp are ATOMIC.
-        defect=(
-            "PR 5 (spec 8b): chiral goal-relative transform -- _geometry.py has no "
-            "to_goal_relative_y, so the two ends have opposite handedness and 12/27 xS features "
-            "flip sign. Fix + retrain + re-stamp are atomic; deferred to its own cycle."
-        ),
     )
 
     # ------------------------------------------------------------------
@@ -215,9 +211,4 @@ def register() -> None:
         # 34.0 (x is fine -- 105/3 tiles exactly), so a y-mirror maps cells off-grid and
         # space_controlled moves 328.17 -> 310.43. Both ride in PR 5 together because
         # space_controlled is xCross model feature #3: splitting them retrains the same model twice.
-        defect=(
-            "PR 5 (spec 8b): chiral goal-relative transform (3/16 features flip sign) PLUS the "
-            "_dominant_region_area y-grid centred on 34.5 not 34.0. Both change xCross model "
-            "inputs, so they share one retrain; fix + retrain + re-stamp are atomic."
-        ),
     )

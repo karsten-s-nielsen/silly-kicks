@@ -2,7 +2,7 @@
 """Idempotently download the 10 public SkillCorner matches into SKILLCORNER_SAMPLE_DIR.
 
 Populates SAMPLE_DIR/<match_id>/<original_filename> for the match.json, tracking
-(extrapolated jsonl), and dynamic-events CSV artifacts — the layout both
+(extrapolated jsonl), and dynamic-events CSV artifacts -- the layout both
 tests/spadl/test_skillcorner_e2e.py and tests/tracking/test_gk_skillcorner_roster_e2e.py
 read. Uses the pining PUBLIC token (no owner tier needed). Skips files already on disk.
 
@@ -29,7 +29,7 @@ from scripts._loader_pining import (
 from tests._skillcorner_sample import MATCH_IDS, SAMPLE_DIR
 
 # suffix -> role: the canonical open-data matches key by filename suffix; _artifact_key's role
-# fallback covers the 2026-07 role-keyed schema (harmless here — these 10 are canonical).
+# fallback covers the 2026-07 role-keyed schema (harmless here -- these 10 are canonical).
 _SUFFIX_ROLES = {
     "_match.json": "metadata",
     "_tracking_extrapolated.jsonl": "tracking",

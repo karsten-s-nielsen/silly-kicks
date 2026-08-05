@@ -1,4 +1,4 @@
-"""Train the GK-distribution retention model (rho) for xT-GK v2 (ADR-036 §Part 3).
+"""Train the GK-distribution retention model (rho) for xT-GK v2 (ADR-036 SPart 3).
 
 Mirror of train_gk_completion.py, but the label is retains() (NOT completion) and EVERY shipped
 variant is calibration-gated (ece<=0.10 AND |reliability_slope-1|<=0.25). GS(WC2022) 'default' +
@@ -146,8 +146,8 @@ def main() -> int:
         encoding="utf-8",
     )
     (wdir / "MODEL_CARD.md").write_text(
-        f"# GK retention (rho) model — variant `{a.variant}`\n\n"
-        f"P(retain | GK distribution) for xT-GK v2 (ADR-036 §Part 3). Logistic, pure-numpy serve.\n\n"
+        f"# GK retention (rho) model -- variant `{a.variant}`\n\n"
+        f"P(retain | GK distribution) for xT-GK v2 (ADR-036 SPart 3). Logistic, pure-numpy serve.\n\n"
         f"- Provider: **{a.provider}** ({len(np.unique(groups))} matches, {len(X)} GK-distribution actions)\n"
         f"- Label: `retains(window_seconds=10)` (truncated windows excluded)\n"
         f"- Marts-native 8 features (geometry + `pressure_on_actor__bekkers_pi`); tracking-frames "

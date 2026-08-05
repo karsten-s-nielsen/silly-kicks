@@ -41,9 +41,9 @@
     "gamma": 0.25
   },
   "params": {
-    "n_estimators": 217,
-    "max_depth": 4,
-    "learning_rate": 0.05015536017850647,
+    "n_estimators": 237,
+    "max_depth": 5,
+    "learning_rate": 0.030079022166172607,
     "tree_method": "hist",
     "n_jobs": 1,
     "subsample": 1.0,
@@ -52,13 +52,13 @@
     "eval_metric": "logloss",
     "verbosity": 0,
     "min_child_weight": 7,
-    "reg_lambda": 1.389658722391251
+    "reg_lambda": 4.071029206971469
   },
   "version": "1.0.0",
   "pitch_length": 105.0,
   "pitch_width": 68.0,
-  "geometry_version": "goal-relative-1",
-  "xgboost_version": "3.2.0",
+  "geometry_version": "goal-relative-2",
+  "xgboost_version": "3.3.0",
   "training_platform": "Linux-6.14.0-1015-nvidia-aarch64-with-glibc2.39",
   "shipped_variant": "public",
   "provider_list": [
@@ -69,7 +69,7 @@
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      0.0325195901
+      0.0418959409
     ]
   },
   "feature_contract": {
@@ -77,32 +77,32 @@
     "probe_sha256": "9f17a54c10b8237f1f60ac7f84953ac8948b90e92bbc45eabc7bc3378138b398",
     "fingerprint": [
       22.0227155455,
-      -0.6889243882,
+      0.6889243882,
       0.6,
       3.1622776602,
       0.9963517949,
       2.0615528128,
-      0.2449786631,
+      -0.2449786631,
       4.472135955,
-      2.6779450446,
+      -2.6779450446,
       12.2065556157,
-      2.1815222912,
+      -2.1815222912,
       19.4164878389,
-      2.1730836729,
+      -2.1730836729,
       25.632011236,
-      1.9295669971,
+      -1.9295669971,
       31.064449134,
-      1.5063694874,
+      -1.5063694874,
       6.4717868475,
-      -1.8849731193,
+      1.8849731193,
       14.4222051019,
-      0.5880026035,
+      -0.5880026035,
       20.3960780544,
-      1.3734007669,
+      -1.3734007669,
       30.0166620396,
-      -0.0333209959,
+      0.0333209959,
       36.1247837364,
-      0.8441539861
+      -0.8441539861
     ],
     "constants": {
       "goal_width": 7.32

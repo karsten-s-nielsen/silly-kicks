@@ -344,7 +344,7 @@ def main() -> None:
 
     print(f"Found {len(parquets)} parquet files in {args.data_dir}")
 
-    # --- 2. Load actions (optional, small — OK to hold in memory) ---
+    # --- 2. Load actions (optional, small -- OK to hold in memory) ---
     actions_by_game: dict[str, pd.DataFrame] = {}
     if args.actions_dir is not None:
         action_parquets = sorted(args.actions_dir.glob("*.parquet"))
@@ -453,7 +453,7 @@ def main() -> None:
     else:
         # Following lakehouse TC-3 pattern: load frames per-file, extract features,
         # then delete frames immediately.  Only the extracted feature matrix (small)
-        # stays in memory — raw frames (large) are never held simultaneously.
+        # stays in memory -- raw frames (large) are never held simultaneously.
         from scripts._driver import for_each, shard_path
         from silly_kicks.tracking import prepare_ghost_gk_training_data
         from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES, keeper_detection_mask
@@ -719,7 +719,7 @@ def main() -> None:
         print(f"  Fit: {fit_elapsed:.1f}s")
 
         pred_t0 = time.time()
-        preds = model.predict_mean(X_test)  # shape (n, 2) — exact boosted HGBR mean (Option A)
+        preds = model.predict_mean(X_test)  # shape (n, 2) -- exact boosted HGBR mean (Option A)
         pred_elapsed = time.time() - pred_t0
         print(f"  Predict (boosted mean): {pred_elapsed:.1f}s")
 
@@ -828,7 +828,7 @@ def main() -> None:
                 return self.m.predict_mean(pd.DataFrame(X, columns=features.columns))[:, 0]
 
         # Subsample the EVAL rows (importance is a statistical estimate; the ranking is stable
-        # on a representative sample). The full 887k corpus is memory-bandwidth-bound — each
+        # on a representative sample). The full 887k corpus is memory-bandwidth-bound -- each
         # boosted predict_mean scans the full leaf arrays, so 20 workers contend for bandwidth
         # and n_jobs gives no speedup. A 150k subsample is ~8x less traffic so n_jobs parallelizes.
         _pi_cap = args.perm_importance_sample
@@ -863,7 +863,7 @@ def main() -> None:
     # --- 7. Save final model ---
     final_model.training_commit = training_commit
     final_model.training_platform = args.training_platform
-    # Aggregate corpus provenance (providers + counts ONLY; spec 2026-07-20 §6). Providers come
+    # Aggregate corpus provenance (providers + counts ONLY; spec 2026-07-20 S6). Providers come
     # from the per-file source_provider column (already collected into provider_labels);
     # n_games from the training groups; n_rows from the retained sample count. NEVER a per-match
     # id list, NEVER a public/restricted split (owner decision). No match->registered

@@ -173,7 +173,7 @@ def _enrich_from_lakehouse_block(block: dict[str, Any], lake: dict[str, Any]) ->
         block["gap_rate_ball_pct"] = round(float(nan_ball_x) * 100.0, 3)
     # velocity outlier rate proxy: if speed_ms p99 is < 12, we estimate the >12-rate
     # as ~0; if p99 >= 12, set 0.01 as a coarse upper bound (real distribution-tail
-    # query would be heavier — left for follow-up).
+    # query would be heavier -- left for follow-up).
     p99 = lake.get("speed_ms_p99")
     if p99 is not None:
         block["velocity_outlier_rate_at_max_12mps"] = 0.01 if float(p99) >= 12.0 else 0.0008
