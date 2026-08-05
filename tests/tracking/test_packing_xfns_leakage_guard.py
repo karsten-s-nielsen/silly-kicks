@@ -11,16 +11,8 @@ without editing this file) and the xt_xfns opt-in guard's "not in any default li
 contract -- the two established precedents for leakage-class and opt-in factories.
 """
 
-import importlib
-
-_MODULES = (
-    "silly_kicks.tracking.features",
-    "silly_kicks.atomic.tracking.features",
-    "silly_kicks.vaep",
-    "silly_kicks.vaep.base",
-    "silly_kicks.atomic.vaep",
-    "silly_kicks.atomic.vaep.base",
-)
+from tests.tracking._xfn_default_lists import SWEPT
+from tests.tracking._xfn_default_lists import default_lists as _default_lists
 
 # The transformer produced by ``packing_xfns`` sets ``__name__ == "packing"`` (std +
 # atomic). The substring guard keys on that; test_packing_transformer_name pins it so
@@ -28,27 +20,15 @@ _MODULES = (
 _FORBIDDEN_NAME = "packing"
 
 
-def _default_lists():
-    found = {}
-    for modname in _MODULES:
-        try:
-            mod = importlib.import_module(modname)
-        except ImportError:
-            continue
-        for attr in dir(mod):
-            if "default_xfns" in attr or attr.startswith("xfns_default") or attr.startswith("hybrid_xfns_default"):
-                obj = getattr(mod, attr)
-                if isinstance(obj, list):
-                    found[f"{modname}.{attr}"] = obj
-    return found
-
-
 def test_default_lists_discovered():
     """Floor sanity: the known default surfaces are present (guard not vacuously green)."""
     lists = _default_lists()
     assert any("tracking.features.tracking_default_xfns" in k for k in lists)
     assert any("vaep.base.xfns_default" in k for k in lists)
-    assert len(lists) >= 10
+    # ADR-054: EXACT, both ways -- the floor could not detect an omission.
+    assert set(lists) == set(SWEPT), (
+        f"new and unswept: {sorted(set(lists) - SWEPT)}; registered but gone: {sorted(SWEPT - set(lists))}"
+    )
 
 
 def test_packing_transformer_name():

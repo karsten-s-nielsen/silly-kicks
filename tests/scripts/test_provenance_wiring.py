@@ -18,7 +18,9 @@ import pathlib
 
 import pytest
 
-_SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+from tests.scripts._script_population import SCRIPTS, called_names, iter_scripts, string_literals
+
+_SCRIPTS = SCRIPTS  # single-sourced with the shared population seam (ADR-054)
 
 # Drivers that write a registered artifact (metrics.json / parquet / report.md under --out).
 # Listed rather than inferred: "writes an artifact" is a semantic property, and a heuristic over
@@ -28,9 +30,9 @@ ARTIFACT_DRIVERS = (
     # coverage, and its keeper-visibility numbers go in front of a club -- exactly the
     # "cited, uncheckable" shape the rule below exists to prevent.
     #
-    # NOT enrolled: `render_sb360_matrix`, which reads a COMMITTED registry and writes a
-    # document. It does no corpus work and consumes no external data, so the guard would add
-    # nothing and would make the report unrenderable during the session that produces it.
+    # Its sibling `render_sb360_matrix` is deliberately NOT enrolled; the reason now lives in
+    # `_NOT_A_DRIVER` below, where the completeness gate can check it, rather than in a comment
+    # here that nothing reads (ADR-054).
     "build_sb360_coverage",
     "build_gkdv_arm_values",
     "calibrate_xt_bandwidth",
@@ -67,7 +69,193 @@ ARTIFACT_DRIVERS = (
     "train_xshot_occurrence",
     "validate_xs_probe",
     "validate_xshot_causal",
+    # --- Enrolled 4.76.0 (ADR-054). All three were found by item 10's completeness gate on its
+    # FIRST run: each consumes data from outside the repository, writes an artifact, and had no
+    # provenance guard at all -- the same class as `validate_xcross_causal` above, and invisible
+    # for exactly the same reason (the old anti-rot assertion was a FLOOR).
+    #
+    # Databricks read-only gold marts (`_loader_databricks.load_xtgk_cohort`).
+    "validate_xtgk_possession_value",
+    # StatsBomb open data via statsbombpy, plus the pining corpus (`load_matches`).
+    "validate_shot_goalmouth_sb",
+    # The pining / DGX tracking corpus (`_loader_pining`).
+    "calibrate_tracking_defaults",
 )
+
+
+#: Matched the derivation rule but is correctly NOT an artifact driver; reason required.
+#:
+#: The discriminator is NOT "consumes external data" -- `build_worldcup_fixture` downloads
+#: StatsBomb open data and is still correctly here. It is: **does the output carry numbers
+#: someone cites?** A test fixture does not; it is verified by being committed and by the tests
+#: that read it, and its generator must stay runnable on a DIRTY tree, because a fixture is
+#: regenerated exactly when the code consuming it is being changed. That second prong is
+#: `render_sb360_matrix`'s recorded reason, and it generalises to this whole class.
+_NOT_A_DRIVER: dict[str, str] = {
+    "render_sb360_matrix": (
+        "reads a COMMITTED registry and writes a document. It does no corpus work and consumes no "
+        "external data, so the guard would add nothing and would make the report unrenderable "
+        "during the session that produces it -- a guarded driver cannot run on the dirty tree that "
+        "produces its own inputs. The script's own docstring line 3 says the same."
+    ),
+    "build_worldcup_fixture": (
+        "writes the committed WC2018 test FIXTURE (spadl-WorldCup-2018.h5), not a cited artifact. "
+        "It does download StatsBomb open data, so it is not exempt for lack of an external source "
+        "-- it is exempt because a fixture regenerated during a conversion change must run on the "
+        "dirty tree carrying that change."
+    ),
+    "make_xcross_directional_fixture": (
+        "builds the committed frozen directional feature-vector fixture for the xCross CI gates "
+        "from SYNTHETIC states. Output is a test input, not a cited number, and it is rebuilt "
+        "precisely when the extractor it feeds is being changed."
+    ),
+    "regenerate_gs_et_native_gk": (
+        "regenerates the committed gs_et ET tracking fixture from the local pining CACHE (no "
+        "network, no token). Output is a test input, not a cited number."
+    ),
+    "stamp_feature_contracts": (
+        "rewrites bundled metadata ONLY, deliberately never calling any model's save(). It "
+        "consumes nothing external and derives its contract from the current library, so it must "
+        "be re-run after a change to a declared constant -- i.e. on the dirty tree carrying that "
+        "change. Its OUTPUT is still policed, by the ADR-054 artifact-provenance gate; the "
+        "source-side guard and the output-side gate answer different questions and only the "
+        "second applies here."
+    ),
+}
+
+#: Genuinely a driver, enrolled, but invisible to the rule. MUST be empty on landing -- see
+#: test_UNDERIVABLE_is_empty. The reason must say WHY it is invisible, so the entry can be
+#: retired if the rule improves.
+_UNDERIVABLE: dict[str, str] = {}
+
+#: Calls that persist something to disk. Keyed on the CALL, never on a filename literal.
+_WRITE_CALLS = frozenset(
+    {
+        "write_text",
+        "write_bytes",
+        "to_parquet",
+        "to_csv",
+        "to_json",
+        "savez",
+        "savez_compressed",
+        "write_table_atomically",
+        "dump",
+    }
+)
+
+
+def _declares_an_out_flag(tree: ast.AST) -> bool:
+    """Any `--*out*` flag, not just an `--out` prefix.
+
+    Measured: the prefix rule missed `--report-out` (calibrate_xt_bandwidth) and `--output-dir`.
+    """
+    return any(s.startswith("--") and "out" in s for s in string_literals(tree))
+
+
+def _writes_a_document(tree: ast.AST) -> bool:
+    """Detect the WRITE, not the filename.
+
+    An earlier draft matched a `.json`/`.md` suffix literal. Measured, that fails in BOTH
+    directions: it MISSES `measure_cover_shadow_argmax_agreement`, which composes its path
+    entirely from `args.out` and carries no suffix literal anywhere, and -- worse -- it misses
+    `render_sb360_matrix`, the one script the spec names as the counter-example that MUST be a
+    candidate so it can be excluded with a reason.
+    """
+    return bool(called_names(tree) & _WRITE_CALLS)
+
+
+def _writes_bundled_weights(tree: ast.AST) -> bool:
+    """The trainers name a bundled weights path instead of an out-flag. Without this clause the
+    three trainers are underivable and the central assertion cannot hold."""
+    return any("_weights" in s for s in string_literals(tree))
+
+
+def _is_artifact_driver(tree: ast.AST) -> bool:
+    return (_declares_an_out_flag(tree) and _writes_a_document(tree)) or _writes_bundled_weights(tree)
+
+
+def _candidates() -> set[str]:
+    return {n for n, tree in iter_scripts().items() if _is_artifact_driver(tree)}
+
+
+def test_the_artifact_driver_population_is_EXACT():
+    """Replaces `assert len(ARTIFACT_DRIVERS) >= 6`. A floor cannot detect an omission -- it passed
+    at 18 entries while `render_sb360_matrix` and `validate_xcross_causal` were both missing."""
+    expected = (set(ARTIFACT_DRIVERS) - set(_UNDERIVABLE)) | set(_NOT_A_DRIVER)
+    missing = sorted(_candidates() - expected)
+    stale = sorted(expected - _candidates() - set(_UNDERIVABLE))
+    assert not missing, (
+        f"scripts that look like artifact drivers but are enrolled nowhere: {missing}. Add them to "
+        f"ARTIFACT_DRIVERS, or to _NOT_A_DRIVER with a reason."
+    )
+    assert not stale, f"enrolled but no longer derivable: {stale} -- record in _UNDERIVABLE with a reason"
+
+
+def test_UNDERIVABLE_is_empty():
+    """The blind spot this closes: a script that is neither derivable NOR enrolled is absent from
+    every set here and the equality above still holds. That is only unreachable while every enrolled
+    driver IS derivable. The day it stops being true, this says so."""
+    assert not _UNDERIVABLE, (
+        f"_UNDERIVABLE is non-empty: {sorted(_UNDERIVABLE)}. A driver invisible to the rule means a "
+        f"NEW driver of the same shape would also be invisible -- broaden the rule instead."
+    )
+
+
+@pytest.mark.parametrize("bucket_name", ["_NOT_A_DRIVER", "_UNDERIVABLE"])
+def test_exemptions_name_scripts_that_exist(bucket_name):
+    """Self-burning-down, the way _UNMODELLED already is in the C4 gate."""
+    bucket = {"_NOT_A_DRIVER": _NOT_A_DRIVER, "_UNDERIVABLE": _UNDERIVABLE}[bucket_name]
+    stale = sorted(n for n in bucket if not (_SCRIPTS / f"{n}.py").is_file())
+    assert not stale, f"{bucket_name} names scripts that no longer exist: {stale}"
+
+
+def test_both_population_gates_consume_the_SHARED_universe():
+    """The reconciliation is structural, not a set relation.
+
+    Asserting "every corpus-walking artifact driver is in ADR-052's population" is TAUTOLOGICAL
+    once both gates call the same predicate over the same script set -- it cannot fail. What CAN
+    fail is one gate re-growing its own glob, after which the two universes drift and nothing else
+    here would notice.
+    """
+    import tests.scripts.test_corpus_driver_resilience as adr052
+
+    src = pathlib.Path(adr052.__file__).read_text(encoding="utf-8")
+    assert "iter_scripts" in src, "ADR-052's gate no longer consumes the shared universe"
+    assert ".glob(" not in src, (
+        "the corpus-driver gate re-grew its own glob over scripts/ -- route it through "
+        "tests/scripts/_script_population.py or the two populations can drift apart silently"
+    )
+
+
+def test_the_population_rule_reads_CODE_not_PROSE():
+    """Non-vacuity, against the real case.
+
+    `make_ghost_gk_golden` carries ZERO `_weights` string literals in code -- its only match is a
+    module docstring mentioning `test_weights_bundle_golden.py` while explaining why an output
+    golden exists. A literal scan that includes docstrings enrols it as a candidate on the strength
+    of a sentence of prose, and it would then need a bogus exemption.
+    """
+    tree = iter_scripts()["make_ghost_gk_golden"]
+    assert not any("_weights" in s for s in string_literals(tree)), (
+        "string_literals() is admitting docstrings again -- source-text heuristics cannot tell a "
+        "described path from a written one"
+    )
+    raw = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    assert any("_weights" in s for s in raw), (
+        "fixture drifted: this test is only meaningful while the docstring still mentions a "
+        "_weights path -- re-point it at another prose-only match or delete it"
+    )
+
+
+def test_the_rule_FLAGS_an_unenrolled_driver():
+    """Non-vacuity, against the real case. `validate_xcross_causal` (4.74.0) had `--out`, wrote
+    metrics.json, was absent from the tuple, and its artifact carried no provenance at all. If the
+    rule cannot see it un-enrolled, it would not have prevented the thing it was built for."""
+    tree = iter_scripts()["validate_xcross_causal"]
+    assert _is_artifact_driver(tree)
+    assert "validate_xcross_causal" in _candidates() - (
+        (set(ARTIFACT_DRIVERS) - {"validate_xcross_causal"}) | set(_NOT_A_DRIVER)
+    )
 
 
 def _source(name: str) -> str:
@@ -122,8 +310,13 @@ def test_the_rev_parse_detector_distinguishes_a_CALL_from_PROSE():
 
 
 def test_the_driver_list_is_not_silently_empty_or_stale():
-    """Meta-assertion: a parametrised gate over a list that drifted to nothing passes vacuously."""
-    assert len(ARTIFACT_DRIVERS) >= 6
+    """Burn-down half: an entry naming a script that no longer exists is stale scaffolding.
+
+    The `assert len(ARTIFACT_DRIVERS) >= 6` that used to open this test is GONE (ADR-054). A floor
+    cannot detect an omission -- it passed at 18 entries while three unguarded artifact drivers and
+    `render_sb360_matrix` were all missing. `test_the_artifact_driver_population_is_EXACT` replaces
+    it and fails in BOTH directions.
+    """
     for name in ARTIFACT_DRIVERS:
         assert (_SCRIPTS / f"{name}.py").is_file(), f"{name}.py no longer exists -- update the list"
 

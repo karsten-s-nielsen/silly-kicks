@@ -82,6 +82,11 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=Path("docs/research/xtgk_possession_value/gate.json"))
     parser.add_argument("--force-unlocked", action="store_true", help="run with placeholder GateConfig")
     parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="permit a dev run from a modified tree; the artifact still records dirty: true",
+    )
+    parser.add_argument(
         "--cohort-cache",
         default=None,
         help=(
@@ -93,6 +98,13 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
+
+    # ADR-037: refuse a dirty tree BEFORE paying for any Databricks query. `git rev-parse HEAD`
+    # returns the same SHA whether or not the tree is modified, so a bare SHA would record a
+    # commit that does not describe the code that ran.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    provenance = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
     if not _gate_is_locked(_GATE_CONFIG_LOCKED) and not args.force_unlocked:
         print(
@@ -163,6 +175,8 @@ def main() -> int:
             "mirror_y_gate": asdict(gate["mirror_y"]["report"]),
             "mirror_x_rejected": gate["mirror_x"]["orientation_rejected"],
         }
+    report["run_commit"] = provenance["commit"]
+    report["run_tree_dirty"] = provenance["dirty"]
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2))
     print(f"wrote gate report -> {args.out}")

@@ -33,11 +33,10 @@ matches/games/providers qualifies, whatever the source.
 from __future__ import annotations
 
 import ast
-import pathlib
 
 import pytest
 
-_SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+from tests.scripts._script_population import iter_scripts
 
 #: Calling any of these means the driver pulls a corpus.
 _CORPUS_CALLS = {"load_matches", "select_match_ids", "load_xtgk_cohort", "load_retention_cohort"}
@@ -151,14 +150,18 @@ def _uses_for_each(tree: ast.AST) -> bool:
 
 
 def _population() -> dict[str, ast.AST]:
-    out = {}
-    for p in sorted(_SCRIPTS.glob("*.py")):
-        if p.name.startswith("_"):
-            continue
-        tree = ast.parse(p.read_text(encoding="utf-8"))
-        if _is_corpus_driver(tree):
-            out[p.stem] = tree
-    return out
+    """Corpus drivers, filtered out of the SHARED script universe (ADR-054).
+
+    The glob/parse scaffolding used to live here and again in the artifact-driver gate. Two
+    independent walkers over `scripts/*.py` drift with nothing relating them, so the universe is
+    single-sourced in `_script_population.iter_scripts` and only the PREDICATE differs. Verified
+    byte-equivalent at the refactor: 22 drivers, 73 collected cases, before and after.
+
+    `_is_corpus_driver` and its local `_string_literals` are deliberately UNCHANGED -- the shared
+    seam's `string_literals` strips docstrings, and swapping it in here would silently move this
+    gate's population. That is a separate decision from single-sourcing the universe.
+    """
+    return {name: tree for name, tree in iter_scripts().items() if _is_corpus_driver(tree)}
 
 
 #: Drivers not yet migrated, each with the reason. Asserted EXACTLY, both ways (see the test below):

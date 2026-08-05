@@ -9,21 +9,12 @@ default list is covered without editing this file, plus a name anchor so a renam
 loudly here instead of silently neutering the substring check.
 """
 
-import importlib
-
 import numpy as np
 import pandas as pd
 
 from silly_kicks.xthreat import ExpectedThreat
-
-_MODULES = (
-    "silly_kicks.tracking.features",
-    "silly_kicks.atomic.tracking.features",
-    "silly_kicks.vaep",
-    "silly_kicks.vaep.base",
-    "silly_kicks.atomic.vaep",
-    "silly_kicks.atomic.vaep.base",
-)
+from tests.tracking._xfn_default_lists import SWEPT
+from tests.tracking._xfn_default_lists import default_lists as _default_lists
 
 #: ``off_ball_run_value_xfns`` names its transformer ``off_ball_run_values``.
 _FORBIDDEN_NAME = "off_ball_run_values"
@@ -35,27 +26,15 @@ def _fitted_xt() -> ExpectedThreat:
     return m
 
 
-def _default_lists():
-    found = {}
-    for modname in _MODULES:
-        try:
-            mod = importlib.import_module(modname)
-        except ImportError:
-            continue
-        for attr in dir(mod):
-            if "default_xfns" in attr or attr.startswith("xfns_default") or attr.startswith("hybrid_xfns_default"):
-                obj = getattr(mod, attr)
-                if isinstance(obj, list):
-                    found[f"{modname}.{attr}"] = obj
-    return found
-
-
 def test_default_lists_discovered():
     """Floor sanity: the guard below is not vacuously green."""
     lists = _default_lists()
     assert any("tracking.features.tracking_default_xfns" in k for k in lists)
     assert any("vaep.base.xfns_default" in k for k in lists)
-    assert len(lists) >= 10
+    # ADR-054: EXACT, both ways -- the floor could not detect an omission.
+    assert set(lists) == set(SWEPT), (
+        f"new and unswept: {sorted(set(lists) - SWEPT)}; registered but gone: {sorted(SWEPT - set(lists))}"
+    )
 
 
 def test_run_value_transformer_name():
