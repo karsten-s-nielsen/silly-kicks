@@ -5,6 +5,176 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.74.0] — 2026-08-05
+
+### Fixed — ADR-028 PR 5 of 5: the goal-relative transform was CHIRAL (PR-S142, ADR-051)
+
+The **final PR of the ADR-051 cycle**. **Retrain trigger + re-materialize.** C4 count unchanged
+(32). No new ADR — the design is spec §8b of `docs/superpowers/specs/2026-07-29-adr028-orientation-defect-class-design.md`, and ADR-051 records the outcome under its **"Closure: PR 5"** section.
+
+**The defect.** `silly_kicks/tracking/_geometry.py` had `to_goal_relative_x` and
+`to_goal_relative_vx` and **no `to_goal_relative_y`**, so `goal_x=105` mapped `(x, y) -> (105-x, y)`
+— an x-only mirror, determinant **-1** — while `goal_x=0` was the identity, **+1**. The two goal
+ends used frames of **opposite handedness**. Composed with ADR-028's point reflection that left
+every RADIAL feature byte-identical and NEGATED every BEARING, which is why it survived every
+obvious check: distances and radii all agree. In production one physical scene scored differently
+depending which END the acting team attacked — a systematic home-vs-away split inside a match.
+
+Measured: xS **12 of 27** features flip sign (worst delta 6.123525), xCross **3 of 16** — exactly
+the counts ADR-037 records as "sign-inconsistent", reached independently from the ADR-028 side.
+After the fix: **0 flips, delta 0.000e+00**, full 27/16 comparison.
+
+Fixed by making the pair the 180-degree **point reflection** `(x, y) -> (105-x, 68-y)`. xCross
+converts y at its single seam; xShot could not — `gx` was x-only while y was read at FOUR
+independent sites — so its frame is pre-transformed ONCE at the top of `extract_xshot_features`
+and `gx` deleted, making "no call site can be missed" a property rather than an assertion.
+`GEOMETRY_VERSION` -> `"goal-relative-2"`, mandated by that constant's own contract.
+
+**Verified end-invariant on REAL data, not only the synthetic gate:** across **1,360 scenes x 27
+features**, scene S at `goal_x=105` equals mirror(S) at `goal_x=0` with max feature delta and max
+prediction delta both **exactly 0**.
+
+**Also fixed:** `_dominant_region_area`'s y grid centred on 34.5 rather than 34.0 (105 divides by
+3, 68 does not), so a scene and its left-right mirror at the SAME goal end differed by **5.4%** in
+`space_controlled` — xCross model feature #3, on the left-wing/right-wing axis of a cross model.
+Now uses a derived symmetric anchor `a = L/2 - (n-1)*res/2`, byte-identical on x. This is NOT an
+orientation defect: with the transform fixed and the grid untouched both legs are bit-identical.
+
+**Retrain / re-materialize — the SHAPE, not just the fact.** `xshot_occurrence_xfns` and
+`xcross_attempt_xfns` are wired into `pre_shot_gk_full_default_xfns` only, so opted-in VAEP
+consumers re-materialize. `to_goal_relative_y(y, goal_x=0)` is the identity, so the transform fix
+moves **only rows attacking the high-x goal** — roughly half the corpus, precisely the home-vs-away
+split above. The grid change is **two-sided**: on the canonical fixture 0% at one end and -5.4% at
+the other, scene-dependent rather than structural.
+
+**Weights.** Both bundled defaults retrained on the corrected geometry and re-stamped:
+`shipped_variant public` (SkillCorner + IDSSE, the registered 17), `geometry_version
+goal-relative-2`, chirality + feature_contract re-applied on x86, all four acceptance gates
+passing. Quality unchanged — xS pr_auc 0.3458 vs 0.3514, **0.37 fold-SD** apart, identical
+`positive_rate` and `base_rate_brier`. `_ghost_gk_weights/` verified byte-unchanged.
+
+**TF-19 verdicts re-run on the corrected weights, both UNCHANGED.** xCross GK-substitution probe:
+`tf19_ready` **False** before and after; the GK signal strengthened (`gk_median_abs_delta` 0.002417
+-> 0.003582, ratio 1.41x -> 1.70x) but still misses both registered prongs (`ratio >= 2.0`,
+`abs floor >= 0.01`).
+
+**Liveness gate retired and replaced (ADR-032 idiom).**
+`test_bundled_model_is_live_not_degenerate` asserted the model ranks near-goal rows above far ones
+at AUC >= 0.9. That premise is **false for the models it guards** — measured `corr(r, p)` is
+**+0.89** for the pre-PR-5 model and **+0.94** for this one, both rising with distance (xS predicts
+a shot ATTEMPT within ~1 s, and 25-34 m is prime open-play shooting range). It passed only because
+two defects compensated: its FAR class sat at r ~= 101 m, ~3x outside the trained domain
+(`_ATTACKING_THIRD_M = 35.0`), and the generator zeroed `vx`/`vy`, pinning ball speed to one value
+on every row — the same degeneracy PR-S118 fixed in the xCross fixture and left here. Fix either and
+the OLD model scores ~0.47, chance. Replaced by three gates — a fixture **precondition** (all rows
+in-domain, `speed` non-constant, >= 40 rows), non-constant model output, and a geometry response —
+each proven by planting the defect it catches.
+
+**Also:** `cache_dir` threaded through the trainers (a corpus downloaded once instead of per run —
+hours per pass at 24-90 s/match), ADR-038 taxonomy wired into `train_gk_completion.py` which had
+none, and all 16 pinned `_KNOWN_NON_ASCII_DRIVERS` made ASCII-only so the debt list is now **empty**.
+
+**Measured for PR 7:** the DGX-vs-x86 feature-contract delta is **0.000e+00** across all 27 probe
+features, so ADR-050's `atol=1e-6` stands as chosen and platform-scoped fingerprints are not
+needed. See `docs/research/pr5_platform_atol/`.
+
+### Added -- two provenanced measurement drivers, and the artifacts they produce
+
+`scripts/measure_covariate_invariance.py` answers which causal covariates a geometry change moves and
+**which axis** moved them, using **three** arms -- `parent` (old transform, old grid), `old_grid` (new
+transform, old grid) and `current`. Two arms cannot attribute `space_controlled`: the NEW
+dominant-region grid is closed under the ADR-028 point reflection (`1.0 -> 67.0` is a grid centre) and
+the OLD one is not (`1.5 -> 66.5`), so measuring axis A against current code forces its delta to zero
+*by construction* while the baseline, which carries the old grid, does move under it. Measured, that
+interaction is real and large: `space_controlled` moves **97.5652** on axis A and **70.9565** on axis B
+at `goal_x=105`, versus a clean `0.0 / 70.9565` at the identity end. The two structural invariants the
+`tf19_signoff_power` decision rests on are exact -- `GK_r` and `gk_depth_x` are **0.0** on both axes,
+because `hypot(a,-b) == hypot(a,b)` and `cos` is even.
+
+`scripts/measure_platform_probe.py` measures the feature-contract fingerprint per platform, one
+self-provenanced JSON each, joined by a `--compare` that REFUSES legs disagreeing on `run_commit`,
+`geometry_version` or probe identity -- such a delta would confound platform with code. Result across
+**all three** bundled contracts (69 features, AMD64/Windows/3.14 vs aarch64/Linux/3.12):
+**`max_abs_delta = 0.0`**. So ADR-050's `atol=1e-6` / `rtol=0` stands and fingerprints do not become
+platform-scoped. The hand-run predecessor covered 27 of 69 features and carried no provenance at all;
+it was removed rather than retro-stamped.
+
+Baseline isolation is by CHECKOUT, not monkeypatch: both extractors bind geometry absolutely, so an
+in-process emulation still resolves `_geo` to the CURRENT module -- inert for this diff, and a silent
+zero for any future change that alters an existing function's behaviour rather than adding one.
+
+### Fixed -- research artifacts refreshed, and two provenanced for the first time
+
+All verdicts **reproduce unchanged** on the corrected geometry: entanglement `inside_band`; xS probe
+v1 `unmeasurable_at_dose` and v2 `joins_with_caveat`; xCross `tf19_ready: false`;
+`gk_clears_placebo_band: False`.
+
+* **`xcross_causal`** gains provenance for the first time -- its driver had none, the third recorded
+  instance of that class and one the gate could not see, since `ARTIFACT_DRIVERS` is hand-maintained
+  behind a floor (`>= 6` against 14 entries). The gate was landed RED and observed failing 3 of 5
+  before wiring. **Its corpus also changed** (23,966 -> 52,978 opportunities; 669 -> 4,193 treated),
+  so the magnitudes are NOT a before/after of the geometry fix -- 4.66.0 alone changed pooled-arm
+  cluster keying. The README says so rather than presenting a comparison that would attribute several
+  releases of pipeline change to this PR.
+* **`tf19_pr3b`** is rewritten with the v1 leg of the same `--variant both` run whose v2 leg is in
+  `tf19_pr3b_xs_v2` -- two VIEWS of one artifact, not two runs, which is why both carry
+  `run_commit 08ce9a8`. It previously carried no provenance either.
+* **`tf19_signoff_power`** is NOT rebuilt, and the reason is measured rather than argued. Its
+  annotation lives in a SIBLING `invalidation.json`, because hand-editing a driver-produced file under
+  an unchanged `run_commit` is the mirror image of restamping one. Three classes are recorded, not
+  two: invariant now (treatment-derived), stale now (`att` -- `theta` is a build-time spell column, so
+  the persisted parquet is stale and re-running only the analysis leg would LAUNDER the decimals), and
+  **current now, stale after PR 7** (`icc`). A two-way split would have asserted `icc` is simply
+  current and been wrong two PRs later.
+* **`tf19_pr2`** now cites the provenanced artifact instead of restating numbers as prose, marks
+  Stage B as NOT refreshed, and resolves a shot-arm row that had been `PENDING PR-3` since 4.51.0.
+
+### Fixed -- three defects found by executing, not by reviewing
+
+Seven document review rounds preceded execution; these were found only by running the thing.
+
+* **A leaked monkeypatch.** The `old_grid` arm patched `_grid_centres` and never restored it, so the
+  `current` arm would have run on the OLD grid -- axis B reading exactly `0.0` and the artifact
+  asserting the grid re-anchor moved nothing, which is the one claim the three arms exist to test.
+  Caught by `/final-review`. **The positive control did not catch it**, because axis A still moves; a
+  second control now asserts `space_controlled`'s axis-B delta is non-zero.
+* **NaN classified as an axis.** `score_differential` is all-NaN by construction, and every NaN
+  comparison in the classifier is False, so it fell through to `"B"` -- asserting the grid moved a
+  confounder never measured. Both controls were NaN-blind by the same mechanism (`abs(nan) > 1e-6` is
+  False), so an entirely-NaN table could have reported `status=ok`.
+* **A driver fatal on its own baseline.** `_grid_centres` was ADDED by this cycle, so the baseline
+  tree has no such attribute; reading it directly killed the baseline arm. The AttributeError is what
+  a correctly-isolated baseline looks like -- had the subprocess resolved to the current tree the
+  attribute would have been found and both arms would have silently shared a grid.
+
+### Changed -- the xCross liveness gate is retired and replaced by three
+
+`test_xcross_bundled_model_is_live_not_degenerate` asserted `roc_auc_score(...) >= 0.9` and measured
+**1.0000** on a fixture where SEVEN of sixteen features were constant -- the entire GK block among
+them, pinned at `(2.0, 34.0)` by the generator. Overwriting that block with `0`, `99` or `NaN` each
+left AUC at 1.0000, so a model ignoring keeper position was indistinguishable from the real one.
+Ranking is not retained as a substitute: a live-but-GK-blind model scores AUC **1.0000** on the
+repaired fixture -- HIGHER than the real model -- while responding **0.00%** to keeper position.
+
+Replaced by a precondition (>= 40 rows, no inert feature, every row inside the model's own
+`wide_area_only` domain), a liveness check, a GK-block response gate, and a re-derivation fidelity
+pin. The inert clause is NaN-EXPLICIT because neither half suffices alone: a bare `(max - min) <= tol`
+is NaN-blind and misses the all-NaN column, while `nunique <= 1` misses two features sitting 3.0 ULP
+apart. `_MIN_RANGE` holds frozen literals, not "a fixed fraction of the observed range", which finds
+only 7 of 9 and is degenerate when computed at test time.
+
+Probes are pinned in GOAL-RELATIVE coordinates: `gk_x`/`gk_y` are absolute, so a pinned absolute
+`(2.0, 34.0)` is a keeper on his line at one goal end and 103 m upfield at the other -- the gate would
+still pass, failing quietly on a physically absurd state. `mean(|dp|)`, never `|mean dp|`: across seven
+probes the absolute form spans **1.93x** and the signed form **6.83x**.
+
+The fixture is rebuilt to 48 rows / 48 distinct vectors / 48-in-domain / zero inert features, keeper
+swept over 12 positions, with negatives redesigned as wide + advanced but not cross-imminent -- they
+were previously central and deep, so restricting to the trained domain removed EVERY negative and left
+a single-class fixture. It stays SINGLE-ENDED deliberately: a committed table provably cannot carry
+chirality evidence, since a reflection pair maps onto the same goal-relative configuration and a
+fabricated half is bit-identical to a real extraction on integer coordinates.
+
 ## [4.73.0] — 2026-08-01
 
 > **This is the release that publishes the 4.71.0 pairing, and the first tag since `v4.70.0`.**

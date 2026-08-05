@@ -1,0 +1,53 @@
+{
+  "legs": {
+    "a": {
+      "machine": "AMD64",
+      "system": "Windows",
+      "python": "3.14.2",
+      "numpy": "2.4.2"
+    },
+    "b": {
+      "machine": "aarch64",
+      "system": "Linux",
+      "python": "3.12.3",
+      "numpy": "2.4.6"
+    }
+  },
+  "run_commit": "35a66679c7bd9db4f23d2db0d768993f1468b0c1",
+  "run_tree_dirty": false,
+  "geometry_version": "goal-relative-2",
+  "contract_atol": 1e-06,
+  "contract_rtol": 0.0,
+  "per_model": {
+    "ghost_gk": {
+      "n_features": 26,
+      "max_abs_delta": 0.0,
+      "n_features_moved": 0,
+      "quantized_features": []
+    },
+    "xshot": {
+      "n_features": 27,
+      "max_abs_delta": 0.0,
+      "n_features_moved": 0,
+      "quantized_features": []
+    },
+    "xcross": {
+      "n_features": 16,
+      "max_abs_delta": 0.0,
+      "n_features_moved": 0,
+      "quantized_features": [
+        "space_controlled",
+        "box_off_def_ratio"
+      ]
+    }
+  },
+  "max_abs_delta_overall": 0.0,
+  "n_features_total": 69,
+  "refusals": [],
+  "status": "ok",
+  "caveats": [
+    "The two legs confound ARCHITECTURE with INTERPRETER; no third leg disentangles them. Read a clean result as 'this pair agrees', not as 'architecture is irrelevant'.",
+    "atol cannot transfer to the quantized xCross features: space_controlled is quantized at ~8.8696 m^2 per cell (~8.87e6 x atol), so its error is exactly 0.0 or >= 8.87 and the tolerance is an equality test on it. box_off_def_ratio is an integer ratio.",
+    "This measures the CONTRACT FINGERPRINT only. It says nothing about the ghost-GK re-fit's own acceptance, which spec 6 makes PR 7's item -- do not read a clean result here as discharging it."
+  ]
+}
