@@ -190,10 +190,18 @@ def test_extract_features_goal_relative_symmetry():
     import pandas as pd
 
     # Same scene mirrored to the other end must yield identical features.
+    #
+    # PR 5: the counterpart is the 180-degree POINT REFLECTION (x -> 105-x AND y -> 68-y), not an
+    # x-only mirror. This test used to flip x alone and PASSED -- because the transform was itself
+    # x-only and chiral, so the two errors cancelled. It was a witness to the defect, not a guard
+    # against it. Now that to_goal_relative_y exists, an x-only mirror maps to (x, 68-y) at the
+    # far end and legitimately differs. Flipping y here is the fix, NOT a loosening.
     f0 = _one_frame()
     f1 = f0.copy()
     f1["x"] = 105.0 - f1["x"]
+    f1["y"] = 68.0 - f1["y"]
     f1["vx"] = -f1["vx"]
+    f1["vy"] = -f1["vy"]
     a = xs.extract_xshot_features(f0, gk_team_id=1, goal_x=0.0)
     b = xs.extract_xshot_features(f1, gk_team_id=1, goal_x=105.0)
     pd.testing.assert_frame_equal(a, b, check_exact=False, atol=1e-9)
@@ -378,13 +386,20 @@ def test_load_raises_on_pitch_dimension_mismatch(tmp_path, monkeypatch):
         xs.XShotOccurrenceModel.load(tmp_path / "v1")
 
 
+#: A geometry_version that is deliberately NOT the library's. Asserted against the live constant in
+#: test_pr5_chirality_gates.py rather than grepped, so this cannot rot into a self-comparison.
+_GEOMETRY_SENTINEL = "goal-relative-3"
+
+
 def test_load_warns_on_geometry_version_only(tmp_path, monkeypatch):
     """Pure-representation change at identical pitch dims is invariant -> warn, not raise."""
     import warnings
 
     X, y = _toy_xy()
     xs.XShotOccurrenceModel().fit(X, y).save(tmp_path / "v1")
-    monkeypatch.setattr(xs._geo, "GEOMETRY_VERSION", "goal-relative-2")
+    # MUST differ from the live constant, or this compares a value to itself and silently stops
+    # testing. It said "goal-relative-2" until PR 5 bumped the library to exactly that.
+    monkeypatch.setattr(xs._geo, "GEOMETRY_VERSION", _GEOMETRY_SENTINEL)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         xs.XShotOccurrenceModel.load(tmp_path / "v1")  # must NOT raise

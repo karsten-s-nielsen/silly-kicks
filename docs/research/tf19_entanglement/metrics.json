@@ -7,21 +7,21 @@
   "control_conversions": 730,
   "control_y_rate": 0.007553338989715042,
   "att_without_gk": {
-    "estimate": 0.09519365375641624,
-    "se": 0.007039557286108888
+    "estimate": 0.09146056929538031,
+    "se": 0.007078012807884442
   },
   "att_with_gk": {
-    "estimate": 0.08819412039197387,
-    "se": 0.00736828200973307
+    "estimate": 0.0975268315445637,
+    "se": 0.007024638322836614
   },
   "atnt_with_gk": {
-    "estimate": 0.08406969765949962,
-    "se": 0.010915292891395598
+    "estimate": 0.08463878484365624,
+    "se": 0.011295151272579199
   },
-  "gk_ablation_shift": -0.006999533364442367,
-  "placebo_band_p95": 0.004689687354176378,
-  "placebo_band_p95_cluster": 0.004689687354176378,
-  "placebo_band_p95_row": 0.004666355576294912,
+  "gk_ablation_shift": 0.006066262249183385,
+  "placebo_band_p95": 0.006999533364442367,
+  "placebo_band_p95_cluster": 0.006999533364442367,
+  "placebo_band_p95_row": 0.006556229584694343,
   "placebo_n_clusters": 179,
   "gk_clears_placebo_band": false,
   "entanglement": "inside_band",
@@ -30,8 +30,8 @@
   "gk_nan_fraction": 0.0,
   "base_nan_fraction": 0.007237647916265981,
   "ps_overlap_fraction": 1.0,
-  "smd_max_pre": 0.8813085155616418,
-  "smd_max_post": 0.054839088389365444,
+  "smd_max_pre": 0.8813088157787504,
+  "smd_max_post": 0.07004662854863188,
   "causal_claim_supported": true,
   "seed": 0,
   "estimator": "abadie_imbens_2006_with_replacement_J1",
@@ -56,10 +56,10 @@
   "corpus": {
     "n_matches": 179,
     "n_opportunities": 98789,
-    "n_partitions": 9,
+    "n_partitions": 1,
     "n_shards": 179,
-    "commit_consistent": false
+    "commit_consistent": true
   },
-  "run_commit": "d1fc18d2fe5404cccd5ee9eb34ea7e1049e9f323",
+  "run_commit": "35a66679c7bd9db4f23d2db0d768993f1468b0c1",
   "run_tree_dirty": false
 }

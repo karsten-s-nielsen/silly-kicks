@@ -1,0 +1,1181 @@
+{
+  "n_frame_groups": 1360,
+  "goal_ends": [
+    0.0,
+    105.0
+  ],
+  "arms": {
+    "parent": "old transform, old grid",
+    "old_grid": "new transform, old grid",
+    "current": "new transform, new grid"
+  },
+  "baseline_geometry_version": "goal-relative-1",
+  "current_geometry_version": "goal-relative-2",
+  "membership": {
+    "shot": [
+      "DefDist_0",
+      "DefDist_1",
+      "GK_r",
+      "GK_theta",
+      "openGoal",
+      "r",
+      "speed",
+      "theta"
+    ],
+    "cross": [
+      "box_off_def_ratio",
+      "dist_endline",
+      "dist_nearest_def",
+      "dist_nearest_teammate",
+      "gk_carrier_side",
+      "gk_dist_far_post",
+      "gk_dist_near_post",
+      "gk_lateral_offset",
+      "gk_r",
+      "gk_theta",
+      "score_differential",
+      "space_controlled",
+      "ten_minute_warning"
+    ],
+    "layer2_build": [
+      "DefDist_0",
+      "DefDist_1",
+      "r",
+      "theta"
+    ],
+    "layer2_analysis": [
+      "DefDist_0",
+      "DefDist_1",
+      "defensive_line_compactness",
+      "defensive_line_height",
+      "pressure_on_actor__bekkers_pi",
+      "r",
+      "score_differential",
+      "theta",
+      "time_remaining_s"
+    ],
+    "treatment": [
+      "gk_depth_x"
+    ]
+  },
+  "rows": [
+    {
+      "covariate": "DefAngle_0",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_1",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_2",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_3",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_4",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefDist_0",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "shot",
+        "layer2_build",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "DefDist_1",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "shot",
+        "layer2_build",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "DefDist_2",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefDist_3",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefDist_4",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "GK_r",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "shot"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "GK_theta",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "shot"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "OffAngle_0",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffAngle_1",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffAngle_2",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffAngle_3",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffAngle_4",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_0",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_1",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_2",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_3",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_4",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "ball_r",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "ball_speed",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "ball_theta",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "box_off_def_ratio",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "dist_endline",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "dist_nearest_def",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "dist_nearest_teammate",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_carrier_side",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_depth_x",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "treatment"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_dist_far_post",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_dist_near_post",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_lateral_offset",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_r",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_theta",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "openGoal",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "shot"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "r",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "shot",
+        "layer2_build",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "score_differential",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": NaN,
+      "axis_b_grid": NaN,
+      "total": NaN,
+      "axis": "not-measurable",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "space_controlled",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 70.95652173913044,
+      "total": 70.95652173913044,
+      "axis": "B",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "speed",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "shot"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "ten_minute_warning",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "theta",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "shot",
+        "layer2_build",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "z",
+      "goal_end": "goal_x_0",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_0",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.280302355228503,
+      "axis_b_grid": 0.0,
+      "total": 6.280302355228503,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_1",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.273724314722171,
+      "axis_b_grid": 0.0,
+      "total": 6.273724314722171,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_2",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.279068946477104,
+      "axis_b_grid": 0.0,
+      "total": 6.279068946477104,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_3",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.267914714285373,
+      "axis_b_grid": 0.0,
+      "total": 6.267914714285373,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefAngle_4",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.2825554256181455,
+      "axis_b_grid": 0.0,
+      "total": 6.2825554256181455,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefDist_0",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "shot",
+        "layer2_build",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "DefDist_1",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "shot",
+        "layer2_build",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": 5.329070518200751e-15,
+      "axis_b_grid": 0.0,
+      "total": 5.329070518200751e-15,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "DefDist_2",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefDist_3",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "DefDist_4",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "GK_r",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "shot"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "GK_theta",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "shot"
+      ],
+      "axis_a_transform": 0.7857821299691777,
+      "axis_b_grid": 0.0,
+      "total": 0.7857821299691777,
+      "axis": "A",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "OffAngle_0",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.283185307179578,
+      "axis_b_grid": 0.0,
+      "total": 6.283185307179578,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffAngle_1",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.277936981016087,
+      "axis_b_grid": 0.0,
+      "total": 6.277936981016087,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffAngle_2",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.2779295319200195,
+      "axis_b_grid": 0.0,
+      "total": 6.2779295319200195,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffAngle_3",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.279029394559892,
+      "axis_b_grid": 0.0,
+      "total": 6.279029394559892,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffAngle_4",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 6.282954426949728,
+      "axis_b_grid": 0.0,
+      "total": 6.282954426949728,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_0",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_1",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 5.329070518200751e-15,
+      "axis_b_grid": 0.0,
+      "total": 5.329070518200751e-15,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_2",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_3",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "OffDist_4",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "ball_r",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 1.4210854715202004e-14,
+      "axis_b_grid": 0.0,
+      "total": 1.4210854715202004e-14,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "ball_speed",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "ball_theta",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 2.620154547780835,
+      "axis_b_grid": 0.0,
+      "total": 2.620154547780835,
+      "axis": "A",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "box_off_def_ratio",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "dist_endline",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "dist_nearest_def",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "dist_nearest_teammate",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 7.105427357601002e-15,
+      "axis_b_grid": 0.0,
+      "total": 7.105427357601002e-15,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_carrier_side",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_depth_x",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "treatment"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_dist_far_post",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 1.4210854715202004e-14,
+      "axis_b_grid": 0.0,
+      "total": 1.4210854715202004e-14,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_dist_near_post",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 1.4210854715202004e-14,
+      "axis_b_grid": 0.0,
+      "total": 1.4210854715202004e-14,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_lateral_offset",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 11.321008403361361,
+      "axis_b_grid": 0.0,
+      "total": 11.321008403361361,
+      "axis": "A",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_r",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "gk_theta",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.7857821299691777,
+      "axis_b_grid": 0.0,
+      "total": 0.7857821299691777,
+      "axis": "A",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "openGoal",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "shot"
+      ],
+      "axis_a_transform": 5.329070518200751e-15,
+      "axis_b_grid": 0.0,
+      "total": 5.329070518200751e-15,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "r",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "shot",
+        "layer2_build",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": 1.4210854715202004e-14,
+      "axis_b_grid": 0.0,
+      "total": 1.4210854715202004e-14,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "score_differential",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": NaN,
+      "axis_b_grid": NaN,
+      "total": NaN,
+      "axis": "not-measurable",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "space_controlled",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 97.56521739130432,
+      "axis_b_grid": 70.95652173913044,
+      "total": 70.95652173913044,
+      "axis": "A+interaction",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "speed",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "shot"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "ten_minute_warning",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "cross"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "theta",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "shot",
+        "layer2_build",
+        "layer2_analysis"
+      ],
+      "axis_a_transform": 2.620154547780835,
+      "axis_b_grid": 0.0,
+      "total": 2.620154547780835,
+      "axis": "A",
+      "is_causal_covariate": true
+    },
+    {
+      "covariate": "z",
+      "goal_end": "goal_x_105",
+      "arms": [
+        "model-feature-only"
+      ],
+      "axis_a_transform": 0.0,
+      "axis_b_grid": 0.0,
+      "total": 0.0,
+      "axis": "none",
+      "is_causal_covariate": false
+    },
+    {
+      "covariate": "defensive_line_height",
+      "goal_end": "n/a",
+      "arms": [
+        "layer2_analysis"
+      ],
+      "source": "join-time (causal/_confounders.py)",
+      "delta": "not-measurable-by-this-driver",
+      "note": "per-spell join, not an extractor feature (opportunities.py:152-157)"
+    },
+    {
+      "covariate": "defensive_line_compactness",
+      "goal_end": "n/a",
+      "arms": [
+        "layer2_analysis"
+      ],
+      "source": "join-time (causal/_confounders.py)",
+      "delta": "not-measurable-by-this-driver",
+      "note": "per-spell join, not an extractor feature (opportunities.py:152-157)"
+    },
+    {
+      "covariate": "pressure_on_actor__bekkers_pi",
+      "goal_end": "n/a",
+      "arms": [
+        "layer2_analysis"
+      ],
+      "source": "join-time (causal/_confounders.py)",
+      "delta": "not-measurable-by-this-driver",
+      "note": "per-spell join, not an extractor feature (opportunities.py:152-157)"
+    },
+    {
+      "covariate": "time_remaining_s",
+      "goal_end": "n/a",
+      "arms": [
+        "layer2_analysis"
+      ],
+      "source": "join-time (causal/_confounders.py)",
+      "delta": "not-measurable-by-this-driver",
+      "note": "per-spell join, not an extractor feature (opportunities.py:152-157)"
+    }
+  ],
+  "run_commit": "0343eddca6ad34767f67c92b43801c00de6591a7",
+  "run_tree_dirty": false,
+  "status": "ok",
+  "breaches": []
+}

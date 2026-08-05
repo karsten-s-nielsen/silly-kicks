@@ -1,0 +1,83 @@
+{
+  "_about": [
+    "Sibling annotation for metrics.json. It is a SEPARATE file on purpose: metrics.json is",
+    "driver-produced and carries run_commit 6b242cfb..., so hand-editing it would add content that",
+    "commit did not produce -- the mirror image of restamping a run_commit without re-running, which",
+    "spec 4.5 forbids. Nothing here overrides the artifact; it classifies which of its fields the",
+    "4.74.0 geometry change did and did not touch.",
+    "",
+    "This artifact was NOT re-run. The reason is measured, not assumed: see cites.covariate_invariance."
+  ],
+  "annotated_at": "4.74.0 (ADR-051 PR 5)",
+  "annotates": "docs/research/tf19_signoff_power/metrics.json",
+  "artifact_run_commit": "6b242cfbd1369500cf65d26a0c4b3fa49c234da6",
+  "artifact_run_commit_unchanged": true,
+
+  "invariant_now": {
+    "fields": ["n_spells", "n_treated", "treated_prevalence", "sizes", "N_MIN_MATCHED", "n_min_per_outcome"],
+    "why": [
+      "Layer 2's treatment is gk_depth_x >= 16.5 via _covariate_depth (opportunities.py:393), and",
+      "gk_depth_x = GK_r * cos(GK_theta). Both factors are EXACTLY invariant under the geometry",
+      "change -- hypot(a,-b) == hypot(a,b) and cos is even -- measured at 0.0 on both axes and both",
+      "goal ends by scripts/measure_covariate_invariance.py. The treated SET is therefore identical,",
+      "so every count and the estimability verdict N_MIN_MATCHED are unchanged."
+    ]
+  },
+
+  "stale_now": {
+    "fields": ["att"],
+    "why": [
+      "theta IS in LAYER2_BUILD_CONFOUNDERS (opportunities.py:150) and moves 2.6202 rad at",
+      "goal_x=105 (axis A). It is a per-spell STORED column, so the persisted spells parquet is",
+      "stale in theta, not merely the analysis-time design matrix. Re-running the seconds-long",
+      "analysis leg over the existing spells would LAUNDER the decimals rather than fix them: the",
+      "spells must be rebuilt first (~8.7h).",
+      "",
+      "The VERDICT is unaffected regardless. Max power 0.055 against a required 0.80, with 0/200",
+      "replicates estimable at n>=4000, is driven by prevalence 0.0041 -- a function of the",
+      "invariant treatment above. Decimals move; the conclusion does not."
+    ]
+  },
+
+  "stale_after_pr7": {
+    "fields": ["icc"],
+    "pending_invalidation": "PR 7 (ghost-GK re-fit onto the canonical box constant)",
+    "why": [
+      "The ICC leg is CURRENT today: it consumes GKDV arm values (ghost-GK, DAS, threat pitch",
+      "control) and never touches the changed extractors, so 4.74.0 did not move it. PR 7 re-fits",
+      "ghost-GK, which feeds those arm values, and will.",
+      "",
+      "Recorded as a third class deliberately. A two-way invariant/stale split would assert that icc",
+      "is simply current and be wrong two PRs later, with no mechanism to revisit. The artifact",
+      "already distinguishes the legs -- upstream_provenance.spells and upstream_provenance.arm_values",
+      "carry DIFFERENT run_commit values -- so the split is available in the data, not invented here."
+    ]
+  },
+
+  "rebuild": {
+    "owner": "spec item 21 (post-PR-7 rebuild), scheduled by Cycle B's invalidation report",
+    "once_not_thrice": [
+      "Three sources invalidate this artifact -- PR 5 (theta, a build-time spell column), PR 6",
+      "(add_defensive_line re-key -> defensive_line_height / _compactness, both in",
+      "LAYER2_CONFOUNDERS), and PR 7 (ghost re-fit -> the ICC leg). It is rebuilt ONCE after PR 7,",
+      "not once per PR."
+    ]
+  },
+
+  "cites": {
+    "covariate_invariance": "docs/research/covariate_invariance/metrics.json",
+    "covariate_invariance_run_commit": "0343eddca6ad",
+    "measured": {
+      "gk_depth_x_axis_a_at_goal_x_105": 0.0,
+      "gk_depth_x_axis_b_at_goal_x_105": 0.0,
+      "GK_r_axis_a_at_goal_x_105": 0.0,
+      "theta_axis_a_at_goal_x_105": 2.6202
+    }
+  },
+
+  "caveat_on_precision": [
+    "See spec K10. The causal placebo bands are quantized at 1/n_treated because estimate_att is",
+    "1:1 nearest-neighbour matching, so their printed digits overstate their resolution. Do not",
+    "quote a band to more than ~4 significant figures."
+  ]
+}

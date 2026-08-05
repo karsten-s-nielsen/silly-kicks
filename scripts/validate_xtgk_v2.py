@@ -1,4 +1,4 @@
-"""Owner-run validation suite for xT-GK v2 (ADR-036 §Part 5).
+"""Owner-run validation suite for xT-GK v2 (ADR-036 SPart 5).
 
 Construct validity is OUT-OF-SAMPLE (possession-parity split) and reported as LIFT over baselines --
 V is (by construction) the expected first-shot xG, so absolute AUC vs a possession->shot target is
@@ -84,7 +84,7 @@ def construct_validity_scores(
     train, test = a[train_mask].copy(), a[~train_mask].copy()
     pl = PressureLevels().fit(train[pressure_column])
     v = MarkovPossessionValue().fit(train, xg_column=xg_column, pressure_column=pressure_column, pressure_levels=pl)
-    # FAITHFUL V_opp (Jeff §2.3): observed post-turnover, possession-bound, bin-widened -- fit on TRAIN
+    # FAITHFUL V_opp (Jeff S2.3): observed post-turnover, possession-bound, bin-widened -- fit on TRAIN
     # (no leakage into the AUC). Default production; a caller may inject a different TurnoverCost.
     if turnover_cost is None:
         turnover_cost = EmpiricalTurnoverValue(min_support=30).fit(
@@ -213,7 +213,7 @@ def _deep_cell_disentanglement(scores: dict) -> tuple[list[str], dict[int, int]]
         rows.append(f"| {c} | {pb:.4f} | {mi:.4f} | {te:.4f} | {nmin} | {lvl} |\n")
     rows.append(
         f"\n> Read: **possession-bound << mirror at real support (level 0/1)** = the mirror over-stated deep "
-        f"threat (the genuine finding). **10s << possession-bound** = window shrinkage (an artifact — NOT the "
+        f"threat (the genuine finding). **10s << possession-bound** = window shrinkage (an artifact -- NOT the "
         f"finding). Level census over {len(DEEP_ZONE_CELLS)} deep cells: "
         f"native {level_census.get(0, 0)} / block {level_census.get(1, 0)} / "
         f"global {level_census.get(-1, 0) + level_census.get(2, 0)} "
@@ -228,7 +228,7 @@ def _write_report(provider: str, variant: str, scores: dict) -> str:
     d = scores["decomposition"]
     disentangle, _ = _deep_cell_disentanglement(scores)
     lines = [
-        f"# xT-GK v2 construct-validity — {provider} (FAITHFUL V_opp)\n",
+        f"# xT-GK v2 construct-validity -- {provider} (FAITHFUL V_opp)\n",
         f"- rho variant: `{variant}` * GK-distribution test rows: **{scores['n_test_gk']}** * "
         f"V_opp = faithful observed-post-turnover, possession-bound, TRAIN-fit\n",
         "\n| metric | AUC | n |\n|---|---|---|\n",

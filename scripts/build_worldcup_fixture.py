@@ -5,12 +5,12 @@ converts each via :func:`silly_kicks.spadl.statsbomb.convert_to_actions`, and
 writes a multi-key HDFStore at ``tests/datasets/statsbomb/spadl-WorldCup-2018.h5``
 with the structure expected by ``tests/conftest.py::sb_worldcup_data``:
 
-- ``games`` table — per-match metadata (game_id, home_team_id, away_team_id, scores,
+- ``games`` table -- per-match metadata (game_id, home_team_id, away_team_id, scores,
   competition_id, season_id, kick_off, match_date)
-- ``actions/game_<game_id>`` keys — per-match SPADL action DataFrames
+- ``actions/game_<game_id>`` keys -- per-match SPADL action DataFrames
 
 Raw event JSONs are cached at ``tests/datasets/statsbomb/raw/.cache/`` (gitignored)
-so re-runs are fast. The cache is keyed by match_id only — if StatsBomb updates
+so re-runs are fast. The cache is keyed by match_id only -- if StatsBomb updates
 a match upstream, the cached file stays stale until ``--no-cache`` or manual
 deletion. Acceptable for a vendored fixture.
 
@@ -290,7 +290,7 @@ def main() -> int:
     matches = _fetch_manifest(cache_dir, no_cache=args.no_cache, verbose=verbose, quiet=quiet)
     if len(matches) != 64:
         _log(
-            f"manifest contains {len(matches)} matches (expected 64) — proceeding anyway",
+            f"manifest contains {len(matches)} matches (expected 64) -- proceeding anyway",
             level="warn",
             verbose=verbose,
             quiet=quiet,

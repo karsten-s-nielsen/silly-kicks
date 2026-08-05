@@ -4,7 +4,7 @@ Two extractors per provider, each with two variants (``--variant``):
 
 1. IDSSE (Sportec/DFL): pulls from ``bronze.idsse_events`` on Databricks
    via ``databricks-sql-connector`` using env-var auth. Source match:
-   ``idsse_J03WMX`` (known to contain throwOut + punt qualifiers — public
+   ``idsse_J03WMX`` (known to contain throwOut + punt qualifiers -- public
    DFL competition identifier, no PII).
 
    - ``--variant default`` -> ~200-400 representative rows including all
@@ -66,9 +66,9 @@ _METRICA_OUT = _REPO_ROOT / "tests" / "datasets" / "metrica" / "sample_match.par
 _METRICA_PER_PERIOD_OUT = _REPO_ROOT / "tests" / "datasets" / "metrica" / "per_period_match.parquet"
 _METRICA_KLOPPY_SOURCE = _REPO_ROOT / "tests" / "datasets" / "kloppy" / "metrica_events.json"
 
-# IDSSE source match — known to contain throwOut + punt qualifiers
+# IDSSE source match -- known to contain throwOut + punt qualifiers
 # (verified via direct probe against bronze.idsse_events 2026-04-29).
-# DFL competition identifier — public, no PII.
+# DFL competition identifier -- public, no PII.
 _IDSSE_SOURCE_MATCH_ID = "idsse_J03WMX"
 
 # Metrica source match for the per_period variant: Sample Game 1 has
@@ -91,12 +91,12 @@ def _extract_idsse(out_path: Path, *, variant: str = "default") -> None:
 
     ``variant='default'`` keeps the existing ~400-row stratified subset
     (used by contract tests). ``variant='per_period'`` skips the row cap
-    so the full match is preserved with per-period shot density intact —
+    so the full match is preserved with per-period shot density intact --
     required by the per-(team, period) orientation invariant added in
     PR-S23 (silly-kicks 3.0.1).
 
     Reads ``DATABRICKS_HOST`` / ``DATABRICKS_TOKEN`` / ``DATABRICKS_HTTP_PATH``
-    from env. NEVER echoes those values to stdout / stderr — only their
+    from env. NEVER echoes those values to stdout / stderr -- only their
     presence/absence on the missing-vars error path.
     """
     try:
@@ -131,7 +131,7 @@ def _extract_idsse(out_path: Path, *, variant: str = "default") -> None:
     # per-file-ignores for this file: interpolated values are module-level
     # constants (no user input), not a real injection vector.
     if variant == "per_period":
-        # Full match — preserve per-period shot density for the
+        # Full match -- preserve per-period shot density for the
         # tests/invariants/test_direction_of_play.py per-(team, period)
         # invariant added in PR-S23 (silly-kicks 3.0.1).
         query = f"""
@@ -170,7 +170,7 @@ def _extract_idsse(out_path: Path, *, variant: str = "default") -> None:
                 df = cur.fetchall_arrow().to_pandas()
     except Exception as exc:
         # databricks-sql exception messages contain the SQL error text and
-        # query ID — useful for debugging, never include the auth token.
+        # query ID -- useful for debugging, never include the auth token.
         print(f"ERROR: Databricks query failed ({type(exc).__name__}): {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -314,7 +314,7 @@ def _extract_metrica(out_path: Path) -> None:
         end_time = end_obj.get("time", start_time) if isinstance(end_obj, dict) else start_time
 
         # kloppy metrica_events.json uses "from" for the event actor and
-        # "to" for the target — NOT "player". Each is a dict with "id" and
+        # "to" for the target -- NOT "player". Each is a dict with "id" and
         # "name" keys.
         from_obj = ev.get("from") or {}
         player = from_obj.get("id") if isinstance(from_obj, dict) else from_obj
@@ -322,7 +322,7 @@ def _extract_metrica(out_path: Path) -> None:
         team_obj = ev.get("team") or {}
         team = team_obj.get("id") if isinstance(team_obj, dict) else team_obj
 
-        # Skip rows with no actor — they're informational events (substitutions,
+        # Skip rows with no actor -- they're informational events (substitutions,
         # set-piece markers, etc.) that the SPADL converter would drop anyway,
         # and they break the cross-provider parity test's GK-detection heuristic.
         if not player:

@@ -1,26 +1,28 @@
 {
+  "run_commit": "6e3a132b0e75da425bec7affede02218150f1232",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
   "shipped_variant": "public",
-  "n_rows": 1216218,
-  "n_positive": 218967,
+  "n_rows": 156110,
+  "n_positive": 34205,
   "providers": [
-    "gradientsports",
     "idsse",
     "skillcorner"
   ],
   "candidates": {
     "public": {
       "params": {
-        "n_estimators": 217.4469439034894,
-        "max_depth": 3.80418533895304,
-        "learning_rate": 0.05015536017850647,
-        "min_child_weight": 7.183932747459947,
-        "reg_lambda": 1.389658722391251
+        "n_estimators": 236.935825365933,
+        "max_depth": 4.777718346547334,
+        "learning_rate": 0.030079022166172607,
+        "min_child_weight": 7.027658363424563,
+        "reg_lambda": 4.071029206971469
       },
       "metrics": {
-        "pr_auc": 0.3514257783817999,
-        "brier": 0.16036342084407806,
-        "log_loss": 0.4901750683784485,
-        "pr_auc_std": 0.018837104553293835,
+        "pr_auc": 0.3458024090235575,
+        "brier": 0.1611367493867874,
+        "log_loss": 0.492645400762558,
+        "pr_auc_std": 0.014979129296158272,
         "positive_rate": 0.21910832105566588,
         "base_rate_brier": 0.17109986469983313,
         "n_usable_folds": 5
@@ -29,51 +31,6 @@
         "idsse",
         "skillcorner"
       ]
-    },
-    "paired": {
-      "nested": {
-        "public": [],
-        "sc_extended": [
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          0.0
-        ],
-        "full": [
-          -0.01132298206646648,
-          -0.023224782398330368,
-          -0.022599859596144356,
-          0.04602916558623871,
-          -0.005252467309271702
-        ]
-      },
-      "shared_params": {
-        "public": [],
-        "sc_extended": [
-          0.0,
-          0.0,
-          0.0,
-          0.0,
-          0.0
-        ],
-        "full": [
-          -0.012219230915328227,
-          -0.0248946320420268,
-          -0.02768591847615448,
-          0.03813700096538869,
-          -0.01078276295041486
-        ]
-      },
-      "full_vs_sc": [
-        -0.01132298206646648,
-        -0.023224782398330368,
-        -0.022599859596144356,
-        0.04602916558623871,
-        -0.005252467309271702
-      ],
-      "shipped": "public",
-      "why": "sc_extended failed the rule; the sequence stops (full cannot ship here)"
     }
   },
   "acceptance": {
@@ -83,5 +40,5 @@
     "log_loss_lt_uniform": true
   },
   "estimates_are_cv_not_shipped_fit": true,
-  "artifact_size_bytes": 434579
+  "artifact_size_bytes": 773201
 }

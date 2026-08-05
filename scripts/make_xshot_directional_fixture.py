@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Build the frozen directional feature-vector fixture for the CI liveness tripwire (PR-S80 N2).
 
-Extracts xS features from the committed slim real-provider fixtures and freezes a handful of
+Extracts xS features from the committed slim real-provider fixtures and freezes IN-DOMAIN
 NEAR-goal (small `r` -> expected-positive) and FAR (large `r` -> expected-negative) FEATURE ROWS.
 
 Freezing at the FEATURE-VECTOR layer (not raw frames) makes the CI quality test schema-robust and
@@ -37,7 +37,18 @@ def _load(provider: str) -> pd.DataFrame:
     df = pd.read_parquet(SLIM / f"{provider}_slim.parquet")
     frames = df[df["__kind"] == "frame"].drop(columns=["__kind"]).reset_index(drop=True)
     frames = frames[[c for c in frames.columns if c in _KEEP]].copy()
-    frames["vx"] = 0.0
+    # PR 5: carry the REAL speed through instead of zeroing velocity.
+    #
+    # This previously set vx = vy = 0, so `speed = hypot(bvx, bvy)` was CONSTANT ZERO on every
+    # frozen row -- the same degeneracy PR-S118 found and fixed in the xCross fixture ("it zeroed
+    # the model's #1 feature, so the model could not respond"), which was repaired there and left
+    # in place here. A feature pinned to one value cannot contribute to a ranking, and it routes
+    # down XGBoost's zero branch rather than the missing branch, so the gate was scoring a
+    # counterfactual the model never sees in production.
+    #
+    # `extract_xshot_features` uses only the MAGNITUDE (`hypot`), never the direction, so putting
+    # the observed speed entirely in vx reproduces the real `speed` feature exactly.
+    frames["vx"] = frames["speed"].astype(float) if "speed" in frames.columns else 0.0
     frames["vy"] = 0.0
     return frames
 
@@ -64,9 +75,23 @@ def main() -> None:
             rec["provider"] = prov
             rows.append(rec)
     df = pd.DataFrame(rows).dropna(subset=["r_val"])
-    near = df.nsmallest(8, "r_val").copy()
+    # PR 5: constrain to the model's TRAINED DOMAIN before splitting near/far.
+    #
+    # `prepare_xshot_training_data(attacking_third_only=True)` keeps only frames with the ball
+    # within `_ATTACKING_THIRD_M` (35 m) of the attacked goal, so anything beyond that was never
+    # seen in training and the model's output there is extrapolation, not prediction. The previous
+    # global `nlargest` put the whole FAR class at r ~= 101 m -- roughly 3x outside the domain --
+    # so the liveness gate was scoring undefined behaviour. Two statistically equivalent models
+    # (pr_auc 0.3514 vs 0.3458, 0.37 SD apart) scored AUC 1.0 and 0.0 on it.
+    df = df[df["r_val"] <= xs._ATTACKING_THIRD_M].reset_index(drop=True)
+    if len(df) < 40:
+        raise SystemExit(f"only {len(df)} in-domain rows (r <= {xs._ATTACKING_THIRD_M}); need >= 40")
+    # Quartile split rather than a fixed 8+8: more rows means the gate cannot be flipped by a
+    # handful of ties, which is what made the 16-row version unable to separate two equal models.
+    lo, hi = df["r_val"].quantile([0.25, 0.75])
+    near = df[df["r_val"] <= lo].copy()
     near["label"] = 1
-    far = df.nlargest(8, "r_val").copy()
+    far = df[df["r_val"] >= hi].copy()
     far["label"] = 0
     frozen = pd.concat([near, far], ignore_index=True)[[*xs.XSHOT_FEATURE_NAMES_FAITHFUL, "label", "provider"]]
     OUT.parent.mkdir(parents=True, exist_ok=True)

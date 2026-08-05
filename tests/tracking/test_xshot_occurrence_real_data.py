@@ -206,8 +206,15 @@ def test_goal_relative_symmetry_real_data(provider):
     teams = list(g[~g["is_ball"].astype(bool)]["team_id"].dropna().unique())
     if len(teams) < 1:
         pytest.skip("frame lacks an identifiable team")
+    # PR 5: the 180-degree POINT REFLECTION, not an x-only mirror. Flipping x alone passed only
+    # because the transform was itself x-only and chiral -- the two errors cancelled, so this
+    # witnessed the defect instead of guarding against it. See test_pr5_chirality_gates.py.
     mirrored = g.copy()
     mirrored["x"] = 105.0 - mirrored["x"]
+    mirrored["y"] = 68.0 - mirrored["y"]
+    for _v in ("vx", "vy"):
+        if _v in mirrored.columns:
+            mirrored[_v] = -mirrored[_v]
     a = xs.extract_xshot_features(g, gk_team_id=teams[0], goal_x=0.0)
     b = xs.extract_xshot_features(mirrored, gk_team_id=teams[0], goal_x=105.0)
     pd.testing.assert_frame_equal(a, b, check_exact=False, atol=1e-9)

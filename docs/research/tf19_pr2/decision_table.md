@@ -5,6 +5,35 @@ completed DGX Stage A / Stage B retrains. This is the PR-2 verdict record refere
 CHANGELOG 4.51.0 and ADR-040; it does not re-derive the probe machinery (that shipped in
 PR-1, `silly_kicks/tracking/_model_eval.py` / `_xcross_eval.py`, ADR-037).
 
+## 4.74.0 refresh (ADR-051 PR 5) — what changed and what did not
+
+The chiral goal-relative transform was corrected and both attempt models retrained, so the **Stage A /
+bundled `public`** figures below are re-read from the retrained artifact. **No probe was re-run for
+this refresh**: the xCross probe executes inside `scripts/train_xcross_attempt.py` and its result is
+already written to the bundled model's own provenanced `metrics.json`. This document previously
+restated those numbers as prose; it now cites the artifact.
+
+**Verdict unchanged: `tf19_ready: false`.** Both prongs are still missed. The GK signal strengthened
+in absolute terms (0.002417 -> 0.003582) and the ratio improved (1.41x -> 1.70x), but the
+nearest-defender control strengthened alongside it (0.001718 -> 0.002106), so the gap to the 2.0x bar
+narrowed without closing, and the absolute floor is missed by ~2.8x. This is a **stability result, not
+a repair** — the reason the gate fails is a control that tracks the GK signal, which a geometry
+correction was never going to address.
+
+**Provenance of the two legs is NOT equal.** The after leg is
+`silly_kicks/tracking/_xcross_weights/default/metrics.json` at `run_commit 6e3a132b0e75`,
+`run_tree_dirty false`. The before leg is the same path at the previous commit, reachable only via
+`git show 6e3a132:<path>`, and it carries **no `run_commit` and no `run_tree_dirty`** — it predates
+the provenance wiring. A `git show` SHA anchors *when a file was committed*, not *what code produced
+it*, which is precisely the distinction `run_commit` exists to make. Read the before column as the
+weaker of the two.
+
+**Stage B (`sc_extended`) is NOT refreshed below.** Its 4.51.0 figures are retained for the Stage-A/B
+contrast, but they were measured on the pre-fix geometry. The 4.74.0 xCross fixed-sequence run
+declined `sc_extended` (it failed the ship rule, so the sequence stopped and `public` remained the
+bundled default), so no refreshed Stage B probe figure is published here. Do not read the Stage B
+column as current.
+
 ## Source data
 
 Authoritative numbers below were read directly from the DGX training box
@@ -20,13 +49,13 @@ Frozen constants: `TF19_PROBE_RATIO=2.0`, `TF19_PROBE_ABS_FLOOR=0.01`
 
 | Metric | Stage A (`public`, bundled default) | Stage B (`sc_extended`, +98 owner SkillCorner matches) |
 |---|---|---|
-| `gk_median_abs_delta` | 0.002417 | 0.009697 (~0.0097) |
-| `nearest_def_median_abs_delta` | 0.001718 | 0.004380 (~0.00438) |
-| ratio (gk / nearest_def) | ~1.41x | ~2.21x |
+| `gk_median_abs_delta` | **0.003582** (was 0.002417) | 0.009697 (~0.0097) *(4.51.0, not refreshed)* |
+| `nearest_def_median_abs_delta` | **0.002106** (was 0.001718) | 0.004380 (~0.00438) *(4.51.0)* |
+| ratio (gk / nearest_def) | **~1.70x** (was ~1.41x) | ~2.21x *(4.51.0)* |
 | clears `ratio >= 2.0` prong | no | **yes** |
 | clears `abs_floor >= 0.01` prong | no | no (0.0097 < 0.01) |
 | dose ratio (4m band / 2m band) | ~2.36x | ~1.66x |
-| `gk_zero_fraction` | n/a (not the reported gate figure) | 0.0 |
+| `gk_zero_fraction` | **0.0392** | 0.0 *(4.51.0)* |
 | `tf19_ready` | `false` | `false` |
 | `tf19_reason` | ratio + floor both miss | "GK \|delta\| did not clear ratio>=2.0 x control AND abs-floor>=0.01" |
 
@@ -105,7 +134,9 @@ ghost-substitution `targets` produced by the GK-substitution engine, which is th
 this checkout (`silly_kicks/gkdv/` is absent). There is therefore no substituted-targets
 input to feed `xs_substitution_probe` in this PR.
 
-**This PR records no xS probe result.** No number is fabricated for the shot arm. The shot
+**RESOLVED as of 4.74.0.** `silly_kicks/gkdv/` shipped in 4.53.0, the probe ran, and both legs are recorded in `docs/research/tf19_pr3b/` (v1) and `docs/research/tf19_pr3b_xs_v2/` (v2) — two VIEWS of one `--variant both` run, which is why both carry `run_commit 08ce9a86b0ea`. Re-run on the corrected geometry, **both verdicts reproduce unchanged**: v1 `unmeasurable_at_dose`, v2 `joins_with_caveat`. The paragraph below is retained as the record of why the row was blank at 4.51.0.
+
+**At 4.51.0 this PR recorded no xS probe result.** No number is fabricated for the shot arm. The shot
 row of the decision table is **PENDING PR-3** — it will be filled in once the `gkdv/`
 ghost-substitution engine lands and can produce the `targets` frame the registered xS probe
 rule (ADR-037 §3, all of its locked constants — twelve as registered in
@@ -115,7 +146,8 @@ consumes.
 | arm | probe verdict | entanglement | decision-table row |
 |---|---|---|---|
 | cross | `fail` | `inside_band` | `gated_clean_fail` |
-| shot | *(not run — PR-3-gated)* | *(not run — PR-3-gated)* | **PENDING** |
+| shot (v1) | `no_valid_placebo` | `inside_band` | **`unmeasurable_at_dose`** |
+| shot (v2) | `pass` | `inside_band` | **`joins_with_caveat`** |
 
 ## Recommendation
 

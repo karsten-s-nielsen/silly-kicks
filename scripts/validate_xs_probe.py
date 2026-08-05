@@ -4,7 +4,7 @@ v1 (random-outfielder) and/or v2 (model-relevant-defender, ADR-037 amendment) pl
 Reported-not-gated harness (mirrors scripts/validate_xcross_causal.py). Loads GS matches via the
 pining loader, and PER MATCH: builds ghost frames + targets via the gkdv engine and computes the
 xS substitution deltas ONCE PER VARIANT (each variant's placebo_out population in its own frame so
-evaluate_xs_probe never sees both; spec §5). Pools the tidy DELTAS (not raw frames -- memory),
+evaluate_xs_probe never sees both; spec S5). Pools the tidy DELTAS (not raw frames -- memory),
 evaluates each variant, computes the spec 3.5 re-gate verdict + a targets->used->band
 reconciliation + the v2 non-gating attacker diagnostic, and writes {metrics.json, report.md}.
 
@@ -156,7 +156,7 @@ def run(
         htid = cast("int | str", home_team_id)  # loader yields `object`; the engine wants int | str
         _cf, prov, report = build_ghost_frames(frames, model=ghost_model, home_team_id=htid)
         targets = provenance_to_targets(prov, frames=frames, home_team_id=htid)
-        # One full substitution_deltas per variant per match (spec §5): recomputing the pool-independent
+        # One full substitution_deltas per variant per match (spec S5): recomputing the pool-independent
         # gk/nearest_def rows is ~13% redundant but keeps each variant's placebo_out population in its OWN
         # frame, so evaluate_xs_probe never sees v1's random AND v2's defender placebo together. Keep only
         # the TIDY deltas -> peak memory is one match.
@@ -217,7 +217,7 @@ def run(
 
     per_match = _per_match_records(res.counters)
     if not per_match:
-        raise SystemExit("no GS matches loaded — check PINING_FOR_THE_DATA_TOKEN / --match-ids-json")
+        raise SystemExit("no GS matches loaded -- check PINING_FOR_THE_DATA_TOKEN / --match-ids-json")
 
     # Combined from THIS PASS'S keys, not `_driver.reconcile`: that helper's whole-generation read
     # requires a partition surface, and `--match-ids-json` here is a reproducibility PIN, not a
@@ -237,7 +237,7 @@ def run(
     if n_games < n_contributing:
         warnings.warn(
             f"game_id collision: {n_games} distinct games from {n_contributing} contributing matches "
-            "— dose-response will undercount games and the duplicate-key guard may raise",
+            "-- dose-response will undercount games and the duplicate-key guard may raise",
             stacklevel=2,
         )
 
@@ -300,16 +300,16 @@ def run(
 
 
 def _dose_ladder_line(p: dict) -> str:
-    """The dose-response ladder IS the effect — surface it even when the prongs are omitted."""
+    """The dose-response ladder IS the effect -- surface it even when the prongs are omitted."""
     dl = p.get("dose_ladder")
     if not dl:
         return "- dose ladder: n/a (unmeasurable)"
     parts = "   ".join(f"{float(k):.0f} m: {float(v):.4f}" for k, v in dl.items())
-    return f"- dose ladder (median |ΔxS| by ghost displacement): {parts}"
+    return f"- dose ladder (median |deltaxS| by ghost displacement): {parts}"
 
 
 def _dose_ratio_line(p: dict) -> str:
-    """Effect-vs-control at the 2 m dose — the number the ratio prong WOULD have used."""
+    """Effect-vs-control at the 2 m dose -- the number the ratio prong WOULD have used."""
     dl, nd = p.get("dose_ladder"), p.get("nearest_def_median")
     if not dl or not nd:  # `not nd` also guards a zero control (no division)
         return "- effect vs control ratio (2 m / nearest-def): n/a (unmeasurable)"
@@ -330,7 +330,7 @@ def _variant_block(name: str, entry: dict, rc: dict) -> list[str]:
         f"placebo_p95: {_fmt(p.get('placebo_p95'))}   gated_band_median: {_fmt(p.get('gated_band_median'))}",
         _dose_ratio_line(p),
         f"- dose_response rho / p: {_fmt(p.get('dose_response_rho'))} / {_fmt(p.get('dose_response_p'))}"
-        + ("   (prongs omitted — unmeasurable)" if prongs_omitted else ""),
+        + ("   (prongs omitted -- unmeasurable)" if prongs_omitted else ""),
     ]
     if p.get("attacker_diag_p95") is not None:
         lines.append(f"- attacker diagnostic p95 (non-gating): {_fmt(p.get('attacker_diag_p95'))}")
@@ -341,7 +341,7 @@ def _render(m: dict) -> str:
     rec = m["reconciliation"]
     variants = m["variants"]
     body = [
-        "# TF-19 PR-3b xS-arm probe — v1 (random) vs v2 (model-relevant defenders)",
+        "# TF-19 PR-3b xS-arm probe -- v1 (random) vs v2 (model-relevant defenders)",
         "",
         f"**Entanglement:** {m['entanglement']}   **seed:** {m['seed']}   "
         f"**Matches:** {m['corpus']['n_matches']}   **Games:** {rec.get('n_distinct_games')}",
@@ -372,7 +372,7 @@ def _render(m: dict) -> str:
         f"- total targets: {rec['total_targets']}   n_frames_used: {rec['n_frames_used']}   "
         f"distinct games: {rec.get('n_distinct_games')}   gated_band_n: {rec['gated_band_n']}",
         f"- targets->used drop frac: {rec['targets_to_used_drop_frac']} "
-        "(a drop is EXPECTED — ghost vs xs carrier-resolver mismatch; read as 'above that baseline').",
+        "(a drop is EXPECTED -- ghost vs xs carrier-resolver mismatch; read as 'above that baseline').",
         "",
     ]
     return "\n".join(body) + "\n"

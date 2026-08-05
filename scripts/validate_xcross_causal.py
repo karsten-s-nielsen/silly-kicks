@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from _provenance import git_provenance, require_clean_tree
 
 from silly_kicks.causal import matching as M
 from silly_kicks.causal.opportunities import GK_BLOCK, PAPER_CONFOUNDERS
@@ -221,6 +222,9 @@ def _load_model_metadata(variant: str = "default") -> dict:
 
 def _write(out: Path, metrics: dict) -> None:
     out.mkdir(parents=True, exist_ok=True)
+    prov = git_provenance()
+    metrics["run_commit"] = prov["commit"]
+    metrics["run_tree_dirty"] = prov["dirty"]
     (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     (out / "report.md").write_text(_render(metrics), encoding="utf-8")
 
@@ -252,7 +256,15 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
+    ap.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="permit a dev run on a dirty tree; the artifact still records run_tree_dirty=true",
+    )
     a = ap.parse_args()
+    # ADR-037: enforce from the ENTRY POINT, before any corpus work is paid for. run() records
+    # the truth; the CLI is what refuses.
+    require_clean_tree(git_provenance(), allow_dirty=a.allow_dirty)
     run(
         a.out,
         a.providers.split(","),

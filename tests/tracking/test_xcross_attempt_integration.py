@@ -412,16 +412,185 @@ def test_xcross_directional_fixture_schema():
     assert df["label"].sum() >= 3 and (df["label"] == 0).sum() >= 3
 
 
-@pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
-def test_xcross_bundled_model_is_live_not_degenerate():
-    from sklearn.metrics import roc_auc_score
+# --- 4.74.0: `test_xcross_bundled_model_is_live_not_degenerate` RETIRED ---------------------------
+#
+# It asserted `roc_auc_score(...) >= 0.9` and measured 1.0000 on a fixture where SEVEN of sixteen
+# features were constant -- the entire GK block among them, pinned at (2.0, 34.0) by the generator.
+# Overwriting that block with 0, 99 or NaN each left AUC at 1.0000, so a model ignoring keeper
+# position entirely was indistinguishable from the real one. Retired-and-replaced per ADR-032's
+# treatment of the dead `pitch_control_at_ball__spearman`, with the reason recorded here so an AUC
+# check is not reinstated by someone who notices its absence.
+#
+# Ranking is NOT retained as a substitute: measured, a live-but-GK-blind model scores AUC 1.0000 on
+# the repaired fixture -- HIGHER than the real model -- while responding 0.00% to keeper position.
+# Only the response gate below separates them.
 
+#: Frozen literals, measured at authoring time on the 48-row fixture, one order of magnitude below
+#: each feature's observed range. NOT "a fixed fraction of the observed range": computed from the
+#: dataframe at test time that rule is degenerate (`range <= frac*range` is False for every frac < 1),
+#: and at frac 0.001 or 0.01 it finds only 7 of the 9 inert columns on the OLD fixture -- missing
+#: exactly the two the range clause exists for (`gk_dist_near_post`/`_far_post`, 3.0 ULP apart).
+_MIN_RANGE = {
+    "ball_r": 1.0, "ball_theta": 0.1, "ball_speed": 1.0, "score_differential": 0.1,
+    "dist_nearest_def": 1.0, "space_controlled": 100.0, "dist_nearest_teammate": 1.0,
+    "dist_endline": 1.0, "box_off_def_ratio": 0.1, "ten_minute_warning": 0.1,
+    "gk_r": 1.0, "gk_theta": 0.1, "gk_lateral_offset": 1.0,
+    "gk_dist_near_post": 0.1, "gk_dist_far_post": 0.1, "gk_carrier_side": 1.0,
+}  # fmt: skip
+
+#: Keeper probes pinned in GOAL-RELATIVE coordinates. `gk_x`/`gk_y` are absolute, so a pinned
+#: absolute probe would be a keeper on his line at one goal end and 103 m upfield at the other --
+#: the gate would still pass, failing quietly on a physically absurd state.
+_GK_PROBES = ((2.0, 34.0), (2.0, 26.0), (2.0, 42.0), (6.0, 28.0), (10.0, 34.0), (12.0, 40.0), (4.0, 30.0))
+
+#: Minimum mean(|dp|) as a fraction of the fixture's own base rate. Measured range across the seven
+#: probes above: 26.04%-50.29%, so 0.15 carries ~1.7x headroom below the weakest probe. Expressed
+#: RELATIVE to the base rate (mean p = 0.012232) because an absolute bar cannot survive a base-rate
+#: shift: at ~1% any absolute threshold above ~0.008 is unreachable by construction.
+_MIN_GK_RESPONSE_REL = 0.15
+
+_GK_COLS = (
+    "gk_r", "gk_theta", "gk_lateral_offset",
+    "gk_dist_near_post", "gk_dist_far_post", "gk_carrier_side",
+)  # fmt: skip
+
+
+def _gk_block_at(gk_gr_x, gk_y, carrier_gr_y):
+    """The extractor's GK block (`_xcross_attempt.py:222-235`), from raw geometry.
+
+    A deliberate train/serve duplication, kept in ONE helper so the drift has a single site. Pinned
+    by `test_xcross_gk_block_rederivation_is_faithful`, which fails the moment the extractor changes.
+    """
+    import math
+
+    from silly_kicks.tracking import _geometry as _geo
+    from silly_kicks.tracking._xcross_attempt import _GOAL_HALF_WIDTH_M
+
+    side = np.sign(carrier_gr_y - _geo.GOAL_Y) or 1.0
+    near_y = _geo.GOAL_Y + _GOAL_HALF_WIDTH_M * side
+    far_y = _geo.GOAL_Y - _GOAL_HALF_WIDTH_M * side
+    return {
+        "gk_r": math.hypot(gk_gr_x, gk_y - _geo.GOAL_Y),
+        "gk_theta": math.atan2(gk_y - _geo.GOAL_Y, gk_gr_x),
+        "gk_lateral_offset": float(gk_y - _geo.GOAL_Y),
+        "gk_dist_near_post": math.hypot(gk_gr_x, gk_y - near_y),
+        "gk_dist_far_post": math.hypot(gk_gr_x, gk_y - far_y),
+        "gk_carrier_side": float((gk_y - _geo.GOAL_Y) * side),
+    }
+
+
+def _with_keeper_at(df, gr_x, gr_y):
+    """Copy of `df` with the GK block recomputed for a keeper at goal-relative (gr_x, gr_y)."""
+    from silly_kicks.tracking import _geometry as _geo
+
+    out = df.copy()
+    carrier_y = df["carrier_y"].to_numpy(dtype=float)
+    goal_x = df["goal_x"].to_numpy(dtype=float)
+    for i in range(len(df)):
+        blk = _gk_block_at(gr_x, gr_y, _geo.to_goal_relative_y(carrier_y[i], goal_x=goal_x[i]))
+        for c in _GK_COLS:
+            out.iloc[i, out.columns.get_loc(c)] = blk[c]
+    return out
+
+
+def test_xcross_fixture_is_not_degenerate():
+    """PRECONDITION. The single assertion that would have caught the defect cycles earlier.
+
+    Lands RED on the pre-4.74.0 fixture: 16 rows (< 40), nine inert features, and half its rows
+    outside the model's own `wide_area_only` trained domain.
+    """
+    from silly_kicks.tracking._xcross_attempt import _ADVANCE_M, _in_wide_area
+
+    df = pd.read_parquet(_XCROSS_DIRECTIONAL)
+    assert len(df) >= 40, f"only {len(df)} rows"
+
+    # NaN-EXPLICIT. A bare `(max - min) <= tol` is NaN-BLIND, since `nan <= tol` is False -- and
+    # `score_differential` was all-NaN on the old fixture, the headline example of the blindness.
+    # `nunique <= 1` alone is also insufficient: gk_dist_near_post/_far_post held two values 3.0 ULP
+    # apart. NEITHER clause alone finds all nine.
+    inert = [
+        c
+        for c in XCROSS_FEATURE_NAMES_FAITHFUL
+        if not df[c].notna().any() or float(df[c].max() - df[c].min()) <= _MIN_RANGE[c]
+    ]
+    assert not inert, f"inert features cannot contribute to any ranking: {inert}"
+
+    missing = {"ball_x", "ball_y", "goal_x", "gk_x", "gk_y", "carrier_y"} - set(df.columns)
+    assert not missing, f"raw geometry absent, so the domain clause is unfalsifiable: {missing}"
+    bx = df["ball_x"].to_numpy(dtype=float)
+    by = df["ball_y"].to_numpy(dtype=float)
+    gx = df["goal_x"].to_numpy(dtype=float)
+    out_of_domain = [(bx[i], by[i]) for i in range(len(df)) if not _in_wide_area(bx[i], by[i], gx[i], _ADVANCE_M)]
+    assert not out_of_domain, f"rows outside wide_area_only are extrapolation: {out_of_domain[:3]}"
+
+
+@pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+def test_xcross_gk_block_rederivation_is_faithful():
+    """`_gk_block_at` duplicates the extractor; this is what stops the copy drifting silently."""
+    from silly_kicks.tracking import _geometry as _geo
+
+    df = pd.read_parquet(_XCROSS_DIRECTIONAL)
+    gk_x = df["gk_x"].to_numpy(dtype=float)
+    gk_y = df["gk_y"].to_numpy(dtype=float)
+    goal_x = df["goal_x"].to_numpy(dtype=float)
+    carrier_y = df["carrier_y"].to_numpy(dtype=float)
+    actual = {c: df[c].to_numpy(dtype=float) for c in _GK_COLS}
+    worst = 0.0
+    for i in range(len(df)):
+        got = _gk_block_at(
+            _geo.to_goal_relative_x(gk_x[i], goal_x=goal_x[i]),
+            gk_y[i],
+            _geo.to_goal_relative_y(carrier_y[i], goal_x=goal_x[i]),
+        )
+        for c in _GK_COLS:
+            worst = max(worst, abs(got[c] - actual[c][i]))
+    assert worst <= 1e-9, f"re-derivation drifted from the extractor by {worst:.3e}"
+
+
+@pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+def test_xcross_bundled_model_predictions_are_live():
+    """LIVENESS -- finite, in [0, 1], non-constant.
+
+    Renamed from `test_xcross_bundled_model_is_live_not_degenerate`: reusing the retired gate's exact
+    name with a different body would hide the change from git history and from name-anchored guards.
+    """
     from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
 
     df = pd.read_parquet(_XCROSS_DIRECTIONAL)
-    m = XCrossAttemptModel.from_variant("default")
-    p = m.predict_proba(df[XCROSS_FEATURE_NAMES_FAITHFUL])
-    assert roc_auc_score(df["label"].to_numpy(), p) >= 0.9
+    p = XCrossAttemptModel.from_variant("default").predict_proba(df[XCROSS_FEATURE_NAMES_FAITHFUL])
+    assert np.all(np.isfinite(p)), "non-finite predictions"
+    assert np.all((p >= 0.0) & (p <= 1.0)), f"out of [0,1]: {p.min()} .. {p.max()}"
+    assert len(np.unique(p)) > 1, "constant predictions"
+
+
+@pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
+def test_xcross_bundled_model_reads_the_gk_block():
+    """RESPONSE. Claims exactly what it tests: perturbing the GK BLOCK moves the prediction.
+
+    NOT "responds to keeper position" -- moving a real keeper also shifts `dist_nearest_def` and
+    `space_controlled`, which a block-only sweep holds fixed. The swept state is a probe of which
+    columns the model reads, not a realizable frame.
+
+    `mean(|dp|)`, never `|mean dp|`: measured across these seven probes the absolute form spans 1.93x
+    and the signed form 6.83x, so a signed-mean threshold would fail a correct model purely on which
+    probe the author happened to pick. Direction is deliberately NOT asserted -- `gk_r` and
+    `gk_carrier_side` are single-split step functions and the response sign flips between probes.
+    """
+    from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
+
+    df = pd.read_parquet(_XCROSS_DIRECTIONAL)
+    model = XCrossAttemptModel.from_variant("default")
+    base = model.predict_proba(df[XCROSS_FEATURE_NAMES_FAITHFUL])
+    assert base.mean() > 0, "degenerate base rate"
+
+    for gr_x, gr_y in _GK_PROBES:
+        probe = _with_keeper_at(df, gr_x, gr_y)
+        moved = np.abs(model.predict_proba(probe[XCROSS_FEATURE_NAMES_FAITHFUL]) - base).mean()
+        rel = moved / base.mean()
+        assert rel >= _MIN_GK_RESPONSE_REL, (
+            f"keeper probe ({gr_x}, {gr_y}): mean|dp|/base = {rel:.4f} < {_MIN_GK_RESPONSE_REL}. "
+            "A model that does not read the GK block is indistinguishable from one that does."
+        )
 
 
 @pytest.mark.skipif(_NO_XCROSS_WEIGHTS, reason="bundled xcross default weights land in Task 13")
