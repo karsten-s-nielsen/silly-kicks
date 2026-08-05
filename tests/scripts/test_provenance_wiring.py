@@ -24,6 +24,14 @@ _SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 # Listed rather than inferred: "writes an artifact" is a semantic property, and a heuristic over
 # `write_text` would sweep in dev utilities whose output nobody cites.
 ARTIFACT_DRIVERS = (
+    # Enrolled with the SB360 coverage audit. Measures real StatsBomb 360 freeze-frame
+    # coverage, and its keeper-visibility numbers go in front of a club -- exactly the
+    # "cited, uncheckable" shape the rule below exists to prevent.
+    #
+    # NOT enrolled: `render_sb360_matrix`, which reads a COMMITTED registry and writes a
+    # document. It does no corpus work and consumes no external data, so the guard would add
+    # nothing and would make the report unrenderable during the session that produces it.
+    "build_sb360_coverage",
     "build_gkdv_arm_values",
     "calibrate_xt_bandwidth",
     "measure_cover_shadow_argmax_agreement",

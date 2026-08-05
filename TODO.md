@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-08-05. **Current release**: silly-kicks 4.74.0 (ADR-051 PR 5 of 5 — the goal-relative transform was CHIRAL: no `to_goal_relative_y`, so the two goal ends had opposite handedness and every bearing negated between them; xS/xCross retrained on the corrected point reflection and re-stamped. Closes the ADR-051 cycle's Gate A xfails; the 8 Gate B / D3 markers remain for PR 6). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-08-05. **Current release**: silly-kicks 4.75.0 (ADR-053 — the SB360 coverage audit: a per-column, per-axis verdict for every `add_*` on freeze-frames, machine observation locked by CI and human adjudication deliberately not. 299 of 486 verdicts `works`; the only 4 `silent_degrade` are `add_ghost_gk`, which fabricates a coordinate from velocity it does not have. Tests, scripts and docs only — no retrain, no re-materialize). Immediately prior: 4.74.0 (ADR-051 PR 5 of 5 — the goal-relative transform was CHIRAL: no `to_goal_relative_y`, so the two goal ends had opposite handedness and every bearing negated between them; xS/xCross retrained on the corrected point reflection and re-stamped. Closes the ADR-051 cycle's Gate A xfails; the 8 Gate B / D3 markers remain for PR 6). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -44,6 +44,62 @@ rejected alternatives) lives in
 ---
 
 ## Technical Debt
+
+### From the SB360 coverage audit (ADR-053)
+
+Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
+repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
+
+- **`add_ghost_gk` fabricates on freeze-frames** — the audit's one actionable library finding, and
+  its only `silent_degrade`. Measured on the paired fixture: six plausible coordinates, none NaN,
+  all differing from the velocity-informed leg.
+  The MECHANISM is a **learned imputation policy, NOT a zero-fill** (measured 2026-08-05; the
+  first-recorded "receives structural zeros" was wrong and was corrected in 4.75.0 at the generating
+  rule). `extract_ghost_gk_features` yields **NaN** for all five velocity features
+  (`ball_vx`/`ball_vy`/`ball_speed`/`defensive_line_speed`/`defending_centroid_vx`), and
+  `predict_mean` reconstructs an sklearn HGBR, which routes NaN down each split's **learned
+  missing-value direction** — a different prediction from zero-fill, not the same one
+  (`velocity=NaN -> [6.795, 33.522]` vs `velocity=0.0 -> [6.888, 33.362]`); that direction was
+  fitted where NaN meant an occasional dropped measurement and is applied here where 5 of 26
+  features are absent on 100% of rows. **This is why "fill the zeros correctly" is not the fix.**
+  Options are to refuse (return NaN, as `add_gk_influence` does) or to emit a provenance column
+  saying the prediction is velocity-free. **Refusing is the honest default** — the producer already
+  stamps `speed_source=SPEED_SOURCE_UNAVAILABLE` (`_snapshot.py:129`) and the house pattern exists
+  twice (`_das.py:259`, `_press_commitment.py:100`); a caller currently cannot tell.
+- **No `providers/statsbomb/` parse port.** `spadl/statsbomb.py` converts event dicts; nothing
+  fetches or shapes SB360 freeze-frames into the `snapshots` contract, so every consumer writes that
+  glue itself. Mirrors `providers/sportec/parse.py`. Eleven aggregators also need bespoke call
+  shapes (see `tests/sb360/_calls.py`) that a first-class producer would have to handle.
+- **`visible_area` has no library seam.** Zero handling anywhere in `silly_kicks/`; the audit
+  consumes the polygon in its own harness only. It converts "player absent" from unknown into a
+  known geometric mask, which is what would let a region-querying feature report *observed* support
+  rather than assume it. Decide whether it earns a public seam.
+- **`velocity_unavailable_by_design` has exactly two consumers** (`_das.py:259`,
+  `_press_commitment.py:100`). Every other velocity-touching module handles absent kinematics ad hoc
+  — several zero-fill and carry on. The audit shows most still degrade honestly, so this is
+  consistency work, not a live defect.
+- **Four boundary entry points are unaudited**, each with its reason in
+  `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
+  one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and
+  silly-kicks ships no xG model, so any port supplied would audit the stub rather than the library.
+- **`snapshot_to_tracking_frames` id dtype is pandas-version-dependent** (`_snapshot.py:172`).
+  `Int64` in yields `Int64` on pandas 2.3.3 and `Float64` on 3.0.3 — the concat-with-all-NA
+  `FutureWarning` materialising. Hyrum's law for any consumer pinning it.
+- **Check whether the lakehouse already ingests StatsBomb open data.** If it does, that path likely
+  beats a new `providers/statsbomb/` port, since it also normalises shape. Not answerable from this
+  repo.
+- **SB360 goal-kick frame availability is the collaboration's real constraint** — only 32.6% of goal
+  kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
+  shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
+  beyond 22 matches is a driver flag, and the shards are additive.
+- **⚠ Cross-session: `render_sb360_matrix.py` must be EXEMPTED, not enrolled, when the
+  `ARTIFACT_DRIVERS` completeness gate lands.** The planned derivation rule ("a `scripts/*.py` with
+  `--out` that writes a `.json`/`.md` beneath it") matches it, but the guard is deliberately absent
+  and the reason is in its module docstring: it reads a COMMITTED registry and renders a document
+  deterministically — no corpus pass, no external data, nothing to misattribute (the ADR-037 harm).
+  Enrolling it would make the report unrenderable during exactly the editing session that produces
+  it. It needs an `_EXEMPT`-with-reason entry in the ADR-050 mould, not a `require_clean_tree` call.
+  `build_sb360_coverage.py` IS enrolled and DOES take the guard — it measures real match data.
 
 ### Blocked or Deferred
 
