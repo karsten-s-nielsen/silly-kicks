@@ -48,6 +48,47 @@ rejected alternatives) lives in
 
 ## Technical Debt
 
+### From the SB360 coverage audit (ADR-053)
+
+Surfaced by the audit, which deliberately reports rather than repairs. Report:
+[docs/research/sb360_coverage/](docs/research/sb360_coverage/). Branch `sb360-coverage-audit`;
+**version bump + CHANGELOG entry are deliberately NOT done** — a version number identifies a
+release, and claiming one on a long-lived branch guarantees a semantic CHANGELOG conflict every
+time `main` moves. Write both at merge time from the commit log.
+
+- **`add_ghost_gk` fabricates on freeze-frames** — the audit's one actionable library finding, and
+  its only `silent_degrade`. `GhostGkModel` receives structural zeros for `ball_vx`/`ball_vy`/
+  `defending_centroid_vx`, features it was *trained on*: out-of-distribution input yielding a
+  plausible coordinate with no basis, indistinguishable downstream from a real prediction. Options
+  are to refuse (return NaN, as `add_gk_influence` does) or to emit a provenance column saying the
+  prediction is velocity-free. **Refusing is the honest default**; a caller cannot currently tell.
+- **No `providers/statsbomb/` parse port.** `spadl/statsbomb.py` converts event dicts; nothing
+  fetches or shapes SB360 freeze-frames into the `snapshots` contract, so every consumer writes that
+  glue itself. Mirrors `providers/sportec/parse.py`. Eleven aggregators also need bespoke call
+  shapes (see `tests/sb360/_calls.py`) that a first-class producer would have to handle.
+- **`visible_area` has no library seam.** Zero handling anywhere in `silly_kicks/`; the audit
+  consumes the polygon in its own harness only. It converts "player absent" from unknown into a
+  known geometric mask, which is what would let a region-querying feature report *observed* support
+  rather than assume it. Decide whether it earns a public seam.
+- **`velocity_unavailable_by_design` has exactly two consumers** (`_das.py:259`,
+  `_press_commitment.py:100`). Every other velocity-touching module handles absent kinematics ad hoc
+  — several zero-fill and carry on. The audit shows most still degrade honestly, so this is
+  consistency work, not a live defect.
+- **Four boundary entry points are unaudited**, each with its reason in
+  `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
+  one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and
+  silly-kicks ships no xG model, so any port supplied would audit the stub rather than the library.
+- **`snapshot_to_tracking_frames` id dtype is pandas-version-dependent** (`_snapshot.py:172`).
+  `Int64` in yields `Int64` on pandas 2.3.3 and `Float64` on 3.0.3 — the concat-with-all-NA
+  `FutureWarning` materialising. Hyrum's law for any consumer pinning it.
+- **Check whether the lakehouse already ingests StatsBomb open data.** If it does, that path likely
+  beats a new `providers/statsbomb/` port, since it also normalises shape. Not answerable from this
+  repo.
+- **SB360 goal-kick frame availability is the collaboration's real constraint** — only 32.6% of goal
+  kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
+  shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
+  beyond 22 matches is a driver flag, and the shards are additive.
+
 ### Blocked or Deferred
 
 - **Missing ball-touch detection to enrich event↔frame sync (candidate future enhancement; anchors on

@@ -47,7 +47,19 @@ The *pre-shot* GK features do need the keeper in frame. For SB360 that means in 
 camera's view, and **how often that holds is not answerable from code** — it is a property of
 the delivered data. That is Layer B (`scripts/build_sb360_coverage.py`).
 
-## Layer B — preliminary, from real open data
+## Layer B — real open data
+
+**Superseded by the full pass: [`coverage.md`](coverage.md)** (22 matches, 3 excluded and
+counted, commit `650ed07`, clean tree). Headline from it: shots and saves carry a freeze-frame
+~98% of the time with the relevant keeper visible 92-100%; goal kicks carry one **32.6%** of the
+time (per-match median 21%, IQR 18-50%), and when one exists the kicking keeper is in it 96%.
+The binding constraint is frame AVAILABILITY for goal kicks, not keeper visibility and not the
+library.
+
+The 9-match spot check below is kept for the record; its 23.3% goal-kick figure was low, as its
+own caveat predicted.
+
+### Spot check (superseded)
 
 ⚠ **Spot measurement only: 9 matches, 3 per cell. Not the full Layer B pass, and not produced by
 a provenanced driver run.** Per-match variance is large, so the per-cell contrasts below are not
