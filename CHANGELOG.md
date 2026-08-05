@@ -5,6 +5,74 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.75.0] — 2026-08-05
+
+### Added — SB360 coverage audit: a per-column verdict for every `add_*` on freeze-frames (PR-S143, ADR-053)
+
+**Tests, scripts and docs only — no `silly_kicks/` source change, so no retrain trigger and no
+re-materialize.** C4 count unchanged (32). Prepares a possible commercial StatsBomb 360 GK
+collaboration by answering, with evidence rather than inspection, which tracking features already
+work on freeze-frames.
+
+**The question.** SB360 ships a per-event freeze-frame: positions, no velocity, one frame per
+action. `snapshot_to_tracking_frames` has bridged it into the tracking schema since PR-S88, but
+only ~10 of 33 `add_*` aggregators had a documented compatibility verdict, and those were written
+by inspection. An aggregator that degrades *silently* on freeze-frames is indistinguishable
+downstream from one that works.
+
+**Two layers, because they answer different questions.** Layer A measures what the CODE does:
+each aggregator runs twice on a paired fixture — Leg A built by the real
+`snapshot_to_tracking_frames`, Leg B velocity-bearing with identical positions at the linked
+frame — and every emitted column gets a verdict. Layer B measures what the DATA contains, over 22
+real open-data matches across three competition cells.
+
+**Layer A result: 486 verdicts across 34 entry points — 299 `works`, 97 `honest_nan`, 60
+`differs_by_design`, 26 `not_exercised`, and exactly 4 `silent_degrade`, all `add_ghost_gk`.**
+Working unchanged on freeze-frames: all 16 `add_xt_gk` columns, `add_gk_completion`,
+`add_pre_shot_gk_position`, `add_pre_shot_gk_angle`, `add_team_shape` (20 columns),
+`add_defensive_line`, `add_shape_graph`, `add_structural_pass`, `add_packing`, `add_line_break`,
+`add_pressure_on_actor`, `add_defensive_credit`, `add_off_ball_run_values`, `add_sync_score` and
+`spadl.add_restart_coordinates`.
+
+**Layer B result (19 usable matches).** Shots carry a freeze-frame **97.7%** of the time with the
+defending keeper visible **92.2%**; saves **97.3%** / **100%**; crosses **85.0%** / **81.4%**;
+goal kicks **32.6%** / **96.4%**. **Shot-facing and save GK work is usable today; the single
+constraint is goal-kick FRAME AVAILABILITY**, not the library and not keeper visibility. Quote the
+dispersion, never the mean: per-match median 21%, IQR 18–50%, range 8–61% (n=16).
+
+**The observation is locked, the adjudication is not.** CI re-derives each machine observation
+(`identical`/`differs`/`all_nan`/`partial_nan`/`no_signal`/`raises_a`) and asserts it; the human
+adjudication (`works`/`silent_degrade`/`honest_nan`/…) carries a mandatory rationale and is
+deliberately unlocked, because a machine cannot separate *fabricated* from *legitimately
+different* — pitch control at zero velocity is a valid positional model; a fitted model silently
+imputing the features it was trained on is not. Locking the verdict instead was tried and
+rejected: it pins the key set while the content rots. A new `add_*` must register or CI fails, in
+both directions.
+
+**A rationale corrected before shipping, at its generating rule.** The `add_ghost_gk` verdict text
+first said the model "receives structural zeros". Measured, it does not:
+`extract_ghost_gk_features` yields NaN, and `predict_mean`'s HGBR reconstruction routes NaN down
+each split's *learned missing-value direction* — a policy fitted where NaN meant an occasional
+dropped measurement, applied where 5 of 26 features are absent on 100% of rows, and a **different**
+prediction from zero-fill (`NaN → [6.795, 33.522]` vs `zero → [6.888, 33.362]`). The
+`silent_degrade` verdict is unaffected — the fabrication is real — but the stated cause was wrong,
+which matters for the fix: "fill the zeros correctly" would not address it, whereas refusing on the
+`speed_source` marker would. Corrected at the rule in `tests/sb360/_adjudicate.py` and regenerated,
+so the 4 call sites, the behaviour matrix, ADR-053, `CLAUDE.md` and the report all move together
+rather than drifting apart. **This is the locked-observation/reviewable-adjudication split earning
+its keep on its own first example:** a locked machine verdict would have been right and unreviewable,
+and the error lived entirely in the human prose the design deliberately left open to correction.
+
+**Excluded and counted: 3 of 22 matches** (`3877115`, `3877170`, `3877194`, MLS 2023) ship a 360
+file whose `event_uuid`s have zero overlap with their own events file, verified against the RAW
+events. Each would otherwise have contributed a single `unmapped` bucket, visually
+indistinguishable from a quiet match while diluting every aggregate it entered. **14% of sampled
+matches had unusable 360↔event linkage** — itself a planning fact.
+
+Registry regenerable via `tests/sb360/_regenerate.py` + `_adjudicate.py` (round-trip verified
+byte-identical). Report: `docs/research/sb360_coverage/`. Follow-ons in `TODO.md`, chief among
+them that `add_ghost_gk` should refuse on freeze-frames rather than emit a plausible coordinate.
+
 ## [4.74.0] — 2026-08-05
 
 ### Fixed — ADR-028 PR 5 of 5: the goal-relative transform was CHIRAL (PR-S142, ADR-051)

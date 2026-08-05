@@ -22,22 +22,28 @@ _entry(
             "differs",
             "silent_degrade",
             rationale=(
-                "A FITTED model receiving structural zeros for features it was trained on "
-                "(ball_vx/ball_vy/defending_centroid_vx). That is out-of-distribution input, and the output is a "
-                "plausible coordinate with no basis -- indistinguishable downstream from a velocity-informed "
-                "prediction. This is the fabrication the audit exists to find. [measured "
-                "cause=velocity+frame_count]"
+                "A FITTED model silently IMPUTING the five velocity features it was trained on "
+                "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor yields "
+                "NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED missing-value "
+                "direction -- fitted where NaN meant an occasional dropped measurement, applied where 5 of 26 "
+                "features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, 33.522] vs zero -> "
+                "[6.888, 33.362]. The output is a plausible coordinate with no basis, indistinguishable "
+                "downstream from a velocity-informed prediction. This is the fabrication the audit exists to "
+                "find. [measured cause=velocity+frame_count]"
             ),
         ),
         "ghost_gk_y": AxisVerdict(
             "differs",
             "silent_degrade",
             rationale=(
-                "A FITTED model receiving structural zeros for features it was trained on "
-                "(ball_vx/ball_vy/defending_centroid_vx). That is out-of-distribution input, and the output is a "
-                "plausible coordinate with no basis -- indistinguishable downstream from a velocity-informed "
-                "prediction. This is the fabrication the audit exists to find. [measured "
-                "cause=velocity+frame_count]"
+                "A FITTED model silently IMPUTING the five velocity features it was trained on "
+                "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor yields "
+                "NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED missing-value "
+                "direction -- fitted where NaN meant an occasional dropped measurement, applied where 5 of 26 "
+                "features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, 33.522] vs zero -> "
+                "[6.888, 33.362]. The output is a plausible coordinate with no basis, indistinguishable "
+                "downstream from a velocity-informed prediction. This is the fabrication the audit exists to "
+                "find. [measured cause=velocity+frame_count]"
             ),
         ),
     },
@@ -71,22 +77,28 @@ _entry(
                 "differs",
                 "silent_degrade",
                 rationale=(
-                    "A FITTED model receiving structural zeros for features it was trained on "
-                    "(ball_vx/ball_vy/defending_centroid_vx). That is out-of-distribution input, and the output "
-                    "is a plausible coordinate with no basis -- indistinguishable downstream from a velocity- "
-                    "informed prediction. This is the fabrication the audit exists to find. [measured "
-                    "cause=velocity+frame_count]"
+                    "A FITTED model silently IMPUTING the five velocity features it was trained on "
+                    "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor "
+                    "yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED "
+                    "missing-value direction -- fitted where NaN meant an occasional dropped measurement, applied "
+                    "where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, "
+                    "33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate with no basis, "
+                    "indistinguishable downstream from a velocity-informed prediction. This is the fabrication "
+                    "the audit exists to find. [measured cause=velocity+frame_count]"
                 ),
             ),
             "ghost_gk_y": AxisVerdict(
                 "differs",
                 "silent_degrade",
                 rationale=(
-                    "A FITTED model receiving structural zeros for features it was trained on "
-                    "(ball_vx/ball_vy/defending_centroid_vx). That is out-of-distribution input, and the output "
-                    "is a plausible coordinate with no basis -- indistinguishable downstream from a velocity- "
-                    "informed prediction. This is the fabrication the audit exists to find. [measured "
-                    "cause=velocity+frame_count]"
+                    "A FITTED model silently IMPUTING the five velocity features it was trained on "
+                    "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor "
+                    "yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED "
+                    "missing-value direction -- fitted where NaN meant an occasional dropped measurement, applied "
+                    "where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, "
+                    "33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate with no basis, "
+                    "indistinguishable downstream from a velocity-informed prediction. This is the fabrication "
+                    "the audit exists to find. [measured cause=velocity+frame_count]"
                 ),
             ),
         },

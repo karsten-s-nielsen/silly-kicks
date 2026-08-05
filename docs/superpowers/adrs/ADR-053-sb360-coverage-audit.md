@@ -43,9 +43,18 @@ content: the audit's own defect class, relocated one layer up.
 
 **Rejected: locking the adjudication too.** A machine cannot distinguish *fabricated* from
 *legitimately different*. Pitch control evaluated at zero velocity is a well-defined
-**positional** model — weaker, not invented. A fitted model fed structural zeros for features it
-was trained on is fabrication. Both observe `differs`. Only a human reading the feature can say
+**positional** model — weaker, not invented. A fitted model silently imputing features it was
+trained on is fabrication. Both observe `differs`. Only a human reading the feature can say
 which, and the written rationale is the reviewable artifact.
+
+That this prong is load-bearing was demonstrated the hard way, on this very example. The
+`add_ghost_gk` rationale first shipped saying the model "receives structural zeros"; measured
+later, it does not. `extract_ghost_gk_features` yields **NaN**, and `predict_mean`'s HGBR
+reconstruction routes NaN down each split's *learned missing-value direction* — a different
+prediction from zero-fill (`NaN → [6.795, 33.522]` vs `zero → [6.888, 33.362]`). The verdict was
+right and the reasoning was wrong, which is precisely the failure a locked machine observation
+cannot catch and a reviewable human rationale can. Corrected in 4.75.0 at the generating rule
+(`tests/sb360/_adjudicate.py`), not at the 4 generated call sites.
 
 **3. Verdicts are per emitted COLUMN, and per axis.** `add_action_context` splits — three
 positional columns work, `actor_speed` is `all_nan`. Two independent axes are swept: velocity

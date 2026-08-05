@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-08-05. **Current release**: silly-kicks 4.74.0 (ADR-051 PR 5 of 5 — the goal-relative transform was CHIRAL: no `to_goal_relative_y`, so the two goal ends had opposite handedness and every bearing negated between them; xS/xCross retrained on the corrected point reflection and re-stamped. Closes the ADR-051 cycle's Gate A xfails; the 8 Gate B / D3 markers remain for PR 6). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-08-05. **Current release**: silly-kicks 4.75.0 (ADR-053 — the SB360 coverage audit: a per-column, per-axis verdict for every `add_*` on freeze-frames, machine observation locked by CI and human adjudication deliberately not. 299 of 486 verdicts `works`; the only 4 `silent_degrade` are `add_ghost_gk`, which fabricates a coordinate from velocity it does not have. Tests, scripts and docs only — no retrain, no re-materialize). Immediately prior: 4.74.0 (ADR-051 PR 5 of 5 — the goal-relative transform was CHIRAL: no `to_goal_relative_y`, so the two goal ends had opposite handedness and every bearing negated between them; xS/xCross retrained on the corrected point reflection and re-stamped. Closes the ADR-051 cycle's Gate A xfails; the 8 Gate B / D3 markers remain for PR 6). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -47,18 +47,25 @@ rejected alternatives) lives in
 
 ### From the SB360 coverage audit (ADR-053)
 
-Surfaced by the audit, which deliberately reports rather than repairs. Report:
-[docs/research/sb360_coverage/](docs/research/sb360_coverage/). Branch `sb360-coverage-audit`;
-**version bump + CHANGELOG entry are deliberately NOT done** — a version number identifies a
-release, and claiming one on a long-lived branch guarantees a semantic CHANGELOG conflict every
-time `main` moves. Write both at merge time from the commit log.
+Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
+repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 
 - **`add_ghost_gk` fabricates on freeze-frames** — the audit's one actionable library finding, and
-  its only `silent_degrade`. `GhostGkModel` receives structural zeros for `ball_vx`/`ball_vy`/
-  `defending_centroid_vx`, features it was *trained on*: out-of-distribution input yielding a
-  plausible coordinate with no basis, indistinguishable downstream from a real prediction. Options
-  are to refuse (return NaN, as `add_gk_influence` does) or to emit a provenance column saying the
-  prediction is velocity-free. **Refusing is the honest default**; a caller cannot currently tell.
+  its only `silent_degrade`. Measured on the paired fixture: six plausible coordinates, none NaN,
+  all differing from the velocity-informed leg.
+  The MECHANISM is a **learned imputation policy, NOT a zero-fill** (measured 2026-08-05; the
+  first-recorded "receives structural zeros" was wrong and was corrected in 4.75.0 at the generating
+  rule). `extract_ghost_gk_features` yields **NaN** for all five velocity features
+  (`ball_vx`/`ball_vy`/`ball_speed`/`defensive_line_speed`/`defending_centroid_vx`), and
+  `predict_mean` reconstructs an sklearn HGBR, which routes NaN down each split's **learned
+  missing-value direction** — a different prediction from zero-fill, not the same one
+  (`velocity=NaN -> [6.795, 33.522]` vs `velocity=0.0 -> [6.888, 33.362]`); that direction was
+  fitted where NaN meant an occasional dropped measurement and is applied here where 5 of 26
+  features are absent on 100% of rows. **This is why "fill the zeros correctly" is not the fix.**
+  Options are to refuse (return NaN, as `add_gk_influence` does) or to emit a provenance column
+  saying the prediction is velocity-free. **Refusing is the honest default** — the producer already
+  stamps `speed_source=SPEED_SOURCE_UNAVAILABLE` (`_snapshot.py:129`) and the house pattern exists
+  twice (`_das.py:259`, `_press_commitment.py:100`); a caller currently cannot tell.
 - **No `providers/statsbomb/` parse port.** `spadl/statsbomb.py` converts event dicts; nothing
   fetches or shapes SB360 freeze-frames into the `snapshots` contract, so every consumer writes that
   glue itself. Mirrors `providers/sportec/parse.py`. Eleven aggregators also need bespoke call
@@ -85,6 +92,14 @@ time `main` moves. Write both at merge time from the commit log.
   kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
   shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
   beyond 22 matches is a driver flag, and the shards are additive.
+- **⚠ Cross-session: `render_sb360_matrix.py` must be EXEMPTED, not enrolled, when the
+  `ARTIFACT_DRIVERS` completeness gate lands.** The planned derivation rule ("a `scripts/*.py` with
+  `--out` that writes a `.json`/`.md` beneath it") matches it, but the guard is deliberately absent
+  and the reason is in its module docstring: it reads a COMMITTED registry and renders a document
+  deterministically — no corpus pass, no external data, nothing to misattribute (the ADR-037 harm).
+  Enrolling it would make the report unrenderable during exactly the editing session that produces
+  it. It needs an `_EXEMPT`-with-reason entry in the ADR-050 mould, not a `require_clean_tree` call.
+  `build_sb360_coverage.py` IS enrolled and DOES take the guard — it measures real match data.
 
 ### Blocked or Deferred
 

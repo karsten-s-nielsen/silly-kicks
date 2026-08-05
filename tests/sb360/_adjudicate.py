@@ -38,9 +38,11 @@ PITCH_CONTROL_DERIVED = {
 }
 
 # --- fitted models ---------------------------------------------------------------------
-# A TRAINED model fed structural zeros for features it was fitted on is receiving
-# out-of-distribution input. The output is a plausible number with no basis -- the fabrication
-# this audit exists to find.
+# A TRAINED model silently IMPUTING features it was fitted on is receiving out-of-distribution
+# input. The output is a plausible number with no basis -- the fabrication this audit exists to
+# find. Note the imputation is NOT a zero-fill: `extract_ghost_gk_features` yields NaN, and the
+# HGBR reconstruction in `predict_mean` routes NaN down each split's LEARNED missing-value
+# direction, which is a different prediction from zero-fill. Measured 2026-08-05.
 FITTED_MODEL = {"add_ghost_gk"}
 
 GK_DOMAIN = {
@@ -85,10 +87,14 @@ R = {
     ),
     "ood_model": (
         "silent_degrade",
-        "A FITTED model receiving structural zeros for features it was trained on "
-        "(ball_vx/ball_vy/defending_centroid_vx). That is out-of-distribution input, and the "
-        "output is a plausible coordinate with no basis -- indistinguishable downstream from a "
-        "velocity-informed prediction. This is the fabrication the audit exists to find.",
+        "A FITTED model silently IMPUTING the five velocity features it was trained on "
+        "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor "
+        "yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED "
+        "missing-value direction -- fitted where NaN meant an occasional dropped measurement, "
+        "applied where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured "
+        "NaN -> [6.795, 33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate "
+        "with no basis, indistinguishable downstream from a velocity-informed prediction. This "
+        "is the fabrication the audit exists to find.",
     ),
     "partial_window": (
         "differs_by_design",

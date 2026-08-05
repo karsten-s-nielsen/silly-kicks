@@ -2,7 +2,9 @@
 
 **Date:** 2026-08-04
 **Status:** Draft — rev 5 (post-review ×4)
-**PR:** TBD (next version from `main`; tree reads `4.73.0`, so `4.74.0` — confirm at PR time)
+**PR:** PR-S143, silly-kicks **4.75.0** (ADR-053). The collision this line warned about did occur:
+the draft predicted `4.74.0` from a `4.73.0` tree, and the other session took `4.74.0` (ADR-051 PR 5
+of 5) before this branch merged. Confirmed against the merged state, not the prediction.
 **Scope:** Audit + registry + CI gate. No new aggregator, no library behaviour change.
 
 ## Motivation

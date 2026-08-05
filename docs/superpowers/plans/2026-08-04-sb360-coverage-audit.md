@@ -20,7 +20,10 @@
 - **Docs commit first.** `scripts/_provenance.py` counts untracked files as dirty, so the spec and this plan must be in the branch's first commit or Task 9's driver `SystemExit`s before doing any work.
 - **Tolerance:** default `rtol=1e-9`, `atol=1e-12`, float columns only. Counts and booleans compare exactly. Cross-leg dtype mismatch is a loud failure, never an implicit cast.
 - **Python:** no `__init__.py` in `tests/scripts/`; `tests/sb360/` does get one (mirrors `tests/tracking/`).
-- **Version:** bump to the next number from `main` (tree reads `4.73.0` → `4.74.0`); confirm no collision at PR time.
+- **Version:** **4.75.0** (PR-S143, ADR-053). The predicted `4.74.0` DID collide — the other session
+  shipped ADR-051 PR 5 as 4.74.0 before this branch merged, which is why the number is assigned from
+  the merged state at PR time and never from the tree the plan was written against. Five sites:
+  `pyproject.toml`, `silly_kicks/__init__.py`, `uv.lock`, the CHANGELOG heading, TODO "Current release".
 
 ## File Structure
 

@@ -131,9 +131,18 @@ stage of the chain and find where it drops. Here it never dropped inside our cod
 ## The one fabrication
 
 `add_ghost_gk` (`ghost_gk_x`, `ghost_gk_y`) is the only column adjudicated `silent_degrade`. A
-fitted model receives structural zeros for `ball_vx`/`ball_vy`/`defending_centroid_vx` —
-features it was trained on. The output is a plausible coordinate with no basis, indistinguishable
-downstream from a velocity-informed prediction.
+fitted model silently imputes the five velocity features it was trained on
+(`ball_vx`/`ball_vy`/`ball_speed`/`defensive_line_speed`/`defending_centroid_vx`). The output is a
+plausible coordinate with no basis, indistinguishable downstream from a velocity-informed
+prediction.
+
+The imputation is **not** a zero-fill, and the distinction matters for the fix.
+`extract_ghost_gk_features` yields NaN; `predict_mean`'s HGBR reconstruction then routes NaN down
+each split's *learned missing-value direction* — a policy fitted where NaN meant an occasional
+dropped measurement, applied here where 5 of 26 features are absent on 100% of rows. Measured:
+`NaN → [6.795, 33.522]` versus `zero-fill → [6.888, 33.362]`. So the defect is not
+out-of-distribution *values* but an out-of-regime imputation policy, and "fill the zeros
+correctly" would not address it — refusing on the `speed_source` marker would.
 
 Everything else that differs, differs *coherently*: pitch control evaluated at zero velocity is
 a well-defined **positional** model, and a feature needing a temporal window legitimately gives
