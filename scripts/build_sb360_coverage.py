@@ -20,6 +20,7 @@ import functools
 import json
 import pathlib
 import sys
+import warnings
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -240,6 +241,25 @@ def measure_match(match):
         b["n_actions"] += 1
         b["n_with_frame"] += int(str(uuid) in frame_uuids)
 
+    # JOIN INTEGRITY. Measured on the first real pass: 3 of 22 open matches (all MLS 2023) ship
+    # a 360 file whose `event_uuid`s have ZERO overlap with their own events file, while
+    # correctly claiming the same `match_id`. That is an upstream inconsistency, not a converter
+    # or join defect -- verified against the RAW events, not just the SPADL actions.
+    #
+    # It must be COUNTED, not silently averaged over. Such a match previously produced a
+    # one-row shard whose single bucket was `unmapped`, indistinguishable at a glance from a
+    # quiet match, and it would have diluted every aggregate it entered.
+    mapped = sum(1 for f in frames_raw if str(f.get("event_uuid")) in type_by_uuid)
+    join_rate = mapped / len(frames_raw) if frames_raw else float("nan")
+    if frames_raw and mapped == 0:
+        warnings.warn(
+            f"match {match_id}: {len(frames_raw)} freeze-frames and NONE join to an event "
+            f"(`event_uuid` has zero overlap with the events file). Upstream data "
+            f"inconsistency -- rows are emitted with match_join_rate=0.0 so a consumer can "
+            f"exclude and COUNT them.",
+            stacklevel=2,
+        )
+
     per_type: dict[str, dict[str, float]] = {}
     for ff in frames_raw:
         players = ff.get("freeze_frame") or []
@@ -297,6 +317,9 @@ def measure_match(match):
                     else float("nan")
                 ),
                 "is_gk_domain": type_name.lower() in GK_DOMAIN_TYPES,
+                # Fraction of this match's frames that resolved to an action at all.
+                # 0.0 marks an upstream uuid mismatch: exclude, and count the exclusion.
+                "match_join_rate": join_rate,
             }
         )
     return pd.DataFrame(rows)
@@ -369,7 +392,7 @@ def main() -> None:
         token_inputs={
             "competitions": sorted(f"{c}:{s}" for c, s in cells),
             "matches_per_cell": args.matches_per_cell,
-            "schema": "sb360-coverage-1",
+            "schema": "sb360-coverage-2",
         },
         tag=args.tag,
         label="match",
