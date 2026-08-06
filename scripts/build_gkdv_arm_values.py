@@ -35,6 +35,28 @@ import argparse
 import json
 from pathlib import Path
 
+from scripts._input_contract import declare_inputs
+
+
+def input_contract() -> dict:
+    """Declare WHICH SYMBOLS these numbers depend on (ADR-054).
+
+    `GkdvParams` carries the arm configuration (`lambda_gk`, the domain radius, the pinned
+    `method="spearman"`), so its field VALUES are what a rerun would have to match. The ghost model
+    is declared by name rather than by weights: its own chirality and feature-contract stamps are
+    what pin the artifact, per ADR-050.
+    """
+    from dataclasses import asdict
+
+    from silly_kicks.gkdv import GkdvParams
+
+    return declare_inputs(
+        driver="build_gkdv_arm_values",
+        params={"gkdv": asdict(GkdvParams())},
+        extractors=("silly_kicks.gkdv._engine", "silly_kicks.gkdv._arms"),
+        models=("silly_kicks.tracking._ghost_gk.GhostGkModel",),
+    )
+
 
 def _aggregate_manifests(dest) -> dict:
     """Corpus-wide totals, plus the conservation identity this pass is accountable for.
@@ -338,6 +360,7 @@ def main() -> None:
         # missing would report a complete corpus, which is the very defect the sidecar closed.
         **res.manifest(),
         "arm_requested": args.arm,
+        "input_contract": input_contract(),
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov["tree_state"],

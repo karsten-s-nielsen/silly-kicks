@@ -80,6 +80,11 @@ ARTIFACT_DRIVERS = (
     "validate_shot_goalmouth_sb",
     # The pining / DGX tracking corpus (`_loader_pining`).
     "calibrate_tracking_defaults",
+    # Item 23 step 2a. Owner-tier Gradient Sports via the pining loader; emits COUNTS only, never
+    # coordinates. Enrolled the moment it was written -- this gate flagged it on its first run,
+    # which is the self-test the spec named: the cycle's own completeness gate catching the
+    # cycle's own new driver before a human noticed.
+    "measure_gs_shot_distribution",
 )
 
 

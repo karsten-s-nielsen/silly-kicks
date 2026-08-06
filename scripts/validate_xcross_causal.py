@@ -18,12 +18,25 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from _input_contract import declare_inputs
 from _provenance import git_provenance, require_clean_tree
 
 from silly_kicks.causal import matching as M
 from silly_kicks.causal.opportunities import GK_BLOCK, PAPER_CONFOUNDERS
 
 _OVERLAP_MIN = 0.5  # min fraction of treated inside the control PS range to claim common support
+
+
+def input_contract() -> dict:
+    """Declare WHICH SYMBOLS these numbers depend on (ADR-054)."""
+    from silly_kicks.tracking import _geometry as _geo
+
+    return declare_inputs(
+        driver="validate_xcross_causal",
+        covariates={"paper": PAPER_CONFOUNDERS, "gk_block": GK_BLOCK},
+        geometry_version=_geo.GEOMETRY_VERSION,
+        extractors=("silly_kicks.tracking._xcross_attempt",),
+    )
 
 
 def _col_means_ignoring_missing(X: np.ndarray, miss: np.ndarray) -> np.ndarray:
@@ -223,6 +236,7 @@ def _load_model_metadata(variant: str = "default") -> dict:
 def _write(out: Path, metrics: dict) -> None:
     out.mkdir(parents=True, exist_ok=True)
     prov = git_provenance()
+    metrics["input_contract"] = input_contract()
     metrics["run_commit"] = prov["commit"]
     metrics["run_tree_dirty"] = prov["dirty"]
     (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")

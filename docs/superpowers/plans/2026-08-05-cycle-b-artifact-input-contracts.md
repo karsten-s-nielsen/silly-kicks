@@ -1221,8 +1221,27 @@ on it.
 
 - [ ] **Step 6: Verify the drivers still import and `--help` cleanly**
 
-Run: `python -m scripts.validate_xshot_causal --help` (and the other three). Expected: usage text, no
-traceback, no cp1252 encode error. **`scripts/` is ASCII-only** — a `—` in a help string fails here.
+**Use the DIRECT form, not `-m`, and the reason is per-driver.** Measured: `validate_xcross_causal`
+(`:21`) and `measure_covariate_invariance` (`:62`) use a BARE `from _provenance import ...`, which
+resolves only when `scripts/` is itself on `sys.path` — their docstrings say so ("Usage (on the box,
+scripts/ on sys.path...)"). `python -m scripts.<name>` puts the REPO ROOT on the path, not `scripts/`,
+so those two raise `ModuleNotFoundError: No module named '_provenance'` under `-m`, and always have —
+this is pre-existing, not something the contract wiring introduced. The other two use
+`from scripts._provenance import` and work either way.
+
+```bash
+python scripts/validate_xshot_causal.py --help
+python scripts/validate_xcross_causal.py --help
+python scripts/measure_covariate_invariance.py --help
+python scripts/build_gkdv_arm_values.py --help
+```
+
+Expected: usage text, no traceback, no cp1252 encode error. **`scripts/` is ASCII-only** — a `—` in a
+help string fails here.
+
+Tests import these as `scripts.<name>` regardless, because `tests/scripts/conftest.py:12-13` inserts
+`scripts/` on `sys.path` for that directory. That is deliberate pre-existing infrastructure, and it
+is why the contract gate works without changing any driver's import style.
 
 - [ ] **Step 7: Regenerate the four artifacts — ALL FIVE RUNS ON ONE CLEAN TREE**
 

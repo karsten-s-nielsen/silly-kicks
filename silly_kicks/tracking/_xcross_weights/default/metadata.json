@@ -85,5 +85,6 @@
       "penalty_area_depth": 16.5,
       "goal_width": 7.32
     }
-  }
+  },
+  "training_commit": "6e3a132b0e75da425bec7affede02218150f1232"
 }
