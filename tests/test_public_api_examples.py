@@ -777,6 +777,10 @@ _EXAMPLES_DEBT: dict[str, str] = {
     "silly_kicks/tracking/schema.py::IdDtypeDiagnosis": (
         "The ADR-019 diagnosis type returned by validate_id_dtypes, the opt-in loud guard."
     ),
+    "silly_kicks/tracking/schema.py::VelocityRegimeDiagnosis": (
+        "The diagnosis type returned by validate_velocity_regime, third member of the "
+        "validate_time_base / validate_id_dtypes family; demonstrated on the validator."
+    ),
     "silly_kicks/tracking/schema.py::IdDtypeDiagnosis.has_mismatch": (
         "True when action and frame id dtypes would silently mis-resolve against each other."
     ),

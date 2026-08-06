@@ -57,8 +57,20 @@ def _scenario():
         time_seconds=4.0,
         frame_rate=25.0,
         z=0.0,
-        speed=0.0,
+        speed=2.0616,
         speed_source="native",
+        # vx/vy are REQUIRED alongside speed_source="native": declaring velocity available while
+        # omitting the columns is the "forgot derive_velocities()" case, which now RAISES. Before
+        # the ghost velocity refusal these fixtures reached the model with 5 of 26 features NaN
+        # and asserted a geometric property of the HGBR's IMPUTED output.
+        #
+        # NON-ZERO deliberately, and `speed` matches the vector. A fully stationary 22-player frame
+        # is out-of-domain for a model fit on real matches: measured, vx=vy=0 inflates the ghost
+        # mirror asymmetry to 3.73 m (vs 1.26 m recorded) and trips _GHOST_Y_TOL, while any
+        # realistic velocity passes. Zeroing vx/vy is a NAMED fixture defect here -- CLAUDE.md
+        # records it as one of two that made the xS liveness gate score noise for three cycles.
+        vx=2.0,
+        vy=0.5,
         ball_state="alive",
         confidence=None,
         visibility=None,

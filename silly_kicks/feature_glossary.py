@@ -1379,6 +1379,18 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_GHOST_GK,
         attribution=_A_GHOST_GK,
     ),
+    FeatureColumn(
+        name="ghost_gk_source",
+        definition=(
+            "Provenance of the ghost-GK position: computed / velocity_unavailable (the frame source "
+            "structurally cannot carry kinematics, so the model is refused rather than served "
+            "imputed features) / no_keeper (the action reached a frame carrying no defending "
+            "goalkeeper) / unlinked (the action reached no frame)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_GHOST_GK,
+        attribution=_A_GHOST_GK,
+    ),
     # -- xT-GK v1 (Eyestone) --------------------------------------------------------------------
     FeatureColumn(
         name="xt_gk",

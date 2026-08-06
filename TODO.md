@@ -50,27 +50,15 @@ rejected alternatives) lives in
 Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
 repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 
-- **`add_ghost_gk` fabricates on freeze-frames** — the audit's one actionable library finding, and
-  its only `silent_degrade`. Measured on the paired fixture: six plausible coordinates, none NaN,
-  all differing from the velocity-informed leg.
-  The MECHANISM is a **learned imputation policy, NOT a zero-fill** (measured 2026-08-05; the
-  first-recorded "receives structural zeros" was wrong and was corrected in 4.75.0 at the generating
-  rule). `extract_ghost_gk_features` yields **NaN** for all five velocity features
-  (`ball_vx`/`ball_vy`/`ball_speed`/`defensive_line_speed`/`defending_centroid_vx`), and
-  `predict_mean` reconstructs an sklearn HGBR, which routes NaN down each split's **learned
-  missing-value direction** — a different prediction from zero-fill, not the same one
-  (`velocity=NaN -> [6.795, 33.522]` vs `velocity=0.0 -> [6.888, 33.362]`); that direction was
-  fitted where NaN meant an occasional dropped measurement and is applied here where 5 of 26
-  features are absent on 100% of rows. **This is why "fill the zeros correctly" is not the fix.**
-  Options are to refuse (return NaN, as `add_gk_influence` does) or to emit a provenance column
-  saying the prediction is velocity-free. **Refusing is the honest default** — the producer already
-  stamps `speed_source=SPEED_SOURCE_UNAVAILABLE` (`_snapshot.py:129`) and the house pattern exists
-  twice (`_das.py:259`, `_press_commitment.py:100`); a caller currently cannot tell.
-- **No `providers/statsbomb/` parse port.** `spadl/statsbomb.py` converts event dicts; nothing
+- **No `providers/statsbomb/` parse port.** **IN PROGRESS — commit 2 of the current cycle**
+  (branch `sb360-degradation-and-port`); to be EXTRACTED from `scripts/build_sb360_coverage.py`
+  rather than written beside it, since that script already carries most of the parse half. `spadl/statsbomb.py` converts event dicts; nothing
   fetches or shapes SB360 freeze-frames into the `snapshots` contract, so every consumer writes that
   glue itself. Mirrors `providers/sportec/parse.py`. Eleven aggregators also need bespoke call
   shapes (see `tests/sb360/_calls.py`) that a first-class producer would have to handle.
-- **`visible_area` has no library seam.** Zero handling anywhere in `silly_kicks/`; the audit
+- **`visible_area` has no library seam.** The polygon will be CARRIED as raw per-action data by
+  commit 2's port (ADR-009: ship raw primitives); the consuming SEAM stays deferred until a
+  consumer exists. Zero handling anywhere in `silly_kicks/`; the audit
   consumes the polygon in its own harness only. It converts "player absent" from unknown into a
   known geometric mask, which is what would let a region-querying feature report *observed* support
   rather than assume it. Decide whether it earns a public seam.
@@ -92,6 +80,18 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
   shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
   beyond 22 matches is a driver flag, and the shards are additive.
+- **`_defending_goal` re-derives the pinned public goal map, and the two already disagree.**
+  `tracking.defended_goal_x` (`_gk_resolve.py:323`) is the pinned seam whose docstring forbids
+  re-deriving the rule; `_ghost_gk.py:814-818` is a second implementation, and it lacks
+  `defended_goal_x`'s mean-outfield-x fallback when a `(game, period, team)` has no GK rows. It is
+  ALSO an ADR-028 **D3** orientation defect (identity-keyed, not direction-keyed) — but `_ghost_gk.py`
+  is NOT in the pinned D3 unit (`tests/tracking/test_mirror_registry.py:294-311` asserts exactly
+  three files), so it needs queueing here rather than assuming that unit covers it.
+- **Two ghost fixtures were asserting geometry on FABRICATED coordinates** (fixed with the refusal):
+  `test_ghost_gk_orientation.py` and `test_action_ltr_mirror_invariance.py` declared
+  `speed_source="native"` with no `vx`/`vy`, so the model ran on 5-of-26 imputed features. Worth a
+  sweep for the same shape elsewhere: a fixture that claims velocity and supplies none is now a
+  loud failure for ghost, but silent for every other velocity consumer.
 - **⚠ Cross-session: `render_sb360_matrix.py` must be EXEMPTED, not enrolled, when the
   `ARTIFACT_DRIVERS` completeness gate lands.** The planned derivation rule ("a `scripts/*.py` with
   `--out` that writes a `.json`/`.md` beneath it") matches it, but the guard is deliberately absent

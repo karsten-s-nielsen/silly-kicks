@@ -25,7 +25,18 @@ from silly_kicks.id_compat import (
 from silly_kicks.reflection import TRACKING_REFLECTION_KINDS, reflect
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
-from .schema import IdDtypeDiagnosis, LinkReport, TimeBaseDiagnosis
+from .schema import (
+    EMPTY,
+    MIXED,
+    POSITIONAL_ONLY,
+    SPEED_SOURCE_UNAVAILABLE,
+    VELOCITY_INFORMED,
+    VELOCITY_MISSING,
+    IdDtypeDiagnosis,
+    LinkReport,
+    TimeBaseDiagnosis,
+    VelocityRegimeDiagnosis,
+)
 
 MISMATCH_OVERLAP_FLOOR: float = 0.2
 """Per-period action/frame range overlap below this is flagged a suspected
@@ -593,6 +604,86 @@ def _format_diagnosis(
         "; ".join(parts) + "; suspected period-relative/absolute time-base mismatch "
         "(time_seconds must be period-relative; see the time-base contract)"
     )
+
+
+def validate_velocity_regime(
+    frames: pd.DataFrame,
+    *,
+    on_mismatch: Literal["warn", "raise", "ignore"] = "raise",
+) -> VelocityRegimeDiagnosis:
+    """Report whether ``frames`` carry usable kinematics, before anything is computed.
+
+    Third member of the :func:`validate_time_base` / :func:`validate_id_dtypes` family
+    (ADR-017, ADR-019). Takes ``frames`` only -- velocity regime is a property of frames alone, and
+    an unread ``actions`` parameter would repeat the dead-parameter defect recorded against
+    ``space_creation``.
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Tracking frames. Neither ``speed_source`` nor ``vx``/``vy`` need be present.
+    on_mismatch : {"warn", "raise", "ignore"}, default "raise"
+        What to do when the regime is ``mixed`` or ``velocity_missing``. An EMPTY frame set never
+        raises.
+
+    Returns
+    -------
+    VelocityRegimeDiagnosis
+
+    Examples
+    --------
+    Check the regime before computing anything that consumes velocity::
+
+        diagnosis = validate_velocity_regime(frames, on_mismatch="warn")
+        if diagnosis.regime == "positional_only":
+            ...  # pitch control et al. remain valid, but are positional-only
+    """
+    # Guard on COLUMN PRESENCE, not row count. `frames.get("speed_source")` returns None on a
+    # missing key; `None == marker` is the Python bool False; `False.sum()` raises AttributeError.
+    # A diagnostic whose job is to report on frames must not crash on the frames most likely to
+    # need diagnosing -- third-party builders, derived frames, anything upstream of the schema.
+    has_marker = "speed_source" in frames.columns
+    counts: dict[str, int] = {}
+    if has_marker:
+        counts = {str(k): int(v) for k, v in frames["speed_source"].value_counts(dropna=False).items()}
+    has_cols = "vx" in frames.columns and "vy" in frames.columns
+
+    n = len(frames)
+    if n == 0:
+        return VelocityRegimeDiagnosis(EMPTY, counts, has_cols, "velocity regime: empty frame set.")
+
+    n_unavailable = int((frames["speed_source"] == SPEED_SOURCE_UNAVAILABLE).sum()) if has_marker else 0
+
+    if n_unavailable == n:
+        regime = POSITIONAL_ONLY
+    elif n_unavailable == 0 and has_cols:
+        regime = VELOCITY_INFORMED
+    elif n_unavailable == 0:
+        regime = VELOCITY_MISSING
+    else:
+        regime = MIXED
+
+    message = (
+        f"velocity regime: {regime} ({n_unavailable}/{n} rows declare "
+        f"speed_source={SPEED_SOURCE_UNAVAILABLE!r}; vx/vy columns "
+        f"{'present' if has_cols else 'absent'})."
+    )
+    if regime == MIXED:
+        message += (
+            " A mixed frame set cannot be scored coherently: some rows can carry velocity and "
+            "others structurally cannot. Fail-loud wins here."
+        )
+    elif regime == VELOCITY_MISSING:
+        message += (
+            " Nothing is structurally missing -- call derive_velocities() first, or declare "
+            "speed_source unavailable if this source has no per-player temporal history."
+        )
+    if regime in (MIXED, VELOCITY_MISSING):
+        if on_mismatch == "raise":
+            raise ValueError(message)
+        if on_mismatch == "warn":
+            warnings.warn(message, stacklevel=2)
+    return VelocityRegimeDiagnosis(regime, counts, has_cols, message)
 
 
 def validate_time_base(

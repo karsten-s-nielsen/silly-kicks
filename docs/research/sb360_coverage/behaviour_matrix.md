@@ -6,24 +6,18 @@ Linkage-provenance columns (`frame_id`, `link_quality_score`, `n_candidate_frame
 
 ## Summary
 
-486 verdicts across 34 entry points, on three axes (velocity; visibility with the keeper removed; visibility with an outfielder removed).
+489 verdicts across 34 entry points, on three axes (velocity; visibility with the keeper removed; visibility with an outfielder removed).
 
 | Adjudication | Count | Meaning |
 |---|---|---|
-| `silent_degrade` | 4 | **Returns a plausible number with no basis.** The actionable finding. |
-| `differs_by_design` | 60 | Differs, but coherently -- a weaker model, not an invented value. |
+| `differs_by_design` | 63 | Differs, but coherently -- a weaker model, not an invented value. |
 | `not_exercised` | 26 | The fixture does not reach this column on this axis. |
-| `honest_nan` | 97 | Declines cleanly. Absence stays visible downstream. |
+| `honest_nan` | 101 | Declines cleanly. Absence stays visible downstream. |
 | `works` | 299 | Identical with or without velocity. |
 
 ## Findings -- every `silent_degrade`
 
-| Function | Column | Axis | Roster | Rationale |
-|---|---|---|---|---|
-| `add_ghost_gk` | `ghost_gk_x` | velocity | full | A FITTED model silently IMPUTING the five velocity features it was trained on (ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED missing-value direction -- fitted where NaN meant an occasional dropped measurement, applied where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, 33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate with no basis, indistinguishable downstream from a velocity-informed prediction. This is the fabrication the audit exists to find. [measured cause=velocity+frame_count] |
-| `add_ghost_gk` | `ghost_gk_y` | velocity | full | A FITTED model silently IMPUTING the five velocity features it was trained on (ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED missing-value direction -- fitted where NaN meant an occasional dropped measurement, applied where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, 33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate with no basis, indistinguishable downstream from a velocity-informed prediction. This is the fabrication the audit exists to find. [measured cause=velocity+frame_count] |
-| `add_ghost_gk` | `ghost_gk_x` | visibility | defender_absent | A FITTED model silently IMPUTING the five velocity features it was trained on (ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED missing-value direction -- fitted where NaN meant an occasional dropped measurement, applied where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, 33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate with no basis, indistinguishable downstream from a velocity-informed prediction. This is the fabrication the audit exists to find. [measured cause=velocity+frame_count] |
-| `add_ghost_gk` | `ghost_gk_y` | visibility | defender_absent | A FITTED model silently IMPUTING the five velocity features it was trained on (ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED missing-value direction -- fitted where NaN meant an occasional dropped measurement, applied where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, 33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate with no basis, indistinguishable downstream from a velocity-informed prediction. This is the fabrication the audit exists to find. [measured cause=velocity+frame_count] |
+None. No column was adjudicated a fabrication.
 
 ## GK domain
 
@@ -36,7 +30,7 @@ The collaboration's question, in two columns: what each GK entry point does on a
 | `add_gk_influence` | honest_nan x4 | not_exercised x4 |
 | `add_pre_shot_gk_position` | works x5 | not_exercised x5 |
 | `add_pre_shot_gk_angle` | works x3 | not_exercised x3 |
-| `add_ghost_gk` | silent_degrade x2 | not_exercised x2 |
+| `add_ghost_gk` | honest_nan x2, differs_by_design x1 | not_exercised x2, differs_by_design x1 |
 | `add_shot_goalmouth` | honest_nan x9, differs_by_design x2 | honest_nan x9, differs_by_design x2 |
 | `add_xshot_occurrence` | not_exercised x1 | not_exercised x1 |
 
@@ -134,12 +128,15 @@ The collaboration's question, in two columns: what each GK entry point does on a
 | `add_elastic_sync` | `elastic_frame_id` | defender_absent | `differs` | `differs_by_design` | no_support |
 | `add_elastic_sync` | `elastic_confidence` | defender_absent | `identical` | `works` | no_support |
 | `add_elastic_sync` | `elastic_error_seconds` | defender_absent | `differs` | `differs_by_design` | no_support |
-| `add_ghost_gk` | `ghost_gk_x` | velocity | `differs` | `silent_degrade` | region_support |
-| `add_ghost_gk` | `ghost_gk_y` | velocity | `differs` | `silent_degrade` | region_support |
-| `add_ghost_gk` | `ghost_gk_x` | gk_absent | `no_signal` | `not_exercised` | region_support |
-| `add_ghost_gk` | `ghost_gk_y` | gk_absent | `no_signal` | `not_exercised` | region_support |
-| `add_ghost_gk` | `ghost_gk_x` | defender_absent | `differs` | `silent_degrade` | region_support |
-| `add_ghost_gk` | `ghost_gk_y` | defender_absent | `differs` | `silent_degrade` | region_support |
+| `add_ghost_gk` | `ghost_gk_x` | velocity | `all_nan` | `honest_nan` | no_support |
+| `add_ghost_gk` | `ghost_gk_y` | velocity | `all_nan` | `honest_nan` | no_support |
+| `add_ghost_gk` | `ghost_gk_source` | velocity | `differs` | `differs_by_design` | no_support |
+| `add_ghost_gk` | `ghost_gk_x` | gk_absent | `no_signal` | `not_exercised` | no_support |
+| `add_ghost_gk` | `ghost_gk_y` | gk_absent | `no_signal` | `not_exercised` | no_support |
+| `add_ghost_gk` | `ghost_gk_source` | gk_absent | `differs` | `differs_by_design` | no_support |
+| `add_ghost_gk` | `ghost_gk_x` | defender_absent | `all_nan` | `honest_nan` | no_support |
+| `add_ghost_gk` | `ghost_gk_y` | defender_absent | `all_nan` | `honest_nan` | no_support |
+| `add_ghost_gk` | `ghost_gk_source` | defender_absent | `differs` | `differs_by_design` | no_support |
 | `add_gk_completion` | `gk_completion` | velocity | `identical` | `works` | no_support |
 | `add_gk_completion` | `gk_completion` | gk_absent | `identical` | `works` | no_support |
 | `add_gk_completion` | `gk_completion` | defender_absent | `identical` | `works` | no_support |
