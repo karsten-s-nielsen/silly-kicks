@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-08-05. **Current release**: silly-kicks 4.75.0 (ADR-053 — the SB360 coverage audit: a per-column, per-axis verdict for every `add_*` on freeze-frames, machine observation locked by CI and human adjudication deliberately not. 299 of 486 verdicts `works`; the only 4 `silent_degrade` are `add_ghost_gk`, which fabricates a coordinate from velocity it does not have. Tests, scripts and docs only — no retrain, no re-materialize). Immediately prior: 4.74.0 (ADR-051 PR 5 of 5 — the goal-relative transform was CHIRAL: no `to_goal_relative_y`, so the two goal ends had opposite handedness and every bearing negated between them; xS/xCross retrained on the corrected point reflection and re-stamped. Closes the ADR-051 cycle's Gate A xfails; the 8 Gate B / D3 markers remain for PR 6). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-08-06. **Current release**: silly-kicks 4.76.0 (ADR-054 — the ghost-GK path REFUSES on freeze-frames instead of fabricating, guarded at the shared serving seam so all three public entry points inherit it; the ADR-053 audit re-derives to ZERO `silent_degrade` BY RULE. Plus `providers/statsbomb`, a shape-never-fetch SB360 parse port EXTRACTED from `build_sb360_coverage.py`. No retrain, no re-materialize — ghost values on velocity-bearing frames are unchanged; the schema gains one column). Immediately prior: 4.75.0 (ADR-053 — the SB360 coverage audit). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -50,22 +50,28 @@ rejected alternatives) lives in
 Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
 repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 
-- **No `providers/statsbomb/` parse port.** **IN PROGRESS — commit 2 of the current cycle**
-  (branch `sb360-degradation-and-port`); to be EXTRACTED from `scripts/build_sb360_coverage.py`
-  rather than written beside it, since that script already carries most of the parse half. `spadl/statsbomb.py` converts event dicts; nothing
-  fetches or shapes SB360 freeze-frames into the `snapshots` contract, so every consumer writes that
-  glue itself. Mirrors `providers/sportec/parse.py`. Eleven aggregators also need bespoke call
-  shapes (see `tests/sb360/_calls.py`) that a first-class producer would have to handle.
-- **`visible_area` has no library seam.** The polygon will be CARRIED as raw per-action data by
-  commit 2's port (ADR-009: ship raw primitives); the consuming SEAM stays deferred until a
-  consumer exists. Zero handling anywhere in `silly_kicks/`; the audit
-  consumes the polygon in its own harness only. It converts "player absent" from unknown into a
-  known geometric mask, which is what would let a region-querying feature report *observed* support
-  rather than assume it. Decide whether it earns a public seam.
-- **`velocity_unavailable_by_design` has exactly two consumers** (`_das.py:259`,
-  `_press_commitment.py:100`). Every other velocity-touching module handles absent kinematics ad hoc
-  — several zero-fill and carry on. The audit shows most still degrade honestly, so this is
-  consistency work, not a live defect.
+- **`_defending_goal` re-derives the PINNED public goal map, and the two ALREADY disagree.**
+  `tracking.defended_goal_x` (`_gk_resolve.py:323`) is the pinned seam whose own docstring says a
+  consumer "must call THIS rather than re-derive the rule, because a second implementation is a fork
+  that can disagree with the first". `_ghost_gk.py:814-818` is that second implementation, and it
+  lacks `defended_goal_x`'s mean-outfield-x fallback when a `(game, period, team)` carries no GK rows.
+  It is ALSO an ADR-028 **D3** orientation defect (identity-keyed, not direction-keyed) -- but
+  `_ghost_gk.py` is NOT in the pinned D3 unit (`tests/tracking/test_mirror_registry.py:294-311`
+  asserts exactly three files: `_defensive_line`, `_packing`, `_gk_influence`), so assuming that unit
+  covers it would DROP it. **This is a live correctness divergence, not tidiness** -- arguably the
+  next cycle's headline rather than a row.
+- **`visible_area` has a library seam for the DATA but not for CONSUMING it.** 4.76.0's port carries
+  the polygon as raw per-action rows (ADR-009: ship raw primitives). The consuming API -- masking,
+  coverage-aware support so a region query reports OBSERVED rather than assumed -- waits for a
+  consumer. Carrying it now is what makes that seam buildable later without touching the port.
+- **`velocity_unavailable_by_design` now has FOUR consumers** — `_das.py`, `_press_commitment.py`,
+  and, as of 4.76.0, `_ghost_gk.py` (the shared serving seam) and `features.py` (the aggregator
+  edge). The remaining velocity-touching modules handle absent kinematics ad hoc, but ADR-053's
+  audit measured that they degrade HONESTLY: the one that did not was the ghost path, and that is
+  now fixed. So the residual is consistency work with **no live defect behind it** — and per
+  ADR-054's column-vs-diagnostic rule the right surface for those five is
+  `validate_velocity_regime`, which already exists, rather than a marker read in each module.
+  Close this row unless a NEW velocity consumer lands that fabricates.
 - **Four boundary entry points are unaudited**, each with its reason in
   `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
   one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and
@@ -73,21 +79,14 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 - **`snapshot_to_tracking_frames` id dtype is pandas-version-dependent** (`_snapshot.py:172`).
   `Int64` in yields `Int64` on pandas 2.3.3 and `Float64` on 3.0.3 — the concat-with-all-NA
   `FutureWarning` materialising. Hyrum's law for any consumer pinning it.
-- **Check whether the lakehouse already ingests StatsBomb open data.** If it does, that path likely
-  beats a new `providers/statsbomb/` port, since it also normalises shape. Not answerable from this
-  repo.
+- **Check whether the lakehouse already ingests StatsBomb open data.** The question has CHANGED now
+  that 4.76.0 ships `providers/statsbomb`: it is no longer build-or-reuse but whether the lakehouse
+  should ADOPT the port so both read SB360 the same way. Not answerable from this repo.
 - **SB360 goal-kick frame availability is the collaboration's real constraint** — only 32.6% of goal
   kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
   shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
   beyond 22 matches is a driver flag, and the shards are additive.
-- **`_defending_goal` re-derives the pinned public goal map, and the two already disagree.**
-  `tracking.defended_goal_x` (`_gk_resolve.py:323`) is the pinned seam whose docstring forbids
-  re-deriving the rule; `_ghost_gk.py:814-818` is a second implementation, and it lacks
-  `defended_goal_x`'s mean-outfield-x fallback when a `(game, period, team)` has no GK rows. It is
-  ALSO an ADR-028 **D3** orientation defect (identity-keyed, not direction-keyed) — but `_ghost_gk.py`
-  is NOT in the pinned D3 unit (`tests/tracking/test_mirror_registry.py:294-311` asserts exactly
-  three files), so it needs queueing here rather than assuming that unit covers it.
-- **Two ghost fixtures were asserting geometry on FABRICATED coordinates** (fixed with the refusal):
+- **Sweep for fixtures that CLAIM velocity and supply none.** Two were found and fixed in 4.76.0:
   `test_ghost_gk_orientation.py` and `test_action_ltr_mirror_invariance.py` declared
   `speed_source="native"` with no `vx`/`vy`, so the model ran on 5-of-26 imputed features. Worth a
   sweep for the same shape elsewhere: a fixture that claims velocity and supplies none is now a
