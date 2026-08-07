@@ -45,13 +45,13 @@ def test_visible_fraction_is_normalised_by_the_STATSBOMB_pitch():
     to a club.
     """
     full = [0.0, 0.0, 120.0, 0.0, 120.0, 80.0, 0.0, 80.0]
-    assert mod._visible_fraction(full) == pytest.approx(1.0)
+    assert mod.visible_fraction(full) == pytest.approx(1.0)
 
     half = [0.0, 0.0, 60.0, 0.0, 60.0, 80.0, 0.0, 80.0]
-    assert mod._visible_fraction(half) == pytest.approx(0.5)
+    assert mod.visible_fraction(half) == pytest.approx(0.5)
 
-    assert mod._visible_fraction([]) == 0.0
-    assert mod._visible_fraction([1.0, 2.0]) == 0.0
+    assert mod.visible_fraction([]) == 0.0
+    assert mod.visible_fraction([1.0, 2.0]) == 0.0
 
 
 def test_defending_keeper_is_keeper_AND_NOT_teammate():
@@ -65,10 +65,10 @@ def test_defending_keeper_is_keeper_AND_NOT_teammate():
         {"keeper": False, "teammate": False},
         {"keeper": False, "teammate": True},
     ]
-    assert mod._defending_gk_visible(players) is False
+    assert mod.defending_gk_visible(players) is False
 
     players.append({"keeper": True, "teammate": False})
-    assert mod._defending_gk_visible(players) is True
+    assert mod.defending_gk_visible(players) is True
 
 
 def test_acting_side_keeper_is_the_relevant_one_for_distribution_and_saves():
@@ -80,15 +80,15 @@ def test_acting_side_keeper_is_the_relevant_one_for_distribution_and_saves():
     coverage was nil. After: both read 1.000 on the acting-side rate.
     """
     acting_keeper = [{"keeper": True, "teammate": True}, {"keeper": False, "teammate": False}]
-    assert mod._acting_side_gk_visible(acting_keeper) is True
-    assert mod._defending_gk_visible(acting_keeper) is False, (
+    assert mod.acting_side_gk_visible(acting_keeper) is True
+    assert mod.defending_gk_visible(acting_keeper) is False, (
         "the defending rate MUST be False here -- that is the definitional artefact this pair "
         "of metrics exists to separate, not a bug to paper over"
     )
 
     opposing_keeper = [{"keeper": True, "teammate": False}]
-    assert mod._defending_gk_visible(opposing_keeper) is True
-    assert mod._acting_side_gk_visible(opposing_keeper) is False
+    assert mod.defending_gk_visible(opposing_keeper) is True
+    assert mod.acting_side_gk_visible(opposing_keeper) is False
 
 
 def test_gk_domain_types_are_SPADL_names_not_statsbomb_ones():
@@ -163,9 +163,12 @@ def test_statsbombpy_is_imported_lazily():
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)) and node.col_offset == 0:
             names = [a.name for a in node.names] + [getattr(node, "module", "") or ""]
-            assert not any("statsbomb" in n for n in names), (
-                "statsbombpy is imported at module level; --help would require it"
-            )
+            # Match the PACKAGE, not the substring. `silly_kicks.providers.statsbomb` is the
+            # in-repo parse port -- a first-party module with no optional dependency behind it --
+            # and a "statsbomb" substring test flags it the moment it exists. Only `statsbombpy`
+            # is the optional dep that `--help` must not require.
+            roots = {n.split(".")[0] for n in names if n}
+            assert "statsbombpy" not in roots, "statsbombpy is imported at module level; --help would require it"
 
 
 @pytest.mark.e2e

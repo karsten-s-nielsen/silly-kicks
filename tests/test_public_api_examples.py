@@ -242,6 +242,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/calibration/_vaep_brier_objective.py",
     "silly_kicks/calibration/_xt.py",
     "silly_kicks/providers/sportec/parse.py",
+    "silly_kicks/providers/statsbomb/parse.py",
     "silly_kicks/spadl/config.py",
     "silly_kicks/tracking/_cover_shadows.py",
     "silly_kicks/tracking/_das.py",

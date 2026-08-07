@@ -350,8 +350,10 @@ Three consequences:
   `match_join_rate=0.0` — a counted report, not a typed error (`:255-262`). Adopt it, or state why the
   port diverges.
 * The script takes `require_clean_tree` under ADR-037, so re-pointing it raises the rule's **clause
-  (e) second hop**: does `coverage.md` need re-running, or an explicit declaration that it remains
-  valid? Decide in the plan; do not leave it implicit.
+  (e) second hop**. **ANSWERED: no re-run needed.** The extraction is an identity MOVE, not a copy --
+  verified `mod.defending_gk_visible is defending_gk_visible` (and likewise for the other two), so
+  the script calls the very objects the library exposes and `coverage.md`'s numbers cannot drift
+  from the port by construction. Declared in the commit message rather than left implicit.
 
 **`providers/__init__.py`'s docstring currently ends "Behind the `[parse-dfl]` extra."** That becomes
 false the moment a second, extra-free port lands. Update it in the same commit.
@@ -434,8 +436,15 @@ Rev 1's Risk 3 offered "carry it in native 120x80" as a fallback. **That is with
 put the polygon in a different coordinate system from the snapshots it describes, which is a trap
 rather than a graceful degradation.
 
-**Open question, to be MEASURED rather than inherited: does the cell-centre correction apply to 360
-data at all?** `crc` exists because SB *event* locations are cell-based — `_convert_locations`' own
+**RESOLVED by measurement (implementation): apply `crc`, and the reason is not the one the question
+assumed.** The feared conflict with `_visible_fraction` does not exist -- that function returns an
+AREA RATIO and `crc` is a pure translation, so it is invisible there (measured: 0.625 either way).
+What binds instead is player/polygon alignment: players reach SPADL through the same affine WITH
+`crc`, so omitting it on the polygon would offset it **0.4375 m** from the players it bounds, and a
+player exactly on the boundary would read as outside. Pinned by
+`test_players_and_polygon_share_one_transform` and confirmed on the real committed slice.
+
+The original question, retained because it is what the measurement answered: `crc` exists because SB *event* locations are cell-based — `_convert_locations`' own
 docstring says "1,1 is the top-left square 'yard' of the field". `visible_area` is a continuous
 polygon, not a cell reference. Applying `crc` where it does not belong is a systematic **~0.44 m**
 offset at fidelity 1 (0.044 m at fidelity 2): small, silent, and it would misalign players against
@@ -503,9 +512,18 @@ is absent — the fixture-that-never-runs shape. Read the committed slice with s
 The other session is executing Cycle B concurrently. `TODO.md` and `CHANGELOG.md` are the entire
 realistic conflict surface and are deferred to merge time, along with the version bump.
 
-Cycle B touches `tests/scripts/`, `tests/test_enrichment_nan_safety.py`,
-`tests/tracking/test_frame_aware_xfns_dup_action_id.py` and `docs/c4/architecture.dsl`. This cycle
-touches none of those.
+Cycle B touches `tests/test_enrichment_nan_safety.py`,
+`tests/tracking/test_frame_aware_xfns_dup_action_id.py`, `docs/c4/architecture.dsl` and SIX files
+under `tests/scripts/`.
+
+**CORRECTED at implementation.** An earlier revision claimed this cycle touches none of those. It
+does touch `tests/scripts/test_build_sb360_coverage.py` -- Task 7 renames two helpers it asserts
+on. The conflict does NOT follow, and the distinction matters: git conflicts are per FILE, and
+Cycle B's six files under `tests/scripts/` are `_script_population.py`, `conftest.py`,
+`test_artifact_provenance_output.py`, `test_corpus_driver_resilience.py`, `test_input_contracts.py`
+and `test_provenance_wiring.py` -- measured, zero occurrences of `test_build_sb360_coverage`. The
+directory overlaps; the files do not. So the test is edited directly rather than shimmed behind
+underscore aliases, which was the earlier recommendation made before checking.
 
 ## 4. Testing
 

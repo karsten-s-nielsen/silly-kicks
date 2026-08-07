@@ -7,6 +7,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from . import _sb_coordinates as _sb_coords
 from . import config as spadlconfig
 from .base import _add_dribbles, _derive_end_coordinates
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
@@ -410,8 +411,7 @@ def _convert_locations(locations: pd.Series, fidelity_version: int) -> npt.NDArr
     n = len(locations)
     if n == 0:
         return np.empty((0, 2), dtype=float)
-    cell_side = 0.1 if fidelity_version == 2 else 1.0
-    crc = cell_side / 2
+    crc = _sb_coords.cell_side(fidelity_version) / 2
     loc_list = locations.tolist()
     xy_raw = np.array(
         [loc[:2] if isinstance(loc, list) and len(loc) >= 2 else [np.nan, np.nan] for loc in loc_list],
@@ -419,9 +419,12 @@ def _convert_locations(locations: pd.Series, fidelity_version: int) -> npt.NDArr
     )
     is_three = np.array([isinstance(loc, list) and len(loc) == 3 for loc in loc_list])
     y_offset = np.where(is_three, 0.05, crc)
-    coordinates = np.empty((n, 2), dtype=float)
-    coordinates[:, 0] = (xy_raw[:, 0] - crc) / _SB_FIELD_LENGTH * spadlconfig.field_length
-    coordinates[:, 1] = spadlconfig.field_width - (xy_raw[:, 1] - y_offset) / _SB_FIELD_WIDTH * spadlconfig.field_width
+    # The affine is shared with the providers/statsbomb port (ADR-038's _scale_to_spadl vs
+    # _transform_coords split). The two behaviours BELOW stay here because they are EVENT
+    # semantics: the 3-element shot y_offset above, and the clip below -- an event location is
+    # on-pitch by construction, while a visible_area polygon legitimately extends past the
+    # touchline and clipping it would silently shrink the observed region.
+    coordinates = _sb_coords.sb_xy_to_spadl(xy_raw, fidelity_version=fidelity_version, y_offset=y_offset)
     coordinates[:, 0] = np.clip(coordinates[:, 0], 0, spadlconfig.field_length)
     coordinates[:, 1] = np.clip(coordinates[:, 1], 0, spadlconfig.field_width)
     return coordinates
