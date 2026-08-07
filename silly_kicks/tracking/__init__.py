@@ -25,6 +25,11 @@ __all__ = [
     "DAS_SOURCE_UNSCOREABLE_FRAME",
     "DAS_SOURCE_VALUES",
     "DEFENSIVE_CREDIT_RULES",
+    "GHOST_GK_COMPUTED",
+    "GHOST_GK_NO_KEEPER",
+    "GHOST_GK_SOURCE_VALUES",
+    "GHOST_GK_UNLINKED",
+    "GHOST_GK_VELOCITY_UNAVAILABLE",
     "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS",
     "KLOPPY_TRACKING_FRAMES_COLUMNS",
     "METRICA_TRACKING_FRAMES_COLUMNS",
@@ -34,6 +39,7 @@ __all__ = [
     "TRACKING_CATEGORICAL_DOMAINS",
     "TRACKING_CONSTRAINTS",
     "TRACKING_FRAMES_COLUMNS",
+    "VELOCITY_REGIME_VALUES",
     "ActionFrameContext",
     "AndrienkoParams",
     "BekkersParams",
@@ -78,6 +84,7 @@ __all__ = [
     "TimeBaseDiagnosis",
     "TrackingConversionReport",
     "UnverifiableFeatureContractWarning",
+    "VelocityRegimeDiagnosis",
     "VoronoiParams",
     "XCrossAttemptModel",
     "XCrossFeatureSet",
@@ -259,6 +266,7 @@ __all__ = [
     "utils",
     "validate_id_dtypes",
     "validate_time_base",
+    "validate_velocity_regime",
     "value_off_ball_runs",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
@@ -300,6 +308,11 @@ from ._das import (
 from ._defensive_line import compute_defensive_line, select_back_line_players
 from ._elastic_sync import ElasticSyncParams, align_events_to_frames, extract_ball_features
 from ._ghost_gk import (
+    GHOST_GK_COMPUTED,
+    GHOST_GK_NO_KEEPER,
+    GHOST_GK_SOURCE_VALUES,
+    GHOST_GK_UNLINKED,
+    GHOST_GK_VELOCITY_UNAVAILABLE,
     GhostClampWarning,
     GhostGkDensity,
     GhostGkModel,
@@ -493,10 +506,12 @@ from .schema import (
     TRACKING_CATEGORICAL_DOMAINS,
     TRACKING_CONSTRAINTS,
     TRACKING_FRAMES_COLUMNS,
+    VELOCITY_REGIME_VALUES,
     IdDtypeDiagnosis,
     LinkReport,
     TimeBaseDiagnosis,
     TrackingConversionReport,
+    VelocityRegimeDiagnosis,
 )
 from .utils import (
     add_sync_score,
@@ -508,6 +523,7 @@ from .utils import (
     sync_score,
     validate_id_dtypes,
     validate_time_base,
+    validate_velocity_regime,
 )
 
 try:

@@ -26,6 +26,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from scripts._driver import for_each
 from scripts._provenance import git_provenance, require_clean_tree
+from silly_kicks.providers.statsbomb import (
+    acting_side_gk_visible,
+    defending_gk_visible,
+    visible_fraction,
+)
+from silly_kicks.spadl import _sb_coordinates as _sb_coords
 
 #: (competition_id, season_id) -> expected name. Asserted at run time: prose verification does
 #: not survive an upstream renumber, and a silently-wrong sample is worse than a crash.
@@ -54,8 +60,9 @@ DEFAULT_SHARD_ROOT = "sb360_coverage_shards"
 
 #: StatsBomb's pitch. `visible_area` is delivered in THIS frame, not SPADL's 105x68; dividing
 #: by 105*68 yields ~1.34 for a fully-visible frame, i.e. a "fraction" above 1.
-SB_PITCH_LENGTH = 120.0
-SB_PITCH_WIDTH = 80.0
+# Re-exported from the port so the script and the library cannot disagree about the SB grid.
+SB_PITCH_LENGTH = _sb_coords.SB_FIELD_LENGTH
+SB_PITCH_WIDTH = _sb_coords.SB_FIELD_WIDTH
 
 #: Keys the converter reads from the top level; everything else rides in `extra`.
 #: Mirrors tests/test_xthreat_statsbomb_e2e.py::_adapt.
@@ -132,42 +139,6 @@ def _ids_for_cell(override, comp_id: int, season_id: int) -> tuple[bool, list | 
     if not ids:
         return (True, None)
     return (False, list(ids))
-
-
-def _defending_gk_visible(players) -> bool:
-    """The keeper being ATTACKED -- correct for shots and crosses.
-
-    ``keeper`` alone answers "a keeper is visible", a different question. Freeze-frame flags are
-    relative to the ACTOR, so the defending keeper is the keeper who is not a teammate.
-    """
-    return any(bool(p.get("keeper")) and not bool(p.get("teammate")) for p in players)
-
-
-def _acting_side_gk_visible(players) -> bool:
-    """The keeper on the ACTOR's own side -- correct for GK distribution and saves.
-
-    Which keeper is "the" keeper depends on the action. On a goal kick or a save the keeper IS
-    the actor, so ``keeper AND NOT teammate`` excludes them BY CONSTRUCTION and reports 0%
-    however good the coverage actually is. Measured on MLS 2023 match 3877060: `goalkick` and
-    `keeper_save` both read exactly 0.000 defending-keeper visibility -- a definitional
-    artefact, not a measurement, and one that would have told a club its goal-kick coverage was
-    nil.
-
-    Reported ALONGSIDE the defending rate rather than replacing it, because the two answer
-    different questions and the right one depends on the action type: shots and crosses want
-    the defending keeper, xT-GK's distribution domain wants this one.
-    """
-    return any(bool(p.get("keeper")) and bool(p.get("teammate")) for p in players)
-
-
-def _visible_fraction(flat) -> float:
-    """Shoelace over StatsBomb's flat ``[x0, y0, x1, y1, ...]``, normalised by the SB pitch."""
-    if len(flat) < 6:
-        return 0.0
-    xs, ys = list(flat[0::2]), list(flat[1::2])
-    n = len(xs)
-    area = 0.5 * abs(sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i] for i in range(n)))
-    return area / (SB_PITCH_LENGTH * SB_PITCH_WIDTH)
 
 
 def _load_catalogue() -> list[dict]:
@@ -278,10 +249,10 @@ def measure_match(match):
             },
         )
         bucket["n_events"] += 1
-        bucket["n_defending_gk_visible"] += int(_defending_gk_visible(players))
-        bucket["n_acting_side_gk_visible"] += int(_acting_side_gk_visible(players))
+        bucket["n_defending_gk_visible"] += int(defending_gk_visible(players))
+        bucket["n_acting_side_gk_visible"] += int(acting_side_gk_visible(players))
         bucket["sum_visible"] += len(players)
-        bucket["sum_area"] += _visible_fraction(ff.get("visible_area") or [])
+        bucket["sum_area"] += visible_fraction(ff.get("visible_area") or [])
 
     rows = []
     for type_name, b in per_type.items():

@@ -34,6 +34,7 @@ from silly_kicks.spadl import config as spadlconfig
 
 from . import _geometry as _geo
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
+from ._velocity_availability import velocity_unavailable_by_design as _velocity_unavailable_by_design
 
 # ---------------------------------------------------------------------------
 # Grid constants (fixed for API stability — see spec Density Grid)
@@ -287,6 +288,38 @@ def keeper_detection_mask(visibility: pd.Series, *, provider: str) -> np.ndarray
             "training on undetected keepers means training on the interpolator (spec 4.3)."
         )
     return visibility.fillna(False).astype(bool).to_numpy()
+
+
+#: Closed vocabulary for the ``ghost_gk_source`` provenance column (the ``DAS_SOURCE_VALUES`` /
+#: ``PRESS_COMMITMENT_SOURCE_VALUES`` pattern). Each token is exported so a consumer enum pins to
+#: this set rather than to string literals.
+GHOST_GK_COMPUTED = "computed"
+#: The frame source declares kinematics structurally unavailable (a freeze-frame), so the model
+#: cannot be served. NOT a zero-fill: the extractor yields NaN and the HGBR would route it down each
+#: split's LEARNED missing-value direction, producing a plausible coordinate with no basis.
+GHOST_GK_VELOCITY_UNAVAILABLE = "velocity_unavailable"
+#: The action reached a frame, but that frame carried no DEFENDING keeper. Distinct from
+#: ``unlinked``: the action did reach a frame, and saying otherwise states something the data
+#: refutes.
+GHOST_GK_NO_KEEPER = "no_keeper"
+#: The action reached no frame at all.
+GHOST_GK_UNLINKED = "unlinked"
+GHOST_GK_SOURCE_VALUES: tuple[str, ...] = (
+    GHOST_GK_COMPUTED,
+    GHOST_GK_VELOCITY_UNAVAILABLE,
+    GHOST_GK_NO_KEEPER,
+    GHOST_GK_UNLINKED,
+)
+
+
+class _GhostVelocityUnavailableError(Exception):
+    """Internal signal: frames declare velocity structurally unavailable.
+
+    Never escapes the module. Each public seam catches it and degrades in the shape its own output
+    allows -- NaN rows with provenance for the two column-emitting seams, NO rows for
+    ``serve_ghost_gk_positions`` (``gkdv/_engine.py`` RAISES on a non-finite ghost on a scored
+    frame, so NaN rows there would break TF-19 rather than degrade it).
+    """
 
 
 GHOST_GK_FEATURE_NAMES: list[str] = [
@@ -2244,15 +2277,20 @@ def compute_ghost_gk(
     out = frames.copy()
     out["ghost_gk_x"] = np.nan
     out["ghost_gk_y"] = np.nan
+    out["ghost_gk_source"] = GHOST_GK_COMPUTED
 
-    _resolved, meta, _batch_features, positions, _clamped = _serve_positions_core(
-        frames,
-        model=model,
-        home_team_id=home_team_id,
-        actions=actions,
-        carrier=carrier,
-        link_frame_ids=link_frame_ids,
-    )
+    try:
+        _resolved, meta, _batch_features, positions, _clamped = _serve_positions_core(
+            frames,
+            model=model,
+            home_team_id=home_team_id,
+            actions=actions,
+            carrier=carrier,
+            link_frame_ids=link_frame_ids,
+        )
+    except _GhostVelocityUnavailableError:
+        out["ghost_gk_source"] = GHOST_GK_VELOCITY_UNAVAILABLE
+        return out
 
     if len(positions) == 0:
         return out
@@ -2304,6 +2342,23 @@ def _serve_positions_core(
     extracted feature set (historically the retired ``predict_density`` pass); the
     positions themselves come from ``predict_mean(batch_features)`` inside this core.
     """
+    # Velocity contract. This is the SHARED serving seam -- add_ghost_gk, compute_ghost_gk and
+    # serve_ghost_gk_positions all funnel through here -- so a guard placed at any ONE of them
+    # would leave the other two fabricating. The 4.22.1 physical-pitch clamp lives here for the
+    # same reason: policy at the edge, and this function IS the edge.
+    #
+    # The model is an HGBR: absent velocity features are NOT zero-filled, they are routed down
+    # each split's LEARNED missing-value direction, fitted where NaN meant an occasional dropped
+    # measurement. On a freeze-frame 5 of 26 features are absent on 100% of rows, so the output is
+    # a plausible coordinate with no basis. Refuse instead.
+    if _velocity_unavailable_by_design(frames):
+        raise _GhostVelocityUnavailableError
+    if "vx" not in frames.columns or "vy" not in frames.columns:
+        raise ValueError(
+            "compute_ghost_gk requires vx/vy on frames (call derive_velocities() first), or "
+            "declare speed_source unavailable. See the velocity-availability contract."
+        )
+
     resolved = _resolve_model(model)
 
     # Build context callbacks from actions
@@ -2435,14 +2490,27 @@ def serve_ghost_gk_positions(
     >>> bool(out["ghost_clamped"].notna().all())  # doctest: +SKIP
     True
     """
-    _resolved, meta, _batch_features, positions, clamped = _serve_positions_core(
-        frames,
-        model=model,
-        home_team_id=home_team_id,
-        actions=actions,
-        carrier=carrier,
-        link_frame_ids=link_frame_ids,
-    )
+    try:
+        _resolved, meta, _batch_features, positions, clamped = _serve_positions_core(
+            frames,
+            model=model,
+            home_team_id=home_team_id,
+            actions=actions,
+            carrier=carrier,
+            link_frame_ids=link_frame_ids,
+        )
+    except _GhostVelocityUnavailableError:
+        # NO rows, not NaN rows: gkdv RAISES on a non-finite ghost on a SCORED frame, so NaN here
+        # would break TF-19 rather than degrade it. Returning nothing routes into its existing
+        # counted-drop path instead.
+        #
+        # Reuse the len(positions) == 0 branch below rather than building a second empty frame --
+        # its join-key dtypes are DERIVED FROM THE INPUT for a measured reason (see that branch).
+        # Only `positions` is read by it; meta/clamped are set for shape consistency and are inert.
+        meta = frames.iloc[:0]
+        positions = np.empty((0, 2), dtype=float)
+        clamped = np.zeros(0, dtype=bool)
+
     if len(positions) == 0:
         # The empty frame's join-key dtypes MUST match the populated path's, or a
         # pd.concat across a per-match loop where one match has no detected GK silently

@@ -183,6 +183,14 @@ def _fresh_atomic_full_links():
     return links
 
 
+def _frames_velocity_unavailable():
+    """make_frames + every row declaring kinematics structurally unavailable -> exercises
+    add_ghost_gk's REFUSAL branch, which returns early and builds its output from `actions`."""
+    f = make_frames()
+    f["speed_source"] = "unavailable"
+    return f
+
+
 def _frames_with_ghost():
     """make_frames + precomputed ghost columns on GK rows -> exercises add_ghost_gk's precompute
     short-circuit (`if "ghost_gk_x" in frames.columns`), which ALIASES ``ghost_frames = frames`` (a real
@@ -357,9 +365,18 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     "tracking:add_elastic_sync": _one(_std_inputs, _std_invoke(F.add_elastic_sync)),
     # add_ghost_gk branches on `"ghost_gk_x" in frames.columns` (precompute short-circuit aliasing frames)
     # -> a variant per branch, incl. the alias path.
+    #
+    # `refused` is a THIRD branch on a different axis: frames declaring velocity structurally
+    # unavailable return early with NaN positions, before either compute or the alias path. Purity
+    # matters most there, because that path builds its output from `actions` directly.
     "tracking:add_ghost_gk": [
         ("compute", _std_inputs, _std_invoke(F.add_ghost_gk, home_team_id=5)),
         ("precomputed", lambda: [make_actions(), _frames_with_ghost()], _std_invoke(F.add_ghost_gk, home_team_id=5)),
+        (
+            "refused",
+            lambda: [make_actions(), _frames_velocity_unavailable()],
+            _std_invoke(F.add_ghost_gk, home_team_id=5),
+        ),
     ],
     "tracking:add_gk_completion": _one(_std_inputs, _std_invoke(F.add_gk_completion)),
     "tracking:add_gk_influence": _one(_xtf_inputs, _xtf_invoke(F.add_gk_influence)),

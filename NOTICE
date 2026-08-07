@@ -13,6 +13,13 @@ kloppy --- standardizing soccer tracking/event data (BSD-3-Clause License).
 Copyright (c) kloppy contributors.
 See: https://github.com/PySport/kloppy
 
+StatsBomb Open Data --- events and 360 freeze-frames, under the StatsBomb Public
+Data License (NON-COMMERCIAL). Copyright (c) StatsBomb.
+See: https://github.com/statsbomb/open-data
+silly-kicks reads this data via silly_kicks.providers.statsbomb, which adds no
+runtime dependency: `statsbombpy` is used only by scripts/ and is not required to
+import or use the library.
+
 pandas, numpy, scikit-learn --- core dependencies (BSD / standard licenses).
 
 Optional gradient-boosting backends (xgboost, lightgbm, catboost) --- listed
@@ -691,6 +698,13 @@ free-sample data (non-commercial redistribution permitted). The
 existing Metrica contract-test fixture
 (tests/datasets/metrica/sample_match.parquet) is Sample Game 2 from
 metrica-sports/sample-data (CC-BY-NC-4.0).
+
+The StatsBomb contract-test fixtures (tests/datasets/statsbomb/raw/events/*.json
+and tests/datasets/statsbomb/three-sixty/*.json) are from StatsBomb Open Data
+under the StatsBomb Public Data License. Redistribution is permitted under the
+same license and this is NON-COMMERCIAL use. The three-sixty slice is Women's
+World Cup 2023 match 3893795, reduced to 6 freeze-frames; byte digests are
+recorded in tests/datasets/statsbomb/three-sixty/SOURCE_SHA.
 
 The kloppy test fixtures (tests/datasets/kloppy/*.xml + .json) are
 vendored from kloppy under BSD-3-Clause. The metrica_events.json

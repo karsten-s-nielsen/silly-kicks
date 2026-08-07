@@ -5,6 +5,70 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.76.0] — 2026-08-06
+
+### Fixed — the ghost-GK path REFUSES on freeze-frames instead of fabricating (PR-S144, ADR-054)
+
+**No retrain, no re-materialize** — ghost positions on velocity-bearing frames are byte-unchanged.
+**Schema note (Hyrum):** `add_ghost_gk` and `compute_ghost_gk` gain one column. C4 count unchanged (32).
+
+Repairs the one actionable defect ADR-053's audit found and deliberately left. CLAUDE.md's
+`speed_source` bullet already required both directions; the ghost path violated a rule `_das.py`
+and `_press_commitment.py` already obeyed — marked frames fabricated instead of degrading, unmarked
+frames fabricated instead of raising.
+
+**The mechanism determined the fix.** `extract_ghost_gk_features` yields NaN, and `predict_mean`'s
+HGBR reconstruction routes NaN down each split's LEARNED missing-value direction — fitted where NaN
+meant an occasional dropped measurement, applied where 5 of 26 features are absent on 100% of rows.
+Measured: `NaN -> [6.795, 33.522]` vs `zero-fill -> [6.888, 33.362]`. An imputation POLICY, not a
+zero-fill, so "fill the zeros correctly" was never the fix.
+
+**The guard sits at the shared serving seam `_serve_positions_core`**, because there are THREE
+public entry points and two bypass the aggregator: `ghost_gk_xfns` reaches `compute_ghost_gk` (the
+VAEP path) and `gkdv/_engine.py` calls `serve_ghost_gk_positions` (TF-19). A guard at
+`add_ghost_gk` would have fixed one caller in four.
+
+**The seams degrade differently, and the asymmetry is forced.** The two column-emitting seams return
+NaN + `ghost_gk_source`; `serve_ghost_gk_positions` returns NO rows, because `gkdv/_engine.py`
+RAISES on a non-finite ghost on a scored frame — NaN rows there would break TF-19 rather than
+degrade it.
+
+**The audit re-derives to ZERO fabrications, by RULE not hand-edit**: the machine observation
+changed `differs` -> `all_nan` and the adjudication followed. `behaviour_matrix.md` now reads 489
+verdicts, 0 `silent_degrade`. That is ADR-053's locked-observation / reviewable-adjudication split
+working as designed.
+
+**New: `validate_velocity_regime` / `VelocityRegimeDiagnosis`**, a third member of the
+`validate_time_base` / `validate_id_dtypes` family. Measured from the registry, **5** aggregators
+produce output that moves with velocity but stays honest — pitch control at zero velocity is a
+well-defined positional model. That is a frame-set-level fact, so it is a diagnostic rather than
+five per-row columns each carrying a constant. Rule: **a provenance COLUMN where the value changes,
+a DIAGNOSTIC where only the interpretation changes.**
+
+**Breaking, narrowly:** unmarked velocity-less frames now RAISE. What breaks is a fabricated
+coordinate.
+
+### Added — StatsBomb 360 parse port (PR-S144, ADR-054)
+
+`silly_kicks.providers.statsbomb` — freeze-frames in, the `snapshot_to_tracking_frames` contract
+out, plus `visible_area` carried as raw per-action polygons. **Shape, never fetch**: no new runtime
+dependency, verified by AST over the subpackage.
+
+**EXTRACTED from `scripts/build_sb360_coverage.py`**, not written beside it — verified an identity
+move, so the published `coverage.md` numbers cannot drift from the port. The scalar affine is
+promoted to `spadl/_sb_coordinates.py` while the clip and the 3-element shot `y_offset` stay behind
+as EVENT semantics (ADR-038's split), which is what lets a `visible_area` polygon extend past the
+touchline instead of being silently shrunk.
+
+Contracts the source forces, stated rather than discovered downstream: the 360 file carries no event
+type (coverage is always a JOIN, and zero overlap is COUNTED via `JoinReport` — measured, 3 of 22
+open matches); player flags are ACTOR-relative with no identity; and **`player_id` does not recur
+across frames**, which forecloses per-player aggregation.
+
+Committed slice: Women's World Cup 2023 match 3893795, 6 freeze-frames, digests in `SOURCE_SHA`,
+read with stdlib `json` so the golden gate cannot skip. `NOTICE` gains a StatsBomb entry — it had
+none while the repo already shipped their events.
+
 ## [4.75.0] — 2026-08-05
 
 ### Added — SB360 coverage audit: a per-column verdict for every `add_*` on freeze-frames (PR-S143, ADR-053)

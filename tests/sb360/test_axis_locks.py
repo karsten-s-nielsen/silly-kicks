@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from tests.sb360 import _fixture as F
+from tests.sb360._adjudicate import classify
 from tests.sb360._harness import run_axis
 from tests.sb360._probes import derive_applicability
 from tests.sb360._registry import SB360_ENTRIES, iter_verdicts
@@ -89,12 +90,47 @@ def test_the_canary_proves_the_legs_are_distinguishable():
     )
 
 
-def test_at_least_one_column_was_adjudicated_a_fabrication():
+def test_the_machinery_can_still_express_a_fabrication():
     """The audit must be capable of returning its headline finding.
 
     Not a claim that fabrication EXISTS -- a claim that the machinery can express it. If every
     verdict were `works` or `honest_nan`, an audit that found nothing would be indistinguishable
     from an audit that could not find anything.
+
+    **This test used to search the real registry for a `silent_degrade` and its failure message
+    said "establish which before deleting this test". That question is now ANSWERED: the library's
+    one fabrication (`add_ghost_gk` serving an HGBR imputed-feature vector on freeze-frames) was
+    REPAIRED, the ghost positions re-derive to `all_nan` -> `honest_nan`, and the audit reports
+    zero fabrications.**
+
+    So the assertion moved to where it always belonged: a PLANTED case against the rule engine.
+    The old form coupled a property of the HARNESS to the continued existence of a DEFECT in the
+    library -- fixing the defect broke the guard, which is exactly backwards.
+    """
+    # A fitted-model column observed as `differs` with velocity isolated as the cause is the
+    # fabrication shape. `add_ghost_gk` is still in FITTED_MODEL; only its POSITIONS stopped
+    # observing `differs`, because they now decline.
+    adjudication, rationale = classify(
+        fn="add_ghost_gk",
+        col="ghost_gk_x",
+        roster="full",
+        obs="differs",
+        cause="velocity",
+    )
+    assert adjudication == "silent_degrade", (
+        f"the rule engine can no longer express a fabrication: a FITTED_MODEL column observed "
+        f"`differs` with cause=velocity classified as {adjudication!r}. The audit's headline "
+        f"finding has become unreachable."
+    )
+    assert rationale, "a silent_degrade verdict must carry a rationale"
+
+
+def test_no_column_is_currently_adjudicated_a_fabrication():
+    """The repaired state, asserted so a regression is loud.
+
+    Companion to the test above: that one proves the machinery CAN say `silent_degrade`, this one
+    records that today nothing DOES. A new fabrication -- or a regression of the ghost refusal --
+    fails here by name.
     """
     fabrications = [
         f"{e.name}.{col} ({axis}/{roster})"
@@ -102,8 +138,7 @@ def test_at_least_one_column_was_adjudicated_a_fabrication():
         for axis, roster, col, v in iter_verdicts(e)
         if v.adjudication == "silent_degrade"
     ]
-    assert fabrications, (
-        "no column is adjudicated `silent_degrade`. Either the library genuinely fabricates "
-        "nothing on freeze-frames -- a real and reportable result -- or the harness cannot "
-        "detect it. Establish which before deleting this test."
+    assert not fabrications, (
+        f"a column is adjudicated `silent_degrade`: {fabrications}. Either a new fabrication "
+        f"landed, or the ghost-GK velocity refusal regressed. Both are real findings."
     )

@@ -19,6 +19,12 @@ import textwrap
 # to do exactly this. Recording these as fabrication would invert their purpose.
 PROVENANCE_LIKE = {
     ("add_das", "das_source"),
+    # ghost_gk_source reports WHICH path produced the ghost position. On a freeze-frame leg it
+    # reads "velocity_unavailable" and on a tracking leg "computed" -- differing is the whole
+    # point. Registered here rather than left to FITTED_MODEL below, which would label the
+    # provenance column itself a fabrication and invert its purpose. (The POSITIONS are the
+    # fitted-model columns, and they now read all_nan -> honest_nan.)
+    ("add_ghost_gk", "ghost_gk_source"),
     ("add_press_commitment", "press_commitment_source"),
     ("add_shot_goalmouth", "shot_crossing_source"),
     ("add_shot_goalmouth", "shot_crossing_confidence"),

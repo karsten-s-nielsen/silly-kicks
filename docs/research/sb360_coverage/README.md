@@ -16,7 +16,10 @@ Matrix: [`behaviour_matrix.md`](behaviour_matrix.md).
 
 **SB360 headroom is substantially larger than expected.** Of 486 verdicts across 34 entry
 points, **299 are `works`** — the column produces identical values with or without velocity —
-and only **4 are `silent_degrade`**.
+and only **4 are `silent_degrade`** -- all `add_ghost_gk`, and **since REPAIRED** (see below), so
+the regenerated `behaviour_matrix.md` now reports **489 verdicts and ZERO `silent_degrade`**. The
+figures in this report are the measurement AS TAKEN at 4.75.0 and are left standing: rewriting them
+would erase the finding that motivated the repair.
 
 These work on freeze-frames today, unchanged:
 
@@ -128,9 +131,18 @@ Traced end-to-end (SB events → converter → SPADL actions → `event_uuid` jo
 The method generalises: to separate "real data" from "our bug", count the same quantity at every
 stage of the chain and find where it drops. Here it never dropped inside our code.
 
-## The one fabrication
+## The one fabrication -- REPAIRED
 
-`add_ghost_gk` (`ghost_gk_x`, `ghost_gk_y`) is the only column adjudicated `silent_degrade`. A
+**Status: fixed.** The ghost path now REFUSES rather than serving an imputed feature vector: the
+guard sits at the shared serving seam `_serve_positions_core`, so `add_ghost_gk`,
+`compute_ghost_gk` and `serve_ghost_gk_positions` all inherit it. `ghost_gk_x`/`ghost_gk_y`
+re-derive to `all_nan` -> `honest_nan` BY RULE (the machine observation changed; the adjudication
+followed), and a new `ghost_gk_source` column reports which path produced the value.
+
+The rest of this section is the original finding, retained because it is the reasoning that
+produced the fix -- in particular the mechanism, which determined what the fix had to be.
+
+`add_ghost_gk` (`ghost_gk_x`, `ghost_gk_y`) WAS the only column adjudicated `silent_degrade`. A
 fitted model silently imputes the five velocity features it was trained on
 (`ball_vx`/`ball_vy`/`ball_speed`/`defensive_line_speed`/`defending_centroid_vx`). The output is a
 plausible coordinate with no basis, indistinguishable downstream from a velocity-informed

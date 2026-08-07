@@ -4509,7 +4509,16 @@ def add_ghost_gk(
 
     See NOTICE for full bibliographic citations.
     """
-    from ._ghost_gk import _resolve_model, compute_ghost_gk
+    from ._ghost_gk import (
+        GHOST_GK_COMPUTED,
+        GHOST_GK_NO_KEEPER,
+        GHOST_GK_SOURCE_VALUES,
+        GHOST_GK_UNLINKED,
+        GHOST_GK_VELOCITY_UNAVAILABLE,
+        _resolve_model,
+        compute_ghost_gk,
+    )
+    from ._velocity_availability import velocity_unavailable_by_design
 
     resolved_model = _resolve_model(model)
     out = actions.copy()
@@ -4528,6 +4537,28 @@ def add_ghost_gk(
     link_frame_ids: set[int] | None = None
     if "frame_id" in pointers.columns:
         link_frame_ids = set(pointers["frame_id"].dropna().astype(int).tolist())
+
+    # Velocity contract, BOTH directions, ahead of the precompute short-circuit below.
+    #
+    # The short-circuit skips compute_ghost_gk entirely, so the guard inside the shared serving
+    # seam is unreachable on that path -- these two are what make the contract hold for frames
+    # that arrive already enriched.
+    #
+    # Both are needed. `velocity_unavailable_by_design` is an ALL-rows predicate, so on an
+    # UNMARKED or PARTIALLY-marked set it returns False and only the second check fires.
+    # MEASURED without it: precomputed-ghost frames with vx/vy dropped and no marker returned
+    # ghost_gk_x = 52.5, a fabricated coordinate on frames the contract says must RAISE.
+    if velocity_unavailable_by_design(frames):
+        out = actions.copy()
+        out["ghost_gk_x"] = np.nan
+        out["ghost_gk_y"] = np.nan
+        out["ghost_gk_source"] = GHOST_GK_VELOCITY_UNAVAILABLE
+        return out
+    if "vx" not in frames.columns or "vy" not in frames.columns:
+        raise ValueError(
+            "add_ghost_gk requires vx/vy on frames (call derive_velocities() first), or declare "
+            "speed_source unavailable. See the velocity-availability contract."
+        )
 
     # Short-circuit: skip compute if frames already have ghost columns
     if "ghost_gk_x" in frames.columns and frames["ghost_gk_x"].notna().any():
@@ -4585,6 +4616,29 @@ def add_ghost_gk(
     gy = out["ghost_gk_y"].to_numpy(dtype="float64")
     out["ghost_gk_x"] = FIELD_LENGTH - gx
     out["ghost_gk_y"] = np.where(flip, FIELD_WIDTH - gy, gy)
+
+    # Provenance. Placed AFTER the ADR-028 reprojection; the order is free, because NaN is
+    # invariant under both `FIELD_LENGTH - gx` and `np.where(flip, FIELD_WIDTH - gy, gy)`.
+    #
+    # `no_keeper` and `unlinked` are distinct facts with distinct remedies: an action that reached
+    # a frame carrying no DEFENDING keeper did reach a frame, and calling it "unlinked" states
+    # something the data refutes. They separate on frame linkage.
+    has_frame = out["action_id"].isin(linked["action_id"])
+    out["ghost_gk_source"] = np.where(
+        out["ghost_gk_x"].notna(),
+        GHOST_GK_COMPUTED,
+        np.where(has_frame, GHOST_GK_NO_KEEPER, GHOST_GK_UNLINKED),
+    )
+
+    # Closed-vocabulary post-condition (the _das.py DAS_SOURCE_VALUES pattern). A vocabulary
+    # described as closed but unenforced is a comment, not a contract -- and consumers are told to
+    # pin an enum to GHOST_GK_SOURCE_VALUES.
+    _emitted = set(pd.unique(out["ghost_gk_source"].dropna()))
+    if not _emitted <= set(GHOST_GK_SOURCE_VALUES):
+        raise ValueError(
+            f"ghost_gk_source emitted values outside its closed vocabulary: "
+            f"{sorted(_emitted - set(GHOST_GK_SOURCE_VALUES))}"
+        )
 
     return out
 

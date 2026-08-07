@@ -258,6 +258,62 @@ class LinkReport:
         return sync_score(links, high_quality_threshold=high_quality_threshold)
 
 
+#: Regimes reported by ``validate_velocity_regime``. Exported for the same reason
+#: ``DAS_SOURCE_VALUES`` is: a regime string that can RAISE by default is a consumer-facing
+#: contract, and consumers must pin an enum to this set rather than to string literals.
+VELOCITY_INFORMED = "velocity_informed"
+POSITIONAL_ONLY = "positional_only"
+#: SOME rows declare kinematics structurally unavailable and others do not. The case fail-loud
+#: exists for: such a frame set cannot be scored coherently.
+MIXED = "mixed"
+#: No row declares kinematics unavailable, but ``vx``/``vy`` are absent -- the
+#: "forgot ``derive_velocities()``" case. NOT a variant of MIXED: nothing is structurally missing
+#: and the remedy is a single call, so labelling it MIXED would attach a message ("some rows can
+#: carry velocity and others structurally cannot") that is FALSE for these frames -- and it is the
+#: case a user is most likely to hit.
+VELOCITY_MISSING = "velocity_missing"
+#: A zero-row frame set is not a velocity problem. Reported rather than smuggled into another
+#: regime, and it does NOT raise -- which FOLLOWS the siblings rather than departing from them:
+#: measured on a schema-shaped zero-row frame, ``validate_time_base`` and ``validate_id_dtypes``
+#: both return a diagnosis.
+EMPTY = "empty"
+VELOCITY_REGIME_VALUES: tuple[str, ...] = (
+    VELOCITY_INFORMED,
+    POSITIONAL_ONLY,
+    MIXED,
+    VELOCITY_MISSING,
+    EMPTY,
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class VelocityRegimeDiagnosis:
+    """Whether a frame set carries usable kinematics, reported before anything is computed.
+
+    Third member of the ``validate_time_base`` / ``validate_id_dtypes`` family (ADR-017, ADR-019),
+    and produced by ``silly_kicks.tracking.utils.validate_velocity_regime``.
+
+    Seventeen of the registered ``add_*`` aggregators produce output that moves with velocity. Two
+    read the availability marker themselves; ``add_ghost_gk`` refuses on it. The rest produce an
+    HONEST, usable value whose INTERPRETATION changes -- pitch control at zero velocity is a
+    well-defined positional model, not a fabrication. What a consumer cannot otherwise tell is that
+    the value is positional-only, and that is a property of the whole frame set rather than of any
+    row, which is why this is a diagnostic rather than a per-row provenance column that would carry
+    a constant.
+
+    Attributes:
+        regime: one of :data:`VELOCITY_REGIME_VALUES`.
+        speed_source_counts: ``speed_source`` value -> row count (empty if the column is absent).
+        has_velocity_columns: whether both ``vx`` and ``vy`` are present.
+        message: human-readable summary, and the text of the raise when one occurs.
+    """
+
+    regime: str
+    speed_source_counts: dict[str, int]
+    has_velocity_columns: bool
+    message: str
+
+
 @dataclasses.dataclass(frozen=True)
 class TimeBaseDiagnosis:
     """Per-period action-vs-frame time-range diagnosis (time-base mismatch hypothesis).
