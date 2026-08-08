@@ -20,7 +20,7 @@ TRACKING = ROOT / "tracking"
 # because that framing let two genuinely-public seams sit here indefinitely while the package
 # advertised "public tracking seams only". A private that DOES have public meaning gets
 # promoted instead of listed (4.53.0 promoted both: `_id_compat` -> `silly_kicks.id_compat`,
-# `_gk_resolve.defended_goal_x` -> `silly_kicks.tracking.defended_goal_x`).
+# `_gk_resolve.defended_goal_x` -> `silly_kicks.tracking.resolve_defended_goals`, ADR-055).
 #
 # So the review question for an addition is not "is the debt documented?" but "is this symbol
 # genuinely internal, and is it confined to one port module?" If the answer to either half is

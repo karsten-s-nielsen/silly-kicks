@@ -9,15 +9,26 @@ See spec: docs/superpowers/specs/2026-05-04-tf13-tf14-defensive-line-design.md s
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Literal, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from silly_kicks.id_compat import canonical_id_series, ids_differ, ids_equal, ids_match, restore_id_dtype
+from silly_kicks.id_compat import (
+    canonical_id,
+    canonical_id_series,
+    ids_differ,
+    ids_equal,
+    ids_match,
+    restore_id_dtype,
+)
 from silly_kicks.spadl import config as spadlconfig
 
+from ._gk_geometry import _truthy_bool
 from .utils import link_actions_to_frames
 
 _GOALKICK = spadlconfig.actiontype_id["goalkick"]
@@ -320,34 +331,317 @@ def acting_gk_from_frames(
     return out
 
 
-def defended_goal_x(frames: pd.DataFrame) -> dict:
-    """(game_id, period_id, team_id) -> defended goal_x (0 or 105).
+class GoalEndUnresolvedError(ValueError):
+    """The goal map cannot resolve the end a computation needs.
 
-    N1: GK identification quality is provider-variable (Metrica/SkillCorner were
-    21-50% pre-fix). Prefer mean GK x; fall back to the team's mean outfield x
-    when a (game, period, team) has no GK rows, so a mis-/missing-GK does not
-    silently drop the team from the goal map.
-
-    Extracted byte-identically from ``_xshot_occurrence._defended_goal_x``
-    (TF-48, spec 2026-06-10-shot-goalmouth-psxg-design); xS re-imports via shim.
-
-    Exported publicly as ``silly_kicks.tracking.defended_goal_x`` (4.53.0). It is the pinned
-    goal map: consumers that need a goal side -- including ``gkdv``, per its spec §4.2 -- must
-    call THIS rather than re-derive the rule, because a second implementation is a fork that
-    can disagree with the first.
+    Raised by per-frame functions, which REQUIRE a resolvable map; caught by name at the
+    ``add_*`` edge, which emits a NaN row plus provenance. Keeping the decision in one place
+    matters: having the aggregator pre-check would duplicate the exact lookup the callee is
+    about to perform, and the two copies can drift on which accessor and which ``allow_guess``.
 
     Examples
     --------
-    Resolve each team's defended goal end per (game, period)::
+    A ``ValueError`` subclass, so existing handlers keep working while new code can catch the
+    specific case by name:
 
-        from silly_kicks.tracking import defended_goal_x
-        goal_map = defended_goal_x(frames)
-        # goal_map[(game_id, period_id, team_id)] in (0.0, 105.0)
+    >>> from silly_kicks.tracking import GoalEndUnresolvedError
+    >>> issubclass(GoalEndUnresolvedError, ValueError)
+    True
+    >>> try:
+    ...     raise GoalEndUnresolvedError("team 2 has no end in (game=1, period=1)")
+    ... except ValueError as exc:
+    ...     print(type(exc).__name__)
+    GoalEndUnresolvedError
     """
-    players = frames[~frames["is_ball"].astype(bool)]
-    out: dict = {}
-    for key, grp in players.groupby(["game_id", "period_id", "team_id"], dropna=False):
-        gk_rows = grp[grp["is_goalkeeper"].astype(bool)]
-        ref = gk_rows if len(gk_rows) else grp  # fallback: whole-team mean-x
-        out[key] = 0.0 if float(ref["x"].mean()) < 52.5 else 105.0
-    return out
+
+
+@dataclass(frozen=True)
+class GoalMap:
+    """Defended goal end per ``(game_id, period_id, team_id)``, with provenance.
+
+    Three MUTUALLY EXCLUSIVE states -- the ladder:
+
+    * ``resolved``   -- GK mean-x is finite
+    * ``guessed``    -- GK mean-x is not finite AND outfield mean-x IS finite (N1 coverage)
+    * ``unresolved`` -- NA team identity, or every x NaN: in NEITHER mapping
+
+    Guessed ends are opt-in via ``allow_guess`` rather than merged in, because a caller that
+    discards provenance is the defect this seam exists to end.
+
+    **Keys are canonical, and canonical means STRING** (``canonical_id(1) == "1"``). Never
+    hold the mappings as a plain dict and index them with raw ids -- ``("1", "1", "2")`` does
+    not equal ``(1, 1, 2)``, so such a lookup MISSES silently. Use the accessors, which
+    canonicalize on the way in.
+
+    ``frozen=True`` freezes the binding, not the mapping, hence ``MappingProxyType``.
+
+    Examples
+    --------
+    Resolve once per match, then ask for an own end and an attacked end::
+
+        goal_map = resolve_defended_goals(frames)
+        own = goal_map.get(game_id, period_id, team_id, allow_guess=True)
+        att = goal_map.attacked_goal(game_id, period_id, team_id, allow_guess=True)
+    """
+
+    resolved: Mapping[tuple, float]
+    guessed: Mapping[tuple, float]
+    unresolved: frozenset
+
+    def __post_init__(self) -> None:
+        strict = dict(self.resolved)
+        loose = {**dict(self.guessed), **strict}
+        by_period: dict[str, dict[tuple, dict]] = {}
+        for label, pool in (("strict", strict), ("loose", loose)):
+            idx: dict[tuple, dict] = {}
+            for (game, period, team), end in pool.items():
+                idx.setdefault((game, period), {})[team] = end
+            by_period[label] = idx
+        # Derived caches, not state: computed once so `attacked_goal`/`ends_in_period` do not
+        # rebuild and linearly scan a merged dict on every call inside a per-frame loop.
+        object.__setattr__(self, "_strict", strict)
+        object.__setattr__(self, "_loose", loose)
+        object.__setattr__(self, "_by_period", by_period)
+
+    @staticmethod
+    def _key(game_id, period_id, team_id) -> tuple:
+        return (canonical_id(game_id), canonical_id(period_id), canonical_id(team_id))
+
+    def _pool(self, allow_guess: bool) -> dict:
+        return self._loose if allow_guess else self._strict  # type: ignore[attr-defined]
+
+    def _period(self, game, period, allow_guess: bool) -> dict:
+        label = "loose" if allow_guess else "strict"
+        return self._by_period[label].get((game, period), {})  # type: ignore[attr-defined]
+
+    def get(self, game_id, period_id, team_id, *, allow_guess: bool = False) -> float | None:
+        """The end THIS team defends, or ``None`` when it does not resolve.
+
+        Examples
+        --------
+        Team 1's keeper stands at x=4, so team 1 defends the x=0 end. The lookup canonicalizes,
+        so the id may arrive in any dtype:
+
+        >>> import pandas as pd
+        >>> from silly_kicks.tracking import resolve_defended_goals
+        >>> frames = pd.DataFrame(
+        ...     {
+        ...         "game_id": [1] * 4,
+        ...         "period_id": [1] * 4,
+        ...         "team_id": [1, 1, 2, 2],
+        ...         "is_ball": [False] * 4,
+        ...         "is_goalkeeper": [True, False, True, False],
+        ...         "x": [4.0, 40.0, 101.0, 65.0],
+        ...         "y": [34.0] * 4,
+        ...     }
+        ... )
+        >>> goal_map = resolve_defended_goals(frames)
+        >>> goal_map.get(1, 1, 1, allow_guess=True)
+        0.0
+        >>> goal_map.get("1", "1", "1", allow_guess=True)
+        0.0
+        >>> goal_map.get(1, 1, 99, allow_guess=True) is None
+        True
+        """
+        key = self._key(game_id, period_id, team_id)
+        if key[2] is pd.NA:
+            return None
+        return self._pool(allow_guess).get(key)
+
+    def attacked_goal(self, game_id, period_id, team_id, *, allow_guess: bool = False) -> float | None:
+        """The end this team ATTACKS -- i.e. the end its OPPONENT defends.
+
+        A real lookup of the opponent's entry, never ``105.0 - get(...)``: the arithmetic
+        identity is a second implementation of the rule, and it is wrong on a degenerate map.
+
+        Returns ``None`` when the ``(game, period)`` does not resolve to exactly one opponent,
+        **or when that opponent's end equals this team's own end**. The second guard is not
+        redundant -- in the degenerate case there IS exactly one opponent, so a count-only
+        check passes and the answer would say this team attacks the goal it defends.
+
+        Examples
+        --------
+        Team 1 defends x=0, so it ATTACKS x=105 -- read off its opponent's entry, not by
+        subtracting its own from the pitch length:
+
+        >>> import pandas as pd
+        >>> from silly_kicks.tracking import resolve_defended_goals
+        >>> frames = pd.DataFrame(
+        ...     {
+        ...         "game_id": [1] * 4,
+        ...         "period_id": [1] * 4,
+        ...         "team_id": [1, 1, 2, 2],
+        ...         "is_ball": [False] * 4,
+        ...         "is_goalkeeper": [True, False, True, False],
+        ...         "x": [4.0, 40.0, 101.0, 65.0],
+        ...         "y": [34.0] * 4,
+        ...     }
+        ... )
+        >>> goal_map = resolve_defended_goals(frames)
+        >>> goal_map.attacked_goal(1, 1, 1, allow_guess=True)
+        105.0
+        >>> goal_map.attacked_goal(1, 1, 2, allow_guess=True)
+        0.0
+        """
+        game, period, team = self._key(game_id, period_id, team_id)
+        if team is pd.NA:
+            return None
+        ends = self._period(game, period, allow_guess)
+        opponents = [end for other, end in ends.items() if other != team]
+        if len(opponents) != 1:
+            return None
+        own = ends.get(team)
+        if own is not None and opponents[0] == own:
+            return None
+        return opponents[0]
+
+    def ends_in_period(self, game_id, period_id, *, allow_guess: bool = False) -> dict:
+        """``{team_id: defended_end}`` for one ``(game, period)``.
+
+        Examples
+        --------
+        Keys come back CANONICAL (strings), which is what makes a raw-tuple lookup against the
+        underlying mappings miss:
+
+        >>> import pandas as pd
+        >>> from silly_kicks.tracking import resolve_defended_goals
+        >>> frames = pd.DataFrame(
+        ...     {
+        ...         "game_id": [1] * 4,
+        ...         "period_id": [1] * 4,
+        ...         "team_id": [1, 1, 2, 2],
+        ...         "is_ball": [False] * 4,
+        ...         "is_goalkeeper": [True, False, True, False],
+        ...         "x": [4.0, 40.0, 101.0, 65.0],
+        ...         "y": [34.0] * 4,
+        ...     }
+        ... )
+        >>> goal_map = resolve_defended_goals(frames)
+        >>> goal_map.ends_in_period(1, 1, allow_guess=True)
+        {'1': 0.0, '2': 105.0}
+        """
+        return dict(self._period(canonical_id(game_id), canonical_id(period_id), allow_guess))
+
+    @property
+    def n_resolved(self) -> int:
+        """How many ``(game, period, team)`` ends came from a finite GK mean-x.
+
+        Examples
+        --------
+        Both teams have a keeper with finite coordinates here, so both ends are RESOLVED
+        rather than guessed from outfield positions:
+
+        >>> import pandas as pd
+        >>> from silly_kicks.tracking import resolve_defended_goals
+        >>> frames = pd.DataFrame(
+        ...     {
+        ...         "game_id": [1] * 4,
+        ...         "period_id": [1] * 4,
+        ...         "team_id": [1, 1, 2, 2],
+        ...         "is_ball": [False] * 4,
+        ...         "is_goalkeeper": [True, False, True, False],
+        ...         "x": [4.0, 40.0, 101.0, 65.0],
+        ...         "y": [34.0] * 4,
+        ...     }
+        ... )
+        >>> goal_map = resolve_defended_goals(frames)
+        >>> goal_map.n_resolved
+        2
+        """
+        return len(self.resolved)
+
+    @property
+    def n_guessed(self) -> int:
+        """How many ends fell back to the outfield mean-x (the ladder's N1 rung).
+
+        Examples
+        --------
+        Zero on frames where every keeper is tracked; a non-zero count is the signal that
+        ``allow_guess=True`` is doing load-bearing work for this match:
+
+        >>> import pandas as pd
+        >>> from silly_kicks.tracking import resolve_defended_goals
+        >>> frames = pd.DataFrame(
+        ...     {
+        ...         "game_id": [1] * 4,
+        ...         "period_id": [1] * 4,
+        ...         "team_id": [1, 1, 2, 2],
+        ...         "is_ball": [False] * 4,
+        ...         "is_goalkeeper": [True, False, True, False],
+        ...         "x": [4.0, 40.0, 101.0, 65.0],
+        ...         "y": [34.0] * 4,
+        ...     }
+        ... )
+        >>> goal_map = resolve_defended_goals(frames)
+        >>> goal_map.n_guessed
+        0
+        """
+        return len(self.guessed)
+
+
+def _end_from_mean_x(mean_x: float) -> float:
+    """The defended end implied by a mean x. THE one place this choice is made.
+
+    Both the GK-derived and the outfield-guessed branches route through here, so the goal-end
+    population gate sees exactly one derivation for the whole package.
+    """
+    return 0.0 if mean_x < spadlconfig.field_length / 2.0 else spadlconfig.field_length
+
+
+def resolve_defended_goals(frames: pd.DataFrame) -> GoalMap:
+    """Build the pinned goal map. THE single implementation of the rule.
+
+    Consumers that need a goal side must call this rather than re-derive it: a second
+    implementation is a fork that can disagree with the first, and this repo carried ten of
+    them. ``tests/tracking/test_goal_map_population.py`` pins the population.
+
+    **Build ONCE per match, from the FULL frames.** The quantity is the MEAN GK x per
+    ``(game, period, team)`` and the mean is the robustness; building from a single frame is a
+    different estimator, and the cost is PROVIDER-DEPENDENT. Measured on the committed slim
+    fixtures, a per-frame map disagrees with the per-match one on 7.1% of team-frames
+    (skillcorner) / 2.2% (metrica) / 0.0% (sportec, gradientsports), and :meth:`GoalMap.attacked_goal`
+    is unresolvable for 35.7% / 61.7% / 0.0%. The damage concentrates in sparse broadcast
+    detection -- SkillCorner sees a keeper in ~19.6% of frames -- which is exactly the provider
+    class this seam serves. (ADR-055 records why the spec's 78.8% headline is not cited here: it
+    does not reproduce on these fixtures.)
+
+    N1 (retained from the original): GK identification quality is provider-variable, so a
+    ``(game, period, team)`` with no GK rows falls back to the team's mean outfield x -- but as
+    ``guessed``, so consuming the guess is a decision the caller makes explicitly.
+
+    Examples
+    --------
+    Resolve once, then thread it into the per-frame functions::
+
+        goal_map = resolve_defended_goals(frames)
+        influence = compute_gk_influence(frame, team_id, gk_id, xt, goal_map=goal_map)
+    """
+    is_ball = _truthy_bool(frames["is_ball"])
+    players = frames[~is_ball]
+    if players.empty:
+        return GoalMap(MappingProxyType({}), MappingProxyType({}), frozenset())
+
+    is_gk = _truthy_bool(players["is_goalkeeper"])
+    keys = ["game_id", "period_id", "team_id"]
+    gk_mean = players[is_gk].groupby(keys, dropna=False)["x"].mean()
+    all_mean = players.groupby(keys, dropna=False)["x"].mean()
+
+    resolved: dict = {}
+    guessed: dict = {}
+    unresolved: set = set()
+    for raw_key, outfield_mean in all_mean.items():
+        # `Series.items()` is typed `Hashable`, but a groupby over THREE keys always yields a
+        # 3-tuple; the cast states that rather than restructuring the loop around the type stub.
+        key = tuple(canonical_id(part) for part in cast("tuple", raw_key))
+        if key[2] is pd.NA:
+            unresolved.add(key)
+            continue
+        gk_x = gk_mean.get(raw_key, np.nan)
+        if np.isfinite(gk_x):
+            resolved[key] = _end_from_mean_x(gk_x)
+        elif np.isfinite(outfield_mean):
+            guessed[key] = _end_from_mean_x(outfield_mean)
+        else:
+            # Every x NaN: `nan < 52.5` is False, so the old code returned 105.0 silently.
+            unresolved.add(key)
+    return GoalMap(MappingProxyType(resolved), MappingProxyType(guessed), frozenset(unresolved))

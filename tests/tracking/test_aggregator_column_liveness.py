@@ -290,6 +290,19 @@ def _xtf(fn, **kw):
     return lambda: (_actions(), fn(_actions(), _frames(), _xt(), home_team_id=5, **kw))
 
 
+def _xtf_map(fn, **kw):
+    """ADR-055: `add_cover_shadows` / `add_gk_influence` take a `goal_map`, not `home_team_id`.
+
+    A SEPARATE builder rather than a conditional inside `_xtf`: the two families now have
+    genuinely different signatures, and a builder that guesses which one it is holding would
+    silently pick the wrong branch the next time a signature moves.
+
+    `goal_map=None` is deliberate -- it makes the aggregator derive the map from `_frames()`,
+    which is the production default path and therefore what liveness should be measuring.
+    """
+    return lambda: (_actions(), fn(_actions(), _frames(), _xt(), **kw))
+
+
 def _run_sync_score():
     links, _report = link_actions_to_frames(_actions(), _frames())
     from silly_kicks.tracking import add_sync_score
@@ -485,21 +498,43 @@ def _run_shot_goalmouth():
     return actions, F.add_shot_goalmouth(actions, frames)
 
 
+def _run_visible_area_coverage():
+    """ADR-055. The polygons VARY per action, which the gate requires and the seam deserves.
+
+    A single fixed polygon would make `visible_area_fraction` constant, and the non-constant half
+    of this gate exists precisely to reject a column that is alive only in the "not all NaN"
+    sense. Three widths -> three distinct fractions; the fourth action carries no polygon, so the
+    NaN + `no_polygon` branch is exercised in the same run.
+    """
+    actions = _actions()
+    widths = [26.25, 52.5, 78.75]
+    polys, aids = [], []
+    for i, aid in enumerate(actions["action_id"]):
+        if i >= len(widths):
+            break
+        w = widths[i]
+        polys.append(np.array([[0.0, 0.0], [w, 0.0], [w, 68.0], [0.0, 68.0]]))
+        aids.append(aid)
+    visible = pd.DataFrame({"action_id": aids, "polygon": polys})
+    return actions, F.add_visible_area_coverage(actions, visible_area=visible)
+
+
 ENTRIES: dict[str, object] = {
     "add_action_context": _std(F.add_action_context),
+    "add_visible_area_coverage": _run_visible_area_coverage,
     "add_actor_pre_window": _std(F.add_actor_pre_window),
     # detailed=True is REQUIRED here, not incidental: `max_single_defender_player_id` is gated to
     # the exact path (the cheap path's argmax measured 0.157 agreement, so it never names anyone),
     # and under the default `detailed=False` that column is 100% NA -- which this gate correctly
     # rejects. Exercising the config where the column is live is the point.
-    "add_cover_shadows": _xtf(F.add_cover_shadows, detailed=True),
+    "add_cover_shadows": _xtf_map(F.add_cover_shadows, detailed=True),
     "add_das": _run_das,
     "add_defensive_credit": _run_defensive_credit,
     "add_defensive_line": _std(F.add_defensive_line, home_team_id=5, n=4),
     "add_elastic_sync": _std(F.add_elastic_sync),
     "add_ghost_gk": _std(F.add_ghost_gk, home_team_id=5),
     "add_gk_completion": _std(F.add_gk_completion),
-    "add_gk_influence": _xtf(F.add_gk_influence),
+    "add_gk_influence": _xtf_map(F.add_gk_influence),
     "add_gradientsports_player_ids": _run_gradientsports_player_ids,
     "add_line_break": _std(F.add_line_break, home_team_id=5),
     "add_obso": _std(F.add_obso),

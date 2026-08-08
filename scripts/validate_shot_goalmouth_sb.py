@@ -72,6 +72,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 from _loader_pining import _base_url, _list_matches, _resolve_token, load_matches
 
+from silly_kicks.id_compat import ids_match, same_id
+
 _SB_COMPETITION_ID = 43  # FIFA World Cup
 _SB_SEASON_ID = 106  # 2022
 _M_PER_YD = 0.9144
@@ -244,16 +246,24 @@ def _extract_sb_gk_y(sb_row) -> float:
     return float("nan")
 
 
-def _gs_gk_y_canonical(g, gk_frames: pd.DataFrame, goal_map: dict) -> float:
+def _gs_gk_y_canonical(g, gk_frames: pd.DataFrame, goal_map) -> float:
     """GS-tracked DEFENDING-GK y at the shot stamp, canonicalized to the shooter's
-    attacked-at-105 frame (the engine's own goal_x reflection), or NaN."""
-    key = (g["game_id"], g["period_id"])
-    ends = {k[2]: v for k, v in goal_map.items() if (k[0], k[1]) == key}
-    opp = [(tid, v) for tid, v in ends.items() if str(tid) != str(g["team_id"])]
+    attacked-at-105 frame (the engine's own goal_x reflection), or NaN.
+
+    ADR-055: ``goal_map`` is a ``GoalMap``, not a plain dict. The previous body scanned
+    ``goal_map.items()`` and compared ``(k[0], k[1]) == key`` -- a RAW tuple against keys that
+    are canonical STRINGS, so it matched nothing and every row silently returned NaN. The
+    accessors canonicalize on the way in, which is exactly why the seam has them.
+    """
+    ends = goal_map.ends_in_period(g["game_id"], g["period_id"], allow_guess=True)
+    # `same_id`, not `str(tid) != str(...)`: map keys are canonical strings while the action's
+    # team id is whatever the caller's frame carries, and str() of an integral float renders
+    # "2.0" against the key's "2".
+    opp = [(tid, v) for tid, v in ends.items() if not same_id(tid, g["team_id"])]
     if len(opp) != 1:
         return float("nan")
     tid, goal_x = opp[0]
-    sub = gk_frames[(gk_frames["period_id"] == g["period_id"]) & (gk_frames["team_id"].astype(str) == str(tid))]
+    sub = gk_frames[(gk_frames["period_id"] == g["period_id"]) & ids_match(gk_frames["team_id"], tid)]
     if sub.empty:
         return float("nan")
     dt = (sub["time_seconds"] - float(g["time_seconds"])).abs()
@@ -537,8 +547,8 @@ def run(
     import silly_kicks.tracking._shot_goalmouth as sgm
     from scripts._driver import for_each, shard_path
     from silly_kicks.spadl import config as spadlconfig
+    from silly_kicks.tracking import resolve_defended_goals
     from silly_kicks.tracking._gk_geometry import _truthy_bool
-    from silly_kicks.tracking._gk_resolve import defended_goal_x
     from silly_kicks.tracking._shot_goalmouth import ShotGoalmouthParams, ShotGoalmouthReport
     from silly_kicks.tracking.features import add_shot_goalmouth
 
@@ -660,7 +670,7 @@ def run(
         unmatched_all.extend({**u, "match_id": match_id} for u in unmatched)
         # GK-geometry handedness inputs (round-2 instrument, ADR-030): the defending
         # GK's tracked y vs the SB freeze-frame GK -- per matched shot, fit-independent
-        goal_map = defended_goal_x(frames)
+        goal_map = resolve_defended_goals(frames)
         gk_frames = frames[_truthy_bool(frames["is_goalkeeper"])]
         for m in matched:
             rows.append(

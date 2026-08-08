@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from silly_kicks.tracking import resolve_defended_goals
 from tests.tracking._provider_inputs import (
     load_provider_frames,
     synthesize_actions,
@@ -46,12 +47,12 @@ class TestCoverShadowsProviders:
         """5 columns present, correct dtypes, no crashes."""
         from silly_kicks.tracking.features import add_cover_shadows
 
-        provider, actions, frames, home_team_id, xt = provider_data
+        provider, actions, frames, _home_team_id, xt = provider_data
         result = add_cover_shadows(
             actions,
             frames,
             xt,
-            home_team_id=home_team_id,
+            goal_map=resolve_defended_goals(frames),
         )
         expected_cols = [
             "n_blocked_receivers",
@@ -67,12 +68,12 @@ class TestCoverShadowsProviders:
         """NaN rate < provider-specific ceiling."""
         from silly_kicks.tracking.features import add_cover_shadows
 
-        provider, actions, frames, home_team_id, xt = provider_data
+        provider, actions, frames, _home_team_id, xt = provider_data
         result = add_cover_shadows(
             actions,
             frames,
             xt,
-            home_team_id=home_team_id,
+            goal_map=resolve_defended_goals(frames),
         )
         nan_rate = result["blocking_score"].isna().mean()
         ceiling = _NAN_RATE_CEILING[provider]
@@ -82,12 +83,12 @@ class TestCoverShadowsProviders:
         """blocking_score >= 0, blocked_threat_fraction in [0,1]."""
         from silly_kicks.tracking.features import add_cover_shadows
 
-        provider, actions, frames, home_team_id, xt = provider_data
+        provider, actions, frames, _home_team_id, xt = provider_data
         result = add_cover_shadows(
             actions,
             frames,
             xt,
-            home_team_id=home_team_id,
+            goal_map=resolve_defended_goals(frames),
         )
         valid_bs = result["blocking_score"].dropna()
         if len(valid_bs) > 0:
@@ -101,12 +102,12 @@ class TestCoverShadowsProviders:
         """n_blocked_receivers >= 0 for all linked actions."""
         from silly_kicks.tracking.features import add_cover_shadows
 
-        provider, actions, frames, home_team_id, xt = provider_data
+        provider, actions, frames, _home_team_id, xt = provider_data
         result = add_cover_shadows(
             actions,
             frames,
             xt,
-            home_team_id=home_team_id,
+            goal_map=resolve_defended_goals(frames),
         )
         valid = result["n_blocked_receivers"].dropna()
         if len(valid) == 0:

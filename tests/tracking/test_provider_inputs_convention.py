@@ -13,6 +13,7 @@ implementation was wrong on it for away rows.
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from silly_kicks.tracking._action_orientation import FIELD_LENGTH, FIELD_WIDTH
@@ -145,3 +146,93 @@ def test_gradientsports_labels_both_directions():
         team: sorted(grp["team_attacking_direction"].dropna().unique()) for team, grp in players.groupby("_team")
     }
     assert by_team == {"100": ["ltr"], "200": ["rtl"]}, by_team
+
+
+#: Providers whose slim slice never has BOTH teams' keepers in the same period, so the check below
+#: has nothing to compare. Note the distinction, which a first draft of this gate got wrong: these
+#: slices DO carry keeper rows (skillcorner 252 of them), just one-sided -- SkillCorner detects a
+#: keeper in ~19.6% of frames (ADR-038), so a short slice routinely sees one team's and not the
+#: other's. "one-sided keeper coverage" and "keeper coverage that agrees" are different states and
+#: must not report the same way, which is why the test SKIPS with the measured counts rather than
+#: passing.
+_ONE_SIDED_KEEPERS = frozenset({"metrica", "skillcorner"})
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        pytest.param(
+            "sportec",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "MEASURED DEFECT in the committed sportec_slim.parquet: its direction LABELS "
+                    "and its keeper POSITIONS are exact opposites, in both periods. "
+                    "team_attacking_direction says DFL-CLU-00000P attacks +x (so it defends x=0), "
+                    "while that team's keeper mean x is 98.1 (p1) and 77.0 (p2). Confirmed "
+                    "independently by orient_frames_to_ltr_by_geometry (ADR-035), which MIRRORS "
+                    "this slice's positions. Strict xfail so repairing the slice is forced to "
+                    "delete this marker rather than leaving a stale exemption behind. Repair also "
+                    "moves sportec_expected.parquet and the lakehouse-parity goldens, so it is a "
+                    "separate change from ADR-055."
+                ),
+            ),
+        ),
+        "gradientsports",
+        *sorted(_ONE_SIDED_KEEPERS),
+    ],
+)
+def test_direction_labels_agree_with_keeper_geometry(provider):
+    """A team labelled ``ltr`` attacks +x, so it DEFENDS x=0 and its keeper stands at LOW x.
+
+    This is not a restatement of ``test_synthesized_actions_are_action_ltr``: that one checks the
+    ACTION builder against the labels and would pass on a slice whose positions are mirrored,
+    because both sides read the same labels. This one checks the labels against the POSITIONS,
+    which is the only pairing that can see a slice reflected without its labels being swapped
+    (ADR-045: a 180-degree point reflection swaps direction labels -- omitting that is the
+    recorded defect class).
+
+    It became load-bearing with ADR-055: ``resolve_defended_goals`` derives the goal end from
+    keeper geometry, so on a slice where the two disagree, a position-derived map and a
+    label-derived one are opposites and any consumer mixing them scores a mirrored scene.
+    """
+    frames = load_provider_frames(provider)
+    players = frames[~frames["is_ball"].astype(bool)]
+    keepers = players[players["is_goalkeeper"].astype(bool)]
+
+    checked = 0
+    one_sided = 0
+    for period, grp in players.groupby("period_id"):
+        labels = {
+            str(team): (g["team_attacking_direction"].dropna().unique().tolist() or [None])[0]
+            for team, g in grp.groupby(grp["team_id"].astype(str))
+        }
+        ltr = [t for t, d in labels.items() if d == "ltr"]
+        rtl = [t for t, d in labels.items() if d == "rtl"]
+        if len(ltr) != 1 or len(rtl) != 1:
+            continue
+        gk = keepers[keepers["period_id"] == period]
+        x_ltr = gk[gk["team_id"].astype(str) == ltr[0]]["x"].mean()
+        x_rtl = gk[gk["team_id"].astype(str) == rtl[0]]["x"].mean()
+        if pd.isna(x_ltr) or pd.isna(x_rtl):
+            one_sided += 1
+            continue
+        checked += 1
+        assert x_ltr < x_rtl, (
+            f"{provider} period {period}: the team labelled 'ltr' ({ltr[0]}) attacks +x, so its "
+            f"keeper should sit at LOWER x than the 'rtl' team's -- measured {x_ltr:.1f} vs "
+            f"{x_rtl:.1f}. Labels and positions disagree: this slice is reflected relative to "
+            "its own direction labels."
+        )
+
+    if checked == 0:
+        assert provider in _ONE_SIDED_KEEPERS, (
+            f"{provider}: no period offered BOTH teams' keepers ({one_sided} one-sided), so this "
+            "gate compared nothing. That is expected only for the providers listed in "
+            f"_ONE_SIDED_KEEPERS ({sorted(_ONE_SIDED_KEEPERS)}) -- for any other provider it "
+            "means keeper coverage regressed and the gate has gone vacuous."
+        )
+        pytest.skip(
+            f"{provider}: {one_sided} period(s) with one-sided keeper coverage, 0 comparable "
+            f"({len(keepers)} keeper rows present). Geometry-vs-label check inexpressible here."
+        )

@@ -11,7 +11,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests.tracking._gk_test_helpers import _make_two_team_frame
+from tests.tracking._goal_map_helpers import goal_map_for, goal_map_like_home_team_id
 from tests.tracking._provider_inputs import load_provider_frames, synthesize_actions
+
+#: ADR-055 replaced ``home_team_id=1`` at this file's synthetic-fixture call sites.
+#: ``_make_two_team_frame`` emits game 1 / period 1 with teams {1, 2} and a keeper at each
+#: end, so this states exactly what ``home_team_id=1`` meant. The REAL-data tests below use
+#: ``resolve_defended_goals`` / ``_csi.goal_map()`` instead -- the production path.
+HOME_GOAL_MAP = goal_map_for({1: 0.0, 2: 105.0})
 
 # === Task 1: Physics core ===
 
@@ -211,7 +218,7 @@ class TestLaneControl:
             frame,
             passer_xy=(50.0, 34.0),
             receiver_xy=(75.0, 34.0),
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             attacking_team_id=2,
         )
         assert result.is_blocked_all
@@ -231,7 +238,7 @@ class TestLaneControl:
             frame,
             passer_xy=(50.0, 34.0),
             receiver_xy=(75.0, 34.0),
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             attacking_team_id=2,
         )
         assert not result.is_blocked_any
@@ -252,7 +259,7 @@ class TestLaneControl:
             frame,
             passer_xy=(50.0, 34.0),
             receiver_xy=(75.0, 34.0),
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             attacking_team_id=2,
         )
         # At least center line should be blocked
@@ -292,7 +299,7 @@ class TestLaneControl:
             frame,
             passer_xy=(50.0, 34.0),
             receiver_xy=(60.0, 34.0),
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             attacking_team_id=2,
             params=p,
         )
@@ -312,7 +319,7 @@ class TestLaneControl:
                 frame,
                 passer_xy=(50.0, 34.0),
                 receiver_xy=(75.0, 34.0),
-                home_team_id=1,
+                goal_map=HOME_GOAL_MAP,
                 attacking_team_id=2,
             )
 
@@ -327,7 +334,7 @@ class TestLaneControl:
                 frame,
                 passer_xy=(50.0, 34.0),
                 receiver_xy=(75.0, 34.0),
-                home_team_id=1,
+                goal_map=HOME_GOAL_MAP,
                 attacking_team_id=2,
             )
 
@@ -502,7 +509,7 @@ class TestBlockingScore:
             frame,
             attacking_team_id=2,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert result.blocking_score >= 0.0
         # With most defenders man-marking, score should be very low
@@ -522,7 +529,7 @@ class TestBlockingScore:
             frame,
             attacking_team_id=2,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert result.blocking_score >= 0.0
         # BlockingScoreResult has threat breakdown
@@ -542,7 +549,7 @@ class TestBlockingScore:
             frame,
             attacking_team_id=2,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             defenders_to_remove=[10],
         )
         assert result.blocking_score >= 0.0
@@ -561,7 +568,7 @@ class TestBlockingScore:
             frame,
             attacking_team_id=2,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert result.blocking_score == 0.0
 
@@ -576,7 +583,7 @@ class TestBlockingScore:
                 frame,
                 attacking_team_id=2,
                 xt=fitted_xt,
-                home_team_id=1,
+                goal_map=HOME_GOAL_MAP,
             )
 
 
@@ -601,7 +608,7 @@ class TestVoronoiPartition:
             fitted_xt,
             frame,
             attacking_team_id=1,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert threat_total >= 0.0
 
@@ -634,7 +641,7 @@ class TestVoronoiPartition:
             fitted_xt,
             frame,
             attacking_team_id=1,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         # Point evaluation at receiver position
         xt_interp = fitted_xt.interpolator()
@@ -707,7 +714,7 @@ class TestAddCoverShadows:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         expected_cols = [
             "n_blocked_receivers",
@@ -728,7 +735,7 @@ class TestAddCoverShadows:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         # Action 1 (time=999.0) cannot link -> NaN
         assert pd.isna(result.loc[1, "blocking_score"])
@@ -743,14 +750,14 @@ class TestAddCoverShadows:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             detailed=False,
         )
         r_full = add_cover_shadows(
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             detailed=True,
         )
         assert "max_single_defender_blocking_score" in r_fast.columns
@@ -787,7 +794,7 @@ class TestCoverShadowXfns:
         """10-row dummy gamestate -> silent NaN (VAEP fit-time contract)."""
         from silly_kicks.tracking.features import cover_shadow_xfns
 
-        xfns = cover_shadow_xfns(fitted_xt, home_team_id=1)
+        xfns = cover_shadow_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         assert len(xfns) == 1
         transformer = xfns[0]
         assert getattr(transformer, "_frame_aware", False) is True
@@ -819,7 +826,7 @@ class TestCoverShadowXfns:
         """5 features x 3 states = 15 output columns."""
         from silly_kicks.tracking.features import cover_shadow_xfns
 
-        xfns = cover_shadow_xfns(fitted_xt, home_team_id=1)
+        xfns = cover_shadow_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         transformer = xfns[0]
 
         dummy = pd.DataFrame(
@@ -852,6 +859,7 @@ class TestBlockingRateSmoke:
 
     def test_blocking_rate_in_plausible_range(self, fitted_xt):
         """Block rate on Sportec fixture should be 10-60%."""
+        from silly_kicks.tracking import resolve_defended_goals
         from silly_kicks.tracking._cover_shadows import CoverShadowParams, lane_control
 
         frames = load_provider_frames("sportec")
@@ -906,7 +914,7 @@ class TestBlockingRateSmoke:
                         frame_data,
                         passer_xy,
                         recv_xy,
-                        home_team_id=home_team_id,
+                        goal_map=resolve_defended_goals(frames),
                         attacking_team_id=tid,
                         params=p,
                     )
@@ -1000,14 +1008,14 @@ class TestDetailedVsLightweightCorrelation:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             detailed=False,
         )
         r_full = add_cover_shadows(
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             detailed=True,
         )
 
@@ -1231,7 +1239,7 @@ class TestLeaveOneOutExactness:
         home_pos, away_pos, att_team, home_team, passer = self.FIXTURES[name]
         frame = _make_two_team_frame(home_positions=home_pos, away_positions=away_pos)
 
-        prod = _compute_cover_shadow_dict(frame, passer, att_team, fitted_xt, home_team_id=home_team, detailed=False)
+        prod = _compute_cover_shadow_dict(frame, passer, att_team, fitted_xt, goal_map=HOME_GOAL_MAP, detailed=False)
         ref = _reference_max_single(frame, passer, att_team, fitted_xt, home_team_id=home_team)
 
         assert prod is not None
@@ -1247,9 +1255,9 @@ class TestLeaveOneOutExactness:
         from silly_kicks.tracking._cover_shadows import _compute_cover_shadow_dict
 
         values = []
-        for home_pos, away_pos, att_team, home_team, passer in self.FIXTURES.values():
+        for home_pos, away_pos, att_team, _home_team, passer in self.FIXTURES.values():
             frame = _make_two_team_frame(home_positions=home_pos, away_positions=away_pos)
-            r = _compute_cover_shadow_dict(frame, passer, att_team, fitted_xt, home_team_id=home_team, detailed=False)
+            r = _compute_cover_shadow_dict(frame, passer, att_team, fitted_xt, goal_map=HOME_GOAL_MAP, detailed=False)
             if r is not None:
                 values.append(r["max_single_defender_blocking_score"])
         assert any(v > 0.0 for v in values), "all fixtures produced max_single=0 — exactness test is vacuous"
@@ -1298,7 +1306,9 @@ class TestCoverShadowComplexityGuard:
             ],
         )
         with patch.object(cs, "lane_control", wraps=cs.lane_control) as spy:
-            result = cs._compute_cover_shadow_dict(frame, (50.0, 34.0), 2, fitted_xt, home_team_id=1, detailed=False)
+            result = cs._compute_cover_shadow_dict(
+                frame, (50.0, 34.0), 2, fitted_xt, goal_map=HOME_GOAL_MAP, detailed=False
+            )
 
         assert result is not None
         n_dangerous = result["n_potential_receivers"]
@@ -1346,7 +1356,7 @@ def test_per_blocker_delta_is_non_negative_before_the_clamp():
 
     n_deltas = 0
     for frame_data, passer_xy, tid in _csi.iter_scoreable():
-        arrays = _csi.lane_arrays(frame_data, tid, _csi.prepared_frames_and_actions()[2])
+        arrays = _csi.lane_arrays(frame_data, tid, _csi.goal_map())
         if arrays is None:
             continue
         lb_pos, lb_vel, att_pos, att_vel, dangerous, params = arrays
@@ -1428,10 +1438,10 @@ def test_raw_difference_non_negative_per_method(method, cover_shadow_raw):
     # N would be 0. D1 would rest on zero measurements, in the test that is D1's only evidence.
     assert rows, "fixture produced no scoreable actions -- FIX THE FIXTURE, do not skip"
 
-    xt, home_team_id = cover_shadow_raw["xt"], cover_shadow_raw["home_team_id"]
+    xt, gm = cover_shadow_raw["xt"], cover_shadow_raw["goal_map"]
     n = 0
     for aid, frame_data, tid, _res in rows:
-        res = compute_blocking_score(frame_data, tid, xt, home_team_id=home_team_id, method=method)
+        res = compute_blocking_score(frame_data, tid, xt, goal_map=gm, method=method)
         assert res.threat_unblocked - res.threat_original >= -TOL_INVARIANT, (method, aid)
         n += 1
     # The N in this docstring must be the N the test measured. `n == len(rows)` alone is an
@@ -1488,20 +1498,18 @@ def test_identity_is_the_argmax_over_all_lane_blockers():
     import silly_kicks.tracking._cover_shadows as cs
     from tests.tracking import _cover_shadow_inputs as _csi
 
-    home_team_id = _csi.prepared_frames_and_actions()[2]
+    gm = _csi.goal_map()
     xt = _csi.fitted_xt()
     checked = 0
     for frame_data, passer_xy, tid in _csi.iter_scoreable():
-        d = cs._compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, home_team_id=home_team_id, detailed=True)
+        d = cs._compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, goal_map=gm, detailed=True)
         if d is None or d["max_single_defender_blocking_score"] <= cs.TOL_ATTRIB:
             continue
         pid = d["max_single_defender_player_id"]
-        blockers = _csi.lane_blocker_ids(frame_data, tid, home_team_id)
+        blockers = _csi.lane_blocker_ids(frame_data, tid, gm)
         assert len(blockers) >= 2, "single-blocker action cannot discriminate an argmax"
         scores = {
-            b: cs.compute_blocking_score(
-                frame_data, tid, xt, home_team_id=home_team_id, defenders_to_remove=[b]
-            ).blocking_score
+            b: cs.compute_blocking_score(frame_data, tid, xt, goal_map=gm, defenders_to_remove=[b]).blocking_score
             for b in blockers
         }
         assert scores[pid] == d["max_single_defender_blocking_score"]
@@ -1525,13 +1533,15 @@ def test_identity_survives_numeric_and_string_player_ids():
     xt = _csi.fitted_xt()
     # detailed=True throughout: the identity is gated to the exact path, so the default build
     # would give two all-NA columns and `left == right` would pass vacuously on two empty lists.
-    num = add_cover_shadows(actions, frames, xt, home_team_id=home_team_id, detailed=True)
+    num = add_cover_shadows(
+        actions, frames, xt, goal_map=goal_map_like_home_team_id(frames, home_team_id), detailed=True
+    )
 
     f2, a2 = frames.copy(), actions.copy()
     f2["player_id"] = f2["player_id"].astype("string")
     f2["team_id"] = f2["team_id"].astype("string")
     a2["team_id"] = a2["team_id"].astype("string")
-    strv = add_cover_shadows(a2, f2, xt, home_team_id=str(home_team_id), detailed=True)
+    strv = add_cover_shadows(a2, f2, xt, goal_map=goal_map_like_home_team_id(f2, str(home_team_id)), detailed=True)
 
     left = num["max_single_defender_player_id"].dropna().astype(str).tolist()
     right = strv["max_single_defender_player_id"].dropna().astype(str).tolist()
@@ -1550,8 +1560,8 @@ def test_cover_shadow_xfns_do_not_leak_the_identity_column():
     from silly_kicks.vaep.features import feature_column_names
     from tests.tracking import _cover_shadow_inputs as _csi
 
-    home_team_id = _csi.prepared_frames_and_actions()[2]
-    xfns = cover_shadow_xfns(_csi.fitted_xt(), home_team_id=home_team_id)
+    gm = _csi.goal_map()
+    xfns = cover_shadow_xfns(_csi.fitted_xt(), goal_map=gm)
     names = feature_column_names(xfns, nb_prev_actions=3)
     assert not [n for n in names if "max_single_defender_player_id" in n]
     # Non-vacuity: the factory must actually be emitting its numeric columns.
@@ -1573,14 +1583,14 @@ def test_identity_is_not_wired_to_a_constant():
     import silly_kicks.tracking._cover_shadows as cs
     from tests.tracking import _cover_shadow_inputs as _csi
 
-    home_team_id = _csi.prepared_frames_and_actions()[2]
+    gm = _csi.goal_map()
     xt = _csi.fitted_xt()
     off_zero = 0
     for frame_data, passer_xy, tid in _csi.iter_scoreable():
-        d = cs._compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, home_team_id=home_team_id, detailed=True)
+        d = cs._compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, goal_map=gm, detailed=True)
         if d is None or d["max_single_defender_player_id"] is None:
             continue
-        blockers = _csi.lane_blocker_ids(frame_data, tid, home_team_id)
+        blockers = _csi.lane_blocker_ids(frame_data, tid, gm)
         if blockers and d["max_single_defender_player_id"] != blockers[0]:
             off_zero += 1
     assert off_zero > 0, (
@@ -1609,10 +1619,10 @@ def test_cheap_path_never_names_a_defender():
     from silly_kicks.tracking.features import add_cover_shadows
     from tests.tracking import _cover_shadow_inputs as _csi
 
-    frames, actions, home_team_id = _csi.prepared_frames_and_actions()
+    frames, actions, _home_team_id = _csi.prepared_frames_and_actions()
     xt = _csi.fitted_xt()
 
-    cheap = add_cover_shadows(actions, frames, xt, home_team_id=home_team_id)
+    cheap = add_cover_shadows(actions, frames, xt, goal_map=_csi.goal_map())
     assert cheap["max_single_defender_player_id"].isna().all(), (
         "the cheap path named a defender -- the measured 0.157-agreement gate has been removed"
     )
@@ -1641,13 +1651,17 @@ def test_ungated_cheap_identity_hatch_still_works():
     import silly_kicks.tracking._cover_shadows as cs
     from tests.tracking import _cover_shadow_inputs as _csi
 
-    home_team_id = _csi.prepared_frames_and_actions()[2]
+    gm = _csi.goal_map()
     xt = _csi.fitted_xt()
     checked = 0
     for frame_data, passer_xy, tid in _csi.iter_scoreable():
-        common = dict(home_team_id=home_team_id, detailed=False)
-        gated = cs._compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, **common)
-        ungated = cs._compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, _ungated_cheap_identity=True, **common)
+        # Spelled out rather than splatted from a dict: a `**common` of mixed value types widens
+        # to `GoalMap | bool`, which the checker then tries to bind to `method` and
+        # `pitch_control_cache`. Same trap the gkdv arms test records for its `xt` keyword.
+        gated = cs._compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, goal_map=gm, detailed=False)
+        ungated = cs._compute_cover_shadow_dict(
+            frame_data, passer_xy, tid, xt, goal_map=gm, detailed=False, _ungated_cheap_identity=True
+        )
         if gated is None or ungated is None:
             continue
         assert gated["max_single_defender_player_id"] is None, "the gate leaked"
@@ -1656,7 +1670,7 @@ def test_ungated_cheap_identity_hatch_still_works():
         if ungated["max_single_defender_blocking_score"] > cs.TOL_ATTRIB:
             named = ungated["max_single_defender_player_id"]
             assert named is not None, "hatch is open but named nobody -- it has stopped working"
-            assert named in _csi.lane_blocker_ids(frame_data, tid, home_team_id)
+            assert named in _csi.lane_blocker_ids(frame_data, tid, gm)
             checked += 1
     assert checked > 0, (
         "no action produced an ungated cheap identity -- the hatch was never exercised, so this "

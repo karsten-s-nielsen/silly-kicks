@@ -120,7 +120,7 @@ def main() -> None:
     from scripts._loader_pining import load_matches
     from silly_kicks.gkdv import build_ghost_frames, delta_das, delta_threat_suppression
     from silly_kicks.id_compat import ids_equal
-    from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier
+    from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier, resolve_defended_goals
 
     want_das = args.arm in ("das", "both")
     want_threat = args.arm in ("threat", "both")
@@ -215,6 +215,9 @@ def main() -> None:
         scored = provenance[provenance["drop_reason"].isna()].reset_index(drop=True)
         keep = np.asarray(ids_equal(scored["gk_team_id"], scored["defending_team_id"]), dtype=bool)
         scored = scored[keep]
+        # ONCE per match, from the FULL frames: the seam's quantity is the MEAN GK x per
+        # (game, period, team), so a per-frame map would be a different estimator.
+        goal_map = resolve_defended_goals(frames)
         for rec in scored.to_dict("records"):
             gid, per, fid = rec["game_id"], rec["period_id"], rec["frame_id"]
             actual = _frame_slice(frames, gid, per, fid)
@@ -238,7 +241,7 @@ def main() -> None:
                                 ghost,
                                 attacking_team_id=atk,
                                 xt=xt_model,
-                                home_team_id=home_team_id,  # type: ignore[arg-type]
+                                goal_map=goal_map,
                             )
                         ),
                     }

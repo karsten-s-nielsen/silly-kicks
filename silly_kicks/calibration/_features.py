@@ -227,8 +227,10 @@ def enrich_invariant(
     # Step 10 (line-break) DELETED — not a feature (spec §4a).
     actions = add_team_shape(actions, frames, links=links, home_team_id=home_team_id)  # Step 11
     actions = _compute_das(actions, frames, links, carrier_params)  # Step 12
-    actions = add_gk_influence(actions, frames, xt, links=links, home_team_id=home_team_id)  # Step 13
-    actions = add_cover_shadows(actions, frames, xt, links=links, home_team_id=home_team_id)  # 14
+    # ADR-055: these two take an optional `goal_map` and no `home_team_id`. Left to default so
+    # each derives the map from `frames` -- the same frames every other step here consumes.
+    actions = add_gk_influence(actions, frames, xt, links=links)  # Step 13
+    actions = add_cover_shadows(actions, frames, xt, links=links)  # 14
     actions = add_sync_score(actions, links)  # Step 15
     return actions, links
 
@@ -355,7 +357,8 @@ def enrich_full(
     # Step 10 (line-break) DELETED — not a feature.
     actions = add_team_shape(actions, frames, links=links, home_team_id=home_team_id)  # 11
     actions = _compute_das(actions, frames, links, carrier_params)  # 12
-    actions = add_gk_influence(actions, frames, xt, links=links, home_team_id=home_team_id)  # 13
-    actions = add_cover_shadows(actions, frames, xt, links=links, home_team_id=home_team_id)  # 14
+    # ADR-055: see enrich_invariant -- optional `goal_map`, no `home_team_id`.
+    actions = add_gk_influence(actions, frames, xt, links=links)  # 13
+    actions = add_cover_shadows(actions, frames, xt, links=links)  # 14
     actions = add_sync_score(actions, links)  # 15
     return actions

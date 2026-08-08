@@ -3,8 +3,12 @@
 Four pitch-control-derived, xT-weighted aggregators: ``add_gk_influence``,
 ``add_player_influence``, ``add_cover_shadows`` and ``add_off_ball_run_values``.
 
-All four take the fitted xT POSITIONALLY as the third argument and ``home_team_id`` KEYWORD-ONLY
-(verified with ``inspect.signature``), so every ``call`` below is the same shape.
+All four take the fitted xT POSITIONALLY as the third argument (verified with
+``inspect.signature``). Two of them -- ``add_player_influence`` and ``add_off_ball_run_values`` --
+still take ``home_team_id`` KEYWORD-ONLY. The other two do NOT: ADR-055 re-keyed
+``add_gk_influence`` and ``add_cover_shadows`` onto an optional ``goal_map`` and removed
+``home_team_id`` entirely, so their ``call`` lambdas IGNORE Gate A's third argument (Gate A passes
+one unconditionally) and they carry a ``call_with_map`` for Gate C instead.
 
 Every tolerance here is sized ABOVE a measurement recorded in its ``basis`` string, per section 6's
 "record each entry's tolerance and its measured basis separately". None of them is inherited from a
@@ -40,17 +44,22 @@ def register() -> None:
     # GATE A measured max residual 4.44e-16 (closing times, seconds); the share column reads
     # 1.39e-17 and the reachable area exactly 0.0.
     #
-    # GATE B FAILS AND IS NOT XFAILED -- deliberately. This is a FINDING, not an oversight: the
-    # spec's D3 re-key list does not name add_gk_influence, yet _gk_influence.py:318 resolves the
-    # defended goal as `same_id(defending_team_id, home_team_id) -> 0.0 else 105.0` and :371
-    # reflects the threat grid on `not same_id(attacking_team_id, home_team_id)`. Both are
-    # identity-keyed direction, which is exactly the D1 class Gate B exists to find. Measured
-    # movement when home_team_id -> away/nonsense: share 0.109, closing-time min 4.38 s, mean
-    # 4.02 s. Manufacturing an xfail here would launder an unrecorded defect into a documented
-    # one; the honest state is RED until the spec's D3 list is corrected or the re-key lands.
+    # GATE B previously FAILED here, unxfailed and deliberately so: it was the finding that
+    # `_gk_influence.py:318` resolved the defended goal as
+    # `same_id(defending_team_id, home_team_id) -> 0.0 else 105.0` and `:371` reflected the threat
+    # grid on `not same_id(attacking_team_id, home_team_id)` -- identity-keyed direction, the D1
+    # class Gate B exists to find. Measured movement when home_team_id -> away/nonsense: share
+    # 0.109, closing-time min 4.38 s, mean 4.02 s.
+    #
+    # ADR-055 RE-KEYED IT. Both sites now read the GoalMap, and `home_team_id` is gone from the
+    # whole family, so `role="unused"` and Gate B SKIPS. That is a real loss of detection, which
+    # is why Gate C exists: it holds the frames fixed and swaps the MAP, and the columns above are
+    # exactly the ones it requires to move.
     _entry(
         "add_gk_influence",
-        lambda a, f, h: add_gk_influence(a, f, gate_xt(), home_team_id=h),
+        # Gate A calls this UNCONDITIONALLY -- the role only selects WHICH id is passed, never
+        # whether one is. The third argument is therefore ignored rather than absent.
+        lambda a, f, _h: add_gk_influence(a, f, gate_xt()),
         {
             "gk_pitch_control_share_weighted": "invariant",
             "gk_reachable_area_m2": "invariant",
@@ -68,18 +77,35 @@ def register() -> None:
             "measurement and ~8 orders below the O(1) movement an orientation defect produces "
             "here (the identity-keyed goal-end resolution moves the closing times by 4.38 s)."
         ),
-        role="direction_only",
-        # EIGHTH D3 member -- found by Gate B, not by the audit that produced the spec's list of
-        # seven (spec 4.3 predicted the enumeration would return MORE than seven; this is it).
-        # Two identity-keyed sites:
-        #   _gk_influence.py:318     goal-end resolution `if same_id(defending_team_id, home_team_id)`
-        #   _gk_influence.py:371-372 the ADR-028 point reflection ITSELF, gated on
-        #                            `same_id(attacking_team_id, home_team_id)` -- the reflection is
-        #                            correct (both axes), the KEY is wrong.
-        # Measured: gk_pitch_control_share_weighted +0.1085, gk_closing_time_min_s__six_yard_box
-        # +4.38 s, IDENTICAL under ->AWAY and ->999999 (the `same_id(x, home) else ...` signature).
-        # Gate A reads 4.44e-16 for the same aggregator: blind to this class exactly as designed.
-        defect_b="D3 re-key pending: identity-keyed direction (spec 4.3); 8th member, found by Gate B",
+        # ADR-055: `home_team_id` no longer exists on this aggregator, so Gate B's variable is
+        # unrepresentable rather than merely unasserted, and the gate SKIPS. Gate C below carries
+        # the detection.
+        role="unused",
+        # Gate C: the map replaces the identity. TWO columns must move, not one --
+        # `_closing_time_per_series` is re-keyed as well as `_gk_influence_at_actions`, so a
+        # ONE-column result means the closing-time path was missed and must not read as success.
+        call_with_map=lambda a, f, gm: add_gk_influence(a, f, gate_xt(), goal_map=gm),
+        # MEASURED under the map swap: share 0.108532, closing_min 4.38062 s, closing_mean
+        # 4.02205 s -- the same magnitudes Gate B recorded for the D3 defect above, which is the
+        # evidence that Gate C detects the class Gate B used to.
+        #
+        # `gk_reachable_area_m2` is deliberately NOT listed: it measures exactly 0.0 under the
+        # swap. That is a FIXTURE property, not a missed re-key -- at tau=1 s the keeper's
+        # reachable set sits close enough to the keeper that no back-line defender reaches it on
+        # either selection, so flipping which four players are the back line changes nothing.
+        # Listing it would make the gate red for a reason unrelated to the map.
+        #
+        # SCOPE, verified by executing the defect rather than by reading the call graph: all three
+        # columns here come from `_gk_influence_at_actions`. `add_gk_influence` does NOT call
+        # `_closing_time_per_series` -- only the standalone `gk_closing_time_{min,mean}_s` helpers
+        # do -- so Gate C is structurally BLIND to that path. Patching it back onto a self-built
+        # map leaves this gate GREEN (measured). Its coverage lives in
+        # tests/tracking/test_goal_map_consumers.py.
+        gate_c_must_move=(
+            "gk_pitch_control_share_weighted",
+            "gk_closing_time_min_s__six_yard_box",
+            "gk_closing_time_mean_s__six_yard_box",
+        ),
         non_vacuity=("gk_pitch_control_share_weighted", "gk_closing_time_min_s__six_yard_box"),
         exempt={
             "frame_id": _PROVENANCE_REASON,
@@ -144,13 +170,17 @@ def register() -> None:
     # Those pre-fix magnitudes are retained deliberately: they are what a REGRESSION would have to
     # reproduce, and they set the tolerance ceiling below.
     #
-    # GATE B STILL FAILS (D3) and is xfailed strictly: blocking_score moves 148.83.
+    # GATE B USED TO FAIL (D3), xfailed strictly: blocking_score moved 148.83. ADR-055 re-keyed
+    # all five sites onto the GoalMap and removed `home_team_id`, so the marker is GONE, the role
+    # is "unused" and Gate B SKIPS. Gate C carries the detection from here, and 148.83 is the
+    # magnitude it should reproduce on blocking_score.
     #
     # max_single_defender_player_id is EXEMPT: it is a player identity, and PR-S136 gated it to
     # detailed=True, so on the default cheap path it is all-NaN (verified: 0/4 non-null).
     _entry(
         "add_cover_shadows",
-        lambda a, f, h: add_cover_shadows(a, f, gate_xt(), home_team_id=h),
+        # Third argument ignored -- see the add_gk_influence entry.
+        lambda a, f, _h: add_cover_shadows(a, f, gate_xt()),
         {
             "n_blocked_receivers": "invariant",
             "n_potential_receivers": "invariant",
@@ -171,7 +201,22 @@ def register() -> None:
             "0.304 that max_single_defender_blocking_score moved under RC1: Gate A now PASSES, so "
             "that ceiling is what keeps an RC1 REGRESSION detectable rather than silently absorbed."
         ),
-        role="direction_only",
+        # ADR-055: `home_team_id` is gone from this aggregator -- Gate B SKIPS, Gate C detects.
+        role="unused",
+        # Gate C: FIVE columns must move. All five emitted columns descend from
+        # `_compute_cover_shadow_dict`, whose direction bool and opponent-end binding both read
+        # the map now.
+        call_with_map=lambda a, f, gm: add_cover_shadows(a, f, gate_xt(), goal_map=gm),
+        # MEASURED under the map swap: blocking_score 148.83 -- the exact magnitude Gate B
+        # recorded for the D3 defect -- plus n_potential_receivers 10, n_blocked_receivers 2,
+        # blocked_threat_fraction 0.597651, max_single_defender_blocking_score 2.02238.
+        gate_c_must_move=(
+            "n_blocked_receivers",
+            "n_potential_receivers",
+            "blocking_score",
+            "blocked_threat_fraction",
+            "max_single_defender_blocking_score",
+        ),
         non_vacuity=("blocking_score", "n_potential_receivers"),
         exempt={
             "max_single_defender_player_id": (
@@ -187,10 +232,10 @@ def register() -> None:
         # seams, so Gate A passes and its marker is GONE -- strict xfail makes that deletion
         # mandatory rather than optional.
         #
-        # Gate B's marker STAYS: `_cover_shadows.py:1030` still keys `attacking_toward_high_x` on
-        # `same_id(attacking_team_id, home_team_id)`. That is D3, which spec section 9 keeps out
-        # of this cycle (byte-identical on converter output), NOT part of RC1.
-        defect_b="D3 re-key pending: identity-keyed direction (spec 4.3)",
+        # Gate B's marker is GONE TOO as of ADR-055: `_cover_shadows.py:1030` no longer keys
+        # `attacking_toward_high_x` on `same_id(attacking_team_id, home_team_id)` -- it calls
+        # `goal_map.attacked_goal(...)`. Strict xfail is what forced this deletion to happen in
+        # the same commit as the fix.
     )
 
     # ------------------------------------------------------------------

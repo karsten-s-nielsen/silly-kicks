@@ -14,6 +14,12 @@ import pandas as pd
 import pytest
 
 from tests._perf_structural import call_counter
+from tests.tracking._goal_map_helpers import goal_map_for
+
+#: ADR-055 replaced ``home_team_id=1`` at this file's re-keyed call sites. Its frames carry
+#: game 1 / period 1 with teams {1, 2} and each keeper at its own end, so this states exactly
+#: what ``home_team_id=1`` meant and matches what ``resolve_defended_goals`` derives there.
+HOME_GOAL_MAP = goal_map_for({1: 0.0, 2: 105.0})
 
 
 def _make_22_player_frame():
@@ -141,7 +147,9 @@ def test_gk_influence_builds_one_pitch_control_surface(fixture_22, monkeypatch):
     frame, xt = fixture_22
     calls = call_counter(monkeypatch, _cache, "compute_pitch_control")
 
-    result = _gk_influence.compute_gk_influence(frame, attacking_team_id=2, gk_player_id=1, xt=xt, home_team_id=1)
+    result = _gk_influence.compute_gk_influence(
+        frame, attacking_team_id=2, gk_player_id=1, xt=xt, goal_map=HOME_GOAL_MAP
+    )
 
     assert result is not None
     assert calls["n"] == 1, (

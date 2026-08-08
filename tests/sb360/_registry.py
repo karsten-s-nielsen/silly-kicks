@@ -134,7 +134,26 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 
 #: Pre-registered count of (entry, axis, roster, column) verdicts adjudicated
 #: ``not_exercised``. Raised only with a recorded reason; it is a budget, not a tally.
-NOT_EXERCISED_BUDGET = 26
+#:
+#: 26 -> 31 (ADR-055). The five are ``add_cover_shadows``' emitted columns on the
+#: ``visibility/gk_absent`` roster, which moved ``all_nan`` -> ``no_signal``; ``no_signal``
+#: admits no adjudication but ``not_exercised``, so the rise is forced by the vocabulary rather
+#: than chosen.
+#:
+#: The reason this budget wants, stated as the mechanism and not as "the fixture is thin":
+#: ``gk_absent`` removes BOTH keepers, so ``resolve_defended_goals`` falls to its outfield rung
+#: and guesses both teams at x=105 (measured outfield mean x 56.9 and 76.5, both past the 52.5
+#: midline). A both-teams-same-end map is DEGENERATE, ``attacked_goal`` refuses it by its
+#: documented same-end guard, and the aggregator emits NaN. Both legs go NaN for the same
+#: roster-driven reason, so no informative row survives.
+#:
+#: It is a real widening of the audit's blind spot and is recorded as such: before the re-key
+#: these five columns produced numbers on a keeper-less freeze-frame, because direction came
+#: from ``home_team_id`` rather than from the frames. Those numbers were not evidence. The
+#: honest consequence is that ``add_cover_shadows`` is keeper-dependent on SB360 input, and the
+#: fixture cannot exercise it without a keeper -- widening the fixture (a keeper at ONE end
+#: would suffice to break the degeneracy) is what would reclaim these five.
+NOT_EXERCISED_BUDGET = 31
 
 
 def _entry(

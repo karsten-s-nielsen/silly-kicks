@@ -97,6 +97,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from tests.tracking._goal_map_helpers import goal_map_like_home_team_id
+
 # --------------------------------------------------------------------------------------
 # Discovery
 # --------------------------------------------------------------------------------------
@@ -765,7 +767,11 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
         ),
         _e(
             "silly_kicks.tracking._defensive_line.select_back_line_players",
-            lambda s: T.select_back_line_players(tracking_frames(), s, s),
+            # 3rd arg was `home_team_id`; ADR-055 re-keyed it to `defends_x0: bool`. The old
+            # lambda passed `s` twice, so `same_id(team_id, home_team_id)` was True for every
+            # variant -- `True` here is that same value, and the axis the gate actually exercises
+            # (`ids_match(frames["team_id"], team_id)`) is unchanged.
+            lambda s: T.select_back_line_players(tracking_frames(), s, True),
         ),
         _e("silly_kicks.tracking._team_shape.compute_team_shape", lambda s: T.compute_team_shape(tracking_frames(), s)),
         _e(
@@ -811,15 +817,28 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
         ),
         _e(
             "silly_kicks.tracking._cover_shadows.compute_blocking_score",
-            lambda s: T.compute_blocking_score(single_frame(), s, xt_model(), home_team_id=s),
+            lambda s: T.compute_blocking_score(
+                single_frame(), s, xt_model(), goal_map=goal_map_like_home_team_id(single_frame(), s)
+            ),
         ),
         _e(
             "silly_kicks.tracking._cover_shadows.compute_threat_pc",
-            lambda s: T.compute_threat_pc(single_frame(), attacking_team_id=s, xt=xt_model(), home_team_id=s),
+            lambda s: T.compute_threat_pc(
+                single_frame(),
+                attacking_team_id=s,
+                xt=xt_model(),
+                goal_map=goal_map_like_home_team_id(single_frame(), s),
+            ),
         ),
         _e(
             "silly_kicks.tracking._cover_shadows.lane_control",
-            lambda s: T.lane_control(single_frame(), passer, receiver, home_team_id=s, attacking_team_id=s),
+            lambda s: T.lane_control(
+                single_frame(),
+                passer,
+                receiver,
+                goal_map=goal_map_like_home_team_id(single_frame(), s),
+                attacking_team_id=s,
+            ),
         ),
         _e(
             "silly_kicks.tracking.pitch_control._dispatch.compute_pitch_control",
@@ -921,6 +940,18 @@ def _tracking_orientation_entries() -> list[IdScalarEntry]:
 
 # ---- tracking: per-Series features + xfns factories ----------------------------------------
 
+#: ADR-055 REMOVED six former members of these tuples -- ``gk_closing_time_{min,mean}_s``,
+#: ``gk_pitch_control_share_weighted``, ``gk_reachable_area_m2``, ``cover_shadow_xfns`` and
+#: ``gk_influence_xfns``. They are not exemptions: each took ``home_team_id`` as its ONLY id
+#: scalar, and after the re-key onto ``goal_map`` they declare no ``*_id`` parameter at all, so
+#: this gate's own ``inspect.signature`` discovery no longer returns them and a retained entry
+#: fails ``test_registry_has_no_stale_entries``.
+#:
+#: The dtype hazard did not disappear, it MOVED: it now lives in ``GoalMap._key``, which
+#: canonicalizes every lookup, and is exercised by
+#: ``tests/tracking/test_gk_resolve_goal_map.py`` (canonical-key + any-dtype-lookup tests) and
+#: by the ``compute_blocking_score`` / ``compute_threat_pc`` / ``lane_control`` entries above,
+#: which still vary ``attacking_team_id`` against a canonically-keyed map.
 #: ``features.py`` per-Series functions taking ``(actions, frames, *, home_team_id, ...)``.
 _SERIES_PLAIN = (
     "back_line_high_x",
@@ -932,15 +963,11 @@ _SERIES_PLAIN = (
     "obso_actual",
     "obso_optimal",
     "obso_peak",
-    "gk_closing_time_mean_s",
-    "gk_closing_time_min_s",
 )
 
 #: ...and those additionally taking a positional ``xt``.
 _SERIES_XT = (
     "actor_reachable_area_m2",
-    "gk_pitch_control_share_weighted",
-    "gk_reachable_area_m2",
     "off_ball_xt_opponent",
     "off_ball_xt_team",
     "reachable_area_opponent",
@@ -961,8 +988,6 @@ _XFNS_PLAIN = (
     "team_shape_xfns",
 )
 _XFNS_XT = (
-    "cover_shadow_xfns",
-    "gk_influence_xfns",
     "off_ball_run_value_xfns",
     "player_influence_xfns",
 )
@@ -1134,10 +1159,14 @@ PUBLIC_ID_SCALAR_ENTRIES: list[IdScalarEntry] = _build_registry()
 COVERED_BY_AGGREGATOR_GATE: dict[str, str] = {
     f"silly_kicks.tracking.features.{n}": "tracking add_* aggregator; swept by test_id_dtype_invariance.py"
     for n in (
-        "add_cover_shadows",
+        # ADR-055: `add_cover_shadows` and `add_gk_influence` are GONE from this list, not
+        # exempted. They took `home_team_id` as their only id scalar; after the re-key onto
+        # `goal_map` they declare no `*_id` parameter, so discovery no longer returns them and
+        # a retained pointer fails `test_registry_has_no_stale_entries`. They are still swept by
+        # test_id_dtype_invariance.py for their ACTIONS/FRAMES id dtypes -- what is gone is the
+        # `home_team_id` SCALAR axis, because the scalar is gone.
         "add_defensive_line",
         "add_ghost_gk",
-        "add_gk_influence",
         "add_line_break",
         "add_obso",
         "add_off_ball_context",
@@ -1157,7 +1186,8 @@ COVERED_BY_AGGREGATOR_GATE: dict[str, str] = {
         "atomic add_* mirror; delegates to the tracking aggregator swept by test_id_dtype_invariance.py"
     )
     for n in (
-        "add_cover_shadows",
+        # ADR-055: the atomic `add_cover_shadows` mirror left for the same reason as its
+        # tracking counterpart above.
         "add_off_ball_run_values",
         "add_packing",
         "add_structural_pass",

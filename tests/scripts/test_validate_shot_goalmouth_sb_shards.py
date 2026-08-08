@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 
 import scripts.validate_shot_goalmouth_sb as sbmod
+from tests.tracking._goal_map_helpers import goal_map_for
 
 _HOME_TEAM, _AWAY_TEAM = "A", "B"
 
@@ -126,8 +127,14 @@ def stub_sb(monkeypatch):
 
     monkeypatch.setattr(sbmod, "load_matches", _load)
     monkeypatch.setattr(features, "add_shot_goalmouth", _add)
+    # ADR-055: a GoalMap, not a plain dict -- and built through `goal_map_for`, which keys via
+    # `GoalMap._key`. A hand-written `{("g", 1, _HOME_TEAM): 0.0}` would be keyed on RAW
+    # tuples while every accessor canonicalizes its lookup, so the stub would miss on every
+    # call and the harness would silently score NaN instead of failing.
     monkeypatch.setattr(
-        _gk_resolve, "defended_goal_x", lambda _f: {("g", 1, _HOME_TEAM): 0.0, ("g", 1, _AWAY_TEAM): 105.0}
+        _gk_resolve,
+        "resolve_defended_goals",
+        lambda _f: goal_map_for({_HOME_TEAM: 0.0, _AWAY_TEAM: 105.0}, game_id="g", period_id=1),
     )
     monkeypatch.setattr(_gk_geometry, "_truthy_bool", lambda s: s.astype(bool))
     return entered

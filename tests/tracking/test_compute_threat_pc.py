@@ -26,6 +26,12 @@ import pytest
 
 from silly_kicks.tracking import compute_threat_pc
 from tests.tracking._gk_test_helpers import _make_two_team_frame
+from tests.tracking._goal_map_helpers import goal_map_for
+
+#: ADR-055 replaced ``home_team_id=1`` at this file's re-keyed call sites. Its frames carry
+#: game 1 / period 1 with teams {1, 2} and each keeper at its own end, so this states exactly
+#: what ``home_team_id=1`` meant and matches what ``resolve_defended_goals`` derives there.
+HOME_GOAL_MAP = goal_map_for({1: 0.0, 2: 105.0})
 
 #: Home (team 1) defends x=0 and is the DEFENDING team; away (team 2) attacks toward x=0.
 #: No home outfielder sits deep, so the keeper is the only defender covering the space
@@ -69,7 +75,7 @@ def _frame(gk_xy: tuple[float, float] = GK_ON_LINE):
 
 
 def test_returns_a_finite_scalar():
-    value = compute_threat_pc(_frame(), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
+    value = compute_threat_pc(_frame(), attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP)
     assert isinstance(value, float)
     assert np.isfinite(value)
     # A zero integral would make every downstream delta trivially zero.
@@ -78,8 +84,10 @@ def test_returns_a_finite_scalar():
 
 def test_moving_the_keeper_changes_the_value():
     """NON-VACUITY: if this cannot move, the whole arm is dead."""
-    on_line = compute_threat_pc(_frame(GK_ON_LINE), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
-    upfield = compute_threat_pc(_frame(GK_OUT_OF_POSITION), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
+    on_line = compute_threat_pc(_frame(GK_ON_LINE), attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP)
+    upfield = compute_threat_pc(
+        _frame(GK_OUT_OF_POSITION), attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP
+    )
     assert on_line != upfield, "threat_pc is insensitive to keeper position -- arm would be vacuous"
 
 
@@ -90,8 +98,10 @@ def test_keeper_covering_its_goalmouth_suppresses_more_threat():
     still pass if the response were inverted. This pins the direction the arm's polarity
     contract is built on.
     """
-    on_line = compute_threat_pc(_frame(GK_ON_LINE), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
-    upfield = compute_threat_pc(_frame(GK_OUT_OF_POSITION), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
+    on_line = compute_threat_pc(_frame(GK_ON_LINE), attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP)
+    upfield = compute_threat_pc(
+        _frame(GK_OUT_OF_POSITION), attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP
+    )
     assert on_line < upfield, (
         "a keeper covering its own goalmouth must leave the attackers LESS threat than the "
         "same keeper stranded 22 m upfield"
@@ -100,15 +110,15 @@ def test_keeper_covering_its_goalmouth_suppresses_more_threat():
 
 def test_identical_frames_give_an_identical_value():
     frame = _frame()
-    first = compute_threat_pc(frame, attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
-    second = compute_threat_pc(frame.copy(), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
+    first = compute_threat_pc(frame, attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP)
+    second = compute_threat_pc(frame.copy(), attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP)
     assert first == second
 
 
 def test_does_not_mutate_the_caller_frame():
     frame = _frame()
     before = frame.copy(deep=True)
-    compute_threat_pc(frame, attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
+    compute_threat_pc(frame, attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP)
     import pandas as pd
 
     pd.testing.assert_frame_equal(frame, before)
@@ -118,7 +128,7 @@ def test_rejects_frames_that_are_not_period_normalized():
     frame = _frame()
     frame["team_attacking_direction"] = "rtl"
     with pytest.raises(ValueError, match="compute_threat_pc"):
-        compute_threat_pc(frame, attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
+        compute_threat_pc(frame, attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP)
 
 
 def test_facade_forwards_the_method_to_pitch_control():
@@ -143,8 +153,8 @@ def test_facade_forwards_the_method_to_pitch_control():
     original = cover_shadows.compute_pitch_control
     cover_shadows.compute_pitch_control = _spy
     try:
-        compute_threat_pc(_frame(), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
-        compute_threat_pc(_frame(), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1, method="voronoi")
+        compute_threat_pc(_frame(), attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP)
+        compute_threat_pc(_frame(), attacking_team_id=2, xt=_fitted_xt(), goal_map=HOME_GOAL_MAP, method="voronoi")
     finally:
         cover_shadows.compute_pitch_control = original
 

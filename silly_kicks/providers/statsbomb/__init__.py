@@ -14,9 +14,9 @@ from .parse import (
     JoinReport,
     acting_side_gk_visible,
     defending_gk_visible,
+    observed_pitch_fraction,
     polygon_to_spadl,
     shape_snapshots,
-    visible_fraction,
 )
 
 __all__ = [
@@ -25,7 +25,7 @@ __all__ = [
     "JoinReport",
     "acting_side_gk_visible",
     "defending_gk_visible",
+    "observed_pitch_fraction",
     "polygon_to_spadl",
     "shape_snapshots",
-    "visible_fraction",
 ]

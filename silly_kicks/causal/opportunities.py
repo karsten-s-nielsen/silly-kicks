@@ -32,11 +32,11 @@ import pandas as pd
 from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as _spc
 from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
+from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 from silly_kicks.tracking._xcross_attempt import (
     _ADVANCE_M,
     _CONFOUNDERS,
     XCROSS_FEATURE_NAMES_FAITHFUL,
-    _build_goal_map,
     _has_results,
     _in_wide_area,
 )
@@ -248,7 +248,7 @@ def build_opportunities(
     carrier_params = dict(model_metadata.get("carrier_params", {}))
     carrier = infer_ball_carrier(frames, **carrier_params)
     poss = derive_team_in_possession(frames, carrier)
-    goal_map = _build_goal_map(frames)
+    goal_map = resolve_defended_goals(frames)
     score_fn = None
     if _has_results(actions) and home_team_id is not None:
         from silly_kicks.tracking._ghost_gk import _build_score_lookup
@@ -312,7 +312,7 @@ def _frame_domain_state(grp, goal_map, gid, per, advance_m, cfg):
     defending = [d for d in non_ball["team_id"].dropna().unique() if not same_id(d, poss_team)]
     if not defending:
         return poss_team, None, False
-    goal_x = goal_map.get((gid, per, defending[0]))
+    goal_x = goal_map.get(gid, per, defending[0], allow_guess=True)
     if goal_x is None:
         return poss_team, None, False
     bx = float(ball["x"].iloc[0]) if len(ball) else np.nan

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from tests.tracking._gk_test_helpers import _make_two_team_frame
+from tests.tracking._goal_map_helpers import goal_map_like_home_team_id
 
 # fitted_xt inherited from tests/conftest.py
 
@@ -30,7 +31,7 @@ class TestGkInfluenceInvariants:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=goal_map_like_home_team_id(frame, 1),
             method=method,
         )
         if not np.isnan(gi.pitch_control_share_weighted):
@@ -48,7 +49,7 @@ class TestGkInfluenceInvariants:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=goal_map_like_home_team_id(frame, 1),
             method=method,
         )
         assert 0.0 <= gi.reachable_area_m2 <= 7140.0
@@ -65,7 +66,7 @@ class TestGkInfluenceInvariants:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=goal_map_like_home_team_id(frame, 1),
             method=method,
         )
         for zct in gi.closing_times.values():
@@ -83,7 +84,7 @@ class TestGkInfluenceInvariants:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=goal_map_like_home_team_id(frame, 1),
             method=method,
         )
         for zct in gi.closing_times.values():
@@ -111,14 +112,14 @@ class TestGkInfluenceInvariants:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=goal_map_like_home_team_id(frame_close, 1),
         )
         gi_far = compute_gk_influence(
             frame_far,
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=goal_map_like_home_team_id(frame_far, 1),
         )
         assert gi_close.closing_times["six_yard_box"].min_s < gi_far.closing_times["six_yard_box"].min_s
 
@@ -147,7 +148,7 @@ class TestGkInfluenceInvariants:
             attacking_team_id="DFL-CLB-0002",
             gk_player_id="DFL-OBJ-0001",
             xt=fitted_xt,
-            home_team_id="DFL-CLB-0001",
+            goal_map=goal_map_like_home_team_id(frame, "DFL-CLB-0001"),
         )
         assert 0.0 <= gi.pitch_control_share_weighted <= 1.0
         assert gi.reachable_area_m2 >= 0.0

@@ -398,3 +398,5 @@ been found.
 **Remaining TF-19 work after this PR:** PR-3b (the xS-arm substitution probe, now unblocked by the
 engine) and the owner validation run — the held-out expected-sign test on known sweeper-keepers
 versus line-keepers. Spec §6.4 Layers 0–3 (the composed headline metric) remain unshipped.
+
+> **Superseded in part by ADR-055 (2026-08-08).** `defended_goal_x` is DELETED, not renamed in place: the seam is now `resolve_defended_goals(frames) -> GoalMap`, built once per match and threaded in, with `get` / `attacked_goal` accessors over canonical STRING keys. The reasoning recorded here stands; only the symbol moved.

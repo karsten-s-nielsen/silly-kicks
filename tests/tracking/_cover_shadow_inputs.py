@@ -58,12 +58,45 @@ def prepared_frames_and_actions():
 
 
 @functools.cache
+def goal_map():
+    """The ADR-055 ``GoalMap`` for the shared fixture, once per session.
+
+    Built from the fixture's DIRECTION LABELS, not from ``resolve_defended_goals``, and that
+    choice is forced by a defect in the committed slice rather than by preference.
+
+    **The sportec slim slice is internally inconsistent** (measured; see
+    ``test_provider_inputs_convention.py::test_direction_labels_agree_with_keeper_geometry``,
+    which records it as a strict xfail). Its ``team_attacking_direction`` says
+    ``DFL-CLU-00000P`` attacks toward +x -- so that team should defend the x=0 goal -- while its
+    keeper's mean x is 98.1 (period 1) and 77.0 (period 2), i.e. parked at the OTHER end. The two
+    signals are exact opposites, in both periods. No other slim provider shows this:
+    gradientsports agrees, and metrica/skillcorner carry no keeper rows to check.
+
+    Everything else in this fixture ecosystem is built on the LABELS -- most directly
+    ``synthesize_actions``, whose action-LTR contract ``test_provider_inputs_convention.py``
+    asserts against ``team_attacking_direction``. A position-derived map would therefore put the
+    cover-shadow tests in a different frame from the actions they score, which is not a stricter
+    test but a mixed-convention one: exactly the defect class ADR-028 exists to prevent.
+
+    So this states the label convention, and the inconsistency is recorded as its own executable
+    finding rather than silently absorbed here. Fixing the slice (re-orienting it, which also
+    moves ``sportec_expected.parquet`` and the lakehouse-parity goldens) is a separate change.
+    """
+    frames, _actions, home_team_id = prepared_frames_and_actions()
+    from tests.tracking._goal_map_helpers import goal_map_like_home_team_id
+
+    gm = goal_map_like_home_team_id(frames, home_team_id)
+    assert gm.n_resolved > 0, "the shared fixture resolves no goal ends -- every consumer would be vacuous"
+    return gm
+
+
+@functools.cache
 def cover_shadow_result():
     """``add_cover_shadows`` output, once per session. COPY BEFORE MUTATING."""
     from silly_kicks.tracking.features import add_cover_shadows
 
-    frames, actions, home_team_id = prepared_frames_and_actions()
-    return add_cover_shadows(actions, frames, fitted_xt(), home_team_id=home_team_id)
+    frames, actions, _home = prepared_frames_and_actions()
+    return add_cover_shadows(actions, frames, fitted_xt(), goal_map=goal_map())
 
 
 @functools.cache
@@ -81,8 +114,8 @@ def cover_shadow_result_detailed():
     """
     from silly_kicks.tracking.features import add_cover_shadows
 
-    frames, actions, home_team_id = prepared_frames_and_actions()
-    return add_cover_shadows(actions, frames, fitted_xt(), home_team_id=home_team_id, detailed=True)
+    frames, actions, _home = prepared_frames_and_actions()
+    return add_cover_shadows(actions, frames, fitted_xt(), goal_map=goal_map(), detailed=True)
 
 
 @functools.cache
@@ -119,9 +152,11 @@ def cover_shadow_raw():
             frame_data = frame_groups.get_group((row["period_id"], int(float(fid_raw))))  # type: ignore[arg-type]
         except KeyError:
             continue
-        res = compute_blocking_score(frame_data, tid, xt, home_team_id=home_team_id)
+        res = compute_blocking_score(frame_data, tid, xt, goal_map=goal_map())
         rows.append((aid, frame_data, tid, res))
-    return {"rows": rows, "home_team_id": home_team_id, "xt": xt}
+    # `home_team_id` is retained alongside the map: it is still a true fact about the fixture and
+    # several consumers use it for non-geometric purposes. It is no longer what steers direction.
+    return {"rows": rows, "home_team_id": home_team_id, "goal_map": goal_map(), "xt": xt}
 
 
 def iter_scoreable():
@@ -149,7 +184,25 @@ def iter_scoreable():
         yield frame_data, (float(row["start_x"]), float(row["start_y"])), tid
 
 
-def lane_arrays(frame_data, attacking_team_id, home_team_id):
+def _attacks_toward_high_x(frame_data, attacking_team_id, gm) -> bool:
+    """Mirrors production's direction resolution: the map, never team identity (ADR-055).
+
+    Kept as one helper because BOTH mirrors below need it, and two copies of a rule this cycle
+    exists to de-duplicate would be a poor joke.
+    """
+    from silly_kicks.tracking import GoalEndUnresolvedError
+
+    attacked = gm.attacked_goal(
+        frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], attacking_team_id, allow_guess=True
+    )
+    if attacked is None:
+        raise GoalEndUnresolvedError(
+            f"test mirror: goal_map does not resolve the goal attacked by {attacking_team_id!r}"
+        )
+    return attacked == 105.0
+
+
+def lane_arrays(frame_data, attacking_team_id, gm):
     """The cheap path's array inputs, mirroring ``_cover_shadows.py:1090-1097`` exactly.
 
     Returns ``(lb_pos, lb_vel, att_pos, att_vel, dangerous, cs_params)`` or ``None`` when the
@@ -164,7 +217,7 @@ def lane_arrays(frame_data, attacking_team_id, home_team_id):
     import pandas as pd
 
     import silly_kicks.tracking._cover_shadows as cs
-    from silly_kicks.id_compat import ids_match, same_id
+    from silly_kicks.id_compat import ids_match
 
     if "vx" not in frame_data.columns or "vy" not in frame_data.columns:
         return None
@@ -178,14 +231,14 @@ def lane_arrays(frame_data, attacking_team_id, home_team_id):
         return None
     ball_x = float(ball_rows.iloc[0]["x"])
 
-    if same_id(attacking_team_id, home_team_id):
+    if _attacks_toward_high_x(frame_data, attacking_team_id, gm):
         dangerous = attackers_outfield[attackers_outfield["x"] > ball_x]
     else:
         dangerous = attackers_outfield[attackers_outfield["x"] < ball_x]
     if len(dangerous) == 0:
         return None
 
-    blocker_ids = lane_blocker_ids(frame_data, attacking_team_id, home_team_id)
+    blocker_ids = lane_blocker_ids(frame_data, attacking_team_id, gm)
     if not blocker_ids:
         return None
 
@@ -203,21 +256,26 @@ def lane_arrays(frame_data, attacking_team_id, home_team_id):
     )
 
 
-def lane_blocker_ids(frame_data, attacking_team_id, home_team_id):
+def lane_blocker_ids(frame_data, attacking_team_id, gm):
     """The candidate set the production path scores.
 
     Mirrors ``_cover_shadows.py``'s own construction exactly. Note the real signature:
     ``_classify_man_markers(defenders, attackers, *, goal_x_own, params)``.
+
+    ``goal_x_own`` here is the DEFENDERS' own goal, i.e. the end the attacking team ATTACKS --
+    which production now looks up as ``goal_map.attacked_goal(...)`` rather than deriving from
+    ``same_id(attacking_team_id, home_team_id)``. This mirror follows, or it drifts from the
+    thing it exists to mirror.
     """
     import silly_kicks.tracking._cover_shadows as cs
-    from silly_kicks.id_compat import ids_match, same_id
+    from silly_kicks.id_compat import ids_match
 
     players = frame_data[~frame_data["is_ball"].astype(bool)]
     defenders_outfield = players[
         (~ids_match(players["team_id"], attacking_team_id)) & (~players["is_goalkeeper"].astype(bool))
     ]
     attackers = players[ids_match(players["team_id"], attacking_team_id)]
-    goal_x_own = 105.0 if same_id(attacking_team_id, home_team_id) else 0.0
+    goal_x_own = 105.0 if _attacks_toward_high_x(frame_data, attacking_team_id, gm) else 0.0
     man_markers = cs._classify_man_markers(
         defenders_outfield, attackers, goal_x_own=goal_x_own, params=cs.CoverShadowParams()
     )

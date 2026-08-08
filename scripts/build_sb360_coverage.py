@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import math
 import pathlib
 import sys
 import warnings
@@ -29,7 +30,7 @@ from scripts._provenance import git_provenance, require_clean_tree
 from silly_kicks.providers.statsbomb import (
     acting_side_gk_visible,
     defending_gk_visible,
-    visible_fraction,
+    observed_pitch_fraction,
 )
 from silly_kicks.spadl import _sb_coordinates as _sb_coords
 
@@ -246,13 +247,24 @@ def measure_match(match):
                 "n_acting_side_gk_visible": 0,
                 "sum_visible": 0.0,
                 "sum_area": 0.0,
+                "n_with_polygon": 0,
             },
         )
         bucket["n_events"] += 1
         bucket["n_defending_gk_visible"] += int(defending_gk_visible(players))
         bucket["n_acting_side_gk_visible"] += int(acting_side_gk_visible(players))
         bucket["sum_visible"] += len(players)
-        bucket["sum_area"] += visible_fraction(ff.get("visible_area") or [])
+        # ADR-042: a coverage DENOMINATOR must never masquerade as a signal. Only events that
+        # actually carry a polygon enter the mean, and the count of them travels with the rate.
+        # `observed_pitch_fraction` now returns NaN (not 0.0) when nothing was published, so the
+        # old unconditional `sum_area +=` would poison the whole bucket to NaN -- and BEFORE the
+        # rename it silently averaged in a 0.0 for every event with no 360 record, reporting
+        # "the camera saw none of the pitch" where the truth is "nobody said". With only 32.6% of
+        # goal kicks carrying a freeze-frame, that is most of the bucket.
+        _frac = observed_pitch_fraction(ff.get("visible_area") or [])
+        if math.isfinite(_frac):
+            bucket["sum_area"] += _frac
+            bucket["n_with_polygon"] += 1
 
     rows = []
     for type_name, b in per_type.items():
@@ -276,7 +288,12 @@ def measure_match(match):
                 # defined by the visible players themselves, since a coverage fraction there is
                 # circular (the hull over visible players is 100% observed by construction).
                 "mean_players_visible": b["sum_visible"] / n if n else float("nan"),
-                "mean_visible_pitch_fraction": b["sum_area"] / n if n else float("nan"),
+                # Denominator is n_with_polygon, NOT n_events -- and it is REPORTED, so a
+                # reader can see how much of the bucket the mean actually rests on.
+                "n_with_polygon": b["n_with_polygon"],
+                "mean_observed_pitch_fraction": (
+                    b["sum_area"] / b["n_with_polygon"] if b["n_with_polygon"] else float("nan")
+                ),
                 # How many SPADL actions of this type EXIST, and how many got a frame.
                 # NaN rather than 0 where the type produced no actions -- an "unmapped" bucket
                 # has frames but no actions by definition, and 0/0 is not a rate of zero.

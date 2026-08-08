@@ -136,6 +136,7 @@ _ROOT_MODULE = "silly_kicks"
 # `test_derived_surface_is_fully_accounted_for` -- this list can no longer silently rot.
 _PUBLIC_MODULE_FILES = (
     "silly_kicks/reflection.py",
+    "silly_kicks/tracking/_visibility.py",
     "silly_kicks/reporting.py",
     "silly_kicks/feature_glossary.py",
     "silly_kicks/spadl/utils.py",

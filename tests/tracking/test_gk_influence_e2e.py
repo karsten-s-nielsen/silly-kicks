@@ -15,6 +15,7 @@ import pytest
 
 from silly_kicks.tracking import play_left_to_right
 from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
+from tests.tracking._goal_map_helpers import goal_map_like_home_team_id
 from tests.tracking._provider_inputs import (
     GRADIENTSPORTS_DIR,
     SLIM_DIR,
@@ -54,7 +55,7 @@ class TestGkInfluenceProviders:
         from silly_kicks.tracking.features import add_gk_influence
 
         provider, actions, frames, home_team_id, xt = provider_data
-        result = add_gk_influence(actions, frames, xt, home_team_id=home_team_id)
+        result = add_gk_influence(actions, frames, xt, goal_map=goal_map_like_home_team_id(frames, home_team_id))
         expected_cols = {
             "gk_pitch_control_share_weighted",
             "gk_reachable_area_m2",
@@ -69,7 +70,7 @@ class TestGkInfluenceProviders:
         from silly_kicks.tracking.features import add_gk_influence
 
         provider, actions, frames, home_team_id, xt = provider_data
-        result = add_gk_influence(actions, frames, xt, home_team_id=home_team_id)
+        result = add_gk_influence(actions, frames, xt, goal_map=goal_map_like_home_team_id(frames, home_team_id))
         for col in (
             "gk_pitch_control_share_weighted",
             "gk_reachable_area_m2",
@@ -84,7 +85,7 @@ class TestGkInfluenceProviders:
         from silly_kicks.tracking.features import add_gk_influence
 
         provider, actions, frames, home_team_id, xt = provider_data
-        result = add_gk_influence(actions, frames, xt, home_team_id=home_team_id)
+        result = add_gk_influence(actions, frames, xt, goal_map=goal_map_like_home_team_id(frames, home_team_id))
 
         # Share in [0, 1]
         share = result["gk_pitch_control_share_weighted"].dropna()

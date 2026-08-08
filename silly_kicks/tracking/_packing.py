@@ -163,7 +163,16 @@ def compute_packing_metrics(
     if len(def_team_vals) == 0:
         gt = np.nan
     else:
-        back = select_back_line_players(frame, def_team_vals[0], home_team_id, n=params.back_line_n)
+        # `defends_x0` replaced the helper's old `home_team_id` (it now takes the DIRECTION, not
+        # an identity). Packing itself is still identity-keyed -- `mirror` above is the same
+        # assumption -- so the source is unchanged and this is a spelling change only. Re-keying
+        # packing off identity is ADR-051 D3 work, not this cycle's.
+        back = select_back_line_players(
+            frame,
+            def_team_vals[0],
+            same_id(def_team_vals[0], home_team_id),
+            n=params.back_line_n,
+        )
         if len(back) == 0:
             gt = np.nan
         else:

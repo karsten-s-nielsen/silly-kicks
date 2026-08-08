@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-08-06. **Current release**: silly-kicks 4.76.0 (ADR-054 — the ghost-GK path REFUSES on freeze-frames instead of fabricating, guarded at the shared serving seam so all three public entry points inherit it; the ADR-053 audit re-derives to ZERO `silent_degrade` BY RULE. Plus `providers/statsbomb`, a shape-never-fetch SB360 parse port EXTRACTED from `build_sb360_coverage.py`. No retrain, no re-materialize — ghost values on velocity-bearing frames are unchanged; the schema gains one column). Immediately prior: 4.75.0 (ADR-053 — the SB360 coverage audit). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-08-08. **Current release**: silly-kicks 4.77.0 (ADR-055 — one `GoalMap` seam replaces TEN goal-end forks across 5 modules, threaded rather than re-derived (a per-frame map is unresolvable for 35.7% of SkillCorner team-frames and 0.0% on dense tracking -- provider-dependent; the spec's 78.8% does not reproduce, see ADR-055); unresolvable ends REFUSE instead of returning a confident 105.0; Gate C replaces Gate B's detection for the two re-keyed aggregators; plus the observed-region seam (`point_observed` / `region_observed_fraction` / `add_visible_area_coverage`). **15 breaking public signatures + 2 deletions-not-aliases; VAEP/tracking retrain trigger** for `add_gk_influence` and `add_cover_shadows`). Immediately prior: 4.76.0 (ADR-054 — the ghost-GK path REFUSES on freeze-frames instead of fabricating, guarded at the shared serving seam so all three public entry points inherit it; the ADR-053 audit re-derives to ZERO `silent_degrade` BY RULE. Plus `providers/statsbomb`, a shape-never-fetch SB360 parse port EXTRACTED from `build_sb360_coverage.py`. No retrain, no re-materialize — ghost values on velocity-bearing frames are unchanged; the schema gains one column). Immediately prior: 4.75.0 (ADR-053 — the SB360 coverage audit). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -50,20 +50,15 @@ rejected alternatives) lives in
 Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
 repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 
-- **`_defending_goal` re-derives the PINNED public goal map, and the two ALREADY disagree.**
-  `tracking.defended_goal_x` (`_gk_resolve.py:323`) is the pinned seam whose own docstring says a
-  consumer "must call THIS rather than re-derive the rule, because a second implementation is a fork
-  that can disagree with the first". `_ghost_gk.py:814-818` is that second implementation, and it
-  lacks `defended_goal_x`'s mean-outfield-x fallback when a `(game, period, team)` carries no GK rows.
-  It is ALSO an ADR-028 **D3** orientation defect (identity-keyed, not direction-keyed) -- but
-  `_ghost_gk.py` is NOT in the pinned D3 unit (`tests/tracking/test_mirror_registry.py:294-311`
-  asserts exactly three files: `_defensive_line`, `_packing`, `_gk_influence`), so assuming that unit
-  covers it would DROP it. **This is a live correctness divergence, not tidiness** -- arguably the
-  next cycle's headline rather than a row.
-- **`visible_area` has a library seam for the DATA but not for CONSUMING it.** 4.76.0's port carries
-  the polygon as raw per-action rows (ADR-009: ship raw primitives). The consuming API -- masking,
-  coverage-aware support so a region query reports OBSERVED rather than assumed -- waits for a
-  consumer. Carrying it now is what makes that seam buildable later without touching the port.
+- **The `visible_area` CONSUMING seam exists; WIRING it into the count features does not.**
+  4.77.0/ADR-055 shipped the primitives -- `point_observed` (`bool | None`),
+  `region_observed_fraction` (an `(M, 2)` polygon, never a bbox) and `add_visible_area_coverage`
+  -- so the previous framing of this row ("a seam for the DATA but not for CONSUMING it") is
+  discharged. What remains is deliberately NOT done: `defenders_in_triangle_to_goal`,
+  `receiver_zone_density` and `nearest_defender_distance` still treat "nobody there" and "nobody
+  VISIBLE there" as the same observation. Wiring them changes existing values AND decides for the
+  consumer what a partial observation means, which is the ADR-009 line -- so it needs a consumer
+  asking for it, not a library decision.
 - **`velocity_unavailable_by_design` now has FOUR consumers** — `_das.py`, `_press_commitment.py`,
   and, as of 4.76.0, `_ghost_gk.py` (the shared serving seam) and `features.py` (the aggregator
   edge). The remaining velocity-touching modules handle absent kinematics ad hoc, but ADR-053's
@@ -76,9 +71,17 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
   one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and
   silly-kicks ships no xG model, so any port supplied would audit the stub rather than the library.
-- **`snapshot_to_tracking_frames` id dtype is pandas-version-dependent** (`_snapshot.py:172`).
-  `Int64` in yields `Int64` on pandas 2.3.3 and `Float64` on 3.0.3 — the concat-with-all-NA
-  `FutureWarning` materialising. Hyrum's law for any consumer pinning it.
+- **`snapshot_to_tracking_frames` id dtype may be pandas-version-dependent -- UNVERIFIED, and the
+  numbers previously recorded here do not reproduce.** This row used to say "`Int64` in yields
+  `Int64` on pandas 2.3.3 and `Float64` on 3.0.3". Measured on 2.3.3 during 4.77.0: the concat
+  yields **`float64`** for the as-built numeric-int fixture, and an `Int64` source stays **`Int64`**
+  -- so neither half of the old claim reproduces on the pinned resolver. The 4.77.0 cycle planned a
+  fix and DROPPED it (ADR-055): casting to `TRACKING_FRAMES_COLUMNS` is unimplementable, because it
+  declares `int64` for `player_id`/`team_id`, the ball row is NA in both, and `int64` cannot hold NA
+  (`IntCastingNaNError` on every snapshot) -- and a `restore_id_dtype`-based pin changed NOTHING for
+  numpy-int, nullable-`Int64` or object sources (with the pin excised, 0 of 2 tests written for it
+  went red). **The concern is only checkable on a pandas-3 environment, which CI does not have
+  (`ci.yml` is OS x Python only).** Next step is that environment, not another blind fix.
 - **Check whether the lakehouse already ingests StatsBomb open data.** The question has CHANGED now
   that 4.76.0 ships `providers/statsbomb`: it is no longer build-or-reuse but whether the lakehouse
   should ADOPT the port so both read SB360 the same way. Not answerable from this repo.
@@ -86,6 +89,21 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
   shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
   beyond 22 matches is a driver flag, and the shards are additive.
+- **`polygon_to_spadl` raises on an odd-length `visible_area`** (found 4.77.0, NOT changed).
+  Same malformed-provider-data shape as its sibling `observed_pitch_fraction`, which 4.77.0
+  hardened to report NaN because it runs per-event across a corpus. `polygon_to_spadl` has the
+  same exposure through `shape_snapshots`, but hardening it changes that function's failure mode
+  from loud-crash to silent-skip, which is a fail-loud-vs-degrade decision rather than a typo --
+  so it is surfaced rather than folded into an unrelated cycle. `len(flat) < 6` already returns an
+  empty `(0, 2)`, so the consistent fix is to extend that guard with `len(flat) % 2`.
+- **`sportec_slim.parquet` is MIRRORED relative to its own direction labels** (found 4.77.0).
+  `team_attacking_direction` says `DFL-CLU-00000P` attacks +x, so it should defend x=0, while that
+  team's keeper mean x is 98.1 (p1) and 77.0 (p2). Confirmed independently by
+  `orient_frames_to_ltr_by_geometry`, which MIRRORS this slice. Only sportec: gradientsports agrees;
+  metrica/skillcorner have one-sided keeper coverage so the check is inexpressible there. Recorded
+  as a **strict xfail** (`test_provider_inputs_convention.py::test_direction_labels_agree_with_keeper_geometry`),
+  so repairing the slice is forced to delete the marker. Repair moves `sportec_expected.parquet` and
+  the lakehouse-parity goldens, which is why it is its own change.
 - **Sweep for fixtures that CLAIM velocity and supply none.** Two were found and fixed in 4.76.0:
   `test_ghost_gk_orientation.py` and `test_action_ltr_mirror_invariance.py` declared
   `speed_source="native"` with no `vx`/`vy`, so the model ran on 5-of-26 imputed features. Worth a

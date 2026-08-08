@@ -36,6 +36,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from silly_kicks import _polygon
 from silly_kicks.spadl import _sb_coordinates as _sb_coords
 
 #: Synthetic, ACTOR-RELATIVE team ids. SB360 records no team identity -- only whether a player is
@@ -105,24 +106,57 @@ def acting_side_gk_visible(players: list[dict]) -> bool:
     return any(bool(p.get("keeper")) and bool(p.get("teammate")) for p in players)
 
 
-def visible_fraction(flat: list[float]) -> float:
-    """Shoelace over StatsBomb's flat ``[x0, y0, x1, y1, ...]``, normalised by the SB pitch.
+def observed_pitch_fraction(flat: list[float]) -> float:
+    """Share of the SB pitch the broadcast camera observed, CLIPPED to the pitch, in ``[0, 1]``.
 
     Works in NATIVE 120x80 -- it never needs SPADL coordinates, and applies no cell-centre
-    correction, no y-inversion and no clip.
+    correction and no y-inversion.
+
+    .. versionchanged:: ADR-055
+       Renamed from ``visible_fraction``, which is DELETED rather than kept as an alias, and the
+       value changes on the common case. Two changes, both corrections:
+
+       * **It now CLIPS to the pitch.** A broadcast polygon routinely extends past the touchline
+         (which is why :func:`polygon_to_spadl` deliberately does not clip its VERTICES -- ADR-054
+         D5 is about the vertices, not about this ratio), so the unclipped shoelace could exceed
+         1.0 and report more pitch observed than the pitch has. Its only caller already names the
+         result ``mean_visible_pitch_fraction``, i.e. meant the clipped quantity all along.
+       * **A degenerate polygon is NaN, not 0.0.** Zero claims "observed, and none of it"; NaN
+         says no measurement exists. The distinction is the entire point of the seam this joins.
+         "Degenerate" covers fewer than 3 vertices, a non-finite vertex, AND an odd-length
+         flat list -- all three are unusable data rather than a measured absence.
+
+       The rename is what makes both safe: a function that kept its name while changing value on
+       the common case would be undetectable by any consumer, whereas a deleted name fails loud
+       at import. The same argument retired ``defended_goal_x``.
 
     Examples
     --------
-    What fraction of the pitch the broadcast camera saw::
-
-        frac = visible_fraction(record["visible_area"])   # 1.0 == the whole pitch
+    >>> from silly_kicks.providers.statsbomb import observed_pitch_fraction
+    >>> observed_pitch_fraction([0.0, 0.0, 120.0, 0.0, 120.0, 80.0, 0.0, 80.0])
+    1.0
+    >>> observed_pitch_fraction([0.0, 0.0, 60.0, 0.0, 60.0, 80.0, 0.0, 80.0])
+    0.5
+    >>> observed_pitch_fraction([])   # nothing published -- not "none of it observed"
+    nan
     """
-    if len(flat) < 6:
-        return 0.0
-    xs, ys = list(flat[0::2]), list(flat[1::2])
-    n = len(xs)
-    area = 0.5 * abs(sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i] for i in range(n)))
-    return area / (_sb_coords.SB_FIELD_LENGTH * _sb_coords.SB_FIELD_WIDTH)
+    # An ODD-length flat list is malformed provider data, not a polygon. Guarded here rather
+    # than left to `reshape`, which raises: this function is called per-event by
+    # `build_sb360_coverage.py` across a whole corpus, so one bad record would kill a
+    # multi-hour pass, and "unusable" is a value this function already knows how to report.
+    # (The retired `visible_fraction` also crashed here, with an IndexError -- so this is a
+    # hardening, not a regression the rename introduced.)
+    usable = len(flat) >= 6 and len(flat) % 2 == 0
+    poly = _polygon.as_polygon(np.asarray(flat, dtype=float).reshape(-1, 2) if usable else None)
+    pitch = np.array(
+        [
+            [0.0, 0.0],
+            [_sb_coords.SB_FIELD_LENGTH, 0.0],
+            [_sb_coords.SB_FIELD_LENGTH, _sb_coords.SB_FIELD_WIDTH],
+            [0.0, _sb_coords.SB_FIELD_WIDTH],
+        ]
+    )
+    return _polygon.covered_fraction(poly, pitch)
 
 
 def polygon_to_spadl(flat: list[float], *, fidelity_version: int = 1) -> np.ndarray:
@@ -144,7 +178,7 @@ def polygon_to_spadl(flat: list[float], *, fidelity_version: int = 1) -> np.ndar
     arguably not a cell reference -- so whether it belongs here was an open question. Two
     measurements settle it:
 
-    * It does NOT create a conflict with :func:`visible_fraction`, which omits ``crc``. That
+    * It does NOT create a conflict with :func:`observed_pitch_fraction`, which omits ``crc``. That
       function returns an AREA RATIO and ``crc`` is a pure translation, so it is invisible there
       (measured: 0.625 either way). The two readings of this polygon cannot disagree.
     * It DOES matter for player/polygon alignment. Players reach SPADL through the same
