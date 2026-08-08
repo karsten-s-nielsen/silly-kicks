@@ -5,6 +5,81 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.77.0] — 2026-08-08
+
+### Changed — one goal-map seam replaces ten forks, and the observed-region seam ships (PR-S145, ADR-055)
+
+**VAEP/tracking retrain trigger** for `add_gk_influence` and `add_cover_shadows`: both were still
+identity-keyed, and their values change wherever team identity and attacking direction disagreed.
+Everything else is additive or a hard rename that fails loud at import.
+
+**The goal-end rule had TEN implementations across 5 modules.** Each was a variant of
+`0.0 if same_id(team, home_team_id) else 105.0`, and each had the same three defects: identity-keyed
+rather than direction-keyed (ADR-051's D3 class), no period term (teams swap ends at half time), and
+fail-OPEN on an unresolvable end (`nan < 52.5` is False, so a keeper-less frame returned a confident
+105.0). Replaced by `resolve_defended_goals(frames) -> GoalMap`, built ONCE per match from the full
+frames and THREADED in — per-frame construction is a different estimator, and the cost is
+PROVIDER-DEPENDENT: measured on the committed slim fixtures, a per-frame map disagrees with the
+per-match one on **7.1%** of team-frames (skillcorner) / 2.2% (metrica) / **0.0%** (sportec,
+gradientsports), and `attacked_goal` is unresolvable for **35.7%** / 61.7% / 0.0%. (The spec's
+78.8% figure comes from its own corpus and does not reproduce on these fixtures; its 34.2%
+unresolvable rate does. The decision rests on the reproduced numbers.) An eleventh fork fails CI via a
+semantic AST gate that was landed RED and observed failing on all ten.
+
+- **BREAKING — 15 public signatures**, across two packages. `home_team_id` → `goal_map` on
+  `compute_gk_influence`, `lane_control`, `compute_blocking_score`, `compute_threat_pc` and
+  `gkdv.delta_threat_suppression`; **removed** (replaced by an optional `goal_map`) from
+  `add_gk_influence`, `add_cover_shadows`, `gk_influence_xfns`, `cover_shadow_xfns`,
+  `gk_pitch_control_share_weighted`, `gk_reachable_area_m2`, `gk_closing_time_min_s`,
+  `gk_closing_time_mean_s` and `atomic.tracking.features.add_cover_shadows`; and
+  `select_back_line_players` takes `defends_x0: bool` instead. Structurally verified: **zero**
+  functions are left declaring `home_team_id` without reading it as a result of this cycle.
+- **BREAKING — two renames, both DELETED not aliased.** `tracking.defended_goal_x` →
+  `resolve_defended_goals` (returns a `GoalMap`, not a dict) and
+  `providers.statsbomb.visible_fraction` → `observed_pitch_fraction`. The second also changes value:
+  it now CLIPS to the pitch and returns NaN (not 0.0) for a degenerate polygon. A function keeping
+  its name while changing value on the common case is undetectable by any consumer; a deleted name
+  raises at import.
+- **`GoalMap` keys are canonical STRINGS**, so a raw-tuple lookup misses silently — which had
+  already shipped in `scripts/validate_shot_goalmouth_sb.py`, scanning `(k[0], k[1]) == key` and
+  returning NaN for every row. Use `get` / `attacked_goal` / `ends_in_period`.
+- **`GoalEndUnresolvedError`** (a `ValueError` subclass): per-frame functions REFUSE an unresolvable
+  end; the `add_*` edge catches it by name and emits a NaN row. `ghost_gk_source` gains
+  `goal_end_unresolved`, distinct from `no_keeper` — a keeper WAS present, and saying otherwise
+  states something the frames refute.
+- **Gate C** replaces Gate B's DETECTION for the two re-keyed aggregators (Gate B goes vacuous once
+  the parameter is gone). It holds frames fixed and swaps the MAP, reproducing the recorded D3
+  magnitudes exactly: `share 0.108532`, `closing_min 4.38062 s`, `closing_mean 4.02205 s`,
+  `blocking_score 148.83`.
+- **`add_cover_shadows` is now keeper-dependent on freeze-frame input.** On SB360's `gk_absent`
+  roster its five columns move `all_nan` → `no_signal`, because the outfield fallback guesses both
+  teams at the same end (measured means 56.9 and 76.5, both past the 52.5 midline) and
+  `attacked_goal` refuses a degenerate map. Previously both legs produced numbers the frames could
+  not support.
+
+### Added — the observed-region seam (ADR-055)
+
+`tracking/_visibility.py`: `point_observed` (returns `bool | None` — `False` is a claim, and a
+missing polygon supports no claim), `region_observed_fraction` (an `(M, 2)` POLYGON, never a bbox,
+which can only OVER-report coverage for a triangle) and `add_visible_area_coverage`, emitting
+`visible_area_fraction` + `visible_area_source` over the closed
+`{observed, no_polygon, degenerate_polygon, unlinked}`. The fraction is NaN for every non-`observed`
+token — never 1.0, never 0.0. Geometry primitives live in the neutral `silly_kicks/_polygon.py`
+because `providers/` has no runtime dependency on `tracking/`. `build_sb360_coverage.py` now
+accumulates only finite fractions and reports `n_with_polygon` as the denominator (ADR-042).
+Wiring coverage INTO the count features is deliberately NOT done (ADR-009). C4 aggregator count
+32 → 33.
+
+### Not shipped — the `_snapshot` dtype pin, and why
+
+Spec §2.6 recorded that `_snapshot.py`'s `pd.concat` yields `Int64` on pandas 2.3.3 and `Float64` on
+3.0.3, and prescribed a cast to `TRACKING_FRAMES_COLUMNS`. On the pinned resolver the concat yields
+**`float64`**; the prescribed cast is **unimplementable** (`int64` cannot hold the ball row's NA, so
+it raises on every snapshot, and the declaration is not what the native adapters emit anyway); and a
+`restore_id_dtype` pin changes nothing for numpy-int, nullable-`Int64` or object sources — with the
+pin excised, **0 of 2** tests written for it went red. Dropped rather than shipped as an
+unobservable no-op; the pandas-3 concern is recorded as a follow-up.
+
 ## [4.76.0] — 2026-08-06
 
 ### Fixed — the ghost-GK path REFUSES on freeze-frames instead of fabricating (PR-S144, ADR-054)

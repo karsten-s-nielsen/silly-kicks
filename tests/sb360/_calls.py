@@ -196,3 +196,24 @@ def gradientsports_player_ids(fn):
         return actions.assign(gs_jersey_resolution_rate=rate)
 
     return call
+
+
+def visible_area_coverage(fn):
+    """``add_visible_area_coverage`` takes NO frames and REQUIRES ``visible_area``.
+
+    So it cannot use :func:`generic`, which forwards ``(actions, frames, ...)``. The polygon is
+    synthesized here as a fixed half-pitch rather than taken from the fixture, because the SB360
+    fixture carries no ``visible_area`` payload -- and a fixed polygon is the honest input for
+    this audit: the aggregator reads no frame, so neither the velocity axis nor a roster ablation
+    can reach it, and the audit's job is to RECORD that rather than manufacture a difference.
+    """
+    import numpy as np
+    import pandas as pd
+
+    half = np.array([[0.0, 0.0], [52.5, 0.0], [52.5, 68.0], [0.0, 68.0]])
+
+    def call(actions, frames, links, home_team_id):
+        visible = pd.DataFrame({"action_id": list(actions["action_id"]), "polygon": [half] * len(actions)})
+        return fn(actions, visible_area=visible, links=links)
+
+    return call

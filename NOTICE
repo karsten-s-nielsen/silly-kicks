@@ -28,6 +28,16 @@ in pyproject.toml; each retains its upstream license.
 Mathematical / Methodological References
 ----------------------------------------
 
+The observed-region seam (silly_kicks/tracking/_visibility.py and the shared polygon
+primitives in silly_kicks/_polygon.py) implements NO published methodology: the observed
+region is PROVIDER-SUPPLIED data -- StatsBomb 360's per-event `visible_area` polygon -- and
+the coverage quantity is plain polygon clipping over it. The clipping algorithm is
+Sutherland, I. E., & Hodgman, G. W. (1974). "Reentrant Polygon Clipping."
+Communications of the ACM, 17(1), 32-42. The attribution token recorded in the feature
+glossary names the DATA source rather than a paper, because "where does this come from" is
+the question that field answers for these two columns. That token is, literally:
+StatsBomb 360 visible_area (provider data)
+
 The SPADL action representation (silly_kicks/spadl/) implements the framework
 described in: Decroos, T., Van Haaren, J., & Davis, J. (2018). "SPADL: A
 Common Framework for Action Description in Soccer." Workshop on Machine

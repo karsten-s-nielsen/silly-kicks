@@ -8,6 +8,12 @@ import numpy as np
 import pandas as pd
 
 from tests.tracking._gk_test_helpers import _make_two_team_frame
+from tests.tracking._goal_map_helpers import goal_map_for
+
+#: ADR-055 replaced ``home_team_id=1`` at this file's re-keyed call sites. Its frames carry
+#: game 1 / period 1 with teams {1, 2} and each keeper at its own end, so this states exactly
+#: what ``home_team_id=1`` meant and matches what ``resolve_defended_goals`` derives there.
+HOME_GOAL_MAP = goal_map_for({1: 0.0, 2: 105.0})
 
 # fitted_xt fixture inherited from tests/conftest.py
 
@@ -100,7 +106,7 @@ class TestPerSeriesHelpers:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert isinstance(result, pd.Series)
         assert len(result) == 2
@@ -115,7 +121,7 @@ class TestPerSeriesHelpers:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         # Second action time_seconds=999 -> no matching frame -> NaN
         assert np.isnan(result.iloc[1])
@@ -128,7 +134,7 @@ class TestPerSeriesHelpers:
         result = gk_closing_time_min_s(
             actions,
             frames,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert np.isnan(result.iloc[0])
 
@@ -140,7 +146,7 @@ class TestPerSeriesHelpers:
             actions,
             None,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert result.isna().all()
         assert result.name == "gk_pitch_control_share_weighted"
@@ -157,7 +163,7 @@ class TestAggregator:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         expected_cols = {
             "gk_pitch_control_share_weighted",
@@ -173,7 +179,7 @@ class TestAggregator:
 
         actions, frames = _make_actions_and_frames()
         enriched = add_action_context(actions, frames)
-        result = add_gk_influence(enriched, frames, fitted_xt, home_team_id=1)
+        result = add_gk_influence(enriched, frames, fitted_xt, goal_map=HOME_GOAL_MAP)
         # Should not duplicate provenance columns
         assert result.columns.duplicated().sum() == 0
 
@@ -191,7 +197,7 @@ class TestAggregator:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             zone_names=["six_yard_box", "near_post", "far_post"],
         )
         assert "gk_closing_time_min_s__near_post" in result.columns
@@ -207,7 +213,7 @@ class TestXfnsFactory:
     def test_returns_frame_aware_transformer(self, fitted_xt):
         from silly_kicks.tracking.features import gk_influence_xfns
 
-        xfns = gk_influence_xfns(fitted_xt, home_team_id=1)
+        xfns = gk_influence_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         assert len(xfns) == 1
         assert hasattr(xfns[0], "_frame_aware")
         assert xfns[0]._frame_aware is True
@@ -215,7 +221,7 @@ class TestXfnsFactory:
     def test_introspection_column_names(self, fitted_xt):
         from silly_kicks.tracking.features import gk_influence_xfns
 
-        xfns = gk_influence_xfns(fitted_xt, home_team_id=1)
+        xfns = gk_influence_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         transformer = xfns[0]
 
         # Create dummy states (3 slots of 2 actions)
@@ -247,7 +253,7 @@ class TestXfnsFactory:
         from silly_kicks.tracking.features import gk_influence_xfns
 
         actions, frames = _make_actions_and_frames()
-        xfns = gk_influence_xfns(fitted_xt, home_team_id=1)
+        xfns = gk_influence_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         transformer = xfns[0]
         states = [actions.copy() for _ in range(3)]
         result = transformer(states, frames)
@@ -256,7 +262,7 @@ class TestXfnsFactory:
     def test_column_naming_convention(self, fitted_xt):
         from silly_kicks.tracking.features import gk_influence_xfns
 
-        xfns = gk_influence_xfns(fitted_xt, home_team_id=1)
+        xfns = gk_influence_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         states = [
             pd.DataFrame(
                 {
@@ -304,7 +310,7 @@ class TestXfnsFactory:
             }
         )
         _, frames = _make_actions_and_frames()
-        xfns = gk_influence_xfns(fitted_xt, home_team_id=1)
+        xfns = gk_influence_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         states = [actions.copy() for _ in range(3)]
 
         call_count = [0]
@@ -332,8 +338,8 @@ class TestXfnsFactory:
         from silly_kicks.tracking.features import gk_influence_xfns
 
         actions, frames = _make_actions_and_frames()
-        xfns_s = gk_influence_xfns(fitted_xt, home_team_id=1, method="spearman")
-        xfns_v = gk_influence_xfns(fitted_xt, home_team_id=1, method="voronoi")
+        xfns_s = gk_influence_xfns(fitted_xt, goal_map=HOME_GOAL_MAP, method="spearman")
+        xfns_v = gk_influence_xfns(fitted_xt, goal_map=HOME_GOAL_MAP, method="voronoi")
 
         states = [actions.copy() for _ in range(3)]
         result_s = xfns_s[0](states, frames)
@@ -368,8 +374,8 @@ class TestAtomicMirror:
         atomic_actions["x"] = atomic_actions["start_x"]
         atomic_actions["y"] = atomic_actions["start_y"]
 
-        std_result = std_share(actions, frames, fitted_xt, home_team_id=1)
-        atomic_result = atomic_share(atomic_actions, frames, fitted_xt, home_team_id=1)
+        std_result = std_share(actions, frames, fitted_xt, goal_map=HOME_GOAL_MAP)
+        atomic_result = atomic_share(atomic_actions, frames, fitted_xt, goal_map=HOME_GOAL_MAP)
         pd.testing.assert_series_equal(std_result, atomic_result, check_names=False)
 
     def test_atomic_closing_time_matches(self, fitted_xt):
@@ -383,8 +389,8 @@ class TestAtomicMirror:
         atomic_actions["x"] = atomic_actions["start_x"]
         atomic_actions["y"] = atomic_actions["start_y"]
 
-        std_result = std_ct(actions, frames, home_team_id=1)
-        atomic_result = atomic_ct(atomic_actions, frames, home_team_id=1)
+        std_result = std_ct(actions, frames, goal_map=HOME_GOAL_MAP)
+        atomic_result = atomic_ct(atomic_actions, frames, goal_map=HOME_GOAL_MAP)
         pd.testing.assert_series_equal(std_result, atomic_result, check_names=False)
 
     def test_atomic_aggregator_column_set(self, fitted_xt):
@@ -395,13 +401,13 @@ class TestAtomicMirror:
         atomic_actions["x"] = atomic_actions["start_x"]
         atomic_actions["y"] = atomic_actions["start_y"]
 
-        result = add_gk_influence(atomic_actions, frames, fitted_xt, home_team_id=1)
+        result = add_gk_influence(atomic_actions, frames, fitted_xt, goal_map=HOME_GOAL_MAP)
         assert "gk_pitch_control_share_weighted" in result.columns
         assert "gk_reachable_area_m2" in result.columns
 
     def test_atomic_xfns_column_count(self, fitted_xt):
         from silly_kicks.atomic.tracking.features import gk_influence_xfns
 
-        xfns = gk_influence_xfns(fitted_xt, home_team_id=1)
+        xfns = gk_influence_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         assert len(xfns) == 1
         assert xfns[0]._frame_aware is True

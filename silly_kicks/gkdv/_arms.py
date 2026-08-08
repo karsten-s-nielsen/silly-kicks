@@ -19,6 +19,11 @@ Delta = 0 the domain exists to exclude.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from silly_kicks.tracking import GoalMap
+
 import pandas as pd
 
 from ._engine import _DEFAULT_PARAMS, GkdvParams
@@ -30,7 +35,7 @@ def delta_threat_suppression(
     *,
     attacking_team_id: int | str,
     xt,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     params: GkdvParams = _DEFAULT_PARAMS,
 ) -> float:
     """Delta-GK-threat-suppression: ``threat_pc(actual) - threat_pc(ghost)``.
@@ -112,7 +117,7 @@ def delta_threat_suppression(
     kwargs = {
         "attacking_team_id": attacking_team_id,
         "xt": xt,
-        "home_team_id": home_team_id,
+        "goal_map": goal_map,
         "method": params.pitch_control_method,
         "params": SpearmanParams(lambda_gk=params.lambda_gk),
     }

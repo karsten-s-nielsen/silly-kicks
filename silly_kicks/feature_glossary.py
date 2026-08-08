@@ -116,6 +116,7 @@ _M_GK_INFLUENCE = "silly_kicks.tracking._gk_influence"
 _M_COVER_SHADOWS = "silly_kicks.tracking._cover_shadows"
 _M_SHOT_GOALMOUTH = "silly_kicks.tracking._shot_goalmouth"
 _M_TRACKING_UTILS = "silly_kicks.tracking.utils"
+_M_VISIBILITY = "silly_kicks.tracking._visibility"
 _M_ELASTIC = "silly_kicks.tracking._elastic_sync"
 _M_GK_GEOMETRY = "silly_kicks.tracking._gk_geometry"
 _M_GK_RESOLVE = "silly_kicks.tracking._gk_resolve"
@@ -133,6 +134,11 @@ _A_SPEARMAN_2018 = "Spearman, W. (2018)"  # Beyond Expected Goals (OBSO / pitch-
 _A_PAUSA = "arXiv:2506.09349"  # Lee 2026 PAUSA
 _A_FERNANDEZ_BORNN = "Fernandez, J., & Bornn, L. (2018)"  # Wide Open Spaces (space creation)
 _A_SOTUDEH = "Sotudeh, H. (2026)"  # shape graph
+#: No published methodology -- the observed region is a PROVIDER-SUPPLIED polygon (StatsBomb 360
+#: `visible_area`), and the coverage quantity is plain polygon clipping over it. Recorded as the
+#: data source rather than left blank, because "where does this come from" is the question the
+#: attribution field answers.
+_A_SB360 = "StatsBomb 360 visible_area (provider data)"
 _A_DEFENSIVE_LINE = "arXiv:2511.06191"  # Herold 2022 (defensive-line discriminators)
 _A_TEAM_SHAPE = "Zhang, G., Kempe, M."  # Zhang 2025 (canonical team-shape metrics)
 _A_DAS = "Bischofberger, J., & Baca, A. (2026)"  # Dangerous Accessible Space
@@ -956,6 +962,33 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_DAS,
         attribution=_A_DAS,
         higher_is_better=True,
+    ),
+    # -- Observed-region coverage (ADR-055) -------------------------------------------------------
+    FeatureColumn(
+        name="visible_area_fraction",
+        definition=(
+            "Share of the pitch the provider's freeze-frame actually observed, from the "
+            "visible_area polygon CLIPPED to the pitch. 1.0 means the whole pitch was in view. "
+            "NaN whenever visible_area_source is not 'observed' -- never 0.0, which would claim "
+            "a measurement that the absent polygon does not support. Higher is better only in "
+            "the sense that more of the scene is EVIDENCE; it says nothing about play."
+        ),
+        unit="ratio",
+        emitting_module=_M_VISIBILITY,
+        attribution=_A_SB360,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="visible_area_source",
+        definition=(
+            "Provenance of visible_area_fraction: observed / no_polygon / degenerate_polygon / "
+            "unlinked. The three non-'observed' tokens are distinct facts with distinct remedies "
+            "-- nothing was published, something unusable was published, or the action reached "
+            "no frame at all."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_VISIBILITY,
+        attribution=_A_SB360,
     ),
     FeatureColumn(
         name="das_source",

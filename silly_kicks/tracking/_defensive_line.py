@@ -20,7 +20,7 @@ from silly_kicks.id_compat import ids_match, same_id
 def select_back_line_players(
     frames: pd.DataFrame,
     team_id: int | str,
-    home_team_id: int | str,
+    defends_x0: bool,
     *,
     n: int | Literal["adaptive"] = 4,
     adaptive_max_n: int = 5,
@@ -37,8 +37,17 @@ def select_back_line_players(
         is tolerated — uses first frame group).
     team_id : int | str
         Team to select back-line players for.
-    home_team_id : int | str
-        Home team identifier for goal-end resolution.
+    defends_x0 : bool
+        Whether ``team_id`` defends the goal at x=0 on these frames — i.e. the
+        DIRECTION, supplied by the caller rather than inferred here.
+
+        This parameter used to be ``home_team_id``, from which the direction was
+        derived as ``same_id(team_id, home_team_id)``. That is identity-keyed
+        direction inference (ADR-051 D3): it is correct only while the frames are
+        home-attacks-right, and it silently inverts otherwise. Callers now supply
+        the direction from whatever source they legitimately hold — the goal map
+        (``goal_map.get(...) == 0.0``) where one is available, ``same_id`` where
+        the caller is itself still identity-keyed and has not yet been re-keyed.
     n : int | Literal["adaptive"], default 4
         Target back-line player count. Clamped to available outfield.
     adaptive_max_n : int, default 5
@@ -54,8 +63,15 @@ def select_back_line_players(
     --------
     Select the back-line players for a team on a frame::
 
+        from silly_kicks.tracking import resolve_defended_goals
         from silly_kicks.tracking._defensive_line import select_back_line_players
-        back_line = select_back_line_players(frame, team_id=1, home_team_id=1)
+
+        goal_map = resolve_defended_goals(frames)   # ONCE per match, full frames
+        back_line = select_back_line_players(
+            frame,
+            team_id=1,
+            defends_x0=goal_map.get(game_id, period_id, 1, allow_guess=True) == 0.0,
+        )
         back_line[["player_id", "x", "y"]].head()
 
     See NOTICE for full bibliographic citations.
@@ -70,7 +86,6 @@ def select_back_line_players(
     if len(outfield) < 3:
         return outfield
 
-    defends_x0 = same_id(team_id, home_team_id)
     xs = outfield["x"].to_numpy(dtype="float64")
 
     if defends_x0:

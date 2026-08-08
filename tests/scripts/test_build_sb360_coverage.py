@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import math
 import pathlib
 
 import pytest
@@ -38,20 +39,27 @@ def test_missing_competition_raises_rather_than_sampling_silently():
         mod.resolve_competition(999, 1, catalogue=[], expect_name="x")
 
 
-def test_visible_fraction_is_normalised_by_the_STATSBOMB_pitch():
+def test_observed_pitch_fraction_is_normalised_by_the_STATSBOMB_pitch():
     """`visible_area` arrives in StatsBomb's 120x80 frame, NOT SPADL's 105x68.
 
     Dividing by 105*68 gives ~1.34 for a fully-visible frame -- a "fraction" above 1, reported
     to a club.
     """
     full = [0.0, 0.0, 120.0, 0.0, 120.0, 80.0, 0.0, 80.0]
-    assert mod.visible_fraction(full) == pytest.approx(1.0)
+    assert mod.observed_pitch_fraction(full) == pytest.approx(1.0)
 
     half = [0.0, 0.0, 60.0, 0.0, 60.0, 80.0, 0.0, 80.0]
-    assert mod.visible_fraction(half) == pytest.approx(0.5)
+    assert mod.observed_pitch_fraction(half) == pytest.approx(0.5)
 
-    assert mod.visible_fraction([]) == 0.0
-    assert mod.visible_fraction([1.0, 2.0]) == 0.0
+    # ADR-055: NaN, not 0.0. "Nothing was published" and "the camera saw none of the pitch"
+    # are different findings, and averaging the second in for every event lacking a 360 record
+    # is what the n_with_polygon denominator now prevents.
+    assert math.isnan(mod.observed_pitch_fraction([]))
+    assert math.isnan(mod.observed_pitch_fraction([1.0, 2.0]))
+    # An ODD-length flat list is malformed provider data. It must report unusable, not crash:
+    # this function runs per-event across a corpus, so a raise would kill a multi-hour pass.
+    # (The retired `visible_fraction` raised IndexError here.)
+    assert math.isnan(mod.observed_pitch_fraction([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]))
 
 
 def test_defending_keeper_is_keeper_AND_NOT_teammate():

@@ -21,7 +21,7 @@ import pathlib
 import numpy as np
 import pandas as pd
 
-from silly_kicks.providers.statsbomb import shape_snapshots, visible_fraction
+from silly_kicks.providers.statsbomb import observed_pitch_fraction, shape_snapshots
 
 _SLICE = pathlib.Path(__file__).resolve().parents[2] / "datasets" / "statsbomb" / "three-sixty"
 
@@ -87,9 +87,9 @@ def test_real_polygons_are_not_degenerate_and_not_clipped_flat():
         assert np.ptp(poly[:, 0]) > 1.0, "polygon has no x extent -- suspect a flat-list mis-parse"
 
 
-def test_visible_fraction_on_real_data_is_a_plausible_camera_view():
+def test_observed_pitch_fraction_on_real_data_is_a_plausible_camera_view():
     """A broadcast frame sees part of the pitch, not none and not all of it."""
-    fracs = [visible_fraction(r.get("visible_area") or []) for r in _frames_raw()]
+    fracs = [observed_pitch_fraction(r.get("visible_area") or []) for r in _frames_raw()]
     assert all(0.0 < f < 1.0 for f in fracs), f"implausible visible fractions: {fracs}"
 
 

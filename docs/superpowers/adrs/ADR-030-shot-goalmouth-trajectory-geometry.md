@@ -286,3 +286,5 @@ discriminator.
 - Deferred: drag-aware horizontal fit (Spearman 2017 constants already in-house) — only if the
   SB validation shows speed-dependent bias; ELASTIC-based contact alignment upgrade — only if
   the pilot shows residual sync bias.
+
+> **Superseded in part by ADR-055 (2026-08-08).** `defended_goal_x` is DELETED, not renamed in place: the seam is now `resolve_defended_goals(frames) -> GoalMap`, built once per match and threaded in, with `get` / `attacked_goal` accessors over canonical STRING keys. The reasoning recorded here stands; only the symbol moved.

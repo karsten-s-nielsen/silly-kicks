@@ -53,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts._driver import for_each, shard_path
 from scripts._loader_pining import load_matches
 from scripts._provenance import git_provenance, require_clean_tree
-from silly_kicks.tracking import link_actions_to_frames
+from silly_kicks.tracking import link_actions_to_frames, resolve_defended_goals
 from silly_kicks.tracking._action_orientation import (
     FIELD_LENGTH,
     FIELD_WIDTH,
@@ -83,17 +83,23 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
-def _lane_blocker_count(frame_data, attacking_team_id, home_team_id) -> int:
+def _lane_blocker_count(frame_data, attacking_team_id, goal_map) -> int:
     """Number of lane blockers, mirroring ``_compute_cover_shadow_dict``'s own construction."""
     import silly_kicks.tracking._cover_shadows as cs
-    from silly_kicks.id_compat import ids_match, same_id
+    from silly_kicks.id_compat import ids_match
 
     players = frame_data[~frame_data["is_ball"].astype(bool)]
     defenders_outfield = players[
         (~ids_match(players["team_id"], attacking_team_id)) & (~players["is_goalkeeper"].astype(bool))
     ]
     attackers = players[ids_match(players["team_id"], attacking_team_id)]
-    goal_x_own = 105.0 if same_id(attacking_team_id, home_team_id) else 0.0
+    # ADR-055: the DEFENDERS' own goal is the end the attacking team ATTACKS -- a real lookup
+    # of the opponent's map entry, not `same_id(attacking_team_id, home_team_id)`.
+    goal_x_own = goal_map.attacked_goal(
+        frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], attacking_team_id, allow_guess=True
+    )
+    if goal_x_own is None:
+        return 0
     man_markers = cs._classify_man_markers(
         defenders_outfield, attackers, goal_x_own=goal_x_own, params=cs.CoverShadowParams()
     )
@@ -101,7 +107,13 @@ def _lane_blocker_count(frame_data, attacking_team_id, home_team_id) -> int:
 
 
 def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[dict]:
-    """One record per action that both paths could score."""
+    """One record per action that both paths could score.
+
+    ``home_team_id`` is retained in the signature because callers pass it and it still
+    identifies the match's home side; the GEOMETRY, however, now comes from the goal map
+    derived from ``frames`` (ADR-055).
+    """
+    goal_map = resolve_defended_goals(frames)
     pointers, _ = link_actions_to_frames(actions, frames)
     pointer_lookup = pointers.set_index("action_id")
     frame_groups = frames.groupby(["period_id", "frame_id"])
@@ -142,14 +154,15 @@ def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[d
         passer_xy = (float(row["start_x"]), float(row["start_y"]))
         if flip[j]:
             passer_xy = (FIELD_LENGTH - passer_xy[0], FIELD_WIDTH - passer_xy[1])
-        common = dict(home_team_id=home_team_id)
         # `_ungated_cheap_identity=True` is REQUIRED: production gates the cheap identity to
         # None, so without it every row would compare None against a real id and this script
         # would report agreement 0.0 -- measuring the gate, not the cheap path.
+        # Spelled out, not splatted: a `**common` dict widens to its value union and the checker
+        # then tries to bind a GoalMap to `method` / `decision_rule` / `pitch_control_cache`.
         cheap = _compute_cover_shadow_dict(
-            frame_data, passer_xy, tid, xt, detailed=False, _ungated_cheap_identity=True, **common
+            frame_data, passer_xy, tid, xt, goal_map=goal_map, detailed=False, _ungated_cheap_identity=True
         )
-        exact = _compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, detailed=True, **common)
+        exact = _compute_cover_shadow_dict(frame_data, passer_xy, tid, xt, goal_map=goal_map, detailed=True)
         if cheap is None or exact is None:
             continue
 
@@ -167,7 +180,7 @@ def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[d
                     frame_data,
                     tid,
                     xt,
-                    home_team_id=home_team_id,
+                    goal_map=goal_map,
                     defenders_to_remove=[pid_cheap],
                 ).blocking_score
             )
@@ -176,7 +189,7 @@ def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[d
             {
                 "match_id": match_id,
                 "action_id": str(aid),
-                "n_lane_blockers": _lane_blocker_count(frame_data, tid, home_team_id),
+                "n_lane_blockers": _lane_blocker_count(frame_data, tid, goal_map),
                 "max_def_cheap": float(cheap["max_single_defender_blocking_score"]),
                 "max_def_exact": float(exact["max_single_defender_blocking_score"]),
                 "exact_score_of_cheap_pid": exact_of_cheap_pid,

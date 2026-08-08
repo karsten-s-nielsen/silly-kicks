@@ -741,9 +741,8 @@ def compute_shot_goalmouth(
 
     See NOTICE for full bibliographic citations (Anzer & Bauer 2021).
     """
-    from silly_kicks.id_compat import same_id
     from silly_kicks.tracking._gk_geometry import _truthy_bool
-    from silly_kicks.tracking._gk_resolve import defended_goal_x
+    from silly_kicks.tracking._gk_resolve import resolve_defended_goals
     from silly_kicks.tracking.utils import slice_around_event
 
     _ = links  # signature parity only; see docstring
@@ -767,14 +766,13 @@ def compute_shot_goalmouth(
 
     is_ball = _truthy_bool(frames["is_ball"])  # ADR-019: never .astype(bool) a string column
     ball = frames[is_ball].drop_duplicates(["game_id", "period_id", "frame_id"], keep="first")
-    goal_map = defended_goal_x(frames)
+    goal_map = resolve_defended_goals(frames)
 
     shots = actions[is_shot]
     sl = slice_around_event(shots, ball, pre_seconds=_PRE_SECONDS, post_seconds=params.post_window_seconds)
     by_action = dict(iter(sl.groupby("action_id"))) if len(sl) else {}
 
     for ridx, row in shots.iterrows():
-        key_gp = (row["game_id"], row["period_id"])
         # attacked goal = the goal defended by the OTHER team in this (game, period).
         # Three mutually exclusive resolution states:
         #   resolved   -- exactly 2 teams, action team identified (same_id), ends differ
@@ -782,10 +780,13 @@ def compute_shot_goalmouth(
         #                 spec 5.5) -> fallback to the end nearer the window's mean ball x
         #   unresolved -- anything else (NaN action team -> same_id never matches -> 2
         #                 candidate "opponent" ends; or a malformed (game, period) group)
-        ends = {k[2]: v for k, v in goal_map.items() if (k[0], k[1]) == key_gp}
-        opp = [v for tid, v in ends.items() if not same_id(tid, row["team_id"])]
+        # The seam owns the lookup: `ends_in_period` canonicalizes, and `attacked_goal` is a
+        # real lookup of the opponent's entry. The former raw tuple `==` compared keys built
+        # from `frames` against ids read off `actions` -- a live ADR-019 hazard.
+        ends = goal_map.ends_in_period(row["game_id"], row["period_id"], allow_guess=True)
+        attacked = goal_map.attacked_goal(row["game_id"], row["period_id"], row["team_id"], allow_guess=True)
         degenerate = len(ends) == 2 and len(set(ends.values())) == 1
-        resolved = len(ends) == 2 and len(opp) == 1 and not degenerate
+        resolved = attacked is not None and not degenerate
         if not resolved and not degenerate:
             out.loc[ridx, "shot_crossing_source"] = "unresolved"
             out.loc[ridx, "shot_crossing_confidence"] = 0.0
@@ -801,7 +802,7 @@ def compute_shot_goalmouth(
         yv = g["y"].to_numpy(float)
         zv = g["z"].to_numpy(float)
         if resolved:
-            goal_x = float(opp[0])
+            goal_x = float(attacked)  # type: ignore[arg-type]
         else:  # degenerate -> PSO fallback (spec section 5.5)
             goal_x = 0.0 if float(np.nanmean(xv)) < 52.5 else _FIELD_LENGTH
         truncated = (t[-1] - max(float(t[0]), 0.0)) < params.post_window_seconds - 0.5 if len(t) else True

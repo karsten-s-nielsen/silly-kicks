@@ -22,6 +22,7 @@ from __future__ import annotations
 
 
 def register() -> None:
+    import numpy as np
     import pandas as pd
 
     from silly_kicks.tracking import (
@@ -29,6 +30,7 @@ def register() -> None:
         add_elastic_sync,
         add_gradientsports_player_ids,
         add_sync_score,
+        add_visible_area_coverage,
         link_actions_to_frames,
     )
     from tests.tracking._mirror_registry import AWAY, HOME, _entry, gate_xt
@@ -218,5 +220,53 @@ def register() -> None:
             "team_id": _ROSTER_JOIN,
             "player_id": _ROSTER_JOIN,
             "is_goalkeeper": _ROSTER_JOIN,
+        },
+    )
+
+    # ------------------------------------------------------------------
+    # add_visible_area_coverage (ADR-055)
+    # ------------------------------------------------------------------
+    # GATE A is STRUCTURAL here, and saying so is the point of this registration. The aggregator
+    # takes NO frames at all -- `inspect.signature` is (actions, *, visible_area, links) -- so it
+    # cannot mix an action-LTR value with a frame-LTR one, which is the only defect Gate A
+    # detects. Gate A passes because the mirrored leg is fed an identical call, not because a
+    # reprojection was verified.
+    #
+    # GATE B skips (`role="unused"`: no `home_team_id`) and GATE C skips (no `call_with_map`: no
+    # goal map either). Both skips are RECORDED here rather than left implicit, so this entry is
+    # never read as making an assertion it does not make -- the registry's job for this
+    # aggregator is anti-rot coverage plus a smoke check that it runs.
+    #
+    # The polygon is a fixed half-pitch, so `visible_area_fraction` is 0.5 on every action and
+    # `non_vacuity` is deliberately empty: a constant column cannot anchor a non-vacuity check,
+    # and inventing per-action variation here would test the fixture rather than the aggregator.
+    _HALF_PITCH = np.array([[0.0, 0.0], [52.5, 0.0], [52.5, 68.0], [0.0, 68.0]])
+
+    def _call_visible_area(actions, _frames, _home_team_id):
+        visible = pd.DataFrame({"action_id": list(actions["action_id"]), "polygon": [_HALF_PITCH] * len(actions)})
+        return add_visible_area_coverage(actions, visible_area=visible)
+
+    _entry(
+        "add_visible_area_coverage",
+        _call_visible_area,
+        {
+            "visible_area_fraction": "invariant",
+            "visible_area_source": "exempt",
+        },
+        tol=1e-12,
+        basis=(
+            "no tolerance is exercised in any meaningful sense: the aggregator reads no frame "
+            "coordinate, so both legs compute the identical polygon-vs-pitch ratio and the "
+            "measured Gate A residual is EXACTLY 0.0 on visible_area_fraction. 1e-12 is recorded "
+            "so the field is not a bare number, and is far below the 0.5 the column carries."
+        ),
+        role="unused",
+        non_vacuity=(),
+        exempt={
+            "visible_area_source": (
+                "a closed-vocabulary provenance STRING, not geometry -- undefined under a mirror "
+                "rather than invariant under one, and pinned by its own vocabulary post-condition "
+                "in _visibility.py plus tests/tracking/test_visibility.py"
+            ),
         },
     )

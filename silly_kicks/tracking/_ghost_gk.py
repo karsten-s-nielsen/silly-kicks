@@ -34,6 +34,7 @@ from silly_kicks.spadl import config as spadlconfig
 
 from . import _geometry as _geo
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
+from ._gk_resolve import resolve_defended_goals
 from ._velocity_availability import velocity_unavailable_by_design as _velocity_unavailable_by_design
 
 # ---------------------------------------------------------------------------
@@ -304,11 +305,21 @@ GHOST_GK_VELOCITY_UNAVAILABLE = "velocity_unavailable"
 GHOST_GK_NO_KEEPER = "no_keeper"
 #: The action reached no frame at all.
 GHOST_GK_UNLINKED = "unlinked"
+#: A DEFENDING keeper was present at the linked frame, but the goal map does not resolve which end
+#: that keeper defends, so the goal-relative frame the model is fitted in does not exist for this
+#: row (ADR-055). Distinct from ``no_keeper`` for the same reason ``no_keeper`` is distinct from
+#: ``unlinked``: a keeper WAS there, and saying otherwise states something the data refutes.
+#:
+#: Before this token the row was reported as ``no_keeper``, which was doubly misleading -- it named
+#: the wrong cause AND pointed at the wrong remedy (get keeper detection, rather than get frames
+#: whose keeper positions resolve an end).
+GHOST_GK_GOAL_END_UNRESOLVED = "goal_end_unresolved"
 GHOST_GK_SOURCE_VALUES: tuple[str, ...] = (
     GHOST_GK_COMPUTED,
     GHOST_GK_VELOCITY_UNAVAILABLE,
     GHOST_GK_NO_KEEPER,
     GHOST_GK_UNLINKED,
+    GHOST_GK_GOAL_END_UNRESOLVED,
 )
 
 
@@ -838,17 +849,13 @@ def _extract_all_ghost_gk_features(
             keep_keys = unique_frames[keep_mask.values]
             work = frames.merge(keep_keys, on=["game_id", "period_id", "frame_id"])
 
-    # --- Precompute defending goal per (game_id, period_id, team_id) ---
-    # On LTR-normalized data with period flips (e.g. SkillCorner), teams swap
-    # ends at halftime.  Using team identity alone to assign goal_x is wrong
-    # for the flipped period.  Instead, use the GK's mean x per period to
-    # determine which goal the GK defends: mean_x < 52.5 → defending x=0,
-    # otherwise defending x=105.
-    _gk_mask = work["is_goalkeeper"].astype(bool) & ~work["is_ball"].astype(bool)
-    _gk_mean_x = work[_gk_mask].groupby(["game_id", "period_id", "team_id"])["x"].mean()
-    _defending_goal: dict = {
-        key: 0.0 if mean_x < _FIELD_LENGTH / 2 else _FIELD_LENGTH for key, mean_x in _gk_mean_x.items()
-    }
+    # --- Defending goal per (game_id, period_id, team_id), from the pinned seam ---
+    # The end comes from the FRAMES, never from team identity: identity-keying is correct
+    # only while frames are home-attacks-right, which is a property of the caller's pipeline
+    # rather than of this function's inputs. Built from `work` -- the post-subsample /
+    # post-link-filter set -- because passing `frames` would change the map whenever
+    # `subsample_fps` is set.
+    _goal_map = resolve_defended_goals(work)
 
     # --- Group and iterate ---
     group_keys = ["game_id", "period_id", "frame_id"]
@@ -873,7 +880,13 @@ def _extract_all_ghost_gk_features(
 
         for _, gk_row in gk_rows.iterrows():
             gk_team = gk_row["team_id"]
-            goal_x = _defending_goal.get((gid, pid, gk_team), 0.0 if same_id(gk_team, home_team_id) else _FIELD_LENGTH)
+            goal_x = _goal_map.get(gid, pid, gk_team, allow_guess=True)
+            if goal_x is None:
+                # No usable end -> no ghost. The former fallback was
+                # `0.0 if same_id(gk_team, home_team_id) else 105.0`, a CONSTANT 105.0 for any
+                # NA-team keeper -- wrong for half the possible cases, and silently, because the
+                # feature vector is then computed in the mirrored goal-relative frame.
+                continue
             flip = goal_x > 50.0
 
             # Cheap defensive-line-x + centroid in goal-relative coords, computed

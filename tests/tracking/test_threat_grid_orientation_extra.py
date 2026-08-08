@@ -23,8 +23,13 @@ import pytest
 
 from silly_kicks.tracking._gk_influence import compute_gk_influence
 from silly_kicks.xthreat import ExpectedThreat
+from tests.tracking._goal_map_helpers import goal_map_for
 
 _HOME, _AWAY = 1, 2
+
+#: ADR-055: the goal ends this file's fixtures imply. Stated, not derived: the tests below
+#: deliberately MOVE a keeper to probe the threat grid, and a derived map would move with it.
+_GOAL_MAP = goal_map_for({_HOME: 0.0, _AWAY: 105.0})
 
 
 def _y_ramp_xt() -> ExpectedThreat:
@@ -100,7 +105,7 @@ def _gk_threat_share(gk_y: float, *, attacking_team_id: int) -> float:
         attacking_team_id,
         gk_player_id,
         _y_ramp_xt(),
-        home_team_id=_HOME,
+        goal_map=_GOAL_MAP,
     )
     return float(influence.pitch_control_share_weighted)
 
@@ -160,7 +165,7 @@ class TestCoverShadowsThreatGridOrientation:
             frame,
             _HOME if attacking_toward_high_x else _AWAY,
             _y_ramp_xt(),
-            home_team_id=_HOME,
+            goal_map=_GOAL_MAP,
             defenders_to_remove=[20 if attacking_toward_high_x else 10],
         )
         return float(result.blocking_score)
@@ -252,7 +257,7 @@ class TestCoverShadowDefaultBranchOrientation:
                 "bodypart_name": ["foot"],
             }
         )
-        out = F.add_cover_shadows(actions, frames, _y_ramp_xt(), home_team_id=_HOME)
+        out = F.add_cover_shadows(actions, frames, _y_ramp_xt(), goal_map=_GOAL_MAP)
         return float(out["max_single_defender_blocking_score"].iloc[0])
 
     def test_default_branch_reads_the_physical_surface(self):

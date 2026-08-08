@@ -7,6 +7,18 @@ import pandas as pd
 import pytest
 
 from tests.tracking._gk_test_helpers import _make_two_team_frame
+from tests.tracking._goal_map_helpers import goal_map_for
+
+#: ADR-055 replaced ``home_team_id=1`` on this file's 33 GK-influence call sites. Every frame
+#: builder here (``_make_outfield_frame``, ``_make_two_team_frame``) emits game 1 / period 1 with
+#: teams {1, 2} and parks each keeper at its own end, so this states exactly what
+#: ``home_team_id=1`` used to mean -- and it is byte-equal to what ``resolve_defended_goals``
+#: derives from those frames (verified: both give ``{('1','1','1'): 0.0, ('1','1','2'): 105.0}``).
+#:
+#: Stated rather than derived on purpose: several tests below deliberately degrade the frame
+#: (no keeper, keeper removed, all-NaN coordinates) to exercise a DIFFERENT contract, and a
+#: derived map would quietly change the orientation under them as a side effect.
+HOME_GOAL_MAP = goal_map_for({1: 0.0, 2: 105.0})
 
 # === T-PR1: compute_tti public export ===
 
@@ -132,7 +144,7 @@ class TestSelectBackLinePlayers:
             team_id=1,
             home_team_id=1,
         )
-        result = select_back_line_players(frames, team_id=1, home_team_id=1, n=4)
+        result = select_back_line_players(frames, team_id=1, defends_x0=True, n=4)
 
         assert len(result) == 4
         assert set(result.columns) >= {"x", "y", "vx", "vy", "player_id"}
@@ -163,7 +175,7 @@ class TestSelectBackLinePlayers:
             team_id=2,
             home_team_id=1,
         )
-        result = select_back_line_players(frames, team_id=2, home_team_id=1, n=4)
+        result = select_back_line_players(frames, team_id=2, defends_x0=False, n=4)
 
         assert len(result) == 4
         # Away team defends x=105, so back line = highest x values
@@ -279,7 +291,7 @@ class TestComputeGkInfluenceCore:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         # Raw share for comparison
         surface = compute_pitch_control(
@@ -299,7 +311,7 @@ class TestComputeGkInfluenceCore:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert 0.0 <= gi.pitch_control_share_weighted <= 1.0
 
@@ -318,7 +330,7 @@ class TestComputeGkInfluenceCore:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             tau_seconds=3.0,
         )
         assert gi.reachable_area_m2 > 0.0
@@ -340,7 +352,7 @@ class TestComputeGkInfluenceCore:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             tau_seconds=3.0,
         )
         gi_near = compute_gk_influence(
@@ -348,7 +360,7 @@ class TestComputeGkInfluenceCore:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             tau_seconds=3.0,
         )
         assert gi_far.reachable_area_m2 > gi_near.reachable_area_m2
@@ -361,7 +373,7 @@ class TestComputeGkInfluenceCore:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert gi.reachable_area_m2 >= 0.0
 
@@ -384,14 +396,14 @@ class TestComputeGkInfluenceCore:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         gi_far = compute_gk_influence(
             frame_far,
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         ct_near = gi_near.closing_times["six_yard_box"]
         ct_far = gi_far.closing_times["six_yard_box"]
@@ -409,7 +421,7 @@ class TestXtOrientation:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         # If we got a valid share, the threat sum was positive
         assert not np.isnan(gi.pitch_control_share_weighted)
@@ -425,7 +437,7 @@ class TestXtOrientation:
             attacking_team_id=2,
             gk_player_id=1,
             xt=xt_zero,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert np.isnan(gi.pitch_control_share_weighted)
 
@@ -444,7 +456,7 @@ class TestXtOrientation:
             attacking_team_id=1,
             gk_player_id=50,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert 0.0 <= gi.pitch_control_share_weighted <= 1.0
 
@@ -462,14 +474,14 @@ class TestXtOrientation:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         gi_home = compute_gk_influence(
             frame,
             attacking_team_id=1,
             gk_player_id=50,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         # Different attacking directions should produce different shares
         assert gi_away.pitch_control_share_weighted != gi_home.pitch_control_share_weighted
@@ -504,7 +516,7 @@ class TestXtOrientation:
             attacking_team_id=2,
             gk_player_id=1,
             xt=xt_asym,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         # Range check only -- see the docstring for where orientation is actually gated.
         assert 0.0 <= gi.pitch_control_share_weighted <= 1.0
@@ -533,7 +545,7 @@ class TestGkInfluenceEdgeCases:
                 attacking_team_id=2,
                 gk_player_id=999,
                 xt=fitted_xt,
-                home_team_id=1,
+                goal_map=HOME_GOAL_MAP,
             )
 
     def test_min_s_leq_mean_s(self, standard_frame, fitted_xt):
@@ -544,7 +556,7 @@ class TestGkInfluenceEdgeCases:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         for zct in gi.closing_times.values():
             assert zct.min_s <= zct.mean_s
@@ -563,7 +575,7 @@ class TestGkInfluenceEdgeCases:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert not np.isinf(gi.pitch_control_share_weighted)
 
@@ -576,7 +588,7 @@ class TestGkInfluenceEdgeCases:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             gk_reaction_time=0.4,
         )
         gi_fast = compute_gk_influence(
@@ -584,7 +596,7 @@ class TestGkInfluenceEdgeCases:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             gk_reaction_time=0.3,
         )
         ct_default = gi_default.closing_times["six_yard_box"]
@@ -600,7 +612,7 @@ class TestGkInfluenceEdgeCases:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             gk_reaction_time=0.4,
         )
         gi_fast = compute_gk_influence(
@@ -608,7 +620,7 @@ class TestGkInfluenceEdgeCases:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             gk_reaction_time=0.3,
         )
         assert gi_fast.reachable_area_m2 >= gi_default.reachable_area_m2
@@ -634,7 +646,7 @@ class TestGkInfluenceEdgeCases:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             tau_seconds=3.0,
         )
         assert gi.reachable_area_m2 > 0.0
@@ -652,7 +664,7 @@ class TestMethodDispatch:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             method=method,
         )
         assert 0.0 <= gi.pitch_control_share_weighted <= 1.0
@@ -676,7 +688,7 @@ class TestZoneParameterized:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             zones=zones,
         )
         assert set(gi.closing_times.keys()) == {"six_yard_box", "near_post", "far_post"}
@@ -700,7 +712,7 @@ class TestZoneParameterized:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             zones=zones,
         )
         assert gi.closing_times["near_post"].min_s < gi.closing_times["far_post"].min_s
@@ -723,7 +735,7 @@ class TestZoneParameterized:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
             zones=[zone],
         )
         zct = gi.closing_times[zone_factory]
@@ -754,7 +766,7 @@ class TestPartialNaNVelocities:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         # Should produce a result (possibly NaN share if all defenders have NaN vel,
         # but should not crash)
@@ -779,7 +791,7 @@ class TestPartialNaNVelocities:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert gi is not None
 
@@ -805,7 +817,7 @@ class TestOffPitchCoordinates:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert gi is not None
         assert not np.isinf(gi.pitch_control_share_weighted)
@@ -825,7 +837,7 @@ class TestOffPitchCoordinates:
             attacking_team_id=2,
             gk_player_id=1,
             xt=fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         assert gi is not None
         assert 0.0 <= gi.pitch_control_share_weighted <= 1.0 or np.isnan(gi.pitch_control_share_weighted)
@@ -840,9 +852,11 @@ class TestGkPlayerIdDtypeInvariance:
     def test_compute_gk_influence_str_id_matches_int_id(self, standard_frame, fitted_xt):
         from silly_kicks.tracking._gk_influence import compute_gk_influence
 
-        gi_int = compute_gk_influence(standard_frame, attacking_team_id=2, gk_player_id=1, xt=fitted_xt, home_team_id=1)
+        gi_int = compute_gk_influence(
+            standard_frame, attacking_team_id=2, gk_player_id=1, xt=fitted_xt, goal_map=HOME_GOAL_MAP
+        )
         gi_str = compute_gk_influence(
-            standard_frame, attacking_team_id=2, gk_player_id="1", xt=fitted_xt, home_team_id=1
+            standard_frame, attacking_team_id=2, gk_player_id="1", xt=fitted_xt, goal_map=HOME_GOAL_MAP
         )
         assert gi_str.pitch_control_share_weighted == pytest.approx(gi_int.pitch_control_share_weighted)
         assert gi_str.reachable_area_m2 == pytest.approx(gi_int.reachable_area_m2)
@@ -860,4 +874,6 @@ class TestGkPlayerIdDtypeInvariance:
         from silly_kicks.tracking._gk_influence import compute_gk_influence
 
         with pytest.raises(ValueError, match="not found"):
-            compute_gk_influence(standard_frame, attacking_team_id=2, gk_player_id="999", xt=fitted_xt, home_team_id=1)
+            compute_gk_influence(
+                standard_frame, attacking_team_id=2, gk_player_id="999", xt=fitted_xt, goal_map=HOME_GOAL_MAP
+            )

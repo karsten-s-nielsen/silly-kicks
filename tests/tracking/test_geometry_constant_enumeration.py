@@ -40,6 +40,14 @@ _EXEMPT = {
     "_GOAL_Y_C": "goal centre y, derived as _FIELD_WIDTH/2; no independent value",
     "_GOAL_Y": "goal centre y, derived as _FIELD_WIDTH/2; no independent value",
     "GOAL_Y_CENTRE": "goal centre y, derived as PITCH_WIDTH/2; no independent value",
+    "GHOST_GK_GOAL_END_UNRESOLVED": (
+        "NOT a geometry constant: a provenance STRING in the closed ghost_gk_source vocabulary "
+        "(ADR-055). It matches only because the name-based enumerator keys on the substring "
+        "'GOAL', and it carries no numeric value a feature contract could declare or a probe "
+        "could make load-bearing. Its sibling tokens (GHOST_GK_NO_KEEPER, GHOST_GK_UNLINKED, ...) "
+        "are invisible to the same predicate purely because their names lack the substring -- so "
+        "this entry records a naming coincidence, not a decision about geometry."
+    ),
 }
 
 

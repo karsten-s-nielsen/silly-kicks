@@ -16,8 +16,9 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import ids_match, same_id
+from silly_kicks.id_compat import ids_match
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.tracking._gk_resolve import GoalEndUnresolvedError, GoalMap
 
 from ._defensive_line import select_back_line_players
 from .pitch_control import PitchControlCache, PitchControlParams, SpearmanParams
@@ -233,7 +234,7 @@ def compute_gk_influence(
     gk_player_id: int | str,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     params: PitchControlParams | None = None,
     zones: list[Zone] | None = None,
@@ -258,8 +259,22 @@ def compute_gk_influence(
         The defending GK's player_id.
     xt : ExpectedThreat
         Pre-fit xT model for threat weighting.
-    home_team_id : int | str
-        Home team identifier (REQUIRED). Determines goal-end resolution.
+    goal_map : GoalMap
+        Defended-goal map for this match, from
+        :func:`~silly_kicks.tracking.resolve_defended_goals`. **Required, with no default.**
+
+        This is a per-FRAME function, so a default would let a caller omit the map and let the
+        end be derived from whatever this one frame happens to show -- a different estimator,
+        measured wrong for 7.1% of team-frames on SkillCorner and unresolvable for 35.7% of
+        them (ADR-055; 0.0% on dense tracking -- the cost is provider-dependent). Build the map
+        ONCE per match from the full frames and thread it in. The
+        ``add_*`` aggregators accept ``goal_map=None`` precisely because they HAVE the full
+        frames; this function does not.
+
+        .. versionchanged:: ADR-055
+           Replaces ``home_team_id``, which resolved the end as
+           ``same_id(defending_team_id, home_team_id)`` -- identity-keyed direction, correct only
+           while the frames are home-attacks-right.
     method : str, default "spearman"
         Pitch control model for primitive (a). Primitives (b) and (c)
         always use the Spearman kinematic TTI model regardless.
@@ -282,15 +297,23 @@ def compute_gk_influence(
     ------
     ValueError
         If gk_player_id is not found in the frame.
+    GoalEndUnresolvedError
+        If ``goal_map`` does not resolve the defending team's end, or the goal the attacking
+        team attacks, in this (game, period). A ``ValueError`` subclass. Refusing is the point:
+        both former guards spelled the miss as "attacking rightward", i.e. they failed OPEN.
+        ``add_gk_influence`` catches this BY NAME at its edge and emits a NaN row.
 
     Examples
     --------
     Compute GK influence primitives for a keeper on a frame::
 
+        from silly_kicks.tracking import resolve_defended_goals
         from silly_kicks.tracking._gk_influence import compute_gk_influence
+
+        goal_map = resolve_defended_goals(frames)   # ONCE per match, from the FULL frames
         gi = compute_gk_influence(
             frame, attacking_team_id=2, gk_player_id=1,
-            xt=fitted_xt, home_team_id=1,
+            xt=fitted_xt, goal_map=goal_map,
         )
 
     See NOTICE for full bibliographic citations.
@@ -315,10 +338,16 @@ def compute_gk_influence(
 
     # --- Goal-end resolution ---
     defending_team_id = gk_row["team_id"]
-    if same_id(defending_team_id, home_team_id):
-        goal_x = 0.0  # home defends x=0
-    else:
-        goal_x = 105.0  # away defends x=105
+    _gid, _pid = frame["game_id"].iloc[0], frame["period_id"].iloc[0]
+    goal_x = goal_map.get(_gid, _pid, defending_team_id, allow_guess=True)
+    if goal_x is None:
+        # PRECONDITION. The add_* edge catches this by name and emits a NaN row; reaching
+        # here from a direct caller is a programming error, the same shape as the
+        # "gk_player_id not found in frame" raise above.
+        raise GoalEndUnresolvedError(
+            f"compute_gk_influence: goal_map does not resolve team {defending_team_id!r} in "
+            f"(game={_gid}, period={_pid})."
+        )
 
     # --- Default zones ---
     if zones is None:
@@ -368,7 +397,17 @@ def compute_gk_influence(
     # Away-team attack: BOTH axes (ADR-028 is a 180-degree point reflection, x->105-x AND
     # y->68-y). An x-only mirror is exact only for a y-symmetric grid, which a fitted xT
     # merely APPROXIMATES -- the same incomplete repair ADR-041 corrected elsewhere.
-    if not same_id(attacking_team_id, home_team_id):
+    # Direction from the FRAMES via the seam. NOTE `acting_team_attacks_rtl` does NOT fit
+    # here: it is (actions, frames) -> Series, i.e. per-ACTION, and this is a per-frame call.
+    _attacked = goal_map.attacked_goal(_gid, _pid, attacking_team_id, allow_guess=True)
+    if _attacked is None:
+        # Explicit: `if _attacked == 0.0` alone would fail OPEN, silently choosing
+        # 'attacking rightward' for an unresolved direction.
+        raise GoalEndUnresolvedError(
+            f"compute_gk_influence: goal_map does not resolve the goal attacked by "
+            f"{attacking_team_id!r} in (game={_gid}, period={_pid})."
+        )
+    if _attacked == 0.0:
         threat_grid = threat_grid[::-1, ::-1]
 
     # Weighted average
@@ -395,10 +434,14 @@ def compute_gk_influence(
     tti_gk = tti_gk[0]  # (n_targets,)
 
     # Back-line defenders TTI
+    # Direction from the RESOLVED end, not from team identity. `goal_x` is this keeper's own
+    # goal, looked up from the goal map above; `goal_x == 0.0` is therefore the same fact the
+    # helper used to infer as `same_id(team_id, home_team_id)` -- minus the D3 assumption that
+    # the frames are home-attacks-right.
     back_line = select_back_line_players(
         frame,
         team_id=defending_team_id,
-        home_team_id=home_team_id,
+        defends_x0=goal_x == 0.0,
     )
 
     if len(back_line) > 0:

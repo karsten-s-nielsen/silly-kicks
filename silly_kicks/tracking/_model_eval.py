@@ -126,12 +126,13 @@ def _eligible_groups(frames: pd.DataFrame, model, arm: str, advance_m: float) ->
     ball-position domain gate (arm='xcross': wide-area; arm='xs': attacking third). Returns
     (grp, gk_team, goal_x, cpid) tuples with grp reset-indexed."""
     from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
-    from silly_kicks.tracking._xcross_attempt import _build_goal_map, _in_wide_area
+    from silly_kicks.tracking._gk_resolve import resolve_defended_goals
+    from silly_kicks.tracking._xcross_attempt import _in_wide_area
 
     cp = dict(getattr(model, "carrier_params", None) or {})
     carrier = infer_ball_carrier(frames, **cp) if cp else infer_ball_carrier(frames)
     poss = derive_team_in_possession(frames, carrier)
-    goal_map = _build_goal_map(frames)
+    goal_map = resolve_defended_goals(frames)
 
     groups_list = []
     for (gid, pid, _fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], sort=False):
@@ -148,7 +149,7 @@ def _eligible_groups(frames: pd.DataFrame, model, arm: str, advance_m: float) ->
         defending = [t for t in non_ball["team_id"].dropna().unique() if t != poss_team]
         if not defending:
             continue
-        goal_x = goal_map.get((gid, pid, defending[0]))
+        goal_x = goal_map.get(gid, pid, defending[0], allow_guess=True)
         if goal_x is None:
             continue
         ball = grp[grp["is_ball"]]

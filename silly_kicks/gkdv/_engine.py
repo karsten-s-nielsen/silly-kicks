@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # TYPE_CHECKING-only, matching `_pin_defended_goal`'s function-local import of the seam:
+    # `silly_kicks.tracking` is public (so the ADR-037 allowlist permits it), but gkdv keeps
+    # tracking out of its module-level import graph. Annotations are strings here anyway --
+    # `from __future__ import annotations` is on -- so nothing needs it at runtime.
+    from silly_kicks.tracking import GoalMap
 
 # ADR-019 mandates this seam repo-wide for every id comparison. It is a PUBLIC module
 # (`silly_kicks.id_compat`, promoted in 4.53.0 from `tracking/_id_compat.py`) precisely
@@ -176,7 +184,7 @@ def _same_team(a, b) -> np.ndarray:
     return ids_equal(pd.Series(a), pd.Series(b)).to_numpy()
 
 
-def _pin_defended_goal(frames: pd.DataFrame) -> dict:
+def _pin_defended_goal(frames: pd.DataFrame) -> GoalMap:
     """The ONE goal-map instance (spec §4.2), reused for the defended-goal flip AND for
     defending-keeper selection. Never re-derived on counterfactual frames -- goal-map drift
     across the two legs would contaminate the delta.
@@ -185,22 +193,27 @@ def _pin_defended_goal(frames: pd.DataFrame) -> dict:
     lookup with a differently-boxed-but-value-equal id would miss and present as a plausible
     pile of ``no_goal_map_entry`` drops rather than as the dtype bug it is.
     """
-    from silly_kicks.tracking import defended_goal_x
+    from silly_kicks.tracking import resolve_defended_goals
 
-    return {(canonical_id(g), canonical_id(p), canonical_id(t)): v for (g, p, t), v in defended_goal_x(frames).items()}
+    # The seam canonicalizes its own keys, so the local re-key this replaced is gone.
+    return resolve_defended_goals(frames)
 
 
-def _goal_lookup(goal_map: dict, game_id, period_id, team_id) -> float:
-    """Goal-map lookup returning NaN (a counted drop) rather than raising on a miss."""
-    key = (canonical_id(game_id), canonical_id(period_id), canonical_id(team_id))
-    return float(goal_map.get(key, np.nan))
+def _goal_lookup(goal_map, game_id, period_id, team_id) -> float:
+    """Goal-map lookup returning NaN (a counted drop) rather than raising on a miss.
+
+    The ``None -> NaN`` conversion is load-bearing: ``_DROP_NO_GOAL_MAP`` keys on NaN, and
+    ``float(None)`` raises.
+    """
+    end = goal_map.get(game_id, period_id, team_id, allow_guess=True)
+    return float("nan") if end is None else float(end)
 
 
 def _apply_domain(
     frames: pd.DataFrame,
     *,
     carrier: pd.DataFrame,
-    goal_map: dict,
+    goal_map: GoalMap,
     params: GkdvParams,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split the frame keys into ``(eligible, dropped)`` per the spec §4.1 domain.
@@ -312,11 +325,15 @@ def _apply_domain(
     _mark(~np.isfinite(ball_dist) | (ball_dist > float(params.domain_ball_to_goal_m)), _DROP_BALL_FAR)
     _mark(~work["has_defending_gk"].to_numpy(dtype=bool), _DROP_NO_DEFENDING_GK)
 
-    # NOTE on `_DROP_NO_GOAL_MAP`: it is a guard, not a reachable branch today. Both team
-    # ids fed to `_goal_lookup` are drawn from the same `players` population the goal map is
-    # built from, and `defended_goal_x` never returns NaN, so the lookup cannot currently
-    # miss. It is retained (cheap) against a future goal-map source, but deliberately WITHOUT
-    # an all-miss raise: an untestable raise is not a guard, it is unexercised code.
+    # NOTE on `_DROP_NO_GOAL_MAP`: it is now a REACHABLE branch, and this note used to say the
+    # opposite. Pre-ADR-055 the claim held -- `defended_goal_x` was total, returning some end for
+    # every group, so a lookup drawn from the same `players` population could not miss. The seam
+    # that replaced it is deliberately PARTIAL: a `(game, period, team)` with an NA team identity
+    # or all-NaN coordinates lands in `unresolved` and `GoalMap.get` returns None, which
+    # `_goal_lookup` converts to NaN precisely so this drop reason can key on it. Reaching it is
+    # the correct outcome for a frame whose ends cannot be established -- the alternative is the
+    # confident 105.0 the old code produced. Still deliberately WITHOUT an all-miss raise: an
+    # untestable raise is not a guard, it is unexercised code.
 
     # --- stride (cost control, spec §5) -------------------------------------------------
     # Counted as a drop reason, NOT silently discarded, so the report still conserves.
@@ -340,7 +357,7 @@ def _build_provenance(
     served: pd.DataFrame,
     eligible: pd.DataFrame,
     dropped: pd.DataFrame,
-    goal_map: dict,
+    goal_map: GoalMap,
 ) -> pd.DataFrame:
     """Per-(frame, gk_team) provenance for eligible frames + one row per dropped frame.
 
@@ -577,7 +594,10 @@ def _select_defending_keeper(
     a bogus home team. Failing here is the cheapest place to learn that.
     """
     goal_map = _pin_defended_goal(frames)
-    mapped_teams = [key[2] for key in goal_map]
+    # Both pools, and via the MAPPINGS rather than by iterating the GoalMap itself: a GoalMap is
+    # not iterable (it is a frozen dataclass, not a dict), and `_goal_lookup` reads it with
+    # `allow_guess=True`, so a team present only in `guessed` is still a team these frames map.
+    mapped_teams = [key[2] for key in (*goal_map.resolved, *goal_map.guessed)]
     if not any(same_id(t, home_team_id) for t in mapped_teams):
         raise ValueError(
             f"provenance_to_targets: home_team_id={home_team_id!r} matches no team in these "

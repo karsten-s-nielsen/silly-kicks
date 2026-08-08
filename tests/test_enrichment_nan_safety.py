@@ -56,6 +56,9 @@ _TRACKING_NEEDS_EXTRA = {
     "add_space_creation",
     "add_structural_pass",
     "add_team_shape",
+    # ADR-055: not "needs extra kwargs" in the usual sense -- it takes NO frames at all
+    # (`(actions, *, visible_area, links)`), so the standard-signature test cannot call it.
+    "add_visible_area_coverage",
     "add_xt_gk",
     "add_off_ball_run_values",
 }
@@ -580,7 +583,19 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         xt = ExpectedThreat(l=16, w=12)
         xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
         out = helper(acts, frames, xt, home_team_id=1)
-    elif name in ("add_gk_influence", "add_cover_shadows", "add_player_influence"):
+    elif name in ("add_gk_influence", "add_cover_shadows"):
+        # ADR-055: these two take an optional `goal_map` and no `home_team_id`. Omitted, so
+        # the aggregator derives the map from the SAME NaN-bearing frames this gate feeds
+        # it -- which is the behaviour under test: a NaN team id must route to the
+        # documented per-row default, including through goal-end resolution.
+        import numpy as np
+
+        from silly_kicks.xthreat import ExpectedThreat
+
+        xt = ExpectedThreat(l=16, w=12)
+        xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+        out = helper(actions, frames, xt)
+    elif name == "add_player_influence":
         import numpy as np
 
         from silly_kicks.xthreat import ExpectedThreat
@@ -635,6 +650,17 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         acts = actions.copy()
         acts["defending_gk_player_id"] = pd.array([200, pd.NA, 200, 200, pd.NA], dtype="Int64")
         out = helper(acts, frames=frames)
+    elif name == "add_visible_area_coverage":
+        # ADR-055: takes NO frames -- `(actions, *, visible_area, links)`. The NaN-IDENTIFIER
+        # surface this gate fuzzes is `actions.action_id`, which is the join key against
+        # `visible_area`, so a NaN there must route to the documented `no_polygon` default rather
+        # than raise or drop the row. The polygon itself is a valid half-pitch: fuzzing IT would
+        # test `as_polygon`, which `tests/tracking/test_visibility.py` already covers.
+        import numpy as np
+
+        half = np.array([[0.0, 0.0], [52.5, 0.0], [52.5, 68.0], [0.0, 68.0]])
+        visible = pd.DataFrame({"action_id": list(actions["action_id"]), "polygon": [half] * len(actions)})
+        out = helper(actions, visible_area=visible)
     elif name == "add_press_commitment":
         # The velocity contract raises loud on missing vx/vy (correct) -- supply them so the
         # NaN-IDENTIFIER surface (NaN team/player) is what gets fuzzed, not the velocity guard.

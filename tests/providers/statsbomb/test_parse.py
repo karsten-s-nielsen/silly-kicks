@@ -14,8 +14,8 @@ from silly_kicks.providers.statsbomb import (
     JoinReport,
     acting_side_gk_visible,
     defending_gk_visible,
+    observed_pitch_fraction,
     shape_snapshots,
-    visible_fraction,
 )
 
 #: Freeze-frame players are ACTOR-relative: `teammate`/`actor`/`keeper`, and no player identity.
@@ -211,9 +211,43 @@ def test_players_and_polygon_share_one_transform():
     )
 
 
-def test_crc_is_invisible_to_visible_fraction():
-    """Non-vacuity for the reasoning above: the reason applying crc creates no conflict with
-    `visible_fraction` is that it is a TRANSLATION and that function returns an area ratio."""
-    flat = [10.0, 10.0, 110.0, 10.0, 110.0, 70.0, 10.0, 70.0]
-    shifted = [v - 0.5 for v in flat]
-    assert visible_fraction(flat) == visible_fraction(shifted)
+def test_crc_moves_observed_pitch_fraction_once_the_ratio_is_CLIPPED():
+    """ADR-055: the old witness went VACUOUS, and the reason it witnessed is now wrong.
+
+    The retired assertion was ``observed_pitch_fraction(flat) == observed_pitch_fraction(shifted)`` on a
+    polygon at x 10-110, y 10-70 -- ENTIRELY INTERIOR to the 120x80 pitch. Under clipping that
+    test keeps passing (measured: 0.625 both ways, delta exactly 0.0) while the property it
+    witnesses becomes FALSE, because for any polygon crossing the touchline the 0.4375 m
+    translation changes the CLIPPED intersection area. A guard that still passes while the
+    reasoning under it dissolves is worse than no guard.
+
+    So this asserts BOTH sides. ADR-054 D5's *conclusion* stands -- apply crc -- but its
+    supporting argument is no longer "crc is invisible here"; it is **alignment**: players reach
+    SPADL through the same ``sb_xy_to_spadl`` WITH crc, so omitting it on the polygon would
+    offset the region by 0.4375 m from the players it bounds and put a boundary player outside
+    it. That is the reason, and it never depended on the ratio being invariant.
+    """
+    interior = [10.0, 10.0, 110.0, 10.0, 110.0, 70.0, 10.0, 70.0]
+    crossing = [-5.0, 10.0, 110.0, 10.0, 110.0, 70.0, -5.0, 70.0]
+
+    # crc == cell_side(fidelity 1) / 2 == 0.4375, read from the library rather than typed in,
+    # so a fidelity change moves the fixture instead of quietly invalidating it.
+    from silly_kicks.spadl._sb_coordinates import cell_side
+
+    crc = cell_side(1) / 2
+
+    def shifted(flat):
+        return [v - crc for v in flat]
+
+    # Interior: still invariant -- which is exactly why it can no longer carry the argument.
+    assert observed_pitch_fraction(interior) == observed_pitch_fraction(shifted(interior))
+
+    # Touchline-crossing: the translation DOES move the clipped ratio. Measured 0.002734375
+    # (0.687500000 -> 0.684765625); asserted as a lower bound so float noise cannot satisfy it.
+    base = observed_pitch_fraction(crossing)
+    moved = observed_pitch_fraction(shifted(crossing))
+    assert base != moved
+    assert abs(base - moved) > 1e-4, (
+        f"crc must measurably move the CLIPPED fraction on a touchline-crossing polygon "
+        f"({base} vs {moved}); if it does not, this witness has gone vacuous again"
+    )

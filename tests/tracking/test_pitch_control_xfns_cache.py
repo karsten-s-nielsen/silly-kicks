@@ -21,15 +21,23 @@ import pytest
 
 from silly_kicks.tracking import features as F
 from silly_kicks.tracking.pitch_control import PitchControlCache
+from tests.tracking._goal_map_helpers import goal_map_like_home_team_id
 from tests.tracking.test_pitch_control_cache import _pc_actions, _pc_frames
 
 # _pc_actions() attributes both actions to team 1, so the families that resolve goal ends /
 # attacking direction from home_team_id must use 1 (Minor-5: read the fixture, do not assume 0).
 _HTID = 1
 
+#: ADR-055: cover_shadow/gk_influence take a `goal_map` instead of `home_team_id`. Built from the
+#: SAME fixture and the SAME _HTID, so these two families keep the orientation they had -- the
+#: cache-identity property under test is unrelated to orientation, and changing it here would
+#: silently change what the byte-identity comparison is comparing.
+_GOAL_MAP = goal_map_like_home_team_id(_pc_frames(), _HTID)
+
 # EVERY PC-consuming family, each with its CORRECT kwargs (signatures differ, Minor-5):
 #   * obso/space_creation/pausa take `pitch_control_method=` (NOT `method=`) + `home_team_id=`;
-#   * cover_shadow/gk_influence/player_influence take `method=` + `home_team_id=`;
+#   * cover_shadow/gk_influence take `method=` + `goal_map=` (ADR-055 re-key);
+#   * player_influence takes `method=` + `home_team_id=`;
 #   * off_ball_run_value takes only `home_team_id=`;
 #   * pitch_control takes only `method=`.
 # `xt` is auto-supplied below to any family whose factory declares it (value-identity holds for
@@ -39,8 +47,8 @@ _PC_FAMILIES = [
     ("obso_xfns", dict(home_team_id=_HTID, pitch_control_method="voronoi")),
     ("space_creation_xfns", dict(home_team_id=_HTID, pitch_control_method="voronoi")),
     ("pausa_xfns", dict(home_team_id=_HTID, pitch_control_method="voronoi")),
-    ("cover_shadow_xfns", dict(home_team_id=_HTID, method="voronoi")),
-    ("gk_influence_xfns", dict(home_team_id=_HTID, method="voronoi")),
+    ("cover_shadow_xfns", dict(goal_map=_GOAL_MAP, method="voronoi")),
+    ("gk_influence_xfns", dict(goal_map=_GOAL_MAP, method="voronoi")),
     ("player_influence_xfns", dict(home_team_id=_HTID, method="voronoi")),
     ("off_ball_run_value_xfns", dict(home_team_id=_HTID)),
 ]
@@ -109,7 +117,7 @@ def test_multi_family_xfn_list_one_cache_byte_identical(fitted_xt):
         return [
             F.pitch_control_xfns("voronoi", **kw),
             F.obso_xfns(home_team_id=_HTID, pitch_control_method="voronoi", xt=fitted_xt, **kw),
-            F.cover_shadow_xfns(fitted_xt, home_team_id=_HTID, method="voronoi", **kw),
+            F.cover_shadow_xfns(fitted_xt, goal_map=_GOAL_MAP, method="voronoi", **kw),
         ]
 
     solo = [fam[0](gs, frames) for fam in _list(None)]

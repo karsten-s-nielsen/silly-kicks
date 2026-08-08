@@ -6,6 +6,12 @@ import pandas as pd
 import pytest
 
 from silly_kicks.tracking.schema import TRACKING_CATEGORICAL_DOMAINS, TRACKING_FRAMES_COLUMNS
+from tests.tracking._goal_map_helpers import goal_map_for
+
+#: ADR-055 replaced ``home_team_id=1`` at this file's re-keyed call sites. Its frames carry
+#: game 1 / period 1 with teams {1, 2} and each keeper at its own end, so this states exactly
+#: what ``home_team_id=1`` meant and matches what ``resolve_defended_goals`` derives there.
+HOME_GOAL_MAP = goal_map_for({1: 0.0, 2: 105.0})
 
 
 def test_snapshot_in_source_provider_domain():
@@ -284,7 +290,7 @@ def test_downstream_cover_shadows_degrades(actions_3, snapshots_combined):
     # because cover_shadows returns None before reaching xt when vx/vy are
     # absent (_cover_shadows.py:792-794).
     mock_xt = MagicMock()
-    result = add_cover_shadows(actions_with_data, frames, mock_xt, links=links, home_team_id=100)
+    result = add_cover_shadows(actions_with_data, frames, mock_xt, links=links, goal_map=HOME_GOAL_MAP)
     # Cover shadows requires vx/vy — should degrade to NaN, not raise
     assert "blocking_score" in result.columns
     assert result["blocking_score"].isna().all()
