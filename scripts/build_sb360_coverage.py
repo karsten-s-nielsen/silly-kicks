@@ -53,6 +53,33 @@ EXPECTED_NAMES = {
 #: flagged.
 GK_DOMAIN_TYPES = ("shot", "shot_penalty", "shot_freekick", "cross", "goalkick", "keeper_save")
 
+#: The columns ``measure_match`` emits, and the shard-generation token they are pinned to.
+#: These two MUST move together: the ``for_each`` fingerprint digests ``token_inputs`` only,
+#: never the source, so changing the columns while leaving the token resolves to the SAME
+#: generation directory, skips every existing shard as already-done, and combines the OLD
+#: schema while reporting a clean pass. ``tests/scripts/test_build_sb360_coverage.py`` pins the
+#: pair, so a column change with a stale token fails CI instead of silently serving old numbers.
+_SHARD_SCHEMA_VERSION = "sb360-coverage-3"
+_EMITTED_SHARD_COLUMNS = (
+    "competition_id",
+    "season_id",
+    "match_id",
+    "action_type",
+    "n_events",
+    "n_defending_gk_visible",
+    "defending_gk_visible_rate",
+    "n_acting_side_gk_visible",
+    "acting_side_gk_visible_rate",
+    "mean_players_visible",
+    "n_with_polygon",
+    "mean_observed_pitch_fraction",
+    "n_actions",
+    "n_actions_with_frame",
+    "frame_existence_rate",
+    "is_gk_domain",
+    "match_join_rate",
+)
+
 #: Default shard root. TOP-LEVEL and ending in ``_shards`` so the anchored ``/*_shards/`` glob
 #: at .gitignore:90 covers it. A nested path such as ``docs/research/.../_shards`` is NOT
 #: covered -- the anchor is deliberate, so an unanchored glob cannot silence tracked paths at
@@ -310,7 +337,18 @@ def measure_match(match):
                 "match_join_rate": join_rate,
             }
         )
-    return pd.DataFrame(rows)
+    # Compare the keys the rows ACTUALLY carry -- never `pd.DataFrame(rows, columns=...)`,
+    # which SELECTS to the declaration and makes the check trivially true (a dropped key
+    # vanishes, a missing one arrives as NaN, and the guard certifies both).
+    if rows and tuple(rows[0]) != _EMITTED_SHARD_COLUMNS:
+        raise AssertionError(
+            f"shard columns drifted from _EMITTED_SHARD_COLUMNS; bump _SHARD_SCHEMA_VERSION "
+            f"(currently {_SHARD_SCHEMA_VERSION!r}) or the next run reuses stale shards. "
+            f"emitted={tuple(rows[0])}"
+        )
+    # An empty result still carries the declared columns: "ran, produced nothing" must stay
+    # distinguishable from "not yet run" (ADR-052).
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=list(_EMITTED_SHARD_COLUMNS))
 
 
 def _iter_matches(selected, args):
@@ -380,7 +418,11 @@ def main() -> None:
         token_inputs={
             "competitions": sorted(f"{c}:{s}" for c, s in cells),
             "matches_per_cell": args.matches_per_cell,
-            "schema": "sb360-coverage-2",
+            # Moves with `_EMITTED_SHARD_COLUMNS`; see the constant for why an un-bumped token
+            # silently serves the previous schema. Measured on the -2 -> -3 move: 22 stale
+            # shards carrying `mean_visible_pitch_fraction` would have been combined in place
+            # of the ADR-042 denominator, with the pass reporting success.
+            "schema": _SHARD_SCHEMA_VERSION,
         },
         tag=args.tag,
         label="match",

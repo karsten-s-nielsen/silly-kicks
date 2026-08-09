@@ -5,6 +5,78 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.77.1] — 2026-08-09
+
+### Fixed — the SB360 coverage driver's shard generation, and two polygon-degeneracy conflations (PR-S146, ADR-055)
+
+**The shard schema moved without its generation token.** 4.77.0 renamed `measure_match`'s
+`mean_visible_pitch_fraction` to `mean_observed_pitch_fraction` and added `n_with_polygon` (the
+ADR-042 denominator), but left `token_inputs["schema"]` at `"sb360-coverage-2"`. `for_each`
+fingerprints `token_inputs` only — never the source — so the un-bumped token resolves to the SAME
+generation directory. Measured: 22 stale shards carrying the old column were sitting in it. A
+re-run would have skipped all 22 as already-done, reported a clean conserved pass, and combined the
+OLD denominator — the ADR-042 fix silently not taking effect. This is the exact silent-dilution
+ADR-052 exists to prevent, and the `schema` token is its manual defence.
+
+Nothing in the suite could see it: the driver's own assertion on the renamed column lives in the
+`e2e` test, which CI does not run — so CI was green on a broken driver. Fixed by bumping to
+`sb360-coverage-3` and by pinning the pair: `_EMITTED_SHARD_COLUMNS` + `_SHARD_SCHEMA_VERSION` in the
+driver, three gates in `tests/scripts/test_build_sb360_coverage.py` (the declaration matches the
+dict `measure_match` actually builds, `token_inputs["schema"]` references the constant rather than
+a literal, and the pair is pinned), plus a run-time assertion that fails at the FIRST shard. All
+four defect reintroductions verified RED.
+
+**The artifact was then re-run, and it is NOT stale.** A full 22-match pass on the corrected driver
+reproduces every published "visible pitch" value at its published 2-decimal precision (max absolute
+change 0.004). Two edits move that column in opposite directions and the decomposition explains why
+the net is nil: `n_with_polygon` is **100.0% of `n_events` for every action type** — every SB360
+freeze-frame in this corpus carries a `visible_area` — so the ADR-042 denominator change is a
+**no-op here**, and the clipping introduced with `observed_pitch_fraction` moves values by at most
+0.004 (`shot_penalty` 0.13 → 0.126, `cross` 0.19 → 0.186). The denominator guard is therefore a
+correctness guard against a case this corpus does not contain, exactly like M1 below; it is not a
+repair of a wrong published number. Recording it the other way round — as a stale artifact — was an
+inference from the code change rather than a measurement, and it was wrong.
+
+**The publish workflow now refuses a tag that disagrees with the built version.** `publish.yml`
+triggers on `v*`, checks out the **tagged commit** and builds from ITS `pyproject.toml`, so the tag
+name is a LABEL and the version published comes from the commit — and nothing compared the two. A
+tag on the wrong commit therefore uploaded a version other than the one it named, silently; PyPI
+uploads are **irreversible**, so the only recovery is burning another version number. (Live example
+of the setup: 4.77.0 is merged but untagged, so `main` carries a `pyproject.toml` at 4.77.0 while a
+`v4.77.1` tag placed there would have published 4.77.0.)
+
+The guard compares the tag against the **built wheel**, not `pyproject.toml` — a pyproject check
+re-asserts the build INPUT, and the two agree by construction, so it would prove nothing about what
+reaches PyPI. It runs in the `build` job **after** the build and **before** the artifact upload, so a
+mismatch never reaches `publish` (which `needs: build`). Versions are compared PARSED, not as
+strings: a wheel name is PEP 440-normalized while a tag is typed by hand, so a string compare would
+fail on a cosmetic difference and pass on none. Executed against seven tag/wheel pairs — matching,
+mismatched, `v`-less, PEP 440-equal-but-string-unequal, no wheel, two wheels, and an unparseable tag
+— all behaving as specified. Wiring is pinned by `tests/test_ci_publish_guard_wired.py`, which
+asserts the step ORDER (a guard after the upload would be useless) and that `publish` still
+`needs: build`; each of its four assertions was observed RED against a broken workflow.
+
+**M1 was measured on the full owner corpus, and it is ZERO — no retrain.** ADR-055 left M1 (NA-team
+GK rows in the `GhostGkModel` training corpus) as a DGX follow-up under a pre-registered rule:
+*zero → record the count; non-zero → retrain trigger.* Measured across all 179 matches with
+conservation asserted (every expected match produced exactly one shard, zero failures):
+gradientsports 64/64, idsse 7/7, skillcorner 108/108 — **0 NA-team GK rows out of 35,335,209 GK
+rows**. The bundled ghost weights are therefore uncontaminated. The retired fallback returned a
+constant `goal_x = 105.0` for any NA-team keeper (`same_id(NA, home)` is False), so that path was
+reachable in code and never reached by this corpus. The count is a SUPERSET of what enters training
+(the extractor further restricts by domain, subsample and link filter), so zero over the superset
+bounds the training set at zero.
+
+**"Published and unusable" was being reported as "nothing published".** `shape_snapshots` dropped
+any polygon that converted to an empty array, so a published-but-2-vertex `visible_area` produced
+no row and read downstream as `no_polygon` — collapsing it into the absent case that
+`tracking._visibility` defines a separate `degenerate_polygon` token to keep apart. It now emits a
+row whenever something was published, and `polygon_to_spadl` returns an empty `(0, 2)` on an
+odd-length flat list instead of raising `ValueError: cannot reshape array of size 7` mid-corpus.
+The 4.77.0 note deferring this on fail-loud-vs-degrade grounds was wrong: it assumed the only
+alternative to a crash was a silent skip, when the degenerate token was already the honest third
+option.
+
 ## [4.77.0] — 2026-08-08
 
 ### Changed — one goal-map seam replaces ten forks, and the observed-region seam ships (PR-S145, ADR-055)

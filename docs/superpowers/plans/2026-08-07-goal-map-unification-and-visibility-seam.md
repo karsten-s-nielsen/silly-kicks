@@ -1,5 +1,15 @@
 # Goal-map unification and the visible-area seam — Implementation Plan
 
+> **STATUS: SHIPPED.** Landed as **4.77.0** (ADR-055, PR-S145, merged `0f23214`, CI green on all
+> five legs) with the follow-up fixes in **4.77.1** (PR-S146). The per-step checkboxes below are
+> left UNTICKED deliberately: ticking 70 boxes would assert 70 completions individually verified,
+> and a deferral audit during this cycle found **three** steps recorded as done whose work did not
+> exist (the seam contract tests, a `gkdv` unreachability note, and the import-allowlist prose).
+> The authoritative record of what shipped is the ADR, the CHANGELOG and the diff — not this file's
+> checkboxes. Two items were deliberately NOT in scope and are tracked in `TODO.md`: the remaining
+> D3 re-key (`_defensive_line.compute_defensive_line`, `_packing`) and widening the SB360
+> `gk_absent` fixture to reclaim the five columns `NOT_EXERCISED_BUDGET` 26→31 gave up.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Revision:** 4 (reviews 1-3; response logs at the end). Rev 1 wrote call sites against the old seam contract; rev 2 kept a gate the fix makes vacuous; rev 3 left the test HARNESS on the old contract.

@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-08-08. **Current release**: silly-kicks 4.77.0 (ADR-055 — one `GoalMap` seam replaces TEN goal-end forks across 5 modules, threaded rather than re-derived (a per-frame map is unresolvable for 35.7% of SkillCorner team-frames and 0.0% on dense tracking -- provider-dependent; the spec's 78.8% does not reproduce, see ADR-055); unresolvable ends REFUSE instead of returning a confident 105.0; Gate C replaces Gate B's detection for the two re-keyed aggregators; plus the observed-region seam (`point_observed` / `region_observed_fraction` / `add_visible_area_coverage`). **15 breaking public signatures + 2 deletions-not-aliases; VAEP/tracking retrain trigger** for `add_gk_influence` and `add_cover_shadows`). Immediately prior: 4.76.0 (ADR-054 — the ghost-GK path REFUSES on freeze-frames instead of fabricating, guarded at the shared serving seam so all three public entry points inherit it; the ADR-053 audit re-derives to ZERO `silent_degrade` BY RULE. Plus `providers/statsbomb`, a shape-never-fetch SB360 parse port EXTRACTED from `build_sb360_coverage.py`. No retrain, no re-materialize — ghost values on velocity-bearing frames are unchanged; the schema gains one column). Immediately prior: 4.75.0 (ADR-053 — the SB360 coverage audit). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-08-09. **Current release**: silly-kicks 4.77.1 (ADR-055 — the SB360 coverage driver's shard schema moved without its generation token, so a re-run would have silently combined 22 stale shards; plus "published and unusable" no longer reports as "nothing published". M1 measured ZERO on the 179-match corpus — no ghost retrain). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -89,13 +89,38 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
   shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
   beyond 22 matches is a driver flag, and the shards are additive.
-- **`polygon_to_spadl` raises on an odd-length `visible_area`** (found 4.77.0, NOT changed).
-  Same malformed-provider-data shape as its sibling `observed_pitch_fraction`, which 4.77.0
-  hardened to report NaN because it runs per-event across a corpus. `polygon_to_spadl` has the
-  same exposure through `shape_snapshots`, but hardening it changes that function's failure mode
-  from loud-crash to silent-skip, which is a fail-loud-vs-degrade decision rather than a typo --
-  so it is surfaced rather than folded into an unrelated cycle. `len(flat) < 6` already returns an
-  empty `(0, 2)`, so the consistent fix is to extend that guard with `len(flat) % 2`.
+- **Finish the D3 re-key: `_defensive_line.compute_defensive_line` and `_packing` are still
+  identity-keyed** (found 4.77.0, deliberately out of that cycle, previously recorded only in the
+  test pin and ADR-055). ADR-055 re-keyed `_gk_influence` and left these two, so the
+  `test_defensive_line_d3_unit_is_enumerated` pin is now exactly `{_defensive_line, _packing}`.
+  Both derive direction as `same_id(team_id, home_team_id)`, which is correct only while frames are
+  home-attacks-right and silently inverts otherwise. `select_back_line_players` already takes
+  `defends_x0: bool`, so the callee is ready and the work is at the two call sites: thread a
+  `GoalMap` and pass `goal_map.get(...) == 0.0`. Note Gate B is the ONLY detector for these two
+  today, and it goes vacuous the moment either is re-keyed — so each must gain a Gate C
+  `call_with_map` + `gate_c_must_move` entry in the same change, or the re-key deletes its own
+  detection (the ADR-055 rule).
+- **Widen the SB360 `gk_absent` fixture to reclaim 5 audited columns** (found 4.77.0).
+  `NOT_EXERCISED_BUDGET` rose 26 → 31 because `gk_absent` removes BOTH keepers, so
+  `resolve_defended_goals` falls to its outfield rung and guesses both teams at x=105 (measured
+  outfield mean x 56.9 and 76.5, both past the 52.5 midline); a both-teams-same-end map is
+  degenerate, `attacked_goal` refuses it, and both legs go NaN for the same roster-driven reason.
+  A real widening of the audit's blind spot: before the re-key those five columns produced numbers
+  on a keeper-less freeze-frame, which were not evidence. A keeper at ONE end is enough to break
+  the degeneracy and reclaim them.
+- ~~Re-run `build_sb360_coverage.py`~~ **DONE 4.77.1 — the artifact is NOT stale.** A full 22-match
+  pass on the corrected driver reproduces every published "visible pitch" value at its 2-decimal
+  precision (max absolute change 0.004): `shot_penalty` 0.13→0.126, `shot_freekick` 0.21→0.210,
+  `shot` 0.18→0.182, `keeper_save` 0.16→0.162, `cross` 0.19→0.186, `goalkick` 0.30→0.298. The two
+  edits move the column in OPPOSITE directions and the decomposition shows why the net is nil:
+  **`n_with_polygon` is 100.0% of `n_events` for every action type** — every SB360 freeze-frame in
+  this corpus carries a `visible_area` — so the ADR-042 denominator change is a **no-op here**, and
+  only the clipping moves anything, by ≤0.004. `coverage.md` is left as committed; regenerating it
+  would rewrite provenance without changing a published digit. **Open, if the artifact is ever
+  rebuilt for another reason:** that pass should install via the declared extra rather than
+  piecemeal (this one needed `statsbombpy`, `ruthless-efficiency>=0.4.0` and `pyarrow` added by
+  hand) and should run on the repo's pinned pandas — this run was pandas 3.0.5 on py3.14, and while
+  it reproduced every value, matching the environment is what makes that evidence rather than luck.
 - **`sportec_slim.parquet` is MIRRORED relative to its own direction labels** (found 4.77.0).
   `team_attacking_direction` says `DFL-CLU-00000P` attacks +x, so it should defend x=0, while that
   team's keeper mean x is 98.1 (p1) and 77.0 (p2). Confirmed independently by

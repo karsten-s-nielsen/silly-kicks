@@ -152,9 +152,8 @@ Two honest qualifications, both recorded at the gate:
 ## The pre-registered measurements: M2 and M3
 
 The spec fixed three measurement rules BEFORE measuring, so an answer could not be chosen after
-seeing it. M1 (NA-team GK rows in the `GhostGkModel` training corpus) needs the DGX training
-corpus and is a recorded follow-up. M2 and M3 are measurable on the committed slim fixtures and
-were run:
+seeing it. **M1 was run on the DGX owner corpus in 4.77.1 and is ZERO** (see below). M2 and M3 are
+measurable on the committed slim fixtures and were run:
 
 | provider | M2 — GK-less `(game, period, team)` groups | M3 — end DIFFERS between p1 and p2 |
 |---|---|---|
@@ -182,6 +181,36 @@ first half's end.
 That converts §2.7's "no value effect" into a value change on those providers, which is why the
 retrain trigger in this ADR is stated unconditionally rather than hedged. It also means the
 sportec/gradientsports byte-identity is a property of THOSE fixtures, not a general claim.
+
+### M1, measured on the full owner corpus (4.77.1): ZERO
+
+Pre-registered rule: *zero → no retrain, record the count; non-zero → retrain trigger, handled as
+its own weights cycle.* Measured on the 179-match DGX pining corpus, conservation asserted (every
+expected match produced exactly one shard, zero failures):
+
+| provider | matches | GK rows | NA-team GK rows |
+|---|---|---|---|
+| gradientsports | 64 / 64 | 23,727,139 | **0** |
+| idsse | 7 / 7 | 2,005,288 | **0** |
+| skillcorner | 108 / 108 | 9,602,782 | **0** |
+| **total** | **179 / 179** | **35,335,209** | **0** |
+
+**So the bundled `GhostGkModel` weights are NOT contaminated, and no retrain is triggered by this
+ADR.** The retired fallback (`0.0 if same_id(gk_team, home_team_id) else 105.0`, which returns a
+constant 105.0 for any NA-team keeper because `same_id(NA, home)` is False) was reachable in code
+and never reached by this corpus.
+
+Two properties make the zero load-bearing rather than incidental. The count is a **superset** of
+what enters training — the extractor further restricts by domain, subsample and link filter — so
+zero over the superset bounds the training set at zero. And the selection is **identical** to the
+extractor's: the probe's `fillna(False)` differs from the extractor's raw `.astype(bool)` only if
+`is_goalkeeper` can hold NA, which it cannot here, because that raw cast RAISES on NA in both
+`boolean` and `object` dtypes and the model trained successfully on this corpus.
+
+The honest reading, and the same one the coverage re-run produced: **this cycle's repair closes a
+path that is real in the code and absent from the corpus.** That is worth keeping — the guard costs
+nothing and the next corpus may differ — but it is not a repair of a wrong published number, and
+recording it as one would be a fabrication in the direction that flatters the change.
 
 ## The D3 unit pin moved
 
@@ -225,6 +254,29 @@ runtime dependency on `tracking/` and adding one would invert the port layering.
 
 Wiring coverage INTO the count features is deliberately NOT in this cycle: it changes existing
 values and decides for the consumer what a partial observation means (ADR-009).
+
+### The vocabulary was defined and then not used by its own producer (4.77.1)
+
+The token split above is the seam's central claim, and the producer feeding it violated it.
+`shape_snapshots` dropped any polygon that converted to an empty array, so a published-but-2-vertex
+`visible_area` produced no row at all and read downstream as `no_polygon` — "nothing published",
+when the truth was "published and unusable". That is precisely the collapse `degenerate_polygon`
+exists to prevent, committed in the module that defines both tokens.
+
+4.77.0 recorded the adjacent `polygon_to_spadl` crash (`reshape(-1, 2)` raises `ValueError` on an
+odd-length flat list, mid-corpus) but declined to fix it, on the stated grounds that hardening it
+would flip `shape_snapshots` from loud-crash to silent-skip — a fail-loud-vs-degrade decision
+rather than a typo. **That reasoning was wrong, and the error is instructive:** it enumerated two
+options, crash and silence, when the seam already shipped a third. Reporting a malformed polygon as
+`degenerate_polygon` is neither a crash nor a silent skip — it is the honest answer, and it was
+already representable. A scope decision defended by a false dichotomy is still a scope decision;
+the give-away was that the justification appealed to a principle the module's own vocabulary
+contradicted.
+
+Fixed in 4.77.1: `polygon_to_spadl` returns an empty `(0, 2)` on an odd length (consistent with its
+existing `len < 6` behaviour), and `shape_snapshots` emits a row whenever something WAS published,
+so the empty array lands below `MIN_VERTICES` and reads as degenerate. Both pinned by tests
+verified RED against the pre-fix code.
 
 ## References
 
