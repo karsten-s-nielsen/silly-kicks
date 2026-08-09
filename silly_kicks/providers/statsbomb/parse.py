@@ -196,7 +196,12 @@ def polygon_to_spadl(flat: list[float], *, fidelity_version: int = 1) -> np.ndar
 
         poly = polygon_to_spadl(record["visible_area"])   # (N, 2), NOT clipped to the pitch
     """
-    if len(flat) < 6:
+    # An ODD-length flat list is malformed provider data. Report it unusable rather than raising:
+    # this runs per-event across a corpus, and `reshape(-1, 2)` on an odd length raises
+    # ValueError, so a single malformed record would kill a whole multi-hour pass. Reporting
+    # unusable is not the same as reporting ABSENT -- `shape_snapshots` still emits a row for
+    # anything that WAS published, so the consumer sees `degenerate_polygon`, not `no_polygon`.
+    if len(flat) < 6 or len(flat) % 2:
         return np.empty((0, 2), dtype=float)
     xy = np.asarray(flat, dtype=float).reshape(-1, 2)
     return _sb_coords.sb_xy_to_spadl(xy, fidelity_version=fidelity_version)
@@ -279,8 +284,14 @@ def shape_snapshots(
                         "y": float(y),
                     }
                 )
-        poly = polygon_to_spadl(ff.get("visible_area") or [], fidelity_version=fidelity_version)
-        if len(poly):
+        raw_area = ff.get("visible_area") or []
+        poly = polygon_to_spadl(raw_area, fidelity_version=fidelity_version)
+        # Emit a row whenever something WAS published, even if it converted to nothing usable.
+        # Dropping it collapses "published and unusable" into "nothing published" -- and those
+        # are the distinct `degenerate_polygon` / `no_polygon` tokens `tracking._visibility`
+        # exists to keep apart (ADR-055). A short or malformed polygon yields an empty (0, 2)
+        # array, which is below MIN_VERTICES and therefore reads as degenerate downstream.
+        if len(poly) or raw_area:
             poly_rows.append({"action_id": action_id, "polygon": poly})
 
     snapshots = pd.DataFrame(snap_rows, columns=["action_id", "team_id", "is_goalkeeper", "x", "y"])

@@ -6,6 +6,8 @@ port already-loaded payloads.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,6 +17,7 @@ from silly_kicks.providers.statsbomb import (
     acting_side_gk_visible,
     defending_gk_visible,
     observed_pitch_fraction,
+    polygon_to_spadl,
     shape_snapshots,
 )
 
@@ -251,3 +254,65 @@ def test_crc_moves_observed_pitch_fraction_once_the_ratio_is_CLIPPED():
         f"crc must measurably move the CLIPPED fraction on a touchline-crossing polygon "
         f"({base} vs {moved}); if it does not, this witness has gone vacuous again"
     )
+
+
+def test_odd_length_polygon_reports_unusable_rather_than_raising():
+    """`reshape(-1, 2)` on an odd length raises; this runs per-event across a corpus.
+
+    A single malformed record must not kill a multi-hour pass. Measured before the fix:
+    ``ValueError: cannot reshape array of size 7 into shape (2)``.
+    """
+    out = polygon_to_spadl([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
+    assert out.shape == (0, 2)
+    # Non-vacuity: an EVEN-length polygon of the same magnitude must still convert, or the
+    # guard above would be indistinguishable from "this function returns empty for everything".
+    good = polygon_to_spadl([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    assert good.shape == (3, 2)
+
+
+def test_published_but_unusable_polygon_is_DEGENERATE_not_absent():
+    """ "Published and unusable" and "nothing published" are different findings (ADR-055).
+
+    ``shape_snapshots`` used to drop any polygon that converted to an empty array, which
+    reported a published-but-2-vertex region as ``no_polygon`` -- the exact conflation
+    ``tracking._visibility`` defines a separate ``degenerate_polygon`` token to prevent.
+    """
+    import silly_kicks.tracking._visibility as vis
+
+    frames_raw = [
+        # Published, but only two vertices -- unusable, NOT absent.
+        {"event_uuid": "u-short", "visible_area": [1.0, 2.0, 3.0, 4.0], "freeze_frame": []},
+        # Nothing published at all.
+        {"event_uuid": "u-none", "freeze_frame": []},
+    ]
+    actions = pd.DataFrame(
+        {
+            "action_id": [0, 1],
+            "original_event_id": ["u-short", "u-none"],
+            "game_id": [1, 1],
+            "period_id": [1, 1],
+            "time_seconds": [1.0, 2.0],
+        }
+    )
+    _snaps, visible_area, _report = shape_snapshots(frames_raw, actions)
+
+    published = set(visible_area["action_id"])
+    assert 0 in published, "a published-but-unusable polygon must still produce a row"
+    assert 1 not in published, "an ABSENT polygon must NOT produce a row"
+
+    poly = visible_area.loc[visible_area["action_id"] == 0, "polygon"].iloc[0]
+    assert len(poly) < vis.MIN_VERTICES
+
+    # END-TO-END, through the consumer that owns the vocabulary. Asserting the row shape alone
+    # would be asserting this test's PRECONDITION: the claim is which TOKEN a reader sees, and
+    # `degenerate_polygon` vs `no_polygon` is the entire distinction the seam exists to keep.
+    out = vis.add_visible_area_coverage(actions, visible_area=visible_area)
+    src = dict(zip(out["action_id"], out["visible_area_source"], strict=True))
+    assert src[0] == vis.VISIBLE_AREA_DEGENERATE_POLYGON, (
+        f"published-but-unusable must read as degenerate, got {src[0]!r}"
+    )
+    assert src[1] == vis.VISIBLE_AREA_NO_POLYGON, f"absent must read as no_polygon, got {src[1]!r}"
+    # The fraction is NaN for every non-`observed` token -- never 0.0, which would read as
+    # "the camera saw none of it" rather than "nobody said".
+    frac = dict(zip(out["action_id"], out["visible_area_fraction"], strict=True))
+    assert math.isnan(frac[0]) and math.isnan(frac[1])
