@@ -360,7 +360,11 @@ def main() -> None:
         # missing would report a complete corpus, which is the very defect the sidecar closed.
         **res.manifest(),
         "arm_requested": args.arm,
-        "input_contract": input_contract(),
+        # `input_contract` is DELIBERATELY not here. `aggregate_manifests` sums ints and
+        # merges dicts as COUNTER dicts (`int(vv)` per value), so a dict carrying strings
+        # -- driver name, digest, extractor tuple -- raises there and destroys the corpus
+        # aggregate AFTER the whole pass has run. It belongs in the cited artifact, not in
+        # the cross-worker counter surface.
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov["tree_state"],
