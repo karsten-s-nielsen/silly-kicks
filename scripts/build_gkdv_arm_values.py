@@ -383,7 +383,11 @@ def main() -> None:
     # process's own values are already recorded, correctly, in its own `manifest_<tag>.json` above.
     # `build_layer2_spells` never did this; the two producers `_partition.py` exists to keep
     # identical had diverged on precisely the field its OR is for.
-    corpus.update(arms_written=written, arm_requested=args.arm)
+    # `input_contract` goes on the CORPUS aggregate, not the per-worker manifest. The aggregate is
+    # the cited artifact and is written AFTER `aggregate_manifests` has run, so a dict carrying
+    # strings can never reach the counter-merge that a per-worker placement fed it. Putting it in
+    # the manifest is what killed a completed 64-match pass at its final step.
+    corpus.update(arms_written=written, arm_requested=args.arm, input_contract=input_contract())
     (dest / "arm_values_manifest.json").write_text(json.dumps(corpus, indent=2, default=str), encoding="utf-8")
     print(json.dumps(corpus, indent=2, default=str))
 

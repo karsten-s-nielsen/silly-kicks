@@ -1,0 +1,51 @@
+{
+  "n_matches": 64,
+  "n_groups_total": 266,
+  "shots_per_group": {
+    "min": 1,
+    "median": 5.0,
+    "max": 20
+  },
+  "reliable_groups_per_match_high": {
+    "min": 0,
+    "median": 0.0,
+    "max": 3
+  },
+  "reliable_groups_per_match_medium": {
+    "min": 0,
+    "median": 2.5,
+    "max": 6
+  },
+  "matches_with_ge2_reliable_high": 6,
+  "matches_with_ge2_reliable_medium": 50,
+  "thresholds": {
+    "high": 10,
+    "medium": 5
+  },
+  "scope": {
+    "providers": [
+      "gradientsports"
+    ],
+    "max_per_provider": null,
+    "tracking_limit": 1,
+    "tracking_limit_caps": "frames per match, NOT actions -- shot counts come from events"
+  },
+  "input_contract": {
+    "version": 1,
+    "driver": "measure_gs_shot_distribution",
+    "detector": {
+      "min_shots_per_group_high": 10,
+      "min_shots_per_group_medium": 5
+    },
+    "extractors": [
+      "silly_kicks.spadl.orientation"
+    ],
+    "digest": "5185d7c48161f47b3339ef8d03b81b150cfc03e9cfd903c877eb7d84acb99d06"
+  },
+  "run_commit": "c487c4935057e31a99ba0ec7023d639fb19a0d3f",
+  "run_tree_dirty": false,
+  "generation": "eeb613cc63b1bf4e",
+  "n_attempted": 64,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0
+}

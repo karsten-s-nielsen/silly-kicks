@@ -1174,7 +1174,17 @@
       "note": "per-spell join, not an extractor feature (opportunities.py:152-157)"
     }
   ],
-  "run_commit": "0343eddca6ad34767f67c92b43801c00de6591a7",
+  "input_contract": {
+    "version": 1,
+    "driver": "measure_covariate_invariance",
+    "geometry_version": "goal-relative-2",
+    "extractors": [
+      "silly_kicks.tracking._xshot_occurrence",
+      "silly_kicks.tracking._xcross_attempt"
+    ],
+    "digest": "7ce75527d8359b72f88dd35a069d5658af50de7b30108b443837f9433fa6c89f"
+  },
+  "run_commit": "c487c4935057e31a99ba0ec7023d639fb19a0d3f",
   "run_tree_dirty": false,
   "status": "ok",
   "breaches": []
