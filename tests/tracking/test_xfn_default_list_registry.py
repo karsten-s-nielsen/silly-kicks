@@ -1,4 +1,4 @@
-"""The set of default xfn lists the leakage guards sweep is pinned EXACTLY (ADR-054).
+"""The set of default xfn lists the leakage guards sweep is pinned EXACTLY (Cycle B).
 
 Three leakage guards each carried their own copy of the discovery rule behind
 `assert len(lists) >= 10`, against a real population of 19. That floor cannot detect an omission,

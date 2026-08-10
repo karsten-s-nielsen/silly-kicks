@@ -89,7 +89,7 @@ _XS_GK_BLOCK = ("GK_r", "GK_theta")
 
 
 def input_contract() -> dict:
-    """Declare WHICH SYMBOLS these numbers depend on (ADR-054).
+    """Declare WHICH SYMBOLS these numbers depend on (Cycle B).
 
     This driver MEASURES the geometry transform, so its own dependence on `GEOMETRY_VERSION` is
     the point rather than an incidental input: a bump means the measurement describes a transform

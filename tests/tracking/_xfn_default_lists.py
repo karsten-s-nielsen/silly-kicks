@@ -5,7 +5,7 @@ Three guards carried three BYTE-IDENTICAL copies of this discovery rule, each pi
 an omission here means a NEW default list that no leakage guard sweeps, i.e. a leaky factory could
 be opted into it with nothing looking. CLAUDE.md calls that a HybridVAEP-class correctness break.
 
-Decision: ADR-054.
+Decision: Cycle B.
 """
 
 from __future__ import annotations

@@ -21,7 +21,7 @@ hashlib for contract digests. No new runtime dependency.
 
 ## Global Constraints
 
-* **ADR number: ADR-054.** Version: read off `main` at commit-prep, never assumed. `main` was at
+* **ADR number: the Cycle B ADR.** Version: read off `main` at commit-prep, never assumed. `main` was at
   4.75.0 / ADR-053 when this plan was written, so expect 4.76.0 — confirm, do not assume.
 * **Every gate lands RED first — or, where the tree is already correct, PROVES IT CAN FAIL via a
   planted defect that is then reverted.** Either way the failing output is pasted into the commit
@@ -105,7 +105,7 @@ independent walkers drift — but the fix is structural, not an assertion: **sin
 | `scripts/measure_gs_shot_distribution.py` | **new.** Item 23 step 2a. Owner-tier GS, summary counts only. |
 | `docs/research/gs_input_convention/` | **new.** 2a's provenanced artifact. |
 | `tests/datasets/gradientsports/_generate_synthetic_match.py` | modify. Reshape to 2a's numbers. |
-| `docs/superpowers/adrs/ADR-054-*.md` | **new.** |
+| `docs/superpowers/adrs/the Cycle B ADR-*.md` | **new.** |
 
 ---
 
@@ -133,7 +133,7 @@ independent walkers drift — but the fix is structural, not an assertion: **sin
 # tests/scripts/_script_population.py
 """One AST walk over `scripts/*.py`, shared by every gate that derives a driver population.
 
-ADR-052's corpus-driver gate and ADR-054's artifact-driver gate need the same scaffolding --
+ADR-052's corpus-driver gate and the Cycle B ADR's artifact-driver gate need the same scaffolding --
 glob, skip private, parse -- and differ only in their predicate. Two independent walkers would
 drift with nothing relating them, which is the defect class this cycle exists to remove. The
 reconciliation is structural: single-source the UNIVERSE, let the predicates differ.
@@ -961,7 +961,7 @@ Phase 1 is a complete, independently reviewable unit. Ask for approval before co
 
 ```python
 # scripts/_input_contract.py
-"""Declared input contracts for research-artifact drivers (ADR-054).
+"""Declared input contracts for research-artifact drivers (the Cycle B ADR).
 
 A driver declares WHICH SYMBOLS its numbers depend on, never what those symbols currently contain.
 When SHOT_ARM_CONFOUNDERS gains a column or GEOMETRY_VERSION bumps, the digest moves without anyone
@@ -1653,10 +1653,10 @@ Expected: 0 failed in both.
 
 ---
 
-### Task 9: ADR-054, docs, C4, version
+### Task 9: the Cycle B ADR, docs, C4, version
 
 **Files:**
-- Create: `docs/superpowers/adrs/ADR-054-artifact-input-contracts-and-registry-completeness.md`
+- Create: `docs/superpowers/adrs/the Cycle B ADR-artifact-input-contracts-and-registry-completeness.md`
 - Modify: `docs/superpowers/specs/2026-08-05-cycle-b-artifact-input-contracts-design.md`
 - Modify: `CLAUDE.md`, `CHANGELOG.md`, `TODO.md`, `pyproject.toml`, `docs/c4/architecture.dsl`
 
@@ -1666,7 +1666,7 @@ Apply the three corrections recorded at the top of this plan to §3.1, §3.3 and
 measurement that overturned it. Per spec Risk 4, a discovery outside §Scope is recorded as a failure
 of that document rather than absorbed silently.
 
-- [ ] **Step 2: Write ADR-054**
+- [ ] **Step 2: Write the Cycle B ADR**
 
 Include, per gate, the RED output recorded during the build. Name explicitly which gates had a LIVE
 red (10, K2, 26, K9-bundled-half) and which had a PLANTED one (24) or landed green by construction

@@ -1,6 +1,6 @@
 """One AST walk over `scripts/*.py`, shared by every gate that derives a driver population.
 
-ADR-052's corpus-driver gate and ADR-054's artifact-driver gate need the same scaffolding --
+ADR-052's corpus-driver gate and Cycle B's artifact-driver gate need the same scaffolding --
 glob, skip private, parse -- and differ only in their predicate. Two independent walkers would
 drift with nothing relating them, which is the defect class this cycle exists to remove. The
 reconciliation is structural: single-source the UNIVERSE, let the predicates differ.

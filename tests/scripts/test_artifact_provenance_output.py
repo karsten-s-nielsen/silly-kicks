@@ -1,4 +1,4 @@
-"""The existing provenance gate reads driver SOURCE; this one reads artifact OUTPUT (ADR-054).
+"""The existing provenance gate reads driver SOURCE; this one reads artifact OUTPUT (Cycle B).
 
 A driver can satisfy every assertion in `test_provenance_wiring.py` -- imports the helper, offers
 `--allow-dirty`, calls `require_clean_tree` from `main()` -- and still emit an artifact nobody can
@@ -65,7 +65,7 @@ _UNPROVENANCED: dict[str, str] = {
         "comparability pass a public driver."
     ),
     "docs/research/xtgk_possession_value/gate.json": (
-        "produced by `validate_xtgk_possession_value`, which ADR-054 wired to the provenance guard "
+        "produced by `validate_xtgk_possession_value`, which Cycle B wired to the provenance guard "
         "in this same cycle. The artifact predates that wiring, so it will carry `run_commit` from "
         "its next owner-run (Databricks gold marts, owner-tier). Burn this entry down then."
     ),

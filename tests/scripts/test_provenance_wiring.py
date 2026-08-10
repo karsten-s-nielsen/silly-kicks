@@ -20,7 +20,7 @@ import pytest
 
 from tests.scripts._script_population import SCRIPTS, called_names, iter_scripts, string_literals
 
-_SCRIPTS = SCRIPTS  # single-sourced with the shared population seam (ADR-054)
+_SCRIPTS = SCRIPTS  # single-sourced with the shared population seam (Cycle B)
 
 # Drivers that write a registered artifact (metrics.json / parquet / report.md under --out).
 # Listed rather than inferred: "writes an artifact" is a semantic property, and a heuristic over
@@ -32,7 +32,7 @@ ARTIFACT_DRIVERS = (
     #
     # Its sibling `render_sb360_matrix` is deliberately NOT enrolled; the reason now lives in
     # `_NOT_A_DRIVER` below, where the completeness gate can check it, rather than in a comment
-    # here that nothing reads (ADR-054).
+    # here that nothing reads (Cycle B).
     "build_sb360_coverage",
     "build_gkdv_arm_values",
     "calibrate_xt_bandwidth",
@@ -69,7 +69,7 @@ ARTIFACT_DRIVERS = (
     "train_xshot_occurrence",
     "validate_xs_probe",
     "validate_xshot_causal",
-    # --- Enrolled 4.76.0 (ADR-054). All three were found by item 10's completeness gate on its
+    # --- Enrolled by Cycle B (version assigned at commit-prep). All three were found by item 10's
     # FIRST run: each consumes data from outside the repository, writes an artifact, and had no
     # provenance guard at all -- the same class as `validate_xcross_causal` above, and invisible
     # for exactly the same reason (the old anti-rot assertion was a FLOOR).
@@ -122,7 +122,7 @@ _NOT_A_DRIVER: dict[str, str] = {
         "rewrites bundled metadata ONLY, deliberately never calling any model's save(). It "
         "consumes nothing external and derives its contract from the current library, so it must "
         "be re-run after a change to a declared constant -- i.e. on the dirty tree carrying that "
-        "change. Its OUTPUT is still policed, by the ADR-054 artifact-provenance gate; the "
+        "change. Its OUTPUT is still policed, by the Cycle B artifact-provenance gate; the "
         "source-side guard and the output-side gate answer different questions and only the "
         "second applies here."
     ),
@@ -317,7 +317,7 @@ def test_the_rev_parse_detector_distinguishes_a_CALL_from_PROSE():
 def test_the_driver_list_is_not_silently_empty_or_stale():
     """Burn-down half: an entry naming a script that no longer exists is stale scaffolding.
 
-    The `assert len(ARTIFACT_DRIVERS) >= 6` that used to open this test is GONE (ADR-054). A floor
+    The `assert len(ARTIFACT_DRIVERS) >= 6` that used to open this test is GONE (Cycle B). A floor
     cannot detect an omission -- it passed at 18 entries while three unguarded artifact drivers and
     `render_sb360_matrix` were all missing. `test_the_artifact_driver_population_is_EXACT` replaces
     it and fails in BOTH directions.

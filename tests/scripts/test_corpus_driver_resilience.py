@@ -150,7 +150,7 @@ def _uses_for_each(tree: ast.AST) -> bool:
 
 
 def _population() -> dict[str, ast.AST]:
-    """Corpus drivers, filtered out of the SHARED script universe (ADR-054).
+    """Corpus drivers, filtered out of the SHARED script universe (Cycle B).
 
     The glob/parse scaffolding used to live here and again in the artifact-driver gate. Two
     independent walkers over `scripts/*.py` drift with nothing relating them, so the universe is

@@ -1,4 +1,4 @@
-"""Unit-test the 2a driver's PURE functions without the owner-tier corpus (ADR-054).
+"""Unit-test the 2a driver's PURE functions without the owner-tier corpus (Cycle B).
 
 `measure_gs_shot_distribution` cannot run in CI: Gradient Sports is owner-tier and the driver
 refuses a dirty tree. Its per-match work function and its summariser are pure (DataFrame in,

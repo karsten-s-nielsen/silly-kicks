@@ -31,7 +31,7 @@ def test_default_lists_discovered():
     lists = _default_lists()
     assert any("tracking.features.tracking_default_xfns" in k for k in lists)
     assert any("vaep.base.xfns_default" in k for k in lists)
-    # ADR-054: EXACT, both ways -- the floor could not detect an omission.
+    # Cycle B: EXACT, both ways -- the floor could not detect an omission.
     assert set(lists) == set(SWEPT), (
         f"new and unswept: {sorted(set(lists) - SWEPT)}; registered but gone: {sorted(SWEPT - set(lists))}"
     )

@@ -131,7 +131,7 @@ __all__ = [
     "space_creation_xfns",
     "structural_pass_xfns",
     "xcross_attempt_xfns",
-    # ADR-054: was imported (:31), used (:877) and re-exported by its sibling
+    # Cycle B: was imported (:31), used (:877) and re-exported by its sibling
     # `xcross_attempt_xfns` above -- but missing here, an asymmetry with no stated reason.
     # Found by K2's replacement meta-assertion, which pairs `dir()` against the declared export
     # instead of comparing an expression to itself.

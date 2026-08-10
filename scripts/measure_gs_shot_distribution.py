@@ -1,6 +1,6 @@
 """Measure the real per-(match, team, period) shot distribution on owner-tier Gradient Sports.
 
-Item 23 step 2a (ADR-054). The GS input-convention guard cannot see the case it governs: the
+Item 23 step 2a (Cycle B). The GS input-convention guard cannot see the case it governs: the
 committed fixture `tests/datasets/gradientsports/synthetic_match.json` DEFERS, so
 `detect_input_convention` never classifies and the declared-vs-detected disagreement never
 surfaces in CI.
@@ -48,7 +48,7 @@ _DEFAULT_MEDIUM = 5
 
 
 def input_contract() -> dict:
-    """Declare WHICH SYMBOLS this measurement depends on (ADR-054)."""
+    """Declare WHICH SYMBOLS this measurement depends on (Cycle B)."""
     import inspect
 
     sig = inspect.signature(detect_input_convention)

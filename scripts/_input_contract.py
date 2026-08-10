@@ -1,4 +1,4 @@
-"""Declared input contracts for research-artifact drivers (ADR-054).
+"""Declared input contracts for research-artifact drivers (Cycle B).
 
 A driver declares WHICH SYMBOLS its numbers depend on, never what those symbols currently contain.
 When ``SHOT_ARM_CONFOUNDERS`` gains a column or ``GEOMETRY_VERSION`` bumps, the digest moves without

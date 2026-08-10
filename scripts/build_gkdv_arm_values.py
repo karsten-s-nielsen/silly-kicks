@@ -39,7 +39,7 @@ from scripts._input_contract import declare_inputs
 
 
 def input_contract() -> dict:
-    """Declare WHICH SYMBOLS these numbers depend on (ADR-054).
+    """Declare WHICH SYMBOLS these numbers depend on (Cycle B).
 
     `GkdvParams` carries the arm configuration (`lambda_gk`, the domain radius, the pinned
     `method="spearman"`), so its field VALUES are what a rerun would have to match. The ghost model

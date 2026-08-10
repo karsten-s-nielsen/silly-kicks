@@ -9,7 +9,7 @@ They differ by `add_gradientsports_player_ids`, a jersey-number helper that enri
 is not coupled to an action. A maintainer who resolves the ambiguity by making the DSL quote 33
 turns a true sentence false in a way no test would catch -- which is why this gate names both.
 
-Decision: ADR-054.
+Decision: Cycle B.
 """
 
 from __future__ import annotations

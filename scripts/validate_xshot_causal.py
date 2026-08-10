@@ -48,7 +48,7 @@ SHOT_ARM_MIN_CONTROL_CONVERSIONS = 30
 
 
 def input_contract() -> dict:
-    """Declare WHICH SYMBOLS these numbers depend on (ADR-054).
+    """Declare WHICH SYMBOLS these numbers depend on (Cycle B).
 
     Both causal imports are function-local by necessity, not style: `SHOT_ARM_CONFOUNDERS` and
     `shot_arm_config` are imported inside `analyze()`, not at module scope, so a module-level

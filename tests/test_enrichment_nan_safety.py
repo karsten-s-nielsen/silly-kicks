@@ -35,7 +35,7 @@ def _discover(module) -> tuple:
     return tuple(fn for _, fn in inspect.getmembers(module, inspect.isfunction) if getattr(fn, "_nan_safe", False))
 
 
-# Discovered from the PACKAGE, not the defining module (ADR-054).
+# Discovered from the PACKAGE, not the defining module (Cycle B).
 #
 # `TRACKING_ENRICHMENTS` used to scan `silly_kicks.tracking.features` alone, while the contract it
 # guards covers the whole public `silly_kicks.tracking` surface. Three decorated helpers therefore
@@ -71,7 +71,7 @@ _TRACKING_NEEDS_EXTRA = {
     "add_team_shape",
     "add_xt_gk",
     "add_off_ball_run_values",
-    # ADR-054: newly VISIBLE to the registry once discovery widened to the package. All three
+    # Cycle B: newly VISIBLE to the registry once discovery widened to the package. All three
     # were outside `tracking.features` and therefore outside the old scan; two of them were
     # already decorated, so the claim existed while nothing exercised it.
     "add_sync_score",
@@ -118,7 +118,7 @@ def test_every_public_add_star_is_enrolled_or_exempted(label, pkg, registry) -> 
     decorated.
 
     ADR-033 and ADR-051 both pin their surface to the public export in BOTH directions; this is
-    ADR-003 catching up (ADR-054).
+    ADR-003 catching up (Cycle B).
 
     Pinned to the PACKAGE export, not the module: `silly_kicks.spadl.utils` has no `__all__` at
     all, so a module-level pin would assert nothing on two of the three registries.

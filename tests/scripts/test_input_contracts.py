@@ -1,4 +1,4 @@
-"""Declared input contracts: the mechanism, and the detector that reports stale artifacts (ADR-054).
+"""Declared input contracts: the mechanism, and the detector that reports stale artifacts (Cycle B).
 
 PR 5 changed a geometry transform and three research artifacts silently went stale. The only thing
 that found them was someone tracing `causal/opportunities.py` by hand, after seven review rounds had

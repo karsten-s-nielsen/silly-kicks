@@ -1,6 +1,6 @@
 # Cycle B — research-artifact input contracts and registry completeness — design
 
-**Status:** approved 2026-08-05. Rebased onto `main` @ `5b1a0a1` (4.75.0, ADR-053), so this cycle takes **ADR-054**; the version number is read off `main` at commit-prep, never assumed. Successor to
+**Status:** approved 2026-08-05. **The ADR number and version are assigned at COMMIT-PREP, read off `main` at that moment -- never pre-claimed.** A hard `the Cycle B ADR` in this document and in 23 source files was taken by a concurrent session mid-cycle (4.76.0 / the Cycle B ADR, SB360); 4.77.0 and 4.77.1 went the same way. Code and tests refer to this work as **Cycle B**, a slug no other session can claim. Successor to
 `2026-08-03-adr051-closeout-and-artifact-validity-design.md`, which specified this work inline as
 §5.1–§5.8 while PR 5 was in flight. That material is consolidated here; the PR 5 spec remains the
 record of how these items were found.

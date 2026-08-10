@@ -54,7 +54,7 @@ def _actions():
 def _atomic_actions():
     """The ATOMIC-shaped twin of `_actions()` -- same trajectories, atomic schema.
 
-    ADR-054: the atomic mirrors consume `x`/`y`/`dx`/`dy` (ATOMIC_SPADL_COLUMNS), not
+    Cycle B: the atomic mirrors consume `x`/`y`/`dx`/`dy` (ATOMIC_SPADL_COLUMNS), not
     `start_x`/`end_x`. Handing them the SPADL fixture yields `KeyError: 'x'`, which
     `_run_family` correctly reports as a FIXTURE GAP rather than the dup-action_id bug --
     exactly the discrimination that keeps this gate from being "fixed" in the wrong place.
@@ -179,7 +179,7 @@ def test_meta_gate_covers_every_xfns_factory():
     -- the same expression on both sides, always true. It also carried
     `assert len(_XFNS_NAMES) >= 21  # bumped for xt_gk_xfns`, a floor inside the very gate that
     exists because floors cannot detect an omission, with a comment recording it had already been
-    hand-bumped once (ADR-054).
+    hand-bumped once (Cycle B).
 
     The independent source is the PACKAGE export, not `features.__all__`. Measured: all four names
     absent from `features.__all__` ARE in `tracking.__all__`, so pairing against the module surface
@@ -240,5 +240,5 @@ def test_xfns_survives_duplicate_action_id_gamestate(name):
 
 @pytest.mark.parametrize("name", _ATOMIC_MIRROR_NAMES)
 def test_atomic_xfns_survives_duplicate_action_id_gamestate(name):
-    """ADR-054: the atomic mirrors were never covered by ADR-020's contract."""
+    """Cycle B: the atomic mirrors were never covered by ADR-020's contract."""
     _run_family(name, AF)

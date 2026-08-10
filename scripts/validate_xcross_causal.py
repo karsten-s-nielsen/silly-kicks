@@ -28,7 +28,7 @@ _OVERLAP_MIN = 0.5  # min fraction of treated inside the control PS range to cla
 
 
 def input_contract() -> dict:
-    """Declare WHICH SYMBOLS these numbers depend on (ADR-054)."""
+    """Declare WHICH SYMBOLS these numbers depend on (Cycle B)."""
     from silly_kicks.tracking import _geometry as _geo
 
     return declare_inputs(
