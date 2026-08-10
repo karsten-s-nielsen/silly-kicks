@@ -5,6 +5,10 @@ from __future__ import annotations
 import pandas as pd
 
 from tests.tracking._gk_test_helpers import _make_two_team_frame
+from tests.tracking._goal_map_helpers import goal_map_for
+
+#: ADR-055: `_make_two_team_frame` emits game 1 / period 1, teams {1, 2}, keeper at each end.
+HOME_GOAL_MAP = goal_map_for({1: 0.0, 2: 105.0})
 
 
 def _make_atomic_actions_and_frames():
@@ -67,7 +71,7 @@ class TestAtomicCoverShadows:
             actions,
             frames,
             fitted_xt,
-            home_team_id=1,
+            goal_map=HOME_GOAL_MAP,
         )
         for col in [
             "n_blocked_receivers",
@@ -82,7 +86,7 @@ class TestAtomicCoverShadows:
         """Atomic xfns factory produces 15 columns."""
         from silly_kicks.atomic.tracking.features import cover_shadow_xfns
 
-        xfns = cover_shadow_xfns(fitted_xt, home_team_id=1)
+        xfns = cover_shadow_xfns(fitted_xt, goal_map=HOME_GOAL_MAP)
         assert len(xfns) == 1
         transformer = xfns[0]
         assert getattr(transformer, "_frame_aware", False) is True
@@ -138,8 +142,8 @@ class TestAtomicCoverShadows:
                 "player_id": [60, 60],
             }
         )
-        std = std_cs(std_actions, frames, fitted_xt, home_team_id=1, detailed=False)
-        atom = atomic_cs(atomic_actions, frames, fitted_xt, home_team_id=1, detailed=False)
+        std = std_cs(std_actions, frames, fitted_xt, goal_map=HOME_GOAL_MAP, detailed=False)
+        atom = atomic_cs(atomic_actions, frames, fitted_xt, goal_map=HOME_GOAL_MAP, detailed=False)
         np.testing.assert_allclose(
             atom["max_single_defender_blocking_score"].to_numpy(),
             std["max_single_defender_blocking_score"].to_numpy(),

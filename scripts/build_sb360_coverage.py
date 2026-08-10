@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import math
 import pathlib
 import sys
 import warnings
@@ -26,6 +27,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from scripts._driver import for_each
 from scripts._provenance import git_provenance, require_clean_tree
+from silly_kicks.providers.statsbomb import (
+    acting_side_gk_visible,
+    defending_gk_visible,
+    observed_pitch_fraction,
+)
+from silly_kicks.spadl import _sb_coordinates as _sb_coords
 
 #: (competition_id, season_id) -> expected name. Asserted at run time: prose verification does
 #: not survive an upstream renumber, and a silently-wrong sample is worse than a crash.
@@ -46,6 +53,33 @@ EXPECTED_NAMES = {
 #: flagged.
 GK_DOMAIN_TYPES = ("shot", "shot_penalty", "shot_freekick", "cross", "goalkick", "keeper_save")
 
+#: The columns ``measure_match`` emits, and the shard-generation token they are pinned to.
+#: These two MUST move together: the ``for_each`` fingerprint digests ``token_inputs`` only,
+#: never the source, so changing the columns while leaving the token resolves to the SAME
+#: generation directory, skips every existing shard as already-done, and combines the OLD
+#: schema while reporting a clean pass. ``tests/scripts/test_build_sb360_coverage.py`` pins the
+#: pair, so a column change with a stale token fails CI instead of silently serving old numbers.
+_SHARD_SCHEMA_VERSION = "sb360-coverage-3"
+_EMITTED_SHARD_COLUMNS = (
+    "competition_id",
+    "season_id",
+    "match_id",
+    "action_type",
+    "n_events",
+    "n_defending_gk_visible",
+    "defending_gk_visible_rate",
+    "n_acting_side_gk_visible",
+    "acting_side_gk_visible_rate",
+    "mean_players_visible",
+    "n_with_polygon",
+    "mean_observed_pitch_fraction",
+    "n_actions",
+    "n_actions_with_frame",
+    "frame_existence_rate",
+    "is_gk_domain",
+    "match_join_rate",
+)
+
 #: Default shard root. TOP-LEVEL and ending in ``_shards`` so the anchored ``/*_shards/`` glob
 #: at .gitignore:90 covers it. A nested path such as ``docs/research/.../_shards`` is NOT
 #: covered -- the anchor is deliberate, so an unanchored glob cannot silence tracked paths at
@@ -54,8 +88,9 @@ DEFAULT_SHARD_ROOT = "sb360_coverage_shards"
 
 #: StatsBomb's pitch. `visible_area` is delivered in THIS frame, not SPADL's 105x68; dividing
 #: by 105*68 yields ~1.34 for a fully-visible frame, i.e. a "fraction" above 1.
-SB_PITCH_LENGTH = 120.0
-SB_PITCH_WIDTH = 80.0
+# Re-exported from the port so the script and the library cannot disagree about the SB grid.
+SB_PITCH_LENGTH = _sb_coords.SB_FIELD_LENGTH
+SB_PITCH_WIDTH = _sb_coords.SB_FIELD_WIDTH
 
 #: Keys the converter reads from the top level; everything else rides in `extra`.
 #: Mirrors tests/test_xthreat_statsbomb_e2e.py::_adapt.
@@ -132,42 +167,6 @@ def _ids_for_cell(override, comp_id: int, season_id: int) -> tuple[bool, list | 
     if not ids:
         return (True, None)
     return (False, list(ids))
-
-
-def _defending_gk_visible(players) -> bool:
-    """The keeper being ATTACKED -- correct for shots and crosses.
-
-    ``keeper`` alone answers "a keeper is visible", a different question. Freeze-frame flags are
-    relative to the ACTOR, so the defending keeper is the keeper who is not a teammate.
-    """
-    return any(bool(p.get("keeper")) and not bool(p.get("teammate")) for p in players)
-
-
-def _acting_side_gk_visible(players) -> bool:
-    """The keeper on the ACTOR's own side -- correct for GK distribution and saves.
-
-    Which keeper is "the" keeper depends on the action. On a goal kick or a save the keeper IS
-    the actor, so ``keeper AND NOT teammate`` excludes them BY CONSTRUCTION and reports 0%
-    however good the coverage actually is. Measured on MLS 2023 match 3877060: `goalkick` and
-    `keeper_save` both read exactly 0.000 defending-keeper visibility -- a definitional
-    artefact, not a measurement, and one that would have told a club its goal-kick coverage was
-    nil.
-
-    Reported ALONGSIDE the defending rate rather than replacing it, because the two answer
-    different questions and the right one depends on the action type: shots and crosses want
-    the defending keeper, xT-GK's distribution domain wants this one.
-    """
-    return any(bool(p.get("keeper")) and bool(p.get("teammate")) for p in players)
-
-
-def _visible_fraction(flat) -> float:
-    """Shoelace over StatsBomb's flat ``[x0, y0, x1, y1, ...]``, normalised by the SB pitch."""
-    if len(flat) < 6:
-        return 0.0
-    xs, ys = list(flat[0::2]), list(flat[1::2])
-    n = len(xs)
-    area = 0.5 * abs(sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i] for i in range(n)))
-    return area / (SB_PITCH_LENGTH * SB_PITCH_WIDTH)
 
 
 def _load_catalogue() -> list[dict]:
@@ -275,13 +274,24 @@ def measure_match(match):
                 "n_acting_side_gk_visible": 0,
                 "sum_visible": 0.0,
                 "sum_area": 0.0,
+                "n_with_polygon": 0,
             },
         )
         bucket["n_events"] += 1
-        bucket["n_defending_gk_visible"] += int(_defending_gk_visible(players))
-        bucket["n_acting_side_gk_visible"] += int(_acting_side_gk_visible(players))
+        bucket["n_defending_gk_visible"] += int(defending_gk_visible(players))
+        bucket["n_acting_side_gk_visible"] += int(acting_side_gk_visible(players))
         bucket["sum_visible"] += len(players)
-        bucket["sum_area"] += _visible_fraction(ff.get("visible_area") or [])
+        # ADR-042: a coverage DENOMINATOR must never masquerade as a signal. Only events that
+        # actually carry a polygon enter the mean, and the count of them travels with the rate.
+        # `observed_pitch_fraction` now returns NaN (not 0.0) when nothing was published, so the
+        # old unconditional `sum_area +=` would poison the whole bucket to NaN -- and BEFORE the
+        # rename it silently averaged in a 0.0 for every event with no 360 record, reporting
+        # "the camera saw none of the pitch" where the truth is "nobody said". With only 32.6% of
+        # goal kicks carrying a freeze-frame, that is most of the bucket.
+        _frac = observed_pitch_fraction(ff.get("visible_area") or [])
+        if math.isfinite(_frac):
+            bucket["sum_area"] += _frac
+            bucket["n_with_polygon"] += 1
 
     rows = []
     for type_name, b in per_type.items():
@@ -305,7 +315,12 @@ def measure_match(match):
                 # defined by the visible players themselves, since a coverage fraction there is
                 # circular (the hull over visible players is 100% observed by construction).
                 "mean_players_visible": b["sum_visible"] / n if n else float("nan"),
-                "mean_visible_pitch_fraction": b["sum_area"] / n if n else float("nan"),
+                # Denominator is n_with_polygon, NOT n_events -- and it is REPORTED, so a
+                # reader can see how much of the bucket the mean actually rests on.
+                "n_with_polygon": b["n_with_polygon"],
+                "mean_observed_pitch_fraction": (
+                    b["sum_area"] / b["n_with_polygon"] if b["n_with_polygon"] else float("nan")
+                ),
                 # How many SPADL actions of this type EXIST, and how many got a frame.
                 # NaN rather than 0 where the type produced no actions -- an "unmapped" bucket
                 # has frames but no actions by definition, and 0/0 is not a rate of zero.
@@ -322,7 +337,18 @@ def measure_match(match):
                 "match_join_rate": join_rate,
             }
         )
-    return pd.DataFrame(rows)
+    # Compare the keys the rows ACTUALLY carry -- never `pd.DataFrame(rows, columns=...)`,
+    # which SELECTS to the declaration and makes the check trivially true (a dropped key
+    # vanishes, a missing one arrives as NaN, and the guard certifies both).
+    if rows and tuple(rows[0]) != _EMITTED_SHARD_COLUMNS:
+        raise AssertionError(
+            f"shard columns drifted from _EMITTED_SHARD_COLUMNS; bump _SHARD_SCHEMA_VERSION "
+            f"(currently {_SHARD_SCHEMA_VERSION!r}) or the next run reuses stale shards. "
+            f"emitted={tuple(rows[0])}"
+        )
+    # An empty result still carries the declared columns: "ran, produced nothing" must stay
+    # distinguishable from "not yet run" (ADR-052).
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=list(_EMITTED_SHARD_COLUMNS))
 
 
 def _iter_matches(selected, args):
@@ -392,7 +418,11 @@ def main() -> None:
         token_inputs={
             "competitions": sorted(f"{c}:{s}" for c, s in cells),
             "matches_per_cell": args.matches_per_cell,
-            "schema": "sb360-coverage-2",
+            # Moves with `_EMITTED_SHARD_COLUMNS`; see the constant for why an un-bumped token
+            # silently serves the previous schema. Measured on the -2 -> -3 move: 22 stale
+            # shards carrying `mean_visible_pitch_fraction` would have been combined in place
+            # of the ADR-042 denominator, with the pass reporting success.
+            "schema": _SHARD_SCHEMA_VERSION,
         },
         tag=args.tag,
         label="match",

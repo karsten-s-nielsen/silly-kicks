@@ -21,9 +21,15 @@ from silly_kicks.gkdv import GkdvParams, delta_das, delta_threat_suppression
 from tests.tracking.test_compute_threat_pc import (
     GK_ON_LINE,
     GK_OUT_OF_POSITION,
+    HOME_GOAL_MAP,
     _fitted_xt,
     _frame,
 )
+
+#: ADR-055: the threat arm takes a `goal_map` instead of `home_team_id`. Re-used from the
+#: cover-shadow suite whose `_frame` builder these tests already share, so the two files
+#: cannot drift on what the fixture's orientation is.
+_GOAL_MAP = HOME_GOAL_MAP
 
 # ---------------------------------------------------------------------------
 # Delta-GK-threat-suppression
@@ -46,7 +52,7 @@ def test_deterrent_keeper_gives_a_NEGATIVE_delta():
         _frame(GK_OUT_OF_POSITION),
         attacking_team_id=2,
         xt=_fitted_xt(),
-        home_team_id=1,
+        goal_map=_GOAL_MAP,
     )
     assert delta < 0, "a better-positioned actual keeper must score negative (= deterrent)"
 
@@ -56,7 +62,7 @@ def test_polarity_is_antisymmetric_in_the_two_legs():
 
     Without this, a hard-coded ``-abs(...)`` would satisfy the polarity test above.
     """
-    kwargs = {"attacking_team_id": 2, "xt": _fitted_xt(), "home_team_id": 1}
+    kwargs = {"attacking_team_id": 2, "xt": _fitted_xt(), "goal_map": _GOAL_MAP}
     forward = delta_threat_suppression(_frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), **kwargs)
     reverse = delta_threat_suppression(_frame(GK_OUT_OF_POSITION), _frame(GK_ON_LINE), **kwargs)
     assert forward == pytest.approx(-reverse)
@@ -65,7 +71,7 @@ def test_polarity_is_antisymmetric_in_the_two_legs():
 
 def test_identical_frames_give_exactly_zero():
     frame = _frame()
-    delta = delta_threat_suppression(frame, frame.copy(), attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
+    delta = delta_threat_suppression(frame, frame.copy(), attacking_team_id=2, xt=_fitted_xt(), goal_map=_GOAL_MAP)
     assert delta == 0.0
 
 
@@ -83,13 +89,13 @@ def test_threat_arm_pins_the_configured_method_into_BOTH_legs(monkeypatch):
 
     monkeypatch.setattr(tracking, "compute_threat_pc", _spy)
     delta_threat_suppression(
-        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id=2, xt=None, home_team_id=1
+        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id=2, xt=None, goal_map=_GOAL_MAP
     )
 
     assert len(seen) == 2, f"expected exactly two threat legs, saw {len(seen)}"
     assert [call.get("method") for call in seen] == ["spearman", "spearman"]
     assert seen[0]["attacking_team_id"] == seen[1]["attacking_team_id"] == 2
-    assert seen[0]["home_team_id"] == seen[1]["home_team_id"] == 1
+    assert seen[0]["goal_map"] is seen[1]["goal_map"] is _GOAL_MAP
 
 
 def test_threat_arm_FORWARDS_lambda_gk_into_the_pitch_control_params(monkeypatch):
@@ -117,7 +123,7 @@ def test_threat_arm_FORWARDS_lambda_gk_into_the_pitch_control_params(monkeypatch
         _frame(GK_OUT_OF_POSITION),
         attacking_team_id=2,
         xt=None,
-        home_team_id=1,
+        goal_map=_GOAL_MAP,
         params=GkdvParams(lambda_gk=7.5),
     )
 
@@ -147,10 +153,10 @@ def test_threat_arm_is_id_dtype_safe(monkeypatch):
     # so the splat both hides the real target and manufactures a type error.
     xt = _fitted_xt()
     numeric = delta_threat_suppression(
-        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id=2, home_team_id=1, xt=xt
+        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id=2, goal_map=_GOAL_MAP, xt=xt
     )
     stringy = delta_threat_suppression(
-        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id="2", home_team_id="1", xt=xt
+        _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION), attacking_team_id="2", goal_map=_GOAL_MAP, xt=xt
     )
     assert numeric == stringy
     assert numeric != 0.0, "vacuous: both dtypes agreed only because the value is zero"
@@ -159,7 +165,7 @@ def test_threat_arm_is_id_dtype_safe(monkeypatch):
 def test_threat_arm_does_not_mutate_its_inputs():
     actual, ghost = _frame(GK_ON_LINE), _frame(GK_OUT_OF_POSITION)
     before_actual, before_ghost = actual.copy(deep=True), ghost.copy(deep=True)
-    delta_threat_suppression(actual, ghost, attacking_team_id=2, xt=_fitted_xt(), home_team_id=1)
+    delta_threat_suppression(actual, ghost, attacking_team_id=2, xt=_fitted_xt(), goal_map=_GOAL_MAP)
     pd.testing.assert_frame_equal(actual, before_actual)
     pd.testing.assert_frame_equal(ghost, before_ghost)
 
@@ -531,8 +537,8 @@ def test_compute_threat_pc_refuses_an_unfitted_xt_rather_than_returning_zero():
     # The wrong TYPE is the subject of this test, so the ignores are deliberate: pyright already
     # rejects these statically, and the point is that the RUNTIME does too (it previously did not).
     with pytest.raises(ValueError, match="fitted ExpectedThreat"):
-        compute_threat_pc(frame, attacking_team_id=1, xt=None, home_team_id=1)  # type: ignore[arg-type]
+        compute_threat_pc(frame, attacking_team_id=1, xt=None, goal_map=_GOAL_MAP)  # type: ignore[arg-type]
 
     # A bundled-variant NAME is also not a fitted model -- refused distinctly, not coerced.
     with pytest.raises(NotImplementedError):
-        compute_threat_pc(frame, attacking_team_id=1, xt="default", home_team_id=1)  # type: ignore[arg-type]
+        compute_threat_pc(frame, attacking_team_id=1, xt="default", goal_map=_GOAL_MAP)  # type: ignore[arg-type]

@@ -16,34 +16,18 @@ _entry(
     columns=(
         "ghost_gk_x",
         "ghost_gk_y",
+        "ghost_gk_source",
     ),
     velocity={
-        "ghost_gk_x": AxisVerdict(
+        "ghost_gk_x": AxisVerdict("all_nan", "honest_nan"),
+        "ghost_gk_y": AxisVerdict("all_nan", "honest_nan"),
+        "ghost_gk_source": AxisVerdict(
             "differs",
-            "silent_degrade",
+            "differs_by_design",
             rationale=(
-                "A FITTED model silently IMPUTING the five velocity features it was trained on "
-                "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor yields "
-                "NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED missing-value "
-                "direction -- fitted where NaN meant an occasional dropped measurement, applied where 5 of 26 "
-                "features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, 33.522] vs zero -> "
-                "[6.888, 33.362]. The output is a plausible coordinate with no basis, indistinguishable "
-                "downstream from a velocity-informed prediction. This is the fabrication the audit exists to "
-                "find. [measured cause=velocity+frame_count]"
-            ),
-        ),
-        "ghost_gk_y": AxisVerdict(
-            "differs",
-            "silent_degrade",
-            rationale=(
-                "A FITTED model silently IMPUTING the five velocity features it was trained on "
-                "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor yields "
-                "NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED missing-value "
-                "direction -- fitted where NaN meant an occasional dropped measurement, applied where 5 of 26 "
-                "features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, 33.522] vs zero -> "
-                "[6.888, 33.362]. The output is a plausible coordinate with no basis, indistinguishable "
-                "downstream from a velocity-informed prediction. This is the fabrication the audit exists to "
-                "find. [measured cause=velocity+frame_count]"
+                "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                "designed das_source to do exactly this. [measured cause=velocity]"
             ),
         ),
     },
@@ -57,7 +41,7 @@ _entry(
                     "measure in EITHER leg. Recorded as unexercised because the vocabulary admits nothing else "
                     "from no_signal -- but the collapse IS the visibility finding: the column hard-depends on the "
                     "keeper being in the freeze-frame, which for SB360 means in the broadcast camera's view. "
-                    "[measured cause=velocity+frame_count]"
+                    "[measured cause=n/a]"
                 ),
             ),
             "ghost_gk_y": AxisVerdict(
@@ -68,48 +52,42 @@ _entry(
                     "measure in EITHER leg. Recorded as unexercised because the vocabulary admits nothing else "
                     "from no_signal -- but the collapse IS the visibility finding: the column hard-depends on the "
                     "keeper being in the freeze-frame, which for SB360 means in the broadcast camera's view. "
-                    "[measured cause=velocity+frame_count]"
+                    "[measured cause=n/a]"
+                ),
+            ),
+            "ghost_gk_source": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                    "designed das_source to do exactly this. [measured cause=velocity]"
                 ),
             ),
         },
         "defender_absent": {
-            "ghost_gk_x": AxisVerdict(
+            "ghost_gk_x": AxisVerdict("all_nan", "honest_nan"),
+            "ghost_gk_y": AxisVerdict("all_nan", "honest_nan"),
+            "ghost_gk_source": AxisVerdict(
                 "differs",
-                "silent_degrade",
+                "differs_by_design",
                 rationale=(
-                    "A FITTED model silently IMPUTING the five velocity features it was trained on "
-                    "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor "
-                    "yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED "
-                    "missing-value direction -- fitted where NaN meant an occasional dropped measurement, applied "
-                    "where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, "
-                    "33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate with no basis, "
-                    "indistinguishable downstream from a velocity-informed prediction. This is the fabrication "
-                    "the audit exists to find. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "ghost_gk_y": AxisVerdict(
-                "differs",
-                "silent_degrade",
-                rationale=(
-                    "A FITTED model silently IMPUTING the five velocity features it was trained on "
-                    "(ball_vx/ball_vy/ball_speed/defensive_line_speed/defending_centroid_vx). The extractor "
-                    "yields NaN, and predict_mean's HGBR reconstruction routes NaN down each split's LEARNED "
-                    "missing-value direction -- fitted where NaN meant an occasional dropped measurement, applied "
-                    "where 5 of 26 features are absent on 100% of rows. NOT a zero-fill: measured NaN -> [6.795, "
-                    "33.522] vs zero -> [6.888, 33.362]. The output is a plausible coordinate with no basis, "
-                    "indistinguishable downstream from a velocity-informed prediction. This is the fabrication "
-                    "the audit exists to find. [measured cause=velocity+frame_count]"
+                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                    "designed das_source to do exactly this. [measured cause=velocity]"
                 ),
             ),
         },
     },
     applicability={
-        "ghost_gk_x": "region_support",
-        "ghost_gk_y": "region_support",
+        "ghost_gk_x": "no_support",
+        "ghost_gk_y": "no_support",
+        "ghost_gk_source": "no_support",
     },
     applicability_deltas={
-        "ghost_gk_x": {"extreme": 0.0, "near": 7.174178138992033},
-        "ghost_gk_y": {"extreme": 0.0, "near": 0.025539771382511844},
+        "ghost_gk_x": {"extreme": 0.0, "near": 0.0},
+        "ghost_gk_y": {"extreme": 0.0, "near": 0.0},
+        "ghost_gk_source": {"extreme": 0.0, "near": 0.0},
     },
 )
 

@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-08-05. **Current release**: silly-kicks 4.75.0 (ADR-053 — the SB360 coverage audit: a per-column, per-axis verdict for every `add_*` on freeze-frames, machine observation locked by CI and human adjudication deliberately not. 299 of 486 verdicts `works`; the only 4 `silent_degrade` are `add_ghost_gk`, which fabricates a coordinate from velocity it does not have. Tests, scripts and docs only — no retrain, no re-materialize). Immediately prior: 4.74.0 (ADR-051 PR 5 of 5 — the goal-relative transform was CHIRAL: no `to_goal_relative_y`, so the two goal ends had opposite handedness and every bearing negated between them; xS/xCross retrained on the corrected point reflection and re-stamped. Closes the ADR-051 cycle's Gate A xfails; the 8 Gate B / D3 markers remain for PR 6). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-08-09. **Current release**: silly-kicks 4.77.1 (ADR-055 — the SB360 coverage driver's shard schema moved without its generation token, so a re-run would have silently combined 22 stale shards; plus "published and unusable" no longer reports as "nothing published". M1 measured ZERO on the 179-match corpus — no ghost retrain). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -50,48 +50,90 @@ rejected alternatives) lives in
 Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
 repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 
-- **`add_ghost_gk` fabricates on freeze-frames** — the audit's one actionable library finding, and
-  its only `silent_degrade`. Measured on the paired fixture: six plausible coordinates, none NaN,
-  all differing from the velocity-informed leg.
-  The MECHANISM is a **learned imputation policy, NOT a zero-fill** (measured 2026-08-05; the
-  first-recorded "receives structural zeros" was wrong and was corrected in 4.75.0 at the generating
-  rule). `extract_ghost_gk_features` yields **NaN** for all five velocity features
-  (`ball_vx`/`ball_vy`/`ball_speed`/`defensive_line_speed`/`defending_centroid_vx`), and
-  `predict_mean` reconstructs an sklearn HGBR, which routes NaN down each split's **learned
-  missing-value direction** — a different prediction from zero-fill, not the same one
-  (`velocity=NaN -> [6.795, 33.522]` vs `velocity=0.0 -> [6.888, 33.362]`); that direction was
-  fitted where NaN meant an occasional dropped measurement and is applied here where 5 of 26
-  features are absent on 100% of rows. **This is why "fill the zeros correctly" is not the fix.**
-  Options are to refuse (return NaN, as `add_gk_influence` does) or to emit a provenance column
-  saying the prediction is velocity-free. **Refusing is the honest default** — the producer already
-  stamps `speed_source=SPEED_SOURCE_UNAVAILABLE` (`_snapshot.py:129`) and the house pattern exists
-  twice (`_das.py:259`, `_press_commitment.py:100`); a caller currently cannot tell.
-- **No `providers/statsbomb/` parse port.** `spadl/statsbomb.py` converts event dicts; nothing
-  fetches or shapes SB360 freeze-frames into the `snapshots` contract, so every consumer writes that
-  glue itself. Mirrors `providers/sportec/parse.py`. Eleven aggregators also need bespoke call
-  shapes (see `tests/sb360/_calls.py`) that a first-class producer would have to handle.
-- **`visible_area` has no library seam.** Zero handling anywhere in `silly_kicks/`; the audit
-  consumes the polygon in its own harness only. It converts "player absent" from unknown into a
-  known geometric mask, which is what would let a region-querying feature report *observed* support
-  rather than assume it. Decide whether it earns a public seam.
-- **`velocity_unavailable_by_design` has exactly two consumers** (`_das.py:259`,
-  `_press_commitment.py:100`). Every other velocity-touching module handles absent kinematics ad hoc
-  — several zero-fill and carry on. The audit shows most still degrade honestly, so this is
-  consistency work, not a live defect.
+- **The `visible_area` CONSUMING seam exists; WIRING it into the count features does not.**
+  4.77.0/ADR-055 shipped the primitives -- `point_observed` (`bool | None`),
+  `region_observed_fraction` (an `(M, 2)` polygon, never a bbox) and `add_visible_area_coverage`
+  -- so the previous framing of this row ("a seam for the DATA but not for CONSUMING it") is
+  discharged. What remains is deliberately NOT done: `defenders_in_triangle_to_goal`,
+  `receiver_zone_density` and `nearest_defender_distance` still treat "nobody there" and "nobody
+  VISIBLE there" as the same observation. Wiring them changes existing values AND decides for the
+  consumer what a partial observation means, which is the ADR-009 line -- so it needs a consumer
+  asking for it, not a library decision.
+- **`velocity_unavailable_by_design` now has FOUR consumers** — `_das.py`, `_press_commitment.py`,
+  and, as of 4.76.0, `_ghost_gk.py` (the shared serving seam) and `features.py` (the aggregator
+  edge). The remaining velocity-touching modules handle absent kinematics ad hoc, but ADR-053's
+  audit measured that they degrade HONESTLY: the one that did not was the ghost path, and that is
+  now fixed. So the residual is consistency work with **no live defect behind it** — and per
+  ADR-054's column-vs-diagnostic rule the right surface for those five is
+  `validate_velocity_regime`, which already exists, rather than a marker read in each module.
+  Close this row unless a NEW velocity consumer lands that fabricates.
 - **Four boundary entry points are unaudited**, each with its reason in
   `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
   one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and
   silly-kicks ships no xG model, so any port supplied would audit the stub rather than the library.
-- **`snapshot_to_tracking_frames` id dtype is pandas-version-dependent** (`_snapshot.py:172`).
-  `Int64` in yields `Int64` on pandas 2.3.3 and `Float64` on 3.0.3 — the concat-with-all-NA
-  `FutureWarning` materialising. Hyrum's law for any consumer pinning it.
-- **Check whether the lakehouse already ingests StatsBomb open data.** If it does, that path likely
-  beats a new `providers/statsbomb/` port, since it also normalises shape. Not answerable from this
-  repo.
+- **`snapshot_to_tracking_frames` id dtype may be pandas-version-dependent -- UNVERIFIED, and the
+  numbers previously recorded here do not reproduce.** This row used to say "`Int64` in yields
+  `Int64` on pandas 2.3.3 and `Float64` on 3.0.3". Measured on 2.3.3 during 4.77.0: the concat
+  yields **`float64`** for the as-built numeric-int fixture, and an `Int64` source stays **`Int64`**
+  -- so neither half of the old claim reproduces on the pinned resolver. The 4.77.0 cycle planned a
+  fix and DROPPED it (ADR-055): casting to `TRACKING_FRAMES_COLUMNS` is unimplementable, because it
+  declares `int64` for `player_id`/`team_id`, the ball row is NA in both, and `int64` cannot hold NA
+  (`IntCastingNaNError` on every snapshot) -- and a `restore_id_dtype`-based pin changed NOTHING for
+  numpy-int, nullable-`Int64` or object sources (with the pin excised, 0 of 2 tests written for it
+  went red). **The concern is only checkable on a pandas-3 environment, which CI does not have
+  (`ci.yml` is OS x Python only).** Next step is that environment, not another blind fix.
+- **Check whether the lakehouse already ingests StatsBomb open data.** The question has CHANGED now
+  that 4.76.0 ships `providers/statsbomb`: it is no longer build-or-reuse but whether the lakehouse
+  should ADOPT the port so both read SB360 the same way. Not answerable from this repo.
 - **SB360 goal-kick frame availability is the collaboration's real constraint** — only 32.6% of goal
   kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
   shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
   beyond 22 matches is a driver flag, and the shards are additive.
+- **Finish the D3 re-key: `_defensive_line.compute_defensive_line` and `_packing` are still
+  identity-keyed** (found 4.77.0, deliberately out of that cycle, previously recorded only in the
+  test pin and ADR-055). ADR-055 re-keyed `_gk_influence` and left these two, so the
+  `test_defensive_line_d3_unit_is_enumerated` pin is now exactly `{_defensive_line, _packing}`.
+  Both derive direction as `same_id(team_id, home_team_id)`, which is correct only while frames are
+  home-attacks-right and silently inverts otherwise. `select_back_line_players` already takes
+  `defends_x0: bool`, so the callee is ready and the work is at the two call sites: thread a
+  `GoalMap` and pass `goal_map.get(...) == 0.0`. Note Gate B is the ONLY detector for these two
+  today, and it goes vacuous the moment either is re-keyed — so each must gain a Gate C
+  `call_with_map` + `gate_c_must_move` entry in the same change, or the re-key deletes its own
+  detection (the ADR-055 rule).
+- **Widen the SB360 `gk_absent` fixture to reclaim 5 audited columns** (found 4.77.0).
+  `NOT_EXERCISED_BUDGET` rose 26 → 31 because `gk_absent` removes BOTH keepers, so
+  `resolve_defended_goals` falls to its outfield rung and guesses both teams at x=105 (measured
+  outfield mean x 56.9 and 76.5, both past the 52.5 midline); a both-teams-same-end map is
+  degenerate, `attacked_goal` refuses it, and both legs go NaN for the same roster-driven reason.
+  A real widening of the audit's blind spot: before the re-key those five columns produced numbers
+  on a keeper-less freeze-frame, which were not evidence. A keeper at ONE end is enough to break
+  the degeneracy and reclaim them.
+- ~~Re-run `build_sb360_coverage.py`~~ **DONE 4.77.1 — the artifact is NOT stale.** A full 22-match
+  pass on the corrected driver reproduces every published "visible pitch" value at its 2-decimal
+  precision (max absolute change 0.004): `shot_penalty` 0.13→0.126, `shot_freekick` 0.21→0.210,
+  `shot` 0.18→0.182, `keeper_save` 0.16→0.162, `cross` 0.19→0.186, `goalkick` 0.30→0.298. The two
+  edits move the column in OPPOSITE directions and the decomposition shows why the net is nil:
+  **`n_with_polygon` is 100.0% of `n_events` for every action type** — every SB360 freeze-frame in
+  this corpus carries a `visible_area` — so the ADR-042 denominator change is a **no-op here**, and
+  only the clipping moves anything, by ≤0.004. `coverage.md` is left as committed; regenerating it
+  would rewrite provenance without changing a published digit. **Open, if the artifact is ever
+  rebuilt for another reason:** that pass should install via the declared extra rather than
+  piecemeal (this one needed `statsbombpy`, `ruthless-efficiency>=0.4.0` and `pyarrow` added by
+  hand) and should run on the repo's pinned pandas — this run was pandas 3.0.5 on py3.14, and while
+  it reproduced every value, matching the environment is what makes that evidence rather than luck.
+- **`sportec_slim.parquet` is MIRRORED relative to its own direction labels** (found 4.77.0).
+  `team_attacking_direction` says `DFL-CLU-00000P` attacks +x, so it should defend x=0, while that
+  team's keeper mean x is 98.1 (p1) and 77.0 (p2). Confirmed independently by
+  `orient_frames_to_ltr_by_geometry`, which MIRRORS this slice. Only sportec: gradientsports agrees;
+  metrica/skillcorner have one-sided keeper coverage so the check is inexpressible there. Recorded
+  as a **strict xfail** (`test_provider_inputs_convention.py::test_direction_labels_agree_with_keeper_geometry`),
+  so repairing the slice is forced to delete the marker. Repair moves `sportec_expected.parquet` and
+  the lakehouse-parity goldens, which is why it is its own change.
+- **Sweep for fixtures that CLAIM velocity and supply none.** Two were found and fixed in 4.76.0:
+  `test_ghost_gk_orientation.py` and `test_action_ltr_mirror_invariance.py` declared
+  `speed_source="native"` with no `vx`/`vy`, so the model ran on 5-of-26 imputed features. Worth a
+  sweep for the same shape elsewhere: a fixture that claims velocity and supplies none is now a
+  loud failure for ghost, but silent for every other velocity consumer.
 - **⚠ Cross-session: `render_sb360_matrix.py` must be EXEMPTED, not enrolled, when the
   `ARTIFACT_DRIVERS` completeness gate lands.** The planned derivation rule ("a `scripts/*.py` with
   `--out` that writes a `.json`/`.md` beneath it") matches it, but the guard is deliberately absent

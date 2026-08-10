@@ -1,0 +1,372 @@
+[
+ {
+  "duration": 1.4662,
+  "id": "1d18e243-0d73-4009-81fa-cccb13ea24d0",
+  "index": 5,
+  "location": [
+   60.0,
+   40.0
+  ],
+  "match_id": 3893795,
+  "minute": 0,
+  "pass": {
+   "angle": 2.5871272,
+   "body_part": {
+    "id": 40,
+    "name": "Right Foot"
+   },
+   "end_location": [
+    38.2,
+    53.5
+   ],
+   "height": {
+    "id": 1,
+    "name": "Ground Pass"
+   },
+   "length": 25.641567,
+   "recipient": {
+    "id": 87185,
+    "name": "Stine Ballisager Pedersen"
+   },
+   "type": {
+    "id": 65,
+    "name": "Kick Off"
+   }
+  },
+  "period": 1,
+  "play_pattern": {
+   "id": 9,
+   "name": "From Kick Off"
+  },
+  "player": {
+   "id": 276443,
+   "name": "Kathrine M\u00f8ller K\u00fchl"
+  },
+  "position": {
+   "id": 15,
+   "name": "Left Center Midfield"
+  },
+  "possession": 2,
+  "possession_team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "related_events": [
+   "3cf6ae9e-0214-4243-85b3-c2bc9639b806"
+  ],
+  "second": 0,
+  "team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "timestamp": "00:00:00.703",
+  "type": {
+   "id": 30,
+   "name": "Pass"
+  }
+ },
+ {
+  "duration": 2.931287,
+  "id": "c0038dea-6a23-44fa-ae1c-2b1f06a57b72",
+  "index": 8,
+  "location": [
+   41.5,
+   55.3
+  ],
+  "match_id": 3893795,
+  "minute": 0,
+  "pass": {
+   "angle": 0.14425415,
+   "body_part": {
+    "id": 40,
+    "name": "Right Foot"
+   },
+   "end_location": [
+    89.0,
+    62.2
+   ],
+   "height": {
+    "id": 3,
+    "name": "High Pass"
+   },
+   "length": 47.998543,
+   "recipient": {
+    "id": 87195,
+    "name": "Janni Thomsen"
+   }
+  },
+  "period": 1,
+  "play_pattern": {
+   "id": 9,
+   "name": "From Kick Off"
+  },
+  "player": {
+   "id": 87185,
+   "name": "Stine Ballisager Pedersen"
+  },
+  "position": {
+   "id": 3,
+   "name": "Right Center Back"
+  },
+  "possession": 2,
+  "possession_team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "related_events": [
+   "7386200d-9909-4358-893c-9426b95f1a78"
+  ],
+  "second": 4,
+  "team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "timestamp": "00:00:04.077",
+  "type": {
+   "id": 30,
+   "name": "Pass"
+  }
+ },
+ {
+  "duration": 0.799358,
+  "id": "9ae81912-3a13-4043-b112-6b31d4a85b6f",
+  "index": 11,
+  "location": [
+   89.0,
+   62.2
+  ],
+  "match_id": 3893795,
+  "minute": 0,
+  "pass": {
+   "aerial_won": true,
+   "angle": 0.10530013,
+   "end_location": [
+    101.3,
+    63.5
+   ],
+   "height": {
+    "id": 2,
+    "name": "Low Pass"
+   },
+   "length": 12.368508,
+   "recipient": {
+    "id": 10108,
+    "name": "Pernille Mosegaard Harder"
+   }
+  },
+  "period": 1,
+  "play_pattern": {
+   "id": 9,
+   "name": "From Kick Off"
+  },
+  "player": {
+   "id": 87195,
+   "name": "Janni Thomsen"
+  },
+  "position": {
+   "id": 17,
+   "name": "Right Wing"
+  },
+  "possession": 2,
+  "possession_team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "related_events": [
+   "7bfe79fd-9b6c-4884-989c-9e347ba62156",
+   "a4e1f78f-17d7-4963-aceb-e18244884179"
+  ],
+  "second": 7,
+  "team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "timestamp": "00:00:07.048",
+  "type": {
+   "id": 30,
+   "name": "Pass"
+  },
+  "under_pressure": true
+ },
+ {
+  "duration": 1.670997,
+  "id": "07a672aa-a317-4d0d-a307-e82913c40936",
+  "index": 18,
+  "location": [
+   113.8,
+   80.0
+  ],
+  "match_id": 3893795,
+  "minute": 0,
+  "pass": {
+   "angle": -1.5707964,
+   "end_location": [
+    113.8,
+    54.4
+   ],
+   "height": {
+    "id": 3,
+    "name": "High Pass"
+   },
+   "length": 25.6,
+   "recipient": {
+    "id": 32230,
+    "name": "Karen Holmgaard"
+   },
+   "type": {
+    "id": 67,
+    "name": "Throw-in"
+   }
+  },
+  "period": 1,
+  "play_pattern": {
+   "id": 4,
+   "name": "From Throw In"
+  },
+  "player": {
+   "id": 15789,
+   "name": "Rikke L\u00e6ntver Sevecke"
+  },
+  "position": {
+   "id": 2,
+   "name": "Right Back"
+  },
+  "possession": 3,
+  "possession_team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "related_events": [
+   "798bfaf4-e5b7-4afe-b12f-9c95f0392b78"
+  ],
+  "second": 31,
+  "team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "timestamp": "00:00:31.493",
+  "type": {
+   "id": 30,
+   "name": "Pass"
+  }
+ },
+ {
+  "duration": 1.520632,
+  "id": "71f3c811-d252-49e2-b5cb-4442b17d8a91",
+  "index": 21,
+  "location": [
+   113.8,
+   54.4
+  ],
+  "match_id": 3893795,
+  "minute": 0,
+  "pass": {
+   "aerial_won": true,
+   "angle": -1.3275876,
+   "cross": true,
+   "end_location": [
+    117.1,
+    41.1
+   ],
+   "height": {
+    "id": 3,
+    "name": "High Pass"
+   },
+   "length": 13.703284,
+   "outcome": {
+    "id": 9,
+    "name": "Incomplete"
+   },
+   "recipient": {
+    "id": 10274,
+    "name": "Nicoline S\u00f8rensen"
+   }
+  },
+  "period": 1,
+  "play_pattern": {
+   "id": 4,
+   "name": "From Throw In"
+  },
+  "player": {
+   "id": 32230,
+   "name": "Karen Holmgaard"
+  },
+  "position": {
+   "id": 10,
+   "name": "Center Defensive Midfield"
+  },
+  "possession": 3,
+  "possession_team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "related_events": [
+   "c3929f4d-a184-46d9-9d71-9712a654669f",
+   "54eb8097-53ff-4738-a4db-4bfdb7418ffb",
+   "339d47b9-b2aa-49d2-8db6-749dc32ab28c"
+  ],
+  "second": 33,
+  "team": {
+   "id": 853,
+   "name": "Denmark Women's"
+  },
+  "timestamp": "00:00:33.204",
+  "type": {
+   "id": 30,
+   "name": "Pass"
+  },
+  "under_pressure": true
+ },
+ {
+  "duration": 0.0,
+  "goalkeeper": {
+   "outcome": {
+    "id": 15,
+    "name": "Success"
+   },
+   "type": {
+    "id": 25,
+    "name": "Collected"
+   }
+  },
+  "id": "54eb8097-53ff-4738-a4db-4bfdb7418ffb",
+  "index": 23,
+  "location": [
+   3.0,
+   39.0
+  ],
+  "match_id": 3893795,
+  "minute": 0,
+  "period": 1,
+  "play_pattern": {
+   "id": 8,
+   "name": "From Keeper"
+  },
+  "player": {
+   "id": 402016,
+   "name": "Huan Xu"
+  },
+  "position": {
+   "id": 1,
+   "name": "Goalkeeper"
+  },
+  "possession": 4,
+  "possession_team": {
+   "id": 1207,
+   "name": "China PR Women's"
+  },
+  "related_events": [
+   "71f3c811-d252-49e2-b5cb-4442b17d8a91"
+  ],
+  "second": 34,
+  "team": {
+   "id": 1207,
+   "name": "China PR Women's"
+  },
+  "timestamp": "00:00:34.725",
+  "type": {
+   "id": 23,
+   "name": "Goal Keeper"
+  }
+ }
+]

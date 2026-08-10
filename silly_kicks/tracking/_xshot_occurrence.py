@@ -662,9 +662,9 @@ def load_xgb_booster_base_score_safe(model_json_path: Path):
     return booster
 
 
-# Moved byte-identically to _gk_resolve.defended_goal_x (TF-48); shim keeps all
-# internal `_defended_goal_x(...)` call sites working unchanged.
-from silly_kicks.tracking._gk_resolve import defended_goal_x as _defended_goal_x  # noqa: E402
+# The pinned goal map. Built ONCE per match from the FULL frames -- the quantity is the mean
+# GK x per (game, period, team), and a per-frame map is a different estimator.
+from silly_kicks.tracking._gk_resolve import resolve_defended_goals  # noqa: E402
 
 _ATTACKING_THIRD_M = 35.0  # final third = within 35 m of the attacked goal line
 
@@ -741,7 +741,7 @@ def prepare_xshot_training_data(
 
     carrier = infer_ball_carrier(work, **cp)
     poss = derive_team_in_possession(work, carrier)
-    goal_map = _defended_goal_x(work)
+    goal_map = resolve_defended_goals(work)
 
     feat_rows: list[pd.DataFrame] = []
     labels_idx: list[dict] = []
@@ -754,7 +754,7 @@ def prepare_xshot_training_data(
         if not others:
             continue
         def_team = others[0]
-        goal_x = goal_map.get((gid, pid, def_team))
+        goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
         if goal_x is None:
             continue
         if attacking_third_only:
@@ -860,7 +860,7 @@ def compute_xshot_occurrence(
     # restrict ONLY the per-frame extract + batched predict (the expensive part).
     carrier = infer_ball_carrier(frames, **m.carrier_params)
     poss = derive_team_in_possession(frames, carrier)
-    goal_map = _defended_goal_x(frames)
+    goal_map = resolve_defended_goals(frames)
 
     # Pass 1: build ONE feature row per target frame (extraction stays per-frame;
     # the XGBoost predict must NOT be --- P1). Restrict to link_frame_ids HERE.
@@ -882,7 +882,7 @@ def compute_xshot_occurrence(
         if not teams:
             continue
         def_team = teams[0]
-        goal_x = goal_map.get((gid, pid, def_team))
+        goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
         if goal_x is None:
             n_skipped_goal += 1
             continue

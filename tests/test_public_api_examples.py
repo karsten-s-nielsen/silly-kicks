@@ -136,6 +136,7 @@ _ROOT_MODULE = "silly_kicks"
 # `test_derived_surface_is_fully_accounted_for` -- this list can no longer silently rot.
 _PUBLIC_MODULE_FILES = (
     "silly_kicks/reflection.py",
+    "silly_kicks/tracking/_visibility.py",
     "silly_kicks/reporting.py",
     "silly_kicks/feature_glossary.py",
     "silly_kicks/spadl/utils.py",
@@ -242,6 +243,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/calibration/_vaep_brier_objective.py",
     "silly_kicks/calibration/_xt.py",
     "silly_kicks/providers/sportec/parse.py",
+    "silly_kicks/providers/statsbomb/parse.py",
     "silly_kicks/spadl/config.py",
     "silly_kicks/tracking/_cover_shadows.py",
     "silly_kicks/tracking/_das.py",
@@ -776,6 +778,10 @@ _EXAMPLES_DEBT: dict[str, str] = {
     ),
     "silly_kicks/tracking/schema.py::IdDtypeDiagnosis": (
         "The ADR-019 diagnosis type returned by validate_id_dtypes, the opt-in loud guard."
+    ),
+    "silly_kicks/tracking/schema.py::VelocityRegimeDiagnosis": (
+        "The diagnosis type returned by validate_velocity_regime, third member of the "
+        "validate_time_base / validate_id_dtypes family; demonstrated on the validator."
     ),
     "silly_kicks/tracking/schema.py::IdDtypeDiagnosis.has_mismatch": (
         "True when action and frame id dtypes would silently mis-resolve against each other."

@@ -132,9 +132,26 @@ def _build(name, mod=F):
     if isinstance(fac, list):
         return fac
     xt = _xt()
-    # home_team_id=1 preferred; (xt, home_team_id=1) for xt-takers; bare for factories
-    # that take neither (e.g. pitch_control_xfns(method=...), elastic_sync_xfns(*,...)).
-    for args, kw in (((), {"home_team_id": 1}), ((xt,), {"home_team_id": 1}), ((), {})):
+    # home_team_id=1 preferred; (xt, home_team_id=1) for xt-takers; (xt,) bare for the
+    # ADR-055 pair (gk_influence_xfns / cover_shadow_xfns take an OPTIONAL goal_map and no
+    # home_team_id at all); bare for factories that take neither (e.g.
+    # pitch_control_xfns(method=...), elastic_sync_xfns(*,...)).
+    #
+    # `goal_map` is deliberately NOT supplied: the factory then builds it from whatever
+    # frames the transformer is called with, which is the production path and the one this
+    # gate is about -- a duplicated action_id in a gamestate slot.
+    # ORDER MATTERS, and it bit this edit: `(xt,)` bare must come LAST. `pitch_control_xfns`
+    # takes `method` as its first positional, so `pitch_control_xfns(xt)` CONSTRUCTS happily
+    # -- binding the xT model to `method` -- and only fails later, inside the transformer,
+    # as "Unknown method '<ExpectedThreat object>'". A construction probe that guesses by
+    # try/except cannot tell a wrong-but-accepted binding from a right one, so the shapes
+    # are ordered most- to least-specific and the ambiguous one is the fallback.
+    for args, kw in (
+        ((), {"home_team_id": 1}),
+        ((xt,), {"home_team_id": 1}),
+        ((), {}),
+        ((xt,), {}),
+    ):
         try:
             return fac(*args, **kw)
         except TypeError:

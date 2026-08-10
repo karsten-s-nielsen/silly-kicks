@@ -1177,7 +1177,7 @@ def add_cover_shadows(
     xt,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
+    goal_map=None,
     decision_rule: Literal["any", "majority", "all"] = "majority",
     detailed: bool = False,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
@@ -1186,12 +1186,19 @@ def add_cover_shadows(
 
     Adapts atomic column names (x, y) to standard (start_x, start_y).
 
+    .. versionchanged:: ADR-055
+       ``home_team_id`` is **removed** and replaced by an optional ``goal_map``,
+       mirroring :func:`silly_kicks.tracking.features.add_cover_shadows`. The atomic
+       mirror inherits the change rather than adapting around it -- an atomic wrapper
+       that kept an identity parameter the standard aggregator no longer honours would
+       accept it and silently drop it.
+
     Examples
     --------
     Enrich atomic actions with the cover-shadow columns::
 
         from silly_kicks.atomic.tracking.features import add_cover_shadows
-        enriched = add_cover_shadows(atomic_actions, frames, xt, home_team_id=1)
+        enriched = add_cover_shadows(atomic_actions, frames, xt)
     """
     from silly_kicks.tracking.features import add_cover_shadows as _std_cs
 
@@ -1204,7 +1211,7 @@ def add_cover_shadows(
         frames,
         xt,
         links=links,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
         decision_rule=decision_rule,
         detailed=detailed,
         method=method,

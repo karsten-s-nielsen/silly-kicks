@@ -15,3 +15,8 @@ silly_kicks/tracking/_ghost_gk_weights/** binary
 # make exactly that unreadable in review.
 silly_kicks/tracking/_gk_completion_weights/*/model.json binary
 silly_kicks/tracking/_gk_completion_weights/*/SHA256SUMS binary
+# StatsBomb 360 slice: byte-exact, never line-ending-converted. Its SOURCE_SHA records SHA-256
+# digests of these files, so autocrlf silently breaks verification -- CI caught exactly that:
+# the digest was computed on a CRLF working copy and ubuntu read LF. Same reason as the three
+# model-artifact pins above; recorded because this is now the fourth time.
+tests/datasets/statsbomb/three-sixty/*.json binary

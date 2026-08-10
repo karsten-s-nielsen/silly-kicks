@@ -5,6 +5,217 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.77.1] — 2026-08-09
+
+### Fixed — the SB360 coverage driver's shard generation, and two polygon-degeneracy conflations (PR-S146, ADR-055)
+
+**The shard schema moved without its generation token.** 4.77.0 renamed `measure_match`'s
+`mean_visible_pitch_fraction` to `mean_observed_pitch_fraction` and added `n_with_polygon` (the
+ADR-042 denominator), but left `token_inputs["schema"]` at `"sb360-coverage-2"`. `for_each`
+fingerprints `token_inputs` only — never the source — so the un-bumped token resolves to the SAME
+generation directory. Measured: 22 stale shards carrying the old column were sitting in it. A
+re-run would have skipped all 22 as already-done, reported a clean conserved pass, and combined the
+OLD denominator — the ADR-042 fix silently not taking effect. This is the exact silent-dilution
+ADR-052 exists to prevent, and the `schema` token is its manual defence.
+
+Nothing in the suite could see it: the driver's own assertion on the renamed column lives in the
+`e2e` test, which CI does not run — so CI was green on a broken driver. Fixed by bumping to
+`sb360-coverage-3` and by pinning the pair: `_EMITTED_SHARD_COLUMNS` + `_SHARD_SCHEMA_VERSION` in the
+driver, three gates in `tests/scripts/test_build_sb360_coverage.py` (the declaration matches the
+dict `measure_match` actually builds, `token_inputs["schema"]` references the constant rather than
+a literal, and the pair is pinned), plus a run-time assertion that fails at the FIRST shard. All
+four defect reintroductions verified RED.
+
+**The artifact was then re-run, and it is NOT stale.** A full 22-match pass on the corrected driver
+reproduces every published "visible pitch" value at its published 2-decimal precision (max absolute
+change 0.004). Two edits move that column in opposite directions and the decomposition explains why
+the net is nil: `n_with_polygon` is **100.0% of `n_events` for every action type** — every SB360
+freeze-frame in this corpus carries a `visible_area` — so the ADR-042 denominator change is a
+**no-op here**, and the clipping introduced with `observed_pitch_fraction` moves values by at most
+0.004 (`shot_penalty` 0.13 → 0.126, `cross` 0.19 → 0.186). The denominator guard is therefore a
+correctness guard against a case this corpus does not contain, exactly like M1 below; it is not a
+repair of a wrong published number. Recording it the other way round — as a stale artifact — was an
+inference from the code change rather than a measurement, and it was wrong.
+
+**The publish workflow now refuses a tag that disagrees with the built version.** `publish.yml`
+triggers on `v*`, checks out the **tagged commit** and builds from ITS `pyproject.toml`, so the tag
+name is a LABEL and the version published comes from the commit — and nothing compared the two. A
+tag on the wrong commit therefore uploaded a version other than the one it named, silently; PyPI
+uploads are **irreversible**, so the only recovery is burning another version number. (Live example
+of the setup: 4.77.0 is merged but untagged, so `main` carries a `pyproject.toml` at 4.77.0 while a
+`v4.77.1` tag placed there would have published 4.77.0.)
+
+The guard compares the tag against the **built wheel**, not `pyproject.toml` — a pyproject check
+re-asserts the build INPUT, and the two agree by construction, so it would prove nothing about what
+reaches PyPI. It runs in the `build` job **after** the build and **before** the artifact upload, so a
+mismatch never reaches `publish` (which `needs: build`). Versions are compared PARSED, not as
+strings: a wheel name is PEP 440-normalized while a tag is typed by hand, so a string compare would
+fail on a cosmetic difference and pass on none. Executed against seven tag/wheel pairs — matching,
+mismatched, `v`-less, PEP 440-equal-but-string-unequal, no wheel, two wheels, and an unparseable tag
+— all behaving as specified. Wiring is pinned by `tests/test_ci_publish_guard_wired.py`, which
+asserts the step ORDER (a guard after the upload would be useless) and that `publish` still
+`needs: build`; each of its four assertions was observed RED against a broken workflow.
+
+**M1 was measured on the full owner corpus, and it is ZERO — no retrain.** ADR-055 left M1 (NA-team
+GK rows in the `GhostGkModel` training corpus) as a DGX follow-up under a pre-registered rule:
+*zero → record the count; non-zero → retrain trigger.* Measured across all 179 matches with
+conservation asserted (every expected match produced exactly one shard, zero failures):
+gradientsports 64/64, idsse 7/7, skillcorner 108/108 — **0 NA-team GK rows out of 35,335,209 GK
+rows**. The bundled ghost weights are therefore uncontaminated. The retired fallback returned a
+constant `goal_x = 105.0` for any NA-team keeper (`same_id(NA, home)` is False), so that path was
+reachable in code and never reached by this corpus. The count is a SUPERSET of what enters training
+(the extractor further restricts by domain, subsample and link filter), so zero over the superset
+bounds the training set at zero.
+
+**"Published and unusable" was being reported as "nothing published".** `shape_snapshots` dropped
+any polygon that converted to an empty array, so a published-but-2-vertex `visible_area` produced
+no row and read downstream as `no_polygon` — collapsing it into the absent case that
+`tracking._visibility` defines a separate `degenerate_polygon` token to keep apart. It now emits a
+row whenever something was published, and `polygon_to_spadl` returns an empty `(0, 2)` on an
+odd-length flat list instead of raising `ValueError: cannot reshape array of size 7` mid-corpus.
+The 4.77.0 note deferring this on fail-loud-vs-degrade grounds was wrong: it assumed the only
+alternative to a crash was a silent skip, when the degenerate token was already the honest third
+option.
+
+## [4.77.0] — 2026-08-08
+
+### Changed — one goal-map seam replaces ten forks, and the observed-region seam ships (PR-S145, ADR-055)
+
+**VAEP/tracking retrain trigger** for `add_gk_influence` and `add_cover_shadows`: both were still
+identity-keyed, and their values change wherever team identity and attacking direction disagreed.
+Everything else is additive or a hard rename that fails loud at import.
+
+**The goal-end rule had TEN implementations across 5 modules.** Each was a variant of
+`0.0 if same_id(team, home_team_id) else 105.0`, and each had the same three defects: identity-keyed
+rather than direction-keyed (ADR-051's D3 class), no period term (teams swap ends at half time), and
+fail-OPEN on an unresolvable end (`nan < 52.5` is False, so a keeper-less frame returned a confident
+105.0). Replaced by `resolve_defended_goals(frames) -> GoalMap`, built ONCE per match from the full
+frames and THREADED in — per-frame construction is a different estimator, and the cost is
+PROVIDER-DEPENDENT: measured on the committed slim fixtures, a per-frame map disagrees with the
+per-match one on **7.1%** of team-frames (skillcorner) / 2.2% (metrica) / **0.0%** (sportec,
+gradientsports), and `attacked_goal` is unresolvable for **35.7%** / 61.7% / 0.0%. (The spec's
+78.8% figure comes from its own corpus and does not reproduce on these fixtures; its 34.2%
+unresolvable rate does. The decision rests on the reproduced numbers.) An eleventh fork fails CI via a
+semantic AST gate that was landed RED and observed failing on all ten.
+
+- **BREAKING — 15 public signatures**, across two packages. `home_team_id` → `goal_map` on
+  `compute_gk_influence`, `lane_control`, `compute_blocking_score`, `compute_threat_pc` and
+  `gkdv.delta_threat_suppression`; **removed** (replaced by an optional `goal_map`) from
+  `add_gk_influence`, `add_cover_shadows`, `gk_influence_xfns`, `cover_shadow_xfns`,
+  `gk_pitch_control_share_weighted`, `gk_reachable_area_m2`, `gk_closing_time_min_s`,
+  `gk_closing_time_mean_s` and `atomic.tracking.features.add_cover_shadows`; and
+  `select_back_line_players` takes `defends_x0: bool` instead. Structurally verified: **zero**
+  functions are left declaring `home_team_id` without reading it as a result of this cycle.
+- **BREAKING — two renames, both DELETED not aliased.** `tracking.defended_goal_x` →
+  `resolve_defended_goals` (returns a `GoalMap`, not a dict) and
+  `providers.statsbomb.visible_fraction` → `observed_pitch_fraction`. The second also changes value:
+  it now CLIPS to the pitch and returns NaN (not 0.0) for a degenerate polygon. A function keeping
+  its name while changing value on the common case is undetectable by any consumer; a deleted name
+  raises at import.
+- **`GoalMap` keys are canonical STRINGS**, so a raw-tuple lookup misses silently — which had
+  already shipped in `scripts/validate_shot_goalmouth_sb.py`, scanning `(k[0], k[1]) == key` and
+  returning NaN for every row. Use `get` / `attacked_goal` / `ends_in_period`.
+- **`GoalEndUnresolvedError`** (a `ValueError` subclass): per-frame functions REFUSE an unresolvable
+  end; the `add_*` edge catches it by name and emits a NaN row. `ghost_gk_source` gains
+  `goal_end_unresolved`, distinct from `no_keeper` — a keeper WAS present, and saying otherwise
+  states something the frames refute.
+- **Gate C** replaces Gate B's DETECTION for the two re-keyed aggregators (Gate B goes vacuous once
+  the parameter is gone). It holds frames fixed and swaps the MAP, reproducing the recorded D3
+  magnitudes exactly: `share 0.108532`, `closing_min 4.38062 s`, `closing_mean 4.02205 s`,
+  `blocking_score 148.83`.
+- **`add_cover_shadows` is now keeper-dependent on freeze-frame input.** On SB360's `gk_absent`
+  roster its five columns move `all_nan` → `no_signal`, because the outfield fallback guesses both
+  teams at the same end (measured means 56.9 and 76.5, both past the 52.5 midline) and
+  `attacked_goal` refuses a degenerate map. Previously both legs produced numbers the frames could
+  not support.
+
+### Added — the observed-region seam (ADR-055)
+
+`tracking/_visibility.py`: `point_observed` (returns `bool | None` — `False` is a claim, and a
+missing polygon supports no claim), `region_observed_fraction` (an `(M, 2)` POLYGON, never a bbox,
+which can only OVER-report coverage for a triangle) and `add_visible_area_coverage`, emitting
+`visible_area_fraction` + `visible_area_source` over the closed
+`{observed, no_polygon, degenerate_polygon, unlinked}`. The fraction is NaN for every non-`observed`
+token — never 1.0, never 0.0. Geometry primitives live in the neutral `silly_kicks/_polygon.py`
+because `providers/` has no runtime dependency on `tracking/`. `build_sb360_coverage.py` now
+accumulates only finite fractions and reports `n_with_polygon` as the denominator (ADR-042).
+Wiring coverage INTO the count features is deliberately NOT done (ADR-009). C4 aggregator count
+32 → 33.
+
+### Not shipped — the `_snapshot` dtype pin, and why
+
+Spec §2.6 recorded that `_snapshot.py`'s `pd.concat` yields `Int64` on pandas 2.3.3 and `Float64` on
+3.0.3, and prescribed a cast to `TRACKING_FRAMES_COLUMNS`. On the pinned resolver the concat yields
+**`float64`**; the prescribed cast is **unimplementable** (`int64` cannot hold the ball row's NA, so
+it raises on every snapshot, and the declaration is not what the native adapters emit anyway); and a
+`restore_id_dtype` pin changes nothing for numpy-int, nullable-`Int64` or object sources — with the
+pin excised, **0 of 2** tests written for it went red. Dropped rather than shipped as an
+unobservable no-op; the pandas-3 concern is recorded as a follow-up.
+
+## [4.76.0] — 2026-08-06
+
+### Fixed — the ghost-GK path REFUSES on freeze-frames instead of fabricating (PR-S144, ADR-054)
+
+**No retrain, no re-materialize** — ghost positions on velocity-bearing frames are byte-unchanged.
+**Schema note (Hyrum):** `add_ghost_gk` and `compute_ghost_gk` gain one column. C4 count unchanged (32).
+
+Repairs the one actionable defect ADR-053's audit found and deliberately left. CLAUDE.md's
+`speed_source` bullet already required both directions; the ghost path violated a rule `_das.py`
+and `_press_commitment.py` already obeyed — marked frames fabricated instead of degrading, unmarked
+frames fabricated instead of raising.
+
+**The mechanism determined the fix.** `extract_ghost_gk_features` yields NaN, and `predict_mean`'s
+HGBR reconstruction routes NaN down each split's LEARNED missing-value direction — fitted where NaN
+meant an occasional dropped measurement, applied where 5 of 26 features are absent on 100% of rows.
+Measured: `NaN -> [6.795, 33.522]` vs `zero-fill -> [6.888, 33.362]`. An imputation POLICY, not a
+zero-fill, so "fill the zeros correctly" was never the fix.
+
+**The guard sits at the shared serving seam `_serve_positions_core`**, because there are THREE
+public entry points and two bypass the aggregator: `ghost_gk_xfns` reaches `compute_ghost_gk` (the
+VAEP path) and `gkdv/_engine.py` calls `serve_ghost_gk_positions` (TF-19). A guard at
+`add_ghost_gk` would have fixed one caller in four.
+
+**The seams degrade differently, and the asymmetry is forced.** The two column-emitting seams return
+NaN + `ghost_gk_source`; `serve_ghost_gk_positions` returns NO rows, because `gkdv/_engine.py`
+RAISES on a non-finite ghost on a scored frame — NaN rows there would break TF-19 rather than
+degrade it.
+
+**The audit re-derives to ZERO fabrications, by RULE not hand-edit**: the machine observation
+changed `differs` -> `all_nan` and the adjudication followed. `behaviour_matrix.md` now reads 489
+verdicts, 0 `silent_degrade`. That is ADR-053's locked-observation / reviewable-adjudication split
+working as designed.
+
+**New: `validate_velocity_regime` / `VelocityRegimeDiagnosis`**, a third member of the
+`validate_time_base` / `validate_id_dtypes` family. Measured from the registry, **5** aggregators
+produce output that moves with velocity but stays honest — pitch control at zero velocity is a
+well-defined positional model. That is a frame-set-level fact, so it is a diagnostic rather than
+five per-row columns each carrying a constant. Rule: **a provenance COLUMN where the value changes,
+a DIAGNOSTIC where only the interpretation changes.**
+
+**Breaking, narrowly:** unmarked velocity-less frames now RAISE. What breaks is a fabricated
+coordinate.
+
+### Added — StatsBomb 360 parse port (PR-S144, ADR-054)
+
+`silly_kicks.providers.statsbomb` — freeze-frames in, the `snapshot_to_tracking_frames` contract
+out, plus `visible_area` carried as raw per-action polygons. **Shape, never fetch**: no new runtime
+dependency, verified by AST over the subpackage.
+
+**EXTRACTED from `scripts/build_sb360_coverage.py`**, not written beside it — verified an identity
+move, so the published `coverage.md` numbers cannot drift from the port. The scalar affine is
+promoted to `spadl/_sb_coordinates.py` while the clip and the 3-element shot `y_offset` stay behind
+as EVENT semantics (ADR-038's split), which is what lets a `visible_area` polygon extend past the
+touchline instead of being silently shrunk.
+
+Contracts the source forces, stated rather than discovered downstream: the 360 file carries no event
+type (coverage is always a JOIN, and zero overlap is COUNTED via `JoinReport` — measured, 3 of 22
+open matches); player flags are ACTOR-relative with no identity; and **`player_id` does not recur
+across frames**, which forecloses per-player aggregation.
+
+Committed slice: Women's World Cup 2023 match 3893795, 6 freeze-frames, digests in `SOURCE_SHA`,
+read with stdlib `json` so the golden gate cannot skip. `NOTICE` gains a StatsBomb entry — it had
+none while the repo already shipped their events.
+
 ## [4.75.0] — 2026-08-05
 
 ### Added — SB360 coverage audit: a per-column verdict for every `add_*` on freeze-frames (PR-S143, ADR-053)

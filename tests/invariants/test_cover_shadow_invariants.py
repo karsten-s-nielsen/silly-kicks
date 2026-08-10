@@ -79,18 +79,16 @@ def test_a_negative_difference_is_reachable(cover_shadow_raw):
     import silly_kicks.tracking._cover_shadows as cs
     from silly_kicks.tracking._cover_shadows import compute_blocking_score
 
-    xt, home_team_id = cover_shadow_raw["xt"], cover_shadow_raw["home_team_id"]
+    xt, gm = cover_shadow_raw["xt"], cover_shadow_raw["goal_map"]
     planted = 0
     for _aid, frame_data, tid, _res in cover_shadow_raw["rows"]:
         # `attacking_team_id` is POSITIONAL -- there is no `team=` keyword.
         surface = cs.compute_pitch_control(frame_data, tid, method="spearman")
-        _total, per_receiver = cs._voronoi_threat(
-            surface, xt, frame_data, attacking_team_id=tid, home_team_id=home_team_id
-        )
+        _total, per_receiver = cs._voronoi_threat(surface, xt, frame_data, attacking_team_id=tid, goal_map=gm)
         targets = [pid for pid, thr in per_receiver.items() if thr > 0.0]
         if not targets:
             continue
-        res = compute_blocking_score(frame_data, tid, xt, home_team_id=home_team_id, defenders_to_remove=[targets[0]])
+        res = compute_blocking_score(frame_data, tid, xt, goal_map=gm, defenders_to_remove=[targets[0]])
         assert res.threat_unblocked - res.threat_original < -_PLANT_MARGIN, (
             "plant did not go negative -- it has degenerated into a no-op and proves nothing"
         )

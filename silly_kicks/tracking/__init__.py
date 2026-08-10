@@ -25,6 +25,12 @@ __all__ = [
     "DAS_SOURCE_UNSCOREABLE_FRAME",
     "DAS_SOURCE_VALUES",
     "DEFENSIVE_CREDIT_RULES",
+    "GHOST_GK_COMPUTED",
+    "GHOST_GK_GOAL_END_UNRESOLVED",
+    "GHOST_GK_NO_KEEPER",
+    "GHOST_GK_SOURCE_VALUES",
+    "GHOST_GK_UNLINKED",
+    "GHOST_GK_VELOCITY_UNAVAILABLE",
     "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS",
     "KLOPPY_TRACKING_FRAMES_COLUMNS",
     "METRICA_TRACKING_FRAMES_COLUMNS",
@@ -34,6 +40,12 @@ __all__ = [
     "TRACKING_CATEGORICAL_DOMAINS",
     "TRACKING_CONSTRAINTS",
     "TRACKING_FRAMES_COLUMNS",
+    "VELOCITY_REGIME_VALUES",
+    "VISIBLE_AREA_DEGENERATE_POLYGON",
+    "VISIBLE_AREA_NO_POLYGON",
+    "VISIBLE_AREA_OBSERVED",
+    "VISIBLE_AREA_SOURCE_VALUES",
+    "VISIBLE_AREA_UNLINKED",
     "ActionFrameContext",
     "AndrienkoParams",
     "BekkersParams",
@@ -47,6 +59,8 @@ __all__ = [
     "GhostGkModel",
     "GhostGkVariant",
     "GkCompletionModel",
+    "GoalEndUnresolvedError",
+    "GoalMap",
     "GradientsportsRosterReport",
     "IdDtypeDiagnosis",
     "IgnoredSurfaceInputsWarning",
@@ -78,6 +92,7 @@ __all__ = [
     "TimeBaseDiagnosis",
     "TrackingConversionReport",
     "UnverifiableFeatureContractWarning",
+    "VelocityRegimeDiagnosis",
     "VoronoiParams",
     "XCrossAttemptModel",
     "XCrossFeatureSet",
@@ -121,6 +136,7 @@ __all__ = [
     "add_structural_pass",
     "add_sync_score",
     "add_team_shape",
+    "add_visible_area_coverage",
     "add_xcross_attempt",
     "add_xshot_occurrence",
     "add_xt_gk",
@@ -156,7 +172,6 @@ __all__ = [
     "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
-    "defended_goal_x",
     "defenders_in_triangle_to_goal",
     "defending_gk_from_frames",
     "defensive_line_x",
@@ -214,6 +229,7 @@ __all__ = [
     "pitch_control_xfns",
     "play_left_to_right",
     "player_influence_xfns",
+    "point_observed",
     "pre_shot_gk_angle_default_xfns",
     "pre_shot_gk_angle_off_goal_line",
     "pre_shot_gk_angle_to_shot_trajectory",
@@ -232,7 +248,9 @@ __all__ = [
     "reachable_area_opponent",
     "reachable_area_team",
     "receiver_zone_density",
+    "region_observed_fraction",
     "require_et_direction",
+    "resolve_defended_goals",
     "resolve_gk_geometry",
     "resolve_restart_geometry",
     "schema",
@@ -259,6 +277,7 @@ __all__ = [
     "utils",
     "validate_id_dtypes",
     "validate_time_base",
+    "validate_velocity_regime",
     "value_off_ball_runs",
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
@@ -300,6 +319,12 @@ from ._das import (
 from ._defensive_line import compute_defensive_line, select_back_line_players
 from ._elastic_sync import ElasticSyncParams, align_events_to_frames, extract_ball_features
 from ._ghost_gk import (
+    GHOST_GK_COMPUTED,
+    GHOST_GK_GOAL_END_UNRESOLVED,
+    GHOST_GK_NO_KEEPER,
+    GHOST_GK_SOURCE_VALUES,
+    GHOST_GK_UNLINKED,
+    GHOST_GK_VELOCITY_UNAVAILABLE,
     GhostClampWarning,
     GhostGkDensity,
     GhostGkModel,
@@ -323,6 +348,16 @@ from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
 from ._structural_pass import StructuralPassParams, compute_structural_pass_metrics
 from ._team_shape import compute_team_shape
+from ._visibility import (
+    VISIBLE_AREA_DEGENERATE_POLYGON,
+    VISIBLE_AREA_NO_POLYGON,
+    VISIBLE_AREA_OBSERVED,
+    VISIBLE_AREA_SOURCE_VALUES,
+    VISIBLE_AREA_UNLINKED,
+    add_visible_area_coverage,
+    point_observed,
+    region_observed_fraction,
+)
 from ._warnings import (
     IgnoredSurfaceInputsWarning,
     MissingFeatureContractWarning,
@@ -360,6 +395,8 @@ from .defensive_credit import (
 from .direction import orient_frames_to_ltr_by_geometry, require_et_direction
 from .feature_framework import ActionFrameContext, lift_to_states
 from .features import (
+    GoalEndUnresolvedError,
+    GoalMap,
     acting_gk_from_frames,
     actor_arc_length_pre_window,
     actor_displacement_pre_window,
@@ -402,7 +439,6 @@ from .features import (
     cover_shadow_xfns,
     das_at_action,
     das_xfns,
-    defended_goal_x,
     defenders_in_triangle_to_goal,
     defending_gk_from_frames,
     defensive_line_x,
@@ -447,6 +483,7 @@ from .features import (
     reachable_area_opponent,
     reachable_area_team,
     receiver_zone_density,
+    resolve_defended_goals,
     shape_graph_xfns,
     shot_crossing_y,
     shot_crossing_z,
@@ -493,10 +530,12 @@ from .schema import (
     TRACKING_CATEGORICAL_DOMAINS,
     TRACKING_CONSTRAINTS,
     TRACKING_FRAMES_COLUMNS,
+    VELOCITY_REGIME_VALUES,
     IdDtypeDiagnosis,
     LinkReport,
     TimeBaseDiagnosis,
     TrackingConversionReport,
+    VelocityRegimeDiagnosis,
 )
 from .utils import (
     add_sync_score,
@@ -508,6 +547,7 @@ from .utils import (
     sync_score,
     validate_id_dtypes,
     validate_time_base,
+    validate_velocity_regime,
 )
 
 try:

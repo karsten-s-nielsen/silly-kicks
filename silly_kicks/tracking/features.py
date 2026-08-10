@@ -70,14 +70,19 @@ from ._das import (
     DasUnscoreableError,
 )
 from ._gk_resolve import (
+    GoalEndUnresolvedError,
+    GoalMap,
     acting_gk_from_frames,
-    defended_goal_x,
     defending_gk_from_frames,
     gk_distribution_mask,
+    resolve_defended_goals,
 )
 from ._packing import PackingParams, secured_reception
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
+from ._visibility import (
+    add_visible_area_coverage,
+)
 from ._warnings import IgnoredSurfaceInputsWarning, SyntheticEPVWarning
 from ._xcross_attempt import xcross_attempt_xfns
 from ._xshot_occurrence import xshot_occurrence_xfns
@@ -96,6 +101,8 @@ from .utils import _resolve_action_frame_context, link_actions_to_frames
 _STANDARD_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty"))
 
 __all__ = [
+    "GoalEndUnresolvedError",
+    "GoalMap",
     "Method",
     "acting_gk_from_frames",
     "actor_arc_length_pre_window",
@@ -128,6 +135,7 @@ __all__ = [
     "add_shot_goalmouth",
     "add_space_creation",
     "add_team_shape",
+    "add_visible_area_coverage",
     "back_line_high_x",
     "back_n_count",
     "ball_carrier_at_action",
@@ -135,7 +143,6 @@ __all__ = [
     "cover_shadow_xfns",
     "das_at_action",
     "das_xfns",
-    "defended_goal_x",
     "defenders_in_triangle_to_goal",
     "defending_gk_from_frames",
     "defensive_line_x",
@@ -180,6 +187,7 @@ __all__ = [
     "reachable_area_opponent",
     "reachable_area_team",
     "receiver_zone_density",
+    "resolve_defended_goals",
     "shape_graph_xfns",
     "shot_crossing_y",
     "shot_crossing_z",
@@ -3024,7 +3032,7 @@ def _gk_influence_at_actions(
     xt: ExpectedThreat,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     method: str = "spearman",
     zone_names: list[str] | None = None,
     tau_seconds: float = 1.0,
@@ -3067,6 +3075,13 @@ def _gk_influence_at_actions(
     else:
         pointers, _ = link_actions_to_frames(actions, frames)
     pointer_lookup = pointers.set_index("action_id")
+    # ONCE per match, from the FULL frames: the seam's quantity is the MEAN GK x per
+    # (game, period, team), and a per-frame map is a different estimator -- unresolvable for
+    # 35.7% of SkillCorner team-frames, 0.0% on dense tracking (ADR-055). Caller-supplied maps
+    # are honoured -- the `links` / `pitch_control_cache`
+    # pattern -- which is also what makes the mirror registry's Gate C possible: a gate
+    # that VARIES the map needs a seam to inject one through.
+    _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
     # Cache: (period_id, frame_id, team_id) -> GkInfluence | None
@@ -3105,7 +3120,15 @@ def _gk_influence_at_actions(
 
             gk_pid = gk_rows.iloc[0]["player_id"]
             gk_team = gk_rows.iloc[0]["team_id"]
-            goal_x = 0.0 if same_id(gk_team, home_team_id) else 105.0
+            goal_x = _goal_map.get(
+                frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], gk_team, allow_guess=True
+            )
+            if goal_x is None:
+                # No usable end: NaN row, never a fabricated one. Cached as None so the next
+                # action on this frame does not re-derive the same miss -- a bare `continue`
+                # leaves the key UNSET and re-enters this branch every time.
+                cache[cache_key] = None
+                continue
 
             # Resolve ball position for near/far post zones
             ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
@@ -3133,13 +3156,21 @@ def _gk_influence_at_actions(
                     attacking_team_id=tid,
                     gk_player_id=gk_pid,
                     xt=xt,
-                    home_team_id=home_team_id,
+                    goal_map=_goal_map,
                     method=method,  # type: ignore[arg-type]
                     zones=zones,
                     tau_seconds=tau_seconds,
                     pitch_control_cache=pitch_control_cache,
                 )
                 cache[cache_key] = gi
+            except GoalEndUnresolvedError:
+                # Policy at the EDGE (ADR-055): the per-frame function REFUSES an unresolvable
+                # end, and this aggregator turns that refusal into a NaN row. Caught BY NAME and
+                # before the broad handler so it does not warn -- an unresolvable end is a
+                # documented degradation, not a computation that failed. Pre-checking here
+                # instead would duplicate the exact lookup `compute_gk_influence` is about to
+                # do, and the two copies could drift on accessor and on `allow_guess`.
+                cache[cache_key] = None
             except (ValueError, KeyError) as exc:
                 _warnings.warn(
                     f"compute_gk_influence failed for frame=({pid},{fid}), team={tid}: {exc}",
@@ -3167,10 +3198,15 @@ def gk_pitch_control_share_weighted(
     frames: pd.DataFrame | None,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     method: str = "spearman",
 ) -> pd.Series:
     """Threat-weighted GK pitch control share at the linked frame.
+
+    .. versionchanged:: ADR-055
+       ``home_team_id`` is **removed** and replaced by an optional ``goal_map``. It
+       was required-and-unread here once the goal end moved onto the map -- this
+       function only forwarded it.
 
     See NOTICE for full bibliographic citations.
 
@@ -3179,7 +3215,7 @@ def gk_pitch_control_share_weighted(
     Compute the threat-weighted GK pitch-control share per action::
 
         from silly_kicks.tracking.features import gk_pitch_control_share_weighted
-        share = gk_pitch_control_share_weighted(actions, frames, xt, home_team_id=1)
+        share = gk_pitch_control_share_weighted(actions, frames, xt)
     """
     col_name = "gk_pitch_control_share_weighted"
     if frames is None:
@@ -3188,7 +3224,7 @@ def gk_pitch_control_share_weighted(
         actions,
         frames,
         xt,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
         method=method,
     )
     return batch[col_name].rename(col_name)
@@ -3199,11 +3235,14 @@ def gk_reachable_area_m2(
     frames: pd.DataFrame | None,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     method: str = "spearman",
     tau_seconds: float = 1.0,
 ) -> pd.Series:
     """GK uniquely reachable area (m^2) at the linked frame.
+
+    .. versionchanged:: ADR-055
+       ``home_team_id`` is **removed** and replaced by an optional ``goal_map``.
 
     See NOTICE for full bibliographic citations.
 
@@ -3212,7 +3251,7 @@ def gk_reachable_area_m2(
     Compute the GK's uniquely reachable area per action::
 
         from silly_kicks.tracking.features import gk_reachable_area_m2
-        area = gk_reachable_area_m2(actions, frames, xt, home_team_id=1)
+        area = gk_reachable_area_m2(actions, frames, xt)
     """
     col_name = "gk_reachable_area_m2"
     if frames is None:
@@ -3221,7 +3260,7 @@ def gk_reachable_area_m2(
         actions,
         frames,
         xt,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
         method=method,
         tau_seconds=tau_seconds,
     )
@@ -3232,20 +3271,25 @@ def gk_closing_time_min_s(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     zone_name: str = "six_yard_box",
 ) -> pd.Series:
     """GK minimum closing time (seconds) to the specified zone.
 
     Lightweight: uses compute_zone_closing_times directly (no pitch
-    control computation). See NOTICE for full bibliographic citations.
+    control computation).
+
+    .. versionchanged:: ADR-055
+       ``home_team_id`` is **removed** and replaced by an optional ``goal_map``.
+
+    See NOTICE for full bibliographic citations.
 
     Examples
     --------
     Compute the GK minimum zone-closing time per action::
 
         from silly_kicks.tracking.features import gk_closing_time_min_s
-        ct = gk_closing_time_min_s(actions, frames, home_team_id=1)
+        ct = gk_closing_time_min_s(actions, frames)
     """
     col_name = f"gk_closing_time_min_s__{zone_name}"
     if frames is None:
@@ -3253,7 +3297,7 @@ def gk_closing_time_min_s(
     return _closing_time_per_series(
         actions,
         frames,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
         zone_name=zone_name,
         extract="min_s",
         col_name=col_name,
@@ -3264,20 +3308,25 @@ def gk_closing_time_mean_s(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     zone_name: str = "six_yard_box",
 ) -> pd.Series:
     """GK mean closing time (seconds) to the specified zone.
 
     Lightweight: uses compute_zone_closing_times directly (no pitch
-    control computation). See NOTICE for full bibliographic citations.
+    control computation).
+
+    .. versionchanged:: ADR-055
+       ``home_team_id`` is **removed** and replaced by an optional ``goal_map``.
+
+    See NOTICE for full bibliographic citations.
 
     Examples
     --------
     Compute the GK mean zone-closing time per action::
 
         from silly_kicks.tracking.features import gk_closing_time_mean_s
-        ct = gk_closing_time_mean_s(actions, frames, home_team_id=1)
+        ct = gk_closing_time_mean_s(actions, frames)
     """
     col_name = f"gk_closing_time_mean_s__{zone_name}"
     if frames is None:
@@ -3285,7 +3334,7 @@ def gk_closing_time_mean_s(
     return _closing_time_per_series(
         actions,
         frames,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
         zone_name=zone_name,
         extract="mean_s",
         col_name=col_name,
@@ -3296,7 +3345,7 @@ def _closing_time_per_series(
     actions,
     frames,
     *,
-    home_team_id,
+    goal_map,
     zone_name,
     extract,
     col_name,
@@ -3307,6 +3356,11 @@ def _closing_time_per_series(
     pointers, _ = link_actions_to_frames(actions, frames)
     results = np.full(len(actions), np.nan)
     pointer_lookup = pointers.set_index("action_id")
+    # ONCE per match, from the FULL frames -- see `_gk_influence_at_actions`. Re-keyed onto the
+    # map here too, deliberately: Gate C expects the closing-time columns to MOVE when the map
+    # is swapped, so leaving this path building its own map would show up as a 1-column result
+    # that reads like success.
+    _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
     for i, (_idx, row) in enumerate(actions.iterrows()):
@@ -3334,7 +3388,11 @@ def _closing_time_per_series(
             continue
         gk_pid = gk_rows.iloc[0]["player_id"]
         gk_team = gk_rows.iloc[0]["team_id"]
-        goal_x = 0.0 if same_id(gk_team, home_team_id) else 105.0
+        goal_x = _goal_map.get(
+            frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], gk_team, allow_guess=True
+        )
+        if goal_x is None:
+            continue  # no usable end for this frame; the row is skipped, never fabricated
 
         ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
         ball_y = float(ball_rows.iloc[0]["y"]) if not ball_rows.empty and pd.notna(ball_rows.iloc[0]["y"]) else None
@@ -3374,7 +3432,7 @@ def add_gk_influence(
     xt: ExpectedThreat,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     method: str = "spearman",
     zone_names: list[str] | None = None,
     tau_seconds: float = 1.0,
@@ -3386,12 +3444,28 @@ def add_gk_influence(
     names ("near_post", "far_post") add closing-time columns. Zones are
     constructed per-action with the correct goal_x and ball_y.
 
+    .. versionchanged:: ADR-055
+       ``home_team_id`` is **removed** and replaced by an optional ``goal_map``.
+       The goal end now comes from the FRAMES (``resolve_defended_goals``), not from
+       team identity: identity only implies a direction while the frames are
+       home-attacks-right, which is the D3 defect this cycle deletes. Pass a
+       :class:`~silly_kicks.tracking.GoalMap` built once per match to share it across
+       aggregators (the ``links`` / ``pitch_control_cache`` pattern); ``None`` builds
+       one from ``frames``.
+
+    Parameters
+    ----------
+    goal_map : GoalMap or None
+        Defended-goal map for this match. ``None`` (default) builds one from
+        ``frames``, which is correct by construction here because this function
+        HAS the full frames.
+
     Examples
     --------
     Enrich a linked match's actions with the GK-influence columns::
 
         from silly_kicks.tracking.features import add_gk_influence
-        enriched = add_gk_influence(actions, frames, xt, home_team_id=1)
+        enriched = add_gk_influence(actions, frames, xt)
 
     See NOTICE for full bibliographic citations.
     """
@@ -3401,7 +3475,7 @@ def add_gk_influence(
         frames,
         xt,
         links=links,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
         method=method,
         zone_names=zone_names,
         tau_seconds=tau_seconds,
@@ -3433,7 +3507,7 @@ def add_gk_influence(
 def gk_influence_xfns(
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     zone_names: list[str] | None = None,
     tau_seconds: float = 1.0,
@@ -3452,8 +3526,15 @@ def gk_influence_xfns(
     ----------
     xt : ExpectedThreat
         Fitted xT model for threat weighting.
-    home_team_id : int | str
-        Home team identifier for goal-end orientation.
+    goal_map : GoalMap or None
+        Defended-goal map for this match. ``None`` (default) builds one from the
+        ``frames`` the transformer is called with.
+
+        .. versionchanged:: ADR-055
+           Replaces ``home_team_id``, which was **required and unread** here after the
+           goal end moved onto the map -- the dead-parameter shape this cycle deletes.
+           Hyrum-visible: an existing ``gk_influence_xfns(xt, home_team_id=1)`` call
+           raises ``TypeError`` rather than silently ignoring the argument.
     method : {"spearman", "fernandez_bornn", "voronoi"}
         Pitch control model, default "spearman".
     zone_names : list[str] | None
@@ -3472,7 +3553,7 @@ def gk_influence_xfns(
     Compose into HybridVAEP::
 
         from silly_kicks.tracking.features import tracking_default_xfns, gk_influence_xfns
-        xfns = tracking_default_xfns + gk_influence_xfns(xt, home_team_id=1)
+        xfns = tracking_default_xfns + gk_influence_xfns(xt)
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
     from . import _gk_influence as _gk_mod
@@ -3499,6 +3580,9 @@ def gk_influence_xfns(
 
         # Shared cache across all 3 slots: (period_id, frame_id, team_id) -> GkInfluence
         cache: dict[tuple, _gk_mod.GkInfluence | None] = {}
+        # ONCE per match, from the FULL frames: the seam's quantity is the MEAN GK x per
+        # (game, period, team), and a per-frame map is a different estimator.
+        _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
         frame_groups = frames.groupby(["period_id", "frame_id"])
 
         def _get_gi(period_id, frame_id_int, team_id):
@@ -3522,7 +3606,14 @@ def gk_influence_xfns(
                 return None
             gk_pid = gk_rows.iloc[0]["player_id"]
             gk_team = gk_rows.iloc[0]["team_id"]
-            goal_x = 0.0 if same_id(gk_team, home_team_id) else 105.0
+            goal_x = _goal_map.get(
+                frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], gk_team, allow_guess=True
+            )
+            if goal_x is None:
+                # `_get_gi` RETURNS a cached value, it does not loop -- and a cached None is
+                # exactly how this function already reports "no influence for this key".
+                cache[key] = None
+                return None
 
             # Resolve ball_y from frame
             ball_rows = frame_data[frame_data["is_ball"].astype(bool)]
@@ -3542,12 +3633,16 @@ def gk_influence_xfns(
                     attacking_team_id=team_id,
                     gk_player_id=gk_pid,
                     xt=xt,
-                    home_team_id=home_team_id,
+                    goal_map=_goal_map,
                     method=method,
                     zones=action_zones,
                     tau_seconds=tau_seconds,
                     pitch_control_cache=pitch_control_cache,
                 )
+            except GoalEndUnresolvedError:
+                # Policy at the EDGE (ADR-055), same rule as `_gk_influence_at_actions`: an
+                # unresolvable end is a documented NaN, not a failure, so it does not warn.
+                gi = None
             except (ValueError, KeyError) as exc:
                 _warnings.warn(
                     f"compute_gk_influence failed for frame {frame_id_int}: {exc}",
@@ -3608,7 +3703,7 @@ def add_cover_shadows(
     xt: ExpectedThreat,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     decision_rule: Literal["any", "majority", "all"] = "majority",
     detailed: bool = False,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
@@ -3620,6 +3715,11 @@ def add_cover_shadows(
     Emits 5 columns: n_blocked_receivers, n_potential_receivers, blocking_score,
     blocked_threat_fraction, max_single_defender_blocking_score.
 
+    .. versionchanged:: ADR-055
+       ``home_team_id`` is **removed** and replaced by an optional ``goal_map``. Both
+       the attacked-goal end and the attack DIRECTION now come from the frames rather
+       than from team identity.
+
     Parameters
     ----------
     actions : pd.DataFrame
@@ -3628,8 +3728,10 @@ def add_cover_shadows(
         Tracking frames (LTR-normalized).
     xt : ExpectedThreat
         Fitted xT model for threat weighting.
-    home_team_id : int | str
-        Home team identifier (defends x=0).
+    goal_map : GoalMap or None
+        Defended-goal map for this match. ``None`` (default) builds one from
+        ``frames``, which is correct by construction here because this function
+        HAS the full frames.
     decision_rule : {"any", "majority", "all"}
         Lane-blocking decision rule. Default "majority".
     detailed : bool
@@ -3648,12 +3750,15 @@ def add_cover_shadows(
     Enrich a linked match's actions with the cover-shadow columns::
 
         from silly_kicks.tracking.features import add_cover_shadows
-        enriched = add_cover_shadows(actions, frames, xt, home_team_id=1)
+        enriched = add_cover_shadows(actions, frames, xt)
 
     See NOTICE for full bibliographic citations.
     """
     from . import _cover_shadows as _cs_mod
     from .pitch_control import PitchControlCache as _PitchControlCache
+
+    # ONCE per match, from the FULL frames -- never per action, and never per frame.
+    _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
 
     # One cache across all actions + the per-defender counterfactual loop so the
     # canonical surface for a frame is computed once (TF-7 shared surface). A
@@ -3706,17 +3811,24 @@ def add_cover_shadows(
         if _flip[j]:
             passer_xy = (FIELD_LENGTH - passer_xy[0], FIELD_WIDTH - passer_xy[1])
 
-        cs = _cs_mod._compute_cover_shadow_dict(
-            frame_data,
-            passer_xy,
-            tid,
-            xt,
-            home_team_id=home_team_id,
-            decision_rule=decision_rule,
-            detailed=detailed,
-            method=method,
-            pitch_control_cache=cache,
-        )
+        try:
+            cs = _cs_mod._compute_cover_shadow_dict(
+                frame_data,
+                passer_xy,
+                tid,
+                xt,
+                goal_map=_goal_map,
+                decision_rule=decision_rule,
+                detailed=detailed,
+                method=method,
+                pitch_control_cache=cache,
+            )
+        except GoalEndUnresolvedError:
+            # Policy at the EDGE (ADR-055): the per-frame function REFUSES an unresolvable
+            # end and this aggregator turns the refusal into a NaN row. `LaneControlResult`
+            # carries three bools and there is no NaN bool, which is why the decision lives
+            # here rather than in a sentinel return value.
+            continue
         if cs is None:
             continue
 
@@ -3761,7 +3873,7 @@ def add_cover_shadows(
 def cover_shadow_xfns(
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     decision_rule: Literal["any", "majority", "all"] = "majority",
     detailed: bool = False,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
@@ -3780,8 +3892,13 @@ def cover_shadow_xfns(
     ----------
     xt : ExpectedThreat
         Fitted xT model for threat weighting.
-    home_team_id : int | str
-        Home team identifier for goal-end orientation.
+    goal_map : GoalMap or None
+        Defended-goal map for this match. ``None`` (default) builds one from the
+        ``frames`` the transformer is called with.
+
+        .. versionchanged:: ADR-055
+           Replaces ``home_team_id``. Hyrum-visible: an existing
+           ``cover_shadow_xfns(xt, home_team_id=1)`` call raises ``TypeError``.
     decision_rule : {"any", "majority", "all"}
         Lane-blocking decision rule. Default "majority".
     detailed : bool
@@ -3794,7 +3911,7 @@ def cover_shadow_xfns(
     Compose into HybridVAEP::
 
         from silly_kicks.tracking.features import tracking_default_xfns, cover_shadow_xfns
-        xfns = tracking_default_xfns + cover_shadow_xfns(xt, home_team_id=1)
+        xfns = tracking_default_xfns + cover_shadow_xfns(xt)
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
     from . import _cover_shadows as _cs_mod
@@ -3814,6 +3931,8 @@ def cover_shadow_xfns(
             return out
 
         cache: dict[tuple, _cs_mod._CoverShadowDict | None] = {}
+        # ONCE per match, from the FULL frames -- see `add_cover_shadows`.
+        _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
         frame_groups = frames.groupby(["period_id", "frame_id"])
 
         def _get_cs(period_id, frame_id_int, team_id, passer_xy):
@@ -3836,7 +3955,7 @@ def cover_shadow_xfns(
                     passer_xy,
                     team_id,
                     xt,
-                    home_team_id=home_team_id,
+                    goal_map=_goal_map,
                     decision_rule=decision_rule,
                     detailed=detailed,
                     method=method,
@@ -3845,6 +3964,11 @@ def cover_shadow_xfns(
                 cache[key] = result_dict
                 return result_dict
 
+            except GoalEndUnresolvedError:
+                # Policy at the EDGE (ADR-055), same rule as `add_cover_shadows`: an
+                # unresolvable end is a documented NaN, not a failure, so it does not warn.
+                cache[key] = None
+                return None
             except (ValueError, KeyError) as exc:
                 _warnings.warn(
                     f"cover_shadow computation failed for frame {frame_id_int}: {exc}",
@@ -4509,7 +4633,17 @@ def add_ghost_gk(
 
     See NOTICE for full bibliographic citations.
     """
-    from ._ghost_gk import _resolve_model, compute_ghost_gk
+    from ._ghost_gk import (
+        GHOST_GK_COMPUTED,
+        GHOST_GK_GOAL_END_UNRESOLVED,
+        GHOST_GK_NO_KEEPER,
+        GHOST_GK_SOURCE_VALUES,
+        GHOST_GK_UNLINKED,
+        GHOST_GK_VELOCITY_UNAVAILABLE,
+        _resolve_model,
+        compute_ghost_gk,
+    )
+    from ._velocity_availability import velocity_unavailable_by_design
 
     resolved_model = _resolve_model(model)
     out = actions.copy()
@@ -4528,6 +4662,28 @@ def add_ghost_gk(
     link_frame_ids: set[int] | None = None
     if "frame_id" in pointers.columns:
         link_frame_ids = set(pointers["frame_id"].dropna().astype(int).tolist())
+
+    # Velocity contract, BOTH directions, ahead of the precompute short-circuit below.
+    #
+    # The short-circuit skips compute_ghost_gk entirely, so the guard inside the shared serving
+    # seam is unreachable on that path -- these two are what make the contract hold for frames
+    # that arrive already enriched.
+    #
+    # Both are needed. `velocity_unavailable_by_design` is an ALL-rows predicate, so on an
+    # UNMARKED or PARTIALLY-marked set it returns False and only the second check fires.
+    # MEASURED without it: precomputed-ghost frames with vx/vy dropped and no marker returned
+    # ghost_gk_x = 52.5, a fabricated coordinate on frames the contract says must RAISE.
+    if velocity_unavailable_by_design(frames):
+        out = actions.copy()
+        out["ghost_gk_x"] = np.nan
+        out["ghost_gk_y"] = np.nan
+        out["ghost_gk_source"] = GHOST_GK_VELOCITY_UNAVAILABLE
+        return out
+    if "vx" not in frames.columns or "vy" not in frames.columns:
+        raise ValueError(
+            "add_ghost_gk requires vx/vy on frames (call derive_velocities() first), or declare "
+            "speed_source unavailable. See the velocity-availability contract."
+        )
 
     # Short-circuit: skip compute if frames already have ghost columns
     if "ghost_gk_x" in frames.columns and frames["ghost_gk_x"].notna().any():
@@ -4585,6 +4741,59 @@ def add_ghost_gk(
     gy = out["ghost_gk_y"].to_numpy(dtype="float64")
     out["ghost_gk_x"] = FIELD_LENGTH - gx
     out["ghost_gk_y"] = np.where(flip, FIELD_WIDTH - gy, gy)
+
+    # Provenance. Placed AFTER the ADR-028 reprojection; the order is free, because NaN is
+    # invariant under both `FIELD_LENGTH - gx` and `np.where(flip, FIELD_WIDTH - gy, gy)`.
+    #
+    # `no_keeper` and `unlinked` are distinct facts with distinct remedies: an action that reached
+    # a frame carrying no DEFENDING keeper did reach a frame, and calling it "unlinked" states
+    # something the data refutes. They separate on frame linkage.
+    has_frame = out["action_id"].isin(linked["action_id"])
+
+    # ADR-055 third branch: a DEFENDING keeper was present but its end does not resolve, so the
+    # goal-relative frame the model is fitted in does not exist for that row. Decided by RE-ASKING
+    # the seam the extractor asked -- a checkable fact -- rather than inferred from the ghost being
+    # absent, which several unrelated drops also produce. `_extract_all_ghost_gk_features` skips on
+    # exactly `goal_map.get(..., allow_guess=True) is None`, and `add_ghost_gk` does not subsample,
+    # so the map it would have built from these frames is the same one.
+    #
+    # Keeper presence comes from `frames`, NOT from `gk_ghost`: that subset is filtered to
+    # `ghost_gk_x.notna()` above, so by construction it contains only keepers that DID get a
+    # ghost -- exactly the rows this branch is not about. Reusing it made the branch unreachable
+    # (measured: the token never fired, and the row still reported `no_keeper`).
+    _gm = resolve_defended_goals(frames)
+    _all_gk = frames[frames["is_goalkeeper"].astype(bool) & ~frames["is_ball"].astype(bool)][
+        ["game_id", "period_id", "frame_id", "team_id"]
+    ].drop_duplicates()
+    _linked_gk, _all_gk = align_join_keys(linked, _all_gk, ["game_id", "period_id", "frame_id"])
+    _m = _linked_gk.merge(_all_gk, on=["game_id", "period_id", "frame_id"], how="left", suffixes=("_action", "_gk"))
+    _def_gk = _m[ids_differ(_m["team_id_action"], _m["team_id_gk"])]
+    _unresolved_gk = {
+        r.action_id
+        for r in _def_gk[["action_id", "game_id", "period_id", "team_id_gk"]].itertuples(index=False)
+        if _gm.get(r.game_id, r.period_id, r.team_id_gk, allow_guess=True) is None
+    }
+    goal_end_unresolved = out["action_id"].isin(_unresolved_gk)
+
+    out["ghost_gk_source"] = np.where(
+        out["ghost_gk_x"].notna(),
+        GHOST_GK_COMPUTED,
+        np.where(
+            goal_end_unresolved,
+            GHOST_GK_GOAL_END_UNRESOLVED,
+            np.where(has_frame, GHOST_GK_NO_KEEPER, GHOST_GK_UNLINKED),
+        ),
+    )
+
+    # Closed-vocabulary post-condition (the _das.py DAS_SOURCE_VALUES pattern). A vocabulary
+    # described as closed but unenforced is a comment, not a contract -- and consumers are told to
+    # pin an enum to GHOST_GK_SOURCE_VALUES.
+    _emitted = set(pd.unique(out["ghost_gk_source"].dropna()))
+    if not _emitted <= set(GHOST_GK_SOURCE_VALUES):
+        raise ValueError(
+            f"ghost_gk_source emitted values outside its closed vocabulary: "
+            f"{sorted(_emitted - set(GHOST_GK_SOURCE_VALUES))}"
+        )
 
     return out
 

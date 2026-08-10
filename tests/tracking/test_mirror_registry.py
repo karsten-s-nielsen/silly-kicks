@@ -49,7 +49,7 @@ def test_registry_has_no_stale_entries():
 
 def test_registry_surface_is_the_expected_size():
     """Pins the count so a silent export change is visible in the diff."""
-    assert len(_public_add_names()) == 33, sorted(_public_add_names())
+    assert len(_public_add_names()) == 34, sorted(_public_add_names())
 
 
 @pytest.mark.parametrize("name", sorted(MIRROR_ENTRIES))
@@ -277,6 +277,108 @@ def test_gate_b_home_team_id_invariance(name):
     assert checked > 0, f"{name}: Gate B compared nothing -- the check is vacuous"
 
 
+# ---------------------------------------------------------------------------
+# Gate C -- goal_map dependence (ADR-055)
+# ---------------------------------------------------------------------------
+
+
+def _flip_map(gm):
+    """Same map with both ends swapped -- still COHERENT, so it is a rival hypothesis.
+
+    Swapping both teams is not the same as corrupting the map: the result still says the two
+    teams defend opposite ends, so ``attacked_goal`` resolves and the degeneracy guard does not
+    fire. An aggregator that reads the map must therefore produce a genuinely different answer,
+    and one that ignores it produces exactly the same one.
+    """
+    from types import MappingProxyType
+
+    from silly_kicks.tracking import GoalMap
+
+    def _swap(pool):
+        return MappingProxyType({k: (FIELD_LENGTH if v == 0.0 else 0.0) for k, v in pool.items()})
+
+    return GoalMap(_swap(gm.resolved), _swap(gm.guessed), gm.unresolved)
+
+
+@pytest.mark.parametrize("name", sorted(MIRROR_ENTRIES))
+def test_gate_c_goal_map_is_the_direction_source(name):
+    """D1, one variable further out than Gate B.
+
+    Gate B varied ``home_team_id``. Once direction comes from the map that parameter carries
+    nothing, so Gate B goes vacuous -- it SKIPS on ``role="unused"``. This gate holds the FRAMES
+    fixed and varies the MAP: the declared columns must MOVE. If they do not, the aggregator is
+    not reading the map and the re-key is cosmetic.
+
+    Named columns rather than a bare ``moved > 0``: "something moved" is satisfied by a PARTIAL
+    re-key, and ``add_gk_influence`` reads the map down two independent paths.
+
+    What this does NOT prove: that the right ACCESSOR was chosen. ``get`` and ``attacked_goal``
+    both move when the map is swapped, so a moved column shows the map is consulted, not that the
+    own end and the attacked end were not transposed. That half is ``test_goal_map_consumers.py``.
+    """
+    from silly_kicks.tracking import resolve_defended_goals
+
+    entry = MIRROR_ENTRIES[name]
+    if entry.call_with_map is None:
+        pytest.skip(f"{name} does not consume a goal map")
+
+    assert entry.gate_c_must_move, (
+        f"{name}: call_with_map is set but gate_c_must_move is empty -- the gate would assert "
+        "nothing about which paths read the map"
+    )
+
+    actions, frames = canonical_scene()
+    true_map = resolve_defended_goals(frames)
+    assert true_map.n_resolved > 0, "the fixture resolves no ends -- Gate C would be vacuous"
+    flipped = _flip_map(true_map)
+    assert dict(flipped.resolved) != dict(true_map.resolved), "the flip is a no-op"
+
+    ref = entry.call_with_map(actions.copy(), frames.copy(), true_map)
+    alt = entry.call_with_map(actions.copy(), frames.copy(), flipped)
+
+    stayed = []
+    for col in entry.gate_c_must_move:
+        assert entry.columns.get(col) == "invariant", (
+            f"{name}: gate_c_must_move names {col!r}, which is not an invariant column"
+        )
+        r = pd.to_numeric(ref[col], errors="coerce").to_numpy(dtype=float)
+        v = pd.to_numeric(alt[col], errors="coerce").to_numpy(dtype=float)
+        both = np.isfinite(r) & np.isfinite(v)
+        # A column that goes all-NaN in ONE leg has also responded to the map -- but silently,
+        # and a comparison over an empty overlap cannot say so. Treat it as "did not move".
+        moved = bool(both.any()) and float(np.abs(r[both] - v[both]).max()) > 1e-12
+        if not moved:
+            stayed.append(f"{col} (comparable rows: {int(both.sum())})")
+
+    assert not stayed, (
+        f"{name}: swapping the goal map did NOT move {stayed}. Either that code path does not "
+        "read the map -- a partial re-key, which is the failure this gate exists to catch -- or "
+        "the gate is vacuous. Both are failures."
+    )
+
+
+def test_gate_c_catches_an_aggregator_that_ignores_the_map():
+    """Witness: without this, a green Gate C is indistinguishable from a gate that checks nothing.
+
+    The plant takes a ``goal_map`` and never reads it -- exactly the cosmetic re-key Gate C is
+    built to detect -- so its output must be IDENTICAL across the two maps.
+    """
+    from silly_kicks.tracking import resolve_defended_goals
+
+    actions, frames = canonical_scene()
+    true_map = resolve_defended_goals(frames)
+
+    def planted(a, _f, _goal_map):
+        out = a.copy()
+        out["planted"] = a["start_x"].to_numpy(dtype=float)  # ignores the map entirely
+        return out
+
+    ref = planted(actions.copy(), frames.copy(), true_map)
+    alt = planted(actions.copy(), frames.copy(), _flip_map(true_map))
+    delta = float((ref["planted"] - alt["planted"]).abs().max())
+    assert delta == 0.0, "the plant moved -- this witness is not discriminating"
+
+
 def test_defensive_line_d3_unit_is_enumerated():
     """``select_back_line_players`` is a PUBLIC export with three consumers.
 
@@ -284,6 +386,23 @@ def test_defensive_line_d3_unit_is_enumerated():
     so the gate names the whole unit and pins its current membership. If a future change re-keys
     one member and not the others, this set changes and the test says so -- which is the point:
     the risk was recorded in the spec with no owner until now.
+
+    **Membership moved in the goal-map unification cycle (ADR-055), and this is the required
+    reason.** ``_gk_influence.py`` left the set: ``compute_gk_influence`` now takes a ``GoalMap``
+    and has no ``home_team_id`` at all, so its back-line call passes ``defends_x0=goal_x == 0.0``
+    from the RESOLVED end. ``select_back_line_players`` itself no longer infers direction --
+    it takes ``defends_x0`` -- so the helper is off identity for every caller.
+
+    The other two members stay listed because they are still identity-keyed at their OWN seams,
+    which is the D3 work ADR-051 still owns and this cycle deliberately did not pull in:
+
+    * ``_defensive_line.py`` -- ``compute_defensive_line`` derives ``same_id(team_id, home_team_id)``
+      per group (:210).
+    * ``_packing.py`` -- ``compute_packing_metrics`` derives ``mirror`` the same way (:145) and
+      feeds the same fact to ``select_back_line_players`` (:166).
+
+    So the pin still catches the failure it was built for: if either remaining member is re-keyed
+    without the other, this set changes again and the test says so.
     """
     import ast
     import pathlib
@@ -294,19 +413,26 @@ def test_defensive_line_d3_unit_is_enumerated():
     unit = {
         "silly_kicks/tracking/_defensive_line.py",
         "silly_kicks/tracking/_packing.py",
-        "silly_kicks/tracking/_gk_influence.py",
     }
+    # Left the unit in the ADR-055 cycle. Kept as a separate assertion rather than deleted: a
+    # member silently dropping out of `unit` is exactly how a partial re-key would hide, so the
+    # departure is asserted rather than merely no longer checked.
+    rekeyed = "silly_kicks/tracking/_gk_influence.py"
     reads = set()
-    for rel in sorted(unit):
+    for rel in sorted(unit | {rekeyed}):
         path = repo / rel
         assert path.exists(), f"D3 unit member missing: {rel}"
         tree = ast.parse(path.read_text(encoding="utf-8"))
         if any(isinstance(n, ast.Name) and n.id == "home_team_id" for n in ast.walk(tree)):
             reads.add(rel)
 
+    assert rekeyed not in reads, (
+        f"{rekeyed} reads home_team_id again. ADR-055 re-keyed it onto the GoalMap; a "
+        "reintroduced identity-keyed direction there is the D3 defect coming back."
+    )
     assert reads, "no member of the D3 unit reads home_team_id -- has the unit moved?"
     assert reads == unit, (
-        f"D3 unit membership changed: {sorted(reads)}. Re-key all three together, or update this "
+        f"D3 unit membership changed: {sorted(reads)}. Re-key both together, or update this "
         "pin WITH the reason -- a partial re-key is the failure mode this test exists to catch."
     )
 

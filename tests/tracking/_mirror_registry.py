@@ -1,6 +1,6 @@
 """Registry backing the ADR-028 mirror gates (spec 2026-07-29, section 6).
 
-TWO gates, because one instrument cannot see both defect classes:
+THREE gates, because one instrument cannot see the defect classes:
 
 * **Gate A** -- physical mirror. Detects CONVENTION MIXING (an action-LTR value combined with a
   frame-LTR one). ``home_team_id`` is swapped, because after a physical mirror the team attacking
@@ -9,6 +9,16 @@ TWO gates, because one instrument cannot see both defect classes:
   direction inference, which Gate A is structurally BLIND to: swapping ``home_team_id`` restores
   the very invariant identity-keying assumes, so an identity-keyed aggregator is invariant under
   Gate A whether it is safe or not.
+* **Gate C** (ADR-055) -- ``goal_map`` DEPENDENCE on fixed canonical frames. Once an aggregator is
+  re-keyed off ``home_team_id`` onto the map, Gate B's variable carries nothing and the gate goes
+  vacuous (it SKIPS on ``role="unused"``). Gate C is the same question one variable further out:
+  hold the frames fixed, swap the MAP, and require the invariant columns to MOVE. If nothing
+  moves, the aggregator is not reading the map and the re-key was cosmetic.
+
+  Gate C does NOT replace Gate B's correctness claim, only its DETECTION: ``get`` and
+  ``attacked_goal`` both move when the map is swapped, so a moved column proves the map is
+  consulted, not that the right accessor was chosen. That half is
+  ``test_goal_map_consumers.py``.
 
 Mirror classes (per emitted column):
 
@@ -43,6 +53,10 @@ class MirrorEntry:
 
     name: str
     call: Callable  # (actions, frames, home_team_id) -> pd.DataFrame
+    #: Gate C only: ``(actions, frames, goal_map) -> pd.DataFrame``. Non-``None`` IS the
+    #: "this aggregator consumes a goal map" predicate -- deliberately NOT a separate boolean
+    #: flag, which would be a second field free to disagree with the first.
+    call_with_map: Callable | None
     columns: dict[str, MirrorClass]
     tolerance: float
     tolerance_basis: str
@@ -70,6 +84,12 @@ class MirrorEntry:
     #: tripping its own vacuity assert -- which is what an entry with exactly one attribution
     #: column did.
     gate_b_exempt: dict[str, str] = field(default_factory=dict)
+    #: Gate C: columns that MUST move when the goal map is swapped. Named columns, not a bare
+    #: ``moved > 0``, because "something moved" is satisfied by a partial re-key: ``add_gk_influence``
+    #: reads the map down TWO independent paths (``_gk_influence_at_actions`` and
+    #: ``_closing_time_per_series``), so a one-column result means the closing-time path was missed
+    #: and would otherwise read as success. Required whenever ``call_with_map`` is set.
+    gate_c_must_move: tuple[str, ...] = ()
 
 
 MIRROR_ENTRIES: dict[str, MirrorEntry] = {}
@@ -89,10 +109,13 @@ def _entry(
     defect=None,
     defect_b=None,
     gate_b_exempt=None,
+    call_with_map=None,
+    gate_c_must_move=(),
 ) -> None:
     MIRROR_ENTRIES[name] = MirrorEntry(
         name=name,
         call=call,
+        call_with_map=call_with_map,
         columns=columns,
         tolerance=tol,
         tolerance_basis=basis,
@@ -103,6 +126,7 @@ def _entry(
         known_defect=defect,
         known_defect_gate_b=defect_b,
         gate_b_exempt=gate_b_exempt or {},
+        gate_c_must_move=tuple(gate_c_must_move),
     )
 
 

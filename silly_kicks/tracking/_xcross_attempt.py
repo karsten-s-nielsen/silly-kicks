@@ -27,6 +27,7 @@ from silly_kicks.tracking._ball_carrier import (
     derive_team_in_possession,
     infer_ball_carrier,
 )
+from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._xshot_occurrence import IntegrityError, load_xgb_booster_base_score_safe
 from silly_kicks.tracking.utils import link_actions_to_frames
@@ -279,19 +280,6 @@ def build_xcross_labels(
     return pd.Series(y, index=frames_index.index)
 
 
-def _build_goal_map(frames: pd.DataFrame) -> dict:
-    """Precompute (game_id, period_id, team_id) -> defended goal_x ONCE (H1; mirror xS
-    _defended_goal_x at the frame-group level). Excludes the "ball" pseudo-team (PA-L3)."""
-    goal_map: dict[tuple, float] = {}
-    real = frames[frames["team_id"] != "ball"]  # PA-L3: skip the ball "team"
-    gk = real[real["is_goalkeeper"]]
-    for (gid, pid, tid), grp in real.groupby(["game_id", "period_id", "team_id"], sort=False):
-        gk_grp = gk[(gk["game_id"] == gid) & (gk["period_id"] == pid) & (gk["team_id"] == tid)]
-        mean_x = gk_grp["x"].mean() if len(gk_grp) else grp["x"].mean()
-        goal_map[(gid, pid, tid)] = 0.0 if mean_x < _geo.PITCH_LENGTH / 2 else _geo.PITCH_LENGTH
-    return goal_map
-
-
 def _has_results(actions: pd.DataFrame | None) -> bool:
     """True iff ``actions`` carries a result column the score lookup can read (PA-H1 graceful
     degradation: score_differential is optional match context; without results it stays NaN)."""
@@ -328,7 +316,7 @@ def prepare_xcross_training_data(
     cp: dict = dict(carrier_params) if carrier_params else dict(_DEFAULT_CARRIER_PARAMS)
     carrier = infer_ball_carrier(frames, **cp)
     poss = derive_team_in_possession(frames, carrier)
-    goal_map = _build_goal_map(frames)  # H1: precompute once
+    goal_map = resolve_defended_goals(frames)  # H1: precompute once, from FULL frames
     score_fn = _build_score_lookup(actions, home_team_id) if _has_results(actions) else None
     has_ball_state = "ball_state" in poss.columns  # M3: column-presence guard (mirror xS:655)
 
@@ -353,7 +341,7 @@ def prepare_xcross_training_data(
         defending = [t for t in non_ball["team_id"].dropna().unique() if t != poss_team]
         if not defending:
             continue
-        goal_x = goal_map.get((gid, pid, defending[0]))
+        goal_x = goal_map.get(gid, pid, defending[0], allow_guess=True)
         if goal_x is None:
             continue
         ball = grp[grp["is_ball"]]
@@ -719,7 +707,7 @@ def compute_xcross_attempt(
     # hysteresis); restrict ONLY the per-frame extract + batched predict to link_frame_ids.
     carrier = infer_ball_carrier(frames, **m.carrier_params)
     poss = derive_team_in_possession(frames, carrier)
-    goal_map = _build_goal_map(frames)  # H1: once
+    goal_map = resolve_defended_goals(frames)  # H1: once, from FULL frames
     score_fn = None
     if actions is not None and _has_results(actions) and home_team_id is not None:
         from silly_kicks.tracking._ghost_gk import _build_score_lookup
@@ -739,7 +727,7 @@ def compute_xcross_attempt(
         if not teams:
             continue
         def_team = teams[0]
-        goal_x = goal_map.get((gid, pid, def_team))
+        goal_x = goal_map.get(gid, pid, def_team, allow_guess=True)
         if goal_x is None:
             continue
         carrier_pid_s = grp["ball_carrier_player_id"].dropna()

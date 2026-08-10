@@ -132,6 +132,18 @@ def _axh(fn, name):  # positional xt + keyword home_team_id (influence/cover-sha
     return _named(lambda a, f, home_team_id: fn(a, f, _xt(), home_team_id=home_team_id), name)
 
 
+def _axm(fn, name):  # positional xt, ADR-055 goal_map instead of home_team_id
+    """The influence/cover-shadow pair after the re-key.
+
+    `goal_map` is left to DEFAULT (None), so the aggregator derives it from the same `frames`
+    this gate is permuting the id dtypes of. That is the point: the map is built from those
+    frames, so it is on the gate's axis rather than beside it -- injecting a pre-built map
+    would pin the goal ends outside the permutation and hide exactly the mis-resolution this
+    gate exists to catch.
+    """
+    return _named(lambda a, f, home_team_id: fn(a, f, _xt()), name)
+
+
 def _das(a, f):
     """add_das with its contract column supplied, IN THE SWEPT team-id dtype.
 
@@ -188,9 +200,9 @@ AGGREGATORS = [
     _ah(F.add_structural_pass, "add_structural_pass"),
     _ah(F.add_team_shape, "add_team_shape"),
     _ah(F.add_ghost_gk, "add_ghost_gk"),
-    _axh(F.add_cover_shadows, "add_cover_shadows"),
+    _axm(F.add_cover_shadows, "add_cover_shadows"),
     _axh(F.add_off_ball_run_values, "add_off_ball_run_values"),
-    _axh(F.add_gk_influence, "add_gk_influence"),
+    _axm(F.add_gk_influence, "add_gk_influence"),
     _axh(F.add_player_influence, "add_player_influence"),
     _axh(F.add_xt_gk, "add_xt_gk"),
     # --- ALTERNATE-METHOD variants (Phase 2) -------------------------------------------
@@ -217,4 +229,15 @@ REGISTERED_AGGREGATORS = {name for name in dir(F) if name.startswith("add_") and
 # unaccounted public function rather than passing unnoticed.
 NON_LINKED_AGGREGATORS: dict[str, str] = {
     # "add_xxx": "reason it compares no action/frame/home_team ids",
+    "add_visible_area_coverage": (
+        "Takes NO frames -- inspect.signature is (actions, *, visible_area, links) -- so there is no "
+        "action-vs-frame id comparison for THIS gate's permutation (which varies actions/frames/"
+        "home_team_id dtypes) to reach, and no home_team_id either. It does have an id join, and "
+        "an earlier version of this note wrongly called it same-source: `action_id` arrives from "
+        "THREE places -- the caller's `actions`, the provider port's `visible_area`, and `links` -- "
+        "and a dtype skew between them silently reported `no_polygon` for every row (measured). "
+        "That is fixed (the join canonicalizes) and covered by its OWN gate, "
+        "tests/tracking/test_visibility.py::test_the_action_id_JOIN_is_dtype_invariant, which "
+        "permutes the join dtypes directly -- the axis this gate does not have."
+    ),
 }

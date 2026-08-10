@@ -20,6 +20,37 @@ jobs:
           python-version: "3.12"
       - run: pip install build
       - run: python -m build
+      # The tag name is a LABEL; the version actually published comes from the tagged commit's
+      # pyproject.toml, and nothing else compared the two. So a tag on the wrong commit uploads a
+      # different version than its name claims -- silently, and PyPI uploads are IRREVERSIBLE, so
+      # the only recovery is burning another version number. Compare against the BUILT artifact
+      # rather than pyproject, because the artifact is what gets uploaded. Runs in `build`, so a
+      # mismatch fails before the `publish` job (which `needs: build`) can run.
+      - name: Tag must match the built version
+        run: |
+          python - "$GITHUB_REF_NAME" <<'PY'
+          import pathlib, sys
+          from packaging.version import InvalidVersion, Version
+
+          tag = sys.argv[1]
+          wheels = sorted(pathlib.Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              sys.exit(f"::error::expected exactly one wheel in dist/, found {[w.name for w in wheels]}")
+          # PEP 427: {distribution}-{version}-{python tag}-{abi tag}-{platform tag}.whl
+          built = wheels[0].name.split("-")[1]
+          try:
+              # Compare PARSED versions: the wheel name is PEP 440-normalized while a tag is typed
+              # by hand, so a string compare would fail on a cosmetic difference and pass on none.
+              ok = Version(tag.removeprefix("v")) == Version(built)
+          except InvalidVersion as exc:
+              sys.exit(f"::error::cannot parse tag {tag!r} or built version {built!r}: {exc}")
+          if not ok:
+              sys.exit(
+                  f"::error::tag {tag} would publish version {built}. The tag is probably on the "
+                  f"wrong commit -- publishing is irreversible, so this is refused."
+              )
+          print(f"tag {tag} matches built version {built}")
+          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist

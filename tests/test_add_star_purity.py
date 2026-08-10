@@ -183,6 +183,14 @@ def _fresh_atomic_full_links():
     return links
 
 
+def _frames_velocity_unavailable():
+    """make_frames + every row declaring kinematics structurally unavailable -> exercises
+    add_ghost_gk's REFUSAL branch, which returns early and builds its output from `actions`."""
+    f = make_frames()
+    f["speed_source"] = "unavailable"
+    return f
+
+
 def _frames_with_ghost():
     """make_frames + precomputed ghost columns on GK rows -> exercises add_ghost_gk's precompute
     short-circuit (`if "ghost_gk_x" in frames.columns`), which ALIASES ``ghost_frames = frames`` (a real
@@ -261,6 +269,16 @@ def _xtf_invoke(fn, **kw):
     return lambda inputs: fn(inputs[0], inputs[1], inputs[2], home_team_id=5, **kw)
 
 
+def _xtf_map_invoke(fn, **kw):
+    """ADR-055: the gk_influence / cover_shadow pair take `goal_map`, not `home_team_id`.
+
+    `goal_map` omitted so the aggregator builds its own from `frames` -- the production default
+    path, and the one whose purity actually matters here: a caller-supplied map is the caller's
+    object, while a self-built one is the object most likely to be mutated in place.
+    """
+    return lambda inputs: fn(inputs[0], inputs[1], inputs[2], **kw)
+
+
 def _dc_inputs():
     a = make_actions().copy()
     a["xg"] = 0.2
@@ -280,6 +298,28 @@ def _dc_invoke(inputs):
 # ---------------------------------------------------------------------------
 def _one(build, invoke):
     return [("default", build, invoke)]
+
+
+def _visible_area_inputs(with_polygon: bool):
+    """Inputs for `add_visible_area_coverage`. TWO variants, per the ADR-033 contributor rule.
+
+    The aggregator branches on whether an action has a polygon: the `observed` path reads the
+    caller's `(N, 2)` array and clips it, the `no_polygon` path never touches it. A single-variant
+    registration would leave the array-reading branch -- the only one that can mutate a caller's
+    ndarray in place -- unexercised, which is exactly the shape ADR-033 was written for.
+    """
+
+    def build():
+        actions = make_actions()
+        polys = [np.array([[0.0, 0.0], [52.5, 0.0], [52.5, 68.0], [0.0, 68.0]])] * len(actions) if with_polygon else []
+        visible = pd.DataFrame({"action_id": list(actions["action_id"]) if with_polygon else [], "polygon": polys})
+        return [actions, visible]
+
+    return build
+
+
+def _visible_area_invoke(inputs):
+    return tracking.add_visible_area_coverage(inputs[0], visible_area=inputs[1])
 
 
 PURITY_ENTRIES: dict[str, list[tuple]] = {
@@ -341,7 +381,11 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     # ---- tracking -----------------------------------------------------------
     "tracking:add_action_context": _one(_std_inputs, _std_invoke(F.add_action_context)),
     "tracking:add_actor_pre_window": _one(_std_inputs, _std_invoke(F.add_actor_pre_window)),
-    "tracking:add_cover_shadows": _one(_xtf_inputs, _xtf_invoke(F.add_cover_shadows)),
+    "tracking:add_cover_shadows": _one(_xtf_inputs, _xtf_map_invoke(F.add_cover_shadows)),
+    "tracking:add_visible_area_coverage": [
+        ("polygon_present", _visible_area_inputs(True), _visible_area_invoke),
+        ("polygon_absent", _visible_area_inputs(False), _visible_area_invoke),
+    ],
     # add_das branches on `links is not None and "frame_id" in links.columns` (caller-supplied links vs
     # internal linking); both paths must copy -> a variant per branch.
     "tracking:add_das": [
@@ -357,12 +401,21 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     "tracking:add_elastic_sync": _one(_std_inputs, _std_invoke(F.add_elastic_sync)),
     # add_ghost_gk branches on `"ghost_gk_x" in frames.columns` (precompute short-circuit aliasing frames)
     # -> a variant per branch, incl. the alias path.
+    #
+    # `refused` is a THIRD branch on a different axis: frames declaring velocity structurally
+    # unavailable return early with NaN positions, before either compute or the alias path. Purity
+    # matters most there, because that path builds its output from `actions` directly.
     "tracking:add_ghost_gk": [
         ("compute", _std_inputs, _std_invoke(F.add_ghost_gk, home_team_id=5)),
         ("precomputed", lambda: [make_actions(), _frames_with_ghost()], _std_invoke(F.add_ghost_gk, home_team_id=5)),
+        (
+            "refused",
+            lambda: [make_actions(), _frames_velocity_unavailable()],
+            _std_invoke(F.add_ghost_gk, home_team_id=5),
+        ),
     ],
     "tracking:add_gk_completion": _one(_std_inputs, _std_invoke(F.add_gk_completion)),
-    "tracking:add_gk_influence": _one(_xtf_inputs, _xtf_invoke(F.add_gk_influence)),
+    "tracking:add_gk_influence": _one(_xtf_inputs, _xtf_map_invoke(F.add_gk_influence)),
     "tracking:add_gradientsports_player_ids": _one(
         lambda: list(_gs_jersey_inputs()),
         lambda i: tracking.add_gradientsports_player_ids(i[0], i[1], home_team_id=5, away_team_id=6)[0],
@@ -460,7 +513,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     ),
     "atomic.tracking:add_action_context": _one(_astd_inputs, _std_invoke(atf.add_action_context)),
     "atomic.tracking:add_actor_pre_window": _one(_astd_inputs, _std_invoke(atf.add_actor_pre_window)),
-    "atomic.tracking:add_cover_shadows": _one(_axtf_inputs, _xtf_invoke(atf.add_cover_shadows)),
+    "atomic.tracking:add_cover_shadows": _one(_axtf_inputs, _xtf_map_invoke(atf.add_cover_shadows)),
     "atomic.tracking:add_ghost_gk": [
         ("compute", _astd_inputs, _std_invoke(atf.add_ghost_gk, home_team_id=5)),
         (
@@ -469,7 +522,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             _std_invoke(atf.add_ghost_gk, home_team_id=5),
         ),
     ],
-    "atomic.tracking:add_gk_influence": _one(_axtf_inputs, _xtf_invoke(atf.add_gk_influence)),
+    "atomic.tracking:add_gk_influence": _one(_axtf_inputs, _xtf_map_invoke(atf.add_gk_influence)),
     "atomic.tracking:add_off_ball_run_values": _one(_axtf_inputs, _xtf_invoke(atf.add_off_ball_run_values)),
     "atomic.tracking:add_packing": _one(_astd_inputs, _std_invoke(atf.add_packing, home_team_id=5)),
     "atomic.tracking:add_pitch_control": _one(_astd_inputs, _std_invoke(atf.add_pitch_control)),

@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Literal, TypedDict
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import ids_match, same_id
+from silly_kicks.id_compat import ids_match
+from silly_kicks.tracking._gk_resolve import GoalEndUnresolvedError, GoalMap
 
 from .pitch_control import PitchControlCache, PitchControlParams, compute_pitch_control
 from .pitch_control._surface import PitchControlSurface
@@ -545,7 +546,7 @@ def lane_control(
     passer_xy: tuple[float, float],
     receiver_xy: tuple[float, float],
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     attacking_team_id: int | str,
     params: CoverShadowParams | None = None,
 ) -> LaneControlResult:
@@ -608,10 +609,16 @@ def lane_control(
     defenders_outfield = defenders_all[~defenders_all["is_goalkeeper"].astype(bool)]
 
     # Man-marking filter
-    if same_id(attacking_team_id, home_team_id):
-        goal_x_own = 105.0  # defenders' own goal
-    else:
-        goal_x_own = 0.0
+    # The DEFENDERS' own goal = the end the attacking team ATTACKS. `attacked_goal` is a
+    # real lookup of the opponent's entry; `105.0 - get(...)` would be a second
+    # implementation of the rule, and it is wrong on a degenerate map.
+    goal_x_own = goal_map.attacked_goal(
+        frame["game_id"].iloc[0], frame["period_id"].iloc[0], attacking_team_id, allow_guess=True
+    )
+    if goal_x_own is None:
+        raise GoalEndUnresolvedError(  # the add_* edge catches this and emits a NaN row
+            f"cover shadows: goal_map does not resolve the goal attacked by {attacking_team_id!r}."
+        )
     man_markers = _classify_man_markers(
         defenders_outfield,
         attackers_all,
@@ -675,7 +682,7 @@ def _voronoi_threat(
     frame: pd.DataFrame,
     *,
     attacking_team_id: int | str,
-    home_team_id: int | str,
+    goal_map: GoalMap,
 ) -> tuple[float, dict]:
     """Compute threat via Voronoi-partitioned grid sum.
 
@@ -701,7 +708,15 @@ def _voronoi_threat(
 
     # Dangerous receivers: ahead of ball toward defending goal
     # After play_left_to_right, home team attacks toward high x.
-    attacking_toward_high_x = same_id(attacking_team_id, home_team_id)
+    _attacked = goal_map.attacked_goal(
+        frame["game_id"].iloc[0], frame["period_id"].iloc[0], attacking_team_id, allow_guess=True
+    )
+    if _attacked is None:
+        # Explicit: `== 105.0` alone would fail OPEN, silently choosing 'rightward'.
+        raise GoalEndUnresolvedError(
+            f"cover shadows: goal_map does not resolve the goal attacked by {attacking_team_id!r}."
+        )
+    attacking_toward_high_x = _attacked == 105.0
     if attacking_toward_high_x:
         dangerous = attackers_outfield[attackers_outfield["x"] > ball_x]
     else:
@@ -755,7 +770,7 @@ def compute_threat_pc(
     *,
     attacking_team_id: int | str,
     xt: ExpectedThreat,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     params: PitchControlParams | None = None,
 ) -> float:
@@ -798,7 +813,7 @@ def compute_threat_pc(
 
     Examples
     --------
-    >>> compute_threat_pc(frame, attacking_team_id=2, xt=xt, home_team_id=1)  # doctest: +SKIP
+    >>> compute_threat_pc(frame, attacking_team_id=2, xt=xt, goal_map=goal_map)  # doctest: +SKIP
     0.0123
 
     References
@@ -815,9 +830,7 @@ def compute_threat_pc(
     require_fitted_xt(xt, caller="compute_threat_pc")
     _validate_ltr(frame, caller="compute_threat_pc")
     surface = compute_pitch_control(frame, attacking_team_id, method=method, params=params)
-    threat, _per_receiver = _voronoi_threat(
-        surface, xt, frame, attacking_team_id=attacking_team_id, home_team_id=home_team_id
-    )
+    threat, _per_receiver = _voronoi_threat(surface, xt, frame, attacking_team_id=attacking_team_id, goal_map=goal_map)
     return float(threat)
 
 
@@ -831,7 +844,7 @@ def compute_blocking_score(
     attacking_team_id: int | str,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     defenders_to_remove: list[int | str] | None = None,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     params: PitchControlParams | None = None,
@@ -891,7 +904,7 @@ def compute_blocking_score(
         xt,
         frame,
         attacking_team_id=attacking_team_id,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
     )
 
     # No short-circuit on threat_orig == 0.0: removing defenders could
@@ -907,10 +920,16 @@ def compute_blocking_score(
             (~ids_match(players["team_id"], attacking_team_id)) & (~players["is_goalkeeper"].astype(bool))
         ]
         attackers = players[ids_match(players["team_id"], attacking_team_id)]
-        if same_id(attacking_team_id, home_team_id):
-            goal_x_own = 105.0
-        else:
-            goal_x_own = 0.0
+        # The DEFENDERS' own goal = the end the attacking team ATTACKS. `attacked_goal` is a
+        # real lookup of the opponent's entry; `105.0 - get(...)` would be a second
+        # implementation of the rule, and it is wrong on a degenerate map.
+        goal_x_own = goal_map.attacked_goal(
+            frame["game_id"].iloc[0], frame["period_id"].iloc[0], attacking_team_id, allow_guess=True
+        )
+        if goal_x_own is None:
+            raise GoalEndUnresolvedError(  # the add_* edge catches this and emits a NaN row
+                f"cover shadows: goal_map does not resolve the goal attacked by {attacking_team_id!r}."
+            )
         man_markers = _classify_man_markers(
             defenders_outfield,
             attackers,
@@ -937,7 +956,7 @@ def compute_blocking_score(
         xt,
         frame_reduced,
         attacking_team_id=attacking_team_id,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
     )
 
     score = max(threat_unblocked - threat_orig, 0.0)
@@ -990,7 +1009,7 @@ def _compute_cover_shadow_dict(
     attacking_team_id: int | str,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     decision_rule: str = "majority",
     detailed: bool = False,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
@@ -1027,7 +1046,15 @@ def _compute_cover_shadow_dict(
     ball_x = float(ball_rows.iloc[0]["x"])
 
     # After play_left_to_right, home team attacks toward high x.
-    attacking_toward_high_x = same_id(attacking_team_id, home_team_id)
+    _attacked = goal_map.attacked_goal(
+        frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], attacking_team_id, allow_guess=True
+    )
+    if _attacked is None:
+        # Explicit: `== 105.0` alone would fail OPEN, silently choosing 'rightward'.
+        raise GoalEndUnresolvedError(
+            f"cover shadows: goal_map does not resolve the goal attacked by {attacking_team_id!r}."
+        )
+    attacking_toward_high_x = _attacked == 105.0
     if attacking_toward_high_x:
         dangerous = attackers_outfield[attackers_outfield["x"] > ball_x]
     else:
@@ -1059,7 +1086,7 @@ def _compute_cover_shadow_dict(
             frame_data,
             passer_xy,
             recv_xy,
-            home_team_id=home_team_id,
+            goal_map=goal_map,
             attacking_team_id=attacking_team_id,
             params=cs_params,
         )
@@ -1070,10 +1097,16 @@ def _compute_cover_shadow_dict(
     defenders_outfield = players[
         (~ids_match(players["team_id"], attacking_team_id)) & (~players["is_goalkeeper"].astype(bool))
     ]
-    if same_id(attacking_team_id, home_team_id):
-        goal_x_own = 105.0
-    else:
-        goal_x_own = 0.0
+    # The DEFENDERS' own goal = the end the attacking team ATTACKS. `attacked_goal` is a
+    # real lookup of the opponent's entry; `105.0 - get(...)` would be a second
+    # implementation of the rule, and it is wrong on a degenerate map.
+    goal_x_own = goal_map.attacked_goal(
+        frame_data["game_id"].iloc[0], frame_data["period_id"].iloc[0], attacking_team_id, allow_guess=True
+    )
+    if goal_x_own is None:
+        raise GoalEndUnresolvedError(  # the add_* edge catches this and emits a NaN row
+            f"cover shadows: goal_map does not resolve the goal attacked by {attacking_team_id!r}."
+        )
     man_markers = _classify_man_markers(
         defenders_outfield,
         attackers,
@@ -1098,7 +1131,7 @@ def _compute_cover_shadow_dict(
         frame_data,
         attacking_team_id,
         xt,
-        home_team_id=home_team_id,
+        goal_map=goal_map,
         defenders_to_remove=lane_blocker_ids,
         method=method,
         pitch_control_cache=pitch_control_cache,
@@ -1116,7 +1149,7 @@ def _compute_cover_shadow_dict(
                 frame_data,
                 attacking_team_id,
                 xt,
-                home_team_id=home_team_id,
+                goal_map=goal_map,
                 defenders_to_remove=[d_pid],
                 method=method,
                 pitch_control_cache=pitch_control_cache,

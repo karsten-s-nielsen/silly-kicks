@@ -441,3 +441,45 @@ aborts unconditionally, a changed feature **count** aborts with its own message 
 broadcast error mid-pass, and coverage is parameterized over all four served parameters **and over
 both sides**, so the strengthening is pinned by a test rather than asserted in a comment (the
 pre-existing tests moved only `coef`/`mean`, so a guard that stopped checking `std` stayed green).
+
+## Amendment (4.77.1, PR-S146) — the SCHEMA token is the fifth token-completeness defect, and the first of its shape
+
+This ADR concedes that `token_inputs` "cannot be checked for completeness", and an adversarial audit
+before it merged found four **undeclared inputs**. This is the mirror case: the declaration was
+complete, and the **shard SCHEMA changed underneath it**.
+
+4.77.0 renamed `measure_match`'s `mean_visible_pitch_fraction` to `mean_observed_pitch_fraction` and
+added `n_with_polygon` in `build_sb360_coverage.py`, while leaving `token_inputs["schema"]` at
+`"sb360-coverage-2"`. The fingerprint digests `token_inputs` only, never the source, so the
+un-bumped token resolved to the SAME generation directory — where **22 shards carrying the old
+column** were waiting. A re-run would have skipped all 22 as already-done, printed a clean
+`[i/n]`, asserted conservation successfully over its own keys, and combined the OLD schema. The
+ADR-042 denominator fix would simply not have taken effect, with no signal anywhere.
+
+**Nothing in the suite could see it.** The driver's only assertion on the renamed column lives in
+its `e2e` test, which CI does not run (ADR-023), so CI was green on a broken driver.
+
+**The pattern, now in CLAUDE.md:** a declared `_EMITTED_SHARD_COLUMNS` + `_SHARD_SCHEMA_VERSION`
+pair, gated three ways — the declaration matches the dict the work function ACTUALLY builds (matched
+by AST, not a hand-copied list); `token_inputs["schema"]` references the constant rather than a
+literal; and the pair itself is pinned — plus a run-time assertion that fails at the FIRST shard
+rather than at combine time. Each of the four defect reintroductions was observed RED.
+
+Three details that cost something to learn:
+
+- **Never write `pd.DataFrame(rows, columns=DECLARED)` as the drift check.** It SELECTS to the
+  declaration, so a dropped key vanishes and a missing one arrives as NaN — the guard certifies
+  exactly the two failures it exists to catch. Compare the keys the rows actually carry.
+- **Name it `_VERSION`, not `_TOKEN`.** ruff `S105` flags a `*_TOKEN` string constant as a hardcoded
+  password; a `# noqa` there would suppress a real check for a naming accident.
+- **An empty result must still return the DECLARED columns**, so D10's "ran, produced nothing" stays
+  distinguishable from "not yet run" even on the drift-checked path.
+
+**Corollary for hand-rolled drivers.** A one-off measurement written the same day reproduced this
+ADR's original motivating defect: it hand-rolled per-match shards (to avoid coupling to another
+session's checkout) but iterated `load_matches(...)` directly with try/except around only the WORK.
+`load_matches` is a GENERATOR — it raises out of the loop — so one bad match killed the pass at 81
+of 179 items. Sharding bought back the 81 and nothing more. **If you hand-roll around `for_each`,
+you must re-implement failure ISOLATION too, not just sharding:** invert onto the id list and load
+one item per call inside try/except, writing a FAILURE shard so "absent" keeps meaning "not yet
+run".

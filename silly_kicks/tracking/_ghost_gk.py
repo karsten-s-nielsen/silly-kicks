@@ -34,6 +34,8 @@ from silly_kicks.spadl import config as spadlconfig
 
 from . import _geometry as _geo
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
+from ._gk_resolve import resolve_defended_goals
+from ._velocity_availability import velocity_unavailable_by_design as _velocity_unavailable_by_design
 
 # ---------------------------------------------------------------------------
 # Grid constants (fixed for API stability — see spec Density Grid)
@@ -287,6 +289,48 @@ def keeper_detection_mask(visibility: pd.Series, *, provider: str) -> np.ndarray
             "training on undetected keepers means training on the interpolator (spec 4.3)."
         )
     return visibility.fillna(False).astype(bool).to_numpy()
+
+
+#: Closed vocabulary for the ``ghost_gk_source`` provenance column (the ``DAS_SOURCE_VALUES`` /
+#: ``PRESS_COMMITMENT_SOURCE_VALUES`` pattern). Each token is exported so a consumer enum pins to
+#: this set rather than to string literals.
+GHOST_GK_COMPUTED = "computed"
+#: The frame source declares kinematics structurally unavailable (a freeze-frame), so the model
+#: cannot be served. NOT a zero-fill: the extractor yields NaN and the HGBR would route it down each
+#: split's LEARNED missing-value direction, producing a plausible coordinate with no basis.
+GHOST_GK_VELOCITY_UNAVAILABLE = "velocity_unavailable"
+#: The action reached a frame, but that frame carried no DEFENDING keeper. Distinct from
+#: ``unlinked``: the action did reach a frame, and saying otherwise states something the data
+#: refutes.
+GHOST_GK_NO_KEEPER = "no_keeper"
+#: The action reached no frame at all.
+GHOST_GK_UNLINKED = "unlinked"
+#: A DEFENDING keeper was present at the linked frame, but the goal map does not resolve which end
+#: that keeper defends, so the goal-relative frame the model is fitted in does not exist for this
+#: row (ADR-055). Distinct from ``no_keeper`` for the same reason ``no_keeper`` is distinct from
+#: ``unlinked``: a keeper WAS there, and saying otherwise states something the data refutes.
+#:
+#: Before this token the row was reported as ``no_keeper``, which was doubly misleading -- it named
+#: the wrong cause AND pointed at the wrong remedy (get keeper detection, rather than get frames
+#: whose keeper positions resolve an end).
+GHOST_GK_GOAL_END_UNRESOLVED = "goal_end_unresolved"
+GHOST_GK_SOURCE_VALUES: tuple[str, ...] = (
+    GHOST_GK_COMPUTED,
+    GHOST_GK_VELOCITY_UNAVAILABLE,
+    GHOST_GK_NO_KEEPER,
+    GHOST_GK_UNLINKED,
+    GHOST_GK_GOAL_END_UNRESOLVED,
+)
+
+
+class _GhostVelocityUnavailableError(Exception):
+    """Internal signal: frames declare velocity structurally unavailable.
+
+    Never escapes the module. Each public seam catches it and degrades in the shape its own output
+    allows -- NaN rows with provenance for the two column-emitting seams, NO rows for
+    ``serve_ghost_gk_positions`` (``gkdv/_engine.py`` RAISES on a non-finite ghost on a scored
+    frame, so NaN rows there would break TF-19 rather than degrade it).
+    """
 
 
 GHOST_GK_FEATURE_NAMES: list[str] = [
@@ -805,17 +849,13 @@ def _extract_all_ghost_gk_features(
             keep_keys = unique_frames[keep_mask.values]
             work = frames.merge(keep_keys, on=["game_id", "period_id", "frame_id"])
 
-    # --- Precompute defending goal per (game_id, period_id, team_id) ---
-    # On LTR-normalized data with period flips (e.g. SkillCorner), teams swap
-    # ends at halftime.  Using team identity alone to assign goal_x is wrong
-    # for the flipped period.  Instead, use the GK's mean x per period to
-    # determine which goal the GK defends: mean_x < 52.5 → defending x=0,
-    # otherwise defending x=105.
-    _gk_mask = work["is_goalkeeper"].astype(bool) & ~work["is_ball"].astype(bool)
-    _gk_mean_x = work[_gk_mask].groupby(["game_id", "period_id", "team_id"])["x"].mean()
-    _defending_goal: dict = {
-        key: 0.0 if mean_x < _FIELD_LENGTH / 2 else _FIELD_LENGTH for key, mean_x in _gk_mean_x.items()
-    }
+    # --- Defending goal per (game_id, period_id, team_id), from the pinned seam ---
+    # The end comes from the FRAMES, never from team identity: identity-keying is correct
+    # only while frames are home-attacks-right, which is a property of the caller's pipeline
+    # rather than of this function's inputs. Built from `work` -- the post-subsample /
+    # post-link-filter set -- because passing `frames` would change the map whenever
+    # `subsample_fps` is set.
+    _goal_map = resolve_defended_goals(work)
 
     # --- Group and iterate ---
     group_keys = ["game_id", "period_id", "frame_id"]
@@ -840,7 +880,13 @@ def _extract_all_ghost_gk_features(
 
         for _, gk_row in gk_rows.iterrows():
             gk_team = gk_row["team_id"]
-            goal_x = _defending_goal.get((gid, pid, gk_team), 0.0 if same_id(gk_team, home_team_id) else _FIELD_LENGTH)
+            goal_x = _goal_map.get(gid, pid, gk_team, allow_guess=True)
+            if goal_x is None:
+                # No usable end -> no ghost. The former fallback was
+                # `0.0 if same_id(gk_team, home_team_id) else 105.0`, a CONSTANT 105.0 for any
+                # NA-team keeper -- wrong for half the possible cases, and silently, because the
+                # feature vector is then computed in the mirrored goal-relative frame.
+                continue
             flip = goal_x > 50.0
 
             # Cheap defensive-line-x + centroid in goal-relative coords, computed
@@ -2244,15 +2290,20 @@ def compute_ghost_gk(
     out = frames.copy()
     out["ghost_gk_x"] = np.nan
     out["ghost_gk_y"] = np.nan
+    out["ghost_gk_source"] = GHOST_GK_COMPUTED
 
-    _resolved, meta, _batch_features, positions, _clamped = _serve_positions_core(
-        frames,
-        model=model,
-        home_team_id=home_team_id,
-        actions=actions,
-        carrier=carrier,
-        link_frame_ids=link_frame_ids,
-    )
+    try:
+        _resolved, meta, _batch_features, positions, _clamped = _serve_positions_core(
+            frames,
+            model=model,
+            home_team_id=home_team_id,
+            actions=actions,
+            carrier=carrier,
+            link_frame_ids=link_frame_ids,
+        )
+    except _GhostVelocityUnavailableError:
+        out["ghost_gk_source"] = GHOST_GK_VELOCITY_UNAVAILABLE
+        return out
 
     if len(positions) == 0:
         return out
@@ -2304,6 +2355,23 @@ def _serve_positions_core(
     extracted feature set (historically the retired ``predict_density`` pass); the
     positions themselves come from ``predict_mean(batch_features)`` inside this core.
     """
+    # Velocity contract. This is the SHARED serving seam -- add_ghost_gk, compute_ghost_gk and
+    # serve_ghost_gk_positions all funnel through here -- so a guard placed at any ONE of them
+    # would leave the other two fabricating. The 4.22.1 physical-pitch clamp lives here for the
+    # same reason: policy at the edge, and this function IS the edge.
+    #
+    # The model is an HGBR: absent velocity features are NOT zero-filled, they are routed down
+    # each split's LEARNED missing-value direction, fitted where NaN meant an occasional dropped
+    # measurement. On a freeze-frame 5 of 26 features are absent on 100% of rows, so the output is
+    # a plausible coordinate with no basis. Refuse instead.
+    if _velocity_unavailable_by_design(frames):
+        raise _GhostVelocityUnavailableError
+    if "vx" not in frames.columns or "vy" not in frames.columns:
+        raise ValueError(
+            "compute_ghost_gk requires vx/vy on frames (call derive_velocities() first), or "
+            "declare speed_source unavailable. See the velocity-availability contract."
+        )
+
     resolved = _resolve_model(model)
 
     # Build context callbacks from actions
@@ -2435,14 +2503,27 @@ def serve_ghost_gk_positions(
     >>> bool(out["ghost_clamped"].notna().all())  # doctest: +SKIP
     True
     """
-    _resolved, meta, _batch_features, positions, clamped = _serve_positions_core(
-        frames,
-        model=model,
-        home_team_id=home_team_id,
-        actions=actions,
-        carrier=carrier,
-        link_frame_ids=link_frame_ids,
-    )
+    try:
+        _resolved, meta, _batch_features, positions, clamped = _serve_positions_core(
+            frames,
+            model=model,
+            home_team_id=home_team_id,
+            actions=actions,
+            carrier=carrier,
+            link_frame_ids=link_frame_ids,
+        )
+    except _GhostVelocityUnavailableError:
+        # NO rows, not NaN rows: gkdv RAISES on a non-finite ghost on a SCORED frame, so NaN here
+        # would break TF-19 rather than degrade it. Returning nothing routes into its existing
+        # counted-drop path instead.
+        #
+        # Reuse the len(positions) == 0 branch below rather than building a second empty frame --
+        # its join-key dtypes are DERIVED FROM THE INPUT for a measured reason (see that branch).
+        # Only `positions` is read by it; meta/clamped are set for shape consistency and are inert.
+        meta = frames.iloc[:0]
+        positions = np.empty((0, 2), dtype=float)
+        clamped = np.zeros(0, dtype=bool)
+
     if len(positions) == 0:
         # The empty frame's join-key dtypes MUST match the populated path's, or a
         # pd.concat across a per-match loop where one match has no detected GK silently
