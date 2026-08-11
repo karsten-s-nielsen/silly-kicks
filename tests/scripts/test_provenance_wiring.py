@@ -118,6 +118,14 @@ _NOT_A_DRIVER: dict[str, str] = {
         "regenerates the committed gs_et ET tracking fixture from the local pining CACHE (no "
         "network, no token). Output is a test input, not a cited number."
     ),
+    "audit_velocity_fixtures": (
+        "reads COMMITTED test sources and runs library code on a synthetic frame -- no corpus "
+        "pass, no external data, nothing whose provenance could be misattributed. Its `--out` JSON "
+        "is a development report, not a cited number: every figure in it is re-derived on demand "
+        "by `tests/scripts/test_audit_velocity_fixtures.py`, which is the standing gate, so a "
+        "stale copy on disk cannot be mistaken for evidence. Same reasoning as "
+        "`render_sb360_matrix` above, and the script's own docstring states it."
+    ),
     "stamp_feature_contracts": (
         "rewrites bundled metadata ONLY, deliberately never calling any model's save(). It "
         "consumes nothing external and derives its contract from the current library, so it must "

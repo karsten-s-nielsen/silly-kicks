@@ -299,6 +299,27 @@ class DetectionResult:
     diagnostics: dict[str, object] = field(default_factory=dict)
 
 
+def _two_teams_share_a_period(match_grp: pd.DataFrame, *, team_col: str, period_col: str) -> bool:
+    """Two distinct teams reliable in the SAME period.
+
+    Discriminates POSSESSION_PERSPECTIVE from PER_PERIOD_ABSOLUTE when both are high-x: within one
+    period the two teams attack OPPOSITE ends, so "both high in the same period" cannot happen
+    under an absolute convention.
+    """
+    return bool((match_grp.groupby(period_col)[team_col].nunique() >= 2).any())
+
+
+def _a_team_spans_periods(match_grp: pd.DataFrame, *, team_col: str, period_col: str) -> bool:
+    """One team reliable in >= 2 distinct periods.
+
+    Discriminates any SWAP-based convention from a non-swapping one: you cannot see a team change
+    (or keep) sides without observing it in two periods. TF-22 added exactly this requirement to
+    the ABSOLUTE branch inline; it is named here so the two branches share ONE spelling of the
+    concept rather than two, which is how rule 1 came to lack it for four releases.
+    """
+    return bool((match_grp.groupby(team_col)[period_col].nunique() >= 2).any())
+
+
 def detect_input_convention(
     events: pd.DataFrame,
     *,
@@ -419,13 +440,50 @@ def detect_input_convention(
 
     confidence: Literal["high", "medium"] = "high" if reliable["reliable_high"].all() else "medium"
 
-    # Rule 1: every reliable group attacks high-x → POSSESSION_PERSPECTIVE
-    if (reliable["side"] == "high").all():
+    # Rule 1: every reliable group attacks high-x → POSSESSION_PERSPECTIVE.
+    #
+    # "All survivors are high" is only EVIDENCE if the survivors could have shown otherwise.
+    # PER_PERIOD_ABSOLUTE produces an all-high reliable set just as readily whenever the
+    # `>= min_shots_per_group_medium` filter happens to remove the low-side groups -- measured on
+    # Gradient Sports match 10502, where team 51 (P1 low, n=3) and team 366 (P2 low, n=3) were both
+    # dropped, leaving team 51 P2 high and team 366 P1 high. Rule 1 then returned
+    # POSSESSION_PERSPECTIVE with confidence="medium" against a converter that correctly declares
+    # PER_PERIOD_ABSOLUTE, on 2 of 36 matches.
+    #
+    # Note it is NOT a "one team's data" problem: that survivor set spans TWO teams, so a
+    # `>= 2 distinct teams` guard does not fix it (measured). What the set lacks is a configuration
+    # an absolute convention could not have produced -- either of the two below.
+    # ONE spelling of the all-high predicate, and the groupby runs only when it can matter: on any
+    # non-all-high input (the common case) rule 1 cannot fire at all, so computing `discriminating`
+    # first would be work no branch reads.
+    if bool((reliable["side"] == "high").all()):
+        discriminating = any(
+            _two_teams_share_a_period(g, team_col=team_col, period_col=period_col)
+            or _a_team_spans_periods(g, team_col=team_col, period_col=period_col)
+            for _match_id, g in reliable.groupby(match_col, sort=False)
+        )
+        if discriminating:
+            return DetectionResult(
+                convention=InputConvention.POSSESSION_PERSPECTIVE,
+                confidence=confidence,
+                diagnostics={
+                    "reason": "every (match, team, period) group attacks high-x",
+                    "groups": reliable.to_dict("records"),
+                },
+            )
+        # All-high but NON-discriminating. Defer rather than guess: `validate_input_convention`
+        # reads `None` as "signal too weak, keep the caller's declared convention", which is the
+        # safe direction -- a false POSITIVE here contradicts a correct declaration and, under
+        # `on_mismatch="raise"`, rejects good data.
         return DetectionResult(
-            convention=InputConvention.POSSESSION_PERSPECTIVE,
-            confidence=confidence,
+            convention=None,
+            confidence="low",
             diagnostics={
-                "reason": "every (match, team, period) group attacks high-x",
+                "reason": (
+                    "every reliable group attacks high-x, but no match has two teams reliable in "
+                    "the same period NOR a team reliable across two periods -- so the sample "
+                    "cannot distinguish possession_perspective from per_period_absolute"
+                ),
                 "groups": reliable.to_dict("records"),
             },
         )
@@ -445,8 +503,12 @@ def detect_input_convention(
         # P1 and away only in P2) trivially satisfies (per_team_sides == 1)
         # .all() and gets classified ABSOLUTE_FRAME_HOME_RIGHT even when the
         # data is genuinely PER_PERIOD_ABSOLUTE. See ADR-006 erratum (PR-S23).
-        per_team_periods = match_grp.groupby(team_col)[period_col].nunique()
-        any_team_spans_both_periods = bool((per_team_periods >= 2).any())
+        # Same predicate rule 1 uses as its clause (b) -- ONE spelling, shared. Behaviour here is
+        # unchanged; only the duplicate inline expression is gone. Rule 1 additionally accepts
+        # `_two_teams_share_a_period`, which does NOT belong in this branch: telling ABSOLUTE from
+        # PER_PERIOD requires observing a team across periods, and two teams inside one period says
+        # nothing about swapping.
+        any_team_spans_both_periods = _a_team_spans_periods(match_grp, team_col=team_col, period_col=period_col)
         if (per_team_sides == 1).all() and any_team_spans_both_periods:
             # Each team on same side across periods → absolute_no_switch
             team_means = match_grp.groupby(team_col)["mean_x"].mean()

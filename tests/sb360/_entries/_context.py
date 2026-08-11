@@ -38,6 +38,12 @@ _entry(
             "receiver_zone_density": AxisVerdict("identical", "works"),
             "defenders_in_triangle_to_goal": AxisVerdict("identical", "works"),
         },
+        "gk_one_end": {
+            "nearest_defender_distance": AxisVerdict("identical", "works"),
+            "actor_speed": AxisVerdict("all_nan", "honest_nan"),
+            "receiver_zone_density": AxisVerdict("identical", "works"),
+            "defenders_in_triangle_to_goal": AxisVerdict("identical", "works"),
+        },
     },
     applicability={
         "nearest_defender_distance": "region_support",
@@ -105,6 +111,10 @@ _entry(
                 ),
             ),
         },
+        "gk_one_end": {
+            "actor_arc_length_pre_window": AxisVerdict("all_nan", "honest_nan"),
+            "actor_displacement_pre_window": AxisVerdict("all_nan", "honest_nan"),
+        },
     },
     applicability={
         "actor_arc_length_pre_window": "support_data_defined",
@@ -134,7 +144,17 @@ _entry(
                 "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
             ),
         ),
-        "elastic_confidence": AxisVerdict("identical", "works"),
+        "elastic_confidence": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=(
+                "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they differ "
+                "in BOTH velocity availability and temporal support, so the isolation probe could not attribute "
+                "the change to one of them. The value is honest on each leg; what a consumer must not do is "
+                "compare a freeze-frame number against a tracking number as though they were the same "
+                "measurement. [measured cause=velocity+frame_count]"
+            ),
+        ),
         "elastic_error_seconds": AxisVerdict(
             "differs",
             "differs_by_design",
@@ -156,7 +176,17 @@ _entry(
                     "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
                 ),
             ),
-            "elastic_confidence": AxisVerdict("identical", "works"),
+            "elastic_confidence": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they "
+                    "differ in BOTH velocity availability and temporal support, so the isolation probe could not "
+                    "attribute the change to one of them. The value is honest on each leg; what a consumer must "
+                    "not do is compare a freeze-frame number against a tracking number as though they were the "
+                    "same measurement. [measured cause=velocity+frame_count]"
+                ),
+            ),
             "elastic_error_seconds": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -177,7 +207,48 @@ _entry(
                     "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
                 ),
             ),
-            "elastic_confidence": AxisVerdict("identical", "works"),
+            "elastic_confidence": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they "
+                    "differ in BOTH velocity availability and temporal support, so the isolation probe could not "
+                    "attribute the change to one of them. The value is honest on each leg; what a consumer must "
+                    "not do is compare a freeze-frame number against a tracking number as though they were the "
+                    "same measurement. [measured cause=velocity+frame_count]"
+                ),
+            ),
+            "elastic_error_seconds": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                    "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
+                ),
+            ),
+        },
+        "gk_one_end": {
+            "elastic_frame_id": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                    "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
+                ),
+            ),
+            "elastic_confidence": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they "
+                    "differ in BOTH velocity availability and temporal support, so the isolation probe could not "
+                    "attribute the change to one of them. The value is honest on each leg; what a consumer must "
+                    "not do is compare a freeze-frame number against a tracking number as though they were the "
+                    "same measurement. [measured cause=velocity+frame_count]"
+                ),
+            ),
             "elastic_error_seconds": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -191,12 +262,12 @@ _entry(
     },
     applicability={
         "elastic_frame_id": "no_support",
-        "elastic_confidence": "no_support",
+        "elastic_confidence": "support_data_defined",
         "elastic_error_seconds": "no_support",
     },
     applicability_deltas={
         "elastic_frame_id": {"extreme": 0.0, "near": 0.0},
-        "elastic_confidence": {"extreme": 0.0, "near": 0.0},
+        "elastic_confidence": {"extreme": 0.00039999999999995595, "near": 0.1839000000000004},
         "elastic_error_seconds": {"extreme": 0.0, "near": 0.0},
     },
 )
@@ -213,6 +284,9 @@ _entry(
             "gs_jersey_resolution_rate": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
+            "gs_jersey_resolution_rate": AxisVerdict("identical", "works"),
+        },
+        "gk_one_end": {
             "gs_jersey_resolution_rate": AxisVerdict("identical", "works"),
         },
     },
@@ -236,6 +310,9 @@ _entry(
             "pressure_on_actor__andrienko_oval": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
+            "pressure_on_actor__andrienko_oval": AxisVerdict("identical", "works"),
+        },
+        "gk_one_end": {
             "pressure_on_actor__andrienko_oval": AxisVerdict("identical", "works"),
         },
     },
@@ -267,6 +344,11 @@ _entry(
             "sync_score_high_quality_frac": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
+            "sync_score_min": AxisVerdict("identical", "works"),
+            "sync_score_mean": AxisVerdict("identical", "works"),
+            "sync_score_high_quality_frac": AxisVerdict("identical", "works"),
+        },
+        "gk_one_end": {
             "sync_score_min": AxisVerdict("identical", "works"),
             "sync_score_mean": AxisVerdict("identical", "works"),
             "sync_score_high_quality_frac": AxisVerdict("identical", "works"),

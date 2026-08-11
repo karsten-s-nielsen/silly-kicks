@@ -5,6 +5,383 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.79.0] — 2026-08-11
+
+### Fixed — `detect_input_convention` rule 1 concluded from evidence that could not discriminate (ADR-059)
+
+Rule 1 infers `POSSESSION_PERSPECTIVE` from *"every reliable (match, team, period) group attacks
+high-x"*. `reliable` is filtered to `n >= min_shots_per_group_medium` (5) — and when that filter
+removes the low-side groups, an all-high survivor set is an artifact of the filter rather than a
+measurement.
+
+**Measured on real Gradient Sports data, wrong on 2 of 36 matches.** Match 10502: team 51 goes
+`P1 13.3 LOW (n=3) -> P2 94.0 HIGH (n=8)`, team 366 goes `P1 95.8 HIGH (n=7) -> P2 9.8 LOW (n=3)`.
+Both teams shoot at opposite ends within a period and SWAP between them — textbook
+`PER_PERIOD_ABSOLUTE`, which `gradientsports.py` correctly declares. Both LOW groups fall below the
+threshold, and rule 1 returned `POSSESSION_PERSPECTIVE` at `confidence="medium"`, contradicting a
+correct declaration.
+
+**The fix recorded in `TODO.md` would not have worked.** It diagnosed *"the rule fires on
+effectively ONE team's data"* and prescribed *"require >= 2 distinct TEAMS"*. Measured: the
+survivors are team 51 (P2) and team 366 (P1) — **two** teams, so that guard permits the misfire
+unchanged. It would have reviewed clean against its own rationale and shipped with the defect live.
+Reproducing the failure before implementing is the only reason it did not.
+
+Rule 1 now requires a configuration an absolute convention could not have produced — **two distinct
+teams reliable in the same period**, or **one team reliable across two periods**. Otherwise it
+returns `convention=None` with a diagnostic naming why. Deferral is the safe direction:
+`validate_input_convention` reads `None` as "keep the caller's declared convention", so a false
+ambiguous leaves output correct and loses only a cross-check, while a false positive contradicts a
+correct declaration and **raises** under `on_mismatch="raise"`.
+
+Clause (b) **is** the guard TF-22 added inline to the ABSOLUTE branch in 3.0.1, for the same reason
+against the same sparse-asymmetric shape; rule 1 never got it. Both branches now call
+`_a_team_spans_periods` — one spelling, not two. Clause (a) is deliberately NOT given to the
+ABSOLUTE branch: separating `ABSOLUTE` from `PER_PERIOD` requires observing a team ACROSS periods,
+so a single shared "is this discriminating?" helper would have silently loosened TF-22.
+
+**Coverage.** Rule 1 is what validates StatsBomb and SkillCorner as `POSSESSION_PERSPECTIVE`, so
+tightening it risks a silent downgrade to ambiguous.
+`test_statsbomb_raw_detected_as_possession_perspective` already asserts this on **3 real StatsBomb
+matches** and passes — a standing gate, worth more than a one-time corpus run that confirms today
+and rots tomorrow. **SkillCorner is guarded too**, by a new
+`test_skillcorner_raw_detected_as_possession_perspective` on real public match `1886347` — one of
+the ten `PUBLIC_CORPUS` registers as redistributable. That gate was nearly not built: a first
+reading took "SkillCorner" to mean owner-tier, which is precisely the provider-name-as-tier-proxy
+inference `scripts/_corpus.py` exists to prevent and whose docstring says visibility is keyed
+per-match, *"NEVER on the provider name"*. The fixture is deliberately a HARD case — `(team 1805,
+period 1)` has 3 shots and is dropped by the same `>= 5` filter that caused the misfire, and the
+match still classifies because the survivors discriminate — so it demonstrates the guard does not
+over-tighten on real data carrying the defect's own shape. `is_shot` is re-derived from the
+converter's own `end_type == "shot"` rule rather than baked into the file, a companion test asserts
+the below-threshold group is still present, and the gate is mutation-verified: force both
+discriminating predicates false and real SkillCorner data detects as `None`.
+
+**No converted data changes — for ANY provider, including the two affected Gradient Sports
+matches.** The detector is a cross-check, not a code path: `to_spadl_ltr` orients on the converter's
+DECLARED `input_convention`, and `validate_input_convention` only warns or raises on a mismatch,
+never overriding the declaration (`orientation.py`'s own module docstring: *"It never overrides the
+declared convention — the converter's declared `input_convention` is the load-bearing contract"*).
+So what changes is which inputs get a spurious warning or a spurious `on_mismatch="raise"`, not a
+single coordinate. No retrain, no re-materialization.
+
+Beyond that, no verdict change for any provider whose data carries a discriminating configuration;
+the ABSOLUTE branch is unchanged.
+
+### Changed — the tracking frames schema declares a NULLABLE id dtype (ADR-058)
+
+`TRACKING_FRAMES_COLUMNS["player_id"]` and `["team_id"]` were `int64`. Every frame set carries a
+ball row, which belongs to no team and holds no player, so both are NA on it **by construction** —
+and numpy `int64` cannot represent NA. So casting a real frame set to the declared schema, which
+4.77.0 attempted, raised `IntCastingNaNError`. Always, on every producer.
+
+4.77.0/ADR-055 met that failure and read it as its planned dtype PIN being *unimplementable*. It was
+the DECLARATION. All five provider variants already overrode these two columns — four to `object`,
+Gradient Sports to `Int64` with a docstring that literally says *"allows NaN on ball rows"* — so the
+base was satisfied by **nothing** and described one producer's happy path. A constant every variant
+overrides is a default masquerading as a contract.
+
+Base is now `Int64`. `GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS` becomes an **alias** of it rather than
+an override — kept as a name, not deleted, because it is exported in `silly_kicks.tracking.__all__`
+and aliasing is already this file's idiom (`SPORTEC`, `SKILLCORNER` and `METRICA` all alias
+`KLOPPY`). Six declarations collapse to two honest dtypes plus four aliases. Not `object` for the
+base: `id_compat`'s both-object path is CONTENT-probed (~15% per side) because boxed floats
+raw-compare False against the same id as a string.
+
+Gated by two tests in `tests/test_tracking_schema.py`, both landed RED: one pins the base, and one
+is complete by ENUMERATION over every `*_TRACKING_FRAMES_COLUMNS` in the module, so a future
+provider added with a non-nullable id dtype fails CI.
+
+**Behaviour surface:** the only site that casts to the BASE at all is `_snapshot._empty_frames()`,
+which builds an EMPTY frame — so the broken declaration was reachable only in the one case with no
+NA to fail on, while the populated path (`_snapshot.py:172`) selects the 20 columns without applying
+dtypes. Empty and populated snapshots therefore disagreed about `player_id`'s dtype and nothing said
+so. The empty frame's `player_id`/`team_id` move `int64` → `Int64`; provider adapters cast to their
+own variants and are unchanged (Gradient Sports was already `Int64`, the four object variants are
+untouched). No retrain, no re-materialization.
+
+### Added — CI's pandas span is DECLARED and asserted, not inherited (ADR-057)
+
+`TODO.md` recorded, of the snapshot dtype question, that *"the concern is only checkable on a
+pandas-3 environment, which CI does not have (`ci.yml` is OS x Python only)"*. **That was false.**
+`pyproject.toml` pins `pandas>=2.1.1,!=3.0.4` with no upper bound and pandas 3 requires Python
+>= 3.11, so pip resolves the newest compatible pandas per interpreter. Measured on run
+`31316804815`: `ubuntu-3.10` → **2.3.3**; `ubuntu-3.11`, `ubuntu-3.12`, `windows-3.12` → **3.0.5**.
+Three of four test legs already ran pandas 3.
+
+The coverage was real but **ACCIDENTAL**, and that is the actual defect: nothing declared or
+asserted it, so it could vanish with no diff and no signal. This repo has one measured instance of
+that class already (DAS going silently all-NaN on pandas 3).
+
+Two halves, neither sufficient alone — a test running in one leg cannot observe another:
+
+- `tests/test_ci_pandas_span_wired.py` asserts the **resolved leg set** still straddles the Python
+  3.11 boundary. It parses os × python-version **minus `exclude` plus `include`**, never the axis:
+  `exclude` is already the pruning mechanism in use, and excluding `ubuntu/3.10` collapses the span
+  while leaving `"3.10"` in the axis, which an axis-based assertion passes. Observed RED against
+  exactly that mutation.
+- A `pandas-span` job (`needs: test`) aggregates each leg's recorded pandas major and fails unless
+  the union spans both. Its script was extracted from `ci.yml` and executed against fabricated
+  artifact trees: `{2,3}` → pass, `{3}` → fail, `{2}` → fail, none → fail.
+
+The guard asserts the SPAN, not specific versions, so a routine dependency bump does not train a
+reader to edit the expectation without thinking.
+
+### Added — `snapshot_to_tracking_frames` id comparability, pinned across both pandas majors
+
+`tests/tracking/test_snapshot_id_dtype_across_pandas.py` asserts the property consumers actually
+depend on per ADR-019 — that `id_compat` comparisons keep working — rather than a dtype literal,
+which is precisely what left the question unverifiable for two cycles. Run on pandas **2.3.3** and
+**3.0.5**. The dtype does diverge (`Int64` source → `Int64` on 2.x, `Float64` on 3.x; numpy-int →
+`float64`, object → `object`, both majors), and the behavioural contract holds identically on both,
+so no xfail was needed. Also pins that the synthesized ball row's ids stay **NA** rather than
+becoming a sentinel (ADR-027), observed RED against a `fillna(0)` mutation.
+
+### Added — the `gk_one_end` SB360 visibility roster reclaims cover-shadow coverage (ADR-053)
+
+`gk_absent` removes BOTH keepers, so `resolve_defended_goals` falls to its outfield rung and guesses
+both teams at x=105; a both-teams-same-end map is degenerate, `attacked_goal` refuses it, and
+`add_cover_shadows` emits NaN on both legs for a roster-driven reason — no informative row survives.
+
+`gk_one_end` **adds** a third roster rather than widening `gk_absent`, which is a real visibility
+axis (keeper outside the observed region) and the only case exercising the both-absent refusal path.
+One keeper visible: the visible team resolves to x=0, the other falls to the outfield rung and
+guesses x=105, the ends differ, the map is non-degenerate. Measured on the fixture:
+`resolved={('7','1','1'): 0.0}`, `guessed={('7','1','2'): 105.0}`, `unresolved=frozenset()` — keys
+are `(game, period, team)`. It is also the better-supported case: per the committed coverage report
+the DEFENDING keeper is in-frame on **92.2%** of shots, so a freeze-frame with a keeper present is
+the common one, and `gk_absent` alone left that majority shape unexercised. (The spec justified this
+with a comparative — defending keeper in-frame *"while the acting-side keeper usually is not"* — that
+`coverage.md` does not support: its `acting GK` cell for `shot` is `—`, i.e. definitionally not
+applicable because the keeper is not the actor on a shot, not a measured lower rate. The report
+measures nothing about the far keeper. The roster's justification stands on the 92.2% alone.)
+
+**All five columns reclaimed** (`not_exercised` → `honest_nan`): `n_blocked_receivers`,
+`n_potential_receivers`, `blocking_score`, `blocked_threat_fraction`,
+`max_single_defender_blocking_score`. Asserted in `test_registry_surface.py`, not left as a task
+note. `max_single_defender_player_id` stays unexercised for an unrelated reason (no pressing
+sequence in the fixture).
+
+`NOT_EXERCISED_BUDGET` **31 → 41**. It counts `(entry, axis, roster, column)` tuples over 35 entries,
+so a third roster can only ADD — a drop was arithmetically impossible, and two earlier drafts of the
+success metric were invented to match the claim instead of read off what changes. All 10 new tuples
+are enumerated to three causes in the constant's docstring. `gk_absent`'s existing slice is pinned
+byte-identical across the change (165 verdicts, floor-asserted before the diff is trusted — a `diff`
+of two empty captures succeeds, so a pin that can pass vacuously is not a pin).
+
+`columns_exercised_on_no_roster()` lands as a standing regression pin over columns unexercised under
+EVERY roster. It registers **zero change** from this cycle, which is the correct expectation: the
+five were already `honest_nan` under `defender_absent`, so they were never in that set.
+
+### Fixed — an unregistered SB360 adapter silently emptied an aggregator's verdicts (4.77.0)
+
+`tests/sb360/_calls.py` defines `visible_area_coverage(fn)` but never registered it in `ADAPTERS`,
+so `_regenerate.py` fell back to `C.generic`, raised `TypeError`, and the probe's `except Exception`
+swallowed it into `cols = ()` — emptying every roster block for `add_visible_area_coverage`.
+Committed verdicts stayed correct, so CI never failed; only a REGENERATION surfaces it. Caught by
+the `gk_absent` pin (165 → 163) and fixed by registering the adapter (re-verified 165 == 165).
+
+**The swallowing handler was the mechanism, and it is no longer silent.** Three changes, because a
+printed warning scrolls past:
+
+1. Probe failures are **collected and reported** at the end of the run, naming each aggregator, its
+   exception, and the likely cause.
+2. `_regenerate.py` now **exits non-zero** when any probe failed. The entries are still written —
+   you need them to diagnose — but the run is not clean and the exit code says so.
+3. A CI gate, `test_every_aggregator_emits_at_least_one_column`, fails on a registry containing an
+   entry with `columns=()`. This is the durable protection: the first two only help someone watching
+   a hand-run regeneration, while this one fails the build.
+
+The `except` itself stays BROAD deliberately — an aggregator that legitimately refuses this fixture
+must not abort a 35-entry regeneration. Narrowing it was considered and rejected as the wrong lever:
+it trades one silent-failure mode for a brittle exception allowlist, whereas the gate catches the
+*consequence* (an uncovered aggregator) regardless of which exception produced it.
+
+Both defects are repaired, so the gate could not be landed red against a live instance. It was
+**mutation-verified**, which ADR-051 permits explicitly: doctoring `add_xcross_attempt` back to
+`columns=()` fails the assertion naming it.
+
+**Making it loud immediately found a SECOND instance, live in the committed registry.** Verified by
+reintroducing the 4.77.0 state (deleting `visible_area_coverage` from `ADAPTERS` and running the
+real regenerator), the report named two aggregators, not one:
+
+```
+!! PROBE FAILED for 2 aggregator(s) -- each regenerated with ZERO columns ...
+    add_visible_area_coverage: TypeError: add_visible_area_coverage() takes 1 positional argument ...
+    add_xcross_attempt: KeyError: 'vx'
+```
+
+`add_xcross_attempt` was the only entry in the registry with `columns=()` — its `velocity` block and
+all three `visibility` blocks **empty**, so ADR-053's "every `add_*` carries an SB360 freeze-frame
+verdict" was not true of it and nothing said so. Cause: it read `frames["vx"]` unguarded and raised a
+bare `KeyError` on a frame set that explicitly declares `speed_source="unavailable"` — the marker
+ADR-054 introduced precisely so a builder can DECLARE that its source has no temporal history.
+
+### Fixed — `add_xcross_attempt` honours the velocity-availability contract (ADR-054)
+
+It now implements the same two-pronged contract as `_das`, `_ghost_gk` and `_press_commitment`,
+because the two shapes are byte-identical at the seam and demand opposite responses:
+
+- **declared unavailable** → degrade to NaN. `ball_speed` is a trained feature, so scoring would
+  have the model impute an input its source structurally cannot carry — the ADR-053 fabrication
+  shape. NaN is already what this function returns on every other unscoreable path.
+- **not declared and `vx`/`vy` absent** → raise a `ValueError` naming the remedy (`derive_velocities()`,
+  or declare `speed_source` unavailable). Previously a bare `KeyError: 'vx'`, which names nothing
+  actionable and which an upstream handler silently reinterpreted as "this aggregator emits nothing".
+
+The guard sits in `compute_xcross_attempt` — the **shared seam** all three public entry points
+(`add_xcross_attempt`, `xcross_attempt_xfns`, a direct call) reach scoring through, the same reason
+the ghost guard lives in `_serve_positions_core`. Separately, `extract_xcross_features` — itself
+public, and documenting itself "NaN-tolerant" with a NaN pre-fill — now leaves `ball_speed` at that
+pre-fill instead of raising, while still computing the positional ball features that do not depend
+on velocity. A zero-fill was rejected as worse than either: a fabricated stationary ball fed to a
+trained feature.
+
+Four tests landed RED (`tests/tracking/test_xcross_attempt_velocity_contract.py`), including a
+non-vacuity control asserting a fully velocity-bearing frame set still scores — without it,
+returning all-NaN unconditionally would satisfy every other assertion.
+
+**No provenance column was added, and that is a decision, not an oversight.** `add_ghost_gk`,
+`add_das` and `add_press_commitment` each emit one (`ghost_gk_source` and friends), so the house
+pattern would suggest an `xcross_attempt_source`. It is declined here because
+`compute_xcross_attempt` already returns NaN for four other unscoreable reasons — no possession, no
+defending team, an unresolvable defended goal, no linked frame — none of which carries provenance. A
+column that named only the velocity cause would imply the other four NaNs were scoreable, which is
+worse than silence. Emitting a vocabulary covering all five is a real schema addition (glossary
+entry per ADR-048, liveness registration, purity variants, its own SB360 verdicts) and belongs in a
+change that decides the whole vocabulary rather than riding along with a crash fix.
+
+**Audit consequences, both recorded rather than absorbed.** The aggregator now probes cleanly and
+carries real verdicts, which moves two pins in the *honest* direction:
+
+- `NOT_EXERCISED_BUDGET` **41 → 45**. The 4 new tuples are `xcross_attempt` on all four axes, and
+  they are coverage that was **already missing and is now visible** — not a regression. Both legs
+  score NaN, and not because of the repair: the velocity-bearing leg is NaN too, because the fixture
+  stages no in-possession wide-area cross for the model to score.
+- `columns_exercised_on_no_roster` gains its **only** new member this cycle,
+  `('add_xcross_attempt', 'xcross_attempt')` — same class as the existing `add_xshot_occurrence`
+  entry: a fitted model over a domain this fixture does not produce.
+
+The regenerate → adjudicate round trip was verified to reproduce every other entry **byte-identically**,
+so the diff is confined to this one block. No gate forbidding zero-column entries is added: the
+condition it would catch is now absent, and a gate written after its own repair arrives green and is
+never observed failing (ADR-051).
+
+### Fixed — `add_elastic_sync` scored every action against an EMPTY distance lookup (ADR-019)
+
+Found by making `snapshot_to_tracking_frames` honour its schema: casting the ids broke five SB360
+verdicts, and the cause was not the fixture.
+
+`elastic_confidence` was a constant **0.6 on every row, on both legs** — which is exactly
+`accel_weight / (accel_weight + proximity_weight)`, the value you get when the proximity term
+contributes nothing at all.
+
+The player-ball distance lookup keyed on `merged["player_id"].astype(str)` while the query keyed on
+`str(action_row["player_id"])`. Every frame set carries a ball row whose `player_id` is NA, which
+upcasts an integer id column to `float64`, so the two sides rendered the same id differently:
+
+```
+LOOKUP key:  (7, 1, 0, '10.0')      # frames side
+QUERY  key:  (7, 1, 3, '10')        # actions side
+```
+
+**Every lookup missed.** `dist` fell to the caller's `inf` default and `proximity_score` to zero. A
+miss is indistinguishable from "infinitely far from the ball", so nothing failed loudly — the
+scoring loop ran to completion and produced a plausible number from a term that had not been
+computed.
+
+**Not snapshot-specific.** A plain `python_int` id column fails identically, because the NA ball row
+upcasts it too. Any caller whose frames carried integer player ids was affected; only genuinely
+STRING ids worked, which is why no provider test caught it.
+
+**The audit had recorded the broken state as `works`.** Both legs degraded the same way, so the
+observation was `identical` — a one-sided check cannot see a defect that breaks both arms equally.
+The registry had even recorded the fingerprint: `applicability` was `no_support` with BOTH probe
+deltas exactly `0.0`, which is precisely what `applicability_deltas` exists to make visible. It now
+reads `support_data_defined` with deltas `{extreme: 0.0004, near: 0.1839}`.
+
+Fixed at the ROOT, not at the symptom: the cast masks it only for the snapshot path, so both sides
+now go through `canonical_id_series` / `canonical_id`, which collapse `10` / `10.0` / `Int64(10)` /
+`"10"` to one rendering. Four tests landed RED across all four id dtypes.
+
+This is the trap CLAUDE.md already names — *"`str(5.0)` iterrows-upcast player-influence/cover-shadow
+mislabel"* — in a module the ADR-043 enumeration registry does not reach, because that registry
+covers id-SCALAR arguments of public functions and this is an internal dict key. **The registry's
+completeness is over a surface, and this defect lives off it.**
+
+**Consequences, scoped by enumeration rather than asserted.** `elastic_sync_xfns` appears in **no**
+default xfn list — checked by enumerating all seven `*_default_xfns` at runtime, not by grepping —
+so this is **NOT a VAEP retrain trigger**. It IS a value change for anyone who opted the factory in
+explicitly, or who reads `elastic_confidence` / `elastic_frame_id` / `elastic_error_seconds` from
+`add_elastic_sync`: those values were previously computed with the proximity term contributing
+nothing, so any stored column is wrong and should be re-materialized. `elastic_frame_id` moves too —
+the alignment was choosing its best frame on acceleration alone.
+
+### Fixed — the SB360 adjudicator asserted pitch-control semantics about non-pitch-control modules
+
+`_adjudicate.py`'s fallback was `return R["window"] if cause == "frame_count" else R["positional_pc"]`,
+so any module that is not pitch-control-derived and whose cause is not exactly `frame_count` had a
+rationale about *"pitch control evaluated at zero velocity"* attached to it. Measured on
+`add_elastic_sync.elastic_confidence`, which computes no such quantity.
+
+A rationale is the part of an ADR-053 verdict a human is asked to ARGUE WITH, so one describing the
+wrong mechanism is worse than a vaguer one that is true. The fallback is now an honest
+`mixed_cause` rule that states what the probe actually established — both legs compute from inputs
+they hold, the probe could not attribute the change to a single cause, and the two numbers must not
+be compared as though they were the same measurement.
+
+### Fixed — the velocity-fixture discriminator was measuring the wrong quantity
+
+`scripts/audit_velocity_fixtures.py` (new) decides which test fixtures declaring
+`speed_source="native"` without `vx`/`vy` actually matter. A grep finds 24 candidates; **that is not
+a defect count**, and the script exists so nobody treats it as one.
+
+Its first revision contrasted a stationary frame set against a moving one — velocity **MAGNITUDE**.
+The defect class is velocity **PRESENCE**: declared available, vector absent, extractor yields NaN,
+fitted model routes it down a learned missing-value branch. 4.76.0 measured exactly that
+(`NaN → [6.795, 33.522]` vs zero-fill `→ [6.888, 33.362]`).
+
+Under the magnitude contrast `add_ghost_gk` — THE consumer of ADR-053/4.76.0 — scored a 0.0 delta
+twice over and was filed **velocity-blind**: the sb360 leg-A fixture declares
+`speed_source="unavailable"`, so the by-design marker (an ALL-rows predicate) returned NaN on both
+arms, and an all-NaN column contributes no numeric delta. **Measured: the positive control shows the
+old instrument CLEARING a reconstruction of the very fixture ADR-053 convicted.**
+
+Corrected to absent-vs-present, with `speed` held CONSTANT across the arms so the contrast isolates
+the vector. That second correction mattered: with the PRESENT arm also overwriting `speed`, the
+instrument convicted `tests/tracking/test_add_action_context.py` and its atomic mirror — measured,
+`add_action_context` is unchanged by `vx`/`vy` at fixed speed and reads only the scalar, so the
+delta was entirely the probe moving `speed` underneath them.
+
+Verdicts are now three-way (`sensitive` / `refuses` / `blind`): a consumer that RAISES on
+declared-but-absent velocity cannot silently fabricate, and folding it into `blind` is what produced
+the false clear. A column flipping between all-NaN and populated is reported as `nan_flipped` rather
+than folded into the delta, because `NaN - x` is NaN and never enters a max-abs-difference.
+
+**Result: 0 convicted, 24 cleared.** 7 consumers measure sensitive, 4 refuse; no candidate file calls
+any of them. Every one of the 24 is correct as written — *"we checked and it did not matter"* is a
+finding, not an absence.
+
+**And it is pinned, not just reported.** `test_no_test_fixture_claims_velocity_and_reaches_a_sensitive_consumer`
+re-derives the intersection every CI run, so a fixture added tomorrow with the same shape — declaring
+velocity, supplying none, calling one of the seven sensitive aggregators — fails the build instead of
+quietly re-creating the 4.76.0 defect. It deliberately pins the **intersection being empty**, not the
+candidate count: locking "24" would fail on any unrelated test file mentioning `speed_source` and
+train a reader to bump the number without thinking. Mutation-verified by flipping
+`add_action_context` from blind to sensitive, which convicts exactly the two files that call it; and
+it carries its own non-vacuity guard, because a mis-resolved scan root would otherwise report zero
+candidates as a clean bill of health.
+
+`tests/scripts/test_audit_velocity_fixtures.py` is the instrument's control, deliberately SPLIT. The
+plan sketched it as *"the reconstructed pre-4.76.0 ghost fixture yields `value_changed is True`"* —
+which couples a gate to a defect CONTINUING TO EXIST, the same mistake this repo already shipped
+once when `test_at_least_one_column_was_adjudicated_a_fabrication` broke because the fabrication it
+asserted had been repaired. Instead: a PLANTED case proves the engine can still convict; a companion
+proves the historical fixtures are SURFACED rather than cleared, without asserting which side of the
+sensitive/refuses line they fall on; a false-POSITIVE guard pins that the two probe arms differ only
+in the vector (observed RED against the contaminated probe — a positive control cannot catch a false
+positive, since a contaminated probe surfaces every known positive while convicting the innocent).
+
 ## [4.78.0] — 2026-08-10
 
 ### Added — artifact input contracts and registry completeness (PR-S147, ADR-056)

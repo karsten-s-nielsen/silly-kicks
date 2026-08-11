@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Last updated**: 2026-08-10. **Current release**: silly-kicks 4.78.0 (ADR-056 — research artifacts now declare WHICH SYMBOLS their numbers depend on, and four registry floors are replaced by derived populations with an `_UNDERIVABLE` bucket asserted empty. The GS fixture generator could not reproduce its own fixture — 51 events against a committed 54, so any regeneration silently deleted the own goal and cross-goal a live test asserts — and reshaping it to the measured shot distribution exposed a synthesized GS row inheriting its pass-class parent's derived end. GS synthesized-row `end_x`/`end_y` change; real rows byte-identical; no retrain). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Last updated**: 2026-08-11. **Current release**: silly-kicks 4.79.0 (ADR-057 + ADR-058 — CI's pandas-major span is now DECLARED rather than inherited by accident, and the tracking frames schema declares a NULLABLE id dtype, which made `snapshot_to_tracking_frames` able to satisfy its own contract for the first time. Casting it then exposed a live defect: `add_elastic_sync` had been scoring every action against an EMPTY player-ball distance lookup — `astype(str)` rendered a float-upcast id as `"10.0"` against a query's `"10"`, so `elastic_confidence` was a constant 0.6 the SB360 audit had recorded as `works`. Fixed at the root via `id_compat`. Also: `add_xcross_attempt` honours the ADR-054 velocity contract instead of raising `KeyError: 'vx'` on a freeze-frame, and had NO audit coverage until it did. `elastic_*` columns change — re-materialize; NOT a retrain trigger, verified against all 19 default xfn lists). **Also in 4.79.0 (ADR-059):** `detect_input_convention` rule 1 concluded `possession_perspective` from evidence that could not distinguish it from `per_period_absolute` — the `>= 5` shots filter removes the low-side groups, so an all-high survivor set is an artifact of the filter. Wrong on 2 of 36 real Gradient Sports matches. **The fix previously recorded in THIS file was measured not to work** — the survivors span two teams, so a ">= 2 distinct teams" guard permits the misfire unchanged. The tightening is coverage-gated on REAL data for both affected providers: StatsBomb (3 matches, pre-existing) and **SkillCorner (new — public match 1886347, deliberately retaining a below-threshold group so it exercises the same sparse-drop shape and still classifies; mutation-verified)**. That gate was first recorded as unbuildable on the false premise that SkillCorner is owner-tier — `scripts/_corpus.py::PUBLIC_CORPUS` registers TEN redistributable SkillCorner matches, and visibility is keyed PER MATCH, never on provider name. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -22,7 +22,6 @@ rejected alternatives) lives in
 
 | # | Task | Size | Source | Notes |
 |---|------|------|--------|-------|
-| — | **`detect_input_convention` rule 1 misfires on sparse groups — cross-provider false positive** | Wicked | silly-kicks (found during Cycle B, item 23) | **DO THIS NEXT.** The detector returns a CONFIDENTLY WRONG verdict (`confidence=medium`) on data whose true convention is unambiguous. **Measured on real GS**, raw `ball_x`+52.5, shots only: match 10502 team 51 `P1 13.3 LOW -> P2 94.0 HIGH`, team 366 `P1 95.8 HIGH -> P2 9.8 LOW`; match 10503 team 364 `P1 89.7 -> P2 12.1`, team 386 `P1 7.5 -> P2 93.6`. Both teams shoot at OPPOSITE ends within a period and SWAP between periods — textbook `per_period_absolute`, exactly what `gradientsports.py:756` declares, and consistent with K6's independent finding that the output is correct to ~0.2 m. Yet the detector infers `possession_perspective` with the diagnostic *"every (match, team, period) group attacks high-x"*, which is false: only HALF the groups do. **Mechanism:** rule 1 tests `(reliable['side'] == 'high').all()` where `reliable` is filtered to `n >= min_shots_per_group_medium` (5). The `>=5` filter drops the counter-examples (10502's `51-P1` has n=3), so on a match whose survivors happen to be all-high the rule fires on effectively ONE team's data. Fires on **2 of 36** GS matches — it needs the sparse asymmetry, which is why it looked like noise. **The fix has a precedent four lines below in the same function:** TF-22 added exactly this guard to the ABSOLUTE branch (*"without this guard, sparse per-team-period-asymmetric data (e.g. IDSSE J03WMX ...) trivially satisfies ..."*); rule 1 never got it. Require ≥2 distinct TEAMS among the reliable groups before rule 1 may fire. **Why it is Wicked, not Dunkin':** rule 1 is the branch that VALIDATES statsbomb + skillcorner as `POSSESSION_PERSPECTIVE`, so tightening it risks silently downgrading them to ambiguous — a coverage loss that shows up as a gate quietly not checking rather than as a red test. 6 providers call the detector; 23 test call sites. **Effort: half a day to a day**, of which 2-3 h is corpus verification that rule 1 still fires for SB/SC on real data. Also check whether metrica/sportec (both `PER_PERIOD_ABSOLUTE`) were silently misfiring too. Deliberately NOT fixed in Cycle B: out of charter (registry completeness / input contracts), needs providers that cycle never touched, and it surfaced after three unplanned repairs already. ADR-worthy. |
 | TF-24 | **Re-run the tracking-defaults calibration on CORRECTED geometry** | Wicked | silly-kicks (ADR-009; ADR-051 spec §11.7) | **The ADR-028 cycle moved away-team geometry under TF-24's feet.** Every sweep to date consumed at least one mixed-convention input: RC4 fed it SkillCorner frames with `team_attacking_direction` NULL on **100%** of rows, and RC1/RC2/RC3 changed cover-shadow, `_gk_geometry` and space-creation values for away actions. So any Stage-2 recommendation on record was computed on geometry that no longer exists. **What is ALREADY settled — do not re-measure it:** no *shipped* constant is invalidated. Stage 1's `infer_ball_carrier` params are `tolerance_m=3.0, beta=0.0, gamma=0.25`, of which only **`beta` and `gamma`** are Optuna-calibrated — at a *held* `tolerance_m=3.0`, an engineering default (`_ball_carrier.py:352-353`) — against a fold that included the unoriented SkillCorner frames. They stand unchanged because carrier inference is **orientation-invariant**, now asserted by `tests/tracking/test_ball_carrier.py::test_carrier_inference_is_orientation_invariant` (40/40 identical assignments under an exact point reflection) instead of by an unsourced figure. Stage 2's `k3` (`pressure.py:61`) and `min_displacement_m` (`_off_ball_runs.py:100`, `_run_values.py:121`) ship as **engineering** defaults TF-24 never set. **What remains is therefore a recommendation refresh, not a defect repair:** re-sweep so the harness's advice is derived from corrected frames, and decide separately whether any recommendation should become a default (ADR-009's standing rule is that TF-24 recommends and never changes library constants). DGX; naturally sequenced AFTER the ghost-GK re-fit below so one corrected-geometry corpus pass serves both. |
 | TF-51 Item 4 | **Defensive-credit atomic-SPADL mirror** | Wicked | silly-kicks (ADR-047 §11; split 2026-07-24) | Its OWN representation-port spec — distinct from Track B. Needs the `_packing_atomic_adapter`-class lookahead bridge synthesizing std `type_id`+`result_id` from the next atom, a documented `preserve_native=[…]` caller contract + loud raise, per-representation window semantics (atomic is denser, so `recovery_max_actions` means something different), and a PREREQUISITE fix for the duplicate `"interception"` id in `atomic/spadl/config.py` (std idx 10 + atomic idx 24 → the dict-comp keeps 24, silently excluding std interception). `compute_bravery`'s atomic mirror rides with it. |
 | TF-51 Track B | **Defensive-credit DPA / role-responsibility model** | Monstah | silly-kicks (arXiv:2606.19931) | The Paper 2 model — its OWN later spec, distinct from Item 4. `xDT`-valued Defensive Pressure Area + `R=(r−d)/r` proximity distribution (r=5 m) + formation-role averaging (template-match + Hungarian, 20-role taxonomy) → "expected involvement" = responsibility, replacing v1 nearest-defender attribution; + the individual `cross_block` credit rule (folds in). New primitives: formation/role detection + failed-pass expected-receiver (Power 2017). Pass-only + aggregate-grain → complements v1. Needs the reference-code read (`github.com/jonas-bischofberger/defensive-network`) before spec. |
@@ -59,29 +58,10 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   VISIBLE there" as the same observation. Wiring them changes existing values AND decides for the
   consumer what a partial observation means, which is the ADR-009 line -- so it needs a consumer
   asking for it, not a library decision.
-- **`velocity_unavailable_by_design` now has FOUR consumers** — `_das.py`, `_press_commitment.py`,
-  and, as of 4.76.0, `_ghost_gk.py` (the shared serving seam) and `features.py` (the aggregator
-  edge). The remaining velocity-touching modules handle absent kinematics ad hoc, but ADR-053's
-  audit measured that they degrade HONESTLY: the one that did not was the ghost path, and that is
-  now fixed. So the residual is consistency work with **no live defect behind it** — and per
-  ADR-054's column-vs-diagnostic rule the right surface for those five is
-  `validate_velocity_regime`, which already exists, rather than a marker read in each module.
-  Close this row unless a NEW velocity consumer lands that fabricates.
 - **Four boundary entry points are unaudited**, each with its reason in
   `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
   one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and
   silly-kicks ships no xG model, so any port supplied would audit the stub rather than the library.
-- **`snapshot_to_tracking_frames` id dtype may be pandas-version-dependent -- UNVERIFIED, and the
-  numbers previously recorded here do not reproduce.** This row used to say "`Int64` in yields
-  `Int64` on pandas 2.3.3 and `Float64` on 3.0.3". Measured on 2.3.3 during 4.77.0: the concat
-  yields **`float64`** for the as-built numeric-int fixture, and an `Int64` source stays **`Int64`**
-  -- so neither half of the old claim reproduces on the pinned resolver. The 4.77.0 cycle planned a
-  fix and DROPPED it (ADR-055): casting to `TRACKING_FRAMES_COLUMNS` is unimplementable, because it
-  declares `int64` for `player_id`/`team_id`, the ball row is NA in both, and `int64` cannot hold NA
-  (`IntCastingNaNError` on every snapshot) -- and a `restore_id_dtype`-based pin changed NOTHING for
-  numpy-int, nullable-`Int64` or object sources (with the pin excised, 0 of 2 tests written for it
-  went red). **The concern is only checkable on a pandas-3 environment, which CI does not have
-  (`ci.yml` is OS x Python only).** Next step is that environment, not another blind fix.
 - **Check whether the lakehouse already ingests StatsBomb open data.** The question has CHANGED now
   that 4.76.0 ships `providers/statsbomb`: it is no longer build-or-reuse but whether the lakehouse
   should ADOPT the port so both read SB360 the same way. Not answerable from this repo.
@@ -100,27 +80,6 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   today, and it goes vacuous the moment either is re-keyed — so each must gain a Gate C
   `call_with_map` + `gate_c_must_move` entry in the same change, or the re-key deletes its own
   detection (the ADR-055 rule).
-- **Widen the SB360 `gk_absent` fixture to reclaim 5 audited columns** (found 4.77.0).
-  `NOT_EXERCISED_BUDGET` rose 26 → 31 because `gk_absent` removes BOTH keepers, so
-  `resolve_defended_goals` falls to its outfield rung and guesses both teams at x=105 (measured
-  outfield mean x 56.9 and 76.5, both past the 52.5 midline); a both-teams-same-end map is
-  degenerate, `attacked_goal` refuses it, and both legs go NaN for the same roster-driven reason.
-  A real widening of the audit's blind spot: before the re-key those five columns produced numbers
-  on a keeper-less freeze-frame, which were not evidence. A keeper at ONE end is enough to break
-  the degeneracy and reclaim them.
-- ~~Re-run `build_sb360_coverage.py`~~ **DONE 4.77.1 — the artifact is NOT stale.** A full 22-match
-  pass on the corrected driver reproduces every published "visible pitch" value at its 2-decimal
-  precision (max absolute change 0.004): `shot_penalty` 0.13→0.126, `shot_freekick` 0.21→0.210,
-  `shot` 0.18→0.182, `keeper_save` 0.16→0.162, `cross` 0.19→0.186, `goalkick` 0.30→0.298. The two
-  edits move the column in OPPOSITE directions and the decomposition shows why the net is nil:
-  **`n_with_polygon` is 100.0% of `n_events` for every action type** — every SB360 freeze-frame in
-  this corpus carries a `visible_area` — so the ADR-042 denominator change is a **no-op here**, and
-  only the clipping moves anything, by ≤0.004. `coverage.md` is left as committed; regenerating it
-  would rewrite provenance without changing a published digit. **Open, if the artifact is ever
-  rebuilt for another reason:** that pass should install via the declared extra rather than
-  piecemeal (this one needed `statsbombpy`, `ruthless-efficiency>=0.4.0` and `pyarrow` added by
-  hand) and should run on the repo's pinned pandas — this run was pandas 3.0.5 on py3.14, and while
-  it reproduced every value, matching the environment is what makes that evidence rather than luck.
 - **`sportec_slim.parquet` is MIRRORED relative to its own direction labels** (found 4.77.0).
   `team_attacking_direction` says `DFL-CLU-00000P` attacks +x, so it should defend x=0, while that
   team's keeper mean x is 98.1 (p1) and 77.0 (p2). Confirmed independently by
@@ -129,20 +88,6 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   as a **strict xfail** (`test_provider_inputs_convention.py::test_direction_labels_agree_with_keeper_geometry`),
   so repairing the slice is forced to delete the marker. Repair moves `sportec_expected.parquet` and
   the lakehouse-parity goldens, which is why it is its own change.
-- **Sweep for fixtures that CLAIM velocity and supply none.** Two were found and fixed in 4.76.0:
-  `test_ghost_gk_orientation.py` and `test_action_ltr_mirror_invariance.py` declared
-  `speed_source="native"` with no `vx`/`vy`, so the model ran on 5-of-26 imputed features. Worth a
-  sweep for the same shape elsewhere: a fixture that claims velocity and supplies none is now a
-  loud failure for ghost, but silent for every other velocity consumer.
-- **⚠ Cross-session: `render_sb360_matrix.py` must be EXEMPTED, not enrolled, when the
-  `ARTIFACT_DRIVERS` completeness gate lands.** The planned derivation rule ("a `scripts/*.py` with
-  `--out` that writes a `.json`/`.md` beneath it") matches it, but the guard is deliberately absent
-  and the reason is in its module docstring: it reads a COMMITTED registry and renders a document
-  deterministically — no corpus pass, no external data, nothing to misattribute (the ADR-037 harm).
-  Enrolling it would make the report unrenderable during exactly the editing session that produces
-  it. It needs an `_EXEMPT`-with-reason entry in the ADR-050 mould, not a `require_clean_tree` call.
-  `build_sb360_coverage.py` IS enrolled and DOES take the guard — it measures real match data.
-
 ### Blocked or Deferred
 
 - **Missing ball-touch detection to enrich event↔frame sync (candidate future enhancement; anchors on

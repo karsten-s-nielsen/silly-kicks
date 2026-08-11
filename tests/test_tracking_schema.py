@@ -63,6 +63,63 @@ def test_gradientsports_variant_uses_nullable_int64_identifiers():
     assert GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS["game_id"] == "int64"
 
 
+def test_the_base_id_dtypes_can_actually_hold_the_ball_rows_NA():
+    """A schema constant no producer can satisfy is a DEFAULT, not a contract.
+
+    Every frame set carries a ball row, which belongs to no team and holds no player, so
+    ``player_id``/``team_id`` are NA on it BY CONSTRUCTION. numpy ``int64`` cannot represent NA, so
+    the base declaration raised ``IntCastingNaNError`` on every snapshot: ADR-055 measured exactly
+    that and dropped its planned dtype pin as *unimplementable*, treating the failure as a property
+    of the pin rather than of the declaration it was pinning to.
+
+    It was the declaration. All five provider variants already overrode these two columns -- four
+    to ``object``, Gradient Sports to ``Int64`` with a docstring that says "allows NaN on ball
+    rows" -- so the base was satisfied by nothing and described one producer's happy path.
+    """
+    import pandas as pd
+
+    ball_row_is_na = pd.DataFrame({"player_id": [7, pd.NA], "team_id": [1, pd.NA]})
+    for col in ("player_id", "team_id"):
+        # Must not raise. The assertion IS the cast. Routed through `pandas_dtype` because the
+        # schema stores dtypes as `str` and pandas-stubs' `astype` overloads take literals.
+        declared = pd.api.types.pandas_dtype(TRACKING_FRAMES_COLUMNS[col])
+        cast = ball_row_is_na[col].astype(declared)
+        assert cast.isna().iloc[-1], (
+            f"{col} declared {TRACKING_FRAMES_COLUMNS[col]!r} silently turned the ball row's "
+            f"absent id into a VALUE -- ADR-027 records a non-NA sentinel as a crash source in "
+            f"downstream opponent guards, which is worse than the raise it replaced"
+        )
+
+
+def test_every_provider_variant_declares_id_dtypes_that_hold_NA():
+    """The same requirement, across the whole declared surface -- complete by enumeration.
+
+    Not a restatement of the test above: that one pins the BASE, this one pins that no variant
+    reintroduces a non-nullable id. A future provider added with ``int64`` ids fails here.
+    """
+    import pandas as pd
+
+    from silly_kicks.tracking import schema as S
+
+    variants = {
+        name: value
+        for name, value in vars(S).items()
+        if name.endswith("_TRACKING_FRAMES_COLUMNS") or name == "TRACKING_FRAMES_COLUMNS"
+    }
+    assert len(variants) >= 6, f"variant discovery found only {sorted(variants)}"
+
+    for name, columns in sorted(variants.items()):
+        for col in ("player_id", "team_id"):
+            probe = pd.Series([1, pd.NA])
+            try:
+                probe.astype(columns[col])
+            except (ValueError, TypeError) as exc:
+                raise AssertionError(
+                    f"{name}[{col!r}] is {columns[col]!r}, which cannot hold the ball row's NA: "
+                    f"{type(exc).__name__}. Use a nullable dtype (Int64) or object."
+                ) from exc
+
+
 def test_tracking_constraints_keys_subset_of_columns():
     assert set(TRACKING_CONSTRAINTS) <= set(TRACKING_FRAMES_COLUMNS)
 

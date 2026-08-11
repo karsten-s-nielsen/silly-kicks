@@ -21,7 +21,12 @@ from tests.sb360._registry import SB360_ENTRIES, iter_verdicts
 #: (axis, roster). Velocity holds roster fixed; visibility varies it at fixed kinematics. Both
 #: visibility rosters are swept because a feature can survive a missing outfielder and collapse
 #: on a missing keeper -- which is why each roster has its own verdict slot.
-_AXES = [("velocity", "full"), ("visibility", "gk_absent"), ("visibility", "defender_absent")]
+_AXES = [
+    ("velocity", "full"),
+    ("visibility", "gk_absent"),
+    ("visibility", "defender_absent"),
+    ("visibility", "gk_one_end"),
+]
 
 
 @pytest.mark.slow

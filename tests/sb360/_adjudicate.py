@@ -91,6 +91,23 @@ R = {
         "than the velocity-informed one, but a coherent quantity rather than an invented one. "
         "A consumer should know the value is positional-only; it is not a fabrication.",
     ),
+    # The honest FALLBACK. Reached when the isolation probe could not attribute the change to a
+    # single cause and the module is not one whose semantics a specific rule above describes.
+    #
+    # It exists because the previous fallback was `positional_pc` -- so any module that was not
+    # pitch-control-derived and whose cause was not exactly `frame_count` had PITCH CONTROL
+    # semantics asserted about it. Measured: `add_elastic_sync.elastic_confidence` was adjudicated
+    # with a rationale about "pitch control evaluated at zero velocity", a quantity that module does
+    # not compute. A rationale is the part of a verdict a human is asked to ARGUE WITH, so one that
+    # describes the wrong mechanism is worse than a vaguer one that is true.
+    "mixed_cause": (
+        "differs_by_design",
+        "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they "
+        "differ in BOTH velocity availability and temporal support, so the isolation probe could "
+        "not attribute the change to one of them. The value is honest on each leg; what a consumer "
+        "must not do is compare a freeze-frame number against a tracking number as though they "
+        "were the same measurement.",
+    ),
     "ood_model": (
         "silent_degrade",
         "A FITTED model silently IMPUTING the five velocity features it was trained on "
@@ -127,7 +144,9 @@ def classify(fn: str, col: str, roster: str, obs: str, cause: str) -> tuple[str,
         return R["window"]
     if fn in PITCH_CONTROL_DERIVED:
         return R["positional_pc"]
-    return R["window"] if cause == "frame_count" else R["positional_pc"]
+    # NOT `positional_pc`. Reaching here means the module is not pitch-control-derived, so claiming
+    # "pitch control at zero velocity" about it states a mechanism it does not have.
+    return R["mixed_cause"]
 
 
 LINE = re.compile(
@@ -212,6 +231,21 @@ def main() -> None:
                 roster = "gk_absent"
             elif '"defender_absent": {' in line:
                 roster = "defender_absent"
+            elif '"gk_one_end": {' in line:
+                # This branch was MISSING when the roster was added, so `roster` simply CARRIED
+                # OVER as "defender_absent" through the whole gk_one_end block.
+                #
+                # Behaviour-neutral today, because `classify` branches only on
+                # `roster == "gk_absent"` and neither the stale value nor the correct one equals
+                # it. VERIFIED BY EXECUTION, not by reading: a full regenerate + adjudicate with
+                # this branch in place re-classified all 127 verdicts and reproduced the entries
+                # BYTE-IDENTICALLY. (Re-running `_adjudicate` alone proves nothing here -- it
+                # rewrites only lines still marked "TODO", so on an already-adjudicated tree it
+                # fills 0 verdicts and never reaches this code at all.)
+                #
+                # Fixed anyway: the next roster-sensitive rule would have misfired silently, and a
+                # parser that tracks two of three rosters is a trap, not a shortcut.
+                roster = "gk_one_end"
             elif line.strip() == "velocity={":
                 roster = "full"
 

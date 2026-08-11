@@ -168,9 +168,10 @@ def snapshot_to_tracking_frames(
         }
     )
 
-    # --- combine and enforce column order ---
+    # --- combine, enforce column order, and enforce the declared DTYPES ---
     frames = pd.concat([player_frames, ball_frames], ignore_index=True)
     frames = frames[list(TRACKING_FRAMES_COLUMNS.keys())]
+    frames = _cast_to_declared_schema(frames)
 
     # --- links ---
     links = pd.DataFrame(
@@ -184,6 +185,41 @@ def snapshot_to_tracking_frames(
     )
 
     return frames, links
+
+
+#: Columns whose dtype is decided by the CALLER's id domain rather than by this port. Everything
+#: else is the same in every declared variant, so it is cast to the base unconditionally.
+_ID_COLUMNS = ("game_id", "player_id", "team_id")
+
+
+def _cast_to_declared_schema(frames: pd.DataFrame) -> pd.DataFrame:
+    """Emit the schema this port claims to emit, rather than whatever ``concat`` inferred.
+
+    Selecting the 20 columns without applying their dtypes left ``player_id``/``team_id`` as
+    whatever the concat produced -- and because the synthesized ball row is NA in both, a numpy-int
+    source was upcast to ``float64``, i.e. ids became FLOATS. That is the shape ADR-019 records as
+    rendering ``"366.0"`` against a clean ``"366"``. It was also resolver-dependent: a nullable
+    ``Int64`` source stayed ``Int64`` on pandas 2.3.3 and was promoted to ``Float64`` on 3.0.5, so
+    one input had two answers depending on the leg.
+
+    This was unimplementable until ADR-058: the base declared a non-nullable ``int64`` for the two
+    columns that are NA on the ball row BY CONSTRUCTION, so the cast raised on every snapshot. With
+    the base at nullable ``Int64`` the port can satisfy its own declaration.
+
+    **Identifier columns follow the caller's domain, using the two declarations ADR-058 already
+    established -- no seventh variant.** Genuinely-string ids (the kloppy family's ``object``) are
+    left alone; numeric ids take the base. Deciding per COLUMN rather than per frame is deliberate:
+    a caller can legitimately pair a numeric ``game_id`` with string ``team_id``s, and picking one
+    variant for the whole frame would corrupt one or the other.
+    """
+    for col, declared in TRACKING_FRAMES_COLUMNS.items():
+        if col in _ID_COLUMNS and frames[col].dtype == object:
+            continue  # genuine string ids -- KLOPPY_TRACKING_FRAMES_COLUMNS declares `object`
+        if str(frames[col].dtype) != declared:
+            # Routed through `pandas_dtype` because the schema stores dtypes as `str` and
+            # pandas-stubs types `astype`'s parameter as a literal union, not `str`.
+            frames[col] = frames[col].astype(pd.api.types.pandas_dtype(declared))
+    return frames
 
 
 def _empty_frames() -> pd.DataFrame:

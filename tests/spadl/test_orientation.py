@@ -535,3 +535,77 @@ class TestValidateInputConvention:
                 declared=ABSOLUTE_FRAME_HOME_RIGHT,
                 x_max=100,  # match_col missing
             )
+
+
+# ---------------------------------------------------------------------------
+# Rule 1 must require DISCRIMINATING evidence (Cycle B item 23 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _shot_rows(match, team, period, mean_x, n):
+    return [
+        {"game_id": match, "team_id": team, "period_id": period, "start_x": mean_x, "is_shot": True} for _ in range(n)
+    ]
+
+
+def test_rule1_does_not_fire_when_the_reliable_set_cannot_discriminate():
+    """The measured Gradient Sports misfire (match 10502), reconstructed.
+
+    Raw ball_x + 52.5, shots only: team 51 `P1 13.3 LOW -> P2 94.0 HIGH`, team 366
+    `P1 95.8 HIGH -> P2 9.8 LOW`. Both teams shoot at opposite ends within a period and SWAP
+    between periods -- textbook PER_PERIOD_ABSOLUTE, which is what `gradientsports.py` declares.
+
+    The `>= min_shots_per_group_medium` filter drops both LOW groups (n=3), leaving an all-HIGH
+    survivor set, and rule 1 concluded POSSESSION_PERSPECTIVE with confidence="medium" -- a
+    CONFIDENTLY WRONG verdict on data whose true convention is unambiguous.
+
+    The survivors are team 51 in P2 and team 366 in P1: **two distinct teams**, which is why a
+    ">= 2 distinct teams" guard does NOT fix this and was measured not to. Under
+    PER_PERIOD_ABSOLUTE those two observations are perfectly consistent -- each team swaps, and the
+    pair that would reveal it is exactly the pair the filter removed. The evidence does not
+    discriminate, so the rule must not conclude from it.
+    """
+    events = pd.DataFrame(
+        _shot_rows(10502, 51, 1, 13.3, 3)  # LOW  -- dropped (n=3 < 5)
+        + _shot_rows(10502, 51, 2, 94.0, 8)  # HIGH -- survives
+        + _shot_rows(10502, 366, 1, 95.8, 7)  # HIGH -- survives
+        + _shot_rows(10502, 366, 2, 9.8, 3)  # LOW  -- dropped (n=3 < 5)
+    )
+
+    result = detect_input_convention(events, match_col="game_id", x_max=105.0, is_shot_col="is_shot")
+
+    assert result.convention is not InputConvention.POSSESSION_PERSPECTIVE, (
+        f"rule 1 fired on evidence that cannot distinguish possession_perspective from "
+        f"per_period_absolute: {result.diagnostics}. The two surviving groups are different teams "
+        f"in DIFFERENT periods, which per_period_absolute produces just as readily."
+    )
+    assert result.convention is None, (
+        f"expected a deferral (ambiguous), got {result.convention}. `validate_input_convention` "
+        f"treats None as 'defer to the caller's declared convention', which is the safe answer "
+        f"when the sample cannot discriminate."
+    )
+
+
+def test_rule1_still_fires_when_a_team_spans_two_periods():
+    """NON-VACUITY, clause (b). One team reliable in BOTH periods and high in both is impossible
+    under per_period_absolute (it would swap), so the evidence discriminates and rule 1 must fire.
+
+    Without this, blocking rule 1 unconditionally would satisfy the test above.
+    """
+    events = pd.DataFrame(
+        _shot_rows(1, "A", 1, 95.0, 6) + _shot_rows(1, "A", 2, 93.0, 6) + _shot_rows(1, "B", 1, 96.0, 6)
+    )
+
+    result = detect_input_convention(events, match_col="game_id", x_max=105.0, is_shot_col="is_shot")
+
+    assert result.convention is InputConvention.POSSESSION_PERSPECTIVE, result.diagnostics
+
+
+def test_rule1_still_fires_when_two_teams_share_a_period():
+    """NON-VACUITY, clause (a). Two teams reliable in the SAME period, both high, is impossible
+    under per_period_absolute -- within one period they attack OPPOSITE ends."""
+    events = pd.DataFrame(_shot_rows(1, "A", 1, 95.0, 6) + _shot_rows(1, "B", 1, 96.0, 6))
+
+    result = detect_input_convention(events, match_col="game_id", x_max=105.0, is_shot_col="is_shot")
+
+    assert result.convention is InputConvention.POSSESSION_PERSPECTIVE, result.diagnostics

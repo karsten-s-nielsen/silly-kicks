@@ -78,6 +78,19 @@ _entry(
                 ),
             ),
         },
+        "gk_one_end": {
+            "ghost_gk_x": AxisVerdict("all_nan", "honest_nan"),
+            "ghost_gk_y": AxisVerdict("all_nan", "honest_nan"),
+            "ghost_gk_source": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                    "designed das_source to do exactly this. [measured cause=velocity]"
+                ),
+            ),
+        },
     },
     applicability={
         "ghost_gk_x": "no_support",
@@ -103,6 +116,9 @@ _entry(
             "gk_completion": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
+            "gk_completion": AxisVerdict("identical", "works"),
+        },
+        "gk_one_end": {
             "gk_completion": AxisVerdict("identical", "works"),
         },
     },
@@ -182,6 +198,12 @@ _entry(
             "gk_closing_time_min_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
             "gk_closing_time_mean_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
         },
+        "gk_one_end": {
+            "gk_pitch_control_share_weighted": AxisVerdict("all_nan", "honest_nan"),
+            "gk_reachable_area_m2": AxisVerdict("all_nan", "honest_nan"),
+            "gk_closing_time_min_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
+            "gk_closing_time_mean_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
+        },
     },
     applicability={
         "gk_pitch_control_share_weighted": "no_support",
@@ -250,6 +272,27 @@ _entry(
             "defending_gk_player_id": AxisVerdict("identical", "works"),
             "pre_shot_gk_angle_to_shot_trajectory": AxisVerdict("identical", "works"),
             "pre_shot_gk_angle_off_goal_line": AxisVerdict("identical", "works"),
+        },
+        "gk_one_end": {
+            "defending_gk_player_id": AxisVerdict("identical", "works"),
+            "pre_shot_gk_angle_to_shot_trajectory": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                ),
+            ),
+            "pre_shot_gk_angle_off_goal_line": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                ),
+            ),
         },
     },
     applicability={
@@ -345,6 +388,45 @@ _entry(
             "pre_shot_gk_y": AxisVerdict("identical", "works"),
             "pre_shot_gk_distance_to_goal": AxisVerdict("identical", "works"),
             "pre_shot_gk_distance_to_shot": AxisVerdict("identical", "works"),
+        },
+        "gk_one_end": {
+            "defending_gk_player_id": AxisVerdict("identical", "works"),
+            "pre_shot_gk_x": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                ),
+            ),
+            "pre_shot_gk_y": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                ),
+            ),
+            "pre_shot_gk_distance_to_goal": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                ),
+            ),
+            "pre_shot_gk_distance_to_shot": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                ),
+            ),
         },
     },
     applicability={
@@ -467,6 +549,35 @@ _entry(
             "shot_fit_end_reason": AxisVerdict("all_nan", "honest_nan"),
             "shot_z_profile": AxisVerdict("all_nan", "honest_nan"),
         },
+        "gk_one_end": {
+            "shot_crossing_y": AxisVerdict("all_nan", "honest_nan"),
+            "shot_crossing_z": AxisVerdict("all_nan", "honest_nan"),
+            "shot_speed": AxisVerdict("all_nan", "honest_nan"),
+            "shot_time_to_goal_line": AxisVerdict("all_nan", "honest_nan"),
+            "shot_on_target_derived": AxisVerdict("all_nan", "honest_nan"),
+            "shot_crossing_source": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                    "designed das_source to do exactly this. [measured cause=frame_count]"
+                ),
+            ),
+            "shot_crossing_confidence": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                    "designed das_source to do exactly this. [measured cause=frame_count]"
+                ),
+            ),
+            "shot_fit_n_frames": AxisVerdict("all_nan", "honest_nan"),
+            "shot_fit_rmse": AxisVerdict("all_nan", "honest_nan"),
+            "shot_fit_end_reason": AxisVerdict("all_nan", "honest_nan"),
+            "shot_z_profile": AxisVerdict("all_nan", "honest_nan"),
+        },
     },
     applicability={
         "shot_crossing_y": "no_support",
@@ -499,14 +610,59 @@ _entry(
 _entry(
     "add_xcross_attempt",
     C.generic(T.add_xcross_attempt),
-    columns=(),
-    velocity={},
-    visibility={
-        "gk_absent": {},
-        "defender_absent": {},
+    columns=("xcross_attempt",),
+    velocity={
+        "xcross_attempt": AxisVerdict(
+            "no_signal",
+            "not_exercised",
+            rationale=(
+                "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                "occurrence context, or blocking defender to score). A fixture inadequacy, not a library property "
+                "-- widening the fixture would move it. [measured cause=velocity+frame_count]"
+            ),
+        ),
     },
-    applicability={},
-    applicability_deltas={},
+    visibility={
+        "gk_absent": {
+            "xcross_attempt": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                ),
+            ),
+        },
+        "defender_absent": {
+            "xcross_attempt": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                ),
+            ),
+        },
+        "gk_one_end": {
+            "xcross_attempt": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                ),
+            ),
+        },
+    },
+    applicability={
+        "xcross_attempt": "no_support",
+    },
+    applicability_deltas={
+        "xcross_attempt": {"extreme": 0.0, "near": 0.0},
+    },
 )
 
 _entry(
@@ -537,6 +693,17 @@ _entry(
             ),
         },
         "defender_absent": {
+            "xshot_occurrence": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                ),
+            ),
+        },
+        "gk_one_end": {
             "xshot_occurrence": AxisVerdict(
                 "no_signal",
                 "not_exercised",
@@ -615,6 +782,24 @@ _entry(
             "xt_gk_native_goalkick_out_of_region": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
+            "xt_gk_base": AxisVerdict("identical", "works"),
+            "xt_gk_pev": AxisVerdict("identical", "works"),
+            "xt_gk_rav": AxisVerdict("identical", "works"),
+            "xt_gk_dzv": AxisVerdict("identical", "works"),
+            "xt_gk_pressure": AxisVerdict("identical", "works"),
+            "xt_gk": AxisVerdict("identical", "works"),
+            "xt_gk_origin_x": AxisVerdict("identical", "works"),
+            "xt_gk_origin_y": AxisVerdict("identical", "works"),
+            "xt_gk_dest_x": AxisVerdict("identical", "works"),
+            "xt_gk_dest_y": AxisVerdict("identical", "works"),
+            "xt_gk_origin_source": AxisVerdict("identical", "works"),
+            "xt_gk_dest_source": AxisVerdict("identical", "works"),
+            "xt_gk_origin_confidence": AxisVerdict("identical", "works"),
+            "xt_gk_completion_variant": AxisVerdict("identical", "works"),
+            "xt_gk_completion_source": AxisVerdict("identical", "works"),
+            "xt_gk_native_goalkick_out_of_region": AxisVerdict("identical", "works"),
+        },
+        "gk_one_end": {
             "xt_gk_base": AxisVerdict("identical", "works"),
             "xt_gk_pev": AxisVerdict("identical", "works"),
             "xt_gk_rav": AxisVerdict("identical", "works"),

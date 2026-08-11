@@ -23,6 +23,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from silly_kicks.id_compat import canonical_id, canonical_id_series
+
 
 @dataclass(frozen=True)
 class ElasticSyncParams:
@@ -178,14 +180,21 @@ def _build_player_ball_distance_lookup(
     dist[ball_missing] = np.inf
 
     # Vectorized key/value build (Phase 0b) — avoids per-row .iloc scalar access.
-    # Match the prior loop's key types exactly: game_id/period_id as np.int64 (raw .iloc),
-    # frame_id as Python int (int(...)), player_id as Python str (str(...)).
+    # game_id/period_id as np.int64 (raw .iloc), frame_id as Python int (int(...)).
+    #
+    # player_id goes through `canonical_id_series`, NOT `astype(str)` (ADR-019). Every frame set
+    # carries a ball row whose player_id is NA, which upcasts an integer id column to float — so
+    # `astype(str)` rendered "10.0" here while the query side (`_align_actions_to_frames`) renders
+    # the action's integer id as "10". Measured: EVERY lookup missed, `dist` fell to the caller's
+    # `inf` default, `proximity_score` to 0, and `elastic_confidence` collapsed to a constant
+    # `accel_weight / (accel_weight + proximity_weight)` = 0.6 on every row. A miss is
+    # indistinguishable from "infinitely far from the ball", so nothing failed loudly.
     keys = list(
         zip(
             merged["game_id"].to_numpy(),
             merged["period_id"].to_numpy(),
             merged["frame_id"].astype(int).tolist(),
-            merged["player_id"].astype(str).tolist(),
+            canonical_id_series(merged["player_id"]).tolist(),
             strict=True,
         )
     )
@@ -315,7 +324,11 @@ def align_events_to_frames(
         action_time = float(action_row["time_seconds"])
         period_id = action_row["period_id"]
         game_id = action_row["game_id"]
-        player_id = str(action_row["player_id"])
+        # `canonical_id`, not `str(...)` (ADR-019): this is the QUERY side of the distance lookup
+        # built above, and the two renderings must agree. `iterrows()` is itself an upcast source --
+        # it materializes each row as a Series of the frame's common dtype -- so `str()` here can
+        # produce "10.0" for an integer id even when the column is clean.
+        player_id = canonical_id(action_row["player_id"])
 
         fit = frame_time_fits.get((game_id, period_id))
         if fit is not None:

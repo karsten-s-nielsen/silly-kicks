@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import silly_kicks.tracking as _T
 
 #: Roster variants the visibility axis sweeps. Each gets its OWN verdict slot.
-VISIBILITY_ROSTERS: tuple[str, ...] = ("gk_absent", "defender_absent")
+VISIBILITY_ROSTERS: tuple[str, ...] = ("gk_absent", "defender_absent", "gk_one_end")
 
 #: Linkage-provenance columns, merged in by 11 of the 33 aggregators (the idempotent-merge
 #: contract in CLAUDE.md). They are NOT feature columns and carry no verdict.
@@ -70,6 +70,13 @@ def _adapters() -> dict:
         "add_sync_score": C.sync_score,
         # A jersey/roster helper over different inputs, returning a tuple of frames.
         "add_gradientsports_player_ids": C.gradientsports_player_ids,
+        # Takes NO frames and REQUIRES `visible_area`, so the generic adapter raises TypeError.
+        # The adapter was written in 4.77.0 and NOT registered here -- a defect only a
+        # REGENERATION surfaces, because the committed verdicts stayed correct while the tool that
+        # rebuilds them silently produced `cols = ()` (the probe at _regenerate.py:122 swallows the
+        # TypeError) and emptied every roster block. Caught by pinning the `gk_absent` slice across
+        # a regeneration: 165 -> 163 verdicts, the two `add_visible_area_coverage` columns gone.
+        "add_visible_area_coverage": C.visible_area_coverage,
     }
 
 
@@ -147,13 +154,52 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: documented same-end guard, and the aggregator emits NaN. Both legs go NaN for the same
 #: roster-driven reason, so no informative row survives.
 #:
-#: It is a real widening of the audit's blind spot and is recorded as such: before the re-key
+#: It was a real widening of the audit's blind spot and is recorded as such: before the re-key
 #: these five columns produced numbers on a keeper-less freeze-frame, because direction came
 #: from ``home_team_id`` rather than from the frames. Those numbers were not evidence. The
-#: honest consequence is that ``add_cover_shadows`` is keeper-dependent on SB360 input, and the
-#: fixture cannot exercise it without a keeper -- widening the fixture (a keeper at ONE end
-#: would suffice to break the degeneracy) is what would reclaim these five.
-NOT_EXERCISED_BUDGET = 31
+#: honest consequence is that ``add_cover_shadows`` is keeper-dependent on SB360 input, and
+#: ``gk_absent`` cannot exercise it. **This has since been RESOLVED by ADDING a roster rather
+#: than widening this one**: ``gk_one_end`` keeps ONE keeper visible, which is exactly the
+#: "keeper at ONE end" this note predicted would break the degeneracy, and all five columns are
+#: reclaimed there. ``gk_absent`` is deliberately left alone -- it is a real visibility axis and
+#: the only case exercising the both-absent refusal path, so widening it would have traded one
+#: coverage loss for another.
+#:
+#: RAISED 31 -> 41 by the `gk_one_end` roster (ADR-055 follow-up). The budget counts
+#: (entry, axis, roster, column) tuples, so a THIRD roster can only ADD to it -- a rise is
+#: structural here, not a regression, and the reclaim this cycle delivers is asserted separately
+#: by `test_gk_one_end_reclaims_the_cover_shadow_columns`. All 10 new tuples are under
+#: `gk_one_end` and enumerate to three causes:
+#:
+#:   6  add_pre_shot_gk_{position,angle}.* geometry -- the roster drops ONE keeper, so the
+#:      shot-facing GK geometry has no informative rows for the actions whose defending keeper
+#:      went off-frame. Column-specific, not blanket: `defending_gk_player_id` still observes
+#:      `identical`, so the aggregator runs and only the geometry loses its comparison.
+#:   3  add_press_commitment.{press_commitment,press_commitment_closing_speed} and
+#:      add_xshot_occurrence.xshot_occurrence -- `no_signal` on ALL THREE rosters. Pre-existing
+#:      and unrelated to this roster; they are the same members `columns_exercised_on_no_roster`
+#:      already reports.
+#:   1  add_cover_shadows.max_single_defender_player_id -- pre-existing (the fixture has no
+#:      pressing sequence), and deliberately NOT among the five columns this roster reclaims.
+#:
+#: RAISED 41 -> 45 by REPAIRING `add_xcross_attempt`, and this rise is the opposite of a
+#: regression: the 4 new tuples are coverage that was ALREADY missing and is now VISIBLE.
+#:
+#: That aggregator used to raise a bare `KeyError: 'vx'` on the freeze-frame probe -- it read
+#: `frames["vx"]` unguarded on input that DECLARES `speed_source="unavailable"` -- and
+#: `_regenerate.py`'s handler swallowed the crash into `cols = ()`. So it was the only entry in
+#: this registry with NO columns and FOUR empty verdict blocks, i.e. ADR-053's "every add_* carries
+#: an SB360 freeze-frame verdict" was quietly untrue of it. It now honours the ADR-054 velocity
+#: contract (declared-unavailable -> NaN; undeclared-missing -> an informative raise), so it probes
+#: cleanly and carries real verdicts.
+#:
+#:   4  add_xcross_attempt.xcross_attempt -- `no_signal` on ALL FOUR axes (velocity/full plus the
+#:      three visibility rosters). BOTH legs are NaN, and not because of the repair: the
+#:      velocity-bearing leg scores NaN too, because the fixture never produces an in-possession
+#:      wide-area cross context for the model to score. A fixture inadequacy, now recorded instead
+#:      of hidden behind an empty block. It is consequently a NEW member of
+#:      `columns_exercised_on_no_roster` -- the only one this cycle adds.
+NOT_EXERCISED_BUDGET = 45
 
 
 def _entry(
@@ -195,6 +241,33 @@ def iter_verdicts(entry: Sb360Entry) -> Iterator[tuple[str, str, str, AxisVerdic
     for roster, cols in entry.visibility.items():
         for col, v in cols.items():
             yield ("visibility", roster, col, v)
+
+
+def columns_exercised_on_no_roster() -> set[tuple[str, str]]:
+    """``(entry, column)`` pairs adjudicated ``not_exercised`` under EVERY visibility roster.
+
+    A column here is exercised NOWHERE in the visibility sweep, whatever the per-roster budget
+    says. Columns absent from a roster's dict count as unexercised for that roster -- an absent
+    verdict is not evidence of coverage.
+
+    SCOPE, because two numbers over one registry WILL be compared by someone: this walks the
+    VISIBILITY rosters only and ignores the velocity axis, while ``NOT_EXERCISED_BUDGET`` counts
+    every ``(entry, axis, roster, column)`` tuple INCLUDING velocity. They are not comparable and
+    neither is a subset of the other.
+
+    This is a standing regression pin, NOT a cycle deliverable. Adding a roster cannot shrink it
+    for a column already exercised on a sibling roster -- "unexercised everywhere" is a strictly
+    stronger predicate than "unexercised on the roster in question". The ``gk_one_end`` cycle
+    (ADR-055 follow-up) deliberately registered ZERO change here while reclaiming five columns
+    under its own roster; the reclaim is asserted separately.
+    """
+    dark: set[tuple[str, str]] = set()
+    for name, entry in SB360_ENTRIES.items():
+        for col in entry.columns:
+            verdicts = [entry.visibility.get(r, {}).get(col) for r in VISIBILITY_ROSTERS]
+            if all(v is None or v.adjudication == "not_exercised" for v in verdicts):
+                dark.add((name, col))
+    return dark
 
 
 def public_add_star() -> set[str]:
