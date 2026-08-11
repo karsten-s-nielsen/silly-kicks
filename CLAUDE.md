@@ -91,7 +91,7 @@ narrative deliberately lives elsewhere; grep these rather than re-adding paragra
 | Question | Source |
 |---|---|
 | What shipped in a release, and what it broke | `CHANGELOG.md` (every version, keyed by `PR-Snnn`) |
-| Why a design is the way it is | `docs/superpowers/adrs/` (ADR-001..ADR-052 plus `ADR-TEMPLATE.md`, referenced inline throughout) |
+| Why a design is the way it is | `docs/superpowers/adrs/` (ADR-001..ADR-059 plus `ADR-TEMPLATE.md`, referenced inline throughout) |
 | What is planned or blocked | `TODO.md` |
 | The measurement behind a claim | `docs/research/<topic>/` |
 | Specs and plans | `docs/superpowers/specs/`, `docs/superpowers/plans/` |

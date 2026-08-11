@@ -145,8 +145,22 @@ mis-declared data.
 **Deliberately NOT fixed here: `detect_input_convention` rule 1 misfires on sparse groups.** Rule 1
 tests `(reliable['side'] == 'high').all()` on groups already filtered to `n >= 5`, so the filter
 drops the counter-examples and on a sparse match the rule fires on effectively one team's data
-(2 of 36 GS matches). The fix precedent sits four lines below in the same function — TF-22's guard on
-the ABSOLUTE branch. It is out of this cycle's charter, touches 6 providers and 23 test call sites,
+(2 of 36 GS matches).
+
+> **CORRECTION (ADR-059, 4.79.0): the diagnosis in the sentence above is WRONG, and the fix it
+> implies would not have worked.** The symptom is not "effectively ONE team's data" — measured, the
+> survivor set spans TWO teams (51 in P2, 366 in P1), so the `>= 2 distinct teams` guard the On-Deck
+> row prescribed permits the misfire unchanged. It would have shipped, reviewed clean against its own
+> rationale, and left the defect live. The real failure is that under `PER_PERIOD_ABSOLUTE` the
+> surviving observations are exactly what you would expect — **the evidence does not DISCRIMINATE
+> between the hypotheses**, because the observations that would reveal the swap are the ones the
+> `n >= 5` filter removed. ADR-059 requires a configuration an absolute convention could not have
+> produced, and defers otherwise. Left in place as the historical record: a plausible diagnosis,
+> stated with a real measurement attached, that a second measurement overturned.
+
+The fix precedent sits four lines below in the same function — TF-22's guard on
+the ABSOLUTE branch (that part HELD: it is ADR-059's clause (b), now single-sourced as
+`_a_team_spans_periods`). It is out of this cycle's charter, touches 6 providers and 23 test call sites,
 and risks silently downgrading StatsBomb/SkillCorner to ambiguous — a coverage loss that shows up as
 a gate quietly not checking rather than as a red test. Registered as the top On-Deck item with its
 full measurement.
