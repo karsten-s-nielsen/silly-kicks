@@ -1,6 +1,6 @@
 # Covariate invariance under the ADR-051 geometry change
 
-status: **ok**  |  run_commit `0343eddca6ad`  |  dirty False  |  1360 frame groups
+status: **ok**  |  run_commit `c487c4935057`  |  dirty False  |  1360 frame groups
 
 baseline geometry_version `goal-relative-1` -> current `goal-relative-2`
 

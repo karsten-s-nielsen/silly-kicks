@@ -190,6 +190,12 @@ of this spec and is recorded as such (§11.4). Items 16–20 were added in rev 2
 23. **Repair the GS input-convention guard** — its enforcement tier and its test fixture both
     point away from the only data that triggers it (§5.6)
 
+24. **Pin the C4 aggregator count** — the subpackage list is gated in both directions, the
+    count is unpinned prose (§5.7)
+
+25. **`from_hub` cannot pin a revision, so every retrain is a silent breaking change for Hub
+    consumers** — and publication is a manual step the mechanism cannot enforce (§5.8)
+
 **C — registered, out of scope (see §8)**
 14. GS corpus taxonomy — **but see §8, this is no longer cleanly deferrable**
 15. Fold-count ship rule with no magnitude floor
@@ -208,7 +214,7 @@ mechanism's first real test. With B last, the hand-tracing that produced this sp
 | | owns | explicitly does not own |
 |---|---|---|
 | PR 5 | items 1, 2, **3**, 7, 8, 11, 12, 13, **16**, **17**, **18**, **19**, **20** | the contract mechanism; the registry completeness gate; any aggregator re-key |
-| Cycle B | items 9, 10, **23**; the invalidation report; **the `tf19_signoff_power` rebuild policy (§3.1)** | re-running anything PR 6/7 will invalidate |
+| Cycle B | items 9, 10, **23**, **24**, **25**; the invalidation report; **the `tf19_signoff_power` rebuild policy (§3.1)** | re-running anything PR 6/7 will invalidate |
 | PR 6 | item 4 | ghost weights |
 | PR 7 | item 5 | calibration defaults |
 | TF-24 | item 6 | library default constants (ADR-009 standing rule) |
@@ -457,6 +463,73 @@ the guess in the text was half wrong (see the group-count finding above).
 
 **Scope note.** This widens Cycle B from two items to three. Coherent widening -- but widening, and
 recorded as such rather than absorbed.
+
+**5.7 Pin the C4 aggregator count (item 24).** `docs/c4/architecture.dsl:23` describes the tracking
+container as having **"32 action-coupled aggregators"**. Measured: **zero** tests reference that
+string or the phrase `action-coupled aggregators` ✅, so the next aggregator to land makes the
+architecture model quietly wrong and nothing says so.
+
+**This is the same defect shape as §5.4, one level out.** The C4 gates are otherwise exemplary and
+should be read as the model to copy, not the thing to fix: `test_every_shipped_subpackage_has_a_c4_container`
+derives the shipped set from the package tree and carries its own meta-assertion (`len(shipped) >= 8`,
+so a broken discovery cannot pass vacuously), and `test_unmodelled_entries_are_real_subpackages`
+burns down exemptions naming packages that no longer exist. Both directions are pinned. The
+**count** simply was never part of that contract.
+
+**Why it belongs in this cycle and not in a tidy-up:** it is the same failure the cycle exists to
+remove -- a number a human maintains, adjacent to a mechanism that could derive it. The fix is small:
+derive the count from `silly_kicks.tracking.__all__` and assert the DSL string matches. The care is
+in the definition, and it is not obvious. Measured on 4.74.0 there are **33** registered `add_*` and
+the DSL says **32**; the difference is `add_gradientsports_player_ids`, a jersey helper that is not
+action-coupled. So the gate must encode which of the two quantities it pins, and CLAUDE.md's ADR-051
+bullet says "all 33 registered `add_*`" for the mirror registry while the C4 bullet says a new
+**action-coupled** aggregator changes the documented count. Two legitimately different numbers, both
+correct, currently distinguished only by prose -- which is exactly how a maintainer picks the wrong
+one. **Whichever the gate pins, it must name the other and say why they differ.**
+
+**Do not "simplify" by making the DSL quote 33.** The C4 container description is about
+action-coupled aggregators specifically; changing the number to match a broader surface would make
+the sentence false in a way no test would catch, which is the failure being fixed rather than a fix.
+
+**5.8 `from_hub` revision pinning, and publication as a pipeline step (item 25).**
+
+**Measured** ✅: `from_hub(cls, repo_id=_HF_REPO_ID)` calls `snapshot_download(repo_id=repo_id)` with
+**no `revision` argument**, so it always resolves the HF repo's default branch tip. A consumer cannot
+express "the weights I was tested against."
+
+**Why this is structural rather than cosmetic.** The feature contract is fail-closed by design, so
+**every retrain invalidates every published artifact**. 4.74.0 demonstrated both directions of that
+within one cycle:
+
+* Before republishing, the *new* library refused the *old* Hub artifact -- `XCrossAttemptModel.from_hub()`
+  raised `IntegrityError` on a public path, and did so on `main` for roughly a day.
+* After republishing, the *old* library refuses the *new* Hub artifact. The model cards' version floor
+  had to be raised 4.51.0 -> 4.74.0 to say so.
+
+Both refusals are the guard working -- neither serves weights against geometry they were not fit on.
+But with no revision parameter there is exactly ONE resolvable artifact per repo at any moment, so the
+pair (library version, artifact) can only be pinned from one side. Raising a documented version floor
+is a README-grade mitigation for a load-time contract.
+
+**Two changes, and the second matters more than the first.**
+
+1. **Thread `revision` through `from_hub`** (and `from_variant`'s Hub path), defaulting to today's
+   behaviour so nothing breaks. Tag each published artifact with its silly-kicks version so the
+   revision is nameable rather than a bare SHA. HF repos are git repos, so prior artifacts are already
+   addressable by commit SHA -- this makes that reachable through the API instead of only through the
+   Hub UI.
+
+2. **Make Hub publication a gated step in the trainer's own pipeline**, subject to the same provenance
+   rules as any artifact driver, with the post-upload `from_hub` round-trip that
+   `scripts/publish_*.py` already performs as its acceptance check. Today publication is a manual
+   follow-up in a plan, which is precisely why a public path stayed broken for a day after the retrain
+   that broke it: "retrained but not published" is a reachable state that no mechanism forbids.
+   **Make it unrepresentable.** This is the same genus as items 9, 10, 23 and 24 -- a step a human is
+   trusted to remember, sitting next to a mechanism that could enforce it.
+
+**Do not "fix" this by making the contract warn instead of raise.** The fail-closed prong is what
+caught the mis-served class in the first place; loosening it to avoid the pinning problem would trade
+a real guard for a convenience and reintroduce exactly the defect ADR-040 exists to prevent.
 
 ---
 

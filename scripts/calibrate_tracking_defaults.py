@@ -304,7 +304,19 @@ def main() -> None:
         "this is the resilience that loop can have: a crashed sweep re-reads from disk instead "
         "of re-downloading the tracking corpus. Ignored for --source databricks.",
     )
+    ap.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="permit a dev run from a modified tree; the report still records dirty: true",
+    )
     args = ap.parse_args()
+
+    # ADR-037: refuse BEFORE `_load_fold` downloads the pining tracking corpus. The harness
+    # RECOMMENDS library defaults, so its manifest is cited in an apply-PR -- a recommendation
+    # nobody can trace back to a commit cannot be reproduced or audited.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    provenance = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
     fold, used_ids = _load_fold(args)
 
@@ -344,7 +356,12 @@ def main() -> None:
         stage=args.stage,
         diagnostics=getattr(objective, "diagnostics", None),
     )
-    report = {"ruthless": json.loads(render_json(result)), "calibration_manifest": manifest}
+    report = {
+        "ruthless": json.loads(render_json(result)),
+        "calibration_manifest": manifest,
+        "run_commit": provenance["commit"],
+        "run_tree_dirty": provenance["dirty"],
+    }
     with open(f"{args.report_out}.json", "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
     with open(f"{args.report_out}.md", "w", encoding="utf-8") as fh:

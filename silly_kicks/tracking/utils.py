@@ -15,6 +15,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.id_compat import (
     _as_bool,
     _raw_comparable,
@@ -1147,6 +1148,7 @@ def sync_score(
     return out
 
 
+@nan_safe_enrichment
 def add_sync_score(
     actions: pd.DataFrame,
     links: pd.DataFrame,

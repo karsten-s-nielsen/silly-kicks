@@ -541,6 +541,7 @@ def run(
     sweep: bool = False,
     z_compare: bool = False,
     debug_shots: bool = False,
+    provenance: dict | None = None,
 ) -> dict:
     from statsbombpy import sb  # type: ignore[import-not-found]  # importorskip-guarded optional dep
 
@@ -912,6 +913,11 @@ def run(
             )
         dbg.sort(key=lambda e: (e["dy_m"] is None, -(e["dy_m"] or 0.0)))
         result["debug_shots"] = dbg
+    # ADR-037: the CLI REFUSES a dirty tree (see main()); run() RECORDS what it was given. A
+    # run() that refused could not be tested without mocking git, which is why the split exists.
+    if provenance is not None:
+        result["run_commit"] = provenance["commit"]
+        result["run_tree_dirty"] = provenance["dirty"]
     Path(out_path).write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     print(
         json.dumps(
@@ -944,7 +950,18 @@ def main() -> None:
         help="per matched shot: full-resolution ball window + kernel fit internals in --out",
     )
     ap.add_argument("--tracking-limit", type=int, default=None, help="dev-smoke only; NEVER for the real run")
+    ap.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="permit a dev run from a modified tree; the artifact still records dirty: true",
+    )
     args = ap.parse_args()
+
+    # Refuse BEFORE paying for the StatsBomb pull and the tracking corpus walk.
+    from scripts._provenance import git_provenance, require_clean_tree
+
+    provenance = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
+
     run(
         args.matches,
         args.out,
@@ -953,6 +970,7 @@ def main() -> None:
         sweep=args.sweep,
         z_compare=args.z_compare,
         debug_shots=args.debug_shots,
+        provenance=provenance,
     )
 
 

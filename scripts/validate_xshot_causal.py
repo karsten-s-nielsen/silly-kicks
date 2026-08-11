@@ -39,10 +39,33 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from scripts._input_contract import declare_inputs
+
 # --- Claim-gate constants (registered; mirror validate_xcross_causal.py) -------------------
 _OVERLAP_MIN = 0.5  # min fraction of treated inside the control PS range to claim common support
 # R10 (registered): minimum CONTROL conversions for the entanglement verdict to be meaningful.
 SHOT_ARM_MIN_CONTROL_CONVERSIONS = 30
+
+
+def input_contract() -> dict:
+    """Declare WHICH SYMBOLS these numbers depend on (Cycle B).
+
+    Both causal imports are function-local by necessity, not style: `SHOT_ARM_CONFOUNDERS` and
+    `shot_arm_config` are imported inside `analyze()`, not at module scope, so a module-level
+    reference would raise NameError at call time.
+    """
+    from silly_kicks.causal import SHOT_ARM_CONFOUNDERS, shot_arm_config
+    from silly_kicks.tracking import _geometry as _geo
+
+    return declare_inputs(
+        driver="validate_xshot_causal",
+        covariates={
+            "shot_arm": SHOT_ARM_CONFOUNDERS,
+            "gk_block": shot_arm_config({}).gk_block,
+        },
+        geometry_version=_geo.GEOMETRY_VERSION,
+        extractors=("silly_kicks.tracking._xshot_occurrence",),
+    )
 
 
 def _col_means_ignoring_missing(X: np.ndarray, miss: np.ndarray) -> np.ndarray:
@@ -393,6 +416,7 @@ def analyze_shards(out: Path, providers: list[str], carrier_min: float, seed: in
         "n_shards": len(list(_generation_dir(Path(out)).glob("*.parquet"))),
         "commit_consistent": corpus["commit_consistent"],
     }
+    metrics["input_contract"] = input_contract()
     metrics["run_commit"] = prov["commit"]
     metrics["run_tree_dirty"] = prov["dirty"] or corpus["run_tree_dirty"]
     _write(Path(out), metrics)

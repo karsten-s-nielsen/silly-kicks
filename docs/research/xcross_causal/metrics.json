@@ -47,6 +47,34 @@
       "included": true
     }
   },
-  "run_commit": "35a66679c7bd9db4f23d2db0d768993f1468b0c1",
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_xcross_causal",
+    "covariates": {
+      "gk_block": [
+        "gk_r",
+        "gk_theta",
+        "gk_lateral_offset",
+        "gk_dist_near_post",
+        "gk_dist_far_post",
+        "gk_carrier_side"
+      ],
+      "paper": [
+        "score_differential",
+        "dist_nearest_def",
+        "space_controlled",
+        "dist_nearest_teammate",
+        "dist_endline",
+        "box_off_def_ratio",
+        "ten_minute_warning"
+      ]
+    },
+    "geometry_version": "goal-relative-2",
+    "extractors": [
+      "silly_kicks.tracking._xcross_attempt"
+    ],
+    "digest": "6bd072a3e4316c150e3f95f885d90d8a6d9b2692fee7d3ca957bd075bad308fc"
+  },
+  "run_commit": "c487c4935057e31a99ba0ec7023d639fb19a0d3f",
   "run_tree_dirty": false
 }

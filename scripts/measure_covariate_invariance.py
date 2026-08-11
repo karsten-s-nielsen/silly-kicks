@@ -59,6 +59,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from _input_contract import declare_inputs
 from _provenance import git_provenance, require_clean_tree
 
 REPO = Path(__file__).resolve().parents[1]
@@ -85,6 +86,25 @@ _NOT_MEASURABLE = (
 #: NOT importable: these exist only as literal `gk_block=` tuples at opportunities.py:139 and :198.
 #: `GK_BLOCK` itself is the SIX lowercase xCross names.
 _XS_GK_BLOCK = ("GK_r", "GK_theta")
+
+
+def input_contract() -> dict:
+    """Declare WHICH SYMBOLS these numbers depend on (Cycle B).
+
+    This driver MEASURES the geometry transform, so its own dependence on `GEOMETRY_VERSION` is
+    the point rather than an incidental input: a bump means the measurement describes a transform
+    that is no longer the live one.
+    """
+    from silly_kicks.tracking import _geometry as _geo
+
+    return declare_inputs(
+        driver="measure_covariate_invariance",
+        geometry_version=_geo.GEOMETRY_VERSION,
+        extractors=(
+            "silly_kicks.tracking._xshot_occurrence",
+            "silly_kicks.tracking._xcross_attempt",
+        ),
+    )
 
 
 def _load_frames() -> list[pd.DataFrame]:
@@ -282,6 +302,7 @@ def run(out: Path, baseline_tree: Path) -> dict:
         "current_geometry_version": current.get("_geometry_version"),
         "membership": membership,
         "rows": rows,
+        "input_contract": input_contract(),
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
     }

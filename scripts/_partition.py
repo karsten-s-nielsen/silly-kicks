@@ -162,9 +162,18 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
             elif isinstance(v, int):
                 totals[k] = totals.get(k, 0) + v
             elif isinstance(v, dict):
-                c = counters.setdefault(k, {})
-                for kk, vv in v.items():
-                    c[kk] = c.get(kk, 0) + int(vv)
+                # A dict is a COUNTER dict only if every value is numeric. One that is not -- a
+                # declared input contract, say -- must be dropped and reported, never raised on:
+                # this aggregation runs AFTER the corpus pass, so a raise here destroys the
+                # combine of work that already cost hours. Measured: an `input_contract` dict
+                # reached this line and `int("build_gkdv_arm_values")` killed a 64-match pass at
+                # the final step.
+                if all(isinstance(vv, (int, float)) and not isinstance(vv, bool) for vv in v.values()):
+                    c = counters.setdefault(k, {})
+                    for kk, vv in v.items():
+                        c[kk] = c.get(kk, 0) + vv
+                else:
+                    dropped.add(k)
             else:
                 # Not meta, not an int to sum, not a dict to merge. Dropping is CORRECT -- a named
                 # case carries per-field semantics (`run_commit` is contributor-gated,

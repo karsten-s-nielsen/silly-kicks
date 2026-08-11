@@ -35,6 +35,28 @@ import argparse
 import json
 from pathlib import Path
 
+from scripts._input_contract import declare_inputs
+
+
+def input_contract() -> dict:
+    """Declare WHICH SYMBOLS these numbers depend on (Cycle B).
+
+    `GkdvParams` carries the arm configuration (`lambda_gk`, the domain radius, the pinned
+    `method="spearman"`), so its field VALUES are what a rerun would have to match. The ghost model
+    is declared by name rather than by weights: its own chirality and feature-contract stamps are
+    what pin the artifact, per ADR-050.
+    """
+    from dataclasses import asdict
+
+    from silly_kicks.gkdv import GkdvParams
+
+    return declare_inputs(
+        driver="build_gkdv_arm_values",
+        params={"gkdv": asdict(GkdvParams())},
+        extractors=("silly_kicks.gkdv._engine", "silly_kicks.gkdv._arms"),
+        models=("silly_kicks.tracking._ghost_gk.GhostGkModel",),
+    )
+
 
 def _aggregate_manifests(dest) -> dict:
     """Corpus-wide totals, plus the conservation identity this pass is accountable for.
@@ -341,6 +363,11 @@ def main() -> None:
         # missing would report a complete corpus, which is the very defect the sidecar closed.
         **res.manifest(),
         "arm_requested": args.arm,
+        # `input_contract` is DELIBERATELY not here. `aggregate_manifests` sums ints and
+        # merges dicts as COUNTER dicts (`int(vv)` per value), so a dict carrying strings
+        # -- driver name, digest, extractor tuple -- raises there and destroys the corpus
+        # aggregate AFTER the whole pass has run. It belongs in the cited artifact, not in
+        # the cross-worker counter surface.
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
         "run_tree_state": prov["tree_state"],
@@ -359,7 +386,11 @@ def main() -> None:
     # process's own values are already recorded, correctly, in its own `manifest_<tag>.json` above.
     # `build_layer2_spells` never did this; the two producers `_partition.py` exists to keep
     # identical had diverged on precisely the field its OR is for.
-    corpus.update(arms_written=written, arm_requested=args.arm)
+    # `input_contract` goes on the CORPUS aggregate, not the per-worker manifest. The aggregate is
+    # the cited artifact and is written AFTER `aggregate_manifests` has run, so a dict carrying
+    # strings can never reach the counter-merge that a per-worker placement fed it. Putting it in
+    # the manifest is what killed a completed 64-match pass at its final step.
+    corpus.update(arms_written=written, arm_requested=args.arm, input_contract=input_contract())
     (dest / "arm_values_manifest.json").write_text(json.dumps(corpus, indent=2, default=str), encoding="utf-8")
     print(json.dumps(corpus, indent=2, default=str))
 

@@ -119,8 +119,24 @@ model = XCrossAttemptModel.from_variant("default")       # recommended, bundled,
 model = XCrossAttemptModel.from_variant("sc_extended")   # this repo, downloads from the Hub
 ```
 
-Requires `pip install silly-kicks[xcross]` and **silly-kicks ≥ 4.51.0** (earlier versions have
-no `sc_extended` routing).
+Requires `pip install silly-kicks[xcross]` and **silly-kicks >= 4.74.0**.
+
+> **Version floor raised in 4.74.0 (was >= 4.51.0), and this is a hard requirement, not a
+> recommendation.** These weights were retrained on a corrected goal-relative transform
+> (`geometry_version: goal-relative-2`). ADR-051 found the previous transform was **chiral**: it had
+> `to_goal_relative_x` and no `to_goal_relative_y`, so `goal_x=105` was an x-only mirror while
+> `goal_x=0` was the identity -- the two goal ends used frames of opposite handedness, every radial
+> feature stayed byte-identical, and every bearing negated between them. One physical scene therefore
+> scored differently depending which end the attacking team was attacking.
+>
+> `load()`'s feature-contract prong is **fail-closed**, so an older silly-kicks will refuse these
+> weights with `IntegrityError` rather than serve them against the geometry they were not fit on.
+> That refusal is the guard working. Pin `silly-kicks>=4.74.0` alongside this artifact.
+>
+> `from_hub()` currently takes no `revision` argument, so it always resolves this repo's default
+> branch -- meaning a client cannot yet pin a specific artifact revision. Until it can, treat the
+> library version as the pin. Previous revisions remain addressable by commit SHA in this repo's git
+> history.
 
 ## Integrity and load-time guards
 

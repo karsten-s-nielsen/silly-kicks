@@ -15,6 +15,7 @@ from silly_kicks.spadl.schema import GRADIENTSPORTS_SPADL_COLUMNS
 _REQUIRED_COLS = sorted(gs_mod.EXPECTED_INPUT_COLUMNS)
 
 _SYNTHETIC_FIXTURE = Path(__file__).parent.parent / "datasets" / "gradientsports" / "synthetic_match.json"
+_GENERATOR = _SYNTHETIC_FIXTURE.parent / "_generate_synthetic_match.py"
 
 
 def _load_synthetic_events() -> pd.DataFrame:
@@ -1745,6 +1746,129 @@ class TestGradientsportsGoalCaptureRealistic:
         assert adjacency, "expected a cross immediately followed by its synthetic shot (same player)"
 
 
+def test_the_generator_reproduces_the_committed_fixture():
+    """The generator and its committed output must not drift. This is the gate that was missing.
+
+    `_generate_synthetic_match.py` emitted 51 events against a committed 54 for an entire release
+    cycle. The three it dropped were the ADR-018 goal-capture events -- the RE+G own goal, the CR+G
+    cross-goal and the `nonEvent` disallowed shot -- appended straight to the JSON when goal capture
+    landed, with the generator never updated. **Any regeneration silently deleted the two rows
+    `test_owngoal_crossgoal_captured_disallowed_excluded` asserts.**
+
+    It was invisible because nothing in CI ever ran the generator; its own docstring calls it "a
+    maintainer-time tool", and a tool nothing exercises is a tool nothing verifies. Comparing the
+    SERIALIZATION rather than the parsed object is deliberate: key order and separators are part of
+    what a regeneration would rewrite, and a parsed-object comparison would pass while the committed
+    file churned. Read as text on both sides so a CRLF checkout is not mistaken for drift.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_gs_synthetic_generator", _GENERATOR)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    produced = json.dumps(mod.build_match(), indent=2, ensure_ascii=False) + "\n"
+    committed = _SYNTHETIC_FIXTURE.read_text(encoding="utf-8")
+    assert produced == committed, (
+        "the generator no longer reproduces synthetic_match.json. Regenerating would REWRITE the "
+        "committed fixture -- diff before you do it, and never let a hand-edit land in the JSON "
+        f"alone. Produced {len(mod.build_match())} events; committed {len(json.loads(committed))}."
+    )
+
+
+class TestGradientsportsInputConventionGuard:
+    """Keep the ADR-006 convention guard EXERCISED on this provider, down both branches.
+
+    Before the Cycle B reshape the fixture carried shots from ONE team only (team 100: 8 in
+    period 1, 1 in period 2), so `detect_input_convention` returned
+    `convention=None, confidence="low"` on the fewer-than-2-reliable-groups clause and
+    `validate_input_convention` deferred silently. The guard inside
+    `gradientsports.convert_to_actions` therefore ran down NEITHER branch in CI -- not its
+    agreement path and not its raise path -- and a regression in this provider's declared
+    convention would have gone unobserved.
+    """
+
+    @staticmethod
+    def _detect(events):
+        from silly_kicks.spadl.orientation import detect_input_convention
+
+        d = events.assign(
+            _sk_x=events["ball_x"].astype("float64") + 52.5,
+            _sk_is_shot=(events["possession_event_type"].fillna("") == "SH"),
+        )
+        return detect_input_convention(
+            d,
+            match_col="game_id",
+            x_col="_sk_x",
+            team_col="team_id",
+            period_col="period_id",
+            is_shot_col="_sk_is_shot",
+            x_max=spadlconfig.field_length,
+        )
+
+    def test_the_fixture_lets_the_detector_CLASSIFY_and_it_AGREES(self):
+        """The reshape's whole point: CI is green because the pipeline is CORRECT, not because
+        nothing was checked. `medium` is deliberate -- 5 shots per group is
+        `min_shots_per_group_medium`, and only 6 of 64 real GS matches reach two `high`-reliable
+        groups while 50 of 64 reach two at `medium`."""
+        from silly_kicks.spadl.orientation import PER_PERIOD_ABSOLUTE
+
+        res = self._detect(_load_synthetic_events())
+        assert res.convention is PER_PERIOD_ABSOLUTE, f"detector deferred or disagreed: {res.diagnostics}"
+        assert res.confidence == "medium"
+
+        # Non-vacuity: the verdict must rest on both teams in both periods. A fixture that
+        # drifted back to one team's shots would defer, and the assertions above would then be
+        # the only thing standing between that and a silently unexercised guard.
+        groups = res.diagnostics["groups"]
+        assert isinstance(groups, list)  # `diagnostics` is dict[str, object]; narrow before use
+        assert len(groups) == 4, f"expected 4 reliable (team, period) groups, got {len(groups)}"
+        assert {g["team_id"] for g in groups} == {100, 200}
+        assert {g["period_id"] for g in groups} == {1, 2}
+        assert {g["side"] for g in groups} == {"high", "low"}
+
+    def test_conversion_emits_no_convention_warning_on_the_real_fixture(self):
+        """The agreement branch. Escalate the mismatch warning to an error and convert."""
+        import warnings
+
+        events = _load_synthetic_events()
+        with warnings.catch_warnings():
+            # Verified non-vacuous: this same filter DOES raise on the mis-declared data built by
+            # `test_the_guard_FIRES_on_a_genuinely_mis_declared_convention`.
+            warnings.filterwarnings("error", message=".*convention.*")
+            gs_mod.convert_to_actions(
+                events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+            )
+
+    def test_the_guard_FIRES_on_a_genuinely_mis_declared_convention(self):
+        """Non-vacuity for the raise path, through the REAL converter.
+
+        Mirror every shot to high-x so the data genuinely IS possession-perspective (each team
+        attacks high-x in BOTH periods) while `gradientsports.py` still declares
+        `PER_PERIOD_ABSOLUTE`. `convert_to_actions` passes no `on_mismatch`, so it resolves to
+        "raise" under `SILLY_KICKS_ASSERT_INVARIANTS=1` -- which `ci.yml` sets.
+        """
+        import os
+        from unittest import mock
+
+        from silly_kicks.spadl.orientation import InputConvention
+
+        events = _load_synthetic_events()
+        is_shot = events["possession_event_type"].fillna("") == "SH"
+        mis = events.copy()
+        mis.loc[is_shot, "ball_x"] = 45.0  # every reliable group now attacks high-x
+
+        # Precondition: the planted data really does read as a DIFFERENT convention.
+        assert self._detect(mis).convention is InputConvention.POSSESSION_PERSPECTIVE
+
+        with mock.patch.dict(os.environ, {"SILLY_KICKS_ASSERT_INVARIANTS": "1"}):
+            with pytest.raises(ValueError, match="declared=per_period_absolute"):
+                gs_mod.convert_to_actions(
+                    mis, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+                )
+
+
 class TestGradientsportsSyntheticProvenance:
     """`is_synthetic` marks converter-injected rows (cross-goal shot, synthesized foul) that share the
     parent's `original_event_id`, so consumers don't collapse/drop them on a dedup."""
@@ -1772,6 +1896,50 @@ class TestGradientsportsSyntheticProvenance:
         )
         assert bool(actions.iloc[0]["is_synthetic"]) is False  # the real cross
         assert bool(actions.iloc[1]["is_synthetic"]) is True  # the synthesized shot
+
+    def test_synthesized_rows_do_not_inherit_the_parents_derived_end(self):
+        """A synthesized row must carry its OWN placeholder end, not the parent's derived one.
+
+        Both synthesis sites `.copy()` a pass-class parent AFTER `_derive_end_coordinates` has
+        rewritten that parent's end to the next action's start, then relabel the copy `foul` or
+        `shot` -- neither of which is in `_DERIVE_END_TYPE_IDS`, i.e. both keep `end == start`
+        by contract. Measured before the fix: all three synthesized rows on this fixture had an
+        inherited end. The two fouls had been wrong since the row was introduced (their parents
+        are mid-period passes) and were invisible because
+        `test_end_coord_integration.py::test_shots_tackles_keeper_saves_end_equals_start` does
+        not include `foul` in its type set; the cross-goal shot read correctly only because its
+        parent was the last period-1 event surviving exclusion.
+        """
+        events = _load_synthetic_events()
+        actions, _ = gs_mod.convert_to_actions(
+            events, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        syn = actions[actions["is_synthetic"].fillna(False).astype(bool)]
+
+        # Non-vacuity: BOTH synthesis kinds must be present, or this asserts nothing.
+        shot_ids = {spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty")}
+        assert (syn["type_id"] == spadlconfig.actiontype_id["foul"]).any(), "no synthesized foul in fixture"
+        assert syn["type_id"].isin(shot_ids).any(), "no synthesized cross-goal shot in fixture"
+
+        differs = (syn["end_x"] != syn["start_x"]) | (syn["end_y"] != syn["start_y"])
+        _cols = ["original_event_id", "type_id", "start_x", "start_y", "end_x", "end_y"]
+        assert not differs.any(), (
+            f"{int(differs.sum())}/{len(syn)} synthesized rows inherited the parent's derived end: "
+            f"{syn.loc[differs, _cols].to_dict('records')}"
+        )
+
+        # The other side: the fix must not have disabled derivation wholesale. The REAL cross
+        # that fathered the synthesized shot is pass-class and MUST still carry a derived end.
+        cross_ids = {spadlconfig.actiontype_id[n] for n in ("cross", "freekick_crossed", "corner_crossed")}
+        parent = actions[
+            (actions["original_event_id"].astype("string") == "53")
+            & actions["type_id"].isin(cross_ids)
+            & ~actions["is_synthetic"].fillna(False).astype(bool)
+        ]
+        assert len(parent) == 1, "expected exactly one real cross for event 53"
+        assert (parent["end_x"] != parent["start_x"]).any() or (parent["end_y"] != parent["start_y"]).any(), (
+            "the cross-goal's PARENT cross lost its derived end -- the reset leaked onto the parent"
+        )
 
     def test_synthesized_foul_flagged_parent_not(self):
         df = _df_minimal_pass()  # real PA with an inline foul -> parent kept + synth foul row

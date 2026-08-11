@@ -60,6 +60,29 @@
     "n_shards": 179,
     "commit_consistent": true
   },
-  "run_commit": "35a66679c7bd9db4f23d2db0d768993f1468b0c1",
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_xshot_causal",
+    "covariates": {
+      "gk_block": [
+        "GK_r",
+        "GK_theta"
+      ],
+      "shot_arm": [
+        "r",
+        "theta",
+        "speed",
+        "openGoal",
+        "DefDist_0",
+        "DefDist_1"
+      ]
+    },
+    "geometry_version": "goal-relative-2",
+    "extractors": [
+      "silly_kicks.tracking._xshot_occurrence"
+    ],
+    "digest": "23ebc8a206074733032ca40b85f4622fab62c2eb8ecc6630123dba179325d3a4"
+  },
+  "run_commit": "c487c4935057e31a99ba0ec7023d639fb19a0d3f",
   "run_tree_dirty": false
 }

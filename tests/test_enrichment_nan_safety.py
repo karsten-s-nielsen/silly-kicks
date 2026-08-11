@@ -17,11 +17,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import silly_kicks.atomic.spadl as atomic_spadl
 import silly_kicks.atomic.spadl.config as atomic_spadlcfg
 import silly_kicks.atomic.spadl.utils as atomic_utils
+import silly_kicks.spadl as std_spadl
 import silly_kicks.spadl.config as spadlcfg
 import silly_kicks.spadl.utils as std_utils
-import silly_kicks.tracking.features as tracking_features
+import silly_kicks.tracking as tracking_pkg
 
 # ADR-041 opt-out: auto-enumerating gate: sweeps EVERY registered aggregator on defaults, so the OBSO family's
 # synthetic-EPV notice is expected and irrelevant here.
@@ -33,9 +35,20 @@ def _discover(module) -> tuple:
     return tuple(fn for _, fn in inspect.getmembers(module, inspect.isfunction) if getattr(fn, "_nan_safe", False))
 
 
-STD_ENRICHMENTS = _discover(std_utils)
-ATOMIC_ENRICHMENTS = _discover(atomic_utils)
-TRACKING_ENRICHMENTS = _discover(tracking_features)
+# Discovered from the PACKAGE, not the defining module (Cycle B).
+#
+# `TRACKING_ENRICHMENTS` used to scan `silly_kicks.tracking.features` alone, while the contract it
+# guards covers the whole public `silly_kicks.tracking` surface. Three decorated helpers therefore
+# sat outside the registry entirely -- `add_sync_score` (defined in `tracking/utils.py`),
+# `add_xshot_occurrence` and `add_xcross_attempt` (defined in their own private modules). Two of the
+# three were ALREADY decorated and still never exercised: the claim was made and nothing checked it.
+#
+# The discovery SCOPE was the defect, not the decorations. Measured: package discovery adds exactly
+# those three and drops nothing (29 -> 32); `spadl` and `atomic.spadl` are unchanged at 7 and 5,
+# because their public `add_*` all happen to live in `utils`.
+STD_ENRICHMENTS = _discover(std_spadl)
+ATOMIC_ENRICHMENTS = _discover(atomic_spadl)
+TRACKING_ENRICHMENTS = _discover(tracking_pkg)
 # Split: helpers needing only (actions, frames) vs those needing extra kwargs
 _TRACKING_NEEDS_EXTRA = {
     "add_cover_shadows",
@@ -61,6 +74,12 @@ _TRACKING_NEEDS_EXTRA = {
     "add_visible_area_coverage",
     "add_xt_gk",
     "add_off_ball_run_values",
+    # Cycle B: newly VISIBLE to the registry once discovery widened to the package. All three
+    # were outside `tracking.features` and therefore outside the old scan; two of them were
+    # already decorated, so the claim existed while nothing exercised it.
+    "add_sync_score",
+    "add_xshot_occurrence",
+    "add_xcross_attempt",
 }
 _TRACKING_STANDARD_SIG = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ not in _TRACKING_NEEDS_EXTRA)
 _TRACKING_EXTRA_KWARGS = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ in _TRACKING_NEEDS_EXTRA)
@@ -74,28 +93,80 @@ _TRACKING_EXTRA_KWARGS = tuple(fn for fn in TRACKING_ENRICHMENTS if fn.__name__ 
 # ---------------------------------------------------------------------------
 
 
+#: Public `add_*` helpers deliberately NOT @nan_safe_enrichment, each with a stated reason.
+#: An entry is a decision on the record; an omission is a helper whose NaN-safety is never tested.
+_NOT_NAN_SAFE: dict[str, str] = {
+    "add_gradientsports_player_ids": (
+        "not an action enricher and structurally outside ADR-003's contract, which is about NaN "
+        "identifiers in a caller-supplied ACTIONS frame. Its signature is "
+        "(jersey_frames, roster, *, home_team_id, away_team_id) -- it takes no actions frame at "
+        "all -- and it returns a (DataFrame, GradientsportsRosterReport) TUPLE, so the harness's "
+        "`isinstance(out, pd.DataFrame)` and row-count assertions do not apply. Unresolved "
+        "jerseys are surfaced through its own report rather than by NaN-routing."
+    ),
+}
+
+_PIN = (
+    ("spadl", std_spadl, STD_ENRICHMENTS),
+    ("atomic.spadl", atomic_spadl, ATOMIC_ENRICHMENTS),
+    ("tracking", tracking_pkg, TRACKING_ENRICHMENTS),
+)
+
+
+@pytest.mark.parametrize("label,pkg,registry", _PIN, ids=[p[0] for p in _PIN])
+def test_every_public_add_star_is_enrolled_or_exempted(label, pkg, registry) -> None:
+    """ADR-003's registry is auto-discovered from the decorator, so it is complete over DECORATED
+    helpers -- but decoration is the human-maintained opt-in and nothing tied it to the public
+    surface. The three floors below pass identically whether or not a new public `add_*` was
+    decorated.
+
+    ADR-033 and ADR-051 both pin their surface to the public export in BOTH directions; this is
+    ADR-003 catching up (Cycle B).
+
+    Pinned to the PACKAGE export, not the module: `silly_kicks.spadl.utils` has no `__all__` at
+    all, so a module-level pin would assert nothing on two of the three registries.
+    """
+    exported = {n for n in pkg.__all__ if n.startswith("add_")}
+    decorated = {fn.__name__ for fn in registry}
+    unenrolled = sorted(exported - decorated - set(_NOT_NAN_SAFE))
+    assert not unenrolled, (
+        f"public add_* in {label}.__all__ with no @nan_safe_enrichment and no exemption: "
+        f"{unenrolled}. ADR-003 makes NaN-tolerance a contract for the whole public enrichment "
+        f"family; an undecorated helper is never exercised against NaN identifiers."
+    )
+
+
+def test_nan_safe_exemptions_are_real_public_helpers() -> None:
+    """Self-burning-down."""
+    public: set[str] = set()
+    for _, pkg, _ in _PIN:
+        public |= set(pkg.__all__)
+    stale = sorted(set(_NOT_NAN_SAFE) - public)
+    assert not stale, f"_NOT_NAN_SAFE names helpers that are not public: {stale}"
+
+
 def test_registry_nonempty_std() -> None:
-    """At least 5 @nan_safe_enrichment helpers in silly_kicks.spadl.utils."""
+    """At least 5 @nan_safe_enrichment helpers in silly_kicks.spadl."""
     assert len(STD_ENRICHMENTS) >= 5, (
-        f"Expected ≥5 @nan_safe_enrichment helpers in silly_kicks.spadl.utils; "
+        f"Expected ≥5 @nan_safe_enrichment helpers in silly_kicks.spadl; "
         f"found {len(STD_ENRICHMENTS)}: {[fn.__name__ for fn in STD_ENRICHMENTS]}. "
         f"Did the marker name change or a helper lose its decoration?"
     )
 
 
 def test_registry_nonempty_tracking() -> None:
-    """At least 10 @nan_safe_enrichment helpers in silly_kicks.tracking.features."""
+    """At least 10 @nan_safe_enrichment helpers in silly_kicks.tracking."""
     assert len(TRACKING_ENRICHMENTS) >= 10, (
-        f"Expected ≥10 @nan_safe_enrichment helpers in silly_kicks.tracking.features; "
+        f"Expected ≥10 @nan_safe_enrichment helpers in silly_kicks.tracking; "
         f"found {len(TRACKING_ENRICHMENTS)}: {[fn.__name__ for fn in TRACKING_ENRICHMENTS]}. "
         f"Did the marker name change or a helper lose its decoration?"
     )
 
 
 def test_registry_nonempty_atomic() -> None:
-    """At least 5 @nan_safe_enrichment helpers in silly_kicks.atomic.spadl.utils."""
+    """At least 5 @nan_safe_enrichment helpers in silly_kicks.atomic.spadl."""
     assert len(ATOMIC_ENRICHMENTS) >= 5, (
-        f"Expected ≥5 @nan_safe_enrichment helpers in silly_kicks.atomic.spadl.utils; "
+        f"Expected ≥5 @nan_safe_enrichment helpers in silly_kicks.atomic.spadl; "
         f"found {len(ATOMIC_ENRICHMENTS)}: {[fn.__name__ for fn in ATOMIC_ENRICHMENTS]}. "
         f"Did the marker name change or a helper lose its decoration?"
     )
@@ -517,6 +588,22 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         "add_structural_pass",
     ):
         out = helper(actions, frames, home_team_id=1)
+    elif name == "add_sync_score":
+        # Takes (actions, LINKS) rather than (actions, frames) -- the only helper in the
+        # registry with that shape, which is why it needs its own branch rather than a
+        # column top-up.
+        from silly_kicks.tracking import link_actions_to_frames
+
+        out = helper(actions, link_actions_to_frames(actions, frames)[0])
+    elif name in ("add_xshot_occurrence", "add_xcross_attempt"):
+        # `ball_state` is a documented contract column for both extractors and is NOT in
+        # TRACKING_FRAMES_COLUMNS. Same supply-the-contract-columns precedent as add_das
+        # below: without it the helper raises before reaching the NaN-IDENTIFIER surface
+        # this gate exists to fuzz, and would pass vacuously.
+        fr = frames.copy()
+        if "ball_state" not in fr.columns:
+            fr["ball_state"] = "alive"
+        out = helper(actions, fr)
     elif name == "add_das":
         # Same supply-the-contract-columns precedent as add_packing / add_ghost_gk: vx, vy
         # and team_in_possession are NOT in TRACKING_FRAMES_COLUMNS (derive_velocities /

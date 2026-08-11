@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import silly_kicks.atomic.tracking.features as AF
+import silly_kicks.tracking as T
 import silly_kicks.tracking.features as F
 from silly_kicks.vaep.feature_framework import gamestates
 from tests.tracking.test_defensive_line import _make_frame_rows
@@ -44,6 +46,34 @@ def _actions():
             "end_y": [34.0] * 4,
             "type_id": [0] * 4,
             "result_id": [1] * 4,
+            "bodypart_id": [0] * 4,
+        }
+    )
+
+
+def _atomic_actions():
+    """The ATOMIC-shaped twin of `_actions()` -- same trajectories, atomic schema.
+
+    Cycle B: the atomic mirrors consume `x`/`y`/`dx`/`dy` (ATOMIC_SPADL_COLUMNS), not
+    `start_x`/`end_x`. Handing them the SPADL fixture yields `KeyError: 'x'`, which
+    `_run_family` correctly reports as a FIXTURE GAP rather than the dup-action_id bug --
+    exactly the discrimination that keeps this gate from being "fixed" in the wrong place.
+
+    Displacements mirror `_actions()`: (40,45,50,55) -> (70,75,60,65) on x, y flat at 34.
+    """
+    return pd.DataFrame(
+        {
+            "game_id": [1] * 4,
+            "period_id": [1] * 4,
+            "action_id": [10, 11, 12, 13],
+            "time_seconds": [1.0, 2.0, 3.0, 4.0],
+            "team_id": [1] * 4,
+            "player_id": [5, 6, 7, 8],
+            "x": [40.0, 45.0, 50.0, 55.0],
+            "y": [34.0] * 4,
+            "dx": [30.0, 30.0, 10.0, 10.0],
+            "dy": [0.0] * 4,
+            "type_id": [0] * 4,
             "bodypart_id": [0] * 4,
         }
     )
@@ -97,8 +127,8 @@ def _frame_for(name):
 _CONSTRUCT_ALLOWLIST: set[str] = set()  # factories that genuinely cannot construct (none today)
 
 
-def _build(name):
-    fac = getattr(F, name)
+def _build(name, mod=F):
+    fac = getattr(mod, name)
     if isinstance(fac, list):
         return fac
     xt = _xt()
@@ -144,20 +174,66 @@ def _is_dup_symptom(msg: str) -> bool:
 
 _XFNS_NAMES = sorted(n for n in dir(F) if n.endswith("_xfns"))
 
+#: The atomic module's full declared `_xfns` surface -- used by the META-assertion below.
+_ATOMIC_XFNS_NAMES = sorted(n for n in dir(AF) if n.endswith("_xfns"))
+
+#: The subset that is a genuine atomic MIRROR -- used by the BEHAVIOURAL parametrisation.
+#:
+#: `atomic.tracking.features` re-exports several factories from `silly_kicks.tracking` as the
+#: IDENTICAL object (`cover_shadow_xfns`, `obso_xfns`, `pausa_xfns` -- verified with `is`). Those
+#: consume SPADL-shaped actions and are already exercised by `_XFNS_NAMES` above; handing them the
+#: atomic fixture raises `KeyError: 'start_x'`, which is a fixture gap by construction rather than
+#: a defect. Filtering on OBJECT IDENTITY rather than a hand-listed exclusion set means a factory
+#: that later acquires a real atomic mirror is picked up automatically.
+_ATOMIC_MIRROR_NAMES = sorted(n for n in _ATOMIC_XFNS_NAMES if getattr(AF, n) is not getattr(F, n, None))
+
 
 def test_meta_gate_covers_every_xfns_factory():
-    assert set(_XFNS_NAMES) == {n for n in dir(F) if n.endswith("_xfns")}
-    assert len(_XFNS_NAMES) >= 21  # bumped for xt_gk_xfns
+    """Two INDEPENDENT derivations must agree: the runtime namespace and the declared export.
+
+    The previous version asserted
+        set(_XFNS_NAMES) == {n for n in dir(F) if n.endswith("_xfns")}
+    -- the same expression on both sides, always true. It also carried
+    `assert len(_XFNS_NAMES) >= 21  # bumped for xt_gk_xfns`, a floor inside the very gate that
+    exists because floors cannot detect an omission, with a comment recording it had already been
+    hand-bumped once (Cycle B).
+
+    The independent source is the PACKAGE export, not `features.__all__`. Measured: all four names
+    absent from `features.__all__` ARE in `tracking.__all__`, so pairing against the module surface
+    would manufacture four findings that are not defects.
+    """
+    exported = {n for n in T.__all__ if n.endswith("_xfns")}
+    assert set(_XFNS_NAMES) == exported, (
+        f"runtime namespace and package export disagree: "
+        f"dir-only={sorted(set(_XFNS_NAMES) - exported)}, "
+        f"export-only={sorted(exported - set(_XFNS_NAMES))}"
+    )
     assert not _CONSTRUCT_ALLOWLIST, "no construct-skips are expected today"
 
 
-def _run_family(name):
+def test_meta_gate_covers_every_ATOMIC_xfns_factory():
+    """The gate enumerated `dir(F)` over tracking.features ONLY, so the atomic mirrors had never
+    been covered by ADR-020's dup-action_id contract at all.
+
+    `atomic.tracking.features` exports via the SUBMODULE, not the package, so its declared surface
+    is `AF.__all__`. This caught `xshot_occurrence_xfns` missing from it while its sibling
+    `xcross_attempt_xfns` was present.
+    """
+    exported = {n for n in AF.__all__ if n.endswith("_xfns")}
+    assert set(_ATOMIC_XFNS_NAMES) == exported, (
+        f"atomic runtime namespace and declared export disagree: "
+        f"dir-only={sorted(set(_ATOMIC_XFNS_NAMES) - exported)}, "
+        f"export-only={sorted(exported - set(_ATOMIC_XFNS_NAMES))}"
+    )
+
+
+def _run_family(name, mod=F):
     """Run every frame-aware transformer of `name` through a dup-action_id gamestate.
-    Discriminates the target bug from a fixture gap so 5C fixes the bug, not the fixture."""
-    states = gamestates(_actions(), nb_prev_actions=3)
+    Discriminates the target bug from a fixture gap so the fix lands on the bug, not the fixture."""
+    states = gamestates(_atomic_actions() if mod is AF else _actions(), nb_prev_actions=3)
     assert states[1]["action_id"].duplicated().any()  # precondition: dup exists
     frame = _frame_for(name)
-    for t in _build(name):
+    for t in _build(name, mod):
         if not getattr(t, "_frame_aware", False):
             continue
         try:
@@ -177,3 +253,9 @@ def _run_family(name):
 @pytest.mark.parametrize("name", _XFNS_NAMES)
 def test_xfns_survives_duplicate_action_id_gamestate(name):
     _run_family(name)  # MUST NOT raise on the non-unique action_id
+
+
+@pytest.mark.parametrize("name", _ATOMIC_MIRROR_NAMES)
+def test_atomic_xfns_survives_duplicate_action_id_gamestate(name):
+    """Cycle B: the atomic mirrors were never covered by ADR-020's contract."""
+    _run_family(name, AF)

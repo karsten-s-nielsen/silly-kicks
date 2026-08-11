@@ -35,6 +35,52 @@ _GOAL_LEFT_POST_Y = 30.34
 _GOAL_RIGHT_POST_Y = 37.66
 
 
+def _rows_by_action_id(actions_id: np.ndarray) -> dict:
+    """Map each ``action_id`` to the LIST of row positions carrying it.
+
+    ADR-020: ``action_id`` is NOT unique in a VAEP gamestate matrix -- shifted slots repeat the
+    boundary action -- so an ``action_id``-KEYED Series is one-to-many. Built once per kernel call
+    and shared by every write site, which is also cheaper than the per-aid ``.loc`` it replaces.
+    """
+    out: dict = {}
+    for pos, aid in enumerate(actions_id):
+        out.setdefault(aid, []).append(pos)
+    return out
+
+
+def _write_positional(
+    out: pd.Series,
+    rows_by_aid: dict,
+    aids,
+    anchor_finite: np.ndarray,
+    value: float,
+) -> None:
+    """Write ``value`` to every row of ``aids`` whose OWN anchor is finite.
+
+    This is a CRASH fix, and the gate is per-ROW because that is the form that cannot break --
+    not because a differing-anchor case was observed. Measured, on the VAEP gamestates this
+    guards: duplicated ``action_id`` rows carry IDENTICAL anchors, because the shift repeats the
+    boundary action verbatim. So the old id-keyed lookup was not computing a wrong number; it was
+    raising ``"truth value of a Series is ambiguous"`` from ``bool(Series)`` the moment an id
+    repeated, which is what ADR-020 is about.
+
+    The per-row form is therefore byte-identical wherever the old code ran at all (verified on the
+    unique-id path), and merely well-defined where the old code died. Stating the weaker true claim
+    on purpose: an earlier draft of this docstring asserted differing anchors as "measured" on the
+    strength of a synthetic probe rather than a real gamestate, which is the substitution CLAUDE.md
+    warns about.
+
+    NaN-anchor rows stay NaN, per the ADR-003 contract: pressure is undefined when the anchor
+    position is unknown, which is distinct from "linked but no defenders" 0.0.
+    """
+    rows = [pos for aid in aids for pos in rows_by_aid.get(aid, ())]
+    if not rows:
+        return
+    keep = [pos for pos in rows if anchor_finite[pos]]
+    if keep:
+        out.iloc[keep] = value
+
+
 def _nearest_defender_distance(
     anchor_x: pd.Series,
     anchor_y: pd.Series,
@@ -358,20 +404,15 @@ def _pressure_andrienko(
     """
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
     actions_id = ctx.actions["action_id"].to_numpy()
-    action_to_idx = pd.Series(ctx.actions.index, index=actions_id)
+    rows_by_aid = _rows_by_action_id(actions_id)
 
     # Track which actions have a finite anchor; NaN-anchor actions stay NaN
     # in output (per ADR-003 NaN-safe contract -- pressure is undefined when
     # anchor position is unknown, distinct from "linked but no defenders" 0.0).
-    anchor_finite_per_aid = pd.Series(
-        np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy()),
-        index=actions_id,
-    )
+    anchor_finite = np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy())
 
     linked_aids = set(ctx.pointers.loc[ctx.pointers["frame_id"].notna(), "action_id"].to_numpy())
-    for aid in linked_aids:
-        if aid in action_to_idx.index and bool(anchor_finite_per_aid.get(aid, False)):
-            out.loc[action_to_idx.loc[aid]] = 0.0  # type: ignore[arg-type]
+    _write_positional(out, rows_by_aid, linked_aids, anchor_finite, 0.0)
 
     if len(ctx.opposite_rows_per_action) == 0:
         return out
@@ -415,8 +456,7 @@ def _pressure_andrienko(
     merged["_pr"] = pr_per_defender
     sums = merged.groupby("action_id")["_pr"].sum()
     for aid, pr_total in sums.items():
-        if aid in action_to_idx.index and bool(anchor_finite_per_aid.get(aid, False)):
-            out.loc[action_to_idx.loc[aid]] = float(pr_total)  # type: ignore[arg-type]
+        _write_positional(out, rows_by_aid, (aid,), anchor_finite, float(pr_total))
     return out
 
 
@@ -447,17 +487,11 @@ def _pressure_link(
     """
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
     actions_id = ctx.actions["action_id"].to_numpy()
-    action_to_idx = pd.Series(ctx.actions.index, index=actions_id)
-
-    anchor_finite_per_aid = pd.Series(
-        np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy()),
-        index=actions_id,
-    )
+    rows_by_aid = _rows_by_action_id(actions_id)  # ADR-020: positional, never action_id-keyed
+    anchor_finite = np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy())
 
     linked_aids = set(ctx.pointers.loc[ctx.pointers["frame_id"].notna(), "action_id"].to_numpy())
-    for aid in linked_aids:
-        if aid in action_to_idx.index and bool(anchor_finite_per_aid.get(aid, False)):
-            out.loc[action_to_idx.loc[aid]] = 0.0  # type: ignore[arg-type]
+    _write_positional(out, rows_by_aid, linked_aids, anchor_finite, 0.0)
 
     if len(ctx.opposite_rows_per_action) == 0:
         return out
@@ -500,9 +534,8 @@ def _pressure_link(
     merged["_pr"] = pr_per_defender
     sums = merged.groupby("action_id")["_pr"].sum()
     for aid, x_total in sums.items():
-        if aid in action_to_idx.index and bool(anchor_finite_per_aid.get(aid, False)):
-            agg = 1.0 - math.exp(-params.k3 * float(x_total))
-            out.loc[action_to_idx.loc[aid]] = agg  # type: ignore[arg-type]
+        agg = 1.0 - math.exp(-params.k3 * float(x_total))
+        _write_positional(out, rows_by_aid, (aid,), anchor_finite, agg)
     return out
 
 
@@ -594,17 +627,11 @@ def _pressure_bekkers(
     """
     out = pd.Series(np.full(len(ctx.actions), np.nan), index=ctx.actions.index, dtype="float64")
     actions_id = ctx.actions["action_id"].to_numpy()
-    action_to_idx = pd.Series(ctx.actions.index, index=actions_id)
-
-    anchor_finite_per_aid = pd.Series(
-        np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy()),
-        index=actions_id,
-    )
+    rows_by_aid = _rows_by_action_id(actions_id)  # ADR-020: positional, never action_id-keyed
+    anchor_finite = np.isfinite(anchor_x.to_numpy()) & np.isfinite(anchor_y.to_numpy())
 
     linked_aids = set(ctx.pointers.loc[ctx.pointers["frame_id"].notna(), "action_id"].to_numpy())
-    for aid in linked_aids:
-        if aid in action_to_idx.index and bool(anchor_finite_per_aid.get(aid, False)):
-            out.loc[action_to_idx.loc[aid]] = 0.0  # type: ignore[arg-type]
+    _write_positional(out, rows_by_aid, linked_aids, anchor_finite, 0.0)
 
     if len(ctx.opposite_rows_per_action) == 0:
         return out
@@ -630,9 +657,10 @@ def _pressure_bekkers(
 
     grouped = ctx.opposite_rows_per_action.groupby("action_id")
     for aid, defender_group in grouped:
-        if aid not in action_to_idx.index:
+        rows = rows_by_aid.get(aid, ())
+        if not rows:
             continue
-        if not bool(anchor_finite_per_aid.get(aid, False)):
+        if not any(anchor_finite[pos] for pos in rows):
             # NaN anchor -> output stays NaN (set at init); don't compute.
             continue
         if aid not in actor_per_action.index:
@@ -641,7 +669,7 @@ def _pressure_bekkers(
         actor_pos = np.array([[actor_row["x"], actor_row["y"]]], dtype="float64")
         actor_vel = np.array([[actor_row["vx"], actor_row["vy"]]], dtype="float64")
         if pd.isna(actor_pos).any() or pd.isna(actor_vel).any():
-            out.loc[action_to_idx.loc[aid]] = float("nan")  # type: ignore[arg-type]
+            _write_positional(out, rows_by_aid, (aid,), anchor_finite, float("nan"))
             continue
 
         defender_pos = defender_group[["x", "y"]].to_numpy(dtype="float64")
@@ -649,7 +677,7 @@ def _pressure_bekkers(
         defender_speed = defender_group["speed"].to_numpy(dtype="float64")
 
         if np.isnan(defender_pos).any() or np.isnan(defender_vel).any():
-            out.loc[action_to_idx.loc[aid]] = float("nan")  # type: ignore[arg-type]
+            _write_positional(out, rows_by_aid, (aid,), anchor_finite, float("nan"))
             continue
 
         tti_to_actor = _bekkers_tti(
@@ -703,7 +731,7 @@ def _pressure_bekkers(
 
         # Aggregation: 1 - prod(1 - p)
         agg = 1.0 - float(np.prod(1.0 - p_per_defender))
-        out.loc[action_to_idx.loc[aid]] = agg  # type: ignore[arg-type]
+        _write_positional(out, rows_by_aid, (aid,), anchor_finite, agg)
 
     return out
 
