@@ -17,11 +17,38 @@ PR for the case table. This file pins that it is WIRED, which execution cannot s
 from __future__ import annotations
 
 import pathlib
+import re
 
 import yaml
+from packaging.requirements import Requirement
 
 _REPO = pathlib.Path(__file__).resolve().parent.parent
 _PUBLISH = _REPO / ".github" / "workflows" / "publish.yml"
+_PYPROJECT = _REPO / "pyproject.toml"
+
+# An upper bound is any operator that can REFUSE a future release. `>=` and `!=` cannot.
+_BOUNDING_OPERATORS = frozenset({"<", "<=", "==", "===", "~="})
+
+
+def _build_system_requires() -> list[str]:
+    """Extract `[build-system] requires` WITHOUT a TOML parser.
+
+    `tomllib` is 3.11+, this package supports 3.10, and `tomli` is not in the `[test]` extra --
+    importing it would pass locally and error on the 3.10 CI leg. The target is one array in a
+    file this repo owns, so a scoped text read is honest here; callers assert non-vacuity.
+    """
+    text = _PYPROJECT.read_text(encoding="utf-8")
+    table = re.search(r"^\[build-system\](.*?)(?=^\[)", text, re.MULTILINE | re.DOTALL)
+    if table is None:
+        return []
+    array = re.search(r"^requires\s*=\s*\[(.*?)\]", table.group(1), re.MULTILINE | re.DOTALL)
+    if array is None:
+        return []
+    return re.findall(r"['\"]([^'\"]+)['\"]", array.group(1))
+
+
+def _is_bounded(requirement: str) -> bool:
+    return any(spec.operator in _BOUNDING_OPERATORS for spec in Requirement(requirement).specifier)
 
 
 def _build_steps() -> list[dict]:
@@ -86,3 +113,45 @@ def test_the_publish_job_still_depends_on_build() -> None:
     """The guard only gates publishing while `publish` needs `build`; drop that and it is bypassed."""
     wf = yaml.safe_load(_PUBLISH.read_text(encoding="utf-8"))
     assert wf["jobs"]["publish"]["needs"] == "build"
+
+
+def test_the_build_backend_is_BOUNDED_so_the_artifact_is_not_a_function_of_WALL_CLOCK_TIME() -> None:
+    """Every Action here is SHA-pinned; leaving the BACKEND unbounded made the artifact drift.
+
+    Measured 2026-08-11, and the window was under four hours: `requires = ["hatchling"]` resolved
+    1.31.0 at 01:39Z (`Metadata-Version: 2.4` -- v4.78.0 published) and 1.32.0 at 12:56Z (2.5),
+    which the publish action's then-pinned `packaging==25.0` refused outright, so v4.79.0 built
+    green and failed to upload with NO diff between the two runs.
+
+    The bound is half the fix and cannot stop a repeat alone -- the publish action's own packaging
+    pin is the other half, and nothing static can compare a producer to a validator baked into a
+    container image. What it buys is that a backend release shows up in a DIFF instead of in a
+    failed publish, which is the difference between a decision and an accident.
+    """
+    requires = _build_system_requires()
+    assert requires, (
+        "could not read [build-system] requires from pyproject.toml -- the extractor broke, so "
+        "this guard was passing without checking anything"
+    )
+    assert any(Requirement(r).name == "hatchling" for r in requires), (
+        f"hatchling is no longer the declared build backend: {requires}. If the backend changed "
+        "deliberately, retarget this guard rather than deleting it."
+    )
+    unbounded = [r for r in requires if not _is_bounded(r)]
+    assert not unbounded, (
+        f"build-system requirement(s) with no upper bound: {unbounded}. An unbounded backend makes "
+        "the published artifact a function of when it was built."
+    )
+
+
+def test_the_bound_predicate_would_actually_reject_the_form_that_broke_publishing() -> None:
+    """Non-vacuity: the guard above passes trivially if `_is_bounded` says yes to everything.
+
+    `"hatchling"` is the EXACT string that was in pyproject.toml when v4.79.0 failed, so this
+    pins that the predicate rejects the real defect and not merely a hypothetical one.
+    """
+    assert not _is_bounded("hatchling"), "the unbounded form must be rejected"
+    assert not _is_bounded("hatchling>=1.27"), "a floor alone bounds nothing above"
+    assert _is_bounded("hatchling>=1.27,<2")
+    assert _is_bounded("hatchling==1.31.0")
+    assert _is_bounded("hatchling~=1.31")

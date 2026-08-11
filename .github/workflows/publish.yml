@@ -67,6 +67,12 @@ jobs:
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+      # v1.14.1 pinned packaging==25.0, whose valid-metadata-version set STOPS at 2.4, so it
+      # rejected the first wheel a hatchling 1.32.0 build produced ("'2.5' is not a valid metadata
+      # version"). v1.14.2 pins packaging==26.2 + twine==7.0.0, which accept 2.5. Bump FORWARD
+      # rather than holding the backend back: metadata 2.5 is legitimate, and pinning hatchling
+      # below it would only defer the same failure. See the build-system bound in pyproject.toml --
+      # the pair is what keeps the producer and the validator from drifting apart again.
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           print-hash: true
