@@ -1,5 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+# BOUNDED, not pinned. Every GitHub Action in .github/workflows/ is SHA-pinned while this was
+# left unbounded, so the artifact's metadata version was a function of WALL-CLOCK TIME: hatchling
+# 1.32.0 (2026-08-11 05:03Z) moved Metadata-Version 2.4 -> 2.5, and the v4.79.0 tag built 8 hours
+# later became the first release the publisher's pinned validator refused. Measured, not inferred:
+# 1.31.0 emits 2.4, 1.32.0 emits 2.5. The major bound cannot stop a repeat on its own -- the
+# publish action's packaging pin is the other half -- but it makes the build reproducible and the
+# blast radius of a backend release visible in a diff instead of in a failed publish.
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]

@@ -196,6 +196,24 @@ reader to edit the expectation without thinking. **Never assert a dtype literal 
 majors** — assert the behaviour (that `id_compat` comparisons still match), which is what made the
 two-cycle-old `snapshot_to_tracking_frames` question finally answerable.
 
+**The BUILD BACKEND is bounded and the PUBLISHER's validator is pinned — the pair, or neither works
+(4.79.0).** Same shape as the span above, and it bit within hours of that ADR landing: every Action
+in `.github/workflows/` is SHA-pinned while `[build-system] requires` was `["hatchling"]` with **no
+upper bound**, so the artifact's `Metadata-Version` was a function of WALL-CLOCK TIME. hatchling
+1.32.0 (2026-08-11 05:03Z) moved 2.4 → 2.5; `v4.78.0` built at 01:39Z and published, `v4.79.0` built
+at 12:56Z and was REFUSED by the publisher's pinned `packaging==25.0`, whose valid set stops at 2.4
+— **green build, green CI, failed upload, no diff between the two runs.** Fix BOTH sides and bump
+FORWARD (`gh-action-pypi-publish` v1.14.2 = `packaging==26.2` + `twine==7.0.0`): metadata 2.5 is
+legitimate, and pinning the backend below it only defers the failure. Bounded (`>=1.27,<2`), never
+pinned — the point is that a backend release lands in a DIFF instead of in a failed publish.
+`tests/test_ci_publish_guard_wired.py` rejects any unbounded `[build-system]` requirement; because a
+bound-checker passes vacuously if its predicate says yes to everything, a companion test pins that
+the predicate rejects the exact `"hatchling"` string that broke this release. **The durable rule: a
+pinned consumer and a floating producer are one dependency, and pinning only the half you control is
+not a pin.** Corollary for diagnosis: I first argued v1.14.2 wouldn't help because its RELEASE DATE
+predates hatchling 1.32.0 — the wrong lens entirely; what decides it is the validator version the
+action pins, which is readable in seconds from `requirements/runtime.txt` at that tag.
+
 **Doctests: CI executes `--doctest-modules` on the PUBLIC surface only** (`pytest --doctest-modules
 silly_kicks/ --ignore-glob="*/_[!_]*.py"`, every leg; PR-S124, wiring guarded by
 `tests/test_ci_doctest_wired.py`). The glob skips single-underscore

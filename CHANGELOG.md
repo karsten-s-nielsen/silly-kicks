@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.79.0] — 2026-08-11
 
+### Fixed — the build backend was unbounded, so the published artifact was a function of wall-clock time
+
+**No library change; release plumbing only.** The first `v4.79.0` publish attempt failed after a
+green build: `InvalidDistribution: Invalid distribution metadata: '2.5' is not a valid metadata
+version`. Nothing in this release caused it, and the window was under four hours.
+
+`pyproject.toml` declared `requires = ["hatchling"]` with **no upper bound** while every GitHub
+Action is SHA-pinned — so the producer floated and the validator was frozen. hatchling **1.32.0**
+landed on PyPI at **05:03Z**; `v4.78.0` had built at **01:39Z** against 1.31.0 and published fine,
+and `v4.79.0` built at **12:56Z** against 1.32.0. Measured, not inferred: 1.31.0 emits
+`Metadata-Version: 2.4`, 1.32.0 emits `2.5`, and `pypa/gh-action-pypi-publish` **v1.14.1** pins
+`packaging==25.0`, whose valid set stops at 2.4 (**v1.14.2** pins `packaging==26.2` + `twine==7.0.0`,
+which accept 2.5).
+
+Fixed on **both** sides, because each alone leaves a gap. The action is bumped to **v1.14.2**
+(bumping *forward* — metadata 2.5 is legitimate, and pinning the backend below it would only defer
+the same failure), and the build backend is **bounded** to `hatchling>=1.27,<2` (not pinned: the
+point is that a backend release shows up in a diff rather than in a failed publish). Guarded by
+`tests/test_ci_publish_guard_wired.py`, which rejects any unbounded `[build-system]` requirement and
+carries a companion test pinning that the predicate rejects the exact `"hatchling"` string that
+broke this release — a bound-checking guard passes vacuously if its predicate says yes to everything.
+
 ### Fixed — `detect_input_convention` rule 1 concluded from evidence that could not discriminate (ADR-059)
 
 Rule 1 infers `POSSESSION_PERSPECTIVE` from *"every reliable (match, team, period) group attacks
