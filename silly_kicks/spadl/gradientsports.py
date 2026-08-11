@@ -282,6 +282,31 @@ def _dispatch_actiontype_resultid(events: pd.DataFrame) -> tuple[np.ndarray, np.
     return type_id_arr, result_id_arr
 
 
+def _reset_synthetic_end(rows: pd.DataFrame) -> pd.DataFrame:
+    """Give a synthesized row its OWN placeholder end, never the parent's derived one.
+
+    Both synthesis sites ``.copy()`` a parent row and overwrite ``type_id``, and both run
+    AFTER ``_derive_end_coordinates``. The parent is pass-class -- a ``PA`` carrying an
+    inline foul, or the ``CR`` of a cross-goal -- so its ``end_x``/``end_y`` have already been
+    rewritten to the NEXT action's start. The synthesized row is ``foul`` or ``shot``, and
+    NEITHER is in ``_DERIVE_END_TYPE_IDS``: those types keep ``end == start`` by contract.
+    Copying the parent wholesale therefore lands a pass-class destination on a type that must
+    not have one, and it reads downstream as a shot or foul that travelled.
+
+    Measured on the committed synthetic fixture: all three synthesized rows carried an
+    inherited end. The two fouls had been wrong since the row was introduced -- their parents
+    are mid-period passes, so a next action always existed -- and were invisible because
+    ``test_shots_tackles_keeper_saves_end_equals_start`` does not include ``foul`` in its type
+    set. The cross-goal shot read correctly only by accident: its parent was the last period-1
+    event surviving exclusion, so derivation had no next action to reach for. Adding any later
+    period-1 event exposes it, which is exactly what the input-convention reshape did.
+    """
+    out = rows.copy()
+    out["end_x"] = out["start_x"]
+    out["end_y"] = out["start_y"]
+    return out
+
+
 def _resolve_team_ids(events: pd.DataFrame) -> pd.arrays.IntegerArray:
     """Resolve per-row ``team_id`` as nullable ``Int64`` (ADR-001-compliant).
 
@@ -704,7 +729,7 @@ def convert_to_actions(
 
     # Foul rows: parent already dispatched to a real action (synthesize an ADDITIONAL foul row).
     if synth_mask.any():
-        foul_rows = actions.loc[synth_mask].copy()
+        foul_rows = _reset_synthetic_end(actions.loc[synth_mask])
         foul_rows["type_id"] = foul_id
         foul_rows["result_id"] = foul_result_full[synth_mask]
         foul_rows["bodypart_id"] = spadlconfig.bodypart_id["foot"]
@@ -726,7 +751,7 @@ def convert_to_actions(
             [spadlconfig.actiontype_id["shot_freekick"], spadlconfig.actiontype_id["shot_penalty"]],
             default=spadlconfig.actiontype_id["shot"],
         ).astype("int64")
-        shot_rows = actions.loc[cg_mask].copy()
+        shot_rows = _reset_synthetic_end(actions.loc[cg_mask])
         shot_rows["type_id"] = cg_type
         shot_rows["result_id"] = spadlconfig.result_id["success"]
         shot_rows["is_synthetic"] = True

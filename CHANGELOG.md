@@ -5,6 +5,92 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.78.0] — 2026-08-10
+
+### Added — artifact input contracts and registry completeness (PR-S147, ADR-056)
+
+**A research artifact recorded `run_commit` — *when* it ran, never *what its numbers depend on*.**
+`scripts/_input_contract.py` adds `declare_inputs()`, which records the SYMBOLS a driver's numbers
+depend on (covariate tuples, extractor module identity, `GEOMETRY_VERSION`) and digests them. When
+`SHOT_ARM_CONFOUNDERS` gains a column the digest moves without anyone editing the driver. Four
+drivers declare one and four artifacts now carry it. Warn, never raise — an artifact is not a
+serving path. Same shape as ADR-050's `feature_contract`.
+
+**Declared limit, not discovered: this catches code drift, not under-declaration.** The mechanism
+names MODULES, so a behavioural change inside one does not move the digest. The concurrent
+`sb360-degradation-and-port` ghost-refusal change is a live near-miss for exactly that — it cannot
+affect GS, so it is not the escalation trigger, but it is the clearest evidence of where that
+trigger will come from.
+
+**Four registry floors replaced by derived populations.** `assert len(ARTIFACT_DRIVERS) >= 6` passed
+at 18 entries while `validate_xcross_causal` was absent and its artifact carried no provenance at
+all. Each gate now derives its population structurally and asserts it EXACTLY, both directions, with
+a three-bucket exemption shape whose `_UNDERIVABLE` bucket is asserted EMPTY — the blind spot the
+other two cannot see. Landed at 22 enrolled drivers, 5 reasoned exemptions, `_UNDERIVABLE` empty,
+and a `SWEPT` registry of exactly 19 default xfn lists (previously three COPIES of one discovery
+rule behind `>= 10`).
+
+**Five live defects found by the new gates:** three artifact drivers with no provenance guard at all
+(`calibrate_tracking_defaults`, `validate_shot_goalmouth_sb`, `validate_xtgk_possession_value`), a
+real ADR-020 dup-`action_id` crash in the three pressure kernels, and `xshot_occurrence_xfns`
+missing from `atomic.tracking.features.__all__`.
+
+**Provenance had FOUR conventions, not two.** Measured across `docs/research/**/*.json`: top-level
+`run_commit` (12), nested `_provenance.commit` (2), `training_commit` (the bundled weights, outside
+`docs/research/`), and nothing at all (3) — plus one artifact that is not a JSON object. The gate
+picks one canonical shape per surface and records divergences WITH the location of their real
+provenance, rather than back-stamping artifacts to fit a shape invented after they were produced.
+
+### Fixed — the GS fixture generator could not reproduce its own fixture (PR-S147, ADR-056)
+
+`tests/datasets/gradientsports/_generate_synthetic_match.py` emitted **51** events against a
+committed **54**. The three missing ones were the ADR-018 goal-capture events — the RE+G own goal,
+the CR+G cross-goal and the `nonEvent` disallowed shot — appended directly to the JSON when goal
+capture landed, with the generator never updated. **Any regeneration silently deleted all three**,
+including the two that `test_owngoal_crossgoal_captured_disallowed_excluded` asserts. Invisible
+because nothing in CI ever runs the generator.
+
+Repaired by reproducing all 54 **verbatim first**, artifacts included (a truncated `ball` dict, a
+raw-clock `startTime`, a `startFormattedGameClock` of `"00:12"` at 1000 s, and a trailing newline
+`main()` never wrote). Byte-identity against the git blob was the acceptance evidence: a generator
+that "improves" the artifact in the same change that restores it cannot show which of the two edits
+moved the file.
+
+**Then reshaped so CI can see the case it governs.** The fixture carried shots from ONE team only,
+so `detect_input_convention` returned `convention=None, confidence="low"` and the converter's
+`validate_input_convention` deferred silently — the guard ran down neither branch. The binding
+constraint was never per-group shot count (the fixture already had 10 shots in one group, AT the
+`high` threshold). Reshaped to the measured distribution (`docs/research/gs_input_convention/`, 64
+matches): both teams on opposite ends within a period, swapping between periods; five shots per
+group, because only 6 of 64 real matches reach two `high`-reliable groups while 50 of 64 reach two
+at `medium`.
+
+    before   convention=None       confidence=low     (deferred)
+    after    PER_PERIOD_ABSOLUTE   confidence=medium  (classifies, and AGREES with the declaration)
+
+Purely additive: all 54 prior events are byte-unchanged and keep their relative order.
+
+### Fixed — a synthesized GS row inherited its parent's derived end coordinates (PR-S147, ADR-056)
+
+**This changes GS conversion values.** Both synthesis sites `.copy()` a pass-class parent AFTER
+`_derive_end_coordinates` has rewritten that parent's end to the next action's start, then relabel
+the copy `foul` or `shot` — neither of which is in `_DERIVE_END_TYPE_IDS`, i.e. both keep
+`end == start` by contract. The copy therefore carried a pass-class destination on a type that must
+not have one, reading downstream as a shot or foul that travelled.
+
+Measured on the committed fixture: **all three** synthesized rows were affected. The two synthesized
+fouls had been wrong since the row was introduced — their parents are mid-period passes, so a next
+action always existed — and were invisible because
+`test_shots_tackles_keeper_saves_end_equals_start` does not include `foul` in its type set. The
+cross-goal shot read correctly only by accident: its parent was the last period-1 event surviving
+exclusion. The input-convention reshape exposed it.
+
+Single-sourced onto `_reset_synthetic_end`. **Real (non-synthetic) rows are byte-identical**, and the
+regression test asserts the parent cross still carries its derived end, so derivation is not disabled
+wholesale. Small-N but corpus-wide: in real data a cross-goal is essentially never period-last, so
+the shot case was wrong every time. A GS consumer persisting `end_x`/`end_y` for synthesized rows
+should re-materialize; nothing else changes and no model retrain is triggered.
+
 ## [4.77.1] — 2026-08-09
 
 ### Fixed — the SB360 coverage driver's shard generation, and two polygon-degeneracy conflations (PR-S146, ADR-055)

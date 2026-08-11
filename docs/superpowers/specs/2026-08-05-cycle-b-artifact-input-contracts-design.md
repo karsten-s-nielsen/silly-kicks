@@ -205,6 +205,13 @@ not the other, so the assertion is not equality; it is that the relationship is 
 (e.g. every artifact driver that walks a corpus is in ADR-052's population). Without it, a change to
 either derivation is silent in the other.
 
+> **CORRECTION (implementation, ADR-056).** The prescribed assertion is **tautological** and cannot
+> fail. "Every corpus-walking artifact driver is in ADR-052's population" is true by construction the
+> moment both gates call the same predicate over the same script set. The reviewer's underlying
+> concern is real -- two independent walkers drift -- but the fix is **structural, not an assertion**:
+> single-source the UNIVERSE in `tests/scripts/_script_population.py`, let the predicates differ, and
+> pin that neither gate re-grows its own `glob`. That is what shipped.
+
 **Naively, assert both directions: `ARTIFACT_DRIVERS | _NOT_A_DRIVER == candidates`. Measured, that
 equality CANNOT HOLD on today's tree, and no exemption registry can fix it** -- the failure is on the
 left side. Three enrolled drivers are not derivable by any `--out`-keyed rule:
@@ -239,6 +246,14 @@ built to prevent that.
 
 Note the asymmetry with the motivating case: `validate_xcross_causal` was unenrolled but **was**
 derivable, which is why the rule reaches it. An unenrolled trainer is a different shape.
+
+> **CORRECTION (implementation, ADR-056).** The three `_UNDERIVABLE` entries above are an artifact of
+> a too-narrow rule, not a property of the tree. `calibrate_xt_bandwidth` is derivable once the rule
+> keys on any `--*out*` flag rather than an `--out` PREFIX (it declares `--report-out`; so does
+> `--output-dir` elsewhere), and both trainers are derivable via a bundled-weights clause. With the
+> broadened predicate the bucket landed **EMPTY**, which is what lets `test_UNDERIVABLE_is_empty` be
+> an assertion rather than a standing waiver. The spec's conclusion -- that the bucket is *needed as
+> a mechanism* -- stands; its measurement of who belongs in it does not.
 
 **So broaden the key until the bucket is EMPTY, and assert that it is.** Two clauses, measured:
 
@@ -332,6 +347,20 @@ That four-way disagreement is exactly the signal an independent source exists to
 live today. Whether those four are export omissions or deliberate is a question the gate should force
 someone to answer.
 
+> **CORRECTION (implementation, ADR-056). This prescription is wrong and its headline finding is an
+> artifact.** The correct independent source is the PACKAGE export `silly_kicks.tracking.__all__`,
+> not `features.__all__`. Measured:
+>
+>     dir(silly_kicks.tracking.features)   _xfns  28
+>     silly_kicks.tracking.__all__         _xfns  28
+>     dir(features) - tracking.__all__            []   <- empty
+>
+> All four names cited above are exported at PACKAGE level; the disagreement is an artifact of
+> comparing against `features.__all__`, which is simply narrower. Building against it would have
+> manufactured four false findings and forced four pointless `__all__` edits. ADR-033 and ADR-051
+> both pin to the package surface for the same reason. K2's real defects are the remaining three: no
+> atomic coverage, the tautological meta-assertion, and the `>= 21` floor.
+
 ### 3.4 Item 26 — the NaN-safety and leakage-guard floors
 
 Found by boundary sweep, not by reading: the genus has an instance nobody named, and it guards a
@@ -353,6 +382,17 @@ does not.
 The floors themselves are legitimate -- they guard against discovery collapse ("Did the marker name
 change or a helper lose its decoration?") -- so this **adds** a two-directional pin rather than
 replacing them.
+
+> **CORRECTION (implementation, ADR-056).** The pin surface must be the PACKAGE `__all__`, not the
+> module's. Measured, a module-level pin would be **vacuous on two of the three registries**:
+>
+>     spadl.utils.__all__          absent          <- no __all__ at all
+>     spadl.utils      add_* in __all__   0        <- pinning here asserts nothing
+>     atomic.spadl.utils                  0        <- same
+>     tracking.features                  25        <- narrower than the package's 33
+>
+> Pinned against the package surface, as ADR-033 does, the assertion produces a real red: four
+> `tracking` helpers exported with no `@nan_safe_enrichment` and no exemption.
 
 **Three more, verified during this review rather than assumed:** the leakage guards
 `test_packing_xfns_leakage_guard.py`, `test_run_value_xfns_leakage_guard.py` and

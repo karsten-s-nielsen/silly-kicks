@@ -3,13 +3,21 @@
 Produces ``synthetic_match.json`` covering every dispatch row from
 ``silly_kicks/spadl/gradientsports.py`` with >=2x redundancy, plus exclusion / set-piece
 / result / body-part / tackle-winner / foul / card variations needed to
-exercise the full converter contract.
+exercise the full converter contract, the three ADR-018 goal-capture events (see
+:func:`_hand_authored`), and an input-convention block that lets the ADR-006 detector
+CLASSIFY rather than defer (see the comment at that block).
 
 Run:
     uv run python tests/datasets/gradientsports/_generate_synthetic_match.py
 
-The resulting JSON is committed and is the canonical test artifact. The
-generator is not invoked from pytest; it is a maintainer-time tool.
+The resulting JSON is committed and is the canonical test artifact. This generator is a
+maintainer-time tool and is not invoked BY pytest -- but
+``test_gradientsports.py::test_the_generator_reproduces_the_committed_fixture`` imports
+``build_match()`` and asserts its serialization equals the committed file. That gate exists
+because its absence let the two drift for a full release cycle: the generator emitted 51
+events against a committed 54, so regenerating would have silently deleted the own goal and
+the cross-goal a live test asserts. **Never hand-edit the JSON -- change the generator and
+re-run it.**
 """
 
 from __future__ import annotations
@@ -254,6 +262,36 @@ def make_event(
         "awayPlayers": [],
         "ball": [{"visibility": "VISIBLE", "x": ball_x, "y": ball_y, "z": 0.0}],
     }
+
+
+def _hand_authored(event, *, raw_time):
+    """Reproduce the three field-level artifacts of the three ADR-018 goal-capture events.
+
+    Events 52-54 (the RE+G own goal, the CR+G cross-goal, the ``nonEvent`` disallowed shot)
+    were appended DIRECTLY to ``synthetic_match.json`` when goal capture landed; this
+    generator was never updated. From that day it emitted 51 events against a committed 54,
+    and any regeneration silently deleted all three -- including the two that
+    ``test_owngoal_crossgoal_captured_disallowed_excluded`` asserts. Nothing in CI ever runs
+    the generator, so the drift was invisible.
+
+    Being hand-authored they deviate from :func:`make_event` in three ways (five fields).
+    None is read by the converter: ``_load_synthetic_events`` takes only
+    ``ball["x"]``/``["y"]`` and ``startGameClock``.
+
+    * ``ball`` carries no ``visibility`` / ``z`` key.
+    * ``startTime`` / ``endTime`` / ``eventTime`` hold the raw clock, not ``200.0 + time_s``.
+    * ``startFormattedGameClock`` reads ``"00:12"`` at clocks of 1000 / 1100 / 1200 s.
+
+    They are reproduced VERBATIM rather than normalized so that restoring them is provably a
+    no-op on the committed bytes. A generator that "improves" the artifact in the same change
+    that restores it cannot show which of the two edits moved the file.
+    """
+    event["startTime"] = raw_time
+    event["endTime"] = raw_time
+    event["eventTime"] = raw_time
+    event["gameEvents"]["startFormattedGameClock"] = "00:12"
+    event["ball"] = [{"x": event["ball"][0]["x"], "y": event["ball"][0]["y"]}]
+    return event
 
 
 def build_match():
@@ -687,6 +725,124 @@ def build_match():
     events.append(e)
     eid += 1
 
+    # GOAL CAPTURE (ADR-018): the own goal, the cross-goal, and the DISALLOWED shot.
+    # These carry ids 52-54 yet sort BEFORE the id-51 END marker, because they were appended
+    # directly to the committed JSON rather than emitted here. See _hand_authored(). They do
+    # not consume `eid`.
+    events.append(
+        _hand_authored(
+            make_event(
+                52,
+                pe_type="RE",
+                period=1,
+                time_s=1000.0,
+                team_id=HOME_TEAM_ID,
+                player_id=7,
+                ball_x=-45.0,
+                ball_y=0.0,
+                bodyType="R",
+                shotOutcomeType="G",
+                rebounderPlayerId=7,
+                rebounderPlayerName="OG Scorer",
+            ),
+            raw_time=1000.0,
+        )
+    )
+    events.append(
+        _hand_authored(
+            make_event(
+                53,
+                pe_type="CR",
+                period=1,
+                time_s=1100.0,
+                team_id=HOME_TEAM_ID,
+                player_id=11,
+                ball_x=45.0,
+                ball_y=30.0,
+                bodyType="R",
+                crosserPlayerId=11,
+                crosserPlayerName="Crosser",
+                crossOutcomeType="I",
+                shotOutcomeType="G",
+            ),
+            raw_time=1100.0,
+        )
+    )
+    events.append(
+        _hand_authored(
+            make_event(
+                54,
+                pe_type="SH",
+                period=1,
+                time_s=1200.0,
+                team_id=HOME_TEAM_ID,
+                player_id=9,
+                ball_x=40.0,
+                ball_y=0.0,
+                bodyType="R",
+                nonEvent=True,
+                shooterPlayerId=9,
+                shooterPlayerName="Disallowed Scorer",
+                shotOutcomeType="G",
+            ),
+            raw_time=1200.0,
+        )
+    )
+
+    # INPUT-CONVENTION BLOCK: give `detect_input_convention` a case it can CLASSIFY.
+    #
+    # Before this block the fixture had shots from ONE team only (team 100: 8 in P1, 1 in P2),
+    # so the detector returned `convention=None, confidence="low"` on the
+    # fewer-than-2-reliable-groups clause (`orientation.py:410`) and the converter's
+    # `validate_input_convention` guard deferred silently. CI therefore never exercised the
+    # guard on this provider at all -- neither its agreement path nor its raise path.
+    #
+    # Shape, measured over all 64 real GS WC2022 matches (`docs/research/gs_input_convention/`):
+    # both teams shoot at OPPOSITE ends within a period and SWAP ends between periods. That is
+    # the `per_period_absolute` signature the converter declares at `gradientsports.py:756`
+    # (match 10502: team 51 `P1 13.3 LOW -> P2 94.0 HIGH`; team 366 `P1 95.8 HIGH -> P2 9.8 LOW`).
+    #
+    # Three choices the measurement underdetermines, stated rather than made silently:
+    #
+    # 1. FIVE shots per group, not ten. Five is `min_shots_per_group_medium`, so the detector
+    #    classifies at `confidence="medium"`. That is the representative tier: only 6 of 64 real
+    #    matches reach two `high`-reliable (>=10) groups, while 50 of 64 reach two at `medium`.
+    #    A fixture pinned at the `high` tier would test a shape the corpus almost never has.
+    # 2. APPENDED, not interleaved. `make_event` callers above use the `time_s = X + eid` idiom,
+    #    so inserting an event mid-stream silently shifts every later event's game clock. These
+    #    carry explicit ids (55-74) and explicit clocks and consume no `eid`, so no existing
+    #    event's id, clock or converted action changes.
+    # 3. Outcome "S" (saved), never "G". These exist to carry a coordinate distribution, so they
+    #    must not add goals -- the goal assertions belong to the three ADR-018 events above.
+    #
+    # The x spread is deliberate rather than one repeated value: a constant column is the
+    # degeneracy that has twice made a gate score noise here (see CLAUDE.md on fixture validity).
+    conv_eid = 55
+    for team_id, player_id, home, period, base_time, side in (
+        (HOME_TEAM_ID, 9, True, 1, 1300.0, +1.0),
+        (AWAY_TEAM_ID, 20, False, 1, 1400.0, -1.0),
+        (HOME_TEAM_ID, 9, True, 2, 1500.0, -1.0),
+        (AWAY_TEAM_ID, 20, False, 2, 1600.0, +1.0),
+    ):
+        for k, spread in enumerate((-3.0, -1.0, 0.0, 1.0, 3.0)):
+            events.append(
+                make_event(
+                    conv_eid,
+                    pe_type="SH",
+                    period=period,
+                    time_s=base_time + 10.0 * k,
+                    team_id=team_id,
+                    player_id=player_id,
+                    home_team=home,
+                    set_piece="O",
+                    ball_x=side * 45.0 + spread,
+                    ball_y=0.0,
+                    bodyType="R",
+                    shotOutcomeType="S",
+                )
+            )
+            conv_eid += 1
+
     # END markers.
     events.append(make_event(eid, ge_type="END", pe_type=None, period=2, time_s=2700.0, ball_x=0.0, ball_y=0.0))
     eid += 1
@@ -698,6 +854,9 @@ def main():
     events = build_match()
     with OUTPUT_PATH.open("w", encoding="utf-8") as f:
         json.dump(events, f, indent=2, ensure_ascii=False)
+        # The committed artifact ends with a newline; `json.dump` does not write one. Without
+        # this the generator's own output differs from its committed file by one byte.
+        f.write("\n")
     print(f"Wrote {len(events)} events to {OUTPUT_PATH}")
 
 
