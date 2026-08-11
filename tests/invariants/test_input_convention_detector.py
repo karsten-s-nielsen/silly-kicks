@@ -321,3 +321,85 @@ def test_tf22_detector_dense_absolute_frame_home_right_classifies_correctly():
         f"expected ABSOLUTE_FRAME_HOME_RIGHT, got {result.convention!r}; diagnostics={result.diagnostics}"
     )
     assert result.confidence == "high"
+
+
+# ---------------------------------------------------------------------------
+# SkillCorner (ADR-059): rule 1 is what validates this provider, so a silent
+# downgrade to ambiguous is the coverage risk that tightening it creates.
+# ---------------------------------------------------------------------------
+
+#: One of the ten SkillCorner matches `scripts/_corpus.py::PUBLIC_CORPUS` registers as
+#: redistributable. Its `visibility` field reads `public` on the pining record itself -- checked,
+#: not inferred from the provider name, which is the exact mistake `_corpus.py` exists to prevent.
+_SKILLCORNER_PUBLIC_MATCH = "1886347"
+
+
+def _build_skillcorner_raw_events_for_detector() -> pd.DataFrame:
+    """Per-event rows with team_id, period_id, start_x, is_shot for the SkillCorner fixture.
+
+    `is_shot` is re-derived here from `end_type == "shot"` -- the SAME rule the converter uses
+    (`silly_kicks/spadl/skillcorner.py`) -- rather than being baked into the committed file, so the
+    fixture cannot silently disagree with the converter about what a shot is.
+
+    SkillCorner x is CENTRE-ORIGIN (measured on this fixture: -52.1 .. 50.8), so it is shifted by
+    half the pitch to match the detector's 0..x_max expectation. This mirrors what the Gradient
+    Sports distribution driver does with raw `ball_x`.
+    """
+    path = _REPO_ROOT / "tests" / "datasets" / "skillcorner" / "raw" / f"{_SKILLCORNER_PUBLIC_MATCH}_events_slim.csv"
+    raw = pd.read_csv(path)
+    return pd.DataFrame(
+        {
+            "game_id": raw["match_id"].astype(str),
+            "team_id": raw["team_id"],
+            "period_id": raw["period"],
+            "start_x": raw["x_start"].astype(float) + 52.5,
+            "is_shot": raw["end_type"] == "shot",
+        }
+    )
+
+
+def test_skillcorner_raw_detected_as_possession_perspective():
+    """The coverage gate ADR-059 needs: rule 1 must still CLASSIFY real SkillCorner data.
+
+    `skillcorner.py` declares POSSESSION_PERSPECTIVE, and rule 1 is the only branch that can
+    confirm it. Tightening rule 1 to require discriminating evidence risks a SILENT downgrade to
+    ambiguous -- a loss that shows up as a gate quietly not checking rather than as a red test.
+
+    This fixture is a real match and is deliberately a HARD case: `(team 1805, period 1)` has only
+    3 shots and is dropped by the `>= min_shots_per_group_medium` filter -- the very sparse-drop
+    shape that made rule 1 misfire on Gradient Sports. It still classifies here because the
+    survivors discriminate (teams 1805 and 4177 are both reliable in period 2, and 4177 spans both
+    periods), which is exactly the distinction ADR-059 draws.
+    """
+    events = _build_skillcorner_raw_events_for_detector()
+    result = detect_input_convention(events, match_col="game_id", x_max=105.0, is_shot_col="is_shot")
+
+    assert result.convention is InputConvention.POSSESSION_PERSPECTIVE, (
+        f"real SkillCorner data no longer detects as possession_perspective: {result.diagnostics}. "
+        f"If rule 1 was tightened, this is the silent-downgrade-to-ambiguous that ADR-059 names as "
+        f"the coverage risk -- the provider's declaration would stop being cross-checked."
+    )
+    assert result.confidence in ("high", "medium")
+
+
+def test_skillcorner_fixture_actually_exercises_the_sparse_drop():
+    """NON-VACUITY of the fixture, not of the detector.
+
+    A gate is only as good as the rows it scores. This one is worth having *because* the fixture
+    contains a below-threshold group: if a future fixture swap removed that, the gate above would
+    still pass while no longer exercising the filter behaviour it exists to cover, and nothing
+    would say so.
+    """
+    events = _build_skillcorner_raw_events_for_detector()
+    shots = events[events["is_shot"]]
+    per_group = shots.groupby(["team_id", "period_id"]).size()
+
+    assert (per_group < 5).any(), (
+        f"the fixture no longer contains a group below min_shots_per_group_medium: "
+        f"{per_group.to_dict()}. It was chosen because it does -- that is the sparse-drop shape "
+        f"that made rule 1 misfire on Gradient Sports."
+    )
+    assert (per_group >= 5).sum() >= 2, (
+        f"fewer than two reliable groups: {per_group.to_dict()} -- the detector would defer on the "
+        f"fewer-than-two-reliable-groups clause and the gate above would assert nothing about rule 1."
+    )

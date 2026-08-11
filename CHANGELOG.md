@@ -5,7 +5,68 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.79.0] — 2026-08-10
+## [4.79.0] — 2026-08-11
+
+### Fixed — `detect_input_convention` rule 1 concluded from evidence that could not discriminate (ADR-059)
+
+Rule 1 infers `POSSESSION_PERSPECTIVE` from *"every reliable (match, team, period) group attacks
+high-x"*. `reliable` is filtered to `n >= min_shots_per_group_medium` (5) — and when that filter
+removes the low-side groups, an all-high survivor set is an artifact of the filter rather than a
+measurement.
+
+**Measured on real Gradient Sports data, wrong on 2 of 36 matches.** Match 10502: team 51 goes
+`P1 13.3 LOW (n=3) -> P2 94.0 HIGH (n=8)`, team 366 goes `P1 95.8 HIGH (n=7) -> P2 9.8 LOW (n=3)`.
+Both teams shoot at opposite ends within a period and SWAP between them — textbook
+`PER_PERIOD_ABSOLUTE`, which `gradientsports.py` correctly declares. Both LOW groups fall below the
+threshold, and rule 1 returned `POSSESSION_PERSPECTIVE` at `confidence="medium"`, contradicting a
+correct declaration.
+
+**The fix recorded in `TODO.md` would not have worked.** It diagnosed *"the rule fires on
+effectively ONE team's data"* and prescribed *"require >= 2 distinct TEAMS"*. Measured: the
+survivors are team 51 (P2) and team 366 (P1) — **two** teams, so that guard permits the misfire
+unchanged. It would have reviewed clean against its own rationale and shipped with the defect live.
+Reproducing the failure before implementing is the only reason it did not.
+
+Rule 1 now requires a configuration an absolute convention could not have produced — **two distinct
+teams reliable in the same period**, or **one team reliable across two periods**. Otherwise it
+returns `convention=None` with a diagnostic naming why. Deferral is the safe direction:
+`validate_input_convention` reads `None` as "keep the caller's declared convention", so a false
+ambiguous leaves output correct and loses only a cross-check, while a false positive contradicts a
+correct declaration and **raises** under `on_mismatch="raise"`.
+
+Clause (b) **is** the guard TF-22 added inline to the ABSOLUTE branch in 3.0.1, for the same reason
+against the same sparse-asymmetric shape; rule 1 never got it. Both branches now call
+`_a_team_spans_periods` — one spelling, not two. Clause (a) is deliberately NOT given to the
+ABSOLUTE branch: separating `ABSOLUTE` from `PER_PERIOD` requires observing a team ACROSS periods,
+so a single shared "is this discriminating?" helper would have silently loosened TF-22.
+
+**Coverage.** Rule 1 is what validates StatsBomb and SkillCorner as `POSSESSION_PERSPECTIVE`, so
+tightening it risks a silent downgrade to ambiguous.
+`test_statsbomb_raw_detected_as_possession_perspective` already asserts this on **3 real StatsBomb
+matches** and passes — a standing gate, worth more than a one-time corpus run that confirms today
+and rots tomorrow. **SkillCorner is guarded too**, by a new
+`test_skillcorner_raw_detected_as_possession_perspective` on real public match `1886347` — one of
+the ten `PUBLIC_CORPUS` registers as redistributable. That gate was nearly not built: a first
+reading took "SkillCorner" to mean owner-tier, which is precisely the provider-name-as-tier-proxy
+inference `scripts/_corpus.py` exists to prevent and whose docstring says visibility is keyed
+per-match, *"NEVER on the provider name"*. The fixture is deliberately a HARD case — `(team 1805,
+period 1)` has 3 shots and is dropped by the same `>= 5` filter that caused the misfire, and the
+match still classifies because the survivors discriminate — so it demonstrates the guard does not
+over-tighten on real data carrying the defect's own shape. `is_shot` is re-derived from the
+converter's own `end_type == "shot"` rule rather than baked into the file, a companion test asserts
+the below-threshold group is still present, and the gate is mutation-verified: force both
+discriminating predicates false and real SkillCorner data detects as `None`.
+
+**No converted data changes — for ANY provider, including the two affected Gradient Sports
+matches.** The detector is a cross-check, not a code path: `to_spadl_ltr` orients on the converter's
+DECLARED `input_convention`, and `validate_input_convention` only warns or raises on a mismatch,
+never overriding the declaration (`orientation.py`'s own module docstring: *"It never overrides the
+declared convention — the converter's declared `input_convention` is the load-bearing contract"*).
+So what changes is which inputs get a spurious warning or a spurious `on_mismatch="raise"`, not a
+single coordinate. No retrain, no re-materialization.
+
+Beyond that, no verdict change for any provider whose data carries a discriminating configuration;
+the ABSOLUTE branch is unchanged.
 
 ### Changed — the tracking frames schema declares a NULLABLE id dtype (ADR-058)
 
