@@ -140,6 +140,24 @@ def _player_layout(roster: str) -> list[dict]:
         # Drop one outfield away player positioned far from the action: the extreme-member
         # case, which is what the applicability probe's probe 1 leans on.
         rows = [r for r in rows if r["player_id"] != 24]
+    elif roster == "gk_one_end":
+        # ONE keeper visible, the other off-frame. The DEFENDING keeper is in-frame on 92.2% of
+        # shots (`docs/research/sb360_coverage/coverage.md`), so a freeze-frame WITH a keeper is
+        # the common shape and `gk_absent` alone leaves it unexercised. Deliberately NOT claimed
+        # here: that the far keeper is usually absent. That report's `acting GK` cell for `shot`
+        # is "—", meaning definitionally not applicable (the keeper is not the actor on a shot),
+        # NOT a measured low rate -- it says nothing about the far keeper either way.
+        #
+        # This roster exists to break `gk_absent`'s DEGENERACY rather than to replace it
+        # (`gk_absent` is a real visibility axis and the only case exercising the both-absent
+        # refusal path).
+        #
+        # Keeping the HOME keeper (base_x 5.0) makes team 1 RESOLVE to x=0. Team 2 falls to the
+        # outfield rung, whose ten members sit at `60 + (i % 4) * 11` -> 71/82/93/60/... for a
+        # mean of 76.5, above the 52.5 midline, so it GUESSES x=105. The two ends DIFFER, the map
+        # is non-degenerate, `attacked_goal` resolves, and the five `add_cover_shadows` columns
+        # become exercisable again (ADR-055 made that aggregator keeper-dependent).
+        rows = [r for r in rows if not (r["is_goalkeeper"] and r["team_id"] == AWAY_TEAM_ID)]
     return rows
 
 

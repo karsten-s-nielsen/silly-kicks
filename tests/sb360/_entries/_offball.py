@@ -42,6 +42,13 @@ _entry(
             "defensive_credit_minus": AxisVerdict("identical", "works"),
             "n_defensive_credits": AxisVerdict("identical", "works"),
         },
+        "gk_one_end": {
+            "audit_xg": AxisVerdict("identical", "works"),
+            "defensive_credit_net": AxisVerdict("identical", "works"),
+            "defensive_credit_plus": AxisVerdict("identical", "works"),
+            "defensive_credit_minus": AxisVerdict("identical", "works"),
+            "n_defensive_credits": AxisVerdict("identical", "works"),
+        },
     },
     applicability={
         "audit_xg": "no_support",
@@ -143,6 +150,30 @@ _entry(
             "line_break": AxisVerdict("identical", "works"),
             "n_attackers_behind_line": AxisVerdict("identical", "works"),
         },
+        "gk_one_end": {
+            "n_off_ball_runners_pre_window": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Cause isolated as frame_count, not velocity: the feature needs a temporal window and a "
+                    "single freeze-frame legitimately yields a different, single-sample answer. Nothing is "
+                    "fabricated from absent kinematics. [measured cause=frame_count]"
+                ),
+            ),
+            "max_off_ball_run_displacement_pre_window": AxisVerdict("all_nan", "honest_nan"),
+            "mean_off_ball_run_speed_pre_window": AxisVerdict("all_nan", "honest_nan"),
+            "n_off_ball_runners_toward_goal_pre_window": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Cause isolated as frame_count, not velocity: the feature needs a temporal window and a "
+                    "single freeze-frame legitimately yields a different, single-sample answer. Nothing is "
+                    "fabricated from absent kinematics. [measured cause=frame_count]"
+                ),
+            ),
+            "line_break": AxisVerdict("identical", "works"),
+            "n_attackers_behind_line": AxisVerdict("identical", "works"),
+        },
     },
     applicability={
         "n_off_ball_runners_pre_window": "no_support",
@@ -188,6 +219,13 @@ _entry(
             "n_valued_disruptive_runs": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
+            "run_value_target": AxisVerdict("identical", "works"),
+            "run_value_disruptive_sum": AxisVerdict("identical", "works"),
+            "run_value_enabled_pass": AxisVerdict("identical", "works"),
+            "n_disruptive_runs": AxisVerdict("identical", "works"),
+            "n_valued_disruptive_runs": AxisVerdict("identical", "works"),
+        },
+        "gk_one_end": {
             "run_value_target": AxisVerdict("identical", "works"),
             "run_value_disruptive_sum": AxisVerdict("identical", "works"),
             "run_value_enabled_pass": AxisVerdict("identical", "works"),
@@ -266,6 +304,28 @@ _entry(
             ),
         },
         "defender_absent": {
+            "n_off_ball_runners_pre_window": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Cause isolated as frame_count, not velocity: the feature needs a temporal window and a "
+                    "single freeze-frame legitimately yields a different, single-sample answer. Nothing is "
+                    "fabricated from absent kinematics. [measured cause=frame_count]"
+                ),
+            ),
+            "max_off_ball_run_displacement_pre_window": AxisVerdict("all_nan", "honest_nan"),
+            "mean_off_ball_run_speed_pre_window": AxisVerdict("all_nan", "honest_nan"),
+            "n_off_ball_runners_toward_goal_pre_window": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Cause isolated as frame_count, not velocity: the feature needs a temporal window and a "
+                    "single freeze-frame legitimately yields a different, single-sample answer. Nothing is "
+                    "fabricated from absent kinematics. [measured cause=frame_count]"
+                ),
+            ),
+        },
+        "gk_one_end": {
             "n_off_ball_runners_pre_window": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -370,6 +430,35 @@ _entry(
             ),
         },
         "defender_absent": {
+            "press_commitment": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                ),
+            ),
+            "press_commitment_closing_speed": AxisVerdict(
+                "no_signal",
+                "not_exercised",
+                rationale=(
+                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
+                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
+                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                ),
+            ),
+            "press_commitment_source": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
+                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
+                    "designed das_source to do exactly this. [measured cause=velocity]"
+                ),
+            ),
+        },
+        "gk_one_end": {
             "press_commitment": AxisVerdict(
                 "no_signal",
                 "not_exercised",

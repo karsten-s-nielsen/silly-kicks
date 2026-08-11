@@ -13,8 +13,16 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     # PERIOD-RELATIVE: seconds since the start of the period, resets to 0 each period (ADR-017)
     "time_seconds": "float64",
     "frame_rate": "float64",
-    "player_id": "int64",
-    "team_id": "int64",
+    # NULLABLE by necessity, not by preference. Every frame set carries a ball row, which belongs
+    # to no team and holds no player, so both are NA on it BY CONSTRUCTION -- and numpy `int64`
+    # cannot represent NA. Declared `int64` these raised `IntCastingNaNError` on every snapshot,
+    # which ADR-055 measured and read as its dtype PIN being unimplementable; it was the
+    # DECLARATION. All five provider variants already overrode them (four to `object`, Gradient
+    # Sports to `Int64`), so the base was satisfied by nothing: a default masquerading as a
+    # contract. Not `object`, because `id_compat`'s both-object path is CONTENT-probed (~15% per
+    # side) since boxed floats raw-compare False against the same id as a string.
+    "player_id": "Int64",
+    "team_id": "Int64",
     "is_ball": "bool",
     "is_goalkeeper": "bool",
     "x": "float64",
@@ -52,14 +60,16 @@ METRICA_TRACKING_FRAMES_COLUMNS: dict[str, str] = KLOPPY_TRACKING_FRAMES_COLUMNS
 """Metrica native bronze->frame output: object identifiers (``"Home"``/``"Away"`` team
 labels + roster-mapped player ids). Same shape as the kloppy variant."""
 
-GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS: dict[str, str] = {
-    **TRACKING_FRAMES_COLUMNS,
-    "player_id": "Int64",
-    "team_id": "Int64",
-}
+GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS: dict[str, str] = TRACKING_FRAMES_COLUMNS
 """Gradient Sports (formerly PFF FC) native output: nullable Int64 identifiers
 (matches GRADIENTSPORTS_SPADL_COLUMNS convention from PR-S18; allows NaN on
-ball rows). game_id stays int64."""
+ball rows). game_id stays int64.
+
+Now an ALIAS of the base rather than an override of it. It carried the only honest id declaration
+in this file, and the base adopted it; re-stating the two columns would leave a redundant literal
+that a future edit could silently diverge from. Kept as a NAME rather than deleted: it is exported
+in ``silly_kicks.tracking.__all__``, and aliasing is already this file's idiom for "this provider's
+schema equals another's" -- SPORTEC, SKILLCORNER and METRICA all alias KLOPPY the same way."""
 
 SPEED_SOURCE_UNAVAILABLE = "unavailable"
 """``speed_source`` token: this frame SOURCE structurally cannot carry kinematics.

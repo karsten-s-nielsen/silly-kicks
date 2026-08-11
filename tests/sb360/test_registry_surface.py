@@ -14,6 +14,7 @@ from tests.sb360._registry import (
     SB360_ENTRIES,
     VISIBILITY_ROSTERS,
     audited_surface,
+    columns_exercised_on_no_roster,
     iter_verdicts,
     public_add_star,
 )
@@ -159,4 +160,123 @@ def test_not_exercised_count_is_within_its_locked_budget():
         f"{actual} not_exercised verdict(s) against a locked budget of "
         f"{NOT_EXERCISED_BUDGET}. A fixture inadequacy must be acknowledged deliberately, "
         f"never allowed to grow quietly (ADR-052: a bounded pass logs what it dropped)."
+    )
+
+
+def test_every_aggregator_emits_at_least_one_column() -> None:
+    """An entry with NO columns has no verdicts, so the audit silently does not cover it.
+
+    This is the gate for a defect class that shipped TWICE. `_regenerate.py` probes each aggregator
+    to discover its columns and, on any exception, falls back to `cols = ()`. The committed verdicts
+    stay correct until someone regenerates, so CI never noticed:
+
+    * `add_visible_area_coverage` (4.77.0) -- its adapter was written in `_calls.py` but never
+      registered in `ADAPTERS`, so the `C.generic` fallback raised `TypeError`;
+    * `add_xcross_attempt` -- read `frames["vx"]` unguarded and raised `KeyError` on a freeze-frame
+      that DECLARES `speed_source="unavailable"`.
+
+    Both are repaired, so this gate cannot be landed red against a live instance. It was instead
+    MUTATION-VERIFIED, which ADR-051 permits explicitly ("landed-red where practical,
+    mutation-verified otherwise"): re-running the regenerator with `visible_area_coverage` deleted
+    from `ADAPTERS` reproduces the empty-column state, and this assertion fails naming it.
+
+    ADR-053's contract is that EVERY registered `add_*` carries an SB360 freeze-frame verdict. An
+    empty entry satisfies the meta-assertion that pins the registry to `tracking.__all__` -- the
+    entry EXISTS -- while carrying no information at all. That gap is what this closes.
+    """
+    empty = sorted(name for name, entry in SB360_ENTRIES.items() if not entry.columns)
+    assert not empty, (
+        f"{empty} carry ZERO columns, so every roster block for them is empty and the audit covers "
+        f"them in name only. This is almost always a PROBE FAILURE in `_regenerate.py` -- run it "
+        f"and read the '!! PROBE FAILED' report, which names the exception. The usual causes are an "
+        f"adapter defined in `_calls.py` but never registered in `ADAPTERS`, or an aggregator that "
+        f"raises on the freeze-frame fixture instead of honouring the ADR-054 velocity contract."
+    )
+
+
+#: ``(entry, column)`` pairs adjudicated ``not_exercised`` under EVERY visibility roster --
+#: exercised NOWHERE in the sweep. A STANDING PIN, not a cycle deliverable: adding a roster cannot
+#: shrink it for a column already exercised on a sibling roster, because "unexercised everywhere"
+#: is a strictly stronger predicate than "unexercised on the roster in question". The `gk_one_end`
+#: cycle deliberately left this set UNCHANGED while reclaiming five columns under its own roster.
+#:
+#: It gained ONE member when `add_xcross_attempt` was repaired -- see the entry below. A member
+#: arriving because an aggregator became VISIBLE is not the regression this pin hunts; the
+#: regression is a column that was exercised somewhere and stopped being. The failure message
+#: distinguishes them, so read WHICH direction moved before rebaselining.
+_EXPECTED_DARK_COLUMNS = {
+    # The fixture has no pressing sequence, so the argmax-defender identity never has a domain.
+    ("add_cover_shadows", "max_single_defender_player_id"),
+    # `no_signal` on all three rosters; TF-51 needs a press the fixture does not stage.
+    ("add_press_commitment", "press_commitment"),
+    ("add_press_commitment", "press_commitment_closing_speed"),
+    # A fitted model over a freeze-frame domain the fixture does not produce.
+    ("add_xshot_occurrence", "xshot_occurrence"),
+    # NEWLY VISIBLE, not newly dark. `add_xcross_attempt` used to raise `KeyError: 'vx'` on the
+    # freeze-frame probe, `_regenerate.py` swallowed that into `cols = ()`, and the aggregator
+    # therefore had NO columns and NO verdicts -- so it could not appear here however dark it was.
+    # With the ADR-054 velocity contract honoured it probes cleanly, and both legs score NaN
+    # because the fixture stages no in-possession wide-area cross. Same class as the
+    # `add_xshot_occurrence` entry above: a fitted model over a domain this fixture does not
+    # produce.
+    ("add_xcross_attempt", "xcross_attempt"),
+}
+
+
+def test_no_column_is_unexercised_on_every_roster_except_the_recorded_ones() -> None:
+    """A column ``not_exercised`` under EVERY visibility roster is exercised NOWHERE.
+
+    Distinct from ``NOT_EXERCISED_BUDGET``, which counts per-ROSTER tuples and therefore RISES
+    whenever a roster is added. This set is the per-COLUMN question, and it is the only one that
+    can answer "is this column covered anywhere at all".
+    """
+    dark = columns_exercised_on_no_roster()
+    assert dark == _EXPECTED_DARK_COLUMNS, (
+        f"columns exercised on NO roster changed.\n"
+        f"  newly dark: {sorted(dark - _EXPECTED_DARK_COLUMNS)}\n"
+        f"  newly lit : {sorted(_EXPECTED_DARK_COLUMNS - dark)}\n"
+        f"A column going dark is a coverage REGRESSION -- find which roster stopped exercising it. "
+        f"A column lighting up is a gain: update the expectation and record which roster covered it."
+    )
+
+
+#: The five columns ADR-055 sent dark on ``gk_absent`` by making ``add_cover_shadows``
+#: keeper-dependent. Reclaiming them is the entire point of the ``gk_one_end`` roster, so the claim
+#: is ASSERTED rather than noted. ``max_single_defender_player_id`` is deliberately absent: it is
+#: `not_exercised` for an UNRELATED reason (no pressing sequence) on every roster.
+_RECLAIMED_BY_GK_ONE_END = (
+    "n_blocked_receivers",
+    "n_potential_receivers",
+    "blocking_score",
+    "blocked_threat_fraction",
+    "max_single_defender_blocking_score",
+)
+
+
+def test_gk_one_end_reclaims_the_cover_shadow_columns() -> None:
+    """The ``gk_one_end`` roster exists to make these five exercisable again.
+
+    Under ``gk_absent`` BOTH keepers are gone, ``resolve_defended_goals`` guesses both teams at
+    x=105, ``attacked_goal`` refuses the degenerate map, and every leg goes NaN for a roster-driven
+    reason. With ONE keeper visible the ends differ (measured: team 1 resolves to 0.0, team 2
+    guesses 105.0), so the columns carry real observations.
+
+    This is the cycle's success criterion. Neither aggregate can express it -- the budget counts
+    per-roster tuples and can only rise, and the no-roster set never contained these columns
+    because they are `honest_nan` under `defender_absent`.
+    """
+    entry = SB360_ENTRIES["add_cover_shadows"]
+    verdicts = entry.visibility.get("gk_one_end", {})
+    assert verdicts, "add_cover_shadows has no gk_one_end block -- the roster was not regenerated"
+
+    unexercised = sorted(
+        col
+        for col in _RECLAIMED_BY_GK_ONE_END
+        if verdicts.get(col) is None or verdicts[col].adjudication == "not_exercised"
+    )
+    assert not unexercised, (
+        f"gk_one_end did not reclaim {unexercised}. The roster's whole purpose is a NON-degenerate "
+        f"goal map -- one keeper visible so the two ends differ. If these are still unexercised, "
+        f"check that `_player_layout` drops only the AWAY keeper and that `resolve_defended_goals` "
+        f"returns two DIFFERENT ends on this roster."
     )

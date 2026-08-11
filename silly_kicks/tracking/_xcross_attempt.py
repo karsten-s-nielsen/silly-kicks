@@ -29,7 +29,11 @@ from silly_kicks.tracking._ball_carrier import (
 )
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
+from silly_kicks.tracking._velocity_availability import (
+    velocity_unavailable_by_design as _velocity_unavailable_by_design,
+)
 from silly_kicks.tracking._xshot_occurrence import IntegrityError, load_xgb_booster_base_score_safe
+from silly_kicks.tracking.schema import SPEED_SOURCE_UNAVAILABLE
 from silly_kicks.tracking.utils import link_actions_to_frames
 
 XCrossFeatureSet = Literal["faithful", "extended"]
@@ -190,9 +194,16 @@ def extract_xcross_features(
     if is_ball.any():
         bx, by = float(gr_x[is_ball][0]), float(y[is_ball][0])
         out["ball_r"], out["ball_theta"] = _polar(bx, by - _geo.GOAL_Y)
-        bvx = float(f.loc[is_ball, "vx"].to_numpy()[0])
-        bvy = float(f.loc[is_ball, "vy"].to_numpy()[0])
-        out["ball_speed"] = math.hypot(bvx, bvy)
+        # NAN-TOLERANT, as this function's docstring promises and its NaN pre-fill implements: an
+        # absent vx/vy leaves `ball_speed` NaN instead of raising. It used to read the columns
+        # unguarded, so a freeze-frame -- which legitimately carries neither, and says so via
+        # `speed_source` -- died on `KeyError: 'vx'`. A zero-fill would be worse than either: a
+        # fabricated stationary ball fed to a trained feature. The POSITIONAL ball features above
+        # are deliberately computed first, since they do not depend on velocity.
+        if "vx" in f.columns and "vy" in f.columns:
+            bvx = float(f.loc[is_ball, "vx"].to_numpy()[0])
+            bvy = float(f.loc[is_ball, "vy"].to_numpy()[0])
+            out["ball_speed"] = math.hypot(bvx, bvy)
 
     # Carrier-anchored geometry. Match the carrier by CANONICAL id (pid is already canonical above),
     # so it works whether the frame player_id is native string (kloppy/sportec/skillcorner/metrica)
@@ -702,6 +713,27 @@ def compute_xcross_attempt(
     m = _resolve_model(model)
     out = frames.copy()
     out["xcross_attempt"] = np.nan
+
+    # VELOCITY-AVAILABILITY CONTRACT (ADR-054), at the SHARED seam. All three public entry points
+    # reach scoring through here -- `add_xcross_attempt`, `xcross_attempt_xfns` and a direct call --
+    # which is the same reason the ghost guard lives in `_serve_positions_core` rather than in one
+    # aggregator. Two prongs, because the two shapes are byte-identical at this seam and demand
+    # opposite responses:
+    if _velocity_unavailable_by_design(frames):
+        # DECLARED unavailable (the SB360 freeze-frame shape): degrade to NaN. `ball_speed` is a
+        # trained feature, so scoring here would have the model impute an input its source
+        # structurally cannot carry -- the ADR-053 fabrication shape. NaN is honest, and it is
+        # already what this function returns on every other unscoreable path below.
+        return out
+    if len(frames) and ("vx" not in frames.columns or "vy" not in frames.columns):
+        # NOT declared: the "forgot derive_velocities()" case. Fail loud, and name the remedy --
+        # this used to surface as a bare `KeyError: 'vx'`, which an upstream handler silently
+        # reinterpreted as "this aggregator emits nothing".
+        raise ValueError(
+            "compute_xcross_attempt requires vx/vy on frames (call derive_velocities() first), or "
+            f"declare speed_source {SPEED_SOURCE_UNAVAILABLE!r}. See the velocity-availability "
+            "contract."
+        )
 
     # N-A (mirror xS): carrier inference + possession run on the FULL contiguous frames (cross-frame
     # hysteresis); restrict ONLY the per-frame extract + batched predict to link_frame_ids.

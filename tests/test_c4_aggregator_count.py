@@ -2,12 +2,18 @@
 
 There are TWO correct numbers and picking the wrong one is the likely failure:
 
-    33  registered add_* in tracking.__all__   the ADR-051 mirror-registry surface
-    32  action-coupled aggregators             what the C4 DSL sentence describes
+    34  registered add_* in tracking.__all__   the ADR-051 mirror-registry surface
+    33  action-coupled aggregators             what the C4 DSL sentence describes
 
 They differ by `add_gradientsports_player_ids`, a jersey-number helper that enriches a roster and
-is not coupled to an action. A maintainer who resolves the ambiguity by making the DSL quote 33
-turns a true sentence false in a way no test would catch -- which is why this gate names both.
+is not coupled to an action. A maintainer who resolves the ambiguity by making the DSL quote the
+LARGER number turns a true sentence false in a way no test would catch -- which is why this gate
+names both.
+
+The two figures above are ILLUSTRATIVE and were one behind the code when 4.79.0 landed (they read
+33/32 while `__all__` already held 34). The gate itself derives both at runtime and was correct
+throughout -- but a docstring whose whole job is stopping someone quoting the wrong number must not
+itself quote a stale one. Prose beside a computed value goes stale; the computation does not.
 
 Decision: Cycle B.
 """

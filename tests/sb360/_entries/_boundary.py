@@ -34,6 +34,12 @@ _entry(
     visibility={
         "gk_absent": {c: AxisVerdict("identical", _WORKS) for c in _ALL},
         "defender_absent": {c: AxisVerdict("identical", _WORKS) for c in _ALL},
+        # MEASURED, not assumed by symmetry: all 8 columns observed `identical` on gk_one_end,
+        # same as the other two rosters. This entry is hand-maintained -- `_regenerate.py` loops
+        # `tracking.__all__` and this is a BOUNDARY_ENTRY_POINT outside it -- so a new roster does
+        # NOT reach it automatically, and `test_every_visibility_roster_has_its_own_slot` is what
+        # says so (it failed with a KeyError until this block existed).
+        "gk_one_end": {c: AxisVerdict("identical", _WORKS) for c in _ALL},
     },
     # ADR-025 imputes restart coordinates from Law-fixed spots and the action's own geometry;
     # nothing here reads another player's position, so both probes correctly move nothing.
