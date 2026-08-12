@@ -647,7 +647,7 @@ class TestAddXtGk:
     def test_merges_columns_and_provenance(self):
         actions = _gk_actions()
         frames = _frames_for(actions)
-        out = add_xt_gk(actions, frames, _fitted_xt(), home_team_id=1)
+        out = add_xt_gk(actions, frames, _fitted_xt())
         for c in _XT_GK_COLS + _COORD_COLS + _PROVENANCE_COLS:  # value + coords + xT-GK provenance
             assert c in out.columns
         assert "frame_id" in out.columns  # linkage provenance
@@ -661,8 +661,8 @@ class TestAddXtGk:
     def test_idempotent_provenance_on_chained_calls(self):
         actions = _gk_actions()
         frames = _frames_for(actions)
-        once = add_xt_gk(actions, frames, _fitted_xt(), home_team_id=1)
-        twice = add_xt_gk(once, frames, _fitted_xt(), home_team_id=1)
+        once = add_xt_gk(actions, frames, _fitted_xt())
+        twice = add_xt_gk(once, frames, _fitted_xt())
         assert "frame_id_x" not in twice.columns
         assert "frame_id_y" not in twice.columns
 
@@ -670,14 +670,14 @@ class TestAddXtGk:
         actions = _gk_actions()
         actions.loc[0, "player_id"] = np.nan
         frames = _frames_for(actions)
-        out = add_xt_gk(actions, frames, _fitted_xt(), home_team_id=1)
+        out = add_xt_gk(actions, frames, _fitted_xt())
         assert len(out) == len(actions)
         assert np.isnan(out.loc[0, "xt_gk"])  # type: ignore[arg-type]
 
 
 class TestXtGkXfns:
     def test_factory_returns_frame_aware_transformer(self):
-        fns = xt_gk_xfns(_fitted_xt(), home_team_id=1)
+        fns = xt_gk_xfns(_fitted_xt())
         assert len(fns) == 1
         assert getattr(fns[0], "_frame_aware", False) is True
 
@@ -686,7 +686,7 @@ class TestXtGkXfns:
         frames = _frames_for(base)
         slot = pd.concat([base, base.iloc[[0]]], ignore_index=True)  # dup action_id=0
         states = [slot, slot, slot]
-        fn = xt_gk_xfns(_fitted_xt(), home_team_id=1)[0]
+        fn = xt_gk_xfns(_fitted_xt())[0]
         res = fn(states, frames)
         assert "xt_gk_a0" in res.columns
         assert len(res) == len(slot)
@@ -695,7 +695,7 @@ class TestXtGkXfns:
 
     def test_none_frames_yields_nan_columns(self):
         base = _gk_actions()
-        fn = xt_gk_xfns(_fitted_xt(), home_team_id=1)[0]
+        fn = xt_gk_xfns(_fitted_xt())[0]
         res = fn([base, base, base], None)
         assert res["xt_gk_a0"].isna().all()
 
@@ -887,13 +887,13 @@ class TestAtomicMirror:
 
         std = _gk_actions()
         frames = _frames_for(std)
-        std_out = add_xt_gk(std, frames, _fitted_xt(), home_team_id=1)
+        std_out = add_xt_gk(std, frames, _fitted_xt())
 
         atom = std.rename(columns={"start_x": "x", "start_y": "y"}).copy()
         atom["dx"] = std["end_x"].to_numpy() - std["start_x"].to_numpy()
         atom["dy"] = std["end_y"].to_numpy() - std["start_y"].to_numpy()
         atom = atom.drop(columns=["end_x", "end_y"])
-        atom_out = atomic_add_xt_gk(atom, frames, _fitted_xt(), home_team_id=1)
+        atom_out = atomic_add_xt_gk(atom, frames, _fitted_xt())
 
         np.testing.assert_allclose(
             atom_out["xt_gk_base"].to_numpy(),

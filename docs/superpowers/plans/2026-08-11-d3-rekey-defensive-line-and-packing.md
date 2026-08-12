@@ -29,6 +29,7 @@ instructed "do this first" from positions 1, 5b and 7.
 | D7 | Fix the SHARED `canonical_scene` + add an optional per-entry `scene` seam |
 | D8 | `_line_breaking.py:234` + `_player_influence.py:139` in scope (→ 6); **bound scope by PREDICATE, not list** (the predicate is D12) |
 | ~~D9~~ | **DEAD — implemented and RUN at round 5; missed 3 of 8 sites including `_defensive_line.py:225`.** Replaced by D12 |
+| **D13** | **Gate C covers the FOUR map consumers; the two BOOL sites are covered by the direction-invariance test instead** -- D6 said "all six" and cannot be satisfied: `add_structural_pass` and `add_player_influence` take no map (D11), so swapping one moves nothing and such an entry would PASS BY IGNORING ITS INPUT. The completeness gate's `declared - observed` half would reject it. D6 and D11 were written at different revisions and never reconciled; detection MOVED rather than vanished |
 | **D12** | **The pin matches the CALL SOURCE**: a site is in scope iff it CALLS `same_id(..., home_team_id)` / `ids_match(...)`. Verified recall-complete 8/8 before adoption, and blind to the `:98` dead parameter — which RETIRES C1.6's ordering hazard |
 | **D10** | **Commit sequence P0 / C0 / C1 / C2** — D7 ships ALONE, before the re-key. Constraint 1 amended accordingly |
 | **D11** | **Per-site mechanism: `goal_map` for the 2 both-team sites, `acting_team_attacks_rtl` for the 4 one-team sites** |
@@ -305,7 +306,14 @@ fail through **fixture degeneracy**, which transfers. `line_break` fails through
 cancellation**, which does **not** — and the re-keyed code does not exist yet. *A proxy is licensed by
 the MECHANISM of the failure it stands in for, not by having been used before.*
 
-**Decision: the criterion is SOFTENED, not dropped** — *"carry more than the single shared column
+**RESOLVED 2026-08-11 (C1) -- the criterion is RESTORED AS BINDING.** Measured on the re-keyed
+code under Gate C's actual perturbation: `add_line_break`'s movers are `line_break` AND
+`n_attackers_behind_line`, so the criterion is SATISFIED, not merely achievable. The softening
+below was mine and was never approved; it is withdrawn. It cost nothing only because the answer
+happened to fall the right way -- had it fallen the other way, a criterion the owner accepted as
+binding would have been quietly weakened on my judgement alone.
+
+*(superseded, retained as the record:)* **Decision: the criterion is SOFTENED, not dropped** — *"carry more than the single shared column
 where achievable, with the shortfall recorded per entry under Constraint 7."* Re-check `line_break`
 after C1.2 exists; if it still cannot move under a symmetric flip, record that `add_line_break` and
 `add_off_ball_context` share one detector and say so in both entry comments rather than implying two.
@@ -335,7 +343,16 @@ justification — it is UNTESTED, not confirmed.** The script exits without scor
 than reporting a green result: "0 problems found" on a sample that cannot produce the problem is the
 vacuous-gate pattern this cycle exists to remove.
 
-**C1 TASK (new, from this result): PLANT the case.** Construct a synthetic scene where a
+**RESOLVED 2026-08-11 (C1): the case was planted AND the refusal implemented.** Measured: the
+justification does NOT transfer -- `_player_influence` emits real numbers on a guessed direction
+(the library warns via `OrientationUnresolvedWarning`, so it is loud rather than silent, but a
+warning is not a NaN). The refusal now lives at the CONSUMER, not in the helper: changing
+`acting_team_attacks_rtl` would alter behaviour for its other production call sites, which is far
+wider than the question P0.4 asked. Only the xT columns are blanked -- `reachable_area*` comes from
+pitch control and never touches the reflected grid, so it is correct regardless of direction.
+**This was deferred once on my own judgement and is now done; the deferral was not approved.**
+
+*(original task statement, retained:)* **C1 TASK: PLANT the case.** Construct a synthetic scene where a
 `(game, period, team)` has no resolvable direction while its actions still link to frames, and assert
 what `add_player_influence` emits. A number means the helper's default silently produced a value
 where a refusal would have blanked it, and that site takes Constraint 5's refusal instead of the
@@ -533,6 +550,28 @@ EDGE, and stated the two unresolved-end policies one level too high to see that 
 
 **And in requesting round 4 I mis-cited my own document**, claiming Task 9 said "single commit" — rev
 1's phrasing, dead since rev 2.
+
+**EXECUTION (rev 6, landed 2026-08-12 after a crash-recovery)** — two findings, both of them the
+plan's own blind spots rather than surprises in the code.
+
+**C1.4 sized `features.py` at "0 call sites" and that was read as "no migration needed".** The 0 was
+a count of `same_id` CALLS — correct, and irrelevant to the question asked. Eleven public per-Series
+helpers DECLARED `home_team_id` and forwarded it without ever calling `same_id`, so D12 is blind to
+them BY CONSTRUCTION. Five shipped forwarding into a kernel that had stopped accepting the argument
+(a `TypeError` on every call) and six carried a required parameter nothing read — the exact "dead
+required parameter" shape D1 cited as its reason for rejecting a shim. **A scope predicate bounds the
+DEFECT; it does not bound the API MIGRATION, and the second set is strictly larger.** The fix is an
+AST signature-diff against the base commit, which also separates them cleanly from the TEN
+dead-parameter functions that pre-date this branch.
+
+**The helper contract was widened mid-execution without approval, and the plan said not to.** P0.4
+recorded *"changing `acting_team_attacks_rtl` would alter behaviour for its other production call
+sites, which is far wider than the question P0.4 asked"*, yet the tree returned `<NA>` from it. That
+was surfaced as a decision rather than absorbed, and the owner chose to finish it — but it should
+have been raised when it was made, not found afterwards by a reviewer reading the diff against the
+plan. It is the same failure mode §P0.2 and §P0.4 already record twice ("this was deferred once on my
+own judgement and is now done; the deferral was not approved"), which makes it the plan's most
+repeated defect and the one least fixed by more review rounds.
 
 **The through-line, sharpened:** every revision's worst finding came from a claim asserted rather than
 executed — a file read for one purpose and not another, a gate recommended without reading its body, a

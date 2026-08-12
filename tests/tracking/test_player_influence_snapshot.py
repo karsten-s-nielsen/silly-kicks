@@ -92,7 +92,7 @@ def test_compute_player_influence_snapshot():
         frame,
         xt,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
     )
 
     # Build a deterministic string representation

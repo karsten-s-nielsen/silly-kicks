@@ -275,6 +275,19 @@ def _as_mask(mask: pd.Series | np.ndarray, index: pd.Index) -> np.ndarray:
                 "exactly that index; reindex would silently broadcast. Pass a positional "
                 "ndarray mask, or de-duplicate the index."
             )
+        if mask.isna().any():
+            # `acting_team_attacks_rtl` returns NULLABLE boolean, where pd.NA means "this
+            # action's direction does not resolve" (4.80.0). Reflection has no third state -- a
+            # row is either point-reflected or not -- so the DECISION belongs to the caller, who
+            # alone knows which of its output columns are flip-invariant. Refuse loudly rather
+            # than let `.to_numpy(dtype=bool)` raise a pandas-internal message that names neither
+            # the cause nor the remedy.
+            raise ValueError(
+                "reflect: mask contains pd.NA (an unresolved direction). Decide the policy at "
+                "the call site -- null the direction-dependent columns for those rows, or pass "
+                "`mask.fillna(False)` if the reflection is genuinely a no-op for them -- rather "
+                "than coercing here, which would silently re-project nothing."
+            )
         return mask.reindex(index, fill_value=False).to_numpy(dtype=bool)
     return np.asarray(mask, dtype=bool)
 

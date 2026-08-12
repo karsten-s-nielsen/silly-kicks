@@ -66,7 +66,7 @@ class TestDefensiveLineDtypeMismatch:
 
         actions = _actions_with_int_game_id(3817)
         frames = _frames_with_str_game_id("3817")
-        result = add_defensive_line(actions, frames, home_team_id=1)
+        result = add_defensive_line(actions, frames)
         # Must not raise ValueError on int64 vs object merge
         assert "defensive_line_x" in result.columns
         # At least one non-NaN value (actions are linkable to frames)
@@ -78,7 +78,7 @@ class TestDefensiveLineDtypeMismatch:
 
         actions = _actions_with_str_game_id("3817")
         frames = _frames_with_str_game_id("3817")
-        result = add_defensive_line(actions, frames, home_team_id=1)
+        result = add_defensive_line(actions, frames)
         assert result["defensive_line_x"].notna().any()
 
 
@@ -103,7 +103,7 @@ class TestTeamShapeAtActionsDtypeMismatch:
 
         actions = _actions_with_int_game_id(3817)
         frames = _frames_with_str_game_id("3817")
-        result = add_team_shape(actions, frames, home_team_id=1)
+        result = add_team_shape(actions, frames)
         # Must not raise ValueError or silently produce all-NaN
         assert "team_shape_convex_hull_area_attacking" in result.columns
         assert result["team_shape_convex_hull_area_attacking"].notna().any()

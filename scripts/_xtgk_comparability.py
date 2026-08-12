@@ -79,11 +79,11 @@ def compare_xtgk_distributions(sc, gs, *, bands=_BANDS, offset_tol=_OFFSET_TOL, 
 def _collect(providers, max_per_provider, tracking_limit, xt):
     """Return a long df of (provider, dist, xt_gk) for in-scope scored GK distributions."""
     rows = []
-    for prov, mid, actions, frames, home in load_matches(
+    for prov, mid, actions, frames, _home in load_matches(
         providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit
     ):
         try:
-            out = add_xt_gk(actions, frames, xt, home_team_id=home)  # type: ignore[reportArgumentType]
+            out = add_xt_gk(actions, frames, xt)  # type: ignore[reportArgumentType]
         except Exception as exc:  # a single bad match shouldn't kill the gate
             print(f"  {prov}/{mid}: add_xt_gk failed ({type(exc).__name__}: {exc})", flush=True)
             continue

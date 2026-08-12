@@ -139,15 +139,17 @@ def join_layer2_confounders(
             f"computed fresh ({CONFOUNDER_SOURCE}), so there is nothing to compute them from."
         )
 
-    from silly_kicks.tracking import add_pressure_on_actor, compute_defensive_line
+    from silly_kicks.tracking import add_pressure_on_actor, compute_defensive_line, resolve_defended_goals
 
     out = spells.copy()
 
     # SIGNATURES VERIFIED BY EXECUTION -- do not "simplify" either call:
-    #   compute_defensive_line(frames, *, home_team_id, n=4, adaptive_max_n=5)
+    #   compute_defensive_line(frames, *, goal_map, n=4, adaptive_max_n=5)
     #   add_pressure_on_actor(actions, frames, *, links=None, methods=(...), ...)  <- methods is
     #   PLURAL and a TUPLE; a singular `method="bekkers_pi"` raises TypeError.
-    line = compute_defensive_line(frames, home_team_id=home_team_id)
+    # ADR-051 D3: direction comes from the goal map, built ONCE from these frames. This is a
+    # CAUSAL COVARIATE path -- if the values move, docs/research/covariate_invariance/ is stale.
+    line = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames))
     # Columns: game_id, period_id, frame_id, team_id, defensive_line_x, back_line_high_x,
     # compactness_x, lateral_width, max_lateral_gap. There is NO `defensive_line_spread`.
     # The key has FOUR levels and the function computes for BOTH teams, so the DEFENDING team must

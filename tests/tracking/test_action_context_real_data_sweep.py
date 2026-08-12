@@ -702,7 +702,7 @@ def _off_ball_context_pipeline_smoke(
     actions = actions.copy()
     actions["game_id"] = real_game_id
 
-    result = add_off_ball_context(actions, frames, home_team_id=home_team_id)  # type: ignore[arg-type]
+    result = add_off_ball_context(actions, frames)  # type: ignore[arg-type]
     runners_n = result["n_off_ball_runners_pre_window"].notna().sum()
     assert runners_n >= 1, (
         f"{provider}: add_off_ball_context emitted 0 non-NaN off-ball-runner values on {len(actions)} actions"
@@ -804,7 +804,7 @@ def _off_ball_context_lakehouse_smoke(
     from silly_kicks.tracking.features import add_off_ball_context
 
     frames = play_left_to_right(frames, home_team_id=home_team_id)
-    result = add_off_ball_context(actions, frames, home_team_id=home_team_id)  # type: ignore[arg-type]
+    result = add_off_ball_context(actions, frames)  # type: ignore[arg-type]
     runners_n = result["n_off_ball_runners_pre_window"].notna().sum()
     assert runners_n >= 1, f"{provider}: off-ball-context lakehouse smoke emitted 0 non-NaN runner values"
     behind_n = result["n_attackers_behind_line"].notna().sum()
@@ -908,7 +908,7 @@ def _defensive_line_pipeline_smoke(
     from silly_kicks.tracking.features import add_defensive_line
 
     frames = play_left_to_right(frames, home_team_id=home_team_id)
-    result = add_defensive_line(actions, frames, home_team_id=home_team_id)  # type: ignore[arg-type]
+    result = add_defensive_line(actions, frames)  # type: ignore[arg-type]
     n_valid = result["defensive_line_x"].notna().sum()
     assert n_valid >= 1, f"{provider}: add_defensive_line emitted 0 non-NaN values on {len(actions)} actions"
     print(f"\n[defensive-line-smoke:{provider}] n_valid={n_valid}")

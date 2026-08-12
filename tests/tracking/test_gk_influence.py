@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from silly_kicks.tracking import resolve_defended_goals
 from tests.tracking._gk_test_helpers import _make_two_team_frame
 from tests.tracking._goal_map_helpers import goal_map_for
 
@@ -160,7 +161,7 @@ class TestSelectBackLinePlayers:
             team_id=1,
             home_team_id=1,
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
 
         assert len(result) == 1
         assert result["defensive_line_x"].notna().all()

@@ -526,7 +526,7 @@ class TestShapeGraphLinkedFrameRestriction:
         from silly_kicks.tracking.features import add_shape_graph
 
         frames, actions = _multiframe_shape_graph(positions_442, n_frames=5)
-        add_shape_graph(actions, frames, links=_links_to_frame(100), home_team_id=1)
+        add_shape_graph(actions, frames, links=_links_to_frame(100))
         # 1 linked frame x 2 teams, not 5 frames x 2 teams.
         assert n["calls"] == 2
 
@@ -545,7 +545,7 @@ class TestShapeGraphLinkedFrameRestriction:
         from silly_kicks.tracking.features import add_shape_graph
 
         frames, actions = _multiframe_shape_graph(positions_442, n_frames=5)
-        add_shape_graph(actions, frames, home_team_id=1)  # no links -> full
+        add_shape_graph(actions, frames)  # no links -> full
         assert n["calls"] == 10
 
     def test_restricted_matches_single_frame(self, positions_442: np.ndarray) -> None:
@@ -556,8 +556,8 @@ class TestShapeGraphLinkedFrameRestriction:
         links = _links_to_frame(100)
         single = frames[frames["frame_id"] == 100]
 
-        r_multi = add_shape_graph(actions, frames, links=links, home_team_id=1)
-        r_single = add_shape_graph(actions, single, links=links, home_team_id=1)
+        r_multi = add_shape_graph(actions, frames, links=links)
+        r_single = add_shape_graph(actions, single, links=links)
 
         cols = [c for c in r_multi.columns if c.startswith("shape_graph_")]
         pd.testing.assert_frame_equal(r_multi[cols], r_single[cols])
@@ -570,7 +570,7 @@ class TestAddShapeGraph:
         from silly_kicks.tracking.features import add_shape_graph
 
         frames, actions = _make_frames_and_actions(positions_442)
-        result = add_shape_graph(actions, frames, home_team_id=1)
+        result = add_shape_graph(actions, frames)
         expected_cols = [
             "shape_graph_density_attacking",
             "shape_graph_n_edges_attacking",
@@ -588,7 +588,7 @@ class TestAddShapeGraph:
 
         frames, actions = _make_frames_and_actions(positions_442)
         empty_frames = frames.iloc[:0]
-        result = add_shape_graph(actions, empty_frames, home_team_id=1)
+        result = add_shape_graph(actions, empty_frames)
         assert len(result) == 1
 
 
@@ -598,7 +598,7 @@ class TestShapeGraphXfns:
     def test_column_count_18(self) -> None:
         from silly_kicks.tracking.features import shape_graph_xfns
 
-        xfns = shape_graph_xfns("team_A")
+        xfns = shape_graph_xfns()
         assert len(xfns) == 1
 
         fn = xfns[0]
@@ -609,7 +609,7 @@ class TestShapeGraphXfns:
         """xfn should emit NaN columns when frames=None (VAEP introspection)."""
         from silly_kicks.tracking.features import shape_graph_xfns
 
-        xfns = shape_graph_xfns("team_A")
+        xfns = shape_graph_xfns()
         fn = xfns[0]
 
         dummy_actions = pd.DataFrame(

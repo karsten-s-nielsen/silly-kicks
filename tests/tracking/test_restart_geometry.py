@@ -13,6 +13,12 @@ _GK, _CORNER_C, _THROW, _PEN, _PASS = 22, 5, 2, 12, 0
 
 
 def _frame(**over):
+    # `team_attacking_direction` is present so the acting team's direction RESOLVES. Without it
+    # `acting_team_attacks_rtl` returns <NA> for every action and the tracking tier is skipped
+    # entirely (4.80.0) -- which would make the tests below fail for a reason none of them is
+    # about: they test ball-row selection, is_ball coercion and tier ordering, not orientation.
+    # The unoriented-frames behaviour itself is pinned separately, in
+    # test_off_ball_runs_orientation.py.
     base = dict(
         game_id=[9, 9],
         period_id=[1, 1],
@@ -25,6 +31,7 @@ def _frame(**over):
         x=[50.0, 104.5],
         y=[20.0, 0.5],
         source_provider=["gradientsports", "gradientsports"],
+        team_attacking_direction=["ltr", None],
     )
     base.update(over)
     return pd.DataFrame(base)
@@ -162,18 +169,24 @@ class TestResolveRestartGeometryEventsOnly:
 
 class TestResolveRestartGeometryFrames:
     def _frames(self, **over):
+        # Row 0 is a PLAYER of the acting team (1), row 1 is the ball. The player row exists so
+        # the acting team's direction RESOLVES: `acting_team_attacks_rtl` filters ball rows out,
+        # so a ball-only frame can never resolve a direction, and since 4.80.0 that means <NA>
+        # and no tracking tier at all. These tests are about TIER ORDERING, not orientation, so
+        # the fixture has to clear the orientation bar for them to test what they claim to.
         base = dict(
-            game_id=[9],
-            period_id=[1],
-            frame_id=[1250],
-            time_seconds=[5.0],
-            team_id=[0],
-            player_id=[-1],
-            is_goalkeeper=[False],
-            is_ball=[True],
-            x=[104.6],
-            y=[0.4],
-            source_provider=["gradientsports"],
+            game_id=[9, 9],
+            period_id=[1, 1],
+            frame_id=[1250, 1250],
+            time_seconds=[5.0, 5.0],
+            team_id=[1, 0],
+            player_id=[10, -1],
+            is_goalkeeper=[False, False],
+            is_ball=[False, True],
+            x=[60.0, 104.6],
+            y=[34.0, 0.4],
+            source_provider=["gradientsports", "gradientsports"],
+            team_attacking_direction=["ltr", None],
         )
         base.update(over)
         return pd.DataFrame(base)
@@ -188,8 +201,9 @@ class TestResolveRestartGeometryFrames:
 
     def test_goalkick_never_uses_tracking_ball(self):
         # goalkick + ball tracked at midfield: must NOT pick the ball; in-area-GK absent -> rule-point
+        # The x/y overrides carry BOTH rows (player, ball) -- the ball is the second element.
         a = _restart(_GK)
-        g = resolve_restart_geometry(a, frames=self._frames(x=[50.0], y=[20.0]))
+        g = resolve_restart_geometry(a, frames=self._frames(x=[60.0, 50.0], y=[34.0, 20.0]))
         assert g.loc[0, "start_coord_source"] == "restart_prior"  # never tracking_ball
 
 

@@ -96,7 +96,7 @@ def test_line_breaking_runs_one_ward_clustering(line_breaking_fixture, monkeypat
     actions, frames = line_breaking_fixture
     calls = call_counter(monkeypatch, _line_breaking, "linkage")
 
-    result = _line_breaking.detect_line_breaking(actions, frames, home_team_id=1)
+    result = _line_breaking.detect_line_breaking(actions, frames)
 
     assert result is not None
     assert calls["n"] == 1, (

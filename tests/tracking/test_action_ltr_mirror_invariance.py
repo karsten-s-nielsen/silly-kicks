@@ -234,16 +234,16 @@ def test_pre_shot_gk_mirror_invariant():
 def test_defensive_line_mirror_invariant():
     a, f = _scenario()
     am, fm = _mirror(a, f)
-    base = add_defensive_line(a, f, home_team_id=HOME)
-    mir = add_defensive_line(am, fm, home_team_id=AWAY)
+    base = add_defensive_line(a, f)
+    mir = add_defensive_line(am, fm)
     _assert_invariant(base, mir, 1, ["defensive_line_x", "back_line_high_x", "compactness_x"])
 
 
 def test_team_shape_centroids_mirror_invariant():
     a, f = _scenario()
     am, fm = _mirror(a, f)
-    base = add_team_shape(a, f, home_team_id=HOME)
-    mir = add_team_shape(am, fm, home_team_id=AWAY)
+    base = add_team_shape(a, f)
+    mir = add_team_shape(am, fm)
     # ADR-028: compute_team_shape is now orientation-aware (deepest line nearest the
     # defended goal), so defensive_line_height is the team's true defensive line and is
     # mirror-invariant for BOTH teams alongside the centroids/spans.
@@ -350,9 +350,9 @@ def test_obso_mirror_invariant():
     # is empty and obso_actual is 0.0 -- the invariance would hold vacuously.
     a, f = _away_actions(), _away_control_at_low_x()
     am, fm = _mirror(a, f)
-    base = add_obso(a, f, home_team_id=HOME)
+    base = add_obso(a, f)
     # After _mirror the team attacking RIGHT is AWAY (see the NOTE above).
-    mir = add_obso(am, fm, home_team_id=AWAY)
+    mir = add_obso(am, fm)
 
     cols = ["obso_actual", "obso_peak", "obso_optimal"]
     # Non-vacuity: the fixture must actually produce values, or the invariance is trivial.
@@ -384,8 +384,8 @@ def test_team_shape_reprojection_is_mirror_invariant_over_ALL_columns():
 
     a, f = _ghost_scenario()
     am, fm = _mirror(a, f)
-    base = add_team_shape(a, f, home_team_id=HOME)  # action 1: away, flip=True (reprojects)
-    mir = add_team_shape(am, fm, home_team_id=AWAY)  # action 1: home, flip=False (raw)
+    base = add_team_shape(a, f)  # action 1: away, flip=True (reprojects)
+    mir = add_team_shape(am, fm)  # action 1: home, flip=False (raw)
 
     # NON-VACUITY: the acting-team centroid must be genuinely off the centre line, or the
     # y-axis is untested exactly as the pre-existing test is. Measured base value ~= 51.
@@ -436,8 +436,8 @@ def test_team_shape_gate_fails_when_the_y_reprojection_is_disabled():
     orig = _F._TEAM_SHAPE_Y_COLS
     try:
         _F._TEAM_SHAPE_Y_COLS = []  # a y re-projection that never happens
-        base = add_team_shape(a, f, home_team_id=HOME)
-        mir = add_team_shape(am, fm, home_team_id=AWAY)
+        base = add_team_shape(a, f)
+        mir = add_team_shape(am, fm)
     finally:
         _F._TEAM_SHAPE_Y_COLS = orig
     b = float(base[base["action_id"] == 1].iloc[0]["team_shape_centroid_y_attacking"])

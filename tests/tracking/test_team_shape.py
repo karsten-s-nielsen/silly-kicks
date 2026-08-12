@@ -346,7 +346,7 @@ class TestAddTeamShape:
             }
         )
 
-        result = add_team_shape(actions, frames, home_team_id=1)
+        result = add_team_shape(actions, frames)
 
         expected_cols = [
             "team_shape_n_outfield_players_attacking",
@@ -401,7 +401,7 @@ class TestAddTeamShape:
             }
         )
 
-        result = add_team_shape(actions, frames, home_team_id=1)
+        result = add_team_shape(actions, frames)
         # Home outfield centroid_x = mean(10,20,30,40,50) = 30
         assert result.iloc[0]["team_shape_centroid_x_attacking"] == pytest.approx(30.0)
         # Away outfield centroid_x = mean(60,70,80,90,95) = 79
@@ -413,7 +413,7 @@ class TestTeamShapeXfns:
         """team_shape_xfns produces 54 columns (18 features x 3 states)."""
         from silly_kicks.tracking.features import team_shape_xfns
 
-        xfns = team_shape_xfns(home_team_id=1)
+        xfns = team_shape_xfns()
         assert len(xfns) == 1
 
         xfn = xfns[0]
@@ -423,7 +423,7 @@ class TestTeamShapeXfns:
         """frames=None -> NaN DataFrame with 54 correct column names."""
         from silly_kicks.tracking.features import team_shape_xfns
 
-        xfns = team_shape_xfns(home_team_id=1)
+        xfns = team_shape_xfns()
         xfn = xfns[0]
 
         # Simulate VAEP introspection: 3 gamestates of 10 rows, no frames

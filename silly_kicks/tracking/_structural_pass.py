@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import ids_match, same_id
+from silly_kicks.id_compat import ids_match
 
 # SGM eps-floor on rho (BUG-3 fix, 2026-06-09). A single defender at 3-sigma contributes
 # exp(-(3s)^2 / 2s^2) = exp(-4.5) ~= 0.0111 for any sigma, so flooring rho here caps 1/rho at
@@ -103,7 +103,7 @@ def compute_structural_pass_metrics(
     frame: pd.DataFrame,
     *,
     attacking_team_id: int | str,
-    home_team_id: int | str,
+    attacks_rtl: bool,
     passer_xy: tuple[float, float],
     receiver_xy: tuple[float, float],
     params: StructuralPassParams | None = None,
@@ -142,8 +142,17 @@ def compute_structural_pass_metrics(
     if dx.size == 0:
         return dict(nan_out)
 
-    # Mirror defenders into the acting team's attack-positive frame iff AWAY.
-    if not same_id(attacking_team_id, home_team_id):
+    # Mirror defenders into the acting team's attack-positive frame iff the acting team
+    # attacks RIGHT-TO-LEFT. Keyed on DIRECTION, not identity: the old
+    # `not same_id(attacking_team_id, home_team_id)` is correct only while the frames are
+    # home-attacks-right and silently inverts otherwise (ADR-051 D3).
+    #
+    # This site serves ONE team, so it takes the bool rather than a GoalMap (the D3 rule:
+    # one team -> bool, both teams -> map). `_packing.py` expresses the SAME mirror -- the two
+    # are duplicated by design -- but reaches it via `attacked_goal(...) == 0.0`, because it
+    # ALSO needs the defending team's end for its back line and so must hold the map anyway.
+    # Same predicate, different route to it; both mean "the acting team attacks x=0".
+    if attacks_rtl:
         dx, dy = 105.0 - dx, 68.0 - dy
     defenders_xy = np.column_stack([dx, dy])
 

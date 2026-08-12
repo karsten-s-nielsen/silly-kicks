@@ -43,8 +43,8 @@ def test_run_value_transformer_name():
     import silly_kicks.tracking.features as tf
 
     xt = _fitted_xt()
-    assert tf.off_ball_run_value_xfns(xt, home_team_id=1)[0].__name__ == _FORBIDDEN_NAME
-    assert atf.off_ball_run_value_xfns(xt, home_team_id=1)[0].__name__ == _FORBIDDEN_NAME
+    assert tf.off_ball_run_value_xfns(xt)[0].__name__ == _FORBIDDEN_NAME
+    assert atf.off_ball_run_value_xfns(xt)[0].__name__ == _FORBIDDEN_NAME
 
 
 def test_no_run_value_xfns_in_any_default_list():
@@ -66,14 +66,14 @@ def test_factory_rejects_an_unfitted_xt_at_build_time():
     import silly_kicks.tracking.features as tf
 
     with pytest.raises(NotFittedError):
-        tf.off_ball_run_value_xfns(ExpectedThreat(), home_team_id=1)
+        tf.off_ball_run_value_xfns(ExpectedThreat())
 
 
 def test_xfn_emits_the_four_numeric_columns_times_three_slots():
     """Coverage denominator excluded: 4 numeric columns, not 5."""
     import silly_kicks.tracking.features as tf
 
-    xfn = tf.off_ball_run_value_xfns(_fitted_xt(), home_team_id=1)[0]
+    xfn = tf.off_ball_run_value_xfns(_fitted_xt())[0]
     states = [pd.DataFrame({"action_id": [1, 2]}, index=[0, 1]) for _ in range(3)]
     out = xfn(states, None)
     assert len(out.columns) == 12

@@ -92,14 +92,14 @@ def _actions():
 
 
 def test_columns_present_and_line_x_dropped():
-    out = add_packing(_actions(), _frames(), home_team_id=1)
+    out = add_packing(_actions(), _frames())
     for col in _PACKING_COLS:
         assert col in out.columns
     assert "line_x" not in out.columns
 
 
 def test_dtypes_contract():
-    out = add_packing(_actions(), _frames(), home_team_id=1)
+    out = add_packing(_actions(), _frames())
     assert out["packing_made"].dtype == "Int64"
     assert out["packing_goal_threat"].dtype == "Int64"
     assert out["packing_net"].dtype == np.float64
@@ -108,7 +108,7 @@ def test_dtypes_contract():
 
 
 def test_geometry_and_receiver_values():
-    out = add_packing(_actions(), _frames(), home_team_id=1)
+    out = add_packing(_actions(), _frames())
     assert out["packing_made"].iloc[0] == 2
     assert out["packing_receiver_player_id"].iloc[0] == 51
     assert out["packing_receiver_player_id"].iloc[4] == 51
@@ -118,7 +118,7 @@ def test_geometry_and_receiver_values():
 
 
 def test_secured_tri_state():
-    out = add_packing(_actions(), _frames(), home_team_id=1)
+    out = add_packing(_actions(), _frames())
     sec = out["packing_secured"]
     assert sec.iloc[0] == True  # noqa: E712 -- window observed past the line
     assert sec.iloc[4] == False  # noqa: E712 -- bounce pass behind the line
@@ -128,7 +128,7 @@ def test_secured_tri_state():
 
 def test_dribble_receiver_and_secured_na_but_counts_numeric():
     """Spec s3: the receiver seam is packing-agnostic; the dribble mask is assembly."""
-    out = add_packing(_actions(), _frames(), home_team_id=1)
+    out = add_packing(_actions(), _frames())
     assert out["packing_made"].iloc[9] == 2
     assert pd.isna(out["packing_receiver_player_id"].iloc[9])
     assert pd.isna(out["packing_secured"].iloc[9])
@@ -136,7 +136,7 @@ def test_dribble_receiver_and_secured_na_but_counts_numeric():
 
 def test_off_domain_receiver_masked():
     """A failed pass has a same-team next touch, but off-domain rows get <NA>."""
-    out = add_packing(_actions(), _frames(), home_team_id=1)
+    out = add_packing(_actions(), _frames())
     assert pd.isna(out["packing_receiver_player_id"].iloc[10])
     assert pd.isna(out["packing_made"].iloc[10])
 
@@ -144,7 +144,7 @@ def test_off_domain_receiver_masked():
 def test_require_secured_gates_receiver_bearing_only():
     """Review F3: secured False -> 0 counts; secured <NA> -> NaN counts; dribbles
     and packing_made == 0 rows untouched."""
-    out = add_packing(_actions(), _frames(), home_team_id=1, params=PackingParams(require_secured=True))
+    out = add_packing(_actions(), _frames(), params=PackingParams(require_secured=True))
     assert out["packing_made"].iloc[0] == 2  # secured True -> kept
     assert out["packing_made"].iloc[4] == 0  # secured False -> zeroed
     assert out["packing_net"].iloc[4] == pytest.approx(0.0)
@@ -156,8 +156,8 @@ def test_require_secured_gates_receiver_bearing_only():
 
 def test_provenance_idempotent_no_suffix_duplicates():
     a, f = _actions(), _frames()
-    once = add_packing(a, f, home_team_id=1)
-    twice = add_packing(once, f, home_team_id=1)
+    once = add_packing(a, f)
+    twice = add_packing(once, f)
     assert not [c for c in twice.columns if c.endswith(("_x", "_y")) and "packing" in c]
     assert "frame_id" in twice.columns
 
@@ -165,18 +165,18 @@ def test_provenance_idempotent_no_suffix_duplicates():
 def test_returns_new_frame_and_input_unmutated():
     a, f = _actions(), _frames()
     snap = a.copy(deep=True)
-    out = add_packing(a, f, home_team_id=1)
+    out = add_packing(a, f)
     assert out is not a
     pd.testing.assert_frame_equal(a, snap)
 
 
 def test_packing_xfns_rejects_require_secured():
     with pytest.raises(ValueError, match="require_secured"):
-        packing_xfns(home_team_id=1, params=PackingParams(require_secured=True))
+        packing_xfns(params=PackingParams(require_secured=True))
 
 
 def test_packing_xfns_emits_nine_numeric_columns():
-    xfns = packing_xfns(home_team_id=1)
+    xfns = packing_xfns()
     assert len(xfns) == 1
     a, f = _actions(), _frames()
     states = [a, a, a]
@@ -191,7 +191,7 @@ def test_packing_xfns_emits_nine_numeric_columns():
 
 
 def test_packing_xfns_frames_none_all_nan():
-    xfns = packing_xfns(home_team_id=1)
+    xfns = packing_xfns()
     a = _actions()
     out = xfns[0]([a, a, a], None)
     assert out.shape == (len(a), 9)

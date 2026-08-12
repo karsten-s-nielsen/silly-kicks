@@ -225,7 +225,6 @@ class AugmentedVaepBrierObjective:
                     actions=actions,
                     frames=frames,
                     xt=self._xt.xt,
-                    home_team_id=home,
                     carrier_params=self._carrier_params,
                 )
                 # M8 via the PUBLIC das_source provenance (ADR-043), not a private flag:

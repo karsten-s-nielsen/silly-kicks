@@ -58,7 +58,7 @@ def gs_match():
     from silly_kicks.tracking import add_packing
 
     L = _load_loader()
-    _prov, _mid, actions, frames, home = next(
+    _prov, _mid, actions, frames, _home = next(
         iter(
             L.load_matches(
                 providers=["gradientsports"],
@@ -67,7 +67,7 @@ def gs_match():
             )
         )
     )
-    packed = add_packing(actions, frames, home_team_id=home)
+    packed = add_packing(actions, frames)
     return actions, packed
 
 

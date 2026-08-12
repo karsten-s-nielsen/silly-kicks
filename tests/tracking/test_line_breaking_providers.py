@@ -26,8 +26,8 @@ class TestLineBreakingProviders:
     def test_add_line_break_ward_no_crash(self, provider_data):
         from silly_kicks.tracking.features import add_line_break
 
-        actions, frames, home_team_id = provider_data
-        result = add_line_break(actions, frames, home_team_id=home_team_id, method="ward")
+        actions, frames, _home_team_id = provider_data
+        result = add_line_break(actions, frames, method="ward")
         assert "line_break__ward" in result.columns
         assert "lines_broken__ward" in result.columns
         assert "line_breaking_type__ward" in result.columns
@@ -38,8 +38,8 @@ class TestLineBreakingProviders:
     def test_line_breaking_ward_xfns_no_crash(self, provider_data):
         from silly_kicks.tracking.features import line_breaking_ward_xfns
 
-        actions, frames, home_team_id = provider_data
-        xfns = line_breaking_ward_xfns(home_team_id=home_team_id)
+        actions, frames, _home_team_id = provider_data
+        xfns = line_breaking_ward_xfns()
         xfn = xfns[0]
 
         states = [actions, actions, actions]
@@ -50,7 +50,7 @@ class TestLineBreakingProviders:
         """Existing method='threshold' unaffected by new method= kwarg."""
         from silly_kicks.tracking.features import add_line_break
 
-        actions, frames, home_team_id = provider_data
-        result = add_line_break(actions, frames, home_team_id=home_team_id, method="threshold")
+        actions, frames, _home_team_id = provider_data
+        result = add_line_break(actions, frames, method="threshold")
         assert "line_break" in result.columns
         assert "n_attackers_behind_line" in result.columns

@@ -251,7 +251,7 @@ class TestAddPausa:
         from silly_kicks.tracking.features import add_pausa
 
         actions, frames = _make_pausa_actions_and_frames()
-        result = add_pausa(actions, frames, home_team_id=1)
+        result = add_pausa(actions, frames)
         expected_cols = {"pausa_temporal", "pausa_spatial", "pausa_composite"}
         added = set(result.columns) - set(actions.columns)
         assert expected_cols.issubset(added)
@@ -261,7 +261,7 @@ class TestAddPausa:
         from silly_kicks.tracking.features import add_pausa
 
         actions, frames = _make_pausa_actions_and_frames()
-        result = add_pausa(actions, frames, home_team_id=1)
+        result = add_pausa(actions, frames)
         for col in ["pausa_temporal", "pausa_spatial", "pausa_composite"]:
             vals = result[col].dropna()
             if len(vals) > 0:
@@ -273,7 +273,7 @@ class TestAddPausa:
         from silly_kicks.tracking.features import add_pausa
 
         actions, frames = _make_pausa_actions_and_frames()
-        result = add_pausa(actions, frames, home_team_id=1)
+        result = add_pausa(actions, frames)
         assert len(result) == len(actions)
 
 
@@ -282,14 +282,14 @@ class TestPausaXfns:
         """pausa_xfns produces 3 lifted xfns (9 VAEP columns)."""
         from silly_kicks.tracking.features import pausa_xfns
 
-        xfns = pausa_xfns(home_team_id=1)
+        xfns = pausa_xfns()
         assert len(xfns) == 3
 
     def test_introspection_nan(self):
         """xfns produce NaN in introspection mode (frames=None)."""
         from silly_kicks.tracking.features import pausa_xfns
 
-        xfns = pausa_xfns(home_team_id=1)
+        xfns = pausa_xfns()
         actions = pd.DataFrame(
             {
                 "game_id": [1],

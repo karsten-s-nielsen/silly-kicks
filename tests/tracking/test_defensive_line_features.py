@@ -37,7 +37,7 @@ class TestActionCoupledFeatures:
         )
         # Home team acts -> should get AWAY team's defensive line
         actions = _make_actions_for_defensive_line(team_id=1)
-        result = defensive_line_x(actions, frames, home_team_id=1)
+        result = defensive_line_x(actions, frames)
         # Away back 4 (highest x): 95, 93, 91, 89 -> mean = 92.0
         assert result.iloc[0] == pytest.approx(92.0)
 
@@ -52,7 +52,7 @@ class TestActionCoupledFeatures:
             time_seconds=100.0,  # far from action
         )
         actions = _make_actions_for_defensive_line(time_seconds=1.0)
-        result = defensive_line_x(actions, frames, home_team_id=1)
+        result = defensive_line_x(actions, frames)
         assert pd.isna(result.iloc[0])
 
     def test_aggregator_column_count(self):
@@ -66,7 +66,7 @@ class TestActionCoupledFeatures:
         )
         actions = _make_actions_for_defensive_line(team_id=1)
         original_cols = len(actions.columns)
-        result = add_defensive_line(actions, frames, home_team_id=1)
+        result = add_defensive_line(actions, frames)
         new_cols = len(result.columns) - original_cols
         assert new_cols == 10  # 6 feature + 4 provenance
 
@@ -86,7 +86,7 @@ class TestActionCoupledFeatures:
         actions["end_y"] = [34.0, 34.0]
         enriched = add_action_context(actions, frames)
         # Now add defensive line on top -- provenance already exists
-        result = add_defensive_line(enriched, frames, home_team_id=1)
+        result = add_defensive_line(enriched, frames)
         # Should have exactly 6 new feature cols, no _x/_y suffixes
         assert "frame_id_x" not in result.columns
         assert "frame_id_y" not in result.columns
@@ -95,14 +95,14 @@ class TestActionCoupledFeatures:
         from silly_kicks.tracking.features import defensive_line_xfns
         from silly_kicks.vaep.feature_framework import is_frame_aware
 
-        xfns = defensive_line_xfns(home_team_id=1)
+        xfns = defensive_line_xfns()
         assert len(xfns) == 1
         assert is_frame_aware(xfns[0])
 
     def test_xfns_factory_has_name(self):
         from silly_kicks.tracking.features import defensive_line_xfns
 
-        xfns = defensive_line_xfns(home_team_id=1)
+        xfns = defensive_line_xfns()
         assert xfns[0].__name__ == "defensive_line"
 
     def test_xfns_column_count(self):
@@ -118,7 +118,7 @@ class TestActionCoupledFeatures:
         )
         actions = _make_actions_for_defensive_line(team_id=1)
         states = gamestates(actions, nb_prev_actions=3)
-        xfn = defensive_line_xfns(home_team_id=1)[0]
+        xfn = defensive_line_xfns()[0]
         result = xfn(states, frames)
         assert result.shape[1] == 18  # 6 cols x 3 states
 
@@ -138,7 +138,7 @@ class TestActionCoupledFeatures:
         )
         actions = _make_actions_for_defensive_line(team_id=1)
         states = gamestates(actions, nb_prev_actions=3)
-        xfn = defensive_line_xfns(home_team_id=1)[0]
+        xfn = defensive_line_xfns()[0]
         with patch(
             "silly_kicks.tracking._defensive_line.compute_defensive_line",
             wraps=compute_defensive_line,

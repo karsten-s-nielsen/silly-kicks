@@ -59,8 +59,8 @@ def _actions():
 
 def test_packing_made_equals_structural_lbs_on_completed_pass_cross():
     a, f = _actions(), _frame()
-    packed = add_packing(a, f, home_team_id=1, params=PackingParams(action_types=("pass", "cross")))
-    struct = add_structural_pass(a, f, home_team_id=1)
+    packed = add_packing(a, f, params=PackingParams(action_types=("pass", "cross")))
+    struct = add_structural_pass(a, f)
 
     completed = (a["result_id"] == _R["success"]).to_numpy()
     both = packed["packing_made"].notna().to_numpy() & struct["structural_lbs"].notna().to_numpy() & completed
@@ -78,8 +78,8 @@ def test_completion_gate_is_the_only_delta():
     """The failed pass has numeric structural_lbs (no result gate in TF-45) but
     <NA> packing_made -- mutating packing's completion gate out turns this red."""
     a, f = _actions(), _frame()
-    packed = add_packing(a, f, home_team_id=1, params=PackingParams(action_types=("pass", "cross")))
-    struct = add_structural_pass(a, f, home_team_id=1)
+    packed = add_packing(a, f, params=PackingParams(action_types=("pass", "cross")))
+    struct = add_structural_pass(a, f)
 
     failed = (a["result_id"] == _R["fail"]).to_numpy()
     disc = failed & struct["structural_lbs"].notna().to_numpy() & packed["packing_made"].isna().to_numpy()

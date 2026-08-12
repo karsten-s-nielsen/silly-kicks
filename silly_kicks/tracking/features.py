@@ -50,7 +50,14 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
-from silly_kicks.id_compat import align_join_keys, ids_differ, ids_match, restore_id_dtype, same_id
+from silly_kicks.id_compat import (
+    align_join_keys,
+    canonical_id,
+    ids_differ,
+    ids_match,
+    restore_id_dtype,
+    same_id,
+)
 from silly_kicks.spadl import config as spadlconfig
 
 from . import _kernels
@@ -1075,7 +1082,7 @@ def defensive_line_x(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     n: int | Literal["adaptive"] = 4,
 ) -> pd.Series:
     """Mean x of the defending team's back-line at the linked frame (m).
@@ -1089,7 +1096,7 @@ def defensive_line_x(
     >>> from silly_kicks.tracking.features import defensive_line_x
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
-    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    df = _kernels._defensive_line_at_actions(actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
     return df["defensive_line_x"].rename("defensive_line_x")
 
 
@@ -1097,7 +1104,7 @@ def back_line_high_x(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     n: int | Literal["adaptive"] = 4,
 ) -> pd.Series:
     """x of the most advanced back-line player on the defending team (m).
@@ -1112,7 +1119,7 @@ def back_line_high_x(
     >>> from silly_kicks.tracking.features import back_line_high_x
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
-    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    df = _kernels._defensive_line_at_actions(actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
     return df["back_line_high_x"].rename("back_line_high_x")
 
 
@@ -1120,7 +1127,7 @@ def compactness_x(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     n: int | Literal["adaptive"] = 4,
 ) -> pd.Series:
     """x-spread of defending team's back-line (max - min, meters).
@@ -1132,7 +1139,7 @@ def compactness_x(
     >>> from silly_kicks.tracking.features import compactness_x
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
-    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    df = _kernels._defensive_line_at_actions(actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
     return df["compactness_x"].rename("compactness_x")
 
 
@@ -1140,7 +1147,7 @@ def lateral_width(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     n: int | Literal["adaptive"] = 4,
 ) -> pd.Series:
     """y-spread of defending team's back-line (max - min, meters).
@@ -1152,7 +1159,7 @@ def lateral_width(
     >>> from silly_kicks.tracking.features import lateral_width
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
-    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    df = _kernels._defensive_line_at_actions(actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
     return df["lateral_width"].rename("lateral_width")
 
 
@@ -1160,7 +1167,7 @@ def max_lateral_gap(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     n: int | Literal["adaptive"] = 4,
 ) -> pd.Series:
     """Largest y-gap between adjacent y-sorted back-line players (m).
@@ -1172,7 +1179,7 @@ def max_lateral_gap(
     >>> from silly_kicks.tracking.features import max_lateral_gap
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
-    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    df = _kernels._defensive_line_at_actions(actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
     return df["max_lateral_gap"].rename("max_lateral_gap")
 
 
@@ -1180,7 +1187,7 @@ def back_n_count(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     n: int | Literal["adaptive"] = 4,
 ) -> pd.Series:
     """Number of players in the defending team's back line (3/4/5).
@@ -1192,8 +1199,51 @@ def back_n_count(
     >>> from silly_kicks.tracking.features import back_n_count
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
-    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n)
+    df = _kernels._defensive_line_at_actions(actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
     return df["back_n_count"].rename("back_n_count")
+
+
+def _nan_frame_for(actions: pd.DataFrame, columns, int_columns=()) -> pd.DataFrame:
+    """All-NaN result aligned to ``actions`` -- the ADR-055 edge policy in one place.
+
+    Policy lives at the EDGE, never in the engine: the per-frame function REFUSES an
+    unresolvable goal end (``GoalEndUnresolvedError``) rather than guessing a side, and the
+    aggregator turns that refusal into NaN rows. Caught BY NAME so a genuine bug still
+    propagates -- the broad ``except`` this replaces is exactly how an all-NaN column becomes
+    indistinguishable from "legitimately absent".
+
+    Pre-checking the map here instead would duplicate the lookup the callee is about to do,
+    and the two copies could drift on accessor (``get`` vs ``attacked_goal``) and on
+    ``allow_guess``.
+    """
+    out = pd.DataFrame(index=actions.index)
+    for col in columns:
+        out[col] = np.nan
+    for col in int_columns:
+        out[col] = pd.array([pd.NA] * len(actions), dtype="Int64")
+    return out
+
+
+# `_unresolvable_direction_mask` lived here and was DELETED in 4.80.0, not repaired. It was a
+# second hand-rolled answer to "is this action's direction resolvable", and it disagreed with
+# `acting_team_attacks_rtl` -- the single orientation authority -- in both directions. The reason
+# it can simply go is the <NA> contract: unresolvability is now a VALUE the authority returns, so
+# a consumer reads it instead of re-deriving it. The full post-mortem sits at its only former
+# call site, in `_player_influence_at_actions`.
+
+
+def _goal_map_for(frames: pd.DataFrame, goal_map=None):
+    """The caller's map, or one built from these frames (ADR-055 rule 1 + rule 3).
+
+    `add_*` aggregators take ``goal_map=None`` and build from their OWN frames, which is
+    correct by construction; a pipeline caller that already holds a per-match map passes it
+    in so it is built ONCE rather than per aggregator. Per-frame callees never see this --
+    they take the resolved map REQUIRED, because a default there would re-admit per-frame
+    direction inference at exactly the call sites that forget it.
+    """
+    from ._gk_resolve import resolve_defended_goals
+
+    return goal_map if goal_map is not None else resolve_defended_goals(frames)
 
 
 @nan_safe_enrichment
@@ -1202,7 +1252,7 @@ def add_defensive_line(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     n: int | Literal["adaptive"] = 4,
 ) -> pd.DataFrame:
     """Enrich actions with 6 defensive-line columns + 4 linkage-provenance columns.
@@ -1217,7 +1267,16 @@ def add_defensive_line(
     >>> from silly_kicks.tracking.features import add_defensive_line
     >>> # See tests/tracking/test_defensive_line_features.py for runnable examples.
     """
-    df = _kernels._defensive_line_at_actions(actions, frames, home_team_id=home_team_id, n=n, links=links)
+    try:
+        df = _kernels._defensive_line_at_actions(
+            actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n, links=links
+        )
+    except GoalEndUnresolvedError:
+        df = _nan_frame_for(
+            actions,
+            ("defensive_line_x", "back_line_high_x", "compactness_x", "lateral_width", "max_lateral_gap"),
+            int_columns=("back_n_count",),
+        )
     out = actions.copy()
     for col in ("defensive_line_x", "back_line_high_x", "compactness_x", "lateral_width", "max_lateral_gap"):
         out[col] = df[col]
@@ -1237,7 +1296,7 @@ def add_defensive_line(
 
 
 def defensive_line_xfns(
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     *,
     n: int | Literal["adaptive"] = 4,
 ) -> list:
@@ -1252,7 +1311,7 @@ def defensive_line_xfns(
     Compose into HybridVAEP::
 
         from silly_kicks.tracking.features import tracking_default_xfns, defensive_line_xfns
-        xfns = tracking_default_xfns + defensive_line_xfns("team_A")
+        xfns = tracking_default_xfns + defensive_line_xfns()
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
     col_names = [
@@ -1268,7 +1327,7 @@ def defensive_line_xfns(
         """Multi-column defensive-line xfn (6 cols x nb_states)."""
         out = pd.DataFrame(index=states[0].index)
         for i, slot in enumerate(states[:3]):
-            batch = _kernels._defensive_line_at_actions(slot, frames, home_team_id=home_team_id, n=n)
+            batch = _kernels._defensive_line_at_actions(slot, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
             for col in col_names:
                 out[f"{col}_a{i}"] = batch[col].to_numpy()
         return out
@@ -1283,7 +1342,6 @@ def add_structural_pass(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
     links: pd.DataFrame | None = None,
     params: StructuralPassParams | None = None,
 ) -> pd.DataFrame:
@@ -1296,7 +1354,7 @@ def add_structural_pass(
 
     See NOTICE for full bibliographic citations.
     """
-    batch = _kernels._structural_pass_at_actions(actions, frames, home_team_id=home_team_id, params=params, links=links)
+    batch = _kernels._structural_pass_at_actions(actions, frames, params=params, links=links)
     out = actions.copy()
     # House Int64 idiom (float Series w/ NaN -> Int64 <NA>) preserves the LBS=0-vs-NaN
     # distinction.
@@ -1316,7 +1374,6 @@ def add_structural_pass(
 
 def structural_pass_xfns(
     *,
-    home_team_id: int | str,
     params: StructuralPassParams | None = None,
 ) -> list:
     """VAEP xfn factory: ONE FrameAwareTransformer emitting structural_lbs/sgm/sdi x 3
@@ -1335,7 +1392,7 @@ def structural_pass_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
         for i, slot in enumerate(states[:3]):
-            batch = _kernels._structural_pass_at_actions(slot, frames, home_team_id=home_team_id, params=params)
+            batch = _kernels._structural_pass_at_actions(slot, frames, params=params)
             for col in col_names:
                 out[f"{col}_a{i}"] = batch[col].to_numpy()
         return out
@@ -1350,7 +1407,7 @@ def add_packing(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     links: pd.DataFrame | None = None,
     params: PackingParams | None = None,
 ) -> pd.DataFrame:
@@ -1401,14 +1458,30 @@ def add_packing(
     Enrich a linked match's actions with the packing columns::
 
         from silly_kicks.tracking import add_packing
-        out = add_packing(actions, frames, home_team_id=1)
+        out = add_packing(actions, frames)
         out[["packing_made", "packing_net", "packing_goal_threat"]].describe()
     """
     if params is None:
         params = PackingParams()
     from silly_kicks.spadl.utils import _resolve_next_touch_positions, resolve_next_touch_receiver
 
-    batch = _kernels._packing_at_actions(actions, frames, home_team_id=home_team_id, params=params, links=links)
+    try:
+        batch = _kernels._packing_at_actions(
+            actions, frames, goal_map=_goal_map_for(frames, goal_map), params=params, links=links
+        )
+    except GoalEndUnresolvedError:
+        # `line_x` is NOT an emitted column, but the event-only assembly below reads it
+        # (`secured_reception(actions, batch["line_x"], ...)`), so omitting it turned this
+        # refusal into `KeyError: 'line_x'` -- a crash, where the ADR-055 edge policy says NaN.
+        # Found by the SB360 audit's `gk_absent` roster, the one scenario with no keeper at
+        # either end and therefore no resolvable goal.
+        #
+        # The rule: a fallback frame must carry every column the code AFTER the try reads, not
+        # just the ones the aggregator emits. `add_defensive_line`'s sibling catch already does.
+        batch = _nan_frame_for(
+            actions,
+            ("packing_made", "packing_net", "packing_goal_threat", "line_x"),
+        )
 
     # Event-only assembly (TF-49 review major 7): receiver + secured live HERE, not in
     # the kernel -- packing_xfns calls the kernel on shifted gamestate slots where
@@ -1461,7 +1534,7 @@ def add_packing(
 
 def packing_xfns(
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     params: PackingParams | None = None,
 ) -> list:
     """VAEP xfn factory: ONE FrameAwareTransformer emitting packing_made /
@@ -1488,7 +1561,7 @@ def packing_xfns(
     Examples
     --------
     >>> from silly_kicks.tracking import packing_xfns
-    >>> xfns = packing_xfns(home_team_id=1)
+    >>> xfns = packing_xfns()
     >>> len(xfns)
     1
     """
@@ -1508,7 +1581,7 @@ def packing_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
         for i, slot in enumerate(states[:3]):
-            batch = _kernels._packing_at_actions(slot, frames, home_team_id=home_team_id, params=params)
+            batch = _kernels._packing_at_actions(slot, frames, goal_map=_goal_map_for(frames, goal_map), params=params)
             for col in col_names:
                 out[f"{col}_a{i}"] = batch[col].to_numpy()
         return out
@@ -1579,7 +1652,7 @@ def add_line_break(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     method: Literal["threshold", "ward"] = "threshold",
     n: int = 4,
     params: LineBreakingParams | None = None,
@@ -1612,7 +1685,7 @@ def add_line_break(
     if method == "threshold":
         from ._off_ball_runs import _line_break_kernel
 
-        df = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n, links=links)
+        df = _line_break_kernel(actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n, links=links)
         out = actions.copy()
         out["line_break"] = df["line_break"]
         out["n_attackers_behind_line"] = df["n_attackers_behind_line"]
@@ -1621,7 +1694,7 @@ def add_line_break(
     # method == "ward"
     from ._line_breaking import detect_line_breaking
 
-    result = detect_line_breaking(actions, frames, home_team_id=home_team_id, params=params, links=links)
+    result = detect_line_breaking(actions, frames, params=params, links=links)
     out = actions.copy()
     out["line_break__ward"] = result["line_break__ward"]
     out["lines_broken__ward"] = result["lines_broken__ward"]
@@ -1635,7 +1708,7 @@ def add_off_ball_context(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     n: int = 4,
     pre_seconds: float = 1.5,
     min_displacement_m: float = 3.0,
@@ -1661,14 +1734,17 @@ def add_off_ball_context(
     """
     from ._off_ball_runs import _line_break_kernel, _off_ball_runs_kernel
 
+    # `_off_ball_runs_kernel`'s `home_team_id` is DEAD (ADR-042 re-keyed the goalward test onto
+    # `acting_team_attacks_rtl`), and this aggregator is re-keyed so it holds none to pass.
+    # `add_off_ball_runs` still DECLARES it, deliberately: that entry's Gate B green IS the
+    # measurement that the parameter is unread, and deleting it would delete the evidence.
     runs = _off_ball_runs_kernel(
         actions,
         frames,
-        home_team_id=home_team_id,
         pre_seconds=pre_seconds,
         min_displacement_m=min_displacement_m,
     )
-    lb = _line_break_kernel(actions, frames, home_team_id=home_team_id, n=n, links=links)
+    lb = _line_break_kernel(actions, frames, goal_map=_goal_map_for(frames, goal_map), n=n, links=links)
     out = actions.copy()
     for col in runs.columns:
         out[col] = runs[col]
@@ -1678,7 +1754,7 @@ def add_off_ball_context(
 
 
 def off_ball_context_xfns(
-    home_team_id: int | str,
+    goal_map: GoalMap | None = None,
     *,
     n: int = 4,
     pre_seconds: float = 1.5,
@@ -1694,7 +1770,7 @@ def off_ball_context_xfns(
     Compose into HybridVAEP::
 
         from silly_kicks.tracking.features import tracking_default_xfns, off_ball_context_xfns
-        xfns = tracking_default_xfns + off_ball_context_xfns("team_A")
+        xfns = tracking_default_xfns + off_ball_context_xfns()
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
     from ._off_ball_runs import _LINE_BREAK_COLS, _OFF_BALL_RUNS_COLS, _line_break_kernel, _off_ball_runs_kernel
@@ -1713,11 +1789,10 @@ def off_ball_context_xfns(
             runs = _off_ball_runs_kernel(
                 slot,
                 frames,
-                home_team_id=home_team_id,
                 pre_seconds=pre_seconds,
                 min_displacement_m=min_displacement_m,
             )
-            lb = _line_break_kernel(slot, frames, home_team_id=home_team_id, n=n)
+            lb = _line_break_kernel(slot, frames, goal_map=_goal_map_for(frames, goal_map), n=n)
             for col in _OFF_BALL_RUNS_COLS:
                 out[f"{col}_a{i}"] = runs[col].to_numpy()
             for col in _LINE_BREAK_COLS:
@@ -1759,7 +1834,6 @@ def _run_values_at_actions(
     frames: pd.DataFrame,
     xt,
     *,
-    home_team_id: int | str,
     links: pd.DataFrame | None = None,
     pitch_control_cache=None,
     params=None,
@@ -1802,7 +1876,7 @@ def _run_values_at_actions(
     n_valued[on_domain] = 0.0
     enabled[on_domain] = credit[on_domain]
 
-    runs = detect_off_ball_runs(actions, frames, home_team_id=home_team_id, params=params)
+    runs = detect_off_ball_runs(actions, frames, params=params)
     if len(runs) == 0:
         return pd.DataFrame(
             {
@@ -1875,7 +1949,6 @@ def add_off_ball_run_values(
     frames: pd.DataFrame,
     xt,
     *,
-    home_team_id: int | str,
     links: pd.DataFrame | None = None,
     pitch_control_cache=None,
     params=None,
@@ -1925,14 +1998,13 @@ def add_off_ball_run_values(
     Value each action's off-ball runs against a linked match::
 
         from silly_kicks.tracking import add_off_ball_run_values
-        out = add_off_ball_run_values(actions, frames, xt, home_team_id=1)
+        out = add_off_ball_run_values(actions, frames, xt)
         out[["run_value_target", "n_disruptive_runs"]].head()
     """
     batch = _run_values_at_actions(
         actions,
         frames,
         xt,
-        home_team_id=home_team_id,
         links=links,
         pitch_control_cache=pitch_control_cache,
         params=params,
@@ -1964,7 +2036,6 @@ def add_off_ball_run_values(
 def off_ball_run_value_xfns(
     xt,
     *,
-    home_team_id: int | str,
     params=None,
     pitch_control_cache: PitchControlCache | None = None,
 ) -> list:
@@ -2004,7 +2075,7 @@ def off_ball_run_value_xfns(
     Build the off-ball run-value VAEP feature transformers::
 
         from silly_kicks.tracking import off_ball_run_value_xfns
-        xfns = off_ball_run_value_xfns(xt, home_team_id=1)
+        xfns = off_ball_run_value_xfns(xt)
         len(xfns)  # -> 1
     """
     from silly_kicks.xthreat import require_fitted_xt
@@ -2023,7 +2094,6 @@ def off_ball_run_value_xfns(
                 slot,
                 frames,
                 xt,
-                home_team_id=home_team_id,
                 params=params,
                 pitch_control_cache=pitch_control_cache,
             )
@@ -2057,9 +2127,20 @@ _TEAM_SHAPE_Y_COLS = [
 
 
 def _reproject_team_shape(out: pd.DataFrame, actions: pd.DataFrame, frames: pd.DataFrame) -> pd.DataFrame:
-    """Mirror team-shape centroid / line-height positions into each action's LTR frame (ADR-028)."""
+    """Mirror team-shape centroid / line-height positions into each action's LTR frame (ADR-028).
+
+    An action whose direction the frames do not resolve has its POSITION columns nulled: those
+    are absolute pitch coordinates and have no meaning without a convention. The remaining
+    team-shape columns are spans and dispersions, invariant under the flip, and are untouched --
+    so this degrades per column, not per row.
+    """
     flip = acting_team_attacks_rtl(actions, frames)
-    return reproject_to_action_ltr(out, flip, x_cols=_TEAM_SHAPE_X_COLS, y_cols=_TEAM_SHAPE_Y_COLS)
+    unresolved = flip.isna().to_numpy()
+    out = reproject_to_action_ltr(out, flip.fillna(False), x_cols=_TEAM_SHAPE_X_COLS, y_cols=_TEAM_SHAPE_Y_COLS)
+    if unresolved.any():
+        _pos_cols = [c for c in (*_TEAM_SHAPE_X_COLS, *_TEAM_SHAPE_Y_COLS) if c in out.columns]
+        out.loc[unresolved, _pos_cols] = np.nan
+    return out
 
 
 @nan_safe_enrichment
@@ -2068,7 +2149,6 @@ def add_team_shape(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
 ) -> pd.DataFrame:
     """Enrich actions with 20 team-shape columns (10 metrics x 2 teams).
 
@@ -2192,7 +2272,7 @@ def add_team_shape(
     return out
 
 
-def team_shape_xfns(home_team_id: int | str) -> list:
+def team_shape_xfns() -> list:
     """Build VAEP xfn list for TF-31/TF-44 team shape features.
 
     Returns a list with ONE FrameAwareTransformer that emits 18 features x 3
@@ -2204,7 +2284,7 @@ def team_shape_xfns(home_team_id: int | str) -> list:
     Compose into HybridVAEP::
 
         from silly_kicks.tracking.features import tracking_default_xfns, team_shape_xfns
-        xfns = tracking_default_xfns + team_shape_xfns("team_A")
+        xfns = tracking_default_xfns + team_shape_xfns()
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
     from ._team_shape import compute_team_shape
@@ -2242,7 +2322,7 @@ def team_shape_xfns(home_team_id: int | str) -> list:
             shape_indexed[tid] = s.set_index(["game_id", "period_id", "frame_id"])
 
         for i, slot in enumerate(states[:3]):
-            slot_result = _team_shape_at_actions(slot, frames, home_team_id, shape_indexed)
+            slot_result = _team_shape_at_actions(slot, frames, shape_indexed)
             for col in col_names:
                 out[f"{col}_a{i}"] = slot_result[col].to_numpy()
         return out
@@ -2255,7 +2335,6 @@ def team_shape_xfns(home_team_id: int | str) -> list:
 def _team_shape_at_actions(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
-    home_team_id: int | str,
     shape_indexed: dict,
 ) -> pd.DataFrame:
     """Join pre-indexed team shape to actions. Internal helper for xfn.
@@ -2337,7 +2416,7 @@ def _team_shape_at_actions(
 # ---------------------------------------------------------------------------
 
 
-def line_breaking_ward_xfns(home_team_id: int | str) -> list:
+def line_breaking_ward_xfns() -> list:
     """Build VAEP xfn list for TF-32 Ward line-breaking features.
 
     Returns a list with ONE FrameAwareTransformer that emits 3 features x 3
@@ -2356,7 +2435,7 @@ def line_breaking_ward_xfns(home_team_id: int | str) -> list:
             tracking_default_xfns,
             line_breaking_ward_xfns,
         )
-        xfns = tracking_default_xfns + line_breaking_ward_xfns("team_A")
+        xfns = tracking_default_xfns + line_breaking_ward_xfns()
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
     from ._line_breaking import detect_line_breaking
@@ -2377,7 +2456,7 @@ def line_breaking_ward_xfns(home_team_id: int | str) -> list:
             return out
 
         for i, slot in enumerate(states[:3]):
-            lb = detect_line_breaking(slot, frames, home_team_id=home_team_id)
+            lb = detect_line_breaking(slot, frames)
             out[f"lines_broken__ward_a{i}"] = lb["lines_broken__ward"].to_numpy()
             out[f"line_breaking_type__ward_between_lines_a{i}"] = (
                 lb["line_breaking_type__ward"] == "between_lines"
@@ -2468,9 +2547,16 @@ def pitch_control_at_target(
     # correct -- the away ground-truth + multi-action tests go RED if anyone replaces this with a no-op.
     _flip = acting_team_attacks_rtl(actions, frames)
     _q = actions[["end_x", "end_y"]].rename(columns={"end_x": "_qx", "end_y": "_qy"}).copy()
-    _q = reproject_to_action_ltr(_q, _flip, x_cols=["_qx"], y_cols=["_qy"])
+    _q = reproject_to_action_ltr(_q, _flip.fillna(False), x_cols=["_qx"], y_cols=["_qy"])
     qx = _q["_qx"].to_numpy(dtype="float64")  # positional order == actions row order (== loop order below)
     qy = _q["_qy"].to_numpy(dtype="float64")
+    # An unresolved direction makes the QUERY POINT unknown -- the involution above cannot place
+    # the action's end in the surface's absolute frame. NaN propagates through the sampling below
+    # to a NaN value, which is the honest answer; a guessed convention would instead sample a
+    # real pitch-control value at the point's mirror image.
+    _unresolved = _flip.isna().to_numpy()
+    qx[_unresolved] = np.nan
+    qy[_unresolved] = np.nan
 
     # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns resolve
     # frame_id by position, never .at on a non-unique action_id). Equivalent to the old
@@ -3788,12 +3874,19 @@ def add_cover_shadows(
     # PASSER into frame coords, not the frame into action-LTR: everything downstream of this
     # tuple is frame-convention, and the one place that steps out to action-LTR (the xT lookup
     # at `_cover_shadows.py:1164`) already reprojects itself. Computed ONCE per call.
-    _flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    # Nullable: <NA> marks an action whose direction the frames do not resolve.
+    _flip = acting_team_attacks_rtl(actions, frames)
 
     for j, (_idx, row) in enumerate(actions.iterrows()):
         aid = row["action_id"]
         tid = row["team_id"]
         if pd.isna(tid) or aid not in pointer_lookup.index:
+            continue
+        if pd.isna(_flip.iloc[j]):
+            # Unresolved direction -> NaN row, the same outcome this loop already gives an
+            # unresolvable goal end (see the GoalEndUnresolvedError handler below). The passer
+            # is the ANCHOR every shadow is measured from, so placing it in the wrong convention
+            # does not degrade the numbers -- it moves the anchor up to a full pitch length.
             continue
         fid_raw = pointer_lookup.at[aid, "frame_id"]
         if pd.isna(fid_raw):
@@ -3808,7 +3901,7 @@ def add_cover_shadows(
             continue
 
         passer_xy = (float(row["start_x"]), float(row["start_y"]))
-        if _flip[j]:
+        if _flip.iloc[j]:
             passer_xy = (FIELD_LENGTH - passer_xy[0], FIELD_WIDTH - passer_xy[1])
 
         try:
@@ -3985,11 +4078,17 @@ def cover_shadow_xfns(
             fid_by_pos = _kernels.resolve_frame_ids_by_position(slot, frames)
             # ADR-028 (RC1), per SLOT: each gamestate slot is its own action frame, so the flip
             # is resolved against that slot rather than the a0 slot.
-            slot_flip = acting_team_attacks_rtl(slot, frames).to_numpy(dtype=bool)
+            slot_flip = acting_team_attacks_rtl(slot, frames)
 
             for j, (_idx, row) in enumerate(slot.iterrows()):
                 tid = row["team_id"]
                 if pd.isna(tid) or np.isnan(fid_by_pos[j]):
+                    continue
+                if pd.isna(slot_flip.iloc[j]):
+                    # Unresolved direction -> this slot's row stays NaN (slot_results is
+                    # NaN-initialised), matching the unlinked-frame route just above. The passer
+                    # is the cache KEY as well as the anchor, so a guessed convention would also
+                    # serve a home-oriented surface to an away action.
                     continue
 
                 pid = int(row["period_id"])
@@ -3998,7 +4097,7 @@ def cover_shadow_xfns(
                     float(row["start_x"]),
                     float(row["start_y"]),
                 )
-                if slot_flip[j]:
+                if slot_flip.iloc[j]:
                     passer_xy = (FIELD_LENGTH - passer_xy[0], FIELD_WIDTH - passer_xy[1])
 
                 # NOTE: `_get_cs` rounds `passer_xy` INTO its cache key, so the reprojection must
@@ -4031,7 +4130,6 @@ def _player_influence_at_actions(
     frames: pd.DataFrame,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
     links: pd.DataFrame | None = None,
@@ -4061,6 +4159,21 @@ def _player_influence_at_actions(
 
     if len(frames) == 0:
         return result, pd.DataFrame()
+
+    # Direction per ACTION from the single orientation authority (ADR-028/041),
+    # resolved ONCE at this edge. `compute_player_influence` serves ONE team and
+    # reflects a GRID, so it takes the resolved bool -- a GoalMap would be collapsed
+    # to a boolean on its first line (the ADR-051 D3 rule).
+    # Nullable: <NA> marks an action whose direction the frames do not resolve. This is THE site
+    # the ADR-055 amendment cites -- an xT grid exists whether or not any single action links, so
+    # a defaulted flip here emitted a real, plausible number computed against a mirrored surface.
+    _pi_flip = dict(
+        zip(
+            actions["action_id"],
+            acting_team_attacks_rtl(actions, frames),
+            strict=False,
+        )
+    )
 
     if links is not None:
         pointers = links
@@ -4096,6 +4209,17 @@ def _player_influence_at_actions(
         fid_raw = pointer_lookup.at[aid, "frame_id"]
         if pd.isna(fid_raw):
             continue
+        # Unresolved direction (<NA> from the single orientation authority). Do NOT skip the
+        # row: `reachable_area*` comes from pitch control and is EXACTLY invariant under the
+        # flip -- measured on the canonical scene, max |delta| 0.0 across all 20 players, against
+        # 1.17e3 for `off_ball_xt` -- so skipping would discard correct values to look tidy.
+        # Compute with no flip and blank ONLY the three grid-derived xT columns below.
+        #
+        # Unlike a linkage failure, nothing here would fail on its own: the influence surface and
+        # the xT grid both exist regardless, so an unblanked row would carry a confident number
+        # built on a guessed orientation. That is the measured case behind the 4.80.0 contract
+        # change (P0.4 / the ADR-055 amendment).
+        direction_unresolved = pd.isna(_pi_flip.get(aid))
 
         pid = action_row["period_id"]
         fid = int(float(str(fid_raw)))
@@ -4113,7 +4237,9 @@ def _player_influence_at_actions(
                     frame_data,
                     xt,
                     attacking_team_id=tid,
-                    home_team_id=home_team_id,
+                    # `bool(pd.NA)` RAISES ("boolean value of NA is ambiguous"), so the
+                    # unresolved case must be branched on, never coerced.
+                    attacks_rtl=False if direction_unresolved else bool(_pi_flip[aid]),
                     method=method,
                     tau_seconds=tau_seconds,
                     pitch_control_cache=pitch_control_cache,
@@ -4173,6 +4299,24 @@ def _player_influence_at_actions(
         result.iat[i, _ci_area_opp] = opponent_area
         result.iat[i, _ci_area_diff] = team_area - opponent_area
 
+        # P0.4 REFUSAL, per row, keyed on the SINGLE orientation authority's own <NA>.
+        #
+        # This used to be a post-pass over `_unresolvable_direction_mask(actions, frames)` -- a
+        # SECOND hand-rolled answer to "is this action's direction resolvable". It disagreed with
+        # the authority in both directions and was removed rather than repaired:
+        #   * it re-derived resolvability with `frames["is_ball"].astype(bool)`, the ADR-019
+        #     string-qualifier trap this same release fixed in `_action_orientation.py`; and
+        #   * it tested membership with a RAW tuple against a `(game_id, period_id, team_id)`
+        #     index, which MISSES SILENTLY across dtypes (ADR-055 rule 2). Measured: on numeric
+        #     actions against string frames it declared every action unresolvable while the
+        #     authority resolved all of them, blanking xT columns that were correct -- caught by
+        #     `test_id_dtype_invariance.py`, which is exactly what that gate is for.
+        # The <NA> contract is what makes the duplicate unnecessary: unresolvability is now a
+        # VALUE the authority returns, so no consumer has to re-derive it.
+        if direction_unresolved:
+            for _ci in (_ci_xt_team, _ci_xt_opp, _ci_xt_diff):
+                result.iat[i, _ci] = np.nan
+
     return result, pointers
 
 
@@ -4181,7 +4325,6 @@ def actor_reachable_area_m2(
     frames: pd.DataFrame | None,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
 ) -> pd.Series:
@@ -4197,7 +4340,7 @@ def actor_reachable_area_m2(
     Compute the actor's uniquely reachable area per action::
 
         from silly_kicks.tracking.features import actor_reachable_area_m2
-        area = actor_reachable_area_m2(actions, frames, xt, home_team_id=1)
+        area = actor_reachable_area_m2(actions, frames, xt)
     """
     col_name = "actor_reachable_area_m2"
     if frames is None:
@@ -4206,7 +4349,6 @@ def actor_reachable_area_m2(
         actions,
         frames,
         xt,
-        home_team_id=home_team_id,
         method=method,
         tau_seconds=tau_seconds,
     )
@@ -4218,7 +4360,6 @@ def off_ball_xt_team(
     frames: pd.DataFrame | None,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> pd.Series:
     """Sum of teammates' off-ball xT (excluding actor) at linked frame.
@@ -4233,7 +4374,7 @@ def off_ball_xt_team(
     Compute the team's off-ball xT per action::
 
         from silly_kicks.tracking.features import off_ball_xt_team
-        val = off_ball_xt_team(actions, frames, xt, home_team_id=1)
+        val = off_ball_xt_team(actions, frames, xt)
     """
     col_name = "off_ball_xt_team"
     if frames is None:
@@ -4242,7 +4383,6 @@ def off_ball_xt_team(
         actions,
         frames,
         xt,
-        home_team_id=home_team_id,
         method=method,
     )
     return batch[col_name].rename(col_name)
@@ -4253,7 +4393,6 @@ def off_ball_xt_opponent(
     frames: pd.DataFrame | None,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
 ) -> pd.Series:
     """Sum of opponents' off-ball xT at linked frame.
@@ -4268,7 +4407,7 @@ def off_ball_xt_opponent(
     Compute the opponent's off-ball xT per action::
 
         from silly_kicks.tracking.features import off_ball_xt_opponent
-        val = off_ball_xt_opponent(actions, frames, xt, home_team_id=1)
+        val = off_ball_xt_opponent(actions, frames, xt)
     """
     col_name = "off_ball_xt_opponent"
     if frames is None:
@@ -4277,7 +4416,6 @@ def off_ball_xt_opponent(
         actions,
         frames,
         xt,
-        home_team_id=home_team_id,
         method=method,
     )
     return batch[col_name].rename(col_name)
@@ -4288,7 +4426,6 @@ def reachable_area_team(
     frames: pd.DataFrame | None,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
 ) -> pd.Series:
@@ -4304,7 +4441,7 @@ def reachable_area_team(
     Compute the team's reachable area per action::
 
         from silly_kicks.tracking.features import reachable_area_team
-        val = reachable_area_team(actions, frames, xt, home_team_id=1)
+        val = reachable_area_team(actions, frames, xt)
     """
     col_name = "reachable_area_team"
     if frames is None:
@@ -4313,7 +4450,6 @@ def reachable_area_team(
         actions,
         frames,
         xt,
-        home_team_id=home_team_id,
         method=method,
         tau_seconds=tau_seconds,
     )
@@ -4325,7 +4461,6 @@ def reachable_area_opponent(
     frames: pd.DataFrame | None,
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
 ) -> pd.Series:
@@ -4341,7 +4476,7 @@ def reachable_area_opponent(
     Compute the opponent's reachable area per action::
 
         from silly_kicks.tracking.features import reachable_area_opponent
-        val = reachable_area_opponent(actions, frames, xt, home_team_id=1)
+        val = reachable_area_opponent(actions, frames, xt)
     """
     col_name = "reachable_area_opponent"
     if frames is None:
@@ -4350,7 +4485,6 @@ def reachable_area_opponent(
         actions,
         frames,
         xt,
-        home_team_id=home_team_id,
         method=method,
         tau_seconds=tau_seconds,
     )
@@ -4364,7 +4498,6 @@ def add_player_influence(
     xt: ExpectedThreat,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
     pitch_control_cache: PitchControlCache | None = None,
@@ -4380,7 +4513,7 @@ def add_player_influence(
     Enrich a linked match's actions with the player-influence columns::
 
         from silly_kicks.tracking.features import add_player_influence
-        enriched = add_player_influence(actions, frames, xt, home_team_id=1)
+        enriched = add_player_influence(actions, frames, xt)
 
     See NOTICE for full bibliographic citations.
     """
@@ -4390,7 +4523,6 @@ def add_player_influence(
         frames,
         xt,
         links=links,
-        home_team_id=home_team_id,
         method=method,
         tau_seconds=tau_seconds,
         pitch_control_cache=pitch_control_cache,
@@ -4421,7 +4553,6 @@ def add_player_influence(
 def player_influence_xfns(
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
     pitch_control_cache: PitchControlCache | None = None,
@@ -4439,7 +4570,7 @@ def player_influence_xfns(
     Compose into HybridVAEP::
 
         from silly_kicks.tracking.features import tracking_default_xfns, player_influence_xfns
-        xfns = tracking_default_xfns + player_influence_xfns(xt, home_team_id=1)
+        xfns = tracking_default_xfns + player_influence_xfns(xt)
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
     from ._player_influence import PlayerInfluence, compute_player_influence
@@ -4464,6 +4595,25 @@ def player_influence_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
 
+        # Direction keyed the SAME WAY the cache is keyed. Attacking direction is a property of
+        # (game, period, team), not of the action, so it is slot-INVARIANT -- which is precisely
+        # why the `(period, frame, team)` cache below can be shared across all three slots. A
+        # per-action lookup would have been both redundant and inconsistent with that key: two
+        # slots hitting one cache entry could otherwise disagree about the flip.
+        #
+        # POLICY, written rather than inherited (ADR-055 amendment, 4.80.0): the helper now
+        # returns <NA> for an unresolvable direction. Here that resolves to "do not flip", because
+        # an xfn matrix must stay numeric -- and a row whose direction is unresolvable already
+        # yields NaN influence downstream, since `_get_pi` cannot resolve a frame for it either.
+        _slot0 = states[0]
+        _flip_series = acting_team_attacks_rtl(_slot0, frames).fillna(False)
+        _flip_by_period_team: dict[tuple, bool] = {}
+        for _pid, _tid, _fl in zip(
+            _slot0["period_id"], _slot0["team_id"], _flip_series.to_numpy(dtype=bool), strict=False
+        ):
+            if not pd.isna(_tid):
+                _flip_by_period_team[(int(_pid), canonical_id(_tid))] = bool(_fl)
+
         # Shared cache across all 3 slots
         cache: dict[tuple, dict[int | str, PlayerInfluence] | None] = {}
         frame_groups = frames.groupby(["period_id", "frame_id"])
@@ -4485,7 +4635,7 @@ def player_influence_xfns(
                     frame_data,
                     xt,
                     attacking_team_id=team_id,
-                    home_team_id=home_team_id,
+                    attacks_rtl=_flip_by_period_team.get((int(period_id), canonical_id(team_id)), False),
                     method=method,
                     tau_seconds=tau_seconds,
                     pitch_control_cache=pitch_control_cache,
@@ -4635,6 +4785,7 @@ def add_ghost_gk(
     """
     from ._ghost_gk import (
         GHOST_GK_COMPUTED,
+        GHOST_GK_DIRECTION_UNRESOLVED,
         GHOST_GK_GOAL_END_UNRESOLVED,
         GHOST_GK_NO_KEEPER,
         GHOST_GK_SOURCE_VALUES,
@@ -4736,11 +4887,17 @@ def add_ghost_gk(
     # so x -> 105 - gr_x UNIFORMLY (gr_x already measures from the defended goal). y mirrors
     # only for away-team actions (the per-action 180-degree reflection). density_spread is
     # a dispersion magnitude -> invariant.
-    flip = acting_team_attacks_rtl(actions, frames).reindex(out.index, fill_value=False).to_numpy(dtype=bool)
+    # Nullable: <NA> marks an action whose direction the frames do not resolve. Note the x/y
+    # asymmetry -- `ghost_gk_x` is flip-INDEPENDENT, so an unresolved row could emit a valid x
+    # beside an unknowable y. Both are nulled instead: a half-placed keeper is not a keeper
+    # position, and every consumer of this pair uses both coordinates.
+    _flip_nullable = acting_team_attacks_rtl(actions, frames).reindex(out.index)
+    direction_unresolved = _flip_nullable.isna().to_numpy()
+    flip = _flip_nullable.fillna(False).to_numpy(dtype=bool)
     gx = out["ghost_gk_x"].to_numpy(dtype="float64")
     gy = out["ghost_gk_y"].to_numpy(dtype="float64")
-    out["ghost_gk_x"] = FIELD_LENGTH - gx
-    out["ghost_gk_y"] = np.where(flip, FIELD_WIDTH - gy, gy)
+    out["ghost_gk_x"] = np.where(direction_unresolved, np.nan, FIELD_LENGTH - gx)
+    out["ghost_gk_y"] = np.where(direction_unresolved, np.nan, np.where(flip, FIELD_WIDTH - gy, gy))
 
     # Provenance. Placed AFTER the ADR-028 reprojection; the order is free, because NaN is
     # invariant under both `FIELD_LENGTH - gx` and `np.where(flip, FIELD_WIDTH - gy, gy)`.
@@ -4775,13 +4932,20 @@ def add_ghost_gk(
     }
     goal_end_unresolved = out["action_id"].isin(_unresolved_gk)
 
+    # `direction_unresolved` is tested BEFORE the goal-end branch: a row can satisfy both, and
+    # this one describes what actually stopped it. The ghost WAS computed; it simply cannot be
+    # expressed in action-LTR, so "no keeper" / "goal end unresolved" would both misname it.
     out["ghost_gk_source"] = np.where(
         out["ghost_gk_x"].notna(),
         GHOST_GK_COMPUTED,
         np.where(
-            goal_end_unresolved,
-            GHOST_GK_GOAL_END_UNRESOLVED,
-            np.where(has_frame, GHOST_GK_NO_KEEPER, GHOST_GK_UNLINKED),
+            direction_unresolved,
+            GHOST_GK_DIRECTION_UNRESOLVED,
+            np.where(
+                goal_end_unresolved,
+                GHOST_GK_GOAL_END_UNRESOLVED,
+                np.where(has_frame, GHOST_GK_NO_KEEPER, GHOST_GK_UNLINKED),
+            ),
         ),
     )
 
@@ -4890,7 +5054,6 @@ def add_shape_graph(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
 ) -> pd.DataFrame:
     """Enrich actions with 6 shape-graph columns (3 metrics x 2 teams).
 
@@ -5040,7 +5203,7 @@ def add_shape_graph(
     return out
 
 
-def shape_graph_xfns(home_team_id: int | str) -> list:
+def shape_graph_xfns() -> list:
     """Build VAEP xfn list for TF-39 shape graph features.
 
     Returns a list with ONE FrameAwareTransformer that emits 6 features x 3
@@ -5051,7 +5214,7 @@ def shape_graph_xfns(home_team_id: int | str) -> list:
     Compose into HybridVAEP::
 
         from silly_kicks.tracking.features import tracking_default_xfns, shape_graph_xfns
-        xfns = tracking_default_xfns + shape_graph_xfns("team_A")
+        xfns = tracking_default_xfns + shape_graph_xfns()
         X = compute_features(actions, xfns=xfns, frames=frames)
     """
     from ._shape_graph import compute_shape_graph
@@ -5115,7 +5278,7 @@ def shape_graph_xfns(home_team_id: int | str) -> list:
                 sg_indexed[tid] = pd.DataFrame(rows_list).set_index(["game_id", "period_id", "frame_id"])
 
         for i, slot in enumerate(states[:3]):
-            slot_result = _shape_graph_at_actions(slot, frames, home_team_id, sg_indexed)
+            slot_result = _shape_graph_at_actions(slot, frames, sg_indexed)
             for col in col_names:
                 out[f"{col}_a{i}"] = slot_result[col].to_numpy()
         return out
@@ -5128,7 +5291,6 @@ def shape_graph_xfns(home_team_id: int | str) -> list:
 def _shape_graph_at_actions(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
-    home_team_id: int | str,
     sg_indexed: dict,
 ) -> pd.DataFrame:
     """Join pre-indexed shape graph metrics to actions. Internal helper for xfn."""
@@ -5272,7 +5434,6 @@ def obso_actual(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
-    home_team_id: int | str = 0,
     links: pd.DataFrame | None = None,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
@@ -5290,7 +5451,7 @@ def obso_actual(
     Compute the actual OBSO value per action on a linked match::
 
         from silly_kicks.tracking.features import obso_actual
-        s = obso_actual(actions, frames, home_team_id=1)
+        s = obso_actual(actions, frames)
     """
     col_name = "obso_actual"
     if frames is None:
@@ -5300,7 +5461,6 @@ def obso_actual(
         actions,
         frames,
         links=links,
-        home_team_id=home_team_id,
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
@@ -5317,7 +5477,6 @@ def obso_peak(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
-    home_team_id: int | str = 0,
     links: pd.DataFrame | None = None,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
@@ -5333,7 +5492,7 @@ def obso_peak(
     Compute the peak OBSO value per action on a linked match::
 
         from silly_kicks.tracking.features import obso_peak
-        s = obso_peak(actions, frames, home_team_id=1)
+        s = obso_peak(actions, frames)
     """
     col_name = "obso_peak"
     if frames is None:
@@ -5343,7 +5502,6 @@ def obso_peak(
         actions,
         frames,
         links=links,
-        home_team_id=home_team_id,
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
@@ -5360,7 +5518,6 @@ def obso_optimal(
     actions: pd.DataFrame,
     frames: pd.DataFrame | None,
     *,
-    home_team_id: int | str = 0,
     links: pd.DataFrame | None = None,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
@@ -5376,7 +5533,7 @@ def obso_optimal(
     Compute the optimal OBSO value per action on a linked match::
 
         from silly_kicks.tracking.features import obso_optimal
-        s = obso_optimal(actions, frames, home_team_id=1)
+        s = obso_optimal(actions, frames)
     """
     col_name = "obso_optimal"
     if frames is None:
@@ -5386,7 +5543,6 @@ def obso_optimal(
         actions,
         frames,
         links=links,
-        home_team_id=home_team_id,
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
@@ -5404,7 +5560,6 @@ def _precompute_obso_lookup(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str = 0,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
@@ -5459,7 +5614,10 @@ def _precompute_obso_lookup(
     # y-symmetric grid -- which the synthetic ramp default is, and a fitted xT surface
     # nearly is, so the error hid behind both. Pinned by
     # tests/tracking/test_obso_orientation.py::TestEpvIsReflectedOnBothAxes.
-    flip_rtl = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    # Nullable: <NA> marks an action whose direction the frames do not resolve. The EPV grid is
+    # built in attack-LTR and reflected per action, so a guessed direction selects the wrong grid
+    # -- the row would carry a real OBSO value read off a mirrored surface.
+    flip_rtl = acting_team_attacks_rtl(actions, frames)
     transition_grid, epv_grid = _get_default_grids(transition_grid, epv_grid)
     epv_grid_rtl = np.ascontiguousarray(np.asarray(epv_grid)[::-1, ::-1])
 
@@ -5497,7 +5655,9 @@ def _precompute_obso_lookup(
 
         # Per-action orientation (see the block above the loop). NaN targets are skipped
         # first, so the reflection only ever runs on real coordinates.
-        if flip_rtl[i]:
+        if pd.isna(flip_rtl.iloc[i]):
+            continue  # unresolved direction -> NaN row, like the NaN-target skip just above
+        if flip_rtl.iloc[i]:
             target_x = FIELD_LENGTH - float(target_x)
             target_y = FIELD_WIDTH - float(target_y)
             epv_for_action = epv_grid_rtl
@@ -5574,7 +5734,6 @@ def add_obso(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str = 0,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     xt: ExpectedThreat | None = None,
@@ -5594,11 +5753,6 @@ def add_obso(
         Long-form tracking frames.
     links : pd.DataFrame or None
         Pre-computed link pointers (from ``link_actions_to_frames``).
-    home_team_id : int or str
-        Home team identifier. Retained for signature stability and LTR-consistency
-        checks; per-action orientation is keyed on the frames' own
-        ``team_attacking_direction`` via ``acting_team_attacks_rtl`` (ADR-028), NOT on
-        this parameter. Before ADR-041 it was accepted and never read at all.
     transition_grid : np.ndarray or None
         Pre-computed ball transition probability grid. Orientation-neutral
         (ball-anchored), so it is never mirrored per action.
@@ -5624,7 +5778,7 @@ def add_obso(
     Enrich a linked match's actions with the OBSO columns::
 
         from silly_kicks.tracking.features import add_obso
-        enriched = add_obso(actions, frames, home_team_id=1)
+        enriched = add_obso(actions, frames)
     """
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="add_obso")
     if epv_source == "synthetic":
@@ -5645,7 +5799,6 @@ def add_obso(
         actions,
         frames,
         links=links,
-        home_team_id=home_team_id,
         transition_grid=transition_grid,
         epv_grid=epv_grid,
         pitch_control_method=pitch_control_method,
@@ -5690,7 +5843,6 @@ def add_obso(
 
 
 def obso_xfns(
-    home_team_id: int | str = 0,
     *,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
@@ -5705,8 +5857,6 @@ def obso_xfns(
 
     Parameters
     ----------
-    home_team_id : int or str
-        Home team identifier.
     transition_grid, epv_grid : np.ndarray or None
         Pre-computed grids (None uses synthetic defaults).
     xt : ExpectedThreat or None
@@ -5729,7 +5879,7 @@ def obso_xfns(
     Build the OBSO VAEP feature transformers::
 
         from silly_kicks.tracking.features import obso_xfns
-        xfns = obso_xfns(home_team_id=1)
+        xfns = obso_xfns()
         len(xfns)  # -> 3
     """
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="obso_xfns")
@@ -5748,7 +5898,6 @@ def obso_xfns(
             frames,
             *,
             _fn=fn,
-            _htid=home_team_id,
             _tg=transition_grid,
             _eg=epv_grid,
             _pcm: Literal["spearman", "fernandez_bornn", "voronoi"] = pitch_control_method,
@@ -5757,7 +5906,6 @@ def obso_xfns(
             return _fn(
                 actions,
                 frames,
-                home_team_id=_htid,
                 transition_grid=_tg,
                 epv_grid=_eg,
                 pitch_control_method=_pcm,
@@ -5956,7 +6104,10 @@ def add_space_creation(
 
     # ADR-028 (RC3) per-action re-projection flag, computed ONCE for the whole call and derived from
     # the FRAMES -- never from `home_team_id`, which carries identity rather than direction (D1).
-    _flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    # Nullable: <NA> marks an action whose direction the frames do not resolve. RC3 (4.71.0) made
+    # this the seam that point-reflects the transition/EPV GRIDS, so a guessed direction does not
+    # degrade the two emitted columns -- it EXCHANGES them for the acting team.
+    _flip = acting_team_attacks_rtl(actions, frames)
 
     for col in _SPACE_CREATION_COLUMNS:
         out[col] = np.nan
@@ -5966,7 +6117,9 @@ def add_space_creation(
     out[_EPV_SOURCE_COLUMN] = pd.array([pd.NA] * len(out), dtype="string")
 
     for i, (_idx, action_row) in enumerate(actions.iterrows()):
-        if np.isnan(fid_by_pos[i]):
+        if np.isnan(fid_by_pos[i]) or pd.isna(_flip.iloc[i]):
+            # Unresolved direction joins the unlinked-frame route: the row stays NaN across
+            # _SPACE_CREATION_COLUMNS rather than emitting two columns that may be swapped.
             continue
 
         period_id = int(action_row["period_id"])
@@ -5981,7 +6134,7 @@ def add_space_creation(
             action_row,
             frame,
             home_team_id=home_team_id,
-            attacks_rtl=bool(_flip[i]),
+            attacks_rtl=bool(_flip.iloc[i]),
             transition_grid=transition_grid,
             epv_grid=epv_grid,
             pitch_control_method=pitch_control_method,
@@ -6101,7 +6254,6 @@ def add_pausa(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str = 0,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     xt: ExpectedThreat | None = None,
@@ -6145,7 +6297,7 @@ def add_pausa(
     Enrich a linked match's actions with the PAUSA columns::
 
         from silly_kicks.tracking.features import add_pausa
-        enriched = add_pausa(actions, frames, home_team_id=1)
+        enriched = add_pausa(actions, frames)
     """
     from ._pausa import compute_pausa_batch
 
@@ -6158,7 +6310,6 @@ def add_pausa(
             out,
             frames,
             links=links,
-            home_team_id=home_team_id,
             transition_grid=transition_grid,
             epv_grid=epv_grid,
             xt=xt,
@@ -6194,7 +6345,6 @@ def add_pausa(
 
 
 def pausa_xfns(
-    home_team_id: int | str = 0,
     *,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
@@ -6209,8 +6359,6 @@ def pausa_xfns(
 
     Parameters
     ----------
-    home_team_id : int or str
-        Home team identifier.
     transition_grid, epv_grid : np.ndarray or None
         Pre-computed grids (None uses synthetic defaults).
     xt : ExpectedThreat or None
@@ -6229,7 +6377,7 @@ def pausa_xfns(
     Build the PAUSA VAEP feature transformers::
 
         from silly_kicks.tracking.features import pausa_xfns
-        xfns = pausa_xfns(home_team_id=1)
+        xfns = pausa_xfns()
         len(xfns)  # -> 3
     """
     epv_grid, epv_source = _resolve_epv_grid(xt, epv_grid, caller="pausa_xfns")
@@ -6245,7 +6393,6 @@ def pausa_xfns(
             frames,
             *,
             _col=col_name,
-            _htid=home_team_id,
             _tg=transition_grid,
             _eg=epv_grid,
             _pcm: Literal["spearman", "fernandez_bornn", "voronoi"] = pitch_control_method,
@@ -6256,7 +6403,6 @@ def pausa_xfns(
             enriched = add_pausa(
                 actions,
                 frames,
-                home_team_id=_htid,
                 transition_grid=_tg,
                 epv_grid=_eg,
                 pitch_control_method=_pcm,
@@ -6399,16 +6545,19 @@ def add_xt_gk(
     xt: ExpectedThreat,
     *,
     links: pd.DataFrame | None = None,
-    home_team_id: int | str,
     params: XtGkParams | None = None,
 ) -> pd.DataFrame:
     """Add xT-GK columns (xt_gk_base/pev/rav/dzv/pressure + composite xt_gk + the three
     provenance columns xt_gk_origin_source/xt_gk_dest_source/xt_gk_origin_confidence) per
     GK-distribution action. ``xt`` is a REQUIRED pre-fitted ExpectedThreat (no self-fit --
-    leakage contract). ``home_team_id`` is accepted for GK-feature-family signature parity
-    (and CI-gate construction); the xT-GK math operates on LTR-normalized SPADL action
-    coordinates and does not consume it. RAV uses a fitted GkCompletionModel (the bundled GS
-    ``default``); the [das] extra is no longer required.
+    leakage contract). The xT-GK math operates on LTR-normalized SPADL action coordinates and
+    takes NO direction argument. It formerly accepted a dead ``home_team_id`` "for
+    GK-feature-family signature parity (and CI-gate construction)"; ADR-055 re-keyed
+    ``add_gk_influence`` and ``add_cover_shadows`` off that parameter, at which point parity
+    meant matching the MINORITY -- and specifically matching ``add_ghost_gk``, which actually
+    READS its copy. A dead parameter that makes itself look live is worse than none, so 4.80.0
+    removed it. RAV uses a fitted GkCompletionModel (the bundled GS ``default``); the [das]
+    extra is no longer required.
 
     See NOTICE for full bibliographic citations (Eyestone xT-GK).
     """
@@ -6431,13 +6580,12 @@ def add_xt_gk(
 def xt_gk_xfns(
     xt: ExpectedThreat,
     *,
-    home_team_id: int | str,
     params: XtGkParams | None = None,
 ) -> list:
     """Factory returning one frame-aware VAEP transformer for xT-GK, closing over the
     caller-fitted ``xt`` (no self-fit -- leakage contract). Emits xt_gk_*_a{i} per
-    gamestate slot. ``home_team_id`` accepted for family parity + CI-gate construction
-    (see add_xt_gk).
+    gamestate slot. Takes no direction argument (see ``add_xt_gk`` for why the former
+    parity-motivated ``home_team_id`` was removed in 4.80.0).
 
     The per-slot ``action_id`` rekey to a unique positional surrogate is required because
     the sub-calls (pressure_on_actor / the completion-density linker) are action_id-keyed and

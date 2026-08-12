@@ -238,7 +238,7 @@ def test_downstream_line_break_works(actions_3, snapshots_combined):
 
     frames, links = snapshot_to_tracking_frames(snapshots_combined, actions_3)
     actions_with_data = actions_3[actions_3["action_id"].isin(links["action_id"])]
-    result = add_line_break(actions_with_data, frames, links=links, home_team_id=100, method="ward")
+    result = add_line_break(actions_with_data, frames, links=links, method="ward")
     assert "line_break__ward" in result.columns
     assert "lines_broken__ward" in result.columns
     assert "line_breaking_type__ward" in result.columns
@@ -247,15 +247,34 @@ def test_downstream_line_break_works(actions_3, snapshots_combined):
     assert result["line_break__ward"].notna().any()
 
 
-def test_downstream_line_break_missing_home_team_id_raises(actions_3, snapshots_combined):
-    """M1: Calling add_line_break without home_team_id raises TypeError."""
+def test_downstream_line_break_REJECTS_home_team_id(actions_3, snapshots_combined):
+    """ADR-051 D3 (4.80.0): passing `home_team_id` now raises -- the parameter is GONE.
+
+    This test is the INVERSE of what it asserted before. It used to pin that `home_team_id` was
+    REQUIRED (omitting it raised); that guard protected against quietly giving the parameter a
+    default, and it is void now the parameter does not exist -- the call it declared impossible
+    is the supported one, and the test passed only while the signature it described was live.
+
+    Rather than delete the coverage, it is turned around to pin the Hyrum-visible break itself,
+    matching the precedent ADR-055 set for `gk_influence_xfns` / `cover_shadow_xfns`: an existing
+    caller passing the old argument gets a loud `TypeError`, never a silently ignored kwarg.
+    """
     from silly_kicks.tracking._snapshot import snapshot_to_tracking_frames
     from silly_kicks.tracking.features import add_line_break
 
     frames, links = snapshot_to_tracking_frames(snapshots_combined, actions_3)
     actions_with_data = actions_3[actions_3["action_id"].isin(links["action_id"])]
+
+    # The supported call: no direction argument at all.
+    ok = add_line_break(actions_with_data, frames, links=links, method="ward")
+    assert "line_break__ward" in ok.columns
+
+    # DO NOT "FIX" THE ARGUMENT BELOW. Passing the removed `home_team_id` is the POINT: this
+    # asserts the break is loud. An automated call-site sweep stripped it once during 4.80.0
+    # (leaving a call that cannot raise, so the test passed by asserting nothing) -- a mechanical
+    # migration cannot tell a stale call from a deliberate negative one.
     with pytest.raises(TypeError):
-        add_line_break(actions_with_data, frames, links=links, method="ward")  # type: ignore[call-arg]
+        add_line_break(actions_with_data, frames, links=links, method="ward", home_team_id=1)  # type: ignore[call-arg]
 
 
 def test_downstream_action_context_actor_speed_nan(actions_3, snapshots_combined):

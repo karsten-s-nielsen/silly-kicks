@@ -285,3 +285,180 @@ verified RED against the pre-fix code.
 * ADR-051 (the D3 orientation defect class), ADR-054 (SB360 degradation + the StatsBomb port),
   ADR-009 (raw primitives ship; composites stay consumer-side), ADR-042 (a coverage denominator
   must never masquerade as a signal), ADR-019 (dtype-safe id comparisons).
+
+---
+
+## Amendment — 2026-08-11, silly-kicks 4.80.0: ADR-051 D3 closed
+
+ADR-055 re-keyed `_gk_influence` onto the `GoalMap` and **deliberately deferred the rest**, recording
+`{_defensive_line, _packing}` as the remaining unit. This amendment closes that arc. It is an
+amendment rather than a new ADR because ADR-055 already contains the decision — under *"Two
+sub-decisions taken by the owner during implementation"* it records that `compute_packing_metrics`
+*"would have needed a `GoalMap` too — three more breaking changes and ~26 files"*. A new ADR would
+restate it.
+
+What the amendment must carry is what ADR-055 does **not**: the fate of Gate B, the scope predicate,
+the per-site mechanism split, and the D3 pin's new form.
+
+### The scope was SIX sites, not the two recorded — and the fix is a PREDICATE, not a list
+
+The list ratcheted **2 → 4 → 6** across three plan revisions. Every expansion came from the same
+cause: scope was ENUMERATED. It is now bounded by a rule a machine re-runs — a site is in scope iff
+it **CALLS** `same_id`/`ids_match` with `home_team_id` — and the pin asserts that rule finds nothing.
+
+Its predecessor is instructive and is recorded so it is not reinvented: a shape-matching predicate
+("a `same_id` result guarding a pitch-constant subtraction or a reversing slice") was implemented and
+RUN, and it missed **3 of 8** sites including `_defensive_line.py`'s own — because that site decides
+direction by sorting from the other end (`argsort(xs)` vs `argsort(-xs)`) without ever reflecting a
+coordinate, and its `-xs` is the unary negation the predicate nominated as its EXCLUSION criterion
+for score sites. A module-population pin under it would have reported `_defensive_line.py` **already
+clean before any re-key**. **Match the SOURCE of the decision, never its downstream shape.**
+
+Corollary, because it is what forced the bad predicate: **a hand-maintained list of FILES TO SCAN is
+not a hand-maintained list of EXEMPTIONS.** Narrowing the scan never hides a violation inside it;
+only an exemption list can wave one through.
+
+### The mechanism is PER SITE, and ADR-055's `goal_map` ruling does not generalise
+
+| Serves | Takes | Sites |
+|---|---|---|
+| BOTH teams | `goal_map` | `_defensive_line`, `_packing` |
+| ONE team | a bool from `acting_team_attacks_rtl` | `_structural_pass`, `_line_breaking`, `_off_ball_runs`, `_player_influence` |
+
+ADR-055 chose `goal_map` for packing on a packing-specific ground: supplying a float end for the
+DEFENDING team requires `0.0 if same_id(...) else 105.0`, the exact fork this arc removes. That
+argument has no force at a site needing one team's direction. `acting_team_attacks_rtl` is the
+repo's single orientation authority (ADR-028/041) with 7+ production call sites, and ADR-042 already
+aligned TF-4 onto it; threading a map into a one-team site would REVERSE that consolidation. At
+`_player_influence` it is concrete: the site reflects a GRID, and a map returns a pitch-x the
+function would collapse to a boolean on its first line.
+
+**Rule for the next author: functions serving ONE team take the bool; functions serving BOTH take the
+map.** The bool is resolved ONCE at the aggregator edge and threaded down — per-frame geometry never
+receives the resolver.
+
+### One unresolved-end policy, expressed twice — the helper became nullable too
+
+An earlier revision of this amendment recorded the split as permanent: map sites REFUSE, helper
+sites inherit `acting_team_attacks_rtl`'s `False` default. That was decided when the question was
+scoped to `_player_influence` alone, and it does not survive contact with the rest of the cycle. A
+`GoalMap` that returns `None` and a direction helper that returns `False` are answering the SAME
+question with opposite honesty, and the helper's answer is the dishonest one: **a resolved
+left-to-right team and a team with no resolvable direction were the same value**, so no consumer
+could distinguish them however carefully it was written.
+
+So `acting_team_attacks_rtl` now returns `dtype="boolean"` with `<NA>` for unresolved. ADR-028 D2
+had already made the condition audible; this makes it *representable*, which is the difference
+between a warning a consumer may ignore and a value it must handle. `.fillna(False)` remains
+correct at many of the 21 call sites — it just has to be WRITTEN, with a reason, which is the whole
+distinction between a considered default and an inherited one.
+
+**The cost was paid up front and is the argument for the change.** Converting the consumers forced
+each to state its policy, and two of them turned out to have none. `_unresolvable_direction_mask`
+was a second hand-rolled resolvability test that disagreed with the authority in both directions
+(the `astype(bool)` string-qualifier trap, plus a raw-tuple index lookup that misses across
+dtypes); it is deleted, because the `<NA>` contract removes the reason a consumer would re-derive
+this at all. And the resolver's own `frames["is_ball"].astype(bool)` had been selecting NO player
+rows for every provider emitting a string `is_ball` — the ADR-028 defect firing on a whole input
+class, invisible precisely because the fall-through returned all-`False`.
+
+**Per-consumer policy, where it is not simply `.fillna(False)`:** `_player_influence` blanks its
+three xT columns and KEEPS `reachable_area*`, because the latter is exactly invariant under the
+flip (measured: max |delta| 0.0 across 20 players, against 1.17e3 for `off_ball_xt`);
+`add_space_creation` refuses the whole row, because its two columns are EXCHANGED rather than
+degraded, and half of an exchanged pair is not a partial answer; the shared action-context nulls
+the sampled geometry so all eight kernels behind it inherit one decision; and
+`resolve_gk_geometry` skips the tracking tier and records the fallback in `*_coord_source`, which
+is the honest reading of "this coordinate could not be derived" rather than a clamp applied in an
+unknown frame.
+
+**`_player_influence` is the exception and it was MEASURED, not assumed.** The helper's justification
+— *"such actions produce NaN geometry anyway because they cannot link"* — was argued for off-ball
+runs and does **not** transfer to an xT grid, which exists whether or not any action links. A planted
+unresolvable scene showed real numbers emitted on a guessed orientation, so that consumer now blanks
+its xT columns. Only the xT columns: `reachable_area*` comes from pitch control, never touches the
+reflected grid, and is correct regardless of direction.
+
+The corpus could not answer this — 3 SkillCorner matches, 3,645 actions, **0 unresolvable**. A sample
+that cannot produce the failure has not cleared it, so the case was BUILT.
+
+### Gate B is retired for these entries; Gate C replaces its DETECTION — for four of six
+
+Gate B varies `home_team_id`; once the parameter is gone the entry skips on `role="unused"`. Gate C
+holds the frames fixed and swaps the MAP.
+
+**But Gate C only applies to the four map consumers.** The two bool sites take no map, so swapping
+one moves nothing and such an entry would PASS BY IGNORING ITS INPUT — vacuous by construction, and
+the completeness gate's `declared − observed` half rejects it. Their detector is a **behavioural
+direction-invariance test**: mirror the FRAMES, hold `home_team_id` constant, require action-LTR
+geometry to be unchanged. That test sees the defect AND survives the fix, which neither Gate A (it
+swaps the id too, restoring the assumed invariant) nor Gate B (vacuous after the fix) can do.
+
+`gate_c_must_move` is now checked for **completeness**, not just satisfaction: an undeclared witness
+fails. Without that, a hand-picked subset lets a partial re-key ship green — and it nearly did.
+`packing_goal_threat` is the ONLY witness for packing's back-line site and was almost dropped as a
+dead column, because it is constant `0` on the base leg. `0` is the CORRECT answer there; flipping
+the end moves it to `[4, 1, 1, 1]`.
+
+**A detector's liveness is not "does it vary across rows" but "does it move when the thing it detects
+changes."** A base-leg constancy screen classifies `packing_goal_threat` identically to
+`back_n_count`, which genuinely cannot move — and they need opposite verdicts.
+
+### A dead parameter is removed WITH the use, or it is never removed
+
+The re-key exposed a second, larger population: **8 signatures carrying a `home_team_id` that
+nothing read** (25 once the cascade below finished; 62 across the whole cycle) — residue from the ADR-028/041 re-keys, which removed the *use* and left the
+*parameter*. Cleaning them is not cosmetic. A declared parameter is a claim that the value matters;
+eight public functions were making that claim falsely, and the very ADR text above tells the next
+author that direction never comes from identity.
+
+They had to be driven to a **FIXPOINT**, because the dead ones formed forwarding CHAINS: the obso
+family existed only to hand the argument to `_precompute_obso_lookup`, which ignored it, so
+removing the sink killed five public signatures above it, then `_run_values_at_actions`, then
+`add_off_ball_run_values` / `off_ball_run_value_xfns` and the atomic mirrors. Three iterations to
+converge.
+
+**Two detector limits, both hit, both worth knowing before the next such sweep.** A reads-counter
+calls a parameter LIVE when its only use seeds an unused closure default (`_htid=home_team_id`) —
+that is how `pausa_xfns` survived the fixpoint. And a call-site sweep keyed on the callee's NAME
+misses ALIASED forwarding (`_std = tracking.add_xt_gk`), which left all four atomic mirrors raising
+`TypeError` against a target that had already been cleaned. Resolving import aliases and checking
+by `inspect.signature().bind()` catches both; neither catches a kwargs DATA TABLE
+(`("obso_xfns", dict(home_team_id=...))`), because that is a dict literal, not a call. The suite is
+the only backstop that saw all three layers.
+
+**Verify a fence before removing it, and expect per-site answers.** `add_xt_gk` / `xt_gk_xfns`
+documented theirs — *"accepted for GK-feature-family signature parity"* — and it was measurably
+stale: this very ADR re-keyed two of that family off the parameter, so parity meant matching the
+minority, and specifically matching `add_ghost_gk`, which READS its copy. Removed. But
+`_off_ball_runs_kernel` KEEPS its unread copy, because its Gate B green **is** the standing
+measurement that the parameter is unread, and so does `_compute_space_creation_for_action` (the
+recorded "retire by disuse, not removal" case). Those two are why `add_off_ball_runs` and
+`add_space_creation` keep theirs as well.
+
+**No value moves**: every removal was AST-verified unread first, so this is signature-only — no
+golden shifts, no retrain question, no re-materialization.
+
+### Consequences
+
+* **BREAKING**: `home_team_id` removed from 5 per-frame functions, 6 `add_*` surfaces and their
+  `*_xfns`, across `tracking` / `atomic` / `calibration` / `causal` — **and from 11 per-Series
+  helpers in `features.py`** the scope predicate could not see, plus the **25 dead-parameter
+  signatures** above. 62 signatures in total, across 82 source and test files. Those helpers never *call*
+  `same_id`; they declared the parameter and forwarded it, so the predicate that correctly bounds
+  the DEFECT does not bound the API MIGRATION. **The two are different sets and the second is
+  strictly larger.** Enumerate a removed parameter by signature diff against the base commit.
+* **BREAKING**: `acting_team_attacks_rtl` returns `dtype="boolean"`, not `bool` (above).
+* **No re-materialization owed for conventionally-oriented frames.** MEASURED, not inferred: every
+  re-keyed aggregator was run at the pre-re-key commit and at this one against the same
+  home-attacks-right scene — **15 columns, 4 aggregators, all identical**. Where frames are oriented
+  otherwise, away-team geometry moves from a wrong value to a correct one.
+* **UNORIENTED frames now yield NaN where they used to yield a confident wrong number.** This is
+  the `<NA>` contract's only behavioural cost and it is a real one: a consumer feeding absolute
+  frames loses columns it used to receive. It is not a regression — those values were mis-projected
+  for roughly half the actions — but it will look like one to anyone who has not adopted ADR-029's
+  `orient_frames_to_ltr`. The library says so loudly (`OrientationUnresolvedWarning`) rather than
+  only in the value.
+* The D3 pin is renamed `test_no_module_infers_direction_from_team_identity` and asserts its
+  population is EXACTLY empty over eight modules. **Empty is the correct steady state** — stated in
+  the docstring so a future reader does not "fix" it by repopulating the set.

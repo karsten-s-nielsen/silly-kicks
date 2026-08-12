@@ -24,7 +24,7 @@ def test_kernel_called_once_per_slot(monkeypatch):
         away_outfield_xs=[50.0, 60.0, 30.0, 80.0],
         away_outfield_ys=[34.0, 20.0, 34.0, 34.0],
     )
-    transformer = packing_xfns(home_team_id=1)[0]
+    transformer = packing_xfns()[0]
     slot = _acts([{}, {}])
     transformer([slot, slot, slot], frame)
     assert calls["n"] == 3

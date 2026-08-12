@@ -5,6 +5,210 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.80.0] — 2026-08-11
+
+### Changed (BREAKING) — ADR-051 D3 closed: direction never comes from team identity again
+
+Every site that inferred the defended-goal end from **team identity** now takes **direction**.
+`same_id(team, home_team_id)` is correct only while the frames are home-attacks-right and
+**silently inverts otherwise** — it produces a confident wrong answer rather than an error, which
+is why it survived three releases after ADR-055 named it.
+
+**Scope was SIX sites, not the two the tracker recorded.** The list had ratcheted 2 → 4 → 6 across
+three plan revisions, each time because it was *enumerated*. It is now bounded by a **predicate** a
+machine can re-run — a site is in scope iff it CALLS `same_id`/`ids_match` with `home_team_id` —
+and the pin asserts that predicate finds nothing:
+
+| Site | Serves | Now takes |
+|---|---|---|
+| `_defensive_line.py` `compute_defensive_line` | both teams | `goal_map` (`get`) |
+| `_packing.py` `compute_packing_metrics` | both teams | `goal_map` (`attacked_goal` **and** `get`) |
+| `_structural_pass.py` | acting team | `attacks_rtl` bool |
+| `_line_breaking.py` (ward path) | acting team | bool, resolved at the edge |
+| `_off_ball_runs.py` `_line_break_kernel` | acting team | bool, resolved at the edge |
+| `_player_influence.py` | attacking team | `attacks_rtl` bool |
+
+**The mechanism is per-site, not uniform.** Only two of the six serve BOTH teams and need a map;
+the other four need one team's direction and take a bool derived from `acting_team_attacks_rtl` —
+the repo's single orientation authority (ADR-028/041), which ADR-042 already aligned TF-4 onto.
+Threading a `GoalMap` into a one-team site would have reversed that consolidation and, at
+`_player_influence`, handed a pitch-x to a function that collapses it to a boolean on its first
+line. ADR-055's `goal_map` ruling is packing-specific and does not generalise: it turns on
+supplying a float end for the DEFENDING team, which arises only because packing also calls
+`select_back_line_players` for the other team.
+
+**Unresolved ends REFUSE on the map path.** `GoalMap.get` returns `float | None` and `None == 0.0`
+is `False`, so `get(...) == 0.0` silently means "defends x=105"; per-frame functions raise
+`GoalEndUnresolvedError` and the `add_*` edge turns it into NaN rows.
+
+### Changed (BREAKING) — `acting_team_attacks_rtl` returns a NULLABLE boolean
+
+The bool path got the same treatment, because the two halves of one cycle should not disagree about
+what "unresolved" means. `acting_team_attacks_rtl` previously returned a bare `bool` and
+`.fillna(False)`-ed internally, so **a resolved left-to-right team and a team whose direction was
+unknown were the same value**. ADR-028 D2 had already added a warning; the value still said
+nothing, and 21 call sites inherited the guess. It now returns `dtype="boolean"` with `<NA>` for
+unresolved, and every consumer states its choice explicitly:
+
+* `.fillna(False)` where the metric is symmetric under the flip or the path already NaNs the row —
+  written, with a reason, at each site.
+* REFUSE where a guess would emit a confident number: `add_player_influence` blanks its three xT
+  columns (the grid is reflected) while KEEPING `reachable_area*`, which is **exactly** invariant
+  under the flip — measured, max |delta| 0.0 across all 20 players of the canonical scene against
+  1.17e3 for `off_ball_xt`. `add_space_creation` refuses the whole row instead, because its two
+  columns are EXCHANGED rather than degraded.
+* The shared action-context nulls the sampled geometry, so all eight kernels behind it inherit one
+  decision rather than eight.
+
+Consequences worth stating plainly. On **unoriented** frames the affected geometry is now NaN where
+it used to be a confidently wrong number — `resolve_gk_geometry` falls through to its rule-based
+prior with the fallback recorded in `*_coord_source`, and the ADR-029 negative control changed from
+asserting the defect (bimodal GK x) to asserting the refusal. Oriented frames are unaffected. Three
+committed test fixtures turned out to be unoriented and were only passing because of the old guess;
+one of them (`test_atomic_add_pre_shot_gk_context`) also labelled its keeper's team as attacking the
+end that keeper was standing in, which nothing read.
+
+The change earned its keep immediately by exposing two live defects. `frames["is_ball"].astype(bool)`
+in the orientation resolver was the ADR-019 string-qualifier trap (`pd.Series(["False"]).astype(bool)`
+is `True`), so `~` selected NO player rows and the resolver fell through for every provider emitting
+an object/string `is_ball` — invisible while the fall-through returned all-`False`, since that is
+indistinguishable from a legitimately all-home action set. And `_unresolvable_direction_mask` was a
+SECOND hand-rolled answer to "is this direction resolvable" that disagreed with the authority in both
+directions: it repeated the same `astype(bool)` trap and tested membership with a raw tuple against a
+`(game_id, period_id, team_id)` index, which misses silently across dtypes (ADR-055 rule 2). On
+numeric actions against string frames it declared every action unresolvable while the authority
+resolved all of them. It is DELETED, not repaired — the `<NA>` contract is what makes a consumer-side
+re-derivation unnecessary.
+
+**Breaking surface**, across four packages: `home_team_id` removed from `compute_defensive_line`,
+`compute_packing_metrics`, `compute_structural_pass_metrics`, `compute_player_influence`,
+`detect_line_breaking`; from `add_defensive_line`, `add_packing`, `add_structural_pass`,
+`add_line_break`, `add_off_ball_context`, `add_player_influence` and their `*_xfns` factories; and
+from the `atomic.tracking` mirrors — **plus the ELEVEN per-Series helpers in `features.py`**:
+`defensive_line_x`, `back_line_high_x`, `compactness_x`, `lateral_width`, `max_lateral_gap` and
+`back_n_count` (which take `goal_map=None` instead, mirroring `add_defensive_line`), and
+`actor_reachable_area_m2`, `off_ball_xt_team`, `off_ball_xt_opponent`, `reachable_area_team`,
+`reachable_area_opponent` (which take no direction argument at all, mirroring
+`add_player_influence`).
+
+That last group is worth naming as a process finding, not just a list. The scope predicate bounds
+the DEFECT — a site is in scope iff it *calls* `same_id`/`ids_match` with `home_team_id` — and the
+per-Series helpers call neither; they merely declared the parameter and forwarded it. So they are
+invisible to the predicate **by construction**, and the migration sweep, which counted call sites,
+recorded `features.py` as needing none. Five of the eleven shipped briefly forwarding
+`home_team_id=` into a kernel that no longer accepted it (a `TypeError` on every call) and six
+carried a required parameter nothing read. **The scope of a re-key and the scope of its API
+migration are different sets, and the second is strictly larger**: enumerate a removed parameter by
+signature diff against the base commit, never by the predicate that found the defect. The four map-consuming aggregators gain `goal_map=None` and
+build from their own frames (ADR-055 rule 3). `calibration/_features.py` and
+`causal/_confounders.py` migrated — the latter builds causal covariates, so
+`docs/research/covariate_invariance/` is downstream of it.
+
+**Values change only where they were WRONG, and this is MEASURED rather than reasoned.** On
+home-attacks-right frames identity-keying agreed with the map, so those outputs are unchanged --
+verified by running every re-keyed aggregator at the pre-re-key commit and at this one against the
+same scene: **15 columns across 4 aggregators, all IDENTICAL** (`defensive_line_x`,
+`back_line_high_x`, `compactness_x`, `lateral_width`, `max_lateral_gap`, `back_n_count`,
+`packing_made`, `packing_net`, `packing_goal_threat`, `packing_secured`, `structural_lbs`,
+`structural_sgm`, `structural_sdi`, `line_break`, `n_attackers_behind_line`). Where the frames are
+oriented any other way the away-team geometry moves -- from a wrong value to a correct one; that is
+the defect, and the direction-invariance test measured it at `defensive_line_x` 23.25 m before the
+fix. **No re-materialization is owed for conventionally-oriented frames.**
+
+**Retrain status, stated explicitly because the answer differs by input.** **NOT** a VAEP/tracking
+retrain trigger on conventionally-oriented frames — the 15-column measurement above, plus the
+committed goldens (`test_packing_golden_identity`, `test_player_influence_snapshot`, the
+`gk_geometry` parquet) reproducing byte-for-byte. **It IS one on UNORIENTED frames, including for
+`tracking_default_xfns`**, and that reaches further than the six re-keyed sites: four of the default
+list's features — `nearest_defender_distance`, `actor_speed`, `receiver_zone_density`,
+`defenders_in_triangle_to_goal` — are served by the shared action-context, which now NULLS the
+sampled positions for an action whose direction does not resolve rather than leaving them in the
+frame convention. **The remedy is to orient (ADR-029 `orient_frames_to_ltr`), not to retrain**: those
+values were mis-projected for roughly half the actions before, so a model retrained on them would be
+fitting the defect.
+
+Separately, on the real corpus (4 SkillCorner matches, 16 `(game, period, team)` groups, FULL
+frames): **0 unresolved**, so no row becomes NaN through the new refusal either.
+
+### Detection — the fix could not have been made to look like success
+
+* **A behavioural invariance test** (`test_d3_direction_invariance.py`) mirrors the FRAMES and
+  holds `home_team_id` CONSTANT. Gate A is structurally blind here (it swaps the id too, restoring
+  the very invariant identity-keying assumes) and Gate B goes vacuous the moment the parameter is
+  removed. This test saw the defect and survives the fix: the ASSERTION is byte-identical across
+  the transition. Observed RED first — `defensive_line_x` 23.25, `packing_made` 6.0,
+  `packing_goal_threat` 4.0 — now all 0.
+* **Gate C** registered for the four map consumers, with **measured** column sets. The two bool
+  sites deliberately get NO Gate C: swapping a map they never receive would move nothing, so such
+  an entry would pass because its input is ignored. Their detector is the invariance test.
+* **The D3 pin is rewritten onto the call predicate** and renamed
+  `test_no_module_infers_direction_from_team_identity`, asserting its population is EXACTLY empty
+  over eight modules — with a non-vacuity companion proving the predicate catches a planted
+  reintroduction, ignores a goal-map lookup, and is blind to the dead-but-declared parameter at
+  `_off_ball_runs.py:98` (whose Gate B green IS the measurement that it is unread).
+* **Accessor correctness** is pinned separately, because Gate C cannot see it: `get` and
+  `attacked_goal` BOTH move under a map swap, so transposing them is a 105 m error Gate C reports
+  as success. `_packing` uses both in one function and is now spied on directly.
+
+### Changed (BREAKING) — every DEAD `home_team_id` in the direction family is gone
+
+Separate from the re-key and larger than it in call sites. EIGHT functions carried a
+`home_team_id` that nothing read — residue from EARLIER re-keys (ADR-028/041) that removed the
+*use* and left the *parameter*. Pulling that thread found a **forwarding chain**: the obso family
+carried the argument solely to hand it to `_precompute_obso_lookup`, which ignored it, so the
+cleanup cascaded through `obso_actual` / `obso_peak` / `obso_optimal` / `add_obso` / `obso_xfns`,
+then through `_run_values_at_actions` to `add_off_ball_run_values` / `off_ball_run_value_xfns`,
+`add_pausa` / `pausa_xfns`, `team_shape_xfns` / `shape_graph_xfns`, `calibration.enrich_invariant`,
+and the four `atomic.tracking` mirrors. Driven to a **fixpoint** (three rounds): **25 signatures**
+-- the 8 dead at the base commit, plus 17 the cascade KILLED on its way up.
+Zero dead `home_team_id` is left in the direction family. Cycle total across the re-key, the
+eleven per-Series helpers and this cleanup: **62 signatures** lost the parameter, measured by
+AST signature-diff against the base commit rather than counted by hand, across 82 source and test
+files (13 in `silly_kicks/`, 68 under `tests/`, 1 in `scripts/`).
+
+**No value moves.** Every removed parameter was AST-verified unread before removal, so this is a
+signature change only — no goldens shift, no retrain question, no re-materialization.
+
+**Two Chesterton's Fences were checked rather than assumed, and they went opposite ways.**
+`add_xt_gk` / `xt_gk_xfns` documented theirs — *"accepted for GK-feature-family signature
+parity"* — and it was **measurably stale**: ADR-055 had re-keyed two of that family off the
+parameter, so parity meant matching the minority, and specifically matching `add_ghost_gk`, which
+actually READS its copy. A dead parameter that makes itself look live is worse than no parameter,
+so it went. By contrast `_off_ball_runs_kernel` KEEPS its unread copy — its Gate B green *is* the
+standing measurement that the parameter is unread — as does
+`_compute_space_creation_for_action`, the case CLAUDE.md records as *"D3 retires it by disuse, not
+removal"*. Those two are the reason `add_off_ball_runs` and `add_space_creation` also keep theirs.
+
+Left alone, and named so the next reader does not re-derive it: four functions outside the
+direction family (`causal.join_layer2_confounders`, `_xcross_eval.gk_substitution_probe`,
+`_xshot_occurrence.prepare_xshot_training_data` / `compute_xshot_occurrence`) plus two `@overload`
+stubs whose `reads=0` is a property of having no body.
+
+### Fixed — two defects the re-key introduced, both caught by existing gates
+
+* **`add_packing` crashed instead of refusing.** Its `GoalEndUnresolvedError` fallback built the
+  three EMITTED columns and not `line_x`, which the event-only assembly reads on the very next
+  line, so an unresolvable goal end surfaced as `KeyError: 'line_x'` rather than the NaN row
+  ADR-055's edge policy specifies. Found by the SB360 audit's `gk_absent` roster — the one scenario
+  with no keeper at either end. The rule the sibling `add_defensive_line` catch already followed: a
+  fallback frame must carry every column the code AFTER the `try` reads, not just the ones the
+  aggregator emits. The audit's `NOT_EXERCISED_BUDGET` rises 45 → 49 as a result, and that rise is
+  an honest loss of comparison rather than a regression: those four cells previously read
+  `identical` because identity-keying always answers, i.e. the old reading was a number obtained by
+  guessing a side.
+* **`add_defensive_line` silently lost its `@nan_safe_enrichment` decorator**, displaced onto the
+  private `_nan_frame_for` when `_goal_map_for` was inserted between them — an ADR-003 contract
+  break. The decorator COUNT in the file was unchanged at 31, so nothing that counts could see it;
+  it was found by diffing the decorated-function SETS against the base commit. Counting is not
+  identity.
+
+**A near-miss worth recording.** `packing_goal_threat` was nearly dropped as a dead column — it is
+constant `0` on the base leg. But `0` is the CORRECT answer there (the bypassed players are not in
+the back line), and flipping the end moves it to `[4, 1, 1, 1]`. It is the ONLY witness for
+`_packing.py`'s back-line site, so dropping it would have left that site unwitnessed while Gate C
+reported success — a partial re-key reading as green. **A detector's liveness is not "does it vary
+across rows" but "does it move when the thing it detects changes".**
+
 ## [4.79.0] — 2026-08-11
 
 ### Fixed — the build backend was unbounded, so the published artifact was a function of wall-clock time

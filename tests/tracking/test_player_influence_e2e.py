@@ -64,8 +64,8 @@ class TestPlayerInfluenceProviders:
         """All 7 player influence columns present, output length matches input."""
         from silly_kicks.tracking.features import add_player_influence
 
-        provider, actions, frames, home_team_id, xt = provider_data
-        result = add_player_influence(actions, frames, xt, home_team_id=home_team_id)
+        provider, actions, frames, _home_team_id, xt = provider_data
+        result = add_player_influence(actions, frames, xt)
         for col in _OUTPUT_COLS:
             assert col in result.columns, f"{provider}: missing column {col}"
         assert len(result) == len(actions)
@@ -74,8 +74,8 @@ class TestPlayerInfluenceProviders:
         """At least 1 non-NaN value per output column on real data."""
         from silly_kicks.tracking.features import add_player_influence
 
-        provider, actions, frames, home_team_id, xt = provider_data
-        result = add_player_influence(actions, frames, xt, home_team_id=home_team_id)
+        provider, actions, frames, _home_team_id, xt = provider_data
+        result = add_player_influence(actions, frames, xt)
         for col in _OUTPUT_COLS:
             n_valid = result[col].notna().sum()
             assert n_valid >= 1, f"{provider}: {col} has 0 non-NaN values out of {len(result)}"
@@ -84,8 +84,8 @@ class TestPlayerInfluenceProviders:
         """Physical invariants: areas >= 0, off_ball_xt >= 0, diff identity."""
         from silly_kicks.tracking.features import add_player_influence
 
-        provider, actions, frames, home_team_id, xt = provider_data
-        result = add_player_influence(actions, frames, xt, home_team_id=home_team_id)
+        provider, actions, frames, _home_team_id, xt = provider_data
+        result = add_player_influence(actions, frames, xt)
 
         # Areas >= 0
         for col in ["actor_reachable_area_m2", "reachable_area_team", "reachable_area_opponent"]:
@@ -121,8 +121,8 @@ class TestPlayerInfluenceProviders:
         """Per-action team reachable area <= total pitch area."""
         from silly_kicks.tracking.features import add_player_influence
 
-        provider, actions, frames, home_team_id, xt = provider_data
-        result = add_player_influence(actions, frames, xt, home_team_id=home_team_id)
+        provider, actions, frames, _home_team_id, xt = provider_data
+        result = add_player_influence(actions, frames, xt)
 
         pitch_area = 105.0 * 68.0
         for col in ["reachable_area_team", "reachable_area_opponent"]:

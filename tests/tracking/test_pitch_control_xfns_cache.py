@@ -35,22 +35,23 @@ _HTID = 1
 _GOAL_MAP = goal_map_like_home_team_id(_pc_frames(), _HTID)
 
 # EVERY PC-consuming family, each with its CORRECT kwargs (signatures differ, Minor-5):
-#   * obso/space_creation/pausa take `pitch_control_method=` (NOT `method=`) + `home_team_id=`;
+#   * obso/pausa take `pitch_control_method=` alone; space_creation adds `home_team_id=` (the
+#     one family that still keys on it -- its chain ends at the deliberate retention);
 #   * cover_shadow/gk_influence take `method=` + `goal_map=` (ADR-055 re-key);
-#   * player_influence takes `method=` + `home_team_id=`;
-#   * off_ball_run_value takes only `home_team_id=`;
+#   * player_influence takes `method=` alone (ADR-051 D3 removed its `home_team_id`);
+#   * off_ball_run_value takes NO arguments (4.80.0 dead-parameter removal);
 #   * pitch_control takes only `method=`.
 # `xt` is auto-supplied below to any family whose factory declares it (value-identity holds for
 # any fixed xt -- both sides share it).
 _PC_FAMILIES = [
     ("pitch_control_xfns", dict(method="voronoi")),
-    ("obso_xfns", dict(home_team_id=_HTID, pitch_control_method="voronoi")),
+    ("obso_xfns", dict(pitch_control_method="voronoi")),
     ("space_creation_xfns", dict(home_team_id=_HTID, pitch_control_method="voronoi")),
-    ("pausa_xfns", dict(home_team_id=_HTID, pitch_control_method="voronoi")),
+    ("pausa_xfns", dict(pitch_control_method="voronoi")),
     ("cover_shadow_xfns", dict(goal_map=_GOAL_MAP, method="voronoi")),
     ("gk_influence_xfns", dict(goal_map=_GOAL_MAP, method="voronoi")),
-    ("player_influence_xfns", dict(home_team_id=_HTID, method="voronoi")),
-    ("off_ball_run_value_xfns", dict(home_team_id=_HTID)),
+    ("player_influence_xfns", dict(method="voronoi")),
+    ("off_ball_run_value_xfns", dict()),
 ]
 
 
@@ -90,12 +91,10 @@ def test_two_families_divergent_params_share_one_cache_exactly(fitted_xt):
 
     cache = PitchControlCache()
     pc_shared = F.pitch_control_xfns("voronoi", pitch_control_cache=cache)[0](gs, frames)
-    ob_shared = F.obso_xfns(
-        home_team_id=_HTID, pitch_control_method="spearman", xt=fitted_xt, pitch_control_cache=cache
-    )[0](gs, frames)
+    ob_shared = F.obso_xfns(pitch_control_method="spearman", xt=fitted_xt, pitch_control_cache=cache)[0](gs, frames)
 
     pc_solo = F.pitch_control_xfns("voronoi")[0](gs, frames)
-    ob_solo = F.obso_xfns(home_team_id=_HTID, pitch_control_method="spearman", xt=fitted_xt)[0](gs, frames)
+    ob_solo = F.obso_xfns(pitch_control_method="spearman", xt=fitted_xt)[0](gs, frames)
 
     for shared, solo in ((pc_shared, pc_solo), (ob_shared, ob_solo)):
         for col in shared.columns:
@@ -116,7 +115,7 @@ def test_multi_family_xfn_list_one_cache_byte_identical(fitted_xt):
         kw = {"pitch_control_cache": cache} if cache is not None else {}
         return [
             F.pitch_control_xfns("voronoi", **kw),
-            F.obso_xfns(home_team_id=_HTID, pitch_control_method="voronoi", xt=fitted_xt, **kw),
+            F.obso_xfns(pitch_control_method="voronoi", xt=fitted_xt, **kw),
             F.cover_shadow_xfns(fitted_xt, goal_map=_GOAL_MAP, method="voronoi", **kw),
         ]
 

@@ -290,6 +290,16 @@ def _xtf(fn, **kw):
     return lambda: (_actions(), fn(_actions(), _frames(), _xt(), home_team_id=5, **kw))
 
 
+def _xtf_nohome(fn, **kw):
+    """xt-taking aggregators with no ``home_team_id``.
+
+    ADR-055's map sites and ADR-051 D3's bool sites reach the same call shape by different
+    mechanisms: the former take ``goal_map`` (left defaulting, so it is built from ``frames``),
+    the latter take none at all and resolve direction via ``acting_team_attacks_rtl``.
+    """
+    return lambda: (_actions(), fn(_actions(), _frames(), _xt(), **kw))
+
+
 def _xtf_map(fn, **kw):
     """ADR-055: `add_cover_shadows` / `add_gk_influence` take a `goal_map`, not `home_team_id`.
 
@@ -530,22 +540,22 @@ ENTRIES: dict[str, object] = {
     "add_cover_shadows": _xtf_map(F.add_cover_shadows, detailed=True),
     "add_das": _run_das,
     "add_defensive_credit": _run_defensive_credit,
-    "add_defensive_line": _std(F.add_defensive_line, home_team_id=5, n=4),
+    "add_defensive_line": _std(F.add_defensive_line, n=4),
     "add_elastic_sync": _std(F.add_elastic_sync),
     "add_ghost_gk": _std(F.add_ghost_gk, home_team_id=5),
     "add_gk_completion": _std(F.add_gk_completion),
     "add_gk_influence": _xtf_map(F.add_gk_influence),
     "add_gradientsports_player_ids": _run_gradientsports_player_ids,
-    "add_line_break": _std(F.add_line_break, home_team_id=5),
+    "add_line_break": _std(F.add_line_break),
     "add_obso": _std(F.add_obso),
-    "add_off_ball_context": _std(F.add_off_ball_context, home_team_id=5),
+    "add_off_ball_context": _std(F.add_off_ball_context),
     # TF-35 (ADR-042): on-domain rows are actions 0 (pass -> receiver 11) and 4
     # (cross -> receiver 12, resolvable only because action 5 was added); the other
     # four are off-domain and stay <NA> on all five columns. Both on-domain windows
     # carry two sprinters, so run_value_target and the disruptive columns are live and
     # differ between the two rows. n_disruptive_runs / n_valued_disruptive_runs are
     # Int64 and therefore dtype-exempt from the non-constant check (both are 1).
-    "add_off_ball_run_values": _xtf(F.add_off_ball_run_values),
+    "add_off_ball_run_values": _xtf_nohome(F.add_off_ball_run_values),
     "add_off_ball_runs": _std(F.add_off_ball_runs, home_team_id=5),
     # TF-49 pre-check (review major 8, run 2026-07-17 before registering): on this fixture
     # the pass window yields made=0 (honest zero -- no defender in (50, 60]), the goalkick
@@ -553,23 +563,23 @@ ENTRIES: dict[str, object] = {
     # IS the reception -> decisive), the cross window made=3/net=1.5 (side band) with a
     # period-end receiver <NA>. All three numeric columns are live + non-constant; receiver
     # (Int64) and secured (boolean) are dtype-exempt from non-constant but live.
-    "add_packing": _std(F.add_packing, home_team_id=5),
+    "add_packing": _std(F.add_packing),
     "add_pausa": _std(F.add_pausa),
     "add_pitch_control": _std(F.add_pitch_control),
-    "add_player_influence": _xtf(F.add_player_influence),
+    "add_player_influence": _xtf_nohome(F.add_player_influence),
     "add_pre_shot_gk_angle": (lambda: (_actions(), F.add_pre_shot_gk_angle(_actions(), frames=_frames()))),
     "add_pre_shot_gk_position": _std(F.add_pre_shot_gk_position),
     "add_press_commitment": _run_press_commitment,
     "add_pressure_on_actor": _std(F.add_pressure_on_actor),
-    "add_shape_graph": _std(F.add_shape_graph, home_team_id=5),
+    "add_shape_graph": _std(F.add_shape_graph),
     "add_shot_goalmouth": _run_shot_goalmouth,
     "add_space_creation": _std(F.add_space_creation, home_team_id=5),
-    "add_structural_pass": _std(F.add_structural_pass, home_team_id=5),
+    "add_structural_pass": _std(F.add_structural_pass),
     "add_sync_score": _run_sync_score,
-    "add_team_shape": _std(F.add_team_shape, home_team_id=5),
+    "add_team_shape": _std(F.add_team_shape),
     "add_xcross_attempt": _std(tracking.add_xcross_attempt, home_team_id=5),
     "add_xshot_occurrence": _std(tracking.add_xshot_occurrence, home_team_id=5),
-    "add_xt_gk": _xtf(F.add_xt_gk),
+    "add_xt_gk": _xtf_nohome(F.add_xt_gk),
 }
 
 

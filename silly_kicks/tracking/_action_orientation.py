@@ -92,7 +92,16 @@ def validate_period_directions(frames: pd.DataFrame, *, caller: str) -> None:
     if not required.issubset(frames.columns) or frames.empty:
         return
 
-    players = frames[~frames["is_ball"].astype(bool)]
+    # Function-local import, matching _shot_goalmouth.py's use of the same helper: this module is
+    # a low-level orientation primitive and _gk_geometry is a high-level restart resolver, so a
+    # module-level import here would invert the layering.
+    from ._gk_geometry import _truthy_bool
+
+    # ADR-019: NEVER `.astype(bool)` a provider string qualifier -- `pd.Series(["False"])
+    # .astype(bool)` is True, so `~` selected NO player rows and this guard silently inspected an
+    # EMPTY frame for every provider emitting an object/string `is_ball` -- i.e. it could not have
+    # rejected a contradictory labelling on exactly those providers.
+    players = frames[~_truthy_bool(frames["is_ball"])]
     # Period 5 (PSO) is excluded even though the narrowed rule makes it redundant today
     # (an all-null period cannot self-contradict). Kept as an explicit, documented
     # invariant so that a future widening of this guard cannot silently re-break shootout
@@ -136,19 +145,25 @@ def _is_shootout_only(actions: pd.DataFrame) -> bool:
 def _warn_unresolved(reason: str) -> None:
     """One message for every silent-failure exit (ADR-028 D2).
 
-    Specified by OUTCOME, not by enumerated condition: any all-False return that is not "there
-    were no actions to flip" warns. An enumerated fix rots the next time a branch is added --
-    which is exactly how the join-key branch was missed when this fix was first specified as
-    "absent or all-null".
+    Specified by OUTCOME, not by enumerated condition: any wholly-unresolved return that is not
+    "there were no actions to flip" warns. An enumerated fix rots the next time a branch is
+    added -- which is exactly how the join-key branch was missed when this fix was first
+    specified as "absent or all-null".
+
+    The outcome it names is now all-``<NA>`` rather than all-False (4.80.0). The warning is
+    still worth emitting: a consumer that answers ``<NA>`` with ``.fillna(False)`` lands exactly
+    where the old contract put it, and this message is what tells the caller the frames, not the
+    consumer, are the thing to fix.
     """
     import warnings
 
     from ._warnings import OrientationUnresolvedWarning
 
     warnings.warn(
-        f"acting_team_attacks_rtl: returning an all-False flip ({reason}). No ADR-028 "
-        "re-projection will be applied, so away-team geometry will silently mix coordinate "
-        "conventions. Orient the frames first -- convert_to_frames(output_convention='ltr') "
+        f"acting_team_attacks_rtl: no action's direction could be resolved ({reason}), so the "
+        "returned flip is entirely <NA>. Consumers that treat <NA> as 'no flip' will apply no "
+        "ADR-028 re-projection, mixing coordinate conventions for away-team geometry. Orient "
+        "the frames first -- convert_to_frames(output_convention='ltr') "
         "or tracking.orient_frames_to_ltr().",
         OrientationUnresolvedWarning,
         stacklevel=3,
@@ -167,21 +182,39 @@ def acting_team_attacks_rtl(
 
     Derivation: build a ``(game_id, period_id, team_id) -> attacking_direction``
     lookup from non-ball frame rows, then map each action's
-    ``(game_id, period_id, team_id)``. Actions whose acting team has no resolvable
-    direction (absent from the frame, or NaN/None direction) default to False (no
-    flip); such actions produce NaN geometry anyway because they cannot link to a
-    usable position.
+    ``(game_id, period_id, team_id)``.
+
+    **An action whose direction cannot be resolved yields <NA>, never False.** This is a
+    NULLABLE boolean, and that is the whole point: the previous contract returned a bare
+    ``bool`` with ``.fillna(False)``, so a consumer could not distinguish a RESOLVED
+    left-to-right team from one whose direction was simply unknown. Twenty-one call sites
+    inherited that guess, and every one of them silently re-projected nothing while looking
+    like it had decided.
+
+    The old docstring justified the default with *"such actions produce NaN geometry anyway
+    because they cannot link to a usable position"*. That argument was made for off-ball runs
+    and MEASURED not to transfer: an xT grid (``_player_influence``) exists whether or not any
+    single action links, so a defaulted row emitted a real number computed against a guessed
+    orientation.
+
+    **Consumers must now decide explicitly.** ``.fillna(False)`` is still the right answer at
+    many sites -- a positional metric that is symmetric under the flip, or a path that already
+    NaNs unlinkable rows -- but it has to be WRITTEN, with a reason. That is the difference
+    between a considered default and an inherited one. See ADR-055's amendment (4.80.0).
 
     Returns
     -------
     pd.Series
-        Boolean Series index-aligned to ``actions``.
+        Nullable boolean (``dtype="boolean"``) index-aligned to ``actions``. ``<NA>`` marks an
+        action whose acting team has no resolvable attacking direction in ``frames``.
     """
-    flip = pd.Series(False, index=actions.index)
+    # <NA>, not False: every early exit below is an UNRESOLVED case, and the whole contract
+    # is that unresolved is distinguishable from "resolved, does not flip".
+    flip = pd.Series(pd.NA, index=actions.index, dtype="boolean")
     if len(actions) == 0:
-        return flip  # nothing to flip -- the ONE legitimate silent no-op
+        return flip  # nothing to resolve -- the ONE legitimate silent no-op
     # Period-5 (PSO) orientation is undefined by design, so an unresolved direction there is
-    # expected rather than a defect. Suppresses the WARNING only; the all-False return below is
+    # expected rather than a defect. Suppresses the WARNING only; the all-<NA> return below is
     # unchanged, so no behaviour moves.
     _quiet = _is_shootout_only(actions)
     if len(frames) == 0:
@@ -203,7 +236,17 @@ def acting_team_attacks_rtl(
             _warn_unresolved("actions and frames do not share the team_id + period_id join keys")
         return flip
 
-    players = frames[~frames["is_ball"].astype(bool)]
+    # See the note in validate_period_directions on why this import is function-local.
+    from ._gk_geometry import _truthy_bool
+
+    # ADR-019: NEVER `.astype(bool)` a provider string qualifier -- `pd.Series(["False"])
+    # .astype(bool)` is True, so `~` selected NO player rows and this resolver fell through to
+    # its "nothing resolved" exit for every provider emitting an object/string `is_ball`. That
+    # is the ADR-028 defect firing on a whole input class, and it stayed invisible until 4.80.0
+    # because the fall-through returned all-False -- indistinguishable from a legitimately
+    # all-home action set. Found by the <NA> contract, not by the warning: the warning DID fire,
+    # but "unoriented frames" is a routine condition, so it read as expected noise.
+    players = frames[~_truthy_bool(frames["is_ball"])]
     players = players[players["team_attacking_direction"].notna()]
     if players.empty:
         if not _quiet:
@@ -226,19 +269,27 @@ def acting_team_attacks_rtl(
     keyed = left.merge(lookup, on=keys, how="left")
     keyed.index = actions.index
 
-    # THE ESCAPE ROUTE the early-exit branches cannot see (ADR-028 D2). `.fillna(False)` below
-    # turns an all-NaN merge into an all-False flip with no signal, so frames that are labelled
-    # and keyed can still silently no-op: the acting team may simply be absent from the frames,
+    # THE ESCAPE ROUTE the early-exit branches cannot see (ADR-028 D2). Frames that are labelled
+    # and keyed can still resolve NOTHING: the acting team may simply be absent from the frames,
     # or the join keys may carry different id spellings (measured during the D2 sweep --
     # actions keyed `game_id="idsse_J03WMX"` against frames keyed `"J03WMX"`). Both looked
-    # oriented and were not.
+    # oriented and were not. Since 4.80.0 the return is all-<NA> rather than all-False, so this
+    # case is now VISIBLE in the value as well as in the warning -- but the warning stays,
+    # because a consumer is free to fillna(False) and land back in the silent no-op.
     #
     # The signal is NOTHING RESOLVED, not nothing flipped: a legitimately all-home action set
-    # also yields an all-False flip and must stay silent. A PARTIAL miss is silent too -- ADR-027
-    # NaN-team rows never resolve, and warning on those would fire on healthy GS data every call.
+    # yields an all-False (resolved!) flip and must stay silent. A PARTIAL miss is silent too --
+    # ADR-027 NaN-team rows never resolve, and warning on those would fire on healthy GS data
+    # every call.
     if not _quiet and not keyed["_dir"].notna().any():
         _warn_unresolved("no action's join key matched any frame row (team absent, or id spellings differ)")
-    return (keyed["_dir"] == "rtl").fillna(False)
+    # NA where the direction did not resolve -- NOT `.fillna(False)`, which is the defect this
+    # contract removes. A row that resolved to "ltr" is False; a row that resolved to nothing is
+    # <NA>, and the consumer has to say which it wants.
+    resolved = keyed["_dir"].notna()
+    out = pd.Series(pd.NA, index=actions.index, dtype="boolean")
+    out[resolved] = keyed.loc[resolved, "_dir"] == "rtl"
+    return out
 
 
 def reproject_to_action_ltr(

@@ -26,6 +26,7 @@ __all__ = [
     "DAS_SOURCE_VALUES",
     "DEFENSIVE_CREDIT_RULES",
     "GHOST_GK_COMPUTED",
+    "GHOST_GK_DIRECTION_UNRESOLVED",
     "GHOST_GK_GOAL_END_UNRESOLVED",
     "GHOST_GK_NO_KEEPER",
     "GHOST_GK_SOURCE_VALUES",
@@ -320,6 +321,7 @@ from ._defensive_line import compute_defensive_line, select_back_line_players
 from ._elastic_sync import ElasticSyncParams, align_events_to_frames, extract_ball_features
 from ._ghost_gk import (
     GHOST_GK_COMPUTED,
+    GHOST_GK_DIRECTION_UNRESOLVED,
     GHOST_GK_GOAL_END_UNRESOLVED,
     GHOST_GK_NO_KEEPER,
     GHOST_GK_SOURCE_VALUES,

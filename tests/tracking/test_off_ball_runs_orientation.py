@@ -189,13 +189,23 @@ class TestUnorientedFramesAreAccepted:
         out = _off_ball_runs_kernel(actions, frames, home_team_id=_HOME)
         assert len(out) == 1  # ran without raising
 
-    def test_unoriented_behaviour_is_pinned_no_flip(self):
-        """DOCUMENTED, not incidental: with no orientation asserted, nothing flips.
+    def test_unoriented_behaviour_is_pinned_unknown_not_zero(self):
+        """DOCUMENTED, not incidental: with no orientation asserted, direction is UNKNOWN.
 
-        The away runner advances -x. On correctly-labelled frames that counts as
-        toward-goal; on unoriented frames the acting team resolves to "no flip", so it does
-        not. Both authorities are arbitrary here -- this test records WHICH arbitrary
-        answer the shipped code gives, so a future change to it is visible.
+        The away runner advances -x. On correctly-labelled frames that counts as toward-goal.
+        On unoriented frames the direction does not resolve at all, so as of 4.80.0 the count
+        is ``pd.NA`` -- not the ``0`` this test previously pinned.
+
+        That earlier ``0`` is the defect the D3 re-key removes, in miniature. It is
+        indistinguishable from a genuine "the runner ran away from goal", so a corpus of
+        unoriented frames reported confident zeros that a consumer had no way to tell from a
+        measurement. ``pd.NA`` says the one true thing: nobody knows which way this team was
+        attacking.
+
+        PER-COLUMN, deliberately: runner count, max displacement and mean speed are
+        displacement MAGNITUDES and stay live -- only the direction-dependent column goes NA.
+        The companion assertion below pins that, so a future "fix" that NaNs the whole row
+        fails here.
         """
         from silly_kicks.tracking import OrientationUnresolvedWarning
 
@@ -207,4 +217,8 @@ class TestUnorientedFramesAreAccepted:
         with pytest.warns(OrientationUnresolvedWarning):
             unoriented = _off_ball_runs_kernel(_action(_AWAY, 20), unoriented_frames, home_team_id=_HOME)
         assert oriented["n_off_ball_runners_toward_goal_pre_window"].iloc[0] == 1
-        assert unoriented["n_off_ball_runners_toward_goal_pre_window"].iloc[0] == 0
+        assert pd.isna(unoriented["n_off_ball_runners_toward_goal_pre_window"].iloc[0])
+        # The flip-invariant columns must survive -- otherwise this is a row-level refusal
+        # wearing a per-column label.
+        assert unoriented["n_off_ball_runners_pre_window"].iloc[0] >= 1
+        assert np.isfinite(unoriented["max_off_ball_run_displacement_pre_window"].iloc[0])

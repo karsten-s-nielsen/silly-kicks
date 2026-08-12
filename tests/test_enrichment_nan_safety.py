@@ -578,14 +578,21 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
     actions, frames = tracking_nan_laced_fixture
     name = helper.__name__
     if name in (
+        # ADR-051 D3 (4.80.0): these five no longer take `home_team_id` -- direction comes
+        # from the goal map or from `acting_team_attacks_rtl`, both derived from `frames`.
         "add_defensive_line",
-        "add_off_ball_runs",
         "add_line_break",
         "add_off_ball_context",
+        "add_structural_pass",
+        # 4.80.0 dead-parameter removal (these two were already direction-correct; the
+        # argument they carried was never read).
         "add_team_shape",
         "add_shape_graph",
+    ):
+        out = helper(actions, frames)
+    elif name in (
+        "add_off_ball_runs",
         "add_space_creation",
-        "add_structural_pass",
     ):
         out = helper(actions, frames, home_team_id=1)
     elif name == "add_sync_score":
@@ -658,7 +665,10 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         # add_xt_gk branch's supply-the-contract-columns precedent.
         acts = actions.copy()
         acts["result_id"] = 1
-        out = helper(acts, frames, home_team_id=1)
+        # ADR-051 D3 (4.80.0): no `home_team_id`; the goal map is built from `frames`. This
+        # branch stays SEPARATE from the no-kwarg group above because of the `result_id`
+        # top-up, not because of the signature.
+        out = helper(acts, frames)
     elif name == "add_xt_gk":
         import numpy as np
 
@@ -679,7 +689,7 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         frames["vx"] = 0.0
         frames["vy"] = 0.0
         frames["team_in_possession"] = 1
-        out = helper(actions, frames, xt, home_team_id=1)
+        out = helper(actions, frames, xt)
     elif name == "add_off_ball_run_values":
         import numpy as np
 
@@ -693,7 +703,7 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         acts["result_id"] = 1
         xt = ExpectedThreat(l=16, w=12)
         xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
-        out = helper(acts, frames, xt, home_team_id=1)
+        out = helper(acts, frames, xt)
     elif name in ("add_gk_influence", "add_cover_shadows"):
         # ADR-055: these two take an optional `goal_map` and no `home_team_id`. Omitted, so
         # the aggregator derives the map from the SAME NaN-bearing frames this gate feeds
@@ -713,7 +723,8 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
 
         xt = ExpectedThreat(l=16, w=12)
         xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
-        out = helper(actions, frames, xt, home_team_id=1)
+        # ADR-051 D3 (4.80.0): direction comes from `acting_team_attacks_rtl`, not an argument.
+        out = helper(actions, frames, xt)
     elif name == "add_ghost_gk":
         import numpy as np
 

@@ -434,3 +434,99 @@ def test_a_per_frame_map_really_is_a_different_estimator_on_sparse_detection():
         f"{dense_unresolvable:.3f}); the 'provider-dependent' claim in ADR-055 assumes it is"
     )
     assert sparse_unresolvable > dense_unresolvable, "the sparse/dense contrast is the finding"
+
+
+# ---------------------------------------------------------------------------
+# ADR-051 D3 -- ACCESSOR correctness for the re-keyed sites.
+#
+# Gate C is structurally BLIND here and says so: `get` (the team's OWN end) and
+# `attacked_goal` (the OPPONENT's end) BOTH move when the map is swapped, so a moved column
+# proves the map is CONSULTED, not that the right end was asked for. Transposing the two is a
+# 105 m error that Gate C would report as success.
+#
+# `_packing.py` is where this matters most, because it uses BOTH in one function:
+#   :145  the away mirror asks where the ATTACKING team is going   -> attacked_goal
+#   :173  the back line asks which end the DEFENDER protects       -> get
+# ---------------------------------------------------------------------------
+
+
+def test_packing_uses_attacked_goal_for_the_mirror_and_get_for_the_back_line():
+    """A transposed accessor pair is invisible to Gate C. Pin it directly.
+
+    Built as a SPY rather than a value assertion: asserting on output numbers would couple this
+    to the fixture's geometry, and the question here is not "what did it compute" but "which
+    end did it ask for". The spy records every lookup, so a swap of the two accessors changes
+    the RECORD even where it happens not to change the number.
+    """
+    from silly_kicks.tracking._packing import compute_packing_metrics
+    from tests.tracking._mirror_registry import AWAY, HOME, canonical_scene
+
+    _actions, frames = canonical_scene()
+    frame = frames[frames["frame_id"] == frames["frame_id"].min()]
+    true_map = resolve_defended_goals(frames)
+
+    calls: list[tuple[str, object]] = []
+
+    class _SpyMap:
+        def get(self, game_id, period_id, team_id, *, allow_guess=False):
+            calls.append(("get", team_id))
+            return true_map.get(game_id, period_id, team_id, allow_guess=allow_guess)
+
+        def attacked_goal(self, game_id, period_id, team_id, *, allow_guess=False):
+            calls.append(("attacked_goal", team_id))
+            return true_map.attacked_goal(game_id, period_id, team_id, allow_guess=allow_guess)
+
+    compute_packing_metrics(
+        frame,
+        attacking_team_id=HOME,
+        # Duck-typed spy, deliberately not a GoalMap subclass: subclassing would inherit the real
+        # accessors and the spy could then pass by NOT overriding the one under test.
+        goal_map=_SpyMap(),  # type: ignore[arg-type]
+        passer_xy=(28.0, 12.0),
+        receiver_xy=(58.0, 38.0),
+    )
+
+    assert calls, "no goal-map lookup at all -- the re-key would be cosmetic"
+    attacked_for = {t for kind, t in calls if kind == "attacked_goal"}
+    own_for = {t for kind, t in calls if kind == "get"}
+
+    assert HOME in attacked_for, (
+        f"the mirror must ask where the ATTACKING team ({HOME}) is going via attacked_goal; lookups were {calls}"
+    )
+    assert AWAY in own_for, (
+        f"the back line must ask which end the DEFENDING team ({AWAY}) protects via get; lookups were {calls}"
+    )
+    assert HOME not in own_for, (
+        "the attacking team's OWN end was requested -- `get` where `attacked_goal` was meant is "
+        "a 105 m transposition Gate C cannot see"
+    )
+
+
+def test_attacked_goal_is_a_real_lookup_not_105_minus_get():
+    """`attacked_goal` must consult the OPPONENT's entry, never arithmetic on the team's own.
+
+    `105.0 - get(...)` looks equivalent and is wrong on a degenerate map: if both teams somehow
+    resolve to the same end, the arithmetic still returns a confident opposite end while a real
+    lookup returns that same end -- and the caller needs to see the degeneracy, not have it
+    smoothed over.
+    """
+    degenerate = GoalMap(
+        MappingProxyType({("1", "1", "1"): 0.0, ("1", "1", "2"): 0.0}),
+        MappingProxyType({}),
+        frozenset(),
+    )
+    # MEASURED: the real lookup REFUSES here (`opponents[0] == own` -> None), which is the whole
+    # point -- `105.0 - get(...)` would have returned a confident 105.0 and invented an
+    # opposition that is not in the data. Refusal is the observable difference between the two
+    # implementations, and it is only observable on a degenerate map.
+    assert degenerate.attacked_goal("1", "1", "1") is None, (
+        "attacked_goal must REFUSE when both teams resolve to the same end. A non-None answer "
+        "here means it is computing the arithmetic complement of the team's own end rather than "
+        "looking up the opponent's recorded one."
+    )
+    # And the arithmetic that would have been wrong, stated so the contrast is not left implicit:
+    own_end = degenerate.get("1", "1", "1")
+    assert own_end == 0.0
+    assert own_end is not None and 105.0 - own_end == 105.0, (
+        "sanity: the complement WOULD have produced 105.0 -- a fabricated opposite end"
+    )

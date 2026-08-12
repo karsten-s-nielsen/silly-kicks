@@ -324,6 +324,12 @@ def _make_actions_and_frames():
                         "vy": 0.0,
                         "is_ball": False,
                         "is_goalkeeper": j == 0,
+                        # ADR-051 D3 (4.80.0): an unresolvable direction is <NA> and
+                        # add_space_creation REFUSES the row (its two columns would be
+                        # EXCHANGED, not merely degraded), so an unoriented fixture makes
+                        # every contract column all-NaN. Read off this fixture's own geometry:
+                        # team 1 keeps goal at x~20 so it attacks ltr, team 2 at x~80 so rtl.
+                        "team_attacking_direction": "ltr" if tid == 1 else "rtl",
                     }
                 )
         frame_rows.append(
@@ -341,6 +347,7 @@ def _make_actions_and_frames():
                 "vy": 0.0,
                 "is_ball": True,
                 "is_goalkeeper": False,
+                "team_attacking_direction": None,  # ball belongs to no team
             }
         )
     frames = pd.DataFrame(frame_rows)

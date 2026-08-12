@@ -14,7 +14,8 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import ids_match, same_id
+from silly_kicks.id_compat import ids_match
+from silly_kicks.tracking._gk_resolve import GoalEndUnresolvedError, GoalMap
 
 
 def select_back_line_players(
@@ -44,10 +45,10 @@ def select_back_line_players(
         This parameter used to be ``home_team_id``, from which the direction was
         derived as ``same_id(team_id, home_team_id)``. That is identity-keyed
         direction inference (ADR-051 D3): it is correct only while the frames are
-        home-attacks-right, and it silently inverts otherwise. Callers now supply
-        the direction from whatever source they legitimately hold — the goal map
-        (``goal_map.get(...) == 0.0``) where one is available, ``same_id`` where
-        the caller is itself still identity-keyed and has not yet been re-keyed.
+        home-attacks-right, and it silently inverts otherwise. Every caller in the
+        package now resolves the direction from the goal map instead; the D3 pin in
+        ``tests/tracking/test_mirror_registry.py`` asserts that no module in this
+        family computes ``same_id(..., home_team_id)`` at all.
     n : int | Literal["adaptive"], default 4
         Target back-line player count. Clamped to available outfield.
     adaptive_max_n : int, default 5
@@ -70,6 +71,8 @@ def select_back_line_players(
         back_line = select_back_line_players(
             frame,
             team_id=1,
+            # `get` returns float | None; `None == 0.0` is False, so a bare `== 0.0`
+            # fails OPEN. Resolve first, then compare.
             defends_x0=goal_map.get(game_id, period_id, 1, allow_guess=True) == 0.0,
         )
         back_line[["player_id", "x", "y"]].head()
@@ -103,24 +106,26 @@ def select_back_line_players(
 def compute_defensive_line(
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     n: int | Literal["adaptive"] = 4,
     adaptive_max_n: int = 5,
 ) -> pd.DataFrame:
     """Per-(game_id, period_id, frame_id, team_id): 6 back-line geometry columns.
 
-    Computes for BOTH teams. home_team_id determines goal assignment
-    (must match the value used in play_left_to_right).
+    Computes for BOTH teams, so it needs BOTH ends -- which is why it takes the map
+    rather than a single direction bool (the ADR-051 D3 rule: one team -> bool, both
+    teams -> map).
 
     Parameters
     ----------
     frames : pd.DataFrame
         Long-form tracking frames (TRACKING_FRAMES_COLUMNS shape).
         Must be LTR-normalized (play_left_to_right applied).
-    home_team_id : int | str
-        Home team identifier. After LTR normalization:
-        - home_team_id defends goal at x=0 (back-line = lowest-x outfield)
-        - other team defends goal at x=105 (back-line = highest-x outfield)
+    goal_map : GoalMap
+        Per-(game, period, team) defended-goal ends, built ONCE per match from the FULL
+        frames (:func:`resolve_defended_goals`). REQUIRED, no default: a default would
+        re-admit per-frame direction inference at exactly the call sites that forget it.
+        An unresolved end RAISES :class:`GoalEndUnresolvedError` rather than guessing.
     n : int | Literal["adaptive"], default 4
         Target back-line player count (3, 4, or 5), clamped to available
         outfield players (minimum 3). Or "adaptive" for x-gap clustering.
@@ -145,7 +150,8 @@ def compute_defensive_line(
     Compute defensive-line geometry for both teams::
 
         from silly_kicks.tracking.features import compute_defensive_line
-        dl = compute_defensive_line(frames, home_team_id=1, n=4)
+        goal_map = resolve_defended_goals(frames)   # ONCE per match, full frames
+        dl = compute_defensive_line(frames, goal_map=goal_map, n=4)
 
     See NOTICE for full bibliographic citations.
     """
@@ -221,8 +227,17 @@ def compute_defensive_line(
             )
             continue
 
-        # Sort by proximity to own goal
-        defends_x0 = same_id(team_id, home_team_id)
+        # Sort by proximity to own goal. Direction comes from the GoalMap, never from team
+        # IDENTITY: `same_id(team_id, home_team_id)` is correct only while the frames are
+        # home-attacks-right and silently inverts otherwise (ADR-051 D3).
+        own_end = goal_map.get(game_id, period_id, team_id, allow_guess=True)
+        if own_end is None:
+            # Explicit: `== 0.0` alone would fail OPEN, silently choosing 'defends x=0'.
+            raise GoalEndUnresolvedError(
+                f"defensive line: goal_map does not resolve the end defended by {team_id!r} "
+                f"in (game={game_id!r}, period={period_id!r})."
+            )
+        defends_x0 = own_end == 0.0
         xs = group["x"].to_numpy(dtype="float64")
         ys = group["y"].to_numpy(dtype="float64")
 

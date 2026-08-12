@@ -106,7 +106,7 @@ class TestH1DropnaMisalignment:
         )
         # Inject NaN y on one opponent
         frames.loc[frames["player_id"] == 52, "y"] = np.nan
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         # Should not crash
         assert len(result) == 1
 
@@ -135,7 +135,7 @@ class TestH2ExtensionPoisoning:
             start_xy=(40.0, 34.0),
             end_xy=(80.0, 34.0),
         )
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         # When both extension AND between-players segments intersect,
         # type should be "between_lines" (not "around_line")
         if result["line_break__ward"].iloc[0]:
@@ -154,7 +154,7 @@ class TestM4NonPassFiltering:
             opp_positions=[(50, 20), (55, 30), (60, 40)],
             action_type_id=shot_type_id,
         )
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         assert pd.isna(result["line_break__ward"].iloc[0])
 
     def test_dribble_produces_na(self):
@@ -166,5 +166,5 @@ class TestM4NonPassFiltering:
             opp_positions=[(50, 20), (55, 30), (60, 40)],
             action_type_id=dribble_type_id,
         )
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         assert pd.isna(result["line_break__ward"].iloc[0])

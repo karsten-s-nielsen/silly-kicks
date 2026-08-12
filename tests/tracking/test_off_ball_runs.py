@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from silly_kicks.tracking import resolve_defended_goals
+
 
 def _make_multi_frame_fixture(
     *,
@@ -468,7 +470,7 @@ class TestLineBreakKernel:
             end_y=34.0,
         )
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         assert result["line_break"].iloc[0] == True  # noqa: E712
 
     def test_does_not_cross_line(self):
@@ -491,7 +493,7 @@ class TestLineBreakKernel:
             end_y=34.0,
         )
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         assert result["line_break"].iloc[0] == False  # noqa: E712
 
     def test_crosses_line_away_team(self):
@@ -517,7 +519,7 @@ class TestLineBreakKernel:
             end_y=34.0,
         )
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         assert result["line_break"].iloc[0] == True  # noqa: E712
 
     def test_no_defensive_line_returns_na(self):
@@ -541,7 +543,7 @@ class TestLineBreakKernel:
             end_y=34.0,
         )
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         assert pd.isna(result["line_break"].iloc[0])
 
     def test_n_attackers_behind_line_home(self):
@@ -566,7 +568,7 @@ class TestLineBreakKernel:
             end_y=34.0,
         )
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         # One home player (x=75) is behind away defensive line (73)
         assert result["n_attackers_behind_line"].iloc[0] == 1
 
@@ -592,7 +594,7 @@ class TestLineBreakKernel:
             end_y=34.0,
         )
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         # One away player (x=25) is behind home defensive line (33) -- x < 33
         assert result["n_attackers_behind_line"].iloc[0] == 1
 
@@ -616,7 +618,7 @@ class TestLineBreakKernel:
             end_y=34.0,
         )
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         assert str(result["line_break"].dtype) == "boolean"
 
     def test_no_linked_frame_returns_na(self):
@@ -638,7 +640,7 @@ class TestLineBreakKernel:
             end_x=95.0,
         )
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         assert pd.isna(result["line_break"].iloc[0])
         assert pd.isna(result["n_attackers_behind_line"].iloc[0])
 
@@ -689,7 +691,7 @@ class TestAggregators:
             end_x=95.0,
         )
 
-        result = add_line_break(actions, frames, home_team_id=1)
+        result = add_line_break(actions, frames)
         new_cols = set(result.columns) - set(actions.columns)
         assert "line_break" in new_cols
         assert "n_attackers_behind_line" in new_cols
@@ -715,7 +717,7 @@ class TestAggregators:
             end_x=95.0,
         )
 
-        result = add_off_ball_context(actions, frames, home_team_id=1)
+        result = add_off_ball_context(actions, frames)
         expected = {
             "n_off_ball_runners_pre_window",
             "max_off_ball_run_displacement_pre_window",
@@ -733,7 +735,7 @@ class TestXfnFactory:
         from silly_kicks.tracking.features import off_ball_context_xfns
         from silly_kicks.vaep.feature_framework import is_frame_aware
 
-        xfns = off_ball_context_xfns(home_team_id=1)
+        xfns = off_ball_context_xfns()
         assert len(xfns) == 1
         assert is_frame_aware(xfns[0])
 
@@ -761,7 +763,7 @@ class TestXfnFactory:
         actions["action_id"] = list(range(1, 5))
         states = gamestates(actions, nb_prev_actions=3)
 
-        xfn = off_ball_context_xfns(home_team_id=1)[0]
+        xfn = off_ball_context_xfns()[0]
         result = xfn(states, frames)
         assert result.shape[1] == 18
 
@@ -770,7 +772,7 @@ class TestXfnFactory:
         from silly_kicks.tracking.features import off_ball_context_xfns
         from silly_kicks.vaep.features.core import feature_column_names
 
-        xfns = off_ball_context_xfns(home_team_id=1)
+        xfns = off_ball_context_xfns()
         cols = feature_column_names(xfns)
         assert len(cols) == 18
 
@@ -805,7 +807,7 @@ class TestLineBreakKernelGameIdTypeMismatch:
         # Actions have str game_id — type mismatch
         actions["game_id"] = "1"
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         # Before fix: n_attackers_behind_line would be 0 (lookup miss)
         assert result["line_break"].iloc[0] == True  # noqa: E712
         assert result["n_attackers_behind_line"].iloc[0] >= 0

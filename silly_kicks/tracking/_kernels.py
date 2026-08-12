@@ -23,6 +23,7 @@ import pandas as pd
 from silly_kicks.id_compat import align_join_keys, ids_differ, ids_equal
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
+from ._gk_resolve import GoalMap
 from .feature_framework import ActionFrameContext
 
 if TYPE_CHECKING:
@@ -814,7 +815,7 @@ def _defensive_line_at_actions(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     n: int | Literal["adaptive"] = 4,
     links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -847,7 +848,7 @@ def _defensive_line_at_actions(
         return empty
 
     # Compute defensive line for all frames (ONCE)
-    dl = compute_defensive_line(frames, home_team_id=home_team_id, n=n)
+    dl = compute_defensive_line(frames, goal_map=goal_map, n=n)
     if dl.empty:
         return empty
 
@@ -903,8 +904,17 @@ def _defensive_line_at_actions(
     # ADR-028: re-project the two x-positions into each action's LTR frame.
     # compactness_x / lateral_width / max_lateral_gap / back_n_count are spans/counts
     # (flip-invariant) and are left unchanged.
+    #
+    # PER-COLUMN on an unresolved direction (4.80.0), and the split is the SAME one the comment
+    # above already draws: the two ABSOLUTE x-positions cannot be placed without a convention and
+    # go NaN; the spans and the count are invariant under the flip and are emitted as measured.
+    # `reflect_columns` takes a plain bool mask -- it cannot represent the third state -- so the
+    # unresolved rows are nulled here rather than pushed into the reflection seam.
     flip = acting_team_attacks_rtl(actions, frames)
-    out = reproject_to_action_ltr(out, flip, x_cols=["defensive_line_x", "back_line_high_x"], y_cols=[])
+    unresolved = flip.isna().to_numpy()
+    out = reproject_to_action_ltr(out, flip.fillna(False), x_cols=["defensive_line_x", "back_line_high_x"], y_cols=[])
+    if unresolved.any():
+        out.loc[unresolved, ["defensive_line_x", "back_line_high_x"]] = np.nan
     return out
 
 
@@ -943,7 +953,6 @@ def _structural_pass_at_actions(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
     params=None,
     links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -976,6 +985,12 @@ def _structural_pass_at_actions(
     col_lbs = np.full(n, np.nan)
     col_sgm = np.full(n, np.nan)
     col_sdi = np.full(n, np.nan)
+    # Direction per ACTION, resolved ONCE at this edge from the single orientation authority
+    # (ADR-028/041). `compute_structural_pass_metrics` serves ONE team, so it receives the
+    # resolved bool rather than a GoalMap (the ADR-051 D3 rule).
+    # Kept as the NULLABLE boolean it is: pd.NA marks an action whose direction the frames do
+    # not resolve, and the loop leaves that action's three columns NaN rather than guessing.
+    _sp_flip = dict(zip(actions["action_id"], acting_team_attacks_rtl(actions, frames), strict=False))
     frame_groups = frames.groupby(["period_id", "frame_id"])
 
     for j, (_idx, row) in enumerate(actions.iterrows()):
@@ -991,10 +1006,17 @@ def _structural_pass_at_actions(
         except KeyError:
             continue
 
+        _flip = _sp_flip.get(row["action_id"])
+        if pd.isna(_flip):
+            # Unresolved direction -> leave lbs/sgm/sdi NaN for this action. LBS is only clean
+            # in attack-positive coords, so a guessed direction does not degrade the number, it
+            # inverts the inequality that defines it.
+            continue
+
         m = compute_structural_pass_metrics(
             frame_data,
             attacking_team_id=tid,
-            home_team_id=home_team_id,
+            attacks_rtl=bool(_flip),
             passer_xy=(float(row["start_x"]), float(row["start_y"])),
             receiver_xy=(float(row["end_x"]), float(row["end_y"])),
             params=params,
@@ -1013,7 +1035,7 @@ def _packing_at_actions(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     params=None,
     links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -1081,7 +1103,7 @@ def _packing_at_actions(
         m = compute_packing_metrics(
             frame_data,
             attacking_team_id=tid,
-            home_team_id=home_team_id,
+            goal_map=goal_map,
             passer_xy=(sx, sy),
             receiver_xy=(ex, ey),
             params=params,

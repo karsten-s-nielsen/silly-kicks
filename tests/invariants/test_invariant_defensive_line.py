@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from silly_kicks.tracking import resolve_defended_goals
 from tests.tracking.conftest import _make_frame_rows
 
 
@@ -18,7 +19,7 @@ def defensive_line_both_teams():
         away_outfield_xs=[95.0, 93.0, 91.0, 89.0, 50.0, 45.0, 40.0, 35.0, 30.0, 25.0],
         away_outfield_ys=[10.0, 20.0, 40.0, 55.0, 34.0, 20.0, 30.0, 40.0, 50.0, 60.0],
     )
-    return compute_defensive_line(frames, home_team_id=1, n=4)
+    return compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
 
 
 class TestRangeInvariants:

@@ -82,7 +82,7 @@ def _mean_by_side(actions, frames, home_team_id):
     from silly_kicks.id_compat import ids_match
     from silly_kicks.tracking import features as F
 
-    out = F.add_obso(actions, frames, home_team_id=home_team_id)
+    out = F.add_obso(actions, frames)
     # ADR-019: GS team_id is nullable Int64 with NaN on the ADR-027 null-actor duel/foul rows;
     # a raw `== home_team_id`.to_numpy(dtype=bool) raises on the NA. ids_match resolves NA to
     # False, and the null-actor rows (no team, NaN obso) are excluded from BOTH arms.

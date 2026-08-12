@@ -149,7 +149,7 @@ def test_compute_player_influence_returns_outfield_only(frame_22, xt_grid):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
     )
     # GKs (player_id 1 and 50) excluded; ball excluded
     assert 1 not in result
@@ -166,7 +166,7 @@ def test_off_ball_xt_positive_for_outfield(frame_22, xt_grid):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
     )
     for pid, pi in result.items():
         assert pi.off_ball_xt >= 0.0, f"Player {pid} has negative off_ball_xt"
@@ -179,7 +179,7 @@ def test_reachable_area_positive_for_outfield(frame_22, xt_grid):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
     )
     for pid, pi in result.items():
         assert pi.reachable_area_m2 >= 0.0, f"Player {pid} has negative area"
@@ -196,7 +196,7 @@ def test_reachable_area_sum_lte_pitch_area(frame_22, xt_grid):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
     )
     # Get team membership from frame
     players = frame_22[~frame_22["is_ball"].astype(bool) & ~frame_22["is_goalkeeper"].astype(bool)]
@@ -214,7 +214,7 @@ def test_tau_zero_all_areas_zero(frame_22, xt_grid):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
         tau_seconds=0.0,
     )
     for pid, pi in result.items():
@@ -230,7 +230,7 @@ def test_off_ball_xt_bounded_by_pitch_area(frame_22, xt_grid, method):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
         method=method,
     )
     total_player_xt = sum(pi.off_ball_xt for pi in result.values())
@@ -254,7 +254,7 @@ def test_single_outfield_player_per_team(xt_grid):
         frame,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
         tau_seconds=5.0,
     )
     assert len(result) == 2
@@ -334,7 +334,7 @@ def test_all_players_same_position(xt_grid):
         frame,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
     )
     for pid, pi in result.items():
         assert pi.reachable_area_m2 == 0.0, f"Player {pid} area={pi.reachable_area_m2} (expected 0)"
@@ -352,7 +352,7 @@ def test_nan_velocity_defaults_to_zero(xt_grid):
         frame,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
     )
     pi = result[10]
     assert not np.isnan(pi.reachable_area_m2), "NaN velocity should not produce NaN area"
@@ -368,7 +368,7 @@ def test_non_spearman_method_non_degenerate(frame_22, xt_grid, method):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
         method=method,
     )
     total_xt = sum(pi.off_ball_xt for pi in result.values())
@@ -393,7 +393,7 @@ def test_tti_optimization_matches_naive(xt_grid):
         frame,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
         tau_seconds=tau,
     )
 
@@ -453,7 +453,7 @@ def test_surface_parameter_skips_pc_call(frame_22, xt_grid):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
         surface=surface,
         method="voronoi",  # should be ignored
     )
@@ -463,7 +463,7 @@ def test_surface_parameter_skips_pc_call(frame_22, xt_grid):
         frame_22,
         xt_grid,
         attacking_team_id=1,
-        home_team_id=1,
+        attacks_rtl=False,
         method="spearman",
     )
 

@@ -408,7 +408,7 @@ def test_defensive_line_reprojection_enumerates_every_geometry_column():
     # home_team_id is KEYWORD-ONLY AND REQUIRED (features.py:1186). An earlier draft called
     # add_defensive_line(a, frames=f) and would have died with TypeError before asserting
     # anything.
-    out = add_defensive_line(a, frames=f, home_team_id="H")
+    out = add_defensive_line(a, frames=f)
     added = set(out.columns) - set(a.columns)
 
     # What _kernels.py:879 enumerates. Keep in sync.

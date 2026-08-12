@@ -36,20 +36,33 @@ def test_acting_team_attacks_rtl_home_false_away_true():
     assert flip.tolist() == [False, True]
 
 
-def test_acting_team_unknown_direction_defaults_false():
-    """An acting team absent from the frames defaults to no-flip -- and now SAYS SO.
+def test_acting_team_unknown_direction_is_NA_not_False():
+    """An acting team absent from the frames resolves to ``<NA>``, never ``False``.
 
-    The default is unchanged (ADR-028 D2 added a warning, not a behaviour change), but it was
-    previously silent, which is how a genuinely mis-keyed join looked identical to a healthy
-    all-home action set. Asserted via ``pytest.warns`` so the announcement is part of the
-    contract rather than incidental.
+    Until 4.80.0 this returned ``False`` (no flip). ADR-028 D2 had already added the warning, but
+    the VALUE was still indistinguishable from a healthy resolved left-to-right action, so a
+    consumer that does not inspect warnings -- which is most of them -- could not tell a
+    mis-keyed join from a correct one. ADR-051 D3 moved the signal into the value: ``<NA>`` means
+    "not resolved", and the consumer has to decide. ``.fillna(False)`` is still a legitimate
+    answer at many sites; it just has to be WRITTEN.
+
+    The contrast is asserted in the SAME test on purpose. Checking only that the unknown team is
+    ``<NA>`` would pass just as well if every action returned ``<NA>``, which would make the
+    helper useless while looking strict.
     """
     from silly_kicks.tracking import OrientationUnresolvedWarning
 
     actions = pd.DataFrame([dict(game_id=1, period_id=1, action_id=0, team_id=999)])
     with pytest.warns(OrientationUnresolvedWarning):
         flip = acting_team_attacks_rtl(actions, _frames())
-    assert flip.tolist() == [False]
+    assert str(flip.dtype) == "boolean", "must be the NULLABLE dtype, or <NA> cannot be carried"
+    assert flip.isna().tolist() == [True]
+
+    # ... and a RESOLVED left-to-right action is False, which is what <NA> must not collapse to.
+    known = pd.DataFrame([dict(game_id=1, period_id=1, action_id=0, team_id=1)])
+    resolved = acting_team_attacks_rtl(known, _frames())
+    assert resolved.isna().tolist() == [False]
+    assert resolved.tolist() == [False]
 
 
 def test_reproject_flips_only_marked_rows_both_axes():

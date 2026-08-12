@@ -175,7 +175,9 @@ def _empty_runs() -> pd.DataFrame:
             "mean_speed_ms": pd.Series(dtype="float64"),
             "peak_speed_ms": pd.Series(dtype="float64"),
             "peak_speed_source": pd.Series(dtype="object"),
-            "toward_goal": pd.Series(dtype="bool"),
+            # Nullable: an unresolved acting-team direction leaves `toward_goal` pd.NA rather
+            # than a confident False (4.80.0). The populated path casts to match.
+            "toward_goal": pd.Series(dtype="boolean"),
         }
     )
 
@@ -184,7 +186,6 @@ def detect_off_ball_runs(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
     params: RunValuationParams | None = None,
 ) -> pd.DataFrame:
     """Detect qualifying off-ball runs in the pre-action window, one row per runner.
@@ -232,7 +233,7 @@ def detect_off_ball_runs(
 
         from silly_kicks.tracking import detect_off_ball_runs
 
-        runs = detect_off_ball_runs(actions, frames, home_team_id=1)
+        runs = detect_off_ball_runs(actions, frames)
         runs[["action_id", "player_id", "displacement_m", "peak_speed_ms"]].head()
     """
     from .utils import slice_around_event
@@ -274,7 +275,7 @@ def detect_off_ball_runs(
         flip_by_action = dict(
             zip(
                 game_actions["action_id"].to_numpy(),
-                acting_team_attacks_rtl(game_actions, game_frames).to_numpy(dtype=bool),
+                acting_team_attacks_rtl(game_actions, game_frames),
                 strict=False,
             )
         )
@@ -307,11 +308,24 @@ def detect_off_ball_runs(
                 continue
 
             # ADR-028: emit in the ACTING team's LTR frame, never the frame convention.
-            if flip_by_action.get(aid, False):
+            #
+            # An unresolved direction keeps the RUN but NaNs its coordinates (ADR-042: coverage
+            # must never masquerade as tactics -- dropping the record would silently shrink
+            # `n_disruptive_runs`, making sparse orientation read as "fewer runs"). The
+            # flip-invariant measurements -- displacement, duration, mean and peak speed -- are
+            # emitted as measured; only the four coordinates and `toward_goal`, which have no
+            # meaning without a convention, go NA.
+            _flip = flip_by_action.get(aid)
+            if pd.isna(_flip):
+                sx = sy = ex = ey = np.nan
+                toward_goal: bool | None = None
+            elif _flip:
                 sx, sy = FIELD_LENGTH - x0, FIELD_WIDTH - y0
                 ex, ey = FIELD_LENGTH - x1, FIELD_WIDTH - y1
+                toward_goal = bool(ex > sx)
             else:
                 sx, sy, ex, ey = x0, y0, x1, y1
+                toward_goal = bool(ex > sx)
 
             records.append(
                 {
@@ -328,13 +342,17 @@ def detect_off_ball_runs(
                     "mean_speed_ms": mean_speed,
                     "peak_speed_ms": peak_speed,
                     "peak_speed_source": peak_source,
-                    "toward_goal": bool(ex > sx),
+                    "toward_goal": pd.NA if toward_goal is None else toward_goal,
                 }
             )
 
     if not records:
         return _empty_runs()
     out = pd.DataFrame.from_records(records, columns=RUN_COLUMNS).reset_index(drop=True)
+    # Nullable, matching _empty_runs(): a mixed bool/pd.NA column infers as `object`, which would
+    # make the populated and empty schemas disagree on dtype. `line_break` in _off_ball_runs.py
+    # already uses this exact pattern, so nullable boolean is the house idiom here, not a novelty.
+    out["toward_goal"] = out["toward_goal"].astype("boolean")
     return _restore_player_id_dtype(out, frames)
 
 
@@ -462,7 +480,7 @@ def value_off_ball_runs(
 
         from silly_kicks.tracking import detect_off_ball_runs, value_off_ball_runs
 
-        runs = detect_off_ball_runs(actions, frames, home_team_id=1)
+        runs = detect_off_ball_runs(actions, frames)
         valued = value_off_ball_runs(runs, actions, frames, xt)
         valued[["player_id", "role", "run_value"]].head()
     """
@@ -484,7 +502,9 @@ def value_off_ball_runs(
 
     receiver, on_domain, enabled_credit = action_level_context(actions, xt)
 
-    flip_rtl = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    # Nullable: <NA> marks an action whose direction the frames do not resolve. Such runs are
+    # routed to the n_unvalued counter below, never valued against an unreflected threat grid.
+    flip_rtl = acting_team_attacks_rtl(actions, frames)
     fid_by_pos = _kernels.resolve_frame_ids_by_position(actions, frames, links=links)
     cache = pitch_control_cache if pitch_control_cache is not None else _PitchControlCache()
     floor = params.resolved_region_floor()
@@ -522,7 +542,11 @@ def value_off_ball_runs(
         out.loc[row_idx, "role"] = pd.array(np.where(is_recv, "target", "disruptive"), dtype="string")
         out.loc[row_idx, "enabled_pass_credit"] = np.where(is_recv, np.nan, enabled_credit[i])
 
-        if np.isnan(fid_by_pos[i]):
+        if np.isnan(fid_by_pos[i]) or pd.isna(flip_rtl.iloc[i]):
+            # Unresolved direction joins the unlinked-frame route: the run keeps its row with
+            # run_value NaN and is COUNTED (ADR-042), rather than being valued against a threat
+            # grid that may need reflecting. Valuing it would put a real number on a surface
+            # oriented by a guess -- the exact "coverage read as tactics" failure ADR-042 names.
             n_unvalued += len(row_idx)
             continue
         group_key = (int(action_row["period_id"]), int(fid_by_pos[i]))
@@ -543,7 +567,7 @@ def value_off_ball_runs(
         # Pitch control lives in FRAME coordinates; the threat grid is built in action-LTR,
         # so it is POINT-reflected (both axes, ADR-028) for an RTL-attacking acting team.
         threat = physical_grid(xt, pc.grid_x, pc.grid_y)
-        if flip_rtl[i]:
+        if flip_rtl.iloc[i]:
             threat = threat[::-1, ::-1]
         weighted = np.asarray(pc.surface) * threat
 

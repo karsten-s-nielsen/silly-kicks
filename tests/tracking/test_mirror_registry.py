@@ -379,30 +379,38 @@ def test_gate_c_catches_an_aggregator_that_ignores_the_map():
     assert delta == 0.0, "the plant moved -- this witness is not discriminating"
 
 
-def test_defensive_line_d3_unit_is_enumerated():
-    """``select_back_line_players`` is a PUBLIC export with three consumers.
+def test_no_module_infers_direction_from_team_identity():
+    """D12: NO module in the direction family computes ``same_id(..., home_team_id)``.
 
-    A partial re-key across them is the incomplete-repair pattern this repo has already shipped,
-    so the gate names the whole unit and pins its current membership. If a future change re-keys
-    one member and not the others, this set changes and the test says so -- which is the point:
-    the risk was recorded in the spec with no owner until now.
+    Renamed from ``test_defensive_line_d3_unit_is_enumerated``, and the rename is load-bearing:
+    the old name described a PENDING UNIT to be worked through, and that unit is now empty. A
+    name that outlives its predicate is how a gate quietly stops meaning what it says.
 
-    **Membership moved in the goal-map unification cycle (ADR-055), and this is the required
-    reason.** ``_gk_influence.py`` left the set: ``compute_gk_influence`` now takes a ``GoalMap``
-    and has no ``home_team_id`` at all, so its back-line call passes ``defends_x0=goal_x == 0.0``
-    from the RESOLVED end. ``select_back_line_players`` itself no longer infers direction --
-    it takes ``defends_x0`` -- so the helper is off identity for every caller.
+    **EMPTY IS THE CORRECT STEADY STATE.** A future reader meeting an empty expectation must not
+    "fix" it by repopulating the set -- the whole point of the D3 arc is that this set stays
+    empty forever. A non-empty result means identity-keyed direction has been reintroduced.
 
-    The other two members stay listed because they are still identity-keyed at their OWN seams,
-    which is the D3 work ADR-051 still owns and this cycle deliberately did not pull in:
+    THE PREDICATE IS D12: a CALL to ``same_id``/``ids_match`` with ``home_team_id``. Its
+    predecessor D9 -- "a same_id result guarding a pitch-constant subtraction or a reversing
+    slice" -- was implemented and RUN, and it missed 3 of 8 sites including
+    ``_defensive_line.py``'s own, because that site decides direction by sorting from the other
+    end (``argsort(xs)`` vs ``argsort(-xs)``) without ever reflecting a coordinate, and its
+    ``-xs`` is the unary negation D9 nominated as its EXCLUSION criterion for score sites. A
+    module-population pin under D9 would have reported ``_defensive_line.py`` already clean
+    before any re-key. Matching the CALL SOURCE instead is recall-complete by construction: no
+    downstream shape can evade it, and no future author can invent a seventh way to branch on
+    the boolean.
 
-    * ``_defensive_line.py`` -- ``compute_defensive_line`` derives ``same_id(team_id, home_team_id)``
-      per group (:210).
-    * ``_packing.py`` -- ``compute_packing_metrics`` derives ``mirror`` the same way (:145) and
-      feeds the same fact to ``select_back_line_players`` (:166).
+    It is also blind to a bare PARAMETER in a signature, which matters: ``_off_ball_runs.py:98``
+    still DECLARES a dead ``home_team_id`` (ADR-042 re-keyed its goalward test onto
+    ``acting_team_attacks_rtl``), and ``add_off_ball_runs``'s Gate B green IS the measurement
+    that the parameter is unread. A name-mention predicate would go red on it and the obvious
+    "fix" would delete that evidence.
 
-    So the pin still catches the failure it was built for: if either remaining member is re-keyed
-    without the other, this set changes again and the test says so.
+    SCOPE vs EXEMPTIONS. The file set below is a list of files to SCAN, NOT a list of
+    exemptions, and the difference is why this can assert emptiness honestly: narrowing the scan
+    never makes a violation INSIDE it invisible -- a new one in a scanned file is still caught.
+    Only an exemption list could wave a real violation through.
     """
     import ast
     import pathlib
@@ -410,30 +418,90 @@ def test_defensive_line_d3_unit_is_enumerated():
     # __file__-anchored, matching the repo idiom. A CWD-relative path silently reads nothing when
     # pytest runs from anywhere but the repo root, and an empty read makes this vacuous, not red.
     repo = pathlib.Path(__file__).resolve().parents[2]
-    unit = {
+    family = {
         "silly_kicks/tracking/_defensive_line.py",
         "silly_kicks/tracking/_packing.py",
+        "silly_kicks/tracking/_off_ball_runs.py",
+        "silly_kicks/tracking/_structural_pass.py",
+        "silly_kicks/tracking/_line_breaking.py",
+        "silly_kicks/tracking/_player_influence.py",
+        # Re-keyed by ADR-055; kept in scope so a REINTRODUCTION there is caught too.
+        "silly_kicks/tracking/_gk_influence.py",
+        "silly_kicks/tracking/_cover_shadows.py",
     }
-    # Left the unit in the ADR-055 cycle. Kept as a separate assertion rather than deleted: a
-    # member silently dropping out of `unit` is exactly how a partial re-key would hide, so the
-    # departure is asserted rather than merely no longer checked.
-    rekeyed = "silly_kicks/tracking/_gk_influence.py"
-    reads = set()
-    for rel in sorted(unit | {rekeyed}):
-        path = repo / rel
-        assert path.exists(), f"D3 unit member missing: {rel}"
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        if any(isinstance(n, ast.Name) and n.id == "home_team_id" for n in ast.walk(tree)):
-            reads.add(rel)
 
-    assert rekeyed not in reads, (
-        f"{rekeyed} reads home_team_id again. ADR-055 re-keyed it onto the GoalMap; a "
-        "reintroduced identity-keyed direction there is the D3 defect coming back."
+    def _identity_direction_calls(tree) -> bool:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", None)
+            if name not in {"same_id", "ids_match"}:
+                continue
+            if any(isinstance(n, ast.Name) and n.id == "home_team_id" for n in ast.walk(node)):
+                return True
+        return False
+
+    offenders = set()
+    for rel in sorted(family):
+        path = repo / rel
+        assert path.exists(), f"direction-family member missing: {rel} -- update this scan set"
+        if _identity_direction_calls(ast.parse(path.read_text(encoding="utf-8"))):
+            offenders.add(rel)
+
+    assert offenders == set(), (
+        f"identity-keyed direction reintroduced in {sorted(offenders)}. Direction comes from the "
+        f"GoalMap (both-team sites) or `acting_team_attacks_rtl` (one-team sites) -- never from "
+        f"which team is labelled home. See ADR-051 D3 and ADR-055."
     )
-    assert reads, "no member of the D3 unit reads home_team_id -- has the unit moved?"
-    assert reads == unit, (
-        f"D3 unit membership changed: {sorted(reads)}. Re-key both together, or update this "
-        "pin WITH the reason -- a partial re-key is the failure mode this test exists to catch."
+
+
+def test_the_D12_predicate_would_CATCH_a_reintroduced_identity_key():
+    """Non-vacuity: the assertion above passes trivially if the predicate matches nothing.
+
+    An empty expectation is exactly the shape that can rot into a gate which tests nothing -- a
+    typo'd function name, an AST walk over the wrong node type, and it still reports success. So
+    the predicate is exercised against source that DOES contain the defect.
+    """
+    import ast
+
+    planted = ast.parse(
+        """
+def f(team_id, home_team_id):
+    defends_x0 = same_id(team_id, home_team_id)
+    return defends_x0
+"""
+    )
+    clean = ast.parse(
+        """
+def f(team_id, goal_map, game_id, period_id):
+    return goal_map.get(game_id, period_id, team_id) == 0.0
+"""
+    )
+    dead_param = ast.parse(
+        """
+def f(actions, frames, *, home_team_id=None):
+    return actions
+"""
+    )
+
+    def _has(tree):
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", None)
+            if name in {"same_id", "ids_match"} and any(
+                isinstance(n, ast.Name) and n.id == "home_team_id" for n in ast.walk(node)
+            ):
+                return True
+        return False
+
+    assert _has(planted), "the predicate must CATCH a reintroduced identity key"
+    assert not _has(clean), "the predicate must not fire on a goal-map lookup"
+    assert not _has(dead_param), (
+        "the predicate must be blind to a bare dead PARAMETER -- _off_ball_runs.py:98 declares "
+        "one deliberately, and firing on it would destroy the ADR-042 evidence"
     )
 
 
@@ -512,7 +580,7 @@ def test_fixture_yields_a_DECIDED_packing_secured_both_ways():
     from silly_kicks.tracking.features import add_packing
 
     actions, frames = canonical_scene()
-    out = add_packing(actions.copy(), frames.copy(), home_team_id=HOME)
+    out = add_packing(actions.copy(), frames.copy())
     secured = out["packing_secured"].dropna()
     assert len(secured) >= 2, f"packing_secured decided on only {len(secured)} row(s)"
     assert set(secured.astype(bool)) == {True, False}, (

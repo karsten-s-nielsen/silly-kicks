@@ -71,7 +71,7 @@ def register() -> None:
     team_shape_columns.update({c: "exempt" for c in _PROVENANCE})
     _entry(
         "add_team_shape",
-        lambda a, f, h: add_team_shape(a, f, home_team_id=h),
+        lambda a, f, h: add_team_shape(a, f),
         team_shape_columns,
         tol=1e-9,
         basis=(
@@ -100,7 +100,7 @@ def register() -> None:
     shape_graph_columns.update({c: "exempt" for c in _PROVENANCE})
     _entry(
         "add_shape_graph",
-        lambda a, f, h: add_shape_graph(a, f, home_team_id=h),
+        lambda a, f, h: add_shape_graph(a, f),
         shape_graph_columns,
         tol=1e-9,
         basis=(
@@ -123,7 +123,7 @@ def register() -> None:
     # ------------------------------------------------------------------
     _entry(
         "add_structural_pass",
-        lambda a, f, h: add_structural_pass(a, f, home_team_id=h),
+        lambda a, f, h: add_structural_pass(a, f),
         {
             "structural_lbs": "invariant",
             "structural_sgm": "invariant",
@@ -140,7 +140,6 @@ def register() -> None:
         role="direction_only",
         non_vacuity=("structural_lbs", "structural_sgm", "structural_sdi"),
         exempt={c: _PROVENANCE_REASON for c in _PROVENANCE},
-        defect_b="D3 re-key pending: identity-keyed direction (spec 4.3)",
     )
 
     # ------------------------------------------------------------------
@@ -155,7 +154,7 @@ def register() -> None:
     # ------------------------------------------------------------------
     _entry(
         "add_packing",
-        lambda a, f, h: add_packing(a, f, home_team_id=h),
+        lambda a, f, h: add_packing(a, f),
         {
             "packing_made": "invariant",
             "packing_net": "invariant",
@@ -180,5 +179,18 @@ def register() -> None:
             ),
             **{c: _PROVENANCE_REASON for c in _PROVENANCE},
         },
-        defect_b="D3 re-key pending: identity-keyed direction (spec 4.3)",
+        # Gate B's variable is GONE (the D3 re-key removed home_team_id), so Gate B now
+        # SKIPS on role="unused" and cannot witness the fix -- only the defect it used to
+        # catch. Gate C is the same question one variable further out: hold the frames FIXED,
+        # swap the MAP, require these columns to move. Sets are MEASURED, not guessed, and the
+        # completeness gate asserts set EQUALITY both ways -- an undeclared witness would let a
+        # partial re-key ship green.
+        call_with_map=lambda a, f, gm: add_packing(a, f, goal_map=gm),
+        # `packing_goal_threat` is the ONLY witness for `_packing.py:173` (which end the
+        # DEFENDING team's back line is taken from); `packing_made`/`packing_net` witness
+        # `:145` (the away mirror). It is constant 0 on the base leg -- correctly, the
+        # bypassed players are not in the back line -- and moves to [4, 1, 1, 1] when the end
+        # flips. A base-leg "is it constant?" screen would have discarded it and left `:173`
+        # unwitnessed, which is a partial re-key reading as success.
+        gate_c_must_move=("packing_made", "packing_net", "packing_goal_threat"),
     )

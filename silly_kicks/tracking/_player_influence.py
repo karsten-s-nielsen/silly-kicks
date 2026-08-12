@@ -16,8 +16,6 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from silly_kicks.id_compat import same_id
-
 from .pitch_control import PitchControlCache, PitchControlParams, PitchControlSurface, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
@@ -43,7 +41,7 @@ def compute_player_influence(
     xt: ExpectedThreat,
     *,
     attacking_team_id: int | str,
-    home_team_id: int | str,
+    attacks_rtl: bool,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     params: PitchControlParams | None = None,
     surface: PitchControlSurface | None = None,
@@ -136,7 +134,15 @@ def compute_player_influence(
     # only for a y-symmetric grid -- true of the ramp-style fixtures and nearly true of a
     # fitted xT, which is how it hid. Pinned by
     # test_player_influence_orientation.py::test_away_attack_reflects_the_threat_grid_on_BOTH_axes.
-    if not same_id(attacking_team_id, home_team_id):
+    # Keyed on DIRECTION, not identity (ADR-051 D3): the old
+    # `not same_id(attacking_team_id, home_team_id)` is correct only while the frames are
+    # home-attacks-right and silently inverts otherwise.
+    #
+    # This site serves ONE team, so it takes the bool rather than a GoalMap (the D3 rule).
+    # Concretely: it reflects a GRID, and a GoalMap returns a pitch x that this function
+    # would collapse to a boolean on its first line -- the map's extra expressiveness would
+    # be discarded at the point of use.
+    if attacks_rtl:
         threat_grid = threat_grid[::-1, ::-1]
 
     cell_area = pc.cell_area
