@@ -1149,9 +1149,53 @@ ssh karsten@192.168.68.73 'bash /tmp/materialize.sh'
 ```
 
 **Do not proceed until the log prints `parity OK`.** If the assertion raises, STOP — the trainer
-would fit on different data than the established pipeline produces (spec D7). `--reference-parquet`
-needs an existing TC3 `frames.parquet` on the box; if none exists, that is itself a finding and the
-parity claim cannot be made — report it rather than dropping the flag.
+would fit on different data than the established pipeline produces (spec D7).
+
+**PRODUCE the reference; do not ship without it and do not go looking for one.** No
+`~/tc3-reference/frames.parquet` exists on the box (verified 2026-08-12: `find ~/ -maxdepth 4 -name
+frames.parquet` returns one hit, `~/sk_gs_et_out/frames.parquet`, which is the TF-23b GS
+extra-time output, not a TC3 corpus reference). The established producer is already in the repo —
+`scripts/_loader_pining_to_cache.py` (PR-S81), which wrote the input the currently-bundled weights
+were fit on. One match is enough:
+
+```bash
+ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+  ./.venv/bin/python scripts/_loader_pining_to_cache.py \
+    --providers skillcorner --max-per-provider 1 --out ~/tc3-reference-src'
+REF=$(ssh karsten@192.168.68.73 'ls ~/tc3-reference-src/skillcorner/*/frames.parquet | head -1')
+```
+
+Pass `$REF` as `--reference-parquet`. **State its power honestly in the write-up:** both pipelines
+consume the SAME `load_matches` generator and write the yielded frames unchanged, so this cannot
+detect a divergent PARSE — there is only one parse. It checks the WRITE path: schema, row count,
+dtypes and a full-content checksum surviving the parquet round-trip. Spec D7's phrase "the trainer's
+established input comes from a different pipeline" is wrong, and the assertion is worth running
+anyway.
+
+- [ ] **Step 3b: ONE-MATCH END-TO-END SMOKE — materialize, then TRAIN, before the corpus pass**
+
+**Non-negotiable, and cheap.** Task 7 costs hours and Task 8 costs hours; the plan previously ran
+them back to back with nothing in between, so a trainer-side input error surfaced only after both
+were paid for. Two such errors were found statically on 2026-08-12 (the missing home-team map and
+the dropped actions), and neither needed real data to find — which is the argument for a smoke that
+needs almost none.
+
+```bash
+ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+  ./.venv/bin/python scripts/materialize_tc3_frames.py \
+    --cache-dir ~/pining-cache --out ~/tc3-smoke \
+    --providers skillcorner --max-per-provider 1'
+SGEN=$(ssh karsten@192.168.68.73 'ls -d ~/tc3-smoke/shards/*/ | head -1')
+ssh karsten@192.168.68.73 "cd ~/silly-kicks-refit && ./.venv/bin/python scripts/train_ghost_gk.py \
+  --data-dir $SGEN --output-dir ~/ghost-smoke \
+  --home-teams ~/tc3-smoke/home_teams.json --actions-dir ~/tc3-smoke/_actions \
+  --variant default --subsample-cap 2000 --training-platform dgx-spark-aarch64"
+```
+
+Required in the smoke log, all four:
+`Home team mapping: 1 games` · `Loaded actions for 1 games` · no `SKIP game` line · a written
+artifact. Then **delete `~/tc3-smoke`** so its one-match generation cannot be mistaken for the
+corpus later.
 
 - [ ] **Step 4: Measure the delta**
 
@@ -1231,16 +1275,31 @@ echo "generation dir: $GEN"    # e.g. ~/tc3-cache/shards/<16-hex-digest>/
 Use `$GEN` as `--data-dir` below. A generation directory contains only per-item `.parquet` shards
 plus `.json` sidecars, so the flat glob picks up exactly the frames and nothing else.
 
+> **`--data-dir` ALONE IS NOT ENOUGH, and the failure is late and total.** The trainer resolves the
+> home-team map from a `meta.json` BESIDE each parquet (`train_ghost_gk.py:379-387`) — present in
+> the TC3 tree layout, absent from a flat generation. With no map it `sys.exit(1)`s at `:388`,
+> *after* Task 7's corpus pass has been paid for. It also takes per-game actions via
+> `--actions-dir` (`:359`) and feeds them to `prepare_ghost_gk_training_data(actions=...)` (`:534`),
+> recording `with_actions` in the artifact metadata — so omitting them trains on different inputs
+> than the established pipeline used, silently. `materialize_tc3_frames.py` therefore emits
+> `home_teams.json` and `_actions/` under its `--out`; **both flags below are mandatory.**
+
 - [ ] **Step 1: Fit the bundled `default` variant on the DGX**
 
 ```bash
 ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
   nohup ./.venv/bin/python scripts/train_ghost_gk.py \
     --data-dir "$GEN" --output-dir ~/ghost-default \
+    --home-teams ~/tc3-cache/home_teams.json \
+    --actions-dir ~/tc3-cache/_actions \
     --variant default --subsample-cap 36000 \
     --training-platform dgx-spark-aarch64 \
     > ~/ghost_default.log 2>&1 &'
 ```
+
+Confirm from the log before letting it run: `Home team mapping: N games` with N equal to the
+materialized match count, and `Loaded actions for N games`. A `SKIP game <id>: no home_team_id`
+line means the map is short and the fit is running on a truncated corpus.
 
 - [ ] **Step 2: Fit the `full` variant from the SAME extraction**
 
@@ -1248,6 +1307,8 @@ ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
 ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
   nohup ./.venv/bin/python scripts/train_ghost_gk.py \
     --data-dir "$GEN" --output-dir ~/ghost-full \
+    --home-teams ~/tc3-cache/home_teams.json \
+    --actions-dir ~/tc3-cache/_actions \
     --variant full --training-platform dgx-spark-aarch64 \
     --skip-permutation-importance \
     > ~/ghost_full.log 2>&1 &'
