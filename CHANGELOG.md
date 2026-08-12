@@ -184,7 +184,18 @@ direction family (`causal.join_layer2_confounders`, `_xcross_eval.gk_substitutio
 `_xshot_occurrence.prepare_xshot_training_data` / `compute_xshot_occurrence`) plus two `@overload`
 stubs whose `reads=0` is a property of having no body.
 
-### Fixed — two defects the re-key introduced, both caught by existing gates
+### Fixed — three defects the re-key introduced
+
+* **The `<NA>` blanking wrote into a READ-ONLY array on pandas 3.** `pitch_control_at_target` does
+  `qx = _q["_qx"].to_numpy(dtype="float64")` and then blanks the unresolved rows; under pandas 3's
+  copy-on-write `.to_numpy()` hands back a read-only VIEW when no dtype conversion is needed, so
+  every affected call raised `ValueError: assignment destination is read-only` — **48 tests on the
+  3.11 leg**. pandas 2 returns a writable array, so a local suite on 3.10 passes all 7209 and sees
+  none of it. Fixed with an explicit `copy=True`. This is ADR-057's span earning its keep for the
+  second time (the first was DAS going silently all-NaN on pandas 3), and the sweep was done by
+  predicate rather than by patching the one line: an AST search for "a `to_numpy()` result later
+  mutated" finds exactly four sites repo-wide, two of them this one's pair.
+
 
 * **`add_packing` crashed instead of refusing.** Its `GoalEndUnresolvedError` fallback built the
   three EMITTED columns and not `line_x`, which the event-only assembly reads on the very next

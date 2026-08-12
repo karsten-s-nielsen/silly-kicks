@@ -402,6 +402,10 @@ def _analytical_leave_one_out(
         }
 
         if include_opponent:
+            # Same caller contract asserted for the BASELINE above; re-stated because this is a
+            # separate block and the narrowing does not carry across.
+            assert obso_multiplier_opponent is not None  # noqa: S101 -- caller contract
+            assert baseline_opp_obso is not None  # noqa: S101 -- set in the same branch above
             # Opponent-attacking surface without this player: the player leaves
             # the DEFENSE of that surface (same removal, complementary side).
             # Monotone in the other direction: removal only INCREASES opponent

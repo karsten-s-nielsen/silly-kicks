@@ -193,7 +193,13 @@ pins that the **resolved leg set** still straddles the 3.11 boundary — parsing
 in use and excluding a leg collapses the span while leaving its version in the axis — and a
 `pandas-span` job (`needs: test`) asserts the union of each leg's recorded major covers both. Assert
 the SPAN, never specific versions: pinning "3.10 → 2.3.3" fails on every routine bump and trains a
-reader to edit the expectation without thinking. **Never assert a dtype literal across pandas
+reader to edit the expectation without thinking. **A `.to_numpy()` result you intend to MUTATE needs
+`copy=True`** — under pandas 3's copy-on-write it is a READ-ONLY view when no dtype conversion is
+required, so `arr[mask] = x` raises `ValueError: assignment destination is read-only`; pandas 2
+returned a writable array, which means a full local suite on the 3.10 leg passes and sees nothing
+(measured: 48 failures on 3.11, 0 locally, 4.80.0). Sweep this by PREDICATE, not by patching the
+line that failed — an AST search for "a `to_numpy()` result later subscript-assigned" finds every
+site repo-wide, and there are four. **Never assert a dtype literal across pandas
 majors** — assert the behaviour (that `id_compat` comparisons still match), which is what made the
 two-cycle-old `snapshot_to_tracking_frames` question finally answerable.
 

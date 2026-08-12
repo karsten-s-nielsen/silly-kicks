@@ -2548,8 +2548,13 @@ def pitch_control_at_target(
     _flip = acting_team_attacks_rtl(actions, frames)
     _q = actions[["end_x", "end_y"]].rename(columns={"end_x": "_qx", "end_y": "_qy"}).copy()
     _q = reproject_to_action_ltr(_q, _flip.fillna(False), x_cols=["_qx"], y_cols=["_qy"])
-    qx = _q["_qx"].to_numpy(dtype="float64")  # positional order == actions row order (== loop order below)
-    qy = _q["_qy"].to_numpy(dtype="float64")
+    # copy=True is REQUIRED, not defensive: the `_unresolved` blanking below writes into these
+    # arrays, and under pandas 3's copy-on-write `.to_numpy()` hands back a READ-ONLY view of the
+    # block when no dtype conversion is needed -- `ValueError: assignment destination is read-only`.
+    # pandas 2 returned a writable array, so this is invisible on the 3.10 leg and caught only by
+    # ADR-057's pandas-major span.
+    qx = _q["_qx"].to_numpy(dtype="float64", copy=True)  # positional order == actions row order
+    qy = _q["_qy"].to_numpy(dtype="float64", copy=True)
     # An unresolved direction makes the QUERY POINT unknown -- the involution above cannot place
     # the action's end in the surface's absolute frame. NaN propagates through the sampling below
     # to a NaN value, which is the honest answer; a guessed convention would instead sample a

@@ -311,7 +311,8 @@ def acting_gk_from_frames(
     gk_team_s = pd.Series(gk_team)
     gk_game_s = pd.Series(gk_game)
 
-    for i in np.where(need)[0]:
+    # int(): np.where yields np.intp; `out.iloc[i] = ...` below wants a plain int index.
+    for i in (int(_i) for _i in np.where(need)[0]):
         t = act_team[i]
         if pd.isna(t):
             continue  # NaN team -> unresolvable (stays NaN)
