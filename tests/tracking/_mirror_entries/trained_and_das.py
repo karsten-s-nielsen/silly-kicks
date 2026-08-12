@@ -37,7 +37,8 @@ rather than per aggregate, in ``tests/tracking/test_pr5_chirality_gates.py``.
 from __future__ import annotations
 
 # Measured on canonical_scene(); see the per-entry tolerance_basis for the derivation.
-_DAS_MIRROR_TOL = 15.0
+# RE-DERIVED for the C0 coherent scene: artifact 173.7716, attribution swap 550.6902.
+_DAS_MIRROR_TOL = 200.0
 
 
 def _with_possession(frames):
@@ -102,14 +103,25 @@ def register() -> None:
             "ray's upper bound to the ray itself, so rays 0 and n-1 each receive a "
             "half-width wedge. A point reflection maps ray k -> ray (k+15) mod 30 at the "
             "shipped n_angles=30, landing the two deficient wedges on different rays. "
-            "Measured on canonical_scene(): 12.0349 (das_team/das_opponent) and 11.9761 "
-            "(das_diff), bit-reproducible across repeat runs. Diagnosis confirmed by "
-            "refinement -- the base-vs-mirror gap collapses 12.03 -> 3.43 -> 1.13 at "
-            "n_angles 30 -> 120 -> 480 while the value itself converges 47.5 -> 91.1 -> "
-            "94.8, the signature of a quadrature artifact rather than a convention defect. "
-            "15.0 keeps ~25% headroom over the measurement and stays 3.1x below the ~46.9 "
-            "a team-attribution swap produces on this fixture, so the defect class this "
-            "gate exists to catch is still detectable."
+            "RE-DERIVED for the C0 coherent scene (D7), NOT rebased. The prior 15.0 was "
+            "sized on the pre-C0 fixture: gap 12.0349, team-attribution swap ~46.9, i.e. "
+            "gap-to-swap 3.90. That fixture held every position CONSTANT while declaring "
+            "vx=0.8/speed=1.0, so its DAS magnitudes were not a physical scene's. "
+            "Re-measured on the coherent scene: das_opponent gap 173.7716, das_diff "
+            "173.7399, das_team 0.0670; team-attribution swap (max |das_team - "
+            "das_opponent|) 550.6902. Artifact and detectable-defect scaled TOGETHER "
+            "(~14x), which is the evidence it is the same proportional quadrature "
+            "artifact rather than a new defect -- an artifact that grew while the swap "
+            "did not would have been a finding, not a tolerance update. "
+            "STATED TRADE: gap-to-swap narrowed 3.90 -> 3.17, so the old tolerance's two "
+            "properties (~25% headroom AND ~3.1x below the swap) can no longer both hold; "
+            "200.0 takes ~15% headroom over the measured artifact and sits 2.75x below the "
+            "swap. The defect class stays detectable, with less margin than before -- "
+            "recorded so a reviewer can disagree rather than discover it. If that margin "
+            "is judged too thin, the per-entry `scene` seam is the remedy (DAS's artifact "
+            "scales with the magnitude of the values, so a smaller-value scene separates "
+            "better); it is deliberately NOT used here, because the shared scene serves "
+            "every other entry better and 2.75x still discriminates."
         ),
         role="unused",  # signature takes no home_team_id at all
         non_vacuity=("das_team", "das_diff"),

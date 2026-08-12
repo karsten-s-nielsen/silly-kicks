@@ -90,6 +90,17 @@ class MirrorEntry:
     #: ``_closing_time_per_series``), so a one-column result means the closing-time path was missed
     #: and would otherwise read as success. Required whenever ``call_with_map`` is set.
     gate_c_must_move: tuple[str, ...] = ()
+    #: Optional per-entry scene builder, defaulting to :func:`canonical_scene`.
+    #:
+    #: The shared scene is the right default: every entry measured on ONE scene is what makes
+    #: the recorded deltas comparable across the registry. But one scene cannot be
+    #: simultaneously optimal for every aggregator -- packing needs a secured reception,
+    #: off-ball runs need real displacement, and an entry that needs neither should not pay
+    #: for them. Without this seam the ONLY way to give an entry a non-degenerate case is to
+    #: mutate the scene ten other modules pin, which is precisely the coupling that made the
+    #: degeneracy permanent. Set it only when the shared scene genuinely cannot serve the
+    #: entry, and say why at the registration.
+    scene: Callable[[], tuple[pd.DataFrame, pd.DataFrame]] | None = None
 
 
 MIRROR_ENTRIES: dict[str, MirrorEntry] = {}
@@ -111,6 +122,7 @@ def _entry(
     gate_b_exempt=None,
     call_with_map=None,
     gate_c_must_move=(),
+    scene=None,
 ) -> None:
     MIRROR_ENTRIES[name] = MirrorEntry(
         name=name,
@@ -127,6 +139,7 @@ def _entry(
         known_defect_gate_b=defect_b,
         gate_b_exempt=gate_b_exempt or {},
         gate_c_must_move=tuple(gate_c_must_move),
+        scene=scene,
     )
 
 
@@ -147,95 +160,215 @@ _BASE_FRAME = dict(
 
 @functools.cache
 def canonical_scene() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """``(actions, frames)`` -- canonical converter shape, DELIBERATELY y-ASYMMETRIC.
+    """``(actions, frames)`` -- canonical converter shape: y-ASYMMETRIC and PHYSICALLY COHERENT.
 
     y-asymmetry is not decoration: an x-only reprojection is exact on a y-symmetric scene, and
     ADR-041 shipped precisely that incomplete repair -- only a y-asymmetric oracle caught it.
 
     Home attacks +x (``"ltr"``); away attacks -x (``"rtl"``). BOTH teams act, so the away rows --
     the only rows an ADR-028 defect touches -- are a real population rather than a single token
-    action. Three frames give the pre-window and velocity-derivative features some history.
+    action.
+
+    COHERENCE (C0 / D7). Positions are DERIVED from ``base + v * (t - T_REF)``, so the declared
+    ``vx``/``vy``/``speed`` columns and the observed inter-frame displacement are the same fact.
+    The previous scene held every position CONSTANT while declaring ``vx=0.8, vy=-0.5,
+    speed=1.0`` -- two contradictory answers to "how fast is this player moving", and which one
+    an aggregator saw depended on whether it read the columns or differenced the frames. That is
+    the defect class this registry exists to catch, sitting in the registry's own reference
+    scene: a plausible number from a computation that had not happened.
+
+    The old constancy carried a fence -- *"a positional drift would desynchronise the action
+    anchors (which name a specific frame position) from the frame the linker actually picks, for
+    no gain"*. The fence is respected and its problem is SOLVED rather than dodged: every action
+    is anchored to ``_at(actor, t)``, the actor's position at that action's own timestamp, so the
+    anchor tracks the trajectory by construction instead of being frozen to avoid it. The "for no
+    gain" clause was written when the only benefit on offer was mirror invariance (Gate A); Gate C
+    liveness and off-ball-run detection are gains it did not weigh.
+
+    TEMPORAL AXIS. Actions are spread in time and the frame grid spans them, because several
+    emitted quantities are only defined over an interval: ``packing_secured`` needs a resolvable
+    reception plus a decisive follow-up (a same-team shot decides ``True`` immediately; an
+    opponent possession boundary decides ``False``), and off-ball runs need displacement. With
+    every action at one instant those columns are structurally ``<NA>`` no matter what the
+    geometry says.
     """
     from silly_kicks.spadl import config as spadlconfig
 
-    rows: list[dict] = [
-        dict(player_id=1, team_id=HOME, is_goalkeeper=True, x=5.0, y=27.0, d="ltr"),
-        dict(player_id=50, team_id=AWAY, is_goalkeeper=True, x=100.0, y=41.0, d="rtl"),
+    t_ref = 8.0
+    # (player_id, team, is_gk, x@t_ref, y@t_ref, vx, vy) -- y spread ASYMMETRICALLY about y=34.
+    # Velocities vary in magnitude and sign so off-ball run detection has a real distribution
+    # rather than one repeated value; keepers drift slowly, outfielders carry.
+    spec: list[tuple[int, int, bool, float, float, float, float]] = [
+        (1, HOME, True, 5.0, 27.0, 0.30, 0.10),
+        (50, AWAY, True, 100.0, 41.0, -0.25, 0.15),
     ]
-    # y values spread ASYMMETRICALLY about y=34 on purpose.
-    for i, (x, y) in enumerate(
-        [(28, 12), (36, 21), (44, 9), (52, 30), (60, 17), (33, 44), (47, 55), (58, 38), (25, 50), (41, 62)]
-    ):
-        rows.append(dict(player_id=10 + i, team_id=HOME, is_goalkeeper=False, x=float(x), y=float(y), d="ltr"))
-    for i, (x, y) in enumerate(
-        [(70, 14), (63, 25), (77, 8), (55, 33), (68, 19), (74, 47), (61, 58), (80, 36), (66, 52), (50, 60)]
-    ):
-        rows.append(dict(player_id=60 + i, team_id=AWAY, is_goalkeeper=False, x=float(x), y=float(y), d="rtl"))
-    # The ball sits deliberately OFF BOTH centre lines. On the halfway line a point reflection is
-    # the identity in x, which silently disarms any pitch-absolute check that samples the ball --
-    # the witness in test_mirror_registry.py caught exactly that when an earlier draft of this
-    # fixture drifted the ball onto x=52.5.
-    rows.append(dict(player_id=np.nan, team_id=np.nan, is_goalkeeper=False, x=38.0, y=23.0, d=None))
+    home_out = [
+        (10, 28.0, 12.0, 1.60, 0.40),
+        (11, 36.0, 21.0, 2.10, -0.60),
+        (12, 44.0, 9.0, 0.90, 1.30),
+        (13, 52.0, 30.0, 2.60, 0.20),
+        (14, 60.0, 17.0, 1.10, -1.40),
+        (15, 33.0, 44.0, 3.10, -0.70),
+        (16, 47.0, 55.0, 0.50, 0.90),
+        (17, 58.0, 38.0, 2.40, -1.10),
+        (18, 25.0, 50.0, 1.80, 1.60),
+        (19, 41.0, 62.0, 0.70, -2.20),
+    ]
+    away_out = [
+        (60, 70.0, 14.0, -1.50, 0.80),
+        (61, 63.0, 25.0, -0.60, -1.20),
+        (62, 77.0, 8.0, -2.30, 0.50),
+        (63, 55.0, 33.0, -1.90, -0.40),
+        (64, 68.0, 19.0, -0.80, 1.70),
+        (65, 74.0, 47.0, -2.70, -0.90),
+        (66, 61.0, 58.0, -1.20, 0.30),
+        (67, 80.0, 36.0, -0.40, -1.60),
+        (68, 66.0, 52.0, -3.00, 1.10),
+        (69, 50.0, 60.0, -1.70, -0.50),
+    ]
+    spec += [(pid, HOME, False, x, y, vx, vy) for pid, x, y, vx, vy in home_out]
+    spec += [(pid, AWAY, False, x, y, vx, vy) for pid, x, y, vx, vy in away_out]
 
+    def _at(pid: int, t: float) -> tuple[float, float]:
+        for p, _team, _gk, x, y, vx, vy in spec:
+            if p == pid:
+                return (x + vx * (t - t_ref), y + vy * (t - t_ref))
+        raise KeyError(pid)
+
+    # The ball FOLLOWS THE PLAY: it is at the acting player's feet at each action's timestamp and
+    # travels between them. Not decoration -- `infer_ball_carrier` needs a player within
+    # `tolerance_m` of the ball to name a carrier, `derive_team_in_possession` needs that carrier,
+    # and `add_das` needs possession. A ball on its own constant velocity diverges from every
+    # player within ~0.4 s, after which the carrier is unresolved, possession is NaN, and DAS
+    # reports `unscoreable_frame` for every action but the first -- measured, on the first draft
+    # of this scene. Intermediate frames may still have no carrier (the ball is genuinely in
+    # flight); the frames that must resolve are the ones the actions link to.
+    #
+    # The ball is deliberately never ON the halfway line: there a point reflection is the identity
+    # in x, which silently disarms any pitch-absolute check that samples it -- the witness in
+    # test_mirror_registry.py caught exactly that when an earlier draft drifted it onto x=52.5.
+    ball_waypoints = [
+        (8.0, 10),  # a1: HOME pass, at p10's feet
+        (8.4, 17),  # a2: received by p17, who shoots
+        (9.0, 60),  # a3: AWAY pass
+        (9.4, 63),  # a4: AWAY reception
+        (10.0, 13),  # a5: HOME regains
+        (10.4, 67),  # a6: AWAY shot
+    ]
+
+    def _ball_at(t: float) -> tuple[float, float]:
+        """Linear interpolation along the waypoints, clamped-extrapolated at both ends."""
+        pts = [(wt, _at(pid, wt)) for wt, pid in ball_waypoints]
+        # Index the segment explicitly rather than leaking a loop variable past `break`:
+        # the leak is what ruff B007 flags, and it is genuinely fragile -- an empty or
+        # single-element `pts` would silently reuse whatever the previous iteration bound.
+        last = len(pts) - 2
+        i = 0 if t <= pts[0][0] else last if t >= pts[-1][0] else min(last, sum(1 for wt, _ in pts if wt <= t) - 1)
+        (t0, p0), (t1, p1) = pts[i], pts[i + 1]
+        f = (t - t0) / (t1 - t0)
+        return (p0[0] + f * (p1[0] - p0[0]), p0[1] + f * (p1[1] - p0[1]))
+
+    # Frame grid spans the action span so every action links to a real frame.
+    frame_times = [round(7.6 + 0.2 * i, 2) for i in range(16)]  # 7.6 .. 10.6
     recs = []
-    for frame_id, t in ((100, 7.6), (101, 7.8), (102, 8.0)):
-        for r in rows:
-            rec = {**_BASE_FRAME, **r, "frame_id": frame_id, "time_seconds": t}
-            rec["team_attacking_direction"] = rec.pop("d")
-            rec["is_ball"] = bool(pd.isna(rec["team_id"]))
-            # Positions are held CONSTANT across the three frames and velocity is stated
-            # explicitly. A positional drift would desynchronise the action anchors below (which
-            # name a specific frame position) from the frame the linker actually picks, for no
-            # gain: mirror invariance is about the two LEGS agreeing, not about motion.
-            rec["vx"], rec["vy"] = 0.8, -0.5
+    for frame_id, t in enumerate(frame_times, start=100):
+        for pid, team, gk, _x, _y, vx, vy in spec:
+            px, py = _at(pid, t)
+            rec = {
+                **_BASE_FRAME,
+                "frame_id": frame_id,
+                "time_seconds": t,
+                "player_id": pid,
+                "team_id": team,
+                "is_goalkeeper": gk,
+                "x": px,
+                "y": py,
+                "vx": vx,
+                "vy": vy,
+                "speed": float(np.hypot(vx, vy)),
+                "team_attacking_direction": "ltr" if team == HOME else "rtl",
+                "is_ball": False,
+            }
             recs.append(rec)
+        bx, by = _ball_at(t)
+        # Ball velocity is the SECANT of its own path, so the declared columns and the observed
+        # displacement agree for the ball exactly as they do for the players.
+        bx_prev, by_prev = _ball_at(t - 0.2)
+        bvx, bvy = (bx - bx_prev) / 0.2, (by - by_prev) / 0.2
+        assert abs(bx - 52.5) > 1e-6, f"ball landed on the halfway line at t={t}"
+        recs.append(
+            {
+                **_BASE_FRAME,
+                "frame_id": frame_id,
+                "time_seconds": t,
+                "player_id": np.nan,
+                "team_id": np.nan,
+                "is_goalkeeper": False,
+                "x": bx,
+                "y": by,
+                "vx": bvx,
+                "vy": bvy,
+                "speed": float(np.hypot(bvx, bvy)),
+                "team_attacking_direction": None,
+                "is_ball": True,
+            }
+        )
     frames = pd.DataFrame(recs)
 
     pass_id = spadlconfig.actiontype_id["pass"]
     shot_id = spadlconfig.actiontype_id["shot"]
+
+    def _home(aid, pid, type_id, t, end_xy):
+        sx, sy = _at(pid, t)
+        return dict(
+            action_id=aid,
+            team_id=HOME,
+            player_id=float(pid),
+            type_id=type_id,
+            time_seconds=t,
+            start_x=sx,
+            start_y=sy,
+            end_x=end_xy[0],
+            end_y=end_xy[1],
+        )
+
+    def _away(aid, pid, type_id, t, end_xy):
+        # AWAY actions are action-LTR == the POINT REFLECTION of the frame position.
+        fx, fy = _at(pid, t)
+        return dict(
+            action_id=aid,
+            team_id=AWAY,
+            player_id=float(pid),
+            type_id=type_id,
+            time_seconds=t,
+            start_x=FIELD_LENGTH - fx,
+            start_y=FIELD_WIDTH - fy,
+            end_x=end_xy[0],
+            end_y=end_xy[1],
+        )
+
+    # HOME pass -> the receiver SHOOTS: a reception that is itself a same-team shot decides
+    # `packing_secured` True immediately, and the pass travels PAST away defenders so it has a
+    # bypass line at all (a pass that bypasses nobody has NaN line_x and is <NA> by definition).
+    a1_end = _at(17, 8.0)
+    a2_start_t = 8.4
+    # AWAY pass -> HOME touch: an opponent possession boundary decides False, giving the column
+    # TWO distinct values rather than a constant.
+    a3_end = _at(63, 9.0)
+
+    # Two DECIDED `packing_secured` rows, by the two distinct mechanisms the label supports --
+    # a constant column would satisfy "non-NA" while proving nothing:
+    #   a1 (HOME pass) -> a2 is the receiver's SHOT            -> True  (decided immediately)
+    #   a3 (AWAY pass) -> a4 is a same-team reception, then a5 -> False (opponent boundary)
+    # An AWAY pass whose NEXT touch is already an opponent has no reception at all, so its
+    # receiver is unresolved and the row is <NA> by definition -- which is why a4 must be AWAY.
     acts = [
-        # HOME actions: action-LTR == frame coords.
-        dict(
-            action_id=1,
-            team_id=HOME,
-            player_id=10.0,
-            type_id=pass_id,
-            start_x=28.0,
-            start_y=12.0,
-            end_x=36.0,
-            end_y=21.0,
-        ),
-        dict(
-            action_id=2,
-            team_id=HOME,
-            player_id=13.0,
-            type_id=shot_id,
-            start_x=52.0,
-            start_y=30.0,
-            end_x=105.0,
-            end_y=34.0,
-        ),
-        # AWAY actions: action-LTR == the POINT REFLECTION of the frame position.
-        dict(
-            action_id=3,
-            team_id=AWAY,
-            player_id=60.0,
-            type_id=pass_id,
-            start_x=FIELD_LENGTH - 70.0,
-            start_y=FIELD_WIDTH - 14.0,
-            end_x=FIELD_LENGTH - 63.0,
-            end_y=FIELD_WIDTH - 25.0,
-        ),
-        dict(
-            action_id=4,
-            team_id=AWAY,
-            player_id=63.0,
-            type_id=shot_id,
-            start_x=FIELD_LENGTH - 55.0,
-            start_y=FIELD_WIDTH - 33.0,
-            end_x=105.0,
-            end_y=34.0,
-        ),
+        _home(1, 10, pass_id, 8.0, a1_end),
+        _home(2, 17, shot_id, a2_start_t, (105.0, 34.0)),
+        _away(3, 60, pass_id, 9.0, (FIELD_LENGTH - a3_end[0], FIELD_WIDTH - a3_end[1])),
+        _away(4, 63, pass_id, 9.4, _at(66, 9.4)),
+        _home(5, 13, pass_id, 10.0, _at(14, 10.0)),
+        _away(6, 67, shot_id, 10.4, (105.0, 34.0)),
     ]
     actions = pd.DataFrame(
         [
@@ -244,7 +377,6 @@ def canonical_scene() -> tuple[pd.DataFrame, pd.DataFrame]:
                 "game_id": 1,
                 "period_id": 1,
                 "result_id": 1,
-                "time_seconds": 8.0,
                 "bodypart_id": spadlconfig.bodypart_id["foot"],
             }
             for a in acts
