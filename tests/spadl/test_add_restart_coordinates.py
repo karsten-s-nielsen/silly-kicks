@@ -81,17 +81,22 @@ def test_tripwire_reverts_bad_imputed_corner_at_edge():
     )
     frames = pd.DataFrame(
         dict(
-            game_id=[9],
-            period_id=[1],
-            frame_id=[1250],
-            time_seconds=[5.0],
-            team_id=[0],
-            player_id=[-1],
-            is_goalkeeper=[False],
-            is_ball=[True],
-            x=[50.0],
-            y=[20.0],
-            source_provider=["gradientsports"],
+            game_id=[9, 9],
+            period_id=[1, 1],
+            frame_id=[1250, 1250],
+            time_seconds=[5.0, 5.0],
+            team_id=[0, 1],
+            player_id=[-1, 10],
+            is_goalkeeper=[False, False],
+            is_ball=[True, False],
+            # ADR-051 D3 (4.80.0): an unresolvable direction is <NA> and the tracking tier
+            # refuses, so `start_coord_source` would be "unresolved" and the tripwire under test
+            # would never run. The label has to sit on a NON-BALL row -- the resolver drops ball
+            # rows before building its lookup, so a ball-only frame set can never resolve.
+            team_attacking_direction=["ltr", "ltr"],
+            x=[50.0, 40.0],
+            y=[20.0, 30.0],
+            source_provider=["gradientsports", "gradientsports"],
         )
     )
     with pytest.warns(UserWarning):

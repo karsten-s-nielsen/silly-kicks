@@ -117,7 +117,7 @@ def _valued(**frame_kwargs):
         _actions(**{k: v for k, v in frame_kwargs.items() if k in ("result_id", "receiver_is_opponent")}),
         _frames(**{k: v for k, v in frame_kwargs.items() if k == "disruptive_absent_at_action"}),
     )
-    runs = detect_off_ball_runs(actions, frames, home_team_id=_HOME)
+    runs = detect_off_ball_runs(actions, frames)
     return runs, value_off_ball_runs(runs, actions, frames, _const_xt()), actions
 
 
@@ -211,20 +211,20 @@ class TestGuards:
         from sklearn.exceptions import NotFittedError
 
         actions, frames = _actions(), _frames()
-        runs = detect_off_ball_runs(actions, frames, home_team_id=_HOME)
+        runs = detect_off_ball_runs(actions, frames)
         with pytest.raises(NotFittedError):
             value_off_ball_runs(runs, actions, frames, ExpectedThreat())
 
     def test_empty_runs_returns_the_value_schema(self):
         actions, frames = _actions(), _frames()
-        empty = detect_off_ball_runs(actions.iloc[:0], frames, home_team_id=_HOME)
+        empty = detect_off_ball_runs(actions.iloc[:0], frames)
         out = value_off_ball_runs(empty, actions, frames, _const_xt())
         for col in ("role", "is_receiver", "run_value", "enabled_pass_credit"):
             assert col in out.columns
 
     def test_input_runs_frame_is_not_mutated(self):
         actions, frames = _actions(), _frames()
-        runs = detect_off_ball_runs(actions, frames, home_team_id=_HOME)
+        runs = detect_off_ball_runs(actions, frames)
         before = runs.copy()
         out = value_off_ball_runs(runs, actions, frames, _const_xt())
         pd.testing.assert_frame_equal(runs, before)
@@ -232,7 +232,7 @@ class TestGuards:
 
     def test_sprint_gate_keeps_both_runners(self):
         """Guard the fixture itself: 7 m/s must clear the 5.56 m/s default gate."""
-        runs = detect_off_ball_runs(_actions(), _frames(), home_team_id=_HOME, params=RunValuationParams())
+        runs = detect_off_ball_runs(_actions(), _frames(), params=RunValuationParams())
         assert len(runs) == 2
 
 
@@ -250,10 +250,10 @@ class TestAggregatorNaRoles:
         import silly_kicks.tracking.features as tf
 
         actions, frames = _actions(result_id=0), _frames()  # failed pass -> off-domain
-        runs = detect_off_ball_runs(actions, frames, home_team_id=_HOME)
+        runs = detect_off_ball_runs(actions, frames)
         assert len(runs) > 0, "no detected runs -- the NA-role path would not be exercised"
 
-        out = tf.add_off_ball_run_values(actions, frames, _const_xt(), home_team_id=_HOME)
+        out = tf.add_off_ball_run_values(actions, frames, _const_xt())
         assert out["run_value_target"].isna().all()
         assert out["n_disruptive_runs"].isna().all()
 
@@ -290,7 +290,7 @@ class TestSafeIndexOfDtype:
             [_actions(), _actions(result_id=0).assign(action_id=[20, 21], time_seconds=[_T, _T + 1.0])],
             ignore_index=True,
         )
-        out = tf.add_off_ball_run_values(actions, _frames(), _const_xt(), home_team_id=_HOME)
+        out = tf.add_off_ball_run_values(actions, _frames(), _const_xt())
         assert out.loc[out["action_id"] == 10, "run_value_target"].notna().all()
         assert out.loc[out["action_id"] == 20, "run_value_target"].isna().all()
 
@@ -329,7 +329,7 @@ class TestAtomicMirrorIsNotSilentlyDead:
     def test_reception_atom_resolves_the_receiver(self):
         from silly_kicks.atomic.tracking.features import add_off_ball_run_values as atomic_add
 
-        out = atomic_add(self._atomic_stream(), _frames(), _const_xt(), home_team_id=_HOME)
+        out = atomic_add(self._atomic_stream(), _frames(), _const_xt())
         assert out["run_value_target"].iloc[0] == pytest.approx(_XT_CONST, rel=1e-3), (
             "the pass atom was not valued -- its receiver did not resolve, so the whole "
             "atomic mirror is off-domain and emits <NA> everywhere"
@@ -340,7 +340,7 @@ class TestAtomicMirrorIsNotSilentlyDead:
         """Non-vacuity: re-typing receptions must not make THEM valued actions."""
         from silly_kicks.atomic.tracking.features import add_off_ball_run_values as atomic_add
 
-        out = atomic_add(self._atomic_stream(), _frames(), _const_xt(), home_team_id=_HOME)
+        out = atomic_add(self._atomic_stream(), _frames(), _const_xt())
         assert pd.isna(out["run_value_target"].iloc[1])
         assert pd.isna(out["n_disruptive_runs"].iloc[1])
 
@@ -349,7 +349,7 @@ class TestAtomicMirrorIsNotSilentlyDead:
         from silly_kicks.atomic.tracking.features import add_off_ball_run_values as atomic_add
 
         stream = self._atomic_stream()
-        out = atomic_add(stream, _frames(), _const_xt(), home_team_id=_HOME)
+        out = atomic_add(stream, _frames(), _const_xt())
         pd.testing.assert_series_equal(out["type_id"], stream["type_id"])
 
 
@@ -375,7 +375,7 @@ class TestMultiGameIsolation:
 
     def test_off_domain_game_is_not_valued_by_the_other_game(self):
         actions, frames = self._two_games(second_game_result=0)  # game 2's pass FAILED
-        runs = detect_off_ball_runs(actions, frames, home_team_id=_HOME)
+        runs = detect_off_ball_runs(actions, frames)
         assert (runs["game_id"] == 2).any(), "no game-2 runs detected -- the test is vacuous"
 
         valued = value_off_ball_runs(runs, actions, frames, _const_xt())
@@ -390,7 +390,7 @@ class TestMultiGameIsolation:
         import silly_kicks.tracking.features as tf
 
         actions, frames = self._two_games(second_game_result=1)  # both games on-domain
-        out = tf.add_off_ball_run_values(actions, frames, _const_xt(), home_team_id=_HOME)
+        out = tf.add_off_ball_run_values(actions, frames, _const_xt())
         assert len(out) == len(actions), "the provenance merge fanned out rows"
 
         for game in (1, 2):
@@ -412,7 +412,7 @@ class TestAtomicXfnsIsNotSilentlyDead:
         from silly_kicks.atomic.tracking.features import off_ball_run_value_xfns as atomic_xfns
 
         stream = TestAtomicMirrorIsNotSilentlyDead._atomic_stream()
-        xfn = atomic_xfns(_const_xt(), home_team_id=_HOME)[0]
+        xfn = atomic_xfns(_const_xt())[0]
         out = xfn([stream, stream, stream], _frames())
         assert out["run_value_target_a0"].notna().any(), (
             "the atomic xfn returned NaN everywhere -- the receival atom was hidden, so no "
@@ -426,13 +426,9 @@ class TestAtomicXfnsIsNotSilentlyDead:
         from silly_kicks.atomic.tracking.features import off_ball_run_value_xfns as atomic_xfns
 
         std_actions = _actions()
-        std = tf.off_ball_run_value_xfns(_const_xt(), home_team_id=_HOME)[0](
-            [std_actions, std_actions, std_actions], _frames()
-        )
+        std = tf.off_ball_run_value_xfns(_const_xt())[0]([std_actions, std_actions, std_actions], _frames())
         atomic_stream = TestAtomicMirrorIsNotSilentlyDead._atomic_stream()
-        atomic = atomic_xfns(_const_xt(), home_team_id=_HOME)[0](
-            [atomic_stream, atomic_stream, atomic_stream], _frames()
-        )
+        atomic = atomic_xfns(_const_xt())[0]([atomic_stream, atomic_stream, atomic_stream], _frames())
         assert float(atomic["run_value_target_a0"].iloc[0]) == pytest.approx(
             float(std["run_value_target_a0"].iloc[0]), rel=1e-6
         )
@@ -457,7 +453,7 @@ class TestGameIdDtypeMismatch:
 
     def test_runs_are_valued_under_a_cross_dtype_game_id(self):
         actions, frames = self._mismatched()
-        runs = detect_off_ball_runs(actions, frames, home_team_id=_HOME)
+        runs = detect_off_ball_runs(actions, frames)
         assert len(runs) > 0, "no runs detected - the valuation assertion would be vacuous"
 
         valued = value_off_ball_runs(runs, actions, frames, _const_xt())
@@ -469,9 +465,9 @@ class TestGameIdDtypeMismatch:
     def test_matched_and_mismatched_dtypes_agree(self):
         """The values must be IDENTICAL, not merely non-NaN."""
         a_ok, f_ok = _actions(), _frames()
-        ref = value_off_ball_runs(detect_off_ball_runs(a_ok, f_ok, home_team_id=_HOME), a_ok, f_ok, _const_xt())
+        ref = value_off_ball_runs(detect_off_ball_runs(a_ok, f_ok), a_ok, f_ok, _const_xt())
         a_bad, f_bad = self._mismatched()
-        got = value_off_ball_runs(detect_off_ball_runs(a_bad, f_bad, home_team_id=_HOME), a_bad, f_bad, _const_xt())
+        got = value_off_ball_runs(detect_off_ball_runs(a_bad, f_bad), a_bad, f_bad, _const_xt())
         np.testing.assert_allclose(
             got["run_value"].to_numpy(dtype="float64"),
             ref["run_value"].to_numpy(dtype="float64"),

@@ -13,6 +13,7 @@ import pytest
 
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking._kernels import _packing_at_actions
+from tests.tracking._goal_map_helpers import goal_map_like_home_team_id
 from tests.tracking.test_defensive_line import _make_frame_rows
 
 _T = spadlconfig.actiontype_id
@@ -55,8 +56,20 @@ def _frame(**kw):
     )
 
 
+def _run(acts, frames=None):
+    """_packing_at_actions with the map the removed home_team_id=1 implied (ADR-051 D3).
+
+    goal_map_like_home_team_id rather than resolve_defended_goals: every test below is
+    about the kernel's domain/NaN/alignment behaviour and the orientation is scaffolding, so
+    deriving the map from the fixture would silently re-decide the convention from wherever the
+    fixture parked its keeper. See tests/tracking/_goal_map_helpers.py for the two spellings.
+    """
+    frames = _frame() if frames is None else frames
+    return _packing_at_actions(acts, frames, goal_map=goal_map_like_home_team_id(frames, 1))
+
+
 def test_columns_and_completed_pass_computes():
-    out = _packing_at_actions(_acts([{}]), _frame(), home_team_id=1)
+    out = _run(_acts([{}]))
     assert list(out.columns) == _COLS
     assert out["packing_made"].iloc[0] == 2  # away 50, 60 in (40, 70]
     assert out["packing_net"].iloc[0] == pytest.approx(2.0)  # forward
@@ -65,17 +78,17 @@ def test_columns_and_completed_pass_computes():
 
 
 def test_completion_gate_failed_action_all_nan():
-    out = _packing_at_actions(_acts([{"result_id": _R["fail"]}]), _frame(), home_team_id=1)
+    out = _run(_acts([{"result_id": _R["fail"]}]))
     assert out.iloc[0].isna().all()
 
 
 def test_off_domain_type_all_nan():
-    out = _packing_at_actions(_acts([{"type_id": _T["tackle"]}]), _frame(), home_team_id=1)
+    out = _run(_acts([{"type_id": _T["tackle"]}]))
     assert out.iloc[0].isna().all()
 
 
 def test_dribble_with_real_end_is_numeric():
-    out = _packing_at_actions(_acts([{"type_id": _T["dribble"]}]), _frame(), home_team_id=1)
+    out = _run(_acts([{"type_id": _T["dribble"]}]))
     assert out["packing_made"].iloc[0] == 2
 
 
@@ -88,7 +101,7 @@ def test_degenerate_dribble_nan_but_degenerate_pass_zero():
             {"type_id": _T["pass"], "start_x": 55.0, "start_y": 30.0, "end_x": 55.0, "end_y": 30.0},
         ]
     )
-    out = _packing_at_actions(acts, _frame(), home_team_id=1)
+    out = _run(acts)
     assert out.iloc[0].isna().all()
     assert out["packing_made"].iloc[1] == 0.0
     assert out["packing_net"].iloc[1] == pytest.approx(0.0)
@@ -96,17 +109,17 @@ def test_degenerate_dribble_nan_but_degenerate_pass_zero():
 
 
 def test_nan_actor_team_all_nan():
-    out = _packing_at_actions(_acts([{"team_id": np.nan}]), _frame(), home_team_id=1)
+    out = _run(_acts([{"team_id": np.nan}]))
     assert out.iloc[0].isna().all()
 
 
 def test_non_finite_coords_all_nan():
-    out = _packing_at_actions(_acts([{"end_x": np.nan}]), _frame(), home_team_id=1)
+    out = _run(_acts([{"end_x": np.nan}]))
     assert out.iloc[0].isna().all()
 
 
 def test_unlinked_action_all_nan():
-    out = _packing_at_actions(_acts([{}]), _frame(time_seconds=500.0), home_team_id=1)
+    out = _run(_acts([{}]), _frame(time_seconds=500.0))
     assert out.iloc[0].isna().all()
 
 
@@ -114,7 +127,7 @@ def test_duplicate_action_id_slot_does_not_raise():
     """Shifted VAEP boundary slots repeat action_id (ADR-020 class)."""
     acts = _acts([{}, {"type_id": _T["tackle"]}])
     acts["action_id"] = [1, 1]
-    out = _packing_at_actions(acts, _frame(), home_team_id=1)
+    out = _run(acts)
     assert len(out) == 2
     assert out["packing_made"].iloc[0] == 2
     assert out.iloc[1].isna().all()
@@ -123,5 +136,5 @@ def test_duplicate_action_id_slot_does_not_raise():
 def test_index_alignment_preserved():
     acts = _acts([{}, {}])
     acts.index = pd.Index([30, 40])
-    out = _packing_at_actions(acts, _frame(), home_team_id=1)
+    out = _run(acts)
     assert list(out.index) == [30, 40]

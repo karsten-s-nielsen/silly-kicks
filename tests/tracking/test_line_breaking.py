@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from silly_kicks.tracking import resolve_defended_goals
 from tests.tracking.test_defensive_line import _make_frame_rows
 from tests.tracking.test_off_ball_runs import _make_action_at
 
@@ -50,7 +51,7 @@ class TestDetectLineBreaking:
             end_y=34.0,
         )
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
 
         assert len(result) == 1
         row = result.iloc[0]
@@ -78,7 +79,7 @@ class TestDetectLineBreaking:
         actions["team_id"] = pd.array([pd.NA], dtype="Int64")
         actions["player_id"] = pd.array([pd.NA], dtype="Int64")
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)  # must not raise
+        result = detect_line_breaking(actions, frames)  # must not raise
         row = result.iloc[0]
         assert pd.isna(row["line_break__ward"]), "NaN-team action must NaN-route line_break__ward"
         assert pd.isna(row["lines_broken__ward"])
@@ -108,7 +109,7 @@ class TestDetectLineBreaking:
         )
         actions["team_id"] = pd.array([1], dtype="Int64")  # Int64 action vs string frames
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         row = result.iloc[0]
         # same_id -> opponent is team '2' (3 lines ahead) -> all 3 broken.
         # raw `!=` -> opponent mis-resolved to team '1' (behind start_x=45) -> no break.
@@ -134,7 +135,7 @@ class TestDetectLineBreaking:
             end_y=34.0,
         )
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
 
         row = result.iloc[0]
         assert row["line_break__ward"] == True  # noqa: E712
@@ -159,7 +160,7 @@ class TestDetectLineBreaking:
             end_y=34.0,
         )
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
 
         row = result.iloc[0]
         assert row["line_break__ward"] == False  # noqa: E712
@@ -191,7 +192,7 @@ class TestDetectLineBreaking:
             end_y=64.0,
         )
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         row = result.iloc[0]
         if row["line_break__ward"]:
             assert row["line_breaking_type__ward"] == "around_line"
@@ -226,7 +227,6 @@ class TestDetectLineBreaking:
         result = detect_line_breaking(
             actions,
             frames,
-            home_team_id=1,
             params=LineBreakingParams(min_opponents=3),
         )
         row = result.iloc[0]
@@ -258,7 +258,6 @@ class TestDetectLineBreaking:
         result = detect_line_breaking(
             actions,
             frames,
-            home_team_id=1,
             params=LineBreakingParams(min_pass_length=3.0),
         )
         row = result.iloc[0]
@@ -297,7 +296,7 @@ class TestDetectLineBreaking:
             type_id=1,  # cross
         )
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         row = result.iloc[0]
         assert row["line_break__ward"] == False  # noqa: E712
         assert row["lines_broken__ward"] == 0
@@ -326,7 +325,7 @@ class TestDetectLineBreaking:
             end_y=34.0,
         )
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         row = result.iloc[0]
         assert row["line_break__ward"] == False  # noqa: E712
 
@@ -350,7 +349,7 @@ class TestDetectLineBreaking:
                 "type_id",
             ]
         )
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         assert len(result) == 0
 
     def test_away_team_pass_coordinate_transform(self):
@@ -389,7 +388,7 @@ class TestDetectLineBreaking:
             end_y=34.0,
         )
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         row = result.iloc[0]
         # Away pass crossing home territory should detect line breaks
         # The exact count depends on home's outfield structure, but
@@ -421,7 +420,7 @@ class TestAddLineBreakWard:
             end_y=34.0,
         )
 
-        result = add_line_break(actions, frames, home_team_id=1, method="ward")
+        result = add_line_break(actions, frames, method="ward")
         assert "line_break__ward" in result.columns
         assert "lines_broken__ward" in result.columns
         assert "line_breaking_type__ward" in result.columns
@@ -448,7 +447,7 @@ class TestAddLineBreakWard:
             end_y=34.0,
         )
 
-        result = add_line_break(actions, frames, home_team_id=1, method="threshold")
+        result = add_line_break(actions, frames, method="threshold")
         assert "line_break" in result.columns
         assert "n_attackers_behind_line" in result.columns
         assert "line_break__ward" not in result.columns
@@ -472,7 +471,7 @@ class TestAddLineBreakWard:
             end_y=34.0,
         )
 
-        result = add_line_break(actions, frames, home_team_id=1)
+        result = add_line_break(actions, frames)
         assert "line_break" in result.columns  # threshold columns
         assert "line_break__ward" not in result.columns
 
@@ -482,7 +481,7 @@ class TestLineBreakingWardXfns:
         """line_breaking_ward_xfns produces 9 columns (3 features x 3 states)."""
         from silly_kicks.tracking.features import line_breaking_ward_xfns
 
-        xfns = line_breaking_ward_xfns(home_team_id=1)
+        xfns = line_breaking_ward_xfns()
         assert len(xfns) == 1
 
         xfn = xfns[0]
@@ -492,7 +491,7 @@ class TestLineBreakingWardXfns:
         """frames=None -> NaN DataFrame with 9 correct column names."""
         from silly_kicks.tracking.features import line_breaking_ward_xfns
 
-        xfns = line_breaking_ward_xfns(home_team_id=1)
+        xfns = line_breaking_ward_xfns()
         xfn = xfns[0]
 
         dummy = pd.DataFrame(
@@ -577,7 +576,7 @@ class TestGoldenFileBackwardCompat:
         """Generate golden file if it doesn't exist (run on main before PR)."""
         from silly_kicks.tracking.features import add_line_break
 
-        result = add_line_break(self.actions, self.frames, home_team_id=1)
+        result = add_line_break(self.actions, self.frames)
         golden_cols = ["line_break", "n_attackers_behind_line"]
         golden = result[golden_cols].copy()
 
@@ -615,8 +614,8 @@ class TestCrossMethodSanity:
             end_y=34.0,
         )
 
-        ward = detect_line_breaking(actions, frames, home_team_id=1)
-        threshold = _line_break_kernel(actions, frames, home_team_id=1)
+        ward = detect_line_breaking(actions, frames)
+        threshold = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
 
         # Both should agree this pass breaks a line
         if ward.iloc[0]["lines_broken__ward"] > 0:
@@ -657,7 +656,7 @@ class TestGameIdTypeMismatch:
         # Match string game_id
         actions["game_id"] = actions["game_id"].astype(str)
 
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         row = result.iloc[0]
         assert row["line_break__ward"] == True  # noqa: E712
         assert row["lines_broken__ward"] == 3
@@ -692,7 +691,7 @@ class TestGameIdTypeMismatch:
         actions["game_id"] = "1"
 
         # Frames have int game_id=1, actions have str game_id="1"
-        result = detect_line_breaking(actions, frames, home_team_id=1)
+        result = detect_line_breaking(actions, frames)
         row = result.iloc[0]
         # Before fix: line_break__ward would be False with lines_broken=0
         assert row["line_break__ward"] == True  # noqa: E712

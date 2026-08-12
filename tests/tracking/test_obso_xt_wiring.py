@@ -49,7 +49,7 @@ class TestMutualExclusion:
 
     def test_factories_reject_both(self):
         with pytest.raises(ValueError, match="either xt= or epv_grid=, not both"):
-            F.obso_xfns(home_team_id=5, xt=_fitted_xt(), epv_grid=np.ones((68, 104)))
+            F.obso_xfns(xt=_fitted_xt(), epv_grid=np.ones((68, 104)))
 
     def test_unfitted_xt_raises(self, obso_actions, obso_frames):
         from sklearn.exceptions import NotFittedError
@@ -61,29 +61,29 @@ class TestMutualExclusion:
 class TestSyntheticWarning:
     def test_synthetic_default_warns_with_category(self, obso_actions, obso_frames):
         with pytest.warns(SyntheticEPVWarning, match="synthetic"):
-            F.add_obso(obso_actions, obso_frames, home_team_id=5)
+            F.add_obso(obso_actions, obso_frames)
 
     def test_xt_supplied_does_not_warn(self, obso_actions, obso_frames):
         with warnings.catch_warnings():
             warnings.simplefilter("error", SyntheticEPVWarning)
-            F.add_obso(obso_actions, obso_frames, home_team_id=5, xt=_fitted_xt())
+            F.add_obso(obso_actions, obso_frames, xt=_fitted_xt())
 
     def test_explicit_grid_does_not_warn(self, obso_actions, obso_frames):
         with warnings.catch_warnings():
             warnings.simplefilter("error", SyntheticEPVWarning)
-            F.add_obso(obso_actions, obso_frames, home_team_id=5, epv_grid=np.full((68, 104), 0.2))
+            F.add_obso(obso_actions, obso_frames, epv_grid=np.full((68, 104), 0.2))
 
     def test_factory_warns_at_factory_call_time(self):
         with pytest.warns(SyntheticEPVWarning):
-            F.obso_xfns(home_team_id=5)
+            F.obso_xfns()
 
     @pytest.mark.parametrize(
         "call",
         [
-            pytest.param(lambda a, f: F.add_obso(a, f, home_team_id=5), id="add_obso"),
+            pytest.param(lambda a, f: F.add_obso(a, f), id="add_obso"),
             pytest.param(lambda a, f: F.add_space_creation(a, f, home_team_id=5), id="add_space_creation"),
-            pytest.param(lambda a, f: F.obso_xfns(home_team_id=5), id="obso_xfns"),
-            pytest.param(lambda a, f: F.pausa_xfns(home_team_id=5), id="pausa_xfns"),
+            pytest.param(lambda a, f: F.obso_xfns(), id="obso_xfns"),
+            pytest.param(lambda a, f: F.pausa_xfns(), id="pausa_xfns"),
             pytest.param(lambda a, f: F.space_creation_xfns(home_team_id=5), id="space_creation_xfns"),
         ],
     )
@@ -107,8 +107,8 @@ class TestDiscriminatingRealXt:
         """Non-vacuous: the injected surface must actually move the numbers."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntheticEPVWarning)
-            syn = F.add_obso(obso_actions, obso_frames, home_team_id=5)
-        real = F.add_obso(obso_actions, obso_frames, home_team_id=5, xt=_fitted_xt())
+            syn = F.add_obso(obso_actions, obso_frames)
+        real = F.add_obso(obso_actions, obso_frames, xt=_fitted_xt())
         both = syn["obso_actual"].notna() & real["obso_actual"].notna()
         assert both.any(), "fixture produced no OBSO rows - the comparison would be vacuous"
         delta = (syn.loc[both, "obso_actual"] - real.loc[both, "obso_actual"]).abs()
@@ -131,20 +131,20 @@ class TestEpvSourceProvenance:
             kwargs["epv_grid"] = np.full((68, 104), 0.2)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntheticEPVWarning)
-            out = F.add_obso(obso_actions, obso_frames, home_team_id=5, **kwargs)
+            out = F.add_obso(obso_actions, obso_frames, **kwargs)
         valued = out["obso_actual"].notna()
         assert valued.any()
         assert (out.loc[valued, "obso_epv_source"] == expected).all()
 
     def test_dtype_is_pandas_string_not_object(self, obso_actions, obso_frames):
         """Folding the seed into the np.nan pre-seed loop would silently give object."""
-        out = F.add_obso(obso_actions, obso_frames, home_team_id=5, xt=_fitted_xt())
+        out = F.add_obso(obso_actions, obso_frames, xt=_fitted_xt())
         assert str(out["obso_epv_source"].dtype) == "string"
 
     def test_present_even_with_supplied_links(self, obso_actions, obso_frames):
         """Must NOT live inside the `links is None` provenance branch."""
         pointers, _ = link_actions_to_frames(obso_actions, obso_frames)
-        out = F.add_obso(obso_actions, obso_frames, home_team_id=5, xt=_fitted_xt(), links=pointers)
+        out = F.add_obso(obso_actions, obso_frames, xt=_fitted_xt(), links=pointers)
         valued = out["obso_actual"].notna()
         assert valued.any()
         assert (out.loc[valued, "obso_epv_source"] == "xt").all()
@@ -161,21 +161,21 @@ class TestPausaWiring:
     def test_warns_when_surface_inputs_ignored(self, obso_actions, obso_frames):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntheticEPVWarning)
-            enriched = F.add_obso(obso_actions, obso_frames, home_team_id=5)
+            enriched = F.add_obso(obso_actions, obso_frames)
         with pytest.warns(IgnoredSurfaceInputsWarning, match="ignored"):
-            F.add_pausa(enriched, obso_frames, home_team_id=5, xt=_fitted_xt())
+            F.add_pausa(enriched, obso_frames, xt=_fitted_xt())
 
     def test_no_ignored_warning_when_recomputing(self, obso_actions, obso_frames):
         """Fresh actions (no obso columns) -> inputs ARE consulted, no misuse warning."""
         with warnings.catch_warnings():
             warnings.simplefilter("error", IgnoredSurfaceInputsWarning)
-            F.add_pausa(obso_actions, obso_frames, home_team_id=5, xt=_fitted_xt())
+            F.add_pausa(obso_actions, obso_frames, xt=_fitted_xt())
 
     def test_threads_pitch_control_cache(self, obso_actions, obso_frames):
         from silly_kicks.tracking.pitch_control import PitchControlCache
 
         cache = PitchControlCache()
-        F.add_pausa(obso_actions, obso_frames, home_team_id=5, xt=_fitted_xt(), pitch_control_cache=cache)
+        F.add_pausa(obso_actions, obso_frames, xt=_fitted_xt(), pitch_control_cache=cache)
         assert len(cache) > 0
 
 

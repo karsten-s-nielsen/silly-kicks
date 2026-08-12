@@ -25,6 +25,7 @@ import silly_kicks.spadl.config as spadlconfig
 from silly_kicks.id_compat import ids_match, same_id
 
 from ._defensive_line import select_back_line_players
+from ._gk_resolve import GoalEndUnresolvedError, GoalMap
 
 _DEFAULT_ACTION_TYPES: tuple[str, ...] = (
     "pass",
@@ -84,6 +85,28 @@ class PackingParams:
             raise ValueError(f"unknown action_types: {sorted(unknown)!r}")
 
 
+def _frame_ids(frame: pd.DataFrame) -> tuple:
+    """``(game_id, period_id)`` for a single linked frame, for the goal-map lookup.
+
+    The map is keyed per (game, period, team), so a per-frame consumer has to say WHICH
+    game and period it is looking at. Taking the first row is safe here because the caller
+    contract is ONE linked frame; a multi-frame slice would be a caller error and the
+    lookup would silently answer for whichever period sorted first, so this asserts rather
+    than trusting it.
+    """
+    if not len(frame):
+        return (None, None)
+    gids = frame["game_id"].dropna().unique()
+    pids = frame["period_id"].dropna().unique()
+    if len(gids) > 1 or len(pids) > 1:
+        raise ValueError(
+            f"compute_packing_metrics expects ONE frame; got game_ids={list(gids)} "
+            f"period_ids={list(pids)}. A goal-map lookup on a mixed slice would answer for "
+            f"whichever sorted first."
+        )
+    return (gids[0] if len(gids) else None, pids[0] if len(pids) else None)
+
+
 def _direction_multiplier(dx: float, dy: float, params: PackingParams) -> float:
     theta = float(np.degrees(np.arctan2(abs(dy), dx)))
     if theta <= params.forward_max_deg:
@@ -97,7 +120,7 @@ def compute_packing_metrics(
     frame: pd.DataFrame,
     *,
     attacking_team_id: int | str,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     passer_xy: tuple[float, float],
     receiver_xy: tuple[float, float],
     params: PackingParams | None = None,
@@ -142,7 +165,19 @@ def compute_packing_metrics(
     if dx_.size == 0:
         return dict(_NAN_METRICS)
 
-    mirror = not same_id(attacking_team_id, home_team_id)
+    # Direction from the map, never from team IDENTITY (ADR-051 D3). The mirror is needed
+    # exactly when the ACTING team attacks x=0, which is what `attacked_goal` answers -- and it
+    # is a REAL lookup of the opponent's entry, never `105.0 - get(...)`, which would be wrong
+    # on a degenerate map.
+    _gid, _pid = _frame_ids(frame)
+    _attacked = goal_map.attacked_goal(_gid, _pid, attacking_team_id, allow_guess=True)
+    if _attacked is None:
+        # Explicit: `== 0.0` alone would fail OPEN, silently choosing 'no mirror'.
+        raise GoalEndUnresolvedError(
+            f"packing: goal_map does not resolve the goal attacked by {attacking_team_id!r} "
+            f"in (game={_gid!r}, period={_pid!r})."
+        )
+    mirror = _attacked == 0.0
     if mirror:
         dx_ = 105.0 - dx_
 
@@ -163,14 +198,20 @@ def compute_packing_metrics(
     if len(def_team_vals) == 0:
         gt = np.nan
     else:
-        # `defends_x0` replaced the helper's old `home_team_id` (it now takes the DIRECTION, not
-        # an identity). Packing itself is still identity-keyed -- `mirror` above is the same
-        # assumption -- so the source is unchanged and this is a spelling change only. Re-keying
-        # packing off identity is ADR-051 D3 work, not this cycle's.
+        # The DEFENDING team's own end -- `get`, not `attacked_goal`: this selects the players
+        # nearest the goal they defend. Distinct from the mirror above, which asks where the
+        # ATTACKING team is going; `packing_goal_threat` is the only emitted column that
+        # witnesses this site, which is why it is named in the entry's gate_c_must_move.
+        _def_end = goal_map.get(_gid, _pid, def_team_vals[0], allow_guess=True)
+        if _def_end is None:
+            raise GoalEndUnresolvedError(
+                f"packing: goal_map does not resolve the end defended by {def_team_vals[0]!r} "
+                f"in (game={_gid!r}, period={_pid!r})."
+            )
         back = select_back_line_players(
             frame,
             def_team_vals[0],
-            same_id(def_team_vals[0], home_team_id),
+            _def_end == 0.0,
             n=params.back_line_n,
         )
         if len(back) == 0:

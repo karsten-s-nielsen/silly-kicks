@@ -451,7 +451,7 @@ class TestAddObso:
         from silly_kicks.tracking.features import add_obso
 
         actions, frames = _make_pass_actions_and_frames()
-        result = add_obso(actions, frames, home_team_id=1)
+        result = add_obso(actions, frames)
         expected_cols = {"obso_actual", "obso_peak", "obso_optimal"}
         added = set(result.columns) - set(actions.columns)
         # Provenance columns may also be added
@@ -463,7 +463,7 @@ class TestAddObso:
         from silly_kicks.tracking.features import add_obso
 
         actions, frames = _make_pass_actions_and_frames()
-        result = add_obso(actions, frames, home_team_id=1)
+        result = add_obso(actions, frames)
         for col in ["obso_actual", "obso_peak", "obso_optimal"]:
             vals = result[col].dropna()
             if len(vals) > 0:
@@ -476,7 +476,7 @@ class TestObsoXfns:
         """obso_xfns produces 9 VAEP columns (3 features x 3 states)."""
         from silly_kicks.tracking.features import obso_xfns
 
-        xfns = obso_xfns(home_team_id=1)
+        xfns = obso_xfns()
         # Each xfn produces 3 columns (3 states via lift_to_states)
         assert len(xfns) == 3  # 3 per-Series helpers, each lifted
 
@@ -484,7 +484,7 @@ class TestObsoXfns:
         """xfns produce NaN in introspection mode (frames=None)."""
         from silly_kicks.tracking.features import obso_xfns
 
-        xfns = obso_xfns(home_team_id=1)
+        xfns = obso_xfns()
         actions = pd.DataFrame(
             {
                 "game_id": [1],

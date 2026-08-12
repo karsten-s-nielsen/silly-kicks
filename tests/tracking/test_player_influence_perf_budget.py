@@ -122,7 +122,7 @@ def test_player_influence_builds_one_pitch_control_surface(fixture_22, monkeypat
     # Patch the cache's primitive (the symbol cache.surface() resolves), not the dispatch site.
     calls = call_counter(monkeypatch, _cache, "compute_pitch_control")
 
-    result = _player_influence.compute_player_influence(frame, xt, attacking_team_id=1, home_team_id=1)
+    result = _player_influence.compute_player_influence(frame, xt, attacking_team_id=1, attacks_rtl=False)
 
     assert len(result) == 20  # 20 outfield players
     assert calls["n"] == 1, (

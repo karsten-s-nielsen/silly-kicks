@@ -8,18 +8,24 @@ grid, so every Gate A comparison is exact and the tolerance is the float-noise f
 a sized allowance.
 
 Gate A is green for all four at a MEASURED delta of exactly ``0`` -- and that is the expected
-reading, not a clean bill of health. Three of the four resolve attacking direction from
-``same_id(team, home_team_id)`` (``_defensive_line.py:73``, ``_off_ball_runs.py:375`` and
-``:397``), which spec section 2.1 records as structurally invisible to the mirror: swapping
-``home_team_id`` restores the very invariant identity-keying assumes. Gate B is the instrument
-that sees it, and it FAILS on those three -- registered as the D3 re-key targets below.
+reading, not a clean bill of health. Gate A is structurally BLIND to identity-keyed direction:
+it swaps ``home_team_id`` along with the mirror, which restores the very invariant such code
+assumes.
 
-``_defensive_line.py:73`` is the section 10.5 named risk (a public export with three consumers:
-``_packing.py:166``, ``_gk_influence.py:398`` and ``_defensive_line`` itself). Both aggregators
-that reach it -- ``add_defensive_line`` directly and ``add_line_break`` / ``add_off_ball_context``
-via ``_line_break_kernel`` -> ``compute_defensive_line`` -- carry the same Gate B marker, so a
-partial re-key that fixes one and not the others xpasses on one entry and still fails the
-others.
+**HISTORICAL, resolved in 4.80.0 (ADR-051 D3).** Three of these entries used to derive attacking
+direction from ``same_id(team, home_team_id)`` and carried a ``defect_b`` marker for it. They no
+longer do: ``compute_defensive_line`` takes a ``GoalMap``, and ``_line_break_kernel`` /
+``_off_ball_runs`` take a bool resolved from ``acting_team_attacks_rtl``. The markers were
+deleted WITH the fix -- they were strict xfails, so an XPASS fails the build and they could not
+have survived it.
+
+Gate B is consequently retired for those entries (``home_team_id`` is gone, so it skips on
+``role="unused"``) and **Gate C replaces its detection**: hold the frames fixed, swap the MAP,
+require the declared columns to move. ``add_off_ball_runs`` is the exception and keeps its Gate B
+entry deliberately -- its ``home_team_id`` reaches ``_off_ball_runs_kernel``'s signature and is
+never read (ADR-042 re-keyed the goalward test), so that entry's GREEN is the measurement that
+the parameter is dead. Declaring it ``"unused"`` would make Gate B skip and throw that evidence
+away.
 """
 
 from __future__ import annotations
@@ -61,7 +67,7 @@ def register() -> None:
     # non-vacuity anchor and a poorer defect witness -- the moving columns carry the signal.
     _entry(
         "add_defensive_line",
-        lambda a, f, h: add_defensive_line(a, f, home_team_id=h),
+        lambda a, f, h: add_defensive_line(a, f),
         {
             "defensive_line_x": "invariant",
             "back_line_high_x": "invariant",
@@ -76,7 +82,22 @@ def register() -> None:
         role="direction_only",
         non_vacuity=("defensive_line_x", "back_line_high_x", "lateral_width"),
         exempt=dict.fromkeys(_PROVENANCE, _PROVENANCE_REASON),
-        defect_b=_D3,
+        # Gate B's variable is GONE (the D3 re-key removed home_team_id), so Gate B now
+        # SKIPS on role="unused" and cannot witness the fix -- only the defect it used to
+        # catch. Gate C is the same question one variable further out: hold the frames FIXED,
+        # swap the MAP, require these columns to move. Sets are MEASURED, not guessed, and the
+        # completeness gate asserts set EQUALITY both ways -- an undeclared witness would let a
+        # partial re-key ship green.
+        call_with_map=lambda a, f, gm: add_defensive_line(a, f, goal_map=gm),
+        gate_c_must_move=(
+            "defensive_line_x",
+            "back_line_high_x",
+            "compactness_x",
+            "lateral_width",
+            "max_lateral_gap",
+        ),
+        # `back_n_count` is deliberately absent: n=4 is satisfied at BOTH ends, so it cannot
+        # move under the swap. Absent because measured dead, not because unexamined.
     )
 
     # ------------------------------------------------------------------
@@ -94,7 +115,7 @@ def register() -> None:
     # correct, which is why the nonsense leg is the strictly stronger one.
     _entry(
         "add_line_break",
-        lambda a, f, h: add_line_break(a, f, home_team_id=h),
+        lambda a, f, h: add_line_break(a, f),
         {
             "line_break": "invariant",
             "n_attackers_behind_line": "invariant",
@@ -103,7 +124,18 @@ def register() -> None:
         basis=_EXACT_BASIS,
         role="direction_only",
         non_vacuity=("line_break", "n_attackers_behind_line"),
-        defect_b=_D3,
+        # Gate B's variable is GONE (the D3 re-key removed home_team_id), so Gate B now
+        # SKIPS on role="unused" and cannot witness the fix -- only the defect it used to
+        # catch. Gate C is the same question one variable further out: hold the frames FIXED,
+        # swap the MAP, require these columns to move. Sets are MEASURED, not guessed, and the
+        # completeness gate asserts set EQUALITY both ways -- an undeclared witness would let a
+        # partial re-key ship green.
+        call_with_map=lambda a, f, gm: add_line_break(a, f, goal_map=gm),
+        # `line_break` DOES move here, which the pre-re-key proxy could not show: it fails
+        # through BRANCH CANCELLATION under a two-team home_team_id swap, not through fixture
+        # degeneracy, so that proxy never transferred to a map swap. Measured on the re-keyed
+        # code, both columns move.
+        gate_c_must_move=("line_break", "n_attackers_behind_line"),
     )
 
     # ------------------------------------------------------------------
@@ -155,7 +187,7 @@ def register() -> None:
     # off-ball-run half contributes nothing to the failure, which is the correct attribution.
     _entry(
         "add_off_ball_context",
-        lambda a, f, h: add_off_ball_context(a, f, home_team_id=h),
+        lambda a, f, h: add_off_ball_context(a, f),
         {
             "n_off_ball_runners_pre_window": "invariant",
             "max_off_ball_run_displacement_pre_window": "invariant",
@@ -168,5 +200,15 @@ def register() -> None:
         basis=_EXACT_BASIS,
         role="direction_only",
         non_vacuity=("line_break", "n_attackers_behind_line", "n_off_ball_runners_pre_window"),
-        defect_b=_D3,
+        # Gate B's variable is GONE (the D3 re-key removed home_team_id), so Gate B now
+        # SKIPS on role="unused" and cannot witness the fix -- only the defect it used to
+        # catch. Gate C is the same question one variable further out: hold the frames FIXED,
+        # swap the MAP, require these columns to move. Sets are MEASURED, not guessed, and the
+        # completeness gate asserts set EQUALITY both ways -- an undeclared witness would let a
+        # partial re-key ship green.
+        call_with_map=lambda a, f, gm: add_off_ball_context(a, f, goal_map=gm),
+        # The four off-ball columns do NOT move: they come from `_off_ball_runs_kernel`, whose
+        # direction was re-keyed onto `acting_team_attacks_rtl` by ADR-042 and never reads the
+        # map. Only the line-break half is map-dependent.
+        gate_c_must_move=("line_break", "n_attackers_behind_line"),
     )

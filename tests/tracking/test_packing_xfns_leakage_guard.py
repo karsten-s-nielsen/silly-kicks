@@ -38,8 +38,8 @@ def test_packing_transformer_name():
     import silly_kicks.atomic.tracking.features as atf
     import silly_kicks.tracking.features as tf
 
-    assert tf.packing_xfns(home_team_id=1)[0].__name__ == _FORBIDDEN_NAME
-    assert atf.packing_xfns(home_team_id=1)[0].__name__ == _FORBIDDEN_NAME
+    assert tf.packing_xfns()[0].__name__ == _FORBIDDEN_NAME
+    assert atf.packing_xfns()[0].__name__ == _FORBIDDEN_NAME
 
 
 def test_no_packing_xfns_in_any_default_list():

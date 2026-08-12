@@ -472,28 +472,50 @@ class TestAtomicFramesKwargWithTracking:
                 ),
             ]
         )
+        # ADR-051 D3 (4.80.0): direction is resolved per ACTING team, and an unresolvable one is
+        # <NA> -> the geometry refuses rather than guessing. This fixture labelled only team 100
+        # (the keeper's side), so the shooter's team 200 had no direction at all and every
+        # pre-shot column came back NaN.
+        #
+        # The labels are also now physically coherent, per the C0 precedent: team 100's keeper
+        # stands at x=104, so team 100 DEFENDS x=105 and attacks "rtl"; team 200, shooting
+        # towards that goal, attacks "ltr". The old single "ltr" on team 100 contradicted its own
+        # keeper's position and was only harmless because nothing read it.
+        _row = dict(
+            game_id=1,
+            period_id=1,
+            frame_id=2000,
+            time_seconds=2.0,
+            frame_rate=25.0,
+            z=float("nan"),
+            speed=0.5,
+            speed_source="native",
+            ball_state="alive",
+            confidence=None,
+            visibility=None,
+            source_provider="test",
+        )
         frames = pd.DataFrame(
             [
                 dict(
-                    game_id=1,
-                    period_id=1,
-                    frame_id=2000,
-                    time_seconds=2.0,
-                    frame_rate=25.0,
+                    _row,
                     player_id=999,
                     team_id=100,
                     is_ball=False,
                     is_goalkeeper=True,
                     x=104.0,
                     y=34.0,
-                    z=float("nan"),
-                    speed=0.5,
-                    speed_source="native",
-                    ball_state="alive",
+                    team_attacking_direction="rtl",
+                ),
+                dict(
+                    _row,
+                    player_id=704,
+                    team_id=200,
+                    is_ball=False,
+                    is_goalkeeper=False,
+                    x=90.0,
+                    y=34.0,
                     team_attacking_direction="ltr",
-                    confidence=None,
-                    visibility=None,
-                    source_provider="test",
                 ),
             ]
         )

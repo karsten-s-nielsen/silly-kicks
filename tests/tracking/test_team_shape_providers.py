@@ -27,8 +27,8 @@ class TestTeamShapeProviders:
     def test_add_team_shape_no_crash(self, provider_data):
         from silly_kicks.tracking.features import add_team_shape
 
-        actions, frames, home_team_id = provider_data
-        result = add_team_shape(actions, frames, home_team_id=home_team_id)
+        actions, frames, _ = provider_data
+        result = add_team_shape(actions, frames)
         assert "team_shape_centroid_x_attacking" in result.columns
         assert "team_shape_centroid_x_defending" in result.columns
         assert len(result) == len(actions)
@@ -38,8 +38,8 @@ class TestTeamShapeProviders:
     def test_team_shape_xfns_no_crash(self, provider_data):
         from silly_kicks.tracking.features import team_shape_xfns
 
-        actions, frames, home_team_id = provider_data
-        xfns = team_shape_xfns(home_team_id=home_team_id)
+        actions, frames, _ = provider_data
+        xfns = team_shape_xfns()
         xfn = xfns[0]
 
         states = [actions, actions, actions]

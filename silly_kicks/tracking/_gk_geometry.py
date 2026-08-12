@@ -158,12 +158,19 @@ def _resolve_flip(actions: pd.DataFrame, frames: pd.DataFrame, flip: np.ndarray 
     therefore costs both time AND duplicate warnings, so ``resolve_restart_geometry`` computes it
     once and threads it -- the same shape as this package's ``links=`` pre-linking optimisation.
     ``flip=None`` keeps every direct caller (and every existing test) working unchanged.
+
+    Returns an OBJECT array of ``True`` / ``False`` / ``pd.NA``, not a bool array: since 4.80.0
+    an action whose direction the frames do not resolve is ``<NA>``, and every consumer below
+    skips such a row so the tracking tier simply does not fire for it -- falling through to the
+    rule-based prior with the fallback recorded in the ``*_coord_source`` provenance column.
+    A bool array cannot carry the third state, and filling it with False would re-project
+    nothing while claiming a tracking-derived coordinate.
     """
     if flip is not None:
         return flip
     from ._action_orientation import acting_team_attacks_rtl
 
-    return acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    return acting_team_attacks_rtl(actions, frames).to_numpy(dtype=object)
 
 
 def _tracking_gk_xy(
@@ -200,6 +207,12 @@ def _tracking_gk_xy(
         if gk.empty:
             continue
         gx, gy = float(gk.iloc[0]["x"]), float(gk.iloc[0]["y"])
+        if pd.isna(flip[i]):
+            # Direction unresolved -> skip, exactly as a missing frame or absent keeper
+            # does. The row falls through to the rule-based prior and records that in
+            # its *_coord_source, rather than claiming a tracking coordinate that was
+            # never re-projected.
+            continue
         if flip[i]:  # ADR-028: frame home-LTR -> action-LTR for away-team actions
             gx, gy = FIELD_LENGTH - gx, FIELD_WIDTH - gy
         # The clamp MUST follow the re-projection: it is an own-half predicate in action-LTR coords.
@@ -277,6 +290,12 @@ def _tracking_gk_xy_detected(
         order = np.lexsort((dt > 0, np.abs(dt)))
         row = cand.iloc[order[0]]
         gx, gy = float(row["x"]), float(row["y"])
+        if pd.isna(flip[i]):
+            # Direction unresolved -> skip, exactly as a missing frame or absent keeper
+            # does. The row falls through to the rule-based prior and records that in
+            # its *_coord_source, rather than claiming a tracking coordinate that was
+            # never re-projected.
+            continue
         if flip[i]:  # ADR-028: frame home-LTR -> action-LTR for away-team actions
             gx, gy = FIELD_LENGTH - gx, FIELD_WIDTH - gy
         if clamp_goal_area and gx > _GOAL_AREA_DEPTH:
@@ -331,6 +350,12 @@ def _tracking_ball_xy(
         if fr.empty:
             continue
         bx, by = float(fr.iloc[0]["x"]), float(fr.iloc[0]["y"])
+        if pd.isna(flip[i]):
+            # Direction unresolved -> skip, exactly as a missing frame or absent keeper
+            # does. The row falls through to the rule-based prior and records that in
+            # its *_coord_source, rather than claiming a tracking coordinate that was
+            # never re-projected.
+            continue
         if flip[i]:  # ADR-028: frame home-LTR -> action-LTR for away-team actions
             bx, by = FIELD_LENGTH - bx, FIELD_WIDTH - by
         res[i] = (bx, by)

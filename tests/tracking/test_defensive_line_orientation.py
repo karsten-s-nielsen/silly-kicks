@@ -64,7 +64,7 @@ def test_away_action_defending_line_reprojected():
             ),
         ]
     )
-    out = add_defensive_line(actions, frames, home_team_id=HOME)
+    out = add_defensive_line(actions, frames)
     # Home defenders at mean x=21 in frame; re-projected to action-LTR (away attacks 105): 105-21 = 84.
     assert abs(out["defensive_line_x"].iloc[0] - 84.0) < 1e-9
     # compactness_x (a span) is invariant: max(24)-min(18)=6 in frame, unchanged.
@@ -92,6 +92,6 @@ def test_home_action_defending_line_unchanged():
             ),
         ]
     )
-    out = add_defensive_line(actions, frames, home_team_id=HOME)
+    out = add_defensive_line(actions, frames)
     # Away defenders mean x=84 in frame; home attacks 105, no flip -> stays 84.
     assert abs(out["defensive_line_x"].iloc[0] - 84.0) < 1e-9

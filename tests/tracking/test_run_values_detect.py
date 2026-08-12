@@ -164,14 +164,12 @@ def _pairs(runs: pd.DataFrame) -> set[tuple[int, int]]:
 
 class TestDetectionMatchesHandWrittenTruth:
     def test_sprint_gate_off_reproduces_the_oracle(self):
-        runs = detect_off_ball_runs(
-            _actions(), _frames(), home_team_id=_HOME, params=RunValuationParams(min_peak_speed_ms=0.0)
-        )
+        runs = detect_off_ball_runs(_actions(), _frames(), params=RunValuationParams(min_peak_speed_ms=0.0))
         assert _pairs(runs) == EXPECTED_SPRINT_OFF
 
     def test_sprint_gate_on_reproduces_the_oracle(self):
         """Discriminator: B (3.5 m/s) drops out, A and E survive."""
-        runs = detect_off_ball_runs(_actions(), _frames(), home_team_id=_HOME)
+        runs = detect_off_ball_runs(_actions(), _frames())
         assert _pairs(runs) == EXPECTED_SPRINT_ON
         assert EXPECTED_SPRINT_ON < EXPECTED_SPRINT_OFF, "the two gates must differ or the test is vacuous"
 
@@ -184,23 +182,14 @@ class TestDetectionMatchesHandWrittenTruth:
         assert counts[12] == EXPECTED_TF4_COUNTS[12]
 
     def test_dead_ball_action_emits_no_runs(self):
-        runs = detect_off_ball_runs(
-            _actions(), _frames(), home_team_id=_HOME, params=RunValuationParams(min_peak_speed_ms=0.0)
-        )
+        runs = detect_off_ball_runs(_actions(), _frames(), params=RunValuationParams(min_peak_speed_ms=0.0))
         assert 11 not in set(runs["action_id"]), "a dead-ball action must not emit runs"
-        assert (
-            len(
-                detect_off_ball_runs(_actions(), _frames(dead_at_action_11=False), home_team_id=_HOME).query(
-                    "action_id == 11"
-                )
-            )
-            > 0
-        ), "with the ball alive the same action DOES emit runs - the dead-ball assertion is not vacuous"
+        assert len(detect_off_ball_runs(_actions(), _frames(dead_at_action_11=False)).query("action_id == 11")) > 0, (
+            "with the ball alive the same action DOES emit runs - the dead-ball assertion is not vacuous"
+        )
 
     def test_measured_geometry_is_the_hand_written_geometry(self):
-        runs = detect_off_ball_runs(
-            _actions(), _frames(), home_team_id=_HOME, params=RunValuationParams(min_peak_speed_ms=0.0)
-        )
+        runs = detect_off_ball_runs(_actions(), _frames(), params=RunValuationParams(min_peak_speed_ms=0.0))
         a = _run_row(runs, 10, 101)
         assert float(a["displacement_m"]) == pytest.approx(6.0)
         assert float(a["duration_s"]) == pytest.approx(1.5)
@@ -212,7 +201,7 @@ class TestDetectionMatchesHandWrittenTruth:
 class TestActionLtrEmission:
     def test_away_run_positions_are_action_ltr(self):
         """E advances toward frame x=0, which IS forward for the away team."""
-        runs = detect_off_ball_runs(_actions(), _frames(), home_team_id=_HOME)
+        runs = detect_off_ball_runs(_actions(), _frames())
         e = _run_row(runs, 12, 202)
         assert float(e["run_start_x"]) == pytest.approx(105.0 - 60.0)
         assert float(e["run_end_x"]) == pytest.approx(105.0 - 54.0)
@@ -220,7 +209,7 @@ class TestActionLtrEmission:
         assert bool(e["toward_goal"]) is True
 
     def test_home_run_positions_are_unflipped(self):
-        runs = detect_off_ball_runs(_actions(), _frames(), home_team_id=_HOME)
+        runs = detect_off_ball_runs(_actions(), _frames())
         a = _run_row(runs, 10, 101)
         assert float(a["run_start_x"]) == pytest.approx(40.0)
         assert float(a["run_end_x"]) == pytest.approx(46.0)
@@ -231,17 +220,13 @@ class TestSpeedFallback:
     def test_all_nan_speed_falls_back_to_displacement_rate(self):
         frames = _frames()
         frames["speed"] = np.nan
-        runs = detect_off_ball_runs(
-            _actions(), frames, home_team_id=_HOME, params=RunValuationParams(min_peak_speed_ms=3.0)
-        )
+        runs = detect_off_ball_runs(_actions(), frames, params=RunValuationParams(min_peak_speed_ms=3.0))
         a = _run_row(runs, 10, 101)
         assert a["peak_speed_source"] == "displacement_rate"
         assert float(a["peak_speed_ms"]) == pytest.approx(4.0)  # 6.0 m / 1.5 s
 
     def test_measured_speed_is_preferred_when_present(self):
-        runs = detect_off_ball_runs(
-            _actions(), _frames(), home_team_id=_HOME, params=RunValuationParams(min_peak_speed_ms=0.0)
-        )
+        runs = detect_off_ball_runs(_actions(), _frames(), params=RunValuationParams(min_peak_speed_ms=0.0))
         assert set(runs["peak_speed_source"]) == {"measured"}
 
 
@@ -271,11 +256,11 @@ class TestFloorResolution:
 
 class TestEmptyInputs:
     def test_no_actions_returns_empty_with_schema(self):
-        runs = detect_off_ball_runs(_actions().iloc[:0], _frames(), home_team_id=_HOME)
+        runs = detect_off_ball_runs(_actions().iloc[:0], _frames())
         assert len(runs) == 0
         assert "run_value" not in runs.columns
         for col in ("action_id", "player_id", "run_start_x", "toward_goal", "peak_speed_source"):
             assert col in runs.columns
 
     def test_no_frames_returns_empty(self):
-        assert len(detect_off_ball_runs(_actions(), _frames().iloc[:0], home_team_id=_HOME)) == 0
+        assert len(detect_off_ball_runs(_actions(), _frames().iloc[:0])) == 0

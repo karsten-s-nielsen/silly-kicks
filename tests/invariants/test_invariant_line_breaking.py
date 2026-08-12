@@ -83,7 +83,7 @@ def line_breaking_result():
         ignore_index=True,
     )
 
-    return detect_line_breaking(actions, frames, home_team_id=1)
+    return detect_line_breaking(actions, frames)
 
 
 class TestLineBreakingInvariants:

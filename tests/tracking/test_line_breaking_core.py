@@ -30,7 +30,7 @@ def test_detect_line_breaking_characterization_unchanged():
     actions = _make_action_at(
         time_seconds=1.0, player_id=2, team_id=1, start_x=10.0, start_y=34.0, end_x=100.0, end_y=34.0
     )
-    row = detect_line_breaking(actions, frames, home_team_id=1).iloc[0]
+    row = detect_line_breaking(actions, frames).iloc[0]
     assert bool(row["line_break__ward"]) is True
     assert int(row["lines_broken__ward"]) == 3
     assert row["line_breaking_type__ward"] == "between_lines"
@@ -80,7 +80,7 @@ def test_straddle_core_and_detect_agree_on_the_same_geometry():
     actions = _make_action_at(
         time_seconds=1.0, player_id=2, team_id=1, start_x=55.0, start_y=34.0, end_x=75.0, end_y=34.0
     )
-    detected = detect_line_breaking(actions, frames, home_team_id=1).iloc[0]
+    detected = detect_line_breaking(actions, frames).iloc[0]
 
     away = frames[(~frames["is_ball"]) & (~frames["is_goalkeeper"]) & (frames["team_id"] == 2)]
     opp_x = away["x"].to_numpy(dtype="float64")

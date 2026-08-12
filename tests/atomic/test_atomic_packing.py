@@ -54,7 +54,7 @@ def test_received_pass_computes_and_numeric_columns_only():
             {"type_id": _AT["receival"], "x": 70.0, "dx": 0.0, "player_id": 51},
         ]
     )
-    out = add_packing(atoms, _frame(), home_team_id=1)
+    out = add_packing(atoms, _frame())
     assert out["packing_made"].iloc[0] == 2  # away 50, 60 in (40, 70]
     assert out["packing_made"].dtype == "Int64"
     assert out["packing_goal_threat"].dtype == "Int64"
@@ -74,27 +74,27 @@ def test_unreceived_pass_is_off_domain():
             {"type_id": _AT["interception"], "team_id": 2, "x": 70.0, "dx": 0.0, "player_id": 90},
         ]
     )
-    out = add_packing(atoms, _frame(), home_team_id=1)
+    out = add_packing(atoms, _frame())
     assert pd.isna(out["packing_made"].iloc[0])
 
 
 def test_dribble_success_is_intrinsic():
     """Dribbles are never followed by receival -- success must not require one."""
     atoms = _atoms([{"type_id": _AT["dribble"], "time_seconds": 1.0}])
-    out = add_packing(atoms, _frame(), home_team_id=1)
+    out = add_packing(atoms, _frame())
     assert out["packing_made"].iloc[0] == 2
 
 
 def test_degenerate_dribble_nan():
     atoms = _atoms([{"type_id": _AT["dribble"], "dx": 0.0, "dy": 0.0, "time_seconds": 1.0}])
-    out = add_packing(atoms, _frame(), home_team_id=1)
+    out = add_packing(atoms, _frame())
     assert pd.isna(out["packing_made"].iloc[0])
 
 
 def test_require_secured_rejected():
     atoms = _atoms([{}])
     with pytest.raises(ValueError, match="require_secured"):
-        add_packing(atoms, _frame(), home_team_id=1, params=PackingParams(require_secured=True))
+        add_packing(atoms, _frame(), params=PackingParams(require_secured=True))
 
 
 def test_output_frame_keeps_caller_type_id_and_gains_no_result_id():
@@ -106,7 +106,7 @@ def test_output_frame_keeps_caller_type_id_and_gains_no_result_id():
             {"type_id": _AT["receival"], "x": 70.0, "dx": 0.0, "player_id": 51},
         ]
     )
-    out = add_packing(atoms, _frame(), home_team_id=1)
+    out = add_packing(atoms, _frame())
     assert "result_id" not in out.columns  # atomic SPADL has none; none may appear
     assert list(out["type_id"]) == list(atoms["type_id"])  # receival atom still visible
 
@@ -120,7 +120,7 @@ def test_collapsed_corner_atom_is_in_domain():
             {"type_id": _AT["receival"], "x": 70.0, "dx": 0.0, "player_id": 51},
         ]
     )
-    out = add_packing(atoms, _frame(), home_team_id=1)
+    out = add_packing(atoms, _frame())
     assert out["packing_made"].iloc[0] == 2
 
 
@@ -135,7 +135,7 @@ def test_collapsed_freekick_pass_in_domain_but_shot_shape_stays_out():
             {"type_id": _AT["goal"], "x": 105.0, "dx": 0.0, "time_seconds": 10.5},
         ]
     )
-    out = add_packing(atoms, _frame(), home_team_id=1)
+    out = add_packing(atoms, _frame())
     assert out["packing_made"].iloc[0] == 2
     assert pd.isna(out["packing_made"].iloc[2])
 
@@ -150,7 +150,7 @@ def test_same_team_keeper_pick_up_is_a_completed_reception():
             {"type_id": _AT["keeper_pick_up"], "x": 70.0, "dx": 0.0, "player_id": 51},
         ]
     )
-    out = add_packing(back_pass, _frame(), home_team_id=1)
+    out = add_packing(back_pass, _frame())
     assert out["packing_made"].iloc[0] == 2
 
     intercepted = _atoms(
@@ -159,7 +159,7 @@ def test_same_team_keeper_pick_up_is_a_completed_reception():
             {"type_id": _AT["keeper_pick_up"], "team_id": 2, "x": 70.0, "dx": 0.0, "player_id": 90},
         ]
     )
-    out2 = add_packing(intercepted, _frame(), home_team_id=1)
+    out2 = add_packing(intercepted, _frame())
     assert pd.isna(out2["packing_made"].iloc[0])
 
 
@@ -170,9 +170,9 @@ def test_atomic_xfns_synthesizes_and_emits_nine_columns():
             {"type_id": _AT["receival"], "x": 70.0, "dx": 0.0, "player_id": 51},
         ]
     )
-    t = packing_xfns(home_team_id=1)[0]
+    t = packing_xfns()[0]
     cols = t([atoms, atoms, atoms], _frame())
     assert cols.shape == (2, 9)
     assert cols["packing_made_a0"].iloc[0] == 2
     with pytest.raises(ValueError, match="require_secured"):
-        packing_xfns(home_team_id=1, params=PackingParams(require_secured=True))
+        packing_xfns(params=PackingParams(require_secured=True))

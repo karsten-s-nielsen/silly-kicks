@@ -151,7 +151,7 @@ def _structural_pass_atomic_endpoints(actions: pd.DataFrame) -> pd.DataFrame:
     return adapted
 
 
-def add_structural_pass(actions, frames, *, home_team_id, links=None, params=None):
+def add_structural_pass(actions, frames, *, links=None, params=None):
     """Atomic-SPADL aggregator for structural-pass primitives (TF-45). Synthesizes
     end_x/end_y from x+dx / y+dy (atomic has no end_*), delegates to the standard
     aggregator, then drops the synthesized columns.
@@ -161,30 +161,30 @@ def add_structural_pass(actions, frames, *, home_team_id, links=None, params=Non
     Enrich atomic actions with the structural-pass primitive columns::
 
         from silly_kicks.atomic.tracking.features import add_structural_pass
-        enriched = add_structural_pass(atomic_actions, frames, home_team_id=1)
+        enriched = add_structural_pass(atomic_actions, frames)
         enriched[["structural_lbs", "structural_sgm", "structural_sdi"]].head()
     """
     from silly_kicks.tracking.features import add_structural_pass as _std
 
     adapted = _structural_pass_atomic_endpoints(actions)
-    result = _std(adapted, frames, home_team_id=home_team_id, links=links, params=params)
+    result = _std(adapted, frames, links=links, params=params)
     return result.drop(columns=["start_x", "start_y", "end_x", "end_y"])
 
 
-def structural_pass_xfns(*, home_team_id, params=None):
+def structural_pass_xfns(*, params=None):
     """Atomic VAEP factory: each gamestate slot has its end_x/end_y synthesized from
     x,y,dx,dy before the shared kernel runs.
 
     Examples
     --------
     >>> from silly_kicks.atomic.tracking.features import structural_pass_xfns
-    >>> xfns = structural_pass_xfns(home_team_id=1)
+    >>> xfns = structural_pass_xfns()
     >>> len(xfns)
     1
     """
     from silly_kicks.tracking.features import structural_pass_xfns as _std_xfns
 
-    inner = _std_xfns(home_team_id=home_team_id, params=params)[0]
+    inner = _std_xfns(params=params)[0]
 
     def _atomic_transformer(states, frames):
         adapted_states = [_structural_pass_atomic_endpoints(s) for s in states]
@@ -258,7 +258,7 @@ def _packing_atomic_adapter(actions: pd.DataFrame, params: PackingParams) -> pd.
     return adapted
 
 
-def add_packing(actions, frames, *, home_team_id, links=None, params=None):
+def add_packing(actions, frames, *, goal_map=None, links=None, params=None):
     """Atomic-SPADL aggregator for TF-49 packing: the THREE numeric columns only
     (packing_made / packing_net / packing_goal_threat). Synthesizes end from x+dx /
     y+dy plus a type-aware result_id (:func:`_packing_atomic_adapter`), delegates to
@@ -276,7 +276,7 @@ def add_packing(actions, frames, *, home_team_id, links=None, params=None):
     Enrich atomic actions with the packing columns::
 
         from silly_kicks.atomic.tracking.features import add_packing
-        enriched = add_packing(atomic_actions, frames, home_team_id=1)
+        enriched = add_packing(atomic_actions, frames)
         enriched[["packing_made", "packing_net", "packing_goal_threat"]].head()
     """
     from silly_kicks.tracking.features import add_packing as _std
@@ -290,7 +290,7 @@ def add_packing(actions, frames, *, home_team_id, links=None, params=None):
             "on a dropped, atom-stream secured label would be a silent semantic trap. See ADR-039."
         )
     adapted = _packing_atomic_adapter(actions, params)
-    enriched = _std(adapted, frames, home_team_id=home_team_id, links=links, params=params)
+    enriched = _std(adapted, frames, goal_map=goal_map, links=links, params=params)
     # Assemble on the CALLER's frame: the delegate ran on the adapter's synthesized
     # stream, whose type_id/result_id are mirror-internal. Row order is preserved by
     # the delegate (copy + how='left' provenance merge), so positional .array
@@ -306,7 +306,7 @@ def add_packing(actions, frames, *, home_team_id, links=None, params=None):
     return out
 
 
-def packing_xfns(*, home_team_id, params=None):
+def packing_xfns(*, goal_map=None, params=None):
     """Atomic VAEP factory for packing: each gamestate slot runs through
     :func:`_packing_atomic_adapter` (endpoint + type-aware result synthesis) before
     the shared kernel. Numeric columns only; inherits the standard factory's
@@ -315,7 +315,7 @@ def packing_xfns(*, home_team_id, params=None):
     Examples
     --------
     >>> from silly_kicks.atomic.tracking.features import packing_xfns
-    >>> xfns = packing_xfns(home_team_id=1)
+    >>> xfns = packing_xfns()
     >>> len(xfns)
     1
     """
@@ -323,7 +323,7 @@ def packing_xfns(*, home_team_id, params=None):
 
     if params is None:
         params = PackingParams()
-    inner = _std_xfns(home_team_id=home_team_id, params=params)[0]
+    inner = _std_xfns(goal_map=goal_map, params=params)[0]
 
     def _atomic_transformer(states, frames):
         adapted_states = [_packing_atomic_adapter(s, params) for s in states]
@@ -360,7 +360,7 @@ def _restore_reception_touches(actions: pd.DataFrame, adapted: pd.DataFrame) -> 
     return out
 
 
-def add_off_ball_run_values(actions, frames, xt, *, home_team_id, links=None, pitch_control_cache=None, params=None):
+def add_off_ball_run_values(actions, frames, xt, *, links=None, pitch_control_cache=None, params=None):
     """Atomic-SPADL mirror of TF-35 run valuation: the five wide columns (ADR-042).
 
     Reuses the packing mirror's adapter (:func:`_packing_atomic_adapter`) to synthesize
@@ -384,7 +384,7 @@ def add_off_ball_run_values(actions, frames, xt, *, home_team_id, links=None, pi
     Enrich atomic actions with the off-ball run-value columns::
 
         from silly_kicks.atomic.tracking.features import add_off_ball_run_values
-        enriched = add_off_ball_run_values(atomic_actions, frames, fitted_xt, home_team_id=1)
+        enriched = add_off_ball_run_values(atomic_actions, frames, fitted_xt)
         enriched[["run_value_target", "n_disruptive_runs"]].head()
     """
     from silly_kicks.tracking.features import _RUN_VALUE_COLS
@@ -396,7 +396,6 @@ def add_off_ball_run_values(actions, frames, xt, *, home_team_id, links=None, pi
         adapted,
         frames,
         xt,
-        home_team_id=home_team_id,
         links=links,
         pitch_control_cache=pitch_control_cache,
         params=params,
@@ -412,7 +411,7 @@ def add_off_ball_run_values(actions, frames, xt, *, home_team_id, links=None, pi
     return out
 
 
-def off_ball_run_value_xfns(xt, *, home_team_id, params=None, pitch_control_cache=None):
+def off_ball_run_value_xfns(xt, *, params=None, pitch_control_cache=None):
     """Atomic VAEP factory for TF-35: each gamestate slot runs through
     :func:`_packing_atomic_adapter` before the shared kernel. Inherits the standard
     factory's fitted-xt check and its opt-in / result-leakage contract (ADR-042) --
@@ -427,13 +426,13 @@ def off_ball_run_value_xfns(xt, *, home_team_id, params=None, pitch_control_cach
     Build the atomic off-ball run-value VAEP transformers::
 
         from silly_kicks.atomic.tracking.features import off_ball_run_value_xfns
-        xfns = off_ball_run_value_xfns(fitted_xt, home_team_id=1)
+        xfns = off_ball_run_value_xfns(fitted_xt)
         len(xfns)
         1
     """
     from silly_kicks.tracking.features import off_ball_run_value_xfns as _std_xfns
 
-    inner = _std_xfns(xt, home_team_id=home_team_id, params=params, pitch_control_cache=pitch_control_cache)[0]
+    inner = _std_xfns(xt, params=params, pitch_control_cache=pitch_control_cache)[0]
     adapter_params = PackingParams(action_types=("pass", "cross"))
 
     def _atomic_transformer(states, frames):
@@ -450,7 +449,7 @@ def off_ball_run_value_xfns(xt, *, home_team_id, params=None, pitch_control_cach
     return [_atomic_transformer]
 
 
-def add_xt_gk(actions, frames, xt, *, links=None, home_team_id, params=None):
+def add_xt_gk(actions, frames, xt, *, links=None, params=None):
     """Atomic-SPADL mirror of tracking.add_xt_gk (Eyestone). Synthesizes start/end from
     x,y,dx,dy (atomic has no end_*), delegates to the standard aggregator, then drops the
     synthesized columns. See silly_kicks.tracking.add_xt_gk + NOTICE.
@@ -460,17 +459,17 @@ def add_xt_gk(actions, frames, xt, *, links=None, home_team_id, params=None):
     Enrich atomic actions with the xT-GK columns::
 
         from silly_kicks.atomic.tracking.features import add_xt_gk
-        enriched = add_xt_gk(atomic_actions, frames, fitted_xt, home_team_id=1)
+        enriched = add_xt_gk(atomic_actions, frames, fitted_xt)
         enriched[["xt_gk_base", "xt_gk_rav", "xt_gk"]].head()
     """
     from silly_kicks.tracking.features import add_xt_gk as _std
 
     adapted = _structural_pass_atomic_endpoints(actions)
-    result = _std(adapted, frames, xt, links=links, home_team_id=home_team_id, params=params)
+    result = _std(adapted, frames, xt, links=links, params=params)
     return result.drop(columns=["start_x", "start_y", "end_x", "end_y"])
 
 
-def xt_gk_xfns(xt, *, home_team_id, params=None):
+def xt_gk_xfns(xt, *, params=None):
     """Atomic VAEP factory for xT-GK: each gamestate slot has its start/end synthesized
     from x,y,dx,dy before the shared kernel runs.
 
@@ -479,13 +478,13 @@ def xt_gk_xfns(xt, *, home_team_id, params=None):
     Build the atomic xT-GK VAEP transformers::
 
         from silly_kicks.atomic.tracking.features import xt_gk_xfns
-        xfns = xt_gk_xfns(fitted_xt, home_team_id=1)
+        xfns = xt_gk_xfns(fitted_xt)
         len(xfns)
         1
     """
     from silly_kicks.tracking.features import xt_gk_xfns as _std_xfns
 
-    inner = _std_xfns(xt, home_team_id=home_team_id, params=params)[0]
+    inner = _std_xfns(xt, params=params)[0]
 
     def _atomic_transformer(states, frames):
         adapted_states = [_structural_pass_atomic_endpoints(s) for s in states]

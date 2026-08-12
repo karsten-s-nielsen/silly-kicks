@@ -111,13 +111,15 @@ class UnverifiableFeatureContractWarning(UserWarning):
 
 
 class OrientationUnresolvedWarning(UserWarning):
-    """``acting_team_attacks_rtl`` could not resolve a direction and returned an all-False flip.
+    """``acting_team_attacks_rtl`` could not resolve a direction for ANY action.
 
-    An all-False flip means NO ADR-028 re-projection is applied, so every away-team action's
-    geometry silently mixes coordinate conventions: an action-LTR anchor against frame-LTR
-    positions. Measured on one canonical away action, labelled frames vs the same frames with the
-    direction column dropped -- ``nearest_defender_distance`` 7.6158 -> 19.6977,
-    ``receiver_zone_density`` 1 -> 0.
+    Since 4.80.0 the returned flip is nullable boolean and such a call yields all-``<NA>``, so
+    the unresolved state is visible in the value itself. The warning is still emitted because a
+    consumer may answer ``<NA>`` with ``.fillna(False)``, which reproduces the original defect:
+    NO ADR-028 re-projection is applied, so every away-team action's geometry silently mixes
+    coordinate conventions -- an action-LTR anchor against frame-LTR positions. Measured on one
+    canonical away action, labelled frames vs the same frames with the direction column dropped
+    -- ``nearest_defender_distance`` 7.6158 -> 19.6977, ``receiver_zone_density`` 1 -> 0.
 
     Not hypothetical: the pining loader shipped SkillCorner frames with
     ``team_attacking_direction`` null on 100% of rows, so an entire provider's action-coupled

@@ -30,18 +30,14 @@ def test_second_FAMILY_over_shared_cache_recomputes_nothing(monkeypatch, fitted_
 
     # (a) FAMILY 2 (obso) with its OWN fresh cache MUST hit the primitive (>0) -- proves it goes
     #     through cache.surface, so the zero-additional assertion below cannot pass vacuously.
-    obso_xfns(
-        home_team_id=_HTID, pitch_control_method="voronoi", xt=fitted_xt, pitch_control_cache=PitchControlCache()
-    )[0](gs, frames)
+    obso_xfns(pitch_control_method="voronoi", xt=fitted_xt, pitch_control_cache=PitchControlCache())[0](gs, frames)
     assert calls["n"] > 0, "obso must go through compute_pitch_control (else the cache-hit test is vacuous)"
 
     # (b) FAMILY 1 pre-populates a SHARED cache; FAMILY 2 over the SAME cache computes ZERO additional.
     shared = PitchControlCache()
     pitch_control_xfns("voronoi", pitch_control_cache=shared)[0](gs, frames)
     baseline = calls["n"]
-    obso_xfns(home_team_id=_HTID, pitch_control_method="voronoi", xt=fitted_xt, pitch_control_cache=shared)[0](
-        gs, frames
-    )
+    obso_xfns(pitch_control_method="voronoi", xt=fitted_xt, pitch_control_cache=shared)[0](gs, frames)
     assert calls["n"] == baseline, "family 2 recomputed surfaces instead of hitting the shared cache"
 
 
@@ -51,7 +47,5 @@ def test_shared_cache_holds_exactly_one_canonical_surface(fitted_xt):
     gs = [actions]
     shared = PitchControlCache()
     pitch_control_xfns("voronoi", pitch_control_cache=shared)[0](gs, frames)
-    obso_xfns(home_team_id=_HTID, pitch_control_method="voronoi", xt=fitted_xt, pitch_control_cache=shared)[0](
-        gs, frames
-    )
+    obso_xfns(pitch_control_method="voronoi", xt=fitted_xt, pitch_control_cache=shared)[0](gs, frames)
     assert len(shared) == 1

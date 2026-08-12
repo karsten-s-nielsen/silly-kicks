@@ -114,20 +114,28 @@ def test_oriented_gk_clusters_at_attacked_goal():
     assert gk_x[2] >= 95.0, f"away shot defending GK x={gk_x[2]}"
 
 
-def test_unoriented_control_is_bimodal():
-    """Sanity: WITHOUT orient, the away-team shot's GK is at the wrong end.
+def test_unoriented_control_is_REFUSED_not_bimodal():
+    """WITHOUT orient, the geometry is now REFUSED rather than silently mis-projected.
 
     This is the NEGATIVE control for the orientation helper, so it deliberately feeds absolute
-    (unoriented) frames. ADR-028 D2 makes that audible: asserted with ``pytest.warns`` rather
-    than filtered, so the control keeps announcing itself. If this path ever goes silent again,
-    this test fails -- which is the point, since a silent unoriented path is the defect the whole
-    seam exists to surface.
+    (unoriented) frames. Its assertion changed in 4.80.0, and the direction of the change is the
+    point: it used to assert the DEFECT -- one GK near the attacked goal and one far, i.e. a
+    bimodal, confidently wrong column -- because ADR-028 D2 could only make that audible, not
+    prevent it. ADR-051 D3's nullable contract prevents it: an unresolvable direction is ``<NA>``,
+    the shared action-context nulls the sampled positions rather than leaving them in the frame
+    convention, and every downstream kernel produces NaN by ordinary arithmetic.
+
+    The warning is still asserted, because a refusal a caller cannot explain is only half an
+    answer -- the message is what names the frames, not the consumer, as the thing to fix.
     """
     from silly_kicks.tracking import OrientationUnresolvedWarning
 
     with pytest.warns(OrientationUnresolvedWarning):
         enriched = add_pre_shot_gk_position(_actions(), _abs_frames())
     gk_x = enriched.set_index("action_id")["pre_shot_gk_x"]
-    # One near the attacked goal, one far -> bimodal (the bug).
-    assert max(gk_x[1], gk_x[2]) >= 95.0
-    assert min(gk_x[1], gk_x[2]) <= 20.0
+    assert gk_x[1:3].isna().all(), f"unoriented frames must yield NaN geometry, got {gk_x.to_dict()}"
+
+    # NON-VACUITY. All-NaN would also be what a broken fixture produces, so the control is only
+    # a control if the SAME actions and the SAME frames, merely oriented, do yield values.
+    oriented = orient_frames_to_ltr(_abs_frames(), home_team_id=100, home_team_start_left=True)
+    assert add_pre_shot_gk_position(_actions(), oriented).set_index("action_id")["pre_shot_gk_x"][1:3].notna().all()

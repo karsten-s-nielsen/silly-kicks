@@ -24,13 +24,13 @@ def test_structural_pass_real_wc2022():
     from silly_kicks.tracking.features import add_structural_pass
 
     parts = []
-    for _p, _mid, actions, frames, home in load_matches(
+    for _p, _mid, actions, frames, _home in load_matches(
         providers=["gradientsports"], max_per_provider=2, tracking_limit=None
     ):
         # Enrich on the FULL action stream, THEN filter -- pre-filtering before the
         # link hides dropped actions from the ADR-017 coverage guard, producing
         # spurious low-coverage warnings.
-        enriched = add_structural_pass(actions, frames, home_team_id=int(home))  # type: ignore[arg-type]
+        enriched = add_structural_pass(actions, frames)  # type: ignore[arg-type]
         passes = enriched[(enriched["type_id"] == 0) & (enriched["result_id"] == 1)].copy()
         passes["enters_third"] = (passes["start_x"] < 70.0) & (passes["end_x"] >= 70.0)
         parts.append(passes)

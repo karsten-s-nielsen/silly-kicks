@@ -199,7 +199,27 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #:      wide-area cross context for the model to score. A fixture inadequacy, now recorded instead
 #:      of hidden behind an empty block. It is consequently a NEW member of
 #:      `columns_exercised_on_no_roster` -- the only one this cycle adds.
-NOT_EXERCISED_BUDGET = 45
+#:
+#: RAISED 45 -> 49 by ADR-051 D3 (4.80.0), and this rise is a REAL loss of comparison, honestly
+#: recorded rather than engineered away.
+#:
+#:   4  add_packing.{packing_made,packing_net,packing_goal_threat,packing_secured} under
+#:      `gk_absent` ONLY. The re-key took packing's direction from team IDENTITY (which always
+#:      answers) to the `GoalMap` (which can decline), and `gk_absent` is the one roster with no
+#:      keeper at EITHER end, so no team's defended goal resolves and ADR-055's edge policy emits
+#:      NaN. Previously these read `identical` -- a number produced by guessing a side, which is
+#:      precisely the defect the re-key removes, so the old reading was worth LESS than this one.
+#:      Narrowly scoped, and that is checked rather than assumed: `defender_absent` and
+#:      `gk_one_end` still observe `identical` on all five columns, because one keeper anywhere
+#:      is enough to resolve the map. `packing_receiver_player_id` also stays `identical` under
+#:      `gk_absent` -- it is event-derived and never consults the map, which is the internal
+#:      consistency check that this is a GEOMETRY refusal and not the aggregator falling over.
+#:
+#:      Surfaced by the audit only after a genuine bug was fixed: the refusal used to escape as
+#:      `KeyError: 'line_x'` (observation `raises_a`), because `add_packing`'s
+#:      `GoalEndUnresolvedError` fallback built the three EMITTED columns and not the internal
+#:      one the event-only assembly reads immediately afterwards.
+NOT_EXERCISED_BUDGET = 49
 
 
 def _entry(

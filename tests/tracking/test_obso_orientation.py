@@ -135,7 +135,7 @@ class TestEpvDirection:
         epv = np.zeros((68, 104))
         epv[:, col_lo:col_hi] = 1.0
         actions = _away_actions().iloc[[0]].reset_index(drop=True)
-        out = F.add_obso(actions, _away_control_at_low_x(), home_team_id=_HOME, epv_grid=epv)
+        out = F.add_obso(actions, _away_control_at_low_x(), epv_grid=epv)
         return float(out["obso_optimal"].iloc[0])
 
     def test_away_epv_is_mirrored_into_frame_orientation(self):
@@ -177,7 +177,7 @@ class TestEpvIsReflectedOnBothAxes:
         away_out = frames["team_id"].eq(_AWAY) & ~frames["is_ball"].astype(bool) & ~frames["is_goalkeeper"].astype(bool)
         moved = frames.copy()
         moved.loc[away_out, "y"] = 48.0
-        out = F.add_obso(actions, moved, home_team_id=_HOME, epv_grid=epv)
+        out = F.add_obso(actions, moved, epv_grid=epv)
         return float(out["obso_optimal"].iloc[0])
 
     def test_away_epv_is_mirrored_on_the_y_axis_too(self):
@@ -210,8 +210,8 @@ class TestHomeUnaffected:
         frames = _away_frames()
         all_ltr = frames.assign(team_attacking_direction="ltr")
 
-        out = F.add_obso(actions, frames, home_team_id=_HOME)
-        ref = F.add_obso(actions, all_ltr, home_team_id=_HOME)
+        out = F.add_obso(actions, frames)
+        ref = F.add_obso(actions, all_ltr)
         a = out["obso_actual"].to_numpy(dtype=float)
         b = ref["obso_actual"].to_numpy(dtype=float)
         assert np.isfinite(a).any(), "no OBSO values - the comparison is vacuous"
@@ -243,8 +243,8 @@ class TestTargetReprojection:
         moved.loc[away_out, "x"] = 15.0
         moved.loc[away_out, "y"] = 48.0
 
-        near = F.add_obso(self._actions_to(90.0, 20.0), moved, home_team_id=_HOME)
-        far = F.add_obso(self._actions_to(15.0, 48.0), moved, home_team_id=_HOME)
+        near = F.add_obso(self._actions_to(90.0, 20.0), moved)
+        far = F.add_obso(self._actions_to(15.0, 48.0), moved)
         near_v = float(near["obso_actual"].iloc[0])
         far_v = float(far["obso_actual"].iloc[0])
 

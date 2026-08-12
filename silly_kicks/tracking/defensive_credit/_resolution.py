@@ -50,7 +50,18 @@ def resolve_responsible_defenders(
     """
     fr = frames[frames["frame_id"] == frame_id] if frame_id is not None else frames
     if flip is None:
-        flip = bool(acting_team_attacks_rtl(actions, frames).iloc[0])
+        _resolved = acting_team_attacks_rtl(actions, frames).iloc[0]
+        if pd.isna(_resolved):
+            # Documented unit-test convenience path. The production caller (_orchestration)
+            # decides this policy for itself and never reaches here, so refusing is safe and
+            # says the useful thing: these frames cannot orient this action, pass `flip=`
+            # explicitly if the test means to fix a direction.
+            raise ValueError(
+                "defensive_credit: the acting team's attacking direction does not resolve from "
+                "these frames, so `flip` cannot be derived. Pass `flip=` explicitly, or orient "
+                "the frames (tracking.orient_frames_to_ltr)."
+            )
+        flip = bool(_resolved)
 
     if mode == "lane_blocker":
         return _lane_blocker(fr, acting_team_id, flip, anchor_x, anchor_y, params)

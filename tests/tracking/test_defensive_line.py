@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from silly_kicks.tracking import resolve_defended_goals
+
 
 def _make_frame_rows(
     *,
@@ -139,7 +141,7 @@ class TestFixedN4:
             away_outfield_xs=[95.0, 93.0, 94.0, 92.0, 60.0, 50.0, 45.0, 40.0, 35.0, 30.0],
             away_outfield_ys=[20.0, 25.0, 40.0, 48.0, 34.0, 20.0, 30.0, 40.0, 50.0, 60.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
 
         # Home team row
         home = result[result["team_id"] == 1].iloc[0]
@@ -162,7 +164,7 @@ class TestFixedN4:
             away_outfield_xs=[95.0, 93.0, 94.0, 92.0, 50.0],
             away_outfield_ys=[20.0, 25.0, 40.0, 48.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         teams = result["team_id"].unique()
         assert set(teams) == {1, 2}
 
@@ -176,7 +178,7 @@ class TestFixedN4:
             away_outfield_xs=[95.0, 93.0, 94.0, 92.0, 50.0],
             away_outfield_ys=[20.0, 25.0, 40.0, 48.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         away = result[result["team_id"] == 2].iloc[0]
         # Away defends x=105; back 4 (highest x): 95, 94, 93, 92
         assert away["defensive_line_x"] == pytest.approx(93.5)
@@ -196,7 +198,7 @@ class TestFixedN3N5:
             away_outfield_xs=[95.0, 93.0, 91.0, 60.0, 50.0],
             away_outfield_ys=[20.0, 34.0, 48.0, 34.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=3)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=3)
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 3
         assert home["defensive_line_x"] == pytest.approx(12.0)  # mean(10,12,14)
@@ -210,7 +212,7 @@ class TestFixedN3N5:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0, 87.0, 50.0, 45.0, 40.0, 35.0, 30.0],
             away_outfield_ys=[10.0, 20.0, 30.0, 40.0, 50.0, 34.0, 34.0, 34.0, 34.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=5)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=5)
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 5
         assert home["defensive_line_x"] == pytest.approx(14.0)  # mean(10,12,14,16,18)
@@ -226,7 +228,7 @@ class TestEdgeCases:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0],
             away_outfield_ys=[20.0, 30.0, 40.0, 50.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         home = result[result["team_id"] == 1].iloc[0]
         assert pd.isna(home["defensive_line_x"])
         assert pd.isna(home["back_n_count"])
@@ -243,7 +245,7 @@ class TestEdgeCases:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0],
             away_outfield_ys=[20.0, 30.0, 40.0, 50.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 3  # clamped
 
@@ -258,7 +260,7 @@ class TestEdgeCases:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0, 50.0],
             away_outfield_ys=[20.0, 25.0, 40.0, 48.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         home = result[result["team_id"] == 1].iloc[0]
         # Back 4 should be 10,12,14,16 -- NOT include GK at x=2
         assert home["defensive_line_x"] == pytest.approx(13.0)
@@ -272,7 +274,7 @@ class TestEdgeCases:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0, 50.0],
             away_outfield_ys=[20.0, 25.0, 40.0, 48.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         home = result[result["team_id"] == 1].iloc[0]
         # Only 4 valid outfield (NaN excluded); n=4 takes all 4: 10,12,14,50
         assert home["back_n_count"] == 4
@@ -297,7 +299,7 @@ class TestEdgeCases:
                 "team_attacking_direction",
             ]
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         assert len(result) == 0
 
     def test_invalid_n_raises(self):
@@ -310,9 +312,9 @@ class TestEdgeCases:
             away_outfield_ys=[20.0, 25.0, 40.0, 48.0],
         )
         with pytest.raises(ValueError, match="n must be"):
-            compute_defensive_line(frames, home_team_id=1, n=2)
+            compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=2)
         with pytest.raises(ValueError, match="n must be"):
-            compute_defensive_line(frames, home_team_id=1, n=6)
+            compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=6)
 
     def test_invalid_adaptive_max_n_raises(self):
         from silly_kicks.tracking._defensive_line import compute_defensive_line
@@ -324,7 +326,7 @@ class TestEdgeCases:
             away_outfield_ys=[20.0, 25.0, 40.0, 48.0],
         )
         with pytest.raises(ValueError, match="adaptive_max_n"):
-            compute_defensive_line(frames, home_team_id=1, n="adaptive", adaptive_max_n=10)
+            compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n="adaptive", adaptive_max_n=10)
 
     def test_ltr_guard_raises(self):
         from silly_kicks.tracking._defensive_line import compute_defensive_line
@@ -337,7 +339,7 @@ class TestEdgeCases:
         )
         frames["team_attacking_direction"] = "rtl"
         with pytest.raises(ValueError, match="period-normalized"):
-            compute_defensive_line(frames, home_team_id=1, n=4)
+            compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
 
     def test_ltr_guard_allows_nan(self):
         from silly_kicks.tracking._defensive_line import compute_defensive_line
@@ -350,7 +352,7 @@ class TestEdgeCases:
         )
         frames["team_attacking_direction"] = None  # all NaN
         # Should not raise
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         assert len(result) > 0
 
 
@@ -365,7 +367,7 @@ class TestAdaptive:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0, 50.0, 48.0, 40.0, 35.0, 30.0, 25.0],
             away_outfield_ys=[15.0, 25.0, 40.0, 50.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n="adaptive")
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n="adaptive")
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 4
 
@@ -379,7 +381,7 @@ class TestAdaptive:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0, 87.0, 50.0, 45.0, 40.0, 35.0, 30.0],
             away_outfield_ys=[10.0, 20.0, 30.0, 40.0, 50.0, 34.0, 34.0, 34.0, 34.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n="adaptive")
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n="adaptive")
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 5
 
@@ -396,7 +398,7 @@ class TestAdaptive:
             away_outfield_xs=[95.0, 93.0, 91.0, 70.0, 65.0, 50.0, 45.0, 40.0, 35.0, 30.0],
             away_outfield_ys=[20.0, 34.0, 48.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0, 34.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n="adaptive")
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n="adaptive")
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 3
 
@@ -411,7 +413,7 @@ class TestAdaptive:
             away_outfield_xs=[95.0, 90.0, 85.0, 80.0, 75.0, 70.0, 65.0, 60.0, 55.0, 50.0],
             away_outfield_ys=[20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 55.0, 60.0, 65.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n="adaptive")
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n="adaptive")
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 4
 
@@ -425,7 +427,7 @@ class TestAdaptive:
             away_outfield_xs=[80.0] * 10,
             away_outfield_ys=[5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n="adaptive")
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n="adaptive")
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 4
 
@@ -439,7 +441,7 @@ class TestAdaptive:
             away_outfield_xs=[95.0, 85.0, 75.0],
             away_outfield_ys=[20.0, 34.0, 48.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n="adaptive")
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n="adaptive")
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 3
 
@@ -453,7 +455,7 @@ class TestAdaptive:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0],
             away_outfield_ys=[20.0, 30.0, 40.0, 50.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n="adaptive")
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n="adaptive")
         home = result[result["team_id"] == 1].iloc[0]
         assert home["back_n_count"] == 4
 
@@ -468,7 +470,7 @@ class TestMultiGame:
             away_outfield_xs=[95.0, 93.0, 91.0, 89.0],
             away_outfield_ys=[20.0, 30.0, 40.0, 50.0],
         )
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         assert "game_id" in result.columns
 
     def test_multi_game_no_collision(self):
@@ -489,7 +491,7 @@ class TestMultiGame:
         )
         f2["game_id"] = 2  # different game, same period_id=1, frame_id=1
         frames = pd.concat([f1, f2], ignore_index=True)
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
 
         # Should have 4 rows: 2 games x 2 teams
         assert len(result) == 4
@@ -521,7 +523,7 @@ class TestMultiPeriod:
             frame_id=1,
         )
         frames = pd.concat([f1, f2], ignore_index=True)
-        result = compute_defensive_line(frames, home_team_id=1, n=4)
+        result = compute_defensive_line(frames, goal_map=resolve_defended_goals(frames), n=4)
         # Period 1 home line
         p1_home = result[(result["period_id"] == 1) & (result["team_id"] == 1)].iloc[0]
         assert p1_home["defensive_line_x"] == pytest.approx(13.0)

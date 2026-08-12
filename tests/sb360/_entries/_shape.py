@@ -127,11 +127,30 @@ _entry(
     },
     visibility={
         "gk_absent": {
-            "packing_made": AxisVerdict("identical", "works"),
-            "packing_net": AxisVerdict("identical", "works"),
-            "packing_goal_threat": AxisVerdict("identical", "works"),
+            # ADR-051 D3 (4.80.0). These four read `identical` until the re-key, because packing
+            # took direction from team IDENTITY, which always answers. It now takes the GoalMap,
+            # which DECLINES: `gk_absent` is the only roster with no keeper at either end, so no
+            # team's defended goal resolves and ADR-055's edge policy emits NaN in both legs.
+            # `not_exercised` because the vocabulary admits nothing else from `no_signal` -- but
+            # the collapse IS the finding, and the lost comparison was previously a number
+            # produced by guessing a side.
+            **{
+                col: AxisVerdict(
+                    "no_signal",
+                    "not_exercised",
+                    rationale=(
+                        "The gk_absent roster has no keeper at EITHER end, so resolve_defended_goals "
+                        "resolves no team and compute_packing_metrics raises GoalEndUnresolvedError; "
+                        "add_packing catches it at the edge and emits NaN in BOTH legs (ADR-055 rule 3). "
+                        "Scoped, not blanket: defender_absent and gk_one_end still observe 'identical' on "
+                        "all five columns, so one keeper anywhere suffices. [measured cause=n/a]"
+                    ),
+                )
+                for col in ("packing_made", "packing_net", "packing_goal_threat", "packing_secured")
+            },
+            # Event-derived, never consults the goal map -- which is what makes the four above a
+            # GEOMETRY refusal rather than the aggregator failing.
             "packing_receiver_player_id": AxisVerdict("identical", "works"),
-            "packing_secured": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
             "packing_made": AxisVerdict("identical", "works"),

@@ -214,12 +214,19 @@ def test_partial_resolution_does_not_warn():
 
     ADR-027 NaN-team rows (GS null-actor duels/fouls) legitimately never resolve. Warning on a
     partial miss would fire on healthy Gradient Sports data every time.
+
+    The unresolvable action is ``pd.NA``, not ``False`` (4.80.0). This is the whole contract in
+    two rows: team 1 resolves to a real ``True``, team 999 appears in no frame and resolves to
+    nothing. Under the old ``.fillna(False)`` the second row was indistinguishable from a team
+    that genuinely attacks left-to-right, which is why 21 consumers inherited a guess.
     """
     a = pd.concat([_actions(), _actions().assign(action_id=2, team_id=999)], ignore_index=True)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         flip = acting_team_attacks_rtl(a, _frames())
-    assert flip.to_numpy().tolist() == [True, False]
+    assert flip.dtype == "boolean"
+    assert bool(flip.iloc[0])  # team 1 IS in the frames, attacking rtl -- a resolved True
+    assert pd.isna(flip.iloc[1])  # team 999 is in no frame -- unknown, NOT False
 
 
 def test_period_five_shootout_is_exempt():

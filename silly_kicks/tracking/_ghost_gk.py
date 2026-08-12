@@ -314,12 +314,21 @@ GHOST_GK_UNLINKED = "unlinked"
 #: the wrong cause AND pointed at the wrong remedy (get keeper detection, rather than get frames
 #: whose keeper positions resolve an end).
 GHOST_GK_GOAL_END_UNRESOLVED = "goal_end_unresolved"
+#: The ghost was computed, but the ACTING team's attacking direction does not resolve from the
+#: frames, so the row cannot be emitted in action-LTR (4.80.0). Distinct from
+#: ``goal_end_unresolved``, which is about the DEFENDING keeper's end: that one says the model's
+#: input frame does not exist, this one says the output frame does not. They also separate on
+#: evidence -- the goal map is derived from keeper POSITIONS, the acting direction from the
+#: frames' own ``team_attacking_direction`` labels -- so either can resolve while the other does
+#: not, and collapsing them would point a reader at the wrong remedy.
+GHOST_GK_DIRECTION_UNRESOLVED = "direction_unresolved"
 GHOST_GK_SOURCE_VALUES: tuple[str, ...] = (
     GHOST_GK_COMPUTED,
     GHOST_GK_VELOCITY_UNAVAILABLE,
     GHOST_GK_NO_KEEPER,
     GHOST_GK_UNLINKED,
     GHOST_GK_GOAL_END_UNRESOLVED,
+    GHOST_GK_DIRECTION_UNRESOLVED,
 )
 
 

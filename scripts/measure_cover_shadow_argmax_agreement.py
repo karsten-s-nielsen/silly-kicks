@@ -136,7 +136,16 @@ def measure_match(actions, frames, home_team_id, xt, *, match_id: str) -> list[d
     # Reproject the PASSER into frame coords, not the frame into action-LTR: everything downstream
     # of this tuple is frame-convention, and the one place that steps out (the xT lookup at
     # `_cover_shadows.py:1164`) already reprojects itself. Computed ONCE per match.
-    flip = acting_team_attacks_rtl(actions, frames).to_numpy(dtype=bool)
+    # ADR-051 D3 (4.80.0): the helper returns a NULLABLE boolean -- <NA> where the frames resolve
+    # no direction -- so a consumer has to say what it wants rather than inherit a guess.
+    #
+    # `.fillna(False)` here, deliberately and with the reason WRITTEN, per the amendment's rule.
+    # This is a measurement driver, not a serving path: on an unoriented frame set the honest
+    # answer is "no reprojection was applied", which is exactly False, and the helper has already
+    # emitted `OrientationUnresolvedWarning` so the condition is visible rather than silent.
+    # Refusing the row instead would silently shrink the denominator of an AGREEMENT rate, which
+    # is the ADR-042 failure mode (a coverage artefact reading as a measurement).
+    flip = acting_team_attacks_rtl(actions, frames).fillna(False).to_numpy(dtype=bool)
 
     records: list[dict] = []
     for j, (_idx, row) in enumerate(actions.iterrows()):

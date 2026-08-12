@@ -118,7 +118,7 @@ def register() -> None:
     # ------------------------------------------------------------------
     _entry(
         "add_obso",
-        lambda a, f, h: add_obso(a, f, home_team_id=h, xt=gate_xt()),
+        lambda a, f, h: add_obso(a, f, xt=gate_xt()),
         {
             "obso_actual": "invariant",
             "obso_peak": "invariant",
@@ -137,7 +137,7 @@ def register() -> None:
 
     _entry(
         "add_pausa",
-        lambda a, f, h: add_pausa(a, f, home_team_id=h, xt=gate_xt()),
+        lambda a, f, h: add_pausa(a, f, xt=gate_xt()),
         {
             # add_pausa emits the OBSO block as well as its own three columns.
             "obso_actual": "invariant",

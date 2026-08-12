@@ -84,7 +84,7 @@ class TestComputePrimitive:
         out = compute_structural_pass_metrics(
             self._frame(),
             attacking_team_id=1,
-            home_team_id=1,
+            attacks_rtl=False,
             passer_xy=(40.0, 34.0),
             receiver_xy=(70.0, 34.0),
         )
@@ -96,7 +96,7 @@ class TestComputePrimitive:
         out = compute_structural_pass_metrics(
             self._frame(),
             attacking_team_id=1,
-            home_team_id=1,
+            attacks_rtl=False,
             passer_xy=(40.0, 34.0),
             receiver_xy=(70.0, 34.0),
         )
@@ -112,7 +112,7 @@ class TestComputePrimitive:
         out = compute_structural_pass_metrics(
             frame,
             attacking_team_id=2,
-            home_team_id=1,
+            attacks_rtl=True,
             passer_xy=(40.0, 34.0),
             receiver_xy=(70.0, 34.0),
         )
@@ -130,7 +130,7 @@ class TestComputePrimitive:
         out = compute_structural_pass_metrics(
             frame,
             attacking_team_id=1,
-            home_team_id=1,
+            attacks_rtl=False,
             passer_xy=(40.0, 34.0),
             receiver_xy=(70.0, 34.0),
         )
@@ -167,7 +167,7 @@ class TestKernel:
     def test_batch_aligns_and_computes(self):
         from silly_kicks.tracking._kernels import _structural_pass_at_actions
 
-        out = _structural_pass_at_actions(_actions(), self._frame(), home_team_id=1)
+        out = _structural_pass_at_actions(_actions(), self._frame())
         assert list(out.columns) == ["structural_lbs", "structural_sgm", "structural_sdi"]
         assert out["structural_lbs"].iloc[0] == 2
         assert len(out) == 2
@@ -182,7 +182,7 @@ class TestKernel:
             away_outfield_ys=[34.0, 20.0, 34.0, 34.0],
             time_seconds=500.0,
         )
-        out = _structural_pass_at_actions(_actions(), frame, home_team_id=1)
+        out = _structural_pass_at_actions(_actions(), frame)
         assert pd.isna(out["structural_lbs"].iloc[0])
 
     def test_duplicate_action_id_in_slot_does_not_raise(self):
@@ -190,7 +190,7 @@ class TestKernel:
 
         slot = _actions()
         slot["action_id"] = [1, 1]  # duplicate, as in a shifted boundary slot
-        out = _structural_pass_at_actions(slot, self._frame(), home_team_id=1)
+        out = _structural_pass_at_actions(slot, self._frame())
         assert len(out) == 2
         assert out["structural_lbs"].iloc[0] == 2  # forward pass row resolved correctly
 
@@ -205,7 +205,7 @@ class TestKernel:
             away_outfield_xs=[50.0, 60.0, 30.0, 80.0],
             away_outfield_ys=[34.0, 20.0, 34.0, 34.0],
         )
-        out = _structural_pass_at_actions(_actions(team_id="H"), frame, home_team_id="H")  # type: ignore[arg-type]
+        out = _structural_pass_at_actions(_actions(team_id="H"), frame)  # type: ignore[arg-type]
         assert out["structural_lbs"].iloc[0] == 2
 
 
@@ -277,7 +277,7 @@ class TestAggregator:
     def test_appends_three_namespaced_columns(self):
         from silly_kicks.tracking.features import add_structural_pass
 
-        res = add_structural_pass(_actions(), self._frame(), home_team_id=1)
+        res = add_structural_pass(_actions(), self._frame())
         for c in ("structural_lbs", "structural_sgm", "structural_sdi"):
             assert c in res.columns
         assert res["structural_lbs"].iloc[0] == 2
@@ -288,7 +288,7 @@ class TestAggregator:
 
         acts = _actions()
         acts.loc[0, "type_id"] = 11  # shot
-        res = add_structural_pass(acts, self._frame(), home_team_id=1)
+        res = add_structural_pass(acts, self._frame())
         assert pd.isna(res["structural_lbs"].iloc[0])
 
     def test_links_path_equals_internal(self):
@@ -296,17 +296,17 @@ class TestAggregator:
         from silly_kicks.tracking.utils import link_actions_to_frames
 
         acts, frame = _actions(), self._frame()
-        a = add_structural_pass(acts, frame, home_team_id=1)
+        a = add_structural_pass(acts, frame)
         links, _ = link_actions_to_frames(acts, frame)
-        b = add_structural_pass(acts, frame, home_team_id=1, links=links)
+        b = add_structural_pass(acts, frame, links=links)
         pd.testing.assert_series_equal(a["structural_sgm"], b["structural_sgm"])
 
     def test_provenance_present_and_unsuffixed_on_rechain(self):
         from silly_kicks.tracking.features import add_structural_pass
 
         acts, frame = _actions(), self._frame()
-        once = add_structural_pass(acts, frame, home_team_id=1)
-        twice = add_structural_pass(once, frame, home_team_id=1)
+        once = add_structural_pass(acts, frame)
+        twice = add_structural_pass(once, frame)
         assert "frame_id" in twice.columns
         assert "frame_id_x" not in twice.columns and "frame_id_y" not in twice.columns
 
@@ -323,7 +323,7 @@ class TestXfns:
     def test_emits_namespaced_per_slot_columns(self):
         from silly_kicks.tracking.features import structural_pass_xfns
 
-        xfns = structural_pass_xfns(home_team_id=1)
+        xfns = structural_pass_xfns()
         assert len(xfns) == 1
         transformer = xfns[0]
         assert getattr(transformer, "_frame_aware", False) is True
@@ -334,7 +334,7 @@ class TestXfns:
     def test_frames_none_guard(self):
         from silly_kicks.tracking.features import structural_pass_xfns
 
-        transformer = structural_pass_xfns(home_team_id=1)[0]
+        transformer = structural_pass_xfns()[0]
         cols = transformer([_actions(), _actions(), _actions()], None)
         assert cols["structural_lbs_a0"].isna().all()
 
@@ -344,7 +344,7 @@ class TestXfns:
 
         states = gamestates(_actions(), nb_prev_actions=3)
         assert states[1]["action_id"].duplicated().any()  # precondition: dup exists
-        transformer = structural_pass_xfns(home_team_id=1)[0]
+        transformer = structural_pass_xfns()[0]
         cols = transformer(states, self._frame())  # must not raise
         assert "structural_lbs_a0" in cols.columns
 
@@ -362,7 +362,7 @@ class TestAtomicMirror:
         from silly_kicks.atomic.tracking.features import add_structural_pass as atom
         from silly_kicks.tracking.features import add_structural_pass as std
 
-        std_res = std(_actions(), self._frame(), home_team_id=1)  # start=(40,34) end=(70,34)
+        std_res = std(_actions(), self._frame())  # start=(40,34) end=(70,34)
         atom_acts = pd.DataFrame(
             {
                 "game_id": [1, 1],
@@ -378,7 +378,7 @@ class TestAtomicMirror:
                 "type_id": [0, 0],
             }
         )
-        atom_res = atom(atom_acts, self._frame(), home_team_id=1)
+        atom_res = atom(atom_acts, self._frame())
         assert atom_res["structural_lbs"].iloc[0] == std_res["structural_lbs"].iloc[0] == 2
 
     def test_atomic_xfns_synthesizes_endpoints(self):
@@ -399,6 +399,6 @@ class TestAtomicMirror:
                 "type_id": [0],
             }
         )
-        t = structural_pass_xfns(home_team_id=1)[0]
+        t = structural_pass_xfns()[0]
         cols = t([atom_state, atom_state, atom_state], self._frame())
         assert cols["structural_lbs_a0"].iloc[0] == 2

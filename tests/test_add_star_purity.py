@@ -270,7 +270,11 @@ def _xtf_invoke(fn, **kw):
 
 
 def _xtf_map_invoke(fn, **kw):
-    """ADR-055: the gk_influence / cover_shadow pair take `goal_map`, not `home_team_id`.
+    """Aggregators taking a positional `xt` and NO `home_team_id`.
+
+    ADR-055 put the gk_influence / cover_shadow pair here (they take `goal_map`); ADR-051 D3
+    (4.80.0) added `add_player_influence` and its atomic mirror, which take no map either and
+    resolve direction through `acting_team_attacks_rtl`.
 
     `goal_map` omitted so the aggregator builds its own from `frames` -- the production default
     path, and the one whose purity actually matters here: a caller-supplied map is the caller's
@@ -397,7 +401,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     "tracking:add_defensive_credit": _one(_dc_inputs, _dc_invoke),
-    "tracking:add_defensive_line": _one(_std_inputs, _std_invoke(F.add_defensive_line, home_team_id=5, n=4)),
+    "tracking:add_defensive_line": _one(_std_inputs, _std_invoke(F.add_defensive_line, n=4)),
     "tracking:add_elastic_sync": _one(_std_inputs, _std_invoke(F.add_elastic_sync)),
     # add_ghost_gk branches on `"ghost_gk_x" in frames.columns` (precompute short-circuit aliasing frames)
     # -> a variant per branch, incl. the alias path.
@@ -420,7 +424,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         lambda: list(_gs_jersey_inputs()),
         lambda i: tracking.add_gradientsports_player_ids(i[0], i[1], home_team_id=5, away_team_id=6)[0],
     ),
-    "tracking:add_line_break": _one(_std_inputs, _std_invoke(F.add_line_break, home_team_id=5)),
+    "tracking:add_line_break": _one(_std_inputs, _std_invoke(F.add_line_break)),
     # Two variants: ADR-033 requires both branches of the new xt=/epv_grid= input mode
     # (ADR-041) -- the synthetic-default path and the injected-xT path build the EPV
     # grid differently and write a different provenance label.
@@ -428,7 +432,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ("default", _std_inputs, _std_invoke(F.add_obso)),
         ("xt_supplied", _xtf_inputs, lambda i: F.add_obso(i[0], i[1], xt=i[2])),
     ],
-    "tracking:add_off_ball_context": _one(_std_inputs, _std_invoke(F.add_off_ball_context, home_team_id=5)),
+    "tracking:add_off_ball_context": _one(_std_inputs, _std_invoke(F.add_off_ball_context)),
     "tracking:add_off_ball_runs": _one(_std_inputs, _std_invoke(F.add_off_ball_runs, home_team_id=5)),
     # add_packing branches on params.require_secured (gates its OWN kernel-owned columns,
     # never caller inputs) -- a non-default-params variant still pins the params path.
@@ -437,21 +441,19 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     # pitch_control_cache variant additionally hands in a mutable object the helper
     # must not corrupt -- two variants per the contributor contract.
     "tracking:add_off_ball_run_values": [
-        ("internal_link", _xtf_inputs, _xtf_invoke(F.add_off_ball_run_values)),
+        ("internal_link", _xtf_inputs, _xtf_map_invoke(F.add_off_ball_run_values)),
         (
             "supplied_links_and_cache",
             lambda: [make_actions(), make_frames(), _fresh_xt(), _fresh_links(), PitchControlCache()],
-            lambda i: F.add_off_ball_run_values(i[0], i[1], i[2], home_team_id=5, links=i[3], pitch_control_cache=i[4]),
+            lambda i: F.add_off_ball_run_values(i[0], i[1], i[2], links=i[3], pitch_control_cache=i[4]),
         ),
     ],
     "tracking:add_packing": [
-        ("defaults", _std_inputs, _std_invoke(F.add_packing, home_team_id=5)),
+        ("defaults", _std_inputs, _std_invoke(F.add_packing)),
         (
             "nondefault_params",
             _std_inputs,
-            lambda i: F.add_packing(
-                i[0], i[1], home_team_id=5, params=tracking.PackingParams(include_gk=True, back_line_n=3)
-            ),
+            lambda i: F.add_packing(i[0], i[1], params=tracking.PackingParams(include_gk=True, back_line_n=3)),
         ),
     ],
     "tracking:add_pausa": [
@@ -459,7 +461,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ("xt_supplied", _xtf_inputs, lambda i: F.add_pausa(i[0], i[1], xt=i[2])),
     ],
     "tracking:add_pitch_control": _one(_std_inputs, _std_invoke(F.add_pitch_control)),
-    "tracking:add_player_influence": _one(_xtf_inputs, _xtf_invoke(F.add_player_influence)),
+    "tracking:add_player_influence": _one(_xtf_inputs, _xtf_map_invoke(F.add_player_influence)),
     "tracking:add_pre_shot_gk_angle": _one(_std_inputs, lambda i: F.add_pre_shot_gk_angle(i[0], frames=i[1])),
     "tracking:add_pre_shot_gk_position": _one(_std_inputs, _std_invoke(F.add_pre_shot_gk_position)),
     "tracking:add_press_commitment": _one(_std_inputs, _std_invoke(F.add_press_commitment)),
@@ -468,11 +470,11 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     # `links is not None and "frame_id" in links.columns` (body assigns a LOCAL frame-id set, never a
     # column) -> a supplied-links variant also confirms they don't mutate caller-supplied links.
     "tracking:add_shape_graph": [
-        ("internal_link", _std_inputs, _std_invoke(F.add_shape_graph, home_team_id=5)),
+        ("internal_link", _std_inputs, _std_invoke(F.add_shape_graph)),
         (
             "supplied_links",
             lambda: [make_actions(), make_frames(), _fresh_links()],
-            lambda i: F.add_shape_graph(i[0], i[1], home_team_id=5, links=i[2]),
+            lambda i: F.add_shape_graph(i[0], i[1], links=i[2]),
         ),
     ],
     "tracking:add_shot_goalmouth": _one(_shot_goalmouth_inputs, lambda i: F.add_shot_goalmouth(i[0], i[1])),
@@ -484,11 +486,11 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: F.add_space_creation(i[0], i[1], home_team_id=5, xt=i[2]),
         ),
     ],
-    "tracking:add_structural_pass": _one(_std_inputs, _std_invoke(F.add_structural_pass, home_team_id=5)),
+    "tracking:add_structural_pass": _one(_std_inputs, _std_invoke(F.add_structural_pass)),
     "tracking:add_sync_score": _one(
         lambda: [make_actions(), _fresh_links()], lambda i: tracking.add_sync_score(i[0], i[1])
     ),
-    "tracking:add_team_shape": _one(_std_inputs, _std_invoke(F.add_team_shape, home_team_id=5)),
+    "tracking:add_team_shape": _one(_std_inputs, _std_invoke(F.add_team_shape)),
     "tracking:add_xcross_attempt": [
         ("internal_link", _std_inputs, _std_invoke(tracking.add_xcross_attempt, home_team_id=5)),
         (
@@ -505,7 +507,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: tracking.add_xshot_occurrence(i[0], i[1], home_team_id=5, links=i[2]),
         ),
     ],
-    "tracking:add_xt_gk": _one(_xtf_inputs, _xtf_invoke(F.add_xt_gk)),
+    "tracking:add_xt_gk": _one(_xtf_inputs, _xtf_map_invoke(F.add_xt_gk)),
     # ---- atomic.tracking (add_sync_score at the package level; 15 feature mirrors below) ----
     "atomic.tracking:add_sync_score": _one(
         lambda: [_atomic_actions(with_gk_role=False), _fresh_atomic_links()],
@@ -523,16 +525,16 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     "atomic.tracking:add_gk_influence": _one(_axtf_inputs, _xtf_map_invoke(atf.add_gk_influence)),
-    "atomic.tracking:add_off_ball_run_values": _one(_axtf_inputs, _xtf_invoke(atf.add_off_ball_run_values)),
-    "atomic.tracking:add_packing": _one(_astd_inputs, _std_invoke(atf.add_packing, home_team_id=5)),
+    "atomic.tracking:add_off_ball_run_values": _one(_axtf_inputs, _xtf_map_invoke(atf.add_off_ball_run_values)),
+    "atomic.tracking:add_packing": _one(_astd_inputs, _std_invoke(atf.add_packing)),
     "atomic.tracking:add_pitch_control": _one(_astd_inputs, _std_invoke(atf.add_pitch_control)),
-    "atomic.tracking:add_player_influence": _one(_axtf_inputs, _xtf_invoke(atf.add_player_influence)),
+    "atomic.tracking:add_player_influence": _one(_axtf_inputs, _xtf_map_invoke(atf.add_player_influence)),
     "atomic.tracking:add_pre_shot_gk_angle": _one(_astd_inputs, lambda i: atf.add_pre_shot_gk_angle(i[0], frames=i[1])),
     "atomic.tracking:add_pre_shot_gk_position": _one(_astd_inputs, _std_invoke(atf.add_pre_shot_gk_position)),
     "atomic.tracking:add_press_commitment": _one(_astd_inputs, _std_invoke(atf.add_press_commitment)),
     "atomic.tracking:add_pressure_on_actor": _one(_astd_inputs, _std_invoke(atf.add_pressure_on_actor)),
     "atomic.tracking:add_shot_goalmouth": _one(_astd_inputs, _std_invoke(atf.add_shot_goalmouth)),
-    "atomic.tracking:add_structural_pass": _one(_astd_inputs, _std_invoke(atf.add_structural_pass, home_team_id=5)),
+    "atomic.tracking:add_structural_pass": _one(_astd_inputs, _std_invoke(atf.add_structural_pass)),
     "atomic.tracking:add_xcross_attempt": [
         ("internal_link", _astd_inputs, _std_invoke(atf.add_xcross_attempt, home_team_id=5)),
         (
@@ -549,7 +551,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: atf.add_xshot_occurrence(i[0], i[1], home_team_id=5, links=i[2]),
         ),
     ],
-    "atomic.tracking:add_xt_gk": _one(_axtf_inputs, _xtf_invoke(atf.add_xt_gk)),
+    "atomic.tracking:add_xt_gk": _one(_axtf_inputs, _xtf_map_invoke(atf.add_xt_gk)),
 }
 
 REGISTERED_NAMES = set(PURITY_ENTRIES)
@@ -787,7 +789,7 @@ def test_enrichment_chain_does_not_mutate_original_inputs():
     actions_before, frames_before = actions.copy(deep=True), frames.copy(deep=True)
     a = sp.add_gk_role(actions)
     a = sp.add_gk_distribution_metrics(a)
-    a = F.add_off_ball_context(a, frames, home_team_id=5)
+    a = F.add_off_ball_context(a, frames)
     a = F.add_shot_goalmouth(a, frames)
     assert actions_before.equals(actions), "chain mutated the original actions frame"
     assert frames_before.equals(frames), "chain mutated the original frames frame"

@@ -59,15 +59,15 @@ def test_chained_enrichments_no_duplicate_provenance(provider: str) -> None:
     # Step 5: add_player_influence => should SKIP provenance
     xt = _make_xt()
     home = actions["team_id"].dropna().iloc[0]
-    actions = add_player_influence(actions, frames, xt, home_team_id=home)
+    actions = add_player_influence(actions, frames, xt)
     _assert_no_suffix_duplicates(actions, "add_player_influence")
 
     # Step 6: add_shape_graph => should SKIP provenance
-    actions = add_shape_graph(actions, frames, home_team_id=home)
+    actions = add_shape_graph(actions, frames)
     _assert_no_suffix_duplicates(actions, "add_shape_graph")
 
     # Step 7: add_obso => should SKIP provenance
-    actions = add_obso(actions, frames, home_team_id=home)
+    actions = add_obso(actions, frames)
     _assert_no_suffix_duplicates(actions, "add_obso")
 
     # Step 8: add_space_creation => should SKIP provenance

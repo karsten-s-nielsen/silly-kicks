@@ -171,11 +171,11 @@ def _mirror(actions, frames):
 def test_add_packing_mirror_invariant():
     a, f = _scenario()
     am, fm = _mirror(a, f)
-    base = add_packing(a, f, home_team_id=HOME)
+    base = add_packing(a, f)
     # After the mirror, the team attacking right is AWAY (the file-pattern note in
     # test_action_ltr_mirror_invariance.py) -- the packing kernel keys its defender
     # mirror on home_team_id, exactly like structural_pass.
-    mir = add_packing(am, fm, home_team_id=AWAY)
+    mir = add_packing(am, fm)
     b = base.set_index("action_id")
     m = mir.set_index("action_id")
     for col in _NUMERIC_COLS:
@@ -188,7 +188,7 @@ def test_asymmetric_ground_truth_pin():
     mirror-invariance alone would pass a double-flip bug that corrupts BOTH
     conventions identically -- the pin catches it."""
     a, f = _scenario()
-    out = add_packing(a, f, home_team_id=HOME).set_index("action_id")
+    out = add_packing(a, f).set_index("action_id")
     # Away pass 60->70: HOME defenders at frame x=40 -> 105-40=65 and x=42 -> 63 are
     # inside (60, 70]; x=50 -> 55 and x=20 -> 85 are not. Forward pass -> net == made.
     assert out.loc[0, "packing_made"] == 2

@@ -31,6 +31,7 @@ from scipy.cluster.hierarchy import fcluster, linkage
 
 from silly_kicks.id_compat import same_id
 from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
 
 _PASS_CROSS_TYPE_IDS = frozenset(
     spadlconfig.actiontype_id[n] for n in ("pass", "cross") if n in spadlconfig.actiontype_id
@@ -66,7 +67,6 @@ def detect_line_breaking(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
     params: LineBreakingParams | None = None,
     links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -79,8 +79,6 @@ def detect_line_breaking(
     frames : pd.DataFrame
         Long-form tracking frames (TRACKING_FRAMES_COLUMNS schema).
         Must be LTR-normalized (play_left_to_right applied).
-    home_team_id : int | str
-        Home team identifier for coordinate resolution.
     params : LineBreakingParams | None
         Algorithm parameters. Defaults to ``LineBreakingParams()``.
 
@@ -97,7 +95,7 @@ def detect_line_breaking(
     Detect line-breaking passes::
 
         from silly_kicks.tracking._line_breaking import detect_line_breaking
-        lb = detect_line_breaking(actions, frames, home_team_id=1)
+        lb = detect_line_breaking(actions, frames)
 
     See NOTICE for full bibliographic citations.
     """
@@ -184,6 +182,17 @@ def detect_line_breaking(
     count_arr = np.full(n_actions, np.nan)
     type_arr: list[str | None] = [None] * n_actions
 
+    # Direction per ACTION, from the frames' own labels -- never from team identity
+    # (ADR-051 D3). This function holds both `actions` and `frames`, so it IS the edge where
+    # the single orientation authority is consulted (ADR-028/041); per-frame callees below
+    # receive the resolved bool, not the resolver.
+    # The Series is NULLABLE boolean: pd.NA marks an action whose direction the frames do not
+    # resolve. It is kept as NA rather than coerced, so the loop below can leave that action's
+    # row NaN -- `.to_numpy(dtype=bool)` cannot represent the third state at all, and an
+    # na_value=False would restore the exact defect this re-key removes (an unresolved
+    # direction rendered indistinguishable from a resolved "does not flip").
+    _flip_by_aid = dict(zip(actions["action_id"], acting_team_attacks_rtl(actions, frames), strict=False))
+
     for _, row in linked.iterrows():
         aid = row["action_id"]
         if aid not in aid_to_pos:
@@ -229,18 +238,32 @@ def detect_line_breaking(
         opp_y = valid_opp["y"].to_numpy(dtype="float64")
 
         # Convert SPADL action coords to tracking coords for intersection (opponents are
-        # already tracking coords). home attacks x=105 in convert_to_frames coords, so a home
-        # action-LTR point already IS the tracking point; an away action-LTR point reflects.
-        if same_id(action_team, home_team_id):
-            track_start_x = start_x
-            track_start_y = start_y
-            track_end_x = end_x
-            track_end_y = end_y
-        else:
+        # already tracking coords). An action-LTR point for a team attacking LEFT-TO-RIGHT in
+        # the frames already IS the tracking point; one attacking RIGHT-TO-LEFT reflects.
+        #
+        # ⚠ NOTE THE DIRECTION OF THIS CONVERSION. `acting_team_attacks_rtl` documents its
+        # bool as "frame-sampled positions must be flipped to land in the ACTION-LTR frame";
+        # here the conversion runs the other way, action-LTR -> tracking. The two coincide
+        # ONLY because (x, y) -> (105-x, 68-y) is an INVOLUTION -- its own inverse (the
+        # 180-degree rotation recorded in `_geometry.py`). Stated because a future reader who
+        # checks the helper's contract against this use will find them opposed, and the
+        # natural "fix" is to invert something that is already correct.
+        _flip = _flip_by_aid.get(aid)
+        if pd.isna(_flip):
+            # Unresolved direction -> leave this action's row NaN, the same route every other
+            # uncomputable row above takes. Guessing "no flip" would mirror away-team geometry
+            # into the wrong convention silently.
+            continue
+        if _flip:
             track_start_x = 105.0 - start_x
             track_start_y = 68.0 - start_y
             track_end_x = 105.0 - end_x
             track_end_y = 68.0 - end_y
+        else:
+            track_start_x = start_x
+            track_start_y = start_y
+            track_end_x = end_x
+            track_end_y = end_y
 
         # The Ward-cluster + straddle geometry is single-sourced in _straddle_core (N3); the
         # pass and the opponents are both in tracking coords here, so it returns the same answer

@@ -760,11 +760,18 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
 
     passer, receiver = (50.0, 34.0), (80.0, 40.0)
 
+    # ADR-051 D3 (4.80.0) removed the `compute_defensive_line` entry. It took `home_team_id` as
+    # its ONLY id scalar and now takes `goal_map`, so discovery no longer returns it and a
+    # retained entry fails `test_registry_has_no_stale_entries` -- the identical rule that
+    # removed ADR-055's six. A draft of this change kept the entry with a `goal_map` lambda,
+    # arguing the id axis survives via `GoalMap`'s canonical key. The argument is TRUE and the
+    # entry is still wrong here: this registry is keyed on `inspect.signature` discovery of
+    # id-SCALAR parameters, and a function with none cannot be a member however real the
+    # underlying hazard is. That hazard is covered where it now lives --
+    # `tests/tracking/test_gk_resolve_goal_map.py` (canonical-key + any-dtype lookup) and the
+    # `compute_packing_metrics` entry below, which varies `attacking_team_id` against a
+    # canonically-keyed map in one call.
     return [
-        _e(
-            "silly_kicks.tracking._defensive_line.compute_defensive_line",
-            lambda s: T.compute_defensive_line(tracking_frames(), home_team_id=s),
-        ),
         _e(
             "silly_kicks.tracking._defensive_line.select_back_line_players",
             # 3rd arg was `home_team_id`; ADR-055 re-keyed it to `defends_x0: bool`. The old
@@ -775,37 +782,30 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
         ),
         _e("silly_kicks.tracking._team_shape.compute_team_shape", lambda s: T.compute_team_shape(tracking_frames(), s)),
         _e(
-            "silly_kicks.tracking._line_breaking.detect_line_breaking",
-            lambda s: T.detect_line_breaking(tracking_actions(), tracking_frames(), home_team_id=s),
-        ),
-        _e(
-            "silly_kicks.tracking._run_values.detect_off_ball_runs",
-            # min_peak_speed_ms=0 recovers TF-4's displacement-only domain (documented on
-            # RunValuationParams). The shared fixture's runners move 6 m at 4.3 m/s, under the
-            # 5.56 m/s sprint gate, so the default returns ZERO runs -- an empty frame proves
-            # nothing about id resolution.
-            lambda s: T.detect_off_ball_runs(
-                tracking_actions(),
-                tracking_frames(),
-                home_team_id=s,
-                params=T.RunValuationParams(min_peak_speed_ms=0.0),
-            ),
-        ),
-        _e(
             "silly_kicks.tracking._packing.compute_packing_metrics",
+            # ADR-051 D3: `home_team_id` -> `goal_map`. `attacking_team_id` is still the id scalar
+            # under test; the map carries the second half of the axis (canonical-key resolution).
             lambda s: T.compute_packing_metrics(
-                single_frame(), attacking_team_id=s, home_team_id=s, passer_xy=passer, receiver_xy=receiver
+                single_frame(),
+                attacking_team_id=s,
+                goal_map=goal_map_like_home_team_id(single_frame(), s),
+                passer_xy=passer,
+                receiver_xy=receiver,
             ),
         ),
         _e(
             "silly_kicks.tracking._structural_pass.compute_structural_pass_metrics",
+            # ADR-051 D3: `home_team_id` -> `attacks_rtl: bool`. The direction is now a plain bool
+            # and carries NO id, so the axis this entry exercises is `attacking_team_id` alone --
+            # which is the one that matters here (`ids_match` against the frame team column).
             lambda s: T.compute_structural_pass_metrics(
-                single_frame(), attacking_team_id=s, home_team_id=s, passer_xy=passer, receiver_xy=receiver
+                single_frame(), attacking_team_id=s, attacks_rtl=False, passer_xy=passer, receiver_xy=receiver
             ),
         ),
         _e(
             "silly_kicks.tracking._player_influence.compute_player_influence",
-            lambda s: T.compute_player_influence(single_frame(), xt_model(), attacking_team_id=s, home_team_id=s),
+            # ADR-051 D3: `home_team_id` -> `attacks_rtl: bool`; see the note above.
+            lambda s: T.compute_player_influence(single_frame(), xt_model(), attacking_team_id=s, attacks_rtl=False),
         ),
         _e(
             "silly_kicks.tracking._space_creation.compute_space_created",
@@ -953,44 +953,42 @@ def _tracking_orientation_entries() -> list[IdScalarEntry]:
 #: by the ``compute_blocking_score`` / ``compute_threat_pc`` / ``lane_control`` entries above,
 #: which still vary ``attacking_team_id`` against a canonically-keyed map.
 #: ``features.py`` per-Series functions taking ``(actions, frames, *, home_team_id, ...)``.
-_SERIES_PLAIN = (
-    "back_line_high_x",
-    "back_n_count",
-    "compactness_x",
-    "defensive_line_x",
-    "lateral_width",
-    "max_lateral_gap",
-    "obso_actual",
-    "obso_optimal",
-    "obso_peak",
-)
+#:
+#: ADR-051 D3 (4.80.0) removed the SIX defensive-line members -- ``defensive_line_x``,
+#: ``back_line_high_x``, ``compactness_x``, ``lateral_width``, ``max_lateral_gap``,
+#: ``back_n_count`` -- by the same rule as the ADR-055 removals recorded above: they now take
+#: ``goal_map`` and declare no ``*_id`` parameter, so discovery no longer returns them.
+#:
+#: NOW EMPTY. The obso three followed in the same release, by a different route: their
+#: ``home_team_id`` was never read, only FORWARDED, and the chain terminated in
+#: ``_precompute_obso_lookup``, which ignored it. Removing the sink made the whole chain dead and
+#: the cleanup cascaded to the public surface. Kept rather than deleted, per ``_SERIES_XT``.
+_SERIES_PLAIN: tuple[str, ...] = ()
 
 #: ...and those additionally taking a positional ``xt``.
-_SERIES_XT = (
-    "actor_reachable_area_m2",
-    "off_ball_xt_opponent",
-    "off_ball_xt_team",
-    "reachable_area_opponent",
-    "reachable_area_team",
-)
+#:
+#: EMPTY since ADR-051 D3 (4.80.0), and deliberately kept rather than deleted: all five members
+#: (``actor_reachable_area_m2``, ``off_ball_xt_team``, ``off_ball_xt_opponent``,
+#: ``reachable_area_team``, ``reachable_area_opponent``) were player-influence per-Series
+#: helpers whose only id scalar was ``home_team_id``; the re-key routes direction through
+#: ``acting_team_attacks_rtl`` instead, so they take no id scalar at all. The tuple survives as
+#: the seam a future ``(actions, frames, xt, *, some_id)`` helper registers into -- deleting it
+#: would make the next such helper arrive with nowhere obvious to go.
+_SERIES_XT: tuple[str, ...] = ()
 
 #: ``*_xfns`` factories by construction shape.
-_XFNS_PLAIN = (
-    "defensive_line_xfns",
-    "line_breaking_ward_xfns",
-    "obso_xfns",
-    "off_ball_context_xfns",
-    "packing_xfns",
-    "pausa_xfns",
-    "shape_graph_xfns",
-    "space_creation_xfns",
-    "structural_pass_xfns",
-    "team_shape_xfns",
-)
-_XFNS_XT = (
-    "off_ball_run_value_xfns",
-    "player_influence_xfns",
-)
+#:
+#: ADR-051 D3 (4.80.0) removed the five D3 factories -- ``defensive_line_xfns``,
+#: ``line_breaking_ward_xfns``, ``off_ball_context_xfns``, ``packing_xfns``,
+#: ``structural_pass_xfns`` (plain) and ``player_influence_xfns`` (xt) -- for the reason
+#: recorded on ``_SERIES_PLAIN``: their only id scalar was ``home_team_id``.
+#: 4.80.0 additionally removed ``obso_xfns``, ``pausa_xfns``, ``shape_graph_xfns`` and
+#: ``team_shape_xfns`` (plain) and ``off_ball_run_value_xfns`` (xt) as dead-parameter cascade.
+#: ``space_creation_xfns`` REMAINS and is the last member: its chain ends at
+#: ``_compute_space_creation_for_action``, whose unread ``home_team_id`` is a DELIBERATE
+#: retention recorded in CLAUDE.md ("D3 retires it by disuse, not removal").
+_XFNS_PLAIN = ("space_creation_xfns",)
+_XFNS_XT: tuple[str, ...] = ()
 
 
 def gk_distribution_case():
@@ -1050,8 +1048,11 @@ def _tracking_feature_entries() -> list[IdScalarEntry]:
             )
         )
     # The atomic mirrors define their OWN xfns factories (distinct qualnames), so they are
-    # separate boundaries and get their own entries.
-    for name in ("packing_xfns", "structural_pass_xfns", "off_ball_run_value_xfns"):
+    # separate boundaries and get their own entries. ADR-051 D3 (4.80.0) emptied this set:
+    # `packing_xfns` / `structural_pass_xfns` went with their tracking originals, then
+    # `off_ball_run_value_xfns` followed when the dead-parameter cascade reached it. The loop
+    # stays so the next atomic factory carrying an id scalar has an obvious home.
+    for name in ():
         fac = getattr(AF, name)
         takes_xt = name == "off_ball_run_value_xfns"
         entries.append(
@@ -1067,29 +1068,10 @@ def _tracking_feature_entries() -> list[IdScalarEntry]:
                 )(fac, takes_xt),
             )
         )
-    # xT-GK scores only GK distributions -> its own fixture, in both representations.
-    entries.append(
-        _e(
-            "silly_kicks.tracking.features.xt_gk_xfns",
-            lambda s: _xfn_outputs(
-                F.xt_gk_xfns(xt_model(), home_team_id=s),
-                states=_gk_gamestates(),
-                frames=gk_distribution_case()[1],
-            ),
-            matched=GK_CASE_HOME,
-        )
-    )
-    entries.append(
-        _e(
-            "silly_kicks.atomic.tracking.features.xt_gk_xfns",
-            lambda s: _xfn_outputs(
-                AF.xt_gk_xfns(xt_model(), home_team_id=s),
-                states=_atomic_gamestates(gk_distribution_case()[0]),
-                frames=gk_distribution_case()[1],
-            ),
-            matched=GK_CASE_HOME,
-        )
-    )
+    # The xT-GK pair (tracking + atomic `xt_gk_xfns`) lived here with its own GK-distribution
+    # fixture. ADR-051 D3 (4.80.0) removed their `home_team_id`, which was dead and retained only
+    # "for GK-feature-family signature parity" -- a rationale ADR-055 had already invalidated by
+    # re-keying two of that family. They declare no id scalar now, so discovery drops them.
     entries.append(
         _e(
             "silly_kicks.tracking._xshot_occurrence.xshot_occurrence_xfns",
@@ -1165,34 +1147,37 @@ COVERED_BY_AGGREGATOR_GATE: dict[str, str] = {
         # a retained pointer fails `test_registry_has_no_stale_entries`. They are still swept by
         # test_id_dtype_invariance.py for their ACTIONS/FRAMES id dtypes -- what is gone is the
         # `home_team_id` SCALAR axis, because the scalar is gone.
-        "add_defensive_line",
+        #
+        # ADR-051 D3 (4.80.0) removed SIX more by the identical rule -- `add_defensive_line`,
+        # `add_line_break`, `add_off_ball_context`, `add_packing`, `add_player_influence`,
+        # `add_structural_pass` -- plus the atomic `add_packing` / `add_structural_pass` mirrors
+        # below. Same reading as ADR-055's: the ACTIONS/FRAMES axes are still swept next door;
+        # only the scalar axis is gone, because the scalar is.
+        #
+        # Where the hazard MOVED, per mechanism, so this list is not read as coverage lost:
+        # the two map sites resolve direction through `GoalMap._key`, which canonicalizes every
+        # lookup (`tests/tracking/test_gk_resolve_goal_map.py`); the four bool sites resolve it
+        # through `acting_team_attacks_rtl`, whose `(game_id, period_id, team_id)` merge is
+        # dtype-exercised by the aggregator gate's frames/actions axes -- a mismatched spelling
+        # there resolves NOTHING and now surfaces as <NA> rather than a silent False (4.80.0).
+        #
+        # 4.80.0 removed SIX more by a different route than the D3 re-key: `add_obso`,
+        # `add_off_ball_run_values`, `add_pausa`, `add_shape_graph`, `add_team_shape` and
+        # `add_xt_gk` never READ the parameter -- they forwarded it into a sink that ignored it,
+        # so cleaning the sink cascaded to the public surface. `add_off_ball_runs` and
+        # `add_space_creation` REMAIN: the first feeds `_off_ball_runs_kernel`, whose unread copy
+        # is preserved deliberately (its Gate B green IS the measurement that it is unread), and
+        # the second ends at `_compute_space_creation_for_action`, the CLAUDE.md-recorded
+        # "retire by disuse, not removal" case.
         "add_ghost_gk",
-        "add_line_break",
-        "add_obso",
-        "add_off_ball_context",
-        "add_off_ball_run_values",
         "add_off_ball_runs",
-        "add_packing",
-        "add_pausa",
-        "add_player_influence",
-        "add_shape_graph",
         "add_space_creation",
-        "add_structural_pass",
-        "add_team_shape",
-        "add_xt_gk",
     )
 } | {
     f"silly_kicks.atomic.tracking.features.{n}": (
         "atomic add_* mirror; delegates to the tracking aggregator swept by test_id_dtype_invariance.py"
     )
-    for n in (
-        # ADR-055: the atomic `add_cover_shadows` mirror left for the same reason as its
-        # tracking counterpart above.
-        "add_off_ball_run_values",
-        "add_packing",
-        "add_structural_pass",
-        "add_xt_gk",
-    )
+    for n in ()
 }
 
 

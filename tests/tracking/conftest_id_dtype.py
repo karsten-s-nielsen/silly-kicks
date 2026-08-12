@@ -121,6 +121,25 @@ def _named(fn, name):
 
 
 def _a(fn, name, **extra):  # no home_team_id (teams resolved from id columns internally)
+    """Aggregators that take no ``home_team_id``.
+
+    Two populations share this constructor, and the distinction matters when reading a green
+    result. The original members never had the parameter -- teams are resolved from the id
+    COLUMNS. The ADR-051 D3 members (``add_defensive_line``, ``add_packing``,
+    ``add_structural_pass``, ``add_line_break`` in both methods, ``add_off_ball_context``) had it
+    REMOVED in 4.80.0 and now resolve DIRECTION from ``frames`` -- via the goal map or via
+    ``acting_team_attacks_rtl``. Either way the resolution reads the same ``frames`` this gate
+    permutes, so it stays ON the gate's axis rather than beside it.
+
+    A THIRD population joined in the same release: ``add_team_shape``, ``add_shape_graph`` and
+    ``add_obso`` never READ the parameter at all -- they had already been re-keyed onto
+    ``acting_team_attacks_rtl`` by ADR-028/041 and were left carrying a dead argument. For those
+    the removal is signature-only and moves no value; they are here because the parameter is
+    gone, not because anything about their resolution changed.
+
+    The lambda still accepts ``home_team_id`` and ignores it: the gate's third permutation axis
+    is structural, and dropping the parameter here would change the call shape for every entry.
+    """
     return _named(lambda a, f, home_team_id: fn(a, f, **extra), name)
 
 
@@ -132,14 +151,28 @@ def _axh(fn, name):  # positional xt + keyword home_team_id (influence/cover-sha
     return _named(lambda a, f, home_team_id: fn(a, f, _xt(), home_team_id=home_team_id), name)
 
 
-def _axm(fn, name):  # positional xt, ADR-055 goal_map instead of home_team_id
-    """The influence/cover-shadow pair after the re-key.
+def _axm(fn, name):  # positional xt, no home_team_id (direction derived from frames)
+    """The xt-taking aggregators after the re-key.
 
     `goal_map` is left to DEFAULT (None), so the aggregator derives it from the same `frames`
     this gate is permuting the id dtypes of. That is the point: the map is built from those
     frames, so it is on the gate's axis rather than beside it -- injecting a pre-built map
     would pin the goal ends outside the permutation and hide exactly the mis-resolution this
     gate exists to catch.
+
+    ADR-051 D3 (4.80.0) added `add_player_influence`, which reaches the same place by the OTHER
+    mechanism: it takes no map at all and resolves direction through `acting_team_attacks_rtl`,
+    whose `(game_id, period_id, team_id)` merge against `frames` is precisely an id-dtype join.
+    So the call shape is identical and the reasoning above carries -- but note the axis it
+    exercises is the MERGE, not a map lookup, which is why a mismatched spelling now surfaces as
+    an all-<NA> flip rather than a silent all-False one.
+
+    ``add_xt_gk`` also moved here in 4.80.0, for the third reason above rather than either of
+    these two: its ``home_team_id`` was DEAD (kept "for GK-feature-family signature parity",
+    a rationale ADR-055 invalidated when it re-keyed two of that family). xT-GK scores on
+    LTR-normalized SPADL coordinates and consults no direction input at all, so this entry
+    exercises the actions/frames id axes only -- which is what it exercised before, the
+    difference being that the third axis is no longer pretended.
     """
     return _named(lambda a, f, home_team_id: fn(a, f, _xt()), name)
 
@@ -191,20 +224,20 @@ AGGREGATORS = [
     _a(F.add_pressure_on_actor, "add_pressure_on_actor"),
     _a(F.add_shot_goalmouth, "add_shot_goalmouth"),
     _a(F.add_space_creation, "add_space_creation"),
-    _ah(F.add_defensive_line, "add_defensive_line", n=4),
-    _ah(F.add_line_break, "add_line_break"),
-    _ah(F.add_off_ball_context, "add_off_ball_context"),
+    _a(F.add_defensive_line, "add_defensive_line", n=4),
+    _a(F.add_line_break, "add_line_break"),
+    _a(F.add_off_ball_context, "add_off_ball_context"),
     _ah(F.add_off_ball_runs, "add_off_ball_runs"),
-    _ah(F.add_packing, "add_packing"),
-    _ah(F.add_shape_graph, "add_shape_graph"),
-    _ah(F.add_structural_pass, "add_structural_pass"),
-    _ah(F.add_team_shape, "add_team_shape"),
+    _a(F.add_packing, "add_packing"),
+    _a(F.add_shape_graph, "add_shape_graph"),
+    _a(F.add_structural_pass, "add_structural_pass"),
+    _a(F.add_team_shape, "add_team_shape"),
     _ah(F.add_ghost_gk, "add_ghost_gk"),
     _axm(F.add_cover_shadows, "add_cover_shadows"),
-    _axh(F.add_off_ball_run_values, "add_off_ball_run_values"),
+    _axm(F.add_off_ball_run_values, "add_off_ball_run_values"),
     _axm(F.add_gk_influence, "add_gk_influence"),
-    _axh(F.add_player_influence, "add_player_influence"),
-    _axh(F.add_xt_gk, "add_xt_gk"),
+    _axm(F.add_player_influence, "add_player_influence"),
+    _axm(F.add_xt_gk, "add_xt_gk"),
     # --- ALTERNATE-METHOD variants (Phase 2) -------------------------------------------
     # The registrations above call DEFAULT arguments only, so a method-dispatched branch was
     # never swept. That is not hypothetical: the ADR-027 defect lived in the Ward branch of
@@ -212,7 +245,7 @@ AGGREGATORS = [
     # silently mis-computed the opponent on Int64-vs-string ids) and THIS GATE MISSED IT --
     # the behavioural NaN-safety gate caught it instead. Naming convention `name[variant]`;
     # the meta-assertion strips the suffix so a variant never substitutes for its base.
-    _ah(F.add_line_break, "add_line_break[ward]", method="ward"),
+    _a(F.add_line_break, "add_line_break[ward]", method="ward"),
     _a(F.add_pitch_control, "add_pitch_control[voronoi]", method="voronoi"),
     _a(F.add_pitch_control, "add_pitch_control[fernandez_bornn]", method="fernandez_bornn"),
     _a(F.add_pressure_on_actor, "add_pressure_on_actor[bekkers_pi]", methods=("bekkers_pi",)),

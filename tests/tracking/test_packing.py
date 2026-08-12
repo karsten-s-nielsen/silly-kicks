@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from silly_kicks.tracking import resolve_defended_goals
 from silly_kicks.tracking._packing import PackingParams, compute_packing_metrics
 
 
@@ -55,12 +56,18 @@ DEFENDERS = [
     (AWAY, 100.0, 34.0, True),
 ]
 
+# Direction is a property of the FRAME, not of team identity (ADR-051 D3), so the map is
+# built from the same fixture the metrics are computed on -- the production contract
+# (resolve once, thread in). Here it resolves off the away GK at x=100: AWAY defends
+# x=105, so HOME attacks x=105 and no mirror is applied.
+_GM_DEFENDERS = resolve_defended_goals(_frame(DEFENDERS))
+
 
 def test_packing_made_forward_count():
     m = compute_packing_metrics(
         _frame(DEFENDERS),
         attacking_team_id=HOME,
-        home_team_id=HOME,
+        goal_map=_GM_DEFENDERS,
         passer_xy=(50.0, 34.0),
         receiver_xy=(70.0, 34.0),
     )
@@ -71,7 +78,7 @@ def test_include_gk_flag():
     m = compute_packing_metrics(
         _frame(DEFENDERS),
         attacking_team_id=HOME,
-        home_team_id=HOME,
+        goal_map=_GM_DEFENDERS,
         passer_xy=(85.0, 34.0),
         receiver_xy=(102.0, 34.0),
         params=PackingParams(include_gk=True),
@@ -80,7 +87,7 @@ def test_include_gk_flag():
     m2 = compute_packing_metrics(
         _frame(DEFENDERS),
         attacking_team_id=HOME,
-        home_team_id=HOME,
+        goal_map=_GM_DEFENDERS,
         passer_xy=(85.0, 34.0),
         receiver_xy=(102.0, 34.0),
     )
@@ -91,7 +98,7 @@ def test_line_x_is_max_bypassed_defender_x():
     m = compute_packing_metrics(
         _frame(DEFENDERS),
         attacking_team_id=HOME,
-        home_team_id=HOME,
+        goal_map=_GM_DEFENDERS,
         passer_xy=(50.0, 34.0),
         receiver_xy=(70.0, 34.0),
     )
@@ -104,7 +111,7 @@ def test_goal_threat_restricted_to_back_line():
     m = compute_packing_metrics(
         _frame(DEFENDERS),
         attacking_team_id=HOME,
-        home_team_id=HOME,
+        goal_map=_GM_DEFENDERS,
         passer_xy=(50.0, 34.0),
         receiver_xy=(95.0, 34.0),
         params=PackingParams(back_line_n=2),
@@ -125,7 +132,7 @@ def test_net_direction_bands(end, expected_mult):
     m = compute_packing_metrics(
         _frame(DEFENDERS),
         attacking_team_id=HOME,
-        home_team_id=HOME,
+        goal_map=_GM_DEFENDERS,
         passer_xy=(50.0, 34.0),
         receiver_xy=end,
     )
@@ -143,7 +150,7 @@ def test_theta_band_boundaries():
         m = compute_packing_metrics(
             _frame(DEFENDERS),
             attacking_team_id=HOME,
-            home_team_id=HOME,
+            goal_map=_GM_DEFENDERS,
             passer_xy=(50.0, 30.0),
             receiver_xy=(50.0 + dx, 30.0 + dy),
             params=p,
@@ -161,7 +168,7 @@ def test_backward_x_tie_far_end_inclusive():
     m = compute_packing_metrics(
         _frame(DEFENDERS),
         attacking_team_id=HOME,
-        home_team_id=HOME,
+        goal_map=_GM_DEFENDERS,
         passer_xy=(60.0, 34.0),
         receiver_xy=(50.0, 33.0),
     )
@@ -172,10 +179,14 @@ def test_backward_x_tie_far_end_inclusive():
 def test_away_actor_mirrors_defenders():
     """Ground-truth asymmetric: away team attacks -x in frame coords; action coords are
     attack-positive. Defender at frame x=40 is at attack-positive 65 for the away team."""
+    frame = _frame([(HOME, 40.0, 30.0, False)])
+    # No GK in this fixture, so HOME's end is GUESSED from its mean outfield x (40 -> nearer
+    # x=0); `attacked_goal(AWAY)` is a real lookup of that HOME entry, giving AWAY an attacked
+    # goal of x=0 and hence the mirror. Reached because HOME is a genuine opponent of AWAY.
     m = compute_packing_metrics(
-        _frame([(HOME, 40.0, 30.0, False)]),
+        frame,
         attacking_team_id=AWAY,
-        home_team_id=HOME,
+        goal_map=resolve_defended_goals(frame),
         passer_xy=(60.0, 34.0),
         receiver_xy=(70.0, 34.0),
     )
@@ -183,10 +194,16 @@ def test_away_actor_mirrors_defenders():
 
 
 def test_no_defenders_nan():
+    # HOME acting with only a HOME player present -> zero opponents, and the no-defenders
+    # short-circuit returns before the goal map is ever consulted. That ordering is what keeps
+    # this case NaN rather than a GoalEndUnresolvedError: `attacked_goal(HOME)` needs an AWAY
+    # entry, and this fixture has none. Passing a real map keeps the test honest about which
+    # branch it exercises.
+    frame = _frame([(HOME, 40.0, 30.0, False)])
     m = compute_packing_metrics(
-        _frame([(HOME, 40.0, 30.0, False)]),
+        frame,
         attacking_team_id=HOME,
-        home_team_id=HOME,
+        goal_map=resolve_defended_goals(frame),
         passer_xy=(50.0, 34.0),
         receiver_xy=(70.0, 34.0),
     )

@@ -92,8 +92,8 @@ def test_atomic_path_inherits_base_rate_switch(monkeypatch):
     atom["dx"] = std["end_x"].to_numpy() - std["start_x"].to_numpy()
     atom["dy"] = std["end_y"].to_numpy() - std["start_y"].to_numpy()
     atom = atom.drop(columns=["end_x", "end_y"])
-    atom_out = atomic_add_xt_gk(atom, frames, _gk_realistic_xt(), home_team_id=1)
-    std_out = std_add_xt_gk(std, frames, _gk_realistic_xt(), home_team_id=1)
+    atom_out = atomic_add_xt_gk(atom, frames, _gk_realistic_xt())
+    std_out = std_add_xt_gk(std, frames, _gk_realistic_xt())
     is_gk = (std["type_id"] == _GOALKICK).to_numpy()
     assert is_gk.sum() >= 1 and (atom_out[is_gk]["xt_gk_completion_source"] == "base_rate").all()  # inherited
     # parity: atomic mirror tags identically to the standard path (mirrors test_xt_gk.py:629-632)

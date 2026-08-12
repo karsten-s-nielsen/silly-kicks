@@ -76,7 +76,7 @@ def test_away_action_centroids_reprojected_both_axes():
             ),
         ]
     )
-    out = add_team_shape(actions, frames, home_team_id=HOME).iloc[0]
+    out = add_team_shape(actions, frames).iloc[0]
     # Attacking team = AWAY. Frame centroid_x = mean(70..79)=74.5 -> action-LTR 105-74.5 = 30.5.
     assert abs(out["team_shape_centroid_x_attacking"] - 30.5) < 1e-9
     # Frame centroid_y = mean(10,15,...,55)=32.5 -> action-LTR 68-32.5 = 35.5.
@@ -105,7 +105,7 @@ def test_home_action_centroids_unchanged():
             ),
         ]
     )
-    out = add_team_shape(actions, frames, home_team_id=HOME).iloc[0]
+    out = add_team_shape(actions, frames).iloc[0]
     # Attacking team = HOME, attacks 105, no flip. Frame centroid_x = mean(20..29)=24.5.
     assert abs(out["team_shape_centroid_x_attacking"] - 24.5) < 1e-9
     assert abs(out["team_shape_centroid_y_attacking"] - 32.5) < 1e-9

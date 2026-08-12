@@ -99,8 +99,19 @@ def test_the_reprojection_actually_MOVES_the_away_passer(spy_passer):
 def test_an_UNORIENTED_frame_set_leaves_every_passer_untouched(spy_passer, recwarn):
     """The other side of the flip. With no resolvable direction nothing is reprojected -- and the
     library warns rather than silently reporting an all-False flip as a measurement."""
+    from silly_kicks.tracking import OrientationUnresolvedWarning
+
     frames = _frames().assign(team_attacking_direction=None)
 
     mod.measure_match(_actions(), frames, _HOME, object(), match_id="m1")
 
     assert {p for _t, p in spy_passer} == {_START}
+    # The docstring has always CLAIMED the library warns here; nothing asserted it, so the claim
+    # was decorative and `recwarn` went unused. Under the 4.80.0 nullable contract the driver
+    # `.fillna(False)`s an all-<NA> flip, which is the right answer for an agreement RATE but is
+    # indistinguishable from a resolved all-left-to-right scene -- the warning is the only thing
+    # that tells them apart, so it is the part worth pinning.
+    assert any(issubclass(w.category, OrientationUnresolvedWarning) for w in recwarn), (
+        "no OrientationUnresolvedWarning -- an unoriented frame set would be measured as if it "
+        "had been resolved, with nothing in the output saying otherwise"
+    )

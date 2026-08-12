@@ -18,10 +18,10 @@ from silly_kicks.id_compat import (
     canonical_id_series,
     ids_differ,
     ids_equal,
-    same_id,
 )
 
 from ._action_orientation import acting_team_attacks_rtl, validate_period_directions
+from ._gk_resolve import GoalMap
 
 _OFF_BALL_RUNS_COLS = [
     "n_off_ball_runners_pre_window",
@@ -95,7 +95,7 @@ def _off_ball_runs_kernel(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    home_team_id: int | str | None = None,
     pre_seconds: float = 1.5,
     min_displacement_m: float = 3.0,
 ) -> pd.DataFrame:
@@ -173,7 +173,7 @@ def _off_ball_runs_kernel(
         flip_by_action = dict(
             zip(
                 game_actions["action_id"].to_numpy(),
-                acting_team_attacks_rtl(game_actions, game_frames).to_numpy(dtype=bool),
+                acting_team_attacks_rtl(game_actions, game_frames),
                 strict=False,
             )
         )
@@ -209,7 +209,15 @@ def _off_ball_runs_kernel(
             # production call sites, so aligning it removes a divergence; it does not fix
             # wrong numbers. Behaviour on unoriented frames is pinned by
             # test_off_ball_runs_orientation.py so it is documented, not incidental.
-            attacks_rtl = bool(flip_by_action.get(aid, False))
+            #
+            # PER-COLUMN, not per-row (4.80.0): direction feeds `toward_goal` and NOTHING else --
+            # runner count, max displacement and mean speed are displacement MAGNITUDES and are
+            # invariant under the flip. So an unresolved direction NaNs that one column and
+            # leaves the other three, rather than discarding three valid metrics. The `False`
+            # below is never read when unresolved; it only keeps the loop's arithmetic total.
+            _flip = flip_by_action.get(aid)
+            _direction_resolved = not pd.isna(_flip)
+            attacks_rtl = bool(_flip) if _direction_resolved else False
 
             per_player = action_group.sort_values("time_seconds").groupby("player_id", sort=False)
 
@@ -234,7 +242,8 @@ def _off_ball_runs_kernel(
                         toward_goal += 1
 
             n_runners_arr[pos] = runners
-            toward_goal_arr[pos] = toward_goal
+            # NaN -> pd.NA in the Int64 pack below: "direction unknown", never a confident 0.
+            toward_goal_arr[pos] = toward_goal if _direction_resolved else np.nan
             if displacements:
                 max_disp_arr[pos] = max(displacements)
                 # Note: this is mean(displacement) / window_duration, not
@@ -269,7 +278,7 @@ def _line_break_kernel(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    home_team_id: int | str,
+    goal_map: GoalMap,
     n: int = 4,
     links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -293,7 +302,10 @@ def _line_break_kernel(
         return empty
 
     # Compute defensive line for all frames (ONCE)
-    dl = compute_defensive_line(frames, home_team_id=home_team_id, n=n)
+    dl = compute_defensive_line(frames, goal_map=goal_map, n=n)
+    # Direction per ACTION from the single orientation authority (ADR-028/041), resolved
+    # ONCE here at the edge; the two sites below consume the resolved bool.
+    _flip_by_aid = dict(zip(actions["action_id"], acting_team_attacks_rtl(actions, frames), strict=False))
     if dl.empty:
         return empty
 
@@ -371,11 +383,20 @@ def _line_break_kernel(
         action_team = row["team_id_action"]
         end_x = row["end_x"]
 
-        # Coordinate-frame resolution
-        if same_id(action_team, home_team_id):
-            spadl_def_line_x = def_line_x
-        else:
-            spadl_def_line_x = 105.0 - def_line_x
+        # Coordinate-frame resolution, keyed on DIRECTION not identity (ADR-051 D3).
+        # ⚠ This un-mirrors the line the PRODUCER emitted, so it must move together with
+        # `compute_defensive_line`: re-keying the producer while leaving this identity-keyed
+        # would MOVE the bug rather than fix it, with `line_break` and
+        # `n_attackers_behind_line` as the affected outputs.
+        _flip = _flip_by_aid.get(aid)
+        if pd.isna(_flip):
+            # Unresolved direction -> stays pd.NA, the same route a NaN defensive line takes
+            # above. Unlike the pre-window metrics, BOTH outputs here depend on the flip
+            # (`line_break` via the un-mirrored line, `n_attackers_behind_line` via the
+            # comparison sense), so there is no column left to emit honestly.
+            continue
+        _attacks_rtl = bool(_flip)
+        spadl_def_line_x = (105.0 - def_line_x) if _attacks_rtl else def_line_x
 
         # Line-break: end_x > spadl_def_line_x (both in action-team SPADL frame)
         line_break_arr[pos] = 1.0 if end_x > spadl_def_line_x else 0.0
@@ -391,13 +412,13 @@ def _line_break_kernel(
             n_behind_arr[pos] = 0
             continue
 
-        # In tracking coords:
-        # Home-team attackers "behind" away line: tracking x > defensive_line_x
-        # Away-team attackers "behind" home line: tracking x < defensive_line_x
-        if same_id(action_team, home_team_id):
-            behind_mask = frame_players["x"] > def_line_x
-        else:
+        # In tracking coords, keyed on DIRECTION not identity (ADR-051 D3):
+        # a team attacking left-to-right has attackers "behind" the line at tracking
+        # x > defensive_line_x; one attacking right-to-left, at x < defensive_line_x.
+        if _attacks_rtl:
             behind_mask = frame_players["x"] < def_line_x
+        else:
+            behind_mask = frame_players["x"] > def_line_x
 
         n_behind_arr[pos] = int(behind_mask.sum())
 

@@ -148,7 +148,6 @@ def enrich_invariant(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     xt: ExpectedThreat,
-    home_team_id: int | str,
     carrier_params: dict,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run the 14 trial-independent enrichment steps; leave the 5 trial cols as NaN.
@@ -221,11 +220,11 @@ def enrich_invariant(
     for method in ("spearman", "fernandez_bornn", "voronoi"):  # Steps 5-7
         s = pitch_control_at_target(actions, frames, links=links, method=method)
         actions[s.name] = s.values
-    actions = add_defensive_line(actions, frames, links=links, home_team_id=home_team_id)  # Step 8
+    actions = add_defensive_line(actions, frames, links=links)  # Step 8
     for col in _TRIAL_DEPENDENT_COLS[1:]:  # Step 9 SKIPPED (off-ball runs)
         actions[col] = np.nan
     # Step 10 (line-break) DELETED — not a feature (spec §4a).
-    actions = add_team_shape(actions, frames, links=links, home_team_id=home_team_id)  # Step 11
+    actions = add_team_shape(actions, frames, links=links)  # Step 11
     actions = _compute_das(actions, frames, links, carrier_params)  # Step 12
     # ADR-055: these two take an optional `goal_map` and no `home_team_id`. Left to default so
     # each derives the map from `frames` -- the same frames every other step here consumes.
@@ -350,12 +349,12 @@ def enrich_full(
     for method in ("spearman", "fernandez_bornn", "voronoi"):  # 5-7
         s = pitch_control_at_target(actions, frames, links=links, method=method)
         actions[s.name] = s.values
-    actions = add_defensive_line(actions, frames, links=links, home_team_id=home_team_id)  # 8
+    actions = add_defensive_line(actions, frames, links=links)  # 8
     actions = add_off_ball_runs(  # 9 INLINE (pre_seconds, min_displacement_m)
         actions, frames, home_team_id=home_team_id, pre_seconds=pre_seconds, min_displacement_m=min_displacement_m
     )
     # Step 10 (line-break) DELETED — not a feature.
-    actions = add_team_shape(actions, frames, links=links, home_team_id=home_team_id)  # 11
+    actions = add_team_shape(actions, frames, links=links)  # 11
     actions = _compute_das(actions, frames, links, carrier_params)  # 12
     # ADR-055: see enrich_invariant -- optional `goal_map`, no `home_team_id`.
     actions = add_gk_influence(actions, frames, xt, links=links)  # 13

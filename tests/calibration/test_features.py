@@ -17,10 +17,8 @@ _CP = {"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0}
 
 
 def test_invariant_sets_trial_cols_nan_and_others_present(synth, frozen_xt):
-    actions, frames, home = synth
-    base, links = enrich_invariant(
-        actions=actions, frames=frames, xt=frozen_xt.xt, home_team_id=home, carrier_params=_CP
-    )
+    actions, frames, _home = synth
+    base, links = enrich_invariant(actions=actions, frames=frames, xt=frozen_xt.xt, carrier_params=_CP)
     for col in _TRIAL_DEPENDENT_COLS:
         assert base[col].isna().all(), f"{col} must be a NaN placeholder in the invariant"
     # A non-trial tracking feature must be materialised (not all-NaN) for at least some rows.
@@ -32,9 +30,7 @@ def test_invariant_sets_trial_cols_nan_and_others_present(synth, frozen_xt):
 
 def test_patch_overwrites_exactly_the_trial_cols(synth, frozen_xt):
     actions, frames, home = synth
-    base, links = enrich_invariant(
-        actions=actions, frames=frames, xt=frozen_xt.xt, home_team_id=home, carrier_params=_CP
-    )
+    base, links = enrich_invariant(actions=actions, frames=frames, xt=frozen_xt.xt, carrier_params=_CP)
     invariant_snapshot = base.drop(columns=_TRIAL_DEPENDENT_COLS).copy()
     patched = patch_trial_columns(
         base_actions=base,

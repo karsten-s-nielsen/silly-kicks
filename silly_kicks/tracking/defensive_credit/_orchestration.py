@@ -100,12 +100,26 @@ def compute_defensive_credits(
     # fid_by_pos); skip the Ward-clustering cost entirely when the rule is disabled (Q8).
     if RULE_FAILED_MARKING_THROUGH_BALL in enabled:
         line_break_between_lines = precompute_line_break_between_lines(
-            act, frames, fid_by_pos=fid_by_pos, flip_by_pos=flip_series.to_numpy()
+            # fillna(False) is safe HERE and only here: the actions whose direction is
+            # unresolved are skipped wholesale in the loop below, so their precomputed entry is
+            # never read. Passing the nullable array instead would push the NA into a numpy
+            # boolean context inside the Ward clustering.
+            act,
+            frames,
+            fid_by_pos=fid_by_pos,
+            flip_by_pos=flip_series.fillna(False).to_numpy(dtype=bool),
         )
     else:
         line_break_between_lines = pd.array([pd.NA] * len(act), dtype="boolean")
     rows: list[CreditRow] = []
     for idx in range(len(act)):
+        if pd.isna(flip_series.iloc[idx]):
+            # Unresolved direction -> this action assigns NO credit. Every geometric rule below
+            # consumes `flip` (lane blocking, proximity, between-lines), so there is no subset
+            # that could still be evaluated honestly. Deliberately NOT the unlinked-frame route
+            # just below, which keeps the action and lets each rule decide: an unlinked action is
+            # missing its frame, whereas this one has a frame it cannot orient.
+            continue
         fid = fid_by_pos[idx]
         fid = None if pd.isna(fid) else int(fid)
         ctx = RuleContext(

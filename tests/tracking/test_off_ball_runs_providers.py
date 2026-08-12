@@ -37,8 +37,8 @@ class TestOffBallRunsProviders:
     def test_line_break_no_crash(self, provider_data):
         from silly_kicks.tracking.features import add_line_break
 
-        actions, frames, home_team_id = provider_data
-        result = add_line_break(actions, frames, home_team_id=home_team_id)
+        actions, frames, _home_team_id = provider_data
+        result = add_line_break(actions, frames)
         assert "line_break" in result.columns
         assert "n_attackers_behind_line" in result.columns
         assert len(result) == len(actions)
@@ -47,8 +47,8 @@ class TestOffBallRunsProviders:
     def test_off_ball_context_no_crash(self, provider_data):
         from silly_kicks.tracking.features import add_off_ball_context
 
-        actions, frames, home_team_id = provider_data
-        result = add_off_ball_context(actions, frames, home_team_id=home_team_id)
+        actions, frames, _home_team_id = provider_data
+        result = add_off_ball_context(actions, frames)
         expected_cols = {
             "n_off_ball_runners_pre_window",
             "max_off_ball_run_displacement_pre_window",

@@ -83,7 +83,7 @@ def _frame() -> pd.DataFrame:
 
 def test_high_y_player_receives_high_y_threat():
     """PRE-FIX THIS INVERTS: the raw interpolator hands back the y-mirrored surface."""
-    out = compute_player_influence(_frame(), _y_ramp_xt(), attacking_team_id=_HOME, home_team_id=_HOME)
+    out = compute_player_influence(_frame(), _y_ramp_xt(), attacking_team_id=_HOME, attacks_rtl=False)
     high = out[_HIGH_Y_PID].off_ball_xt
     low = out[_LOW_Y_PID].off_ball_xt
 
@@ -109,7 +109,7 @@ def test_away_attack_reflects_the_threat_grid_on_BOTH_axes():
     frame.loc[frame["player_id"].isin([_HIGH_Y_PID, _LOW_Y_PID]), "team_id"] = 2
     frame.loc[frame["player_id"].isin([21, 22]), "team_id"] = _HOME
 
-    out = compute_player_influence(frame, _y_ramp_xt(), attacking_team_id=2, home_team_id=_HOME)
+    out = compute_player_influence(frame, _y_ramp_xt(), attacking_team_id=2, attacks_rtl=True)
     at_frame_high_y = out[_HIGH_Y_PID].off_ball_xt
     at_frame_low_y = out[_LOW_Y_PID].off_ball_xt
 
@@ -125,4 +125,4 @@ def test_away_attack_reflects_the_threat_grid_on_BOTH_axes():
 def test_unfitted_xt_fails_loud():
     """The shared guard now applies here too (it previously would not have raised)."""
     with pytest.raises(NotFittedError):
-        compute_player_influence(_frame(), ExpectedThreat(), attacking_team_id=_HOME, home_team_id=_HOME)
+        compute_player_influence(_frame(), ExpectedThreat(), attacking_team_id=_HOME, attacks_rtl=False)

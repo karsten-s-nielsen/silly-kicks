@@ -57,6 +57,8 @@ class TestResolveGkGeometry:
                 "player_id": [10],
                 "is_goalkeeper": [True],
                 "is_ball": [False],
+                # ADR-051 D3 (4.80.0): frames must declare direction or the tracking tier refuses.
+                "team_attacking_direction": ["ltr"],
                 "x": [4.0],
                 "y": [33.0],
                 "source_provider": ["sportec"],
@@ -211,6 +213,10 @@ class TestGoldenSnapshot:
                 player_id=[10],
                 is_goalkeeper=[True],
                 is_ball=[False],
+                # ADR-051 D3 (4.80.0): frames must declare direction or the tracking tier
+                # refuses. "ltr" is the direction the old bare-bool default silently assumed,
+                # so the committed golden parquet is reproduced byte-for-byte.
+                team_attacking_direction=["ltr"],
                 x=[4.0],
                 y=[33.0],
                 source_provider=["sportec"],

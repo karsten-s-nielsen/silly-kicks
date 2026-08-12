@@ -45,7 +45,6 @@ def test_add_player_influence_output_columns(sportec_data):
         actions,
         frames,
         xt,
-        home_team_id=actions["team_id"].dropna().iloc[0],
     )
     for col in _OUTPUT_COLS:
         assert col in result.columns, f"Missing column: {col}"
@@ -56,8 +55,7 @@ def test_diff_identity(sportec_data):
     from silly_kicks.tracking.features import add_player_influence
 
     actions, frames, xt = sportec_data
-    home = actions["team_id"].dropna().iloc[0]
-    result = add_player_influence(actions, frames, xt, home_team_id=home)
+    result = add_player_influence(actions, frames, xt)
 
     valid = result["off_ball_xt_team"].notna()
     pd.testing.assert_series_equal(
@@ -76,8 +74,7 @@ def test_provenance_columns_added(sportec_data):
     from silly_kicks.tracking.features import add_player_influence
 
     actions, frames, xt = sportec_data
-    home = actions["team_id"].dropna().iloc[0]
-    result = add_player_influence(actions, frames, xt, home_team_id=home)
+    result = add_player_influence(actions, frames, xt)
 
     provenance = {"frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"}
     assert provenance.issubset(result.columns)
@@ -88,9 +85,8 @@ def test_provenance_skip_guard(sportec_data):
     from silly_kicks.tracking.features import add_player_influence
 
     actions, frames, xt = sportec_data
-    home = actions["team_id"].dropna().iloc[0]
-    result = add_player_influence(actions, frames, xt, home_team_id=home)
-    result2 = add_player_influence(result, frames, xt, home_team_id=home)
+    result = add_player_influence(actions, frames, xt)
+    result2 = add_player_influence(result, frames, xt)
 
     for col in ["frame_id", "time_offset_seconds"]:
         bad_x = f"{col}_x"
@@ -116,9 +112,8 @@ def test_per_series_helper_returns_series(sportec_data, helper_name):
     from silly_kicks.tracking import features
 
     actions, frames, xt = sportec_data
-    home = actions["team_id"].dropna().iloc[0]
     fn = getattr(features, helper_name)
-    result = fn(actions, frames, xt, home_team_id=home)
+    result = fn(actions, frames, xt)
     assert isinstance(result, pd.Series)
     assert len(result) == len(actions)
 
@@ -148,7 +143,7 @@ def test_per_series_helper_none_frames(helper_name, xt_grid):
         }
     )
     fn = getattr(features, helper_name)
-    result = fn(actions, None, xt_grid, home_team_id=1)
+    result = fn(actions, None, xt_grid)
     assert result.isna().all()
 
 
@@ -159,7 +154,7 @@ def test_player_influence_xfns_column_names(xt_grid):
     """feature_column_names probing (empty frames) returns 21 columns."""
     from silly_kicks.tracking.features import player_influence_xfns
 
-    xfns = player_influence_xfns(xt_grid, home_team_id=1)
+    xfns = player_influence_xfns(xt_grid)
     assert len(xfns) == 1
 
     # Simulate VAEP probing: 10-row dummy actions, no frames

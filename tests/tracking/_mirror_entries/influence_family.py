@@ -126,7 +126,7 @@ def register() -> None:
     # under both the away and the nonsense home id.
     _entry(
         "add_player_influence",
-        lambda a, f, h: add_player_influence(a, f, gate_xt(), home_team_id=h),
+        lambda a, f, h: add_player_influence(a, f, gate_xt()),
         {
             "actor_reachable_area_m2": "invariant",
             "off_ball_xt_team": "invariant",
@@ -149,7 +149,12 @@ def register() -> None:
             "re-ordered reduction on a numba vs numpy leg) and still ~10 orders below the 6.93e3 "
             "movement the identity-keyed grid reflection produces."
         ),
-        role="direction_only",
+        role="unused",  # D3 re-keyed: direction now from acting_team_attacks_rtl, no home_team_id
+        # NO `call_with_map`: this is a D11 BOOL site. It reflects a GRID and takes the
+        # resolved direction, never a GoalMap, so a map swap would move nothing and a Gate C
+        # entry here would pass because its input is ignored -- vacuous by construction. Its
+        # detector is tests/tracking/test_d3_direction_invariance.py, which mirrors the FRAMES
+        # and holds home_team_id: that sees the defect AND survives the fix.
         non_vacuity=("off_ball_xt_team", "off_ball_xt_diff"),
         exempt={
             "frame_id": _PROVENANCE_REASON,
@@ -157,7 +162,6 @@ def register() -> None:
             "n_candidate_frames": _PROVENANCE_REASON,
             "link_quality_score": _PROVENANCE_REASON,
         },
-        defect_b="D3 re-key pending: identity-keyed direction (spec 4.3)",
     )
 
     # ------------------------------------------------------------------
@@ -252,7 +256,7 @@ def register() -> None:
     # which is why the non-vacuity anchor is the column that is genuinely non-zero there.
     _entry(
         "add_off_ball_run_values",
-        lambda a, f, h: add_off_ball_run_values(a, f, gate_xt(), home_team_id=h),
+        lambda a, f, h: add_off_ball_run_values(a, f, gate_xt()),
         {
             "run_value_target": "invariant",
             "run_value_disruptive_sum": "invariant",

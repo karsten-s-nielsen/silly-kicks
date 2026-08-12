@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from silly_kicks.tracking import resolve_defended_goals
 from tests.tracking.test_off_ball_runs import _make_action_at, _make_multi_frame_fixture
 
 
@@ -69,7 +70,7 @@ class TestLineBreakInvariants:
             "player_id"
         ].iloc[0]
 
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
         valid = result["n_attackers_behind_line"].dropna()
         assert (valid >= 0).all()
 
@@ -110,7 +111,7 @@ class TestLineBreakInvariants:
         import pandas as pd
 
         actions = pd.concat([a_past, a_short], ignore_index=True)
-        result = _line_break_kernel(actions, frames, home_team_id=1)
+        result = _line_break_kernel(actions, frames, goal_map=resolve_defended_goals(frames))
 
         # Where line_break is True, end_x must exceed the spadl defensive line
         lb_true = result[result["line_break"] == True]  # noqa: E712

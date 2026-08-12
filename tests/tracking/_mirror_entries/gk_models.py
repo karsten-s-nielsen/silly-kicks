@@ -163,7 +163,7 @@ def register() -> None:
 
     _entry(
         "add_xt_gk",
-        lambda a, f, h: add_xt_gk(_gk_distribution_scene(a), _trusted_provider_frames(f), gate_xt(), home_team_id=h),
+        lambda a, f, h: add_xt_gk(_gk_distribution_scene(a), _trusted_provider_frames(f), gate_xt()),
         {
             "xt_gk_base": "invariant",
             "xt_gk_pev": "invariant",

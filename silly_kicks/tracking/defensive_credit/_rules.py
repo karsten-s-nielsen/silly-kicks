@@ -114,7 +114,14 @@ class RuleContext:
         # single-frame test path: every action is assumed to link to the one frame (frame_id=fid)
         fid_by_pos = np.full(len(act), np.nan if fid is None else float(fid))
         line_break = precompute_line_break_between_lines(
-            act, frames, fid_by_pos=fid_by_pos, flip_by_pos=flip_series.to_numpy()
+            act,
+            frames,
+            fid_by_pos=fid_by_pos,
+            # Convenience builder for unit tests, whose fixtures are oriented by construction.
+            # The production path (_orchestration) skips unresolved actions instead; here a
+            # fixture that cannot resolve its direction is a fixture defect, and fillna(False)
+            # keeps the failure where it belongs -- in the assertion, not in a dtype error.
+            flip_by_pos=flip_series.fillna(False).to_numpy(dtype=bool),
         )
         return cls(
             actions=act,
@@ -126,7 +133,7 @@ class RuleContext:
             params=params,
             frame_id=fid,
             acting_team_id=act.iloc[idx]["team_id"],
-            flip=bool(flip_series.iloc[idx]),
+            flip=bool(flip_series.fillna(False).iloc[idx]),
             line_break_between_lines=line_break,
         )
 

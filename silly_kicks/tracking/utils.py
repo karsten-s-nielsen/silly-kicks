@@ -954,13 +954,23 @@ def _resolve_action_frame_context(
     # Key by action_id (same precondition as the action_id merges above). Dedupe defensively:
     # gamestate-shifted slots repeat the SAME action (identical game/period/team) so first-wins
     # is correct, and a duplicate index would otherwise make .map() raise.
-    flip_by_action = pd.Series(flip.to_numpy(dtype=bool), index=actions["action_id"].to_numpy())
+    # NULLABLE boolean, deliberately not coerced: <NA> marks an action whose direction the frames
+    # do not resolve, and _reproject_rows below NaNs that action's sampled geometry instead of
+    # leaving it in the frame convention. This is the shared context behind eight kernels, so a
+    # .fillna(False) here would reinstate the ADR-028 defect at all eight in one line.
+    flip_by_action = pd.Series(flip.to_numpy(dtype=object), index=actions["action_id"].to_numpy(), dtype="boolean")
     flip_by_action = flip_by_action[~flip_by_action.index.duplicated(keep="first")]
 
     def _reproject_rows(rows: pd.DataFrame) -> pd.DataFrame:
         if rows.empty or "action_id" not in rows.columns:
             return rows
         row_flip = rows["action_id"].map(flip_by_action)
+        # Rows whose action has no resolvable direction. Their POSITIONS are nulled after the
+        # re-projection below, so every kernel downstream produces NaN for that action by
+        # ordinary arithmetic -- the same result it already gives an action with no frame rows.
+        # Row COUNT is preserved (the context stays aligned with `actions`); only the geometry
+        # goes away, because a position in an unknown convention is not a measurement.
+        _unresolved = row_flip.isna().to_numpy()
         row_flip = row_flip.fillna(False).astype(bool)
         row_flip.index = rows.index
         # ADR-045: velocities MUST be negated alongside positions. Omitting them made
@@ -973,7 +983,8 @@ def _resolve_action_frame_context(
         # matters at all -- also carries the smoothed pair. Enumerating x/y/vx/vy alone
         # would leave a mirrored position sitting next to an unmirrored copy of itself,
         # which is D3b reconstituted inside D1's own fix.
-        return reproject_to_action_ltr(
+        _geometry_cols = ["x", "x_smoothed", "y", "y_smoothed", "vx", "vy"]
+        out = reproject_to_action_ltr(
             rows,
             row_flip,
             x_cols=["x", "x_smoothed"],
@@ -981,6 +992,14 @@ def _resolve_action_frame_context(
             vx_cols=["vx"],
             vy_cols=["vy"],
         )
+        if _unresolved.any():
+            # The SAME column list the re-projection covers: nulling a subset would leave a
+            # mirrored position beside an unmirrored copy of itself, the exact shape the
+            # enumeration comment above exists to prevent.
+            for _c in _geometry_cols:
+                if _c in out.columns:
+                    out.loc[_unresolved, _c] = np.nan
+        return out
 
     actor_rows = _reproject_rows(actor_rows)
     opposite = _reproject_rows(opposite)

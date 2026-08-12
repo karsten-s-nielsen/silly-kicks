@@ -714,7 +714,9 @@ def _find_caution_pairs(
     if "caution_card_color" not in events.columns:
         return pairs
     foul_indices = np.where(is_foul)[0]
-    for idx in foul_indices:
+    # int(): np.where yields np.intp, and `pairs` is a dict[int, str]. Casting at the loop
+    # boundary keeps every downstream use (dict key, .iloc) plainly typed.
+    for idx in (int(_i) for _i in foul_indices):
         foul_row = rows.iloc[idx]
         candidates = events[
             (events["event_type"] == "Caution")
