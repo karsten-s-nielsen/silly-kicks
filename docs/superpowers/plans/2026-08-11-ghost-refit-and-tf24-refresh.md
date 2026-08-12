@@ -1095,28 +1095,50 @@ fails on first contact):
   `DEAD` as finished — empty means the ssh failed, so retry. Re-check the process ended **before**
   `scp`-ing results; a live run serves the previous run's file.
 
-- [ ] **Step 1: Ship the code and provision the venv**
+- [ ] **Step 1: CLONE the branch (never `git archive`) and provision the venv**
+
+**A tarball checkout breaks provenance, measured.** `git archive` ships no `.git`, so
+`git_provenance()` returns `commit: "unknown", tree_state: "unknown", dirty: True` and EVERY
+artifact driver refuses — or, with `--allow-dirty`, stamps `"unknown"` into an artifact whose
+numbers get cited. The box can reach GitHub, and the branch is pushed:
 
 ```bash
-ssh karsten@192.168.68.73 'mkdir -p ~/silly-kicks-refit'
-git archive --format=tar HEAD | ssh karsten@192.168.68.73 'tar -x -C ~/silly-kicks-refit'
+ssh karsten@192.168.68.73 'rm -rf ~/sk-refit && git clone --branch <this-branch> --depth 1 -q \
+  https://github.com/karsten-s-nielsen/silly-kicks.git ~/sk-refit && cd ~/sk-refit && \
+  echo "HEAD=$(git rev-parse --short HEAD) porcelain=$(git status --porcelain | wc -l)"'
 ```
 
-Then, as a separate call (never combined with the pipe above):
+Expect `porcelain=0`. There is an older clone at `~/Development/silly-kicks` on a different branch —
+leave it alone. A shallow clone is enough: provenance needs only `rev-parse` and `status`.
+
+Then, as a separate call (never combined with a pipe):
 
 ```bash
-ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && /home/karsten/.local/bin/uv venv .venv && \
-  /home/karsten/.local/bin/uv pip install -e . pyarrow "pandas==2.3.3" "kloppy>=3.18" scipy scikit-learn'
+ssh karsten@192.168.68.73 'cd ~/sk-refit && /home/karsten/.local/bin/uv venv .venv && \
+  /home/karsten/.local/bin/uv pip install -e ".[train]" pyarrow "pandas==2.3.3" "kloppy>=3.18" scipy scikit-learn'
 ```
 
-`pandas==2.3.3` is pinned deliberately — the box otherwise resolves pandas 3.0.x.
+`pandas==2.3.3` is pinned deliberately — the box otherwise resolves pandas 3.0.x. **`.[train]` is
+not optional and a bare `-e .` fails:** `scripts/_driver.py` imports `ruthless.fingerprint` to
+compute the generation token, so the materializer dies with `ModuleNotFoundError: ruthless` before
+touching any data. Taking it from the extra means the `>=0.4.0` floor comes from `pyproject.toml`
+rather than from a hand-typed version.
 
-- [ ] **Step 2: Confirm the token and the interpreter before spending hours**
+- [ ] **Step 2: Confirm the token, the interpreter AND the provenance before spending hours**
 
 ```bash
 ssh karsten@192.168.68.73 'test -f ~/.pining_env && echo TOKEN_PRESENT || echo TOKEN_MISSING'
-ssh karsten@192.168.68.73 '~/silly-kicks-refit/.venv/bin/python -c "import pandas, pyarrow, silly_kicks; print(pandas.__version__, silly_kicks.__version__)"'
+ssh karsten@192.168.68.73 'cd ~/sk-refit && ./.venv/bin/python -c "
+import pandas, pyarrow, silly_kicks, sys; sys.path.insert(0, \".\")
+from ruthless import fingerprint
+from scripts._provenance import git_provenance
+print(pandas.__version__, silly_kicks.__version__)
+p = git_provenance(); print({k: p[k] for k in (\"commit\", \"tree_state\", \"dirty\")})
+"'
 ```
+
+`tree_state` must read `clean` and `commit` must be this branch's HEAD. If it says `unknown`, the
+checkout is a tarball and Step 1 was skipped.
 
 If `TOKEN_MISSING`, write it without exposing the value in argv:
 
@@ -1180,22 +1202,33 @@ were paid for. Two such errors were found statically on 2026-08-12 (the missing 
 the dropped actions), and neither needed real data to find — which is the argument for a smoke that
 needs almost none.
 
+**TWO matches, not one, and `--cv-folds 2`.** Measured: a one-match smoke reaches the fit and then
+dies in `StratifiedGroupKFold` with `Fold 4/5 — Train: 0 samples`, because the CV groups BY MATCH
+and one group cannot be split. Two matches also make the smoke exercise RESUME, which is where its
+most valuable finding came from.
+
 ```bash
-ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
   ./.venv/bin/python scripts/materialize_tc3_frames.py \
     --cache-dir ~/pining-cache --out ~/tc3-smoke \
-    --providers skillcorner --max-per-provider 1'
+    --providers skillcorner --max-per-provider 2 --reference-parquet "$REF"'
 SGEN=$(ssh karsten@192.168.68.73 'ls -d ~/tc3-smoke/shards/*/ | head -1')
-ssh karsten@192.168.68.73 "cd ~/silly-kicks-refit && ./.venv/bin/python scripts/train_ghost_gk.py \
+ssh karsten@192.168.68.73 "cd ~/sk-refit && ./.venv/bin/python scripts/train_ghost_gk.py \
   --data-dir $SGEN --output-dir ~/ghost-smoke \
   --home-teams ~/tc3-smoke/home_teams.json --actions-dir ~/tc3-smoke/_actions \
-  --variant default --subsample-cap 2000 --training-platform dgx-spark-aarch64"
+  --variant default --subsample-cap 2000 --cv-folds 2 --training-platform dgx-spark-aarch64"
 ```
 
-Required in the smoke log, all four:
-`Home team mapping: 1 games` · `Loaded actions for 1 games` · no `SKIP game` line · a written
-artifact. Then **delete `~/tc3-smoke`** so its one-match generation cannot be mistaken for the
+Required in the smoke log, all five: `parity OK` from the PRE-FLIGHT (before the first item),
+`Home team mapping: 2 games`, `Loaded actions for 2 games`, no `SKIP game` line, and a written
+artifact. Then **delete `~/tc3-smoke`** so its two-match generation cannot be mistaken for the
 corpus later.
+
+**What this smoke has already caught, on its first run** — all three needed real data or a real
+resume, and none of them needed the full corpus: a missing `ruthless` dependency; a parity check
+keyed on "the first match processed", which resume silently redirected onto the WRONG match; and the
+same check being swallowed by `for_each` as one failed item, so a real breach would not have stopped
+the pass.
 
 - [ ] **Step 4: Measure the delta**
 

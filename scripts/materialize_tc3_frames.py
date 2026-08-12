@@ -104,6 +104,52 @@ def assert_frames_parity(produced: pd.DataFrame, reference: pd.DataFrame, *, mat
         )
 
 
+def preflight_reference_parity(reference_path: pathlib.Path, *, cache_dir: pathlib.Path, load_matches) -> str:
+    """Assert parity against the ONE match the reference came from, BEFORE any corpus work.
+
+    **This ran INSIDE the loop, on "the first match processed", and that was wrong twice over --
+    both failure modes measured on a two-match smoke, not reasoned about.**
+
+    1. `for_each` RESUMES by skipping items whose shard exists, so on any resumed pass the true
+       first match never reaches `work` and the check fires against a DIFFERENT match. Observed:
+       `FAILED 1899585: row count 935663 != reference 999534` -- two different matches, correctly
+       reported as unequal, meaning nothing.
+    2. `for_each` records a failing item and CONTINUES (up to `max_consecutive_failures`). So a
+       genuine parity breach would not have stopped the pass, while the design intent -- and the
+       plan's operator instruction -- is that parity failure is a STOP.
+
+    Both dissolve by checking before the loop instead of inside it. The match is identified from the
+    reference ITSELF (`source_provider` column + the `{provider}/{match_id}/` path the established
+    `_loader_pining_to_cache.py` writes), so there is no new flag and no ordering assumption left to
+    break.
+    """
+    reference = pd.read_parquet(reference_path)
+    if "source_provider" not in reference.columns:
+        raise SystemExit(f"{reference_path}: no `source_provider` column; cannot identify its match")
+    provider = str(reference["source_provider"].dropna().iloc[0])
+    # The path, not `game_id`: the loader's allowlist keys on MATCH id, and a provider's `game_id`
+    # need not equal it (SkillCorner's can be a kloppy hash). `game_id` is used to verify the loader
+    # handed back the match we asked for, which is a different question.
+    match_id = reference_path.parent.name
+    want_games = {str(g) for g in reference["game_id"].dropna().unique()}
+
+    print(f"pre-flight parity: {provider}/{match_id} vs {reference_path}", flush=True)
+    for _prov, got_id, _actions, frames, _home in load_matches(
+        providers=[provider], match_ids={provider: [match_id]}, cache_dir=cache_dir
+    ):
+        got_games = {str(g) for g in frames["game_id"].dropna().unique()}
+        if not (got_games & want_games):
+            raise SystemExit(
+                f"pre-flight loaded {provider}/{got_id} with game_ids {sorted(got_games)}, which do "
+                f"not intersect the reference's {sorted(want_games)}. Refusing to compare two "
+                f"different matches -- that is what made the in-loop check meaningless."
+            )
+        assert_frames_parity(frames, reference, match_id=str(got_id))
+        print(f"parity OK against {reference_path}", flush=True)
+        return str(got_id)
+    raise SystemExit(f"pre-flight: the loader yielded no match for {provider}/{match_id}")
+
+
 def collect_home_team_map(home_dir: pathlib.Path, keys) -> dict[str, str]:
     """Assemble the trainer's `--home-teams` map from per-item sidecars, or RAISE.
 
@@ -149,7 +195,8 @@ def main() -> None:
         "--reference-parquet",
         type=pathlib.Path,
         default=None,
-        help="An existing TC3 frames.parquet to assert parity against on the FIRST match.",
+        help="An existing TC3 frames.parquet. Parity is asserted PRE-FLIGHT against the match it "
+        "came from (identified from the file itself), before any corpus work.",
     )
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--allow-dirty", action="store_true")
@@ -160,21 +207,20 @@ def main() -> None:
 
     from scripts._loader_pining import load_matches
 
-    reference = pd.read_parquet(args.reference_parquet) if args.reference_parquet else None
-    checked: list[str] = []
+    # BEFORE the loop, and before any corpus work is paid for: a parity breach must STOP the pass,
+    # and `for_each` would only record it as one failed item and carry on. See
+    # `preflight_reference_parity` for the two measured failure modes of the in-loop version.
+    checked_match = (
+        preflight_reference_parity(args.reference_parquet, cache_dir=args.cache_dir, load_matches=load_matches)
+        if args.reference_parquet
+        else None
+    )
 
     home_dir = args.out / "_home"
     actions_dir = args.out / "_actions"
 
     def _work(item):
         provider, match_id, actions, frames, home = item
-        # Parity is asserted on the FIRST match only: it is a pipeline-shape check, not a per-row
-        # one, and re-reading the reference per match would cost the corpus pass for no new signal.
-        if reference is not None and not checked:
-            assert_frames_parity(frames, reference, match_id=str(match_id))
-            checked.append(str(match_id))
-            print(f"parity OK against {args.reference_parquet}", flush=True)
-
         # `home` and `actions` are TRAINER INPUTS, not decoration, and neither can ride the
         # `for_each` contract: `work` returns one tidy frame, and a `{game_id: team_id}` counter
         # dict is DROPPED by `aggregate_manifests` (`_partition.py:88` merges a dict counter only
@@ -256,8 +302,8 @@ def main() -> None:
                 "run_commit": prov["commit"],
                 "run_tree_dirty": prov["dirty"],
                 "providers": sorted(args.providers),
-                "parity_checked_against": str(args.reference_parquet) if reference is not None else None,
-                "parity_checked_match": checked[0] if checked else None,
+                "parity_checked_against": str(args.reference_parquet) if args.reference_parquet else None,
+                "parity_checked_match": checked_match,
                 "n_home_team_entries": len(home_map),
                 "n_action_shards": len(sorted(actions_dir.glob("*.parquet"))) if actions_dir.exists() else 0,
             },
