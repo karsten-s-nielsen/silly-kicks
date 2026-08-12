@@ -11,6 +11,8 @@ import warnings
 
 import pytest
 
+import silly_kicks.spadl.config as spadlconfig
+
 
 @pytest.mark.parametrize("name", ["MissingFeatureContractWarning", "UnverifiableFeatureContractWarning"])
 def test_warning_category_is_registered_on_every_public_surface(name):
@@ -121,11 +123,13 @@ def test_probe_makes_the_box_constant_load_bearing(monkeypatch):
     }
     before = int(gg.extract_ghost_gk_features(contract_probe_frame(), **kw)["attackers_in_box"].iloc[0])
 
-    monkeypatch.setattr(gg, "_PENALTY_AREA_Y_MIN", (68.0 - 40.32) / 2.0)
-    monkeypatch.setattr(gg, "_PENALTY_AREA_Y_MAX", (68.0 + 40.32) / 2.0)
+    # Flip the CANONICAL constant: ghost's own `_PENALTY_AREA_*` were deleted when its predicate
+    # and declaration migrated onto `spadlconfig` (ADR-050 §6). Direction is reversed accordingly --
+    # the baseline is now the 20.16 box, and shrinking it to 20.15 moves the probe the other way.
+    monkeypatch.setattr(spadlconfig, "penalty_area_half_width", 40.3 / 2.0)
     after = int(gg.extract_ghost_gk_features(contract_probe_frame(), **kw)["attackers_in_box"].iloc[0])
 
-    assert (before, after) == (0, 1)
+    assert (before, after) == (1, 0)
 
 
 # --------------------------------------------------------------------------------------------
@@ -444,12 +448,17 @@ def test_ghost_pin_is_enforced_by_a_raise_not_by_prose(monkeypatch):
     the "do not unify before the re-fit" instruction exists to prevent. Before this artifact
     carried a contract, only a docstring said so -- and a docstring is deletable by whoever is
     "finishing the job"."""
-    import silly_kicks.tracking._ghost_gk as gg
     from silly_kicks.tracking._ghost_gk import GhostGkModel
 
     # ghost has no _VARIANT_CACHE (verified), so from_variant re-runs load() every call.
-    monkeypatch.setattr(gg, "_PENALTY_AREA_Y_MIN", (68.0 - 40.32) / 2.0)
-    monkeypatch.setattr(gg, "_PENALTY_AREA_Y_MAX", (68.0 + 40.32) / 2.0)
+    # Flip the CANONICAL constant -- ghost's own were deleted at the ADR-050 §6 closure.
+    #
+    # The value is deliberately one NO artifact has ever been stamped with. Using "the other era's"
+    # constant makes this test era-dependent and silently self-disarming: patching to 20.15 while
+    # the bundled artifact still declares 20.15 MATCHES, so `load()` succeeds and the test fails
+    # `DID NOT RAISE` -- observed while migrating. A never-stamped value diverges from whatever is
+    # on disk, before or after the re-fit.
+    monkeypatch.setattr(spadlconfig, "penalty_area_half_width", 19.0)
     with pytest.raises(Exception, match=r"constant|feature contract"):
         GhostGkModel.from_variant("default")
 

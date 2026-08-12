@@ -234,9 +234,9 @@ def _resolve_model(model: GhostGkModel | GhostGkVariant | None) -> GhostGkModel:
 _FIELD_LENGTH = spadlconfig.field_length  # 105.0
 _FIELD_WIDTH = spadlconfig.field_width  # 68.0
 _GOAL_Y = _FIELD_WIDTH / 2.0  # 34.0
-_PENALTY_AREA_X = 16.5
-_PENALTY_AREA_Y_MIN = (_FIELD_WIDTH - 40.3) / 2.0
-_PENALTY_AREA_Y_MAX = (_FIELD_WIDTH + 40.3) / 2.0
+# The penalty-area constants that used to live here (`_PENALTY_AREA_X`, `_PENALTY_AREA_Y_MIN/MAX`,
+# a 40.3 m box) are GONE: both the predicate and the contract declaration now read `spadlconfig`
+# through `_geo.in_penalty_area_goal_relative_array`. ADR-050 §6 closed.
 _VELOCITY_WINDOW_S = 0.5
 _SET_PIECE_DECAY_SECONDS = 10.0
 
@@ -677,7 +677,8 @@ def extract_ghost_gk_features(
         nearest_atk_x = float(np.min(atk_xs))
         atk_cx = float(np.mean(atk_xs))
         atk_cy = float(np.mean(atk_ys))
-        in_box = (atk_xs < _PENALTY_AREA_X) & (atk_ys >= _PENALTY_AREA_Y_MIN) & (atk_ys <= _PENALTY_AREA_Y_MAX)
+        # `atk_xs` is already goal-relative (via `to_gr_x`), which is what the helper expects.
+        in_box = _geo.in_penalty_area_goal_relative_array(atk_xs, atk_ys)
         attackers_in_box = int(np.sum(in_box))
     else:
         nearest_atk_x = atk_cx = atk_cy = np.nan
@@ -1556,11 +1557,12 @@ def _feature_contract_block() -> dict:
     """Feature contract (ADR-050): this model's FEATURE VECTOR on the fixed probe frame, plus the
     geometry constants its extractor consumes. Mirror of the xS/xCross blocks.
 
-    Ghost's declared half-width evaluates to **20.15**, not the canonical 20.16 -- deliberately.
-    Its bundled weights were trained on the 40.3 m box, so unifying the constant without a re-fit
-    would skew ``attackers_in_box``, a real trained feature. Recording the divergence is what turns
-    the "do not unify before the re-fit" instruction from a comment into a mechanism: after this
-    artifact is stamped, flipping the constant makes ``load()`` raise.
+    Ghost's declared half-width is the canonical 20.16, and its predicate reads the same source --
+    ADR-050 §6 closed. It previously declared **20.15** against a 40.3 m box because the bundled
+    weights were fit on it; recording that divergence is what made ``load()`` raise on an
+    unaccompanied flip, and the re-fit discharged it. VALUES, not merely key names, are pinned by
+    ``tests/tracking/test_declared_constant_values.py`` -- the enumeration gate only ever compared
+    NAMES, which is how a 20.15 declaration survived against a 20.16 extractor.
     """
     from silly_kicks.tracking._feature_contract import contract_probe_frame, feature_contract
 
@@ -1584,8 +1586,11 @@ def _feature_contract_block() -> dict:
     return feature_contract(
         _vec,
         constants={
-            "penalty_area_half_width": (_PENALTY_AREA_Y_MAX - _PENALTY_AREA_Y_MIN) / 2.0,
-            "penalty_area_depth": float(_PENALTY_AREA_X),
+            # Declared from the SAME source the predicate consumes. Deriving these independently is
+            # how an artifact comes to declare a constant it was not fit on -- ghost declared 20.15
+            # against a 20.16 extractor and every key-name gate stayed green.
+            "penalty_area_half_width": float(spadlconfig.penalty_area_half_width),
+            "penalty_area_depth": float(spadlconfig.penalty_area_depth),
         },
     )
 

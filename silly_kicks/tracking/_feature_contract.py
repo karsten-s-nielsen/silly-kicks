@@ -52,11 +52,15 @@ _CONTRACT_RTOL = 0.0
 #: become module-qualified.
 DECLARED_CONSTANT_SOURCES: dict[str, str] = {
     # penalty area
+    # xCross's aliases. These are now LOAD-BEARING beyond xCross: ghost's own three entries were
+    # pruned when it migrated onto the canonical source (ADR-050 §6), so these are the only module
+    # constants left mapping to `penalty_area_half_width` / `penalty_area_depth` -- and models still
+    # STAMP both keys, which `test_the_registry_and_the_built_contracts_agree` requires to be
+    # covered here. A future cycle migrating xCross the same way would empty the registry and fail
+    # that assertion from the other direction; `test_declared_constant_values.py` is what should
+    # absorb the responsibility if that happens.
     "_BOX_HALF_WIDTH_M": "penalty_area_half_width",
     "_BOX_DEPTH_M": "penalty_area_depth",
-    "_PENALTY_AREA_X": "penalty_area_depth",
-    "_PENALTY_AREA_Y_MIN": "penalty_area_half_width",
-    "_PENALTY_AREA_Y_MAX": "penalty_area_half_width",
     # goal mouth -- these drive `openGoal`, so a goal-width change skews xS exactly the way a box
     # change skews ghost. Same class, same treatment.
     "GOAL_WIDTH": "goal_width",

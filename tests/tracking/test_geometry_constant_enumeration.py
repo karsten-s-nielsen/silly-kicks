@@ -149,7 +149,12 @@ def test_the_registry_and_the_built_contracts_agree(tmp_path):
 
 def test_every_declared_constant_is_load_bearing_on_the_probe(tmp_path):
     """Pinned per-model, so a reviewer can see in one screen that xS declares no penalty-area
-    constant (it has none) and that ghost's pair is the 40.3-derived one its weights were fit on.
+    constant (it has none) and that ghost declares the pair.
+
+    Ghost's pair is now the CANONICAL one (ADR-050 §6 closed): its predicate and its declaration both
+    read ``spadlconfig``, where it previously declared a 40.3-derived 20.15. This gate compares key
+    NAMES only -- which is exactly how that divergence survived -- so the VALUES are pinned
+    separately by ``tests/tracking/test_declared_constant_values.py``.
 
     A declaration the probe cannot move is a guard that fires when nothing changed -- which is how
     ``legacy_override`` becomes reflex.

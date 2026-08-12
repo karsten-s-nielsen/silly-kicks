@@ -42,10 +42,19 @@ def cache_token() -> str:
     flip the penalty-area constant, re-run* -- and with a bare file-existence cache check the
     second run silently reuses the first run's 40.3 m features while stamping a 20.16 m feature
     contract. Deriving the token from the constants makes that impossible with zero discipline.
-    """
-    import silly_kicks.tracking._ghost_gk as gg
 
-    return f"v3-box{gg._PENALTY_AREA_Y_MIN:.4f}-{gg._PENALTY_AREA_Y_MAX:.4f}-{gg._PENALTY_AREA_X:.4f}"
+    Reads the CANONICAL source directly. Ghost used to own `_PENALTY_AREA_Y_MIN/_MAX/_X` and this
+    token derived from those; ADR-050 section 6's closure deleted them, so the token follows the constants
+    to `spadlconfig` rather than pointing at names that no longer exist. The band form is preserved
+    so the token stays comparable in shape -- and its VALUE changes (13.8500 -> 13.8400), which is
+    precisely the invalidation this function exists to produce for the box-constant re-fit.
+    """
+    import silly_kicks.spadl.config as _spc
+    from silly_kicks.tracking import _geometry as _geo
+
+    lo = _geo.GOAL_Y - _spc.penalty_area_half_width
+    hi = _geo.GOAL_Y + _spc.penalty_area_half_width
+    return f"v3-box{lo:.4f}-{hi:.4f}-{_spc.penalty_area_depth:.4f}"
 
 
 #: One game's labels ride its shard under this prefix, so a game is ONE tidy frame -- the shape

@@ -34,6 +34,12 @@ ARTIFACT_DRIVERS = (
     # `_NOT_A_DRIVER` below, where the completeness gate can check it, rather than in a comment
     # here that nothing reads (Cycle B).
     "build_sb360_coverage",
+    # The ADR-050 §6 ghost box-constant closure. Both consume the pining corpus (external data) and
+    # write documents whose numbers are cited: `materialize_tc3_frames` produces the corpus cache
+    # the re-fit trains on, and `measure_box_constant_delta` produces the flip count that decides
+    # the release's ship claim ("unification, measured no-op" vs a weights comparison).
+    "materialize_tc3_frames",
+    "measure_box_constant_delta",
     "build_gkdv_arm_values",
     "calibrate_xt_bandwidth",
     "measure_cover_shadow_argmax_agreement",

@@ -11,10 +11,10 @@ from silly_kicks.tracking._geometry import in_penalty_area_absolute
 _FIELD_LENGTH: float = spadlconfig.field_length  # 105.0
 _FIELD_WIDTH: float = spadlconfig.field_width  # 68.0
 # Penalty-area geometry now comes from the canonical `spadlconfig.penalty_area_*` constants via
-# `_geometry.in_penalty_area_absolute` -- this module holds no box constant of its own. NOTE the
-# surviving cross-module divergence: `_ghost_gk.py` still uses 40.3 (half 20.15) because its
-# bundled weights were trained on that value; its artifact records the constant in its feature
-# contract, so flipping it without a re-fit makes `load()` raise rather than skew silently.
+# `_geometry.in_penalty_area_absolute` -- this module holds no box constant of its own. The
+# cross-module divergence this note used to flag (`_ghost_gk.py` at 40.3 / half 20.15) is CLOSED:
+# ghost reads the same canonical constants, and its feature contract is what forced the re-fit
+# instead of letting the flip skew a trained feature silently.
 _GOAL_Y_C: float = _FIELD_WIDTH / 2.0  # 34.0
 
 # --- closed rule vocabulary (DAS_SOURCE_VALUES pattern) ---
