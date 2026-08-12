@@ -184,6 +184,26 @@ direction family (`causal.join_layer2_confounders`, `_xcross_eval.gk_substitutio
 `_xshot_occurrence.prepare_xshot_training_data` / `compute_xshot_occurrence`) plus two `@overload`
 stubs whose `reads=0` is a property of having no body.
 
+### Fixed — the lint gate's verdict was a function of dependency-resolution luck
+
+The lint job exact-pins `ruff`, `pyright` and `pandas-stubs` but let **numpy** float, and numpy is
+a typing input to pyright in exactly the way pandas-stubs is -- it ships inline types. Measured on
+two runs a day apart: main's lint resolved numpy 2.5.2 and then DOWNGRADED to 2.4.6, while
+PR-S150's stayed on 2.5.2, and the seven pyright errors that difference produced sat in three files
+the PR's diff could not reach. A gate that goes red with no diff -- and green again on a re-run --
+teaches everyone to re-run it.
+
+Pinned on the SECOND install, and that placement is the property: the first install sets the tools,
+but `pip install -e ".[test]"` re-resolves and is what actually moves numpy, so a pin on the first
+line would be visibly present and bind nothing. `tests/test_ci_lint_pins_wired.py` asserts both the
+presence and the placement, and was mutation-tested against all three broken arrangements (pin on
+the first install only; pin absent; test matrix pinned too) before being trusted.
+
+**The TEST matrix stays deliberately unpinned, and that asymmetry is asserted too.** There an
+unpinned numpy/pandas is COVERAGE -- ADR-057's span, which caught this very release's pandas-3
+defect -- so someone "tidying" the two jobs into consistency would silently delete it. Typing
+inputs and behavioural inputs want opposite policies.
+
 ### Fixed — three defects the re-key introduced
 
 * **The `<NA>` blanking wrote into a READ-ONLY array on pandas 3.** `pitch_control_at_target` does

@@ -203,6 +203,17 @@ site repo-wide, and there are four. **Never assert a dtype literal across pandas
 majors** — assert the behaviour (that `id_compat` comparisons still match), which is what made the
 two-cycle-old `snapshot_to_tracking_frames` question finally answerable.
 
+**A TYPING input is pinned; a BEHAVIOURAL input is not (4.80.0).** The lint job exact-pins
+`ruff`, `pyright`, `pandas-stubs` **and `numpy`** -- numpy ships inline types, so it decides what
+pyright REPORTS exactly as pandas-stubs does, and leaving it floating made the gate's verdict a
+function of resolution luck (measured: main resolved 2.5.2 then DOWNGRADED to 2.4.6, so a PR whose
+diff could not reach the three offending files went red while main stayed green). **Pin it on the
+LAST install that can move it** -- the tools line runs first, but `pip install -e ".[test]"`
+re-resolves, so a pin above it is decorative. The TEST matrix stays UNPINNED on purpose: there,
+floating numpy/pandas is ADR-057's span and is what catches real breakage. Both halves are pinned
+by `tests/test_ci_lint_pins_wired.py`, including the asymmetry, so "tidying" the jobs into
+consistency fails CI rather than silently deleting the coverage.
+
 **The BUILD BACKEND is bounded and the PUBLISHER's validator is pinned — the pair, or neither works
 (4.79.0).** Same shape as the span above, and it bit within hours of that ADR landing: every Action
 in `.github/workflows/` is SHA-pinned while `[build-system] requires` was `["hatchling"]` with **no

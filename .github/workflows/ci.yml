@@ -25,7 +25,17 @@ jobs:
       - run: pip install ruff==0.15.7 pyright==1.1.409 pandas-stubs==2.3.3.260113
       - run: ruff check silly_kicks/ tests/ scripts/
       - run: ruff format --check silly_kicks/ tests/ scripts/
-      - run: pip install -e ".[test]"
+      # numpy is pinned HERE, not on the line above, and that placement is the whole point: this
+      # install re-resolves the dependency graph and is what MOVES numpy. Measured on two runs a
+      # day apart -- main's lint resolved 2.5.2 then downgraded to 2.4.6, while PR-S150's stayed on
+      # 2.5.2, and the 7 pyright errors that difference produced blocked a PR whose diff could not
+      # reach the three files reporting them. numpy supplies inline types to pyright exactly as
+      # pandas-stubs supplies stubs, so leaving it floating while pinning the other three typing
+      # inputs made the gate's verdict a function of resolution luck (ADR-057's rule: a pinned
+      # consumer and a floating producer are one dependency). The TEST jobs deliberately stay
+      # unpinned -- there, floating is COVERAGE, and it is what caught the pandas-3 copy-on-write
+      # defect in this same release.
+      - run: pip install -e ".[test]" "numpy==2.5.2"
       # config-driven include: silly_kicks + tests + scripts (pyproject [tool.pyright])
       - run: pyright
 
