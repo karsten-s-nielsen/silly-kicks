@@ -24,6 +24,39 @@ from scripts._provenance import git_provenance, require_clean_tree
 
 _LEGACY_BOX_WIDTH = 40.3
 _LEGACY_DEPTH = 16.5
+
+
+def frame_parquets(data_dir: pathlib.Path) -> list[pathlib.Path]:
+    """Every TRACKING-FRAME parquet under `data_dir`, and nothing else.
+
+    Accepts BOTH layouts. `materialize_tc3_frames` adopts ADR-052's `for_each`, which writes
+    `shard_root/<token>/<key>.parquet` -- NOT `{provider}/{id}/frames.parquet`. A
+    `**/frames.parquet` glob silently finds nothing there and this driver exits having measured no
+    rows, which on a remote box reads as "the corpus is empty" rather than "you pointed at the wrong
+    directory".
+
+    **Sidecar directories are EXCLUDED, and that is a regression fix, not tidiness.** The bare
+    `**/*.parquet` fallback was safe only while frames were the sole parquet under `--out`. Once
+    `materialize_tc3_frames` began emitting `_actions/<key>.parquet` for the trainer, the fallback
+    swept those up too and this driver died mid-corpus on
+    `ArrowInvalid: No match for FieldRef.Name(x)` -- SPADL actions carry `start_x`/`end_x`, never
+    `x`. Measured on the real 179-match pass.
+
+    The rule is the leading underscore: `_actions/`, `_home/` and any future sidecar are siblings of
+    the shard generation under one `--out`, and none of them holds frames. Excluding by NAME rather
+    than by probing each file's schema keeps this cheap and, more importantly, keeps a genuinely
+    malformed FRAME shard loud instead of silently skipped.
+    """
+    named = sorted(data_dir.glob("**/frames.parquet"))
+    if named:
+        return named
+    return sorted(
+        p
+        for p in data_dir.glob("**/*.parquet")
+        if not any(part.startswith("_") for part in p.relative_to(data_dir).parts[:-1])
+    )
+
+
 _GOAL_Y = 34.0
 
 
@@ -72,11 +105,7 @@ def main() -> None:
     prov = git_provenance()
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
-    # Accept BOTH layouts. `materialize_tc3_frames` adopts ADR-052's `for_each`, which writes
-    # `shard_root/<token>/<key>.parquet` -- NOT `{provider}/{id}/frames.parquet`. A `**/frames.parquet`
-    # glob silently finds nothing there and this driver exits having measured no rows, which on a
-    # remote box reads as "the corpus is empty" rather than "you pointed at the wrong directory".
-    paths = sorted(args.data_dir.glob("**/frames.parquet")) or sorted(args.data_dir.glob("**/*.parquet"))
+    paths = frame_parquets(args.data_dir)
     xs_all, ys_all = [], []
     for pq in paths:
         df = pd.read_parquet(pq, columns=["x", "y"])

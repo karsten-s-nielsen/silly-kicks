@@ -12,8 +12,9 @@ guard is PER-CASE attribution with hand-derived answers, plus the negative case.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
-from scripts.measure_box_constant_delta import classify_flips
+from scripts.measure_box_constant_delta import classify_flips, frame_parquets
 
 _ZERO = {
     "n_flipped": 0,
@@ -75,3 +76,36 @@ def test_the_buckets_partition_flipped_over_a_large_random_sample():
     parts = out["n_flipped_band_only"] + out["n_flipped_boundary_only"] + out["n_flipped_both"]
     assert out["n_flipped"] == parts
     assert out["n_flipped"] > 0, "sample produced no flips; the attribution is untested here"
+
+
+def _write(path, cols):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(cols).to_parquet(path)
+
+
+def test_sidecar_directories_are_excluded_from_the_frame_glob(tmp_path):
+    """REGRESSION, measured on the real 179-match pass. The bare `**/*.parquet` fallback was safe
+    only while frames were the only parquet under `--out`. Once `materialize_tc3_frames` began
+    emitting `_actions/<key>.parquet` for the trainer, this driver swept them up and died on
+    `ArrowInvalid: No match for FieldRef.Name(x)` -- SPADL actions carry `start_x`, never `x`."""
+    _write(tmp_path / "shards" / "abc123" / "skillcorner__1.parquet", {"x": [1.0], "y": [2.0]})
+    _write(tmp_path / "_actions" / "skillcorner__1.parquet", {"start_x": [1.0], "action_id": [7]})
+    found = frame_parquets(tmp_path)
+    assert [p.name for p in found] == ["skillcorner__1.parquet"]
+    assert all("_actions" not in p.parts for p in found)
+
+
+def test_the_exclusion_does_not_swallow_real_shards(tmp_path):
+    """Non-vacuity partner: the same layout WITHOUT a sidecar must still find every shard, so the
+    test above is passing because `_actions` was excluded and not because the glob found nothing."""
+    _write(tmp_path / "shards" / "abc123" / "skillcorner__1.parquet", {"x": [1.0], "y": [2.0]})
+    _write(tmp_path / "shards" / "abc123" / "gradientsports__2.parquet", {"x": [3.0], "y": [4.0]})
+    assert len(frame_parquets(tmp_path)) == 2
+
+
+def test_the_tc3_tree_layout_still_wins_when_present(tmp_path):
+    """`{provider}/{id}/frames.parquet` is the established layout and takes precedence, so a corpus
+    written by `_loader_pining_to_cache.py` is read by its NAME rather than by the fallback."""
+    _write(tmp_path / "skillcorner" / "1" / "frames.parquet", {"x": [1.0], "y": [2.0]})
+    _write(tmp_path / "_actions" / "1.parquet", {"start_x": [1.0]})
+    assert [p.name for p in frame_parquets(tmp_path)] == ["frames.parquet"]
