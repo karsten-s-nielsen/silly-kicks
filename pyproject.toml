@@ -127,6 +127,19 @@ train = [
     "ruthless-efficiency[optuna]>=0.4.0",
     "xgboost>=2.0,<4.0",
     "pyarrow>=14.0.0",  # trainer caches the extracted feature matrix to parquet (per-match streaming)
+    # TRAINING floor, deliberately tighter than the runtime `scikit-learn>=1.3.1` above. Inference
+    # never imports sklearn (pure-numpy reconstruction), so consumers keep the permissive floor;
+    # what needs constraining is the environment that FITS the trees, because HistGradientBoosting
+    # produces different trees across versions. Measured on the ghost re-fit: the same corpus, the
+    # same commit and the same pandas, fit under 1.7.2 and then 1.9.0, gave different weights
+    # (1,096,295 vs 1,008,517 bytes, different sha256).
+    #
+    # The bundled ghost artifacts record `sklearn_version` and WARN on a runtime mismatch, so the
+    # value was always treated as provenance-relevant -- but nothing constrained it at fit time, and
+    # an unpinned DGX venv silently resolved 1.7.2 (the ceiling for the Python 3.10 that `uv`
+    # happened to pick) against a superseded artifact fit under 1.9.0. A value worth warning about
+    # is worth pinning. Pin what is actually used: the shipped weights are fit on 3.12 + 1.9.0.
+    "scikit-learn>=1.9",
 ]
 dev = [
     "ruff>=0.8.0",

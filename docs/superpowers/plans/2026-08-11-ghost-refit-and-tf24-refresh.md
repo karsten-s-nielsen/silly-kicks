@@ -1118,7 +1118,22 @@ ssh karsten@192.168.68.73 'cd ~/sk-refit && /home/karsten/.local/bin/uv venv .ve
   /home/karsten/.local/bin/uv pip install -e ".[train]" pyarrow "pandas==2.3.3" "kloppy>=3.18" scipy scikit-learn'
 ```
 
-`pandas==2.3.3` is pinned deliberately — the box otherwise resolves pandas 3.0.x. **`.[train]` is
+`pandas==2.3.3` is pinned deliberately — the box otherwise resolves pandas 3.0.x.
+
+**PIN THE INTERPRETER TOO — `--python /usr/bin/python3.12`.** Measured 2026-08-13: left to itself
+`uv` built the venv on a Python **3.10**, where scikit-learn caps at **1.7.2** (1.9.0 is reported
+unsatisfiable), so the first re-fit silently trained two minors BEHIND the artifact it was
+replacing. Nothing failed — the artifact records `sklearn_version` and warns on a runtime mismatch,
+but nothing constrained it at fit time. 3.12 is chosen because it is CI's primary leg. The
+`scikit-learn>=1.9` floor now lives in the `[train]` extra so it travels with the repo rather than
+with whoever types this command; `-e ".[train]"` picks it up. **The re-fit is NOT version-neutral:**
+same corpus, same commit, same pandas, fit under 1.7.2 then 1.9.0 -> different weights (1,096,295 vs
+1,008,517 bytes, different sha256).
+
+**Deleting `~/ghost-default` and `~/ghost-full` before re-fitting is REQUIRED, not hygiene.** The
+feature cache lives inside the output dir and is keyed on the geometry constants, NOT on the
+interpreter or numpy — so a re-fit in a new environment happily reuses features extracted by the old
+one, and the environment change silently applies to the FIT only. **`.[train]` is
 not optional and a bare `-e .` fails:** `scripts/_driver.py` imports `ruthless.fingerprint` to
 compute the generation token, so the materializer dies with `ModuleNotFoundError: ruthless` before
 touching any data. Taking it from the extra means the `>=0.4.0` floor comes from `pyproject.toml`
@@ -1317,7 +1332,7 @@ plus `.json` sidecars, so the flat glob picks up exactly the frames and nothing 
 > than the established pipeline used, silently. `materialize_tc3_frames.py` therefore emits
 > `home_teams.json` and `_actions/` under its `--out`; **both flags below are mandatory.**
 
-- [ ] **Step 1: Fit the bundled `default` variant on the DGX**
+- [x] **Step 1: Fit the bundled `default` variant on the DGX**
 
 ```bash
 ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
@@ -1334,7 +1349,7 @@ Confirm from the log before letting it run: `Home team mapping: N games` with N 
 materialized match count, and `Loaded actions for N games`. A `SKIP game <id>: no home_team_id`
 line means the map is short and the fit is running on a truncated corpus.
 
-- [ ] **Step 2: Fit the `full` variant from the SAME extraction**
+- [x] **Step 2: Fit the `full` variant from the SAME extraction**
 
 ```bash
 ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
@@ -1348,9 +1363,20 @@ ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
 ```
 
 `--variant` is only a metadata label; `--subsample-cap` is the real axis and is applied AFTER
-extraction (`train_ghost_gk.py:648-656`), so both fits reuse one extraction.
+extraction (`train_ghost_gk.py:648-656`).
 
-- [ ] **Step 3: Bring both artifacts back to x86**
+> **CORRECTED 2026-08-13: the two fits do NOT share one extraction, and this cost a full re-run.**
+> The claim used to end "...so both fits reuse one extraction". The subsample being post-extraction
+> is true; the conclusion does not follow. The feature cache lives at
+> `args.output_dir / "ghost_gk_v1" / "_feature_cache"` (`train_ghost_gk.py:398`), so it is keyed by
+> `--output-dir` — and the two fits must use different output dirs or they overwrite each other's
+> artifacts. Observed: the `full` fit restarted at `[1/179]` and re-extracted the whole corpus.
+> Budget TWO extractions, not one. Copying the cache across by hand was considered and rejected: a
+> mis-validated cache silently feeding a PUBLISHED artifact is exactly what `cache_token()` exists
+> to prevent. If the second extraction is ever worth eliminating, the honest fix is a
+> `--feature-cache-dir` decoupled from `--output-dir`, not an operator moving directories.
+
+- [x] **Step 3: Bring both artifacts back to x86**
 
 **The trainer writes into `<output-dir>/ghost_gk_v1/`, not `<output-dir>/`** (`train_ghost_gk.py:885`),
 and that subdirectory ALSO holds `metrics.json` and a `_feature_cache/` of roughly 220 MB. So
@@ -1388,7 +1414,7 @@ ls -l silly_kicks/tracking/_ghost_gk_weights/default/ /tmp/ghost-full/   # 3 fil
 `exclude = ["silly_kicks/tracking/_ghost_gk_weights/full", ...]`), so it stays out of the package
 tree and is published from `/tmp` in Task 9.
 
-- [ ] **Step 4: Re-stamp the feature contracts — ON X86**
+- [x] **Step 4: Re-stamp the feature contracts — ON X86**
 
 **`stamp_feature_contracts.py` has NO argparse and stamps ALL THREE models.** It cannot be scoped.
 
@@ -1397,7 +1423,7 @@ grep -q add_argument scripts/stamp_feature_contracts.py && echo "HAS PARSER" || 
 python scripts/stamp_feature_contracts.py
 ```
 
-- [ ] **Step 5: Assert the blast radius — positively AND negatively**
+- [x] **Step 5: Assert the blast radius — positively AND negatively**
 
 ```bash
 git diff --name-only silly_kicks/tracking/
@@ -1413,7 +1439,7 @@ was wrong. **The positive assertion is not ceremony:** `git diff --name-only` re
 *tracked* paths, so if these artifacts were ever gitignored or LFS-managed it would print nothing and
 pass vacuously. Assert that ghost's metadata **did** change.
 
-- [ ] **Step 6: Stamp-parity for the `full` variant — the artifact this step would otherwise miss**
+- [x] **Step 6: Stamp-parity for the `full` variant — the artifact this step would otherwise miss**
 
 **`save()` writes the contract itself** (`_ghost_gk.py:1977`:
 `"feature_contract": _feature_contract_block()`), so an artifact is stamped **wherever it is
@@ -1432,12 +1458,18 @@ outside the tree, so the diff passes while blind to half the deliverable.
 Rather than extend `TARGETS` (adding a parser to a script whose parser-less-ness is now a documented
 global constraint is its own reviewable change), **assert the platform inheritance instead**:
 
+**Pass the path as an ARGUMENT, never as a `/tmp/...` literal inside Python.** Git Bash translates
+MSYS paths in ARGUMENTS but not inside a Python string, so `pathlib.Path("/tmp/ghost-full/...")`
+resolves to `\tmp\ghost-full` on Windows and raises `FileNotFoundError` (hit 2026-08-13). Resolve it
+with `pwd -W` and hand it in:
+
 ```bash
-python - <<'PY'
-import json, pathlib
+WINPATH=$(cd /tmp/ghost-full && pwd -W)
+python - "$WINPATH" <<'PY'
+import json, pathlib, sys
 from silly_kicks.tracking import _ghost_gk
 local = _ghost_gk._feature_contract_block()                     # recomputed HERE, on x86
-carried = json.loads(pathlib.Path("/tmp/ghost-full/metadata.json").read_text())["feature_contract"]
+carried = json.loads((pathlib.Path(sys.argv[1]) / "metadata.json").read_text(encoding="utf-8"))["feature_contract"]
 assert local["constants"] == carried["constants"], (local["constants"], carried["constants"])
 assert local["probe_sha256"] == carried["probe_sha256"]
 assert local["fingerprint"] == carried["fingerprint"], "aarch64 and x86 disagree on the probe vector"
@@ -1451,7 +1483,7 @@ interpreter. Bit-identical → demonstrated for this cycle, and §8's platform-p
 first real datum. **Different → stop**: that is exactly the condition the gap was registered for, and
 it would otherwise ship to the Hub unnoticed.
 
-- [ ] **Step 7: The Task 3 and Task 4 reds must now clear**
+- [x] **Step 7: The Task 3 and Task 4 reds must now clear**
 
 Run:
 ```

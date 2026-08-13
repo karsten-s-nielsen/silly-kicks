@@ -392,9 +392,16 @@ def test_ghost_records_pitch_dims_and_a_contract(tmp_path, monkeypatch):
     m.save(out)
     meta = json.loads((out / "metadata.json").read_text())
     assert meta["pitch_length"] == 105.0 and meta["pitch_width"] == 68.0
-    # D3: ghost still uses the 40.3 m box until its re-fit, so its declared half-width is 20.15,
-    # NOT the canonical 20.16. Recording the divergence is the point.
-    assert meta["feature_contract"]["constants"]["penalty_area_half_width"] == 20.15
+    # The divergence this line used to record is CLOSED: ghost was re-fit onto the canonical box,
+    # so its declared half-width is 20.16. Recording the divergence WAS the point, and the raise it
+    # produced on an unaccompanied flip is what forced the re-fit rather than letting the constant
+    # move under trained weights.
+    #
+    # Deliberately a LITERAL, not `spadlconfig.penalty_area_half_width`. `test_declared_constant_values`
+    # already asserts artifact-equals-canonical; if this one also read the canonical source, both
+    # would follow a change to `spadlconfig` in silence. One hard-coded pin is what catches "the
+    # canonical constant itself moved".
+    assert meta["feature_contract"]["constants"]["penalty_area_half_width"] == 20.16
     assert meta["feature_contract"]["constants"]["penalty_area_depth"] == 16.5
 
     GhostGkModel.load(out)
