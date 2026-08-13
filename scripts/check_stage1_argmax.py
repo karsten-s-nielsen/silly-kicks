@@ -190,7 +190,13 @@ def load_neighbours(store: pathlib.Path, *, optimum: dict, k: int) -> list[dict]
     return out
 
 
-def build_fold(shards: list[pathlib.Path], *, actions_dir: pathlib.Path, home_teams: pathlib.Path) -> dict:
+def build_fold(
+    shards: list[pathlib.Path],
+    *,
+    actions_dir: pathlib.Path,
+    home_teams: pathlib.Path,
+    max_per_provider: int | None = None,
+) -> dict:
     """`{provider: [(actions, frames, home_team_id)]}` -- the shape `CarrierAccuracyObjective` takes.
 
     Reconstructed from the corpus the materializer wrote: shards are `{provider}__{match}.parquet`,
@@ -207,6 +213,8 @@ def build_fold(shards: list[pathlib.Path], *, actions_dir: pathlib.Path, home_te
     for shard in shards:
         stem = shard.stem
         provider = stem.split("__")[0]
+        if max_per_provider is not None and len(fold.get(provider, [])) >= max_per_provider:
+            continue
         apath = actions_dir / f"{stem}.parquet"
         if not apath.is_file():
             skipped["no_actions"] += 1
@@ -243,6 +251,13 @@ def main() -> None:
     ap.add_argument("--actions-dir", type=pathlib.Path, required=True, help="The corpus `_actions/` dir.")
     ap.add_argument("--home-teams", type=pathlib.Path, required=True, help="The corpus `home_teams.json`.")
     ap.add_argument("--k-neighbours", type=int, default=4)
+    ap.add_argument(
+        "--objective-matches-per-provider",
+        type=int,
+        default=5,
+        help="Cap on matches per provider in the ARGMAX fold (the objective retains each match). "
+        "The invariance prong always streams the FULL corpus; this bounds only the argmax fold.",
+    )
     ap.add_argument("--max-matches", type=int, default=None, help="Dev smoke only; a capped run is not a result.")
     ap.add_argument(
         "--count-no-carrier-as-agreement",
@@ -265,22 +280,35 @@ def main() -> None:
         paths = paths[: args.max_matches]
     if not paths:
         raise SystemExit(f"no frame parquets under {args.data_dir}")
-    frames = pd.concat([pd.read_parquet(p) for p in paths], ignore_index=True)
-    require_velocity(frames)
-    print(f"loaded {len(paths)} matches, {len(frames)} rows", flush=True)
-
-    mirrored = reflect_frames(frames)
-
-    results = {}
+    # STREAM the invariance prong: one match in memory at a time. The corpus is ~727M rows across
+    # 179 matches; a `pd.concat` of all of them, plus the deep copy `reflect_frames` makes, would
+    # need roughly twice the box's RAM and would OOM hours into an unattended run. The counts are
+    # additive, so streaming costs nothing in fidelity -- this prong still sees EVERY match.
+    results: dict[str, dict] = {}
     for label, point in (("shipped_point", _SHIPPED_POINT), ("recorded_optimum", recorded)):
-        fact = _carrier_series(frames, beta=point["beta"], gamma=point["gamma"])
-        refl = _carrier_series(mirrored, beta=point["beta"], gamma=point["gamma"])
-        cmp = compare_assignments(fact, refl, count_no_carrier_as_agreement=args.count_no_carrier_as_agreement)
-        cmp["point"] = point
-        cmp["invariance_fraction"] = cmp["n_same"] / cmp["n_frames"] if cmp["n_frames"] else 0.0
-        cmp["verdict"] = invariance_verdict(same=cmp["n_same"], total=cmp["n_frames"])
-        results[label] = cmp
-        print(f"  {label}: {cmp['invariance_fraction']:.6f} -> {cmp['verdict']} (n={cmp['n_frames']})", flush=True)
+        acc = {"n_frames": 0, "n_same": 0, "n_no_carrier": 0}
+        for i, path in enumerate(paths, 1):
+            fr = pd.read_parquet(path)
+            if i == 1 and label == "shipped_point":
+                require_velocity(fr)
+            fact = _carrier_series(fr, beta=point["beta"], gamma=point["gamma"])
+            refl = _carrier_series(reflect_frames(fr), beta=point["beta"], gamma=point["gamma"])
+            cmp1 = compare_assignments(fact, refl, count_no_carrier_as_agreement=args.count_no_carrier_as_agreement)
+            for k in ("n_frames", "n_same", "n_no_carrier"):
+                acc[k] += cmp1[k]
+            del fr, fact, refl
+            if i % 25 == 0:
+                print(f"    {label}: {i}/{len(paths)} matches", flush=True)
+        fraction = acc["n_same"] / acc["n_frames"] if acc["n_frames"] else 0.0
+        verdict = invariance_verdict(same=acc["n_same"], total=acc["n_frames"])
+        results[label] = {
+            **acc,
+            "point": point,
+            "no_carrier_convention": ("counted_as_agreement" if args.count_no_carrier_as_agreement else "excluded"),
+            "invariance_fraction": fraction,
+            "verdict": verdict,
+        }
+        print(f"  {label}: {fraction:.6f} -> {verdict} (n={acc['n_frames']})", flush=True)
 
     neighbours = load_neighbours(args.store, optimum=recorded, k=args.k_neighbours)
     print(f"neighbours found: {len(neighbours)} of k={args.k_neighbours} requested", flush=True)
@@ -292,7 +320,15 @@ def main() -> None:
     # proxy was written here first and removed: it answers "do these parameters assign the same
     # carrier?", which is not the quantity that was maximised, so an argmax verdict derived from it
     # would compare two different metrics and call the result a confirmation.
-    fold = build_fold(paths, actions_dir=args.actions_dir, home_teams=args.home_teams)
+    # The objective RETAINS each match (`_PreparedMatch` keeps `frames` plus a dense pre-index), so
+    # its fold is provider-CAPPED and the cap is recorded. This is the harness's normal setting, not
+    # a compromise: Stage 1 scores match-stratified CV folds, never the whole corpus at once.
+    fold = build_fold(
+        paths,
+        actions_dir=args.actions_dir,
+        home_teams=args.home_teams,
+        max_per_provider=args.objective_matches_per_provider,
+    )
     n_matches_scored = sum(len(v) for v in fold.values())
     if not n_matches_scored:
         raise SystemExit(
@@ -362,7 +398,8 @@ def main() -> None:
         "sentinel_point": _SENTINEL_POINT,
         "sentinel_score": sentinel_score,
         "sentinel_delta": sentinel_delta,
-        "n_matches": len(paths),
+        "n_matches_invariance": len(paths),
+        "objective_matches_per_provider_cap": args.objective_matches_per_provider,
         "store": str(args.store),
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
