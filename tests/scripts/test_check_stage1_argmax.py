@@ -1,0 +1,221 @@
+"""The Stage-1 gate is pre-registered: invariance >= 99.9%, and the argmax must not move.
+
+Pre-registered means the threshold was fixed in the design (spec D5) BEFORE any corrected-geometry
+data was scored, so this file exists to pin it against later adjustment. A gate whose threshold
+moves after seeing the result is not a gate.
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+
+import pandas as pd
+import pytest
+
+from scripts.check_stage1_argmax import (
+    build_fold,
+    compare_assignments,
+    invariance_verdict,
+    load_neighbours,
+    reflect_frames,
+    require_velocity,
+)
+
+
+def test_at_threshold_passes():
+    assert invariance_verdict(same=9990, total=10000) == "stands"
+
+
+def test_below_threshold_requires_sweep():
+    assert invariance_verdict(same=9989, total=10000) == "sweep"
+
+
+def test_perfect_invariance_passes():
+    assert invariance_verdict(same=10, total=10) == "stands"
+
+
+def test_zero_rows_is_an_error_not_a_pass():
+    """An empty comparison must never read as 'stands' -- that is a silent no-op gate."""
+    with pytest.raises(ValueError):
+        invariance_verdict(same=0, total=0)
+
+
+def test_the_reflection_negates_velocity():
+    """Prong 1 is STRUCTURALLY BLIND to this (beta=0 kills the velocity term), and prong 2 -- whose
+    neighbours have beta != 0 -- is what gets corrupted. So it must be tested directly."""
+    src = pd.DataFrame(
+        {
+            "game_id": [1, 1],
+            "period_id": [1, 1],
+            "frame_id": [1, 1],
+            "player_id": ["a", "b"],
+            "team_id": ["H", "A"],
+            "x": [10.0, 95.0],
+            "y": [20.0, 48.0],
+            "vx": [1.5, -2.0],
+            "vy": [-0.5, 3.0],
+        }
+    )
+    out = reflect_frames(src)
+    assert list(out["x"]) == [95.0, 10.0]
+    assert list(out["y"]) == [48.0, 20.0]
+    assert list(out["vx"]) == [-1.5, 2.0], "velocities were not negated -- not a reflection"
+    assert list(out["vy"]) == [0.5, -3.0]
+
+
+def test_the_reflection_leaves_the_source_untouched():
+    """The checker scores BOTH legs; a reflection that mutated its input would make the factual leg
+    the reflected one and the comparison vacuous."""
+    src = pd.DataFrame(
+        {
+            "game_id": [1],
+            "period_id": [1],
+            "frame_id": [1],
+            "player_id": ["a"],
+            "team_id": ["H"],
+            "x": [10.0],
+            "y": [20.0],
+            "vx": [1.5],
+            "vy": [-0.5],
+        }
+    )
+    before = src.copy(deep=True)
+    reflect_frames(src)
+    pd.testing.assert_frame_equal(src, before)
+
+
+def test_missing_velocity_columns_raise_rather_than_zero_silently():
+    """`_ball_carrier.py` substitutes pvx=0.0 when vx/vy are absent, which makes beta inert and
+    every neighbour score identically -- an argmax that 'cannot move' for the wrong reason."""
+    with pytest.raises(ValueError, match="vx"):
+        require_velocity(pd.DataFrame({"x": [1.0], "y": [2.0]}))
+
+
+def test_all_nan_velocity_is_rejected_too():
+    """Present-but-empty is the same failure with a different shape: the columns exist, so a
+    `in frames.columns` check passes, and beta is still inert."""
+    with pytest.raises(ValueError, match=r"vx|vy"):
+        require_velocity(pd.DataFrame({"x": [1.0], "y": [2.0], "vx": [float("nan")], "vy": [float("nan")]}))
+
+
+def test_velocity_present_is_accepted():
+    """Non-vacuity partner: the guard must accept a frame that HAS velocity, or the two tests above
+    would pass against a function that rejects everything."""
+    require_velocity(pd.DataFrame({"x": [1.0], "y": [2.0], "vx": [0.5], "vy": [0.5]}))
+
+
+# --------------------------------------------------------------------------------------------
+# compare_assignments -- the no-carrier convention is a STATED choice, so both branches are pinned
+
+
+def _series(pairs):
+    idx = pd.MultiIndex.from_tuples([(str(g), "1", str(f)) for g, f in enumerate(range(len(pairs)))])
+    return pd.Series([p for p in pairs], index=idx)
+
+
+def test_no_carrier_frames_are_EXCLUDED_by_default():
+    """Counting `no-carrier == no-carrier` as agreement inflates the fraction by however many
+    dead-ball frames the corpus holds. The claim under test is about carrier CHOICE, and a frame
+    with no carrier expresses none."""
+    a = _series(["p1", "nan", "p3"])
+    b = _series(["p1", "nan", "p9"])
+    out = compare_assignments(a, b, count_no_carrier_as_agreement=False)
+    assert out["n_frames"] == 2, "the both-no-carrier frame must leave the denominator"
+    assert out["n_same"] == 1
+    assert out["n_no_carrier"] == 1
+    assert out["no_carrier_convention"] == "excluded"
+
+
+def test_no_carrier_frames_CAN_be_counted_as_agreement():
+    """The opposite convention is defensible; silence is not. Pinning both directions is what makes
+    the recorded `no_carrier_convention` field meaningful rather than decorative."""
+    a = _series(["p1", "nan", "p3"])
+    b = _series(["p1", "nan", "p9"])
+    out = compare_assignments(a, b, count_no_carrier_as_agreement=True)
+    assert out["n_frames"] == 3
+    assert out["n_same"] == 2, "the both-no-carrier frame now counts as agreement"
+    assert out["no_carrier_convention"] == "counted_as_agreement"
+
+
+def test_a_disagreement_is_actually_detected():
+    """Non-vacuity: the two tests above would pass against a function that always reports agreement
+    on the frames it keeps."""
+    a = _series(["p1", "p2"])
+    b = _series(["p1", "p9"])
+    out = compare_assignments(a, b, count_no_carrier_as_agreement=False)
+    assert (out["n_frames"], out["n_same"]) == (2, 1)
+
+
+# --------------------------------------------------------------------------------------------
+# build_fold -- a fabricated home_team_id would mis-orient geometry inside the objective
+
+
+def _write_corpus(tmp_path):
+    gen = tmp_path / "shards" / "tok"
+    gen.mkdir(parents=True)
+    acts = tmp_path / "_actions"
+    acts.mkdir()
+    frames = pd.DataFrame({"game_id": ["g1"], "x": [1.0], "y": [2.0]})
+    frames.to_parquet(gen / "skillcorner__1886347.parquet")
+    pd.DataFrame({"action_id": [1]}).to_parquet(acts / "skillcorner__1886347.parquet")
+    (tmp_path / "home_teams.json").write_text(json.dumps({"g1": "4177"}))
+    return gen, acts, tmp_path / "home_teams.json"
+
+
+def test_build_fold_keys_home_by_GAME_ID_not_match_id(tmp_path):
+    """SkillCorner's `game_id` is a kloppy hash unrelated to its match id; keying by the filename
+    would find no home team for every SkillCorner match while looking populated."""
+    gen, acts, home = _write_corpus(tmp_path)
+    fold = build_fold(sorted(gen.glob("*.parquet")), actions_dir=acts, home_teams=home)
+    assert list(fold) == ["skillcorner"]
+    (_actions, _frames, home_id) = fold["skillcorner"][0]
+    assert home_id == "4177"
+
+
+def test_build_fold_SKIPS_a_match_with_no_actions_rather_than_defaulting(tmp_path):
+    gen, acts, home = _write_corpus(tmp_path)
+    (acts / "skillcorner__1886347.parquet").unlink()
+    fold = build_fold(sorted(gen.glob("*.parquet")), actions_dir=acts, home_teams=home)
+    assert fold == {}, "a match without actions must be skipped, not scored on a fabricated fold"
+
+
+def test_build_fold_SKIPS_a_match_with_no_home_id_rather_than_defaulting(tmp_path):
+    """A fabricated `home_team_id` would silently mis-orient one match's geometry inside an
+    objective whose whole purpose here is to detect geometry-driven change."""
+    gen, acts, home = _write_corpus(tmp_path)
+    home.write_text(json.dumps({"some-other-game": "999"}))
+    fold = build_fold(sorted(gen.glob("*.parquet")), actions_dir=acts, home_teams=home)
+    assert fold == {}
+
+
+# --------------------------------------------------------------------------------------------
+# load_neighbours -- exercised against the REAL store, because its failure modes are all shape
+
+
+_STORE = pathlib.Path("calibration_runs/balanced_confirm_tol3/s1.db")
+
+
+@pytest.mark.skipif(not _STORE.is_file(), reason="prior Optuna store not present (gitignored)")
+def test_neighbours_exclude_the_optimum_itself():
+    """The optimum is not its own neighbour; including it would guarantee a tie and make
+    `argmax_moved` structurally unable to report movement."""
+    opt = json.loads((_STORE.parent / "carrier_best.json").read_text())
+    optimum = {"beta": float(opt["beta"]), "gamma": float(opt["gamma"])}
+    nbs = load_neighbours(_STORE, optimum=optimum, k=4)
+    assert len(nbs) == 4
+    for nb in nbs:
+        assert not (abs(nb["beta"] - optimum["beta"]) < 1e-12 and abs(nb["gamma"] - optimum["gamma"]) < 1e-12)
+
+
+@pytest.mark.skipif(not _STORE.is_file(), reason="prior Optuna store not present (gitignored)")
+def test_neighbours_are_the_NEAREST_in_normalised_space():
+    """Un-normalised distance would let the wider parameter dominate, so the neighbour set would
+    probe one axis only -- a sensitivity test that cannot see the other dimension."""
+    opt = json.loads((_STORE.parent / "carrier_best.json").read_text())
+    optimum = {"beta": float(opt["beta"]), "gamma": float(opt["gamma"])}
+    near = load_neighbours(_STORE, optimum=optimum, k=3)
+    far = load_neighbours(_STORE, optimum=optimum, k=30)
+    assert [(n["beta"], n["gamma"]) for n in near] == [(f["beta"], f["gamma"]) for f in far[:3]], (
+        "k=3 must be the first three of k=30 -- otherwise the ordering is not by distance"
+    )

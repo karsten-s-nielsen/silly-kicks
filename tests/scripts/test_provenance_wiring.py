@@ -40,6 +40,10 @@ ARTIFACT_DRIVERS = (
     # the release's ship claim ("unification, measured no-op" vs a weights comparison).
     "materialize_tc3_frames",
     "measure_box_constant_delta",
+    # TF-24 Stage-1 confirmation. Writes `docs/research/tf24_stage1_confirmation/metrics.json`,
+    # whose verdict decides whether the recorded carrier optimum stands or a full Stage-1
+    # sweep is owed -- a cited number, so the tree it ran on has to be recorded.
+    "check_stage1_argmax",
     "build_gkdv_arm_values",
     "calibrate_xt_bandwidth",
     "measure_cover_shadow_argmax_agreement",
