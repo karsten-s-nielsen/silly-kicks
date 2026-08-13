@@ -1495,7 +1495,13 @@ ghost `load()` chirality + contract checks pass against the re-fit artifact.
 
 ---
 
-## Task 9: Publish both variants and correct the model card
+## Task 9: Publish the Hub-hosted variant and correct the model card
+
+> **"Both variants" was imprecise -- exactly ONE is Hub-hosted (corrected 2026-08-13).**
+> `from_hub` does `snapshot_download(repo_id)` and loads the repo ROOT, so one repo holds one
+> artifact. `silly-kicks/ghost-gk-v1` serves `"full"`; `"default"` ships bundled in the wheel and is
+> never uploaded. Publishing both to that repo would have had the second silently overwrite the
+> first, since the filenames are identical.
 
 **Files:**
 - Create: `scripts/publish_ghost_gk.py`
@@ -1522,7 +1528,7 @@ ghost `load()` chirality + contract checks pass against the re-fit artifact.
 > Scope note retained from the earlier revision: the wider ghost-GK raw-data disclosure work
 > (audit bundle, wheels) is a separate matter and is NOT reopened by this.
 
-- [ ] **Step 1: ~~Correct the false model-card claim~~ — ALREADY DONE, verify only**
+- [x] **Step 1: ~~Correct the false model-card claim~~ — ALREADY DONE, verify only**
 
 **Corrected 2026-08-12: the claim this step describes no longer exists.** It was fixed in `34bb22f`
 ("docs(hf): reconcile ghost-gk-v1 model card + org card to parameters-only") for 4.54.0 / ADR-044.
@@ -1543,7 +1549,7 @@ What DOES need updating here is the corpus description, once Task 8 re-fits: the
 `full` variant's match/frame counts and the `default` subsample size, and those are claims about the
 artifact this cycle replaces.
 
-- [ ] **Step 2: Write the publisher, mirroring the xCross one**
+- [x] **Step 2: Write the publisher, mirroring the xCross one**
 
 Create `scripts/publish_ghost_gk.py`:
 
@@ -1603,7 +1609,7 @@ if __name__ == "__main__":
 
 `predict_mean(self, features: pd.DataFrame) -> np.ndarray` is verified correct (`_ghost_gk.py:1738`).
 
-- [ ] **Step 2b: Update `from_variant`'s docstring — it is PUBLIC and this cycle falsifies it**
+- [x] **Step 2b: Update `from_variant`'s docstring — it is PUBLIC and this cycle falsifies it**
 
 `GhostGkModel.from_variant` (`:2160-2168`) documents `"full"` as *"Hub-hosted and **pre-contract** —
 it cannot be re-uploaded under the standing owner hold — so it emits `MissingFeatureContractWarning`"*,
@@ -1614,21 +1620,21 @@ fire. It lives in a module CI runs under `--doctest-modules`, and unlike the mod
 test docstring it was not otherwise scheduled. Replace the stale sentence and re-check the two sample
 counts and sizes against the artifacts Task 8 actually produced.
 
-- [ ] **Step 3: Verify locally without uploading**
+- [x] **Step 3: Verify locally without uploading**
 
 ```bash
 python scripts/publish_ghost_gk.py --artifact-dir silly_kicks/tracking/_ghost_gk_weights/default --verify-only
 ```
 Expected: prints the probe prediction, no network access.
 
-- [ ] **Step 4: Upload both variants**
+- [x] **Step 4: Upload both variants**
 
 ```bash
 python scripts/publish_ghost_gk.py --artifact-dir silly_kicks/tracking/_ghost_gk_weights/default
 python scripts/publish_ghost_gk.py --artifact-dir /tmp/ghost-full
 ```
 
-- [ ] **Step 5: Confirm `from_hub` is un-broken**
+- [x] **Step 5: Confirm `from_hub` is un-broken**
 
 ```bash
 python -c "

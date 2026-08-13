@@ -2173,14 +2173,19 @@ class GhostGkModel:
         Parameters
         ----------
         variant : "default" | "full"
-            ``"default"``: lightweight model (~12 MB, 36 k training samples).
-            ``"full"``: high-resolution model (~170 MB, 887 k training samples).
+            ``"default"``: lightweight model (~1.0 MB, 36 k training samples).
+            ``"full"``: high-resolution model (~2.4 MB, the full 179-match corpus).
 
-        The bundled ``"default"`` carries a feature contract (ADR-050) and loads clean. ``"full"``
-        is Hub-hosted and pre-contract -- it cannot be re-uploaded under the standing owner hold --
-        so it emits :class:`MissingFeatureContractWarning`. A consumer that escalates that category
-        (as this repo's own CI does) gets an exception on the ``"full"`` path. That is the intended
-        reading: an artifact whose extractor cannot be verified should not be served silently.
+        Both sizes are PARAMETERS-ONLY. The figures here read ~12 MB and ~170 MB until the ghost
+        re-fit; those predate the ADR-044 migration that stripped the per-sample density arrays,
+        and were wrong by more than an order of magnitude for two releases.
+
+        **Both variants now carry a feature contract (ADR-050) and load clean.** ``"full"`` was
+        Hub-hosted and pre-contract, so it used to emit :class:`MissingFeatureContractWarning` and
+        raise for any consumer escalating that category; the box-constant re-fit re-uploaded it with
+        a contract, which discharged that. The warning still fires for any OTHER artifact lacking a
+        contract, and the reading is unchanged: an artifact whose extractor cannot be verified
+        should not be served silently.
 
         Examples
         --------
@@ -2188,7 +2193,7 @@ class GhostGkModel:
 
             model = GhostGkModel.from_variant("default")
 
-        Load the Hub-hosted full variant (network; warns, having no feature contract)::
+        Load the Hub-hosted full variant (network)::
 
             model = GhostGkModel.from_variant("full")
         """
@@ -2206,9 +2211,13 @@ class GhostGkModel:
 
         Requires ``pip install silly-kicks[ghost-gk]``.
 
-        The Hub artifact predates the feature contract (ADR-050) and cannot be re-uploaded under
-        the standing owner hold, so this path emits :class:`MissingFeatureContractWarning`; callers
-        escalating that category will see it raise.
+        The Hub artifact CARRIES a feature contract (ADR-050) as of the box-constant re-fit, so
+        this path no longer emits :class:`MissingFeatureContractWarning` and no longer raises for
+        callers escalating that category. It did both for two releases: the hosted artifact
+        predated the contract and could not be re-uploaded while the disclosure work was held.
+        ``scripts/publish_ghost_gk.py`` is what keeps this true -- it refuses to publish an
+        artifact whose ``metadata.json`` has no contract, and asserts the round-tripped model loads
+        without the warning.
 
         Examples
         --------
