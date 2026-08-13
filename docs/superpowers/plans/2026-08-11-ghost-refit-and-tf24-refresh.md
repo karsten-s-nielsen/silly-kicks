@@ -1095,7 +1095,7 @@ fails on first contact):
   `DEAD` as finished — empty means the ssh failed, so retry. Re-check the process ended **before**
   `scp`-ing results; a live run serves the previous run's file.
 
-- [ ] **Step 1: CLONE the branch (never `git archive`) and provision the venv**
+- [x] **Step 1: CLONE the branch (never `git archive`) and provision the venv**
 
 **A tarball checkout breaks provenance, measured.** `git archive` ships no `.git`, so
 `git_provenance()` returns `commit: "unknown", tree_state: "unknown", dirty: True` and EVERY
@@ -1124,7 +1124,7 @@ compute the generation token, so the materializer dies with `ModuleNotFoundError
 touching any data. Taking it from the extra means the `>=0.4.0` floor comes from `pyproject.toml`
 rather than from a hand-typed version.
 
-- [ ] **Step 2: Confirm the token, the interpreter AND the provenance before spending hours**
+- [x] **Step 2: Confirm the token, the interpreter AND the provenance before spending hours**
 
 ```bash
 ssh karsten@192.168.68.73 'test -f ~/.pining_env && echo TOKEN_PRESENT || echo TOKEN_MISSING'
@@ -1147,7 +1147,7 @@ printf 'export PINING_FOR_THE_DATA_TOKEN=%q\n' "$PINING_FOR_THE_DATA_TOKEN" \
   | ssh karsten@192.168.68.73 'umask 077; cat > ~/.pining_env'
 ```
 
-- [ ] **Step 3: Materialize the corpus via a script file (one download, both workstreams)**
+- [x] **Step 3: Materialize the corpus via a script file (one download, both workstreams)**
 
 Write `/tmp/materialize.sh` locally (LF endings), `scp` it, then run it:
 
@@ -1155,7 +1155,7 @@ Write `/tmp/materialize.sh` locally (LF endings), `scp` it, then run it:
 #!/usr/bin/env bash
 set -euo pipefail
 source ~/.pining_env
-cd ~/silly-kicks-refit
+cd ~/sk-refit
 mkdir -p ~/logs
 nohup ./.venv/bin/python scripts/materialize_tc3_frames.py \
   --cache-dir ~/pining-cache --out ~/tc3-cache \
@@ -1181,7 +1181,7 @@ extra-time output, not a TC3 corpus reference). The established producer is alre
 were fit on. One match is enough:
 
 ```bash
-ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
   ./.venv/bin/python scripts/_loader_pining_to_cache.py \
     --providers skillcorner --max-per-provider 1 --out ~/tc3-reference-src'
 REF=$(ssh karsten@192.168.68.73 'ls ~/tc3-reference-src/skillcorner/*/frames.parquet | head -1')
@@ -1194,7 +1194,7 @@ dtypes and a full-content checksum surviving the parquet round-trip. Spec D7's p
 established input comes from a different pipeline" is wrong, and the assertion is worth running
 anyway.
 
-- [ ] **Step 3b: ONE-MATCH END-TO-END SMOKE — materialize, then TRAIN, before the corpus pass**
+- [x] **Step 3b: ONE-MATCH END-TO-END SMOKE — materialize, then TRAIN, before the corpus pass**
 
 **Non-negotiable, and cheap.** Task 7 costs hours and Task 8 costs hours; the plan previously ran
 them back to back with nothing in between, so a trainer-side input error surfaced only after both
@@ -1230,10 +1230,10 @@ keyed on "the first match processed", which resume silently redirected onto the 
 same check being swallowed by `for_each` as one failed item, so a real breach would not have stopped
 the pass.
 
-- [ ] **Step 4: Measure the delta**
+- [x] **Step 4: Measure the delta**
 
 ```bash
-ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
   ./.venv/bin/python scripts/measure_box_constant_delta.py --data-dir ~/tc3-cache --out ~/box_delta'
 mkdir -p docs/research/box_constant_delta
 scp karsten@192.168.68.73:~/box_delta/metrics.json docs/research/box_constant_delta/metrics.json
@@ -1246,7 +1246,7 @@ scp karsten@192.168.68.73:~/box_delta/metrics.json docs/research/box_constant_de
 found nothing under a `for_each` output and exited reporting an empty corpus, which on a remote box
 reads as "no data" rather than "wrong directory".
 
-- [ ] **Step 5: Record which ship claim applies**
+- [x] **Step 5: Record which ship claim applies**
 
 Read `n_flipped`:
 - `0` → the PR ships as **"unification, measured no-op"**, citing `0 / n_rows`.
@@ -1255,7 +1255,7 @@ Read `n_flipped`:
 Write a short `docs/research/box_constant_delta/README.md` stating the count, the split, the
 behind-the-line population, and which claim was selected.
 
-- [ ] **Step 6: DECIDE the behind-the-line question on the number, and record it as a DECISION**
+- [x] **Step 6: DECIDE the behind-the-line question on the number, and record it as a DECISION**
 
 `in_penalty_area_goal_relative*` has no `0 <= gr_x` guard, so points beyond the goal line count as
 in-box. ADR-050 parked this; parking it again without looking at `n_behind_line` is how a question
@@ -1320,7 +1320,7 @@ plus `.json` sidecars, so the flat glob picks up exactly the frames and nothing 
 - [ ] **Step 1: Fit the bundled `default` variant on the DGX**
 
 ```bash
-ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
   nohup ./.venv/bin/python scripts/train_ghost_gk.py \
     --data-dir "$GEN" --output-dir ~/ghost-default \
     --home-teams ~/tc3-cache/home_teams.json \
@@ -1337,7 +1337,7 @@ line means the map is short and the fit is running on a truncated corpus.
 - [ ] **Step 2: Fit the `full` variant from the SAME extraction**
 
 ```bash
-ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
   nohup ./.venv/bin/python scripts/train_ghost_gk.py \
     --data-dir "$GEN" --output-dir ~/ghost-full \
     --home-teams ~/tc3-cache/home_teams.json \
@@ -1352,12 +1352,40 @@ extraction (`train_ghost_gk.py:648-656`), so both fits reuse one extraction.
 
 - [ ] **Step 3: Bring both artifacts back to x86**
 
+**The trainer writes into `<output-dir>/ghost_gk_v1/`, not `<output-dir>/`** (`train_ghost_gk.py:885`),
+and that subdirectory ALSO holds `metrics.json` and a `_feature_cache/` of roughly 220 MB. So
+`scp -r ~/ghost-default/* <dest>/` is wrong three ways: it nests the artifact one level too deep
+(`default/ghost_gk_v1/...`), it drags in a cache the same file calls out at `:914` as the thing that
+once made the artifact-size gate meaningless, and it copies `metrics.json`, which is deliberately
+NOT part of the shipped set. Copy the three shipped files BY NAME
+(`_SHIPPED = ("rfcde_weights.npz", "metadata.json", "SHA256SUMS")`, `train_ghost_gk.py:917`;
+`save()` writes all three, `_ghost_gk.py:1906`):
+
 ```bash
-scp -r karsten@192.168.68.73:~/ghost-default/* silly_kicks/tracking/_ghost_gk_weights/default/
-scp -r karsten@192.168.68.73:~/ghost-full/ /tmp/ghost-full/
+for f in rfcde_weights.npz metadata.json SHA256SUMS; do
+  scp "karsten@192.168.68.73:~/ghost-default/ghost_gk_v1/$f" \
+      "silly_kicks/tracking/_ghost_gk_weights/default/$f"
+done
+
+rm -rf /tmp/ghost-full && mkdir -p /tmp/ghost-full
+for f in rfcde_weights.npz metadata.json SHA256SUMS; do
+  scp "karsten@192.168.68.73:~/ghost-full/ghost_gk_v1/$f" "/tmp/ghost-full/$f"
+done
 ```
 
-`full` is excluded from wheel and sdist (`pyproject.toml:147,154`), so it stays out of the package
+Both loops name the SOURCE subdirectory explicitly, so `/tmp/ghost-full/metadata.json` is where
+Step 6 expects it. `scp -r ~/ghost-full/ /tmp/ghost-full/` would have produced
+`/tmp/ghost-full/ghost-full/ghost_gk_v1/metadata.json` — two levels off — and Step 6 would have
+failed on a path error while appearing to test platform inheritance.
+
+Verify before continuing, because a partial copy is silent:
+
+```bash
+ls -l silly_kicks/tracking/_ghost_gk_weights/default/ /tmp/ghost-full/   # 3 files each, no subdirs
+```
+
+`full` is excluded from wheel and sdist (`pyproject.toml:147,154` — verified: both targets carry
+`exclude = ["silly_kicks/tracking/_ghost_gk_weights/full", ...]`), so it stays out of the package
 tree and is published from `/tmp` in Task 9.
 
 - [ ] **Step 4: Re-stamp the feature contracts — ON X86**
@@ -1444,20 +1472,44 @@ ghost `load()` chirality + contract checks pass against the re-fit artifact.
 **Interfaces:** consumes Task 8's artifacts. Mirrors `scripts/publish_xcross_attempt.py`.
 
 **Note:** there is no ghost publish script today — only `publish_xcross_attempt.py` and
-`publish_xshot_occurrence.py`. `from_hub` is currently broken: the hosted artifact predates ADR-040's
-chirality block, so `load()` fail-closes on it. This task discharges that.
+`publish_xshot_occurrence.py`.
 
-- [ ] **Step 1: Correct the false model-card claim**
+> **THE UPLOAD IS IN SCOPE — owner-confirmed 2026-08-13.** An earlier revision of this note said the
+> upload was owner-held and that the task could not discharge `from_hub`. That is withdrawn: the
+> owner has confirmed the HF upload is part of this cycle, so the publisher runs for real, both
+> variants are uploaded, `from_hub` IS discharged, and Step 5 is expected to PASS.
+>
+> **One stale docstring falls out of this and must be fixed in the same task.**
+> `_ghost_gk.from_hub` currently tells the caller *"The Hub artifact predates the feature contract
+> (ADR-050) and cannot be re-uploaded under the standing owner hold"*, and emits
+> `MissingFeatureContractWarning` on that basis. Once the re-stamped artifact is uploaded that
+> sentence is false and the warning is misleading — a user escalating that category would see a
+> raise describing a condition that no longer exists. Update the docstring and re-check the warning
+> path against the newly uploaded artifact.
+>
+> Scope note retained from the earlier revision: the wider ghost-GK raw-data disclosure work
+> (audit bundle, wheels) is a separate matter and is NOT reopened by this.
 
-At `docs/huggingface/model-cards/ghost-gk-v1-model-card.md:84`, the card claims the published
-artifact contains "leaf-aggregated GK positions". There are none in the file. Replace with:
+- [ ] **Step 1: ~~Correct the false model-card claim~~ — ALREADY DONE, verify only**
 
+**Corrected 2026-08-12: the claim this step describes no longer exists.** It was fixed in `34bb22f`
+("docs(hf): reconcile ghost-gk-v1 model card + org card to parameters-only") for 4.54.0 / ADR-044.
+`docs/huggingface/model-cards/ghost-gk-v1-model-card.md:84` already reads *"Only the learned model
+parameters are published … **No per-sample training data and no raw provider tracking data is
+redistributed** (parameters-only artifact, silly-kicks 4.54.0 — the per-sample density arrays were
+removed; see ADR-044)"*, which is semantically what the step asked for. Lines 32, 41, 72, 109, 163
+and 173 carry the same corrected framing.
+
+Rewriting it would produce a diff with no meaning. **Verify and move on:**
+
+```bash
+grep -n "leaf-aggregated" docs/huggingface/model-cards/ghost-gk-v1-model-card.md   # expect: no match
+grep -n "parameters-only artifact, silly-kicks 4.54.0" docs/huggingface/model-cards/ghost-gk-v1-model-card.md
 ```
-Only the learned model parameters are published -- tree structure, split thresholds, leaf values and
-the boosting baselines. No per-sample training data and no raw provider tracking data are
-redistributed. (Artifacts have been parameters-only since v4.54.0 / ADR-044; `predict_density`
-requires a locally `fit()` model and is unavailable on a distributed artifact.)
-```
+
+What DOES need updating here is the corpus description, once Task 8 re-fits: the card states the
+`full` variant's match/frame counts and the `default` subsample size, and those are claims about the
+artifact this cycle replaces.
 
 - [ ] **Step 2: Write the publisher, mirroring the xCross one**
 
@@ -1732,8 +1784,39 @@ Expected: 4 passed.
 
 - [ ] **Step 5: Run the confirmation on the DGX, then Stage 2**
 
+**THE PRIOR STORE IS GITIGNORED AND LOCAL-ONLY — it does not travel with the clone (verified
+2026-08-12).** `.gitignore:51` covers `calibration_runs/` and `git ls-files calibration_runs` returns
+**zero** tracked files, so a `git clone` on the DGX has no store at all and `--store ~/tf24-stage1.db`
+points at nothing. Ship it explicitly first:
+
 ```bash
-ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+scp calibration_runs/balanced_confirm_tol3/s1.db karsten@192.168.68.73:~/tf24-stage1.db
+scp calibration_runs/balanced_confirm_tol3/carrier_best.json karsten@192.168.68.73:~/tf24-stage1-best.json
+```
+
+**`balanced_confirm_tol3` is the right store, and the other three are traps** (inspected read-only,
+2026-08-12). It is the only one whose trials vary `beta`/`gamma` alone at a HELD `tolerance_m=3.0`,
+which is what the shipped defaults actually are; `balanced` optimises to `tolerance_m=1.00`,
+`balanced_resweep` to `7.998`, and `smoke` is a smoke run. Picking any of those would re-score a
+different design point and call it a confirmation.
+
+> **THE SHIPPED DEFAULT IS NOT THE STORE'S OPTIMUM, and the plan conflated them.** Measured:
+>
+> | | tolerance_m | beta | gamma |
+> |---|---|---|---|
+> | `DEFAULT_CARRIER_PARAMS` (`_ball_carrier.py:32`) | 3.0 | **0.0** | **0.25** |
+> | `balanced_confirm_tol3/carrier_best.json` | 3.0 | **0.000194** | **0.22096** |
+> |
+>
+> The shipped values are the Optuna optimum ROUNDED. Step 3 above says to run at `beta=0.0,
+> gamma=0.25` (the shipped point) while Step 6 says to re-score "the recorded optimum" (the store
+> point). **Both are legitimate questions and they are different ones:** *"does the SHIPPED default
+> still win?"* and *"has the ARGMAX moved?"* Score both, label them separately in
+> `metrics.json` (`shipped_point`, `recorded_optimum`), and state which one the verdict is about.
+> Silently substituting one for the other is how a confirmation confirms nothing.
+
+```bash
+ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
   ./.venv/bin/python scripts/check_stage1_argmax.py \
     --data-dir "$GEN" --store ~/tf24-stage1.db --out ~/tf24_stage1'
 ```
@@ -1742,7 +1825,7 @@ If `verdict == "sweep"` **or** `argmax_moved` is true, run the full Stage-1 swee
 Otherwise proceed:
 
 ```bash
-ssh karsten@192.168.68.73 'cd ~/silly-kicks-refit && source ~/.pining_env && \
+ssh karsten@192.168.68.73 'cd ~/sk-refit && source ~/.pining_env && \
   nohup ./.venv/bin/python scripts/calibrate_tracking_defaults.py \
   --stage 2 --source pining --providers skillcorner idsse gradientsports \
   --carrier-best ~/tf24_stage1/carrier_best.json --store ~/tf24-stage2.db \
@@ -1810,6 +1893,32 @@ reader must be able to tell "covered", "deliberately not reproducible" and "forg
 Not optional, and not satisfied by the C4 gates passing — they pin the DSL; nothing reads
 `architecture.html`. Full pipeline: `structurizr.war export` -> `plantuml.jar -tsvg` ->
 `c4_assemble.py docs/c4 --svg-dir <tmp>`.
+
+**The toolchain IS present on this machine — verified 2026-08-12, do not re-derive it and do not
+skip the step:**
+
+| tool | location | verified |
+|---|---|---|
+| `structurizr.war` | `~/.claude/tools/structurizr.war` | present (221 MB) |
+| `plantuml.jar` | `~/.claude/tools/plantuml.jar` | present (26.9 MB) |
+| `c4_assemble.py` | `<plugin>/mad-scientist-skills/*/skills/c4/c4_assemble.py` | present |
+| Java | `/c/Program Files/Microsoft/jdk-21.0.10.7-hotspot/bin/java` | 21, on PATH |
+| Graphviz | resolved by PlantUML itself | **dot 2.44.1, `-testdot` exit 0** |
+
+**GATE ON PLANTUML'S OWN CHECK, NEVER `which dot`.** The skill states it outright: PlantUML resolves
+`dot` through its own search paths, not `$PATH`. Measured here — `which dot` and PowerShell's
+`Get-Command dot` BOTH return nothing, while `java -jar ~/.claude/tools/plantuml.jar -testdot`
+prints *"Dot version: dot - graphviz version 2.44.1 … Installation seems OK"* and exits 0. A
+`which`-based check concludes Graphviz is missing and skips the regeneration; that conclusion was
+reached once in this cycle and was wrong.
+
+```bash
+java -jar ~/.claude/tools/plantuml.jar -testdot    # must print "Installation seems OK", exit 0
+```
+
+Without `dot` PlantUML does NOT fail — it emits a green "Cannot find Graphviz" placeholder SVG **with
+exit code 0**, which `c4_assemble.py` then rejects for having 0 element nodes. So a green exit is not
+evidence; the `-testdot` line and a non-empty assembled diagram are.
 
 - [ ] **Step 4: Assemble the evidence and STOP**
 

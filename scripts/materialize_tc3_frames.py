@@ -167,9 +167,13 @@ def collect_home_team_map(home_dir: pathlib.Path, keys) -> dict[str, str]:
     hash unrelated to its match id, and the trainer looks the map up as
     `home_team_map.get(str(game_id))`.
     """
+    # Materialized ONCE. `keys` is annotated loosely and a generator would be exhausted by the loop
+    # below, making the error message report "N of 0 shards" -- a diagnostic that misstates the
+    # corpus size at exactly the moment someone is trying to work out what went missing.
+    all_keys = list(keys)
     home_map: dict[str, str] = {}
     missing = []
-    for key in keys:
+    for key in all_keys:
         path = home_dir / f"{join_key(key)}.json"
         if not path.exists():
             missing.append(join_key(key))
@@ -179,7 +183,7 @@ def collect_home_team_map(home_dir: pathlib.Path, keys) -> dict[str, str]:
             home_map[str(gid)] = str(rec["home_team_id"])
     if missing:
         raise SystemExit(
-            f"{len(missing)} of {len(list(keys))} shards have no home-team sidecar "
+            f"{len(missing)} of {len(all_keys)} shards have no home-team sidecar "
             f"(first: {missing[:3]}). The trainer would skip those games and fit on a shorter "
             f"corpus while reporting success. Re-run those items, or delete the generation."
         )

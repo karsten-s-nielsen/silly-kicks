@@ -132,3 +132,14 @@ def test_duplicate_identity_rows_are_order_insensitive():
     dup["team_id"] = ["H", "H"]
     dup["vx"] = [0.5, 9.9]
     assert_frames_parity(dup, dup.iloc[::-1].reset_index(drop=True), match_id="m1")
+
+
+def test_the_missing_sidecar_message_reports_the_real_corpus_size(tmp_path):
+    """Regression: `keys` was consumed by the loop and then re-listed for the message, so a
+    GENERATOR reported "N of 0 shards" -- a diagnostic that misstates the corpus size at exactly the
+    moment someone is working out what went missing."""
+    home = tmp_path / "_home"
+    _sidecar(home, "skillcorner__1", home="55", game_ids=["g1"])
+    keys = iter([("skillcorner", "1"), ("skillcorner", "2"), ("skillcorner", "3")])
+    with pytest.raises(SystemExit, match="2 of 3 shards"):
+        collect_home_team_map(home, keys)

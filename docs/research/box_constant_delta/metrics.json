@@ -1,0 +1,10 @@
+{
+  "n_flipped": 14548,
+  "n_flipped_band_only": 3217,
+  "n_flipped_boundary_only": 11328,
+  "n_flipped_both": 3,
+  "n_rows": 401908642,
+  "n_behind_line": 340261,
+  "run_commit": "968f81929ecfc1600f97f3485068812afe0a1de2",
+  "run_tree_dirty": false
+}
