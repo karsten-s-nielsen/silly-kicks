@@ -386,3 +386,55 @@ def test_the_guard_precedes_the_corpus_walk_within_main(name):
         f"{name}.py starts the corpus walk at line {min(walk)} before checking the tree at "
         f"{min(guard)} -- the check must come first or it protects nothing."
     )
+
+
+# --------------------------------------------------------------------------------------------
+# Platform identity: an artifact must record WHERE it was produced, not only WHAT code ran.
+
+
+def test_git_provenance_records_the_platform():
+    """`run_commit` says what code ran; it does not say on what machine.
+
+    That gap became load-bearing when ghost was re-fit on DGX Spark (aarch64) while the feature
+    contract's tolerance note still asserted "every fingerprinted artifact is produced on x86". A
+    contract mismatch on a cross-platform artifact must be diagnosable as "wrong machine" from the
+    artifact itself, not by re-deriving where it came from.
+
+    It lives in `git_provenance` for the ADR-037 reason the commit does: it is the ONE seam every
+    artifact driver already calls, so no driver can forget it.
+    """
+    from scripts._provenance import git_provenance
+
+    prov = git_provenance()
+    assert "platform" in prov, "git_provenance must record the platform"
+    assert isinstance(prov["platform"], str) and prov["platform"], "platform must be a non-empty string"
+    assert "machine" in prov, "the ISA is what actually differs (aarch64 vs x86_64); record it separately"
+    assert isinstance(prov["machine"], str) and prov["machine"]
+
+
+@pytest.mark.parametrize("failing_call", ["rev-parse", "status"])
+def test_platform_survives_a_git_failure(monkeypatch, failing_call):
+    """Platform identity does not come from git, so a box without git must still report it.
+
+    `git_provenance` has THREE return statements and two of them are git-failure paths -- one when
+    `rev-parse` fails (no git, not a repo) and one when `status` fails after `rev-parse` succeeded.
+    Both are parametrised here, because a `platform` merged into only the happy path would leave
+    exactly the unprovenanced runs (tarball checkouts, CI images) least able to say where they ran,
+    and a single-path test would not see it.
+    """
+    import scripts._provenance as prov_mod
+
+    def _selective_boom(*args, **kwargs):
+        if args and args[0] == failing_call:
+            raise FileNotFoundError(f"git {failing_call} unavailable")
+        return "0" * 40 if args and args[0] == "rev-parse" else ""
+
+    monkeypatch.setattr(prov_mod, "_git", _selective_boom)
+    prov = prov_mod.git_provenance()
+
+    assert prov["tree_state"] == "unknown", "a git failure must not report a known tree state"
+    assert prov["dirty"] is True, "unknown provenance is never treated as clean"
+    # `.get`, not `[...]`: a dropped key raises KeyError BEFORE the assertion, so the message
+    # explaining the defect never reaches the reader. Verified by planting the regression.
+    assert prov.get("platform"), f"platform dropped on the {failing_call}-failure path"
+    assert prov.get("machine"), f"machine dropped on the {failing_call}-failure path"

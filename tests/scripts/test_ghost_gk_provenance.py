@@ -47,3 +47,33 @@ def test_provenance_null_when_absent(tmp_path):
     m.save(tmp_path / "m")
     meta = json.loads((tmp_path / "m" / "metadata.json").read_text())
     assert meta["corpus_provenance"] is None
+
+
+# --------------------------------------------------------------------------------------------
+# The stamped platform must not depend on the operator remembering a flag.
+
+
+def test_training_platform_defaults_to_the_detected_platform():
+    """Ghost was the ONLY trained model whose machine identity was operator-supplied: xShot and
+    xCross both record `platform.platform()` unconditionally, while ghost's `--training-platform`
+    defaulted to None. The flag was in fact forgotten during the ADR-050 re-fit."""
+    from scripts.train_ghost_gk import resolve_training_platform
+
+    prov = {"platform": "Linux-6.11.0-aarch64-with-glibc2.39", "machine": "aarch64"}
+    assert resolve_training_platform(None, prov) == "Linux-6.11.0-aarch64-with-glibc2.39"
+
+
+def test_an_explicit_label_still_wins():
+    """The override exists for a human-meaningful card label; detection must not clobber it."""
+    from scripts.train_ghost_gk import resolve_training_platform
+
+    prov = {"platform": "Linux-6.11.0-aarch64-with-glibc2.39", "machine": "aarch64"}
+    assert resolve_training_platform("dgx-spark-aarch64", prov) == "dgx-spark-aarch64"
+
+
+def test_the_stamped_platform_is_never_None():
+    """An absent platform and an unknown one are the same useless value downstream."""
+    from scripts.train_ghost_gk import resolve_training_platform
+
+    assert resolve_training_platform(None, {"platform": "Windows-11", "machine": "AMD64"})
+    assert resolve_training_platform("", {"platform": "Windows-11", "machine": "AMD64"}) == "Windows-11"

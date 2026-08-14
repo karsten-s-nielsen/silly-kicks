@@ -70,9 +70,17 @@ def test_git_provenance_reports_the_real_tree():
     # An EXACT set, deliberately: this is the published shape, and a field appearing or vanishing
     # here is an API change for every artifact consumer. `tree_state` joined it additively in
     # 4.72.0 (ADR-052 Task 16b) -- `dirty` kept its exact meaning and value beside it.
-    assert set(prov) == {"commit", "tree_state", "dirty", "dirty_files"}
+    # `platform`/`machine` joined the same way when ghost was re-fit on DGX Spark (aarch64): the
+    # commit says WHAT code ran and could not say WHERE, while `_feature_contract`'s tolerance note
+    # still asserted every fingerprinted artifact came from x86. Purely additive again -- every
+    # pre-existing key keeps its meaning, so an older consumer reading the four original fields is
+    # unaffected.
+    assert set(prov) == {"commit", "tree_state", "dirty", "dirty_files", "platform", "machine"}
     assert prov["tree_state"] in {"clean", "dirty", "unknown"}
     assert isinstance(prov["dirty"], bool)
+    # Non-empty on EVERY path: platform identity does not come from git, so it must survive the
+    # early returns that a missing binary or a non-repo checkout take.
+    assert prov["platform"] and prov["machine"]
     if prov["commit"] != "unknown":
         assert len(prov["commit"]) == 40, "expected a full git SHA"
     assert prov["dirty"] == bool(prov["dirty_files"]) or prov["commit"] == "unknown"

@@ -237,6 +237,22 @@ def keeper_detection_mask_or_none(visibility: pd.Series) -> pd.Series | None:
     return visibility.fillna(False).astype(bool)
 
 
+def resolve_training_platform(explicit: str | None, prov: dict) -> str:
+    """The platform to stamp: an explicit label if given, else the detected one.
+
+    Defaulting to `None` was the defect. `_xshot_occurrence` and `_xcross_attempt` both record
+    `platform.platform()` unconditionally, so ghost was the only trained artifact whose machine
+    identity depended on the operator remembering a flag -- and the flag was in fact forgotten,
+    leaving artifacts that could not say where they ran. Detection is the DEFAULT and the flag is now
+    only an override for a human-meaningful label ("dgx-spark-aarch64" reads better than
+    "Linux-6.11.0-aarch64-with-glibc2.39" in a model card).
+
+    Never returns None: an absent platform and an unknown platform are the same useless value
+    downstream, and `platform.platform()` always answers.
+    """
+    return explicit or prov["platform"]
+
+
 def main() -> None:
     # Force unbuffered stdout so background tasks show progress immediately
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
@@ -279,10 +295,8 @@ def main() -> None:
     # `None` rather than the helper's "unknown" sentinel, so metadata.json keeps the `str | None`
     # shape that `GhostGkModel.load` and the published artifacts already carry.
     training_commit = None if run_prov["commit"] == "unknown" else run_prov["commit"]
-    print(
-        f"training_commit={training_commit} (tree_dirty={run_prov['dirty']}), "
-        f"training_platform={args.training_platform}"
-    )
+    training_platform = resolve_training_platform(args.training_platform, run_prov)
+    print(f"training_commit={training_commit} (tree_dirty={run_prov['dirty']}), training_platform={training_platform}")
 
     print(f"Config: n_estimators={args.n_estimators}, max_depth={args.max_depth}")
     print(f"Data: {args.data_dir}, subsample_fps={args.subsample_fps}")
@@ -871,7 +885,7 @@ def main() -> None:
 
     # --- 7. Save final model ---
     final_model.training_commit = training_commit
-    final_model.training_platform = args.training_platform
+    final_model.training_platform = training_platform
     # Aggregate corpus provenance (providers + counts ONLY; spec 2026-07-20 S6). Providers come
     # from the per-file source_provider column (already collected into provider_labels);
     # n_games from the training groups; n_rows from the retained sample count. NEVER a per-match
