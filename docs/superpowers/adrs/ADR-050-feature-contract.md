@@ -283,3 +283,59 @@ exactly what the contract cannot. The two are complementary; neither subsumes th
 **Not tracked as follow-up work.** There is no "stamp `GkCompletionModel` later" item, because the
 analysis above says the stamp would not do the job. If the extractor is ever refactored to consume
 raw frames, revisit this.
+## Amendment (4.81.0, PR-S151) — §6 discharged, and a SECOND blindness of the same family
+
+**§6 is closed.** `_ghost_gk` no longer keeps its own 40.3 m box. The model was re-fit against the
+canonical constant, and both its predicate and its contract declaration now read `spadlconfig`, so
+the "declared 20.15 against a 20.16 extractor" configuration this ADR describes is no longer
+reachable — the raise that guarded the un-unified state is discharged by the re-fit rather than
+deleted.
+
+**The measured delta, and the attribution nobody would have guessed.** Over the full 179-match
+pining corpus (401,908,642 player-frame rows), the unification flips **14,548** rows — 0.00362%.
+The split is the interesting part:
+
+| cause | rows | share of flips |
+|---|---:|---:|
+| depth boundary `gr_x < 16.5` → `gr_x <= 16.5` | 11,328 | **77.9%** |
+| the 1 cm half-width band (20.15 → 20.16) | 3,217 | 22.1% |
+| both together | 3 | — |
+
+**Three quarters of the change is not the constant.** It is players standing exactly on the 16.5 m
+line, moved by a strictness change that rode along with the unification. A reader who reads
+"unified 40.3 → 40.32" as the explanation is wrong about most of the number. Artifact:
+`docs/research/box_constant_delta/`.
+
+**`:64` is FALSIFIED, and it is the third line of this ADR to be.** It reads "with every
+fingerprinted artifact produced on x86 so no cross-platform comparison happens against a
+not-yet-measured tolerance." Both halves are now untrue: the bundled ghost `default` is stamped
+`training_platform="dgx-spark-aarch64"`, and the tolerance HAS been measured —
+`docs/research/pr5_platform_atol/` reports **max|delta| = 0.0 across all 69 bundled features**
+(ghost 26, xShot 27, xCross 16) between AMD64/Windows/py3.14 and aarch64/Linux/py3.12, zero features
+moved. Three caveats travel with that number and must not be dropped: the legs confound
+ARCHITECTURE with INTERPRETER; `atol` cannot transfer to xCross's quantized `space_controlled`
+(~8.87e6 × atol per cell) or integer-ratio `box_off_def_ratio`, where it degenerates to an equality
+test; and it measures the fingerprint only, not any model's acceptance. **The platform is now
+recorded on every artifact** via `git_provenance`, so this class of stale premise is answerable from
+the artifact instead of from a comment.
+
+**The blindness.** This ADR already records that the contract cannot see an UPSTREAM-RESOLUTION
+change (4.73.0, above). The re-fit surfaced a second one from the opposite direction, and the two
+bound the guarantee from both sides:
+
+> `in_penalty_area_goal_relative*` has no `0 <= gr_x` lower bound, so a point *behind the goal line*
+> counts as in-box. Adding that bound declares **no new constant**, and the canonical probe frame
+> carries **no behind-the-line player** — so `_feature_contract_block()` is byte-identical with and
+> without the clamp. The contract would stay green across a change to the predicate's SHAPE.
+
+So the contract sees a constant's VALUE move, and is blind both to what happens *before* its
+extractor (upstream resolution) and to changes in the extractor's own predicate SHAPE that no
+declared constant parameterises. **What a contract declares is a set of NUMBERS, never a set of
+BEHAVIOURS** — and a probe frame that does not contain the case cannot witness it.
+
+**The clamp is deliberately NOT taken this cycle**, and the reason is attribution, not size — the
+affected population is **16.0× larger** than the unification being re-fit for (233,359 rows behind
+the line *and* inside the y band, 0.05806%; `gr_x < 0` alone is 340,261). Two causes moving one set
+of weights would make the delta above unattributable, and the clamp is a two-model change: signed
+`gr_x` reaches `_xcross_attempt` as well, which is not otherwise re-fit here. Tracked as its own
+On-Deck cycle with the revisit triggers stated in the artifact README.

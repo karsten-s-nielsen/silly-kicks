@@ -21,6 +21,7 @@ import pathlib
 import pytest
 
 import silly_kicks.spadl.config as spadlconfig
+from silly_kicks.tracking._feature_contract import CANONICAL_CONTRACT_KEYS
 
 _WEIGHTS = {
     "ghost": "silly_kicks/tracking/_ghost_gk_weights/default/metadata.json",
@@ -28,11 +29,11 @@ _WEIGHTS = {
     "xcross": "silly_kicks/tracking/_xcross_weights/default/metadata.json",
 }
 
-#: Canonical source for each declared contract key this gate covers.
-_CANONICAL = {
-    "penalty_area_half_width": lambda: spadlconfig.penalty_area_half_width,
-    "penalty_area_depth": lambda: spadlconfig.penalty_area_depth,
-}
+#: Canonical source for each declared contract key this gate covers, SINGLE-SOURCED from the library
+#: registry so the two cannot drift. `CANONICAL_CONTRACT_KEYS` is also what the enumeration gate's
+#: accounting consults, so a key excused there is necessarily pinned here -- the property that makes
+#: widening that accounting safe rather than a hole.
+_CANONICAL = {key: (lambda k=key: getattr(spadlconfig, k)) for key in sorted(CANONICAL_CONTRACT_KEYS)}
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
