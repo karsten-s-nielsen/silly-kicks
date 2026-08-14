@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadl
+from silly_kicks.id_compat import ids_differ, ids_equal, same_id
 
 # Single-source goal/own-goal predicates (ADR-0NN). Extracted so the definition lives in ONE place
 # instead of being copy-pasted across the ~8 label functions (the copy-paste that hid the own-goal
@@ -127,6 +128,25 @@ def scores(
         raise ValueError(f"Unknown window mode: {window!r}")
 
 
+def _same_team_scalar(a, b) -> bool:
+    """Scalar id equality for the groupby loops. NA is never equal to anything."""
+    return same_id(a, b)
+
+
+def _other_team_scalar(a, b) -> bool:
+    """Scalar OPPONENT test: both ids present AND different -- the scalar sibling of `ids_differ`.
+
+    `not same_id(a, b)` is NOT this. `same_id` is False when either id is NA, so negating it
+    promotes every NULL-team row to "opponent", which is the silent defect this fix exists to
+    remove: in a concedes label that charges an unknown-team row with the other side's goal.
+
+    Deliberately a module-local helper rather than a new `id_compat` export: ADR-027 fixed the
+    identical shape in `_line_breaking.py` with `same_id` plus an explicit `pd.isna` route at the
+    call site, and following that precedent keeps the public id surface unchanged.
+    """
+    return not (pd.isna(a) or pd.isna(b)) and not same_id(a, b)
+
+
 def _scores_action(actions: pd.DataFrame, nr_actions: int) -> pd.DataFrame:
     """Original VAEP action-count windowed scoring labels."""
     goal = _is_goal(actions)
@@ -138,8 +158,9 @@ def _scores_action(actions: pd.DataFrame, nr_actions: int) -> pd.DataFrame:
         shifted_goal = goal.shift(-i, fill_value=False)
         shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_team = team_id.shift(-i)
-        same_team = team_id == shifted_team
-        result = result | (shifted_goal & same_team) | (shifted_owngoal & ~same_team)
+        same_team = pd.Series(ids_equal(team_id, shifted_team).to_numpy(), index=team_id.index)
+        other_team = pd.Series(ids_differ(team_id, shifted_team).to_numpy(), index=team_id.index)
+        result = result | (shifted_goal & same_team) | (shifted_owngoal & other_team)
 
     return pd.DataFrame(result, columns=["scores"])
 
@@ -215,8 +236,9 @@ def _concedes_action(actions: pd.DataFrame, nr_actions: int) -> pd.DataFrame:
         shifted_goal = goal.shift(-i, fill_value=False)
         shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_team = team_id.shift(-i)
-        same_team = team_id == shifted_team
-        result = result | (shifted_goal & ~same_team) | (shifted_owngoal & same_team)
+        same_team = pd.Series(ids_equal(team_id, shifted_team).to_numpy(), index=team_id.index)
+        other_team = pd.Series(ids_differ(team_id, shifted_team).to_numpy(), index=team_id.index)
+        result = result | (shifted_goal & other_team) | (shifted_owngoal & same_team)
 
     return pd.DataFrame(result, columns=["concedes"])
 
@@ -234,9 +256,10 @@ def _scores_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.Dat
         shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_xg = xg.shift(-i).fillna(0.0)
         shifted_team = team_id.shift(-i)
-        same_team = team_id == shifted_team
+        same_team = pd.Series(ids_equal(team_id, shifted_team).to_numpy(), index=team_id.index)
+        other_team = pd.Series(ids_differ(team_id, shifted_team).to_numpy(), index=team_id.index)
         score_xg = shifted_xg.where(shifted_goal & same_team, 0.0)
-        owngoal_xg = shifted_xg.where(shifted_owngoal & ~same_team, 0.0)
+        owngoal_xg = shifted_xg.where(shifted_owngoal & other_team, 0.0)
         result = result.combine(score_xg + owngoal_xg, max, fill_value=0.0)  # type: ignore[reportArgumentType]
     return pd.DataFrame({"scores": result})
 
@@ -254,8 +277,9 @@ def _concedes_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.D
         shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_xg = xg.shift(-i).fillna(0.0)
         shifted_team = team_id.shift(-i)
-        same_team = team_id == shifted_team
-        concede_xg = shifted_xg.where(shifted_goal & ~same_team, 0.0)
+        same_team = pd.Series(ids_equal(team_id, shifted_team).to_numpy(), index=team_id.index)
+        other_team = pd.Series(ids_differ(team_id, shifted_team).to_numpy(), index=team_id.index)
+        concede_xg = shifted_xg.where(shifted_goal & other_team, 0.0)
         owngoal_xg = shifted_xg.where(shifted_owngoal & same_team, 0.0)
         result = result.combine(concede_xg + owngoal_xg, max, fill_value=0.0)  # type: ignore[reportArgumentType]
     return pd.DataFrame({"concedes": result})
@@ -280,7 +304,7 @@ def _scores_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.DataF
         for i, pos in enumerate(idx):
             for j_pos in idx[i + 1 :]:
                 if goal.loc[j_pos]:
-                    same_team = team_id.loc[pos] == team_id.loc[j_pos]
+                    same_team = _same_team_scalar(team_id.loc[pos], team_id.loc[j_pos])
                     if same_team:
                         if xg_column is not None:
                             result.loc[pos] = max(result.loc[pos], xg.loc[j_pos])
@@ -288,8 +312,8 @@ def _scores_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.DataF
                             result.loc[pos] = True
                             break
                 if owngoal.loc[j_pos]:
-                    same_team = team_id.loc[pos] == team_id.loc[j_pos]
-                    if not same_team:
+                    other_team = _other_team_scalar(team_id.loc[pos], team_id.loc[j_pos])
+                    if other_team:
                         if xg_column is not None:
                             result.loc[pos] = max(result.loc[pos], xg.loc[j_pos])
                         else:
@@ -325,15 +349,15 @@ def _concedes_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.Dat
         for i, pos in enumerate(idx):
             for j_pos in idx[i + 1 :]:
                 if goal.loc[j_pos]:
-                    same_team = team_id.loc[pos] == team_id.loc[j_pos]
-                    if not same_team:
+                    other_team = _other_team_scalar(team_id.loc[pos], team_id.loc[j_pos])
+                    if other_team:
                         if xg_column is not None:
                             result.loc[pos] = max(result.loc[pos], xg.loc[j_pos])
                         else:
                             result.loc[pos] = True
                             break
                 if owngoal.loc[j_pos]:
-                    same_team = team_id.loc[pos] == team_id.loc[j_pos]
+                    same_team = _same_team_scalar(team_id.loc[pos], team_id.loc[j_pos])
                     if same_team:
                         if xg_column is not None:
                             result.loc[pos] = max(result.loc[pos], xg.loc[j_pos])
@@ -404,14 +428,14 @@ def _scores_time(
             end = boundaries[local_i]
             for local_j in range(local_i + 1, min(end, len(idx))):
                 if g[local_j]:
-                    if tid[local_i] == tid[local_j]:
+                    if _same_team_scalar(tid[local_i], tid[local_j]):
                         if xg_column:
                             result[global_i] = max(float(result[global_i]), float(xg[idx[local_j]]))
                         else:
                             result[global_i] = True
                             break
                 if og[local_j]:
-                    if tid[local_i] != tid[local_j]:
+                    if _other_team_scalar(tid[local_i], tid[local_j]):
                         if xg_column:
                             result[global_i] = max(float(result[global_i]), float(xg[idx[local_j]]))
                         else:
@@ -477,14 +501,14 @@ def _concedes_time(
             end = boundaries[local_i]
             for local_j in range(local_i + 1, min(end, len(idx))):
                 if g[local_j]:
-                    if tid[local_i] != tid[local_j]:
+                    if _other_team_scalar(tid[local_i], tid[local_j]):
                         if xg_column:
                             result[global_i] = max(float(result[global_i]), float(xg[idx[local_j]]))
                         else:
                             result[global_i] = True
                             break
                 if og[local_j]:
-                    if tid[local_i] == tid[local_j]:
+                    if _same_team_scalar(tid[local_i], tid[local_j]):
                         if xg_column:
                             result[global_i] = max(float(result[global_i]), float(xg[idx[local_j]]))
                         else:

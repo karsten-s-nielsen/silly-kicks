@@ -2,24 +2,34 @@
 """TF-24 Stage-1 confirmation: does the recorded carrier optimum still hold on corrected geometry?
 
 ADR-028 and its follow-ups moved away-team geometry after every Stage-1 sweep on record, so the
-question is whether the recorded optimum survives. Two prongs, and they answer DIFFERENT questions:
+question is whether the recorded optimum survives. Two prongs, answering DIFFERENT questions:
 
-1. INVARIANCE -- score the corpus, then score an exact point reflection of it, and compare carrier
-   assignments frame by frame. Carrier inference should be orientation-invariant; the pre-registered
-   threshold is >= 99.9% agreement (spec D5, fixed before any corrected-geometry data was scored).
-2. ARGMAX -- re-score the recorded optimum and its immediate neighbours on the corrected frames and
-   report whether the best point is still the recorded one.
+1. INVARIANCE -- score the corpus, score its exact point reflection, compare carrier assignments.
+   Carrier inference should be orientation-invariant; the threshold (>= 99.9%) is pre-registered in
+   spec D5, fixed before any corrected-geometry data was scored.
+2. ARGMAX -- re-score the recorded optimum and its nearest trials and report whether the best point
+   moved BY MORE THAN THE NOISE.
 
-**THE SHIPPED DEFAULT IS NOT THE STORE'S OPTIMUM, and scoring one while reporting the other is the
-trap this script exists to avoid.** `_ball_carrier.DEFAULT_CARRIER_PARAMS` ships
-`beta=0.0, gamma=0.25`; `calibration_runs/balanced_confirm_tol3` recorded
-`beta=0.000194, gamma=0.22096`. The shipped values are the Optuna optimum ROUNDED. "Does the SHIPPED
-default still win?" and "has the ARGMAX moved?" are both legitimate and they are not the same
-question, so both points are scored and labelled separately in the artifact.
+**BOTH PRONGS USE THE HARNESS'S OWN MACHINERY, and the first draft of this script did not.** That
+draft hand-rolled a corpus loop (which `pd.concat`-ed 727M rows and would have OOM'd a 119 GB box),
+hand-rolled disjoint folds, and invented a "sentinel delta vs margin" ratio to decide whether a
+difference mattered. All three already exist here and are used now:
 
-`tolerance_m` is held at 3.0 throughout: it is an engineering default that Stage 1 never calibrated
-(only `beta` and `gamma` vary in the store), so sweeping it here would answer a question nobody
-asked and would make the neighbour set incomparable to the recorded one.
+* `scripts/_driver.py::for_each` (ADR-052) streams the corpus BY CONSTRUCTION, shards per match,
+  resumes after a crash and asserts conservation. The OOM was unreachable through this seam.
+* `calibration._cv.match_cv_splits` gives match-stratified folds -- GroupKFold(5) above 7 matches,
+  leave-one-match-out below -- so no match appears in both sides.
+* `calibration._cv.cv_standard_error` is the noise floor: `std(ddof=1)/sqrt(n_folds)`.
+
+**THE SHIPPED DEFAULT IS NOT THE STORE'S OPTIMUM.** `_ball_carrier.DEFAULT_CARRIER_PARAMS` ships
+`beta=0.0, gamma=0.25`; the store recorded `0.000194, 0.22096` -- the optimum ROUNDED. "Does the
+SHIPPED default still win?" and "has the ARGMAX moved?" are different questions, so both points are
+scored and labelled separately.
+
+`tolerance_m` is held at 3.0: only `beta`/`gamma` vary in the store, so sweeping it here would
+answer a question nobody asked and make the neighbour set incomparable to the recorded one. Whether
+it SHOULD be swept is a live question -- it moves the objective by ~0.42 across its plausible range
+while beta/gamma move it by ~4e-4 -- but that is a design decision, not a knob to turn here.
 """
 
 from __future__ import annotations
@@ -31,11 +41,11 @@ import pathlib
 import numpy as np
 import pandas as pd
 
+from scripts._driver import for_each
 from scripts._provenance import git_provenance, require_clean_tree
 
-#: Pre-registered in the design BEFORE any corrected-geometry data was scored (spec D5). A gate
-#: whose threshold is chosen after seeing the result is not a gate; `test_check_stage1_argmax.py`
-#: pins both sides of it.
+#: Pre-registered in spec D5 BEFORE any corrected-geometry data was scored. A gate whose threshold
+#: is chosen after seeing the result is not a gate.
 _INVARIANCE_THRESHOLD = 0.999
 
 _PITCH_LENGTH = 105.0
@@ -44,43 +54,67 @@ _PITCH_WIDTH = 68.0
 #: Held, not swept -- see the module docstring.
 _TOLERANCE_M = 3.0
 
-#: The shipped library default (`_ball_carrier.DEFAULT_CARRIER_PARAMS`), which is the recorded
-#: optimum ROUNDED. Scored as its own labelled point.
+#: The shipped library default, which is the recorded optimum ROUNDED. Scored as its own point.
 _SHIPPED_POINT = {"beta": 0.0, "gamma": 0.25}
 
 _VELOCITY_COLUMNS = ("vx", "vy")
 
-#: A deliberately DISPLACED point, scored only to prove the objective responds to these parameters
-#: at all. Measured on a 3-match fold: recorded 0.31456, this 0.30460 -- so prong 2 is not inert.
-#: Without it, "the argmax did not move" is indistinguishable from "nothing could have moved it",
-#: which is the failure `require_velocity` guards on the input side and this guards on the output
-#: side. The neighbourhood around the optimum is genuinely FLAT (four neighbours scored identically
-#: to 16 digits), so the distinction is not hypothetical.
-_SENTINEL_POINT = {"beta": 5.0, "gamma": 2.0}
+#: Bump when the SHAPE of an invariance shard changes, so a resumed pass cannot combine old rows
+#: with new ones (the 4.77.1 defect).
+_SHARD_SCHEMA_VERSION = "tf24-invariance-1"
 
 
 def invariance_verdict(*, same: int, total: int) -> str:
     """`"stands"` iff agreement clears the pre-registered threshold.
 
-    Raises on an empty comparison rather than returning `"stands"`: zero frames compared would
-    otherwise read as perfect invariance, which is the silent no-op-gate failure -- the gate reports
-    success having tested nothing.
+    Raises on an empty comparison rather than returning `"stands"`: zero frames compared would read
+    as perfect invariance, i.e. a gate reporting success having tested nothing.
     """
     if total <= 0:
         raise ValueError("no frames compared; an empty comparison cannot be a pass")
     return "stands" if (same / total) >= _INVARIANCE_THRESHOLD else "sweep"
 
 
+def stage1_metric_and_direction() -> tuple[str, object]:
+    """The metric name and optimisation direction, READ FROM the sweep's own config.
+
+    `stage1_config` is the single source for both (`metric="carrier_accuracy"`,
+    `direction=Direction.MAXIMIZE`). Hard-coding "higher is better" into a `>` here would leave this
+    confirmation silently disagreeing with the sweep the day either changes -- the confirmation would
+    keep reporting on a design that no longer exists, which is the exact failure mode the whole
+    corrected-geometry re-check exists to catch one level up.
+    """
+    from silly_kicks.calibration._spaces import stage1_config
+
+    cfg = stage1_config(n_trials=1, store_path=":memory:")
+    return cfg.metric, cfg.direction
+
+
+def moved_beyond_noise(*, recorded: float, best_alternative: float, se: float, maximize: bool = True) -> bool:
+    """True iff the gain over the recorded point exceeds the between-fold standard error.
+
+    Mirrors `calibration._diagnostics.tf25_gate_fires`, which decides the same question for
+    provider-specific defaults: *a difference only counts when it clears that fold set's own SE.*
+    Deliberately a separate function rather than a call into it -- `tf25_gate_fires`'s parameters
+    are named for a MINIMISED Brier, and routing a maximised accuracy through `global_brier` /
+    `provider_best_brier` would make every call site read as its own opposite.
+
+    A `nan` SE (single fold) can never justify "moved", exactly as a nan SE can never justify a
+    provider-specific default there.
+    """
+    if se is None or not np.isfinite(se):
+        return False
+    gain = (best_alternative - recorded) if maximize else (recorded - best_alternative)
+    return gain > se
+
+
 def require_velocity(frames: pd.DataFrame) -> None:
     """Raise unless the frames carry USABLE `vx`/`vy`.
 
-    `_ball_carrier` sets `has_velocity = "vx" in frames.columns and "vy" in frames.columns` and
-    silently substitutes `pvx = 0.0` otherwise. With velocity zeroed, `beta` becomes inert and every
-    neighbour scores identically to the optimum -- the argmax "cannot move" for a reason that has
-    nothing to do with geometry, and prong 2 reports a clean pass having tested nothing.
-
-    Checks CONTENT, not just presence: an all-NaN `vx` passes a `in frames.columns` test and leaves
-    beta exactly as inert. Present-but-empty is the same defect wearing a different shape.
+    `_ball_carrier` substitutes `pvx = 0.0` when velocity is absent, which makes `beta` inert so
+    every candidate scores identically -- an argmax that "cannot move" for a reason that has nothing
+    to do with geometry. Checks CONTENT, not just presence: an all-NaN column passes a
+    `in frames.columns` test and is exactly as inert.
     """
     missing = [c for c in _VELOCITY_COLUMNS if c not in frames.columns]
     if missing:
@@ -97,19 +131,14 @@ def require_velocity(frames: pd.DataFrame) -> None:
 
 
 def reflect_frames(frames: pd.DataFrame) -> pd.DataFrame:
-    """An exact 180-degree point reflection of the pitch: positions mirrored, VELOCITIES NEGATED.
+    """An exact 180-degree point reflection: positions mirrored, VELOCITIES NEGATED.
 
     Mirroring positions while leaving velocities pointing the original way is not a reflection --
-    it is a physically incoherent frame, and `infer_ball_carrier` scores
-    `cand_dists[ci] - beta * v_toward`, so the velocity term is live.
+    `infer_ball_carrier` scores `cand_dists[ci] - beta * v_toward`, so the velocity term is live.
+    Prong 1 is structurally BLIND to getting this wrong (beta ~ 0 kills the term); prong 2 is what
+    gets corrupted, its neighbours having `beta != 0` by construction. Hence the dedicated test.
 
-    **Prong 1 is structurally BLIND to getting this wrong**: the recorded optimum has `beta` at (or
-    rounded to) zero, the term vanishes, and the invariance fraction is unaffected. Prong 2 is what
-    gets corrupted, because its neighbours have `beta != 0` by construction -- exactly the scores
-    the argmax comparison depends on. Hence the dedicated unit test.
-
-    Returns a NEW frame; the caller scores both legs and a mutating reflection would make the
-    "factual" leg the reflected one.
+    Returns a NEW frame -- a mutating reflection would make the "factual" leg the reflected one.
     """
     out = frames.copy(deep=True)
     out["x"] = _PITCH_LENGTH - frames["x"]
@@ -120,74 +149,52 @@ def reflect_frames(frames: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _carrier_series(frames: pd.DataFrame, *, beta: float, gamma: float, pre: dict | None = None) -> pd.Series:
+def _carrier_series(frames: pd.DataFrame, *, beta: float, gamma: float) -> pd.Series:
     """Carrier assignment keyed by frame, for one parameter point."""
     from silly_kicks.tracking._ball_carrier import infer_ball_carrier
 
-    out = infer_ball_carrier(frames, tolerance_m=_TOLERANCE_M, beta=beta, gamma=gamma, pre=pre)
+    out = infer_ball_carrier(frames, tolerance_m=_TOLERANCE_M, beta=beta, gamma=gamma)
     idx = pd.MultiIndex.from_frame(out[["game_id", "period_id", "frame_id"]].astype(str))
     return pd.Series(out["ball_carrier_player_id"].astype(str).to_numpy(), index=idx)
 
 
 def compare_assignments(factual: pd.Series, reflected: pd.Series, *, count_no_carrier_as_agreement: bool) -> dict:
-    """Agreement between two carrier assignments over the frames BOTH resolved.
+    """Agreement between two carrier assignments.
 
-    **The no-carrier rule is stated, not implied.** Frames where inference returns no carrier are
-    counted explicitly: treating `None == None` as agreement inflates the fraction by however many
-    dead-ball frames the corpus holds, and excluding them changes the denominator. Either is
-    defensible; silence is not, in a pre-registered gate. The default here EXCLUDES them, because
-    the claim under test is about carrier CHOICE and a frame with no carrier expresses none.
+    **The no-carrier rule is stated, not implied.** Treating `no-carrier == no-carrier` as agreement
+    inflates the fraction by every dead-ball frame; excluding them changes the denominator. Either is
+    defensible, silence is not. The default EXCLUDES them: the claim under test is about carrier
+    CHOICE, and a frame with no carrier expresses none.
     """
     joined = pd.DataFrame({"a": factual, "b": reflected}).dropna(how="all")
-    a_none = joined["a"].isin(["nan", "None", "<NA>"])
-    b_none = joined["b"].isin(["nan", "None", "<NA>"])
-    both_none = a_none & b_none
+    both_none = joined["a"].isin(["nan", "None", "<NA>"]) & joined["b"].isin(["nan", "None", "<NA>"])
     n_no_carrier = int(both_none.sum())
-    if count_no_carrier_as_agreement:
-        scored = joined
-        same = int((joined["a"] == joined["b"]).sum())
-    else:
-        scored = joined[~both_none]
-        same = int((scored["a"] == scored["b"]).sum())
+    scored = joined if count_no_carrier_as_agreement else joined[~both_none]
     return {
         "n_frames": len(scored),
-        "n_same": same,
+        "n_same": int((scored["a"] == scored["b"]).sum()),
         "n_no_carrier": n_no_carrier,
-        "no_carrier_convention": ("counted_as_agreement" if count_no_carrier_as_agreement else "excluded"),
     }
 
 
-def load_neighbours(store: pathlib.Path, *, optimum: dict, k: int) -> list[dict]:
-    """The K nearest completed trials to `optimum` in NORMALISED parameter space.
+def invariance_rows(shard: pathlib.Path, *, points: dict, count_no_carrier_as_agreement: bool) -> pd.DataFrame:
+    """One match's invariance counts, as the tidy frame `for_each` requires.
 
-    Normalised because `beta` and `gamma` have different ranges, so a raw euclidean distance would
-    make the wider parameter dominate "nearest" and the neighbour set would probe one axis only.
-
-    **`beta` sits ON a boundary at ~0, so neighbours exist on one side only.** The count actually
-    found is recorded rather than assumed symmetric -- a K that silently returns fewer points is a
-    weaker test than it looks.
+    This is the `work` callable: it sees ONE match, so the corpus is streamed by construction and
+    the 727M-row concatenation that OOM'd the first draft is unreachable here.
     """
-    import optuna
-
-    study = optuna.load_study(study_name=None, storage=f"sqlite:///{store}")
-    trials = [t for t in study.trials if t.state.name == "COMPLETE" and {"beta", "gamma"} <= set(t.params)]
-    if not trials:
-        raise SystemExit(f"{store}: no COMPLETE trials carrying beta+gamma; wrong store?")
-    betas = np.array([t.params["beta"] for t in trials], dtype=float)
-    gammas = np.array([t.params["gamma"] for t in trials], dtype=float)
-    span_b = float(betas.max() - betas.min()) or 1.0
-    span_g = float(gammas.max() - gammas.min()) or 1.0
-    d = np.hypot((betas - optimum["beta"]) / span_b, (gammas - optimum["gamma"]) / span_g)
-    order = np.argsort(d)
-    out = []
-    for i in order[: k + 1]:
-        t = trials[i]
-        if abs(t.params["beta"] - optimum["beta"]) < 1e-12 and abs(t.params["gamma"] - optimum["gamma"]) < 1e-12:
-            continue  # the optimum itself
-        out.append({"beta": float(t.params["beta"]), "gamma": float(t.params["gamma"]), "recorded_value": t.value})
-        if len(out) == k:
-            break
-    return out
+    frames = pd.read_parquet(shard)
+    require_velocity(frames)
+    mirrored = reflect_frames(frames)
+    rows = []
+    for label, point in points.items():
+        cmp = compare_assignments(
+            _carrier_series(frames, **point),
+            _carrier_series(mirrored, **point),
+            count_no_carrier_as_agreement=count_no_carrier_as_agreement,
+        )
+        rows.append({"match": shard.stem, "point": label, **cmp})
+    return pd.DataFrame.from_records(rows)
 
 
 def build_fold(
@@ -199,23 +206,22 @@ def build_fold(
 ) -> dict:
     """`{provider: [(actions, frames, home_team_id)]}` -- the shape `CarrierAccuracyObjective` takes.
 
-    Reconstructed from the corpus the materializer wrote: shards are `{provider}__{match}.parquet`,
-    their actions sit at `<actions_dir>/{provider}__{match}.parquet`, and the home map is keyed by
-    the `game_id` the FRAMES carry (SkillCorner's is a kloppy hash unrelated to its match id).
-
     A match missing either actions or a home id is SKIPPED and counted, never defaulted: a
     fabricated `home_team_id` would silently mis-orient one match's geometry inside an objective
     whose whole purpose here is to detect geometry-driven change.
+
+    Capped because `_PreparedMatch` retains `frames` plus a dense pre-index for every match in the
+    fold. That is the harness's normal setting rather than a compromise -- Stage 1 scores
+    match-stratified CV folds, never the whole corpus at once.
     """
     home_map = json.loads(home_teams.read_text(encoding="utf-8"))
     fold: dict[str, list] = {}
     skipped = {"no_actions": 0, "no_home": 0}
     for shard in shards:
-        stem = shard.stem
-        provider = stem.split("__")[0]
+        provider = shard.stem.split("__")[0]
         if max_per_provider is not None and len(fold.get(provider, [])) >= max_per_provider:
             continue
-        apath = actions_dir / f"{stem}.parquet"
+        apath = actions_dir / f"{shard.stem}.parquet"
         if not apath.is_file():
             skipped["no_actions"] += 1
             continue
@@ -231,8 +237,68 @@ def build_fold(
     return fold
 
 
-def _frame_parquets(data_dir: pathlib.Path) -> list[pathlib.Path]:
-    """Frames only -- excludes `_actions/` and `_home/` sidecars, which are not frames."""
+def score_points_by_cv_fold(fold: dict, points: dict) -> dict[str, list[float]]:
+    """Per-CV-fold carrier accuracy for each candidate point.
+
+    Uses `match_cv_splits` -- the harness's own match-stratified scheme (GroupKFold(5) above 7
+    matches, leave-one-match-out below) -- rather than a hand-partitioned fold set. The per-fold
+    metrics are what `cv_standard_error` turns into the noise floor, so the split must be the one
+    the rest of the harness uses or the SE describes a different design.
+
+    Test sets are disjoint and cover the corpus, so each match is prepared exactly once across all
+    folds -- the caching in `CarrierAccuracyObjective` is not wasted by scoring fold-wise.
+    """
+    from ruthless.result import Candidate
+
+    from silly_kicks.calibration._carrier_objective import CarrierAccuracyObjective
+    from silly_kicks.calibration._cv import match_cv_splits
+
+    flat = [(prov, m) for prov, matches in fold.items() for m in matches]
+    match_ids = np.array([f"{prov}__{i}" for i, (prov, _m) in enumerate(flat)])
+    out: dict[str, list[float]] = {name: [] for name in points}
+    for _train_idx, test_idx in match_cv_splits(match_ids):
+        sub: dict[str, list] = {}
+        for i in test_idx:
+            prov, m = flat[i]
+            sub.setdefault(prov, []).append(m)
+        obj = CarrierAccuracyObjective(sub)
+        for name, p in points.items():
+            m = obj.evaluate(Candidate(id=name, params={"tolerance_m": _TOLERANCE_M, **p}))
+            out[name].append(float(m["carrier_accuracy"]))
+    return out
+
+
+def load_neighbours(store: pathlib.Path, *, optimum: dict, k: int) -> list[dict]:
+    """The K nearest completed trials to `optimum` in NORMALISED parameter space.
+
+    Normalised because `beta` and `gamma` have different ranges; a raw euclidean distance would let
+    the wider parameter dominate and the probe would see one axis only. `beta` sits ON a boundary at
+    ~0, so neighbours exist on one side -- the count FOUND is recorded rather than assumed symmetric.
+    """
+    import optuna
+
+    study = optuna.load_study(study_name=None, storage=f"sqlite:///{store}")
+    trials = [t for t in study.trials if t.state.name == "COMPLETE" and {"beta", "gamma"} <= set(t.params)]
+    if not trials:
+        raise SystemExit(f"{store}: no COMPLETE trials carrying beta+gamma; wrong store?")
+    betas = np.array([t.params["beta"] for t in trials], dtype=float)
+    gammas = np.array([t.params["gamma"] for t in trials], dtype=float)
+    span_b = float(betas.max() - betas.min()) or 1.0
+    span_g = float(gammas.max() - gammas.min()) or 1.0
+    d = np.hypot((betas - optimum["beta"]) / span_b, (gammas - optimum["gamma"]) / span_g)
+    out = []
+    for i in np.argsort(d):
+        t = trials[i]
+        if abs(t.params["beta"] - optimum["beta"]) < 1e-12 and abs(t.params["gamma"] - optimum["gamma"]) < 1e-12:
+            continue  # the optimum is not its own neighbour: a guaranteed tie hides real movement
+        out.append({"beta": float(t.params["beta"]), "gamma": float(t.params["gamma"]), "recorded_value": t.value})
+        if len(out) == k:
+            break
+    return out
+
+
+def frame_parquets(data_dir: pathlib.Path) -> list[pathlib.Path]:
+    """Frame shards only -- underscore-prefixed sidecars (`_actions/`, `_home/`) are not frames."""
     named = sorted(data_dir.glob("**/frames.parquet"))
     if named:
         return named
@@ -246,24 +312,14 @@ def _frame_parquets(data_dir: pathlib.Path) -> list[pathlib.Path]:
 def main() -> None:
     ap = argparse.ArgumentParser(description="TF-24 Stage-1 confirmation on corrected geometry.")
     ap.add_argument("--data-dir", type=pathlib.Path, required=True)
+    ap.add_argument("--actions-dir", type=pathlib.Path, required=True)
+    ap.add_argument("--home-teams", type=pathlib.Path, required=True)
     ap.add_argument("--store", type=pathlib.Path, required=True, help="The PRIOR Stage-1 Optuna store (s1.db).")
     ap.add_argument("--out", type=pathlib.Path, required=True)
-    ap.add_argument("--actions-dir", type=pathlib.Path, required=True, help="The corpus `_actions/` dir.")
-    ap.add_argument("--home-teams", type=pathlib.Path, required=True, help="The corpus `home_teams.json`.")
     ap.add_argument("--k-neighbours", type=int, default=4)
-    ap.add_argument(
-        "--objective-matches-per-provider",
-        type=int,
-        default=5,
-        help="Cap on matches per provider in the ARGMAX fold (the objective retains each match). "
-        "The invariance prong always streams the FULL corpus; this bounds only the argmax fold.",
-    )
+    ap.add_argument("--objective-matches-per-provider", type=int, default=5)
     ap.add_argument("--max-matches", type=int, default=None, help="Dev smoke only; a capped run is not a result.")
-    ap.add_argument(
-        "--count-no-carrier-as-agreement",
-        action="store_true",
-        help="Count frames where BOTH legs found no carrier as agreement (default: exclude).",
-    )
+    ap.add_argument("--count-no-carrier-as-agreement", action="store_true")
     ap.add_argument("--allow-dirty", action="store_true")
     args = ap.parse_args()
 
@@ -272,141 +328,111 @@ def main() -> None:
 
     best = json.loads((args.store.parent / "carrier_best.json").read_text(encoding="utf-8"))
     recorded = {"beta": float(best["beta"]), "gamma": float(best["gamma"])}
+    points = {"shipped_point": _SHIPPED_POINT, "recorded_optimum": recorded}
     print(f"recorded optimum: {recorded} (tolerance_m held at {_TOLERANCE_M})")
     print(f"shipped point:    {_SHIPPED_POINT}")
 
-    paths = _frame_parquets(args.data_dir)
+    paths = frame_parquets(args.data_dir)
     if args.max_matches:
         paths = paths[: args.max_matches]
     if not paths:
         raise SystemExit(f"no frame parquets under {args.data_dir}")
-    # STREAM the invariance prong: one match in memory at a time. The corpus is ~727M rows across
-    # 179 matches; a `pd.concat` of all of them, plus the deep copy `reflect_frames` makes, would
-    # need roughly twice the box's RAM and would OOM hours into an unattended run. The counts are
-    # additive, so streaming costs nothing in fidelity -- this prong still sees EVERY match.
-    results: dict[str, dict] = {}
-    for label, point in (("shipped_point", _SHIPPED_POINT), ("recorded_optimum", recorded)):
-        acc = {"n_frames": 0, "n_same": 0, "n_no_carrier": 0}
-        for i, path in enumerate(paths, 1):
-            fr = pd.read_parquet(path)
-            if i == 1 and label == "shipped_point":
-                require_velocity(fr)
-            fact = _carrier_series(fr, beta=point["beta"], gamma=point["gamma"])
-            refl = _carrier_series(reflect_frames(fr), beta=point["beta"], gamma=point["gamma"])
-            cmp1 = compare_assignments(fact, refl, count_no_carrier_as_agreement=args.count_no_carrier_as_agreement)
-            for k in ("n_frames", "n_same", "n_no_carrier"):
-                acc[k] += cmp1[k]
-            del fr, fact, refl
-            if i % 25 == 0:
-                print(f"    {label}: {i}/{len(paths)} matches", flush=True)
-        fraction = acc["n_same"] / acc["n_frames"] if acc["n_frames"] else 0.0
-        verdict = invariance_verdict(same=acc["n_same"], total=acc["n_frames"])
-        results[label] = {
-            **acc,
-            "point": point,
+
+    # PRONG 1, through the ADR-052 seam: streams by construction, shards per match, resumes.
+    res = for_each(
+        paths,
+        key=lambda p: (str(p.stem.split("__")[0]), str(p.stem)),
+        work=lambda p: invariance_rows(
+            p, points=points, count_no_carrier_as_agreement=args.count_no_carrier_as_agreement
+        ),
+        shard_root=args.out / "shards",
+        token_inputs={
+            "points": {k: dict(sorted(v.items())) for k, v in sorted(points.items())},
+            "tolerance_m": _TOLERANCE_M,
+            "no_carrier": bool(args.count_no_carrier_as_agreement),
+            "schema": _SHARD_SCHEMA_VERSION,
+        },
+        label="match",
+    )
+    counts = pd.concat([pd.read_parquet(p) for p in sorted(res.shard_dir.glob("*.parquet"))], ignore_index=True)
+    invariance = {}
+    for label in points:
+        sub = counts[counts["point"] == label]
+        n_frames, n_same = int(sub["n_frames"].sum()), int(sub["n_same"].sum())
+        invariance[label] = {
+            "n_frames": n_frames,
+            "n_same": n_same,
+            "n_no_carrier": int(sub["n_no_carrier"].sum()),
             "no_carrier_convention": ("counted_as_agreement" if args.count_no_carrier_as_agreement else "excluded"),
-            "invariance_fraction": fraction,
-            "verdict": verdict,
+            "point": points[label],
+            "invariance_fraction": n_same / n_frames if n_frames else 0.0,
+            "verdict": invariance_verdict(same=n_same, total=n_frames),
         }
-        print(f"  {label}: {fraction:.6f} -> {verdict} (n={acc['n_frames']})", flush=True)
+        print(f"  {label}: {invariance[label]['invariance_fraction']:.6f} -> {invariance[label]['verdict']}")
 
+    # PRONG 2: the harness's CV, and its standard error as the noise floor.
     neighbours = load_neighbours(args.store, optimum=recorded, k=args.k_neighbours)
-    print(f"neighbours found: {len(neighbours)} of k={args.k_neighbours} requested", flush=True)
-
-    # Re-score the optimum and its neighbours on the CORRECTED frames. The score is agreement with
-    # the optimum's own assignment: a neighbour that reproduces it is indistinguishable here, which
-    # is the honest reading -- this prong asks whether the argmax MOVED, not what its objective was.
-    # Score with the SAME objective the store's values came from. An agreement-with-the-optimum
-    # proxy was written here first and removed: it answers "do these parameters assign the same
-    # carrier?", which is not the quantity that was maximised, so an argmax verdict derived from it
-    # would compare two different metrics and call the result a confirmation.
-    # The objective RETAINS each match (`_PreparedMatch` keeps `frames` plus a dense pre-index), so
-    # its fold is provider-CAPPED and the cap is recorded. This is the harness's normal setting, not
-    # a compromise: Stage 1 scores match-stratified CV folds, never the whole corpus at once.
     fold = build_fold(
         paths,
         actions_dir=args.actions_dir,
         home_teams=args.home_teams,
         max_per_provider=args.objective_matches_per_provider,
     )
-    n_matches_scored = sum(len(v) for v in fold.values())
-    if not n_matches_scored:
-        raise SystemExit(
-            "the objective fold is empty -- no match yielded (actions, frames, home_team_id). "
-            "Without it the argmax prong cannot run, and reporting invariance alone as a "
-            "confirmation would overstate what was tested."
-        )
-    print(f"objective fold: {n_matches_scored} matches across {sorted(fold)}", flush=True)
+    n_scored = sum(len(v) for v in fold.values())
+    if not n_scored:
+        raise SystemExit("the objective fold is empty; the argmax prong cannot run")
+    candidates = {**points, **{f"nb{i}": {"beta": n["beta"], "gamma": n["gamma"]} for i, n in enumerate(neighbours)}}
+    per_fold = score_points_by_cv_fold(fold, candidates)
 
-    from ruthless.result import Candidate
+    from ruthless import Direction
 
-    from silly_kicks.calibration._carrier_objective import CarrierAccuracyObjective
+    from silly_kicks.calibration._cv import cv_scheme_for, cv_standard_error
 
-    obj = CarrierAccuracyObjective(fold)
+    metric_name, direction = stage1_metric_and_direction()
+    maximize = direction == Direction.MAXIMIZE
 
-    def _score(label: str, beta: float, gamma: float) -> float:
-        m = obj.evaluate(Candidate(id=label, params={"tolerance_m": _TOLERANCE_M, "beta": beta, "gamma": gamma}))
-        return float(m["carrier_accuracy"])
+    summary = {
+        name: {
+            "mean": float(np.mean(v)),
+            "se": cv_standard_error(v),
+            "per_fold": v,
+            "params": candidates[name],
+        }
+        for name, v in per_fold.items()
+    }
+    for name, s in sorted(summary.items(), key=lambda kv: -kv[1]["mean"]):
+        print(f"  {s['mean']:.6f} +/- {s['se']:.6f}  {name}")
 
-    recorded_score = _score("recorded", recorded["beta"], recorded["gamma"])
-    shipped_score = _score("shipped", _SHIPPED_POINT["beta"], _SHIPPED_POINT["gamma"])
-    print(f"  recorded optimum score: {recorded_score:.6f}", flush=True)
-    print(f"  shipped point score:    {shipped_score:.6f}", flush=True)
-
-    scored = []
-    for i, nb in enumerate(neighbours):
-        s = _score(f"nb{i}", nb["beta"], nb["gamma"])
-        scored.append({**nb, "score_on_corrected": s})
-        print(f"  neighbour beta={nb['beta']:.6g} gamma={nb['gamma']:.6g}: {s:.6f}", flush=True)
-
-    # The argmax MOVED iff some neighbour now scores strictly higher than the recorded optimum.
-    # Strictly: a tie leaves the recorded point winning, which is the conservative reading for a
-    # confirmation whose purpose is to avoid an unnecessary sweep.
-    best_neighbour = max((s["score_on_corrected"] for s in scored), default=float("-inf"))
-    argmax_moved = bool(best_neighbour > recorded_score)
-    score_margin = best_neighbour - recorded_score if scored else None
-
-    # Non-vacuity, on the OUTPUT side. A flat neighbourhood makes `argmax_moved` turn on a margin of
-    # ~1e-4, which is a handful of actions; reported as a bare boolean that overstates the finding.
-    # Scoring a deliberately displaced point separates "the optimum held" from "nothing could have
-    # moved it", and records the margin so the verdict can be read rather than trusted.
-    sentinel_score = _score("sentinel", _SENTINEL_POINT["beta"], _SENTINEL_POINT["gamma"])
-    sentinel_delta = abs(sentinel_score - recorded_score)
-    print(f"  sentinel {_SENTINEL_POINT}: {sentinel_score:.6f} (delta {sentinel_delta:.6f})", flush=True)
-    if sentinel_delta == 0.0:
-        raise SystemExit(
-            "the objective did not move for a deliberately displaced point, so it is INSENSITIVE to "
-            "these parameters here and no argmax verdict is meaningful. Refusing to write an "
-            "artifact that would read as a confirmation."
-        )
+    rec = summary["recorded_optimum"]
+    alts = {k: v for k, v in summary.items() if k.startswith("nb")}
+    best_alt = max(alts.values(), key=lambda s: s["mean"]) if alts else None
+    argmax_moved = (
+        moved_beyond_noise(recorded=rec["mean"], best_alternative=best_alt["mean"], se=rec["se"], maximize=maximize)
+        if best_alt
+        else False
+    )
 
     out = {
-        "shipped_point": results["shipped_point"],
-        "recorded_optimum": results["recorded_optimum"],
-        "tolerance_m_held": _TOLERANCE_M,
+        "invariance": invariance,
         "invariance_threshold": _INVARIANCE_THRESHOLD,
-        "k_neighbours_requested": args.k_neighbours,
-        "k_neighbours_found": len(neighbours),
-        "neighbours": scored,
-        "recorded_optimum_score": recorded_score,
-        "shipped_point_score": shipped_score,
-        "best_neighbour_score": best_neighbour if scored else None,
-        "objective": "CarrierAccuracyObjective.carrier_accuracy",
-        "n_matches_scored": n_matches_scored,
-        "argmax_moved": argmax_moved,
-        "score_margin": score_margin,
-        "sentinel_point": _SENTINEL_POINT,
-        "sentinel_score": sentinel_score,
-        "sentinel_delta": sentinel_delta,
         "n_matches_invariance": len(paths),
         "objective_matches_per_provider_cap": args.objective_matches_per_provider,
+        "n_matches_objective": n_scored,
+        "cv_scheme": cv_scheme_for(n_scored),
+        "objective": f"CarrierAccuracyObjective.{metric_name}",
+        "direction": str(direction),
+        "points": summary,
+        "k_neighbours_requested": args.k_neighbours,
+        "k_neighbours_found": len(neighbours),
+        "argmax_moved": argmax_moved,
+        "argmax_rule": "best neighbour mean - recorded mean > recorded CV standard error",
         "store": str(args.store),
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
     }
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "metrics.json").write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({k: v for k, v in out.items() if k != "neighbours"}, indent=2))
+    print(f"argmax_moved={argmax_moved} (rule: {out['argmax_rule']})")
 
 
 if __name__ == "__main__":

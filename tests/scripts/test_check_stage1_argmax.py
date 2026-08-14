@@ -18,6 +18,7 @@ from scripts.check_stage1_argmax import (
     compare_assignments,
     invariance_verdict,
     load_neighbours,
+    moved_beyond_noise,
     reflect_frames,
     require_velocity,
 )
@@ -124,7 +125,6 @@ def test_no_carrier_frames_are_EXCLUDED_by_default():
     assert out["n_frames"] == 2, "the both-no-carrier frame must leave the denominator"
     assert out["n_same"] == 1
     assert out["n_no_carrier"] == 1
-    assert out["no_carrier_convention"] == "excluded"
 
 
 def test_no_carrier_frames_CAN_be_counted_as_agreement():
@@ -135,7 +135,6 @@ def test_no_carrier_frames_CAN_be_counted_as_agreement():
     out = compare_assignments(a, b, count_no_carrier_as_agreement=True)
     assert out["n_frames"] == 3
     assert out["n_same"] == 2, "the both-no-carrier frame now counts as agreement"
-    assert out["no_carrier_convention"] == "counted_as_agreement"
 
 
 def test_a_disagreement_is_actually_detected():
@@ -219,3 +218,36 @@ def test_neighbours_are_the_NEAREST_in_normalised_space():
     assert [(n["beta"], n["gamma"]) for n in near] == [(f["beta"], f["gamma"]) for f in far[:3]], (
         "k=3 must be the first three of k=30 -- otherwise the ordering is not by distance"
     )
+
+
+# --------------------------------------------------------------------------------------------
+# moved_beyond_noise -- the argmax rule. Mirrors `_diagnostics.tf25_gate_fires`, so it is pinned
+# from BOTH sides plus the nan case, exactly as that gate is.
+
+
+def test_a_gain_larger_than_the_SE_counts_as_moved():
+    assert moved_beyond_noise(recorded=0.500, best_alternative=0.510, se=0.005) is True
+
+
+def test_a_gain_smaller_than_the_SE_does_NOT_count():
+    """The measured case: the margin was 1.005e-4 while between-fold spread was ~1e-2. A bare
+    boolean on the raw difference would have called that a move."""
+    assert moved_beyond_noise(recorded=0.537868, best_alternative=0.537968, se=0.01) is False
+
+
+def test_a_gain_exactly_at_the_SE_does_NOT_count():
+    """Strict `>`, matching `tf25_gate_fires`: a tie leaves the recorded point winning, the
+    conservative reading for a confirmation whose purpose is to avoid an unnecessary sweep."""
+    # Operands chosen binary-exact ON PURPOSE: 0.51 - 0.5 == 0.010000000000000009, so the
+    # obvious numbers would have tested float representation instead of the rule.
+    assert moved_beyond_noise(recorded=0.5, best_alternative=0.75, se=0.25) is False
+
+
+def test_a_nan_SE_can_never_justify_moved():
+    """A single fold has no SE. `tf25_gate_fires` refuses a provider-specific default on a nan SE
+    for the same reason: an unmeasurable spread is not evidence of a difference."""
+    assert moved_beyond_noise(recorded=0.5, best_alternative=0.9, se=float("nan")) is False
+
+
+def test_a_worse_alternative_is_never_moved():
+    assert moved_beyond_noise(recorded=0.6, best_alternative=0.5, se=0.001) is False
