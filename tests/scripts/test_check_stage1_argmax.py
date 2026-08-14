@@ -251,3 +251,23 @@ def test_a_nan_SE_can_never_justify_moved():
 
 def test_a_worse_alternative_is_never_moved():
     assert moved_beyond_noise(recorded=0.6, best_alternative=0.5, se=0.001) is False
+
+
+def test_the_shard_key_does_not_repeat_the_separator():
+    """`join_key` REJECTS a component containing `__`, because ("a__b","c") and ("a","b__c") both
+    join to "a__b__c" -- two distinct items silently sharing one shard. Passing the full stem as the
+    match component tripped exactly that guard on the first real run."""
+    from scripts._driver import join_key
+    from scripts.check_stage1_argmax import shard_key
+
+    key = shard_key(pathlib.Path("/x/y/gradientsports__10502.parquet"))
+    assert key == ("gradientsports", "10502")
+    assert join_key(key)  # must not raise
+
+
+def test_the_shard_key_survives_a_match_id_containing_the_separator():
+    """Partition on the FIRST separator only: a provider prefix is stripped, the rest is kept whole
+    rather than truncated at a second `__`."""
+    from scripts.check_stage1_argmax import shard_key
+
+    assert shard_key(pathlib.Path("/x/skillcorner__a__b.parquet")) == ("skillcorner", "a__b")

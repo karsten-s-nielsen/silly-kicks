@@ -297,6 +297,18 @@ def load_neighbours(store: pathlib.Path, *, optimum: dict, k: int) -> list[dict]
     return out
 
 
+def shard_key(shard: pathlib.Path) -> tuple[str, str]:
+    """`(provider, match_id)` for a `{provider}__{match_id}.parquet` shard.
+
+    The match id must NOT keep the `provider__` prefix: `join_key` rejects a key component that
+    contains its own `__` separator, because `("a__b", "c")` and `("a", "b__c")` would both join to
+    `"a__b__c"` and two distinct items would silently share one shard. Splitting on the FIRST
+    separator only, so a match id containing `__` still round-trips.
+    """
+    provider, _, match = shard.stem.partition("__")
+    return (provider, match or shard.stem)
+
+
 def frame_parquets(data_dir: pathlib.Path) -> list[pathlib.Path]:
     """Frame shards only -- underscore-prefixed sidecars (`_actions/`, `_home/`) are not frames."""
     named = sorted(data_dir.glob("**/frames.parquet"))
@@ -341,7 +353,7 @@ def main() -> None:
     # PRONG 1, through the ADR-052 seam: streams by construction, shards per match, resumes.
     res = for_each(
         paths,
-        key=lambda p: (str(p.stem.split("__")[0]), str(p.stem)),
+        key=shard_key,
         work=lambda p: invariance_rows(
             p, points=points, count_no_carrier_as_agreement=args.count_no_carrier_as_agreement
         ),
