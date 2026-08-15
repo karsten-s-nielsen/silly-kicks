@@ -14,9 +14,10 @@ from dataclasses import dataclass
 from silly_kicks.calibration._cv import cv_standard_error
 from silly_kicks.calibration._diagnostics import exceeds_noise_floor
 
-#: Provisional practical-significance floor on carrier accuracy. The FROZEN value is derived from
-#: Stage-2 Brier sensitivity in the plan's Task 8, and the landed keep-incumbent result is asserted
-#: invariant to it across a plausible range -- so the result does not hinge on this exact number.
+#: Practical-significance floor on carrier accuracy, FROZEN at 0.005. The 179-match confirmation
+#: (run_commit 2cecd2b, docs/research/tf24_stage1_confirmation/) showed the keep-incumbent
+#: recommendation is invariant to this value across [0, 0.1]: the shipped default is the outright
+#: highest-mean point, so no candidate clears any positive floor and the result does not hinge on it.
 MIN_EFFECT_SIZE: float = 0.005
 
 

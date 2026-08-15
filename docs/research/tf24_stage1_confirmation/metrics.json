@@ -1,0 +1,166 @@
+{
+  "invariance": {
+    "shipped_point": {
+      "n_frames": 8786059,
+      "n_same": 8786054,
+      "n_no_carrier": 8867791,
+      "no_carrier_convention": "excluded",
+      "point": {
+        "beta": 0.0,
+        "gamma": 0.25
+      },
+      "invariance_fraction": 0.9999994309166373,
+      "verdict": "stands"
+    },
+    "recorded_optimum": {
+      "n_frames": 8786059,
+      "n_same": 8786054,
+      "n_no_carrier": 8867791,
+      "no_carrier_convention": "excluded",
+      "point": {
+        "beta": 0.00019437256930907466,
+        "gamma": 0.22096254078053068
+      },
+      "invariance_fraction": 0.9999994309166373,
+      "verdict": "stands"
+    }
+  },
+  "invariance_threshold": 0.999,
+  "n_matches_invariance": 179,
+  "objective_matches_per_provider_cap": 5,
+  "n_matches_objective": 15,
+  "cv_scheme": "groupkfold",
+  "objective": "CarrierAccuracyObjective.carrier_accuracy",
+  "direction": "Direction.MAXIMIZE",
+  "points": {
+    "shipped_point": {
+      "mean": 0.5413458690411092,
+      "se": 0.01748758623453813,
+      "per_fold": [
+        0.5131225299449599,
+        0.5717194540829865,
+        0.5324801603453841,
+        0.5910504039602844,
+        0.4983567968719311
+      ],
+      "params": {
+        "beta": 0.0,
+        "gamma": 0.25
+      }
+    },
+    "recorded_optimum": {
+      "mean": 0.5410386624011128,
+      "se": 0.01741644186256826,
+      "per_fold": [
+        0.5123405186022009,
+        0.5724286675234295,
+        0.5324801603453841,
+        0.5896188685853856,
+        0.49832509694916366
+      ],
+      "params": {
+        "beta": 0.00019437256930907466,
+        "gamma": 0.22096254078053068
+      }
+    },
+    "nb0": {
+      "mean": 0.5410801908385896,
+      "se": 0.01734354885352315,
+      "per_fold": [
+        0.512430248878847,
+        0.5716293070118388,
+        0.5332813235297249,
+        0.5897666777461408,
+        0.49829339702639613
+      ],
+      "params": {
+        "beta": 0.02079715213410932,
+        "gamma": 0.21808232545400058
+      }
+    },
+    "nb1": {
+      "mean": 0.5409091245203943,
+      "se": 0.017464551041665635,
+      "per_fold": [
+        0.512430248878847,
+        0.5720659544294868,
+        0.5321240349892588,
+        0.5899115229605685,
+        0.49801386134381037
+      ],
+      "params": {
+        "beta": 0.012100242079954325,
+        "gamma": 0.2523890579145739
+      }
+    },
+    "nb2": {
+      "mean": 0.5411571648289383,
+      "se": 0.017528964507012267,
+      "per_fold": [
+        0.5125199791554932,
+        0.5720659544294868,
+        0.5321240349892588,
+        0.5907190586985217,
+        0.4983567968719311
+      ],
+      "params": {
+        "beta": 0.004717360768629546,
+        "gamma": 0.2575891550042757
+      }
+    },
+    "nb3": {
+      "mean": 0.5411571648289383,
+      "se": 0.017528964507012267,
+      "per_fold": [
+        0.5125199791554932,
+        0.5720659544294868,
+        0.5321240349892588,
+        0.5907190586985217,
+        0.4983567968719311
+      ],
+      "params": {
+        "beta": 0.00462860568944243,
+        "gamma": 0.259105641282348
+      }
+    }
+  },
+  "k_neighbours_requested": 4,
+  "k_neighbours_found": 4,
+  "argmax_moved": false,
+  "argmax_rule": "best neighbour mean - recorded mean > recorded CV standard error",
+  "store": "/home/karsten/tf24-store/s1.db",
+  "run_commit": "2cecd2b0df458131db420c4b6e26b8dada18d014",
+  "run_tree_dirty": false,
+  "selection": {
+    "moved": false,
+    "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+    "selected": {
+      "beta": 0.0,
+      "gamma": 0.25
+    }
+  },
+  "fold_stability": {
+    "per_point_mean": {
+      "shipped_point": 0.5413458690411092,
+      "recorded_optimum": 0.5410386624011128,
+      "nb0": 0.5410801908385896,
+      "nb1": 0.5409091245203943,
+      "nb2": 0.5411571648289383,
+      "nb3": 0.5411571648289383
+    },
+    "n_folds": 5,
+    "fold_winners": [
+      "shipped_point",
+      "recorded_optimum",
+      "nb0",
+      "shipped_point",
+      "shipped_point"
+    ],
+    "n_distinct_fold_winners": 3,
+    "between_fold_var": 0.0012195511092892846,
+    "between_point_var": 1.7713254224895767e-08,
+    "fold_to_point_var_ratio": 68849.63619927163,
+    "verdict": "no_discriminating_evidence",
+    "selection_reason": "no candidate cleared both the effect-size floor and the paired-SE test"
+  }
+}

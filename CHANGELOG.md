@@ -46,9 +46,11 @@ search space and `CarrierAccuracyObjective`, excluded from the new committed, pr
 `carrier_selected.json`, and sourced by Stage 2 from `DEFAULT_CARRIER_PARAMS` (Stage 2 now refuses an
 unprovenanced or dirty selection artifact). New public `silly_kicks.calibration` surface:
 `select_recommended_point`, `PointScore`, `Selection`, `build_selection_artifact`, `exceeds_noise_floor`,
-`MIN_EFFECT_SIZE`. Additive — no library default changes (ADR-009 preserved). The DGX store
-reconciliation, the frozen `δ` (`MIN_EFFECT_SIZE`) derivation, and the authoritative confirmation run
-are a post-release owner step; **ADR-060 stays Proposed** until they land.
+`MIN_EFFECT_SIZE`. Additive — no library default changes (ADR-009 preserved). The DGX confirmation is
+done (`docs/research/tf24_stage1_confirmation/`, `run_commit 2cecd2b`, clean tree): the store held
+`tolerance_m` at 3.0, `argmax_moved=False`, the fold-stability ratio is ~68,850× (between-fold vs
+between-point noise), and the keep-incumbent recommendation is invariant to `δ` across `[0, 0.1]` (the
+provisional `0.005` stands). **ADR-060 is Accepted.**
 
 ### Changed — provenance and script robustness
 

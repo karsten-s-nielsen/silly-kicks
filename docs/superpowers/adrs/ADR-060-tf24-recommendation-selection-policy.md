@@ -3,11 +3,8 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-08-14 |
-| **Status** | Proposed |
+| **Status** | Accepted (DGX confirmation landed 2026-08-15; run_commit 2cecd2b) |
 | **Deciders** | Karsten S. Nielsen (owner); drafted with Claude (Opus 4.8); cross-reviewed by a second session |
-
-> The ADR number is a placeholder until commit-prep — confirm it is still free against `origin/main`
-> before numbering ([[no-version-number-until-commit-prep]]).
 
 ## Context
 

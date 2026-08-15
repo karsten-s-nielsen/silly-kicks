@@ -1,0 +1,8 @@
+{
+  "beta": 0.0,
+  "gamma": 0.25,
+  "moved": false,
+  "reason": "no candidate cleared both the effect-size floor and the paired-SE test",
+  "run_commit": "2cecd2b0df458131db420c4b6e26b8dada18d014",
+  "run_tree_dirty": false
+}

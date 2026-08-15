@@ -49,8 +49,9 @@ MIT license with full attribution preserved.
   numpy/scikit-learn, no R -- which is not the same as dependency-free
 - **Feature glossary** -- a machine-readable registry of every derived column the
   library emits, CI-gated for completeness and linked to `NOTICE` attributions
-- **Providers** -- raw-data parse ports (bytes → bronze → converter input). Currently **one**:
-  Sportec/DFL, behind the `[parse-dfl]` extra
+- **Providers** -- raw-data parse ports (bytes → bronze → converter input). **Two** so far:
+  Sportec/DFL (behind the `[parse-dfl]` extra), and StatsBomb SB360 freeze-frames → tracking
+  frames + `visible_area` polygons (no extra)
 - **Calibration** -- an Optuna harness that *recommends* tuned defaults and never
   changes library constants
 
