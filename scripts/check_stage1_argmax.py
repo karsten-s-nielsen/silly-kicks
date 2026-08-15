@@ -26,10 +26,10 @@ difference mattered. All three already exist here and are used now:
 SHIPPED default still win?" and "has the ARGMAX moved?" are different questions, so both points are
 scored and labelled separately.
 
-`tolerance_m` is held at 3.0: only `beta`/`gamma` vary in the store, so sweeping it here would
-answer a question nobody asked and make the neighbour set incomparable to the recorded one. Whether
-it SHOULD be swept is a live question -- it moves the objective by ~0.42 across its plausible range
-while beta/gamma move it by ~4e-4 -- but that is a design decision, not a knob to turn here.
+`tolerance_m` is HELD at 3.0 and is out of the recommendation BY CONSTRUCTION, not un-tuned: the
+carrier-actor objective has no loose-ball negatives, so it presses the radius to the search upper
+bound -- an artifact, not a value to apply (see `_ball_carrier.py` docstring + ADR-060). It is
+removed from the Stage-1 search space; this confirmation scores `beta`/`gamma` only.
 """
 
 from __future__ import annotations
@@ -37,12 +37,14 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import statistics
 
 import numpy as np
 import pandas as pd
 
 from scripts._driver import for_each
 from scripts._provenance import git_provenance, require_clean_tree
+from silly_kicks.calibration import MIN_EFFECT_SIZE
 
 #: Pre-registered in spec D5 BEFORE any corrected-geometry data was scored. A gate whose threshold
 #: is chosen after seeing the result is not a gate.
@@ -93,19 +95,21 @@ def stage1_metric_and_direction() -> tuple[str, object]:
 def moved_beyond_noise(*, recorded: float, best_alternative: float, se: float, maximize: bool = True) -> bool:
     """True iff the gain over the recorded point exceeds the between-fold standard error.
 
-    Mirrors `calibration._diagnostics.tf25_gate_fires`, which decides the same question for
-    provider-specific defaults: *a difference only counts when it clears that fold set's own SE.*
-    Deliberately a separate function rather than a call into it -- `tf25_gate_fires`'s parameters
-    are named for a MINIMISED Brier, and routing a maximised accuracy through `global_brier` /
-    `provider_best_brier` would make every call site read as its own opposite.
+    Routes through `calibration.exceeds_noise_floor` -- the SAME floor primitive that backs
+    `tf25_gate_fires` (provider-specific defaults) and `select_recommended_point` (the Stage-1
+    recommendation), so "a difference counts only when it clears that fold set's own SE" has ONE
+    definition across the harness. Kept as a thin wrapper rather than a bare call into
+    `tf25_gate_fires` because that gate's parameters are named for a MINIMISED Brier; a maximised
+    accuracy is turned into a `gain` here first, so the call site reads in accuracy terms rather
+    than as its own opposite.
 
-    A `nan` SE (single fold) can never justify "moved", exactly as a nan SE can never justify a
-    provider-specific default there.
+    A `nan`/`inf`/`None` SE (single fold, or an undefined spread) can never justify "moved" -- the
+    floor primitive rejects it, exactly as an unmeasurable spread cannot justify a provider default.
     """
-    if se is None or not np.isfinite(se):
-        return False
+    from silly_kicks.calibration import exceeds_noise_floor
+
     gain = (best_alternative - recorded) if maximize else (recorded - best_alternative)
-    return gain > se
+    return exceeds_noise_floor(gain, se)
 
 
 def require_velocity(frames: pd.DataFrame) -> None:
@@ -321,6 +325,60 @@ def frame_parquets(data_dir: pathlib.Path) -> list[pathlib.Path]:
     )
 
 
+def _fold_stability(summary: dict, selection) -> dict:
+    """Per-fold winners (ranks) + between-fold vs between-point variance ratio + a verdict tied to the
+    SAME selection, so the diagnostic and the recommendation cannot disagree (spec 3.4). The huge
+    ratio on real data is the finding: fold noise dwarfs point differences."""
+    labels = list(summary)
+    per_fold = {name: list(summary[name]["per_fold"]) for name in labels}
+    n_folds = len(per_fold[labels[0]])
+    fold_winners = [max(labels, key=lambda name: per_fold[name][f]) for f in range(n_folds)]
+    point_means = [summary[name]["mean"] for name in labels]
+    fold_means = [statistics.fmean(per_fold[name][f] for name in labels) for f in range(n_folds)]
+    between_point_var = statistics.pvariance(point_means) if len(point_means) > 1 else 0.0
+    between_fold_var = statistics.pvariance(fold_means) if n_folds > 1 else 0.0
+    return {
+        "per_point_mean": {name: summary[name]["mean"] for name in labels},
+        "n_folds": n_folds,
+        "fold_winners": fold_winners,
+        "n_distinct_fold_winners": len(set(fold_winners)),
+        "between_fold_var": between_fold_var,
+        "between_point_var": between_point_var,
+        "fold_to_point_var_ratio": (between_fold_var / between_point_var) if between_point_var > 0 else None,
+        "verdict": "moved" if selection.moved else "no_discriminating_evidence",
+        "selection_reason": selection.reason,
+    }
+
+
+def augment_metrics(out: dict, *, provenance: dict, min_effect_size: float) -> tuple[dict, dict]:
+    """AUGMENT the confirmation `out` dict with the selection + fold-stability blocks, and build the
+    carrier_selected.json payload. NEVER replaces `out` -- the Prong-1 invariance result and every run
+    metadatum survive (F1). Pure (provenance passed in). Returns (augmented_out, selected)."""
+    from silly_kicks.calibration import PointScore, build_selection_artifact, select_recommended_point
+
+    summary = out["points"]
+    if "shipped_point" not in summary:
+        raise KeyError("augment_metrics expects the shipped incumbent under 'shipped_point'")
+
+    def _score(name: str) -> PointScore:
+        s = summary[name]
+        return PointScore(label=name, params=s["params"], per_fold=tuple(s["per_fold"]), mean=s["mean"])
+
+    incumbent = _score("shipped_point")
+    candidates = [_score(name) for name in summary if name != "shipped_point"]
+    selection = select_recommended_point(incumbent=incumbent, candidates=candidates, min_effect_size=min_effect_size)
+    selected = build_selection_artifact(selection, provenance=provenance)
+
+    augmented = dict(out)  # shallow copy; ADD keys only, never remove
+    augmented["selection"] = {
+        "moved": selection.moved,
+        "reason": selection.reason,
+        "selected": {"beta": selected["beta"], "gamma": selected["gamma"]},
+    }
+    augmented["fold_stability"] = _fold_stability(summary, selection)
+    return augmented, selected
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="TF-24 Stage-1 confirmation on corrected geometry.")
     ap.add_argument("--data-dir", type=pathlib.Path, required=True)
@@ -442,9 +500,11 @@ def main() -> None:
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
     }
+    out, selected = augment_metrics(out, provenance=prov, min_effect_size=MIN_EFFECT_SIZE)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "metrics.json").write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
-    print(f"argmax_moved={argmax_moved} (rule: {out['argmax_rule']})")
+    (args.out / "carrier_selected.json").write_text(json.dumps(selected, indent=2) + "\n", encoding="utf-8")
+    print(f"selection moved={selected['moved']}; argmax_moved={out['argmax_moved']}")
 
 
 if __name__ == "__main__":

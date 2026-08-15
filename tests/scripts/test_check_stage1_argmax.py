@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from scripts.check_stage1_argmax import (
+    augment_metrics,
     build_fold,
     compare_assignments,
     invariance_verdict,
@@ -271,3 +272,75 @@ def test_the_shard_key_survives_a_match_id_containing_the_separator():
     from scripts.check_stage1_argmax import shard_key
 
     assert shard_key(pathlib.Path("/x/skillcorner__a__b.parquet")) == ("skillcorner", "a__b")
+
+
+# --------------------------------------------------------------------------------------------
+# augment_metrics -- the confirmation `out` dict is AUGMENTED (never replaced), and the recommendation
+# artifact + fold-stability diagnostic ride alongside. The critical property is NON-LOSSINESS.
+
+
+def _summary():
+    # shipped incumbent + two candidates, all within noise -> keep incumbent
+    return {
+        "shipped_point": {
+            "mean": 0.80,
+            "se": 0.01,
+            "per_fold": [0.79, 0.80, 0.81],
+            "params": {"beta": 0.0, "gamma": 0.25},
+        },
+        "recorded_optimum": {
+            "mean": 0.8001,
+            "se": 0.01,
+            "per_fold": [0.7901, 0.8001, 0.8101],
+            "params": {"beta": 1.9e-4, "gamma": 0.221},
+        },
+        "nb0": {
+            "mean": 0.8002,
+            "se": 0.01,
+            "per_fold": [0.7902, 0.8002, 0.8102],
+            "params": {"beta": 0.1, "gamma": 0.3},
+        },
+    }
+
+
+def _base_out(summary):
+    # a realistic confirmation `out`, carrying the Prong-1 invariance result + metadata that MUST survive
+    return {
+        "invariance": {"shipped_point": {"invariance_fraction": 0.9999, "verdict": "stands"}},
+        "invariance_threshold": 0.999,
+        "cv_scheme": "GroupKFold(5)",
+        "objective": "CarrierAccuracyObjective.carrier_accuracy",
+        "argmax_moved": False,
+        "points": summary,
+        "run_commit": "abc123",
+        "run_tree_dirty": False,
+    }
+
+
+def test_augment_metrics_is_non_lossy_and_adds_selection_no_tolerance_m():
+    base = _base_out(_summary())
+    out, selected = augment_metrics(base, provenance={"commit": "abc123", "dirty": False}, min_effect_size=0.01)
+    # NON-LOSSY (F1 regression guard): the invariance prong + all metadata survive
+    assert out["invariance"] == base["invariance"]
+    assert out["cv_scheme"] == "GroupKFold(5)" and out["objective"] == base["objective"]
+    assert out["argmax_moved"] is False and out["run_commit"] == "abc123"
+    # ADDED blocks
+    assert out["selection"]["moved"] is False
+    assert out["fold_stability"]["verdict"] == "no_discriminating_evidence"
+    assert "fold_winners" in out["fold_stability"]  # §3.4 per-fold ranks
+    assert "fold_to_point_var_ratio" in out["fold_stability"]  # §3.4 variance ratio
+    # selection artifact: {beta, gamma} + provenance, NO tolerance_m
+    assert selected["beta"] == 0.0 and selected["gamma"] == 0.25 and "tolerance_m" not in selected
+    assert selected["run_commit"] == "abc123" and selected["run_tree_dirty"] is False
+
+
+def test_fold_stability_verdict_flips_on_a_discriminating_fold_set():
+    # non-vacuity (spec §6): a wide-separation, low-SE candidate MOVES the verdict off the incumbent
+    summary = _summary()
+    summary["nb0"] = {"mean": 0.91, "se": 0.005, "per_fold": [0.90, 0.91, 0.92], "params": {"beta": 0.1, "gamma": 0.3}}
+    out, selected = augment_metrics(
+        _base_out(summary), provenance={"commit": "abc", "dirty": False}, min_effect_size=0.01
+    )
+    assert out["selection"]["moved"] is True
+    assert out["fold_stability"]["verdict"] == "moved"
+    assert selected["beta"] == 0.1 and selected["gamma"] == 0.3  # the artifact follows the move

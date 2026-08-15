@@ -3,14 +3,23 @@ from ruthless import Direction, OptunaConfig
 from silly_kicks.calibration._spaces import stage1_config, stage2_config
 
 
-def test_stage1_config_is_maximize_with_three_params():
+def test_stage1_config_is_maximize_with_two_params():
+    # ADR-060: tolerance_m is held at DEFAULT_CARRIER_PARAMS, not swept -> beta/gamma only.
     cfg = stage1_config(n_trials=10, store_path="s1.db")
     assert isinstance(cfg, OptunaConfig)
     assert cfg.metric == "carrier_accuracy"
     assert cfg.direction is Direction.MAXIMIZE
-    assert set(cfg.param_space) == {"tolerance_m", "beta", "gamma"}
-    assert set(cfg.warm_start) == {"tolerance_m", "beta", "gamma"}  # current defaults
+    assert set(cfg.param_space) == {"beta", "gamma"}
+    assert set(cfg.warm_start) == {"beta", "gamma"}  # current defaults
     assert cfg.store.path == "s1.db"  # type: ignore[union-attr]
+
+
+def test_stage1_config_does_not_sweep_tolerance_m():
+    # ADR-060: tolerance_m is held at DEFAULT_CARRIER_PARAMS, not swept (under-determined by the
+    # carrier-actor objective, which has no loose-ball negatives). Only beta/gamma are searched.
+    cfg = stage1_config(n_trials=1, store_path=":memory:")
+    assert set(cfg.param_space) == {"beta", "gamma"}
+    assert "tolerance_m" not in cfg.warm_start
 
 
 def test_stage2_config_is_minimize_with_three_params():

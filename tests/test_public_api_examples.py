@@ -194,6 +194,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/calibration/_spaces.py",
     "silly_kicks/calibration/_carrier_objective.py",
     "silly_kicks/calibration/_diagnostics.py",
+    "silly_kicks/calibration/_selection.py",
     "silly_kicks/calibration/_xt_bandwidth_objective.py",
     "silly_kicks/causal/matching.py",
     "silly_kicks/causal/opportunities.py",
@@ -1019,6 +1020,8 @@ _SKIP_SYMBOLS = frozenset(
         "InputConvention",  # str-Enum — members are the documentation
         "OpportunityConfig",  # frozen dataclass — fields are the documentation (DetectionResult precedent)
         "PitchControlParams",  # type alias union — components have examples
+        "PointScore",  # frozen dataclass — plain per-fold score container, fields are the documentation
+        "Selection",  # frozen dataclass — plain selection-result container, fields are the documentation
     }
 )
 

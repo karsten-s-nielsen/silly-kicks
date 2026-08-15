@@ -8,6 +8,7 @@ into ``load_matches`` instead of the old hardcoded ``match_ids=None``.
 
 from __future__ import annotations
 
+import json
 import types
 
 import pandas as pd
@@ -105,3 +106,31 @@ def test_load_fold_threads_memory_bounds(monkeypatch):
     assert len(fold["gradientsports"]) == 1
     a, f, h = fold["gradientsports"][0]
     assert h == "H" and a is acts and f is frms
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Stage 2 consumes {beta, gamma}, sources tolerance_m from the constant,
+# and refuses an upstream selection artifact that lacks provenance or was
+# produced from a dirty tree.
+# ---------------------------------------------------------------------------
+
+
+def test_carrier_selection_sources_tolerance_m_and_validates(tmp_path):
+    f = tmp_path / "carrier_selected.json"
+    f.write_text(json.dumps({"beta": 0.0, "gamma": 0.25, "run_commit": "abc", "run_tree_dirty": False}))
+    params = C._load_carrier_selection(f)
+    assert params == {"tolerance_m": 3.0, "beta": 0.0, "gamma": 0.25}
+
+
+def test_carrier_selection_refuses_missing_provenance(tmp_path):
+    f = tmp_path / "carrier_selected.json"
+    f.write_text(json.dumps({"beta": 0.0, "gamma": 0.25}))  # no run_commit
+    with pytest.raises(ValueError, match="provenance"):
+        C._load_carrier_selection(f)
+
+
+def test_carrier_selection_refuses_dirty_upstream(tmp_path):
+    f = tmp_path / "carrier_selected.json"
+    f.write_text(json.dumps({"beta": 0.0, "gamma": 0.25, "run_commit": "abc", "run_tree_dirty": True}))
+    with pytest.raises(ValueError, match="dirty"):
+        C._load_carrier_selection(f)
