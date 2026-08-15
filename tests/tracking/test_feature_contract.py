@@ -11,6 +11,8 @@ import warnings
 
 import pytest
 
+import silly_kicks.spadl.config as spadlconfig
+
 
 @pytest.mark.parametrize("name", ["MissingFeatureContractWarning", "UnverifiableFeatureContractWarning"])
 def test_warning_category_is_registered_on_every_public_surface(name):
@@ -121,11 +123,13 @@ def test_probe_makes_the_box_constant_load_bearing(monkeypatch):
     }
     before = int(gg.extract_ghost_gk_features(contract_probe_frame(), **kw)["attackers_in_box"].iloc[0])
 
-    monkeypatch.setattr(gg, "_PENALTY_AREA_Y_MIN", (68.0 - 40.32) / 2.0)
-    monkeypatch.setattr(gg, "_PENALTY_AREA_Y_MAX", (68.0 + 40.32) / 2.0)
+    # Flip the CANONICAL constant: ghost's own `_PENALTY_AREA_*` were deleted when its predicate
+    # and declaration migrated onto `spadlconfig` (ADR-050 §6). Direction is reversed accordingly --
+    # the baseline is now the 20.16 box, and shrinking it to 20.15 moves the probe the other way.
+    monkeypatch.setattr(spadlconfig, "penalty_area_half_width", 40.3 / 2.0)
     after = int(gg.extract_ghost_gk_features(contract_probe_frame(), **kw)["attackers_in_box"].iloc[0])
 
-    assert (before, after) == (0, 1)
+    assert (before, after) == (1, 0)
 
 
 # --------------------------------------------------------------------------------------------
@@ -388,9 +392,16 @@ def test_ghost_records_pitch_dims_and_a_contract(tmp_path, monkeypatch):
     m.save(out)
     meta = json.loads((out / "metadata.json").read_text())
     assert meta["pitch_length"] == 105.0 and meta["pitch_width"] == 68.0
-    # D3: ghost still uses the 40.3 m box until its re-fit, so its declared half-width is 20.15,
-    # NOT the canonical 20.16. Recording the divergence is the point.
-    assert meta["feature_contract"]["constants"]["penalty_area_half_width"] == 20.15
+    # The divergence this line used to record is CLOSED: ghost was re-fit onto the canonical box,
+    # so its declared half-width is 20.16. Recording the divergence WAS the point, and the raise it
+    # produced on an unaccompanied flip is what forced the re-fit rather than letting the constant
+    # move under trained weights.
+    #
+    # Deliberately a LITERAL, not `spadlconfig.penalty_area_half_width`. `test_declared_constant_values`
+    # already asserts artifact-equals-canonical; if this one also read the canonical source, both
+    # would follow a change to `spadlconfig` in silence. One hard-coded pin is what catches "the
+    # canonical constant itself moved".
+    assert meta["feature_contract"]["constants"]["penalty_area_half_width"] == 20.16
     assert meta["feature_contract"]["constants"]["penalty_area_depth"] == 16.5
 
     GhostGkModel.load(out)
@@ -444,12 +455,17 @@ def test_ghost_pin_is_enforced_by_a_raise_not_by_prose(monkeypatch):
     the "do not unify before the re-fit" instruction exists to prevent. Before this artifact
     carried a contract, only a docstring said so -- and a docstring is deletable by whoever is
     "finishing the job"."""
-    import silly_kicks.tracking._ghost_gk as gg
     from silly_kicks.tracking._ghost_gk import GhostGkModel
 
     # ghost has no _VARIANT_CACHE (verified), so from_variant re-runs load() every call.
-    monkeypatch.setattr(gg, "_PENALTY_AREA_Y_MIN", (68.0 - 40.32) / 2.0)
-    monkeypatch.setattr(gg, "_PENALTY_AREA_Y_MAX", (68.0 + 40.32) / 2.0)
+    # Flip the CANONICAL constant -- ghost's own were deleted at the ADR-050 §6 closure.
+    #
+    # The value is deliberately one NO artifact has ever been stamped with. Using "the other era's"
+    # constant makes this test era-dependent and silently self-disarming: patching to 20.15 while
+    # the bundled artifact still declares 20.15 MATCHES, so `load()` succeeds and the test fails
+    # `DID NOT RAISE` -- observed while migrating. A never-stamped value diverges from whatever is
+    # on disk, before or after the re-fit.
+    monkeypatch.setattr(spadlconfig, "penalty_area_half_width", 19.0)
     with pytest.raises(Exception, match=r"constant|feature contract"):
         GhostGkModel.from_variant("default")
 

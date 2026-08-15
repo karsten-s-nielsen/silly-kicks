@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 import silly_kicks.atomic.spadl.config as atomicspadl
+from silly_kicks.id_compat import ids_differ, ids_equal
 
 
 def scores(actions: pd.DataFrame, nr_actions: int = 10, xg_column: str | None = None) -> pd.DataFrame:
@@ -51,8 +52,9 @@ def scores(actions: pd.DataFrame, nr_actions: int = 10, xg_column: str | None = 
         shifted_goal = goal.shift(-i, fill_value=False)
         shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_team = team_id.shift(-i)
-        same_team = team_id == shifted_team
-        result = result | (shifted_goal & same_team) | (shifted_owngoal & ~same_team)
+        same_team = pd.Series(ids_equal(team_id, shifted_team).to_numpy(), index=team_id.index)
+        other_team = pd.Series(ids_differ(team_id, shifted_team).to_numpy(), index=team_id.index)
+        result = result | (shifted_goal & same_team) | (shifted_owngoal & other_team)
 
     return pd.DataFrame(result, columns=["scores"])
 
@@ -101,8 +103,9 @@ def concedes(actions: pd.DataFrame, nr_actions: int = 10, xg_column: str | None 
         shifted_goal = goal.shift(-i, fill_value=False)
         shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_team = team_id.shift(-i)
-        same_team = team_id == shifted_team
-        result = result | (shifted_goal & ~same_team) | (shifted_owngoal & same_team)
+        same_team = pd.Series(ids_equal(team_id, shifted_team).to_numpy(), index=team_id.index)
+        other_team = pd.Series(ids_differ(team_id, shifted_team).to_numpy(), index=team_id.index)
+        result = result | (shifted_goal & other_team) | (shifted_owngoal & same_team)
 
     return pd.DataFrame(result, columns=["concedes"])
 
@@ -120,9 +123,10 @@ def _scores_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.Dat
         shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_xg = xg.shift(-i).fillna(0.0)
         shifted_team = team_id.shift(-i)
-        same_team = team_id == shifted_team
+        same_team = pd.Series(ids_equal(team_id, shifted_team).to_numpy(), index=team_id.index)
+        other_team = pd.Series(ids_differ(team_id, shifted_team).to_numpy(), index=team_id.index)
         score_xg = shifted_xg.where(shifted_goal & same_team, 0.0)
-        owngoal_xg = shifted_xg.where(shifted_owngoal & ~same_team, 0.0)
+        owngoal_xg = shifted_xg.where(shifted_owngoal & other_team, 0.0)
         result = result.combine(score_xg + owngoal_xg, max, fill_value=0.0)  # type: ignore[reportArgumentType]
     return pd.DataFrame({"scores": result})
 
@@ -140,8 +144,9 @@ def _concedes_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.D
         shifted_owngoal = owngoal.shift(-i, fill_value=False)
         shifted_xg = xg.shift(-i).fillna(0.0)
         shifted_team = team_id.shift(-i)
-        same_team = team_id == shifted_team
-        concede_xg = shifted_xg.where(shifted_goal & ~same_team, 0.0)
+        same_team = pd.Series(ids_equal(team_id, shifted_team).to_numpy(), index=team_id.index)
+        other_team = pd.Series(ids_differ(team_id, shifted_team).to_numpy(), index=team_id.index)
+        concede_xg = shifted_xg.where(shifted_goal & other_team, 0.0)
         owngoal_xg = shifted_xg.where(shifted_owngoal & same_team, 0.0)
         result = result.combine(concede_xg + owngoal_xg, max, fill_value=0.0)  # type: ignore[reportArgumentType]
     return pd.DataFrame({"concedes": result})

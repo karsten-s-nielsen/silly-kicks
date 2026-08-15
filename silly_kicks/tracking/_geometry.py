@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 import silly_kicks.spadl.config as _spadlconfig
 
 FIELD_LENGTH = 105.0
@@ -122,12 +124,63 @@ def in_penalty_area_goal_relative(gr_x: float, y: float) -> bool:
     >>> in_penalty_area_goal_relative(16.51, 34.0)
     False
     """
-    # NOTE: no lower bound on gr_x, DELIBERATELY. The shipped xCross predicate is
-    # `gr_x <= _BOX_DEPTH_M` with no `0 <= gr_x` guard, and real tracking carries x beyond the
-    # goal line (gr_x < 0), so adding one would CHANGE xCross behaviour for behind-the-line
-    # players. Whether a behind-the-line point should count as in-box is a separate, measurable
-    # question -- not this cycle's.
-    return bool((gr_x <= _spadlconfig.penalty_area_depth) and (abs(y - GOAL_Y) <= _spadlconfig.penalty_area_half_width))
+    # NOTE: no lower bound on gr_x, DELIBERATELY -- see `in_penalty_area_goal_relative_array`,
+    # which carries the rule and the open question about behind-the-line points.
+    #
+    # Delegates rather than restating the comparison: the rule has ONE expression, and this form
+    # exists for the SIGNATURE (scalar in, `bool` out), not for a second copy of the arithmetic.
+    # ``bool()`` is mandatory, not cosmetic -- the array form returns ``np.bool_``, and
+    # ``np.False_ is False`` is False, which would break `test_penalty_area.py:52` and
+    # `test_geometry_box_predicate_parity.py:93`; both assert with ``is``.
+    return bool(in_penalty_area_goal_relative_array(np.asarray(gr_x), np.asarray(y)))
+
+
+def in_penalty_area_goal_relative_array(gr_x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Vectorized :func:`in_penalty_area_goal_relative`. Same rule, same boundaries, array in/out.
+
+    Exists because the two consuming extractors (``_ghost_gk``, ``_xcross_attempt``) evaluate this
+    over numpy arrays per frame, and a scalar call per player per frame is a real cost on a
+    179-match extraction. ADR-050 §6 rebound the CONSTANTS at those sites and left the EXPRESSION
+    duplicated; it never evaluated a vectorized canonical predicate, which is what this is.
+
+    **This body is the ONE expression of the domain rule.** The scalar form delegates to it, and
+    :func:`in_penalty_area_absolute` delegates to the scalar, so all three entry points -- and all
+    three live call paths (``_ghost_gk`` and ``_xcross_attempt`` here, ``defensive_credit`` via the
+    absolute form) -- evaluate this arithmetic and no other. ``test_geometry_box_predicate_parity``
+    therefore guards against REGRESSION rather than drift; the collapse was proven value-identical
+    first, over 780 pairs spanning 4 ulps either side of both bounds plus NaN and +/-inf, and only
+    then applied.
+
+    **OPEN, and deliberately unbounded below:** there is no ``0 <= gr_x`` guard. Real tracking
+    carries points beyond the goal line (``gr_x < 0``) and they currently count as in-box.
+
+    Adding one is not a local change, and the exposure differs BY ENTRY POINT: the two array call
+    sites take a SIGNED ``gr_x`` (via ``to_goal_relative_x``), so a guard would move
+    ``attackers_in_box`` (ghost) and the box off/def ratio (xCross feature #6) -- both TRAINED
+    features, so both models need re-fitting -- while :func:`in_penalty_area_absolute` folds with
+    ``abs()`` before calling in, so its ``gr_x`` is never negative and a guard is a no-op for
+    ``defensive_credit``.
+
+    **ADR-050's contract will NOT stop you, and that is measured, not assumed.** The contract
+    stamps the probe feature vector plus the declared CONSTANTS; a lower bound declares no new
+    constant, and the probe frame carries no behind-the-line player, so ``_feature_contract_block()``
+    is byte-identical with and without the clamp -- ``load()`` stays green while real-data values
+    move. The mechanism catches a CONSTANT change, not a predicate-SHAPE change. Treat that as the
+    reason this note exists rather than a reason to relax: the discipline here is manual.
+    ``scripts/measure_box_constant_delta.py`` emits ``n_behind_line`` / ``n_rows`` so the question
+    can be decided on a number instead of a guess.
+
+    NaN on either argument yields False, matching the scalar form (``NaN <= depth`` is False).
+    Pinned, together with the two forms' agreement over the doubles straddling both bounds, by
+    ``tests/tracking/test_geometry_box_predicate_parity.py``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> in_penalty_area_goal_relative_array(np.array([16.5, 16.51]), np.array([34.0, 34.0]))
+    array([ True, False])
+    """
+    return (gr_x <= _spadlconfig.penalty_area_depth) & (np.abs(y - GOAL_Y) <= _spadlconfig.penalty_area_half_width)
 
 
 def in_penalty_area_absolute(x: float, y: float, *, attacked_goal_x: float) -> bool:

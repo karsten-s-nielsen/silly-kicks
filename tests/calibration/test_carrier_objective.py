@@ -46,6 +46,14 @@ def test_link_failure_excluded_not_penalized(synth_link_failure):
     assert metrics["n_compared__provA"] == 1.0  # only the linked action counts
 
 
+def test_evaluate_defaults_tolerance_m_when_absent(synth_unreachable_actor):
+    """No tolerance_m in params -> the objective uses DEFAULT_CARRIER_PARAMS (3.0), so the 5 m
+    'unreachable actor' still misses and the match scores 0.5 -- and it must NOT KeyError."""
+    obj = CarrierAccuracyObjective(synth_unreachable_actor)
+    m = obj.evaluate(Candidate(id="t", params={"beta": 0.0, "gamma": 0.25}))
+    assert m["carrier_accuracy"] == 0.5
+
+
 @pytest.mark.slow
 def test_prepare_cached_once_and_matches_uncached(synth_two_providers_imbalanced, monkeypatch):
     """The per-match invariant prepare runs ONCE per match and is reused across trials, and

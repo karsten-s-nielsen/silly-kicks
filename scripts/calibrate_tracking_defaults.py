@@ -250,6 +250,33 @@ def _load_xt_corpus_pining(args, calib_ids) -> tuple[pd.DataFrame, set[str]]:
     return pd.concat(parts, ignore_index=True), corpus_ids
 
 
+def _load_carrier_selection(path) -> dict:
+    """Read the Stage-1 selection artifact and build Stage-2's carrier params.
+
+    `tolerance_m` is NOT read from the file -- it is a held constant sourced from
+    DEFAULT_CARRIER_PARAMS (ADR-060). The upstream artifact must carry clean provenance, or Stage 2
+    refuses it (missing manifest == dirty; the corpus-driver family rule).
+    """
+    from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
+
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    missing = {"beta", "gamma"} - set(data)
+    if missing:
+        raise ValueError(f"{path}: carrier selection missing keys {sorted(missing)} -- run Stage 1 first")
+    if not data.get("run_commit"):
+        raise ValueError(f"{path}: no run_commit provenance -- an unprovenanced upstream is treated as dirty")
+    if data.get("run_tree_dirty") is not False:
+        raise ValueError(
+            f"{path}: upstream run_tree_dirty={data.get('run_tree_dirty')!r} -- refusing a dirty selection"
+        )
+    return {
+        "tolerance_m": DEFAULT_CARRIER_PARAMS["tolerance_m"],
+        "beta": float(data["beta"]),
+        "gamma": float(data["gamma"]),
+    }
+
+
 def _load_xt_corpus_databricks() -> pd.DataFrame:
     """Load the xT-fit corpus from bronze.spadl_actions -- ONLY the columns ExpectedThreat needs (N3)."""
     import scripts._loader_databricks as databricks_loader
@@ -273,7 +300,11 @@ def main() -> None:
     ap.add_argument("--store", required=True)
     ap.add_argument("--xt-artifact", default=None)
     ap.add_argument("--xt-corpus-source", choices=["pining", "databricks"], default="pining")
-    ap.add_argument("--carrier-best", default=None, help="JSON with the Stage-1 optimum (for Stage 2)")
+    ap.add_argument(
+        "--carrier-best",
+        default=None,
+        help="the Stage-1 SELECTION artifact carrier_selected.json (NOT the raw sweep best)",
+    )
     ap.add_argument("--report-out", default="calibration_report")
     ap.add_argument(
         "--match-ids",
@@ -324,11 +355,9 @@ def main() -> None:
     carrier_params = None
     if args.stage == "2":
         xt = _resolve_xt(args, fold, used_ids)  # pining held-out (default) / databricks bronze
-        with open(args.carrier_best, encoding="utf-8") as fh:
-            carrier_params = json.load(fh)
-        missing = {"tolerance_m", "beta", "gamma"} - set(carrier_params)  # N4a: validate up front
-        if missing:
-            raise ValueError(f"carrier_best.json missing keys {sorted(missing)} -- run Stage 1 first")
+        # {beta, gamma} from the Stage-1 SELECTION artifact; tolerance_m is HELD (ADR-060), not read
+        # from the file. Refuses an unprovenanced / dirty upstream.
+        carrier_params = _load_carrier_selection(args.carrier_best)
 
     result, objective = run_stage(
         stage=int(args.stage) if args.stage != "diagnostics" else "diagnostics",
@@ -342,7 +371,7 @@ def main() -> None:
 
     # M9: Stage 1 writes carrier_best.json so Stage 2 consumes a RECORDED artifact (not hand-typed).
     if args.stage == "1" and result.best is not None:
-        best_carrier = {k: result.best.candidate.params[k] for k in ("tolerance_m", "beta", "gamma")}
+        best_carrier = {k: result.best.candidate.params[k] for k in ("beta", "gamma")}
         with open(args.carrier_best or "carrier_best.json", "w", encoding="utf-8") as fh:
             json.dump(best_carrier, fh, indent=2)
         print(f"Wrote carrier_best.json: {best_carrier}")

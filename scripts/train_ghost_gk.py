@@ -42,10 +42,19 @@ def cache_token() -> str:
     flip the penalty-area constant, re-run* -- and with a bare file-existence cache check the
     second run silently reuses the first run's 40.3 m features while stamping a 20.16 m feature
     contract. Deriving the token from the constants makes that impossible with zero discipline.
-    """
-    import silly_kicks.tracking._ghost_gk as gg
 
-    return f"v3-box{gg._PENALTY_AREA_Y_MIN:.4f}-{gg._PENALTY_AREA_Y_MAX:.4f}-{gg._PENALTY_AREA_X:.4f}"
+    Reads the CANONICAL source directly. Ghost used to own `_PENALTY_AREA_Y_MIN/_MAX/_X` and this
+    token derived from those; ADR-050 section 6's closure deleted them, so the token follows the constants
+    to `spadlconfig` rather than pointing at names that no longer exist. The band form is preserved
+    so the token stays comparable in shape -- and its VALUE changes (13.8500 -> 13.8400), which is
+    precisely the invalidation this function exists to produce for the box-constant re-fit.
+    """
+    import silly_kicks.spadl.config as _spc
+    from silly_kicks.tracking import _geometry as _geo
+
+    lo = _geo.GOAL_Y - _spc.penalty_area_half_width
+    hi = _geo.GOAL_Y + _spc.penalty_area_half_width
+    return f"v3-box{lo:.4f}-{hi:.4f}-{_spc.penalty_area_depth:.4f}"
 
 
 #: One game's labels ride its shard under this prefix, so a game is ONE tidy frame -- the shape
@@ -228,6 +237,22 @@ def keeper_detection_mask_or_none(visibility: pd.Series) -> pd.Series | None:
     return visibility.fillna(False).astype(bool)
 
 
+def resolve_training_platform(explicit: str | None, prov: dict) -> str:
+    """The platform to stamp: an explicit label if given, else the detected one.
+
+    Defaulting to `None` was the defect. `_xshot_occurrence` and `_xcross_attempt` both record
+    `platform.platform()` unconditionally, so ghost was the only trained artifact whose machine
+    identity depended on the operator remembering a flag -- and the flag was in fact forgotten,
+    leaving artifacts that could not say where they ran. Detection is the DEFAULT and the flag is now
+    only an override for a human-meaningful label ("dgx-spark-aarch64" reads better than
+    "Linux-6.11.0-aarch64-with-glibc2.39" in a model card).
+
+    Never returns None: an absent platform and an unknown platform are the same useless value
+    downstream, and `platform.platform()` always answers.
+    """
+    return explicit or prov["platform"]
+
+
 def main() -> None:
     # Force unbuffered stdout so background tasks show progress immediately
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
@@ -270,10 +295,8 @@ def main() -> None:
     # `None` rather than the helper's "unknown" sentinel, so metadata.json keeps the `str | None`
     # shape that `GhostGkModel.load` and the published artifacts already carry.
     training_commit = None if run_prov["commit"] == "unknown" else run_prov["commit"]
-    print(
-        f"training_commit={training_commit} (tree_dirty={run_prov['dirty']}), "
-        f"training_platform={args.training_platform}"
-    )
+    training_platform = resolve_training_platform(args.training_platform, run_prov)
+    print(f"training_commit={training_commit} (tree_dirty={run_prov['dirty']}), training_platform={training_platform}")
 
     print(f"Config: n_estimators={args.n_estimators}, max_depth={args.max_depth}")
     print(f"Data: {args.data_dir}, subsample_fps={args.subsample_fps}")
@@ -862,7 +885,7 @@ def main() -> None:
 
     # --- 7. Save final model ---
     final_model.training_commit = training_commit
-    final_model.training_platform = args.training_platform
+    final_model.training_platform = training_platform
     # Aggregate corpus provenance (providers + counts ONLY; spec 2026-07-20 S6). Providers come
     # from the per-file source_provider column (already collected into provider_labels);
     # n_games from the training groups; n_rows from the retained sample count. NEVER a per-match

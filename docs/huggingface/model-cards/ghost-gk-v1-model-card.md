@@ -29,7 +29,7 @@ Key properties:
 - **Density estimation, not regression**: Outputs a 60&times;64 probability grid (3,840 cells at 0.5m resolution), not a single (x, y) point. Captures multimodal positioning (e.g., split between near-post and central when the ball is wide).
 - **No pickle**: Serialized as npz (NumPy arrays) + JSON (metadata) + SHA-256 integrity sidecar. No pickle anywhere in the load/save path.
 - **Vectorized inference**: Tree traversal uses NumPy array operations (no sklearn at inference time). Batch prediction of 1,000 frames completes in under 1 second.
-- **Two variants**: `"default"` (approx. 0.76 MB, 36k-frame subsample) ships bundled in the wheel; `"full"` (approx. 2.4 MB, 179-match corpus) downloads from this Hub repo on first use. Both are **parameters-only** artifacts &mdash; the two trained tree ensembles and their baselines, with no per-sample training data (silly-kicks 4.54.0; ADR-044).
+- **Two variants**: `"default"` (approx. 1.0 MB, 36k-frame subsample) ships bundled in the wheel; `"full"` (approx. 2.4 MB, 179-match corpus) downloads from this Hub repo on first use. Both are **parameters-only** artifacts &mdash; the two trained tree ensembles and their baselines, with no per-sample training data (silly-kicks 4.54.0; ADR-044).
 
 ## Architecture
 
@@ -66,7 +66,7 @@ All coordinates are goal-relative: the defending goal is at x=0, pitch center at
 
 | Variant | Training corpus | File size | Source |
 |---------|----------------|-----------|--------|
-| `default` | 36k-frame subsample | ~0.76 MB | Bundled in `pip install silly-kicks` |
+| `default` | 36k-frame subsample | ~1.0 MB | Bundled in `pip install silly-kicks` |
 | `full` | 179 matches / ~1.04M frames | ~2.4 MB | Downloaded from this HF repo via `pip install silly-kicks[ghost-gk]` |
 
 Both variants are **parameters-only** artifacts (no per-sample training data is stored or redistributed). They serve identical point-estimate machinery (`ghost_gk_x/y`); the `full` variant is trained on the larger corpus. The KDE **density** read-out (`predict_density`) is available only on a **locally fit** model &mdash; see Usage.

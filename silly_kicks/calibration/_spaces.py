@@ -23,7 +23,10 @@ from silly_kicks.xthreat import GridSpec
 
 
 def stage1_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "random"] = "tpe") -> OptunaConfig:
-    """Stage 1 — carrier accuracy (maximize): tolerance_m, beta, gamma.
+    """Stage 1 — carrier accuracy (maximize): beta, gamma.
+
+    tolerance_m is held at DEFAULT_CARRIER_PARAMS — under-determined by this objective (ADR-060),
+    so it is not swept here.
 
     Examples
     --------
@@ -38,11 +41,10 @@ def stage1_config(*, n_trials: int, store_path: str, sampler: Literal["tpe", "ra
         n_trials=n_trials,
         sampler=sampler,
         param_space={
-            "tolerance_m": FloatRange(kind="float", lo=1.0, hi=8.0),
             "beta": FloatRange(kind="float", lo=0.0, hi=2.0),
             "gamma": FloatRange(kind="float", lo=0.0, hi=3.0),
         },
-        warm_start={"tolerance_m": 3.0, "beta": 0.5, "gamma": 1.0},
+        warm_start={"beta": 0.5, "gamma": 1.0},
         store=StoreConfig(kind="sqlite", path=store_path),
     )
 

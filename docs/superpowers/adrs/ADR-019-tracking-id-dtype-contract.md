@@ -165,3 +165,49 @@ vs `_frame` suffix) are unchanged. The orientation seam is already shape 1, so n
 logic was needed — only the over-broad exemption was removed. The single library-code change
 (kloppy's `==` → `same_id`) is **behavior-identical** (str-vs-str): no behavior change, no retrain
 trigger (the BUG-4 *fix* shipped in 4.20.1; this amendment guards the *class*).
+## Amendment (4.81.0, PR-S151) — the VAEP label seam, and a shape `~ids_equal` gets wrong
+
+`vaep/labels.py` and `atomic/vaep/labels.py` compared ids with a raw `==`/`!=` at **sixteen** sites
+(counted from the diff, not by eye: 8 + 4 + 4). ADR-027 guarantees Gradient Sports emits null-actor
+rows whose `team_id` is NULL — as nullable `Int64` carrying NA, precisely so a sentinel cannot
+bypass `pd.isna` routing — and the labels are a consumer seam this ADR governs. The sixteen sites
+took **three** shapes, and only two of them crash:
+
+| shape | sites | where | failure |
+|---|---:|---|---|
+| Series vs Series (`team_id == shifted_team`) | 8 | action + xG windows | nullable-boolean → a **`pd.NA` LABEL**; `.to_numpy()` gives object, and the harness's `np.unique(y[train_idx])` raises `TypeError: boolean value of NA is ambiguous` |
+| scalar vs scalar (`team_id.loc[i] == team_id.loc[j]`) | 4 | possession windows | `if same_team:` on `pd.NA` raises immediately — the ADR-027 `_line_breaking.py` defect, different module |
+| numpy element (`tid[i] != tid[j]`) | 4 | time windows | `tid = np.asarray(actions["team_id"].values)` turns nullable `Int64` into `float64` + `nan`, so `nan != nan` is **True**: the row is read as an OPPONENT and `_concedes_time` charges it with the goal. **No exception.** |
+
+The third is why this is an amendment and not a routine fix. **`~ids_equal(...)` is the wrong
+repair**: it satisfies the two crashing shapes while preserving the silent one, because negating
+"same" promotes every NULL-team row to "opponent". A row with no team is **neither** the same team
+nor an opponent, and only `ids_differ` — which requires BOTH ids present — can say so. The scalar
+loop needed the same reasoning spelled out, since `not same_id(a, b)` has exactly the `~ids_equal`
+defect:
+
+```python
+def _other_team_scalar(a, b) -> bool:
+    return not (pd.isna(a) or pd.isna(b)) and not same_id(a, b)
+```
+
+**Found three hours into a TF-24 Stage-2 run**, by the crash — while the silent shape had been
+mislabelling GS null-actor rows the whole time.
+
+**A regression the fix itself introduced, now pinned.** `ids_equal`/`ids_differ` are **POSITIONAL**
+and return a fresh `RangeIndex`. Combining that with a label-indexed Series LABEL-ALIGNS, producing
+a UNION: a 400-row frame yielded **410** rows. Any filtered or sliced caller has a non-`0..n-1`
+index, which is the normal case downstream. The idiom is to take `.to_numpy()` and reattach the
+source index explicitly. **This is the third time this repo has hit it**, so the guard is behavioural
+(`test_a_non_rangeindex_frame_keeps_its_length_and_index`), not prose.
+
+**Retrain trigger, bounded.** `scores()`/`concedes()` return corrected values on any corpus carrying
+null-actor rows — Gradient Sports today. Providers with no NULL `team_id` are byte-identical, which
+is asserted rather than argued (`test_clean_int64_labels_are_UNCHANGED_by_the_na_routing`), so this
+is a re-materialize for GS-derived label columns and a no-op elsewhere. No bundled artifact moves.
+
+**Where this sits against ADR-043's enumeration registry.** It does not extend it. The registry is
+complete over *id-scalar arguments of public functions*; these are internal comparisons between two
+columns of one frame, which that surface does not reach — the same bound the 4.79.0
+`_elastic_sync` dict-key defect established. The lesson repeats rather than extends: a
+completeness-by-enumeration gate bounds **the surface it enumerates**, never the defect class.

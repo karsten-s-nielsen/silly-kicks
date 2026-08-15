@@ -140,16 +140,26 @@ def test_the_registry_and_the_built_contracts_agree(tmp_path):
         f"registry names keys no model stamps: {sorted(registry_keys - all_keys)}. Either a model "
         f"must declare it, or the source constant belongs in _EXEMPT."
     )
-    # (b) no model stamps a key the registry does not know about
-    assert all_keys <= registry_keys, (
-        f"models stamp undeclared keys: {sorted(all_keys - registry_keys)}. Add the owning module "
-        f"constant to DECLARED_CONSTANT_SOURCES so the enumeration gate can see it."
+    # (b) no model stamps a key NOTHING accounts for. Accounted for = a module constant the registry
+    # maps (the enumeration gate sees edits to it) OR a canonical `spadlconfig` source
+    # (test_declared_constant_values.py pins its value). Requiring the registry alone made this
+    # unsatisfiable the moment an extractor migrated -- see the migration test below.
+    unaccounted = _unaccounted_keys(all_keys, DECLARED_CONSTANT_SOURCES)
+    assert not unaccounted, (
+        f"models stamp keys nothing accounts for: {sorted(unaccounted)}. EITHER add the owning "
+        f"module constant to DECLARED_CONSTANT_SOURCES (if the extractor keeps a private copy), OR "
+        f"add the key to CANONICAL_CONTRACT_KEYS (if it now reads spadlconfig directly)."
     )
 
 
 def test_every_declared_constant_is_load_bearing_on_the_probe(tmp_path):
     """Pinned per-model, so a reviewer can see in one screen that xS declares no penalty-area
-    constant (it has none) and that ghost's pair is the 40.3-derived one its weights were fit on.
+    constant (it has none) and that ghost declares the pair.
+
+    Ghost's pair is now the CANONICAL one (ADR-050 §6 closed): its predicate and its declaration both
+    read ``spadlconfig``, where it previously declared a 40.3-derived 20.15. This gate compares key
+    NAMES only -- which is exactly how that divergence survived -- so the VALUES are pinned
+    separately by ``tests/tracking/test_declared_constant_values.py``.
 
     A declaration the probe cannot move is a guard that fires when nothing changed -- which is how
     ``legacy_override`` becomes reflex.
@@ -158,3 +168,69 @@ def test_every_declared_constant_is_load_bearing_on_the_probe(tmp_path):
     assert built["xshot"] == {"goal_width"}
     assert built["xcross"] == {"penalty_area_half_width", "penalty_area_depth", "goal_width"}
     assert built["ghost"] == {"penalty_area_half_width", "penalty_area_depth"}
+
+
+# --------------------------------------------------------------------------------------------
+# A key with a CANONICAL source needs no module constant -- migration is success, not a gap.
+
+
+def _unaccounted_keys(all_keys: set[str], registry: dict[str, str]) -> set[str]:
+    """Stamped keys traceable to NOTHING that gates them.
+
+    A stamped key is accounted for by EITHER a module-level constant the registry maps (so the
+    enumeration gate sees any edit to it) OR a canonical ``spadlconfig`` source (so
+    ``test_declared_constant_values.py`` pins its VALUE). Requiring the registry alone makes the
+    gate unsatisfiable the moment an extractor migrates: the constant is deleted BY DESIGN, and the
+    old failure message tells the reader to re-add a constant that cannot exist.
+    """
+    from silly_kicks.tracking._feature_contract import CANONICAL_CONTRACT_KEYS
+
+    return all_keys - (set(registry.values()) | set(CANONICAL_CONTRACT_KEYS))
+
+
+def test_the_gate_survives_an_extractor_migrating_onto_the_canonical_source(tmp_path):
+    """The post-xCross-migration state, simulated on the REAL stamped keys.
+
+    ghost migrated in this cycle, so xCross's `_BOX_*` are the only module constants left mapping to
+    `penalty_area_*`. Migrating xCross the same way -- the obvious next step -- deletes them, and
+    prong (b) then fails with "Add the owning module constant", a remedy that is IMPOSSIBLE because
+    the constant now lives in `spadlconfig`. The gate would block the very migration ADR-050 §6
+    prescribes.
+    """
+    from silly_kicks.tracking._feature_contract import CANONICAL_CONTRACT_KEYS, DECLARED_CONSTANT_SOURCES
+
+    all_keys = set().union(*_built_contract_constants(tmp_path).values())
+    migrated = {n: k for n, k in DECLARED_CONSTANT_SOURCES.items() if k not in CANONICAL_CONTRACT_KEYS}
+    assert set(migrated.values()) != set(DECLARED_CONSTANT_SOURCES.values()), (
+        "the simulation removed nothing -- it is not exercising a migration"
+    )
+    assert _unaccounted_keys(all_keys, migrated) == set()
+
+
+def test_a_key_with_neither_a_constant_nor_a_canonical_source_is_REPORTED():
+    """Non-vacuity, and the property that keeps the union honest: widening the accounting must not
+    make it accept everything. A stamped key backed by nothing must still fail."""
+    assert _unaccounted_keys({"invented_key"}, {}) == {"invented_key"}
+
+
+def test_every_canonical_contract_key_resolves_on_spadlconfig():
+    """`CANONICAL_CONTRACT_KEYS` is resolved by `getattr(spadlconfig, key)`; a name that does not
+    resolve would silently excuse a stamped key while pinning nothing."""
+    import silly_kicks.spadl.config as spadlconfig
+    from silly_kicks.tracking._feature_contract import CANONICAL_CONTRACT_KEYS
+
+    assert CANONICAL_CONTRACT_KEYS, "an empty canonical set makes the accounting registry-only again"
+    for key in CANONICAL_CONTRACT_KEYS:
+        assert hasattr(spadlconfig, key), f"{key} does not resolve on spadlconfig"
+
+
+def test_goal_width_is_NOT_canonical_and_that_is_recorded_not_accidental():
+    """`spadlconfig` has no `goal_width` (verified 2026-08-14), so the goal-mouth keys are held up
+    ONLY by their module constants -- the same un-migrated state ghost's pair was in before ADR-050
+    §6. Pinning it here means a future `spadlconfig.goal_width` is a deliberate change to this gate,
+    not a silent widening of what the accounting excuses."""
+    import silly_kicks.spadl.config as spadlconfig
+    from silly_kicks.tracking._feature_contract import CANONICAL_CONTRACT_KEYS
+
+    assert "goal_width" not in CANONICAL_CONTRACT_KEYS
+    assert not hasattr(spadlconfig, "goal_width")

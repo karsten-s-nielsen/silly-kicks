@@ -189,3 +189,96 @@ def test_unrostered_player_is_dropped_not_given_a_None_team():
     bronze = _skillcorner_bronze(raw, meta, match_id="m1")
     assert bronze["player_id"].tolist() == ["10"]  # the unrostered 999 dropped
     assert "None" not in bronze["team_id"].tolist()
+
+
+# --------------------------------------------------------------------------------------------
+# tracking_limit must count records that CARRY WORK, not raw records.
+
+
+def _rec(period, players):
+    return {"period": period, "frame": 1, "timestamp": "00:00:00.0", "ball_data": {}, "player_data": players}
+
+
+def test_tracking_limit_skips_the_empty_pre_match_prefix():
+    """A SkillCorner feed opens with `period: null` records carrying an EMPTY `player_data`.
+
+    Measured on the pining corpus: 19 such records on match 1886347 but **12,559** on 2011166 and
+    **13,459** on 2013725. A raw head slice at the harness's `tracking_limit=50` therefore lands
+    entirely inside the prefix on those two, `_skillcorner_bronze` emits ZERO rows, and
+    `convert_to_frames` raises `bronze missing column(s)` listing EVERY column -- because
+    `pd.DataFrame([])` has none. That reads as a corrupt download rather than an empty slice, and
+    it aborted a Stage-2 run at the `for_each` consecutive-failure guard.
+    """
+    from scripts._loader_pining import _head_with_player_data
+
+    raw = [_rec(None, []) for _ in range(200)] + [_rec(1, [{"player_id": 1, "x": 1.0, "y": 2.0}]) for _ in range(80)]
+    out = _head_with_player_data(raw, 50)
+    assert len(out) == 50, "the limit must be filled from records that carry player data"
+    assert all(r["player_data"] for r in out), "an empty-player_data record survived the filter"
+
+
+def test_tracking_limit_still_caps_when_there_is_no_prefix():
+    """Non-vacuity: the filter must still BOUND work, not just skip prefixes. A function that
+    returned everything would satisfy the test above."""
+    from scripts._loader_pining import _head_with_player_data
+
+    raw = [_rec(1, [{"player_id": 1, "x": 1.0, "y": 2.0}]) for _ in range(500)]
+    assert len(_head_with_player_data(raw, 50)) == 50
+
+
+def test_tracking_limit_returns_what_exists_when_the_feed_is_shorter():
+    """A short feed must not raise or pad -- it yields what it has."""
+    from scripts._loader_pining import _head_with_player_data
+
+    raw = [_rec(1, [{"player_id": 1, "x": 1.0, "y": 2.0}]) for _ in range(7)]
+    assert len(_head_with_player_data(raw, 50)) == 7
+
+
+def test_an_empty_bronze_names_its_REAL_cause():
+    """`pd.DataFrame([])` has no columns, so returning it made `convert_to_frames` report EVERY
+    expected column as missing -- reading as a corrupt download rather than an empty slice. The
+    prefix fix removed the most common route to this state; the diagnostic has to be right for the
+    others (an off-roster-only feed, a match with no `x`)."""
+    import pytest
+
+    from scripts._loader_pining import _skillcorner_bronze
+
+    meta = {
+        "players": [{"id": 1, "team_id": "H", "player_role": {"acronym": "GK"}}],
+        "pitch_length": 105.0,
+        "pitch_width": 68.0,
+    }
+    with pytest.raises(ValueError, match="no player rows"):
+        _skillcorner_bronze([_rec(None, [])], meta, match_id="X")
+
+
+def test_the_empty_bronze_error_reports_the_counts_a_reader_needs():
+    """A bare "no rows" does not say whether the feed was empty, the roster was, or the filter ate
+    everything -- which is the distinction that cost a Stage-2 run."""
+    import pytest
+
+    from scripts._loader_pining import _skillcorner_bronze
+
+    meta = {
+        "players": [{"id": 1, "team_id": "H", "player_role": {"acronym": "GK"}}],
+        "pitch_length": 105.0,
+        "pitch_width": 68.0,
+    }
+    with pytest.raises(ValueError) as exc:
+        _skillcorner_bronze([_rec(None, []), _rec(None, [])], meta, match_id="X")
+    msg = str(exc.value)
+    assert "2 raw record" in msg, "the raw record count must be reported"
+    assert "roster=1" in msg, "the roster size must be reported"
+
+
+def test_a_NON_empty_bronze_still_builds():
+    """Non-vacuity: the guard must not reject a healthy feed."""
+    from scripts._loader_pining import _skillcorner_bronze
+
+    meta = {
+        "players": [{"id": 1, "team_id": "H", "player_role": {"acronym": "GK"}}],
+        "pitch_length": 105.0,
+        "pitch_width": 68.0,
+    }
+    out = _skillcorner_bronze([_rec(1, [{"player_id": 1, "x": 1.0, "y": 2.0}])], meta, match_id="X")
+    assert len(out) == 1 and out["team_id"].iloc[0] == "H" and bool(out["is_goalkeeper"].iloc[0])

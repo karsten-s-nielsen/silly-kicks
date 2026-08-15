@@ -224,3 +224,32 @@ its derived end — the fix must not disable derivation wholesale.
   dict value and raised — after ~60 h of completed work. Both defects fixed: the contract moved to
   the cited artifact, and a dict is now treated as counters only if every value is numeric, otherwise
   dropped and REPORTED.
+## Amendment (4.81.0, PR-S151) — provenance answers WHERE, not only WHAT
+
+`git_provenance()` gained `platform` and `machine`. Purely additive: the four original keys keep
+their meaning and values, so an older consumer reading `commit`/`tree_state`/`dirty`/`dirty_files` is
+unaffected. `tests/scripts/test_provenance.py` asserts the field set EXACTLY, on purpose — this is a
+published shape and a field appearing or vanishing is an API change for every artifact consumer — so
+the addition is recorded there in the same idiom `tree_state` used when it joined in 4.72.0.
+
+**Why it belongs in that helper and not in each trainer**, which is this ADR's own argument for the
+commit: it is the ONE seam every artifact driver already calls, so no driver can forget it. The
+alternative was live and had already failed — ghost's trainer took a MANUAL `--training-platform`
+defaulting to `None` while `_xshot_occurrence` and `_xcross_attempt` both recorded
+`platform.platform()` unconditionally, and the flag was in fact forgotten. Detection is now the
+default there, the flag only an override for a human-readable card label.
+
+**What made it load-bearing rather than tidy.** `_feature_contract`'s tolerance note asserted that
+"every fingerprinted artifact is produced on x86" — and by then the bundled ghost `default` was
+stamped `training_platform="dgx-spark-aarch64"`. A comment cannot be the answer to "which machine
+produced this artifact", because it goes stale silently and the artifact is the thing you actually
+hold when a contract mismatch fires. **The stale premise is the finding, not the missing field.**
+
+**It also duplicated an existing instrument, which is worth recording as the near-miss it was.** The
+repair began from a hand-run ghost-only spot check; `scripts/measure_platform_probe.py` already
+existed, is enrolled in `ARTIFACT_DRIVERS`, probes all THREE bundled contracts (69 features), and
+had committed results in `docs/research/pr5_platform_atol/` reporting **max|delta| = 0.0** with three
+caveats the spot check did not carry — including that `atol` degenerates to an equality test on
+xCross's quantized `space_controlled`. The comment now cites the artifact. **Before writing a
+measurement into a comment, check whether a driver already measures it** — a weaker private number
+in a load-bearing comment is how the stale premise got there in the first place.

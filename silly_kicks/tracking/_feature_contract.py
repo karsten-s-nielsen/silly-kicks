@@ -25,6 +25,7 @@ import pandas as pd
 from ._warnings import MissingFeatureContractWarning, UnverifiableFeatureContractWarning
 
 __all__ = [
+    "CANONICAL_CONTRACT_KEYS",
     "DECLARED_CONSTANT_SOURCES",
     "contract_probe_frame",
     "feature_contract",
@@ -36,8 +37,29 @@ _CONTRACT_VERSION = "feature-contract-1"
 # Tolerance is CHOSEN, not inherited from chirality. Chirality's rtol=1e-2 was sized for a gross
 # sign flip on a probability; a feature vector spans metres, counts and radians, where rtol=1e-2 on
 # a ~17 m feature is a 0.17 m blind spot -- 17x the 0.01 m change this contract exists to catch.
-# The atol is pending a measured DGX-vs-x86 delta; until then every fingerprinted artifact is
-# produced on x86 so no cross-platform comparison happens against an unvalidated tolerance.
+#
+# THE CROSS-PLATFORM DELTA IS MEASURED -- see `docs/research/pr5_platform_atol/` (produced by
+# `scripts/measure_platform_probe.py`, one self-provenanced leg per machine plus a `--compare` join).
+# AMD64/Windows/py3.14 vs aarch64/Linux/py3.12: **max|delta| = 0.0 over all 69 bundled features**
+# (ghost 26, xShot 27, xCross 16), zero features moved. So atol is not currently being leaned on
+# across platforms at all. Cite THAT artifact, not a hand-run spot check on one model.
+#
+# The earlier note here -- "pending a measured DGX-vs-x86 delta; until then every fingerprinted
+# artifact is produced on x86" -- was doubly stale: the measurement exists, AND the premise is false,
+# because the bundled ghost `default` is now stamped `training_platform="dgx-spark-aarch64"`.
+#
+# THREE CAVEATS THE ARTIFACT RECORDS, and a clean number must not be read without them:
+#   1. The two legs confound ARCHITECTURE with INTERPRETER; no third leg separates them. It says
+#      "this pair agrees", never "architecture is irrelevant".
+#   2. atol cannot transfer to xCross's QUANTIZED features even in principle: `space_controlled` is
+#      ~8.8696 m^2 per cell (~8.87e6 x atol), so its error is exactly 0.0 or >= 8.87 and the
+#      tolerance degenerates to an equality test; `box_off_def_ratio` is an integer ratio. Do not
+#      generalise "elementwise, so portable" across all three extractors -- it is not true here.
+#   3. It measures the CONTRACT FINGERPRINT only, and says nothing about any model's own acceptance.
+#
+# The platform is now RECORDED on every artifact (via `git_provenance`) rather than assumed, so a
+# contract mismatch is diagnosable as "wrong machine" without re-deriving where the artifact came
+# from -- which is what the stale premise above cost.
 _CONTRACT_ATOL = 1e-6
 _CONTRACT_RTOL = 0.0
 
@@ -52,11 +74,13 @@ _CONTRACT_RTOL = 0.0
 #: become module-qualified.
 DECLARED_CONSTANT_SOURCES: dict[str, str] = {
     # penalty area
+    # xCross's aliases, and after ghost's ADR-050 §6 migration the ONLY module constants left
+    # mapping to `penalty_area_*`. They are no longer load-bearing for the enumeration gate's
+    # accounting, though: both keys are in `CANONICAL_CONTRACT_KEYS` below, so migrating xCross the
+    # same way deletes these two entries and the gate still passes. That is the point -- a migrated
+    # constant SHOULD disappear from here.
     "_BOX_HALF_WIDTH_M": "penalty_area_half_width",
     "_BOX_DEPTH_M": "penalty_area_depth",
-    "_PENALTY_AREA_X": "penalty_area_depth",
-    "_PENALTY_AREA_Y_MIN": "penalty_area_half_width",
-    "_PENALTY_AREA_Y_MAX": "penalty_area_half_width",
     # goal mouth -- these drive `openGoal`, so a goal-width change skews xS exactly the way a box
     # change skews ghost. Same class, same treatment.
     "GOAL_WIDTH": "goal_width",
@@ -64,6 +88,31 @@ DECLARED_CONSTANT_SOURCES: dict[str, str] = {
     "GOAL_Y_MAX": "goal_width",
     "_GOAL_HALF_WIDTH_M": "goal_width",
 }
+
+#: Contract keys whose canonical source is ``spadlconfig``, resolved as ``getattr(spadlconfig, key)``.
+#:
+#: These two registries answer DIFFERENT questions and neither subsumes the other.
+#: ``DECLARED_CONSTANT_SOURCES`` maps a **module-level constant** to the key it feeds, so the
+#: enumeration gate can tell a declared constant from an undeclared one. This set names keys whose
+#: value has a **canonical home**, so `tests/tracking/test_declared_constant_values.py` can pin the
+#: VALUE by name -- independently of which module, if any, still keeps a private copy.
+#:
+#: Why the split is load-bearing: migrating an extractor onto the canonical source (ADR-050 §6, which
+#: ghost did) DELETES its private constant. Accounting for stamped keys against the module registry
+#: alone therefore makes the gate **unsatisfiable** exactly when the migration succeeds -- it would
+#: demand a constant that no longer exists, and its failure message would instruct the reader to undo
+#: the migration. A key listed here needs no module constant at all.
+#:
+#: ``goal_width`` is deliberately ABSENT: ``spadlconfig`` has no such attribute (verified 2026-08-14),
+#: so the goal-mouth keys are held up only by their module constants -- the un-migrated state ghost's
+#: pair was in before §6. Adding ``spadlconfig.goal_width`` must be a deliberate edit here, not a
+#: silent widening of what the accounting excuses; a gate pins both halves of that.
+CANONICAL_CONTRACT_KEYS: frozenset[str] = frozenset(
+    {
+        "penalty_area_half_width",
+        "penalty_area_depth",
+    }
+)
 
 _BASE = {"game_id": "fc", "period_id": 1, "frame_id": 1, "time_seconds": 10.0, "is_ball": False}
 

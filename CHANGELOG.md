@@ -5,6 +5,61 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.81.0] — 2026-08-15
+
+### Changed (BREAKING) — ghost-GK re-fit onto the canonical penalty-area constant (ADR-050 §6 discharged)
+
+`_ghost_gk` derived its penalty area from a local **40.3 m** box (half-width 20.15) while `spadlconfig`
+carries the Law's **40.32** (20.16). `attackers_in_box` is a trained feature, so the divergence was
+train/serve skew that ADR-050's feature contract had already turned into a load-time raise. Ghost now
+reads the canonical constant through a single vectorized predicate
+(`_geometry.in_penalty_area_goal_relative_array`, which also flips the depth boundary `<` → `<=`), and
+**both bundled variants are re-fit** on the 179-match corpus (scikit-learn 1.9.0). `attackers_in_box`
+shifts, so opted-in ghost/VAEP consumers must re-materialize; the `[train]` extra now pins
+`scikit-learn>=1.9`. The xCross box predicate collapses onto the same helper **value-identically**
+(its weights are byte-unchanged). The Hub artifact `silly-kicks/ghost-gk-v1` was re-uploaded WITH a
+feature contract, discharging `from_variant("full")` / `from_hub`. `CANONICAL_CONTRACT_KEYS` (ADR-050
+amendment) splits the enumeration-gate accounting so a migrated constant may disappear from
+`DECLARED_CONSTANT_SOURCES` without the gate becoming unsatisfiable.
+
+### Changed (BREAKING) — VAEP labels survive a NULL `team_id` and never invent an opponent
+
+`vaep/labels.py` and its atomic mirror compared team ids with a raw `==`, which ADR-027's Gradient
+Sports null-actor rows (NULL `team_id`, nullable `Int64`) broke three ways: a Series compare produced
+a `pd.NA` **label** (the calibration harness's `np.unique` then raised), a scalar-in-loop compare
+raised on `pd.NA`, and the numpy path silently read `nan != nan` as True and **charged a null-team row
+with the opponent's goal**. Every site now routes through `id_compat`; "other team" uses `ids_differ`
+(both ids present), never `~ids_equal` (which would promote every unknown-team row to opponent).
+Byte-identical on clean `int64`; the retrain trigger is **consumers only** — no bundled trainer imports
+`vaep.labels`.
+
+### Added — TF-24 recommendation honesty: the indistinguishable set, and `tolerance_m` as a held constant (ADR-060)
+
+TF-24 Stage 1's `beta`/`gamma` are non-identifiable and its `tolerance_m` is under-determined (the
+carrier objective has no loose-ball negatives, so a sweep presses the radius to its upper bound). The
+Stage-1 confirmation now emits the **indistinguishable set** under a **prefer-incumbent** rule — the
+recommendation stays the shipped default unless a candidate clears **both** a practical effect-size
+floor **and** a paired-difference-SE significance test (via a shared `exceeds_noise_floor`, which now
+also backs `tf25_gate_fires`) — plus a standing **fold-stability** diagnostic. **`tolerance_m` becomes a
+held constant with zero swept, recommended, or consumed representation:** removed from `stage1_config`'s
+search space and `CarrierAccuracyObjective`, excluded from the new committed, provenance-stamped
+`carrier_selected.json`, and sourced by Stage 2 from `DEFAULT_CARRIER_PARAMS` (Stage 2 now refuses an
+unprovenanced or dirty selection artifact). New public `silly_kicks.calibration` surface:
+`select_recommended_point`, `PointScore`, `Selection`, `build_selection_artifact`, `exceeds_noise_floor`,
+`MIN_EFFECT_SIZE`. Additive — no library default changes (ADR-009 preserved). The DGX confirmation is
+done (`docs/research/tf24_stage1_confirmation/`, `run_commit 2cecd2b`, clean tree): the store held
+`tolerance_m` at 3.0, `argmax_moved=False`, the fold-stability ratio is ~68,850× (between-fold vs
+between-point noise), and the keep-incumbent recommendation is invariant to `δ` across `[0, 0.1]` (the
+provisional `0.005` stands). **ADR-060 is Accepted.**
+
+### Changed — provenance and script robustness
+
+`git_provenance()` now records `platform` + `machine` (ADR-056 amendment), so a cross-platform artifact
+mismatch is diagnosable from the artifact itself. `tracking_limit` counts records that carry player
+data — a SkillCorner `period: null` prefix could otherwise slice to zero rows and read as a corrupt
+download (pre-existing since 3.28.0); the `for_each` shard key splits on the first `__` separator only.
+An ADR-019 amendment documents the VAEP label seam and the `~ids_equal` NA trap.
+
 ## [4.80.0] — 2026-08-11
 
 ### Changed (BREAKING) — ADR-051 D3 closed: direction never comes from team identity again

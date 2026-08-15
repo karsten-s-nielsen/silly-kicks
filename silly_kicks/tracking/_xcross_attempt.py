@@ -248,7 +248,8 @@ def extract_xcross_features(
 
     # #6 off/def ratio in the attacked box. C1: attacked box is goal-relative gr_x <= 16.5
     # (attacked goal at gr_x=0), |y-34| <= 20.16.
-    in_box = (gr_x <= _BOX_DEPTH_M) & (np.abs(y - _geo.GOAL_Y) <= _BOX_HALF_WIDTH_M) & ~is_ball
+    # The helper has no ball concept, so `& ~is_ball` composes HERE rather than inside it.
+    in_box = _geo.in_penalty_area_goal_relative_array(gr_x, y) & ~is_ball
     if carrier_mask.any():
         carrier_team = team[carrier_mask][0]
         n_off = int(((team == carrier_team) & in_box & ~is_gk).sum())

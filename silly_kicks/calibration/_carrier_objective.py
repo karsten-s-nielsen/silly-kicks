@@ -28,6 +28,7 @@ import pandas as pd
 from ruthless.result import Candidate, Metrics
 
 from silly_kicks.calibration._gates import signal_sanity
+from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
 
 _CARRIER_ACTION_TYPES = {"pass", "cross", "shot", "dribble"}
 
@@ -183,7 +184,10 @@ class CarrierAccuracyObjective:
             )["carrier_accuracy"]
         """
         p = candidate.params
-        tolerance_m, beta, gamma = float(p["tolerance_m"]), float(p["beta"]), float(p["gamma"])
+        # tolerance_m is held at DEFAULT_CARRIER_PARAMS (ADR-060): under-determined by the
+        # carrier-actor objective, so it is not swept. beta/gamma remain required search params.
+        tolerance_m = float(p.get("tolerance_m", DEFAULT_CARRIER_PARAMS["tolerance_m"]))
+        beta, gamma = float(p["beta"]), float(p["gamma"])
         per_provider: dict[str, float] = {}
         total_compared: dict[str, int] = {}
         for provider, matches in self._fold.items():

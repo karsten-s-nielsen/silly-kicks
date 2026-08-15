@@ -12,6 +12,7 @@ explicitly, and the dirtiness is recorded either way.
 
 from __future__ import annotations
 
+import platform as _platform
 import subprocess
 
 #: The ONLY degradable failures. `except Exception` here would report a TypeError or AttributeError
@@ -46,7 +47,14 @@ def _git(*args: str) -> str:
 
 
 def git_provenance() -> dict:
-    """``{"commit", "tree_state", "dirty", "dirty_files"}`` for the current tree.
+    """``{"commit", "tree_state", "dirty", "dirty_files", "platform", "machine"}`` for this run.
+
+    ``platform``/``machine`` answer WHERE, which the commit cannot. Added when ghost was re-fit on
+    DGX Spark (aarch64) while `_feature_contract`'s tolerance note still asserted that every
+    fingerprinted artifact was produced on x86 -- a claim that had silently become false. A contract
+    mismatch on a cross-platform artifact must be diagnosable from the artifact itself. It belongs
+    HERE, not in each trainer, for the same reason the commit does: this is the one seam every
+    artifact driver already calls, so no driver can forget it.
 
     ``tree_state`` is ``"clean"``, ``"dirty"`` or ``"unknown"``. ``dirty`` is the ORIGINAL boolean,
     unchanged: ``True`` for BOTH ``dirty`` and ``unknown``, because unknown provenance is treated as
@@ -62,14 +70,18 @@ def git_provenance() -> dict:
     making a false claim about its own provenance is the exact failure this module exists to
     prevent -- one level down.
     """
+    # Platform identity is resolved FIRST and merged into every return path, including the two
+    # git-failure ones. It does not come from git, so dropping it on those paths would blind exactly
+    # the runs least able to say where they ran (tarball checkouts, CI images, a box without git).
+    host = {"platform": _platform.platform(), "machine": _platform.machine()}
     try:
         commit = _git("rev-parse", "HEAD")
     except _GIT_FAILURES:
-        return {"commit": "unknown", "tree_state": "unknown", "dirty": True, "dirty_files": []}
+        return {"commit": "unknown", "tree_state": "unknown", "dirty": True, "dirty_files": [], **host}
     try:
         porcelain = _git("status", "--porcelain")
     except _GIT_FAILURES:
-        return {"commit": commit, "tree_state": "unknown", "dirty": True, "dirty_files": []}
+        return {"commit": commit, "tree_state": "unknown", "dirty": True, "dirty_files": [], **host}
     # Porcelain v1: two status chars + a space, then the path. UNTRACKED files ("??") count as
     # dirty on purpose -- a new, uncommitted module is exactly the kind of thing that changes what
     # runs while HEAD reads clean.
@@ -79,6 +91,7 @@ def git_provenance() -> dict:
         "tree_state": "dirty" if files else "clean",
         "dirty": bool(files),
         "dirty_files": files,
+        **host,
     }
 
 

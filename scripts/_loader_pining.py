@@ -393,6 +393,33 @@ def _sc_timestamp_seconds(ts) -> float:
     raise ValueError(f"unrecognized SkillCorner timestamp format: {ts!r}")
 
 
+def _head_with_player_data(raw: list[dict], limit: int) -> list[dict]:
+    """The first ``limit`` records that CARRY player data.
+
+    A SkillCorner feed opens with a pre-match prefix whose records have ``period: null`` and an
+    EMPTY ``player_data``. Its LENGTH varies by orders of magnitude across the pining corpus --
+    measured 19 records on match 1886347 but **12,559** on 2011166 and **13,459** on 2013725 --
+    so a raw head slice at the harness's ``tracking_limit=50`` lands entirely inside the prefix on
+    the long ones. ``_skillcorner_bronze`` then emits ZERO rows, and because ``pd.DataFrame([])``
+    has no columns at all, ``convert_to_frames`` reports it as ``bronze missing column(s)`` listing
+    EVERY column -- which reads as a corrupt download rather than an empty slice. Three consecutive
+    held-out matches failed that way and tripped ``for_each``'s consecutive-failure abort, taking
+    down a Stage-2 run before it fit anything.
+
+    ``tracking_limit`` exists to BOUND WORK, so it must count records that carry work. The filter
+    cannot change any value the xT corpus reads: that path consumes ``actions``, built from the
+    events CSV independently of this argument, and DISCARDS ``frames``.
+    """
+    out: list[dict] = []
+    for rec in raw:
+        if not rec.get("player_data"):
+            continue
+        out.append(rec)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) -> pd.DataFrame:
     """Shape SkillCorner V3 tracking into the native builder's EXPECTED_INPUT_COLUMNS bronze.
 
@@ -440,6 +467,22 @@ def _skillcorner_bronze(raw_frames: list[dict], meta: dict, *, match_id: str) ->
                     "pitch_width": float(meta["pitch_width"]),
                 }
             )
+    if not rows:
+        # Fail loudly and ACCURATELY. `pd.DataFrame([])` has no columns at all, so returning it sends
+        # `convert_to_frames` down its missing-column branch, which reports EVERY expected column as
+        # absent -- indistinguishable from a corrupt download or a schema break, and it cost a
+        # Stage-2 run to diagnose. Naming the real cause here is the whole repair; the empty-prefix
+        # case (`_head_with_player_data`) was only the most common route to it.
+        #
+        # It RAISES rather than returning a correctly-columned empty frame on purpose: an empty frame
+        # set converts to zero frames and a match silently loses its tracking, which is the
+        # silent-null class this repo has been bitten by repeatedly. Loud and truthful, not quiet.
+        raise ValueError(
+            f"skillcorner match {match_id}: no player rows built from {len(raw_frames)} raw record(s) "
+            f"(roster={len(roster)} players). Every record either carried no `player_data`, held no "
+            f"`x`, or named a player absent from the team sheet. If a `tracking_limit` was applied, "
+            f"it may have sliced a pre-match `period: null` prefix -- see `_head_with_player_data`."
+        )
     return pd.DataFrame(rows)
 
 
@@ -471,7 +514,7 @@ def build_skillcorner_frames(paths, match_id, tracking_limit):
         raw = json.load(fh) if first == "[" else [json.loads(line) for line in fh if line.strip()]
 
     if tracking_limit:
-        raw = raw[:tracking_limit]
+        raw = _head_with_player_data(raw, tracking_limit)
 
     bronze = _skillcorner_bronze(raw, meta, match_id=str(match_id))
     # ADR-028 RC4 (spec section 3.4): this forced ``output_convention="absolute_frame"``, which leaves

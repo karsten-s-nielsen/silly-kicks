@@ -27,7 +27,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             gkdv = container "silly_kicks.gkdv" "GKDV v1 (TF-19): ghost-substitution engine (build_ghost_frames) + two gate-independent physics arms (delta-DAS, delta-threat-suppression) in attacker-value units (negative = deterrent). ADR-043." "Python" "Library"
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
-            providers = container "silly_kicks.providers" "Per-provider raw-data parse ports (bytes -> provider bronze -> converter input). The Sportec/DFL parse+shape port single-sources the lakehouse DFL parser (golden-pinned). Behind the [parse-dfl] extra." "Python (optional [parse-dfl] extra)" "Library"
+            providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze -> converter input): Sportec/DFL (golden-pinned, [parse-dfl] extra) + StatsBomb SB360 freeze-frames -> tracking frames + visible_area (no extra). ADR-031/054." "Python" "Library"
             glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 341 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
         }
 
@@ -103,6 +103,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         calibration -> providers "Parses IDSSE/Sportec DFL XML + shapes to native converter input via" "parse_dfl_* / shape_*_to_native"
         providers -> spadl "Emits silly_kicks.spadl.sportec convert_to_actions input via" "shape_events_to_native (DataFrame contract)"
         providers -> tracking "Emits silly_kicks.tracking.sportec convert_to_frames input via" "shape_tracking_to_native (DataFrame contract)"
+
+        // --- Relationships: StatsBomb SB360 parse port (ADR-054) ---
+        providers -> tracking "Shapes SB360 freeze-frames to tracking frames + per-action visible_area polygons via" "snapshot_to_tracking_frames"
     }
 
     views {

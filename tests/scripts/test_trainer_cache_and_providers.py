@@ -25,16 +25,18 @@ def test_ghost_cache_token_is_derived_from_the_geometry_constants():
     the constant, re-run -- and the second run silently reuses the first run's 40.3 features while
     stamping a 20.16 contract. Deriving the token from the constants auto-invalidates on the flip
     with zero discipline required."""
-    import silly_kicks.tracking._ghost_gk as gg
+    import silly_kicks.spadl.config as _spc
 
     t = _load("train_ghost_gk")
     before = t.cache_token()
-    original = gg._PENALTY_AREA_Y_MIN
+    original = _spc.penalty_area_half_width
     try:
-        gg._PENALTY_AREA_Y_MIN = (68.0 - 40.32) / 2.0
+        # Flip the CANONICAL source -- ghost's own `_PENALTY_AREA_*` constants were deleted when it
+        # migrated onto it (ADR-050 §6), and `cache_token` followed them there.
+        _spc.penalty_area_half_width = 20.15
         assert t.cache_token() != before, "token must change when the box constant changes"
     finally:
-        gg._PENALTY_AREA_Y_MIN = original
+        _spc.penalty_area_half_width = original
 
 
 def test_corpus_fingerprint_distinguishes_corpora():
