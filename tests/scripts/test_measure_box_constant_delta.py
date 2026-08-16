@@ -109,3 +109,52 @@ def test_the_tc3_tree_layout_still_wins_when_present(tmp_path):
     _write(tmp_path / "skillcorner" / "1" / "frames.parquet", {"x": [1.0], "y": [2.0]})
     _write(tmp_path / "_actions" / "1.parquet", {"start_x": [1.0]})
     assert [p.name for p in frame_parquets(tmp_path)] == ["frames.parquet"]
+
+
+def test_main_emits_the_training_flip_decision_inputs(tmp_path, monkeypatch):
+    """End-to-end `main()`: builds a tc3-shaped cache and asserts the Phase-B fields land in
+    metrics.json. Nothing else exercises `main()`, which is exactly how the last defect there
+    (`prov.commit` on a dict) reached a corpus pass before it was caught."""
+    import json
+    import sys
+
+    from scripts.measure_box_constant_delta import main
+    from silly_kicks.spadl import config as spc
+    from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
+
+    cache = tmp_path / "cache"
+    (cache / "shards" / "tok").mkdir(parents=True)
+    (cache / "_actions").mkdir()
+    (cache / "_home").mkdir()
+    frames = pd.concat(
+        [_make_ghost_gk_frames(frame_id=1, timestamp=1.0), _make_ghost_gk_frames(frame_id=2, timestamp=2.0)],
+        ignore_index=True,
+    )
+    frames.loc[frames["player_id"] == "a10", ["x", "y"]] = [-1.0, 34.0]  # a behind-line attacker
+    frames.to_parquet(cache / "shards" / "tok" / "skillcorner__100.parquet")
+    pd.DataFrame(
+        {
+            "game_id": ["100"],
+            "period_id": [1],
+            "team_id": [2],
+            "time_seconds": [1.0],
+            "type_id": [spc.actiontype_id["cross"]],
+            "result_id": [spc.result_id["success"]],
+        }
+    ).to_parquet(cache / "_actions" / "skillcorner__100.parquet")
+    (cache / "_home" / "skillcorner__100.json").write_text(json.dumps({"home_team_id": 1}))
+
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        sys, "argv", ["measure_box_constant_delta.py", "--data-dir", str(cache), "--out", str(out), "--allow-dirty"]
+    )
+    main()
+
+    metrics = json.loads((out / "metrics.json").read_text())
+    assert "training_flip" in metrics
+    ghost = metrics["training_flip"]["ghost"]
+    assert ghost["n_examples"] > 0
+    assert ghost["n_behind_line"] == 2  # a10 behind-line in the 2 home-GK examples
+    assert ghost["changed_fraction"] > 0.0
+    assert metrics["off_pitch_margin_m"] == 2.0
+    assert metrics["run_tree_dirty"] is True  # --allow-dirty stamps the truth
