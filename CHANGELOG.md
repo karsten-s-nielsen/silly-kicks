@@ -5,6 +5,25 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.82.0] — 2026-08-15
+
+### Hardened — SB360 snapshot direction convention: named, tested, and correctly documented (PR-S151)
+
+`snapshot_to_tracking_frames` labels both teams `team_attacking_direction="ltr"` because a
+freeze-frame is already in SPADL action-LTR, so `acting_team_attacks_rtl` returns a resolved
+all-`False` (no-flip) mask and SB360 is never re-projected (ADR-028). The value is now a named
+constant `_SNAPSHOT_ATTACKING_DIRECTION` with a pointer to the authority in
+`validate_period_directions`, pinned by `test_snapshot_actions_are_never_reprojected` (both teams
+resolve to no-flip + a non-vacuity mutation that would catch a per-team regression). Corrected six
+stale test comments that claimed `validate_period_directions` *rejects* a blanket `"ltr"` (it accepts
+uniform `"ltr"`; it raises only on a single team self-contradicting) and two rotted `_snapshot.py:92`
+citations (including one inside the `validate_period_directions` docstring the convention is
+canonized in). Groomed the SB360 Tech-Debt section: removed the retracted goal-kick-coverage-constraint
+row (strikethrough is not used in this repo; the measurement is preserved in
+`docs/research/sb360_coverage/`).
+
+**Doc/test only — no behaviour change, no retrain, no re-materialization, no public-surface change.**
+
 ## [4.81.0] — 2026-08-15
 
 ### Changed (BREAKING) — ghost-GK re-fit onto the canonical penalty-area constant (ADR-050 §6 discharged)

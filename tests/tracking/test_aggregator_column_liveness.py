@@ -115,8 +115,9 @@ def _frow(pid, team, gk, x, y, t, *, is_ball=False, vx=4.3, vy=0.0):
         ball_state="alive",
         # ADR-041: per-TEAM direction. Team 5 is home (all actions are team 5, so the
         # acting team never flips and every aggregator's values are unchanged); team 6
-        # attacks the other way. A blanket "ltr" is physically impossible -- two teams
-        # cannot attack the same way -- and validate_period_directions now rejects it.
+        # attacks the other way. A blanket "ltr" would silently make acting_team_attacks_rtl
+        # return no-flip for team 6 and mis-orient its geometry. (validate_period_directions
+        # does NOT reject uniform "ltr" -- it raises only on a SINGLE team self-contradicting.)
         team_attacking_direction="ltr" if _is_home_team else "rtl",
         confidence=None,
         visibility=None,

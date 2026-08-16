@@ -12,6 +12,14 @@ import pandas as pd
 
 from .schema import SPEED_SOURCE_UNAVAILABLE, TRACKING_FRAMES_COLUMNS
 
+#: BOTH teams are labelled with this ONE value on purpose: a snapshot shares its event's SPADL
+#: action-LTR frame, so it is already action-LTR and the geometry layer must NEVER re-project it
+#: (ADR-028). This is the accepted-convention case in ``validate_period_directions`` -- NOT the
+#: rejected single-team self-contradiction (that guard raises only when ONE team carries both
+#: directions in a period). Flipping to per-team directions reintroduces the ADR-028 mixed-frame
+#: defect on all SB360 input. Pinned by ``test_snapshot_actions_are_never_reprojected``.
+_SNAPSHOT_ATTACKING_DIRECTION = "ltr"
+
 
 def snapshot_to_tracking_frames(
     snapshots: pd.DataFrame,
@@ -128,7 +136,7 @@ def snapshot_to_tracking_frames(
             # SPEED_SOURCE_UNAVAILABLE.
             "speed_source": SPEED_SOURCE_UNAVAILABLE,
             "ball_state": "alive",
-            "team_attacking_direction": "ltr",
+            "team_attacking_direction": _SNAPSHOT_ATTACKING_DIRECTION,
             "confidence": np.nan,
             "visibility": np.nan,
             "source_provider": "snapshot",
@@ -160,7 +168,7 @@ def snapshot_to_tracking_frames(
             # SPEED_SOURCE_UNAVAILABLE.
             "speed_source": SPEED_SOURCE_UNAVAILABLE,
             "ball_state": "alive",
-            "team_attacking_direction": "ltr",
+            "team_attacking_direction": _SNAPSHOT_ATTACKING_DIRECTION,
             "confidence": np.nan,
             "visibility": np.nan,
             "source_provider": "snapshot",

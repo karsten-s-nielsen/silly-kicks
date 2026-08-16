@@ -5,10 +5,11 @@ TF-4 was the LAST module keyed on home/away identity for orientation, while
 ``:2126``, ``:4123``, ``:4765``, ``utils.py:854``, ``_gk_geometry.py:196``,
 ``_kernels.py:877``). Re-keying it closes that inconsistency rather than creating one.
 
-The re-key was only safe once ``validate_period_directions`` started rejecting frames whose
-per-team labels are physically impossible: ``_validate_ltr`` alone accepts every row being
-``"ltr"`` (it merely requires that ``"ltr"`` appears), and on such frames
-``acting_team_attacks_rtl`` silently resolves to "no flip" for the away team.
+The re-key was only safe once ``validate_period_directions`` began rejecting the genuinely-broken
+case -- a SINGLE team carrying both "ltr" and "rtl" in one period. It deliberately does NOT reject a
+uniform "ltr" (that is an accepted convention, e.g. snapshot frames): ``_validate_ltr`` accepts it
+too (it merely requires that "ltr" appears), and on such a frame ``acting_team_attacks_rtl`` silently
+resolves to "no flip" for the away team -- the mis-orientation the per-team labels below avoid.
 """
 
 from __future__ import annotations
@@ -150,7 +151,7 @@ class TestUnorientedFramesAreAccepted:
     """Unoriented != mislabelled. These three shapes are produced BY THE LIBRARY.
 
     An earlier draft of the guard rejected all of them, regressing paths that had always
-    worked: ``snapshot_to_tracking_frames`` (``_snapshot.py:92``, uniform "ltr" because
+    worked: ``snapshot_to_tracking_frames`` (uniform "ltr" because
     snapshot frames are already action-LTR), ``output_convention="absolute_frame"``
     SkillCorner/Metrica (``skillcorner.py:282`` / ``metrica.py:180``, all-null -- the shape
     ``scripts/_loader_pining.py`` feeds the training corpora), and period-5 shootouts

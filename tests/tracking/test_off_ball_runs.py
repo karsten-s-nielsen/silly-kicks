@@ -65,10 +65,11 @@ def _make_multi_frame_fixture(
                     y=pos[1],
                     ball_state="alive",
                     # ADR-041: per-team direction, NOT a blanket "ltr". Labelling both
-                    # teams "ltr" is physically impossible (two teams cannot attack the
-                    # same way) and is now rejected by validate_period_directions. The
-                    # old blanket label is exactly why toward_goal could not be re-keyed
-                    # onto the frames' own direction.
+                    # teams "ltr" would silently make acting_team_attacks_rtl return no-flip
+                    # for the away team and mis-orient its geometry -- which is exactly why
+                    # toward_goal could not be re-keyed onto the frames' own direction until
+                    # per-team labels were used. (validate_period_directions accepts uniform
+                    # "ltr"; it rejects only a SINGLE team self-contradicting.)
                     team_attacking_direction="ltr" if p["team_id"] == home_team_id else "rtl",
                     source_provider="synthetic",
                 )
