@@ -53,9 +53,9 @@ def validate_period_directions(frames: pd.DataFrame, *, caller: str) -> None:
       absent or all-null). ``skillcorner.py:282`` / ``metrica.py:180`` emit exactly this for
       ``output_convention="absolute_frame"`` (documented at ``skillcorner.py:180``), and it
       is what ``scripts/_loader_pining.py`` feeds the training corpora.
-    * **A different convention** -- ``snapshot_to_tracking_frames`` (``_snapshot.py:92``)
-      labels every player ``"ltr"`` because snapshot frames are ALREADY in SPADL action-LTR,
-      so "never flip" is the correct reading, not a contradiction.
+    * **A different convention** -- ``snapshot_to_tracking_frames`` labels every player
+      ``"ltr"`` because snapshot frames are ALREADY in SPADL action-LTR, so "never flip" is
+      the correct reading, not a contradiction.
     * **Undefined by nature** -- period 5 (PSO); see ``_ORIENTED_PERIODS``.
 
     For all three, ``acting_team_attacks_rtl`` returning False ("no orientation asserted, so

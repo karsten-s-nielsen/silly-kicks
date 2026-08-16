@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Release**: silly-kicks 4.81.0 (2026-08-15). Two breaking changes plus the TF-24 recommendation-honesty redesign. **Ghost-GK re-fit (ADR-050 §6, breaking):** `_ghost_gk` migrated off its local 40.3 m box onto `spadlconfig`'s canonical 20.16 (plus a `<`→`<=` depth boundary); both bundled variants re-fit on the 179-match corpus (scikit-learn 1.9.0) and re-published to the Hub with a feature contract; xCross collapses onto the same predicate value-identically. `attackers_in_box` shifts, so ghost/VAEP consumers re-materialize. **VAEP labels (breaking):** a NULL `team_id` (ADR-027 GS null-actor rows) no longer produces an NA label, raises, or silently charges the opponent's goal — all id comparisons route through `id_compat`; consumers-only retrain. **TF-24 (ADR-060, additive):** Stage 1 emits the indistinguishable `beta`/`gamma` set under prefer-incumbent selection (effect-size floor AND paired-SE); `tolerance_m` is a held constant everywhere (not swept, absent from the artifact, sourced from the constant); new `silly_kicks.calibration` public surface; **ADR-060 Accepted — DGX confirmation landed (`argmax_moved=False`, `run_commit 2cecd2b`, clean tree)**. Plus ADR-050/019/056 amendments and script robustness (provenance platform stamp, `tracking_limit`, shard key).
+**Release**: silly-kicks 4.82.0 (2026-08-15). SB360 snapshot direction-convention hardening (doc/test only -- no behaviour change, no retrain, no re-materialization, no public-surface change). `snapshot_to_tracking_frames`'s uniform-`"ltr"` labelling of BOTH teams is now the named constant `_SNAPSHOT_ATTACKING_DIRECTION` with a pointer to the `validate_period_directions` authority, and is pinned by `test_snapshot_actions_are_never_reprojected` (both teams resolve to a no-flip mask; SB360 is never re-projected, ADR-028). Corrected six stale test comments claiming the guard *rejects* a blanket `"ltr"` (it accepts uniform `"ltr"`; it raises only when a SINGLE team self-contradicts) and two rotted `_snapshot.py:92` citations. Also groomed the SB360 Tech-Debt section, removing the retracted goal-kick-coverage-constraint row (strikethrough is not used in this repo; the measurement is preserved in [docs/research/sb360_coverage/](docs/research/sb360_coverage/)). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -65,10 +65,6 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 - **Check whether the lakehouse already ingests StatsBomb open data.** The question has CHANGED now
   that 4.76.0 ships `providers/statsbomb`: it is no longer build-or-reuse but whether the lakehouse
   should ADOPT the port so both read SB360 the same way. Not answerable from this repo.
-- **SB360 goal-kick frame availability is the collaboration's real constraint** — only 32.6% of goal
-  kicks carry a freeze-frame (per-match median 21%, IQR 18–50%, range 8–61% over 16 matches), while
-  shots and saves carry one ~98% of the time. Not a code issue; a planning input. Extending the pass
-  beyond 22 matches is a driver flag, and the shards are additive.
 - **`sportec_slim.parquet` is MIRRORED relative to its own direction labels** (found 4.77.0).
   `team_attacking_direction` says `DFL-CLU-00000P` attacks +x, so it should defend x=0, while that
   team's keeper mean x is 98.1 (p1) and 77.0 (p2). Confirmed independently by

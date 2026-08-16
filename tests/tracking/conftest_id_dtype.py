@@ -92,9 +92,10 @@ def _frow(pid, team, gk, x, y, t, t_a, *, is_ball=False):
         vy=0.0,
         speed_source="native",
         ball_state="alive",
-        # ADR-041: per-TEAM direction. Team 5 is home; a blanket "ltr" labels both teams as
-        # attacking the same way, which is physically impossible and is now rejected by
-        # validate_period_directions.
+        # ADR-041: per-TEAM direction. Team 5 is home; a blanket "ltr" would silently make
+        # acting_team_attacks_rtl return no-flip for the away team and mis-orient its geometry.
+        # (validate_period_directions does NOT reject a uniform "ltr" -- it raises only when a
+        # SINGLE team self-contradicts in a period; snapshot frames use uniform "ltr" by convention.)
         team_attacking_direction="ltr" if _is_home_team else "rtl",
         confidence=None,
         visibility=None,

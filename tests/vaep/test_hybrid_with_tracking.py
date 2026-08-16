@@ -20,7 +20,9 @@ import pytest
 # labelled "ltr", which is a physically impossible scene (both teams attacking the same
 # goal) and made ``acting_team_attacks_rtl`` resolve to an all-False flip on all 200
 # actions -- 101 of them away actions. The fixture therefore never exercised the ADR-028
-# re-projection path at all.
+# re-projection path at all. (This is a REAL two-team scene, where uniform "ltr" is a fixture
+# bug; contrast snapshot_to_tracking_frames, where uniform "ltr" is the CORRECT convention
+# because a freeze-frame is already action-LTR -- see _SNAPSHOT_ATTACKING_DIRECTION.)
 _HOME_TEAM_ID = 1
 _AWAY_TEAM_ID = 2
 _TEAM_DIRECTION = {_HOME_TEAM_ID: "ltr", _AWAY_TEAM_ID: "rtl"}

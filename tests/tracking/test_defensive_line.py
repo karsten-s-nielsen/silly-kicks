@@ -98,8 +98,10 @@ def _make_frame_rows(
             x=away_gk_pos[0],
             y=away_gk_pos[1],
             source_provider="sportec",
-            # ADR-041: away attacks the OTHER way. Labelling both teams "ltr" is
-            # physically impossible and is now rejected by validate_period_directions.
+            # ADR-041: away attacks the OTHER way. Labelling both teams "ltr" would silently
+            # make acting_team_attacks_rtl return no-flip for the away team and mis-orient its
+            # geometry -- NOT a validate_period_directions raise (it accepts uniform "ltr" and
+            # rejects only a SINGLE team self-contradicting).
             team_attacking_direction="rtl",
         )
     )
@@ -120,8 +122,10 @@ def _make_frame_rows(
                 x=x,
                 y=y,
                 source_provider="sportec",
-                # ADR-041: away attacks the OTHER way. Labelling both teams "ltr" is
-                # physically impossible and is now rejected by validate_period_directions.
+                # ADR-041: away attacks the OTHER way. Labelling both teams "ltr" would silently
+                # make acting_team_attacks_rtl return no-flip for the away team and mis-orient its
+                # geometry -- NOT a validate_period_directions raise (it accepts uniform "ltr" and
+                # rejects only a SINGLE team self-contradicting).
                 team_attacking_direction="rtl",
             )
         )

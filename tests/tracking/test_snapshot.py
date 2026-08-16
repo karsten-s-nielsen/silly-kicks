@@ -388,3 +388,45 @@ def test_partially_marked_frames_still_raise(actions_3, snapshots_combined):
     actions_with_data = actions_3[actions_3["action_id"].isin(links["action_id"])]
     with pytest.raises(ValueError, match="velocity columns"):
         add_das(actions_with_data, partial, links=links)
+
+
+def test_snapshot_actions_are_never_reprojected(actions_3, snapshots_combined):
+    """Uniform 'ltr' means acting_team_attacks_rtl resolves BOTH teams to a RESOLVED no-flip.
+
+    Pins the MEANING of the labelling that test_constant_columns pins the VALUE of. A snapshot is
+    already in SPADL action-LTR, so the flip mask acting_team_attacks_rtl returns is the input EVERY
+    ADR-028 geometry consumer gates its re-projection on -- an all-False (resolved) mask is exactly
+    what "never re-projected" means. A future change to per-team directions would flip away-team
+    actions; this test fails first, and its mutation leg proves it would.
+
+    Cross-module: this lives in test_snapshot.py for fixture reuse but asserts a property of
+    _action_orientation; a future move of acting_team_attacks_rtl touches a test in the snapshot file.
+
+    Accepted limit (spec section 8): this pins the SEAM's contract -- acting_team_attacks_rtl returns
+    a resolved no-flip mask for a snapshot -- NOT the guarantee that every consumer keeps routing
+    through that seam. The module is the documented SSOT for re-projection, so the seam is the right
+    altitude for a doc-hardening cycle.
+    """
+    from silly_kicks.id_compat import ids_match
+    from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
+    from silly_kicks.tracking._snapshot import snapshot_to_tracking_frames
+
+    away = ids_match(actions_3["team_id"], 200)
+    assert away.any()  # premise: the load-bearing away action EXISTS (guards emptiness-vacuity)
+
+    frames, _links = snapshot_to_tracking_frames(snapshots_combined, actions_3)
+    flip = acting_team_attacks_rtl(actions_3, frames)
+
+    # Property: every action RESOLVES (not <NA>) and never flips -> SB360 is never re-projected.
+    assert flip.notna().all()
+    assert not flip.any()
+
+    # Non-vacuity: the per-team "fix" this guards against WOULD flip the away action, from a RESOLVED
+    # False to a RESOLVED True. Re-assert notna on the MUTATED frame -- nullable-boolean .all() is
+    # skipna=True, so without this an <NA> away action would pass .all() silently.
+    per_team = frames.copy()
+    per_team.loc[ids_match(per_team["team_id"], 200), "team_attacking_direction"] = "rtl"
+    flip_mut = acting_team_attacks_rtl(actions_3, per_team)
+    assert flip_mut.notna().all()  # still fully resolved post-mutation
+    assert flip_mut[away].all()  # away flips to True
+    assert not flip_mut[~away].any()  # home unchanged (still False)
