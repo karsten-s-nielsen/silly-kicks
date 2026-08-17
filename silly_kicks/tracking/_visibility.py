@@ -57,6 +57,22 @@ VISIBLE_AREA_SOURCE_VALUES: tuple[str, ...] = (
     VISIBLE_AREA_UNLINKED,
 )
 
+#: A region-of-interest with no area -- a zero-radius disk, a collinear triangle. The observed
+#: polygon is fine; the QUESTION has no denominator, which is a different fact from a missing or
+#: degenerate polygon and gets its own token.
+REGION_OBSERVATION_DEGENERATE_REGION = "degenerate_region"
+#: Closed vocabulary for a per-region ``*_observed_source`` companion (Task 4 count features).
+#: It REUSES the polygon tokens and ADDS ``degenerate_region``; it is a FEATURE-level superset,
+#: deliberately NOT a widening of the pinned :data:`VISIBLE_AREA_SOURCE_VALUES`. ``unlinked`` is
+#: absent here -- that is an action<->frame property the caller overlays, not a polygon-vs-region
+#: outcome.
+REGION_OBSERVATION_SOURCE_VALUES: tuple[str, ...] = (
+    VISIBLE_AREA_OBSERVED,
+    VISIBLE_AREA_NO_POLYGON,
+    VISIBLE_AREA_DEGENERATE_POLYGON,
+    REGION_OBSERVATION_DEGENERATE_REGION,
+)
+
 
 def point_observed(polygon, x: float, y: float) -> bool | None:
     """Was ``(x, y)`` inside the observed region? ``None`` when that cannot be answered.
@@ -148,6 +164,75 @@ def region_observed_fraction(polygon, region) -> float:
     return covered_fraction(polygon, region)
 
 
+def classify_region_observation(polygon, region) -> tuple[float, str]:
+    """Classify how a region of interest sits inside an observed polygon: ``(fraction, source)``.
+
+    The higher-level companion to :func:`region_observed_fraction`: it returns the same fraction
+    but ALSO the reason, over the closed :data:`REGION_OBSERVATION_SOURCE_VALUES`. The fraction is
+    NaN for every non-``observed`` source -- never ``0.0`` (observed and empty) and never ``1.0``.
+
+    Parameters
+    ----------
+    polygon : array-like or None
+        ``(N, 2)`` observed region (need not be convex). ``None`` means no polygon was published
+        (``no_polygon``); a present-but-sub-triangle polygon is ``degenerate_polygon``.
+    region : array-like
+        ``(M, 2)`` region of interest. **Must be convex** (the callers pass triangles and inscribed
+        disks). A zero-area or non-finite region is ``degenerate_region`` -- it is NEVER passed to
+        :func:`region_observed_fraction`, so the concave-region ``ValueError`` is unreachable here.
+
+    Returns
+    -------
+    tuple[float, str]
+        ``(fraction, source)`` where ``source`` is one of
+        :data:`REGION_OBSERVATION_SOURCE_VALUES`.
+
+    Examples
+    --------
+    The left half observes three quarters of a pitch-spanning triangle; a zero-area region has no
+    denominator and is refused rather than raised on:
+
+    >>> import numpy as np
+    >>> from silly_kicks.tracking import classify_region_observation
+    >>> left = np.array([[0.0, 0.0], [52.5, 0.0], [52.5, 68.0], [0.0, 68.0]])
+    >>> tri = np.array([[0.0, 0.0], [105.0, 0.0], [0.0, 68.0]])
+    >>> frac, source = classify_region_observation(left, tri)
+    >>> round(frac, 6), source
+    (0.75, 'observed')
+    >>> classify_region_observation(None, tri)[1]
+    'no_polygon'
+
+    See NOTICE for full bibliographic citations.
+    """
+    if polygon is None:
+        return float("nan"), VISIBLE_AREA_NO_POLYGON
+    poly = as_polygon(polygon)
+    if len(poly) < MIN_VERTICES:
+        return float("nan"), VISIBLE_AREA_DEGENERATE_POLYGON
+    reg = as_polygon(region)
+    if len(reg) < MIN_VERTICES or not np.isfinite(reg).all() or abs(shoelace_area(reg)) == 0.0:
+        return float("nan"), REGION_OBSERVATION_DEGENERATE_REGION
+    return region_observed_fraction(poly, reg), VISIBLE_AREA_OBSERVED
+
+
+def _polygons_by_action(visible_area) -> dict:
+    """``canonical_id(action_id)`` -> polygon: the ONE ADR-019-safe visible-area join.
+
+    Shared by :func:`add_visible_area_coverage` and ``add_action_context``'s companions so the two
+    cannot disagree about how a polygon is looked up. ``action_id`` joins THREE separately-sourced
+    frames (the caller's ``actions``, the provider's ``visible_area``, and ``links``), so the key
+    MUST be canonicalized: a plain dict keyed on the raw id MISSES SILENTLY across dtypes, and the
+    miss is indistinguishable from a genuine absence -- measured, an int64 ``actions.action_id``
+    against an object ``visible_area.action_id`` reported ``no_polygon`` for EVERY row while every
+    polygon had in fact been supplied.
+    """
+    by_action: dict = {}
+    if visible_area is not None and len(visible_area) > 0:
+        for row in visible_area[["action_id", "polygon"]].itertuples(index=False):
+            by_action[canonical_id(row.action_id)] = row.polygon
+    return by_action
+
+
 @nan_safe_enrichment
 def add_visible_area_coverage(
     actions: pd.DataFrame,
@@ -215,10 +300,7 @@ def add_visible_area_coverage(
     # is indistinguishable from a genuine absence: measured, an int64 `actions.action_id` against
     # an object `visible_area.action_id` reported `no_polygon` for EVERY row while every polygon
     # had in fact been supplied. That is precisely the confusion this module exists to remove.
-    by_action: dict = {}
-    if visible_area is not None and len(visible_area) > 0:
-        for row in visible_area[["action_id", "polygon"]].itertuples(index=False):
-            by_action[canonical_id(row.action_id)] = row.polygon
+    by_action = _polygons_by_action(visible_area)
 
     linked_ids: set | None = None
     if links is not None and len(links) > 0:

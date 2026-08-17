@@ -326,6 +326,23 @@ def _visible_area_invoke(inputs):
     return tracking.add_visible_area_coverage(inputs[0], visible_area=inputs[1])
 
 
+def _action_context_va_inputs():
+    """`add_action_context` inputs WITH a `visible_area` polygon table (companion branch).
+
+    The companion path is the only one that reads a caller-supplied polygon ndarray, so ADR-033
+    requires it as a second variant alongside the no-visible_area default -- the array-reading
+    branch is exactly where an in-place clip would leak into the caller's object.
+    """
+    actions = make_actions()
+    poly = np.array([[0.0, 0.0], [105.0, 0.0], [105.0, 68.0], [0.0, 68.0]])
+    visible = pd.DataFrame({"action_id": list(actions["action_id"]), "polygon": [poly] * len(actions)})
+    return [actions, make_frames(), visible]
+
+
+def _action_context_va_invoke(inputs):
+    return F.add_action_context(inputs[0], inputs[1], visible_area=inputs[2])
+
+
 PURITY_ENTRIES: dict[str, list[tuple]] = {
     # ---- spadl --------------------------------------------------------------
     # add_game_state branches on input FORMAT (`type_name`/`result_name` vs `type_id`/`result_id`); both
@@ -383,7 +400,10 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         ),
     ],
     # ---- tracking -----------------------------------------------------------
-    "tracking:add_action_context": _one(_std_inputs, _std_invoke(F.add_action_context)),
+    "tracking:add_action_context": [
+        ("no_visible_area", _std_inputs, _std_invoke(F.add_action_context)),
+        ("with_visible_area", _action_context_va_inputs, _action_context_va_invoke),
+    ],
     "tracking:add_actor_pre_window": _one(_std_inputs, _std_invoke(F.add_actor_pre_window)),
     "tracking:add_cover_shadows": _one(_xtf_inputs, _xtf_map_invoke(F.add_cover_shadows)),
     "tracking:add_visible_area_coverage": [

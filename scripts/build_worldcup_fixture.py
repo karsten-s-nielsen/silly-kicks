@@ -44,6 +44,9 @@ from typing import Any
 
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._sb_raw import flatten_events
+
 # Late import to avoid silly-kicks import cost when running --help.
 # Imported lazily inside main().
 
@@ -64,8 +67,6 @@ _HDF_COMPLIB = "zlib"
 _HDF_COMPLEVEL = 9
 _HDF_SIZE_WARN_BYTES = 50 * 1024 * 1024  # 50 MB
 _MIN_ACTIONS_PER_MATCH = 100  # sanity floor
-
-_TOP_LEVEL_KEYS = frozenset({"id", "period", "timestamp", "team", "player", "type", "location"})
 
 
 def _log(message: str, *, level: str = "info", verbose: bool = False, quiet: bool = False) -> None:
@@ -142,32 +143,6 @@ def _fetch_raw_events(
     return json.loads(raw.decode("utf-8"))
 
 
-def _adapt_events_to_silly_kicks_input(events: list[dict[str, Any]], match_id: int) -> pd.DataFrame:
-    """Adapt StatsBomb open-data event JSON to silly-kicks's expected input shape.
-
-    Same adapter pattern used in tests/spadl/test_add_possessions.py.
-    """
-    return pd.DataFrame(
-        [
-            {
-                "game_id": match_id,
-                "event_id": e.get("id"),
-                "period_id": e.get("period"),
-                "timestamp": e.get("timestamp"),
-                "team_id": (e.get("team") or {}).get("id"),
-                "player_id": (e.get("player") or {}).get("id"),
-                "type_name": (e.get("type") or {}).get("name"),
-                "location": e.get("location"),
-                "extra": {k: v for k, v in e.items() if k not in _TOP_LEVEL_KEYS},
-                # PR-S12 (silly-kicks 2.1.0): preserve native possession sequence
-                # for downstream regression validation against add_possessions.
-                "possession": e.get("possession"),
-            }
-            for e in events
-        ]
-    )
-
-
 def _build_games_metadata_df(matches: list[dict[str, Any]]) -> pd.DataFrame:
     """Build the ``games`` metadata DataFrame from the matches manifest."""
     rows = []
@@ -205,7 +180,7 @@ def _convert_match(
     home_team_id = int(match["home_team"]["home_team_id"])
 
     events = _fetch_raw_events(match_id, cache_dir, no_cache=no_cache, verbose=verbose, quiet=quiet)
-    adapted = _adapt_events_to_silly_kicks_input(events, match_id)
+    adapted = flatten_events(events, match_id, surface_native=("possession",))
     actions, _report = statsbomb.convert_to_actions(adapted, home_team_id=home_team_id, preserve_native=["possession"])
     return match_id, actions
 

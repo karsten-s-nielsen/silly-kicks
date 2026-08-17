@@ -100,6 +100,11 @@ ARTIFACT_DRIVERS = (
     # offpitch_rate / out_of_region_goalkick_rate become the ADR-024 CI rate-gate baselines -- cited
     # numbers, so the tree they ran on has to be recorded.
     "validate_skillcorner_keeper_origin",
+    # The SB360 licensed-corpus validation driver. Consumes the licensed StatsBomb 360 corpus via
+    # the pining loader (`load_statsbomb_matches`) and writes cited coverage/verdict numbers to
+    # docs/research/sb360_licensed_coverage/ -- exactly the "external data -> cited artifact" class
+    # this registry enrolls. Licensed per-match shards go to a gitignored root, never the aggregate.
+    "validate_sb360_licensed_corpus",
 )
 
 

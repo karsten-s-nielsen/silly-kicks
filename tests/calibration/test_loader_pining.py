@@ -135,9 +135,16 @@ def test_load_matches_dispatches_per_provider(monkeypatch, tmp_path):
     monkeypatch.setattr(
         L,
         "_build_match",
-        # _build_match returns a uniform 4-tuple (actions, frames, home, report); report is None for
-        # idsse (no native geometry gate) -> load_matches never excludes it (spec 4.4).
-        lambda provider, match_id, paths, tracking_limit: (built["actions"], built["frames"], built["home"], None),
+        # _build_match returns a uniform 5-tuple (actions, frames, home, visible_area, report);
+        # visible_area + report are None for idsse (no per-action polygon, no native geometry gate)
+        # -> load_matches never excludes it (spec 4.4).
+        lambda provider, match_id, paths, tracking_limit: (
+            built["actions"],
+            built["frames"],
+            built["home"],
+            None,
+            None,
+        ),
     )
     rows = list(
         L.load_matches(providers=["idsse"], match_ids={"idsse": ["M1"]}, token="test-token-pining-for-the-data")
@@ -183,8 +190,8 @@ def test_apply_et_direction_noop_when_no_et_periods():
 def test_load_matches_max_per_provider_truncates(monkeypatch):
     monkeypatch.setattr(L, "_list_matches", lambda p, t, b: [{"id": str(i), "artifacts": {}} for i in range(5)])
     monkeypatch.setattr(L, "_download_artifacts", lambda *a, **k: {})
-    # _build_match now returns a uniform 4-tuple (…, report); None report -> never excluded (spec 4.4).
-    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None, None))
+    # _build_match now returns a uniform 5-tuple (…, visible_area, report); both None -> never excluded.
+    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None, None, None))
     got = [mid for _p, mid, *_ in L.load_matches(providers=["gradientsports"], max_per_provider=2)]
     assert got == ["0", "1"]
 
@@ -192,7 +199,7 @@ def test_load_matches_max_per_provider_truncates(monkeypatch):
 def test_load_matches_no_cap_loads_all(monkeypatch):
     monkeypatch.setattr(L, "_list_matches", lambda p, t, b: [{"id": str(i), "artifacts": {}} for i in range(3)])
     monkeypatch.setattr(L, "_download_artifacts", lambda *a, **k: {})
-    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None, None))
+    monkeypatch.setattr(L, "_build_match", lambda *a, **k: (None, None, None, None, None))
     got = [mid for _p, mid, *_ in L.load_matches(providers=["gradientsports"])]
     assert got == ["0", "1", "2"]
 

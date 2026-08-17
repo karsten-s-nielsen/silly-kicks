@@ -5,6 +5,81 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.84.0] — 2026-08-17
+
+SB360 licensed-corpus enablement: load the 30-match licensed StatsBomb 360 corpus (now served by
+pining-for-the-data) through the library, add opt-in visibility-aware companion columns to the three
+count features, and ship a leak-safe validation driver. Validated end-to-end on the real licensed
+corpus (loader parsers, fidelity threading, roster identity, and the driver's coverage/companion
+distributions) — and that validation caught a latent 4.76.0 defect: snapshot frames carried synthetic
+team ids that broke the action↔frame join, silently NaN-ing every direction-dependent tracking
+feature on SB360. Fixing it (below) is the tracking-feature half of the enablement actually working.
+No retrain — no bundled model consumes SB360 snapshot frames.
+
+### Added — SB360 licensed-corpus loader path (PR-S153, ADR-062)
+
+- `scripts/_sb_raw.py`: the single-sourced StatsBomb raw-JSON flattener (`flatten_events`) plus
+  `parse_freeze_frames`/`parse_metadata`/`parse_roster`. De-forks SIX copies of the `_adapt_events`
+  body across `scripts/` and `tests/` down to one (a deliberate variant in
+  `test_end_coord_integration.py` is left under Chesterton's Fence).
+- pining `statsbomb` loader: internal `_build_match` widened to a 5-tuple (adds `visible_area`); new
+  `build_statsbomb_match` + a parallel public `load_statsbomb_matches` (6-tuple). The public
+  `load_matches` 5-tuple and every unpack site are UNTOUCHED (Hyrum). Fidelity (`xy_fidelity_version`)
+  threaded from metadata; roster identity joined onto actions. First path chaining real SB360
+  freeze-frames all the way to tracking frames. `providers/statsbomb` stays pure-shaping (ADR-054).
+
+### Added — visibility-aware count-feature companions (PR-S153, ADR-062)
+
+- `tracking.classify_region_observation` + `REGION_OBSERVATION_SOURCE_VALUES`
+  (`observed`/`no_polygon`/`degenerate_polygon`/`degenerate_region`) — a FEATURE-level superset of the
+  ADR-055 polygon tokens (NOT a widening of the pinned `VISIBLE_AREA_SOURCE_VALUES`).
+- `add_action_context(..., visible_area=)`: six OPT-IN companion columns
+  (`<feature>_observed_fraction`/`_observed_source`) reporting how much of each count's
+  region-of-interest the provider observed. ADDITIVE — the primary count columns are byte-identical
+  with and without `visible_area`; per-Series functions and `tracking_default_xfns` untouched. NO VAEP
+  change, NO retrain (ADR-009). A NaN nearest-defender distance → `degenerate_region`, never a
+  fabricated fraction.
+
+### Changed — SB360 audit call convention single-sourced (PR-S153)
+
+- The per-aggregator adapters (`tests/sb360/_calls.py`) + the adapter map (`_registry._adapters()`)
+  are MOVED to `scripts/_sb_battery.py` (re-export shim + re-point) so the ADR-053 audit and the new
+  validation driver resolve ONE call convention (`tests → scripts`, never the reverse). The committed
+  `_entries` round-trip stays byte-identical.
+
+### Added — leak-safe licensed-corpus validation driver (PR-S153)
+
+- `scripts/validate_sb360_licensed_corpus.py`: measures per-column coverage, the honest
+  `honest_nan`/`silent_degrade`/`raises` distribution, and the three count features'
+  `observed_source`/`fraction` distributions. Licensed per-match shards go to a GITIGNORED root; only
+  the reconciled aggregate lands under `docs/research/` (ADR-052 shards; ADR-037 provenance). Enrolled
+  in `ARTIFACT_DRIVERS`.
+
+### Fixed — SB360 snapshot team ids resolve to REAL match ids (PR-S153, ADR-062)
+
+- `providers/statsbomb.shape_snapshots` (ADR-054) emitted a synthetic actor-relative `{0,1}` team id
+  (teammate/opponent) on the principle "SB360 records no team identity." But the port receives
+  `actions` — the event's actor team — and a match has two teams, so the `teammate` flag fully
+  determines each player's REAL team; the synthetic ids are a fabrication the derivation avoids. Their
+  effect: the action↔frame team join failed on real data, `acting_team_attacks_rtl` returned all-`<NA>`,
+  and ADR-051 D3 correctly turned that into honest-NaN for EVERY direction-dependent tracking feature
+  (attacking-side team shape, defensive line, pre-shot GK, packing, space creation, structural pass,
+  xshot/xcross, obso/pausa, …). Latent since 4.76.0 — the port's fixtures used coherent ids and never
+  exercised the `{0,1}` path; the new licensed-corpus validation driver is what surfaced it.
+- `shape_snapshots` now resolves the `teammate` flag to the real match team ids (falling back to the
+  synthetic pair ONLY when the two teams cannot be resolved — no `team_id` column, or not exactly two
+  distinct teams). Measured on real match 3986784: `acting_team_attacks_rtl` goes 1795/1795 `<NA>` →
+  1795/1795 resolved. Regression-guarded from both sides in `tests/providers/statsbomb/test_parse.py`
+  (real-id resolution + the synthetic fallback + an end-to-end join-resolves test).
+
+### Notes
+
+- ADR-062 records the enablement, including the decision NOT to add an observed-region ADR-053 audit
+  axis: a two-leg comparison is vacuous on the full-coverage fixture, so the companions are verified by
+  dedicated both-sides tests (`test_visibility.py`, `test_add_action_context.py`) + the licensed-corpus
+  driver, which observed all five degradation tokens on live matches. Scope note at
+  `tests/sb360/_registry.py::audited_surface`.
+
 ## [4.83.0] — 2026-08-17
 
 The keeper-box geometry & detection-quality cycle: three independent pining-sourced passes against

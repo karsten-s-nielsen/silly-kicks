@@ -20,8 +20,12 @@ Three properties of the source shape the API:
   ZERO overlap with their own events file while claiming the same ``match_id`` -- upstream, not a
   join defect, and COUNTED rather than silently averaged over (see :class:`JoinReport`).
 * **Player flags are ACTOR-relative** -- ``teammate`` / ``actor`` / ``keeper``, with no player
-  identity at all. ``is_goalkeeper`` comes from ``keeper``; ``team_id`` is a synthetic
-  actor-relative pair, NOT a real team identity.
+  identity at all. ``is_goalkeeper`` comes from ``keeper``. ``team_id`` is RESOLVED to the real
+  match team ids: the freeze-frame gives no team labels, but ``actions`` names the event's actor
+  team, and in a 2-team match the ``teammate`` flag then fixes every player's real team -- a
+  derivation from context, not a fabricated identity. When the two teams cannot be resolved (no
+  ``team_id`` column, or not exactly two distinct teams) it falls back to a synthetic
+  actor-relative pair.
 * **``visible_area`` is a FLAT ``[x1, y1, x2, y2, ...]`` polygon in StatsBomb 120x80** -- not a
   list of pairs, and not 105x68.
 
@@ -37,10 +41,14 @@ import numpy as np
 import pandas as pd
 
 from silly_kicks import _polygon
+from silly_kicks.id_compat import same_id
 from silly_kicks.spadl import _sb_coordinates as _sb_coords
 
-#: Synthetic, ACTOR-RELATIVE team ids. SB360 records no team identity -- only whether a player is
-#: the actor's teammate -- so these separate the two sides without claiming to name them.
+#: Synthetic, ACTOR-RELATIVE team ids -- the FALLBACK used only when the real match teams cannot
+#: be resolved from ``actions`` (no ``team_id`` column, or not exactly two distinct teams). SB360
+#: freeze-frames record no team labels; when ``actions`` names both teams ``shape_snapshots``
+#: resolves the real ids instead (see the module docstring), because the synthetic pair breaks the
+#: action<->frame team join and silently NaNs every direction-dependent tracking feature.
 ACTING_TEAM_ID = 0
 OPPONENT_TEAM_ID = 1
 
@@ -264,10 +272,29 @@ def shape_snapshots(
         )
     report = JoinReport(n_frames=n_frames, n_mapped=len(mapped), join_rate=join_rate)
 
+    # Resolve each action's teammate/opponent flag to the REAL match team ids. The freeze-frame
+    # gives no team labels, but `actions` names the event's actor team and a match has two teams,
+    # so `teammate` fixes every player's real team -- a derivation, not a fabricated identity. Real
+    # ids are what the action<->frame team join (`acting_team_attacks_rtl`, ADR-028) needs; the
+    # synthetic {0,1} pair breaks that join and silently NaNs every direction-dependent tracking
+    # feature (ADR-051 D3). Fall back to the synthetic pair only when the two teams are not
+    # resolvable (no `team_id` column, or not exactly two distinct teams).
+    action_team_pair: dict[object, tuple[object, object]] = {}
+    if "team_id" in actions.columns:
+        match_teams = list(pd.unique(actions["team_id"].dropna()))
+        if len(match_teams) == 2:
+            a_team, b_team = match_teams
+            for aid, acting in zip(actions["action_id"], actions["team_id"], strict=False):
+                if pd.isna(acting):
+                    continue
+                opponent = b_team if same_id(acting, a_team) else a_team
+                action_team_pair[aid] = (acting, opponent)
+
     snap_rows: list[dict] = []
     poly_rows: list[dict] = []
     for ff in mapped:
         action_id = by_uuid[str(ff["event_uuid"])]
+        acting_team, opponent_team = action_team_pair.get(action_id, (ACTING_TEAM_ID, OPPONENT_TEAM_ID))
         players = ff.get("freeze_frame") or []
         locs = [p.get("location") for p in players]
         keep = [i for i, loc in enumerate(locs) if isinstance(loc, list) and len(loc) >= 2]
@@ -278,7 +305,7 @@ def shape_snapshots(
                 snap_rows.append(
                     {
                         "action_id": action_id,
-                        "team_id": ACTING_TEAM_ID if bool(row.get("teammate")) else OPPONENT_TEAM_ID,
+                        "team_id": acting_team if bool(row.get("teammate")) else opponent_team,
                         "is_goalkeeper": bool(row.get("keeper")),
                         "x": float(x),
                         "y": float(y),
