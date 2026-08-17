@@ -1,0 +1,14 @@
+{
+  "generation": "1e00905b42b046e0",
+  "n_attempted": 108,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "run_commit": "aa340176494f2fcf29e99ea7706ef3742766c4fc",
+  "run_tree_dirty": false,
+  "platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
+  "machine": "aarch64",
+  "n_rows": 6865,
+  "offpitch_rate": 0.0,
+  "out_of_region_goalkick_rate": 0.0,
+  "raw_native_goalkick_out_of_region_rate": 0.5021026072329688
+}

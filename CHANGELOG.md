@@ -5,6 +5,55 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.83.0] — 2026-08-17
+
+The keeper-box geometry & detection-quality cycle: three independent pining-sourced passes against
+one clean commit (`aa34017`), all artifacts stamped `run_commit aa34017`, `run_tree_dirty false`.
+
+### Validated — SkillCorner keeper-origin resolver on the full pining corpus (PR-S152, ADR-024 amendment)
+
+`scripts/validate_skillcorner_keeper_origin.py` confirms the shipped ADR-024 resolver on the **full
+108-match SkillCorner pining corpus** (6,865 GK-distribution rows; `docs/research/skillcorner_keeper_origin/`),
+closing the rate-gate follow-up ADR-024's 4.37.0 amendment deferred. Two **structural** CI rate-gates
+(`tests/scripts/test_skillcorner_rate_gates_structural.py`, all legs): `offpitch_rate` and the gated
+`out_of_region_goalkick_rate`, each computed/finite/under-a-loose-ceiling plus a both-sides mutation.
+Corpus baseline: gated out-of-region **0.0** (~100 % own-box) vs a raw diagnostic **0.502** (the
+broadcast-ball artifact the resolver corrects). The driver computes `gr_x = origin_x` (action-LTR,
+defended goal at x=0), **not** via the frame goal map — an orientation bug caught on real data (the
+frame-goal-map form scored 28.6 % own-box vs the correct 100 %); the fixture now carries an away-team
+goal-kick + a non-vacuity guard.
+
+### Measured — the gr_x behind-line clamp is immaterial; parked (PR-S152, ADR-061)
+
+`scripts/measure_box_constant_delta.py` gains a `training_flip` block (basis A) measuring what a
+`gr_x >= 0` clamp does to the actual training examples on the full 179-match corpus
+(`docs/research/box_constant_delta/`). Ghost `attackers_in_box` changes **0.213 %**, xcross
+`box_off_def_ratio` **0.193 %** — immaterial, so the clamp is **not** shipped (doc-only/parked, ADR-061).
+26.8 % of the behind-line box points are > 2 m off-pitch (artifacts) → recorded as a data-quality
+(D-data) observation (ADR-061 / `docs/research/box_constant_delta/`), not a geometry clamp. The driver adopts the ADR-052 `for_each` shard seam (resumable per-match shards).
+
+### Recommended — TF-24 Stage-2 tracking defaults, within noise (PR-S152, ADR-009/ADR-060)
+
+`calibrate_tracking_defaults.py --stage 2` over the full 179-match corpus, 60 trials, holding the
+ADR-060 Stage-1 carrier params (`docs/research/tf24_stage2_refresh/`). Recommendation
+`k3=2.94 / pre_seconds=2.26 / min_displacement_m=4.77` (held-out Brier 0.009553) beats the incumbent
+defaults (0.009608) by 0.000055 — **within every per-provider SE** (0.0003–0.0019). Per ADR-009 the
+harness recommends, never adopts; this result argues against adoption. **No library default change.**
+
+### Added — xCross training-data meta seam (PR-S152)
+
+`prepare_xcross_training_data` / `extract_xcross_features` gain `return_meta` / `return_box_detail`
+(frame-free, additive) so the gr_x measurement sources both decision inputs from a single call. In no
+default xfn list; no retrain.
+
+### Doc — C4 model: pining now serves SB360 (owner-tier)
+
+`docs/c4/architecture.{dsl,html}` — `pining-for-the-data` now advertises SB360 (owner-tier),
+re-rendered with the pinned Graphviz `dot`; harmonized the redundant "StatsBomb SB360" → "SB360".
+
+**Additive across the board — no library behaviour change, no retrain, no re-materialization, no
+public-surface change beyond the two additive `_xcross_attempt` kwargs.**
+
 ## [4.82.0] — 2026-08-15
 
 ### Hardened — SB360 snapshot direction convention: named, tested, and correctly documented (PR-S151)

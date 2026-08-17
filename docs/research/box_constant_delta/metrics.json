@@ -5,6 +5,53 @@
   "n_flipped_both": 3,
   "n_rows": 401908642,
   "n_behind_line": 340261,
-  "run_commit": "968f81929ecfc1600f97f3485068812afe0a1de2",
+  "training_flip": {
+    "ghost": {
+      "n_examples": 1775229,
+      "n_changed": 3784,
+      "n_rows_with_behind_line": 3784,
+      "n_behind_line": 4032,
+      "n_real_near_line": 2951,
+      "n_offpitch": 1081,
+      "n_matches": 179,
+      "changed_fraction": 0.0021315559851714906,
+      "train_behind_line_base_rate": 0.0021315559851714906,
+      "real_near_line_fraction": 0.7318948412698413,
+      "offpitch_fraction": 0.2681051587301587,
+      "dist_to_goal_hist": [
+        1837,
+        1104,
+        1004,
+        78,
+        9
+      ]
+    },
+    "xcross": {
+      "n_examples": 1209332,
+      "n_changed": 2330,
+      "n_rows_with_behind_line": 2344,
+      "n_behind_line": 2453,
+      "n_real_near_line": 2006,
+      "n_offpitch": 447,
+      "n_matches": 179,
+      "changed_fraction": 0.001926683491382019,
+      "train_behind_line_base_rate": 0.0019382601303860312,
+      "real_near_line_fraction": 0.817774154097024,
+      "offpitch_fraction": 0.18222584590297594,
+      "dist_to_goal_hist": [
+        1261,
+        743,
+        435,
+        14,
+        0
+      ]
+    }
+  },
+  "off_pitch_margin_m": 2.0,
+  "generation": "5f84f46aa36d4fe5",
+  "n_attempted": 179,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "run_commit": "aa340176494f2fcf29e99ea7706ef3742766c4fc",
   "run_tree_dirty": false
 }

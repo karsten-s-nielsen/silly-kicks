@@ -157,4 +157,8 @@ def test_main_emits_the_training_flip_decision_inputs(tmp_path, monkeypatch):
     assert ghost["n_behind_line"] == 2  # a10 behind-line in the 2 home-GK examples
     assert ghost["changed_fraction"] > 0.0
     assert metrics["off_pitch_margin_m"] == 2.0
-    assert metrics["run_tree_dirty"] is True  # --allow-dirty stamps the truth
+    # main() stamps the REAL git state, not a fixed value: `--allow-dirty` PERMITS a dirty tree, it
+    # does not fabricate dirtiness. The value tracks the live checkout (clean on CI -> False, dirty in
+    # dev -> True), so assert the field is stamped as a bool rather than a tree-state-dependent value.
+    assert isinstance(metrics["run_tree_dirty"], bool)
+    assert metrics["run_commit"]  # provenance stamped (real SHA on a clean tree, "unknown" only if git absent)
