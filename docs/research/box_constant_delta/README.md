@@ -1,9 +1,12 @@
 # Ghost box-constant unification — measured delta (D2)
 
 `metrics.json` in this directory. Produced by `scripts/measure_box_constant_delta.py` at
-`run_commit 968f819`, `run_tree_dirty false`, over the full 179-match pining corpus
+`run_commit aa34017`, `run_tree_dirty false`, over the full 179-match pining corpus
 (108 skillcorner + 64 gradientsports + 7 idsse), materialized at `run_commit 8d37540` with parity
-asserted against the established `_loader_pining_to_cache.py` output for match 1886347.
+asserted against the established `_loader_pining_to_cache.py` output for match 1886347. The geometry
+counts below are **byte-identical** to the prior `968f819` run (the `classify_flips` measurement did
+not change); this refresh adds the Phase-B **`training_flip`** block (basis A — see the section below)
+and re-stamps provenance at commit-1 of the keeper-box cycle.
 
 ## The count, and the ship claim it selects
 
@@ -60,3 +63,27 @@ a geometry bug.
 declares no new constant and the probe frame carries no behind-the-line player, so
 `_feature_contract_block()` is byte-identical with and without the clamp. The discipline is manual;
 this note is the record.
+
+## Phase B — the training-feature-delta under a `gr_x >= 0` clamp (basis A)
+
+The D6 count above is over *frame rows*; the ship-relevant question is what the clamp does to the
+actual **training examples** each model sees. `training_flip` in `metrics.json` recomputes the box
+feature under the shipped predicate and under a scoped `gr_x >= 0` clamp, per model, on the same
+179-match corpus (`run_commit aa34017`, clean):
+
+| model | box feature | `changed_fraction` | changed / examples | off-pitch fraction |
+|---|---|---:|---:|---:|
+| ghost | `attackers_in_box` (count) | **0.213 %** | 3,784 / 1,775,229 | **0.268** |
+| xcross | `box_off_def_ratio` (feature #6) | **0.193 %** | 2,330 / 1,209,332 | — |
+
+**Decision (basis A): the clamp is immaterial → NOT shipped, doc-only/parked.** It changes ~0.2 % of
+training examples corpus-wide (consistent with, and slightly above, the 2-match pre-commit probe's
+0.12 % / 0.06 %). Per the D6 revisit rule, that alone does not warrant a two-model re-fit + republish.
+
+**But 26.8 % of the ghost behind-line box points sit > 2 m off-pitch** (`off_pitch_margin_m = 2.0`) —
+they are the broadcast/detection artifacts `_loader_pining` already warns about, not real keepers
+behind their line. This is the **D-data** signal: a clamp would partly paper over an upstream
+data-quality issue rather than fix a geometry bug (the D6 note (b) anticipated exactly this). Recorded
+as a data-quality observation, not a shipped change — the honest split is ~73 % near-line (plausibly
+real) / ~27 % off-pitch (artifact), which argues for cleaning the ingestion, not clamping the predicate.
+

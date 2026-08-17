@@ -1,6 +1,6 @@
 # ADR-024: xT-GK (Eyestone) — pure parametric GK-distribution-value feature
 
-**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4; amended 2026-06-27 — PEV/DZV fidelity fix, Eyestone Q1–Q3, 4.35.0, PR-S100; amended 2026-06-29 — resolved-coordinate audit columns, 4.36.0, PR-S101; amended 2026-06-30 — SkillCorner keeper-origin resolution / broadcast-tracking domain fix, 4.37.0, PR-S104)
+**Status:** Accepted (2026-06-08; amended 2026-06-09 — goal-kick coverage + SkillCorner completion/variant family, both folded into 4.21.0; amended 2026-06-10 — per-type base-rate serve switch, SK-91, 4.21.4; amended 2026-06-27 — PEV/DZV fidelity fix, Eyestone Q1–Q3, 4.35.0, PR-S100; amended 2026-06-29 — resolved-coordinate audit columns, 4.36.0, PR-S101; amended 2026-06-30 — SkillCorner keeper-origin resolution / broadcast-tracking domain fix, 4.37.0, PR-S104; amended 2026-08-17 — real-data rate-gate validation + the `gr_x = origin_x` action-LTR convention, 4.83.0, PR-S152)
 **Deciders:** Karsten (with Claude); collaborator Jeffrey Eyestone (metric author)
 **Related:** ADR-005 (tracking feature surfaces), ADR-019 (id-dtype contract), ADR-020 (frame-aware xfns frame-id resolution), ADR-021 (pluggable xT), ADR-011 (trained-model lifecycle — explicitly NOT applicable here)
 
@@ -364,6 +364,31 @@ the lakehouse's `unresolved`→NULL render applies to far fewer rows). Full-trac
 bound (validate-then-maybe); the `_tracking_gk_xy_detected` window perf (measure-before-optimize). C4 count
 unchanged (28). **Out of scope (lakehouse L4):** the mart `xt_gk_origin_source` enum, `unresolved`→NULL render,
 `access_tier`, and the `fct_tracking_frames` re-point.
+
+## Amendment (4.83.0, 2026-08-17, PR-S152) — real-data rate-gate validation + `gr_x = origin_x`
+
+The 4.37.0 amendment shipped the keeper-origin resolver and **deferred** "both CI rate-gate thresholds
+(calibrate from the measured bronze + corpus rates on the pining corpus)". This amendment closes that
+follow-up: `scripts/validate_skillcorner_keeper_origin.py` validates the shipped resolver on the **full
+108-match SkillCorner pining corpus** (`docs/research/skillcorner_keeper_origin/`, `run_commit aa34017`,
+clean) and lands two **structural** CI rate-gates (`tests/scripts/test_skillcorner_rate_gates_structural.py`),
+each asserting computed / finite / under-a-loose-ceiling plus a both-sides mutation.
+
+**Corpus baseline (owner-run `@e2e` data-contract).** `offpitch_rate = 0.000`;
+`out_of_region_goalkick_rate` (gated, on the shipped per-provider distrust) `= 0.000` — the ADR-024
+"~100 % own-box" acceptance, corpus-wide; `raw_native_goalkick_out_of_region_rate` (diagnostic, distrust
+off) `= 0.502` — half of SkillCorner's native goal-kick origins are the broadcast-ball artifact, all
+corrected. The before/after split (raw 50.2 % → gated 0.0) is the whole justification for
+`native_origin_is_trusted("skillcorner") == False`.
+
+**The `gr_x = origin_x` convention.** `resolve_gk_geometry` emits origins in the SPADL **action-LTR**
+frame (acting team attacks x=105, DEFENDS x=0), so the goal-relative x of a GK-distribution origin **is
+`origin_x`** — the validation driver does NOT route it through `resolve_defended_goals` (a
+home-attacks-right *frame* quantity). For an away-team action the two frames are 105 m apart, so a
+frame-goal-map `gr_x` flips to ~100 and every away goal-kick reads out-of-box (the ADR-028 trap). This
+was caught **on real data** (the frame-goal-map form scored 28.6 % own-box vs the correct 100 %); the
+committed synthetic fixture is single-team-vacuous for it, so it now carries an away-team goal-kick plus
+a non-vacuity guard. Additive — no library behaviour change, no retrain.
 
 ## References
 

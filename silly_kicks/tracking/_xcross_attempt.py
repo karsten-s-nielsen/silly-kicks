@@ -13,7 +13,7 @@ import json
 import math
 import warnings
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 import numpy as np
 import pandas as pd
@@ -149,6 +149,32 @@ def _dominant_region_area(carrier_xy, all_xy, *, res: float = 3.0) -> float:
     return frac * _geo.PITCH_LENGTH * _geo.PITCH_WIDTH
 
 
+@overload
+def extract_xcross_features(
+    frame_data: pd.DataFrame,
+    *,
+    gk_team_id,
+    goal_x: float,
+    carrier_player_id,
+    feature_set: XCrossFeatureSet = ...,
+    score_differential: float = ...,
+    return_box_detail: Literal[False] = ...,
+) -> pd.DataFrame: ...
+
+
+@overload
+def extract_xcross_features(
+    frame_data: pd.DataFrame,
+    *,
+    gk_team_id,
+    goal_x: float,
+    carrier_player_id,
+    feature_set: XCrossFeatureSet = ...,
+    score_differential: float = ...,
+    return_box_detail: Literal[True],
+) -> tuple[pd.DataFrame, dict]: ...
+
+
 def extract_xcross_features(
     frame_data: pd.DataFrame,
     *,
@@ -157,8 +183,14 @@ def extract_xcross_features(
     carrier_player_id,
     feature_set: XCrossFeatureSet = "faithful",
     score_differential: float = np.nan,
-) -> pd.DataFrame:
+    return_box_detail: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """Extract the faithful xCross feature row for a single (game, period, frame) snapshot.
+
+    ``return_box_detail=True`` (default False, so every existing caller and the serve path are
+    byte-identical) additionally returns the behind-line box detail used by the keeper-box gr_x
+    measurement -- computed from the SAME ``in_box``/``gr_x``/``team`` arrays that build
+    ``box_off_def_ratio``, so the descriptive split cannot drift from the feature it explains.
 
     All spatial features are in goal-relative coordinates (attacked goal at gr_x = 0). The GK block
     is the contiguous tail (``XCROSS_GK_BLOCK``). ``score_differential`` is supplied by the caller
@@ -189,6 +221,14 @@ def extract_xcross_features(
     y = np.array([_geo.to_goal_relative_y(v, goal_x=goal_x) for v in f["y"].to_numpy(dtype=float)])
 
     out: dict[str, float] = {name: np.nan for name in XCROSS_FEATURE_NAMES_FAITHFUL}
+    box_detail: dict = {
+        "n_off": 0,
+        "n_def": 0,
+        "n_off_behind": 0,
+        "n_def_behind": 0,
+        "box_off_def_ratio_clamped": np.nan,
+        "behind_line_box_gr_x": np.array([], dtype=float),
+    }
 
     # Ball (ball-anchored)
     if is_ball.any():
@@ -252,9 +292,26 @@ def extract_xcross_features(
     in_box = _geo.in_penalty_area_goal_relative_array(gr_x, y) & ~is_ball
     if carrier_mask.any():
         carrier_team = team[carrier_mask][0]
-        n_off = int(((team == carrier_team) & in_box & ~is_gk).sum())
-        n_def = int(((team != carrier_team) & in_box & ~is_gk).sum())
+        off_in_box = (team == carrier_team) & in_box & ~is_gk
+        def_in_box = (team != carrier_team) & in_box & ~is_gk
+        n_off = int(off_in_box.sum())
+        n_def = int(def_in_box.sum())
         out["box_off_def_ratio"] = float(n_off / n_def) if n_def > 0 else float(n_off)
+        if return_box_detail:
+            # The clamp (gr_x >= 0) removes exactly the behind-line box players from both counts,
+            # so the clamped ratio is recomputed here from the SAME masks -- no second extraction.
+            off_behind = off_in_box & (gr_x < 0.0)
+            def_behind = def_in_box & (gr_x < 0.0)
+            n_off_b, n_def_b = int(off_behind.sum()), int(def_behind.sum())
+            c_off, c_def = n_off - n_off_b, n_def - n_def_b
+            box_detail = {
+                "n_off": n_off,
+                "n_def": n_def,
+                "n_off_behind": n_off_b,
+                "n_def_behind": n_def_b,
+                "box_off_def_ratio_clamped": float(c_off / c_def) if c_def > 0 else float(c_off),
+                "behind_line_box_gr_x": gr_x[off_behind | def_behind],
+            }
 
     # #1 score differential (passed in; NaN at serve unless a score lookup supplied it)
     out["score_differential"] = (
@@ -270,7 +327,8 @@ def extract_xcross_features(
     period = int(f["period_id"].iloc[0])
     out["ten_minute_warning"] = 1 if period in (1, 2) and t >= 35 * 60 else 0
 
-    return pd.DataFrame([out], columns=XCROSS_FEATURE_NAMES_FAITHFUL)
+    features = pd.DataFrame([out], columns=XCROSS_FEATURE_NAMES_FAITHFUL)
+    return (features, box_detail) if return_box_detail else features
 
 
 def build_xcross_labels(
@@ -306,6 +364,38 @@ def _in_wide_area(ball_x: float, ball_y: float, goal_x: float, advance_m: float)
     return wide and advanced
 
 
+@overload
+def prepare_xcross_training_data(
+    frames: pd.DataFrame,
+    actions: pd.DataFrame,
+    *,
+    home_team_id,
+    feature_set: XCrossFeatureSet = ...,
+    horizon_seconds: float = ...,
+    wide_area_only: bool = ...,
+    advance_m: float = ...,
+    cross_types: tuple[str, ...] = ...,
+    carrier_params: dict | None = ...,
+    return_meta: Literal[False] = ...,
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]: ...
+
+
+@overload
+def prepare_xcross_training_data(
+    frames: pd.DataFrame,
+    actions: pd.DataFrame,
+    *,
+    home_team_id,
+    feature_set: XCrossFeatureSet = ...,
+    horizon_seconds: float = ...,
+    wide_area_only: bool = ...,
+    advance_m: float = ...,
+    cross_types: tuple[str, ...] = ...,
+    carrier_params: dict | None = ...,
+    return_meta: Literal[True],
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]: ...
+
+
 def prepare_xcross_training_data(
     frames: pd.DataFrame,
     actions: pd.DataFrame,
@@ -317,9 +407,16 @@ def prepare_xcross_training_data(
     advance_m: float = _ADVANCE_M,
     cross_types: tuple[str, ...] = _DEFAULT_CROSS_TYPES,
     carrier_params: dict | None = None,
-) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    return_meta: bool = False,
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray] | tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]:
     """Return (features, labels, groups=game_id) for one match. Shared train/serve extractor =
-    anti-skew guarantee. ``home_team_id`` is USED to sign score_differential (PA-H1)."""
+    anti-skew guarantee. ``home_team_id`` is USED to sign score_differential (PA-H1).
+
+    ``return_meta=True`` additionally returns a per-example meta frame (row-aligned with features,
+    ghost-verbatim contract) carrying the behind-line box detail for the keeper-box gr_x decision:
+    ``n_off``/``n_def``/``n_off_behind``/``n_def_behind``, ``box_off_def_ratio_clamped`` (the ratio
+    with behind-line box players removed), and ``behind_line_box_gr_x``. Default False leaves the
+    training path byte-identical."""
     # PA-H1: confounder #1 score_differential -- reuse ghost-GK's _build_score_lookup (local import
     # keeps `import _xcross_attempt` light + avoids pulling the ghost-GK model at module load).
     # The callback is _score(game_id, time) -> home_score - away_score (negate for away possessor).
@@ -334,6 +431,7 @@ def prepare_xcross_training_data(
 
     feat_rows: list[pd.DataFrame] = []
     frame_index_rows: list[dict] = []
+    meta_details: list[dict] = []
     coverage = {"in_domain": 0, "carrier_resolved": 0}  # L-2 carrier-coverage log
     for (gid, pid, fid), grp in poss.groupby(["game_id", "period_id", "frame_id"], sort=False):
         if has_ball_state:
@@ -372,16 +470,29 @@ def prepare_xcross_training_data(
             # ADR-019: a naive str()==str() renders a float-backed id as "5.0" against a
             # scalar "5", so the compare is ALWAYS False and every row's sign flips.
             sd = raw if same_id(poss_team, home_team_id) else -raw
-        feat_rows.append(
-            extract_xcross_features(
+        if return_meta:
+            _feat, _detail = extract_xcross_features(
                 grp,
                 gk_team_id=defending[0],
                 goal_x=goal_x,
                 carrier_player_id=carrier_pid,
                 feature_set=feature_set,
                 score_differential=sd,
+                return_box_detail=True,
             )
-        )
+            feat_rows.append(_feat)
+            meta_details.append(_detail)
+        else:
+            feat_rows.append(
+                extract_xcross_features(
+                    grp,
+                    gk_team_id=defending[0],
+                    goal_x=goal_x,
+                    carrier_player_id=carrier_pid,
+                    feature_set=feature_set,
+                    score_differential=sd,
+                )
+            )
         frame_index_rows.append(
             dict(
                 game_id=gid,
@@ -405,12 +516,20 @@ def prepare_xcross_training_data(
 
     if not feat_rows:
         empty = pd.DataFrame(columns=XCROSS_FEATURE_NAMES_FAITHFUL)
+        if return_meta:
+            return empty, np.array([], dtype=int), np.array([], dtype=object), pd.DataFrame()
         return empty, np.array([], dtype=int), np.array([], dtype=object)
 
     features = pd.concat(feat_rows, ignore_index=True)
     frame_index = pd.DataFrame(frame_index_rows)  # carries team_in_possession (matches label helper)
     y = np.asarray(build_xcross_labels(frame_index, actions, horizon_seconds=horizon_seconds, cross_types=cross_types))
     groups = frame_index["game_id"].to_numpy()
+    if return_meta:
+        meta = frame_index.copy()
+        for _k in ("n_off", "n_def", "n_off_behind", "n_def_behind", "box_off_def_ratio_clamped"):
+            meta[_k] = [d[_k] for d in meta_details]
+        meta["behind_line_box_gr_x"] = [d["behind_line_box_gr_x"] for d in meta_details]
+        return features, y, groups, meta
     return features, y, groups
 
 
