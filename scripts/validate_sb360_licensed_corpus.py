@@ -233,8 +233,21 @@ def main(argv=None) -> None:
     )
     args.out.mkdir(parents=True, exist_ok=True)
     reconcile(res.shard_dir, args.out / "coverage.parquet", tag=args.tag)
+    # Stamp the CANONICAL research-artifact provenance (ADR-037/ADR-056): `run_commit` +
+    # `run_tree_dirty` (+ `run_tree_state`), NOT git_provenance()'s raw `commit`/`dirty` keys -- the
+    # `test_artifact_provenance_output` gate reads `run_commit`/`run_tree_dirty` by name. Matches the
+    # convention in build_gkdv_arm_values.py.
     (args.out / f"manifest_{args.tag}.json").write_text(
-        json.dumps({**res.manifest(), **prov}, indent=2), encoding="utf-8"
+        json.dumps(
+            {
+                **res.manifest(),
+                "run_commit": prov["commit"],
+                "run_tree_dirty": prov["dirty"],
+                "run_tree_state": prov["tree_state"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
     )
     print(
         f"attempted={res.attempted} processed={res.attempted - res.skipped - res.failed} "

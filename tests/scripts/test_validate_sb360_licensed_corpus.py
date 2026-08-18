@@ -27,13 +27,28 @@ def test_shards_go_to_gitignored_root_not_docs_research(tmp_path):
     assert (out / "manifest_all.json").exists(), "manifest not written"
 
 
-def test_manifest_carries_provenance(tmp_path):
+def test_manifest_carries_provenance(tmp_path, monkeypatch):
+    # Force a DIRTY provenance so the "--allow-dirty records the fact, never launders it" property is
+    # tested DETERMINISTICALLY -- independent of the ambient checkout, which is clean on CI (where a
+    # `dirty is True` assertion off the real tree would fail) and often dirty in dev.
+    monkeypatch.setattr(
+        drv,
+        "git_provenance",
+        lambda: {
+            "commit": "deadbeefcafe",
+            "tree_state": "dirty",
+            "dirty": True,
+            "dirty_files": ["x.py"],
+            "platform": "test",
+            "machine": "test",
+        },
+    )
     out = tmp_path / "out"
     drv.main(["--shard-root", str(tmp_path / "s"), "--out", str(out), "--fixture-only", "--allow-dirty"])
     manifest = json.loads((out / "manifest_all.json").read_text())
-    # git_provenance() keys are stamped into the artifact (commit + the dirty boolean).
-    assert "commit" in manifest
-    assert manifest.get("dirty") is True  # --allow-dirty run records the fact, never launders it
+    # Canonical research-artifact provenance (ADR-037/ADR-056): run_commit + run_tree_dirty by name.
+    assert manifest.get("run_commit") == "deadbeefcafe"
+    assert manifest.get("run_tree_dirty") is True  # --allow-dirty records the fact, never launders it
 
 
 def test_measure_match_tidy_schema_and_kinds():
