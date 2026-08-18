@@ -140,7 +140,15 @@ _entry(
         "gk_closing_time_mean_s__six_yard_box",
     ),
     velocity={
-        "gk_pitch_control_share_weighted": AxisVerdict("all_nan", "honest_nan"),
+        "gk_pitch_control_share_weighted": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=(
+                "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than the "
+                "velocity-informed one, but a coherent quantity rather than an invented one. A consumer should "
+                "know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+            ),
+        ),
         "gk_reachable_area_m2": AxisVerdict("all_nan", "honest_nan"),
         "gk_closing_time_min_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
         "gk_closing_time_mean_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
@@ -155,7 +163,7 @@ _entry(
                     "measure in EITHER leg. Recorded as unexercised because the vocabulary admits nothing else "
                     "from no_signal -- but the collapse IS the visibility finding: the column hard-depends on the "
                     "keeper being in the freeze-frame, which for SB360 means in the broadcast camera's view. "
-                    "[measured cause=n/a]"
+                    "[measured cause=velocity]"
                 ),
             ),
             "gk_reachable_area_m2": AxisVerdict(
@@ -193,26 +201,42 @@ _entry(
             ),
         },
         "defender_absent": {
-            "gk_pitch_control_share_weighted": AxisVerdict("all_nan", "honest_nan"),
+            "gk_pitch_control_share_weighted": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
             "gk_reachable_area_m2": AxisVerdict("all_nan", "honest_nan"),
             "gk_closing_time_min_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
             "gk_closing_time_mean_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
         },
         "gk_one_end": {
-            "gk_pitch_control_share_weighted": AxisVerdict("all_nan", "honest_nan"),
+            "gk_pitch_control_share_weighted": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
             "gk_reachable_area_m2": AxisVerdict("all_nan", "honest_nan"),
             "gk_closing_time_min_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
             "gk_closing_time_mean_s__six_yard_box": AxisVerdict("all_nan", "honest_nan"),
         },
     },
     applicability={
-        "gk_pitch_control_share_weighted": "no_support",
+        "gk_pitch_control_share_weighted": "support_data_defined",
         "gk_reachable_area_m2": "no_support",
         "gk_closing_time_min_s__six_yard_box": "no_support",
         "gk_closing_time_mean_s__six_yard_box": "no_support",
     },
     applicability_deltas={
-        "gk_pitch_control_share_weighted": {"extreme": 0.0, "near": 0.0},
+        "gk_pitch_control_share_weighted": {"extreme": 1.139729816079793e-08, "near": 0.006220818992856925},
         "gk_reachable_area_m2": {"extreme": 0.0, "near": 0.0},
         "gk_closing_time_min_s__six_yard_box": {"extreme": 0.0, "near": 0.0},
         "gk_closing_time_mean_s__six_yard_box": {"extreme": 0.0, "near": 0.0},

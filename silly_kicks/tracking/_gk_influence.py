@@ -21,6 +21,7 @@ from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking._gk_resolve import GoalEndUnresolvedError, GoalMap
 
 from ._defensive_line import select_back_line_players
+from ._velocity_availability import velocity_unavailable_by_design, zero_velocity_if_unavailable
 from .pitch_control import PitchControlCache, PitchControlParams, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
@@ -318,6 +319,16 @@ def compute_gk_influence(
 
     See NOTICE for full bibliographic citations.
     """
+    # ADR-063: a declared-velocity-less provider (SB360 freeze frames) gets the zero-velocity
+    # positional model; a frame merely missing vx/vy (a forgotten derive_velocities()) fails loud
+    # here. The Tier-2 kinematic outputs (reachable area, closing time) are compute_tti-monotonic in
+    # the along-target velocity component, so at zero velocity they are systematically BIASED
+    # estimates of a physical fact -- SUPPRESSED to NaN below, the frame-level
+    # validate_velocity_regime being the signal (PREFERRED D1). Only the model-relative Tier-1
+    # pitch-control share is surfaced.
+    frame = zero_velocity_if_unavailable(frame, method=method)
+    _velocity_less = velocity_unavailable_by_design(frame)
+
     # --- Validate GK presence ---
     players = frame[~frame["is_ball"].astype(bool)]
     players = players.dropna(subset=["x", "y"])
@@ -466,9 +477,13 @@ def compute_gk_influence(
     else:
         unique_cells = tti_gk <= tau_seconds
 
-    reachable_area_m2 = float(unique_cells.sum() * cell_area)
+    # Tier-2 SUPPRESSION (ADR-063 PREFERRED D1): on a declared-velocity-less frame the zero-
+    # velocity reachable area is a systematically biased physical estimate, withheld as NaN.
+    reachable_area_m2 = float("nan") if _velocity_less else float(unique_cells.sum() * cell_area)
 
     # --- Primitive (c): zone closing times ---
+    # The zone loop still runs on the velocity-less branch so the zone-keyed COLUMNS exist (as NaN)
+    # rather than being absent -- a consumer sees an honest NaN, not a missing column.
     closing_times: dict[str, ZoneClosingTime] = {}
     for zone in zones:
         zone_tti = compute_tti(
@@ -479,8 +494,8 @@ def compute_gk_influence(
             gk_max_acceleration,
         )[0]  # (n_zone_points,)
         closing_times[zone.name] = ZoneClosingTime(
-            min_s=float(zone_tti.min()),
-            mean_s=float(zone_tti.mean()),
+            min_s=float("nan") if _velocity_less else float(zone_tti.min()),
+            mean_s=float("nan") if _velocity_less else float(zone_tti.mean()),
         )
 
     return GkInfluence(

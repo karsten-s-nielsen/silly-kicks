@@ -36,11 +36,20 @@ PROVENANCE_LIKE = {
 # Pitch control evaluated at zero velocity is a well-defined POSITIONAL model: weaker than the
 # velocity-informed one, but a coherent quantity rather than a fabricated one. The spec names
 # this case explicitly as the reason `differs_by_design` exists.
+#
+# ADR-063 added the four velocity-requiring pitch-control aggregators below to the zero-velocity
+# lift; their model-relative (Tier-1) columns now compute the positional model on a declared-
+# velocity-less freeze-frame and legitimately DIFFER from the velocity-informed leg -- exactly
+# the `positional_pc` case. (Their physical-quantity Tier-2 columns -- reachable area, closing
+# time -- are suppressed to NaN and read `all_nan` -> `honest_nan` via AUTO, never reaching here.)
 PITCH_CONTROL_DERIVED = {
     "add_obso",
     "add_pitch_control",
     "add_space_creation",
     "add_pausa",
+    "add_gk_influence",
+    "add_cover_shadows",
+    "add_player_influence",
 }
 
 # --- fitted models ---------------------------------------------------------------------

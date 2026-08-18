@@ -56,6 +56,12 @@ def test_chained_enrichments_no_duplicate_provenance(provider: str) -> None:
     actions = add_pressure_on_actor(actions, frames, methods=("andrienko_oval",))
     _assert_no_suffix_duplicates(actions, "add_pressure_on_actor")
 
+    # add_player_influence / add_space_creation require velocity as of ADR-063 (raw provider
+    # frames carry `speed` but no `vx`/`vy`); derive it so the chain exercises the real path.
+    from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
+
+    frames = derive_velocities(smooth_frames(frames))
+
     # Step 5: add_player_influence => should SKIP provenance
     xt = _make_xt()
     home = actions["team_id"].dropna().iloc[0]

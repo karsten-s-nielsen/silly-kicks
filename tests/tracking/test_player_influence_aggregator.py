@@ -22,6 +22,14 @@ def xt_grid():
 @pytest.fixture
 def sportec_data(xt_grid):
     frames = load_provider_frames("sportec")
+    # Derive velocities before a velocity-requiring aggregator (the convention already used by
+    # test_cover_shadows.py). Raw provider frames carry `speed` but no `vx`/`vy`; as of ADR-063
+    # add_player_influence RAISES on velocity-less-undeclared frames rather than degrading to a
+    # (vacuous) all-NaN column, so these tests now exercise a real velocity-bearing computation.
+    from silly_kicks.tracking.preprocess import derive_velocities, smooth_frames
+
+    frames = smooth_frames(frames)
+    frames = derive_velocities(frames)
     actions = synthesize_actions(frames, n_actions=5)
     return actions, frames, xt_grid
 

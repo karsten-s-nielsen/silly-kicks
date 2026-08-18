@@ -23,6 +23,8 @@ import pandas as pd
 
 from silly_kicks.id_compat import ids_match
 
+from ._velocity_availability import zero_velocity_if_unavailable
+
 if TYPE_CHECKING:
     from .pitch_control import PitchControlCache
 
@@ -175,13 +177,13 @@ def compute_space_created(
 
     transition_grid, epv_grid = _get_default_grids(transition_grid, epv_grid)
 
-    # Ensure velocity columns
-    if "vx" not in frame.columns or "vy" not in frame.columns:
-        frame = frame.copy()
-        if "vx" not in frame.columns:
-            frame["vx"] = 0.0
-        if "vy" not in frame.columns:
-            frame["vy"] = 0.0
+    # ADR-063: declared-velocity-less providers (SB360 freeze frames) get the zero-velocity
+    # positional model; a frame merely missing vx/vy (a forgotten derive_velocities()) RAISES --
+    # and the ValueError propagates through add_space_creation, whose per-action loop has no catch,
+    # failing loud on the caller bug (the ADR-043 discipline). This REPLACES the old unconditional
+    # zero-fill, which silently accepted the caller mistake. All three space-creation columns are
+    # model-relative (Tier 1), so none is suppressed.
+    frame = zero_velocity_if_unavailable(frame, method=pitch_control_method)
 
     # Resolve ball position
     if ball_position is None:

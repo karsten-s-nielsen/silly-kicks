@@ -112,18 +112,45 @@ def _plant(tmp_path: pathlib.Path, name: str, source: str) -> pathlib.Path:
     return path
 
 
-def test_the_engine_can_still_convict(tmp_path, consumers) -> None:
-    """PLANTED case against the conviction engine, using a consumer sensitive TODAY.
+def test_no_velocity_consumer_silently_fabricates_ADR063(consumers) -> None:
+    """ADR-063 (4.85.0) CLOSED the silent-fabrication class the SENSITIVE verdict named.
 
-    Deliberately not one of the historical fixtures: their consumer was repaired, so asserting a
-    conviction through it would couple this gate to a defect's continued existence.
+    4.76.0 made only the ghost path REFUSE declared-but-absent velocity; ADR-063 extended the same
+    fail-fast to every pitch-control velocity consumer (gk_influence, cover_shadows, player_influence,
+    space_creation, obso, pausa, pitch_control). So on the absent-vs-present probe NO consumer now
+    computes a DIFFERENT value silently -- every velocity consumer either REFUSES or is genuinely
+    velocity-BLIND. Pinning SENSITIVE empty is the load-bearing property: a consumer regressing back
+    to a silent zero-fill would reappear here, and the control below would then have a sensitive
+    consumer to convict again.
     """
     sensitive = sorted(n for n, d in consumers.items() if d["verdict"] == mod.SENSITIVE)
-    assert sensitive, (
-        "no consumer measured SENSITIVE at all -- the probe failed to perturb anything, and every "
+    assert not sensitive, (
+        f"consumer(s) {sensitive} silently produced a DIFFERENT value on declared-but-absent "
+        f"velocity -- the ADR-053/ADR-063 silent-fabrication class was supposed to be closed. A "
+        f"velocity consumer must REFUSE such input (fail-fast), not zero-fill it quietly."
+    )
+    # Non-vacuity: the probe must have REACHED the velocity consumers (else 'no sensitive' is
+    # meaningless). ADR-063's pitch-control consumers + the pre-existing ghost must all read REFUSES.
+    refusing = {n for n, d in consumers.items() if d["verdict"] == mod.REFUSES}
+    assert {"add_gk_influence", "add_obso", "add_pitch_control", "add_ghost_gk"} <= refusing, (
+        f"expected the pitch-control + ghost consumers to REFUSE, got refusing={sorted(refusing)}"
+    )
+
+
+def test_the_engine_can_still_surface_a_planted_fixture(tmp_path, consumers) -> None:
+    """PLANTED case against the detection engine, using a consumer REFUSING today.
+
+    ADR-063 emptied SENSITIVE, so CONVICTION (a fixture silently scoring on imputed velocity) is
+    unreachable -- the engine now detects the SAME defective shape as ``surfaced_refusing`` (loud, RED
+    at test-time) instead. A control that could never fire is worthless, so this plants against a
+    consumer that REFUSES today and asserts the engine surfaces it rather than clearing it.
+    """
+    refusing = sorted(n for n, d in consumers.items() if d["verdict"] == mod.REFUSES)
+    assert refusing, (
+        "no consumer measured REFUSES -- the probe reached no velocity consumer at all, and every "
         "'cleared' verdict this instrument produces is worthless"
     )
-    aggregator = sensitive[0]
+    aggregator = refusing[0]
     source = (
         f"import pandas as pd\n"
         f"from silly_kicks.tracking import {aggregator}\n"
@@ -135,11 +162,11 @@ def test_the_engine_can_still_convict(tmp_path, consumers) -> None:
 
     assert verdict["claims"] is True
     assert verdict["reaches_consumer"] is True
-    assert verdict["value_changed"] is True
-    assert verdict["convicted"] is True, (
-        f"the engine failed to convict a planted fixture that declares velocity, supplies none, "
-        f"and calls {sensitive[0]!r} -- measured sensitive with delta "
-        f"{consumers[sensitive[0]]['delta']!r}. Any 'no fixtures affected' conclusion from this "
+    # Conviction is (correctly) unreachable now -- no consumer is sensitive.
+    assert verdict["convicted"] is False
+    assert verdict["surfaced_refusing"] is True, (
+        f"the engine failed to SURFACE a planted fixture that declares velocity, supplies none, and "
+        f"calls {aggregator!r} -- measured REFUSES. Any 'no fixtures affected' conclusion from this "
         f"instrument is worthless."
     )
 
@@ -238,11 +265,14 @@ def test_the_two_probe_arms_differ_ONLY_in_the_vector() -> None:
 def test_no_test_fixture_claims_velocity_and_reaches_a_sensitive_consumer(consumers) -> None:
     """STANDING GATE: the audit's conclusion, pinned so it cannot silently stop being true.
 
-    The sweep found 24 files declaring `speed_source="native"`/`"derived"` while supplying no
-    `vx`/`vy`, and **zero** of them reach a consumer whose output moves when the vector is supplied.
-    That is a finding worth keeping, not a one-off report: a fixture added tomorrow with the same
-    shape, calling one of the seven sensitive aggregators, would be asserting on values the
-    extractor could not compute -- the ADR-053/4.76.0 defect, re-created.
+    The sweep found ~24 files declaring `speed_source="native"`/`"derived"` while supplying no
+    `vx`/`vy`, and **zero** of them reach a velocity consumer. That is a finding worth keeping, not a
+    one-off report: a fixture added tomorrow with the same shape, calling one of the eleven velocity
+    consumers, would be asserting on values the extractor could not compute -- the ADR-053/4.76.0
+    defect. Since ADR-063 (4.85.0), those consumers REFUSE such input rather than scoring it
+    silently, so the re-created defect now RED-fails at test-time (`surfaced_refusing`) instead of
+    passing quietly (`convicted`); this gate catches BOTH, or it goes vacuous the moment the last
+    SENSITIVE consumer became a REFUSING one.
 
     Deliberately NOT a locked count of candidates. Pinning "24" would fail on every unrelated test
     file that mentions `speed_source`, training a reader to bump the number without thinking. The
@@ -260,16 +290,19 @@ def test_no_test_fixture_claims_velocity_and_reaches_a_sensitive_consumer(consum
         "gate is passing vacuously."
     )
 
-    convicted = []
+    flagged = []
     for rel in counts["claiming_without_vx"]:
         verdict = mod.classify(repo / rel, consumers)
-        if verdict["convicted"]:
-            convicted.append((verdict["file"], verdict["sensitive_calls"]))
+        # convicted (SENSITIVE, silent) OR surfaced_refusing (REFUSES, RED at test-time): both are
+        # the same defective shape. Post-ADR-063 the first is unreachable, so catching only it would
+        # make this gate vacuous.
+        if verdict["convicted"] or verdict["surfaced_refusing"]:
+            flagged.append((verdict["file"], verdict["sensitive_calls"] or verdict["refusing_calls"]))
 
-    assert not convicted, (
-        f"{len(convicted)} test fixture(s) declare velocity, supply no vx/vy, and call an "
-        f"aggregator measured to CHANGE its output when the vector is supplied:\n"
-        + "\n".join(f"  {f} -> {calls}" for f, calls in convicted)
+    assert not flagged, (
+        f"{len(flagged)} test fixture(s) declare velocity, supply no vx/vy, and call a velocity "
+        f"consumer (which REFUSES such input as of ADR-063, so the fixture RED-fails at test-time):\n"
+        + "\n".join(f"  {f} -> {calls}" for f, calls in flagged)
         + "\nEach is asserting on values the extractor could not compute. Fix the FIXTURE: supply "
         "real vx/vy consistent with the declared speed, or declare speed_source 'unavailable' if "
         "the source genuinely has no temporal history. Re-run "

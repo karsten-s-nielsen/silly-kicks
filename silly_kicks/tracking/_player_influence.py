@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from ._velocity_availability import velocity_unavailable_by_design, zero_velocity_if_unavailable
 from .pitch_control import PitchControlCache, PitchControlParams, PitchControlSurface, SpearmanParams
 from .pitch_control._spearman import compute_tti
 
@@ -96,6 +97,14 @@ def compute_player_influence(
 
     See NOTICE for full bibliographic citations.
     """
+    # ADR-063: a declared-velocity-less provider (SB360 freeze frames) gets the zero-velocity
+    # positional model; a frame merely missing vx/vy (a forgotten derive_velocities()) fails loud.
+    # off_ball_xt (Tier 1, model-relative) is surfaced; the reachable-area outputs (Tier 2) are a
+    # systematically biased physical estimate at zero velocity and are SUPPRESSED to NaN below,
+    # the frame-level validate_velocity_regime being the signal (PREFERRED D1).
+    frame = zero_velocity_if_unavailable(frame, method=method)
+    _velocity_less = velocity_unavailable_by_design(frame)
+
     sp_defaults = SpearmanParams()
     rt = reaction_time if reaction_time is not None else sp_defaults.reaction_time
     ma = max_acceleration if max_acceleration is not None else sp_defaults.max_acceleration
@@ -219,6 +228,8 @@ def compute_player_influence(
         pid = row["player_id"]
         result[pid] = PlayerInfluence(
             off_ball_xt=off_ball_xt_map.get(pid, 0.0),
-            reachable_area_m2=reachable_map.get(pid, 0.0),
+            # Tier-2 suppression (ADR-063 PREFERRED D1): the zero-velocity reachable area is a
+            # biased physical estimate, withheld as NaN on a declared-velocity-less frame.
+            reachable_area_m2=float("nan") if _velocity_less else reachable_map.get(pid, 0.0),
         )
     return result

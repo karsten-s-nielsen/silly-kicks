@@ -2623,19 +2623,18 @@ def pitch_control_at_target(
     if frames is None:
         return pd.Series(np.nan, index=actions.index, name=col_name)
 
+    from ._velocity_availability import zero_velocity_if_unavailable
     from .pitch_control import PitchControlCache
 
     # One cache across all actions (TF-7 shared surface); a caller-supplied
     # cache extends reuse across feature families in a single pass.
     cache = pitch_control_cache if pitch_control_cache is not None else PitchControlCache()
 
-    # Ensure velocity columns exist (fill with zero if missing)
-    if "vx" not in frames.columns or "vy" not in frames.columns:
-        frames = frames.copy()
-        if "vx" not in frames.columns:
-            frames["vx"] = 0.0
-        if "vy" not in frames.columns:
-            frames["vy"] = 0.0
+    # Declared-velocity-less providers (SB360 freeze frames) get the zero-velocity positional
+    # model; a frame merely missing vx/vy (a forgotten derive_velocities()) fails loud. Single-
+    # sourced at the edge (ADR-063) -- this REPLACES the old unconditional zero-fill, which
+    # silently accepted the caller-bug frame.
+    frames = zero_velocity_if_unavailable(frames, method=method)
 
     results = np.full(len(actions), np.nan)
 
@@ -3266,6 +3265,13 @@ def _gk_influence_at_actions(
     if len(frames) == 0:
         return result, pd.DataFrame()
 
+    # ADR-063 edge: declared-velocity-less frames get the zero-velocity model (zero-filled ONCE
+    # here, not per frame); a forgotten derive_velocities() raises LOUD before the per-frame loop,
+    # so the raise is not swallowed by the loop's degrade-to-NaN handler (the ADR-043 discipline).
+    from ._velocity_availability import zero_velocity_if_unavailable
+
+    frames = zero_velocity_if_unavailable(frames, method=method)
+
     if links is not None:
         pointers = links
     else:
@@ -3774,6 +3780,14 @@ def gk_influence_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
 
+        # ADR-063: same contract as add_gk_influence -- zero-fill a declared-velocity-less frame
+        # set ONCE here and raise LOUD on a forgotten derive_velocities() before the per-frame
+        # loop, so the raise is not swallowed by _get_gi's degrade-to-NaN handler. (Tier-2 is
+        # suppressed inside compute_gk_influence, so no transformer-level suppression is needed.)
+        from ._velocity_availability import zero_velocity_if_unavailable
+
+        frames = zero_velocity_if_unavailable(frames, method=method)
+
         # Shared cache across all 3 slots: (period_id, frame_id, team_id) -> GkInfluence
         cache: dict[tuple, _gk_mod.GkInfluence | None] = {}
         # ONCE per match, from the FULL frames: the seam's quantity is the MEAN GK x per
@@ -3951,7 +3965,14 @@ def add_cover_shadows(
     See NOTICE for full bibliographic citations.
     """
     from . import _cover_shadows as _cs_mod
+    from ._velocity_availability import zero_velocity_if_unavailable
     from .pitch_control import PitchControlCache as _PitchControlCache
+
+    # ADR-063 edge: declared-velocity-less frames get the zero-velocity model (zero-filled ONCE
+    # here); a forgotten derive_velocities() raises LOUD before the per-action loop -- UNIFORMLY,
+    # matching the gk/player kernel edges. Without it, a fully-unlinkable match would reach no
+    # per-frame compute and return all-NaN silently on the caller bug instead of raising.
+    frames = zero_velocity_if_unavailable(frames, method=method)
 
     # ONCE per match, from the FULL frames -- never per action, and never per frame.
     _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
@@ -4133,6 +4154,13 @@ def cover_shadow_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
 
+        # ADR-063: same contract as add_cover_shadows -- zero-fill a declared-velocity-less frame
+        # set ONCE here and raise LOUD on a forgotten derive_velocities() before the per-frame
+        # loop, so the raise is not swallowed by _get_cs's degrade-to-NaN handler.
+        from ._velocity_availability import zero_velocity_if_unavailable
+
+        frames = zero_velocity_if_unavailable(frames, method=method)
+
         cache: dict[tuple, _cs_mod._CoverShadowDict | None] = {}
         # ONCE per match, from the FULL frames -- see `add_cover_shadows`.
         _goal_map = goal_map if goal_map is not None else resolve_defended_goals(frames)
@@ -4269,6 +4297,16 @@ def _player_influence_at_actions(
 
     if len(frames) == 0:
         return result, pd.DataFrame()
+
+    # ADR-063 edge: declared-velocity-less frames get the zero-velocity model (zero-filled ONCE
+    # here); a forgotten derive_velocities() raises LOUD before the per-frame loop, so the raise is
+    # not swallowed by the loop's degrade-to-NaN handler (the ADR-043 discipline).
+    from ._velocity_availability import velocity_unavailable_by_design, zero_velocity_if_unavailable
+
+    frames = zero_velocity_if_unavailable(frames, method=method)
+    # Tier-2 (reachable area) is a biased physical estimate at zero velocity -> suppressed to NaN
+    # below (PREFERRED D1). Read the marker AFTER the zero-fill copy, which leaves it in place.
+    _velocity_less = velocity_unavailable_by_design(frames)
 
     # Direction per ACTION from the single orientation authority (ADR-028/041),
     # resolved ONCE at this edge. `compute_player_influence` serves ONE team and
@@ -4426,6 +4464,15 @@ def _player_influence_at_actions(
         if direction_unresolved:
             for _ci in (_ci_xt_team, _ci_xt_opp, _ci_xt_diff):
                 result.iat[i, _ci] = np.nan
+
+    # Tier-2 SUPPRESSION (ADR-063 PREFERRED D1): on a declared-velocity-less frame set the four
+    # reachable-area columns are withheld as NaN. Applied at the ASSEMBLY (not only in
+    # compute_player_influence) because `actor_reachable_area_m2` initialises to 0.0 and stays 0.0
+    # for a GK actor -- who is excluded from the per-player influence dict -- so the per-player NaN
+    # does not reach it. The reason is a whole-frame-set fact -> validate_velocity_regime.
+    if _velocity_less:
+        for _c in ("actor_reachable_area_m2", "reachable_area_team", "reachable_area_opponent", "reachable_area_diff"):
+            result[_c] = np.nan
 
     return result, pointers
 
@@ -4705,6 +4752,15 @@ def player_influence_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
 
+        # ADR-063: same contract as add_player_influence -- zero-fill a declared-velocity-less
+        # frame set ONCE here and raise LOUD on a forgotten derive_velocities() before the
+        # per-frame loop (so _get_pi's degrade-to-NaN handler does not swallow it). Tier-2 is
+        # suppressed at the ASSEMBLY below, mirroring _player_influence_at_actions.
+        from ._velocity_availability import velocity_unavailable_by_design, zero_velocity_if_unavailable
+
+        frames = zero_velocity_if_unavailable(frames, method=method)
+        _velocity_less = velocity_unavailable_by_design(frames)
+
         # Direction keyed the SAME WAY the cache is keyed. Attacking direction is a property of
         # (game, period, team), not of the action, so it is slot-INVARIANT -- which is precisely
         # why the `(period, frame, team)` cache below can be shared across all three slots. A
@@ -4831,6 +4887,21 @@ def player_influence_xfns(
 
             for col in col_names:
                 out[f"{col}_a{i}"] = slot_results[col]
+
+        # Tier-2 SUPPRESSION (ADR-063 PREFERRED D1), mirroring _player_influence_at_actions: on a
+        # declared-velocity-less frame set the reachable-area columns are withheld as NaN across all
+        # three slots. `actor_reachable_area_m2` initialises to 0.0 and stays 0.0 for a GK actor, so
+        # the per-player NaN from compute_player_influence does not reach it -- hence the ASSEMBLY.
+        if _velocity_less:
+            _tier2_cols = (
+                "actor_reachable_area_m2",
+                "reachable_area_team",
+                "reachable_area_opponent",
+                "reachable_area_diff",
+            )
+            for _i in range(3):
+                for _c in _tier2_cols:
+                    out[f"{_c}_a{_i}"] = np.nan
 
         return out
 
@@ -5682,6 +5753,7 @@ def _precompute_obso_lookup(
     Returns dict mapping row position (0-based) to OBSO triplet dict.
     """
     from ._obso import _get_default_grids, compute_pass_obso
+    from ._velocity_availability import zero_velocity_if_unavailable
     from .pitch_control import PitchControlCache as _PitchControlCache
 
     # One cache across all passes so overlapping pass windows reuse surfaces
@@ -5689,13 +5761,14 @@ def _precompute_obso_lookup(
     # feature families in a single enrichment pass.
     cache = pitch_control_cache if pitch_control_cache is not None else _PitchControlCache()
 
-    # Ensure velocity columns
-    if "vx" not in frames.columns or "vy" not in frames.columns:
-        frames = frames.copy()
-        if "vx" not in frames.columns:
-            frames["vx"] = 0.0
-        if "vy" not in frames.columns:
-            frames["vy"] = 0.0
+    # ADR-063: the SINGLE obso velocity seam. Shared by add_obso, the per-Series obso_actual/peak/
+    # optimal (obso_xfns), and add_pausa -> add_obso -> pausa_xfns. A declared-velocity-less frame
+    # set (SB360) gets the zero-velocity model (already the pre-existing behaviour, now principled);
+    # a forgotten derive_velocities() RAISES here, before any per-pass work -- UNIFORMLY across every
+    # obso/pausa public entry -- rather than the old unconditional zero-fill silently accepting it.
+    # REPLACES that loose block. compute_pass_obso's per-window `_ensure_velocity_columns` is then a
+    # no-op on this path (windows are sliced from the already-prepared frames).
+    frames = zero_velocity_if_unavailable(frames, method=pitch_control_method)
 
     # Dup-action_id-safe frame-id resolution by position (ADR: frame-aware xfns resolve
     # frame_id by position, never .at on a non-unique action_id). Here it gates "is this
@@ -6187,7 +6260,14 @@ def add_space_creation(
 
     out = actions.copy()
 
+    from ._velocity_availability import zero_velocity_if_unavailable
     from .pitch_control import PitchControlCache as _PitchControlCache
+
+    # ADR-063 edge: declared-velocity-less frames get the zero-velocity model (zero-filled ONCE
+    # here); a forgotten derive_velocities() raises LOUD before the per-action loop -- UNIFORMLY,
+    # matching the gk/player kernel edges (compute_space_created also guards per-frame for direct
+    # callers, but a fully-unlinkable match must not silently return all-NaN on the caller bug).
+    frames = zero_velocity_if_unavailable(frames, method=pitch_control_method)
 
     # One cache across all actions (TF-7 shared surface); a caller-supplied
     # cache extends reuse across feature families in a single pass.

@@ -5,7 +5,66 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.84.0] — 2026-08-17
+## [4.85.0] — 2026-08-18
+
+Velocity-less-provider position-only lift: the four velocity-requiring pitch-control aggregators
+(`add_gk_influence`, `add_cover_shadows`, `add_player_influence`, `add_space_creation`) now compute the
+zero-velocity positional model on frames that DECLARE velocity structurally unavailable (SB360
+freeze-frames), instead of raising or degrading to NaN — lifting the 13 model-relative (Tier-1)
+columns while keeping the 7 physical-quantity estimates (reachable area, closing time) suppressed to
+NaN and the 20 constitutively-velocity columns honest-NaN. On the SB360 licensed corpus the fully-NaN
+battery-column count drops 40 → ~27. Additive on every velocity-bearing frame → **NO retrain** (a
+velocity-bearing frame's output is byte-identical; the edge helper returns the same object untouched).
+Decision: ADR-063.
+
+### Added — the one edge seam (PR-S154, ADR-063)
+
+- `tracking._velocity_availability.zero_velocity_if_unavailable(frames, *, method="spearman")`: the
+  single, method-aware, fail-fast seam that decides degrade-vs-raise from the `speed_source` marker.
+  vx/vy present → unchanged (same object); ABSENT and DECLARED (`velocity_unavailable_by_design`) → a
+  zero-velocity copy (the classic Spearman reaction-time model, weaker not invented); ABSENT and NOT
+  declared with a velocity-requiring method → RAISES (a forgotten `derive_velocities()` is a caller
+  bug). Policy at the edge; the `compute_pitch_control` dispatch stays a pure engine.
+
+### Changed — the position-only lift (PR-S154, ADR-063)
+
+- The four aggregators call the seam at their pitch-control sites (compute_* + the `_*_at_actions`
+  kernel edges), REPLACING two ad-hoc unconditional `vx/vy=0` blocks (`pitch_control_at_target`,
+  `compute_space_created`) and one silent `return None` (`_compute_cover_shadow_dict`). Tier-2
+  reachable-area/closing-time columns are actively SUPPRESSED to NaN on declared-velocity-less frames
+  (they compute for free via `compute_tti`'s own zero-fill, so keeping them NaN is deliberate); the
+  signal is the frame-level `validate_velocity_regime`, NOT a per-row token (PREFERRED D1 — a constant
+  token is the shape `schema.py:310-312` rejects). D2: the Tier-1/Tier-2 boundary is MEASURED, not
+  asserted — the model-relative share is ~velocity-invariant while reachable area is directionally
+  biased (understatement).
+- ADR-053 SB360 audit re-adjudicated per column: Tier-1 → `differs → differs_by_design` (the
+  positional model), velocity-invariant Tier-1 → `identical → works`, Tier-2 → `all_nan → honest_nan`.
+- The four `*_xfns` opt-in VAEP transformers honour the SAME contract as their `add_*` twins (Tier-1
+  lift, Tier-2 suppression in `player_influence_xfns`, fail-fast raise on forgotten velocity — the
+  per-frame `ValueError` catch no longer swallows it; `space_creation_xfns` already delegated to
+  `add_space_creation`). The edge helper returns an EMPTY frame set unchanged, so VAEP
+  `feature_column_names` introspection (empty-frames) never raises. Byte-identical on velocity-bearing
+  frames → still no retrain.
+
+### Fixed / Breaking (intended) — fail-fast on the caller bug (PR-S154, ADR-063)
+
+- `pitch_control_at_target`/`add_pitch_control` and the four aggregators now RAISE on a frame merely
+  MISSING `vx`/`vy` that is NOT declared velocity-less, instead of silently zero-filling or degrading
+  to an all-NaN column "indistinguishable downstream from legitimately-absent" (the ADR-043
+  discipline). `add_pitch_control` is public (cross-repo Hyrum exposure: the lakehouse d32 consumer).
+- `add_obso`/`add_pausa` (+ `obso_xfns`/`pausa_xfns`) also fail-fast on forgotten velocity — they were
+  never in the "40 fully-NaN" set (they already zero-filled on declared frames), but kept the same
+  loose zero-fill; extended via the single shared `_precompute_obso_lookup` seam (declared behaviour
+  byte-identical → SB360 obso verdict unchanged). `add_pressure_on_actor(method="bekkers_pi")` is
+  deliberately unmodified (opt-in method, not in the default battery).
+- Three in-repo test fixtures that passed raw provider frames (`speed` present, `vx`/`vy` absent) to
+  these aggregators — `test_player_influence_aggregator.py`, `test_provenance_skip_guard.py`,
+  `test_enrichment_nan_safety.py` — were passing VACUOUSLY on all-NaN output; fixed by deriving
+  velocities / supplying the contract columns (the convention `test_cover_shadows.py` and the
+  `add_das` NaN-safety branch already use). The spec's "in-repo blast radius is zero" claim was
+  corrected by executing the full suite.
+
+
 
 SB360 licensed-corpus enablement: load the 30-match licensed StatsBomb 360 corpus (now served by
 pining-for-the-data) through the library, add opt-in visibility-aware companion columns to the three
