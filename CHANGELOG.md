@@ -70,7 +70,11 @@ No retrain — no bundled model consumes SB360 snapshot frames.
   synthetic pair ONLY when the two teams cannot be resolved — no `team_id` column, or not exactly two
   distinct teams). Measured on real match 3986784: `acting_team_attacks_rtl` goes 1795/1795 `<NA>` →
   1795/1795 resolved. Regression-guarded from both sides in `tests/providers/statsbomb/test_parse.py`
-  (real-id resolution + the synthetic fallback + an end-to-end join-resolves test).
+  (real-id resolution + the synthetic fallback + an end-to-end join-resolves test). On the licensed
+  corpus this moves ~35% of the battery's columns from spuriously-NaN to populated. The features that
+  REMAIN NaN on SB360 are velocity-dependent (DAS and the spearman/Fernández-Bornn pitch-control
+  aggregators) — inherent to single freeze-frames with no per-player velocity (ADR-054), not the
+  team-id defect.
 
 ### Notes
 

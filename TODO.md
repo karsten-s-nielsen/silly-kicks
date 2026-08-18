@@ -46,15 +46,6 @@ rejected alternatives) lives in
 Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
 repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 
-- **The `visible_area` CONSUMING seam exists; WIRING it into the count features does not.**
-  4.77.0/ADR-055 shipped the primitives -- `point_observed` (`bool | None`),
-  `region_observed_fraction` (an `(M, 2)` polygon, never a bbox) and `add_visible_area_coverage`
-  -- so the previous framing of this row ("a seam for the DATA but not for CONSUMING it") is
-  discharged. What remains is deliberately NOT done: `defenders_in_triangle_to_goal`,
-  `receiver_zone_density` and `nearest_defender_distance` still treat "nobody there" and "nobody
-  VISIBLE there" as the same observation. Wiring them changes existing values AND decides for the
-  consumer what a partial observation means, which is the ADR-009 line -- so it needs a consumer
-  asking for it, not a library decision.
 - **Four boundary entry points are unaudited**, each with its reason in
   `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
   one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and
