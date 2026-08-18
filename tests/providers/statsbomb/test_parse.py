@@ -58,10 +58,59 @@ def test_is_goalkeeper_comes_from_the_keeper_flag():
     assert snaps["is_goalkeeper"].tolist() == [False, True, True]
 
 
-def test_team_id_is_actor_relative_not_a_real_identity():
-    """SB360 carries no team identity -- only `teammate` relative to the actor."""
-    snaps, _va, _r = shape_snapshots(_frames(), _actions())
+def test_team_id_falls_back_to_actor_relative_when_actions_name_no_teams():
+    """When `actions` carry no resolvable two-team identity, `team_id` is the synthetic
+    actor-relative pair -- SB360 freeze-frames carry no team labels of their own, so with nothing
+    to resolve against the port separates the two sides without naming them."""
+    from silly_kicks.providers.statsbomb import ACTING_TEAM_ID, OPPONENT_TEAM_ID
+
+    snaps, _va, _r = shape_snapshots(_frames(), _actions())  # `_actions()` has no `team_id` column
+    assert set(snaps["team_id"]) == {ACTING_TEAM_ID, OPPONENT_TEAM_ID}
     assert snaps["team_id"].nunique() == 2, "teammate/opponent must separate into two groups"
+
+
+def _actions_two_teams():
+    """Two actions spanning BOTH real match teams -- so the port can resolve the 2-team match.
+    The freeze-frame we shape is uuid-1 (an action by team 5105)."""
+    return pd.DataFrame(
+        {
+            "action_id": [0, 1],
+            "original_event_id": ["uuid-1", "uuid-2"],
+            "team_id": [5105, 5106],
+            "game_id": [1, 1],
+            "period_id": [1, 1],
+            "time_seconds": [10.0, 20.0],
+            "start_x": [60.0, 60.0],
+            "start_y": [34.0, 34.0],
+        }
+    )
+
+
+def test_team_id_resolves_to_real_match_ids_when_actions_name_two_teams():
+    """The bug this fixes: `shape_snapshots` receives `actions`, so the actor's real team (5105
+    here) plus the `teammate` flag plus a 2-team match FULLY DETERMINE each player's real team --
+    deriving it is not fabricating identity. Emitting the synthetic {0,1} instead breaks the
+    action<->frame team join (`acting_team_attacks_rtl`, ADR-028), which silently NaNs every
+    direction-dependent tracking feature on real SB360 data (ADR-051 D3)."""
+    snaps, _va, _r = shape_snapshots(_frames(), _actions_two_teams())
+    # `_FF` is two teammates then one opponent -> acting 5105, 5105, opponent 5106.
+    assert snaps["team_id"].tolist() == [5105, 5105, 5106]
+    assert set(snaps["team_id"]) == {5105, 5106}, "must be the REAL match ids, not synthetic {0,1}"
+
+
+def test_snapshot_frames_join_to_actions_so_direction_resolves():
+    """End-to-end: with real team ids the action<->frame join resolves, so
+    `acting_team_attacks_rtl` returns a real answer (no-flip -- a snapshot is already action-LTR,
+    ADR-028/4.82.0) instead of all-<NA>, which is what let ADR-051 D3 NaN the geometry layer."""
+    from silly_kicks.tracking import snapshot_to_tracking_frames
+    from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
+
+    actions = _actions_two_teams()
+    snaps, _va, _r = shape_snapshots(_frames(), actions)
+    frames, _links = snapshot_to_tracking_frames(snaps, actions)
+    flip = acting_team_attacks_rtl(actions.iloc[[0]], frames)
+    assert flip.notna().all(), "direction is unresolved (<NA>) -- the action<->frame team join failed"
+    assert not bool(flip.iloc[0]), "a snapshot is already action-LTR, so the acting team must not flip"
 
 
 def test_coordinates_are_transformed_to_spadl():

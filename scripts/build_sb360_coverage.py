@@ -27,6 +27,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from scripts._driver import for_each
 from scripts._provenance import git_provenance, require_clean_tree
+from scripts._sb_raw import flatten_events
 from silly_kicks.providers.statsbomb import (
     acting_side_gk_visible,
     defending_gk_visible,
@@ -91,10 +92,6 @@ DEFAULT_SHARD_ROOT = "sb360_coverage_shards"
 # Re-exported from the port so the script and the library cannot disagree about the SB grid.
 SB_PITCH_LENGTH = _sb_coords.SB_FIELD_LENGTH
 SB_PITCH_WIDTH = _sb_coords.SB_FIELD_WIDTH
-
-#: Keys the converter reads from the top level; everything else rides in `extra`.
-#: Mirrors tests/test_xthreat_statsbomb_e2e.py::_adapt.
-_TOP_LEVEL_KEYS = frozenset({"id", "period", "timestamp", "team", "player", "type", "location"})
 
 
 class CompetitionMismatchError(ValueError):
@@ -175,28 +172,6 @@ def _load_catalogue() -> list[dict]:
     return _values(_retry(lambda: sb.competitions(fmt="dict")))
 
 
-def _adapt_events(events: list[dict], match_id: int):
-    """Raw StatsBomb event dicts -> the silly-kicks converter's input contract."""
-    import pandas as pd
-
-    return pd.DataFrame(
-        [
-            {
-                "game_id": match_id,
-                "event_id": e.get("id"),
-                "period_id": e.get("period"),
-                "timestamp": e.get("timestamp"),
-                "team_id": (e.get("team") or {}).get("id"),
-                "player_id": (e.get("player") or {}).get("id"),
-                "type_name": (e.get("type") or {}).get("name"),
-                "location": e.get("location"),
-                "extra": {k: v for k, v in e.items() if k not in _TOP_LEVEL_KEYS},
-            }
-            for e in events
-        ]
-    )
-
-
 def measure_match(match):
     """One match -> tidy per-(SPADL action_type) coverage rows. Rates carry denominators."""
     import pandas as pd
@@ -212,7 +187,7 @@ def measure_match(match):
     # exercises the converter -- the path NWSL data will take -- for the same reason Leg A of
     # the synthetic fixture is built by the real producer.
     events = _values(_retry(lambda: sb.events(match_id=match_id, fmt="dict")))
-    actions, _report = convert_to_actions(_adapt_events(events, match_id), home_team_id)
+    actions, _report = convert_to_actions(flatten_events(events, match_id), home_team_id)
     # SPADL emits `type_id`, NOT `type_name` -- the name is a config-table lookup, and
     # `SPADL_COLUMNS` has no `type_name` at all. The synthetic Layer A fixture carries
     # `type_name` as a CONVENIENCE column alongside the schema, and writing this against that

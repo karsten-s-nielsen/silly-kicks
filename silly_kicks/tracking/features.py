@@ -88,7 +88,11 @@ from ._packing import PackingParams, secured_reception
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
 from ._visibility import (
+    REGION_OBSERVATION_DEGENERATE_REGION,
+    VISIBLE_AREA_UNLINKED,
+    _polygons_by_action,
     add_visible_area_coverage,
+    classify_region_observation,
 )
 from ._warnings import IgnoredSurfaceInputsWarning, SyntheticEPVWarning
 from ._xcross_attempt import xcross_attempt_xfns
@@ -438,6 +442,88 @@ def defenders_in_triangle_to_goal(
     return _kernels._defenders_in_triangle_to_goal(actions["start_x"], actions["start_y"], ctx)
 
 
+#: The three count features whose region-of-interest can be checked against a 360 polygon. Order
+#: fixes the emitted companion-column order. ``actor_speed`` is excluded: it reads a single player,
+#: not a region, so a coverage fraction is meaningless for it.
+_VISIBILITY_COMPANION_FEATURES = (
+    "nearest_defender_distance",
+    "receiver_zone_density",
+    "defenders_in_triangle_to_goal",
+)
+
+
+def _append_visibility_companions(
+    out: pd.DataFrame,
+    actions: pd.DataFrame,
+    ctx,
+    visible_area: pd.DataFrame,
+    *,
+    receiver_zone_radius: float,
+    nearest_dist,
+) -> pd.DataFrame:
+    """Append the six ``<feature>_observed_fraction``/``_observed_source`` companions.
+
+    Additive: called ONLY when ``visible_area`` is supplied, and it touches no primary column.
+    Each source is one of :data:`REGION_OBSERVATION_SOURCE_VALUES` plus ``unlinked`` (an
+    action<->frame fact overlaid here, exactly as the primary ``frame_id`` is NaN for an unlinked
+    action). The NEAREST-DEFENDER region is an inscribed disk of radius = the measured distance, so
+    a NaN distance (no opponent, or unlinked) has no radius -> ``degenerate_region``, never a
+    fabricated fraction.
+
+    Orientation (R2-G): the provider polygon and every region are raw-SPADL in ONE frame -- the
+    kernels do not re-orient (goal fixed at x=105) -- so a caller feeding re-oriented frames would
+    have to re-orient the polygon to match. SB360, the only supplier today, is action-LTR already.
+    """
+    polygons = _polygons_by_action(visible_area)
+    linked = {
+        canonical_id(a)
+        for a, f in zip(ctx.pointers["action_id"], ctx.pointers["frame_id"], strict=False)
+        if pd.notna(f)
+    }
+    sx = actions["start_x"].to_numpy(dtype=float)
+    sy = actions["start_y"].to_numpy(dtype=float)
+    ex = actions["end_x"].to_numpy(dtype=float)
+    ey = actions["end_y"].to_numpy(dtype=float)
+    nd = np.asarray(nearest_dist, dtype=float)
+
+    n = len(actions)
+    frac = {name: np.full(n, np.nan) for name in _VISIBILITY_COMPANION_FEATURES}
+    src: dict[str, list[str]] = {name: [] for name in _VISIBILITY_COMPANION_FEATURES}
+
+    for i, aid in enumerate(actions["action_id"]):
+        if canonical_id(aid) not in linked:
+            for name in _VISIBILITY_COMPANION_FEATURES:
+                src[name].append(VISIBLE_AREA_UNLINKED)
+            continue
+        polygon = polygons.get(canonical_id(aid))  # None -> classify -> no_polygon
+
+        triangle = np.array(
+            [
+                [sx[i], sy[i]],
+                [_kernels._GOAL_X, _kernels._GOAL_LEFT_POST_Y],
+                [_kernels._GOAL_X, _kernels._GOAL_RIGHT_POST_Y],
+            ]
+        )
+        frac["defenders_in_triangle_to_goal"][i], s_tri = classify_region_observation(polygon, triangle)
+        src["defenders_in_triangle_to_goal"].append(s_tri)
+
+        receiver_disk = _kernels._inscribed_disk(ex[i], ey[i], receiver_zone_radius)
+        frac["receiver_zone_density"][i], s_rz = classify_region_observation(polygon, receiver_disk)
+        src["receiver_zone_density"].append(s_rz)
+
+        if not np.isfinite(nd[i]):
+            src["nearest_defender_distance"].append(REGION_OBSERVATION_DEGENERATE_REGION)
+        else:
+            defender_disk = _kernels._inscribed_disk(sx[i], sy[i], nd[i])
+            frac["nearest_defender_distance"][i], s_nd = classify_region_observation(polygon, defender_disk)
+            src["nearest_defender_distance"].append(s_nd)
+
+    for name in _VISIBILITY_COMPANION_FEATURES:
+        out[f"{name}_observed_fraction"] = frac[name]
+        out[f"{name}_observed_source"] = src[name]
+    return out
+
+
 @nan_safe_enrichment
 def add_action_context(
     actions: pd.DataFrame,
@@ -445,6 +531,7 @@ def add_action_context(
     *,
     links: pd.DataFrame | None = None,
     receiver_zone_radius: float = 5.0,
+    visible_area: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with 4 tracking-aware features + 4 linkage-provenance columns.
 
@@ -460,6 +547,15 @@ def add_action_context(
         - time_offset_seconds (float64; NaN if unlinked)
         - link_quality_score (float64; NaN if unlinked)
         - n_candidate_frames (int64)
+
+    When ``visible_area`` (an ``action_id`` -> polygon table, e.g. from
+    ``silly_kicks.providers.statsbomb.shape_snapshots``) is supplied, SIX additional columns are
+    appended -- ``<feature>_observed_fraction`` + ``<feature>_observed_source`` for each of the
+    three region-based counts -- reporting how much of each count's region-of-interest the provider
+    actually observed. This is OPT-IN and additive: the four primary columns are byte-identical
+    with and without ``visible_area``, and the per-Series functions / ``tracking_default_xfns`` are
+    untouched, so no VAEP feature changes (ADR-009: the library ships the raw coverage, the consumer
+    decides what a partial observation means).
 
     See NOTICE for full bibliographic citations.
 
@@ -478,6 +574,15 @@ def add_action_context(
     out["receiver_zone_density"] = rz.astype("Int64")
     dt = _kernels._defenders_in_triangle_to_goal(actions["start_x"], actions["start_y"], ctx)
     out["defenders_in_triangle_to_goal"] = dt.astype("Int64")
+    if visible_area is not None:
+        out = _append_visibility_companions(
+            out,
+            actions,
+            ctx,
+            visible_area,
+            receiver_zone_radius=receiver_zone_radius,
+            nearest_dist=out["nearest_defender_distance"],
+        )
     # Provenance: skip if already present (idempotent with other add_* enrichments)
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols):

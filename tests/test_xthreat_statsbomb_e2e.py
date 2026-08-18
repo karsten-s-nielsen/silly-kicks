@@ -9,12 +9,11 @@ held-out (game_id-split) pass NLL. Marked e2e: deselected in the normal suite (n
 
 from __future__ import annotations
 
-from typing import Any
-
 import pandas as pd
 import pytest
 
 import silly_kicks.spadl as spadl
+from scripts._sb_raw import flatten_events
 from silly_kicks.spadl import statsbomb
 from silly_kicks.xthreat import (
     GridSpec,
@@ -29,29 +28,6 @@ from silly_kicks.xthreat import (
 # WC2018 fixture so this is genuinely independent.
 _COMPETITION_ID = 43
 _SEASON_ID = 106
-
-_TOP_LEVEL_KEYS = frozenset({"id", "period", "timestamp", "team", "player", "type", "location"})
-
-
-def _adapt(events: list[dict[str, Any]], match_id: int) -> pd.DataFrame:
-    """Adapt raw StatsBomb event dicts to the silly-kicks converter input (mirrors
-    scripts/build_worldcup_fixture.py::_adapt_events_to_silly_kicks_input)."""
-    return pd.DataFrame(
-        [
-            {
-                "game_id": match_id,
-                "event_id": e.get("id"),
-                "period_id": e.get("period"),
-                "timestamp": e.get("timestamp"),
-                "team_id": (e.get("team") or {}).get("id"),
-                "player_id": (e.get("player") or {}).get("id"),
-                "type_name": (e.get("type") or {}).get("name"),
-                "location": e.get("location"),
-                "extra": {k: v for k, v in e.items() if k not in _TOP_LEVEL_KEYS},
-            }
-            for e in events
-        ]
-    )
 
 
 @pytest.mark.e2e
@@ -73,7 +49,7 @@ def test_kde_beats_singh_on_statsbomb_open_competition():
         try:
             home_team_id = int(m["home_team"]["home_team_id"])
             events = list(sb.events(match_id=int(match_id), fmt="dict").values())
-            adapted = _adapt(events, int(match_id))
+            adapted = flatten_events(events, int(match_id))
             actions, _ = statsbomb.convert_to_actions(adapted, home_team_id=home_team_id)
             frames.append(spadl.play_left_to_right(actions, home_team_id))
             converted += 1

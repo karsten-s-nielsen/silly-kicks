@@ -807,31 +807,15 @@ class TestBoundaryAgainstStatsBombNative:
                 f"see tests/datasets/statsbomb/README.md for vendoring details."
             )
 
+        from scripts._sb_raw import flatten_events
         from silly_kicks.spadl import statsbomb
 
         with open(fixture_path, encoding="utf-8") as f:
             events_raw = json.load(f)
 
-        # Adapter: StatsBomb open data top-level keys → silly-kicks EXPECTED_INPUT_COLUMNS.
-        _top_level_keys = {"id", "period", "timestamp", "team", "player", "type", "location"}
-        adapted = pd.DataFrame(
-            [
-                {
-                    "game_id": match_id,
-                    "event_id": e.get("id"),
-                    "period_id": e.get("period"),
-                    "timestamp": e.get("timestamp"),
-                    "team_id": (e.get("team") or {}).get("id"),
-                    "player_id": (e.get("player") or {}).get("id"),
-                    "type_name": (e.get("type") or {}).get("name"),
-                    "location": e.get("location"),
-                    "extra": {k: v for k, v in e.items() if k not in _top_level_keys},
-                    # preserve_native target: top-level possession sequence number.
-                    "possession": e.get("possession"),
-                }
-                for e in events_raw
-            ]
-        )
+        # Adapter: StatsBomb open data top-level keys → silly-kicks EXPECTED_INPUT_COLUMNS,
+        # single-sourced via scripts/_sb_raw.py (surface `possession` for preserve_native).
+        adapted = flatten_events(events_raw, match_id, surface_native=("possession",))
 
         actions, _report = statsbomb.convert_to_actions(
             adapted,

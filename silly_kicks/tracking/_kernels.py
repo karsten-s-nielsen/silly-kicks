@@ -36,6 +36,18 @@ _GOAL_LEFT_POST_Y = 30.34
 _GOAL_RIGHT_POST_Y = 37.66
 
 
+def _inscribed_disk(cx: float, cy: float, r: float, n: int = 20) -> np.ndarray:
+    """An ``n``-gon INSCRIBED in the circle of radius ``r`` centred at ``(cx, cy)``.
+
+    Its vertices lie ON the circle, so the polygon area ``0.5 n r^2 sin(2*pi/n)`` is strictly LESS
+    than ``pi r^2``. Coverage of a radial region-of-interest therefore UNDER-reports, never
+    over-reports -- the honesty invariant the observed-region seam exists to hold (a fabricated
+    "fully observed" is exactly the failure it prevents).
+    """
+    theta = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    return np.column_stack([cx + r * np.cos(theta), cy + r * np.sin(theta)])
+
+
 def _rows_by_action_id(actions_id: np.ndarray) -> dict:
     """Map each ``action_id`` to the LIST of row positions carrying it.
 

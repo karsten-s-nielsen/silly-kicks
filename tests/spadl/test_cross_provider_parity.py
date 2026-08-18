@@ -23,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from scripts._sb_raw import flatten_events
 from silly_kicks.spadl import coverage_metrics
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -96,23 +97,7 @@ def _load_statsbomb_fixture():
     with open(fixture_path, encoding="utf-8") as f:
         events_raw = json.load(f)
 
-    _top_level_keys = {"id", "period", "timestamp", "team", "player", "type", "location"}
-    adapted = pd.DataFrame(
-        [
-            {
-                "game_id": 7298,
-                "event_id": e.get("id"),
-                "period_id": e.get("period"),
-                "timestamp": e.get("timestamp"),
-                "team_id": (e.get("team") or {}).get("id"),
-                "player_id": (e.get("player") or {}).get("id"),
-                "type_name": (e.get("type") or {}).get("name"),
-                "location": e.get("location"),
-                "extra": {k: v for k, v in e.items() if k not in _top_level_keys},
-            }
-            for e in events_raw
-        ]
-    )
+    adapted = flatten_events(events_raw, 7298)
     home_team_id = int(adapted["team_id"].dropna().iloc[0])
     actions, _ = statsbomb.convert_to_actions(adapted, home_team_id=home_team_id)
     return actions

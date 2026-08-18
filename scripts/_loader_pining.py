@@ -243,7 +243,7 @@ def load_matches(
         for match_id in wanted:
             n_total += 1
             artifacts = manifest[match_id]["artifacts"]
-            actions, frames, home, report = _build_match_with_retry(
+            actions, frames, home, _visible_area, report = _build_match_with_retry(
                 provider, match_id, artifacts, tok, base_url, tracking_limit, cache_dir=cache_dir
             )
             # S1 geometry rate-gate (spec 4.4): DROP a geometrically-broken skillcorner match rather
@@ -257,6 +257,33 @@ def load_matches(
                 continue  # <-- the kill-line for the S1 exclusion guard (dormant on the kloppy path)
             yield provider, match_id, actions, frames, home
     print(f"excluded {n_excluded}/{n_total} matches", file=sys.stderr)
+
+
+def load_statsbomb_matches(
+    *,
+    match_ids: list[str] | None = None,
+    token: str | None = None,
+    max_matches: int | None = None,
+    cache_dir: str | Path | None = None,
+) -> Iterator[tuple[str, str, pd.DataFrame, pd.DataFrame, object, object]]:
+    """Yield ``(provider, match_id, actions, frames, home_team_id, visible_area)`` for SB360 matches.
+
+    The SB360-only sibling of :func:`load_matches`: it carries the extra per-action ``visible_area``
+    polygon table that the tracking-provider path has no analogue for, so the public 5-tuple contract
+    of :func:`load_matches` (and its every unpack site) stays untouched. Reuses
+    :func:`_build_match_with_retry` for download/retry/cache; ``provider`` is always ``"statsbomb"``.
+    """
+    tok, base_url = _resolve_token(token), _base_url()
+    manifest = {m["id"]: m for m in _list_matches("statsbomb", tok, base_url)}
+    wanted = _wanted_for_provider(
+        list(manifest), "statsbomb", {"statsbomb": match_ids} if match_ids else None, max_matches
+    )
+    for match_id in wanted:
+        artifacts = manifest[match_id]["artifacts"]
+        actions, frames, home, visible_area, _report = _build_match_with_retry(
+            "statsbomb", match_id, artifacts, tok, base_url, None, cache_dir=cache_dir
+        )
+        yield "statsbomb", match_id, actions, frames, home, visible_area
 
 
 def _build_match_with_retry(
@@ -318,6 +345,9 @@ def _download_artifacts(
     """Download the artifacts each provider needs, keyed by a NORMALISED role name."""
     if provider == "idsse":
         roles = {"events": "events", "metadata": "metadata", "tracking": "tracking"}
+    elif provider == "statsbomb":
+        # SB360: freeze-frames replace continuous tracking; no `tracking` artifact exists.
+        roles = {"events": "events", "freeze_frames": "freeze_frames", "metadata": "metadata", "roster": "roster"}
     elif provider == "gradientsports":
         roles = {"events": "events", "metadata": "metadata", "roster": "roster", "tracking": "tracking"}
     elif provider == "skillcorner":
@@ -345,22 +375,116 @@ def _download_artifacts(
 
 
 def _build_match(provider, match_id, paths, tracking_limit):
-    """Provider dispatch: parse artifacts into ``(actions, frames, home_team_id, report)``.
+    """Provider dispatch: parse artifacts into ``(actions, frames, home_team_id, visible_area, report)``.
 
+    ``visible_area`` is the per-action SB360 freeze-frame polygon table (``action_id``/``polygon``)
+    for statsbomb, and ``None`` for the tracking providers, which carry no per-action visible area.
     ``report`` is the tracking ``TrackingConversionReport`` for skillcorner (whose native builder
     runs the S1 geometry rate-gate, spec 4.4); ``None`` for providers with no native gate.
     ``load_matches`` reads ``report.geometry_excluded`` to DROP a geometrically-broken skillcorner
-    match. The 4-tuple arity is uniform across providers so the retry wrapper + caller unpack cleanly.
+    match. The 5-tuple arity is uniform across providers so the retry wrapper + caller unpack cleanly.
     """
     if provider == "idsse":
         actions, frames, home = _build_idsse(paths, match_id, tracking_limit)
-        return actions, frames, home, None
+        return actions, frames, home, None, None
     if provider == "skillcorner":
-        return _build_skillcorner(paths, match_id, tracking_limit)
+        actions, frames, home, report = _build_skillcorner(paths, match_id, tracking_limit)
+        return actions, frames, home, None, report
     if provider == "gradientsports":
         actions, frames, home = _build_gradientsports(paths, tracking_limit)
-        return actions, frames, home, None
+        return actions, frames, home, None, None
+    if provider == "statsbomb":
+        # SB360 freeze-frames carry no per-player temporal history, so `tracking_limit` (a frame
+        # cap for continuous tracking) is inapplicable and deliberately ignored.
+        return build_statsbomb_match(paths, match_id)
     raise ValueError(f"unknown pining provider {provider!r}")
+
+
+def _read_json(path):
+    """Decode a pining JSON artifact, transparently gunzipping a ``.json.gz`` file."""
+    import gzip
+
+    p = Path(path)
+    opener = gzip.open if p.suffix == ".gz" else open
+    with opener(p, "rt", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _attach_roster_identity(actions: pd.DataFrame, roster: dict[int, dict]) -> pd.DataFrame:
+    """Add ``player_name``/``player_position``/``player_jersey`` to ``actions`` by SPADL ``player_id``.
+
+    NaN-tolerant: SPADL ``player_id`` is null for goal-kicks by design, and any unmatched id maps to
+    NaN identity (never a crash). Returns a NEW frame; ``actions`` is not mutated.
+    """
+    from silly_kicks.id_compat import canonical_id
+
+    out = actions.copy()
+    keyed = {canonical_id(pid): rec for pid, rec in roster.items()}
+
+    def _field(pid, field):
+        rec = keyed.get(canonical_id(pid)) if pd.notna(pid) else None
+        return rec.get(field) if rec is not None else None
+
+    out["player_name"] = [_field(p, "name") for p in out["player_id"]]
+    out["player_position"] = [_field(p, "position") for p in out["player_id"]]
+    out["player_jersey"] = [_field(p, "jersey") for p in out["player_id"]]
+    return out
+
+
+def build_statsbomb_match(paths, match_id):
+    """Build one SB360 match from its pining artifacts into the widened 5-tuple.
+
+    ``paths`` maps the normalised roles ``events`` and ``freeze_frames`` (required) plus ``metadata``
+    and ``roster`` (optional) to files -- ``.json`` or ``.json.gz``. Metadata supplies
+    ``home_team_id`` and the fidelity versions (threaded into ``convert_to_actions`` and
+    ``shape_snapshots``); absent, ``home_team_id`` is derived from the events and fidelity is
+    inferred. Roster, when present, adds identity columns to ``actions``.
+
+    Returns ``(actions, frames, home_team_id, visible_area, report=None)``. ``_preprocess`` is NOT
+    run -- freeze-frames have no velocity to derive (``speed_source == "unavailable"``).
+    """
+    from scripts._sb_raw import (
+        flatten_events,
+        parse_freeze_frames,
+        parse_metadata,
+        parse_roster,
+    )
+    from silly_kicks.providers.statsbomb import shape_snapshots
+    from silly_kicks.spadl.statsbomb import convert_to_actions
+    from silly_kicks.tracking import snapshot_to_tracking_frames
+
+    events = _read_json(paths["events"])
+    if isinstance(events, dict):
+        events = list(events.values())
+
+    home = xy_fidelity = shot_fidelity = None
+    if paths.get("metadata") is not None:
+        md = parse_metadata(_read_json(paths["metadata"]))
+        home, xy_fidelity, shot_fidelity = (
+            md["home_team_id"],
+            md["xy_fidelity_version"],
+            md["shot_fidelity_version"],
+        )
+
+    flat = flatten_events(events, match_id)
+    if home is None:
+        home = int(flat["team_id"].dropna().iloc[0])
+
+    actions, _report = convert_to_actions(
+        flat,
+        home_team_id=home,
+        xy_fidelity_version=xy_fidelity,
+        shot_fidelity_version=shot_fidelity,
+    )
+
+    frames_raw = parse_freeze_frames(_read_json(paths["freeze_frames"]))
+    snapshots, visible_area, _join = shape_snapshots(frames_raw, actions, fidelity_version=xy_fidelity or 1)
+    frames, _links = snapshot_to_tracking_frames(snapshots, actions)
+
+    if paths.get("roster") is not None:
+        actions = _attach_roster_identity(actions, parse_roster(_read_json(paths["roster"])))
+
+    return actions, frames, home, visible_area, None
 
 
 def _preprocess(frames: pd.DataFrame) -> pd.DataFrame:

@@ -96,7 +96,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         calibration -> spadl "Converts provider events to SPADL via" "convert_to_actions()"
         calibration -> mlLibs "Trains disposable XGBoost classifiers (deterministic) via" "XGBoost"
         calibration -> kloppy "Parses SkillCorner/Sportec provider data via" "kloppy.skillcorner / kloppy.sportec"
-        calibration -> pining "Loads SkillCorner/IDSSE/Gradient-Sports matches from" "Bearer -> 302 -> presigned S3"
+        calibration -> pining "Loads SkillCorner/IDSSE/Gradient-Sports/SB360 matches from" "Bearer -> 302 -> presigned S3"
         calibration -> databricks "Loads bronze tables + the spadl_actions xT corpus from" "databricks-sql-connector"
 
         // --- Relationships: DFL parse port (ADR-031 T3) ---

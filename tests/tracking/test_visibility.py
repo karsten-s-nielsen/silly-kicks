@@ -12,12 +12,14 @@ import pandas as pd
 import pytest
 
 from silly_kicks.tracking import (
+    REGION_OBSERVATION_SOURCE_VALUES,
     VISIBLE_AREA_DEGENERATE_POLYGON,
     VISIBLE_AREA_NO_POLYGON,
     VISIBLE_AREA_OBSERVED,
     VISIBLE_AREA_SOURCE_VALUES,
     VISIBLE_AREA_UNLINKED,
     add_visible_area_coverage,
+    classify_region_observation,
     point_observed,
     region_observed_fraction,
 )
@@ -275,3 +277,52 @@ def test_a_genuinely_absent_polygon_still_reads_no_polygon():
     visible = pd.DataFrame({"action_id": [0], "polygon": [LEFT_HALF]})
     out = add_visible_area_coverage(actions, visible_area=visible)
     assert list(out["visible_area_source"]) == [VISIBLE_AREA_OBSERVED, VISIBLE_AREA_NO_POLYGON]
+
+
+# ---------------------------------------------------------------------------
+# classify_region_observation (Task 3): (fraction, source) over the closed set
+# {observed, no_polygon, degenerate_polygon, degenerate_region}. `degenerate_region`
+# NEVER raises -- a zero-area region-of-interest is a missing denominator, not an error.
+# ---------------------------------------------------------------------------
+
+_TRI = np.array([[0.0, 0.0], [105.0, 0.0], [0.0, 68.0]])  # convex region of interest
+
+
+def test_classify_fully_observed():
+    f, s = classify_region_observation(_TRI, _TRI)  # region == polygon
+    assert f == 1.0 and s == "observed"
+
+
+def test_classify_partial():
+    f, s = classify_region_observation(LEFT_HALF, _TRI)  # left half observed
+    assert 0.0 < f < 1.0 and s == "observed"
+
+
+def test_classify_no_polygon():
+    f, s = classify_region_observation(None, _TRI)
+    assert np.isnan(f) and s == "no_polygon"
+
+
+def test_classify_degenerate_polygon():
+    two_vertices = np.array([[0.0, 0.0], [10.0, 10.0]])  # present but bounds no area
+    f, s = classify_region_observation(two_vertices, _TRI)
+    assert np.isnan(f) and s == "degenerate_polygon"
+
+
+def test_classify_degenerate_region_never_raises():
+    zero = np.array([[10.0, 10.0], [10.0, 10.0], [10.0, 10.0]])  # zero-area region
+    f, s = classify_region_observation(_TRI, zero)
+    assert np.isnan(f) and s == "degenerate_region"  # NOT a ValueError
+
+
+def test_classify_all_sources_are_in_the_closed_set():
+    assert set(REGION_OBSERVATION_SOURCE_VALUES) == {
+        "observed",
+        "no_polygon",
+        "degenerate_polygon",
+        "degenerate_region",
+    }
+    # It reuses the polygon tokens but is NOT the pinned VISIBLE_AREA set (adds degenerate_region,
+    # drops the action<->frame `unlinked`, which the caller overlays).
+    assert "unlinked" not in REGION_OBSERVATION_SOURCE_VALUES
+    assert set(REGION_OBSERVATION_SOURCE_VALUES) != set(VISIBLE_AREA_SOURCE_VALUES)

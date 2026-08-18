@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from scripts._sb_raw import flatten_events
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _KLOPPY_FIXTURES_DIR = _REPO_ROOT / "tests" / "datasets" / "kloppy"
 
@@ -41,23 +43,8 @@ LoaderResult = tuple[pd.DataFrame, "int | str"]
 
 
 def _adapt_statsbomb_raw(raw: list[dict[str, object]], game_id: int) -> pd.DataFrame:
-    _top_level_keys = {"id", "period", "timestamp", "team", "player", "type", "location"}
-    return pd.DataFrame(
-        [
-            {
-                "game_id": game_id,
-                "event_id": e.get("id"),
-                "period_id": e.get("period"),
-                "timestamp": e.get("timestamp"),
-                "team_id": (e.get("team") or {}).get("id"),  # type: ignore[attr-defined]
-                "player_id": (e.get("player") or {}).get("id"),  # type: ignore[attr-defined]
-                "type_name": (e.get("type") or {}).get("name"),  # type: ignore[attr-defined]
-                "location": e.get("location"),
-                "extra": {k: v for k, v in e.items() if k not in _top_level_keys},
-            }
-            for e in raw
-        ]
-    )
+    # Single-sourced flattener (scripts/_sb_raw.py) -- the one copy of this body.
+    return flatten_events(raw, game_id)
 
 
 def load_statsbomb(match_id: int, *, xy_fidelity_version: int = 1) -> LoaderResult:

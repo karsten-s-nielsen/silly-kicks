@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Release**: silly-kicks 4.83.0 (2026-08-17). Keeper-box geometry & detection-quality cycle — three pining-sourced passes against clean commit `aa34017` (all artifacts stamp it): **(A)** the SkillCorner keeper-origin resolver validated on the full 108-match corpus + two structural CI rate-gates (gated out-of-region **0.0** / raw diagnostic **0.502**; ADR-024 amendment; `docs/research/skillcorner_keeper_origin/`); **(B)** the `gr_x` behind-line clamp measured **immaterial** (~0.2% training-example flip) → **parked** (ADR-061), with 26.8% of the behind-line box points off-pitch recorded as a data-quality observation (ADR-061 / `docs/research/box_constant_delta/`); **(C)** the TF-24 Stage-2 tracking-defaults recommendation lands **within noise** of the incumbent → no adoption (ADR-009/ADR-060; `docs/research/tf24_stage2_refresh/`). Additive — no library behaviour change, no retrain, no re-materialization. Also: `_xcross_attempt` gains additive `return_meta`/`return_box_detail`; `measure_box_constant_delta` adopts the ADR-052 `for_each` seam; the C4 pining node now advertises SB360 (owner-tier). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Release**: silly-kicks 4.84.0 (2026-08-17). SB360 licensed-corpus enablement (ADR-062, PR-S153) — additive, no retrain, validated end-to-end on the real 30-match licensed corpus. **(A)** the single-sourced raw-JSON flattener `scripts/_sb_raw.py` (de-forks six `_adapt_events` copies) + the pining `statsbomb` loader (`_build_match` 5-tuple, `load_statsbomb_matches`; fidelity threaded from metadata, roster identity joined) — the first path chaining real SB360 freeze-frames to tracking frames; **(B)** opt-in visibility companions on `add_action_context(visible_area=)` (`classify_region_observation` + `REGION_OBSERVATION_SOURCE_VALUES`; primary columns byte-identical → no VAEP change; ADR-009); **(C)** the SB360 audit call convention single-sourced into `scripts/_sb_battery.py` (round-trip byte-identical) + the leak-safe `validate_sb360_licensed_corpus` driver (ADR-052 shards, ADR-037 provenance); **(D)** a latent 4.76.0 defect the driver SURFACED — `shape_snapshots` emitted synthetic `{0,1}` team ids that broke the action↔frame join (`acting_team_attacks_rtl` all-`<NA>` → every direction-dependent tracking feature honest-NaN on SB360); it now resolves the REAL match team ids (fallback to synthetic only when unresolvable). The observed-region ADR-053 audit axis was DECLINED (vacuous two-leg comparison; companions verified by dedicated tests). Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -46,15 +46,6 @@ rejected alternatives) lives in
 Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
 repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 
-- **The `visible_area` CONSUMING seam exists; WIRING it into the count features does not.**
-  4.77.0/ADR-055 shipped the primitives -- `point_observed` (`bool | None`),
-  `region_observed_fraction` (an `(M, 2)` polygon, never a bbox) and `add_visible_area_coverage`
-  -- so the previous framing of this row ("a seam for the DATA but not for CONSUMING it") is
-  discharged. What remains is deliberately NOT done: `defenders_in_triangle_to_goal`,
-  `receiver_zone_density` and `nearest_defender_distance` still treat "nobody there" and "nobody
-  VISIBLE there" as the same observation. Wiring them changes existing values AND decides for the
-  consumer what a partial observation means, which is the ADR-009 line -- so it needs a consumer
-  asking for it, not a library decision.
 - **Four boundary entry points are unaudited**, each with its reason in
   `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
   one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and

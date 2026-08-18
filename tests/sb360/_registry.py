@@ -41,43 +41,17 @@ def feature_columns(emitted) -> tuple[str, ...]:
 
 
 def _adapters() -> dict:
-    """Aggregators whose signature does not fit the generic adapter.
+    """The single-sourced per-aggregator call adapters (moved to ``scripts/_sb_battery.py``).
 
-    Hand-written in ``_calls`` rather than guessed: an adapter that supplies a default for a
-    required argument turns a wrong call into a recorded verdict about the library.
+    Returns a COPY of ``scripts._sb_battery.ADAPTER_MAP`` so the audit cannot mutate the shared
+    map. The map and the adapter bodies live in ``scripts/`` (not here) so the licensed-corpus
+    validation driver resolves the EXACT same call convention -- the layer that silently
+    empty-blocked once (``add_visible_area_coverage`` unregistered -> ``generic`` ``TypeError``
+    swallowed to ``cols=()``) must not be forked. Layering is ``tests -> scripts`` (round-4 review).
     """
-    from tests.sb360 import _calls as C
+    from scripts._sb_battery import ADAPTER_MAP
 
-    return {
-        # Require a fitted ExpectedThreat.
-        "add_cover_shadows": C.with_xt,
-        "add_gk_influence": C.with_xt,
-        "add_off_ball_run_values": C.with_xt,
-        "add_player_influence": C.with_xt,
-        "add_xt_gk": C.with_xt,
-        # Requires an xg_column too -- silly-kicks ships no xG model.
-        "add_defensive_credit": C.defensive_credit,
-        # xt is KEYWORD-only with a None default; left unset they take the SYNTHETIC EPV path
-        # and emit SyntheticEPVWarning, which CI escalates -- recording `raises_a` for a
-        # function that works fine when handed the xT a real consumer supplies.
-        "add_obso": C.with_xt_keyword,
-        "add_pausa": C.with_xt_keyword,
-        "add_space_creation": C.with_xt_keyword,
-        # frames is keyword-only here, positional in its sibling; both need the GK prerequisite.
-        "add_pre_shot_gk_angle": C.pre_shot_gk_angle,
-        "add_pre_shot_gk_position": C.pre_shot_gk_position,
-        # Takes `links` as its second POSITIONAL argument and no frames at all.
-        "add_sync_score": C.sync_score,
-        # A jersey/roster helper over different inputs, returning a tuple of frames.
-        "add_gradientsports_player_ids": C.gradientsports_player_ids,
-        # Takes NO frames and REQUIRES `visible_area`, so the generic adapter raises TypeError.
-        # The adapter was written in 4.77.0 and NOT registered here -- a defect only a
-        # REGENERATION surfaces, because the committed verdicts stayed correct while the tool that
-        # rebuilds them silently produced `cols = ()` (the probe at _regenerate.py:122 swallows the
-        # TypeError) and emptied every roster block. Caught by pinning the `gk_absent` slice across
-        # a regeneration: 165 -> 163 verdicts, the two `add_visible_area_coverage` columns gone.
-        "add_visible_area_coverage": C.visible_area_coverage,
-    }
+    return dict(ADAPTER_MAP)
 
 
 #: Populated lazily on first access to avoid an import cycle (``_calls`` imports this module).
@@ -296,7 +270,30 @@ def public_add_star() -> set[str]:
 
 
 def audited_surface() -> set[str]:
-    """Every name this audit is allowed to register."""
+    """Every name this audit is allowed to register.
+
+    SCOPE NOTE -- the SB360 visibility-companion columns are DELIBERATELY outside this surface.
+    ``add_action_context(..., visible_area=...)`` emits six opt-in companion columns
+    (``<feature>_observed_fraction`` / ``_observed_source`` for the three region-based counts). This
+    audit runs every ``add_*`` through :mod:`tests.sb360._calls`'s ``generic`` adapter, which forwards
+    ``links``/``home_team_id`` only -- never ``visible_area`` -- so the companions never appear in a
+    verdict block, and their absence is CORRECT, not an omission.
+
+    The tempting "fix" is a third, observed-region axis. It was tried and REJECTED. The ADR-053 audit
+    is a TWO-LEG (Leg A vs Leg B) fabrication detector, and the companions depend on the polygon +
+    action geometry, not on kinematics or roster -- so on the full-coverage fixture polygon both legs
+    are byte-identical and every verdict would be ``identical -> works``. A gate that records ``works``
+    without ever exercising partial visibility is exactly the "coverage denominator masquerading as a
+    signal" / "a gate that certifies the failure it catches is worse than none" trap this codebase
+    names elsewhere: negative value, not zero.
+
+    The companions ARE verified, from both sides, where verification is meaningful:
+    ``tests/tracking/test_visibility.py`` (``classify_region_observation`` across every source token),
+    ``tests/tracking/test_add_action_context.py`` (companion tokens, NaN policy, additive byte-identity
+    gate), and ``scripts/validate_sb360_licensed_corpus.py`` (all five degradation tokens observed on
+    the real licensed corpus). This reinterprets the design spec's §9 (which proposed the axis); the
+    reinterpretation is recorded in ADR-062 and routed back to review. See the plan's Task 6.
+    """
     return public_add_star() | set(BOUNDARY_ENTRY_POINTS)
 
 

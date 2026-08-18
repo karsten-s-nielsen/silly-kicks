@@ -35,6 +35,8 @@ __all__ = [
     "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS",
     "KLOPPY_TRACKING_FRAMES_COLUMNS",
     "METRICA_TRACKING_FRAMES_COLUMNS",
+    "REGION_OBSERVATION_DEGENERATE_REGION",
+    "REGION_OBSERVATION_SOURCE_VALUES",
     "SKILLCORNER_TRACKING_FRAMES_COLUMNS",
     "SPEED_SOURCE_UNAVAILABLE",
     "SPORTEC_TRACKING_FRAMES_COLUMNS",
@@ -145,6 +147,7 @@ __all__ = [
     "back_line_high_x",
     "back_n_count",
     "ball_carrier_at_action",
+    "classify_region_observation",
     "compactness_x",
     "compute_blocking_score",
     "compute_bravery",
@@ -351,12 +354,15 @@ from ._space_creation import SpaceCreationParams, compute_space_created
 from ._structural_pass import StructuralPassParams, compute_structural_pass_metrics
 from ._team_shape import compute_team_shape
 from ._visibility import (
+    REGION_OBSERVATION_DEGENERATE_REGION,
+    REGION_OBSERVATION_SOURCE_VALUES,
     VISIBLE_AREA_DEGENERATE_POLYGON,
     VISIBLE_AREA_NO_POLYGON,
     VISIBLE_AREA_OBSERVED,
     VISIBLE_AREA_SOURCE_VALUES,
     VISIBLE_AREA_UNLINKED,
     add_visible_area_coverage,
+    classify_region_observation,
     point_observed,
     region_observed_fraction,
 )
