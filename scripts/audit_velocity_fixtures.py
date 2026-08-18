@@ -2,8 +2,13 @@
 
 ADR-053/4.76.0 found two fixtures declaring ``speed_source="native"`` with no ``vx``/``vy``, so a
 fitted model scored on 5-of-26 IMPUTED features while asserting a geometric property of that
-imputed output. The ghost path now REFUSES that input at the shared serving seam, but every other
-velocity consumer stays silent.
+imputed output. The ghost path REFUSED that input at the shared serving seam from 4.76.0; **ADR-063
+(4.85.0) extended the same fail-fast to every pitch-control velocity consumer** (gk_influence,
+cover_shadows, player_influence, space_creation, obso, pausa, pitch_control), so the silent-
+fabrication class is now EMPTY -- every velocity consumer either REFUSES declared-but-absent
+velocity or is genuinely velocity-BLIND. A fixture with the defective shape therefore RED-fails at
+test-time (it reaches a ``refuses`` consumer) rather than scoring silently, and this instrument's
+job is to SURFACE it -- as ``surfaced_refusing`` now, not ``convicted``.
 
 A grep finds ~24 candidates. **That is not a defect count**, and this script exists so nobody
 treats it as one: a fixture that never reaches a velocity-sensitive consumer is correct as written,

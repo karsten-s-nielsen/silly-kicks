@@ -402,7 +402,7 @@ def compute_pass_obso(
     event_df = pass_window_frames[event_frame_idx]
 
     # Ensure velocity columns exist
-    event_df = _ensure_velocity_columns(event_df)
+    event_df = _ensure_velocity_columns(event_df, method=pitch_control_method)
 
     event_surface = cache.surface(event_df, attacking_team_id, method=pitch_control_method)
     event_ppcf_at_target = event_surface.at_points(target_arr)
@@ -442,7 +442,7 @@ def compute_pass_obso(
     for i, frame_df in enumerate(pass_window_frames):
         if i == event_frame_idx:
             continue
-        frame_df = _ensure_velocity_columns(frame_df)
+        frame_df = _ensure_velocity_columns(frame_df, method=pitch_control_method)
         ppcf_val = cache.surface(frame_df, attacking_team_id, method=pitch_control_method).at_points(target_arr)
         frame_obso = float(np.clip(float(ppcf_val[0]) * trans_at_target * epv_at_target, 0.0, 1.0))
         if frame_obso > peak_obso:
@@ -490,15 +490,19 @@ def compute_pass_obso(
 # ---------------------------------------------------------------------------
 
 
-def _ensure_velocity_columns(frame: pd.DataFrame) -> pd.DataFrame:
-    """Return frame with vx/vy columns, filling zeros if missing."""
-    if "vx" not in frame.columns or "vy" not in frame.columns:
-        frame = frame.copy()
-        if "vx" not in frame.columns:
-            frame["vx"] = 0.0
-        if "vy" not in frame.columns:
-            frame["vy"] = 0.0
-    return frame
+def _ensure_velocity_columns(frame: pd.DataFrame, *, method: str = "spearman") -> pd.DataFrame:
+    """Prepare a frame for a velocity-requiring pitch-control call (ADR-063).
+
+    A declared-velocity-less frame (``speed_source == "unavailable"``) gets the zero-velocity
+    positional model; a frame merely MISSING ``vx``/``vy`` (a forgotten ``derive_velocities()``)
+    RAISES -- so the public engine ``compute_pass_obso`` fails fast on the caller bug rather than
+    silently zero-filling it, matching ``compute_pitch_control``. Single-sourced through the shared
+    ``zero_velocity_if_unavailable`` edge seam; on the ``add_obso``/``add_pausa`` aggregator path the
+    frames are already prepared by ``_precompute_obso_lookup``, so this is a no-op there.
+    """
+    from ._velocity_availability import zero_velocity_if_unavailable
+
+    return zero_velocity_if_unavailable(frame, method=method)
 
 
 def _extract_teammate_positions(frame: pd.DataFrame, attacking_team_id: int | str) -> np.ndarray:

@@ -18,6 +18,7 @@ import pandas as pd
 from silly_kicks.id_compat import ids_match
 from silly_kicks.tracking._gk_resolve import GoalEndUnresolvedError, GoalMap
 
+from ._velocity_availability import zero_velocity_if_unavailable
 from .pitch_control import PitchControlCache, PitchControlParams, compute_pitch_control
 from .pitch_control._surface import PitchControlSurface
 
@@ -829,6 +830,10 @@ def compute_threat_pc(
 
     require_fitted_xt(xt, caller="compute_threat_pc")
     _validate_ltr(frame, caller="compute_threat_pc")
+    # ADR-063: a direct caller (e.g. a gkdv counterfactual differencing two frames) on a
+    # declared-velocity-less frame gets the zero-velocity model; a forgotten derive_velocities()
+    # still raises. Without this the bare compute_pitch_control below refuses a declared frame too.
+    frame = zero_velocity_if_unavailable(frame, method=method)
     surface = compute_pitch_control(frame, attacking_team_id, method=method, params=params)
     threat, _per_receiver = _voronoi_threat(surface, xt, frame, attacking_team_id=attacking_team_id, goal_map=goal_map)
     return float(threat)
@@ -888,6 +893,10 @@ def compute_blocking_score(
     Cascioli et al. (2025).
     """
     _validate_ltr(frame, caller="compute_blocking_score")
+    # ADR-063: same as compute_threat_pc -- declared-velocity-less frames get the zero-velocity
+    # model for direct callers; a forgotten derive_velocities() raises. (The counterfactual
+    # frame_reduced below is sliced from this prepared frame, so it inherits vx/vy=0.)
+    frame = zero_velocity_if_unavailable(frame, method=method)
 
     # Original (canonical-frame) threat — routed through the shared cache.
     # The counterfactual surface below is computed on a *modified* frame and
@@ -1019,7 +1028,9 @@ def _compute_cover_shadow_dict(
     """Compute 5 cover-shadow values for a single frame + passer position.
 
     Returns a dict keyed by _CS_COL_NAMES, or None on degenerate input
-    (missing velocity columns, no ball, NaN coordinates, etc.).
+    (no ball, NaN coordinates, no potential receivers, etc.). A frame that
+    DECLARES velocity structurally unavailable gets the zero-velocity model
+    (ADR-063); a frame merely MISSING velocity RAISES (a caller bug).
     Used by both ``add_cover_shadows`` and ``cover_shadow_xfns`` to avoid
     duplicating the per-frame computation.
 
@@ -1032,9 +1043,14 @@ def _compute_cover_shadow_dict(
     rtol 1e-10 to the prior per-(d, receiver) ``lane_control`` loop.
     See docs/superpowers/specs/2026-05-28-cover-shadows-leave-one-out-decouple-design.md.
     """
-    # Velocity columns are required for lane_control TTI race
-    if "vx" not in frame_data.columns or "vy" not in frame_data.columns:
-        return None
+    # Velocity columns are required for the lane_control TTI race. ADR-063: a declared-velocity-
+    # less provider (SB360 freeze frames) gets the zero-velocity positional model; a frame merely
+    # missing vx/vy (a forgotten derive_velocities()) RAISES -- and the ValueError propagates
+    # through add_cover_shadows' GoalEndUnresolvedError-only handler, failing loud on the caller
+    # bug (the ADR-043 discipline). This REPLACES the old silent ``return None`` on missing
+    # velocity, which conflated a declared-velocity-less provider with a caller mistake. All five
+    # cover-shadow columns are model-relative (Tier 1), so none is suppressed.
+    frame_data = zero_velocity_if_unavailable(frame_data, method=method)
 
     players = frame_data[~frame_data["is_ball"].astype(bool)]
     attackers = players[ids_match(players["team_id"], attacking_team_id)]

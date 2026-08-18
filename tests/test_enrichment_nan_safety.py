@@ -62,6 +62,13 @@ _TRACKING_NEEDS_EXTRA = {
     "add_off_ball_runs",
     "add_packing",
     "add_player_influence",
+    # ADR-063: honours the velocity contract -- velocity DECLARED with vx/vy ABSENT is the
+    # "forgot derive_velocities()" case and RAISES (the same supply-the-contract-columns
+    # precedent as add_das/add_xcross_attempt). Moved out of the standard-signature test, where
+    # they previously passed only because the loose unconditional zero-fill silently accepted them.
+    "add_pitch_control",
+    "add_obso",
+    "add_pausa",
     "add_pre_shot_gk_angle",
     "add_pre_shot_gk_position",
     "add_press_commitment",
@@ -590,10 +597,15 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         "add_shape_graph",
     ):
         out = helper(actions, frames)
-    elif name in (
-        "add_off_ball_runs",
-        "add_space_creation",
-    ):
+    elif name == "add_off_ball_runs":
+        out = helper(actions, frames, home_team_id=1)
+    elif name == "add_space_creation":
+        # ADR-063: velocity-requiring -- RAISES on velocity-less-undeclared frames, so supply
+        # vx/vy (the add_das supply-the-contract-columns precedent) to reach the NaN-IDENTIFIER
+        # surface. home_team_id is a dead-but-present parameter (ADR-051 D3).
+        frames = frames.copy()
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
         out = helper(actions, frames, home_team_id=1)
     elif name == "add_sync_score":
         # Takes (actions, LINKS) rather than (actions, frames) -- the only helper in the
@@ -709,12 +721,20 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         # the aggregator derives the map from the SAME NaN-bearing frames this gate feeds
         # it -- which is the behaviour under test: a NaN team id must route to the
         # documented per-row default, including through goal-end resolution.
+        #
+        # ADR-063: supply vx/vy (the same supply-the-contract-columns precedent as add_das):
+        # these velocity-requiring aggregators now RAISE on velocity-less-undeclared frames,
+        # so without the vector the gate would measure that refusal instead of the
+        # NaN-IDENTIFIER surface it exists to fuzz.
         import numpy as np
 
         from silly_kicks.xthreat import ExpectedThreat
 
         xt = ExpectedThreat(l=16, w=12)
         xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+        frames = frames.copy()
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
         out = helper(actions, frames, xt)
     elif name == "add_player_influence":
         import numpy as np
@@ -724,7 +744,32 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         xt = ExpectedThreat(l=16, w=12)
         xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
         # ADR-051 D3 (4.80.0): direction comes from `acting_team_attacks_rtl`, not an argument.
+        # ADR-063: supply vx/vy -- velocity-requiring, RAISES on velocity-less-undeclared frames.
+        frames = frames.copy()
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
         out = helper(actions, frames, xt)
+    elif name == "add_pitch_control":
+        # ADR-063: pitch control now honours the velocity contract -- supply vx/vy so the gate
+        # exercises the NaN-IDENTIFIER surface rather than the missing-velocity refusal.
+        frames = frames.copy()
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
+        out = helper(actions, frames)
+    elif name in ("add_obso", "add_pausa"):
+        # ADR-063: OBSO-derived, velocity-requiring via the shared _precompute_obso_lookup seam --
+        # supply vx/vy (+ xt to avoid the synthetic-EPV path) so the gate reaches the NaN-IDENTIFIER
+        # surface rather than the missing-velocity refusal. add_pausa computes OBSO via add_obso.
+        import numpy as np
+
+        from silly_kicks.xthreat import ExpectedThreat
+
+        xt = ExpectedThreat(l=16, w=12)
+        xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+        frames = frames.copy()
+        frames["vx"] = 0.0
+        frames["vy"] = 0.0
+        out = helper(actions, frames, xt=xt)
     elif name == "add_ghost_gk":
         import numpy as np
 

@@ -22,11 +22,35 @@ _entry(
         "max_single_defender_player_id",
     ),
     velocity={
-        "n_blocked_receivers": AxisVerdict("all_nan", "honest_nan"),
-        "n_potential_receivers": AxisVerdict("all_nan", "honest_nan"),
-        "blocking_score": AxisVerdict("all_nan", "honest_nan"),
-        "blocked_threat_fraction": AxisVerdict("all_nan", "honest_nan"),
-        "max_single_defender_blocking_score": AxisVerdict("all_nan", "honest_nan"),
+        "n_blocked_receivers": AxisVerdict("identical", "works"),
+        "n_potential_receivers": AxisVerdict("identical", "works"),
+        "blocking_score": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=(
+                "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than the "
+                "velocity-informed one, but a coherent quantity rather than an invented one. A consumer should "
+                "know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+            ),
+        ),
+        "blocked_threat_fraction": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=(
+                "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than the "
+                "velocity-informed one, but a coherent quantity rather than an invented one. A consumer should "
+                "know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+            ),
+        ),
+        "max_single_defender_blocking_score": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=(
+                "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than the "
+                "velocity-informed one, but a coherent quantity rather than an invented one. A consumer should "
+                "know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+            ),
+        ),
         "max_single_defender_player_id": AxisVerdict(
             "no_signal",
             "not_exercised",
@@ -63,7 +87,7 @@ _entry(
                 rationale=(
                     "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
                     "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                    "property -- widening the fixture would move it. [measured cause=velocity]"
                 ),
             ),
             "blocked_threat_fraction": AxisVerdict(
@@ -72,7 +96,7 @@ _entry(
                 rationale=(
                     "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
                     "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                    "property -- widening the fixture would move it. [measured cause=velocity]"
                 ),
             ),
             "max_single_defender_blocking_score": AxisVerdict(
@@ -81,7 +105,7 @@ _entry(
                 rationale=(
                     "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
                     "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=n/a]"
+                    "property -- widening the fixture would move it. [measured cause=velocity]"
                 ),
             ),
             "max_single_defender_player_id": AxisVerdict(
@@ -95,11 +119,43 @@ _entry(
             ),
         },
         "defender_absent": {
-            "n_blocked_receivers": AxisVerdict("all_nan", "honest_nan"),
-            "n_potential_receivers": AxisVerdict("all_nan", "honest_nan"),
-            "blocking_score": AxisVerdict("all_nan", "honest_nan"),
-            "blocked_threat_fraction": AxisVerdict("all_nan", "honest_nan"),
-            "max_single_defender_blocking_score": AxisVerdict("all_nan", "honest_nan"),
+            "n_blocked_receivers": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=n/a]"
+                ),
+            ),
+            "n_potential_receivers": AxisVerdict("identical", "works"),
+            "blocking_score": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "blocked_threat_fraction": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "max_single_defender_blocking_score": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
             "max_single_defender_player_id": AxisVerdict(
                 "no_signal",
                 "not_exercised",
@@ -111,11 +167,43 @@ _entry(
             ),
         },
         "gk_one_end": {
-            "n_blocked_receivers": AxisVerdict("all_nan", "honest_nan"),
-            "n_potential_receivers": AxisVerdict("all_nan", "honest_nan"),
-            "blocking_score": AxisVerdict("all_nan", "honest_nan"),
-            "blocked_threat_fraction": AxisVerdict("all_nan", "honest_nan"),
-            "max_single_defender_blocking_score": AxisVerdict("all_nan", "honest_nan"),
+            "n_blocked_receivers": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=n/a]"
+                ),
+            ),
+            "n_potential_receivers": AxisVerdict("identical", "works"),
+            "blocking_score": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "blocked_threat_fraction": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "max_single_defender_blocking_score": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
             "max_single_defender_player_id": AxisVerdict(
                 "no_signal",
                 "not_exercised",
@@ -603,9 +691,33 @@ _entry(
     ),
     velocity={
         "actor_reachable_area_m2": AxisVerdict("all_nan", "honest_nan"),
-        "off_ball_xt_team": AxisVerdict("all_nan", "honest_nan"),
-        "off_ball_xt_opponent": AxisVerdict("all_nan", "honest_nan"),
-        "off_ball_xt_diff": AxisVerdict("all_nan", "honest_nan"),
+        "off_ball_xt_team": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=(
+                "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than the "
+                "velocity-informed one, but a coherent quantity rather than an invented one. A consumer should "
+                "know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+            ),
+        ),
+        "off_ball_xt_opponent": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=(
+                "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than the "
+                "velocity-informed one, but a coherent quantity rather than an invented one. A consumer should "
+                "know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+            ),
+        ),
+        "off_ball_xt_diff": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=(
+                "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than the "
+                "velocity-informed one, but a coherent quantity rather than an invented one. A consumer should "
+                "know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+            ),
+        ),
         "reachable_area_team": AxisVerdict("all_nan", "honest_nan"),
         "reachable_area_opponent": AxisVerdict("all_nan", "honest_nan"),
         "reachable_area_diff": AxisVerdict("all_nan", "honest_nan"),
@@ -613,27 +725,99 @@ _entry(
     visibility={
         "gk_absent": {
             "actor_reachable_area_m2": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_team": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_opponent": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_diff": AxisVerdict("all_nan", "honest_nan"),
+            "off_ball_xt_team": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "off_ball_xt_opponent": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "off_ball_xt_diff": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
             "reachable_area_team": AxisVerdict("all_nan", "honest_nan"),
             "reachable_area_opponent": AxisVerdict("all_nan", "honest_nan"),
             "reachable_area_diff": AxisVerdict("all_nan", "honest_nan"),
         },
         "defender_absent": {
             "actor_reachable_area_m2": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_team": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_opponent": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_diff": AxisVerdict("all_nan", "honest_nan"),
+            "off_ball_xt_team": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "off_ball_xt_opponent": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "off_ball_xt_diff": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
             "reachable_area_team": AxisVerdict("all_nan", "honest_nan"),
             "reachable_area_opponent": AxisVerdict("all_nan", "honest_nan"),
             "reachable_area_diff": AxisVerdict("all_nan", "honest_nan"),
         },
         "gk_one_end": {
             "actor_reachable_area_m2": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_team": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_opponent": AxisVerdict("all_nan", "honest_nan"),
-            "off_ball_xt_diff": AxisVerdict("all_nan", "honest_nan"),
+            "off_ball_xt_team": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "off_ball_xt_opponent": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
+            "off_ball_xt_diff": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=(
+                    "Pitch control evaluated at zero velocity is a well-defined POSITIONAL model -- weaker than "
+                    "the velocity-informed one, but a coherent quantity rather than an invented one. A consumer "
+                    "should know the value is positional-only; it is not a fabrication. [measured cause=velocity]"
+                ),
+            ),
             "reachable_area_team": AxisVerdict("all_nan", "honest_nan"),
             "reachable_area_opponent": AxisVerdict("all_nan", "honest_nan"),
             "reachable_area_diff": AxisVerdict("all_nan", "honest_nan"),
@@ -641,18 +825,18 @@ _entry(
     },
     applicability={
         "actor_reachable_area_m2": "no_support",
-        "off_ball_xt_team": "no_support",
-        "off_ball_xt_opponent": "no_support",
-        "off_ball_xt_diff": "no_support",
+        "off_ball_xt_team": "region_support",
+        "off_ball_xt_opponent": "support_data_defined",
+        "off_ball_xt_diff": "support_data_defined",
         "reachable_area_team": "no_support",
         "reachable_area_opponent": "no_support",
         "reachable_area_diff": "no_support",
     },
     applicability_deltas={
         "actor_reachable_area_m2": {"extreme": 0.0, "near": 0.0},
-        "off_ball_xt_team": {"extreme": 0.0, "near": 0.0},
-        "off_ball_xt_opponent": {"extreme": 0.0, "near": 0.0},
-        "off_ball_xt_diff": {"extreme": 0.0, "near": 0.0},
+        "off_ball_xt_team": {"extreme": 0.0, "near": 1013.9184347479022},
+        "off_ball_xt_opponent": {"extreme": 45.57257186738025, "near": 0.0},
+        "off_ball_xt_diff": {"extreme": 45.57257186738025, "near": 1013.9184347479027},
         "reachable_area_team": {"extreme": 0.0, "near": 0.0},
         "reachable_area_opponent": {"extreme": 0.0, "near": 0.0},
         "reachable_area_diff": {"extreme": 0.0, "near": 0.0},
