@@ -3,10 +3,7 @@
   "n_attempted": 30,
   "n_failed": 0,
   "n_counters_unrecorded": 0,
-  "commit": "34abee9bf391be9aac402fa25425eed208347cf6",
-  "tree_state": "clean",
-  "dirty": false,
-  "dirty_files": [],
-  "platform": "Windows-11-10.0.26200-SP0",
-  "machine": "AMD64"
+  "run_commit": "6cec6e44a3602cd2b6aecf813186bd850bebdc8b",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean"
 }
