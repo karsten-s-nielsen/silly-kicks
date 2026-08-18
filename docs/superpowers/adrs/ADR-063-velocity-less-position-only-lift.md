@@ -204,15 +204,20 @@ round-trips byte-identically.
 ## Consequences
 
 C4-free (no new aggregator/backend/model — the count is unchanged; behaviour changes only on
-velocity-less frames). The atomic mirror inherits. The SB360 coverage artifact is refreshed on the real
-licensed corpus in a separate driver pass (the fully-NaN battery-column count drops 40 → ~27:
-Tier-1's 13 populated, Tier-2's 7 kept NaN, Tier-3's 20 kept NaN). **The lift is COVERAGE-GATED, so
-~27 is a best case:** an actor/keeper-specific Tier-1 column (`gk_pitch_control_share_weighted`, the
-cover-shadow columns, `space_created_m2`) populates only where that player is captured in the
-freeze-frame (SB360 partial visibility + the ADR-055 keeper-dependence), while team-level columns
-(`off_ball_xt_*`, `obso`, `pausa`) populate more readily. The committed open-360 fixture-only preview
-confirmed exactly that split — team-level lifted, Tier-2 suppressed, actor/keeper-specific NaN where the
-player was absent — so the true count is what the licensed-corpus pass measures, and may exceed ~27.
+velocity-less frames). The atomic mirror inherits. The SB360 coverage artifact was refreshed on the real
+licensed corpus in a separate driver pass (PR-S154 Commit 2, generated at `run_commit cf2f155` on the
+30-match corpus, pandas 3 to match the 4.84.0 baseline so the diff isolates the lift). **Measured: the
+fully-NaN battery-column count drops 40 → 31** — 9 of the 13 Tier-1 columns populate, Tier-2's 7 stay
+NaN, Tier-3's 20 stay NaN, with 0 regressions (no previously-populated column went NaN, and every
+non-lifted battery row is byte-identical to 4.84.0). **The lift is COVERAGE-GATED, which is why 9
+populate rather than the design-scope 13:** the 4 that stay NaN are `add_cover_shadows`'
+`max_single_defender_player_id` (no uniquely-resolved single blocker on this corpus) and
+`add_space_creation`'s three columns (`space_created_m2`, `space_denied_m2_opponent`, `obso_epv_source`),
+gated by that aggregator's pre-existing two-team-id opponent-perspective requirement (it raises on 23/30
+matches — unchanged old↔new, not a velocity effect). The team-level columns (`off_ball_xt_*`, the
+cover-shadow scores) and the actor-specific `gk_pitch_control_share_weighted` all populate. The
+design-time estimate was ~27 (all 13 Tier-1 populating); the measured 31 is the honest outcome this ADR
+deferred to ("the true count is what the licensed-corpus pass measures").
 
 **Known limit (voronoi + gk/player).** The edge helper's fail-fast is keyed on the pitch-control
 `method`, but `add_gk_influence`/`add_player_influence` primitives (b)/(c) always use the Spearman

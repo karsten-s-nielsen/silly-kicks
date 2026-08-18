@@ -10,10 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Velocity-less-provider position-only lift: the four velocity-requiring pitch-control aggregators
 (`add_gk_influence`, `add_cover_shadows`, `add_player_influence`, `add_space_creation`) now compute the
 zero-velocity positional model on frames that DECLARE velocity structurally unavailable (SB360
-freeze-frames), instead of raising or degrading to NaN — lifting the 13 model-relative (Tier-1)
-columns while keeping the 7 physical-quantity estimates (reachable area, closing time) suppressed to
-NaN and the 20 constitutively-velocity columns honest-NaN. On the SB360 licensed corpus the fully-NaN
-battery-column count drops 40 → ~27. Additive on every velocity-bearing frame → **NO retrain** (a
+freeze-frames), instead of raising or degrading to NaN — giving all 13 model-relative (Tier-1)
+columns the lift path while keeping the 7 physical-quantity estimates (reachable area, closing time)
+suppressed to NaN and the 20 constitutively-velocity columns honest-NaN. Measured on the SB360
+licensed corpus (`run_commit cf2f155`, 30 matches): the fully-NaN battery-column count drops 40 → 31
+— 9 of the 13 Tier-1 columns populate; the other 4 stay coverage-gated to NaN (`add_cover_shadows`'
+`max_single_defender_player_id` id ride-along, and `add_space_creation`'s three columns, gated by that
+aggregator's pre-existing two-team-id opponent-perspective requirement — unchanged from 4.84.0), with
+0 regressions. Additive on every velocity-bearing frame → **NO retrain** (a
 velocity-bearing frame's output is byte-identical; the edge helper returns the same object untouched).
 Decision: ADR-063.
 
