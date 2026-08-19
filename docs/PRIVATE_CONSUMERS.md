@@ -17,6 +17,21 @@ the module/consumer pairing is the durable part.
 | `tracking/_xt_gk.py` | `XtGkReport` | `src/analytics/action_context/pipeline.py:98` | Aggregate QA type is not re-exported publicly | Same v2 migration; or promote the report type if v2 keeps an equivalent |
 | `tracking/_ghost_gk.py`, `_xt_gk.py`, `_gk_completion.py`, `_gk_geometry.py` | **module PATHS as hardcoded strings** | `src/ingestion/exec_visibility.py:467-472` (their ADR-044 executor-env drift guard) | Needs stable module identities to detect executor-env drift | A public introspection surface for shipped-module identity, **or** an accepted standing pin coordinated on rename. **Highest-risk entry: degrades silently.** |
 
+**Public output value changes** — not a private-module import, but the same blast-radius discipline:
+a public column whose VALUES moved (not its schema) can silently break a downstream consumer that
+built assumptions on the old distribution.
+
+| silly-kicks column | What changed | Consumer (luxury-lakehouse) | Why | Exit condition |
+|---|---|---|---|---|
+| `spadl.statsbomb` output `cross_blocked` | Flips from all-`pd.NA` to a real `True`/`False` mask (ADR-046 amendment, `4.86.0`) — an open-play `cross` whose `related_events` links to an OPPOSING-team `Block` (not `block.offensive`) | Any consumer schema/pipeline that added `cross_blocked` on StatsBomb assuming a stable all-`pd.NA` column (e.g. a lakehouse mart column typed/partitioned around "always null") | The ADR-046 deferral (n=1-verified, "fragile join") is discharged — a pre-registered probe over ~510 open-data matches passed all three ship rules (`docs/research/sb360_cross_blocked/`) | Re-check any downstream null-handling / dtype assumption on StatsBomb `cross_blocked`; the column now carries real signal on open-play crosses (still `pd.NA` on set-piece crosses and non-cross rows) |
+
+**Note:** the public TF-51 `compute_bravery` (`tracking/defensive_credit/_bravery.py`) reads
+`cross_blocked` directly (no `*_xfns`, so still no retrain); `add_press_commitment` does NOT.
+A downstream consumer computing TF-51 bravery via silly-kicks on StatsBomb sees the
+`bravery_open_play_crosses` leg move from NA-unknown to cross-inclusive. The luxury-lakehouse
+materializes `press_commitment` (which does not read `cross_blocked`) and DEFERS `compute_bravery`,
+so it is UNAFFECTED by this change.
+
 **In-repo (first-party) consumers** — not the lakehouse, but recorded under the same discipline
 (a permanent CI test coupling to a private module is worth a rename's blast-radius, even in-repo):
 

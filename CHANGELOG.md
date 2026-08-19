@@ -5,6 +5,43 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.86.0] — 2026-08-19
+
+StatsBomb `cross_blocked` un-deferred: a pre-registered probe over ~510 open-data matches (~10,550
+open-play crosses) passed all three ship rules (absent-`related_events` rate 0.035, same-team `Block`
+links 0.007 — one same-team case, a StatsBomb offensive block, correctly excluded — multi-block
+ambiguity 0, base rate ~1.3%), so the `related_events` -> `Block` join is now trusted and
+StatsBomb emits a real `cross_blocked` mask instead of all-`pd.NA`. Also ships a rendered
+`docs/research/sb360_licensed_coverage/coverage.md` (was parquet-only) and the probe measurement note.
+Decision: ADR-046 amendment.
+
+### Added — StatsBomb `cross_blocked` probe + licensed-coverage render (PR-S155, ADR-046 amendment)
+
+- `docs/research/sb360_cross_blocked/README.md`: the pre-registered probe corpus (committed fixtures +
+  50-match WC2022 slice + a 457-match, 20-competition wide corpus), the R1/R2/R3 pass table, and the
+  single same-team-`Block` edge case (a StatsBomb-labelled `block.offensive` Ronaldo deflection, WC2022
+  3857298) that the opposing-team rule already excludes.
+- `docs/research/sb360_licensed_coverage/coverage.md`: a markdown render of the committed
+  `coverage.parquet` (`scripts/render_sb360_licensed_coverage.py`), mirroring the open-data
+  `sb360_coverage/coverage.md` companion. The fully-NaN battery caption now separately names the
+  SB360-anonymity (no persistent freeze-frame player identity, ADR-054) columns rather than folding
+  `add_cover_shadows.max_single_defender_player_id` into the velocity/Tier-2 explanation.
+
+### Changed — real StatsBomb `cross_blocked` mask (PR-S155, ADR-046 amendment)
+
+- `spadl/statsbomb.py`: `cross_blocked` is derived from an open-play `cross`'s `related_events` link to
+  an OPPOSING-team `Block` event (and NOT flagged `block.offensive`), replacing the all-`pd.NA`
+  deferred placeholder. Scope unchanged: open-play `cross` only, set-piece crosses stay `pd.NA`.
+  Additive; consumed by no VAEP/atomic feature → **no silly-kicks retrain**; declared `"invariant"`
+  under the ADR-045 reflection registry (unchanged).
+
+**Hyrum note:** StatsBomb `cross_blocked` flips from all-`pd.NA` to real `True`/`False` values —
+additive and consumed by no `vaep/`/`atomic/` feature -> no silly-kicks retrain; downstream consumers
+see a live-surface value change for any schema that added the column assuming a stable all-`pd.NA`
+StatsBomb output (see `docs/PRIVATE_CONSUMERS.md`). The public TF-51 `compute_bravery` reads
+`cross_blocked` (no `*_xfns`): StatsBomb bravery output moves from shots-only to cross-inclusive --
+still no retrain. (`add_press_commitment` does NOT read `cross_blocked` and is unaffected.)
+
 ## [4.85.0] — 2026-08-18
 
 Velocity-less-provider position-only lift: the four velocity-requiring pitch-control aggregators

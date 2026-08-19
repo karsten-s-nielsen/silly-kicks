@@ -104,6 +104,8 @@ def _flatten_extra(events: pd.DataFrame) -> pd.DataFrame:
     events["_interception_outcome"] = _deep_get(extra, "interception", "outcome", "name")
     events["_clearance_body_part"] = _deep_get(extra, "clearance", "body_part", "name")
     events["_carry_end_location"] = _deep_get(extra, "carry", "end_location")
+    events["_related_events"] = extra.str.get("related_events")
+    events["_block_offensive"] = _deep_get(extra, "block", "offensive")
     return events
 
 
@@ -279,7 +281,8 @@ def convert_to_actions(
         applicable=(events["type_name"] == "Shot").to_numpy(),
         blocked=(events["_shot_outcome"] == "Blocked").to_numpy(),
     )
-    actions["cross_blocked"] = _blocked_flag(len(actions))  # deferred (BD-2)
+    assert len(actions) == len(events)  # noqa: S101 -- cross_blocked mask is events-aligned at this site
+    actions["cross_blocked"] = _cross_blocked_flag(events)
 
     actions = (
         actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]
@@ -430,6 +433,64 @@ def _convert_locations(locations: pd.Series, fidelity_version: int) -> npt.NDArr
     return coordinates
 
 
+def _open_play_cross_mask(events: pd.DataFrame) -> np.ndarray:
+    """Open-play cross: a Pass with ``pass.cross`` True whose ``pass.type`` is not a set piece.
+
+    ONE spelling, shared by ``_vectorized_type_id`` (the SPADL ``cross`` type) and the
+    ``cross_blocked`` mask, so the two definitions cannot drift. Requires the ``_flatten_extra``
+    columns (``_pass_cross``, ``_pass_type``) to be present.
+    """
+    is_pass = events["type_name"] == "Pass"
+    return (
+        is_pass
+        & (events["_pass_cross"] == True)  # noqa: E712
+        & ~events["_pass_type"].isin(["Free Kick", "Corner", "Goal Kick", "Throw-in"])
+    ).to_numpy()
+
+
+def _cross_blocked_flag(events: pd.DataFrame) -> "pd.arrays.BooleanArray":
+    """StatsBomb ``cross_blocked``: an open-play cross whose ``related_events`` links to a ``Block``
+    by the OPPOSING team. Built on the PRE-FILTER events frame so every uuid resolves; aligned to
+    ``actions`` exactly as ``shot_blocked`` is (same call site, same length).
+
+    The opposing-team requirement already excludes StatsBomb *offensive* blocks (a block by an
+    attacking player is same-team by construction). The explicit ``not offensive`` guard is
+    belt-and-suspenders and self-documenting: a corpus probe (~510 matches, ~10.5k open-play crosses)
+    found a single same-team block -- a labelled offensive block -- and ZERO opposing blocks flagged
+    offensive, so this guard is a no-op on real data but pins the intent.
+    """
+    from silly_kicks.id_compat import same_id
+
+    applicable = _open_play_cross_mask(events)
+    # uuid -> (type_name, team_id, is_offensive_block) over the full events. event_id is a genuine
+    # string uuid; team_id is numeric -> compared via same_id, never stringified (ADR-019 dict-key trap).
+    lookup = {
+        eid: (tname, tid, bool(off) if pd.notna(off) else False)
+        for eid, tname, tid, off in zip(
+            events["event_id"],
+            events["type_name"],
+            events["team_id"],
+            events["_block_offensive"],
+            strict=True,
+        )
+    }
+    blocked = np.zeros(len(events), dtype=bool)
+    for i, (is_x, rel_ids, my_team) in enumerate(
+        zip(applicable, events["_related_events"], events["team_id"], strict=True)
+    ):
+        if not is_x or not isinstance(rel_ids, list) or pd.isna(my_team):
+            continue
+        for r in rel_ids:
+            info = lookup.get(r)
+            if info is None:
+                continue
+            rtype, rteam, r_offensive = info
+            if rtype == "Block" and not r_offensive and pd.notna(rteam) and not same_id(my_team, rteam):
+                blocked[i] = True
+                break
+    return _blocked_flag(len(events), applicable=applicable, blocked=blocked)
+
+
 def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
     """Compute SPADL type_id for all events using vectorized np.select."""
     t = events["type_name"]
@@ -463,7 +524,7 @@ def _vectorized_type_id(events: pd.DataFrame) -> pd.Series:
         # Throw-in
         is_pass & (pass_type == "Throw-in"),
         # Cross (not a set piece)
-        is_pass & (pass_cross == True) & ~pass_type.isin(["Free Kick", "Corner", "Goal Kick", "Throw-in"]),  # noqa: E712
+        _open_play_cross_mask(events),
         # Regular pass (fallthrough for all other passes)
         is_pass,
         # Dribble (StatsBomb) → take_on
