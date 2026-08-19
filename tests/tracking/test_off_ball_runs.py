@@ -812,3 +812,115 @@ class TestLineBreakKernelGameIdTypeMismatch:
         # Before fix: n_attackers_behind_line would be 0 (lookup miss)
         assert result["line_break"].iloc[0] == True  # noqa: E712
         assert result["n_attackers_behind_line"].iloc[0] >= 0
+
+
+class TestLineBreakPathNaTeamFramesDegrade:
+    """A NaN-team_id 'team' in the FRAMES (>=3 unassigned/false-positive tracking detections)
+    makes `compute_defensive_line` try to resolve the NA team's end -> `goal_map.get` returns
+    None (NA key) -> `GoalEndUnresolvedError`. `add_defensive_line` catches it and NaN-degrades;
+    the three `_line_break_kernel` callers (`add_line_break` threshold, `add_off_ball_context`,
+    the `off_ball_context_xfns` transformer) must do the SAME, not raise uncaught.
+    """
+
+    @staticmethod
+    def _na_team_frames():
+        from tests.tracking.test_defensive_line import _make_frame_rows
+
+        frames = _make_frame_rows(
+            home_outfield_xs=[20.0, 25.0, 30.0, 35.0, 40.0],
+            home_outfield_ys=[10.0, 20.0, 34.0, 48.0, 58.0],
+            away_outfield_xs=[50.0, 50.0, 50.0, 70.0, 70.0, 70.0, 90.0, 90.0, 90.0, 90.0],
+            away_outfield_ys=[15.0, 34.0, 53.0, 15.0, 34.0, 53.0, 10.0, 24.0, 44.0, 58.0],
+        )
+        frames["team_id"] = frames["team_id"].astype("Int64")
+        frames["player_id"] = frames["player_id"].astype("Int64")
+        base = frames[frames["team_id"].notna() & (~frames["is_ball"])].iloc[0].to_dict()
+        na_rows = []
+        for x, y in [(55.0, 20.0), (55.0, 34.0), (55.0, 48.0)]:
+            row = dict(base)
+            row.update(player_id=pd.NA, team_id=pd.NA, is_goalkeeper=False, is_ball=False, x=x, y=y)
+            na_rows.append(row)
+        na_df = pd.DataFrame(na_rows).astype({"team_id": "Int64", "player_id": "Int64"})
+        frames = pd.concat([frames, na_df], ignore_index=True)
+        frames["team_id"] = frames["team_id"].astype("Int64")
+        frames["player_id"] = frames["player_id"].astype("Int64")
+        return frames
+
+    @classmethod
+    def _action(cls, frames):
+        home = frames[(frames["team_id"] == 1) & (~frames["is_ball"]) & (~frames["is_goalkeeper"])]
+        return _make_action_at(
+            time_seconds=1.0,
+            player_id=int(home["player_id"].iloc[0]),
+            team_id=1,
+            start_x=10.0,
+            start_y=34.0,
+            end_x=100.0,
+            end_y=34.0,
+        )
+
+    def test_kernel_degrades_not_raises(self):
+        from silly_kicks.tracking._off_ball_runs import _LINE_BREAK_COLS, _line_break_kernel
+
+        frames = self._na_team_frames()
+        out = _line_break_kernel(self._action(frames), frames, goal_map=resolve_defended_goals(frames))
+        assert list(out.columns) == _LINE_BREAK_COLS
+        assert out["line_break"].isna().all()
+        assert out["n_attackers_behind_line"].isna().all()
+
+    def test_add_line_break_threshold_degrades(self):
+        from silly_kicks.tracking.features import add_line_break
+
+        frames = self._na_team_frames()
+        out = add_line_break(self._action(frames), frames)  # method="threshold" default
+        assert out["line_break"].isna().all()
+
+    def test_add_off_ball_context_degrades(self):
+        from silly_kicks.tracking.features import add_off_ball_context
+
+        frames = self._na_team_frames()
+        out = add_off_ball_context(self._action(frames), frames)
+        assert out["line_break"].isna().all()
+
+    def test_off_ball_context_xfns_transformer_degrades(self):
+        from silly_kicks.tracking.features import off_ball_context_xfns
+        from silly_kicks.vaep.feature_framework import gamestates
+
+        frames = self._na_team_frames()
+        actions = pd.concat([self._action(frames)] * 4, ignore_index=True)
+        actions["action_id"] = list(range(1, 5))
+        states = gamestates(actions, nb_prev_actions=3)
+        result = off_ball_context_xfns()[0](states, frames)  # must not raise
+        assert result.shape[1] == 18
+
+    def test_add_defensive_line_reference_degrades(self):
+        # The sibling that ALREADY catches GoalEndUnresolvedError -- the pattern being mirrored.
+        from silly_kicks.tracking.features import add_defensive_line
+
+        frames = self._na_team_frames()
+        out = add_defensive_line(self._action(frames), frames)
+        assert out["defensive_line_x"].isna().all()
+
+    def test_resolvable_control_does_not_degrade(self):
+        # Without the NA rows the same entry point resolves normally (no raise; real values).
+        from silly_kicks.tracking.features import add_line_break
+        from tests.tracking.test_defensive_line import _make_frame_rows
+
+        frames = _make_frame_rows(
+            home_outfield_xs=[20.0, 25.0, 30.0, 35.0, 40.0],
+            home_outfield_ys=[10.0, 20.0, 34.0, 48.0, 58.0],
+            away_outfield_xs=[50.0, 50.0, 50.0, 70.0, 70.0, 70.0, 90.0, 90.0, 90.0, 90.0],
+            away_outfield_ys=[15.0, 34.0, 53.0, 15.0, 34.0, 53.0, 10.0, 24.0, 44.0, 58.0],
+        )
+        home = frames[(frames["team_id"] == 1) & (~frames["is_ball"]) & (~frames["is_goalkeeper"])]
+        actions = _make_action_at(
+            time_seconds=1.0,
+            player_id=int(home["player_id"].iloc[0]),
+            team_id=1,
+            start_x=10.0,
+            start_y=34.0,
+            end_x=100.0,
+            end_y=34.0,
+        )
+        out = add_line_break(actions, frames)
+        assert out["line_break"].notna().any()
