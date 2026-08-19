@@ -154,6 +154,12 @@ _NOT_A_DRIVER: dict[str, str] = {
         "source-side guard and the output-side gate answer different questions and only the "
         "second applies here."
     ),
+    "render_sb360_licensed_coverage": (
+        "reads the COMMITTED licensed coverage parquet + manifest and writes coverage.md. It does "
+        "no corpus work and consumes no external data, so a provenance guard would add nothing and "
+        "would make the report unrenderable during the session that produces it. Same class as "
+        "`render_sb360_matrix`; provenance travels by reference to the manifest it stamps."
+    ),
 }
 
 #: Genuinely a driver, enrolled, but invisible to the rule. MUST be empty on landing -- see

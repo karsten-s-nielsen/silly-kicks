@@ -409,5 +409,63 @@ def test_shot_blocked_true_on_real_blocked_shot():
     assert (shots["shot_blocked"] == True).sum() == 12  # noqa: E712
     # every shot row is True/False (never NA on a provider that encodes it)
     assert shots["shot_blocked"].notna().all()
-    # non-shots + the deferred cross column are NA
-    assert actions["cross_blocked"].isna().all()
+    _crosses = actions[actions["type_name"] == "cross"]
+    assert _crosses["cross_blocked"].notna().all()  # open-play crosses carry True/False
+    assert (_crosses["cross_blocked"] == False).all()  # 7298 has no blocked crosses  # noqa: E712
+    assert actions[actions["type_name"] != "cross"]["cross_blocked"].isna().all()
+
+
+def test_open_play_cross_mask_equals_inline_predicate():
+    """The extracted helper must equal an independent inline spelling of the open-play-cross rule
+    on real events. Deliberately NOT compared against `_vectorized_type_id` (post-refactor it calls
+    the helper, so that comparison is tautological); the inline copy here is the invariance anchor.
+    """
+    import json
+    import pathlib
+
+    from scripts._sb_raw import flatten_events
+    from silly_kicks.spadl.statsbomb import _flatten_extra, _open_play_cross_mask
+
+    raw = json.loads(pathlib.Path("tests/datasets/statsbomb/raw/events/7584.json").read_text(encoding="utf-8"))
+    events = flatten_events(raw, 7584)
+    events["extra"] = events["extra"].fillna({})  # mirror convert_to_actions
+    events = _flatten_extra(events)
+
+    inline = (
+        (events["type_name"] == "Pass")
+        & (events["_pass_cross"] == True)  # noqa: E712
+        & ~events["_pass_type"].isin(["Free Kick", "Corner", "Goal Kick", "Throw-in"])
+    ).to_numpy()
+    mask = _open_play_cross_mask(events)
+    assert mask.tolist() == inline.tolist()
+    assert mask.sum() > 0  # non-vacuous: the fixture actually exercises the True branch
+
+
+def test_cross_blocked_true_on_real_blocked_cross():
+    from silly_kicks.spadl.utils import add_names
+    from tests.invariants._loaders import load_statsbomb
+
+    actions, _ = load_statsbomb(7584)
+    actions = add_names(actions)
+    crosses = actions[actions["type_name"] == "cross"]
+    # exactly one genuine blocked cross in 7584 (min 89)
+    assert (crosses["cross_blocked"] == True).sum() == 1  # noqa: E712
+    blocked = crosses[crosses["cross_blocked"] == True]  # noqa: E712
+    assert blocked["original_event_id"].iloc[0] == "e8edd276-8490-456c-b221-240d128f61f1"
+    # every open-play cross carries a real True/False, never NA
+    assert crosses["cross_blocked"].notna().all()
+    # non-open-play rows (regular passes, set-piece crosses, non-passes) stay NA
+    assert actions[actions["type_name"] != "cross"]["cross_blocked"].isna().all()
+
+
+def test_cross_blocked_false_when_no_block_related():
+    from silly_kicks.spadl.utils import add_names
+    from tests.invariants._loaders import load_statsbomb
+
+    for mid in (7298, 3754058):  # zero blocked crosses in these matches
+        actions, _ = load_statsbomb(mid)
+        actions = add_names(actions)
+        crosses = actions[actions["type_name"] == "cross"]
+        assert crosses["cross_blocked"].notna().all()
+        assert (crosses["cross_blocked"] == False).all()  # noqa: E712
+        assert actions[actions["type_name"] != "cross"]["cross_blocked"].isna().all()

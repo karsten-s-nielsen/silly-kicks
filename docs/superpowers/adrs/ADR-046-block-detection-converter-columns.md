@@ -78,3 +78,28 @@ tiers) emit all-`pd.NA`; StatsBomb `cross_blocked` is deferred to `pd.NA` (n=1-v
 the provider audit had reported it "unverified" because the GS *synthetic* test fixture only emits
 `{null, C, F}`. Real data was the arbiter, as it was for SkillCorner (whose 294-column Game
 Intelligence schema, identical across public and owner-tier RM, records no shot/cross-block signal).
+
+## Amendment (2026-08-19): StatsBomb `cross_blocked` un-deferred
+
+The original decision deferred StatsBomb `cross_blocked` to all-`pd.NA` ("n=1-verified, fragile
+`related_events` join"), recording a real-data instance probe as the standing verification debt. That
+debt is discharged: a pre-registered probe (spec `2026-08-19-sb360-cross-blocked-and-licensed-coverage`)
+over ~510 open-data matches (~10,550 open-play crosses) passed all three rules -- R1 (absent
+`related_events`) 0.035, R2 (same-team links) 0.007 -- one same-team case, a StatsBomb offensive
+block, correctly excluded -- R3 (multi-block ambiguity) 0, base rate 1.3%.
+The `related_events` -> `Block` join is clean and symmetric; the "fragility" was the tiny base rate,
+not a broken mechanism.
+
+StatsBomb `cross_blocked` now ships a real mask: an open-play `cross` whose `related_events` links to a
+`Block` by the OPPOSING team and NOT flagged `block.offensive`. The single same-team case in the whole
+corpus was a StatsBomb-labelled offensive block (Ronaldo, WC2022), which the opposing-team rule already
+excludes; the `not block.offensive` guard is explicit belt-and-suspenders. Scope unchanged: open-play
+`cross` only (set-piece crosses stay `pd.NA`). Measurement: `docs/research/sb360_cross_blocked/`.
+
+**Hyrum note:** StatsBomb `cross_blocked` flips from all-`pd.NA` to real `True`/`False`. Silly-kicks-side
+this is additive and consumed by no `vaep/`/`atomic/` feature -> no retrain; declared `"invariant"`.
+(It IS consumed by the public TF-51 `compute_bravery` (not `add_press_commitment`), which has no `*_xfns`:
+StatsBomb bravery becomes cross-inclusive rather than shots-only -- a public-function output change,
+still no retrain.)
+Downstream consumers that added `cross_blocked` to a schema assuming a stable all-`pd.NA` column see a
+live-surface value change (see `docs/PRIVATE_CONSUMERS.md`).
