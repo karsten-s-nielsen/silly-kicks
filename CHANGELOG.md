@@ -5,6 +5,20 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.86.1] — 2026-08-19
+
+### Fixed
+
+- **`GoalEndUnresolvedError` no longer escapes the line-break kernel path.** `_line_break_kernel` --
+  consumed by `add_line_break(method="threshold")` (the default), `add_off_ball_context`, and the
+  `off_ball_context_xfns` VAEP feature-factory -- called `compute_defensive_line` unguarded, so a frame
+  carrying a NaN-`team_id` "team" (>=3 unassigned/false-positive tracking detections) raised
+  `GoalEndUnresolvedError` uncaught, where `add_defensive_line` (and the kernel's own
+  `dl.empty`/`linked.empty` guards) NaN-degrade. The kernel now catches `GoalEndUnresolvedError` at that
+  single point and returns its existing all-NaN frame, mirroring the ADR-055 edge policy across all three
+  callers. `add_line_break(method="ward")` is a distinct path and is unchanged. Purely a crash-fix (no
+  value change on resolvable inputs); no retrain. Reported by the lakehouse full-adoption effort.
+
 ## [4.86.0] — 2026-08-19
 
 StatsBomb `cross_blocked` un-deferred: a pre-registered probe over ~510 open-data matches (~10,550

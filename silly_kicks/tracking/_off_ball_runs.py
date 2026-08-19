@@ -287,6 +287,7 @@ def _line_break_kernel(
     Returns DataFrame aligned with actions.index, columns: _LINE_BREAK_COLS.
     """
     from ._defensive_line import compute_defensive_line
+    from ._gk_resolve import GoalEndUnresolvedError
     from .utils import link_actions_to_frames
 
     n_actions = len(actions)
@@ -301,8 +302,16 @@ def _line_break_kernel(
     if n_actions == 0 or len(frames) == 0:
         return empty
 
-    # Compute defensive line for all frames (ONCE)
-    dl = compute_defensive_line(frames, goal_map=goal_map, n=n)
+    # Compute defensive line for all frames (ONCE). An unresolvable defended end -- e.g. a
+    # NaN-team_id "team" of unassigned/false-positive tracking detections -- raises
+    # GoalEndUnresolvedError. Mirror add_defensive_line's edge policy (and this kernel's own
+    # `dl.empty`/`linked.empty` guards below) by NaN-degrading to `empty`, not raising uncaught
+    # through the three public callers (add_line_break threshold, add_off_ball_context, the
+    # off_ball_context_xfns transformer).
+    try:
+        dl = compute_defensive_line(frames, goal_map=goal_map, n=n)
+    except GoalEndUnresolvedError:
+        return empty
     # Direction per ACTION from the single orientation authority (ADR-028/041), resolved
     # ONCE here at the edge; the two sites below consume the resolved bool.
     _flip_by_aid = dict(zip(actions["action_id"], acting_team_attacks_rtl(actions, frames), strict=False))
