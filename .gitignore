@@ -89,3 +89,8 @@ calibration_runs/
 # where a future intentionally-tracked path could vanish from `git status` with no error.
 /*_shards/
 /xt_bandwidth_report_corpus/
+
+# Cover-shadow RQ1 + pass-risk validation (ADR-064): the per-pass score table holds raw owner-tier GS
+# player positions and is NEVER committed -- only the aggregate docs/research/ metrics are. A specific
+# filename (not a tracked path), so ignoring it at any depth is safe.
+pass_scores.parquet

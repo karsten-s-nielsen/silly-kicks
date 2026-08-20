@@ -5,6 +5,32 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.87.0] — 2026-08-19
+
+Cover-shadow RQ1 + pass-risk calibration -- a **reported-not-gated** real-data validation cycle (ADR-064,
+PR-S157). Measures two shipped predictors (`_cover_shadows.lane_control`; `pitch_control_at_target`) against
+real GS WC2022 pass outcomes and emits two auditable `docs/research/` artifacts. No library behaviour change,
+**no retrain**, C4-free (three `scripts/` drivers; aggregator count unchanged). The metric hierarchy is
+leakage-aware: the leakage-free completed-pass **false-positive rate** (Driver A, PASS-ONLY -- crosses are
+aerial) / **false-alarm rate** (Driver B) leads, while every metric that reads a failed pass (AUC, recall,
+slope) is tagged OPTIMISTIC because the failed-pass `end_xy` target is outcome-selected. **The cycle measures
+OVER-PREDICTION, not DETECTION.** The σ/λ recalibration (TF-24; this artifact supplies its selection-biased
+objective) and the Power-2017 expected-receiver model (shared with TF-51 Track B) are deferred, each with a
+tracked home.
+
+### Added -- the RQ validation cycle (PR-S157, ADR-064)
+
+- `scripts/build_rq_pass_scores.py`: the expensive `for_each`-sharded GS WC2022 corpus pass (per-pass
+  cover-shadow lane probabilities + `pitch_control_at_target`), writing a **gitignored** `pass_scores.parquet`
+  + a provenance `manifest.json`. Owner-tier raw positions are never committed.
+- `scripts/validate_cover_shadow_rq1.py` + `scripts/validate_pass_risk_calibration.py`: two thin consumers
+  that read the persisted table (REFUSING a dirty / missing / commit-mismatched upstream manifest, ADR-037)
+  and write the aggregate `docs/research/{cover_shadow_rq1, pass_risk_calibration}/` artifacts,
+  ship-mask-labeled via `_corpus.artifact_label(providers={"gradientsports"}, all_public=False)`.
+- `scripts/_rq_metrics.py` (pure metric helpers) + `scripts/_rq_corpus.py` (played-pass extraction + the
+  ADR-028 orientation reprojection). The cycle consumes the private `_cover_shadows.lane_control` seam
+  (recorded in `docs/PRIVATE_CONSUMERS.md`).
+
 ## [4.86.1] — 2026-08-19
 
 ### Fixed
