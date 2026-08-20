@@ -5,6 +5,44 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.88.0] — 2026-08-20
+
+SB360 boundary-audit closeout (ADR-053 amendment, PR-S158). The four boundary entry points parked
+behind a strict xfail are now registered, `UNAUDITABLE_BOUNDARY` is empty, and the
+substantive-vs-structural verdict distinction is enforced where it is machine-checkable.
+**Test-registry + docs, plus one docstring-only fix in `gkdv/_arms.py` -- no behavior change, no
+retrain, C4-free.**
+
+### Added -- boundary-audit closeout (PR-S158, ADR-053 amendment)
+
+- Registered `xtgk.compute_xt_gk_v2` (frame-blind: audited via synthesize-and-inject deterministic,
+  velocity-blind port doubles held identical across both legs -- the `audit_xt` pattern -- so
+  `identical`/`works` is a frame-coupling tripwire, NOT a claim that xt_gk_v2 is velocity-robust or
+  SB360-computable) and the three `gkdv` boundary points `build_ghost_frames`, `delta_das`,
+  `delta_threat_suppression` (`honest_nan`, inherited from `serve_ghost_gk_positions`'s ADR-054
+  refusal of velocity-less freeze-frames; the arms are never reached on Leg A, so the verdict is
+  contingent on that refusal) in the SB360 audit. The "no xG model" block was a category error --
+  the audit measures velocity/frame degradation (a cross-leg delta), never value quality.
+- Emptied `UNAUDITABLE_BOUNDARY` and retired the strict
+  `test_every_boundary_entry_point_is_registered` xfail into a plain passing completeness assertion
+  (a boundary point added later still must register or CI fails); raised `NOT_EXERCISED_BUDGET` with
+  the recorded gkdv `gk_absent` reason.
+- Added a per-entry `verdict_provenance` (`substantive`/`structural`) field + mandatory
+  `provenance_rationale` on `Sb360Entry`, plus the meta-gate
+  `test_boundary_entries_declare_admissible_provenance`: `works` (from `identical`) forces
+  `structural`, LOCKING the frame-blind half tight; `differs_by_design`/`silent_degrade` forces
+  `substantive`. **Known limit:** `honest_nan` is observationally ambiguous (self-refusal vs
+  inherited-refusal produce the same `all_nan`), so gkdv's `structural` choice is author-asserted --
+  forced only to carry a rationale. The ceiling is named, not overstated as fully test-locked.
+- ADR-053 amendment records the boundary-entry policy; the stale TODO "four boundary entry points
+  are unauditable" item is deleted as resolved.
+
+### Fixed
+
+- Corrected the `delta_threat_suppression` docstring in `silly_kicks/gkdv/_arms.py`: it referenced a
+  `home_team_id` parameter the current signature does not take (the real parameter is `goal_map`).
+  Docstring-only -- no behavior change, no retrain. (Surfaced by this cycle's whole-branch review.)
+
 ## [4.87.0] — 2026-08-19
 
 Cover-shadow RQ1 + pass-risk calibration -- a **reported-not-gated** real-data validation cycle (ADR-064,

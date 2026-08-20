@@ -62,11 +62,11 @@ def delta_threat_suppression(
         Team whose threat is measured (the team NOT defended by the substituted keeper).
     xt : ExpectedThreat
         Fitted xT model supplying the per-cell threat weights.
-    home_team_id : int | str
-        Home team identifier (defends x=0). Compared against the frames' ``team_id`` only
-        inside ``compute_threat_pc``, which routes every such comparison through the
-        ADR-019 ``silly_kicks.id_compat`` seam -- so a value-equal scalar of a different dtype yields
-        an identical result.
+    goal_map : GoalMap
+        The defended-goal map for these frames, from
+        ``silly_kicks.tracking.resolve_defended_goals``. Threaded into ``compute_threat_pc`` to
+        orient each team's attack; ids are matched through the ADR-019 ``silly_kicks.id_compat``
+        seam, so a value-equal scalar of a different dtype yields an identical result.
     params : GkdvParams
         Registered knobs. ``pitch_control_method`` and ``lambda_gk`` are consumed here, the
         latter forwarded into ``SpearmanParams`` as the arm's keeper-gain term.
@@ -84,9 +84,11 @@ def delta_threat_suppression(
     would contribute a spurious ``0.0``::
 
         from silly_kicks.gkdv import build_ghost_frames, delta_threat_suppression
+        from silly_kicks.tracking import resolve_defended_goals
 
         ghost_frames, provenance, report = build_ghost_frames(frames, home_team_id=1)
         scored = provenance.loc[provenance["drop_reason"].isna()]
+        goal_map = resolve_defended_goals(frames)
 
         key = ["game_id", "period_id", "frame_id"]
         one = scored.iloc[0][key]
@@ -94,7 +96,7 @@ def delta_threat_suppression(
         ghost = ghost_frames.merge(one.to_frame().T, on=key)
 
         delta = delta_threat_suppression(
-            actual, ghost, attacking_team_id=2, xt=fitted_xt, home_team_id=1
+            actual, ghost, attacking_team_id=2, xt=fitted_xt, goal_map=goal_map
         )
         # delta < 0  ->  the real keeper suppressed threat vs the league-average ghost.
 

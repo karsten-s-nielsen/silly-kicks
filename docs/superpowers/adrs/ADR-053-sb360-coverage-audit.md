@@ -100,3 +100,66 @@ Execution then overturned four claims that had survived all five reviews, includ
 own motivating example (`add_gk_influence` was believed to fabricate; it declines). **A reachable
 code path is not evidence about the value it produces** — the zero-fill it was accused of is real
 and IS reached, and the output is still NaN.
+
+## Amendment (2026-08-20, silly-kicks 4.88.0, PR-S158) — boundary-audit closeout: verdict provenance, `UNAUDITABLE_BOUNDARY` emptied
+
+The four boundary entry points parked as out-of-scope behind a strict xfail
+(`xtgk.compute_xt_gk_v2`, `gkdv.build_ghost_frames`, `gkdv.delta_das`,
+`gkdv.delta_threat_suppression`) are now **registered**, and `UNAUDITABLE_BOUNDARY` is **empty**.
+The `xtgk.compute_xt_gk_v2` reason -- "needs an xG-calibrated `MarkovPossessionValue` port and
+silly-kicks ships no xG model, so any port audits the stub" -- was a **category error**: the audit
+measures **velocity/frame degradation** (a cross-leg delta), never **value quality**, so a
+deterministic port double injected identically into both legs cannot audit the stub (its values
+cancel in the delta). The load-bearing addition is a verdict-provenance distinction the amendment
+makes explicit, so an empty `UNAUDITABLE_BOUNDARY` is never re-read as end-to-end degradation
+coverage.
+
+- **Substantive vs structural/inherited verdicts.** A **substantive** degradation verdict comes
+  from a velocity-*consuming* function whose own handling moves the value -- it zero-fills
+  (`differs_by_design`) or honest-NaNs (`honest_nan`) *because of what the function does*. A
+  **structural/inherited** verdict comes from a function the audit's axes cannot substantively
+  reach: **frame-blind -> `identical`/`works`** (the value cannot move -- a frame-coupling
+  tripwire), or **downstream-of-a-refusing-seam -> `honest_nan`** (the value is NaN because an
+  upstream seam refused, not because this function handled anything). Both are honest recorded
+  verdicts; **only the first is degradation coverage.** Registering a structural verdict retires
+  the *un-auditable category* without claiming the function is velocity-audited. Both of this
+  cycle's subjects are structural/inherited.
+- **Frame-blind, injected-port orchestrators** are audited via *synthesize-and-inject*:
+  deterministic, velocity-blind, live port doubles held identical across both legs -- the same
+  pattern `audit_xt` (`scripts/_sb_battery.py`; injects a non-degenerate `ExpectedThreat` into six
+  aggregators) and `visible_area_coverage` (a frame-blind entry that records the honest "the axis
+  cannot reach it" rather than manufacturing a difference) already use; both resolve to
+  `identical`/`works` -- the same verdict, not two flavours. No bundled model is required.
+  **`works` on a frame-blind orchestrator means "this function fabricates nothing through a frame
+  it never reads" -- NOT "the metric is velocity-robust or SB360-computable."** For
+  `compute_xt_gk_v2` specifically, the metric's velocity-dependence lives in its inputs
+  (`pressure`, `is_gk_distribution`, `retention_features`), computed upstream from tracking and
+  unavailable on real SB360; the `identical` verdict is a **regression invariant** that flips if a
+  future edit makes the function read a frame, nothing more.
+- **A function downstream of a refusing seam inherits that seam's verdict, and the inheritance is
+  contingent.** gkdv inherits `serve_ghost_gk_positions`'s ADR-054 refusal of velocity-less
+  freeze-frames -> `honest_nan` (the class `add_ghost_gk` already carries): on the freeze-frame
+  leg no ghost is served, zero frames are scored, and the arms are **never reached**. So the arms'
+  *intrinsic* zero-velocity behaviour is **out of scope** and would need its own probe if the
+  serving seam ever stops refusing (cf. ADR-063, which lifted the four pitch-control aggregators to
+  the zero-velocity positional model).
+- **The distinction is enforced for the checkable half, author-asserted for the other.** A
+  per-entry `verdict_provenance` (`substantive`/`structural`) field on every registered
+  `BOUNDARY_ENTRY_POINT` (paired with a mandatory `provenance_rationale`), plus a meta-gate
+  (`test_boundary_entries_declare_admissible_provenance`) deriving its population from
+  `BOUNDARY_ENTRY_POINTS`: `works` (from `identical`) forces `structural`, locking the frame-blind
+  case (`xtgk.compute_xt_gk_v2`) tight -- a value that cannot move across the velocity legs was not
+  substantively handled; `differs_by_design`/`silent_degrade` forces `substantive`. **Known limit:
+  `honest_nan` is observationally ambiguous** -- self-refusal (substantive, the shape
+  `add_ghost_gk` has) and inherited-refusal (structural, gkdv's shape) both produce `all_nan`, and
+  no observation distinguishes them, so the gate **cannot** check gkdv's `structural` choice; it is
+  **author-asserted**, forced only to carry a rationale. This gate locks HALF the distinction, and
+  naming that ceiling is the durability contribution -- it is not overstated as fully test-locked
+  (ADR-056: a floor cannot detect an omission, so the frame-blind half is machine-checked; the
+  inherited-refusal half is rationale-documented but author-asserted).
+
+All five current boundary entries (the four above plus the already-registered
+`spadl.add_restart_coordinates`) declare `verdict_provenance="structural"` with a stated reason.
+The stale TODO "four boundary entry points are unauditable" item is deleted as **resolved** (not
+tracked forward). Consequences unchanged from the parent decision: tests and docs only, no library
+change, no aggregator added, C4-free, no retrain trigger.

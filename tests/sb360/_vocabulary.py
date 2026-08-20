@@ -103,5 +103,13 @@ RATIONALE_CONDITIONAL: dict[str, str] = {
     "honest_nan": "observation is partial_nan",
 }
 
+# --- verdict_provenance.* -------------------------------------------------------------
+#: Whether a BOUNDARY entry's verdict is SUBSTANTIVE (a velocity-consuming function whose own
+#: handling moved the value) or STRUCTURAL (a function the axes cannot substantively reach:
+#: frame-blind -> `identical`; downstream-of-a-refusing-seam -> `honest_nan`). Scoped to
+#: BOUNDARY_ENTRY_POINTS so an empty UNAUDITABLE_BOUNDARY is not misread as end-to-end coverage
+#: (ADR-053 amendment / spec Part 4).
+VERDICT_PROVENANCE: frozenset[str] = frozenset({"substantive", "structural"})
+
 # --- applicability.* ------------------------------------------------------------------
 APPLICABILITY: frozenset[str] = frozenset({"region_support", "no_support", "support_data_defined"})

@@ -109,6 +109,9 @@ class Sb360Entry:
     tolerances: dict[str, tuple[float, float]] = field(default_factory=dict)
     tolerance_basis: dict[str, str] = field(default_factory=dict)
     structurally_impossible: dict[str, str] = field(default_factory=dict)
+    #: Boundary-entry provenance (substantive/structural). None on the add_* surface. See Part 4.
+    verdict_provenance: str | None = None
+    provenance_rationale: str | None = None
 
 
 SB360_ENTRIES: dict[str, Sb360Entry] = {}
@@ -193,7 +196,24 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #:      `KeyError: 'line_x'` (observation `raises_a`), because `add_packing`'s
 #:      `GoalEndUnresolvedError` fallback built the three EMITTED columns and not the internal
 #:      one the event-only assembly reads immediately afterwards.
-NOT_EXERCISED_BUDGET = 49
+#:
+#: RAISED 49 -> 52 by registering `gkdv.build_ghost_frames` as a boundary entry (spec Part 2).
+#: The 3 new tuples are its emitted columns (`ghost_x`, `ghost_y`, `displacement_m`) under
+#: `gk_absent` ONLY. `gk_absent` removes BOTH keepers, and gkdv's spec-§4.1 domain requires a
+#: defending-GK row present, so no frame is eligible on EITHER leg -- both legs score zero and
+#: every column observes `no_signal` (both-NaN), which admits only `not_exercised`. On the other
+#: two rosters ONE keeper remains, so the defending keeper resolves and these columns observe
+#: `all_nan` instead (Leg A refuses the velocity-less freeze-frame -- ADR-054 -- while Leg B
+#: scores the in-domain actions), which is `honest_nan`, NOT `not_exercised`, and does not count
+#: here.
+#:
+#: RAISED 52 -> 54 by registering `gkdv.delta_das` + `gkdv.delta_threat_suppression` as the last
+#: two boundary entries (spec Part 2/Task 5). Same shape as `build_ghost_frames`: one emitted
+#: column each (`delta_das`, `delta_threat_suppression`), `no_signal` -> `not_exercised` under
+#: `gk_absent` ONLY (both keepers gone -> no eligible frame on either leg), and `honest_nan` on
+#: the other two rosters. That is +2 tuples, one per column. This is the FINAL bump -- every
+#: BOUNDARY_ENTRY_POINT is now registered and `UNAUDITABLE_BOUNDARY` is empty.
+NOT_EXERCISED_BUDGET = 54
 
 
 def _entry(
@@ -208,6 +228,8 @@ def _entry(
     tolerances=None,
     tolerance_basis=None,
     structurally_impossible=None,
+    verdict_provenance=None,
+    provenance_rationale=None,
 ) -> None:
     SB360_ENTRIES[name] = Sb360Entry(
         name=name,
@@ -220,6 +242,8 @@ def _entry(
         tolerances=tolerances or {},
         tolerance_basis=tolerance_basis or {},
         structurally_impossible=structurally_impossible or {},
+        verdict_provenance=verdict_provenance,
+        provenance_rationale=provenance_rationale,
     )
 
 
