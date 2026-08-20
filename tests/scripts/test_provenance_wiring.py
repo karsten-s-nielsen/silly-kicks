@@ -40,6 +40,12 @@ ARTIFACT_DRIVERS = (
     # the release's ship claim ("unification, measured no-op" vs a weights comparison).
     "materialize_tc3_frames",
     "measure_box_constant_delta",
+    # The cover-shadow RQ1 + pass-risk validation cycle (2026-08-19). `build_rq_pass_scores` is the
+    # expensive corpus pass (per-pass GS scores -> gitignored pass_scores.parquet); the two consumers
+    # read that persisted table and write the cited docs/research/ artifacts.
+    "build_rq_pass_scores",
+    "validate_cover_shadow_rq1",
+    "validate_pass_risk_calibration",
     # TF-24 Stage-1 confirmation. Writes `docs/research/tf24_stage1_confirmation/metrics.json`,
     # whose verdict decides whether the recorded carrier optimum stands or a full Stage-1
     # sweep is owed -- a cited number, so the tree it ran on has to be recorded.

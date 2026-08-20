@@ -134,6 +134,120 @@ def slim_skillcorner_match():
     return _synthetic_skillcorner_match()
 
 
+def _rq_frame_rows(frame_id: int, t: float, ball_xy: tuple[float, float]) -> list[dict]:
+    """One synthetic frame: home (team 1) attacks x=105 ('ltr'), away (team 2) 'rtl'; +ball. vx/vy=0
+    present so pitch_control_at_target does not take the velocity-less raise path (mirrors GS)."""
+    home = [
+        (19, 2.0, 34.0, True),
+        (10, 30.0, 34.0, False),
+        (11, 58.0, 34.0, False),
+        (12, 20.0, 20.0, False),
+        (13, 25.0, 50.0, False),
+    ]
+    away = [(29, 103.0, 34.0, True), (20, 45.0, 34.0, False), (21, 70.0, 25.0, False), (22, 75.0, 45.0, False)]
+    rows = []
+    for pid, x, y, gk in home:
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=frame_id,
+                time_seconds=t,
+                team_id=1,
+                player_id=pid,
+                is_goalkeeper=gk,
+                is_ball=False,
+                team_attacking_direction="ltr",
+                x=x,
+                y=y,
+                vx=0.0,
+                vy=0.0,
+                speed=0.0,
+                source_provider="gradientsports",
+            )
+        )
+    for pid, x, y, gk in away:
+        rows.append(
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=frame_id,
+                time_seconds=t,
+                team_id=2,
+                player_id=pid,
+                is_goalkeeper=gk,
+                is_ball=False,
+                team_attacking_direction="rtl",
+                x=x,
+                y=y,
+                vx=0.0,
+                vy=0.0,
+                speed=0.0,
+                source_provider="gradientsports",
+            )
+        )
+    rows.append(
+        dict(
+            game_id=1,
+            period_id=1,
+            frame_id=frame_id,
+            time_seconds=t,
+            team_id=np.nan,
+            player_id=np.nan,
+            is_goalkeeper=False,
+            is_ball=True,
+            team_attacking_direction=np.nan,
+            x=ball_xy[0],
+            y=ball_xy[1],
+            vx=0.0,
+            vy=0.0,
+            speed=0.0,
+            source_provider="gradientsports",
+        )
+    )
+    return rows
+
+
+def _rq_mini_actions() -> pd.DataFrame:
+    """Two home passes: action 0 completed (next same-team touch = player 11 -> receiver);
+    action 1 FAILED (-> end_xy target)."""
+    from silly_kicks.spadl import config as spc
+
+    p = spc.actiontype_id["pass"]
+    s, f = spc.result_id["success"], spc.result_id["fail"]
+    return pd.DataFrame(
+        {
+            "game_id": [1, 1],
+            "action_id": [0, 1],
+            "period_id": [1, 1],
+            "time_seconds": [1.0, 2.0],
+            "team_id": [1, 1],
+            "player_id": [10, 11],
+            "type_id": [p, p],
+            "result_id": [s, f],
+            "bodypart_id": [0, 0],
+            "start_x": [30.0, 60.0],
+            "start_y": [34.0, 34.0],
+            "end_x": [58.0, 80.0],
+            "end_y": [34.0, 34.0],
+        }
+    )
+
+
+def _rq_mini_frames() -> pd.DataFrame:
+    return pd.DataFrame(_rq_frame_rows(0, 1.0, (30.0, 34.0)) + _rq_frame_rows(1, 2.0, (60.0, 34.0)))
+
+
+@pytest.fixture
+def mini_actions() -> pd.DataFrame:
+    return _rq_mini_actions()
+
+
+@pytest.fixture
+def mini_frames() -> pd.DataFrame:
+    return _rq_mini_frames()
+
+
 def _fixture_with_all_rows_offpitch():
     """A measure_match-shaped frame whose every row is gross-off-pitch (for the A2 failing side)."""
     from validate_skillcorner_keeper_origin import EXPECTED_COLS

@@ -1,0 +1,103 @@
+{
+  "headline_fp_rate": {
+    "majority": 0.1545341467748623,
+    "center": 0.08934036209994274,
+    "mean": 0.08912318110920255,
+    "max": 0.13283579142727397
+  },
+  "pass_plus_cross_secondary": {
+    "majority": 0.15780594028328168,
+    "center": 0.09279240397065171,
+    "mean": 0.09267469690430416,
+    "max": 0.136716757562679
+  },
+  "optimistic": {
+    "leakage_inflated": true,
+    "auc": {
+      "n_blocked": 0.6922685932188641,
+      "margin_mean": 0.7644478154296962,
+      "abs_p_blocked": {
+        "center": 0.5109356239341754,
+        "mean": 0.5086981246492929,
+        "max": 0.5047173659653338
+      }
+    },
+    "confusion": {
+      "tp": 5677,
+      "fp": 8044,
+      "tn": 42930,
+      "fn": 5293,
+      "precision": 0.41374535383718386,
+      "recall": 0.5175022789425706,
+      "specificity": 0.8421940597167183,
+      "balanced_accuracy": 0.6798481693296445
+    },
+    "reliability_slope": 0.20437143496497784
+  },
+  "recalibration_baseline": {
+    "ece": 0.17599755622337707,
+    "reliability_curve": {
+      "bin_mid": [
+        0.05,
+        0.15000000000000002,
+        0.25,
+        0.35000000000000003,
+        0.45,
+        0.55,
+        0.6500000000000001,
+        0.75,
+        0.8500000000000001,
+        0.95
+      ],
+      "mean_pred": [
+        0.006783685368455862,
+        0.14688751860938093,
+        0.24763753573374028,
+        0.34860971761197235,
+        0.4495859202164268,
+        0.549266550987053,
+        0.6499038861263601,
+        0.7510606307879828,
+        0.8505855182233363,
+        0.9609050760446171
+      ],
+      "emp_rate": [
+        0.1564889538455021,
+        0.14885777450257923,
+        0.18289085545722714,
+        0.1978908188585608,
+        0.22651565622918055,
+        0.2528216704288939,
+        0.2679307502061006,
+        0.27996845425867506,
+        0.32323996971990915,
+        0.4045977011494253
+      ],
+      "n": [
+        47211,
+        2714,
+        2034,
+        1612,
+        1501,
+        1329,
+        1213,
+        1268,
+        1321,
+        1740
+      ]
+    },
+    "note": "pre-recalibration baseline (p_blocked is P(screened), not P(fail)); the sigma/lambda cycle drives ECE down. Selection-biased to attempted passes -- see the TF-24 handoff."
+  },
+  "paper_reconciliation": {
+    "cascioli_majority_recall": 0.369,
+    "cascioli_majority_precision": 0.22,
+    "required_sentence": "our majority recall 0.518 vs the paper's 0.369 (recomputed from Cascioli Appendix B, not the handoff table)."
+  },
+  "scope_note": "This measures OVER-PREDICTION (specificity on completed passes), NOT DETECTION (recall) -- recall needs the failed-pass class, which is both leaked (outcome-selected end_xy target) and confounded, until the deferred Power-2017 expected-receiver model lands. The clean headline is not a full validation.",
+  "n_passes": 61944,
+  "n_pass_only": 60251,
+  "n_completed": 50974,
+  "corpus_visibility": "full",
+  "run_commit": "ed0449ee931f5675a99059fa842d08b80f89cb3f",
+  "run_tree_dirty": false
+}

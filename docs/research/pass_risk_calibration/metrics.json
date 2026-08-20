@@ -1,0 +1,78 @@
+{
+  "headline_false_alarm_rate": {
+    "0.1": 0.04179918218991367,
+    "0.2": 0.05523181162712601,
+    "0.3": 0.06799280959247772
+  },
+  "optimistic": {
+    "leakage_inflated": true,
+    "auc": 0.6008519303851549,
+    "ece": 0.31643854082233475,
+    "reliability_slope": 0.3166979708500353,
+    "reliability_curve": {
+      "bin_mid": [
+        0.05,
+        0.15000000000000002,
+        0.25,
+        0.35000000000000003,
+        0.45,
+        0.55,
+        0.6500000000000001,
+        0.75,
+        0.8500000000000001,
+        0.95
+      ],
+      "mean_pred": [
+        0.019310300280935087,
+        0.14930708231245002,
+        0.2513828082226607,
+        0.34989009475297783,
+        0.4889278507856298,
+        0.5017671909504624,
+        0.6485180606281458,
+        0.7499647169173038,
+        0.8524371178830371,
+        0.9843928523786478
+      ],
+      "emp_rate": [
+        0.6280795488275452,
+        0.6507177033492823,
+        0.6894343649946638,
+        0.6822429906542056,
+        0.8066780497059381,
+        0.8350207308841964,
+        0.8484848484848485,
+        0.8761467889908257,
+        0.8873602751504729,
+        0.9378769601930036
+      ],
+      "n": [
+        3369,
+        1045,
+        937,
+        963,
+        5271,
+        41484,
+        1155,
+        1090,
+        1163,
+        4974
+      ]
+    }
+  },
+  "low_control_completion_band": {
+    "contaminated": true,
+    "by_tau": {
+      "0.1": 0.6280795488275452,
+      "0.2": 0.6334390575441776,
+      "0.3": 0.6432442534105774
+    },
+    "note": "P(success | control<tau) over ALL passes -- the 'technically complete, functionally lost' read. Failed passes cluster at low control via the end_xy selection, so this is CONTAMINATED and kept distinct from the clean false-alarm headline; never conflated."
+  },
+  "scope_note": "This measures OVER-PREDICTION (specificity on completed passes), NOT DETECTION (recall) -- recall needs the failed-pass class, which is both leaked (outcome-selected end_xy target) and confounded, until the deferred Power-2017 expected-receiver model lands. The clean headline is not a full validation.",
+  "n_passes": 61944,
+  "n_completed": 50974,
+  "corpus_visibility": "full",
+  "run_commit": "ed0449ee931f5675a99059fa842d08b80f89cb3f",
+  "run_tree_dirty": false
+}
