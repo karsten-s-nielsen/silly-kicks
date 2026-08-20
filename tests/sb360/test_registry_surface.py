@@ -6,8 +6,6 @@ own repair arrives green and is never observed to work (ADR-051).
 
 from __future__ import annotations
 
-import pytest
-
 from tests.sb360 import _vocabulary as V
 from tests.sb360._registry import (
     NOT_EXERCISED_BUDGET,
@@ -35,31 +33,20 @@ def test_every_public_add_star_is_registered():
 #: Boundary entry points the action-paired fixture structurally cannot exercise, each with its
 #: reason. NOT a convenience list: every name here is one the audit does not cover, and saying
 #: so explicitly is the difference between a SCOPED gap and a silent one.
-UNAUDITABLE_BOUNDARY: dict[str, str] = {
-    "gkdv.build_ghost_frames": (
-        "Takes FRAMES only and returns (frames, provenance, report) -- not action-coupled, so "
-        "the per-action paired comparison has no shape to compare. Also needs a fitted "
-        "GhostGkModel."
-    ),
-    "gkdv.delta_das": (
-        "Operates on a FACTUAL/GHOST frame PAIR rather than on actions, and consumes the output of build_ghost_frames."
-    ),
-    "gkdv.delta_threat_suppression": ("Same frame-pair shape as delta_das, plus a fitted ExpectedThreat."),
-    "xtgk.compute_xt_gk_v2": (
-        "Requires three injected ports (possession_value, retention, turnover_cost). "
-        "MarkovPossessionValue needs an xG-calibrated fit and silly-kicks ships NO xG model, so "
-        "any port the audit supplied would be auditing the stub rather than the library."
-    ),
-}
+#:
+#: NOW EMPTY: every BOUNDARY_ENTRY_POINT is registered (the last two -- `gkdv.delta_das` and
+#: `gkdv.delta_threat_suppression` -- landed via the inline frame-pair adapters in
+#: `_entries/_boundary.py`, projecting each per-frame arm to its action ANCHOR frame). The symbol
+#: is retained so `test_uncovered_boundary_points_each_carry_a_reason` still guards a FUTURE
+#: unregistered boundary entry.
+UNAUDITABLE_BOUNDARY: dict[str, str] = {}
 
 
-@pytest.mark.xfail(
-    reason="Four boundary entry points are structurally out of reach of an action-paired "
-    "fixture -- see UNAUDITABLE_BOUNDARY for the per-name reason. Kept STRICT so that covering "
-    "any of them forces this marker to be revisited rather than quietly passing.",
-    strict=True,
-)
 def test_every_boundary_entry_point_is_registered():
+    """Every frame-consuming boundary entry point outside ``tracking.__all__`` now carries an
+    SB360 verdict -- the strict xfail retired once the last two (`gkdv.delta_das`,
+    `gkdv.delta_threat_suppression`) landed and `UNAUDITABLE_BOUNDARY` emptied. A plain
+    completeness assertion from here on: a NEW boundary entry must register or CI fails."""
     from tests.sb360._registry import BOUNDARY_ENTRY_POINTS
 
     missing = set(BOUNDARY_ENTRY_POINTS) - set(SB360_ENTRIES)
@@ -280,3 +267,57 @@ def test_gk_one_end_reclaims_the_cover_shadow_columns() -> None:
         f"check that `_player_layout` drops only the AWAY keeper and that `resolve_defended_goals` "
         f"returns two DIFFERENT ends on this roster."
     )
+
+
+def test_verdict_provenance_vocabulary_and_restart_declaration():
+    from tests.sb360._vocabulary import VERDICT_PROVENANCE
+
+    assert VERDICT_PROVENANCE == frozenset({"substantive", "structural"})
+    entry = SB360_ENTRIES["spadl.add_restart_coordinates"]
+    assert entry.verdict_provenance == "structural"
+    assert entry.provenance_rationale, "a structural boundary entry needs a stated reason"
+
+
+def test_boundary_entries_declare_admissible_provenance():
+    """Every REGISTERED boundary entry declares substantive/structural, admissibly from its
+    observation, so an empty UNAUDITABLE_BOUNDARY cannot be misread as end-to-end degradation
+    coverage (ADR-053 Part 4). Population derived from BOUNDARY_ENTRY_POINTS -- a new boundary
+    entry without a provenance fails here.
+
+    KNOWN LIMIT (spec Part 4): this gate locks HALF the distinction. `works`=>`structural` is tight
+    (a value that cannot move was not substantively handled). `differs_by_design`/`silent_degrade`
+    =>`substantive` is enforceable but inert this cycle. But `honest_nan` is OBSERVATIONALLY
+    AMBIGUOUS -- self-refusal (substantive) and inherited-refusal (structural, gkdv) both produce
+    `all_nan`, so the gate CANNOT check gkdv's `structural` choice; it is author-asserted, forced
+    only to carry a rationale. This is the machine-checkability ceiling, named deliberately.
+
+    Cannot be landed red against the correct Task-1 state (add_restart_coordinates is already
+    `structural`+`works`), so it was MUTATION-VERIFIED (ADR-051), both admissibility branches: see
+    Step 2.
+    """
+    from tests.sb360._registry import BOUNDARY_ENTRY_POINTS
+    from tests.sb360._vocabulary import VERDICT_PROVENANCE
+
+    for name in sorted(set(BOUNDARY_ENTRY_POINTS) & set(SB360_ENTRIES)):
+        entry = SB360_ENTRIES[name]
+        prov = entry.verdict_provenance
+        assert prov in VERDICT_PROVENANCE, (
+            f"{name}: registered boundary entry carries verdict_provenance {prov!r}, not in "
+            f"{sorted(VERDICT_PROVENANCE)}. Declare substantive/structural (spec Part 4)."
+        )
+        for _axis, _roster, col, v in iter_verdicts(entry):
+            if v.adjudication == "works":
+                assert prov == "structural", (
+                    f"{name}.{col}: `works` (from `identical`) forces `structural` -- a value that "
+                    f"cannot move across the velocity legs was not substantively handled. Got {prov!r}."
+                )
+            if v.adjudication in {"differs_by_design", "silent_degrade"}:
+                assert prov == "substantive", (
+                    f"{name}.{col}: {v.adjudication!r} forces `substantive` -- the value moved "
+                    f"because of the function. Got {prov!r}."
+                )
+        if prov == "structural":
+            assert entry.provenance_rationale, (
+                f"{name}: `structural` requires a non-empty provenance_rationale naming WHY "
+                f"(frame-blind / inherited-from-refusal)."
+            )

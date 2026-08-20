@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Release**: silly-kicks 4.87.0 (2026-08-19). Cover-shadow RQ1 + pass-risk calibration (ADR-064, PR-S157) — a **reported-not-gated** real-data validation cycle. Three `scripts/` drivers: `build_rq_pass_scores` (the expensive `for_each`-sharded GS WC2022 corpus pass → gitignored `pass_scores.parquet`) + two consumers (`validate_cover_shadow_rq1`, `validate_pass_risk_calibration`) that read the persisted table and write aggregate `docs/research/` artifacts (upstream-manifest-refusing, ADR-037; ship-mask-labeled). Leakage-aware hierarchy: the completed-pass false-positive/false-alarm rate leads (Driver A PASS-ONLY — crosses aerial); AUC/recall/slope tagged OPTIMISTIC (failed-pass `end_xy` is outcome-selected); **measures over-prediction, not detection**. No library change, no retrain, C4-free. The three drivers are run locally on the GS WC2022 pining corpus (commit 2 = the aggregate artifacts). σ/λ recalibration (TF-24) + the Power-2017 receiver model (TF-51 Track B) deferred. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Release**: silly-kicks 4.88.0 (boundary-audit closeout — ADR-053 amendment, PR-S158). Registered `xtgk.compute_xt_gk_v2` + the three `gkdv` boundary points (`build_ghost_frames`, `delta_das`, `delta_threat_suppression`) in the SB360 audit; emptied `UNAUDITABLE_BOUNDARY` and retired its strict xfail into a plain completeness assertion; added a `verdict_provenance` field + `test_boundary_entries_declare_admissible_provenance` meta-gate that LOCKS the frame-blind half (`works` => structural) of the substantive-vs-structural distinction and author-asserts the observationally-ambiguous `honest_nan` half (the named machine-checkability ceiling); ADR-053 amendment. **Test-registry + docs only — no library change, no retrain, C4-free.** Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -47,10 +47,6 @@ rejected alternatives) lives in
 Surfaced by the audit (shipped 4.75.0 / PR-S143 / ADR-053), which deliberately reports rather than
 repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
 
-- **Four boundary entry points are unaudited**, each with its reason in
-  `tests/sb360/test_registry_surface.py::UNAUDITABLE_BOUNDARY` behind a strict xfail. The blocking
-  one is `xtgk.compute_xt_gk_v2`: it needs an xG-calibrated `MarkovPossessionValue` port and
-  silly-kicks ships no xG model, so any port supplied would audit the stub rather than the library.
 - **Check whether the lakehouse already ingests StatsBomb open data.** The question has CHANGED now
   that 4.76.0 ships `providers/statsbomb`: it is no longer build-or-reuse but whether the lakehouse
   should ADOPT the port so both read SB360 the same way. Not answerable from this repo.
