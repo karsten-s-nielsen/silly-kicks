@@ -55,8 +55,8 @@ the consumers' aggregate `metrics.json` + `README.md` land under `docs/research/
 ## Consequences
 
 - **Two commits, non-squash.** Commit 1 lands the code + docs (clean tree so the driver can run); the
-  owner runs the three drivers on the DGX (stamping commit 1's SHA); commit 2 lands the aggregate
-  artifacts. Non-squash so the artifacts' `run_commit` resolves.
+  three drivers are then run locally on the GS WC2022 pining corpus (stamping commit 1's SHA); commit 2
+  lands the aggregate artifacts. Non-squash so the artifacts' `run_commit` resolves.
 - **No retrain, C4-free** (three `scripts/` drivers; aggregator count unchanged). `_cover_shadows.lane_control`
   is consumed as a private seam (recorded in `docs/PRIVATE_CONSUMERS.md`).
 - **Two deferrals, each with a home.** (a) The σ/λ recalibration is TF-24's own cycle -- this artifact
