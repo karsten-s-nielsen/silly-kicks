@@ -117,7 +117,7 @@ import pandas as pd
 
 from ..tracking import direction
 from . import config as spadlconfig
-from .base import _add_dribbles, _derive_end_coordinates
+from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import KLOPPY_SPADL_COLUMNS, SPORTEC_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -644,6 +644,16 @@ def convert_to_actions(
         )
 
     raw_actions = _build_raw_actions(events, preserve_native, goalkeeper_ids=goalkeeper_ids)
+
+    # Chronological-action_id invariant: sort the raw actions into
+    # (game_id, period_id, time_seconds) order at the TOP of the frame -- before
+    # any positional (.shift()-based) derivation (_derive_end_coordinates /
+    # _add_dribbles) -- so action_id becomes a chronological index and every
+    # time-neighbour lookup resolves the true neighbour. Native DFL bronze can
+    # ship events out of time order (a genuine ..., 28.806, 26.370 inversion in
+    # the IDSSE slice). Empty frame passes through unchanged. See
+    # sort_actions_chronologically in .base.
+    raw_actions = sort_actions_chronologically(raw_actions)
 
     if len(raw_actions) > 0:
         actions = _derive_end_coordinates(raw_actions)

@@ -201,7 +201,7 @@ def add_gk_role(
             f"add_gk_role: distribution_lookback_actions must be >= 1, got {distribution_lookback_actions}"
         )
 
-    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    sorted_actions = _sort_actions_chronological_or_action_id(actions)
 
     n = len(sorted_actions)
     if n == 0:
@@ -419,7 +419,7 @@ def add_gk_distribution_metrics(
     # add_gk_role's internal ordering, so the require_gk_role path is value/order-identical; the
     # gk_role-present path now returns a sorted copy (it previously assigned the four columns straight
     # onto the caller's frame -- the motivating in-place-mutation defect).
-    out = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    out = _sort_actions_chronological_or_action_id(actions)
     if "gk_role" not in out.columns:
         if require_gk_role:
             out = add_gk_role(out)
@@ -630,7 +630,7 @@ def add_pre_shot_gk_context(
     if lookback_actions < 1:
         raise ValueError(f"add_pre_shot_gk_context: lookback_actions must be >= 1, got {lookback_actions}")
 
-    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    sorted_actions = _sort_actions_chronological_or_action_id(actions)
 
     n = len(sorted_actions)
     gk_was_distributing = np.zeros(n, dtype=bool)
@@ -796,7 +796,8 @@ def add_restart_coordinates(
     Returns
     -------
     pd.DataFrame
-        Sorted copy of ``actions`` (by ``game_id``, ``period_id``, ``action_id``) with 8 appended
+        Sorted copy of ``actions`` (by ``game_id``, ``period_id``, ``time_seconds`` when present,
+        then ``action_id``) with 8 appended
         columns: ``enriched_start_x``/``_y``, ``start_coord_source``, ``start_coord_confidence``,
         ``enriched_end_x``/``_y``, ``end_coord_source``, ``end_coord_confidence``.
 
@@ -819,7 +820,16 @@ def add_restart_coordinates(
             f"add_restart_coordinates: actions missing required columns: {sorted(missing)}. "
             f"Got: {sorted(actions.columns)}"
         )
-    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    # Establish chronological order for resolve_restart_geometry's positional next-event shift.
+    # A persisted mart may carry a non-chronological action_id (the defect the converter fix removes
+    # for fresh conversions), so key on time_seconds when present, with action_id as the tiebreak --
+    # NOT action_id alone (spec §3d; mirrors retains()'s robust key). On chronological input this is
+    # identical to the old action_id sort. time_seconds is not a required column, so fall back.
+    _sort_cols = ["game_id", "period_id"]
+    if "time_seconds" in actions.columns:
+        _sort_cols.append("time_seconds")
+    _sort_cols.append("action_id")
+    sorted_actions = actions.sort_values(_sort_cols, kind="mergesort").reset_index(drop=True)
 
     from silly_kicks.tracking._gk_geometry import apply_restart_tripwire, resolve_restart_geometry
 
@@ -981,8 +991,10 @@ def add_possessions(
 
     Algorithm
     ---------
-    Actions are sorted by ``(game_id, period_id, action_id)``. A possession
-    boundary is emitted when ANY of:
+    Actions are sorted by ``(game_id, period_id, time_seconds, action_id)`` (by
+    ``action_id`` alone when ``time_seconds`` is absent) -- robust to a mart's
+    non-chronological ``action_id`` (spec §3d). A possession boundary is emitted
+    when ANY of:
 
     1. ``game_id`` changes (counter resets to 0).
     2. ``period_id`` changes within the same game (counter increments).
@@ -1132,7 +1144,7 @@ def add_possessions(
         )
 
     # Sort by canonical SPADL order. Stable sort preserves original-row order on ties.
-    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    sorted_actions = _sort_actions_chronological_or_action_id(actions)
 
     n = len(sorted_actions)
     if n == 0:
@@ -1278,7 +1290,15 @@ def _resolve_next_touch_positions(actions: pd.DataFrame) -> pd.Series:
     if len(a) == 0:
         return pd.Series(pd.NA, index=a.index, dtype="Int64")
 
-    s = a.sort_values(["game_id", "period_id", "action_id"], kind="stable")
+    # Chronological order for the positional next-touch .shift (spec §3d): key on time_seconds when
+    # present with action_id as tiebreak (a mart may carry non-chronological action_id), NOT
+    # action_id alone. kind="stable" + NO reset_index -- the index mapping back to `a`'s positions
+    # below relies on `a`'s 0..n-1 index surviving the sort.
+    _sort_cols = ["game_id", "period_id"]
+    if "time_seconds" in a.columns:
+        _sort_cols.append("time_seconds")
+    _sort_cols.append("action_id")
+    s = a.sort_values(_sort_cols, kind="stable")
     s_touch = s[~np.isin(s["type_id"].to_numpy(), non_touch_ids)]
     grp = [s_touch["game_id"].to_numpy(), s_touch["period_id"].to_numpy()]
 
@@ -1587,6 +1607,60 @@ def _blocked_flag(
     return pd.array(values, dtype="boolean")
 
 
+def _sort_actions_chronological_or_action_id(actions: pd.DataFrame) -> pd.DataFrame:
+    """Return a sorted copy of ``actions`` for an order-sensitive consumer.
+
+    Keyed on ``(game_id, period_id, time_seconds, action_id)`` when ``time_seconds`` is present,
+    else ``(game_id, period_id, action_id)``. A persisted mart may carry a non-chronological
+    ``action_id`` (the defect the converter fix removes only for FRESH conversions -- consumers that
+    read marts bypass the ``_finalize_output`` guard), so any consumer doing neighbour / ``.shift`` /
+    window lookups must establish order by ``time_seconds`` with ``action_id`` as the tiebreak, NOT
+    ``action_id`` alone (spec 2026-08-20 §3d; mirrors ``retains()``'s robust key). A no-op on
+    chronological input. ``time_seconds`` is not universally required by every consumer, hence the
+    fallback. Resets the index (drop) like the action_id-alone sorts it replaces. ``mergesort`` is
+    stable, so co-timestamped rows keep their native adjacency.
+    """
+    cols = ["game_id", "period_id"]
+    if "time_seconds" in actions.columns:
+        cols.append("time_seconds")
+    cols.append("action_id")
+    return actions.sort_values(cols, kind="mergesort").reset_index(drop=True)
+
+
+def _assert_chronological_action_id(actions: pd.DataFrame) -> None:
+    """Assert ``action_id`` order is chronological within each ``(game_id, period_id)``.
+
+    The chronological-``action_id`` invariant (spec 2026-08-20): within a ``(game_id, period_id)``
+    group, sorting by ``action_id`` must give non-decreasing ``time_seconds`` (finite rows only).
+    Called from :func:`_finalize_output` -- the converter choke point -- and **raises by default**,
+    a deliberate deviation from the warn-default ``SILLY_KICKS_ASSERT_INVARIANTS`` convention
+    (spec §3c): a non-chronological ``action_id`` is a hard downstream crash *or* silent
+    corruption (``add_restart_coordinates`` / VAEP labels / ``secured_reception`` all assume it),
+    so failing fast at the converter boundary is correct.
+
+    NaN ``time_seconds`` rows cannot be ordered and are excluded (not violations). Empty frames,
+    and frames lacking any of ``{game_id, period_id, action_id, time_seconds}``, are out of scope
+    and pass (a non-action schema is not a converter output).
+    """
+    required = ("game_id", "period_id", "action_id", "time_seconds")
+    if len(actions) == 0 or any(c not in actions.columns for c in required):
+        return
+    ts = actions["time_seconds"].to_numpy(dtype="float64")
+    finite = np.isfinite(ts)
+    if not finite.any():
+        return
+    sub = actions.loc[finite, list(required)].sort_values(["game_id", "period_id", "action_id"], kind="mergesort")
+    for (gid, pid), grp in sub.groupby(["game_id", "period_id"], dropna=False, sort=False):
+        t = grp["time_seconds"].to_numpy(dtype="float64")
+        if (np.diff(t) < -1e-9).any():
+            raise ValueError(
+                f"non-chronological action_id within (game_id={gid!r}, period_id={pid!r}): "
+                f"action_id-sorted time_seconds is not non-decreasing ({t.tolist()}). Converters must "
+                f"sort chronologically at the top of the frame (chronological-action_id invariant, "
+                f"spec 2026-08-20; use spadl.base.sort_actions_chronologically)."
+            )
+
+
 def _finalize_output(
     df: pd.DataFrame,
     schema: dict[str, str] | None = None,
@@ -1683,6 +1757,11 @@ def _finalize_output(
                     f"Per-team shot stats (count, mean_x): {reliable.to_dict('index')}. "
                     f"Expected all mean_x > {spadlconfig.field_length / 2:.1f}. See ADR-006."
                 )
+
+    # Chronological-action_id invariant (spec 2026-08-20, §3c): RAISE by default at the
+    # converter choke point. Runs on the finalized (projected, dtype-enforced) frame; a
+    # non-action schema without the required columns is a silent no-op.
+    _assert_chronological_action_id(result)
     return result
 
 

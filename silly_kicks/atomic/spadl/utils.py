@@ -8,7 +8,7 @@ import pandas as pd
 
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.reflection import ATOMIC_SPADL_REFLECTION_KINDS, reflect
-from silly_kicks.spadl.utils import CoverageMetrics
+from silly_kicks.spadl.utils import CoverageMetrics, _sort_actions_chronological_or_action_id
 
 from . import config as spadlconfig
 from .schema import ATOMIC_SPADL_COLUMNS
@@ -165,7 +165,7 @@ def add_gk_role(
             f"add_gk_role: distribution_lookback_actions must be >= 1, got {distribution_lookback_actions}"
         )
 
-    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    sorted_actions = _sort_actions_chronological_or_action_id(actions)
 
     n = len(sorted_actions)
     if n == 0:
@@ -392,7 +392,7 @@ def add_possessions(
             f"{sorted(invalid_defensive)}. Valid types: {sorted(spadlconfig.actiontype_id.keys())}"
         )
 
-    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    sorted_actions = _sort_actions_chronological_or_action_id(actions)
 
     n = len(sorted_actions)
     if n == 0:
@@ -676,7 +676,7 @@ def add_gk_distribution_metrics(
     # add_gk_role's internal ordering, so the require_gk_role path is value/order-identical; the
     # gk_role-present path now returns a sorted copy (it previously assigned the four columns straight
     # onto the caller's frame -- the motivating in-place-mutation defect).
-    out = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    out = _sort_actions_chronological_or_action_id(actions)
     if "gk_role" not in out.columns:
         if require_gk_role:
             out = add_gk_role(out)
@@ -893,7 +893,7 @@ def add_pre_shot_gk_context(
     if lookback_actions < 1:
         raise ValueError(f"add_pre_shot_gk_context: lookback_actions must be >= 1, got {lookback_actions}")
 
-    sorted_actions = actions.sort_values(["game_id", "period_id", "action_id"], kind="mergesort").reset_index(drop=True)
+    sorted_actions = _sort_actions_chronological_or_action_id(actions)
 
     n = len(sorted_actions)
     gk_was_distributing = np.zeros(n, dtype=bool)

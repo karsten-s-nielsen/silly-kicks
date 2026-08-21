@@ -9,6 +9,7 @@ import pandas as pd
 from .base import (
     _add_dribbles,
     _derive_end_coordinates,
+    sort_actions_chronologically,
 )
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
@@ -313,6 +314,14 @@ def convert_to_actions(
 
     events = _fix_wyscout_events(events)
     actions = _create_df_actions(events, preserve_native=preserve_native)
+    # Order-insensitivity (chronological-action_id invariant): sort actions chronologically
+    # BEFORE the shift-based fixes below. _fix_actions (_remove_keeper_goal_actions .shift(1),
+    # _adjust_goalkick_result .shift(-1)) and _derive_end_coordinates (.shift) all depend on
+    # neighbour order, and action_id (assigned by position at the end) must be chronological.
+    # _fix_wyscout_events inserts interception/touch rows after its internal (period_id,
+    # milliseconds) sort, so the actions arrive here out of order -- this is the single
+    # guarantee point. mergesort keeps co-timestamped rows in native order (§3a scope).
+    actions = sort_actions_chronologically(actions, by=("game_id", "period_id", "time_seconds"))
     actions = _fix_actions(actions)
     # SPADL canonical convention is "all teams attack left-to-right". Wyscout
     # input is possession-perspective (already per-team LTR after rescale to

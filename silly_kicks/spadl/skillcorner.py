@@ -26,7 +26,7 @@ import pandas as pd
 
 from . import config as spadlconfig
 from ._skillcorner_inference import infer_defensive_actions, infer_keeper_saves
-from .base import _add_dribbles, _derive_end_coordinates
+from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr
 from .schema import SKILLCORNER_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output
@@ -269,6 +269,15 @@ def convert_to_actions(
     pp["time_seconds"] = _to_period_relative(_parse_time_start(pp["time_start"]), pp["period"])
     if len(obe) > 0 and "time_start" in obe.columns and "period" in obe.columns:
         obe["time_seconds"] = _to_period_relative(_parse_time_start(obe["time_start"]), obe["period"])
+
+    # Order-insensitivity (chronological-action_id invariant): sort pp chronologically NOW --
+    # before the sx/sy transforms and the .shift(-1)-based same_team_next / is_short lookups
+    # below, whose results (and thus type_id/result_id and the derived-row times) otherwise
+    # depend on raw input order. SkillCorner's continuous broadcast clock makes ties rare;
+    # mergesort keeps any co-timestamped rows in native order (§3a inter-timestamp scope). pp
+    # carries `period` (not `period_id`) at this stage. The final combined sort
+    # (period_id, time_seconds) at the end still runs to interleave the defensive/goalkick rows.
+    pp = sort_actions_chronologically(pp, by=("period", "time_seconds"))
 
     total_pp = len(pp)
 

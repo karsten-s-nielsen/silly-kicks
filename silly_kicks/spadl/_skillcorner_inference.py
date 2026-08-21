@@ -76,7 +76,17 @@ def infer_defensive_actions(
                 & ((obe_regains["time_seconds"] - t).abs() <= _OBE_TEMPORAL_WINDOW)
             ]
             if len(candidates) > 0:
-                best = candidates.iloc[(candidates["time_seconds"] - t).abs().argmin()]
+                # Order-insensitive pick (ADR-065): nearest in time, ties broken by CONTENT columns
+                # that are always present on an OBE row (``time_seconds`` then ``player_id``), NOT by
+                # positional ``argmin()`` (first-on-tie in obe's INPUT row order, so two equidistant
+                # same-team ``direct_regain`` rows would flip the tackle's attributed
+                # player/team/coords when the input is permuted). ``event_id`` is deliberately NOT
+                # used: it is not a guaranteed OBE column at this seam.
+                best = (
+                    candidates.assign(_dt=(candidates["time_seconds"] - t).abs())
+                    .sort_values(["_dt", "time_seconds", "player_id"], kind="mergesort")
+                    .iloc[0]
+                )
                 action_type = spadlconfig.actiontype_id["tackle"]
                 player = best["player_id"]
                 team = best["team_id"]

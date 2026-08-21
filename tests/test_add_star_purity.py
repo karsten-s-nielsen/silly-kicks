@@ -362,10 +362,19 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
         lambda: [make_actions(), make_frames()],
         lambda i: sp.add_pre_shot_gk_context(i[0], frames=i[1]),
     ),
-    "spadl:add_restart_coordinates": _one(
-        lambda: [make_actions(), make_frames()],
-        lambda i: sp.add_restart_coordinates(i[0], frames=i[1]),
-    ),
+    "spadl:add_restart_coordinates": [
+        (
+            "with_time_seconds",
+            lambda: [make_actions(), make_frames()],
+            lambda i: sp.add_restart_coordinates(i[0], frames=i[1]),
+        ),
+        (
+            # Exercises the `time_seconds`-absent sort-key fallback branch (ADR-065 §3d) for purity.
+            "without_time_seconds",
+            lambda: [make_actions().drop(columns=["time_seconds"])],
+            lambda i: sp.add_restart_coordinates(i[0]),
+        ),
+    ],
     "spadl:add_gk_distribution_metrics": [
         (
             "gk_role_present",

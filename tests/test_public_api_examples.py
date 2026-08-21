@@ -140,6 +140,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/reporting.py",
     "silly_kicks/feature_glossary.py",
     "silly_kicks/spadl/utils.py",
+    "silly_kicks/spadl/base.py",
     "silly_kicks/spadl/orientation.py",
     "silly_kicks/spadl/schema.py",
     "silly_kicks/spadl/statsbomb.py",
