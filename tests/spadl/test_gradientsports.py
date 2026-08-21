@@ -38,6 +38,8 @@ def _load_synthetic_events() -> pd.DataFrame:
                 "possession_event_id": ev.get("possessionEventId"),
                 "period_id": ge.get("period"),
                 "time_seconds": ge.get("startGameClock"),
+                "start_time": ev.get("startTime"),
+                "event_time": ev.get("eventTime"),
                 "team_id": ge.get("teamId"),
                 "player_id": ge.get("playerId"),
                 "game_event_type": ge.get("gameEventType"),
@@ -111,6 +113,8 @@ def _load_synthetic_events() -> pd.DataFrame:
     df["event_id"] = df["event_id"].astype("int64")
     df["period_id"] = df["period_id"].astype("int64")
     df["time_seconds"] = df["time_seconds"].astype("float64")
+    df["start_time"] = df["start_time"].astype("float64")
+    df["event_time"] = df["event_time"].astype("float64")
     df["ball_x"] = df["ball_x"].astype("float64")
     df["ball_y"] = df["ball_y"].astype("float64")
     return df
@@ -1176,6 +1180,9 @@ class TestGradientsportsNanTimeSeconds:
                     "possession_event_id": i,
                     "period_id": 1,
                     "time_seconds": time_s,
+                    # Monotonic absolute clock in intended chronological order, so the
+                    # start_time-ordered FOUL imputation (Option D) recovers the native neighbour.
+                    "start_time": float(i),
                     "team_id": 100,
                     "player_id": 1,
                     "game_event_type": "FOUL" if pe_type is None else "OTB",
@@ -1255,6 +1262,79 @@ class TestGradientsportsNanTimeSeconds:
         assert not nan_mask.any(), (
             f"Found {nan_mask.sum()} NaN time_seconds in output:\n"
             f"{actions.loc[nan_mask, ['action_id', 'period_id', 'type_id', 'time_seconds']]}"
+        )
+
+
+class TestFoulTimeImputationIsOrderInsensitive:
+    """Option D (spec 2026-08-20 chronological-action-id §2b): a null-clock FOUL's ``time_seconds``
+    is imputed by a ``start_time``-ordered ffill/bfill, so it is a PURE FUNCTION of content --
+    identical under any input row permutation -- AND correct (the foul takes its
+    ``start_time``-predecessor's game clock). Measured on all 64 real GS WC2022 matches
+    (``scratchpad/gs_foul_id_probe.py``): ``gameEventId`` is ~21.5% non-chronological (unfit as a
+    chronology key), while ``start_time`` has 0/144,374 inversions and is present on all 28 null-clock
+    fouls. The old native-order ffill was correct on native-ordered feeds but NOT permutation-invariant.
+    """
+
+    @staticmethod
+    def _rows():
+        # (event_id, time_seconds, start_time, is_foul); start_time is the absolute clock.
+        # start_time order A(100) < B(200) < FOUL(250) < C(300); the FOUL's start_time-predecessor
+        # is pass B (clock 20.0), so the imputed foul clock must be 20.0 regardless of input order.
+        return [
+            (1, 10.0, 100.0, False),
+            (2, 20.0, 200.0, False),
+            (9, None, 250.0, True),  # FOUL — NaN startGameClock, start_time between B and C
+            (3, 30.0, 300.0, False),
+        ]
+
+    @classmethod
+    def _build(cls, rows):
+        recs = []
+        for eid, ts, st, is_foul in rows:
+            r: dict[str, object] = {col: None for col in _REQUIRED_COLS}
+            r.update(
+                {
+                    "game_id": 10502,
+                    "event_id": eid,
+                    "possession_event_id": eid,
+                    "period_id": 1,
+                    "time_seconds": ts,
+                    "start_time": st,
+                    "team_id": 100,
+                    "player_id": 1,
+                    "game_event_type": "FOUL" if is_foul else "OTB",
+                    "possession_event_type": "FO" if is_foul else "PA",
+                    "set_piece_type": "O",
+                    "ball_x": 0.0,
+                    "ball_y": 0.0,
+                    "body_type": "R",
+                }
+            )
+            if is_foul:
+                r["foul_type"] = "I"
+                r["final_foul_outcome_type"] = "Y"
+            else:
+                r["pass_outcome_type"] = "C"  # noqa: S105  # SPADL pass-outcome code, not a secret
+            recs.append(r)
+        df = pd.DataFrame(recs)
+        for col in ("possession_event_id", "player_id"):
+            df[col] = df[col].astype("Int64")
+        return df
+
+    def _foul_times(self, df):
+        actions, _ = gs_mod.convert_to_actions(
+            df, home_team_id=100, home_team_start_left=True, home_team_start_left_extratime=True
+        )
+        m = actions["type_id"] == spadlconfig.actiontype_id["foul"]
+        return actions.loc[m, "time_seconds"].tolist()
+
+    def test_foul_time_is_startTime_predecessor_and_permutation_invariant(self):
+        rows = self._rows()
+        native = self._foul_times(self._build(rows))
+        reversed_ = self._foul_times(self._build(list(reversed(rows))))
+        assert native == reversed_, f"FOUL time must be permutation-invariant; native={native} reversed={reversed_}"
+        assert native == pytest.approx([20.0]), (
+            f"FOUL must take its start_time-predecessor's clock (20.0), got {native}"
         )
 
 

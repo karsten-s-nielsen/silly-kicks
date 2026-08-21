@@ -90,11 +90,15 @@ class TestContract:
         result = add_gk_distribution_metrics(actions)
         assert before.equals(actions), "input mutated in place"
         assert result is not actions
-        assert result[["game_id", "period_id", "action_id"]].equals(
-            result[["game_id", "period_id", "action_id"]].sort_values(
-                ["game_id", "period_id", "action_id"], kind="mergesort"
+        # Sorted by the ROBUST chronological key (spec §3d): time_seconds primary, action_id tiebreak
+        # -- a mart's non-chronological action_id must not drive the order. This fixture is
+        # deliberately non-chronological (the gk_action has the highest action_id but the earliest
+        # time), so an action_id-alone sort would order it differently.
+        assert result[["game_id", "period_id", "time_seconds", "action_id"]].equals(
+            result[["game_id", "period_id", "time_seconds", "action_id"]].sort_values(
+                ["game_id", "period_id", "time_seconds", "action_id"], kind="mergesort"
             )
-        ), "output is not sorted by (game_id, period_id, action_id)"
+        ), "output is not sorted by (game_id, period_id, time_seconds, action_id)"
 
     def test_empty_input(self):
         actions = _df([_make_action(action_id=0)]).iloc[0:0]

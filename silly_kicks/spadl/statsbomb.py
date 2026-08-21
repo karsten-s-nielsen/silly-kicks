@@ -9,7 +9,7 @@ import pandas as pd
 
 from . import _sb_coordinates as _sb_coords
 from . import config as spadlconfig
-from .base import _add_dribbles, _derive_end_coordinates
+from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import POSSESSION_PERSPECTIVE, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
 from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -284,11 +284,8 @@ def convert_to_actions(
     assert len(actions) == len(events)  # noqa: S101 -- cross_blocked mask is events-aligned at this site
     actions["cross_blocked"] = _cross_blocked_flag(events)
 
-    actions = (
-        actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]
-        .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")  # type: ignore[reportCallIssue]
-        .reset_index(drop=True)
-    )
+    # Chronological via the shared seam (ADR-065); drop non_action rows first.
+    actions = sort_actions_chronologically(actions[actions.type_id != spadlconfig.actiontype_id["non_action"]])
     # SPADL canonical convention is "all teams attack left-to-right". StatsBomb
     # input is possession-perspective (already per-team LTR after rescale to
     # 105x68), so this is an explicit no-op kept here as the audit hook for

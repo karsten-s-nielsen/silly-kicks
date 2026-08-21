@@ -75,7 +75,7 @@ import pandas as pd
 from silly_kicks.tracking import direction
 
 from . import config as spadlconfig
-from .base import _derive_end_coordinates
+from .base import _derive_end_coordinates, sort_actions_chronologically
 from .orientation import PER_PERIOD_ABSOLUTE, to_spadl_ltr, validate_input_convention
 from .schema import GRADIENTSPORTS_SPADL_COLUMNS, ConversionReport
 from .utils import _blocked_flag, _finalize_output, _validate_input_columns, _validate_preserve_native
@@ -91,6 +91,12 @@ EXPECTED_INPUT_COLUMNS: frozenset[str] = frozenset(
         "possession_event_id",
         "period_id",
         "time_seconds",
+        # Absolute event clock (raw GS ``startTime``). Chronology-faithful and present on EVERY
+        # event including null-``startGameClock`` FOULs, so it is the order-insensitive basis for
+        # imputing a FOUL's ``time_seconds`` (measured: 0/144,374 inversions vs the game clock on
+        # 64 real WC2022 matches; ``gameEventId`` is ~21.5% inverted and unfit). See the imputation
+        # block below and ``_impute_time_seconds_by_start_time``.
+        "start_time",
         "team_id",
         "player_id",
         # Event-class dispatch keys
@@ -356,6 +362,55 @@ def _resolve_team_ids(events: pd.DataFrame) -> pd.arrays.IntegerArray:
     return team.array  # type: ignore[return-value]
 
 
+def _impute_time_seconds_by_start_time(events: pd.DataFrame) -> np.ndarray:
+    """Impute NaN ``time_seconds`` by an ffill/bfill ORDERED BY ``start_time`` within each period.
+
+    Real Gradient Sports FOUL events carry a NULL ``startGameClock`` (-> NaN ``time_seconds``) but a
+    non-null absolute ``start_time``. Ordering the ffill by ``start_time`` (with ``event_time`` as a
+    per-row fallback) makes the imputed value a PURE FUNCTION of content -- identical under any input
+    row permutation -- and chronologically correct (a NaN row takes its ``start_time``-predecessor's
+    game clock). Measured basis: on 64 real WC2022 matches ``start_time`` has 0/144,374 inversions vs
+    ``startGameClock`` and is present on all 28 null-clock fouls, whereas ``gameEventId`` is ~21.5%
+    inverted (``scratchpad/gs_foul_id_probe.py``).
+
+    Returns a float64 ndarray aligned to ``events`` row positions (never reorders ``events`` itself;
+    the top-of-frame sort happens after this, keyed on the now-populated ``time_seconds``).
+
+    Fallback: if a NaN-``time_seconds`` row lacks BOTH ``start_time`` and ``event_time``, the ordering
+    key is undefined, so imputation falls back to native row order (the pre-4.x behaviour) with a
+    warning. Unobserved on real GS data (every foul carries ``start_time``); a caller hitting it has
+    an incomplete feed.
+    """
+    order_key = events["start_time"].to_numpy(dtype="float64")
+    if "event_time" in events.columns:
+        event_time = events["event_time"].to_numpy(dtype="float64")
+        order_key = np.where(np.isnan(order_key), event_time, order_key)  # fresh array (writable)
+
+    work = pd.DataFrame(
+        {
+            "_pos": np.arange(len(events)),
+            "period_id": events["period_id"].to_numpy(),
+            "time_seconds": events["time_seconds"].to_numpy(dtype="float64"),
+            "_ord": order_key,
+        }
+    )
+    if np.isnan(order_key).any():
+        warnings.warn(
+            "gradientsports: row(s) with NaN time_seconds lack a start_time/event_time ordering "
+            "key; imputing time_seconds in native row order (NOT permutation-invariant). Supply "
+            "start_time (raw GS startTime) to make foul-time imputation order-insensitive.",
+            UserWarning,
+            stacklevel=2,
+        )
+        work = work.sort_values(["period_id", "_pos"], kind="mergesort")
+    else:
+        # Stable: co-`start_time` rows keep their native adjacency within the period.
+        work = work.sort_values(["period_id", "_ord", "_pos"], kind="mergesort")
+    work["time_seconds"] = work.groupby("period_id")["time_seconds"].transform(lambda s: s.ffill().bfill())
+    work = work.sort_values("_pos", kind="mergesort")
+    return work["time_seconds"].to_numpy(dtype="float64")
+
+
 def convert_to_actions(
     events: pd.DataFrame,
     home_team_id: int,
@@ -548,6 +603,35 @@ def convert_to_actions(
         return actions, report
 
     # ------------------------------------------------------------------
+    # Chronological-action_id invariant (top sort). Impute NaN time_seconds
+    # FIRST, then sort the post-exclusion events into
+    # (game_id, period_id, time_seconds) order at the TOP -- before ANY
+    # positional / .shift()-based derivation (_derive_end_coordinates, the
+    # foul/cross-goal synthesis __order__, action_id assignment). Everything
+    # below is built 1:1 from this frame, so action_id becomes chronological and
+    # the synthesis masks (computed from `events`, applied to `actions`
+    # positionally) stay aligned. On native (already-chronological) input the
+    # sort is a stable no-op. See sort_actions_chronologically in .base.
+    #
+    # Imputation must precede the sort: real Gradient Sports data has NULL
+    # startGameClock on all dedicated FOUL events (gameEventType=FOUL,
+    # possessionEventType=FO) -- 28/28 across 13/64 WC2022 matches. A foul has no
+    # game clock and so cannot participate in a time_seconds sort; its time is
+    # imputed by an ORDER-INSENSITIVE ffill/bfill keyed on `start_time` (the raw
+    # absolute clock, present on every event including fouls) -- NOT on native row
+    # order, which would make the imputed value depend on input permutation. See
+    # _impute_time_seconds_by_start_time and its measured basis (§2b of the spec).
+    if events["time_seconds"].isna().any():
+        events = events.copy()
+        events["time_seconds"] = _impute_time_seconds_by_start_time(events)
+    # `start_time` is the tiebreak: an imputed FOUL takes its predecessor's (coarse) game clock, so it
+    # is CO-TIMESTAMPED with that predecessor. `time_seconds` alone cannot order the pair, and the
+    # adjacent pass's `.shift(-1)`-derived end coord depends on which comes first -- so co-timestamped
+    # rows are pinned by the fine-grained absolute `start_time` (the intra-timestamp sequence key,
+    # 0/144,374 inversions vs the game clock on real GS). Makes the whole converter order-insensitive.
+    events = sort_actions_chronologically(events, tiebreak=("start_time",))
+
+    # ------------------------------------------------------------------
     # Dispatch (type_id, result_id, bodypart_id)
     # ------------------------------------------------------------------
     type_id_arr, result_id_arr = _dispatch_actiontype_resultid(events)
@@ -611,16 +695,9 @@ def convert_to_actions(
         }
     )
 
-    # ------------------------------------------------------------------
-    # Impute NaN time_seconds via forward-fill + back-fill within period.
-    # Real Gradient Sports data has NULL startGameClock on all dedicated
-    # FOUL events (gameEventType=FOUL, possessionEventType=FO) — 28/28
-    # across 13/64 WC2022 matches. Events are chronologically ordered
-    # within a period, so ffill propagates the preceding event's timestamp
-    # and bfill handles period-leading NaN.
-    # ------------------------------------------------------------------
-    if actions["time_seconds"].isna().any():
-        actions["time_seconds"] = actions.groupby("period_id")["time_seconds"].transform(lambda s: s.ffill().bfill())
+    # time_seconds NaN-imputation now happens on `events` at the top of the
+    # frame (before the chronological sort), so `actions["time_seconds"]` is
+    # already non-NaN here -- see the top-of-frame block.
 
     # ------------------------------------------------------------------
     # Tackle winner/loser passthrough (ADR-001)

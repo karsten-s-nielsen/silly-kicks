@@ -3,7 +3,7 @@
 import pandas as pd
 
 from . import config as spadlconfig
-from .base import min_dribble_length
+from .base import min_dribble_length, sort_actions_chronologically
 from .wyscout import (
     _WS_SUBTYPE_ACCELERATION,
     _WS_SUBTYPE_AIR_DUEL,
@@ -74,6 +74,12 @@ def _fix_wyscout_events(df_events: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Wyscout event dataframe with an extra column 'offside'
     """
+    # Order-insensitivity (chronological-action_id invariant): sort events chronologically at the
+    # TOP -- before _convert_duels, whose .shift(-1)/.shift(-2) duel->take-on collapse decides
+    # WHICH actions exist (like opta's recovery flip, so a later action-level sort cannot undo an
+    # order-dependent collapse). _insert_interceptions re-sorts internally at :277; this top sort
+    # makes the duel logic order-insensitive. mergesort keeps co-(period,ms) rows in native order.
+    df_events = sort_actions_chronologically(df_events, by=("period_id", "milliseconds"))
     df_events = _create_shot_coordinates(df_events)
     df_events = _convert_duels(df_events)
     df_events = _insert_interceptions(df_events)

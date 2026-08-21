@@ -807,6 +807,10 @@ def _gs_flatten_events(events_json: list[dict], roster: pd.DataFrame) -> pd.Data
             "possession_event_id": ev.get("possessionEventId"),
             "period_id": ge.get("period"),
             "time_seconds": ge.get("startGameClock"),
+            # Absolute event clock -- the order-insensitive basis for imputing a null-startGameClock
+            # FOUL's time_seconds (spadl.gradientsports Option D). Present on every real GS event.
+            "start_time": ev.get("startTime"),
+            "event_time": ev.get("eventTime"),
             "team_id": ge.get("teamId"),
             "player_id": ge.get("playerId"),
             "game_event_type": ge.get("gameEventType"),
@@ -848,6 +852,8 @@ def _gs_flatten_events(events_json: list[dict], roster: pd.DataFrame) -> pd.Data
     df["event_id"] = df["event_id"].astype("int64")
     df["period_id"] = df["period_id"].astype("int64")
     df["time_seconds"] = df["time_seconds"].astype("float64")
+    df["start_time"] = df["start_time"].astype("float64")
+    df["event_time"] = df["event_time"].astype("float64")
     df["ball_x"] = df["ball_x"].astype("float64")
     df["ball_y"] = df["ball_y"].astype("float64")
     return df

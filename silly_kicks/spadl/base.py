@@ -27,6 +27,55 @@ _DERIVE_END_TYPE_IDS: frozenset[int] = frozenset(
 )
 
 
+def sort_actions_chronologically(
+    frame: pd.DataFrame,
+    *,
+    by: tuple[str, ...] = ("game_id", "period_id", "time_seconds"),
+    tiebreak: tuple[str, ...] = (),
+) -> pd.DataFrame:
+    """Stable-sort an actions/events frame into chronological order.
+
+    The one shared sort seam every converter uses at the top of its frame,
+    before ANY positional (``.shift()``-based) derivation, so that
+    ``action_id`` becomes a chronological ``(game_id, period_id, time_seconds)``
+    index and every time-neighbour lookup resolves the true neighbour.
+
+    Sorts by ``(*by, *tiebreak)`` with a stable ``kind="mergesort"`` so genuine
+    intra-timestamp ties keep their input order. An empty frame is returned
+    unchanged; the input is never mutated (``sort_values`` returns a new frame).
+
+    ``by`` defaults to the SPADL-actions key; raw-event callers pass their own
+    ordering columns (e.g. ``by=("period_id", "milliseconds")``). A missing or
+    mistyped ordering key RAISES ``KeyError`` -- the seam whose whole job is to
+    never let ordering rot silently must fail loud, not degrade to a partial
+    sort.
+
+    Examples
+    --------
+    Sort a SPADL actions frame chronologically before any positional derivation::
+
+        ordered = sort_actions_chronologically(actions)
+
+    Raw-event callers pass their own ordering columns (``time_seconds`` is not yet
+    built), optionally with an intra-timestamp tiebreak::
+
+        ordered = sort_actions_chronologically(
+            events, by=("game_id", "period_id", "minute", "second"), tiebreak=("event_id",)
+        )
+    """
+    if len(frame) == 0:
+        return frame
+    keys = [*by, *tiebreak]
+    missing = [c for c in keys if c not in frame.columns]
+    if missing:  # M-D: NEVER silently partial-sort -- the exact bug this seam exists to prevent
+        raise KeyError(
+            f"sort_actions_chronologically: ordering key(s) {missing} absent. Pass a `by=` matching "
+            f"this frame (raw-event frames pass e.g. by=('period_id','milliseconds')); a missing key "
+            f"must fail loud, not degrade to a partial sort."
+        )
+    return frame.sort_values(keys, kind="mergesort").reset_index(drop=True)
+
+
 def _derive_end_coordinates(actions: pd.DataFrame, *, extra_type_ids: frozenset[int] = frozenset()) -> pd.DataFrame:
     """Derive end_x/end_y from next action's start for pass-class types.
 

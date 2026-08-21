@@ -5,6 +5,67 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.89.0] — 2026-08-21
+
+Chronological-`action_id` order-insensitivity invariant across every SPADL converter (ADR-065,
+PR-S159). A `convert_to_actions` is now a pure function of its chronological event content —
+permuting the input row order yields identical output modulo the `action_id` renumber. The invariant
+is CI-gated (permutation-invariance gate over every converter) and enforced at runtime (a
+raise-by-default guard at the `_finalize_output` choke point). **Retrain trigger for the providers
+whose real feed is non-chronological — measured per-provider, NOT inferred from the gate.**
+
+### Fixed — order-insensitive converters (PR-S159, ADR-065)
+
+- **All six order-dependent converters now sort chronologically at the top of the frame, before any
+  positional/`.shift()` derivation** (discovered by the permutation gate, not a source read):
+  `sportec`, `gradientsports`, `metrica`, `wyscout`, `skillcorner`, `opta`. `kloppy`/`statsbomb`
+  were already order-insensitive. Each fix is proven to be exactly a chronological sort (no logic
+  drift) via an M-C check (`new(raw) == old(pre-sorted)`) and/or an unchanged provider test suite.
+- **`wyscout`** was additionally *chronology-broken*: it inserted interception/touch rows AFTER its
+  internal `(period_id, milliseconds)` sort, so `action_id` was non-chronological regardless of input
+  order. Now sorts events before the `_convert_duels` shift-collapse AND sorts actions before the
+  action-level fixes.
+- **Retrain trigger (measured per-provider):** `sportec`/`IDSSE` (real events non-chronological) and
+  `wyscout` (the chronology-bug fix reorders output) genuinely change. **Measured byte-identical on
+  real data → NOT retrain triggers:** `gradientsports` (all 64 real WC2022 matches) and `skillcorner`
+  (8 real public matches; pre-sorting the input chronologically leaves the output unchanged). `opta`
+  is byte-identical on its committed fixtures and its f24 feed is inherently time-ordered (not in the
+  pining corpus, so fixture/reasoned, not real-data-measured). `metrica` is **not in the pining
+  corpus** (no real data available to measure): fixture-verified only — a real-data M-C is recommended
+  before lakehouse re-materialization.
+
+### Changed — Gradient Sports input contract (BREAKING; PR-S159, ADR-065)
+
+- `spadl.gradientsports.EXPECTED_INPUT_COLUMNS` gains a **required `start_time`** column (the raw
+  absolute event clock). A null-`startGameClock` FOUL (28/28 fouls across 13/64 real matches) has its
+  `time_seconds` imputed by a `start_time`-ordered ffill (`event_time` fallback), which is
+  order-insensitive AND chronologically correct — `gameEventId` was measured ~21.5% non-chronological
+  and unfit, while `start_time`/`eventTime` have 0/144,374 inversions and are present on every foul.
+  `start_time` is also the GS sort tiebreak (an imputed foul is co-timestamped with its predecessor).
+  **Downstream: the lakehouse GS shaper MUST supply `start_time`/`event_time`, or GS conversion raises
+  the missing-column error.** Byte-identical on real GS feeds, so not itself a retrain trigger.
+
+### Added — enforcement + consumer hardening (PR-S159, ADR-065)
+
+- `spadl.base.sort_actions_chronologically(frame, *, by, tiebreak)` — the single shared chronological
+  sort seam (raise-on-missing-key; parameterized `by` for raw-vs-SPADL key frames).
+- Permutation-invariance gate (`tests/spadl/test_converter_order_insensitivity.py`) + complementary
+  index-chronology check, auto-enumerating every `convert_to_actions`.
+- `_assert_chronological_action_id` at `_finalize_output` — **raises by default** (a deviation from
+  the warn-default `SILLY_KICKS_ASSERT_INVARIANTS`, justified in ADR-065); NaN-`time_seconds` rows
+  excluded; empty/non-action frames no-op; covers `convert_to_atomic`.
+- Mart-reading `add_*` consumers now sort the robust `(game_id, period_id, time_seconds, action_id)`
+  key via the shared `_sort_actions_chronological_or_action_id` helper — `add_restart_coordinates`,
+  `add_gk_role`, `add_gk_distribution_metrics`, `add_pre_shot_gk_context`, `add_possessions`,
+  `_resolve_next_touch_positions` + atomic mirrors (defense-in-depth for a persisted mart with a
+  non-chronological `action_id`; `retains()` was already robust).
+
+### Migration
+
+- **`action_id` is a cross-table join key → this is an ATOMIC migration.** For the retrain-triggering
+  providers, re-convert ALL affected-provider data together — bronze, goldens, and every id-keyed
+  derived table. A partial re-conversion (some tables old-id, some new-id) misjoins silently.
+
 ## [4.88.0] — 2026-08-20
 
 SB360 boundary-audit closeout (ADR-053 amendment, PR-S158). The four boundary entry points parked

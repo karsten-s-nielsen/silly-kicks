@@ -12,6 +12,7 @@ from .base import (
     _add_dribbles,
     _derive_end_coordinates,
     min_dribble_length,
+    sort_actions_chronologically,
 )
 from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr, validate_input_convention
 from .schema import ConversionReport
@@ -157,6 +158,17 @@ def convert_to_actions(
         x_max=100.0,
     )
 
+    # Order-insensitivity (chronological-action_id invariant): sort the raw events
+    # chronologically at the TOP -- before any positional derivation. _fix_recoveries
+    # (.shift(-1)) and _fix_unintentional_ball_touches (.shift(-2)) run on this order
+    # and their output (recovery dribble<->non_action flips, deflected-pass end coords,
+    # and thus the surviving action COUNT) is otherwise input-order-dependent. Opta's
+    # (minute, second) order equals the (game_id, period_id, time_seconds) order the
+    # converter already sorted by downstream; on a native (already time-ordered) feed
+    # this is a stable no-op. mergesort keeps co-(minute,second) rows in native order
+    # (the §3a gate's inter-timestamp scope; R3 co-timestamp boundary).
+    events = sort_actions_chronologically(events, by=("game_id", "period_id", "minute", "second"))
+
     actions = pd.DataFrame()
 
     actions["game_id"] = events.game_id
@@ -200,11 +212,9 @@ def convert_to_actions(
 
     actions = _fix_recoveries(actions, events.type_name)
     actions = _fix_unintentional_ball_touches(actions, events.type_name, events.outcome)
-    actions = (
-        actions[actions.type_id != spadlconfig.actiontype_id["non_action"]]
-        .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")  # type: ignore[reportCallIssue]
-        .reset_index(drop=True)
-    )
+    # Already sorted chronologically at the top (events sort above); here only drop the
+    # non_action rows the fixes marked. mergesort-stable reset keeps the sorted order.
+    actions = actions[actions.type_id != spadlconfig.actiontype_id["non_action"]].reset_index(drop=True)
     actions = _fix_owngoals(actions)
     actions = to_spadl_ltr(
         actions,

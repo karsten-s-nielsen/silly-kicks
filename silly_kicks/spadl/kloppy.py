@@ -42,7 +42,7 @@ from ._kloppy_coordinates import (
     _SoccerActionCoordinateSystem,  # noqa: F401  # re-exported for backcompat (ADR-031)
     socceraction_coordinate_system,
 )
-from .base import _add_dribbles, _derive_end_coordinates
+from .base import _add_dribbles, _derive_end_coordinates, sort_actions_chronologically
 from .orientation import ABSOLUTE_FRAME_HOME_RIGHT, to_spadl_ltr
 from .schema import KLOPPY_SPADL_COLUMNS, ConversionReport
 from .utils import _finalize_output
@@ -221,12 +221,8 @@ def convert_to_actions(
                 action[_col] = raw_dict.get(_col)
         actions.append(action)
 
-    # Create the SPADL actions DataFrame
-    df_actions = (
-        pd.DataFrame(actions)
-        .sort_values(["game_id", "period_id", "time_seconds"], kind="mergesort")
-        .reset_index(drop=True)
-    )
+    # Create the SPADL actions DataFrame (chronological via the shared seam; ADR-065).
+    df_actions = sort_actions_chronologically(pd.DataFrame(actions))
     df_actions = df_actions[df_actions.type_id != spadlconfig.actiontype_id["non_action"]]  # type: ignore[reportOptionalSubscript, reportOptionalMemberAccess]
 
     df_actions = _derive_end_coordinates(df_actions)  # type: ignore[reportArgumentType]  # kloppy API varies by version

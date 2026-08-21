@@ -219,8 +219,22 @@ def synthesize_actions(
     # Build the action stream: indices 0..n-3 passes; n-2 keeper_save; n-1 shot.
     n_passes = len(sample) - 2
     pass_rows = sample.iloc[:n_passes]
-    save_time = min(float(gk_row["time_seconds"]), float(last_frame["time_seconds"]) - 2.0)
+    # The keeper_save is the shot's IMMEDIATE chronological predecessor in the shot's period (its
+    # documented intent: action 9, just before the shot at action 10, captured by the shot's pre-shot
+    # action-lookback window). ``gk_row`` supplies ONLY the GK position/identity, never the time --
+    # stamping its own (possibly early) frame time made the stream NON-chronological, which the
+    # chronological-action_id sort (ADR-065) then reorders, moving the save out of the lookback window
+    # and dropping the shot's GK context to NaN. Place it strictly between the shot and the latest
+    # earlier same-period action so the stream is chronological (action_id order == time order).
     shot_time = float(last_frame["time_seconds"])
+    shot_period = int(last_frame["period_id"])
+    _earlier_same_period = [
+        float(t)
+        for t, p in zip(pass_rows["time_seconds"], pass_rows["period_id"], strict=False)
+        if int(p) == shot_period and float(t) < shot_time
+    ]
+    _floor = max(_earlier_same_period) if _earlier_same_period else shot_time - 2.0
+    save_time = (_floor + shot_time) / 2.0
 
     built = pd.DataFrame(
         {
