@@ -35,7 +35,12 @@ _T = {n: i for i, n in enumerate(actiontypes)}
 _R = {n: i for i, n in enumerate(results)}
 _PASS_TYPES = {_T["pass"], _T["cross"]}
 _SUCCESS = _R["success"]
-_SHARD_SCHEMA_VERSION = "receiver-rows-1"
+_SHARD_SCHEMA_VERSION = "receiver-rows-2"  # v2: per-provider labeling (id / trajectory), drop-on-ambiguous
+#: Q2 label-admission lane width -- DELIBERATELY tighter than trajectory_weak_labels' 5.0 m TRAVEL gate
+#: (which it overloads as its perpendicular bound). A candidate farther than this from the
+#: release->reception ray is not "clearly the target": the pass is DROPPED (counted), never guessed onto
+#: the nearest visible teammate -- which, on visibility-truncated SB360, would be a confident mislabel.
+_LABEL_LANE_WIDTH_M = 2.0
 
 
 def _feature_names(feature_set: str) -> list[str]:
@@ -57,32 +62,110 @@ def _assert_emitted_schema(df: pd.DataFrame, declared: list[str]) -> None:
         raise AssertionError(f"shard schema drift: missing {sorted(want - got)}, extra {sorted(got - want)}")
 
 
-def extract_candidate_rows(actions: pd.DataFrame, frames: pd.DataFrame, *, feature_set: str = "public") -> pd.DataFrame:
-    """Per completed pass, one row per teammate candidate: features + label (1 = observed receiver)."""
-    from silly_kicks.spadl.utils import resolve_next_touch_receiver
+def labeling_strategy_for_provider(provider: str) -> str:
+    """Which receiver-labeling regime a provider's frames admit (Q4) -- decided at FRAME-SET granularity,
+    NEVER per-pass. A provider whose freeze/tracking frames carry real player identity uses clean
+    ``"id"`` labels; an identity-less freeze-frame provider (SB360, whose rows are numbered -- ADR-062)
+    uses ``"trajectory"`` labels.
+
+    An identity provider's pass whose receiver has no in-frame id match is DROPPED (counted), NEVER
+    trajectory-labeled: a per-pass "id-match else trajectory" fallback would silently trajectory-label a
+    GS pass whose receiver ran off-frame, among the VISIBLE candidates -- a confident mislabel that erodes
+    the clean-label guarantee making the identity leg the trusted one in the pool.
+    """
+    return "trajectory" if provider == "statsbomb" else "id"
+
+
+def _trajectory_winner(teammates: pd.DataFrame, release: np.ndarray, reception: np.ndarray, lane_width: float):
+    """``candidate_id`` of the teammate nearest the release->reception ray (forward of the passer), within
+    ``lane_width`` (Q1 reception anchor + Q2 tight bound). ``None`` when none is clearly on the ray -- the
+    pass is then dropped, never guessed onto the nearest visible teammate."""
+    ray = reception - release
+    length = float(np.linalg.norm(ray))
+    if length < 1e-9:
+        return None
+    u = ray / length
+    best_perp, best_id = np.inf, None
+    for _, tm in teammates.iterrows():
+        rel = np.array([float(tm["x"]), float(tm["y"])], dtype=np.float64) - release
+        proj = float(rel @ u)
+        if proj <= 0.0:  # forward of the passer only
+            continue
+        perp = float(np.linalg.norm(rel - proj * u))
+        if perp < best_perp:
+            best_perp, best_id = perp, canonical_id(tm["player_id"])
+    return best_id if best_perp <= lane_width else None
+
+
+def extract_candidate_rows(
+    actions: pd.DataFrame, frames: pd.DataFrame, *, feature_set: str = "public", labeling_strategy: str = "id"
+) -> pd.DataFrame:
+    """Per completed pass, one row per teammate candidate: features + a single-receiver label.
+
+    ``labeling_strategy`` (Q4, from :func:`labeling_strategy_for_provider`): ``"id"`` labels the candidate
+    whose real id is the observed next-touch receiver (identity providers; a no-match pass is DROPPED);
+    ``"trajectory"`` labels the candidate nearest the release->reception ray within ``_LABEL_LANE_WIDTH_M``
+    (identity-less SB360; an ambiguous pass is DROPPED). Both anchor the reception on the SAME next-touch
+    action the label identity comes from (Q1). A ball-less owner frame is skipped (Q5), never a crash.
+    """
+    from silly_kicks.spadl.utils import _resolve_next_touch_positions, resolve_next_touch_receiver
+    from silly_kicks.tracking._receiver import (
+        NoReleaseDirectionError,
+        _acting_attacks_rtl,
+        _passer_xy,
+        _split_players,
+    )
 
     links, _ = link_actions_to_frames(actions, frames)
-    # resolve_next_touch_receiver is POSITIONALLY aligned with actions -> key by action_id explicitly
-    receiver = dict(zip(actions["action_id"].to_numpy(), resolve_next_touch_receiver(actions).to_numpy(), strict=True))
+    a = actions.reset_index(drop=True)  # positional alignment for _resolve_next_touch_positions/receiver
+    positions = _resolve_next_touch_positions(a)  # Int64 positional index of the next same-team touch
+    receiver = resolve_next_touch_receiver(a, positions=positions)  # id, from that SAME action (Q1)
     frame_of = dict(zip(links["action_id"].to_numpy(), links["frame_id"].to_numpy(), strict=True))
     by_frame = {canonical_id(fid): g for fid, g in frames.groupby("frame_id")}
     rows = []
-    for _, act in actions.iterrows():
+    for p, (_idx, act) in enumerate(a.iterrows()):  # p is the positional index (a is reset_index)
         if act["type_id"] not in _PASS_TYPES or int(act["result_id"]) != _SUCCESS:
-            continue  # train on COMPLETED passes only (observed receiver = ground truth)
-        obs = receiver.get(act["action_id"])
+            continue  # train on COMPLETED passes only
         fr = by_frame.get(canonical_id(frame_of.get(act["action_id"])))
-        if obs is None or (isinstance(obs, float) and np.isnan(obs)) or obs is pd.NA or fr is None:
+        if fr is None:
             continue
-        feats = receiver_candidate_features(act, fr, feature_set=feature_set)
+        try:
+            feats = receiver_candidate_features(act, fr, feature_set=feature_set)
+        except NoReleaseDirectionError:
+            continue  # Q5: ball-less owner frame -> skip this pass (never crash the match)
         if feats.empty:
             continue
+        if labeling_strategy == "id":
+            obs = receiver.iloc[p]
+            if obs is None or (isinstance(obs, float) and np.isnan(obs)) or obs is pd.NA:
+                continue  # no resolvable receiver -> drop
+            matches = [cid for cid in feats["candidate_id"] if same_id(cid, obs)]
+            if len(matches) != 1:  # Q4: identity provider, receiver off-frame / not unique -> DROP
+                continue
+            winner = matches[0]
+        else:  # trajectory
+            npos = positions.iloc[p]
+            if pd.isna(npos):
+                continue  # no next touch -> no reception anchor -> drop
+            nxt = a.iloc[int(npos)]
+            attacks_rtl = _acting_attacks_rtl(fr, act["team_id"])  # reproject action coords -> frame coords
+
+            def _to_frame(x, y, _rtl=attacks_rtl):
+                return (105.0 - float(x), 68.0 - float(y)) if _rtl else (float(x), float(y))
+
+            release = np.array(_to_frame(act["start_x"], act["start_y"]), dtype=np.float64)
+            reception = np.array(_to_frame(nxt["start_x"], nxt["start_y"]), dtype=np.float64)
+            # same passer-exclusion as the feature candidates, so the winner is always among them (Q4/A-F1)
+            teammates, _opp = _split_players(fr, act["team_id"], act["player_id"], passer_xy=_passer_xy(act, fr))
+            winner = _trajectory_winner(teammates, release, reception, _LABEL_LANE_WIDTH_M)
+            if winner is None:  # Q2: ambiguous -> DROP (never all-zero, never label-nearest-regardless)
+                continue
         for _, cf in feats.iterrows():
             rows.append(
                 {
                     **{c: cf[c] for c in _feature_names(feature_set)},
                     "candidate_id": cf["candidate_id"],
-                    "label": 1 if same_id(cf["candidate_id"], obs) else 0,
+                    "label": 1 if same_id(cf["candidate_id"], winner) else 0,
                     "game_id": act["game_id"],
                     "action_id": act["action_id"],
                     "n_candidates": len(feats),
@@ -96,27 +179,71 @@ def extract_candidate_rows(actions: pd.DataFrame, frames: pd.DataFrame, *, featu
     return df[cols]  # deterministic column order, AFTER the schema assertion
 
 
+def _top1_accuracy(model, rows: pd.DataFrame, feature_set: str) -> float:
+    """Per-pass top-1: the argmax-scored candidate is the labeled receiver. Shared by cv_top1 + the
+    pooling gate so 'train here, evaluate there' uses ONE scoring definition."""
+    names = _feature_names(feature_set)
+    test = rows.reset_index(drop=True).copy()  # unique index -> grp.loc[idxmax] is a scalar (L5)
+    test["_p"] = model.predict_candidates(test[names])
+    hits = n = 0
+    for _, grp in test.groupby(["game_id", "action_id"]):
+        n += 1
+        hits += int(grp.loc[grp["_p"].idxmax(), "label"] == 1)
+    return hits / n if n else float("nan")
+
+
 def cv_top1(rows: pd.DataFrame, feature_set: str, n_splits: int = 5) -> tuple[float, list[float]]:
     """Held-out top-1 accuracy (per pass: the argmax candidate is the observed receiver), GroupKFold on game."""
     from sklearn.model_selection import GroupKFold
 
     names = _feature_names(feature_set)
-    groups = rows["game_id"].to_numpy()
-    n_groups = len(pd.unique(groups))
+    n_groups = len(pd.unique(rows["game_id"].to_numpy()))
     k = min(n_splits, n_groups)
     if k < 2:
         return float("nan"), []
     fold_top1 = []
-    for tr, te in GroupKFold(n_splits=k).split(rows, groups=groups):
+    for tr, te in GroupKFold(n_splits=k).split(rows, groups=rows["game_id"].to_numpy()):
         m = ReceiverModel(feature_set).fit(rows.iloc[tr][names], rows.iloc[tr]["label"])
-        test = rows.iloc[te].copy().reset_index(drop=True)  # unique index -> grp.loc[idxmax] is a scalar (L5)
-        test["_p"] = m.predict_candidates(test[names])
-        hits = n = 0
-        for _, grp in test.groupby(["game_id", "action_id"]):
-            n += 1
-            hits += int(grp.loc[grp["_p"].idxmax(), "label"] == 1)
-        fold_top1.append(hits / n if n else float("nan"))
+        fold_top1.append(_top1_accuracy(m, rows.iloc[te], feature_set))
     return float(np.nanmean(fold_top1)), fold_top1
+
+
+def pooling_gate(primary: pd.DataFrame, pool: pd.DataFrame, feature_set: str, *, n_splits: int = 5) -> dict:
+    """Q3: does adding ``pool`` (clean-id GS) regress top-1 on the PRIMARY (SB360) held-out? GroupKFold on
+    the PRIMARY games only; the pool is added to TRAIN, NEVER to TEST. Keep the pool iff pooled >=
+    primary-only (no regression) -- SB360 is the serve distribution and the leakage-free-everywhere target,
+    so the noisier GS leg must EARN inclusion rather than be pooled in naively."""
+    from sklearn.model_selection import GroupKFold
+
+    names = _feature_names(feature_set)
+    games = primary["game_id"].to_numpy()
+    k = min(n_splits, len(pd.unique(games)))
+    if k < 2:
+        return {
+            "keep_pool": False,
+            "reason": "too few primary games to gate",
+            "primary_only_top1": float("nan"),
+            "pooled_top1": float("nan"),
+            "margin": float("nan"),
+        }
+    prim_only, pooled = [], []
+    for tr, te in GroupKFold(n_splits=k).split(primary, groups=games):
+        train_prim, test_prim = primary.iloc[tr], primary.iloc[te]
+        m0 = ReceiverModel(feature_set).fit(train_prim[names], train_prim["label"])
+        prim_only.append(_top1_accuracy(m0, test_prim, feature_set))
+        train_pooled = pd.concat([train_prim, pool], ignore_index=True)
+        m1 = ReceiverModel(feature_set).fit(train_pooled[names], train_pooled["label"])
+        pooled.append(_top1_accuracy(m1, test_prim, feature_set))  # evaluated on held-out PRIMARY only
+    p0, p1 = float(np.nanmean(prim_only)), float(np.nanmean(pooled))
+    return {"primary_only_top1": p0, "pooled_top1": p1, "margin": p1 - p0, "keep_pool": bool(p1 >= p0)}
+
+
+def _coverage_counters(item, frame) -> dict:
+    """for_each counters closure: per-match label coverage. Survives even a fully-dropped match (empty
+    frame) via its own sidecar, so drop-on-ambiguous thinning is visible in the manifest, not silent."""
+    completed = int((item[1]["type_id"].isin(list(_PASS_TYPES)) & (item[1]["result_id"] == _SUCCESS)).sum())
+    kept = int(frame.groupby(["game_id", "action_id"]).ngroups) if len(frame) else 0
+    return {"n_completed_passes": completed, "n_kept_passes": kept}
 
 
 def velocity_ablation_completed(rows: pd.DataFrame) -> dict:
@@ -243,7 +370,7 @@ def _load_corpus(provider: str, cache_dir):
     if provider == "statsbomb":
         from scripts._loader_pining import load_statsbomb_matches
 
-        return ((m[1], m[2], m[3]) for m in load_statsbomb_matches())
+        return ((m[1], m[2], m[3]) for m in load_statsbomb_matches(cache_dir=cache_dir))  # F5: honor --cache-dir
     from scripts._loader_pining import load_matches
 
     return ((m[1], m[2], m[3]) for m in load_matches(providers=[provider], cache_dir=cache_dir))
@@ -258,11 +385,45 @@ def _resolve_deployment(public_bundle, owner_model, provider, cache_dir, shard_r
         key=lambda t: str(t[0]),
         work=lambda t: _deployment_counts_for_match(public_model, owner_model, t[1], t[2], match_id=t[0]),
         shard_root=shard_root,
-        token_inputs={"schema": "receiver-deploy-1", "columns": _DEPLOY_SHARD_COLUMNS, "commit": prov_commit},
+        token_inputs={
+            "schema": "receiver-deploy-1",
+            "provider": provider,  # F4: two owner runs with different --provider must not share a generation
+            "columns": _DEPLOY_SHARD_COLUMNS,
+            "commit": prov_commit,
+        },
         label="deploy",
     )
     pooled = reconcile(res.shard_dir, out_dir / "deployment_counts.parquet", tag="deploy")
     return _pooled_deployment(pooled)
+
+
+def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_path, tag):
+    """Shard + reconcile one provider's candidate rows with ITS per-provider labeling strategy (Q4), and
+    return ``(rows, coverage_counters)``. Primary and pool providers get DISTINCT generations (the token
+    keys on ``provider``), so they never collide under one ``shard_root``."""
+    strategy = labeling_strategy_for_provider(provider)
+    res = for_each(
+        _load_corpus(provider, cache_dir),
+        key=lambda t: str(t[0]),
+        work=lambda t: extract_candidate_rows(t[1], t[2], feature_set=feature_set, labeling_strategy=strategy),
+        shard_root=shard_root,
+        token_inputs={
+            "schema": _SHARD_SCHEMA_VERSION,
+            "feature_set": feature_set,
+            "provider": provider,
+            "labeling_strategy": strategy,
+            "columns": _emitted_columns(feature_set),
+        },
+        counters=_coverage_counters,
+        label=tag,
+    )
+    rows = reconcile(res.shard_dir, out_path, tag=tag)
+    # F3: namespace game_id by provider so a pooled corpus can never collide game_ids across providers
+    # (which would under-count n_matches and make the post-pool CV provider-blind). Per-provider parquet
+    # keeps raw ids; the returned in-memory rows -- what the model fits + the manifest counts -- are unique.
+    if len(rows):
+        rows = rows.assign(game_id=f"{provider}:" + rows["game_id"].astype(str))
+    return rows, dict(res.counters)
 
 
 def main() -> None:
@@ -271,6 +432,12 @@ def main() -> None:
     ap.add_argument("--shard-root", type=pathlib.Path, required=True)
     ap.add_argument("--feature-set", choices=["public", "owner"], default="public")
     ap.add_argument("--provider", default="statsbomb")
+    ap.add_argument(
+        "--pool-provider",
+        default=None,
+        help="a SECOND provider to POOL into the public model IF it earns inclusion on the primary held-out "
+        "(Q3) -- e.g. --provider statsbomb --pool-provider gradientsports. The primary is the serve target.",
+    )
     ap.add_argument("--cache-dir", default=None, help="pining cache dir for a tracking provider (owner variant)")
     ap.add_argument(
         "--public-bundle",
@@ -288,30 +455,39 @@ def main() -> None:
     prov = git_provenance()
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
-    res = for_each(
-        _load_corpus(args.provider, args.cache_dir),  # (match_id, actions, frames)
-        key=lambda t: str(t[0]),
-        work=lambda t: extract_candidate_rows(t[1], t[2], feature_set=args.feature_set),
-        shard_root=args.shard_root,
-        # emitted columns IN the generation token (4.77.1): an in-set column addition moves the digest.
-        token_inputs={
-            "schema": _SHARD_SCHEMA_VERSION,
-            "feature_set": args.feature_set,
-            "provider": args.provider,
-            "columns": _emitted_columns(args.feature_set),
-        },
-        label="match",
-    )
     args.out.mkdir(parents=True, exist_ok=True)
-    rows = reconcile(res.shard_dir, args.out / "candidate_rows.parquet", tag="all")
+    # PRIMARY corpus (the serve target; SB360 -> trajectory labels, a tracking provider -> id labels).
+    rows, coverage = _extract_provider_rows(
+        args.provider, args.feature_set, args.shard_root, args.cache_dir, args.out / "candidate_rows.parquet", "all"
+    )
 
+    # `reconcile` returns a COLUMN-LESS frame when no shard is non-empty, so guard `both_classes` on
+    # `len(rows)` (F2) -- else `rows["label"]` raises KeyError before the vacuity message can fire.
     n_passes = int(rows.groupby(["game_id", "action_id"]).ngroups) if len(rows) else 0
-    both_classes = bool((rows["label"] == 1).any()) and bool((rows["label"] == 0).any())
+    both_classes = len(rows) > 0 and bool((rows["label"] == 1).any()) and bool((rows["label"] == 0).any())
     if len(rows) < args.min_rows or n_passes < args.min_passes or not both_classes:
         raise SystemExit(
             f"vacuous training set: {len(rows)} rows / {n_passes} passes "
             f"(need >= {args.min_rows} rows, >= {args.min_passes} passes, BOTH classes present)"
         )
+
+    # Q3: a POOL provider (GS) earns inclusion only if it does NOT regress the PRIMARY held-out top-1.
+    providers, pool_gate, pool_coverage = {args.provider}, None, None
+    if args.pool_provider:
+        pool_rows, pool_coverage = _extract_provider_rows(
+            args.pool_provider,
+            args.feature_set,
+            args.shard_root,
+            args.cache_dir,
+            args.out / "pool_rows.parquet",
+            "pool",
+        )
+        pool_gate = pooling_gate(rows, pool_rows, args.feature_set)
+        # F1: an EMPTY pool ties the gate (margin 0 -> keep_pool True) but contributes nothing; gating on
+        # len(pool_rows) stops a zero-contribution pool from falsely stamping providers_trained/visibility.
+        if pool_gate["keep_pool"] and len(pool_rows):
+            rows = pd.concat([rows, pool_rows], ignore_index=True)
+            providers.add(args.pool_provider)
 
     names = _feature_names(args.feature_set)
     model = ReceiverModel(args.feature_set).fit(rows[names], rows["label"])
@@ -319,22 +495,27 @@ def main() -> None:
     top1, fold_top1 = cv_top1(rows, args.feature_set)
     model.save(args.out / "model")
 
-    corpus_label = artifact_label(providers={args.provider}, all_public=(args.feature_set == "public"))
+    corpus_label = artifact_label(providers=providers, all_public=providers.issubset({"statsbomb"}))
     manifest = {
         "schema": _SHARD_SCHEMA_VERSION,
         "feature_set": args.feature_set,
         "provider": args.provider,
+        "labeling_strategy": labeling_strategy_for_provider(args.provider),
+        "providers_trained": sorted(providers),  # the actual pool the shipped model saw
         "n_matches": int(rows["game_id"].nunique()),
         "n_passes": n_passes,
         "n_candidate_rows": len(rows),
         "top1_cv": top1,
         "top1_by_fold": fold_top1,
         "candidate_count_distribution": _candidate_count_distribution(rows),  # M2
+        "label_coverage": coverage,  # kept vs completed passes -> drop-on-ambiguous thinning is visible
         "visible_area_caveat": "SB360 truncates the negative candidate set; see the train-vs-serve shift (M2).",
         "corpus_visibility": corpus_label,
         "run_commit": prov["commit"],
         "run_tree_dirty": prov["dirty"],
     }
+    if pool_gate is not None:  # Q3 gate outcome + the pool's own coverage (load-bearing: did GS earn inclusion?)
+        manifest["pooling_gate"] = {**pool_gate, "pool_provider": args.pool_provider, "pool_coverage": pool_coverage}
     # M-A resolution (owner variant): velocity's contribution on COMPLETED passes (i), and -- when a public
     # bundle is supplied -- the deployment gate on GS-FAILED (ii). Both stamped into the same provenanced
     # manifest, so the bundling decision is an artifact, not an unrecorded interactive call (L4a).

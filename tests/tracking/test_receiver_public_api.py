@@ -65,6 +65,19 @@ def test_resolve_dtype_safe_action_id_mismatched_links():
     assert got.loc[1] == "11"  # resolves despite the str-vs-int action_id dtype mismatch
 
 
+def test_proxy_serve_ball_less_frame_is_na_but_missing_columns_raises():
+    """Q5 serve path: the geometric proxy (model=None) on a per-frame ball gap -> pd.NA for that action,
+    never a crash; a velocity-less frame SET (missing vx/vy columns) still raises loud."""
+    import pytest
+
+    fr = _frame()  # carries the ball row + vx/vy
+    fr_no_ball = fr[~fr["is_ball"].to_numpy(dtype=bool)].copy()
+    got = resolve_intended_receiver(_actions(), fr_no_ball, model=None, links=_links())
+    assert got.loc[1] is pd.NA  # per-frame ball gap -> NA
+    with pytest.raises(KeyError):
+        resolve_intended_receiver(_actions(), fr.drop(columns=["vx", "vy"]), model=None, links=_links())
+
+
 def test_public_surface_is_pure():
     actions, frame = _actions(), _frame()
     a0, f0 = actions.copy(deep=True), frame.copy(deep=True)

@@ -131,6 +131,20 @@ def test_extractor_is_pure():
     pd.testing.assert_frame_equal(frame, before)
 
 
+def test_owner_ball_less_frame_raises_no_release_direction_but_missing_columns_stays_loud():
+    """Q5: two DIFFERENT-severity failures. A frame with vx/vy COLUMNS but no BALL ROW is a per-frame gap
+    -> NoReleaseDirectionError (caller skips/NaNs). Missing vx/vy columns entirely is a whole-frame-set
+    misconfiguration (owner routed to a velocity-less provider) -> a LOUD KeyError, never swallowed."""
+    from silly_kicks.tracking._receiver import NoReleaseDirectionError
+
+    fr = _frame(with_velocity=True)
+    fr_no_ball = fr[~fr["is_ball"].to_numpy(dtype=bool)].copy()  # keep vx/vy columns, drop the ball ROW
+    with pytest.raises(NoReleaseDirectionError):
+        receiver_candidate_features(_action(), fr_no_ball, feature_set="owner")
+    with pytest.raises(KeyError):  # missing vx/vy COLUMNS -> loud, distinct from the per-frame exception
+        receiver_candidate_features(_action(), _frame(with_velocity=False), feature_set="owner")
+
+
 def test_params_is_frozen():
     import dataclasses
 

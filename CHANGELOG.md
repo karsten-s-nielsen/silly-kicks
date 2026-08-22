@@ -28,6 +28,16 @@ gate clears** (per-provider via `CoverShadowParams.for_provider`, never a global
   regardless of provider -- an away-team action on a home-attacks-right frame (real GS tracking) is not
   scored across two frames. Byte-identical on aligned frames (SB360 `ltr`, home GS): no retrain.
 - `silly_kicks/calibration/_cover_shadow_objective.py`: the σ/λ discrimination objective + lane-pressure ablation.
+- **Per-provider receiver labeling (real-data amendment, ADR-066).** SB360 freeze frames carry no player
+  identity (ADR-062), so id-based labeling yields 0 positives -- `labeling_strategy_for_provider` picks
+  `"trajectory"` for SB360 (label the teammate nearest the release->next-touch-start ray within a tight
+  `_LABEL_LANE_WIDTH_M`; ambiguous -> drop, never all-zero/nearest-guess) and `"id"` for identity providers
+  (a no-id-match pass is dropped, never per-pass trajectory-guessed). The public model is **SB360-primary**;
+  `--pool-provider` (GS) earns inclusion only via `pooling_gate` (GroupKFold on primary games, pool->train
+  only, kept iff no primary-top-1 regression). `NoReleaseDirectionError` makes a ball-less owner frame a
+  per-frame skip/NaN (train + serve), while a missing `vx`/`vy` COLUMN stays a loud `KeyError`. Label
+  coverage + the pool-gate outcome are recorded in the manifest; the outcome-reading label lives in the
+  driver, pinned by a driver-layer leakage guard.
 - `scripts/`: `train_receiver_model` (SB360 public + GS owner variants, ADR-052/037; a provider-selecting
   loader -- `statsbomb` -> velocity-less SB360, any tracking provider -> real velocity frames the owner
   variant requires; a corpus-volume `--min-passes` floor; and, for the owner variant, the M-A resolution --

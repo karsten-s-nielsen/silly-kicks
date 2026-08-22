@@ -44,6 +44,26 @@ class IntegrityError(Exception):
     """
 
 
+class NoReleaseDirectionError(Exception):
+    """A single frame cannot yield the ball's release direction -- a PER-FRAME gap in a velocity provider
+    (no ball row, or ~0 ball velocity), NOT a misconfiguration.
+
+    Deliberately distinct from the ``KeyError`` ``_ball_release_dir`` raises when the frame set carries no
+    ``vx``/``vy`` columns AT ALL: that means the owner variant was routed to a velocity-less provider (e.g.
+    SB360) and MUST fail loud, never be swallowed into an empty-but-"successful" result. Callers skip/NaN a
+    ``NoReleaseDirectionError`` (count it); they never catch the missing-columns ``KeyError``.
+
+    Examples
+    --------
+    A caller skips a per-frame ball gap but lets a whole-frame-set misconfiguration surface::
+
+        try:
+            feats = receiver_candidate_features(action_row, frame, feature_set="owner")
+        except NoReleaseDirectionError:
+            ...  # ball-less frame -> skip this pass (count it); a missing vx/vy column still raises
+    """
+
+
 _PUBLIC_COLS = ["ball_dist", "lane_pressure", "space"]
 _OWNER_EXTRA_COLS = ["release_dir_align", "closing_speed"]
 
@@ -93,11 +113,24 @@ def _passer_xy(action_row: pd.Series, frame: pd.DataFrame) -> np.ndarray:
     return np.array([x, y], dtype=np.float64)
 
 
-def _split_players(frame: pd.DataFrame, action_team, passer_id):
+#: On identity-less frames (SB360, whose rows are numbered synthetic ids) the passer's real event id can
+#: never match a frame row, so id-exclusion leaves the ACTOR as an acting-team candidate at ~the release
+#: point -- where it sits ~on the pass ray (perpendicular ~0) and would WIN a trajectory label, mislabeling
+#: the pass onto the passer (label 1 at ball_dist ~0, the inverse of truth). When id-exclusion matched no
+#: passer, drop the acting-team candidate within this of the release. No-op where id-exclusion worked
+#: (identity providers) -- gated on ``is_passer.any()`` -- so a real teammate near the passer is never lost.
+_PASSER_EXCLUSION_M = 1.0
+
+
+def _split_players(frame: pd.DataFrame, action_team, passer_id, *, passer_xy: np.ndarray | None = None):
     non_ball = frame[~frame["is_ball"].to_numpy(dtype=bool)]
     is_team = ids_match(non_ball["team_id"], action_team)
     is_passer = ids_match(non_ball["player_id"], passer_id)
     teammates = non_ball[is_team & ~is_passer]
+    if passer_xy is not None and not is_passer.any() and not teammates.empty:
+        pxy = np.asarray(passer_xy, dtype=np.float64)
+        d = np.linalg.norm(teammates[["x", "y"]].to_numpy(dtype=np.float64) - pxy, axis=1)
+        teammates = teammates[d > _PASSER_EXCLUSION_M]  # identity-less: drop the actor-as-candidate at the release
     opp_outfield = non_ball[~is_team & ~non_ball["is_goalkeeper"].astype(bool)]
     return teammates, opp_outfield
 
@@ -105,18 +138,21 @@ def _split_players(frame: pd.DataFrame, action_team, passer_id):
 def _ball_release_dir(frame: pd.DataFrame) -> np.ndarray:
     """Unit vector of the ball's release velocity -- the only leakage-free release direction.
 
-    Raises if the frame carries no velocity (SB360 freeze frames): the caller must not silently
-    substitute the outcome-selected pass-event angle.
+    Two DIFFERENT-severity failures (Q5): a missing ``vx``/``vy`` column is a whole-frame-set property --
+    the owner variant was routed to a velocity-less provider -- and stays a LOUD ``KeyError`` (never
+    swallowed). A missing ball row or ~0 velocity is a PER-FRAME gap in a velocity provider and raises
+    :class:`NoReleaseDirectionError`, which the caller skips/NaNs and counts. The caller must not silently
+    substitute the outcome-selected pass-event angle in either case.
     """
     if "vx" not in frame.columns or "vy" not in frame.columns:
         raise KeyError("release direction needs ball velocity (vx/vy) -- absent on this frame set")
     ball = frame[frame["is_ball"].to_numpy(dtype=bool)]
     if ball.empty:
-        raise ValueError("frame has no ball row -- cannot derive the release direction")
+        raise NoReleaseDirectionError("frame has no ball row -- cannot derive the release direction")
     v = np.array([float(ball["vx"].iloc[0]), float(ball["vy"].iloc[0])], dtype=np.float64)
     n = np.linalg.norm(v)
     if n < 1e-9:
-        raise ValueError("ball release velocity is ~0 -- no release direction")
+        raise NoReleaseDirectionError("ball release velocity is ~0 -- no release direction")
     return v / n
 
 
@@ -164,7 +200,7 @@ def receiver_candidate_features(
         raise ValueError(f"feature_set must be 'public' or 'owner', got {feature_set!r}")
     p = params or ReceiverParams()
     passer = _passer_xy(action_row, frame)
-    teammates, opp_outfield = _split_players(frame, action_row["team_id"], action_row["player_id"])
+    teammates, opp_outfield = _split_players(frame, action_row["team_id"], action_row["player_id"], passer_xy=passer)
     def_pos = opp_outfield[["x", "y"]].to_numpy(dtype=np.float64)
 
     if feature_set == "owner":
@@ -215,7 +251,7 @@ def geometric_proxy_receiver(
     p = params or ReceiverParams()
     ball_dir = _ball_release_dir(frame)  # raises on a velocity-less frame
     passer = _passer_xy(action_row, frame)
-    teammates, _ = _split_players(frame, action_row["team_id"], action_row["player_id"])
+    teammates, _ = _split_players(frame, action_row["team_id"], action_row["player_id"], passer_xy=passer)
     cos_min = float(np.cos(np.deg2rad(p.proxy_cone_deg)))
     best_id, best_align = None, cos_min
     for _, tm in teammates.iterrows():
@@ -327,7 +363,10 @@ class ReceiverModel:
             ranked = model.rank(action_row, frame)
             intended = ranked.index[0]
         """
-        feats = receiver_candidate_features(action_row, frame, params=self.params, feature_set=self.feature_set)
+        try:
+            feats = receiver_candidate_features(action_row, frame, params=self.params, feature_set=self.feature_set)
+        except NoReleaseDirectionError:
+            return pd.Series(dtype=float)  # owner serve on a ball-less frame -> no inference (Q5), NOT a crash
         if feats.empty:
             return pd.Series(dtype=float)
         p = self.predict_candidates(feats)
@@ -559,9 +598,10 @@ def resolve_intended_receiver(
     """Intended-receiver ``player_id`` per action (``model=None`` -> the geometric proxy).
 
     Pure (no input mutation). An action whose frame is unlinked, or whose inference yields nothing, gets
-    ``pd.NA``. NOTE: ``model=None`` uses the geometric proxy, which REQUIRES ball velocity (the only
-    leakage-free release direction) and RAISES on a velocity-less frame set (e.g. SB360 freeze frames) --
-    it does not silently substitute the outcome-selected pass-event angle. A public ``model`` is
+    ``pd.NA``. NOTE: ``model=None`` uses the geometric proxy, which needs the ball's release velocity. A
+    velocity-less frame SET (no ``vx``/``vy`` columns at all, e.g. SB360 freeze frames) RAISES loud -- the
+    proxy was misrouted; it never silently substitutes the outcome-selected pass-event angle. A single
+    ball-less frame within a velocity provider yields ``pd.NA`` for that action (Q5). A public ``model`` is
     positions-only and velocity-free.
 
     Examples
@@ -578,7 +618,10 @@ def resolve_intended_receiver(
             out[act["action_id"]] = pd.NA
             continue
         if model is None:
-            rid = geometric_proxy_receiver(act, fr)
+            try:
+                rid = geometric_proxy_receiver(act, fr)
+            except NoReleaseDirectionError:
+                rid = None  # per-frame ball gap -> pd.NA (Q5); missing vx/vy COLUMNS still raises loud
             out[act["action_id"]] = pd.NA if rid is None else rid  # normalize proxy miss to pd.NA (L6)
         else:
             ranked = model.rank(act, fr)
@@ -613,7 +656,10 @@ def intended_receiver_positions(
         rid = pd.NA
         if fr is not None:
             if model is None:
-                rid = geometric_proxy_receiver(act, fr)
+                try:
+                    rid = geometric_proxy_receiver(act, fr)
+                except NoReleaseDirectionError:
+                    rid = None  # per-frame ball gap -> pd.NA (Q5); missing vx/vy COLUMNS still raises loud
                 if rid is None:
                     rid = pd.NA  # normalize proxy miss to pd.NA (L6)
             else:
