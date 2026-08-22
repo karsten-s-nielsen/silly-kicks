@@ -441,6 +441,73 @@ def test_empty_primary_exits_cleanly_not_keyerror(tmp_path, monkeypatch):
         TRM.main()
 
 
+def _owner_cand_rows():
+    """Pre-extracted owner (velocity) candidate rows: both classes, 2 namespaced games, separable."""
+    rows = []
+    for g in (1, 2):
+        for a in range(4):
+            for cid, is_rx in [(1, 1), (2, 0), (3, 0)]:
+                rows.append(
+                    {
+                        "ball_dist": 15.0,
+                        "lane_pressure": 0.5,
+                        "space": 12.0 if is_rx else 4.0,
+                        "release_dir_align": 0.9 if is_rx else 0.1,
+                        "closing_speed": 3.0 if is_rx else 0.0,
+                        "candidate_id": str(cid),
+                        "label": is_rx,
+                        "game_id": f"gradientsports:{g}",
+                        "action_id": a,
+                        "n_candidates": 3,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def test_owner_rows_skips_the_training_reparse(tmp_path, monkeypatch):
+    """--owner-rows reads a pre-extracted parquet and SKIPS the training corpus re-parse (a GS match is ~4M
+    frames). Only the deployment gate (mocked here) would touch the provider, so the training loader is
+    never called."""
+    rows_path = tmp_path / "candidate_rows.parquet"
+    _owner_cand_rows().to_parquet(rows_path)
+    called = {"load": False}
+
+    def _boom(*a, **k):
+        called["load"] = True
+        return iter([])
+
+    monkeypatch.setattr("scripts._loader_pining.load_matches", _boom)
+    monkeypatch.setattr(TRM, "_resolve_deployment", lambda *a, **k: {"decisive": False, "margin": float("nan")})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_receiver_model.py",
+            "--out",
+            str(tmp_path / "out"),
+            "--shard-root",
+            str(tmp_path / "sh"),
+            "--feature-set",
+            "owner",
+            "--provider",
+            "gradientsports",
+            "--owner-rows",
+            str(rows_path),
+            "--public-bundle",
+            str(tmp_path / "pub"),
+            "--allow-dirty",
+            "--min-rows",
+            "1",
+            "--min-passes",
+            "1",
+        ],
+    )
+    TRM.main()
+    man = json.loads((tmp_path / "out" / "metrics.json").read_text())
+    assert "velocity_ablation" in man and "deployment" in man  # M-A resolution completed from the parquet
+    assert called["load"] is False  # the training path did NOT re-parse the corpus
+
+
 def test_help_exits_zero():
     with pytest.raises(SystemExit) as exc:
         old = sys.argv

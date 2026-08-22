@@ -445,6 +445,15 @@ def main() -> None:
         default=None,
         help="public bundle dir -> run the M-A(ii) deployment gate (public vs this owner variant) on GS-failed",
     )
+    ap.add_argument(
+        "--owner-rows",
+        type=pathlib.Path,
+        default=None,
+        help="reuse a pre-extracted candidate_rows.parquet and SKIP the training corpus re-parse (the "
+        "deployment gate still parses the provider once). Lean path for completing the owner M-A resolution "
+        "-- a GS match is ~4M frames / ~74s to parse, so re-parsing it just to skip an existing shard is pure "
+        "waste (ADR-052: for_each resumes work, not item production).",
+    )
     ap.add_argument("--allow-dirty", action="store_true")
     ap.add_argument("--min-rows", type=int, default=1)
     # A corpus-volume floor so a partial download cannot silently bundle a model. Injectable; RAISE it to
@@ -456,10 +465,14 @@ def main() -> None:
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    # PRIMARY corpus (the serve target; SB360 -> trajectory labels, a tracking provider -> id labels).
-    rows, coverage = _extract_provider_rows(
-        args.provider, args.feature_set, args.shard_root, args.cache_dir, args.out / "candidate_rows.parquet", "all"
-    )
+    if args.owner_rows is not None:
+        # Lean path: reuse the already-extracted rows; only the deployment gate re-parses the provider.
+        rows, coverage = pd.read_parquet(args.owner_rows), {"note": "rows from --owner-rows; coverage not recomputed"}
+    else:
+        # PRIMARY corpus (the serve target; SB360 -> trajectory labels, a tracking provider -> id labels).
+        rows, coverage = _extract_provider_rows(
+            args.provider, args.feature_set, args.shard_root, args.cache_dir, args.out / "candidate_rows.parquet", "all"
+        )
 
     # `reconcile` returns a COLUMN-LESS frame when no shard is non-empty, so guard `both_classes` on
     # `len(rows)` (F2) -- else `rows["label"]` raises KeyError before the vacuity message can fire.
