@@ -83,10 +83,38 @@ def compute_cover_shadow_metrics(df: pd.DataFrame) -> dict:
                 "(recomputed from Cascioli Appendix B, not the handoff table)."
             ),
         },
+        "deleaked_recall": _deleaked_recall_block(df, recall),
         "scope_note": _SCOPE_NOTE,
         "n_passes": len(df),
         "n_pass_only": len(pass_only),
         "n_completed": int(df["is_completed"].astype(bool).sum()),
+    }
+
+
+def _deleaked_recall_block(df: pd.DataFrame, recall: float) -> dict:
+    """Task 13: recall honesty once the failed-pass target is model-inferred (not the leaked end_xy)."""
+    ts = df["target_source"].value_counts().to_dict() if "target_source" in df.columns else {}
+    is_deleaked = bool(ts.get("intended_receiver", 0))
+    return {
+        "is_deleaked": is_deleaked,  # the build ran with a receiver model (failed target != leaked end_xy)
+        "target_source_counts": ts,
+        "recall": recall,  # confusion recall, computed on the de-leaked p_blocked when is_deleaked
+        "failed_pass_validity_note": (
+            "the failed-pass validity (receiver top-1 vs the trajectory-weak-labelled set) is an UPPER BOUND "
+            "on the easy tail (R1), reported in the receiver model's metrics.json -- not recomputed here."
+        ),
+        "robustness_band_note": (
+            "a trained-model-vs-geometric-proxy recall band is a same-failure-mode ROBUSTNESS check, NOT "
+            "evidence the inference is correct (M3) -- both extrapolations can be wrong the same way."
+        ),
+        "residual_bias_note": (
+            "the gates bound the lane-pressure channel (ablation) + the easy-subset transfer (validation); "
+            "the hard-subset, non-lane-pressure covariate bias stays UNMEASURED (R3)."
+        ),
+        "candidate_count_shift_note": (
+            "SB360-train vs GS-serve candidate-count gap (M2) is recorded in the receiver training metrics -- "
+            "a ranking-distribution shift this recall does not correct for."
+        ),
     }
 
 

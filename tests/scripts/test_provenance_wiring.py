@@ -46,6 +46,11 @@ ARTIFACT_DRIVERS = (
     "build_rq_pass_scores",
     "validate_cover_shadow_rq1",
     "validate_pass_risk_calibration",
+    # The cover-shadow sigma/lambda re-tune + expected-receiver cycle (2026-08-20). `train_receiver_model`
+    # trains the SB360/GS receiver bundle (writes model + metrics.json); `apply_cover_shadow_retune` writes
+    # the gated per-provider apply decision -- both consume external data / cite a number, so provenance.
+    "train_receiver_model",
+    "apply_cover_shadow_retune",
     # TF-24 Stage-1 confirmation. Writes `docs/research/tf24_stage1_confirmation/metrics.json`,
     # whose verdict decides whether the recorded carrier optimum stands or a full Stage-1
     # sweep is owed -- a cited number, so the tree it ran on has to be recorded.
@@ -401,7 +406,15 @@ def test_the_guard_precedes_the_corpus_walk_within_main(name):
     happened because expensive work ran before anything validated it."""
     main_fn = _function(_source(name), "main")
     assert main_fn is not None
-    guard, walk = _calls_in(main_fn, "require_clean_tree"), _calls_in(main_fn, "load_matches")
+    guard = _calls_in(main_fn, "require_clean_tree")
+    # The walk = a direct corpus-loader call OR the sharded `for_each` itself (the actual expensive pass).
+    # train_receiver_model delegates its loader to a helper but drives `for_each` in main(), so a
+    # loader-name-only grep would silently SKIP its ordering check (L4); `for_each` is the real invariant.
+    walk = (
+        _calls_in(main_fn, "load_matches")
+        + _calls_in(main_fn, "load_statsbomb_matches")
+        + _calls_in(main_fn, "for_each")
+    )
     if not walk:
         pytest.skip("corpus walk is delegated out of main(); the entry-point gate covers it")
     assert min(guard) < min(walk), (

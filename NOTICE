@@ -539,6 +539,14 @@ The cover shadow features in silly_kicks/tracking/_cover_shadows.py
   (Ball drag model: quadratic air resistance with rho=1.22, C_D=0.25,
   A=0.038, m=0.42; referenced by Cascioli et al. for ball travel time)
 
+The expected-receiver model in silly_kicks/tracking/_receiver.py (ADR-066)
+infers the intended receiver of a pass from pre-pass game state, drawing on:
+
+- Power, P., Ruiz, H., Wei, X., & Lucey, P. (2017). "Not All Passes Are
+  Created Equal: Objectively Measuring the Risk and Reward of Passes in
+  Soccer from Tracking Data." KDD. (Pass-option / intended-target modelling
+  from pre-pass positional state)
+
 The per-player influence primitives in silly_kicks/tracking/_player_influence.py
 (PR-S51, TF-36 + TF-33) compose:
 

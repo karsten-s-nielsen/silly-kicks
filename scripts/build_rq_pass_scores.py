@@ -60,10 +60,24 @@ _MIN_PASSES = 20_000
 _MIN_COMPLETED = 12_000
 
 
-def score_match(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.DataFrame:
-    """One tidy shard per match: per played pass, the cover-shadow lane probs + pitch control."""
+def _assert_emitted_schema(df: pd.DataFrame, declared: list[str]) -> None:
+    """4.77.1: compare the keys the rows ACTUALLY carry to the declaration -- NEVER
+    ``pd.DataFrame(rows, columns=declared)`` / ``df[declared]`` as the CHECK, which SELECTS to the
+    declaration (a dropped key vanishes, a missing one arrives as NaN, an added one is invisible). Fails
+    at the FIRST shard on any drift; ordering with ``df[declared]`` is fine AFTER this assertion."""
+    got, want = set(df.columns), set(declared)
+    if got != want:
+        raise AssertionError(f"shard schema drift: missing {sorted(want - got)}, extra {sorted(got - want)}")
+
+
+def score_match(actions: pd.DataFrame, frames: pd.DataFrame, *, receiver_model=None) -> pd.DataFrame:
+    """One tidy shard per match: per played pass, the cover-shadow lane probs + pitch control.
+
+    ``receiver_model`` (Task 8) DE-LEAKS the failed-pass target (intercepted -> the model's intended
+    receiver); ``None`` keeps the 4.87.0 leaked ``end_xy`` behaviour, byte-identical.
+    """
     links, _ = link_actions_to_frames(actions, frames)  # (pointers, LinkReport) -- ADR-004
-    passes = rqc.extract_played_passes(actions, frames, links=links)
+    passes = rqc.extract_played_passes(actions, frames, links=links, model=receiver_model)
     if passes.empty:
         return pd.DataFrame(columns=_EMITTED_SHARD_COLUMNS)
     gm = resolve_defended_goals(frames)
@@ -105,7 +119,11 @@ def score_match(actions: pd.DataFrame, frames: pd.DataFrame) -> pd.DataFrame:
                 "control": float(ctrl_by_aid.get(p["action_id"], np.nan)),
             }
         )
-    return pd.DataFrame(recs)[_EMITTED_SHARD_COLUMNS]
+    if not recs:  # passes non-empty but every frame missing -> an empty shard with the declared columns
+        return pd.DataFrame(columns=_EMITTED_SHARD_COLUMNS)
+    df = pd.DataFrame(recs)
+    _assert_emitted_schema(df, _EMITTED_SHARD_COLUMNS)  # keys rows ACTUALLY carry vs the declaration
+    return df[_EMITTED_SHARD_COLUMNS]  # deterministic column order, AFTER the schema assertion
 
 
 def main() -> None:
@@ -113,6 +131,7 @@ def main() -> None:
     ap.add_argument("--out", type=pathlib.Path, required=True)
     ap.add_argument("--shard-root", type=pathlib.Path, required=True)
     ap.add_argument("--cache-dir", default=None)
+    ap.add_argument("--receiver-model", default=None, help="receiver variant key -> DE-LEAK the failed target (Task 8)")
     ap.add_argument("--allow-dirty", action="store_true")
     ap.add_argument("--min-passes", type=int, default=_MIN_PASSES)  # injectable floors
     ap.add_argument("--min-completed", type=int, default=_MIN_COMPLETED)
@@ -121,6 +140,12 @@ def main() -> None:
     prov = git_provenance()  # a DICT: prov["commit"], prov["dirty"]
     require_clean_tree(prov, allow_dirty=args.allow_dirty)  # BEFORE any corpus work
 
+    receiver_model = None
+    if args.receiver_model:
+        from silly_kicks.tracking._receiver import ReceiverModel
+
+        receiver_model = ReceiverModel.from_variant(args.receiver_model)
+
     cs = CoverShadowParams()
     token_inputs = {
         "schema": _SHARD_SCHEMA_VERSION,
@@ -128,12 +153,13 @@ def main() -> None:
         "lambda_ctrl": cs.lambda_ctrl,
         "pc_method": "spearman",
         "geometry_version": GEOMETRY_VERSION,
+        "receiver_model": args.receiver_model or "none",  # de-leak is a content input -> new generation
     }
     items = load_matches(providers=["gradientsports"], cache_dir=args.cache_dir)
     res = for_each(
         items,
         key=lambda t: t[1],
-        work=lambda t: score_match(t[2], t[3]),
+        work=lambda t: score_match(t[2], t[3], receiver_model=receiver_model),
         shard_root=args.shard_root,
         token_inputs=token_inputs,
         label="match",

@@ -163,6 +163,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/xthreat/_eval.py",
     "silly_kicks/xthreat/_physical.py",
     "silly_kicks/tracking/_warnings.py",
+    "silly_kicks/tracking/_receiver.py",
     "silly_kicks/tracking/_run_values.py",
     "silly_kicks/tracking/defensive_credit/_params.py",
     "silly_kicks/tracking/defensive_credit/_orchestration.py",
