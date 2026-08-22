@@ -397,6 +397,16 @@ def _resolve_deployment(public_bundle, owner_model, provider, cache_dir, shard_r
     return _pooled_deployment(pooled)
 
 
+def _namespace_game_ids(rows, provider):
+    """F3: provider-prefix ``game_id`` so a pooled corpus can never collide ids across providers (which
+    would under-count ``n_matches`` and make the post-pool CV provider-blind). The prefix is bijective, so
+    grouping/CV is unchanged for a single provider. Single-sourced so the normal extract path and the
+    ``--owner-rows`` lean path (which reads the RAW-id per-provider parquet) produce the SAME in-memory rows."""
+    if not len(rows):
+        return rows
+    return rows.assign(game_id=f"{provider}:" + rows["game_id"].astype(str))
+
+
 def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_path, tag):
     """Shard + reconcile one provider's candidate rows with ITS per-provider labeling strategy (Q4), and
     return ``(rows, coverage_counters)``. Primary and pool providers get DISTINCT generations (the token
@@ -417,12 +427,9 @@ def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_pat
         counters=_coverage_counters,
         label=tag,
     )
-    rows = reconcile(res.shard_dir, out_path, tag=tag)
-    # F3: namespace game_id by provider so a pooled corpus can never collide game_ids across providers
-    # (which would under-count n_matches and make the post-pool CV provider-blind). Per-provider parquet
-    # keeps raw ids; the returned in-memory rows -- what the model fits + the manifest counts -- are unique.
-    if len(rows):
-        rows = rows.assign(game_id=f"{provider}:" + rows["game_id"].astype(str))
+    # Per-provider parquet keeps RAW ids; the returned in-memory rows -- what the model fits + the manifest
+    # counts -- are provider-namespaced so a pooled corpus stays collision-free (F3).
+    rows = _namespace_game_ids(reconcile(res.shard_dir, out_path, tag=tag), provider)
     return rows, dict(res.counters)
 
 
@@ -466,8 +473,11 @@ def main() -> None:
 
     args.out.mkdir(parents=True, exist_ok=True)
     if args.owner_rows is not None:
-        # Lean path: reuse the already-extracted rows; only the deployment gate re-parses the provider.
-        rows, coverage = pd.read_parquet(args.owner_rows), {"note": "rows from --owner-rows; coverage not recomputed"}
+        # Lean path: reuse the RAW-id per-provider parquet; only the deployment gate re-parses the provider.
+        # Namespace exactly as _extract_provider_rows would, so this is a faithful drop-in (and composes with
+        # --pool-provider without half-namespacing the corpus).
+        rows = _namespace_game_ids(pd.read_parquet(args.owner_rows), args.provider)
+        coverage = {"note": "rows from --owner-rows; coverage not recomputed"}
     else:
         # PRIMARY corpus (the serve target; SB360 -> trajectory labels, a tracking provider -> id labels).
         rows, coverage = _extract_provider_rows(

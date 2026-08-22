@@ -456,12 +456,25 @@ def _owner_cand_rows():
                         "closing_speed": 3.0 if is_rx else 0.0,
                         "candidate_id": str(cid),
                         "label": is_rx,
-                        "game_id": f"gradientsports:{g}",
+                        # RAW id, exactly as reconcile writes the per-provider parquet (the namespacing is
+                        # applied in-memory on read, not persisted).
+                        "game_id": str(g),
                         "action_id": a,
                         "n_candidates": 3,
                     }
                 )
     return pd.DataFrame(rows)
+
+
+def test_namespace_game_ids_bijective_and_empty_safe():
+    """F3 namespacing is a bijective provider prefix on RAW ids, and no-ops on an empty frame -- so the
+    --owner-rows lean path reproduces the normal extract path's in-memory rows exactly."""
+    raw = pd.DataFrame({"game_id": ["10502", "10517", "10502"], "action_id": [0, 1, 2]})
+    out = TRM._namespace_game_ids(raw, "gradientsports")
+    assert list(out["game_id"]) == ["gradientsports:10502", "gradientsports:10517", "gradientsports:10502"]
+    assert out["game_id"].nunique() == raw["game_id"].nunique()  # bijective -> grouping unchanged
+    empty = pd.DataFrame({"game_id": [], "action_id": []})
+    assert len(TRM._namespace_game_ids(empty, "gradientsports")) == 0  # empty-safe
 
 
 def test_owner_rows_skips_the_training_reparse(tmp_path, monkeypatch):
