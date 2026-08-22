@@ -79,6 +79,12 @@ class CoverShadowDiscriminationObjective:
         from sklearn.metrics import roc_auc_score
 
         margin, is_fail, is_completed, is_blocked = self._measure(sigma, lambda_ctrl)
+        # Real GS produces non-finite lane values (~0.8% of the corpus; `_rq_metrics` records it), so a
+        # NaN margin is real -- and `roc_auc_score` RAISES on any NaN in the score. Drop non-finite pairs
+        # (mirrors `_rq_metrics._finite`), which also keeps them out of the FP subset (a downward bias fix).
+        finite = np.isfinite(margin)
+        margin, is_fail = margin[finite], is_fail[finite]
+        is_completed, is_blocked = is_completed[finite], is_blocked[finite]
         if len(np.unique(is_fail)) < 2:
             return float("nan")
         if self._incumbent_fp is not None and is_completed.any():

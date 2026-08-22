@@ -35,6 +35,16 @@ def test_objective_discriminates_failed_from_completed():
     assert CoverShadowDiscriminationObjective(_passes()).score(0.20, 4.3) >= 0.8
 
 
+def test_score_masks_non_finite_margins():
+    """Real GS produces non-finite lane values (~0.8% of the corpus); roc_auc_score RAISES on any NaN in
+    the score. A pass with a NaN target -> NaN margin must be DROPPED, not crash the sweep."""
+    fr = _make_lane_control_frame(passer_pos=(50.0, 34.0), receiver_pos=(75.0, 34.0), defender_pos=(62.5, 34.0))
+    nan_pass = PreparedPass(fr, (50.0, 34.0), (float("nan"), 34.0), 2, HOME_GOAL_MAP, True, False)  # NaN target
+    obj = CoverShadowDiscriminationObjective([*_passes(), nan_pass])
+    v = obj.score(0.20, 4.3)  # must NOT raise ValueError: Input contains NaN
+    assert np.isfinite(v) and v >= 0.8  # the finite passes still discriminate
+
+
 def test_fp_constraint_rejects_overblocking():
     passes = [*_passes(), _pass((62.5, 34.0), is_fail=False)]  # blocked BUT completed = a false positive
     assert np.isnan(CoverShadowDiscriminationObjective(passes, incumbent_fp=0.0).score(0.20, 4.3))

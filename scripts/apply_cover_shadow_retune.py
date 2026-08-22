@@ -87,13 +87,19 @@ def main() -> None:
     prov = git_provenance()
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
     d = json.loads(args.inputs.read_text(encoding="utf-8"))
+
+    # a hand-edited inputs file may carry JSON null; coerce None -> nan (math.isfinite(None) raises TypeError)
+    def _f(key: str) -> float:
+        v = d[key]
+        return float("nan") if v is None else float(v)
+
     out = decide_apply(
-        coverage=d["coverage"],
-        receiver_margin=d["receiver_margin"],
-        ablation_share=d["ablation_share"],
+        coverage=_f("coverage"),
+        receiver_margin=_f("receiver_margin"),
+        ablation_share=_f("ablation_share"),
         noise_ok=bool(d["noise_ok"]),
-        candidate_sigma=d["candidate_sigma"],
-        candidate_lambda=d["candidate_lambda"],
+        candidate_sigma=_f("candidate_sigma"),
+        candidate_lambda=_f("candidate_lambda"),
     )
     manifest = {
         "outcome": out.outcome,

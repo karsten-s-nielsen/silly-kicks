@@ -117,3 +117,14 @@ def test_receiver_failed_pass_accuracy_reports_upper_bound():
     assert acc["n_scored"] == 1
     assert acc["top1_proxy"] == 1.0  # the geometric proxy picks the on-ray teammate = the weak label
     assert acc["r1_caveat"] == R1_CAVEAT
+
+
+def test_failed_pass_accuracy_survives_ball_less_frame():
+    """Q5 (real-data): the accuracy fn calls the velocity-based geometric proxy internally -- a GS ball-less
+    frame must SKIP the proxy for that pass, not crash the whole deployment gate. The positions-only model
+    still ranks, so the pass is scored; the proxy is simply skipped (-> top1_proxy 0.0)."""
+    fr_no_ball = _frame_100()
+    fr_no_ball = fr_no_ball[~fr_no_ball["is_ball"].to_numpy(dtype=bool)].copy()  # drop the ball ROW
+    acc = receiver_failed_pass_accuracy(_fitted_model(), _actions(), fr_no_ball, links=_links())
+    assert acc["n_scored"] == 1  # completes without raising; the covered pass is still model-scored
+    assert acc["top1_proxy"] == 0.0  # the velocity proxy was skipped on the ball-less frame

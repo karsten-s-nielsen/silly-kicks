@@ -89,7 +89,11 @@ The design response (green-lit in a design review, whose bindings this records):
 - **Fail-soft on a per-frame gap, loud on a misconfiguration** (Q5, `NoReleaseDirectionError`): a ball-less
   frame is a per-frame gap → skip/NaN (train and serve), counted; a *missing `vx`/`vy` column* is the owner
   variant routed to a velocity-less provider → a LOUD `KeyError`, never swallowed. This is the fail-loud
-  discipline (ADR-051/ADR-010) — *not* ADR-043, which is GKDV v1.
+  discipline (ADR-051/ADR-010) — *not* ADR-043, which is GKDV v1. **All FIVE `geometric_proxy_receiver`
+  callers handle it** — `extract_candidate_rows`, `rank`, `resolve_intended_receiver`,
+  `intended_receiver_positions`, and (surfaced only on the real GS deployment pass, not the fixtures) the
+  M-A(ii) `receiver_failed_pass_accuracy` proxy, which skips the ball-less frame because the deployment gate
+  scores on `top1`, not the proxy.
 
 **Load-bearing consequences** a future maintainer will ask "why?" about: the public model is trained on the
 serve distribution (SB360) with trajectory labels; GS is pooled in only if the held-out gate clears (outcome

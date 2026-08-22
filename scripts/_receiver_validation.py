@@ -24,7 +24,7 @@ import pandas as pd
 from silly_kicks.id_compat import canonical_id, ids_match, same_id
 from silly_kicks.spadl.config import actiontypes, results
 from silly_kicks.tracking import link_actions_to_frames
-from silly_kicks.tracking._receiver import geometric_proxy_receiver
+from silly_kicks.tracking._receiver import NoReleaseDirectionError, geometric_proxy_receiver
 
 _T = {n: i for i, n in enumerate(actiontypes)}
 _R = {n: i for i, n in enumerate(results)}
@@ -145,7 +145,10 @@ def receiver_failed_pass_accuracy(model, actions: pd.DataFrame, frames: pd.DataF
         truth = str(lab["weak_receiver_id"])
         if str(ranked.index[0]) == truth:
             model_hits += 1
-        proxy = geometric_proxy_receiver(act, fr)
+        try:
+            proxy = geometric_proxy_receiver(act, fr)
+        except NoReleaseDirectionError:
+            proxy = None  # ball-less frame -> the velocity-based proxy can't compute (Q5); model still scored
         if proxy is not None and str(proxy) == truth:
             proxy_hits += 1
     n_intercepted = int((classify_failure_mode(actions) == "intercepted").sum())
