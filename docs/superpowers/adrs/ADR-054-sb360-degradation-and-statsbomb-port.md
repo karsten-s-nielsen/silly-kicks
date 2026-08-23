@@ -136,3 +136,47 @@ Recorded because each is a reusable shape, not a one-off.
 3. **A checksummed fixture without a `binary` pin.** `SOURCE_SHA` recorded a CRLF working-copy
    digest describing bytes that exist only on Windows; CI read the LF blob. The repo had solved this
    three times already for model artifacts — this is the fourth `.gitattributes` entry.
+
+## Amendment (4.90.0 / PR-S160 — xShot guard, self-enforcing contract, space_creation softening)
+
+Three additions extend the velocity-availability contract this ADR established.
+
+**1. xShot joins the contract (a third fitted model), and the fabrication was LIVE.**
+`add_xshot_occurrence` had no velocity guard: `XSHOT_FEATURE_NAMES_FAITHFUL` includes `speed`, which
+is NaN on a velocity-less SB360 freeze-frame, so XGBoost's missing-value routing produced an
+ungrounded probability (measured: `0.239811` on the audit's declared frame). `xshot_occurrence_xfns()`
+is a member of `pre_shot_gk_full_default_xfns`, so any consumer building that GK-union bundle on SB360
+was carrying fabricated xShot. `compute_xshot_occurrence` now carries the same two-prong guard as
+`compute_xcross_attempt` (declared-unavailable → honest NaN; undeclared-missing-velocity → loud raise
+naming `derive_velocities()`), at the shared compute seam all three public entry points reach.
+
+**2. The contract becomes CI-ENFORCED, not merely documented — and the enforcement is anchored
+STRUCTURALLY.** Nothing structurally required a velocity-feature model to route through the guard,
+which is exactly why xShot slipped through releases while the SB360 audit recorded it `not_exercised`
+(a `not_exercised` model is invisible to a runtime audit — the audit provably cannot police the class).
+`tests/tracking/test_velocity_feature_contract.py` turns the prose contract into a static invariant.
+Its population is anchored on the STRUCTURAL property "takes a `frames` parameter AND scores a fitted
+model", NOT on the `*_FEATURE_NAMES*` naming convention — anchoring on a convention would re-commit the
+original sin one level up (a future frame-served model that declares features differently would
+escape). Each frame-scoring entry with a velocity feature must CALL the guard in its body (a module
+import is not enough — the refactor-forgot-to-call bug); `_GUARD_EXEMPT` holds verified wrappers
+(delegate to a guarded entry), eval probes, and velocity-free-model scorers; `test_population_is_exact`
+(keyed on `(module, name)` pairs) catches a new frame-served model whatever it names its features.
+**Named limitation:** the guard check requires a direct in-body call, so the two-prong block stays
+intentionally duplicated across the serve modules; if it is ever DRY'd into a shared helper,
+`_fn_calls_guard` must be taught to follow one call level (or the helper added to its alias set) —
+the gate trades refactorability for seam-visibility, on purpose.
+
+**3. `add_space_creation` opponent-perspective softening — and the marker is a PRAGMATIC FOV PROXY.**
+`_resolve_opponent_team_id` and `_compute_space_creation_for_action`'s two-team guard now soften a
+legitimate one-team SB360 FOV crop to a per-row NaN opponent value (with a `space_opponent_source`
+provenance token: `resolved` / `unresolved_one_team`) instead of aborting the whole batch, while a
+full-tracking one-team frame — or a 0/3+-team frame in any mode — still raises. **The coupling this
+ADR must own:** the gate keys on `velocity_unavailable_by_design`, which answers "does this frame carry
+kinematics?", NOT "is this a legitimate FOV crop?" — two orthogonal properties that COINCIDE only in
+today's provider set (SB360 is both velocity-less and FOV-cropped). There is no frame-level FOV signal
+today (SB360's `visible_area` is an action-level polygon; the schema visibility column is unpopulated),
+so the velocity marker is the pragmatic proxy — but the softening should migrate to a real FOV signal
+the day a frame-level one exists. `space_opponent_source` is the mitigation: a consumer can count
+softened rows rather than conflating an unresolvable opponent with a genuine zero. Additive; no VAEP
+retrain. Downstream materializers gain the new column (flagged in `docs/PRIVATE_CONSUMERS.md`).

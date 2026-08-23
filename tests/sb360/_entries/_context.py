@@ -300,27 +300,47 @@ _entry(
 
 _entry(
     "add_pressure_on_actor",
-    C.generic(T.add_pressure_on_actor),
-    columns=("pressure_on_actor__andrienko_oval",),
+    ADAPTERS["add_pressure_on_actor"](T.add_pressure_on_actor),
+    columns=(
+        "pressure_on_actor__andrienko_oval",
+        "pressure_on_actor__bekkers_pi",
+    ),
     velocity={
         "pressure_on_actor__andrienko_oval": AxisVerdict("identical", "works"),
+        "pressure_on_actor__bekkers_pi": AxisVerdict(
+            "all_nan",
+            "honest_nan",
+            rationale=(
+                "bekkers_pi is velocity-derived (probabilistic TTI + a velocity-GATED active-pressing "
+                "speed_threshold filter). Its zero-velocity form is artifact-dependent, not a smooth "
+                "limit -- so it SUPPRESSES to honest-NaN on the velocity-less leg (Tier-3, ADR-063 "
+                "amendment / spec Part 4), while the velocity leg scores. This is the audit-observable "
+                "counterpart to xShot/space_creation (which the two-leg fixture cannot exercise). "
+                "[measured cause=velocity]"
+            ),
+        ),
     },
     visibility={
         "gk_absent": {
             "pressure_on_actor__andrienko_oval": AxisVerdict("identical", "works"),
+            "pressure_on_actor__bekkers_pi": AxisVerdict("all_nan", "honest_nan"),
         },
         "defender_absent": {
             "pressure_on_actor__andrienko_oval": AxisVerdict("identical", "works"),
+            "pressure_on_actor__bekkers_pi": AxisVerdict("all_nan", "honest_nan"),
         },
         "gk_one_end": {
             "pressure_on_actor__andrienko_oval": AxisVerdict("identical", "works"),
+            "pressure_on_actor__bekkers_pi": AxisVerdict("all_nan", "honest_nan"),
         },
     },
     applicability={
         "pressure_on_actor__andrienko_oval": "region_support",
+        "pressure_on_actor__bekkers_pi": "no_support",
     },
     applicability_deltas={
         "pressure_on_actor__andrienko_oval": {"extreme": 0.0, "near": 44.15914354723026},
+        "pressure_on_actor__bekkers_pi": {"extreme": 0.0, "near": 0.0},
     },
 )
 

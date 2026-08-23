@@ -215,6 +215,22 @@ def visible_area_coverage(fn):
     return call
 
 
+def with_pressure_methods(fn):
+    """``add_pressure_on_actor`` audits BOTH the default ``andrienko_oval`` AND the velocity-derived
+    ``bekkers_pi`` -- the latter is opt-in (not in the default ``methods`` tuple), so ``generic``
+    would never emit its column. Passing it explicitly makes the ADR-063 honest-NaN tier (spec Part 4)
+    audit-observable: the one part of that cycle the two-leg fixture CAN prove."""
+    params = inspect.signature(fn).parameters
+
+    def call(actions, frames, links, home_team_id):
+        kwargs: dict = {"methods": ("andrienko_oval", "bekkers_pi")}
+        if "links" in params:
+            kwargs["links"] = links
+        return fn(actions, frames, **kwargs)
+
+    return call
+
+
 #: Aggregators whose signature does not fit the :func:`generic` adapter. Hand-written rather than
 #: guessed: an adapter that supplies a default for a required argument turns a wrong call into a
 #: recorded verdict about the library.
@@ -242,6 +258,9 @@ ADAPTER_MAP: dict[str, Callable] = {
     "add_gradientsports_player_ids": gradientsports_player_ids,
     # Takes NO frames and REQUIRES `visible_area`, so the generic adapter raises TypeError.
     "add_visible_area_coverage": visible_area_coverage,
+    # Audits the opt-in velocity-derived bekkers_pi method alongside the default andrienko_oval, so
+    # the ADR-063 honest-NaN tier (spec Part 4) is exercised by the two-leg fixture.
+    "add_pressure_on_actor": with_pressure_methods,
 }
 
 
