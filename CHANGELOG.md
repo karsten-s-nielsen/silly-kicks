@@ -5,9 +5,9 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.90.0] — 2026-08-21
+## [4.91.0] — 2026-08-23
 
-Cover-shadow σ/λ discrimination re-tuning + expected-receiver model (ADR-066, PR-S160) -- an
+Cover-shadow σ/λ discrimination re-tuning + expected-receiver model (ADR-066, PR-S162) -- an
 **exploratory, reported-not-gated** cycle building on ADR-064's RQ1 validation. Ships an expected-receiver
 model (`ReceiverModel`, ADR-011 bundle: SHA + chirality + feature contract) that infers the intended
 receiver of a pass from PRE-PASS state ONLY -- the leakage ban pinned by an output-invariance guard; the
@@ -19,7 +19,7 @@ PER-PROVIDER apply gate (receiver-validity + lane-pressure-bias ablation + ADR-0
 thresholds) that keeps the incumbent σ/λ as the honest-null likely outcome. **No library change unless the
 gate clears** (per-provider via `CoverShadowParams.for_provider`, never a global default -- H3); C4-free.
 
-### Added -- the receiver + σ/λ cycle (PR-S160, ADR-066)
+### Added -- the receiver + σ/λ cycle (PR-S162, ADR-066)
 
 - `silly_kicks/tracking/_receiver.py`: `ReceiverModel` + public `resolve_intended_receiver` /
   `intended_receiver_positions` + `geometric_proxy_receiver`; `CoverShadowParams.for_provider` (additive).
@@ -56,6 +56,49 @@ gate clears** (per-provider via `CoverShadowParams.for_provider`, never a global
 - The de-leaked, failure-mode-conditional RQ harness + the recall-honesty block (R1/M3/R3/M2 caveats).
 
 Attribution: Power et al. 2017 (receiver); Cascioli et al. 2025 (σ/λ). See NOTICE.
+
+## [4.90.1] — 2026-08-23
+
+Sportec/IDSSE parse-port set-piece team resolution (patch, PR-S161; no API or output change on
+existing corpora). A DFL *direct* set-piece — a free kick, goal kick, corner or penalty with no nested
+`<Play>` — arrives from `_build_event_row` with `team='unknown'`; the acting (executor) team is
+carried only in the `{type}_team` qualifier column (the first-child `Team` attribute).
+`_TEAM_QUALIFIER_PRIORITY` consulted only `play_team` / `throwin_team` / `foul_team_fouler`, so
+`freekick_team` / `goalkick_team` / `corner_team` / `penalty_team` were never read and `team` stayed
+`'unknown'`, crashing the downstream opponent guards (a lakehouse full-adoption pass drained 8 idsse
+units on direct free kicks). All four are the set-piece executor, so filling `team` from the full
+executor class is inert where a qualifier is absent and correct where present. **No parser change** —
+the columns were already parsed into bronze; only the resolution priority list was incomplete. Inert
+on the committed IDSSE parity slice (it holds no direct set-pieces), so `test_parse_port_parity.py`
+stays byte-identical. Reported by the lakehouse.
+
+## [4.90.0] — 2026-08-23
+
+SB360 velocity-availability hardening (ADR-054 + ADR-063 amendments, PR-S160). Four changes, no VAEP retrain
+(all guards fire only on the SB360 velocity-less marker; full-tracking output is byte-identical):
+
+- **xShot velocity-fabrication guard.** `add_xshot_occurrence` had no velocity guard: `speed` is a
+  trained feature, so on a velocity-less SB360 freeze-frame it fabricated an ungrounded probability
+  (the ADR-053 shape). It was live on the `pre_shot_gk_full_default_xfns` GK-union bundle.
+  `compute_xshot_occurrence` now degrades to honest NaN on declared-velocity-unavailable frames and
+  raises loud on a forgotten `derive_velocities()`, mirroring `add_xcross_attempt`. **Consumers that
+  built `pre_shot_gk_full_default_xfns` on SB360 will see NaN where a (meaningless) number was —
+  a correctness fix (a model trained on those SB360 values was trained on a bug).**
+- **The velocity-availability contract is now CI-enforced** by a static gate over frame-consuming
+  model-scoring entries (`tests/tracking/test_velocity_feature_contract.py`), anchored structurally
+  rather than on the `*_FEATURE_NAMES*` naming convention, so the next such model cannot slip.
+- **`add_space_creation` opponent perspective softens on SB360 instead of raising.** A legitimate
+  one-team broadcast-FOV freeze-frame now yields the team-side `space_created_m2` (the ADR-063
+  zero-velocity positional estimate) with a honest-NaN `space_denied_m2_opponent`, tagged by a **new,
+  additive `space_opponent_source` column** (`resolved` / `unresolved_one_team`). Full-tracking frames
+  and 0/3+-team frames still raise. **Downstream consumers that materialize space_creation gain the
+  additive `space_opponent_source` column (non-breaking — unknown columns are ignored); see
+  `docs/PRIVATE_CONSUMERS.md`.**
+- **`add_pressure_on_actor(method="bekkers_pi")` is tiered honest-NaN on velocity-unavailable frames**
+  (ADR-063 amendment): its active-pressing `speed_threshold` filter is a velocity-gated discrete term,
+  so its zero-velocity form is artifact-dependent, not a smooth limit — it suppresses (Tier-3) rather
+  than lifts. `andrienko_oval` / `link_zones` are positional and unchanged. Closes the pressure-honesty
+  loop for `GkRetention`'s marts `release_pressure` at the source.
 
 ## [4.89.0] — 2026-08-21
 

@@ -615,19 +615,25 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
 
         out = helper(actions, link_actions_to_frames(actions, frames)[0])
     elif name == "add_xshot_occurrence":
-        # `ball_state` is a documented contract column for this extractor and is NOT in
-        # TRACKING_FRAMES_COLUMNS. Same supply-the-contract-columns precedent as add_das
-        # below: without it the helper raises before reaching the NaN-IDENTIFIER surface
-        # this gate exists to fuzz, and would pass vacuously.
+        # `ball_state` as above, PLUS vx/vy -- the same supply-the-contract-columns precedent as
+        # add_xcross_attempt below, and for the identical reason. The ADR-054 amendment gave xShot
+        # the SAME two-prong velocity guard as xCross: velocity DECLARED with vx/vy ABSENT is the
+        # "forgot derive_velocities()" case and RAISES. The shared fixture supplies neither, so
+        # without the vector the gate would measure that refusal instead of the NaN-IDENTIFIER
+        # surface it exists to fuzz.
         #
-        # Deliberately NOT given vx/vy: this extractor WARNS and falls back to distance-only
-        # carrier inference, so supplying them would silently change which path the gate
-        # exercises. `add_xcross_attempt` used to share this branch and now has its own,
-        # because it needs the vector and this one must not be given it.
+        # It previously did NOT supply vx/vy because the extractor merely WARNED and fell back to
+        # distance-only carrier inference; adding the guard moved it onto xCross's footing, so it
+        # needs the vector here too.
         fr = frames.copy()
         if "ball_state" not in fr.columns:
             fr["ball_state"] = "alive"
+        fr["vx"] = 0.0
+        fr["vy"] = 0.0
         out = helper(actions, fr)
+        # Non-vacuity, mirroring add_xcross_attempt: the scorer must actually have run rather than
+        # the whole call degrading, or the NaN-identifier assertions downstream mean nothing.
+        assert "xshot_occurrence" in out.columns
     elif name == "add_xcross_attempt":
         # `ball_state` as above, PLUS vx/vy -- the same supply-the-contract-columns precedent as
         # add_das below, and for the identical reason. This extractor now honours the ADR-054

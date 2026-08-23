@@ -23,7 +23,7 @@ import pandas as pd
 
 from silly_kicks.id_compat import ids_match
 
-from ._velocity_availability import zero_velocity_if_unavailable
+from ._velocity_availability import velocity_unavailable_by_design, zero_velocity_if_unavailable
 
 if TYPE_CHECKING:
     from .pitch_control import PitchControlCache
@@ -53,15 +53,26 @@ def _unique_team_ids(frame: pd.DataFrame) -> np.ndarray:
     return np.asarray(non_ball.dropna().unique())
 
 
-def _resolve_opponent_team_id(frame: pd.DataFrame, attacking_team_id: int | str):
+def _resolve_opponent_team_id(
+    frame: pd.DataFrame,
+    attacking_team_id: int | str,
+    *,
+    on_unresolvable: Literal["raise", "nan"] = "raise",
+):
     """Resolve the opposing team id from a two-team frame (dtype-robust).
 
-    Raises ``ValueError`` when the frame does not contain exactly two team
-    ids (excluding ball rows) or when ``attacking_team_id`` does not uniquely
-    match one of them — corrupt input must fail loud, not emit silent NaN.
+    ``on_unresolvable="raise"`` (default): a frame without exactly two team ids raises — corrupt
+    input fails loud. ``on_unresolvable="nan"``: ONLY the exactly-one-team case returns ``None`` (a
+    legitimate one-team SB360 FOV crop, marker-gated by the caller). Zero teams or three-plus teams
+    RAISE even in ``"nan"`` mode — no outfield players, or >2 team ids, is genuinely corrupt, not an
+    FOV limit; restricting the None-return to ``len == 1`` also keeps the caller's
+    ``space_opponent_source == "unresolved_one_team"`` label exactly accurate. The
+    ``attacking_team_id`` non-unique-match branch STILL raises in both modes — a genuine id error.
     """
     uniq = _unique_team_ids(frame)
     if len(uniq) != 2:
+        if on_unresolvable == "nan" and len(uniq) == 1:
+            return None
         raise ValueError(
             "opponent perspective requires exactly two team ids in the frame "
             f"(excluding ball rows); found {list(uniq)!r}"
@@ -171,9 +182,17 @@ def compute_space_created(
         params = SpaceCreationParams()
 
     opponent_team_id = None
+    opponent_source: str | None = None  # meaningful only when include_opponent_perspective
     if include_opponent_perspective:
-        # Loud two-team guard (corrupt frames never degrade to silent NaN).
-        opponent_team_id = _resolve_opponent_team_id(frame, attacking_team_id)
+        # Marker-gated FOV softening (spec Part 2): a legitimate velocity-unavailable-by-design
+        # (SB360) one-team freeze-frame degrades the opponent side to NaN rather than aborting the
+        # whole batch; a full-tracking one-team frame is still corrupt and still raises. The velocity
+        # marker is a PRAGMATIC PROXY for FOV-legitimacy (they coincide only in today's providers;
+        # ADR-054 amendment) -- migrate to a real frame-level FOV/visibility signal when one exists.
+        _mode = "nan" if velocity_unavailable_by_design(frame) else "raise"
+        opponent_team_id = _resolve_opponent_team_id(frame, attacking_team_id, on_unresolvable=_mode)
+        opponent_source = "resolved" if opponent_team_id is not None else "unresolved_one_team"
+    opponent_resolved = include_opponent_perspective and opponent_team_id is not None
 
     transition_grid, epv_grid = _get_default_grids(transition_grid, epv_grid)
 
@@ -249,7 +268,7 @@ def compute_space_created(
     # complementary PC surface makes the opponent LOO the exact pointwise negation
     # of the team LOO (informationally empty — lakehouse round-2 rejection).
     obso_multiplier_opponent = None
-    if include_opponent_perspective:
+    if opponent_resolved:
         # Point reflection (ADR-041): the opponent attacks the other goal AND the y-axis
         # mirrors with it. Equivalent to the previous axis=1 flip for the y-SYMMETRIC
         # synthetic grids -- gated to rtol=1e-9 against a pre-change golden in
@@ -275,7 +294,7 @@ def compute_space_created(
     if atk_players.empty:
         base_cols = ["player_id", "team_id", "space_created_m2"]
         if include_opponent_perspective:
-            base_cols.append("space_denied_m2_opponent")
+            base_cols += ["space_denied_m2_opponent", "space_opponent_source"]
         return pd.DataFrame(columns=base_cols)
 
     # Cell area
@@ -293,7 +312,7 @@ def compute_space_created(
             atk_players,
             cell_area,
             pitch_control_method,
-            include_opponent=include_opponent_perspective,
+            include_opponent=opponent_resolved,
             obso_multiplier_opponent=obso_multiplier_opponent,
         )
     else:
@@ -310,7 +329,16 @@ def compute_space_created(
             obso_multiplier_opponent=obso_multiplier_opponent,
         )
 
-    return pd.DataFrame(results)
+    out_df = pd.DataFrame(results)
+    if include_opponent_perspective:
+        # Provenance for the opponent-perspective column (spec Part 2 / Finding 2): "resolved" (two
+        # teams) or "unresolved_one_team" (softened FOV crop). ``space_denied_m2_opponent`` is NaN
+        # EXACTLY when unresolved -- the LOO above ran team-side only, so the column is absent from
+        # ``results`` and is added here as honest-NaN, never fabricated as 0.
+        out_df["space_opponent_source"] = opponent_source
+        if not opponent_resolved:
+            out_df["space_denied_m2_opponent"] = np.nan
+    return out_df
 
 
 def _analytical_leave_one_out(

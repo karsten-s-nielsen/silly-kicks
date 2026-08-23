@@ -1077,8 +1077,11 @@ def pressure_on_actor(
     convention per ADR-005 section 8 multi-flavor xfn rule).
 
     NaN where action couldn't link; 0.0 where linked but no defenders
-    contribute pressure. ``bekkers_pi`` raises ValueError if frames lack
-    vx/vy or (when use_ball_carrier_max=True) if frames lack any ball rows.
+    contribute pressure. ``bekkers_pi`` degrades to honest NaN on a
+    DECLARED-velocity-unavailable frame set (``speed_source`` unavailable on
+    every row -- the SB360 freeze-frame shape; Tier-3, ADR-063 amendment) and
+    raises ValueError only when vx/vy are missing and NOT declared unavailable
+    (the forgot-``derive_velocities()`` case).
 
     See NOTICE for full bibliographic citations.
 
@@ -1106,6 +1109,16 @@ def pressure_on_actor(
         s = _kernels._pressure_link(actions["start_x"], actions["start_y"], ctx, params=lp)
     elif method == "bekkers_pi":
         bp = params if isinstance(params, BekkersParams) else BekkersParams()
+        from ._velocity_availability import velocity_unavailable_by_design
+
+        if velocity_unavailable_by_design(frames):
+            # DECLARED velocity-unavailable (SB360 freeze-frame): honest-NaN (ADR-063 amendment, spec
+            # Part 4). bekkers_pi's active-pressing speed_threshold filter is a velocity-GATED discrete
+            # term, so its zero-velocity value is artifact-dependent -- NOT a smooth limit of the same
+            # model -- so we SUPPRESS to honest-NaN (Tier-3), never lift. Short-circuit before the
+            # kernel; this reaches the same honest-NaN the kernel itself gives on NaN velocity, without
+            # the impossible-on-a-freeze-frame "run derive_velocities()" raise below.
+            return pd.Series(np.nan, index=actions.index, name="pressure_on_actor__bekkers_pi")
         if "vx" not in frames.columns or "vy" not in frames.columns:
             raise ValueError(
                 "pressure_on_actor(method='bekkers_pi'): frames missing velocity columns "
@@ -6116,7 +6129,12 @@ _SPACE_CREATION_COLUMNS = (
     "space_denied_m2_opponent",
 )
 
-_SPACE_CREATION_NAN_ROW: dict[str, float] = dict.fromkeys(_SPACE_CREATION_COLUMNS, np.nan)
+#: Opponent-resolution provenance (spec Part 2). A pandas "string" column, seeded SEPARATELY from the
+#: float _SPACE_CREATION_COLUMNS loop (folding a str into that np.nan loop yields OBJECT dtype, not
+#: "string" -- the same note as _EPV_SOURCE_COLUMN).
+_SPACE_OPPONENT_SOURCE_COLUMN = "space_opponent_source"
+
+_SPACE_CREATION_NAN_ROW: dict[str, float | str] = dict.fromkeys(_SPACE_CREATION_COLUMNS, np.nan)
 
 
 def _compute_space_creation_for_action(
@@ -6129,7 +6147,7 @@ def _compute_space_creation_for_action(
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
-) -> dict[str, float]:
+) -> dict[str, float | str]:
     """Compute both-perspective space creation for the actor at one action frame.
 
     A single ``compute_space_created(include_opponent_perspective=True)`` call
@@ -6148,6 +6166,7 @@ def _compute_space_creation_for_action(
     retires it by disuse rather than by removal.
     """
     from ._space_creation import _unique_team_ids, compute_space_created
+    from ._velocity_availability import velocity_unavailable_by_design
 
     team_id = action_row["team_id"]
     player_id = action_row["player_id"]
@@ -6156,10 +6175,13 @@ def _compute_space_creation_for_action(
     if pd.isna(team_id) or pd.isna(player_id):
         return dict(_SPACE_CREATION_NAN_ROW)
 
-    # Loud two-team guard with the action/frame key (lakehouse contract: a
-    # resolvable actor on a corrupt frame must raise, not silently emit NaN).
+    # Loud two-team guard with the action/frame key (lakehouse contract: a resolvable actor on a
+    # corrupt frame must raise, not silently emit NaN). Marker-gated FOV softening (spec Part 2): a
+    # legitimate velocity-unavailable-by-design (SB360) ONE-team FOV crop is NOT corrupt -- let it
+    # through so compute_space_created softens the opponent side to NaN. A full-tracking one-team
+    # frame, or 0/3+ teams, is genuinely corrupt and still raises with the action/frame context.
     team_ids_in_frame = _unique_team_ids(frame)
-    if len(team_ids_in_frame) != 2:
+    if len(team_ids_in_frame) != 2 and not (velocity_unavailable_by_design(frame) and len(team_ids_in_frame) == 1):
         raise ValueError(
             "space_creation opponent perspective requires exactly two team ids "
             f"in the linked frame; found {list(team_ids_in_frame)!r} "
@@ -6188,6 +6210,7 @@ def _compute_space_creation_for_action(
     return {
         "space_created_m2": float(row["space_created_m2"]),
         "space_denied_m2_opponent": float(row["space_denied_m2_opponent"]),
+        _SPACE_OPPONENT_SOURCE_COLUMN: row["space_opponent_source"],
     }
 
 
@@ -6305,6 +6328,7 @@ def add_space_creation(
     # note in add_obso: folding a str into that np.nan loop yields OBJECT dtype, not
     # pandas "string" (ADR-041).
     out[_EPV_SOURCE_COLUMN] = pd.array([pd.NA] * len(out), dtype="string")
+    out[_SPACE_OPPONENT_SOURCE_COLUMN] = pd.array([pd.NA] * len(out), dtype="string")
 
     for i, (_idx, action_row) in enumerate(actions.iterrows()):
         if np.isnan(fid_by_pos[i]) or pd.isna(_flip.iloc[i]):

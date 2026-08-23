@@ -850,6 +850,7 @@ _entry(
         "space_created_m2",
         "space_denied_m2_opponent",
         "obso_epv_source",
+        "space_opponent_source",
     ),
     velocity={
         "space_created_m2": AxisVerdict(
@@ -871,6 +872,16 @@ _entry(
             ),
         ),
         "obso_epv_source": AxisVerdict("identical", "works"),
+        "space_opponent_source": AxisVerdict(
+            "identical",
+            "works",
+            rationale=(
+                "Opponent-resolution provenance (spec Part 2): 'resolved' on both legs of the two-team "
+                "fixture -- a real value, identical across legs, not a fabrication. The softened "
+                "'unresolved_one_team' path is exercised by unit tests + the real licensed corpus, not "
+                "this two-team fixture."
+            ),
+        ),
     },
     visibility={
         "gk_absent": {
@@ -893,6 +904,7 @@ _entry(
                 ),
             ),
             "obso_epv_source": AxisVerdict("identical", "works"),
+            "space_opponent_source": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
             "space_created_m2": AxisVerdict(
@@ -914,6 +926,7 @@ _entry(
                 ),
             ),
             "obso_epv_source": AxisVerdict("identical", "works"),
+            "space_opponent_source": AxisVerdict("identical", "works"),
         },
         "gk_one_end": {
             "space_created_m2": AxisVerdict(
@@ -935,16 +948,19 @@ _entry(
                 ),
             ),
             "obso_epv_source": AxisVerdict("identical", "works"),
+            "space_opponent_source": AxisVerdict("identical", "works"),
         },
     },
     applicability={
         "space_created_m2": "support_data_defined",
         "space_denied_m2_opponent": "support_data_defined",
         "obso_epv_source": "no_support",
+        "space_opponent_source": "no_support",
     },
     applicability_deltas={
         "space_created_m2": {"extreme": 0.0003106691724212851, "near": 0.0007322852434015203},
         "space_denied_m2_opponent": {"extreme": 0.0002771696771546317, "near": 0.003391238345130887},
         "obso_epv_source": {"extreme": 0.0, "near": 0.0},
+        "space_opponent_source": {"extreme": 0.0, "near": 0.0},
     },
 )

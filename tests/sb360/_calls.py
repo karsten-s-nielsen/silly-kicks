@@ -21,6 +21,7 @@ from scripts._sb_battery import (
     pre_shot_gk_position,
     sync_score,
     visible_area_coverage,
+    with_pressure_methods,
     with_xt,
     with_xt_keyword,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "pre_shot_gk_position",
     "sync_score",
     "visible_area_coverage",
+    "with_pressure_methods",
     "with_xt",
     "with_xt_keyword",
 ]

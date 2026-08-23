@@ -700,7 +700,11 @@ _entry(
             rationale=(
                 "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
                 "occurrence context, or blocking defender to score). A fixture inadequacy, not a library property "
-                "-- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                "-- widening the fixture would move it. [measured cause=velocity+frame_count] "
+                "NOTE: the velocity-fabrication guard IS enforced structurally -- by the static "
+                "velocity-feature contract gate (tests/tracking/test_velocity_feature_contract.py), NOT by "
+                "this fixture. A not_exercised model is invisible to a runtime audit, which is exactly why "
+                "fixture widening was deliberately declined in favour of the systemic gate (ADR-054)."
             ),
         ),
     },
