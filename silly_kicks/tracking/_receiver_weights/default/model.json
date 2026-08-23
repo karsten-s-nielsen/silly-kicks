@@ -1,0 +1,64 @@
+{
+  "version": "1.0.0",
+  "feature_set": "public",
+  "feature_names": [
+    "ball_dist",
+    "lane_pressure",
+    "space"
+  ],
+  "coef": [
+    -1.347050500869307,
+    -0.38105451989351125,
+    0.6474932753410191
+  ],
+  "intercept": -2.251136243736503,
+  "mean": [
+    18.550207635747558,
+    0.7738581586398097,
+    7.087832921844952
+  ],
+  "std": [
+    9.667279493604893,
+    0.7390961864064456,
+    5.12357627404238
+  ],
+  "shipped_variant": "public",
+  "params": {
+    "lane_half_width_m": 3.0,
+    "proxy_cone_deg": 45.0,
+    "pressure_scale_m": 4.0
+  },
+  "chirality": {
+    "version": "chirality-probe-1",
+    "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
+    "outputs": [
+      0.7628238779,
+      0.074256765
+    ]
+  },
+  "feature_contract": {
+    "version": "feature-contract-1",
+    "probe_sha256": "9f17a54c10b8237f1f60ac7f84953ac8948b90e92bbc45eabc7bc3378138b398",
+    "fingerprint": [
+      6.4717868475,
+      0.0,
+      8.3966674937,
+      20.3960780544,
+      0.0,
+      11.1803398875,
+      14.4222051019,
+      0.0,
+      17.0880074906,
+      36.1247837364,
+      0.0,
+      22.360679775,
+      30.0166620396,
+      0.0,
+      34.1320963318
+    ],
+    "constants": {
+      "lane_half_width_m": 3.0,
+      "pressure_scale_m": 4.0
+    }
+  }
+}

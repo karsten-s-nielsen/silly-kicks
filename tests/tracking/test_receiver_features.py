@@ -7,6 +7,8 @@ which raise if asked for on a frame without velocity.
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -54,7 +56,7 @@ def test_public_feature_set_is_positions_only():
     # POSITIONS ONLY -- no velocity-derived feature leaks into the public set
     assert set(feats.columns) == {"candidate_id", "ball_dist", "lane_pressure", "space"}
     f = feats.set_index("candidate_id")
-    assert f.loc["10", "lane_pressure"] > f.loc["11", "lane_pressure"]  # 20 interposed on 9->10
+    assert cast(float, f.loc["10", "lane_pressure"]) > cast(float, f.loc["11", "lane_pressure"])  # 20 on 9->10
     assert f.loc["10", "space"] == f["space"].min()  # 10 is the most tightly marked
 
 
@@ -121,7 +123,11 @@ def test_proxy_is_frame_consistent_under_away_reflection():
     same teammate on an away/rtl frame as on its aligned mirror."""
     aligned = _with_direction(_frame(with_velocity=True), att_dir="ltr")
     mirror = _reflect_frame(aligned)
-    assert geometric_proxy_receiver(_action(), aligned) == geometric_proxy_receiver(_action(), mirror) == "10"
+    r_aligned = geometric_proxy_receiver(_action(), aligned)
+    r_mirror = geometric_proxy_receiver(_action(), mirror)
+    # the proxy returns NAType | str; a resolved receiver here is a str id -- narrow before comparing
+    assert isinstance(r_aligned, str) and isinstance(r_mirror, str)
+    assert r_aligned == r_mirror == "10"
 
 
 def test_extractor_is_pure():

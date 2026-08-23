@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -277,6 +278,11 @@ def variant_key_for_provider(provider: str) -> str:
     'default'
     """
     return {"gradientsports": "gs_owner", "skillcorner": "skillcorner"}.get(provider, "default")
+
+
+# Provider-preference keys (the non-"default" values variant_key_for_provider can emit) that gracefully
+# degrade to the shipped 'default' when their own variant isn't bundled -- see ReceiverModel.from_variant.
+_DEGRADABLE_VARIANT_KEYS = frozenset({"gs_owner", "skillcorner"})
 
 
 class ReceiverModel:
@@ -550,6 +556,19 @@ class ReceiverModel:
             return _VARIANT_CACHE[variant]
         wdir = _WEIGHTS_ROOT / variant
         if not (wdir / "SHA256SUMS").exists():
+            # "Resolved against what actually ships": a provider-preference key whose own variant is not
+            # bundled degrades to the public 'default' (like _gk_completion's alias, but DYNAMIC -- a future
+            # cycle that earns gs_owner simply ships the dir and it is used automatically). An UNKNOWN key
+            # still raises, so a typo is never silently served the default.
+            if variant in _DEGRADABLE_VARIANT_KEYS:
+                warnings.warn(
+                    f"No bundled receiver weights for {variant!r}; serving the public 'default' "
+                    "(resolved against what actually ships).",
+                    stacklevel=2,
+                )
+                m = cls.from_variant("default")
+                _VARIANT_CACHE[variant] = m
+                return m
             raise FileNotFoundError(
                 f"No bundled receiver weights for {variant!r} at {wdir}. Train via scripts/train_receiver_model.py."
             )

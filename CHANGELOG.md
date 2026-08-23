@@ -27,6 +27,13 @@ gate clears** (per-provider via `CoverShadowParams.for_provider`, never a global
   `team_attacking_direction` (ADR-028), so passer and frame-derived positions share ONE coordinate system
   regardless of provider -- an away-team action on a home-attacks-right frame (real GS tracking) is not
   scored across two frames. Byte-identical on aligned frames (SB360 `ltr`, home GS): no retrain.
+- **Bundled weights (`silly_kicks/tracking/_receiver_weights/default/`) -- the public SB360 receiver**,
+  positions-only, top-1 CV 0.510 on 30 WC2022 open-data matches (ADR-011 `model.json` + `SHA256SUMS` +
+  `metrics.json` + `MODEL_CARD.md`; `.gitattributes` pin mirrors GK-completion). The GS `owner` variant
+  did NOT earn bundling -- both pre-registered gates land negative (`pooling_gate` margin -0.022;
+  `deployment_gate` margin +0.033 < the 0.05 floor; velocity +0.34 pp on completed passes), the
+  honest-null the design anticipated -- so `variant_key_for_provider`'s `gs_owner`/`skillcorner` keys
+  DEGRADE to the shipped `default` in `ReceiverModel.from_variant` (warns; an unknown key still raises).
 - `silly_kicks/calibration/_cover_shadow_objective.py`: the σ/λ discrimination objective + lane-pressure ablation.
 - **Per-provider receiver labeling (real-data amendment, ADR-066).** SB360 freeze frames carry no player
   identity (ADR-062), so id-based labeling yields 0 positives -- `labeling_strategy_for_provider` picks

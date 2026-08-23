@@ -5,12 +5,15 @@ from __future__ import annotations
 import ast
 import inspect
 import sys
+from typing import Any
 
 import pytest
 
 from scripts.apply_cover_shadow_retune import decide_apply
 
-_OK = dict(
+# dict[str, Any]: heterogeneous (noise_ok is bool, the rest float), so `**_OK` unpacking into
+# decide_apply's typed params is only well-formed for the type checker under Any.
+_OK: dict[str, Any] = dict(
     coverage=0.50, receiver_margin=0.10, ablation_share=0.20, noise_ok=True, candidate_sigma=0.30, candidate_lambda=5.0
 )
 

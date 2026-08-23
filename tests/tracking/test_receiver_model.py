@@ -9,7 +9,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from silly_kicks.tracking._receiver import IntegrityError, ReceiverModel, ReceiverParams
+from silly_kicks.tracking import _receiver
+from silly_kicks.tracking._receiver import (
+    IntegrityError,
+    ReceiverModel,
+    ReceiverParams,
+    variant_key_for_provider,
+)
 
 _ATT, _DEF = 1, 2
 
@@ -108,3 +114,29 @@ def test_non_default_params_round_trip_and_load(tmp_path):
     m.save(tmp_path)
     loaded = ReceiverModel.load(tmp_path)  # must NOT raise
     assert loaded.params.lane_half_width_m == 5.0 and loaded.params.pressure_scale_m == 6.0
+
+
+def test_bundled_default_variant_loads_and_is_positions_only():
+    """D1 (ADR-066): the SHIPPED ``default`` bundle loads through the full ADR-011 guard chain (SHA +
+    chirality + feature contract) and is the positions-only public model -- the always-default variant."""
+    _receiver._VARIANT_CACHE.clear()
+    m = ReceiverModel.from_variant("default")  # raises IntegrityError if the shipped bundle is bad
+    assert m.feature_set == "public"
+    assert m.feature_names == ["ball_dist", "lane_pressure", "space"]
+    assert variant_key_for_provider("statsbomb") == "default"
+
+
+def test_from_variant_degrades_unbundled_provider_keys_to_default():
+    """D2 (ADR-066): ``variant_key_for_provider`` can return ``gs_owner``/``skillcorner``, but no owner
+    variant earned bundling -- ``from_variant`` DEGRADES those keys to the shipped ``default`` (warns),
+    while an UNKNOWN key still RAISES so a typo is never silently served the default."""
+    _receiver._VARIANT_CACHE.clear()
+    default = ReceiverModel.from_variant("default").to_dict()
+    for key in ("gs_owner", "skillcorner"):
+        _receiver._VARIANT_CACHE.clear()
+        with pytest.warns(UserWarning, match="resolved against what actually ships"):
+            degraded = ReceiverModel.from_variant(key)
+        assert degraded.to_dict() == default  # byte-identical to the shipped default bundle
+    _receiver._VARIANT_CACHE.clear()
+    with pytest.raises(FileNotFoundError):
+        ReceiverModel.from_variant("bogus_typo")
