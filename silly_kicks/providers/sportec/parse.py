@@ -1308,6 +1308,10 @@ def adapt_idsse_events_for_silly_kicks(events_pdf: pd.DataFrame) -> pd.DataFrame
 _TEAM_QUALIFIER_PRIORITY: list[str] = [
     "play_team",
     "throwin_team",
+    "freekick_team",
+    "goalkick_team",
+    "corner_team",
+    "penalty_team",
     "foul_team_fouler",
 ]
 
@@ -1321,10 +1325,15 @@ _PLAYER_QUALIFIER_PRIORITY: list[str] = [
 def _resolve_idsse_team_from_qualifiers(df: pd.DataFrame) -> None:
     """Fill ``team`` from qualifier columns where it is ``'unknown'``.
 
-    DFL XML ThrowIn/FreeKick/GoalKick/CornerKick/Foul events store the
-    acting team's CLU id in qualifier columns.  This function resolves
-    the CLU id to ``'home'`` / ``'away'`` by comparing against the
-    match-level ``home_team_id_native`` / ``away_team_id_native``.
+    A DFL XML set-piece with no nested ``<Play>`` -- a *direct* ThrowIn /
+    FreeKick / GoalKick / CornerKick / Penalty, plus Foul -- arrives with
+    ``team='unknown'`` and stores the acting (executor) team's CLU id in a
+    ``{type}_team`` qualifier column.  This function resolves that CLU id to
+    ``'home'`` / ``'away'`` by comparing against the match-level
+    ``home_team_id_native`` / ``away_team_id_native``.  Filling from the full
+    set-piece executor class is inert where a qualifier is absent and correct
+    where present; an unlisted set-piece type would leave ``team='unknown'``
+    and crash the downstream opponent guards.
 
     Mutates *df* in place.
     """

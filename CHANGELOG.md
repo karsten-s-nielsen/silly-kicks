@@ -5,6 +5,21 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.90.1] — 2026-08-23
+
+Sportec/IDSSE parse-port set-piece team resolution (patch, PR-S161; no API or output change on
+existing corpora). A DFL *direct* set-piece — a free kick, goal kick, corner or penalty with no nested
+`<Play>` — arrives from `_build_event_row` with `team='unknown'`; the acting (executor) team is
+carried only in the `{type}_team` qualifier column (the first-child `Team` attribute).
+`_TEAM_QUALIFIER_PRIORITY` consulted only `play_team` / `throwin_team` / `foul_team_fouler`, so
+`freekick_team` / `goalkick_team` / `corner_team` / `penalty_team` were never read and `team` stayed
+`'unknown'`, crashing the downstream opponent guards (a lakehouse full-adoption pass drained 8 idsse
+units on direct free kicks). All four are the set-piece executor, so filling `team` from the full
+executor class is inert where a qualifier is absent and correct where present. **No parser change** —
+the columns were already parsed into bronze; only the resolution priority list was incomplete. Inert
+on the committed IDSSE parity slice (it holds no direct set-pieces), so `test_parse_port_parity.py`
+stays byte-identical. Reported by the lakehouse.
+
 ## [4.90.0] — 2026-08-23
 
 SB360 velocity-availability hardening (ADR-054 + ADR-063 amendments, PR-S160). Four changes, no VAEP retrain
