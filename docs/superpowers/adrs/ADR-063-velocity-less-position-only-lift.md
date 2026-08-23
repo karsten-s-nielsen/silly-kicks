@@ -234,3 +234,42 @@ silently fabricates (4.76.0 had closed only the ghost path). Its positive contro
 refusal (`surfaced_refusing` — the engine still SURFACES a planted bad fixture, now loud not silent), a
 new test pins `SENSITIVE` empty, and the standing gate catches `convicted OR surfaced_refusing` so it
 does not go vacuous.
+
+## Amendment (4.90.0 / PR-S160 — bekkers_pi is the first Tier-3 velocity aggregator)
+
+This ADR deferred `add_pressure_on_actor(method="bekkers_pi")`'s tier ("opt-in method … its tier is a
+separate decision"). It is decided here: **Tier-3 (honest-NaN), not Tier-1 (lift).** bekkers_pi
+(Bekkers 2024 probabilistic TTI) is velocity-derived, but unlike the pitch-control family it does NOT
+lift cleanly, and the reason is a reusable tier-assignment discriminator.
+
+**The discriminator (the durable contribution).** A velocity-derived aggregator whose zero-velocity
+form is a *smooth limit of the same model* is Tier-1 (lift via `zero_velocity_if_unavailable`). One
+gated by a velocity-**discrete** term — a threshold or filter — is Tier-3 (honest-NaN), because a
+discrete gate has no meaningful limit and its zero-velocity value depends on how velocity-absence is
+represented. bekkers_pi's active-pressing `speed_threshold` filter (`_kernels.py:742-743`) is exactly
+such a gate: with `speed=NaN` (`zero_velocity_if_unavailable` leaves `speed` untouched) the filter
+silently no-ops (`NaN < 2.0` is False) and the column would deliver a positional TTI intensity with
+Bekkers' *defining* active-pressing filter switched off — a different model under the same
+`pressure_on_actor__bekkers_pi` name (a silent per-provider contract split, Hyrum); with `speed=0` the
+filter fires on every defender → a degenerate constant 0. The value is **artifact-dependent**, so it
+is suppressed to honest-NaN.
+
+**Contrast with the existing ball-less degrade (why suppress here, base-model there).** bekkers already
+tolerates a ball-less frame by falling back to its base model (pressure-on-player only,
+`_kernels.py:715-718`) — a still-meaningful measurement, so that degrade is fine. The velocity-less
+degrade is categorically different: the discrete gate collapses the signal to a deceptive value with
+no valid reading, which is why it is honest-NaN, not a base-model fallback.
+
+**Mechanism + scope.** The seam sits at the `pressure_on_actor` `bekkers_pi` branch (edge, engine
+pure), REPLACING the prior unconditional vx/vy raise whose remedy ("run `derive_velocities()`") is
+impossible on a single freeze-frame: declared-unavailable → per-action NaN; undeclared-missing-velocity
+→ the existing raise (now correctly scoped to the caller bug); velocity present → byte-identical.
+`add_pressure_on_actor` delegates per method, so it inherits the seam; `andrienko_oval`/`link_zones`
+are positional and untouched. **Unlike xShot/space_creation, this change IS audit-observable** — the
+SB360 two-leg fixture produces a pressing signal, so post-fix bekkers is Leg-A-all-NaN /
+Leg-B-scored → a real `honest_nan` re-adjudication (via a `methods`-passing audit adapter). It also
+closes the Claim-3 loop for `GkRetention`'s marts `release_pressure` (= `pressure_on_actor__bekkers_pi`)
+at the source: the marts pressure is now honest-NaN on SB360, so retention's input is honest (its own
+mean-imputation of that NaN is a defined marts-native degradation, out of this freeze-frame cycle and
+moot until SB360 action-context is enabled). No retrain (velocity-bearing output byte-identical;
+retention weights are trained on full-tracking marts).

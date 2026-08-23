@@ -1002,6 +1002,14 @@ def pressure_on_actor(
         s = _kernels._pressure_link(actions["x"], actions["y"], ctx, params=lp)
     elif method == "bekkers_pi":
         bp = params if isinstance(params, BekkersParams) else BekkersParams()
+        from silly_kicks.tracking._velocity_availability import velocity_unavailable_by_design
+
+        if velocity_unavailable_by_design(frames):
+            # DECLARED velocity-unavailable (SB360 freeze-frame): honest-NaN (ADR-063 amendment).
+            # MIRRORS tracking.features.pressure_on_actor -- bekkers_pi's active-pressing
+            # speed_threshold filter is a velocity-GATED discrete term, so its zero-velocity form is
+            # artifact-dependent (Tier-3): SUPPRESS, do not lift or raise-impossibly on a freeze-frame.
+            return pd.Series(np.nan, index=actions.index, name="pressure_on_actor__bekkers_pi")
         if "vx" not in frames.columns or "vy" not in frames.columns:
             raise ValueError(
                 "pressure_on_actor(method='bekkers_pi'): frames missing velocity columns "

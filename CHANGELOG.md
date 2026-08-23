@@ -5,6 +5,34 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.90.0] — 2026-08-23
+
+SB360 velocity-availability hardening (ADR-054 + ADR-063 amendments, PR-S160). Four changes, no VAEP retrain
+(all guards fire only on the SB360 velocity-less marker; full-tracking output is byte-identical):
+
+- **xShot velocity-fabrication guard.** `add_xshot_occurrence` had no velocity guard: `speed` is a
+  trained feature, so on a velocity-less SB360 freeze-frame it fabricated an ungrounded probability
+  (the ADR-053 shape). It was live on the `pre_shot_gk_full_default_xfns` GK-union bundle.
+  `compute_xshot_occurrence` now degrades to honest NaN on declared-velocity-unavailable frames and
+  raises loud on a forgotten `derive_velocities()`, mirroring `add_xcross_attempt`. **Consumers that
+  built `pre_shot_gk_full_default_xfns` on SB360 will see NaN where a (meaningless) number was —
+  a correctness fix (a model trained on those SB360 values was trained on a bug).**
+- **The velocity-availability contract is now CI-enforced** by a static gate over frame-consuming
+  model-scoring entries (`tests/tracking/test_velocity_feature_contract.py`), anchored structurally
+  rather than on the `*_FEATURE_NAMES*` naming convention, so the next such model cannot slip.
+- **`add_space_creation` opponent perspective softens on SB360 instead of raising.** A legitimate
+  one-team broadcast-FOV freeze-frame now yields the team-side `space_created_m2` (the ADR-063
+  zero-velocity positional estimate) with a honest-NaN `space_denied_m2_opponent`, tagged by a **new,
+  additive `space_opponent_source` column** (`resolved` / `unresolved_one_team`). Full-tracking frames
+  and 0/3+-team frames still raise. **Downstream consumers that materialize space_creation gain the
+  additive `space_opponent_source` column (non-breaking — unknown columns are ignored); see
+  `docs/PRIVATE_CONSUMERS.md`.**
+- **`add_pressure_on_actor(method="bekkers_pi")` is tiered honest-NaN on velocity-unavailable frames**
+  (ADR-063 amendment): its active-pressing `speed_threshold` filter is a velocity-gated discrete term,
+  so its zero-velocity form is artifact-dependent, not a smooth limit — it suppresses (Tier-3) rather
+  than lifts. `andrienko_oval` / `link_zones` are positional and unchanged. Closes the pressure-honesty
+  loop for `GkRetention`'s marts `release_pressure` at the source.
+
 ## [4.89.0] — 2026-08-21
 
 Chronological-`action_id` order-insensitivity invariant across every SPADL converter (ADR-065,

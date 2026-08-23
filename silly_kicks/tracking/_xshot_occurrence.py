@@ -30,6 +30,10 @@ from silly_kicks.tracking._ball_carrier import (
     infer_ball_carrier,
 )
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
+from silly_kicks.tracking._velocity_availability import (
+    velocity_unavailable_by_design as _velocity_unavailable_by_design,
+)
+from silly_kicks.tracking.schema import SPEED_SOURCE_UNAVAILABLE
 from silly_kicks.tracking.utils import link_actions_to_frames
 
 # Goal geometry (goal-relative coords: defended goal at x=0, centre y=34).
@@ -850,6 +854,25 @@ def compute_xshot_occurrence(
     m = _resolve_model(model)
     out = frames.copy()
     out["xshot_occurrence"] = np.nan
+
+    # VELOCITY-AVAILABILITY CONTRACT (ADR-054), at the SHARED seam. All three public entry points
+    # reach scoring through here -- `add_xshot_occurrence`, `xshot_occurrence_xfns` and a direct
+    # call -- which is the same reason the xcross guard lives at its compute seam and the ghost guard
+    # in `_serve_positions_core`. Two prongs, because the two shapes are byte-identical here and
+    # demand opposite responses:
+    if _velocity_unavailable_by_design(frames):
+        # DECLARED unavailable (the SB360 freeze-frame shape): degrade to NaN. `speed` is a trained
+        # feature, so scoring here would have the model impute an input its source structurally
+        # cannot carry -- the ADR-053 fabrication shape. NaN is honest, and it is already what this
+        # function returns on every other unscoreable path below.
+        return out
+    if len(frames) and ("vx" not in frames.columns or "vy" not in frames.columns):
+        # NOT declared: the "forgot derive_velocities()" case. Fail loud, and name the remedy -- this
+        # used to silently fall back to distance-only carrier inference and fabricate a score.
+        raise ValueError(
+            "compute_xshot_occurrence requires vx/vy on frames (call derive_velocities() first), or "
+            f"declare speed_source {SPEED_SOURCE_UNAVAILABLE!r}. See the velocity-availability contract."
+        )
 
     # N-A: carrier inference + possession MUST run on the FULL contiguous frames.
     # infer_ball_carrier has a CROSS-FRAME dependency (gamma hysteresis carries the

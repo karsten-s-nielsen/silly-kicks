@@ -711,6 +711,15 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         attribution=_A_FERNANDEZ_BORNN,
         higher_is_better=True,
     ),
+    FeatureColumn(
+        name="space_opponent_source",
+        definition=(
+            "Provenance of the opponent-perspective measurement: 'resolved' (two teams in the frame) "
+            "or 'unresolved_one_team' (a one-team SB360 FOV crop -- space_denied_m2_opponent is NaN)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_SPACE_CREATION,
+    ),
     # -- Team shape envelope (TF-31 / TF-44) ----------------------------------------------------
     FeatureColumn(
         name="team_shape_centroid_x_attacking",
