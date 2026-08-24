@@ -16,8 +16,11 @@ variant adds the ball-release-velocity direction + closing speed. It DE-LEAKS th
 (opt-in `build_rq_pass_scores --receiver-model`; `model=None` is 4.87.0-byte-identical), and re-tunes
 cover-shadow σ/λ for DISCRIMINATION (margin-AUC, not magnitude "recalibration" -- M1) via a three-conjunct,
 PER-PROVIDER apply gate (receiver-validity + lane-pressure-bias ablation + ADR-060 noise, pre-registered
-thresholds) that keeps the incumbent σ/λ as the honest-null likely outcome. **No library change unless the
-gate clears** (per-provider via `CoverShadowParams.for_provider`, never a global default -- H3); C4-free.
+thresholds) that keeps the incumbent σ/λ. **No library change** -- the GS re-tune ran (owner-side) and
+kept the incumbent: receiver-validity passed decisively (`receiver_margin` 0.173), but the σ/λ argmax was
+marginal + boundary-degenerate (`docs/research/cover_shadow_sigma_lambda_retune/`). A per-provider apply
+stays possible if a future re-tune clears (via `CoverShadowParams.for_provider`, never a global default --
+H3); C4-free.
 
 ### Added -- the receiver + σ/λ cycle (PR-S162, ADR-066)
 

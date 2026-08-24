@@ -28,8 +28,9 @@ _CASCIOLI_MAJORITY_RECALL = 0.369
 _CASCIOLI_MAJORITY_PRECISION = 0.220
 _SCOPE_NOTE = (
     "This measures OVER-PREDICTION (specificity on completed passes), NOT DETECTION (recall) -- recall "
-    "needs the failed-pass class, which is both leaked (outcome-selected end_xy target) and confounded, "
-    "until the deferred Power-2017 expected-receiver model lands. The clean headline is not a full validation."
+    "needs the failed-pass class, whose target the Power-2017 expected-receiver model now DE-LEAKS "
+    "(opt-in `--receiver-model`); the failed-pass legs stay confounded and an easy-tail upper bound (R1). "
+    "The clean headline is not a full validation."
 )
 
 
