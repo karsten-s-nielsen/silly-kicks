@@ -1,0 +1,45 @@
+{
+  "schema": "receiver-rows-2",
+  "feature_set": "public",
+  "provider": "statsbomb",
+  "labeling_strategy": "trajectory",
+  "providers_trained": [
+    "statsbomb"
+  ],
+  "n_matches": 30,
+  "n_passes": 7229,
+  "n_candidate_rows": 46000,
+  "top1_cv": 0.5097663185813329,
+  "top1_by_fold": [
+    0.5231874591770085,
+    0.51004851004851,
+    0.49299719887955185,
+    0.521476510067114,
+    0.5011219147344802
+  ],
+  "candidate_count_distribution": {
+    "mean": 6.363259095310554,
+    "p10": 4.0,
+    "p50": 6.0,
+    "p90": 9.0
+  },
+  "label_coverage": {
+    "n_completed_passes": 16635,
+    "n_kept_passes": 7229
+  },
+  "visible_area_caveat": "SB360 truncates the negative candidate set; see the train-vs-serve shift (M2).",
+  "corpus_visibility": "public",
+  "run_commit": "08347cd6d6f0451707f29209dc1e4fa73a0f4b90",
+  "run_tree_dirty": false,
+  "pooling_gate": {
+    "primary_only_top1": 0.5097663185813329,
+    "pooled_top1": 0.4878187125128589,
+    "margin": -0.021947606068474013,
+    "keep_pool": false,
+    "pool_provider": "gradientsports",
+    "pool_coverage": {
+      "n_completed_passes": 51440,
+      "n_kept_passes": 50719
+    }
+  }
+}

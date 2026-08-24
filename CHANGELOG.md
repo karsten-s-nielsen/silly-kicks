@@ -5,6 +5,61 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.91.0] — 2026-08-23
+
+Cover-shadow σ/λ discrimination re-tuning + expected-receiver model (ADR-066, PR-S162) -- an
+**exploratory, reported-not-gated** cycle building on ADR-064's RQ1 validation. Ships an expected-receiver
+model (`ReceiverModel`, ADR-011 bundle: SHA + chirality + feature contract) that infers the intended
+receiver of a pass from PRE-PASS state ONLY -- the leakage ban pinned by an output-invariance guard; the
+public feature set is positions-only (leakage-free on velocity-less SB360 freeze frames), the owner (GS)
+variant adds the ball-release-velocity direction + closing speed. It DE-LEAKS the RQ1 failed-pass target
+(opt-in `build_rq_pass_scores --receiver-model`; `model=None` is 4.87.0-byte-identical), and re-tunes
+cover-shadow σ/λ for DISCRIMINATION (margin-AUC, not magnitude "recalibration" -- M1) via a three-conjunct,
+PER-PROVIDER apply gate (receiver-validity + lane-pressure-bias ablation + ADR-060 noise, pre-registered
+thresholds) that keeps the incumbent σ/λ. **No library change** -- the GS re-tune ran (owner-side) and
+kept the incumbent: receiver-validity passed decisively (`receiver_margin` 0.173), but the σ/λ argmax was
+marginal + boundary-degenerate (`docs/research/cover_shadow_sigma_lambda_retune/`). A per-provider apply
+stays possible if a future re-tune clears (via `CoverShadowParams.for_provider`, never a global default --
+H3); C4-free.
+
+### Added -- the receiver + σ/λ cycle (PR-S162, ADR-066)
+
+- `silly_kicks/tracking/_receiver.py`: `ReceiverModel` + public `resolve_intended_receiver` /
+  `intended_receiver_positions` + `geometric_proxy_receiver`; `CoverShadowParams.for_provider` (additive).
+  The action passer (SPADL action-LTR) is reprojected into the frame convention via the frame's
+  `team_attacking_direction` (ADR-028), so passer and frame-derived positions share ONE coordinate system
+  regardless of provider -- an away-team action on a home-attacks-right frame (real GS tracking) is not
+  scored across two frames. Byte-identical on aligned frames (SB360 `ltr`, home GS): no retrain.
+- **Bundled weights (`silly_kicks/tracking/_receiver_weights/default/`) -- the public SB360 receiver**,
+  positions-only, top-1 CV 0.510 on 30 WC2022 open-data matches (ADR-011 `model.json` + `SHA256SUMS` +
+  `metrics.json` + `MODEL_CARD.md`; `.gitattributes` pin mirrors GK-completion). The GS `owner` variant
+  did NOT earn bundling -- both pre-registered gates land negative (`pooling_gate` margin -0.022;
+  `deployment_gate` margin +0.033 < the 0.05 floor; velocity +0.34 pp on completed passes), the
+  honest-null the design anticipated -- so `variant_key_for_provider`'s `gs_owner`/`skillcorner` keys
+  DEGRADE to the shipped `default` in `ReceiverModel.from_variant` (warns; an unknown key still raises).
+- `silly_kicks/calibration/_cover_shadow_objective.py`: the σ/λ discrimination objective + lane-pressure ablation.
+- **Per-provider receiver labeling (real-data amendment, ADR-066).** SB360 freeze frames carry no player
+  identity (ADR-062), so id-based labeling yields 0 positives -- `labeling_strategy_for_provider` picks
+  `"trajectory"` for SB360 (label the teammate nearest the release->next-touch-start ray within a tight
+  `_LABEL_LANE_WIDTH_M`; ambiguous -> drop, never all-zero/nearest-guess) and `"id"` for identity providers
+  (a no-id-match pass is dropped, never per-pass trajectory-guessed). The public model is **SB360-primary**;
+  `--pool-provider` (GS) earns inclusion only via `pooling_gate` (GroupKFold on primary games, pool->train
+  only, kept iff no primary-top-1 regression). `NoReleaseDirectionError` makes a ball-less owner frame a
+  per-frame skip/NaN (train + serve), while a missing `vx`/`vy` COLUMN stays a loud `KeyError`. Label
+  coverage + the pool-gate outcome are recorded in the manifest; the outcome-reading label lives in the
+  driver, pinned by a driver-layer leakage guard.
+- `scripts/`: `train_receiver_model` (SB360 public + GS owner variants, ADR-052/037; a provider-selecting
+  loader -- `statsbomb` -> velocity-less SB360, any tracking provider -> real velocity frames the owner
+  variant requires; a corpus-volume `--min-passes` floor; and, for the owner variant, the M-A resolution --
+  `velocity_ablation_completed` (i) plus, given `--public-bundle`, the pooled `deployment_gate` (ii) via a
+  second sharded pass -- recorded in the provenanced manifest so the bundling decision is an artifact),
+  `apply_cover_shadow_retune` (three-conjunct gate + `{applied, null:unvalidatable, null:biased,
+  null:within-noise}`), `_receiver_validation` (trajectory-weak-labelled failed-pass set, H1/R1/R4),
+  `_gs_failure_mode_check` (R6), `_cover_shadow_thresholds` (pre-registered R5).
+- The de-leaked, failure-mode-conditional RQ harness + the recall-honesty block (R1/M3/R3/M2 caveats).
+
+Attribution: Power et al. 2017 (receiver); Cascioli et al. 2025 (σ/λ). See NOTICE.
+
 ## [4.90.1] — 2026-08-23
 
 Sportec/IDSSE parse-port set-piece team resolution (patch, PR-S161; no API or output change on

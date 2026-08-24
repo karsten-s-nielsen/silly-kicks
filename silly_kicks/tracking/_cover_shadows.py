@@ -112,6 +112,27 @@ class CoverShadowParams:
         """Drag coefficient k = (rho * C_D * A) / (2 * m)."""
         return (self.air_density * self.drag_coefficient * self.ball_cross_section) / (2 * self.ball_mass)
 
+    @classmethod
+    def for_provider(cls, provider: str) -> CoverShadowParams:
+        """Per-provider sigma/lambda (empty override map -> the incumbent default), mirroring
+        ``PreprocessConfig.for_provider``. ADDITIVE: the map is empty until a per-provider re-tune
+        clears the ADR-060 apply gate -- a sigma/lambda fit on one provider's velocity profile is a
+        global default for NONE (H3), so this is how an applied re-tune stays provider-scoped.
+
+        Examples
+        --------
+        >>> CoverShadowParams.for_provider("gradientsports").sigma
+        0.2
+        """
+        import dataclasses
+
+        return dataclasses.replace(cls(), **_PROVIDER_COVER_SHADOW_PARAMS.get(provider, {}))
+
+
+#: Per-provider ``CoverShadowParams`` field overrides. EMPTY by default (H3 / ADR-060): a per-provider
+#: sigma/lambda re-tune populates it only when it clears the apply gate; other providers keep the incumbent.
+_PROVIDER_COVER_SHADOW_PARAMS: dict[str, dict] = {}
+
 
 # ---------------------------------------------------------------------------
 # Return types

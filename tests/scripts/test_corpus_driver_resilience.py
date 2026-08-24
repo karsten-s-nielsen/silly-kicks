@@ -39,7 +39,13 @@ import pytest
 from tests.scripts._script_population import iter_scripts
 
 #: Calling any of these means the driver pulls a corpus.
-_CORPUS_CALLS = {"load_matches", "select_match_ids", "load_xtgk_cohort", "load_retention_cohort"}
+_CORPUS_CALLS = {
+    "load_matches",
+    "load_statsbomb_matches",  # SB360 corpus loader (train_receiver_model, validate_sb360_licensed_corpus)
+    "select_match_ids",
+    "load_xtgk_cohort",
+    "load_retention_cohort",
+}
 #: A corpus-shaped CLI surface. Paired with a per-item loop it means the same thing.
 _CORPUS_ARGS = {"--data-dir", "--match-ids-json", "--max-per-provider", "--providers"}
 #: The public surface of `scripts/_driver.py`. Calling any of them is adoption.

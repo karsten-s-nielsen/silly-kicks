@@ -1,0 +1,62 @@
+{
+  "run_commit": "4b4c934777025b4aebaf10e04481bb695de43b84",
+  "run_tree_dirty": false,
+  "metric": "cover-shadow sigma/lambda discrimination re-tune (GS WC2022, ADR-066)",
+  "decision": "keep_incumbent",
+  "decision_reason": "The pre-registered decide_apply gate returns applied for the measured candidate (all conjuncts pass: coverage>=0.30, receiver_margin>=0.05, ablation<0.50, noise_ok). It is NOT applied: the argmax lambda is boundary-clipped at the grid minimum (1.5) and slides further out as data grows (10-match probe 2.0 -> 64-match 1.5), i.e. an unbounded, boundary-degenerate optimum, not a valid measured argmax. The gain is marginal (+0.0098 margin-AUC) and demands a large, aggressive parameter change (sigma 0.20->0.04, a near-unblurred cover-shadow) whose sigma shift is partly the lane-pressure bias the ablation exists to catch (ablation 0.177, non-zero). Boundary-degeneracy is a validity failure the pre-registered conjuncts do not test; owner decision (reported-not-gated cycle) is to keep the incumbent. No library change.",
+  "mechanical_gate_outcome": "applied",
+  "incumbent_sigma": 0.2,
+  "incumbent_lambda": 4.3,
+  "apply_inputs": {
+    "coverage": 0.4503070038505568,
+    "receiver_margin": 0.1730991449040906,
+    "ablation_share": 0.17677669529663684,
+    "noise_ok": true,
+    "candidate_sigma": 0.04,
+    "candidate_lambda": 1.5
+  },
+  "diagnostics": {
+    "grid": {
+      "sigma": [
+        0.02,
+        0.04,
+        0.06,
+        0.08,
+        0.1
+      ],
+      "lambda": [
+        1.5,
+        2.0,
+        2.5,
+        3.0,
+        3.5
+      ]
+    },
+    "incumbent": {
+      "sigma": 0.2,
+      "lambda": 4.3,
+      "auc": 0.5853341626217727,
+      "fp": 0.15780903615639652
+    },
+    "candidate_with_lane": {
+      "sigma": 0.04,
+      "lambda": 1.5,
+      "auc": 0.5949705171383822
+    },
+    "candidate_without_lane": {
+      "sigma": 0.06,
+      "lambda": 1.5
+    },
+    "n_folds": 64,
+    "per_match_mean_inc": 0.5815652432025569,
+    "per_match_mean_cand": 0.5913180392462959,
+    "gain": 0.00975279604373902,
+    "max_matches": null
+  },
+  "library_change": "none -- _PROVIDER_COVER_SHADOW_PARAMS has no GS entry; CoverShadowParams() unchanged",
+  "provenance": {
+    "de_leak_and_recall_commit": "1018dc0 (clean-tree ancestor; de-leak path byte-identical post-merge)",
+    "receiver_validity_and_sweep_commit": "4b4c934777025b4aebaf10e04481bb695de43b84 (merged 4.91.0)",
+    "note": "aggregate statistics only (sigma/lambda/AUC/gain); no raw per-pass GS data (owner-tier)"
+  }
+}

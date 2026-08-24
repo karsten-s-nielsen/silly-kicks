@@ -82,6 +82,7 @@ __all__ = [
     "PositionLabel",
     "PreprocessConfig",
     "PressureParams",
+    "ReceiverModel",
     "RestartCoordinateReport",
     "RunValuationParams",
     "RunValueCoverageWarning",
@@ -205,6 +206,7 @@ __all__ = [
     "gradientsports",
     "infer_ball_carrier",
     "infer_positions",
+    "intended_receiver_positions",
     "interpolate_frames",
     "kloppy",
     "lane_control",
@@ -256,6 +258,7 @@ __all__ = [
     "require_et_direction",
     "resolve_defended_goals",
     "resolve_gk_geometry",
+    "resolve_intended_receiver",
     "resolve_restart_geometry",
     "schema",
     "secured_reception",
@@ -345,6 +348,11 @@ from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_o
 from ._packing import PackingParams, compute_packing_metrics, secured_reception
 from ._pausa import compute_pausa, compute_pausa_batch
 from ._player_influence import PlayerInfluence, compute_player_influence
+from ._receiver import (
+    ReceiverModel,
+    intended_receiver_positions,
+    resolve_intended_receiver,
+)
 from ._restart_report import RestartCoordinateReport
 from ._run_values import RunValuationParams, detect_off_ball_runs, value_off_ball_runs
 from ._shape_graph import PositionLabel, ShapeGraph, compute_shape_graph, infer_positions

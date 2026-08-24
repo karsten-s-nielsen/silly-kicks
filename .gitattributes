@@ -15,6 +15,12 @@ silly_kicks/tracking/_ghost_gk_weights/** binary
 # make exactly that unreadable in review.
 silly_kicks/tracking/_gk_completion_weights/*/model.json binary
 silly_kicks/tracking/_gk_completion_weights/*/SHA256SUMS binary
+# Expected-receiver model (4.90.0, ADR-066), pinned NARROWLY like GK-completion above -- only the
+# SHA-verified pair. `_sha` normalizes CRLF before hashing so verification is safe either way; the pin
+# just stops model.json flipping to CRLF on the next checkout and bloating diffs. `metrics.json` and
+# `MODEL_CARD.md` stay TEXT so the coefficients/provenance remain reviewable.
+silly_kicks/tracking/_receiver_weights/*/model.json binary
+silly_kicks/tracking/_receiver_weights/*/SHA256SUMS binary
 # StatsBomb 360 slice: byte-exact, never line-ending-converted. Its SOURCE_SHA records SHA-256
 # digests of these files, so autocrlf silently breaks verification -- CI caught exactly that:
 # the digest was computed on a CRLF working copy and ubuntu read LF. Same reason as the three
