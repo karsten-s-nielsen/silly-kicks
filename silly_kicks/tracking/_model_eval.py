@@ -181,17 +181,22 @@ def _resolve_extractor(arm: str):
     return extract_xshot_features
 
 
-def _extract_kwargs(arm: str, gk_team, goal_x: float, cpid) -> dict:
+def _extract_kwargs(arm: str, gk_team, goal_x: float, cpid, *, feature_set: str = "faithful") -> dict:
     """Arm-specific extractor kwargs. The probe measures positional sensitivity; score held at
-    NaN for arm='xcross' exactly as the legacy probe did (xs features carry no score input)."""
+    NaN for arm='xcross' exactly as the legacy probe did (xs features carry no score input).
+
+    ``feature_set`` (default "faithful") threads the SCORED model's variant to the extractor so a
+    velocity-less position_only model is probed on its own 15/26-col vector -- a faithful model gets
+    the identical extract as before (byte-equivalent; the golden pin is on faithful output)."""
     if arm == "xcross":
         return {
             "gk_team_id": gk_team,
             "goal_x": goal_x,
             "carrier_player_id": cpid,
             "score_differential": float("nan"),
+            "feature_set": feature_set,
         }
-    return {"gk_team_id": gk_team, "goal_x": goal_x}
+    return {"gk_team_id": gk_team, "goal_x": goal_x, "feature_set": feature_set}
 
 
 def _nearest_def_mask(grp: pd.DataFrame, gk_team, cpid) -> np.ndarray | None:
@@ -295,7 +300,7 @@ def _panel_deltas(model, frames, *, arm, n_frames, n_random, seed, advance_m) ->
         pid = grp["period_id"].iloc[0]
         fid = grp["frame_id"].iloc[0]
         moves = [(dx, dy) for _name, dx, dy in _displacement_panel(goal_x)]
-        kw = _extract_kwargs(arm, gk_team, goal_x, cpid)
+        kw = _extract_kwargs(arm, gk_team, goal_x, cpid, feature_set=getattr(model, "feature_set", "faithful"))
         # GK
         gk_mask = grp["is_goalkeeper"].astype(bool) & (grp["team_id"] == gk_team)
         gk_deltas = _delta_for_move(model, grp, gk_mask, moves, extract_fn, kw)
@@ -373,7 +378,7 @@ def _targets_deltas(
         trow = tkey.loc[(canonical_id(gid), canonical_id(pid), canonical_id(fid))]
         ghost_clamped = bool(trow["ghost_clamped"])
         ghost_oob = bool(trow["ghost_out_of_box"])
-        kw = _extract_kwargs(arm, gk_team, goal_x, cpid)
+        kw = _extract_kwargs(arm, gk_team, goal_x, cpid, feature_set=getattr(model, "feature_set", "faithful"))
         gk_mask = grp["is_goalkeeper"].astype(bool) & (grp["team_id"] == gk_team)
         if int(gk_mask.sum()) > 1:
             warnings.warn(

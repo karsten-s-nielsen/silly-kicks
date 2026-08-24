@@ -124,6 +124,12 @@ def test_declared_unavailable_degrades_to_nan_rather_than_crashing() -> None:
         "velocity is declared unavailable, so every score must be NaN. A NUMBER here would mean "
         "the model scored on features it could not have computed -- the ADR-053 fabrication shape."
     )
+    # Provenance (Task 7): the SB360 degrade records which variant auto-select chose. The value is
+    # `position_only` even when unbundled (the resolver picks it, then falls back to NaN).
+    assert (out["xcross_attempt_variant"] == "position_only").all()
+    # D2: the string column survives @nan_safe_enrichment. Assert the VALUE type, not the dtype
+    # literal (object on pandas 2, StringDtype on pandas 3 -- ADR-057).
+    assert all(isinstance(v, str) for v in out["xcross_attempt_variant"])
 
 
 def test_undeclared_missing_velocity_raises_informatively() -> None:
@@ -159,6 +165,9 @@ def test_velocity_bearing_frames_are_unaffected() -> None:
         "a fully velocity-bearing frame set scored NaN -- the guard is firing on input it should "
         "pass through, so the all-NaN assertions above prove nothing"
     )
+    # Provenance (Task 7): a velocity-bearing set auto-selects the `default` variant (that it scored
+    # here also confirms the bundled default loads via from_variant).
+    assert (out["xcross_attempt_variant"] == "default").all()
 
 
 def test_extract_xcross_features_honours_its_documented_nan_tolerance() -> None:

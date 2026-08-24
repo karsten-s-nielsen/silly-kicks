@@ -473,6 +473,8 @@ def test_add_xcross_aggregator():
     )
     out = xc.add_xcross_attempt(spadl_actions, frames, model=model, home_team_id="A")
     assert "xcross_attempt" in out.columns
+    # Provenance (Task 7): an explicit model= override records `custom`, never the auto-selected key.
+    assert (out["xcross_attempt_variant"] == "custom").all()
 
 
 def test_add_xcross_nan_safe():

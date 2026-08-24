@@ -172,6 +172,13 @@ def parse_args() -> argparse.Namespace:
         help="Which variant this run produces (recorded in metrics/metadata)",
     )
     parser.add_argument(
+        "--feature-set",
+        choices=["faithful", "position_only"],
+        default="faithful",
+        help="'faithful' (velocity-bearing, 26 feats) or 'position_only' (5 velocity feats dropped, 21) "
+        "for a model that scores on lone velocity-less SB360 freeze frames.",
+    )
+    parser.add_argument(
         "--subsample-cap",
         type=int,
         default=None,
@@ -439,6 +446,8 @@ def main() -> None:
 
     extraction_inputs: dict[str, object] = {
         "extractor": "prepare_ghost_gk_training_data",
+        # feature_set changes the shard's feature columns (26 vs 21) -> MUST key the generation (4.77.1).
+        "feature_set": args.feature_set,
         "geometry": cache_token(),
         "subsample_fps": args.subsample_fps,
         "carrier_params": dict(cp),
@@ -548,6 +557,7 @@ def main() -> None:
                 actions=game_actions,
                 subsample_fps=args.subsample_fps,
                 carrier_params=cp,
+                feature_set=args.feature_set,
                 return_meta=True,
             )
             # Zeroed, not merely cleared: `counters` runs for every ATTEMPTED item, and a
@@ -735,6 +745,7 @@ def main() -> None:
             n_estimators=args.n_estimators,
             max_depth=args.max_depth,
             verbose=1,
+            feature_set=args.feature_set,
         )
         fit_t0 = time.time()
         model.fit(X_train, y_train, carrier_params=cp)
@@ -801,6 +812,7 @@ def main() -> None:
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
         verbose=1,
+        feature_set=args.feature_set,
     )
     final_t0 = time.time()
     final_model.fit(features, labels, carrier_params=cp)

@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Position-only model variants + velocity-keyed auto-select (minor; ADR-067, PR-S163). `XShotOccurrenceModel`,
+`XCrossAttemptModel` and `GhostGkModel` gain **position-only variants** (the same models with velocity
+features dropped) that score on velocity-less StatsBomb-360 freeze-frames, auto-selected at the serve
+seam by the declared velocity marker.
+
+- **Auto-select** mirrors the provider-keyed `variant_key_for_provider` pattern, keyed on
+  velocity-availability: a declared-velocity-unavailable frame set resolves to the `position_only`
+  variant; a velocity-bearing set to `default`; an explicit `model=` override to `custom`. The missing-
+  variant fallback goes to **NaN, never to default** (the default velocity model is invalid on
+  velocity-less frames). A **mixed-availability** frame set now RAISES (some-but-not-all rows marked
+  would otherwise fabricate `speed=NaN` on the marked rows). The ADR-054 undeclared-missing-velocity
+  raise is preserved.
+- **New provenance columns** `xshot_occurrence_variant` / `xcross_attempt_variant` / `ghost_gk_variant`
+  on the `add_*` path (closed set `{default, position_only, custom}`); the `*_xfns` / VAEP path stays
+  numeric.
+- **`feature_set` extended** to add `"position_only"` (`"extended"` reservation kept); ghost gains a
+  `feature_set` (incl. save/load serialization) + a genuinely single-frame-capable extractor path.
+- **Trainers** gain `--feature-set position_only` (threaded to prepare + the model + the shard token);
+  a reported comparability artifact quantifies the velocity-vs-position-only skill cost.
+- **Behavior change (retrain / Hyrum trigger):** SB360 xShot/xCross/ghost go NaN → value (once the
+  variants are bundled); **velocity-bearing frames are byte-identical**. gkdv's ghost arm begins to
+  work on SB360. See `docs/PRIVATE_CONSUMERS.md`.
+
 ## [4.91.0] — 2026-08-23
 
 Cover-shadow σ/λ discrimination re-tuning + expected-receiver model (ADR-066, PR-S162) -- an

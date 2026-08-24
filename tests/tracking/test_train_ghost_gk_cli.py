@@ -91,6 +91,26 @@ def test_cli_omitted_records_library_default(tmp_path):
     assert meta["carrier_params"] == dict(DEFAULT_CARRIER_PARAMS)
 
 
+@pytest.mark.slow
+def test_cli_feature_set_position_only(tmp_path):
+    # `--feature-set position_only` trains a 21-feature ghost (the 5 velocity features dropped) end to
+    # end through the trainer harness, the parity gate, and the position_only chirality /
+    # feature-contract guards. Exercises the trainer subprocess glue (argparse -> shard token ->
+    # prepare -> fit -> save) the model round-trips cannot.
+    from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES_POSITION_ONLY, GhostGkModel
+
+    data, out = _corpus(tmp_path)
+    proc = _invoke(data, out, "--feature-set", "position_only")
+    assert proc.returncode == 0, proc.stderr
+    art = out / "ghost_gk_v1"
+    meta = json.loads((art / "metadata.json").read_text())
+    assert meta["feature_set"] == "position_only"
+    assert meta["feature_names"] == list(GHOST_GK_FEATURE_NAMES_POSITION_ONLY)
+    assert len(meta["feature_names"]) == 21  # the 5 velocity features dropped
+    # Loads through the position_only chirality + feature-contract guards:
+    GhostGkModel.load(art)
+
+
 # ---------------------------------------------------------------------------
 # ADR-052: the per-game extraction is sharded, and the whole-corpus cache token was widened
 # ---------------------------------------------------------------------------

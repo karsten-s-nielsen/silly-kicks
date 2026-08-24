@@ -29,6 +29,11 @@ def test_marked_frames_degrade_to_nan_not_a_coordinate():
     out = T.add_ghost_gk(actions, frames, home_team_id=1)
     assert out["ghost_gk_x"].isna().all(), "marked frames must not produce a coordinate"
     assert out["ghost_gk_y"].isna().all()
+    # Provenance (Task 7): the SB360 degrade records which variant auto-select chose. `position_only`
+    # even when unbundled (resolver picks it, then None -> NaN). D2: assert the VALUE type, not the
+    # dtype literal (object on pandas 2, StringDtype on pandas 3 -- ADR-057).
+    assert (out["ghost_gk_variant"] == "position_only").all()
+    assert all(isinstance(v, str) for v in out["ghost_gk_variant"])
 
 
 def test_unmarked_velocity_less_frames_RAISE():

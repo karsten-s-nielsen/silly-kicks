@@ -183,12 +183,15 @@ def _ast_frame_scoring_fns() -> set[tuple[str, str]]:
 
 
 # (module-stem, fn name) -> reason. Frame-consuming functions the AST walk flags (a `frames` param +
-# a model-class/predict reference) that do NOT need their OWN guard call. Three verified categories:
+# a model-class/predict reference) that do NOT need their OWN guard call. Four verified categories:
 #   (a) wrappers that DELEGATE to a registry serve entry which carries the guard;
 #   (b) model-agnostic EVAL probes (offline, not a production serve path);
-#   (c) scorers of the velocity-FREE GkCompletionModel (no velocity feature to fabricate).
-# Each reason was verified by reading the function body, not assumed (the delegation/velocity-free
-# claim is the load-bearing fact -- a false one would re-open the hole the gate closes).
+#   (c) scorers of the velocity-FREE GkCompletionModel (no velocity feature to fabricate);
+#   (d) velocity-keyed variant RESOLVERS -- they reference the model CLASS (to call `from_variant`)
+#       but never extract features or `.predict`; they return `(model, key)`, and the guard lives in
+#       the compute_* / _serve_positions_core registry entry that consumes that return.
+# Each reason was verified by reading the function body, not assumed (the delegation/velocity-free/
+# resolver claim is the load-bearing fact -- a false one would re-open the hole the gate closes).
 _GUARD_EXEMPT: dict[tuple[str, str], str] = {
     ("_xshot_occurrence", "add_xshot_occurrence"): (
         "aggregator wrapper; delegates to compute_xshot_occurrence (registry entry) which guards"
@@ -214,6 +217,18 @@ _GUARD_EXEMPT: dict[tuple[str, str], str] = {
     ),
     ("_xt_gk", "compute_xt_gk"): (
         "xt_gk v1 metric; scores the velocity-FREE GkCompletionModel (no velocity feature to fabricate)"
+    ),
+    ("_xshot_occurrence", "_resolve_xshot_model_for_frames"): (
+        "velocity-keyed variant resolver (cat. d): returns (model, key), never extracts/predicts; the "
+        "guard lives in compute_xshot_occurrence (registry entry) which calls it"
+    ),
+    ("_xcross_attempt", "_resolve_xcross_model_for_frames"): (
+        "velocity-keyed variant resolver (cat. d): returns (model, key), never extracts/predicts; the "
+        "guard lives in compute_xcross_attempt (registry entry) which calls it"
+    ),
+    ("_ghost_gk", "_resolve_ghost_model_for_frames"): (
+        "velocity-keyed variant resolver (cat. d): returns (model, key), never extracts/predicts; the "
+        "guard lives in _serve_positions_core (registry entry) which calls it"
     ),
 }
 
