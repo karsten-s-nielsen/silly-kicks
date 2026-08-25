@@ -1,4 +1,4 @@
-# ADR-068: Detection-aware provider visibility guardrails
+# ADR-069: Detection-aware provider visibility guardrails
 
 | Field | Value |
 |---|---|

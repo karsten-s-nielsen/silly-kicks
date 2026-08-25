@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Position-only model variants + velocity-keyed auto-select (minor; ADR-067, PR-S163). `XShotOccurrenceModel`,
+Position-only model variants + velocity-keyed auto-select (minor; ADR-067, PR-S164). `XShotOccurrenceModel`,
 `XCrossAttemptModel` and `GhostGkModel` gain **position-only variants** (the same models with velocity
 features dropped) that score on velocity-less StatsBomb-360 freeze-frames, auto-selected at the serve
 seam by the declared velocity marker.
@@ -44,7 +44,7 @@ seam by the declared velocity marker.
   quantifies the position-only cost: ghost MAE **+0.034 m**, xShot PR-AUC **−0.039**, xCross PR-AUC
   **−0.025**. See `docs/PRIVATE_CONSUMERS.md`.
 
-### Detection-aware visibility guardrails (ADR-068)
+### Detection-aware visibility guardrails (ADR-069)
 
 Prevents the class of failure that surfaced when the ghost trainer aborted mid-corpus on stale
 kloppy-built SkillCorner frames (`visibility=None`): a detection-aware provider whose per-player

@@ -60,7 +60,7 @@ spec's "Module placement" block.
 - Modify: `scripts/train_ghost_gk.py` (`:141` `validate_provider` import → `_provider_visibility`; `provider_by_path` capture + `validate_corpus_visibility`).
 - Create: `tests/tracking/test_detection_aware_visibility.py` (shared rule + `keeper_detection_mask` + Layer-1 seam + clean-break negative test).
 - Modify: `tests/scripts/test_trainer_cache_and_providers.py` (Layer-2 fires-before-fit test; MIGRATE `test_validate_provider_is_shared_not_duplicated:122` import → `_provider_visibility`).
-- Create: `docs/superpowers/adrs/ADR-068-detection-aware-visibility-guardrails.md` (number at commit).
+- Create: `docs/superpowers/adrs/ADR-069-detection-aware-visibility-guardrails.md` (number at commit).
 - Modify: `CHANGELOG.md` (`[Unreleased]`), `CLAUDE.md`, `docs/PRIVATE_CONSUMERS.md` (one-liner in the **in-repo first-party** table for `tracking/_provider_visibility.py`; the `_ghost_gk.py` drift-guard path pin is unaffected).
 - **No change:** `pyproject.toml` — `packages = ["silly_kicks"]` (`:154-155`) auto-includes the new module; the only `exclude`s are the `full/` weight dirs (`:160`).
 
@@ -155,7 +155,7 @@ def test_moved_symbols_not_reexported_from_ghost_gk():  # TRUE clean break (revi
 ### Task 4: ADR + docs + full verification
 
 - [ ] **Step 1:** ADR (contract + two layers; cross-ref ADR-038 + spec 4.3; record the M3=B module
-  decision — taxonomy + rule in the neutral `tracking/_provider_visibility.py`, clean break). `ADR-068`
+  decision — taxonomy + rule in the neutral `tracking/_provider_visibility.py`, clean break). `ADR-069`
   until commit.
 - [ ] **Step 2:** `CHANGELOG [Unreleased]` (additive guardrail; no retrain) + CLAUDE.md durable bullet
   (the visibility-usability contract + its single source in `_provider_visibility.py`) +

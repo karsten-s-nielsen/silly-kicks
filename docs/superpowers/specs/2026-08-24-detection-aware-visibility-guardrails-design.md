@@ -196,7 +196,7 @@ population; the guard covers the systematic discard, not a keeper-specific null"
 
 ## ADR & scope
 
-ADR-068: the detection-aware visibility-usability contract + two-layer enforcement;
+ADR-069: the detection-aware visibility-usability contract + two-layer enforcement;
 cross-refs ADR-038 and spec 4.3; names the M3 module-coupling decision taken. Additive — no model
 change, no retrain trigger. Verification (review M4): run `.venv`/`.venv312` interpreters **directly**
 (not `uv run` — the `[train]` extra breaks its resolution here), capturing **all** `FAILED` lines
