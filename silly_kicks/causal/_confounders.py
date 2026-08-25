@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import group_rows
+
 #: The only accepted provenance. `join_layer2_confounders` refuses anything else by name.
 CONFOUNDER_SOURCE = "frames_computed"
 
@@ -43,7 +45,7 @@ def _pressure_at_entry(spells: pd.DataFrame, frames: pd.DataFrame, add_pressure_
     ball position so the SHIPPED, pinned `bekkers_pi` implementation is what runs (spec §6.4 pins
     the measure; ADR-036 pins it again after the 3-method audit).
     """
-    from silly_kicks.id_compat import same_id
+    from silly_kicks.id_compat import ids_match
     from silly_kicks.spadl import config as _cfg
 
     ball = frames.loc[frames["is_ball"].astype(bool), ["game_id", "period_id", "frame_id", "x", "y"]]
@@ -59,6 +61,9 @@ def _pressure_at_entry(spells: pd.DataFrame, frames: pd.DataFrame, add_pressure_
     # ordinary definition. Resolved here rather than re-running carrier inference, which
     # `build_opportunities` has already paid for internally and does not surface on the spell row.
     players = frames.loc[~frames["is_ball"].astype(bool)]
+    # ADR-068: build the per-frame lookup ONCE instead of re-scanning the entire `players` table per
+    # spell (was O(n_spells * n_player_rows) -- the exact O(n^2) the sibling _defending_team_id fixed).
+    frame_groups = group_rows(players, ("game_id", "period_id", "frame_id"))
     carriers: list[object] = []
     for gid, per, fid, team, cx, cy in zip(
         spells["game_id"],
@@ -69,8 +74,8 @@ def _pressure_at_entry(spells: pd.DataFrame, frames: pd.DataFrame, add_pressure_
         by,
         strict=True,
     ):
-        grp = players[(players["game_id"] == gid) & (players["period_id"] == per) & (players["frame_id"] == fid)]
-        grp = grp[[same_id(t, team) for t in grp["team_id"]]]
+        grp = frame_groups.get(gid, per, fid)
+        grp = grp[ids_match(grp["team_id"], team)]  # ADR-019 dtype-safe, vectorized
         if grp.empty or not np.isfinite(cx):
             carriers.append(pd.NA)
             continue

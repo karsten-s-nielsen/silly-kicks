@@ -232,6 +232,16 @@ def _cluster_reassign(X_gk: np.ndarray, cluster_ids: np.ndarray, rng: np.random.
     NOT a strict row permutation: the null it draws is the cluster-exchangeable one (the point
     -- a per-destination mapping; concatenating permuted variable-size blocks would straddle
     destination boundaries and drift the null back toward the row-i.i.d. permutation)."""
+    return _cluster_reassign_prepared(_prepare_cluster_reassign(X_gk, cluster_ids), rng)
+
+
+def _prepare_cluster_reassign(X_gk: np.ndarray, cluster_ids: np.ndarray) -> tuple:
+    """Invariant prep for :func:`_cluster_reassign`, hoisted out of the per-seed loop (ADR-068).
+
+    The cluster grouping -- ``np.unique`` (or the ``pd.factorize`` fallback for unorderable pooled
+    ids), the per-cluster destination masks and source row-blocks -- does NOT depend on the per-seed
+    permutation, so it is built ONCE by :func:`placebo_shift` and reused across all seeds. Only the
+    permutation ``sigma`` and the ``np.resize`` reassignment stay per-seed."""
     X_gk = np.asarray(X_gk, dtype=float)
     ids = np.asarray(cluster_ids)
     # `np.unique` SORTS, and a pooled multi-provider corpus carries mixed id types -- MEASURED:
@@ -257,12 +267,22 @@ def _cluster_reassign(X_gk: np.ndarray, cluster_ids: np.ndarray, rng: np.random.
 
         codes, labels = pd.factorize(ids, sort=False)
         ids, uniq = codes, np.arange(len(labels))
-    sigma = rng.permutation(len(uniq))
+    dest_masks = [ids == u for u in uniq]
+    blocks = [X_gk[m] for m in dest_masks]
+    dest_sizes = [int(m.sum()) for m in dest_masks]
+    return X_gk, dest_masks, blocks, dest_sizes
+
+
+def _cluster_reassign_prepared(prepared: tuple, rng: np.random.Generator) -> np.ndarray:
+    """Per-seed whole-cluster reassignment from the invariant :func:`_prepare_cluster_reassign`
+    output. Byte-identical to the old inline loop: ``sigma = rng.permutation(n_clusters)`` then each
+    destination receives ``blocks[sigma[d]]`` recycled to its size."""
+    X_gk, dest_masks, blocks, dest_sizes = prepared
+    ncol = X_gk.shape[1]
+    sigma = rng.permutation(len(blocks))
     out = np.empty_like(X_gk)
-    for d_pos, dest in enumerate(uniq):
-        src_rows = X_gk[ids == uniq[sigma[d_pos]]]
-        dest_mask = ids == dest
-        out[dest_mask] = np.resize(src_rows, (int(dest_mask.sum()), X_gk.shape[1]))
+    for d_pos in range(len(blocks)):
+        out[dest_masks[d_pos]] = np.resize(blocks[sigma[d_pos]], (dest_sizes[d_pos], ncol))
     return out
 
 
@@ -302,11 +322,13 @@ def placebo_shift(X_base, X_gk, Y, Z, *, n_seeds: int, rng_seed: int, cluster_id
     base = _att_with_block(X_base, np.empty((n, 0)), Y, Z, seed=rng_seed)
     rng = np.random.default_rng(rng_seed)
     shifts = np.empty(n_seeds)
+    # ADR-068: build the invariant cluster grouping ONCE, not once per seed (n_seeds up to 200).
+    prepared = _prepare_cluster_reassign(X_gk, cluster_ids) if cluster_ids is not None else None
     for s in range(n_seeds):
-        if cluster_ids is None:
+        if prepared is None:
             permuted = X_gk[rng.permutation(n)]
         else:
-            permuted = _cluster_reassign(X_gk, cluster_ids, rng)
+            permuted = _cluster_reassign_prepared(prepared, rng)
         shifts[s] = _att_with_block(X_base, permuted, Y, Z, seed=rng_seed + 1 + s) - base
     return {
         "shifts": shifts,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import ids_differ
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
@@ -111,6 +112,9 @@ def compute_defensive_credits(
         )
     else:
         line_break_between_lines = pd.array([pd.NA] * len(act), dtype="boolean")
+    # ADR-068: build the per-frame lookup ONCE (keyed on frame_id, matching resolve_responsible_
+    # defenders' filter exactly) instead of re-scanning the whole `frames` table per action x per rule.
+    frame_groups = group_rows(frames, "frame_id")
     rows: list[CreditRow] = []
     for idx in range(len(act)):
         if pd.isna(flip_series.iloc[idx]):
@@ -134,6 +138,7 @@ def compute_defensive_credits(
             acting_team_id=act.iloc[idx]["team_id"],
             flip=bool(flip_series.iloc[idx]),
             line_break_between_lines=line_break_between_lines,
+            frame_groups=frame_groups,
         )
         for rule_name in enabled:
             rows.extend(RULE_REGISTRY[rule_name](ctx))

@@ -196,12 +196,23 @@ def add_gk_role(
 
     from silly_kicks.id_compat import ids_isin
 
+    # ADR-068: everything derived from the CURRENT (un-shifted) columns is invariant across k, so
+    # hoist it out of the lookback loop -- most importantly the ADR-019 `ids_isin` content-probe,
+    # which is the loop's dominant cost and was recomputed on every one of the K iterations.
+    cur_player_arr = player_id.to_numpy()
+    cur_game_arr = game_id.to_numpy()
+    if goalkeeper_ids is not None:
+        cur_team_arr = team_id.to_numpy()
+        # Rule (a) — known-GK match: caller declared a GK player_id set. Routed through the ADR-019
+        # seam: a raw `.isin` compares by value, so a caller's {"1"} set against an int64 player_id
+        # column (or the reverse) matches NOTHING and the declaration is silently discarded.
+        cur_is_known_gk = ids_isin(cur_player_arr, goalkeeper_ids).to_numpy()
+        cur_player_na = pd.isna(cur_player_arr)
+
     for k in range(1, distribution_lookback_actions + 1):
         shifted_keeper = is_keeper_series.shift(k, fill_value=False).to_numpy(dtype=bool)
         shifted_player = player_id.shift(k).to_numpy()
         shifted_game = game_id.shift(k).to_numpy()
-        cur_player_arr = player_id.to_numpy()
-        cur_game_arr = game_id.to_numpy()
         same_player = cur_player_arr == shifted_player
         same_game = cur_game_arr == shifted_game
 
@@ -209,21 +220,14 @@ def add_gk_role(
 
         if goalkeeper_ids is not None:
             shifted_team = team_id.shift(k).to_numpy()
-            cur_team_arr = team_id.to_numpy()
             same_team = cur_team_arr == shifted_team
 
-            # Rule (a) — known-GK match: caller declared a GK player_id set. Routed through
-            # the ADR-019 seam: a raw `.isin` compares by value, so a caller's {"1"} set
-            # against an int64 player_id column (or the reverse) matches NOTHING and the
-            # declaration is silently discarded -- no error, just no distribution rows.
-            cur_is_known_gk = ids_isin(cur_player_arr, goalkeeper_ids).to_numpy()
             match = match | (cur_is_known_gk & same_team)
 
             # Rule (b) — NaN-team fallback: both player_ids unidentifiable
             # but same team + prev was keeper. Coarse heuristic; caller
             # opts in by passing goalkeeper_ids (signals willingness to
             # accept over-counting risk on dense NaN data).
-            cur_player_na = pd.isna(cur_player_arr)
             shifted_player_na = pd.isna(shifted_player)
             match = match | (cur_player_na & shifted_player_na & same_team)
 

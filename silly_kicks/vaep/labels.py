@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.spadl.config as spadl
-from silly_kicks.id_compat import ids_differ, ids_equal, same_id
+from silly_kicks.id_compat import ids_differ, ids_equal, ids_match, same_id
 
 # Single-source goal/own-goal predicates (ADR-0NN). Extracted so the definition lives in ONE place
 # instead of being copy-pasted across the ~8 label functions (the copy-paste that hid the own-goal
@@ -285,94 +285,93 @@ def _concedes_xg(actions: pd.DataFrame, nr_actions: int, xg_column: str) -> pd.D
     return pd.DataFrame({"concedes": result})
 
 
+def _suffix_after(ev: np.ndarray) -> np.ndarray:
+    """``rev[i]`` = aggregate of ``ev[i+1:]`` (max for float, OR for bool); 0/False past the end.
+
+    ``np.maximum.accumulate`` is OR on bool and max on float, so one implementation serves both the
+    boolean (any downstream eligible event) and the xG (max downstream eligible xG) label paths.
+    """
+    rev = np.zeros_like(ev)
+    if len(ev) > 1:
+        suffix = np.maximum.accumulate(ev[::-1])[::-1]  # suffix[i] = agg(ev[i:])
+        rev[:-1] = suffix[1:]  # rev[i] = agg(ev[i+1:])  (strictly downstream)
+    return rev
+
+
+def _possession_labels(
+    actions: pd.DataFrame,
+    xg_column: str | None,
+    *,
+    col_name: str,
+    same_event: np.ndarray,
+    other_event: np.ndarray,
+    self_event: np.ndarray,
+) -> pd.DataFrame:
+    """Vectorized possession-chain windowed label (ADR-068; replaces the O(k^2) scalar-``.loc`` loop).
+
+    A position labels 1 iff a downstream ``same_event`` by its OWN team, or a downstream
+    ``other_event`` by the opposing team, occurs within the same possession -- plus a ``self_event``
+    at the position itself. **Team-aware:** a possession holds at most two teams (carve-outs can add a
+    second to a mostly-one-team chain), so per team present we take the reverse-cumulative aggregate
+    of that team's eligible downstream events and index each position by its OWN team. Semantics are
+    byte-identical to the prior nested loop: ``same_id`` for same-team (``ids_match``), both-present-
+    and-different for opponent (``pd.notna & ~ids_match``); xG path takes the MAX over eligible
+    downstream events (the old loop's no-break ``max``), boolean path the OR.
+    """
+    team = actions["team_id"].to_numpy()
+    group_cols = ["game_id", "possession_id"] if "game_id" in actions.columns else ["possession_id"]
+    # A row with a NaN group key is dropped by groupby(dropna=True), so the prior nested loop never
+    # visited it and its self-event never applied. Gate the GLOBAL self-event init the same way, or a
+    # NaN-key goal/owngoal would score itself where the old loop left it 0.0/False (byte-identity).
+    valid_key = actions[group_cols].notna().all(axis=1).to_numpy()
+    if xg_column is not None:
+        xg = actions.get(xg_column, pd.Series(0.0, index=actions.index)).fillna(0.0).to_numpy(dtype=float)
+        out = np.where(self_event & valid_key, xg, 0.0)  # self-scoring / self-conceding pass
+    else:
+        xg = None
+        out = self_event & valid_key  # bool
+    for pos_idx in actions.groupby(group_cols, sort=False).indices.values():
+        if len(pos_idx) < 2:
+            continue  # no strictly-downstream position exists
+        g_team = team[pos_idx]
+        g_same = same_event[pos_idx]
+        g_other = other_event[pos_idx]
+        for tteam in pd.unique(g_team):
+            if pd.isna(tteam):
+                continue  # a NULL-team position matches no team (same_id NA-never-equal) -> self only
+            # ndarray (not Series) so the boolean-index reads below stay positional
+            same_team = np.asarray(ids_match(g_team, tteam))  # team[j] == tteam (NA-never-equal)
+            other_team = pd.notna(g_team) & ~same_team  # opponent: both present AND different
+            eligible = (g_same & same_team) | (g_other & other_team)
+            ev = np.where(eligible, xg[pos_idx], 0.0) if xg is not None else eligible
+            rev = _suffix_after(ev)
+            local = pos_idx[same_team]  # global positions of this team
+            if xg_column is not None:
+                out[local] = np.maximum(out[local], rev[same_team])
+            else:
+                out[local] = out[local] | rev[same_team]
+
+    return pd.DataFrame({col_name: out}, index=actions.index)
+
+
 def _scores_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.DataFrame:
     """Possession-chain windowed scoring labels."""
-    goal = _is_goal(actions)
-    owngoal = _is_owngoal(actions)
-    team_id = actions["team_id"]
-
-    if xg_column is not None:
-        xg = actions.get(xg_column, pd.Series(0.0, index=actions.index)).fillna(0.0)  # type: ignore[reportOptionalMemberAccess]
-
-    group_cols = ["game_id", "possession_id"] if "game_id" in actions.columns else ["possession_id"]
-    result: pd.Series = (  # type: ignore[type-arg]
-        pd.Series(0.0, index=actions.index) if xg_column is not None else pd.Series(False, index=actions.index)
+    goal = _is_goal(actions).to_numpy()
+    owngoal = _is_owngoal(actions).to_numpy()
+    # scores: downstream same-team GOAL, or downstream opponent OWNGOAL; self = a goal action.
+    return _possession_labels(
+        actions, xg_column, col_name="scores", same_event=goal, other_event=owngoal, self_event=goal
     )
-
-    for _key, grp in actions.groupby(group_cols):
-        idx = grp.index
-        for i, pos in enumerate(idx):
-            for j_pos in idx[i + 1 :]:
-                if goal.loc[j_pos]:
-                    same_team = _same_team_scalar(team_id.loc[pos], team_id.loc[j_pos])
-                    if same_team:
-                        if xg_column is not None:
-                            result.loc[pos] = max(result.loc[pos], xg.loc[j_pos])
-                        else:
-                            result.loc[pos] = True
-                            break
-                if owngoal.loc[j_pos]:
-                    other_team = _other_team_scalar(team_id.loc[pos], team_id.loc[j_pos])
-                    if other_team:
-                        if xg_column is not None:
-                            result.loc[pos] = max(result.loc[pos], xg.loc[j_pos])
-                        else:
-                            result.loc[pos] = True
-                            break
-        # The goal action itself scores
-        for pos in idx:
-            if goal.loc[pos]:
-                if xg_column is not None:
-                    result.loc[pos] = max(result.loc[pos], xg.loc[pos])
-                else:
-                    result.loc[pos] = True
-
-    return pd.DataFrame(result, columns=["scores"])
 
 
 def _concedes_possession(actions: pd.DataFrame, xg_column: str | None) -> pd.DataFrame:
     """Possession-chain windowed conceding labels."""
-    goal = _is_goal(actions)
-    owngoal = _is_owngoal(actions)
-    team_id = actions["team_id"]
-
-    if xg_column is not None:
-        xg = actions.get(xg_column, pd.Series(0.0, index=actions.index)).fillna(0.0)  # type: ignore[reportOptionalMemberAccess]
-
-    group_cols = ["game_id", "possession_id"] if "game_id" in actions.columns else ["possession_id"]
-    result: pd.Series = (  # type: ignore[type-arg]
-        pd.Series(0.0, index=actions.index) if xg_column is not None else pd.Series(False, index=actions.index)
+    goal = _is_goal(actions).to_numpy()
+    owngoal = _is_owngoal(actions).to_numpy()
+    # concedes: downstream opponent GOAL, or downstream same-team OWNGOAL; self = an owngoal action.
+    return _possession_labels(
+        actions, xg_column, col_name="concedes", same_event=owngoal, other_event=goal, self_event=owngoal
     )
-
-    for _key, grp in actions.groupby(group_cols):
-        idx = grp.index
-        for i, pos in enumerate(idx):
-            for j_pos in idx[i + 1 :]:
-                if goal.loc[j_pos]:
-                    other_team = _other_team_scalar(team_id.loc[pos], team_id.loc[j_pos])
-                    if other_team:
-                        if xg_column is not None:
-                            result.loc[pos] = max(result.loc[pos], xg.loc[j_pos])
-                        else:
-                            result.loc[pos] = True
-                            break
-                if owngoal.loc[j_pos]:
-                    same_team = _same_team_scalar(team_id.loc[pos], team_id.loc[j_pos])
-                    if same_team:
-                        if xg_column is not None:
-                            result.loc[pos] = max(result.loc[pos], xg.loc[j_pos])
-                        else:
-                            result.loc[pos] = True
-                            break
-        # The owngoal action itself concedes
-        for pos in idx:
-            if owngoal.loc[pos]:
-                if xg_column is not None:
-                    result.loc[pos] = max(result.loc[pos], xg.loc[pos])
-                else:
-                    result.loc[pos] = True
-
-    return pd.DataFrame(result, columns=["concedes"])
 
 
 def _scores_time(

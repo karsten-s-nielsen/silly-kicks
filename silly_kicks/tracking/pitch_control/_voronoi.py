@@ -13,6 +13,7 @@ import pandas as pd
 
 from silly_kicks.id_compat import ids_match
 
+from ._grids import pitch_grid
 from ._params import VoronoiParams
 from ._surface import PitchControlSurface
 
@@ -39,8 +40,8 @@ def compute_voronoi(
         surface = compute_voronoi(frame, attacking_team_id=1, params=VoronoiParams())
         surface.at_point(50, 34)  # -> 1.0
     """
-    grid_x = np.linspace(0, 105.0, params.grid_cells_x)
-    grid_y = np.linspace(0, 68.0, params.grid_cells_y)
+    # ADR-068: cached, read-only grid + targets (built once per (grid_cells_x, grid_cells_y)).
+    grid_x, grid_y, targets = pitch_grid(params.grid_cells_x, params.grid_cells_y)
     n_cells = params.grid_cells_x * params.grid_cells_y
 
     # Filter players (no ball rows, no NaN positions)
@@ -56,10 +57,6 @@ def compute_voronoi(
             method="voronoi",
             attacking_team_id=attacking_team_id,
         )
-
-    # Build target grid
-    gx, gy = np.meshgrid(grid_x, grid_y)
-    targets = np.column_stack([gx.ravel(), gy.ravel()])  # (n_cells, 2)
 
     # Player positions
     player_pos = players[["x", "y"]].to_numpy(dtype="float64")  # (n_players, 2)

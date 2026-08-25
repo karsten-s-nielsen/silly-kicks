@@ -17,6 +17,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import group_rows
+
 from . import config as spadlconfig
 
 _OBE_TEMPORAL_WINDOW: float = 2.0  # seconds
@@ -55,6 +57,11 @@ def infer_defensive_actions(
 
     rows: list[dict] = []
     obe_regains = obe[obe["end_type"] == "direct_regain"] if len(obe) > 0 else pd.DataFrame()
+    # ADR-068: pre-group the direct_regain OBE rows by (period, team_id) ONCE, instead of
+    # re-filtering the whole obe_regains table per defensive row (was O(n_defensive * n_obe)). The
+    # per-row candidate set is then an O(1) group lookup + the temporal-window filter; the exact
+    # (|dt|, time_seconds, player_id) sort/pick below is unchanged -> byte-identical.
+    obe_groups = group_rows(obe_regains, ("period", "team_id")) if len(obe_regains) > 0 else None
 
     for idx in pp.index[defensive_mask]:
         row = pp.loc[idx]
@@ -69,12 +76,9 @@ def infer_defensive_actions(
         y = row["y_start"]
 
         # OBE upgrade: check for direct_regain within temporal window + same team
-        if len(obe_regains) > 0:
-            candidates = obe_regains[
-                (obe_regains["period"] == period)
-                & (obe_regains["team_id"] == row["team_id"])
-                & ((obe_regains["time_seconds"] - t).abs() <= _OBE_TEMPORAL_WINDOW)
-            ]
+        if obe_groups is not None:
+            same_period_team = obe_groups.get(period, row["team_id"])  # O(1): same (period, team_id)
+            candidates = same_period_team[(same_period_team["time_seconds"] - t).abs() <= _OBE_TEMPORAL_WINDOW]
             if len(candidates) > 0:
                 # Order-insensitive pick (ADR-065): nearest in time, ties broken by CONTENT columns
                 # that are always present on an OBE row (``time_seconds`` then ``player_id``), NOT by

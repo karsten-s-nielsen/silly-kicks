@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import canonical_id, canonical_id_series, ids_equal, ids_match
 
 from ..spadl import config as spadlconfig
@@ -244,8 +245,11 @@ def detect_off_ball_runs(
         return _empty_runs()
 
     records: list[dict] = []
+    # ADR-068: build the per-game lookup ONCE instead of re-filtering `frames` per game (the lookup
+    # canonicalises keys, so it is byte-identical to the ids_equal filter it replaces).
+    frame_groups = group_rows(frames, "game_id")
     for game_id, game_actions in actions.groupby("game_id", sort=False):
-        game_frames = frames[ids_equal(frames["game_id"], pd.Series(game_id, index=frames.index))]
+        game_frames = frame_groups.get(game_id)
         if game_frames.empty:
             continue
 

@@ -563,6 +563,105 @@ def _lane_received_batched(
     return float(p_blocked[0]), float(p_received[0]), p_received[1:]
 
 
+def _lane_control_setup(
+    frame: pd.DataFrame,
+    attacking_team_id: int | str,
+    *,
+    goal_map: GoalMap,
+    params: CoverShadowParams,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    """Frame-level setup for :func:`lane_control` -- the lane-blocker defender arrays + all-attacker
+    arrays, INVARIANT across receivers (ADR-068). Hoisted so the cover-shadow baseline classifies
+    man-markers ONCE, not once per dangerous receiver. Returns ``None`` when there are no lane-blockers
+    (the core then yields the zero result); raises :class:`GoalEndUnresolvedError` when the attacked
+    goal is unresolved -- identical to the inline ``lane_control`` setup it factors."""
+    players = frame[~frame["is_ball"].astype(bool)].copy()
+    defenders_all = players[~ids_match(players["team_id"], attacking_team_id)].copy()
+    attackers_all = players[ids_match(players["team_id"], attacking_team_id)].copy()
+
+    # Exclude GK from lane-blocking defenders
+    defenders_outfield = defenders_all[~defenders_all["is_goalkeeper"].astype(bool)]
+
+    # Man-marking filter. The DEFENDERS' own goal = the end the attacking team ATTACKS. `attacked_goal`
+    # is a real lookup of the opponent's entry; `105.0 - get(...)` would be a second implementation of
+    # the rule, wrong on a degenerate map.
+    goal_x_own = goal_map.attacked_goal(
+        frame["game_id"].iloc[0], frame["period_id"].iloc[0], attacking_team_id, allow_guess=True
+    )
+    if goal_x_own is None:
+        raise GoalEndUnresolvedError(  # the add_* edge catches this and emits a NaN row
+            f"cover shadows: goal_map does not resolve the goal attacked by {attacking_team_id!r}."
+        )
+    man_markers = _classify_man_markers(defenders_outfield, attackers_all, goal_x_own=goal_x_own, params=params)
+    lane_blockers = defenders_outfield[~defenders_outfield["player_id"].isin(man_markers)]
+
+    if lane_blockers.empty:
+        return None
+
+    return (
+        lane_blockers[["x", "y"]].to_numpy(dtype=np.float64),
+        lane_blockers[["vx", "vy"]].to_numpy(dtype=np.float64),
+        # Attackers: exclude passer (already at start), include receiver + others
+        attackers_all[["x", "y"]].to_numpy(dtype=np.float64),
+        attackers_all[["vx", "vy"]].to_numpy(dtype=np.float64),
+    )
+
+
+def _lane_control_core(
+    setup: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None,
+    passer_xy: tuple[float, float],
+    receiver_xy: tuple[float, float],
+    *,
+    params: CoverShadowParams,
+) -> LaneControlResult:
+    """Per-receiver lane blocking from the hoisted :func:`_lane_control_setup` arrays (ADR-068).
+
+    Byte-identical to ``lane_control``'s inline geometry + 3-lane ``_compute_lane_probabilities`` +
+    decision. ``setup is None`` (no lane-blockers) or a degenerate pass (< 1e-6) -> the zero result."""
+    passer = np.array(passer_xy, dtype=np.float64)
+    receiver = np.array(receiver_xy, dtype=np.float64)
+    pass_vec = receiver - passer
+    pass_dist = np.linalg.norm(pass_vec)
+    if pass_dist < 1e-6 or setup is None:
+        return LaneControlResult(0, 0, 0, 0, 0, 0, False, False, False)
+
+    def_pos, def_vel, att_pos, att_vel = setup
+    u = pass_vec / pass_dist
+    u_perp = np.array([-u[1], u[0]])
+    half_width = params.cone_width_factor * pass_dist / 2.0
+
+    # Generate sample points along 3 lines
+    t = np.linspace(0.0, 1.0, params.n_sample_points)
+    center = passer[np.newaxis, :] + t[:, np.newaxis] * pass_vec[np.newaxis, :]
+    left = center + t[:, np.newaxis] * half_width * u_perp[np.newaxis, :]
+    right = center - t[:, np.newaxis] * half_width * u_perp[np.newaxis, :]
+
+    # Compute probabilities for each lane
+    results = []
+    for lane_targets in (center, left, right):
+        pb, pr = _compute_lane_probabilities(lane_targets, def_pos, def_vel, att_pos, att_vel, params=params)
+        results.append((pb, pr))
+
+    p_bc, p_rc = results[0]
+    p_bl, p_rl = results[1]
+    p_br, p_rr = results[2]
+
+    blocked_flags = [p_bc > p_rc, p_bl > p_rl, p_br > p_rr]
+    n_blocked = sum(blocked_flags)
+
+    return LaneControlResult(
+        p_blocked_center=p_bc,
+        p_blocked_left=p_bl,
+        p_blocked_right=p_br,
+        p_received_center=p_rc,
+        p_received_left=p_rl,
+        p_received_right=p_rr,
+        is_blocked_any=n_blocked >= 1,
+        is_blocked_majority=n_blocked >= 2,
+        is_blocked_all=n_blocked == 3,
+    )
+
+
 def lane_control(
     frame: pd.DataFrame,
     passer_xy: tuple[float, float],
@@ -582,8 +681,8 @@ def lane_control(
         Passer position (x, y) in meters.
     receiver_xy : tuple[float, float]
         Receiver position (x, y) in meters.
-    home_team_id : int | str
-        Home team identifier (defends x=0).
+    goal_map : GoalMap
+        Per-(game, period, team) defended-goal map (ADR-055).
     attacking_team_id : int | str
         Attacking team identifier.
     params : CoverShadowParams | None
@@ -605,92 +704,17 @@ def lane_control(
     _validate_ltr(frame, caller="lane_control")
     p = params or CoverShadowParams()
 
+    # Degenerate-pass check BEFORE setup (original order): a receiver at the passer position returns
+    # the zero result WITHOUT triggering man-marker classification or the goal_map resolve/raise.
     passer = np.array(passer_xy, dtype=np.float64)
     receiver = np.array(receiver_xy, dtype=np.float64)
-    pass_vec = receiver - passer
-    pass_dist = np.linalg.norm(pass_vec)
-    if pass_dist < 1e-6:
+    if np.linalg.norm(receiver - passer) < 1e-6:
         return LaneControlResult(0, 0, 0, 0, 0, 0, False, False, False)
 
-    u = pass_vec / pass_dist
-    u_perp = np.array([-u[1], u[0]])
-    half_width = p.cone_width_factor * pass_dist / 2.0
-
-    # Generate sample points along 3 lines
-    t = np.linspace(0.0, 1.0, p.n_sample_points)
-    center = passer[np.newaxis, :] + t[:, np.newaxis] * pass_vec[np.newaxis, :]
-    left = center + t[:, np.newaxis] * half_width * u_perp[np.newaxis, :]
-    right = center - t[:, np.newaxis] * half_width * u_perp[np.newaxis, :]
-
-    # Identify players
-    players = frame[~frame["is_ball"].astype(bool)].copy()
-    defenders_all = players[~ids_match(players["team_id"], attacking_team_id)].copy()
-    attackers_all = players[ids_match(players["team_id"], attacking_team_id)].copy()
-
-    # Exclude GK from lane-blocking defenders
-    defenders_outfield = defenders_all[~defenders_all["is_goalkeeper"].astype(bool)]
-
-    # Man-marking filter
-    # The DEFENDERS' own goal = the end the attacking team ATTACKS. `attacked_goal` is a
-    # real lookup of the opponent's entry; `105.0 - get(...)` would be a second
-    # implementation of the rule, and it is wrong on a degenerate map.
-    goal_x_own = goal_map.attacked_goal(
-        frame["game_id"].iloc[0], frame["period_id"].iloc[0], attacking_team_id, allow_guess=True
-    )
-    if goal_x_own is None:
-        raise GoalEndUnresolvedError(  # the add_* edge catches this and emits a NaN row
-            f"cover shadows: goal_map does not resolve the goal attacked by {attacking_team_id!r}."
-        )
-    man_markers = _classify_man_markers(
-        defenders_outfield,
-        attackers_all,
-        goal_x_own=goal_x_own,
-        params=p,
-    )
-    lane_blockers = defenders_outfield[~defenders_outfield["player_id"].isin(man_markers)]
-
-    if lane_blockers.empty:
-        return LaneControlResult(0, 0, 0, 0, 0, 0, False, False, False)
-
-    # Build position/velocity arrays
-    def_pos = lane_blockers[["x", "y"]].to_numpy(dtype=np.float64)
-    def_vel = lane_blockers[["vx", "vy"]].to_numpy(dtype=np.float64)
-
-    # Attackers: exclude passer (already at start), include receiver + others
-    att_pos = attackers_all[["x", "y"]].to_numpy(dtype=np.float64)
-    att_vel = attackers_all[["vx", "vy"]].to_numpy(dtype=np.float64)
-
-    # Compute probabilities for each lane
-    results = []
-    for lane_targets in (center, left, right):
-        pb, pr = _compute_lane_probabilities(
-            lane_targets,
-            def_pos,
-            def_vel,
-            att_pos,
-            att_vel,
-            params=p,
-        )
-        results.append((pb, pr))
-
-    p_bc, p_rc = results[0]
-    p_bl, p_rl = results[1]
-    p_br, p_rr = results[2]
-
-    blocked_flags = [p_bc > p_rc, p_bl > p_rl, p_br > p_rr]
-    n_blocked = sum(blocked_flags)
-
-    return LaneControlResult(
-        p_blocked_center=p_bc,
-        p_blocked_left=p_bl,
-        p_blocked_right=p_br,
-        p_received_center=p_rc,
-        p_received_left=p_rl,
-        p_received_right=p_rr,
-        is_blocked_any=n_blocked >= 1,
-        is_blocked_majority=n_blocked >= 2,
-        is_blocked_all=n_blocked == 3,
-    )
+    # ADR-068: the frame-level setup (defender/attacker arrays + man-marker classification) is
+    # factored out so the cover-shadow baseline can build it ONCE across receivers. Byte-identical.
+    setup = _lane_control_setup(frame, attacking_team_id, goal_map=goal_map, params=p)
+    return _lane_control_core(setup, passer_xy, receiver_xy, params=p)
 
 
 # ---------------------------------------------------------------------------
@@ -1110,23 +1134,21 @@ def _compute_cover_shadow_dict(
             "max_single_defender_player_id": None,
         }
 
-    # Baseline pass: lane_control per receiver on the FULL frame, used only for the
-    # n_blocked decision (kept unchanged so n_blocked_receivers stays provably
-    # bit-identical). The max_single leave-one-out below recomputes its own baseline
-    # via the vectorized precompute. See spec §5 (deliberate deviation note).
+    # Baseline pass for the n_blocked decision. ADR-068: the frame-level lane_control SETUP
+    # (defender/attacker arrays + man-marker classification) is INVARIANT across receivers, so build
+    # it ONCE via `_lane_control_setup` instead of re-running the full `lane_control` per receiver --
+    # the old loop re-classified man-markers n_dangerous times. `_lane_control_core` per receiver is
+    # BYTE-IDENTICAL to `lane_control` (it IS `lane_control`'s post-setup body), so n_blocked_receivers
+    # stays provably bit-identical. The max_single leave-one-out below keeps its own vectorized
+    # precompute. See spec §5.
     cs_params = CoverShadowParams()
     decision_attr = f"is_blocked_{decision_rule}"
     n_blocked = 0
+    _validate_ltr(frame_data, caller="cover_shadows")
+    lane_setup = _lane_control_setup(frame_data, attacking_team_id, goal_map=goal_map, params=cs_params)
     for _, recv_row in dangerous.iterrows():
         recv_xy = (float(recv_row["x"]), float(recv_row["y"]))
-        lc = lane_control(
-            frame_data,
-            passer_xy,
-            recv_xy,
-            goal_map=goal_map,
-            attacking_team_id=attacking_team_id,
-            params=cs_params,
-        )
+        lc = _lane_control_core(lane_setup, passer_xy, recv_xy, params=cs_params)
         if getattr(lc, decision_attr):
             n_blocked += 1
 
