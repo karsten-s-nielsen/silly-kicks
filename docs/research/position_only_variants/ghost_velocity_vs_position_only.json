@@ -1,0 +1,23 @@
+{
+  "model": "ghost",
+  "delta": {
+    "overall_mae": {
+      "velocity": 1.1335126772862805,
+      "position_only": 1.1677056803754549,
+      "delta": -0.03419300308917439
+    },
+    "per_provider_mae_max": {
+      "velocity": 1.6733701128822056,
+      "position_only": 1.7020457661603046,
+      "delta": -0.028675653278098956
+    },
+    "cross_fold_std": {
+      "velocity": 0.032303919825997375,
+      "position_only": 0.03344352465935537,
+      "delta": -0.0011396048333579961
+    }
+  },
+  "run_commit": "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean"
+}

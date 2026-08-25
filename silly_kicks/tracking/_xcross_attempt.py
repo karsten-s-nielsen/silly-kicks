@@ -30,13 +30,19 @@ from silly_kicks.tracking._ball_carrier import (
 from silly_kicks.tracking._gk_resolve import resolve_defended_goals
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._velocity_availability import (
+    variant_key_for_velocity as _variant_key_for_velocity,
+)
+from silly_kicks.tracking._velocity_availability import (
+    velocity_availability_is_mixed as _velocity_availability_is_mixed,
+)
+from silly_kicks.tracking._velocity_availability import (
     velocity_unavailable_by_design as _velocity_unavailable_by_design,
 )
 from silly_kicks.tracking._xshot_occurrence import IntegrityError, load_xgb_booster_base_score_safe
 from silly_kicks.tracking.schema import SPEED_SOURCE_UNAVAILABLE
 from silly_kicks.tracking.utils import link_actions_to_frames
 
-XCrossFeatureSet = Literal["faithful", "extended"]
+XCrossFeatureSet = Literal["faithful", "extended", "position_only"]
 
 # Paper confounders (realized with silly-kicks primitives) + ball geometry.
 # NOTE (review C1): goal-relative convention is **attacked goal at gr_x = 0**
@@ -66,6 +72,10 @@ XCROSS_GK_BLOCK = [
     "gk_carrier_side",
 ]
 XCROSS_FEATURE_NAMES_FAITHFUL = _BALL_FEATURES + _CONFOUNDERS + XCROSS_GK_BLOCK  # 16 (3+7+6)
+# Position-only variant: drop the single velocity feature `ball_speed` so a fitted model can score on
+# a velocity-less SB360 freeze-frame. Dropped (shorter vector), never NaN-filled (feature contract
+# raises on non-finite, ADR-050).
+XCROSS_FEATURE_NAMES_POSITION_ONLY = [f for f in XCROSS_FEATURE_NAMES_FAITHFUL if f != "ball_speed"]  # 15
 
 # Domain-filter constants (M1 re-justified; M-4 corridor = cross_zone dense-zone, not SkillCorner's).
 _WIDE_Y_LOW = 14.0  # cross_zone wide corridor (specialty.py:54)
@@ -196,10 +206,10 @@ def extract_xcross_features(
     is the contiguous tail (``XCROSS_GK_BLOCK``). ``score_differential`` is supplied by the caller
     (prepare/compute build it from match-context actions; NaN when unavailable). NaN-tolerant.
     """
-    if feature_set != "faithful":
+    if feature_set == "extended":
         raise NotImplementedError(
             "xCrossAttempt feature_set='extended' is a deferred extension point; "
-            "only 'faithful' is implemented (TF-17 PR-A). See the design spec."
+            "only 'faithful' and 'position_only' are implemented. See the design spec."
         )
     f = frame_data
     is_ball = f["is_ball"].to_numpy(dtype=bool)
@@ -327,7 +337,10 @@ def extract_xcross_features(
     period = int(f["period_id"].iloc[0])
     out["ten_minute_warning"] = 1 if period in (1, 2) and t >= 35 * 60 else 0
 
-    features = pd.DataFrame([out], columns=XCROSS_FEATURE_NAMES_FAITHFUL)
+    # Feature-set-driven final assembly of ONE computation (DRY): position_only selects `out` minus
+    # `ball_speed`; a velocity-less frame leaves `ball_speed` NaN but it is simply not selected.
+    _names = XCROSS_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XCROSS_FEATURE_NAMES_FAITHFUL
+    features = pd.DataFrame([out], columns=_names)
     return (features, box_detail) if return_box_detail else features
 
 
@@ -515,7 +528,11 @@ def prepare_xcross_training_data(
             )
 
     if not feat_rows:
-        empty = pd.DataFrame(columns=XCROSS_FEATURE_NAMES_FAITHFUL)
+        empty = pd.DataFrame(
+            columns=(
+                XCROSS_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XCROSS_FEATURE_NAMES_FAITHFUL
+            )
+        )
         if return_meta:
             return empty, np.array([], dtype=int), np.array([], dtype=object), pd.DataFrame()
         return empty, np.array([], dtype=int), np.array([], dtype=object)
@@ -541,17 +558,23 @@ def _chirality_block(model: XCrossAttemptModel) -> dict:
 
     def _predict(frame):
         feats = extract_xcross_features(
-            frame, gk_team_id="B", goal_x=105.0, carrier_player_id="A1", score_differential=float("nan")
+            frame,
+            gk_team_id="B",
+            goal_x=105.0,
+            carrier_player_id="A1",
+            score_differential=float("nan"),
+            feature_set=model.feature_set,
         )
         return model.predict_proba(feats)
 
     return chirality_fingerprint(_predict)
 
 
-def _feature_contract_block() -> dict:
+def _feature_contract_block(feature_set: XCrossFeatureSet = "faithful") -> dict:
     """Feature contract (ADR-050): this model's FEATURE VECTOR on the fixed probe frame, plus the
     geometry constants its extractor consumes. Mirror of the xS block; see that docstring for why
-    it takes no model.
+    it takes no model. ``feature_set`` selects the extractor's vector (r2: caller passes the variant's
+    feature set -- save passes ``self.feature_set``, load passes the loaded model's).
 
     Declares all three constants it actually reads: the box pair drives ``box_off_def_ratio`` and
     the goal width drives the post distances. The box constants are the canonical
@@ -573,6 +596,7 @@ def _feature_contract_block() -> dict:
                 goal_x=105.0,
                 carrier_player_id="A2",
                 score_differential=1.0,
+                feature_set=feature_set,
             )
             .iloc[0]
             .to_numpy(dtype=float)
@@ -618,8 +642,8 @@ class XCrossAttemptModel:
     """
 
     def __init__(self, *, feature_set: XCrossFeatureSet = "faithful", params: dict | None = None) -> None:
-        if feature_set != "faithful":
-            raise NotImplementedError("Only feature_set='faithful' is implemented (TF-17 PR-A).")
+        if feature_set == "extended":
+            raise NotImplementedError("feature_set='extended' is not implemented; use 'faithful' or 'position_only'.")
         self.feature_set: XCrossFeatureSet = feature_set
         self._params = _pinned_params(params)
         self._booster = None  # xgboost.Booster after fit/load
@@ -675,7 +699,13 @@ class XCrossAttemptModel:
         path.mkdir(parents=True, exist_ok=True)
         self._booster.save_model(str(path / "model.json"))
         metadata = {
-            "feature_names": XCROSS_FEATURE_NAMES_FAITHFUL,
+            # feature_set-appropriate: a position_only model's booster carries 15 columns, so its
+            # recorded feature_names must match (a hardcoded FAITHFUL list would misdescribe it).
+            "feature_names": (
+                XCROSS_FEATURE_NAMES_POSITION_ONLY
+                if self.feature_set == "position_only"
+                else XCROSS_FEATURE_NAMES_FAITHFUL
+            ),
             "feature_set": self.feature_set,
             "horizon_seconds": self.horizon_seconds,
             "cross_types": self.cross_types,
@@ -690,7 +720,7 @@ class XCrossAttemptModel:
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
-            "feature_contract": _feature_contract_block(),
+            "feature_contract": _feature_contract_block(self.feature_set),
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
@@ -759,7 +789,7 @@ class XCrossAttemptModel:
         from silly_kicks.tracking._feature_contract import verify_feature_contract
 
         verify_feature_contract(
-            _feature_contract_block(),
+            _feature_contract_block(model.feature_set),
             meta.get("feature_contract"),
             legacy_override=legacy_override,
             model_name="xCrossAttempt",
@@ -814,6 +844,29 @@ def _resolve_model(model: XCrossAttemptModel | str | None) -> XCrossAttemptModel
     raise TypeError(f"Unsupported model type: {type(model)!r}")
 
 
+def _resolve_xcross_model_for_frames(
+    frames: pd.DataFrame, model: XCrossAttemptModel | str | None
+) -> tuple[XCrossAttemptModel | None, str]:
+    """Layer B (see the xShot analogue for the full contract): override -> ``(model, "custom")``;
+    else velocity-keyed ``from_variant``; declared-unavailable-but-unbundled -> ``(None,
+    "position_only")`` + warn (NaN fallback, never default)."""
+    if model is not None:
+        return _resolve_model(model), "custom"
+    key = _variant_key_for_velocity(frames)
+    try:
+        return XCrossAttemptModel.from_variant(key), key
+    except FileNotFoundError:
+        if key == "position_only":
+            warnings.warn(
+                "No bundled xCrossAttempt 'position_only' variant; velocity-less frames yield NaN "
+                "(train + bundle it, or pass an explicit model=).",
+                UserWarning,
+                stacklevel=2,
+            )
+            return None, key
+        raise
+
+
 def compute_xcross_attempt(
     frames: pd.DataFrame,
     *,
@@ -830,30 +883,39 @@ def compute_xcross_attempt(
     enables ``score_differential`` via the match-context score lookup; omitted -> NaN
     (XGBoost-tolerant). ``pitch_control_cache`` is reserved for the deferred 'extended' variant.
     """
-    m = _resolve_model(model)
     out = frames.copy()
     out["xcross_attempt"] = np.nan
 
-    # VELOCITY-AVAILABILITY CONTRACT (ADR-054), at the SHARED seam. All three public entry points
-    # reach scoring through here -- `add_xcross_attempt`, `xcross_attempt_xfns` and a direct call --
-    # which is the same reason the ghost guard lives in `_serve_positions_core` rather than in one
-    # aggregator. Two prongs, because the two shapes are byte-identical at this seam and demand
-    # opposite responses:
-    if _velocity_unavailable_by_design(frames):
-        # DECLARED unavailable (the SB360 freeze-frame shape): degrade to NaN. `ball_speed` is a
-        # trained feature, so scoring here would have the model impute an input its source
-        # structurally cannot carry -- the ADR-053 fabrication shape. NaN is honest, and it is
-        # already what this function returns on every other unscoreable path below.
-        return out
-    if len(frames) and ("vx" not in frames.columns or "vy" not in frames.columns):
-        # NOT declared: the "forgot derive_velocities()" case. Fail loud, and name the remedy --
-        # this used to surface as a bare `KeyError: 'vx'`, which an upstream handler silently
-        # reinterpreted as "this aggregator emits nothing".
+    # VELOCITY-AVAILABILITY CONTRACT (ADR-054) + velocity-keyed auto-select, at the SHARED seam. All
+    # three public entry points reach scoring through here (`add_xcross_attempt`,
+    # `xcross_attempt_xfns`, a direct call).
+    #
+    # MIXED availability (some-but-not-all rows declare velocity unavailable) is a caller error: it
+    # would resolve to the default velocity model and fabricate ball_speed=NaN on the marked rows (M3).
+    if _velocity_availability_is_mixed(frames):
+        raise ValueError(
+            "compute_xcross_attempt: mixed velocity-availability -- some rows declare "
+            f"speed_source={SPEED_SOURCE_UNAVAILABLE!r} and some do not. Pass a single-availability "
+            "frame set (all freeze-frame, or all velocity-bearing)."
+        )
+    # UNDECLARED missing vx/vy (NOT the declared freeze-frame shape): the "forgot derive_velocities()"
+    # case. Fail loud (ADR-054 prong, preserved).
+    if (
+        not _velocity_unavailable_by_design(frames)
+        and len(frames)
+        and ("vx" not in frames.columns or "vy" not in frames.columns)
+    ):
         raise ValueError(
             "compute_xcross_attempt requires vx/vy on frames (call derive_velocities() first), or "
             f"declare speed_source {SPEED_SOURCE_UNAVAILABLE!r}. See the velocity-availability "
             "contract."
         )
+    # Layer B: override -> "custom"; declared-unavailable -> position_only (or NaN if unbundled, NEVER
+    # the default); else default. compute output stays byte-identical (the public
+    # `xcross_attempt_variant` column is added by add_xcross_attempt, which re-resolves the key).
+    m, _variant = _resolve_xcross_model_for_frames(frames, model)
+    if m is None:
+        return out  # declared-unavailable but no bundled position_only variant -> honest NaN
 
     # N-A (mirror xS): carrier inference + possession run on the FULL contiguous frames (cross-frame
     # hysteresis); restrict ONLY the per-frame extract + batched predict to link_frame_ids.
@@ -891,7 +953,12 @@ def compute_xcross_attempt(
             sd = raw if same_id(tip, home_team_id) else -raw
         feat_rows.append(
             extract_xcross_features(
-                grp, gk_team_id=def_team, goal_x=goal_x, carrier_player_id=carrier_pid, score_differential=sd
+                grp,
+                gk_team_id=def_team,
+                goal_x=goal_x,
+                carrier_player_id=carrier_pid,
+                score_differential=sd,
+                feature_set=m.feature_set,
             )
         )
         keys.append((gid, pid, frame_id, tip))
@@ -934,7 +1001,8 @@ def add_xcross_attempt(
     linking. ``actions_for_context`` (optional, PA-H1) threads match-context to score_differential
     at compute time; defaults to ``actions`` when scoring fresh.
     """
-    m = _resolve_model(model)
+    # Do NOT pre-resolve: pass the ORIGINAL `model` to compute so velocity-keyed auto-select fires
+    # (a pre-resolved instance would be seen as a "custom" override and bypass it).
     out = actions.copy()
     pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
 
@@ -947,7 +1015,7 @@ def add_xcross_attempt(
     else:
         scored = compute_xcross_attempt(
             frames,
-            model=m,
+            model=model,
             home_team_id=home_team_id,
             actions=actions_for_context if actions_for_context is not None else actions,
             link_frame_ids=link_frame_ids,
@@ -966,6 +1034,8 @@ def add_xcross_attempt(
     deduped = merged.drop_duplicates(subset=["action_id"], keep="first")
     col = deduped.set_index("action_id")["xcross_attempt"]
     out = out.merge(col.rename("xcross_attempt"), left_on="action_id", right_index=True, how="left")
+    # Provenance (closed set {default, position_only, custom}, D5): which variant auto-select served.
+    out["xcross_attempt_variant"] = "custom" if model is not None else _variant_key_for_velocity(frames)
     return out
 
 
@@ -987,7 +1057,6 @@ def xcross_attempt_xfns(
             for c in cols:
                 out[c] = np.nan
             return out
-        m = _resolve_model(model)
         slot_pointers = []
         link_frame_ids: set[int] = set()
         for slot in states[:3]:
@@ -995,9 +1064,9 @@ def xcross_attempt_xfns(
             slot_pointers.append(ptr)
             if "frame_id" in ptr.columns:
                 link_frame_ids |= {int(f) for f in ptr["frame_id"].dropna().astype(int).tolist()}
-        scored = compute_xcross_attempt(frames, model=m, home_team_id=home_team_id, link_frame_ids=link_frame_ids)
+        scored = compute_xcross_attempt(frames, model=model, home_team_id=home_team_id, link_frame_ids=link_frame_ids)
         for i, (slot, ptr) in enumerate(zip(states[:3], slot_pointers, strict=False)):
-            enriched = add_xcross_attempt(slot, scored, model=m, home_team_id=home_team_id, links=ptr)
+            enriched = add_xcross_attempt(slot, scored, model=model, home_team_id=home_team_id, links=ptr)
             out[cols[i]] = enriched["xcross_attempt"].to_numpy() if "xcross_attempt" in enriched else np.nan
         return out
 

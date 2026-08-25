@@ -22,7 +22,6 @@ import pandas as pd
 # monkeypatch tests) read them as _xcross_eval module attributes.
 from silly_kicks.tracking._model_eval import TF19_PROBE_ABS_FLOOR, TF19_PROBE_RATIO
 from silly_kicks.tracking._xcross_attempt import (
-    XCROSS_FEATURE_NAMES_FAITHFUL,
     XCROSS_GK_BLOCK,
     _pinned_params,
 )
@@ -86,10 +85,13 @@ def gk_block_ablation(
 ) -> dict:
     """Reported context: held-out PR-AUC + log-loss WITH vs WITHOUT XCROSS_GK_BLOCK, scored via
     the SAME ``_cv_score`` the acceptance gate uses (so deltas are gate-comparable for any seed/ns)."""
-    with_ = _cv_score(
-        X[XCROSS_FEATURE_NAMES_FAITHFUL], y, groups, params, seed=seed, negative_subsample=negative_subsample
-    )
-    base_cols = [c for c in XCROSS_FEATURE_NAMES_FAITHFUL if c not in XCROSS_GK_BLOCK]
+    # Feature-set-agnostic: the caller passes the shipped model's feature matrix (faithful 16 /
+    # position_only 15), so derive the columns from X rather than hardcoding FAITHFUL (which would
+    # KeyError on ['ball_speed'] for a position_only model). XCROSS_GK_BLOCK is velocity-free, so it
+    # is present in both sets and the "without GK" drop is correct either way.
+    feature_cols = list(X.columns)
+    with_ = _cv_score(X[feature_cols], y, groups, params, seed=seed, negative_subsample=negative_subsample)
+    base_cols = [c for c in feature_cols if c not in XCROSS_GK_BLOCK]
     wo_ = _cv_score(X[base_cols], y, groups, params, seed=seed, negative_subsample=negative_subsample)
     return {
         "with_gk_pr_auc": with_["pr_auc"],
@@ -220,7 +222,9 @@ def permutation_importance_report(
     from sklearn.model_selection import StratifiedGroupKFold
     from sklearn.utils import Bunch
 
-    X = X[XCROSS_FEATURE_NAMES_FAITHFUL]
+    # Feature-set-agnostic (see gk_block_ablation): derive columns from X, never hardcode FAITHFUL.
+    feature_cols = list(X.columns)
+    X = X[feature_cols]
     y = np.asarray(y, dtype=int)
     groups = np.asarray(groups).astype(str)
     n_splits = max(2, min(5, len(np.unique(groups))))
@@ -244,9 +248,9 @@ def permutation_importance_report(
 
     if per_fold:
         mean_imp = np.mean(np.vstack(per_fold), axis=0)
-        importances = {f: float(v) for f, v in zip(XCROSS_FEATURE_NAMES_FAITHFUL, mean_imp, strict=True)}
+        importances = {f: float(v) for f, v in zip(feature_cols, mean_imp, strict=True)}
     else:
-        importances = {f: float("nan") for f in XCROSS_FEATURE_NAMES_FAITHFUL}
+        importances = {f: float("nan") for f in feature_cols}
 
     coverage = float(X["score_differential"].notna().mean())
     return {

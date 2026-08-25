@@ -121,15 +121,18 @@ def test_unclassified_provider_fails_BEFORE_any_fitting(monkeypatch):
 
 def test_validate_provider_is_shared_not_duplicated():
     """Two copies of the membership set drift the moment a provider is added -- silently, because
-    an unclassified provider only surfaces deep inside a run."""
+    an unclassified provider only surfaces deep inside a run.
+
+    Pins the SINGLE SOURCE: `validate_provider` lives in `_provider_visibility` (moved out of
+    `_ghost_gk` under the id_compat clean-break precedent), so this test imports from there."""
     import pytest as _pytest
 
-    import silly_kicks.tracking._ghost_gk as gg
+    import silly_kicks.tracking._provider_visibility as pv
 
-    assert callable(gg.validate_provider)
-    gg.validate_provider("gradientsports")
+    assert callable(pv.validate_provider)
+    pv.validate_provider("gradientsports")
     with _pytest.raises(ValueError, match="provider"):
-        gg.validate_provider("nope")
+        pv.validate_provider("nope")
 
 
 def test_keeper_detection_mask_still_rejects_an_unknown_provider():
@@ -142,6 +145,113 @@ def test_keeper_detection_mask_still_rejects_an_unknown_provider():
 
     with _pytest.raises(ValueError, match="provider"):
         keeper_detection_mask(pd.Series([True, False]), provider="nope")
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 (ADR: detection-aware visibility guardrails): the ghost-trainer consume-time pre-flight
+# fails on a detection-aware shard whose `visibility` was discarded, BEFORE any extraction/fit --
+# via parquet null_count metadata, so a MIXED corpus is caught, not just a systematic one.
+# Co-located here (review S2) beside test_unclassified_provider_fails_BEFORE_any_fitting.
+# ---------------------------------------------------------------------------
+
+
+def _write_shard(path, *, provider, visibility):
+    import pandas as pd
+
+    n = len(visibility) if visibility is not None else 2
+    data = {"source_provider": [provider] * n, "x": [float(i) for i in range(n)]}
+    if visibility is not None:
+        data["visibility"] = visibility
+    pd.DataFrame(data).to_parquet(path)
+    return path
+
+
+def test_validate_corpus_visibility_raises_before_fit_on_all_null_skillcorner(tmp_path, monkeypatch):
+    """Review B3: an all-null-visibility SkillCorner shard fails the pre-flight, and fit is never
+    reached (spy call-count 0)."""
+    import pandas as pd
+    import pytest as _pytest
+
+    import silly_kicks.tracking._ghost_gk as gg
+
+    shard = _write_shard(
+        tmp_path / "skillcorner__m1.parquet",
+        provider="skillcorner",
+        visibility=pd.array([None, None], dtype="boolean"),
+    )
+
+    calls = {"n": 0}
+    monkeypatch.setattr(gg.GhostGkModel, "fit", lambda self, *a, **k: calls.__setitem__("n", 1))
+
+    t = _load("train_ghost_gk")
+    with _pytest.raises(ValueError, match=r"tracking\.skillcorner"):
+        t.validate_corpus_visibility({shard: "skillcorner"})
+    assert calls["n"] == 0
+
+
+def test_validate_corpus_visibility_ok_on_native_skillcorner(tmp_path):
+    shard = _write_shard(tmp_path / "skillcorner__m2.parquet", provider="skillcorner", visibility=[True, False, True])
+    t = _load("train_ghost_gk")
+    assert t.validate_corpus_visibility({shard: "skillcorner"}) is None
+
+
+def test_validate_corpus_visibility_noop_for_fully_observed(tmp_path):
+    # A fully-observed provider legitimately carries no `visibility` column -> no-op (not a raise).
+    shard = _write_shard(tmp_path / "gradientsports__m3.parquet", provider="gradientsports", visibility=None)
+    t = _load("train_ghost_gk")
+    assert t.validate_corpus_visibility({shard: "gradientsports"}) is None
+
+
+def test_validate_corpus_visibility_raises_when_column_absent_for_skillcorner(tmp_path):
+    # M2 (consume side): a detection-aware shard that DROPPED the column is a discarding regression.
+    shard = _write_shard(tmp_path / "skillcorner__m4.parquet", provider="skillcorner", visibility=None)
+    import pytest as _pytest
+
+    t = _load("train_ghost_gk")
+    with _pytest.raises(ValueError, match="visibility"):
+        t.validate_corpus_visibility({shard: "skillcorner"})
+
+
+def test_validate_corpus_visibility_catches_a_mixed_corpus(tmp_path):
+    """Review S3 / the load-bearing 'one question': reading EVERY detection-aware shard (not sampling
+    one) catches a corpus where only a TAIL shard was kloppy-rebuilt."""
+    import pandas as pd
+    import pytest as _pytest
+
+    good = _write_shard(tmp_path / "skillcorner__ok.parquet", provider="skillcorner", visibility=[True, False])
+    bad = _write_shard(
+        tmp_path / "skillcorner__bad.parquet",
+        provider="skillcorner",
+        visibility=pd.array([None, None], dtype="boolean"),
+    )
+    t = _load("train_ghost_gk")
+    with _pytest.raises(ValueError, match=r"tracking\.skillcorner"):
+        t.validate_corpus_visibility({good: "skillcorner", bad: "skillcorner"})
+
+
+def test_main_calls_validate_corpus_visibility_before_extraction():
+    """Wiring + ordering: main() must call validate_corpus_visibility, and BEFORE the per-frame
+    keeper_detection_mask extraction / the model fit -- else 'fires before extraction' is not
+    actually guaranteed by the pre-flight function raising in isolation."""
+    import ast
+
+    src = (REPO / "scripts" / "train_ghost_gk.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    main = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def _call_lines(pred):
+        return [n.lineno for n in ast.walk(main) if isinstance(n, ast.Call) and pred(n)]
+
+    vis = _call_lines(lambda n: isinstance(n.func, ast.Name) and n.func.id == "validate_corpus_visibility")
+    assert vis, "main() must call validate_corpus_visibility"
+    later = _call_lines(
+        lambda n: (
+            (isinstance(n.func, ast.Name) and n.func.id == "keeper_detection_mask")
+            or (isinstance(n.func, ast.Attribute) and n.func.attr == "fit")
+        )
+    )
+    assert later, "expected keeper_detection_mask / .fit in main()"
+    assert min(vis) < min(later), "validate_corpus_visibility must run BEFORE extraction/fit"
 
 
 # ---------------------------------------------------------------------------

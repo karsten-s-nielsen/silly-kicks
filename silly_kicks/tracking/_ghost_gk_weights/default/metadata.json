@@ -44,7 +44,7 @@
     "gamma": 0.25
   },
   "sklearn_version": "1.9.0",
-  "training_commit": "de8ca604d084baabc423d53c5969088a4809c72c",
+  "training_commit": "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a",
   "training_platform": "dgx-spark-aarch64",
   "corpus_provenance": {
     "providers": [
@@ -60,17 +60,18 @@
   "stores_training_data": false,
   "pitch_length": 105.0,
   "pitch_width": 68.0,
+  "feature_set": "faithful",
   "chirality": {
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      2.4759452533,
-      32.5674411489
+      2.7028606615,
+      32.4338939123
     ]
   },
   "feature_contract": {
     "version": "feature-contract-1",
-    "probe_sha256": "9f17a54c10b8237f1f60ac7f84953ac8948b90e92bbc45eabc7bc3378138b398",
+    "probe_sha256": "d86fc4ab50ba6d14bee656539383512cec95ea328402271a7dcc930dfb001135",
     "fingerprint": [
       17.0,
       20.0,

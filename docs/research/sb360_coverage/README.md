@@ -17,9 +17,10 @@ Matrix: [`behaviour_matrix.md`](behaviour_matrix.md).
 **SB360 headroom is substantially larger than expected.** Of 486 verdicts across 34 entry
 points, **299 are `works`** — the column produces identical values with or without velocity —
 and only **4 are `silent_degrade`** -- all `add_ghost_gk`, and **since REPAIRED** (see below), so
-the regenerated `behaviour_matrix.md` now reports **489 verdicts and ZERO `silent_degrade`**. The
-figures in this report are the measurement AS TAKEN at 4.75.0 and are left standing: rewriting them
-would erase the finding that motivated the repair.
+immediately after the repair the regenerated `behaviour_matrix.md` reported **489 verdicts and ZERO
+`silent_degrade`** (the live matrix has since grown as aggregators were added, and still carries ZERO
+`silent_degrade`). The figures in this report are the measurement AS TAKEN at 4.75.0 and are left
+standing: rewriting them would erase the finding that motivated the repair.
 
 These work on freeze-frames today, unchanged:
 

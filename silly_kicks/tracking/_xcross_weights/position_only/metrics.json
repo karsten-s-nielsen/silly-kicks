@@ -1,0 +1,120 @@
+{
+  "run_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "shipped_variant": "public",
+  "n_rows": 92001,
+  "n_positive": 2849,
+  "providers": [
+    "idsse",
+    "skillcorner"
+  ],
+  "candidates": {
+    "public": {
+      "params": {
+        "n_estimators": 141.41913598139377,
+        "max_depth": 2.313859633587296,
+        "learning_rate": 0.05480319440585896,
+        "min_child_weight": 10.285824751351434,
+        "reg_lambda": 3.1019112561289663
+      },
+      "metrics": {
+        "pr_auc": 0.061119334574545284,
+        "brier": 0.029961612075567245,
+        "log_loss": 0.13242643624544143,
+        "pr_auc_std": 0.017725508106325453,
+        "n_usable_folds": 5,
+        "positive_rate": 0.03096705470592711,
+        "base_rate_brier": 0.03000809622876723
+      },
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ]
+    }
+  },
+  "acceptance": {
+    "enough_usable_folds": true,
+    "pr_auc_gt_base_rate": true,
+    "brier_lt_base_rate_brier": true,
+    "log_loss_lt_uniform": true
+  },
+  "estimates_are_cv_not_shipped_fit": true,
+  "artifact_size_bytes": 111094,
+  "gk_block_ablation": {
+    "with_gk_pr_auc": 0.061119334574545284,
+    "without_gk_pr_auc": 0.058983915075459546,
+    "with_gk_log_loss": 0.13242643624544143,
+    "without_gk_log_loss": 0.13206217885017396,
+    "delta_pr_auc": 0.0021354194990857375,
+    "delta_log_loss": 0.00036425739526746437,
+    "note": "reported context (marginal predictive value); NOT the tf19_ready gate"
+  },
+  "gk_substitution_probe": {
+    "gk_median_abs_delta": 0.005470305681228638,
+    "gk_mean_abs_delta": 0.009982451542891796,
+    "gk_p90_abs_delta": 0.028598531335592273,
+    "nearest_def_median_abs_delta": 0.002536226063966751,
+    "random_band_median_abs_delta": 0.0,
+    "gk_zero_fraction": 0.12083333333333333,
+    "random_band_zero_fraction": 0.8641666666666666,
+    "gk_median_abs_delta_at_2m": 0.003670858219265938,
+    "gk_median_abs_delta_at_4m": 0.009763603564351797,
+    "gk_dose_ratio_4m_over_2m": 2.6597604650348567,
+    "tf19_ready": false,
+    "tf19_reason": "GK |\u0394| did not clear ratio>=2.0 x control AND abs-floor>=0.01",
+    "tf19_probe_ratio": 2.0,
+    "tf19_probe_abs_floor": 0.01,
+    "n_frames_used": 200,
+    "note": "responsiveness (necessary for TF-19), NOT causal GK primacy (PR-C); nearest-def control is partially self-limiting (floating identity)"
+  },
+  "permutation_importance": {
+    "importances": {
+      "ball_r": 0.00920285049039659,
+      "ball_theta": 0.0012628972940811577,
+      "score_differential": -0.00043530280821614547,
+      "dist_nearest_def": 0.008474683078175999,
+      "space_controlled": 0.0001039404831352159,
+      "dist_nearest_teammate": 0.017037753397355176,
+      "dist_endline": 0.002951990154653715,
+      "box_off_def_ratio": 0.0027253080270254713,
+      "ten_minute_warning": -0.0009220011363266153,
+      "gk_r": 0.000396204983834637,
+      "gk_theta": 0.0038219603684008937,
+      "gk_lateral_offset": 0.000935037258564185,
+      "gk_dist_near_post": 0.00098145163693476,
+      "gk_dist_far_post": 0.0030511754489905055,
+      "gk_carrier_side": 0.0022821628356659877
+    },
+    "score_differential_importance": -0.00043530280821614547,
+    "score_differential_coverage": 1.0,
+    "scoring": "average_precision",
+    "n_repeats": 10,
+    "n_folds_used": 5,
+    "held_out": true,
+    "note": "CV-held-out, architecture-representative; NOT measured on the production weights' own training data. score_differential importance is qualified by coverage."
+  },
+  "score_differential_range_probe": {
+    "coverage": 1.0,
+    "min": -3.0,
+    "max": 3.0,
+    "abs_ge_12_count": 0
+  },
+  "probe_sample_matches": [
+    [
+      "skillcorner",
+      "1886347"
+    ],
+    [
+      "skillcorner",
+      "1899585"
+    ]
+  ],
+  "probe_sample_in_training_folds": {
+    "1886347": true,
+    "1899585": true
+  },
+  "probe_gated_on_held_out": false,
+  "tf19_ready": false,
+  "reproducibility": "public"
+}

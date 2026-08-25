@@ -24,11 +24,32 @@ def _unmarked():
     return actions, frames, links
 
 
-def test_marked_frames_degrade_to_nan_not_a_coordinate():
+def test_marked_frames_degrade_to_nan_not_a_coordinate(monkeypatch):
+    # The position_only ghost is BUNDLED as of commit 2, so a marked (velocity-less) frame now SERVES a
+    # coordinate via that variant (the SB360 unlock; real-weights serve covered in
+    # test_position_only_bundled). This remains the FALLBACK contract: with NO position_only variant
+    # available, auto-select degrades to honest NaN rather than fabricating a coordinate from the
+    # faithful model. Force the unbundled path to keep that covered.
+    import silly_kicks.tracking._ghost_gk as _gg
+
+    monkeypatch.delenv("SILLY_KICKS_GHOST_GK_PATH", raising=False)
+
+    def _boom(cls, v):
+        if v == "position_only":
+            raise FileNotFoundError
+        raise AssertionError("must NOT fall back to the default on velocity-less frames")
+
+    monkeypatch.setattr(_gg.GhostGkModel, "from_variant", classmethod(_boom))
+
     actions, frames, _ = _marked()
     out = T.add_ghost_gk(actions, frames, home_team_id=1)
     assert out["ghost_gk_x"].isna().all(), "marked frames must not produce a coordinate"
     assert out["ghost_gk_y"].isna().all()
+    # Provenance (Task 7): the SB360 degrade records which variant auto-select chose. `position_only`
+    # even when unbundled (resolver picks it, then None -> NaN). D2: assert the VALUE type, not the
+    # dtype literal (object on pandas 2, StringDtype on pandas 3 -- ADR-057).
+    assert (out["ghost_gk_variant"] == "position_only").all()
+    assert all(isinstance(v, str) for v in out["ghost_gk_variant"])
 
 
 def test_unmarked_velocity_less_frames_RAISE():

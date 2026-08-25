@@ -33,9 +33,18 @@ from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as spadlconfig
 
 from . import _geometry as _geo
+from . import _provider_visibility as _pv
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
 from ._gk_resolve import resolve_defended_goals
-from ._velocity_availability import velocity_unavailable_by_design as _velocity_unavailable_by_design
+from ._velocity_availability import (
+    variant_key_for_velocity as _variant_key_for_velocity,
+)
+from ._velocity_availability import (
+    velocity_availability_is_mixed as _velocity_availability_is_mixed,
+)
+from ._velocity_availability import (
+    velocity_unavailable_by_design as _velocity_unavailable_by_design,
+)
 
 # ---------------------------------------------------------------------------
 # Grid constants (fixed for API stability — see spec Density Grid)
@@ -162,7 +171,7 @@ _ENV_VAR = "SILLY_KICKS_GHOST_GK_PATH"
 _WEIGHTS_ROOT = Path(__file__).parent / "_ghost_gk_weights"
 
 #: Valid model variant names for the ``model`` parameter.
-GhostGkVariant = Literal["default", "full"]
+GhostGkVariant = Literal["default", "full", "position_only"]
 
 
 _HF_REPO_ID = "silly-kicks/ghost-gk-v1"
@@ -227,6 +236,31 @@ def _resolve_model(model: GhostGkModel | GhostGkVariant | None) -> GhostGkModel:
     raise FileNotFoundError(msg)
 
 
+def _resolve_ghost_model_for_frames(
+    frames: pd.DataFrame, model: GhostGkModel | GhostGkVariant | None
+) -> tuple[GhostGkModel | None, str]:
+    """Layer B (see the xShot analogue for the full contract): override -> ``(model, "custom")``;
+    else velocity-keyed ``from_variant``; declared-unavailable-but-unbundled -> ``(None,
+    "position_only")`` + warn (NaN fallback, never default).
+
+    An env-var override (``SILLY_KICKS_GHOST_GK_PATH``) also counts as an explicit override -> the env
+    model, keyed ``"custom"`` -- so auto-select fires only when the caller has chosen nothing at all.
+    """
+    if model is not None or os.environ.get(_ENV_VAR) is not None:
+        return _resolve_model(model), "custom"
+    key = _variant_key_for_velocity(frames)
+    try:
+        return GhostGkModel.from_variant(key), key
+    except FileNotFoundError:
+        if key == "position_only":
+            # No bundled position_only variant: return None so the serve seam raises the degrade
+            # signal (ghost_gk_source=velocity_unavailable). No warn -- unlike xShot/xCross (whose
+            # compute-NaN is otherwise silent), ghost's degrade IS column-signalled, and every SB360
+            # serve would otherwise warn until the variant ships.
+            return None, key
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Feature engineering
 # ---------------------------------------------------------------------------
@@ -240,54 +274,19 @@ _GOAL_Y = _FIELD_WIDTH / 2.0  # 34.0
 _VELOCITY_WINDOW_S = 0.5
 _SET_PIECE_DECAY_SECONDS = 10.0
 
-# Which providers' feeds carry a per-player detection flag (spec 4.3).
-# A null `visibility` is AMBIGUOUS: for a fully-observed provider it means "no flag exists and
-# none is needed"; for a detection-aware provider it means "the pipeline DISCARDED the flag"
-# (the kloppy gateway hard-codes visibility=None). Reading the second as the first would train
-# ghost-GK on interpolator output -- ~80% of SkillCorner keeper positions are extrapolated.
-_DETECTION_AWARE_PROVIDERS = frozenset({"skillcorner"})
-# metrica is full optical tracking (all players every frame, NO detection flag) -- fully observed
-# like the native providers. Classifying it here keeps ghost-GK trainable on metrica (a pre-PR
-# capability the always-run detected-only filter would otherwise crash); metrica's exclusion from
-# the registered GKDV corpora is a separate corpus-composition decision (Tier-2 data quality).
-_FULLY_OBSERVED_PROVIDERS = frozenset({"gradientsports", "sportec", "idsse", "metrica"})
-
-
-def validate_provider(provider: str) -> None:
-    """Raise unless ``provider`` is classified as detection-aware or fully observed.
-
-    Single source for the membership rule: both :func:`keeper_detection_mask` and the ghost trainer's
-    startup check call this. Two copies of the set would drift the moment a provider is added --
-    and the failure mode of that drift is silent, because an unclassified provider only surfaces
-    deep inside a training run, after the expensive extraction.
-
-    Raises ``ValueError`` naming the two sets and their current members.
-
-    Examples
-    --------
-    >>> validate_provider("gradientsports")
-    """
-    known = _DETECTION_AWARE_PROVIDERS | _FULLY_OBSERVED_PROVIDERS
-    if provider not in known:
-        raise ValueError(
-            f"unclassified provider {provider!r}: add it to _DETECTION_AWARE_PROVIDERS or "
-            f"_FULLY_OBSERVED_PROVIDERS -- an unknown provider is NOT assumed observed. "
-            f"Known: {sorted(known)}"
-        )
+# The provider visibility taxonomy (`_DETECTION_AWARE_PROVIDERS`, `_FULLY_OBSERVED_PROVIDERS`), the
+# `validate_provider` membership rule, and the all-null `assert_detection_aware_visibility` rule live
+# in the neutral `_provider_visibility` module (imported above as `_pv`) -- accessed qualified, never
+# `from ._provider_visibility import ...`, so those names are NOT re-exported from `_ghost_gk` (a
+# transitive re-export would silently keep the old import path alive; single source is the point).
 
 
 def keeper_detection_mask(visibility: pd.Series, *, provider: str) -> np.ndarray:
     """Rows whose keeper was ACTUALLY DETECTED. Fail-closed on the ambiguous null (spec 4.3)."""
-    validate_provider(provider)
-    if provider in _FULLY_OBSERVED_PROVIDERS:
+    _pv.validate_provider(provider)
+    if provider in _pv._FULLY_OBSERVED_PROVIDERS:
         return np.ones(len(visibility), dtype=bool)
-    if visibility.isna().all():
-        raise ValueError(
-            f"keeper_detection_mask: provider {provider!r} carries a detection flag, but "
-            "`visibility` is entirely null -- the pipeline discarded it (the kloppy gateway "
-            "hard-codes visibility=None). Build these frames with tracking.skillcorner instead; "
-            "training on undetected keepers means training on the interpolator (spec 4.3)."
-        )
+    _pv.assert_detection_aware_visibility(visibility, provider=provider)
     return visibility.fillna(False).astype(bool).to_numpy()
 
 
@@ -370,6 +369,13 @@ GHOST_GK_FEATURE_NAMES: list[str] = [
     "defensive_line_speed",
     "defending_centroid_vx",
 ]
+
+GhostFeatureSet = Literal["faithful", "position_only"]
+# Position-only variant: drop the 5 velocity-derived features (ball_vx/vy/speed + the two cross-frame
+# temporal derivatives that need prev-frame state) so a fitted model scores on a LONE SB360 freeze
+# frame with no predecessor. Dropped (shorter vector), never NaN-filled (feature contract, ADR-050).
+_GHOST_VELOCITY_FEATURES = ("ball_vx", "ball_vy", "ball_speed", "defensive_line_speed", "defending_centroid_vx")
+GHOST_GK_FEATURE_NAMES_POSITION_ONLY = [f for f in GHOST_GK_FEATURE_NAMES if f not in _GHOST_VELOCITY_FEATURES]  # 21
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +566,7 @@ def extract_ghost_gk_features(
     prev_defensive_line_x: float | None = None,
     prev_defending_centroid_x: float | None = None,
     dt: float = _VELOCITY_WINDOW_S,
+    feature_set: GhostFeatureSet = "faithful",
 ) -> pd.DataFrame:
     """Extract 26 ghost-GK features from frame data in goal-relative coords.
 
@@ -762,7 +769,13 @@ def extract_ghost_gk_features(
         def_line_speed,
         def_centroid_vx,
     ]
-    return pd.DataFrame([row], columns=GHOST_GK_FEATURE_NAMES)
+    # Feature-set-driven final assembly of ONE computation (DRY): position_only selects the same
+    # values minus the 5 velocity features. On a lone freeze frame the dropped velocity features would
+    # be NaN (no vx/vy, no predecessor for the cross-frame derivatives) -- but they are not selected,
+    # so the 21-vector is finite (the single-frame obligation).
+    _values = dict(zip(GHOST_GK_FEATURE_NAMES, row, strict=True))
+    _names = GHOST_GK_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else GHOST_GK_FEATURE_NAMES
+    return pd.DataFrame([[_values[c] for c in _names]], columns=_names)
 
 
 # ---------------------------------------------------------------------------
@@ -779,6 +792,7 @@ def _extract_all_ghost_gk_features(
     phase_at_time: Callable[[Any, float], int] | None = None,
     subsample_fps: float | None = None,
     link_frame_ids: set[int] | None = None,
+    feature_set: GhostFeatureSet = "faithful",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Shared batch helper: iterate frames, extract features for every GK.
 
@@ -958,6 +972,7 @@ def _extract_all_ghost_gk_features(
                     prev_defensive_line_x=prev_dl_x,
                     prev_defending_centroid_x=prev_dc_x,
                     dt=actual_dt,
+                    feature_set=feature_set,
                 )
                 feature_rows.append(feat)
 
@@ -985,8 +1000,13 @@ def _extract_all_ghost_gk_features(
             prev_timestamps[state_key] = time_s
 
     if not feature_rows:
+        # feature_set-appropriate empty columns, matching the non-empty concat below (a hardcoded
+        # faithful 26-col empty frame would fail the position_only width-check in prepare).
+        _empty_names = (
+            GHOST_GK_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else GHOST_GK_FEATURE_NAMES
+        )
         return (
-            pd.DataFrame(columns=GHOST_GK_FEATURE_NAMES),
+            pd.DataFrame(columns=_empty_names),
             pd.DataFrame(
                 columns=[
                     "game_id",
@@ -1014,6 +1034,7 @@ def prepare_ghost_gk_training_data(
     actions: pd.DataFrame | None = ...,
     subsample_fps: float | None = ...,
     carrier_params: dict | None = ...,
+    feature_set: GhostFeatureSet = ...,
     return_meta: Literal[False] = ...,
 ) -> tuple[pd.DataFrame, pd.DataFrame]: ...
 
@@ -1026,6 +1047,7 @@ def prepare_ghost_gk_training_data(
     actions: pd.DataFrame | None = ...,
     subsample_fps: float | None = ...,
     carrier_params: dict | None = ...,
+    feature_set: GhostFeatureSet = ...,
     return_meta: Literal[True],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: ...
 
@@ -1037,6 +1059,7 @@ def prepare_ghost_gk_training_data(
     actions: pd.DataFrame | None = None,
     subsample_fps: float | None = 1.0,
     carrier_params: dict | None = None,
+    feature_set: GhostFeatureSet = "faithful",
     return_meta: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Assemble training features + labels from one game's tracking frames.
@@ -1111,10 +1134,13 @@ def prepare_ghost_gk_training_data(
         score_at_time=score_fn,
         phase_at_time=phase_fn,
         subsample_fps=subsample_fps,
+        feature_set=feature_set,
     )
 
     if len(meta) == 0:
-        empty_features = pd.DataFrame(columns=GHOST_GK_FEATURE_NAMES)
+        empty_features = pd.DataFrame(
+            columns=(GHOST_GK_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else GHOST_GK_FEATURE_NAMES)
+        )
         empty_labels = pd.DataFrame(columns=["gk_x", "gk_y"])
         # `meta` here is the 8-column empty frame from _extract_all_ghost_gk_features.
         if return_meta:
@@ -1131,9 +1157,11 @@ def prepare_ghost_gk_training_data(
     labels = labels[valid.values].reset_index(drop=True)
     meta = meta[valid.values].reset_index(drop=True)
 
-    # Validate feature width
-    if features.shape[1] != len(GHOST_GK_FEATURE_NAMES):
-        raise ValueError(f"Expected {len(GHOST_GK_FEATURE_NAMES)} features, got {features.shape[1]}")
+    # Validate feature width against the feature_set-appropriate count (26 faithful / 21
+    # position_only) -- a hardcoded 26 would reject a valid position_only matrix.
+    _expected_names = GHOST_GK_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else GHOST_GK_FEATURE_NAMES
+    if features.shape[1] != len(_expected_names):
+        raise ValueError(f"Expected {len(_expected_names)} features, got {features.shape[1]}")
 
     # Filter label domain (sweeper-keeper rushes, off-pitch artifacts)
     in_domain = (
@@ -1546,16 +1574,23 @@ def _chirality_block(model: GhostGkModel) -> dict:
 
     def _predict(frame):
         feats = extract_ghost_gk_features(
-            frame, gk_team_id="B", goal_x=105.0, score_diff=0.0, phase=0, ball_carrier_team_id="A"
+            frame,
+            gk_team_id="B",
+            goal_x=105.0,
+            score_diff=0.0,
+            phase=0,
+            ball_carrier_team_id="A",
+            feature_set=model.feature_set,
         )
         return model.predict_mean(feats)
 
     return chirality_fingerprint(_predict)
 
 
-def _feature_contract_block() -> dict:
+def _feature_contract_block(feature_set: GhostFeatureSet = "faithful") -> dict:
     """Feature contract (ADR-050): this model's FEATURE VECTOR on the fixed probe frame, plus the
-    geometry constants its extractor consumes. Mirror of the xS/xCross blocks.
+    geometry constants its extractor consumes. Mirror of the xS/xCross blocks. ``feature_set`` selects
+    the extractor's vector (r2): a position_only artifact fingerprints its 21-feature vector, not 26.
 
     Ghost's declared half-width is the canonical 20.16, and its predicate reads the same source --
     ADR-050 §6 closed. It previously declared **20.15** against a 40.3 m box because the bundled
@@ -1578,7 +1613,8 @@ def _feature_contract_block() -> dict:
                 prev_defensive_line_x=90.0,
                 prev_defending_centroid_x=94.0,
                 dt=0.04,
-            )[list(GHOST_GK_FEATURE_NAMES)]
+                feature_set=feature_set,
+            )[list(GHOST_GK_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else GHOST_GK_FEATURE_NAMES)]
             .iloc[0]
             .to_numpy(dtype=float)
         )
@@ -1617,7 +1653,15 @@ class GhostGkModel:
     See NOTICE for full bibliographic citations.
     """
 
-    def __init__(self, *, n_estimators: int = 500, max_depth: int = 8, verbose: int = 0):
+    def __init__(
+        self,
+        *,
+        n_estimators: int = 500,
+        max_depth: int = 8,
+        verbose: int = 0,
+        feature_set: GhostFeatureSet = "faithful",
+    ):
+        self.feature_set: GhostFeatureSet = feature_set
         self._n_estimators = n_estimators
         self._max_depth = max_depth
         self._verbose = verbose
@@ -1645,6 +1689,16 @@ class GhostGkModel:
         self.carrier_params: dict = dict(DEFAULT_CARRIER_PARAMS)
         self.training_commit: str | None = None
         self.training_platform: str | None = None
+
+    def _feature_names(self) -> list[str]:
+        """The model's feature columns for its ``feature_set`` (26 faithful / 21 position_only).
+
+        The single source for every positional column select on the fit/predict/save path -- fit and
+        predict_mean/_density index ``X[:, feature_idx]`` positionally, so a hardcoded FAITHFUL list
+        would ``KeyError: ['ball_vx', ...]`` on a position_only model (the shape the xShot train smoke
+        caught for ``prepare_*``). ``feature_set`` is faithful/position_only by construction.
+        """
+        return GHOST_GK_FEATURE_NAMES_POSITION_ONLY if self.feature_set == "position_only" else GHOST_GK_FEATURE_NAMES
 
     def fit(
         self,
@@ -1679,7 +1733,7 @@ class GhostGkModel:
 
         # Canonical fit-time column order (predict_mean / predict_density index X
         # positionally by feature_idx, so reorder here once at the source).
-        X = features[GHOST_GK_FEATURE_NAMES].values.astype(np.float64)
+        X = features[self._feature_names()].values.astype(np.float64)
         y_x = labels["gk_x"].values.astype(np.float64)
         y_y = labels["gk_y"].values.astype(np.float64)
 
@@ -1779,7 +1833,7 @@ class GhostGkModel:
         # Reindex to the canonical fit-time column order (Hyrum guard): the reconstruction
         # indexes X[:, feature_idx] positionally — a reordered DataFrame would silently
         # mis-predict.
-        X = features[GHOST_GK_FEATURE_NAMES].values.astype(np.float64)
+        X = features[self._feature_names()].values.astype(np.float64)
         out = np.empty((len(X), 2), dtype=np.float64)
         out[:, 0] = self._baseline_x + _vectorized_leaf_values(self._tree_nodes, X)
         out[:, 1] = self._baseline_y + _vectorized_leaf_values(self._tree_nodes_y, X)
@@ -1828,7 +1882,7 @@ class GhostGkModel:
 
         # Reindex to the canonical fit-time column order (same positional guard as
         # predict_mean): the leaf traversal indexes X[:, feature_idx] positionally.
-        X = features[GHOST_GK_FEATURE_NAMES].values.astype(np.float64)
+        X = features[self._feature_names()].values.astype(np.float64)
         query_leaves = _vectorized_leaf_indices(self._tree_nodes, X)
 
         # Precompute grid mesh
@@ -1960,7 +2014,9 @@ class GhostGkModel:
         import sklearn
 
         metadata = {
-            "feature_names": GHOST_GK_FEATURE_NAMES,
+            # feature_set-appropriate (21 for position_only): the recorded names must match the
+            # trees actually fitted, not the faithful 26 (mirrors the xShot/xCross save fix).
+            "feature_names": self._feature_names(),
             "grid_spec": {
                 "x_min": GRID_X_MIN,
                 "x_max": GRID_X_MAX,
@@ -1987,8 +2043,9 @@ class GhostGkModel:
             # feature with no signal. Added alongside the feature contract (ADR-050).
             "pitch_length": _geo.PITCH_LENGTH,
             "pitch_width": _geo.PITCH_WIDTH,
+            "feature_set": self.feature_set,
             "chirality": _chirality_block(self),
-            "feature_contract": _feature_contract_block(),
+            "feature_contract": _feature_contract_block(self.feature_set),
         }
         meta_path = path / "metadata.json"
         with open(meta_path, "w", newline="\n") as f:
@@ -2096,6 +2153,7 @@ class GhostGkModel:
         model = cls(
             n_estimators=metadata.get("n_estimators", 500),
             max_depth=metadata.get("max_depth", 8),
+            feature_set=metadata.get("feature_set", "faithful"),
         )
         model._tree_nodes = tree_nodes
         model._tree_nodes_y = tree_nodes_y
@@ -2155,7 +2213,7 @@ class GhostGkModel:
         from silly_kicks.tracking._feature_contract import verify_feature_contract
 
         verify_feature_contract(
-            _feature_contract_block(),
+            _feature_contract_block(model.feature_set),
             metadata.get("feature_contract"),
             legacy_override=legacy_override,
             model_name="GhostGk",
@@ -2386,16 +2444,29 @@ def _serve_positions_core(
     # The model is an HGBR: absent velocity features are NOT zero-filled, they are routed down
     # each split's LEARNED missing-value direction, fitted where NaN meant an occasional dropped
     # measurement. On a freeze-frame 5 of 26 features are absent on 100% of rows, so the output is
-    # a plausible coordinate with no basis. Refuse instead.
-    if _velocity_unavailable_by_design(frames):
-        raise _GhostVelocityUnavailableError
-    if "vx" not in frames.columns or "vy" not in frames.columns:
+    # a plausible coordinate with no basis. So on a declared-unavailable freeze frame, serve the
+    # POSITION-ONLY ghost variant (auto-selected below) instead -- it drops the 5 velocity features;
+    # only if that variant is not bundled do we refuse (raise the degrade signal).
+    #
+    # MIXED availability -> caller error (would fabricate on the marked rows, M3).
+    if _velocity_availability_is_mixed(frames):
+        raise ValueError(
+            "compute_ghost_gk: mixed velocity-availability -- some rows declare speed_source "
+            "unavailable and some do not. Pass a single-availability frame set."
+        )
+    # UNDECLARED missing vx/vy (NOT the declared freeze-frame shape): forgot derive_velocities().
+    if not _velocity_unavailable_by_design(frames) and ("vx" not in frames.columns or "vy" not in frames.columns):
         raise ValueError(
             "compute_ghost_gk requires vx/vy on frames (call derive_velocities() first), or "
             "declare speed_source unavailable. See the velocity-availability contract."
         )
 
-    resolved = _resolve_model(model)
+    # Layer B: override/env -> "custom"; declared-unavailable -> position_only ghost (or None if
+    # unbundled); else default. A None resolution raises the degrade signal, so the entry points still
+    # emit the honest velocity-unavailable degrade (ghost_gk_source / zero rows) they did before.
+    resolved, _variant = _resolve_ghost_model_for_frames(frames, model)
+    if resolved is None:
+        raise _GhostVelocityUnavailableError
 
     # Build context callbacks from actions
     score_fn = _build_score_lookup(actions, home_team_id) if actions is not None else None
@@ -2425,6 +2496,7 @@ def _serve_positions_core(
         score_at_time=score_fn,
         phase_at_time=phase_fn,
         link_frame_ids=link_frame_ids,
+        feature_set=resolved.feature_set,
     )
 
     if len(batch_features) == 0:

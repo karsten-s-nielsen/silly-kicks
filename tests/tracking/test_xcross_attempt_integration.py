@@ -214,6 +214,62 @@ def test_train_script_smoke(tmp_path):
 
 
 @pytest.mark.slow
+def test_train_script_smoke_position_only(tmp_path):
+    # `--feature-set position_only` trains a 15-feature model (velocity `ball_speed` dropped) end to
+    # end through the trainer harness, the gk-substitution PROBE, and the position_only chirality /
+    # feature-contract guards. Mirrors the faithful smoke above; the synthetic dir carries vx/vy but
+    # position_only simply does not select `ball_speed`. Exercises the trainer subprocess glue (argparse
+    # -> shard token -> combine -> CV -> probe -> fit -> save) that the model round-trips cannot.
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    data_dir = _write_synthetic_train_dir(tmp_path)
+    out_dir = Path(tmp_path) / "out_po"
+    repo_root = Path(__file__).resolve().parents[2]
+    env = dict(os.environ, PYTHONPATH=str(repo_root))
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "scripts/train_xcross_attempt.py",
+            "--allow-dirty",
+            "--data-dir",
+            str(data_dir),
+            "--output-dir",
+            str(out_dir),
+            "--n-trials",
+            "3",
+            "--horizon-seconds",
+            "1.0",
+            "--probe-providers",
+            "synthetic",
+            "--feature-set",
+            "position_only",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        cwd=str(repo_root),
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    art = out_dir / "xcross_attempt_v1"
+    assert (art / "model.json").exists()
+    assert (art / "SHA256SUMS").exists()
+    meta = json.loads((art / "metadata.json").read_text())
+    assert meta["feature_set"] == "position_only"
+    assert len(meta["feature_names"]) == 15  # velocity `ball_speed` dropped
+    metrics = json.loads((art / "metrics.json").read_text())
+    assert metrics["acceptance"] and all(metrics["acceptance"].values())  # gates passed
+    # Loads through the position_only chirality + feature-contract guards:
+    from silly_kicks.tracking._xcross_attempt import XCrossAttemptModel
+
+    XCrossAttemptModel.load(art)
+
+
+@pytest.mark.slow
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     """Fail-closed: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact."""
     import os

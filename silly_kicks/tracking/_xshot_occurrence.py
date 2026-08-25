@@ -31,6 +31,12 @@ from silly_kicks.tracking._ball_carrier import (
 )
 from silly_kicks.tracking._occurrence_labels import _build_occurrence_labels
 from silly_kicks.tracking._velocity_availability import (
+    variant_key_for_velocity as _variant_key_for_velocity,
+)
+from silly_kicks.tracking._velocity_availability import (
+    velocity_availability_is_mixed as _velocity_availability_is_mixed,
+)
+from silly_kicks.tracking._velocity_availability import (
     velocity_unavailable_by_design as _velocity_unavailable_by_design,
 )
 from silly_kicks.tracking.schema import SPEED_SOURCE_UNAVAILABLE
@@ -122,7 +128,7 @@ def _open_goal_fraction(ball: tuple[float, float], defenders: np.ndarray) -> flo
     return max(0.0, 1.0 - merged_len / GOAL_WIDTH)
 
 
-XShotFeatureSet = Literal["faithful", "extended"]
+XShotFeatureSet = Literal["faithful", "extended", "position_only"]
 
 _BALL_FEATURES = ["r", "theta", "z", "speed", "openGoal"]
 _GK_FEATURES = ["GK_r", "GK_theta"]
@@ -131,6 +137,11 @@ _DEF_INTERLEAVED = [c for k in range(5) for c in (f"DefDist_{k}", f"DefAngle_{k}
 _OFF_INTERLEAVED = [c for k in range(5) for c in (f"OffDist_{k}", f"OffAngle_{k}")]
 XSHOT_FEATURE_NAMES_FAITHFUL = _BALL_FEATURES + _GK_FEATURES + _DEF_INTERLEAVED + _OFF_INTERLEAVED
 # 5 + 2 + 10 + 10 = 27
+# Position-only variant (ADR: velocity-keyed auto-select): drop the single velocity feature `speed`
+# so a fitted model can score on a velocity-less SB360 freeze-frame. Dropped (shorter vector), never
+# NaN-filled -- the feature contract raises on non-finite (ADR-050).
+XSHOT_FEATURE_NAMES_POSITION_ONLY = [f for f in XSHOT_FEATURE_NAMES_FAITHFUL if f != "speed"]
+# 26 (faithful minus `speed`)
 
 
 def _nearest_k(ball_xy: tuple[float, float], pts: np.ndarray, k: int = 5):
@@ -174,11 +185,11 @@ def extract_xshot_features(
 
     See NOTICE for full bibliographic citations.
     """
-    if feature_set != "faithful":
+    if feature_set == "extended":
         raise NotImplementedError(
             "xShotOccurrence feature_set='extended' is not implemented in this "
-            "release; only 'faithful' (paper Appendix A) is available. See the "
-            "TF-16 weights/TF-19 follow-up."
+            "release; only 'faithful' (paper Appendix A) and 'position_only' are "
+            "available. See the TF-16 weights/TF-19 follow-up."
         )
 
     # Goal-relative ONCE, for every consumer below: the 180-degree point reflection
@@ -269,10 +280,10 @@ def extract_xshot_features(
         values[f"OffDist_{k}"] = odist[k]
         values[f"OffAngle_{k}"] = oang[k]
 
-    return pd.DataFrame(
-        [[values[c] for c in XSHOT_FEATURE_NAMES_FAITHFUL]],
-        columns=XSHOT_FEATURE_NAMES_FAITHFUL,
-    )
+    # Feature-set-driven final assembly of ONE computation (DRY): position_only selects the same
+    # `values` minus `speed`; a velocity-less frame leaves `speed` NaN but it is simply not selected.
+    names = XSHOT_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL
+    return pd.DataFrame([[values[c] for c in names]], columns=names)
 
 
 def build_xshot_labels(
@@ -339,15 +350,19 @@ def _chirality_block(model: XShotOccurrenceModel) -> dict:
     from silly_kicks.tracking._chirality import chirality_fingerprint
 
     def _predict(frame):
-        feats = extract_xshot_features(frame, gk_team_id="B", goal_x=105.0)
+        feats = extract_xshot_features(frame, gk_team_id="B", goal_x=105.0, feature_set=model.feature_set)
         return model.predict_proba(feats)
 
     return chirality_fingerprint(_predict)
 
 
-def _feature_contract_block() -> dict:
+def _feature_contract_block(feature_set: XShotFeatureSet = "faithful") -> dict:
     """Feature contract (ADR-050): this model's FEATURE VECTOR on the fixed probe frame, plus the
     geometry constants its extractor consumes.
+
+    ``feature_set`` selects the extractor's output vector (r2: this block is model-INDEPENDENT, so the
+    caller passes the variant's feature set -- ``save`` passes ``self.feature_set``, ``load`` passes
+    the loaded model's; a position_only artifact fingerprints its 26-feature vector, not the 27).
 
     Model-independent by design -- unlike ``_chirality_block`` it takes no model, because it
     fingerprints the EXTRACTOR, not the fitted weights. Chirality catches a y-mirror in the output;
@@ -364,7 +379,9 @@ def _feature_contract_block() -> dict:
 
     def _vec():
         return (
-            extract_xshot_features(contract_probe_frame(), gk_team_id="B", goal_x=105.0).iloc[0].to_numpy(dtype=float)
+            extract_xshot_features(contract_probe_frame(), gk_team_id="B", goal_x=105.0, feature_set=feature_set)
+            .iloc[0]
+            .to_numpy(dtype=float)
         )
 
     return feature_contract(_vec, constants={"goal_width": GOAL_WIDTH})
@@ -410,8 +427,8 @@ class XShotOccurrenceModel:
     """
 
     def __init__(self, *, feature_set: XShotFeatureSet = "faithful", params: dict | None = None) -> None:
-        if feature_set != "faithful":
-            raise NotImplementedError("Only feature_set='faithful' is implemented.")
+        if feature_set == "extended":
+            raise NotImplementedError("feature_set='extended' is not implemented; use 'faithful' or 'position_only'.")
         self.feature_set: XShotFeatureSet = feature_set
         self._params = _pinned_params(params)
         self._booster = None  # xgboost.Booster after fit/load
@@ -485,7 +502,13 @@ class XShotOccurrenceModel:
         path.mkdir(parents=True, exist_ok=True)
         self._booster.save_model(str(path / "model.json"))
         metadata = {
-            "feature_names": XSHOT_FEATURE_NAMES_FAITHFUL,
+            # feature_set-appropriate: a position_only model's booster carries 26 columns, so its
+            # recorded feature_names must match (a hardcoded FAITHFUL list would misdescribe it).
+            "feature_names": (
+                XSHOT_FEATURE_NAMES_POSITION_ONLY
+                if self.feature_set == "position_only"
+                else XSHOT_FEATURE_NAMES_FAITHFUL
+            ),
             "feature_set": self.feature_set,
             "horizon_seconds": self.horizon_seconds,
             "shot_types": self.shot_types,
@@ -501,7 +524,7 @@ class XShotOccurrenceModel:
             "shipped_variant": self.shipped_variant,
             "provider_list": self.provider_list,
             "chirality": _chirality_block(self),
-            "feature_contract": _feature_contract_block(),
+            "feature_contract": _feature_contract_block(self.feature_set),
         }
         (path / "metadata.json").write_text(json.dumps(metadata, indent=2), newline="\n")
         with open(path / "SHA256SUMS", "w", newline="\n") as f:
@@ -578,7 +601,7 @@ class XShotOccurrenceModel:
         from silly_kicks.tracking._feature_contract import verify_feature_contract
 
         verify_feature_contract(
-            _feature_contract_block(),
+            _feature_contract_block(model.feature_set),
             meta.get("feature_contract"),
             legacy_override=legacy_override,
             model_name="xShotOccurrence",
@@ -639,6 +662,38 @@ def _resolve_model(model: XShotOccurrenceModel | str | None) -> XShotOccurrenceM
     if model is None or isinstance(model, str):
         return XShotOccurrenceModel.from_variant(model or "default")  # raises until weights ship
     raise TypeError(f"Unsupported model type: {type(model)!r}")
+
+
+def _resolve_xshot_model_for_frames(
+    frames: pd.DataFrame, model: XShotOccurrenceModel | str | None
+) -> tuple[XShotOccurrenceModel | None, str]:
+    """Layer B: resolve ``(model, variant_key)`` for a frame set (velocity-keyed auto-select).
+
+    - explicit override (instance/str) -> that model, ``variant_key="custom"`` (V1: the closed
+      vocabulary is ``{default, position_only, custom}`` -- do NOT read ``shipped_variant``).
+    - else ``key = variant_key_for_velocity(frames)``; ``from_variant(key)`` -> ``(model, key)``.
+    - declared-unavailable but NO bundled ``position_only`` variant -> ``(None, "position_only")`` +
+      warn: fall back to NaN, NEVER to the default (the default velocity model is invalid on
+      velocity-less frames -- the load-bearing asymmetry with the completion template).
+
+    A ``None`` model signals the caller to emit NaN. The ADR-054 undeclared-missing-velocity RAISE and
+    the mixed-availability RAISE live at the compute seam, not here.
+    """
+    if model is not None:
+        return _resolve_model(model), "custom"
+    key = _variant_key_for_velocity(frames)
+    try:
+        return XShotOccurrenceModel.from_variant(key), key
+    except FileNotFoundError:
+        if key == "position_only":
+            warnings.warn(
+                "No bundled xShotOccurrence 'position_only' variant; velocity-less frames yield NaN "
+                "(train + bundle it, or pass an explicit model=).",
+                UserWarning,
+                stacklevel=2,
+            )
+            return None, key
+        raise
 
 
 def load_xgb_booster_base_score_safe(model_json_path: Path):
@@ -731,8 +786,8 @@ def prepare_xshot_training_data(
 
     See NOTICE for full bibliographic citations.
     """
-    if feature_set != "faithful":
-        raise NotImplementedError("Only feature_set='faithful' is implemented.")
+    if feature_set == "extended":
+        raise NotImplementedError("feature_set='extended' is not implemented; use 'faithful' or 'position_only'.")
     cp: dict = dict(carrier_params) if carrier_params else dict(_DEFAULT_CARRIER_PARAMS)
     types = _DEFAULT_SHOT_TYPES if shot_types is None else tuple(shot_types)
 
@@ -740,7 +795,11 @@ def prepare_xshot_training_data(
     if "ball_state" in frames.columns:
         work = frames[frames["ball_state"].astype(str) == "alive"]
     if len(work) == 0:
-        empty = pd.DataFrame(columns=XSHOT_FEATURE_NAMES_FAITHFUL)
+        empty = pd.DataFrame(
+            columns=(
+                XSHOT_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL
+            )
+        )
         return empty, np.zeros(0, dtype=int), np.zeros(0)
 
     carrier = infer_ball_carrier(work, **cp)
@@ -766,7 +825,7 @@ def prepare_xshot_training_data(
             ball_x = float(ball["x"].iloc[0]) if len(ball) else float("nan")
             if not _ball_in_attacking_third(ball_x, goal_x):
                 continue
-        feat_rows.append(extract_xshot_features(grp, gk_team_id=def_team, goal_x=goal_x))
+        feat_rows.append(extract_xshot_features(grp, gk_team_id=def_team, goal_x=goal_x, feature_set=feature_set))
         labels_idx.append(
             {
                 "game_id": gid,
@@ -776,11 +835,16 @@ def prepare_xshot_training_data(
             }
         )
 
+    # feature_set-appropriate column set -- "extended" is guarded out above, so this is
+    # faithful/position_only. Single-sourced so the empty-path and the concat-select cannot drift
+    # (a FAITHFUL select on a position_only frame raises KeyError: ['speed'] -- caught by the smoke).
+    _names = XSHOT_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL
+
     if not feat_rows:
-        empty = pd.DataFrame(columns=XSHOT_FEATURE_NAMES_FAITHFUL)
+        empty = pd.DataFrame(columns=_names)
         return empty, np.zeros(0, dtype=int), np.zeros(0)
 
-    features = pd.concat(feat_rows, ignore_index=True)[XSHOT_FEATURE_NAMES_FAITHFUL]
+    features = pd.concat(feat_rows, ignore_index=True)[_names]
     fidx = pd.DataFrame(labels_idx)
 
     shots_f = shots
@@ -851,28 +915,42 @@ def compute_xshot_occurrence(
 
     See NOTICE for full bibliographic citations.
     """
-    m = _resolve_model(model)
     out = frames.copy()
     out["xshot_occurrence"] = np.nan
 
-    # VELOCITY-AVAILABILITY CONTRACT (ADR-054), at the SHARED seam. All three public entry points
-    # reach scoring through here -- `add_xshot_occurrence`, `xshot_occurrence_xfns` and a direct
-    # call -- which is the same reason the xcross guard lives at its compute seam and the ghost guard
-    # in `_serve_positions_core`. Two prongs, because the two shapes are byte-identical here and
-    # demand opposite responses:
-    if _velocity_unavailable_by_design(frames):
-        # DECLARED unavailable (the SB360 freeze-frame shape): degrade to NaN. `speed` is a trained
-        # feature, so scoring here would have the model impute an input its source structurally
-        # cannot carry -- the ADR-053 fabrication shape. NaN is honest, and it is already what this
-        # function returns on every other unscoreable path below.
-        return out
-    if len(frames) and ("vx" not in frames.columns or "vy" not in frames.columns):
-        # NOT declared: the "forgot derive_velocities()" case. Fail loud, and name the remedy -- this
-        # used to silently fall back to distance-only carrier inference and fabricate a score.
+    # VELOCITY-AVAILABILITY CONTRACT (ADR-054) + velocity-keyed auto-select, at the SHARED seam. All
+    # three public entry points reach scoring through here -- `add_xshot_occurrence`,
+    # `xshot_occurrence_xfns` and a direct call.
+    #
+    # MIXED availability (some-but-not-all rows declare velocity unavailable) is a caller error: it
+    # would otherwise resolve to the default velocity model and fabricate speed=NaN on the marked rows
+    # (M3). Raise BEFORE the other prongs.
+    if _velocity_availability_is_mixed(frames):
+        raise ValueError(
+            "compute_xshot_occurrence: mixed velocity-availability -- some rows declare "
+            f"speed_source={SPEED_SOURCE_UNAVAILABLE!r} and some do not. Pass a single-availability "
+            "frame set (all freeze-frame, or all velocity-bearing)."
+        )
+    # UNDECLARED missing vx/vy (NOT the declared freeze-frame shape): the "forgot derive_velocities()"
+    # case. Fail loud (ADR-054 prong, preserved) -- declared-unavailable frames proceed to the
+    # resolver below and get the position-only variant.
+    if (
+        not _velocity_unavailable_by_design(frames)
+        and len(frames)
+        and ("vx" not in frames.columns or "vy" not in frames.columns)
+    ):
         raise ValueError(
             "compute_xshot_occurrence requires vx/vy on frames (call derive_velocities() first), or "
             f"declare speed_source {SPEED_SOURCE_UNAVAILABLE!r}. See the velocity-availability contract."
         )
+    # Layer B: override -> "custom"; declared-unavailable -> position_only (or NaN if unbundled, NEVER
+    # the default velocity model); else default. `compute_*` output stays byte-identical (no provenance
+    # column here -- the byte-identical constraint for velocity-bearing direct callers); the public
+    # `xshot_occurrence_variant` column is added by `add_xshot_occurrence`, which RE-RESOLVES the key
+    # (deterministic; `from_variant` is cached), leaving the xfns/VAEP path numeric.
+    m, _variant = _resolve_xshot_model_for_frames(frames, model)
+    if m is None:
+        return out  # declared-unavailable but no bundled position_only variant -> honest NaN
 
     # N-A: carrier inference + possession MUST run on the FULL contiguous frames.
     # infer_ball_carrier has a CROSS-FRAME dependency (gamma hysteresis carries the
@@ -909,7 +987,7 @@ def compute_xshot_occurrence(
         if goal_x is None:
             n_skipped_goal += 1
             continue
-        feat_rows.append(extract_xshot_features(grp, gk_team_id=def_team, goal_x=goal_x))
+        feat_rows.append(extract_xshot_features(grp, gk_team_id=def_team, goal_x=goal_x, feature_set=m.feature_set))
         keys.append((gid, pid, frame_id, tip))
 
     # N1: surface coverage loss rather than dropping silently.
@@ -963,7 +1041,9 @@ def add_xshot_occurrence(
 
     See NOTICE for full bibliographic citations.
     """
-    m = _resolve_model(model)
+    # Do NOT pre-resolve the model: pass the ORIGINAL `model` to compute so its velocity-keyed
+    # auto-select fires (a pre-resolved instance would be seen as a "custom" override and bypass it,
+    # serving the default velocity model on declared freeze frames -- the fabrication risk).
     out = actions.copy()
     pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
 
@@ -974,7 +1054,7 @@ def add_xshot_occurrence(
     if "xshot_occurrence" in frames.columns and frames["xshot_occurrence"].notna().any():
         scored = frames
     else:
-        scored = compute_xshot_occurrence(frames, model=m, home_team_id=home_team_id, link_frame_ids=link_frame_ids)
+        scored = compute_xshot_occurrence(frames, model=model, home_team_id=home_team_id, link_frame_ids=link_frame_ids)
 
     # Map each action to the xS at its linked frame + its own team.
     xcol = scored[scored["xshot_occurrence"].notna()][
@@ -995,6 +1075,11 @@ def add_xshot_occurrence(
     deduped = merged.drop_duplicates(subset=["action_id"], keep="first")
     col = deduped.set_index("action_id")["xshot_occurrence"]
     out = out.merge(col.rename("xshot_occurrence"), left_on="action_id", right_index=True, how="left")
+    # Provenance (closed set {default, position_only, custom}, ADR/D5): which variant auto-select
+    # served. Re-resolved deterministically from the frames' velocity-availability (compute uses the
+    # same key); an explicit model= is "custom". The xfns/VAEP path stays numeric (it never calls
+    # add_*), so no string column leaks into a feature matrix.
+    out["xshot_occurrence_variant"] = "custom" if model is not None else _variant_key_for_velocity(frames)
     return out
 
 
@@ -1022,7 +1107,6 @@ def xshot_occurrence_xfns(
             for c in cols:
                 out[c] = np.nan
             return out
-        m = _resolve_model(model)
         slot_pointers = []
         link_frame_ids: set[int] = set()
         for slot in states[:3]:
@@ -1030,9 +1114,9 @@ def xshot_occurrence_xfns(
             slot_pointers.append(ptr)
             if "frame_id" in ptr.columns:
                 link_frame_ids |= {int(f) for f in ptr["frame_id"].dropna().astype(int).tolist()}
-        scored = compute_xshot_occurrence(frames, model=m, home_team_id=home_team_id, link_frame_ids=link_frame_ids)
+        scored = compute_xshot_occurrence(frames, model=model, home_team_id=home_team_id, link_frame_ids=link_frame_ids)
         for i, (slot, ptr) in enumerate(zip(states[:3], slot_pointers, strict=False)):
-            enriched = add_xshot_occurrence(slot, scored, model=m, home_team_id=home_team_id, links=ptr)
+            enriched = add_xshot_occurrence(slot, scored, model=model, home_team_id=home_team_id, links=ptr)
             out[cols[i]] = enriched["xshot_occurrence"].to_numpy() if "xshot_occurrence" in enriched else np.nan
         return out
 

@@ -29,7 +29,7 @@ import pandas as pd
 
 from silly_kicks.tracking import link_actions_to_frames, snapshot_to_tracking_frames
 
-FIXTURE_VERSION = "sb360-fixture-1"
+FIXTURE_VERSION = "sb360-fixture-2"
 
 HOME_TEAM_ID = 1
 AWAY_TEAM_ID = 2
@@ -120,7 +120,13 @@ def _player_layout(roster: str) -> list[dict]:
                 "player_id": 10 + i,
                 "team_id": HOME_TEAM_ID,
                 "is_goalkeeper": i == 0,
-                "base_x": 5.0 if i == 0 else 30.0 + (i % 4) * 18.0,
+                # i==2 is a central STRIKER ahead of the ball (which sits at x=88 on the scored
+                # frames, team 1 attacking x=105), so the attacking team has a `dangerous receiver`
+                # and the xT-weighted threat arm (compute_threat_pc / gkdv delta_threat) is
+                # NON-VACUOUS. Without it a cross/shot scene has no target in the box, threat is 0
+                # on BOTH legs, and delta_threat is a masked `identical` the non-vacuity guard
+                # rightly rejects. Consistent with player 12's shooter role (action 2 shoots x=95).
+                "base_x": 5.0 if i == 0 else (96.0 if i == 2 else 30.0 + (i % 4) * 18.0),
                 "base_y": 34.0 if i == 0 else 8.0 + (i % 5) * 13.0,
             }
         )

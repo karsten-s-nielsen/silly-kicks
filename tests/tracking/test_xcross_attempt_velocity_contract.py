@@ -105,15 +105,30 @@ def _freeze_frame(*, declare: str, with_velocity: bool) -> tuple[pd.DataFrame, p
     return frames, actions
 
 
-def test_declared_unavailable_degrades_to_nan_rather_than_crashing() -> None:
+def test_declared_unavailable_degrades_to_nan_rather_than_crashing(monkeypatch) -> None:
     """The SB360 freeze-frame case: a DECLARED absence is data, not a malformed input.
 
     This is the exact input the sb360 audit probe supplies, and it raised `KeyError: 'vx'` -- which
     an upstream handler then read as "this aggregator emits no columns at all".
+
+    With the position_only variant BUNDLED (commit 2) a declared frame now SERVES a value via that
+    variant (real-weights serve covered in test_position_only_bundled). This remains the FALLBACK
+    contract -- a declared absence must degrade to NaN, never crash -- so the unbundled path is FORCED
+    here to keep the graceful-degradation branch (the thing this test exists for) covered.
     """
+    import silly_kicks.tracking._xcross_attempt as _xc
+
+    def _boom(cls, v):
+        if v == "position_only":
+            raise FileNotFoundError
+        raise AssertionError("must NOT fall back to the default on velocity-less frames")
+
+    monkeypatch.setattr(_xc.XCrossAttemptModel, "from_variant", classmethod(_boom))
+
     frames, actions = _freeze_frame(declare=SPEED_SOURCE_UNAVAILABLE, with_velocity=False)
 
-    out = T.add_xcross_attempt(actions, frames, home_team_id="A")
+    with pytest.warns(UserWarning, match="position_only"):
+        out = T.add_xcross_attempt(actions, frames, home_team_id="A")
 
     assert "xcross_attempt" in out.columns, (
         "the column vanished entirely -- a consumer cannot distinguish that from the aggregator "
@@ -124,6 +139,12 @@ def test_declared_unavailable_degrades_to_nan_rather_than_crashing() -> None:
         "velocity is declared unavailable, so every score must be NaN. A NUMBER here would mean "
         "the model scored on features it could not have computed -- the ADR-053 fabrication shape."
     )
+    # Provenance (Task 7): the SB360 degrade records which variant auto-select chose. The value is
+    # `position_only` even when unbundled (the resolver picks it, then falls back to NaN).
+    assert (out["xcross_attempt_variant"] == "position_only").all()
+    # D2: the string column survives @nan_safe_enrichment. Assert the VALUE type, not the dtype
+    # literal (object on pandas 2, StringDtype on pandas 3 -- ADR-057).
+    assert all(isinstance(v, str) for v in out["xcross_attempt_variant"])
 
 
 def test_undeclared_missing_velocity_raises_informatively() -> None:
@@ -159,6 +180,9 @@ def test_velocity_bearing_frames_are_unaffected() -> None:
         "a fully velocity-bearing frame set scored NaN -- the guard is firing on input it should "
         "pass through, so the all-NaN assertions above prove nothing"
     )
+    # Provenance (Task 7): a velocity-bearing set auto-selects the `default` variant (that it scored
+    # here also confirms the bundled default loads via from_variant).
+    assert (out["xcross_attempt_variant"] == "default").all()
 
 
 def test_extract_xcross_features_honours_its_documented_nan_tolerance() -> None:

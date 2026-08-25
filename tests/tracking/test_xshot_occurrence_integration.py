@@ -636,6 +636,54 @@ def test_train_script_smoke(tmp_path):
 
 
 @pytest.mark.slow
+def test_train_script_smoke_position_only(tmp_path):
+    # Task 8: `--feature-set position_only` trains a 26-feature model (velocity `speed` dropped) that
+    # saves + loads through the position_only chirality/feature-contract guards. Mirrors the faithful
+    # smoke above; the synthetic dir carries vx/vy but position_only simply does not select `speed`.
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    data_dir = _write_synthetic_train_dir(tmp_path)
+    out_dir = Path(tmp_path) / "out_po"
+    repo_root = Path(__file__).resolve().parents[2]
+    env = dict(os.environ, PYTHONPATH=str(repo_root))
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "scripts/train_xshot_occurrence.py",
+            "--allow-dirty",
+            "--data-dir",
+            str(data_dir),
+            "--output-dir",
+            str(out_dir),
+            "--n-trials",
+            "3",
+            "--horizon-seconds",
+            "1.0",
+            "--feature-set",
+            "position_only",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        cwd=str(repo_root),
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    art = out_dir / "xshot_occurrence_v1"
+    meta = json.loads((art / "metadata.json").read_text())
+    assert meta["feature_set"] == "position_only"
+    assert len(meta["feature_names"]) == 26  # velocity `speed` dropped
+    # Loads through the position_only chirality + feature-contract guards (Task 6 threading):
+    from silly_kicks.tracking._xshot_occurrence import XShotOccurrenceModel
+
+    XShotOccurrenceModel.load(art)
+
+
+@pytest.mark.slow
 def test_train_script_fail_closed_writes_no_artifact(tmp_path):
     """N3: a corpus that cannot beat the base rate -> non-zero exit, NO bundled artifact."""
     import os

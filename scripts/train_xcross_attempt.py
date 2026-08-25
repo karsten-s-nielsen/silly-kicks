@@ -24,9 +24,13 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from silly_kicks.tracking._xcross_attempt import XCrossFeatureSet
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
@@ -94,10 +98,19 @@ def _extract(
     probe_keep=2,
     probe_providers=("gradientsports",),
     probe_comparison_providers=("skillcorner",),
+    feature_set: XCrossFeatureSet = "faithful",
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[dict, dict, int]]:
     from scripts._driver import for_each, shard_path
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
-    from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL, prepare_xcross_training_data
+    from silly_kicks.tracking._xcross_attempt import (
+        XCROSS_FEATURE_NAMES_FAITHFUL,
+        XCROSS_FEATURE_NAMES_POSITION_ONLY,
+        prepare_xcross_training_data,
+    )
+
+    _feature_names = (
+        XCROSS_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XCROSS_FEATURE_NAMES_FAITHFUL
+    )
 
     collision = set(_SIDE_COLS) & set(XCROSS_FEATURE_NAMES_FAITHFUL)
     if collision:
@@ -114,6 +127,7 @@ def _extract(
             frames,
             actions,
             home_team_id=home,
+            feature_set=feature_set,
             horizon_seconds=horizon_seconds,
             wide_area_only=True,
             carrier_params=DEFAULT_CARRIER_PARAMS,  # 4.7.0 values; shared constant (anti-drift)
@@ -152,6 +166,8 @@ def _extract(
         # cohort, not what a feature row contains.
         token_inputs={
             "extractor": "prepare_xcross_training_data",
+            # feature_set changes the X columns (16 vs 15) -> MUST key the shard generation (4.77.1).
+            "feature_set": feature_set,
             "horizon_seconds": horizon_seconds,
             "wide_area_only": True,
             "carrier_params": dict(DEFAULT_CARRIER_PARAMS),
@@ -167,7 +183,7 @@ def _extract(
         raise SystemExit("No usable training data.")
     combined = pd.concat(parts, ignore_index=True)
     return (
-        combined[XCROSS_FEATURE_NAMES_FAITHFUL],
+        combined[_feature_names],
         combined["_y"].to_numpy(int),
         combined["_group"].to_numpy(),
         combined["_provider"].to_numpy(),
@@ -436,6 +452,13 @@ def main(argv=None) -> None:
         "an upstream artifact were ever revised; these are immutable historical matches.",
     )
     ap.add_argument(
+        "--feature-set",
+        choices=["faithful", "position_only"],
+        default="faithful",
+        help="'faithful' (velocity-bearing, 16 feats) or 'position_only' (velocity dropped, 15 feats) "
+        "for a model that scores on velocity-less SB360 freeze frames. 'extended' is NOT exposed here.",
+    )
+    ap.add_argument(
         "--allow-dirty",
         action="store_true",
         help="Train from a modified working tree. The run still records run_tree_dirty=true in "
@@ -488,6 +511,7 @@ def main(argv=None) -> None:
         X, y, groups, providers, match_ids, probe_bundle = _extract(
             source,
             args.horizon_seconds,
+            feature_set=args.feature_set,
             # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so
             # the "fresh --output-dir per corpus" discipline the fingerprint enforces covers them.
             shard_root=art / "shards",
@@ -651,7 +675,7 @@ def main(argv=None) -> None:
         if ns
         else (X[ship_mask], y[ship_mask], None)
     )
-    model = XCrossAttemptModel(params=candidates[shipped]["params"])
+    model = XCrossAttemptModel(params=candidates[shipped]["params"], feature_set=args.feature_set)
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
     model.fit(Xfit, pd.Series(yfit), carrier_params=DEFAULT_CARRIER_PARAMS, horizon_seconds=args.horizon_seconds)

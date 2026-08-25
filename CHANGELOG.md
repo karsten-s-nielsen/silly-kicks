@@ -5,6 +5,67 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.93.0] — 2026-08-25
+
+Position-only model variants + velocity-keyed auto-select (minor; ADR-067, PR-S164). `XShotOccurrenceModel`,
+`XCrossAttemptModel` and `GhostGkModel` gain **position-only variants** (the same models with velocity
+features dropped) that score on velocity-less StatsBomb-360 freeze-frames, auto-selected at the serve
+seam by the declared velocity marker.
+
+- **Auto-select** mirrors the provider-keyed `variant_key_for_provider` pattern, keyed on
+  velocity-availability: a declared-velocity-unavailable frame set resolves to the `position_only`
+  variant; a velocity-bearing set to `default`; an explicit `model=` override to `custom`. The missing-
+  variant fallback goes to **NaN, never to default** (the default velocity model is invalid on
+  velocity-less frames). A **mixed-availability** frame set now RAISES (some-but-not-all rows marked
+  would otherwise fabricate `speed=NaN` on the marked rows). The ADR-054 undeclared-missing-velocity
+  raise is preserved.
+- **New provenance columns** `xshot_occurrence_variant` / `xcross_attempt_variant` / `ghost_gk_variant`
+  on the `add_*` path (closed set `{default, position_only, custom}`); the `*_xfns` / VAEP path stays
+  numeric.
+- **`feature_set` extended** to add `"position_only"` (`"extended"` reservation kept); ghost gains a
+  `feature_set` (incl. save/load serialization) + a genuinely single-frame-capable extractor path.
+- **Trainers** gain `--feature-set position_only` (threaded to prepare + the model + the shard token);
+  a reported comparability artifact quantifies the velocity-vs-position-only skill cost.
+- **Behavior change (retrain / Hyrum trigger):** SB360 xShot/xCross/ghost go NaN → value now that the
+  variants are **BUNDLED** — xShot/xCross `position_only` PUBLIC defaults (`training_commit` = the
+  Phase-A commit), ghost `position_only` RESTRICTED full-native (owner-tier corpus; a machine-checkable
+  `reproducibility` caveat rides in its `metrics.json`). **The ghost `default` was ALSO re-fit on the
+  native SkillCorner corpus** (removing the kloppy y-inversion contamination; `training_commit` = the
+  guardrails commit) — a **velocity-bearing retrain trigger for the ghost default** (served positions
+  move up to ~0.75 m on the velocity-bearing golden, which was re-captured). xShot/xCross velocity-bearing
+  frames stay byte-identical (auto-select serves the unchanged `default`). **gkdv's ghost arm now works
+  on SB360:** the ghost POSITION serves via the `position_only` variant, so `build_ghost_frames` and the
+  pitch-control **threat-suppression** arm (`delta_threat_suppression`) compute on velocity-less
+  freeze-frames (pitch control has a valid zero-velocity positional model, ADR-063). The
+  **accessible-space** arm (`delta_das`) STRUCTURALLY needs velocity, so it now degrades to honest-NaN
+  there — the ADR-043 consumer-degrade `add_das` uses, `DasUnscoreableError` caught in `delta_das` —
+  rather than propagating a crash (a behaviour change for a gkdv caller running `delta_das` over a
+  velocity-less freeze-frame set). A reported comparability (`docs/research/position_only_variants/`)
+  quantifies the position-only cost: ghost MAE **+0.034 m**, xShot PR-AUC **−0.039**, xCross PR-AUC
+  **−0.025**. See `docs/PRIVATE_CONSUMERS.md`.
+
+### Detection-aware visibility guardrails (ADR-069)
+
+Prevents the class of failure that surfaced when the ghost trainer aborted mid-corpus on stale
+kloppy-built SkillCorner frames (`visibility=None`): a detection-aware provider whose per-player
+detection flag was discarded now fails **loud** at BOTH the build seam and the consume seam, before
+any corpus pass — never per-game-3-in via the `for_each` abort.
+
+- **One shared rule** `assert_detection_aware_visibility` + the provider visibility taxonomy
+  (`_DETECTION_AWARE_PROVIDERS` / `_FULLY_OBSERVED_PROVIDERS` / `validate_provider`) move to a neutral
+  private `tracking/_provider_visibility.py` (the 4.53.0 `_id_compat` clean-break precedent — a rule
+  multiple consumers must obey does not belong inside one consumer's private module).
+  `keeper_detection_mask` stays in `_ghost_gk` and delegates; the break is genuine (a module alias, no
+  transitive re-export — pinned by a negative test).
+- **Layer 1 (build-time):** `materialize_tc3_frames` refuses to write a detection-aware shard whose
+  `visibility` was dropped or is entirely null, so the poison never becomes a shard.
+- **Layer 2 (consume-time):** the ghost-trainer pre-flight reads parquet `null_count` **metadata** for
+  every detection-aware shard — catching a MIXED corpus (one tail-kloppy shard), not just a systematic
+  one — before any extraction or fit.
+- **Additive; no model change, no retrain.** The native path already carries a real `visibility`, so
+  both layers are no-ops on every bundled corpus; they fire only on a detection-discarding builder. The
+  `keeper_detection_mask` all-null message is unified (provider-generic); no test pinned the old prefix.
+
 ## [4.92.0] — 2026-08-25
 
 Eliminates the repo-wide **rescan-in-loop O(n²)** defect class the 2026-08-24 optimization audit

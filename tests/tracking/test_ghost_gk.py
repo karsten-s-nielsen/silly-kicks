@@ -579,6 +579,8 @@ class TestAggregatorAndXfns:
         assert "ghost_gk_x" in result.columns
         assert "ghost_gk_y" in result.columns
         assert len(result) == len(actions)
+        # Provenance (Task 7): an explicit model= override records `custom`.
+        assert (result["ghost_gk_variant"] == "custom").all()
         # No provenance leak
         assert "time_offset_seconds" not in result.columns
         assert "link_quality_score" not in result.columns

@@ -4985,12 +4985,16 @@ def add_ghost_gk(
         GHOST_GK_SOURCE_VALUES,
         GHOST_GK_UNLINKED,
         GHOST_GK_VELOCITY_UNAVAILABLE,
-        _resolve_model,
         compute_ghost_gk,
     )
-    from ._velocity_availability import velocity_unavailable_by_design
+    from ._velocity_availability import (
+        variant_key_for_velocity,
+        velocity_availability_is_mixed,
+        velocity_unavailable_by_design,
+    )
 
-    resolved_model = _resolve_model(model)
+    # Do NOT pre-resolve: pass the ORIGINAL `model` to compute_ghost_gk so velocity-keyed auto-select
+    # fires (a pre-resolved instance would be seen as a "custom" override and bypass it).
     out = actions.copy()
 
     # Link actions to frames
@@ -5008,35 +5012,38 @@ def add_ghost_gk(
     if "frame_id" in pointers.columns:
         link_frame_ids = set(pointers["frame_id"].dropna().astype(int).tolist())
 
-    # Velocity contract, BOTH directions, ahead of the precompute short-circuit below.
-    #
-    # The short-circuit skips compute_ghost_gk entirely, so the guard inside the shared serving
-    # seam is unreachable on that path -- these two are what make the contract hold for frames
-    # that arrive already enriched.
-    #
-    # Both are needed. `velocity_unavailable_by_design` is an ALL-rows predicate, so on an
-    # UNMARKED or PARTIALLY-marked set it returns False and only the second check fires.
-    # MEASURED without it: precomputed-ghost frames with vx/vy dropped and no marker returned
-    # ghost_gk_x = 52.5, a fabricated coordinate on frames the contract says must RAISE.
-    if velocity_unavailable_by_design(frames):
-        out = actions.copy()
-        out["ghost_gk_x"] = np.nan
-        out["ghost_gk_y"] = np.nan
-        out["ghost_gk_source"] = GHOST_GK_VELOCITY_UNAVAILABLE
-        return out
-    if "vx" not in frames.columns or "vy" not in frames.columns:
+    # Velocity contract + velocity-keyed auto-select, ahead of the precompute short-circuit below
+    # (which bypasses compute_ghost_gk's own guard). On DECLARED frames we NO LONGER short-circuit to
+    # NaN: we route through compute_ghost_gk, which auto-selects the position_only ghost (or degrades
+    # honestly if it is unbundled). The fence the old NaN return protected is preserved differently --
+    # the precompute short-circuit is disabled on declared frames (below), so a pre-computed
+    # ghost_gk_x that bypassed the seam (the MEASURED 52.5 fabrication) is never trusted here.
+    declared = velocity_unavailable_by_design(frames)
+    # MIXED availability is a caller error (would fabricate on the marked rows, M3). The
+    # `velocity_unavailable_by_design` ALL-rows predicate returns False on a partially-marked set, so
+    # this dedicated predicate is what catches it ahead of the short-circuit.
+    if velocity_availability_is_mixed(frames):
+        raise ValueError(
+            "add_ghost_gk: mixed velocity-availability -- some rows declare speed_source unavailable "
+            "and some do not. Pass a single-availability frame set."
+        )
+    # UNDECLARED missing vx/vy (NOT the declared freeze-frame shape): forgot derive_velocities().
+    if not declared and ("vx" not in frames.columns or "vy" not in frames.columns):
         raise ValueError(
             "add_ghost_gk requires vx/vy on frames (call derive_velocities() first), or declare "
             "speed_source unavailable. See the velocity-availability contract."
         )
 
-    # Short-circuit: skip compute if frames already have ghost columns
-    if "ghost_gk_x" in frames.columns and frames["ghost_gk_x"].notna().any():
+    # Short-circuit: skip compute if frames already have ghost columns -- but ONLY on velocity-bearing
+    # frames. On DECLARED frames a pre-computed ghost_gk_x may be a fabricated value that bypassed the
+    # serving seam (the 52.5 defect), so always route through compute_ghost_gk, which auto-selects the
+    # position_only variant (or degrades honestly). This is how the old NaN-return fence is preserved.
+    if not declared and "ghost_gk_x" in frames.columns and frames["ghost_gk_x"].notna().any():
         ghost_frames = frames
     else:
         ghost_frames = compute_ghost_gk(
             frames,
-            model=resolved_model,
+            model=model,
             home_team_id=home_team_id,
             actions=actions_for_context,
             carrier=carrier,
@@ -5133,12 +5140,19 @@ def add_ghost_gk(
         out["ghost_gk_x"].notna(),
         GHOST_GK_COMPUTED,
         np.where(
-            direction_unresolved,
-            GHOST_GK_DIRECTION_UNRESOLVED,
+            # declared-velocity-unavailable frames whose ghost is NaN == no bundled position_only
+            # variant served (the honest velocity degrade), NOT a missing keeper. Tested FIRST among
+            # the NaN branches because on a declared freeze frame every row is in this state.
+            declared,
+            GHOST_GK_VELOCITY_UNAVAILABLE,
             np.where(
-                goal_end_unresolved,
-                GHOST_GK_GOAL_END_UNRESOLVED,
-                np.where(has_frame, GHOST_GK_NO_KEEPER, GHOST_GK_UNLINKED),
+                direction_unresolved,
+                GHOST_GK_DIRECTION_UNRESOLVED,
+                np.where(
+                    goal_end_unresolved,
+                    GHOST_GK_GOAL_END_UNRESOLVED,
+                    np.where(has_frame, GHOST_GK_NO_KEEPER, GHOST_GK_UNLINKED),
+                ),
             ),
         ),
     )
@@ -5152,6 +5166,10 @@ def add_ghost_gk(
             f"ghost_gk_source emitted values outside its closed vocabulary: "
             f"{sorted(_emitted - set(GHOST_GK_SOURCE_VALUES))}"
         )
+
+    # Provenance (closed set {default, position_only, custom}, D5): which variant auto-select served.
+    # Distinct from ghost_gk_source (which reports the degrade REASON) -- this reports the variant.
+    out["ghost_gk_variant"] = "custom" if model is not None else variant_key_for_velocity(frames)
 
     return out
 
@@ -5192,10 +5210,9 @@ def ghost_gk_xfns(
                     out[f"{col}_a{i}"] = np.nan
             return out
 
-        from ._ghost_gk import _resolve_model, compute_ghost_gk
+        from ._ghost_gk import compute_ghost_gk
 
-        resolved = _resolve_model(model)
-
+        # Pass the ORIGINAL model (not a pre-resolved instance) so compute_ghost_gk auto-selects.
         # PR-S66: link each gamestate slot once and restrict the single
         # compute_ghost_gk to the UNION of their linked frames. The union ⊇ every
         # slot's linked set, the KDE is byte-identical per sample, and each
@@ -5211,7 +5228,7 @@ def ghost_gk_xfns(
 
         ghost_frames = compute_ghost_gk(
             frames,
-            model=resolved,
+            model=model,
             home_team_id=home_team_id,
             carrier=carrier,
             link_frame_ids=link_frame_ids,
@@ -5221,7 +5238,7 @@ def ghost_gk_xfns(
             enriched = add_ghost_gk(
                 slot,
                 ghost_frames,
-                model=resolved,
+                model=model,
                 home_team_id=home_team_id,
                 links=pointers,
             )

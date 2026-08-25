@@ -38,6 +38,10 @@ import pandas as pd
 
 from scripts._driver import for_each, join_key
 from scripts._provenance import git_provenance, require_clean_tree
+from silly_kicks.tracking._provider_visibility import (
+    _DETECTION_AWARE_PROVIDERS,
+    assert_detection_aware_visibility,
+)
 
 #: Identity columns -- used to ORDER rows deterministically, never to restrict what is hashed.
 _KEY_COLUMNS = ("game_id", "period_id", "frame_id", "player_id", "x", "y", "team_id")
@@ -190,6 +194,30 @@ def collect_home_team_map(home_dir: pathlib.Path, keys) -> dict[str, str]:
     return home_map
 
 
+def _guard_provider_frames(frames: pd.DataFrame, provider: str) -> None:
+    """Build-time (shift-left) visibility guard for a detection-aware provider (ADR: detection-aware
+    visibility guardrails; Layer 1).
+
+    A detection-aware provider (SkillCorner) whose materialized frames carry no USABLE ``visibility``
+    must fail HERE -- when the shard is written -- not an hour into a downstream training pass via the
+    per-frame ``keeper_detection_mask``. Two checks, both discarding regressions this guard exists to
+    catch: the column must be PRESENT (M2 -- a dropped column is a discarded flag too), and it must not
+    be entirely null (the shared rule). No-op for a fully-observed provider, so the native path (which
+    always carries a real ``visibility``) is unaffected -- this fires only on a future revert to a
+    detection-discarding builder (e.g. the kloppy gateway's ``visibility=None``).
+    """
+    if provider not in _DETECTION_AWARE_PROVIDERS:
+        return
+    if "visibility" not in frames.columns:
+        raise ValueError(
+            f"provider {provider!r} carries a detection flag, but the materialized frames have NO "
+            "`visibility` column -- the pipeline dropped it. Build these frames with "
+            "tracking.skillcorner instead; training on undetected keepers means training on the "
+            "interpolator (spec 4.3)."
+        )
+    assert_detection_aware_visibility(frames["visibility"], provider=provider)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Materialize pining frames into a resumable corpus cache.")
     ap.add_argument("--cache-dir", type=pathlib.Path, required=True)
@@ -225,6 +253,10 @@ def main() -> None:
 
     def _work(item):
         provider, match_id, actions, frames, home = item
+        # Shift-left (ADR: detection-aware visibility guardrails, Layer 1): refuse a detection-aware
+        # shard whose `visibility` was discarded BEFORE writing any sidecar, so a poisoned item leaves
+        # nothing on disk (no orphan `_home`/`_actions`) and never becomes a shard the trainer aborts on.
+        _guard_provider_frames(frames, str(provider))
         # `home` and `actions` are TRAINER INPUTS, not decoration, and neither can ride the
         # `for_each` contract: `work` returns one tidy frame, and a `{game_id: team_id}` counter
         # dict is DROPPED by `aggregate_manifests` (`_partition.py:88` merges a dict counter only

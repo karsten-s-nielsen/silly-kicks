@@ -23,9 +23,13 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from silly_kicks.tracking._xshot_occurrence import XShotFeatureSet
 
 sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
@@ -90,11 +94,19 @@ _SIDE_COLS = ("_y", "_group", "_provider", "_match_id")
 
 
 def _extract(
-    source, horizon_seconds, *, shard_root
+    source, horizon_seconds, *, shard_root, feature_set: XShotFeatureSet = "faithful"
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     from scripts._driver import for_each, shard_path
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
-    from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL, prepare_xshot_training_data
+    from silly_kicks.tracking._xshot_occurrence import (
+        XSHOT_FEATURE_NAMES_FAITHFUL,
+        XSHOT_FEATURE_NAMES_POSITION_ONLY,
+        prepare_xshot_training_data,
+    )
+
+    _feature_names = (
+        XSHOT_FEATURE_NAMES_POSITION_ONLY if feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL
+    )
 
     collision = set(_SIDE_COLS) & set(XSHOT_FEATURE_NAMES_FAITHFUL)
     if collision:
@@ -106,6 +118,7 @@ def _extract(
             frames,
             actions_or_shots,
             home_team_id=home,
+            feature_set=feature_set,
             horizon_seconds=horizon_seconds,
             attacking_third_only=True,
             carrier_params=DEFAULT_CARRIER_PARAMS,  # 4.7.0 values; shared constant (anti-drift)
@@ -135,6 +148,9 @@ def _extract(
         # key separates them; the HPO and the gates consume these rows downstream.
         token_inputs={
             "extractor": "prepare_xshot_training_data",
+            # feature_set changes the X columns (27 vs 26), so it MUST key the shard generation, or a
+            # faithful run's shards get reused for a position_only run (the 4.77.1 stale-shard trap).
+            "feature_set": feature_set,
             "horizon_seconds": horizon_seconds,
             "attacking_third_only": True,
             "carrier_params": dict(DEFAULT_CARRIER_PARAMS),
@@ -152,7 +168,7 @@ def _extract(
         raise SystemExit("No usable training data.")
     combined = pd.concat(parts, ignore_index=True)
     return (
-        combined[XSHOT_FEATURE_NAMES_FAITHFUL],
+        combined[_feature_names],
         combined["_y"].to_numpy(int),
         combined["_group"].to_numpy(),
         combined["_provider"].to_numpy(),
@@ -390,6 +406,14 @@ def main(argv=None) -> None:
         "an upstream artifact were ever revised; these are immutable historical matches.",
     )
     ap.add_argument(
+        "--feature-set",
+        choices=["faithful", "position_only"],
+        default="faithful",
+        help="'faithful' (velocity-bearing, 27 feats) or 'position_only' (velocity dropped, 26 feats) "
+        "for a model that scores on velocity-less SB360 freeze frames. 'extended' is NOT exposed here "
+        "(it raises in prepare).",
+    )
+    ap.add_argument(
         "--allow-dirty",
         action="store_true",
         help="Train from a modified working tree. The run still records run_tree_dirty=true in "
@@ -436,7 +460,9 @@ def main(argv=None) -> None:
         t0 = time.time()
         # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so the
         # "fresh --output-dir per corpus" discipline the fingerprint enforces covers them too.
-        X, y, groups, providers, match_ids = _extract(source, args.horizon_seconds, shard_root=art / "shards")
+        X, y, groups, providers, match_ids = _extract(
+            source, args.horizon_seconds, shard_root=art / "shards", feature_set=args.feature_set
+        )
         print(f"Extracted {len(X)} rows ({int(y.sum())} positives) in {time.time() - t0:.0f}s")
         cache.mkdir(parents=True, exist_ok=True)
         X.to_parquet(cache / "features.parquet")
@@ -565,7 +591,7 @@ def main(argv=None) -> None:
             None,
         )
     )
-    model = XShotOccurrenceModel(params=candidates[shipped]["params"])
+    model = XShotOccurrenceModel(params=candidates[shipped]["params"], feature_set=args.feature_set)
     model.shipped_variant = shipped
     model.provider_list = candidates[shipped]["providers"]
     model.fit(

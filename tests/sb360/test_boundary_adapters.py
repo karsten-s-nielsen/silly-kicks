@@ -24,22 +24,38 @@ def test_xt_gk_v2_columns_are_live_so_identical_is_a_real_comparison():
 
 
 def test_gkdv_build_ghost_frames_is_live_asymmetric_across_legs():
-    """Leg A (freeze-frame) serves no ghost (ADR-054 refusal) -> all NaN; Leg B scores the
-    in-domain actions -> finite. That asymmetry is the honest_nan signal (spec Part 2)."""
+    """Both legs now serve a ghost -- Leg A (freeze-frame) via the position_only variant (ADR-067),
+    Leg B via the velocity default -- and they DIFFER on >=1 scored action. That difference (a
+    differs_by_design signal, not a NaN asymmetry) is what the substantive verdict rests on, and the
+    `not allclose` clause guards against the two legs secretly being the same object (spec Part 2)."""
     entry = SB360_ENTRIES["gkdv.build_ghost_frames"]
-    a_out = entry.call(*F.build_leg_a(), F.HOME_TEAM_ID)
-    b_out = entry.call(*F.build_leg_b(), F.HOME_TEAM_ID)
-    assert not np.isfinite(a_out["displacement_m"].to_numpy(dtype=float)).any(), "Leg A must be all-NaN"
-    assert np.isfinite(b_out["displacement_m"].to_numpy(dtype=float)).any(), "Leg B must score >=1 action"
+    a = entry.call(*F.build_leg_a(), F.HOME_TEAM_ID)["displacement_m"].to_numpy(dtype=float)
+    b = entry.call(*F.build_leg_b(), F.HOME_TEAM_ID)["displacement_m"].to_numpy(dtype=float)
+    assert np.isfinite(a).any(), "Leg A must serve >=1 ghost via the position_only variant"
+    assert np.isfinite(b).any(), "Leg B must score >=1 action"
+    both = np.isfinite(a) & np.isfinite(b)
+    assert both.any() and not np.allclose(a[both], b[both]), "the two legs' ghosts must DIFFER"
 
 
-def test_gkdv_arms_are_live_asymmetric_across_legs():
-    for name, col in (
-        ("gkdv.delta_das", "delta_das"),
-        ("gkdv.delta_threat_suppression", "delta_threat_suppression"),
-    ):
-        entry = SB360_ENTRIES[name]
-        a = entry.call(*F.build_leg_a(), F.HOME_TEAM_ID)[col].to_numpy(dtype=float)
-        b = entry.call(*F.build_leg_b(), F.HOME_TEAM_ID)[col].to_numpy(dtype=float)
-        assert not np.isfinite(a).any(), f"{name}: Leg A must be all-NaN (ghost refusal)"
-        assert np.isfinite(b).any(), f"{name}: Leg B must score >=1 action"
+def test_gkdv_delta_das_is_honest_nan_on_the_velocity_less_leg():
+    """delta_das STRUCTURALLY needs velocity (ADR-043), so it degrades to honest-NaN on the
+    freeze-frame leg and scores on the velocity-bearing leg -- an honest all-NaN, not a masked 0.0."""
+    das = SB360_ENTRIES["gkdv.delta_das"]
+    a = das.call(*F.build_leg_a(), F.HOME_TEAM_ID)["delta_das"].to_numpy(dtype=float)
+    b = das.call(*F.build_leg_b(), F.HOME_TEAM_ID)["delta_das"].to_numpy(dtype=float)
+    assert not np.isfinite(a).any(), "delta_das: Leg A must be all-NaN (DAS needs velocity)"
+    assert np.isfinite(b).any(), "delta_das: Leg B must score >=1 action"
+
+
+def test_gkdv_delta_threat_is_live_and_non_vacuous_across_legs():
+    """delta_threat computes on BOTH legs (pitch control has a valid zero-velocity positional model,
+    ADR-063) and is LIVE: >=1 scored action is NON-ZERO and the two legs DIFFER there. This is the
+    non-vacuity fix -- delta_threat was previously a masked 0.0 because no receiver was ahead of the
+    ball; sb360-fixture-2 adds a striker so the keeper's threat-suppression is actually measured."""
+    thr = SB360_ENTRIES["gkdv.delta_threat_suppression"]
+    ta = thr.call(*F.build_leg_a(), F.HOME_TEAM_ID)["delta_threat_suppression"].to_numpy(dtype=float)
+    tb = thr.call(*F.build_leg_b(), F.HOME_TEAM_ID)["delta_threat_suppression"].to_numpy(dtype=float)
+    assert np.isfinite(ta).any() and np.isfinite(tb).any(), "delta_threat must score on both legs"
+    assert np.nanmax(np.abs(ta)) > 0, "delta_threat must be NON-ZERO on >=1 action (not a masked 0.0)"
+    both = np.isfinite(ta) & np.isfinite(tb)
+    assert both.any() and not np.allclose(ta[both], tb[both]), "the two legs' delta_threat must DIFFER"

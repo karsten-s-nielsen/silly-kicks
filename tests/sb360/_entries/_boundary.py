@@ -184,11 +184,30 @@ def _gkdv_per_action(frames, cf, prov, links, actions, arm_fn):
     return pd.Series(vals, index=actions.index)
 
 
-_GKDV_STRUCTURAL_RATIONALE = (
-    "Inherited from serve_ghost_gk_positions, which REFUSES velocity-less freeze-frames "
-    "(ADR-054): Leg A scores zero frames -> NaN, Leg B scores the in-domain actions. Same "
-    "`honest_nan` class as add_ghost_gk. The arms are never reached on Leg A, so their intrinsic "
-    "zero-velocity behaviour is out of scope and contingent on that refusal (cf. ADR-063). ADR-053 Part 4."
+# The ghost POSITION now serves on the velocity-less freeze-frame leg via the position_only variant
+# (ADR-067), so gkdv's arms ARE reached on Leg A -- each with its own honest behaviour below, no
+# longer a single inherited refusal.
+_GKDV_GK_ABSENT_RATIONALE = (
+    "By construction: the gk_absent roster removes both keepers, so a GK-counterfactual arm has no "
+    "keeper to substitute in EITHER leg -- no_signal, unexercisable. [measured cause=n/a]"
+)
+_GKDV_GHOST_UNLOCK_RATIONALE = (
+    "SB360 unlock (ADR-067): the freeze-frame leg auto-selects the position_only ghost variant "
+    "(velocity-less) and the tracking leg the velocity default, so build_ghost_frames legitimately "
+    "returns different ghost positions across legs -- a SUBSTANTIVE counterfactual, not a fabrication "
+    "(applicability region_support). [measured cause=velocity]"
+)
+_GKDV_DELTA_DAS_RATIONALE = (
+    "delta_das (accessible space) STRUCTURALLY requires velocity, so on the velocity-less freeze-frame "
+    "leg it degrades to honest-NaN -- the ADR-043 consumer-degrade `add_das` uses via das_source "
+    "(DasUnscoreableError caught in delta_das) -- while the tracking leg scores. An honest all-NaN, "
+    "not a fabricated value. [measured cause=velocity]"
+)
+_GKDV_DELTA_THREAT_RATIONALE = (
+    "delta_threat_suppression computes via pitch control, which has a valid zero-velocity positional "
+    "model (ADR-063), so it scores on BOTH legs -- positional-only on the freeze-frame leg, "
+    "velocity-informed on the tracking leg -- and they legitimately differ where there is threat to "
+    "suppress. A SUBSTANTIVE counterfactual, not a fabrication. [measured cause=velocity]"
 )
 
 
@@ -230,18 +249,30 @@ _entry(
     "gkdv.build_ghost_frames",
     _call_gkdv_build_ghost_frames,
     columns=_GKDV_BGF_COLS,
-    velocity={c: AxisVerdict("all_nan", "honest_nan") for c in _GKDV_BGF_COLS},
+    velocity={
+        c: AxisVerdict("differs", "differs_by_design", rationale=_GKDV_GHOST_UNLOCK_RATIONALE) for c in _GKDV_BGF_COLS
+    },
     visibility={
         "gk_absent": {
-            c: AxisVerdict("no_signal", "not_exercised", rationale=_GKDV_STRUCTURAL_RATIONALE) for c in _GKDV_BGF_COLS
+            c: AxisVerdict("no_signal", "not_exercised", rationale=_GKDV_GK_ABSENT_RATIONALE) for c in _GKDV_BGF_COLS
         },
-        "defender_absent": {c: AxisVerdict("all_nan", "honest_nan") for c in _GKDV_BGF_COLS},
-        "gk_one_end": {c: AxisVerdict("all_nan", "honest_nan") for c in _GKDV_BGF_COLS},
+        "defender_absent": {
+            c: AxisVerdict("differs", "differs_by_design", rationale=_GKDV_GHOST_UNLOCK_RATIONALE)
+            for c in _GKDV_BGF_COLS
+        },
+        "gk_one_end": {
+            c: AxisVerdict("differs", "differs_by_design", rationale=_GKDV_GHOST_UNLOCK_RATIONALE)
+            for c in _GKDV_BGF_COLS
+        },
     },
-    applicability={c: "no_support" for c in _GKDV_BGF_COLS},
-    applicability_deltas={c: {"extreme": 0.0, "near": 0.0} for c in _GKDV_BGF_COLS},
-    verdict_provenance="structural",
-    provenance_rationale=_GKDV_STRUCTURAL_RATIONALE,
+    applicability={c: "region_support" for c in _GKDV_BGF_COLS},
+    applicability_deltas={
+        "ghost_x": {"extreme": 0.0, "near": 5.945952494478718},
+        "ghost_y": {"extreme": 0.0, "near": 0.8630997327604462},
+        "displacement_m": {"extreme": 0.0, "near": 107.98991562762673},
+    },
+    verdict_provenance="substantive",
+    provenance_rationale=_GKDV_GHOST_UNLOCK_RATIONALE,
 )
 
 
@@ -281,22 +312,49 @@ def _call_gkdv_delta_threat(actions, frames, links, home_team_id):
     return actions.assign(delta_threat_suppression=vals.to_numpy())
 
 
-for _name, _fn, _col in (
-    ("gkdv.delta_das", _call_gkdv_delta_das, "delta_das"),
-    ("gkdv.delta_threat_suppression", _call_gkdv_delta_threat, "delta_threat_suppression"),
-):
-    _entry(
-        _name,
-        _fn,
-        columns=(_col,),
-        velocity={_col: AxisVerdict("all_nan", "honest_nan")},
-        visibility={
-            "gk_absent": {_col: AxisVerdict("no_signal", "not_exercised", rationale=_GKDV_STRUCTURAL_RATIONALE)},
-            "defender_absent": {_col: AxisVerdict("all_nan", "honest_nan")},
-            "gk_one_end": {_col: AxisVerdict("all_nan", "honest_nan")},
+# delta_das degrades to honest-NaN on the velocity-less freeze-frame leg (DAS structurally needs
+# velocity, ADR-043), so it never MOVES across legs -- structural, all_nan/honest_nan.
+_entry(
+    "gkdv.delta_das",
+    _call_gkdv_delta_das,
+    columns=("delta_das",),
+    velocity={"delta_das": AxisVerdict("all_nan", "honest_nan")},
+    visibility={
+        "gk_absent": {"delta_das": AxisVerdict("no_signal", "not_exercised", rationale=_GKDV_GK_ABSENT_RATIONALE)},
+        "defender_absent": {"delta_das": AxisVerdict("all_nan", "honest_nan")},
+        "gk_one_end": {"delta_das": AxisVerdict("all_nan", "honest_nan")},
+    },
+    applicability={"delta_das": "no_support"},
+    applicability_deltas={"delta_das": {"extreme": 0.0, "near": 0.0}},
+    verdict_provenance="structural",
+    provenance_rationale=_GKDV_DELTA_DAS_RATIONALE,
+)
+
+# delta_threat computes on BOTH legs (pitch control has a valid zero-velocity positional model,
+# ADR-063), so the freeze-frame (positional) and tracking (velocity-informed) legs legitimately
+# DIFFER where there is threat to suppress -- SUBSTANTIVE. On gk_one_end only the goalkick action
+# is scored (a no-threat restart, 0.0 on both legs), a coincidental `identical`/`works` within a
+# substantive arm; on gk_absent there is no keeper (no_signal).
+_entry(
+    "gkdv.delta_threat_suppression",
+    _call_gkdv_delta_threat,
+    columns=("delta_threat_suppression",),
+    velocity={
+        "delta_threat_suppression": AxisVerdict("differs", "differs_by_design", rationale=_GKDV_DELTA_THREAT_RATIONALE)
+    },
+    visibility={
+        "gk_absent": {
+            "delta_threat_suppression": AxisVerdict("no_signal", "not_exercised", rationale=_GKDV_GK_ABSENT_RATIONALE)
         },
-        applicability={_col: "no_support"},
-        applicability_deltas={_col: {"extreme": 0.0, "near": 0.0}},
-        verdict_provenance="structural",
-        provenance_rationale=_GKDV_STRUCTURAL_RATIONALE,
-    )
+        "defender_absent": {
+            "delta_threat_suppression": AxisVerdict(
+                "differs", "differs_by_design", rationale=_GKDV_DELTA_THREAT_RATIONALE
+            )
+        },
+        "gk_one_end": {"delta_threat_suppression": AxisVerdict("identical", "works")},
+    },
+    applicability={"delta_threat_suppression": "no_support"},
+    applicability_deltas={"delta_threat_suppression": {"extreme": 0.0, "near": 0.0}},
+    verdict_provenance="substantive",
+    provenance_rationale=_GKDV_DELTA_THREAT_RATIONALE,
+)

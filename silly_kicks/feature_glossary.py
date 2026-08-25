@@ -1629,6 +1629,35 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_XCROSS,
         attribution=_A_XCROSS,
     ),
+    # Velocity-keyed variant provenance (closed set {default, position_only, custom}). Distinct from a
+    # value: which model auto-select served, so a NaN->value change on SB360 is auditable per action.
+    FeatureColumn(
+        name="xshot_occurrence_variant",
+        definition=(
+            "Provenance of the served xS variant (velocity-keyed auto-select): 'default' (velocity "
+            "model), 'position_only' (velocity-less SB360 freeze frames), or 'custom' (explicit model=)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_XSHOT,
+    ),
+    FeatureColumn(
+        name="xcross_attempt_variant",
+        definition=(
+            "Provenance of the served xCross variant (velocity-keyed auto-select): 'default', "
+            "'position_only' (velocity-less SB360), or 'custom' (explicit model=)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_XCROSS,
+    ),
+    FeatureColumn(
+        name="ghost_gk_variant",
+        definition=(
+            "Provenance of the served ghost-GK variant (velocity-keyed auto-select): 'default', "
+            "'position_only' (velocity-less SB360), or 'custom' (explicit model=)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_GHOST_GK,
+    ),
 )
 
 

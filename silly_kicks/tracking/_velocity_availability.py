@@ -7,6 +7,8 @@ unconditionally or silently filling zeros.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 
 from .schema import SPEED_SOURCE_UNAVAILABLE
@@ -28,6 +30,34 @@ def velocity_unavailable_by_design(frames: pd.DataFrame) -> bool:
     if "speed_source" not in frames.columns or len(frames) == 0:
         return False
     return bool((frames["speed_source"] == SPEED_SOURCE_UNAVAILABLE).all())
+
+
+def variant_key_for_velocity(frames: pd.DataFrame) -> Literal["default", "position_only"]:
+    """Pure 2-way variant key (Layer A of the velocity-keyed model auto-select).
+
+    ``"position_only"`` iff the frame set DECLARES velocity structurally unavailable
+    (:func:`velocity_unavailable_by_design`), else ``"default"``. No IO, no fallback, no raise -- the
+    velocity analogue of ``variant_key_for_provider``. An EMPTY or partially-marked set is not
+    all-unavailable, so it keys ``"default"``; a mixed set is caught separately by
+    :func:`velocity_availability_is_mixed` at the serve seam.
+    """
+    return "position_only" if velocity_unavailable_by_design(frames) else "default"
+
+
+def velocity_availability_is_mixed(frames: pd.DataFrame) -> bool:
+    """True iff SOME-but-not-ALL rows declare velocity unavailable (a mixed frame set).
+
+    :func:`velocity_unavailable_by_design` requires the marker on EVERY row and returns ``False`` on a
+    partially-marked set -- so without this guard a mixed set (some freeze-frame rows, some
+    velocity-bearing) would resolve to the DEFAULT velocity variant and the marked rows would get
+    ``speed=NaN`` fabricated (the ADR-054 defect reappearing on mixed frames). The serve seam RAISES on
+    a mixed set: mixed velocity-availability is a caller error. Empty / no ``speed_source`` column ->
+    ``False`` (nothing declared).
+    """
+    if "speed_source" not in frames.columns or len(frames) == 0:
+        return False
+    n = int((frames["speed_source"] == SPEED_SOURCE_UNAVAILABLE).sum())
+    return 0 < n < len(frames)
 
 
 def zero_velocity_if_unavailable(frames: pd.DataFrame, *, method: str = "spearman") -> pd.DataFrame:

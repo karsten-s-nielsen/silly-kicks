@@ -163,3 +163,15 @@ All five current boundary entries (the four above plus the already-registered
 The stale TODO "four boundary entry points are unauditable" item is deleted as **resolved** (not
 tracked forward). Consequences unchanged from the parent decision: tests and docs only, no library
 change, no aggregator added, C4-free, no retrain trigger.
+
+### Follow-up (ADR-067 Phase B) — the gate refined for the first MIXED entry; two entries now `substantive`
+
+Bundling the position-only ghost (ADR-067) made gkdv's counterfactual arms *produce* on SB360, so
+`gkdv.build_ghost_frames` and `gkdv.delta_threat_suppression` became **`substantive`** (their values
+now move across the velocity legs) — the "all five declare `structural`" statement above no longer
+holds. `delta_threat_suppression` is also the first **MIXED** boundary entry: substantive where there
+is threat, but a coincidental `0==0` `works` on the no-threat goalkick roster. The per-cell
+`works→structural` lock could not express that mix, so the gate was refined: an entry is `substantive`
+if ANY cell moves (`differs_by_design`/`silent_degrade`), exempting coincidental `works` cells; an
+entry with NO substantive cell still locks `works→structural`, keeping the frame-blind case
+(`add_restart_coordinates`, `xtgk.compute_xt_gk_v2`) tight. See ADR-067's Phase-B amendment.

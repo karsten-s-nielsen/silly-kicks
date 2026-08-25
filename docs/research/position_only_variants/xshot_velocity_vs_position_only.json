@@ -1,0 +1,23 @@
+{
+  "model": "xshot",
+  "delta": {
+    "pr_auc": {
+      "velocity": 0.3458024090235575,
+      "position_only": 0.3065819349186868,
+      "delta": 0.03922047410487073
+    },
+    "brier": {
+      "velocity": 0.1611367493867874,
+      "position_only": 0.16699706315994262,
+      "delta": -0.005860313773155212
+    },
+    "log_loss": {
+      "velocity": 0.492645400762558,
+      "position_only": 0.5109103977680206,
+      "delta": -0.018264997005462635
+    }
+  },
+  "run_commit": "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean"
+}

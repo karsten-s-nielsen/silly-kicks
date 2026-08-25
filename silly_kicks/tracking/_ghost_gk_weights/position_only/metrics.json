@@ -1,0 +1,56 @@
+{
+  "n_games": 173,
+  "n_samples": 966197,
+  "n_providers": 3,
+  "providers": [
+    "gradientsports",
+    "skillcorner",
+    "sportec"
+  ],
+  "cv_folds": 5,
+  "subsample_fps": 1.0,
+  "variant": "full",
+  "carrier_params": {
+    "tolerance_m": 3.0,
+    "beta": 0.0,
+    "gamma": 0.25
+  },
+  "training_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba",
+  "run_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "hyperparameters": {
+    "n_estimators": 500,
+    "max_depth": 8
+  },
+  "cv_mae_x_mean": 0.1680071911244539,
+  "cv_mae_x_std": 0.006081734392022603,
+  "cv_mae_y_mean": 1.1154806467718994,
+  "cv_mae_y_std": 0.032205023731503774,
+  "cv_mae_euclidean_mean": 1.1677056803754549,
+  "cv_mae_euclidean_std": 0.03344352465935537,
+  "per_provider_mae_euclidean": {
+    "gradientsports": 1.1026230365296334,
+    "skillcorner": 1.2205057894302473,
+    "sportec": 1.7020457661603046
+  },
+  "acceptance": {
+    "overall_mae_lt_2m": true,
+    "per_provider_mae_lt_3m": true,
+    "cross_fold_std_lt_05m": true,
+    "artifact_size_lt_15mb": true
+  },
+  "artifact_size_bytes": 2385491,
+  "detection_selection_bias": {
+    "keeper_depth_detected_mean": 5.050323365342181,
+    "keeper_depth_undetected_mean": 15.526409784723722,
+    "ball_to_keeper_dist_detected_mean": 23.268318332653397,
+    "ball_to_keeper_dist_undetected_mean": 47.98931664042842,
+    "n_detected": 184277,
+    "n_undetected": 735727,
+    "n_games_counters_unrecorded": 0,
+    "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
+  },
+  "reproducibility": "restricted",
+  "reproducibility_note": "Trained on the full 179-match native corpus including gradientsports (owner-tier); not reproducible from public data. The public idsse+skillcorner arm collapsed to 0 usable folds on 17 public matches, so the restricted full-corpus position_only variant is bundled per the Risk-1 decision gate."
+}

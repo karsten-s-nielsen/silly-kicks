@@ -37,9 +37,21 @@ def _undeclared_missing_velocity(frames: pd.DataFrame) -> pd.DataFrame:
     return frames.drop(columns=[c for c in ("vx", "vy") if c in frames.columns]).copy()
 
 
-def test_declared_velocity_unavailable_returns_nan_not_fabricated():
+def test_declared_velocity_unavailable_returns_nan_not_fabricated(monkeypatch):
+    # With the position_only variant BUNDLED (commit 2), a declared-velocity-less frame now serves a
+    # value via that variant (the SB360 unlock; asserted on real weights in test_position_only_bundled).
+    # This guard remains the FALLBACK contract: with NO position_only variant available, the FAITHFUL
+    # model must NOT be used (its `speed` feature -> XGBoost missing-value routing = the ADR-053
+    # fabrication shape); auto-select falls back to honest NaN. Force the unbundled path to keep it covered.
+    def _boom(cls, v):
+        if v == "position_only":
+            raise FileNotFoundError
+        raise AssertionError("must NOT fall back to the faithful default on velocity-less frames")
+
+    monkeypatch.setattr(xs.XShotOccurrenceModel, "from_variant", classmethod(_boom))
     frames = _declared_unavailable(_synthetic_match_frames(n_frames=5))
-    out = xs.compute_xshot_occurrence(frames, model=None, home_team_id=1)
+    with pytest.warns(UserWarning, match="position_only"):
+        out = xs.compute_xshot_occurrence(frames, model=None, home_team_id=1)
     assert out["xshot_occurrence"].isna().all()
 
 

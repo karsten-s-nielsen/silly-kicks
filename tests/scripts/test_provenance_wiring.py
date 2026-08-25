@@ -116,6 +116,11 @@ ARTIFACT_DRIVERS = (
     # docs/research/sb360_licensed_coverage/ -- exactly the "external data -> cited artifact" class
     # this registry enrolls. Licensed per-match shards go to a gitignored root, never the aggregate.
     "validate_sb360_licensed_corpus",
+    # The position-only-variants cycle. Consumes the two trainer metrics.json (faithful vs
+    # position_only) and writes the velocity-vs-position_only skill-delta artifact to
+    # docs/research/position_only_variants/ -- a CITED number (the ADR's "reported comparability
+    # cost"), so the tree it ran on is recorded. Flagged by this gate on its first run.
+    "compare_position_only_variants",
 )
 
 
