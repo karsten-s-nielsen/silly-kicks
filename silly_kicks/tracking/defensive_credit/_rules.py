@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from silly_kicks._frame_index import RowGroups
 
 import numpy as np
 import pandas as pd
@@ -87,6 +90,10 @@ class RuleContext:
     # indexed by ctx.idx. True fires rule_failed_marking_through_ball; False / short-circuit-0 / <NA>
     # do not. Typed Any: it is an ExtensionArray whose element type varies (bool / pd.NA).
     line_break_between_lines: Any = None
+    # ADR-068: an O(1) per-frame lookup built ONCE by compute_defensive_credits and shared across
+    # every action x rule. None on the unit-test path (build_single) -> resolve falls back to the
+    # per-call boolean filter. Keyed on frame_id ALONE, matching the filter it replaces exactly.
+    frame_groups: RowGroups | None = None
 
     @property
     def action(self) -> pd.Series:
@@ -103,6 +110,7 @@ class RuleContext:
             params=self.params,
             frame_id=self.frame_id,
             flip=self.flip,
+            frame_groups=self.frame_groups,
         )
 
     @classmethod

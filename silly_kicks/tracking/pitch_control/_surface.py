@@ -89,6 +89,31 @@ class PitchControlSurface:
         """
         return float(self.at_points(np.array([[x, y]]))[0])
 
+    def _interpolator(self):
+        """Lazily build + cache the ``RegularGridInterpolator`` (ADR-068).
+
+        The grid and surface are immutable (``__post_init__`` sets ``writeable=False``), so the
+        interpolator is a pure function of them and is safe to build once and reuse across every
+        ``at_point`` / ``at_points`` call. ``PitchControlCache`` shares one surface across many
+        xfn families, each of which queried it, rebuilding the interpolator every time. Cached on
+        the instance via ``object.__setattr__`` (the standard frozen-dataclass lazy-cache idiom;
+        ``_interp_cache`` is not a field, so ``eq`` / ``hash`` / ``repr`` are unaffected).
+        """
+        interp = self.__dict__.get("_interp_cache")
+        if interp is None:
+            from scipy.interpolate import RegularGridInterpolator
+
+            # RegularGridInterpolator expects (y, x) ordering for the grid
+            interp = RegularGridInterpolator(
+                (self.grid_y, self.grid_x),
+                self.surface,
+                method="linear",
+                bounds_error=False,
+                fill_value=None,  # extrapolate via nearest  # type: ignore[arg-type]
+            )
+            object.__setattr__(self, "_interp_cache", interp)
+        return interp
+
     def at_points(self, xy: np.ndarray) -> np.ndarray:
         """Batch bilinear interpolation. xy shape: (N, 2).
 
@@ -99,16 +124,7 @@ class PitchControlSurface:
             pts = np.array([[50, 34], [80, 20]])
             surface.at_points(pts)  # -> array([0.52, 0.71])
         """
-        from scipy.interpolate import RegularGridInterpolator
-
-        # RegularGridInterpolator expects (y, x) ordering for the grid
-        interp = RegularGridInterpolator(
-            (self.grid_y, self.grid_x),
-            self.surface,
-            method="linear",
-            bounds_error=False,
-            fill_value=None,  # extrapolate via nearest  # type: ignore[arg-type]
-        )
+        interp = self._interpolator()
         # Input is (x, y) but interpolator expects (y, x)
         yx = np.column_stack([xy[:, 1], xy[:, 0]])
         result = interp(yx)

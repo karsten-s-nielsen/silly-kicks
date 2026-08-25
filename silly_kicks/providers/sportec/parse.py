@@ -1,11 +1,14 @@
 """DFL / Sportec parse+shape port --- bytes -> bronze -> silly-kicks converter input.
 
-ADR-031 (T3). This module is **upstreamed verbatim** from the luxury-lakehouse
-DFL/Sportec parser, pinned at commit ``0efac60`` (see
-``tests/datasets/sportec/idsse_slice/SOURCE_SHA``). It single-sources the IDSSE/Sportec
-DFL parse layer so the silly-kicks dev harness (``scripts/_loader_pining.py``) and the
-lakehouse stop maintaining two divergent parsers. See
-``docs/superpowers/specs/2026-06-16-dfl-parse-port-design.md``.
+ADR-031 (T3). This module **originated** as a verbatim lift of the luxury-lakehouse
+DFL/Sportec parser at commit ``0efac60`` (see ``tests/datasets/sportec/idsse_slice/SOURCE_SHA``).
+**silly-kicks now OWNS this parser outright:** the lakehouse's ADR-055 delete-and-depend removed
+its own copy and depends on this port, so there is no longer a live upstream to diverge from or
+re-lift. ``0efac60`` is therefore the historical origin, not a maintained mirror; the committed DFL
+**golden** (``tests/providers/sportec/test_parse_port_parity.py``, byte-identical vs the frozen
+lakehouse output) is the parity authority. silly-kicks-local optimizations that keep that golden
+green are sanctioned -- e.g. the ADR-068 **single-pass** parse below, which reads the position file
+once instead of twice (byte-identical). See ``docs/superpowers/specs/2026-06-16-dfl-parse-port-design.md``.
 
 Provenance of the lifted bodies (luxury-lakehouse @ 0efac60):
 
@@ -31,10 +34,11 @@ The bodies are lifted byte-for-byte; the ONLY adaptations are (a) the lakehouse
 above are inlined, (c) the events bronze-column set is materialised, and (d) the
 silly-kicks-local hardening helpers marked ``LOCAL HARDENING`` below
 (:func:`_normalize_ball_state` / :func:`_resolve_period_column`), which close two
-*silent-degradation* paths in the lifted bodies. Those helpers are **output-neutral on
-valid input** --- they only add loudness where the lift previously degraded quietly --- so
-the golden parity gate stays the authority on the lift itself. A future re-pin to a newer
-lakehouse SHA must re-apply them, not drop them. The parse layer
+*silent-degradation* paths in the lifted bodies, and (e) the ADR-068 **single-pass** structure of
+:func:`_parse_positions_xml` (one file read + a deferred player-row replay instead of two full
+reads), which is **byte-identical** to the two-pass original. Adaptations (d)/(e) are output-neutral
+on valid input, so the golden parity gate stays the authority. (There is no live upstream to re-pin
+from -- see the ownership note above; these are now silly-kicks-owned.) The parse layer
 is faithful ``bytes -> RAW bronze``; **data-quality (Savitzky-Golay smoothing, velocity
 derivation) stays consumer-side** --- the lakehouse applies its own ``_smooth_tracking``
 after this parse, and the silly-kicks harness applies ``_preprocess``. The Phase-2.1
@@ -51,11 +55,30 @@ import xml.etree.ElementTree as ET  # nosemgrep: use-defused-xml -- trusted loca
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+class _PlayerFrame(NamedTuple):
+    """One collected player tracking frame (ADR-068 single-pass): typed so the deferred replay in
+    :func:`_parse_positions_xml` keeps int/float types instead of a ``dict[str, object]``."""
+
+    period: int
+    n: int
+    x: float
+    y: float
+    person_id: str
+    team_id: str | None
+    team_label: str
+    t: str | None
+    s: float | None
+    a: float | None
+    d: float | None
+    m: bool | None
 
 
 # ---------------------------------------------------------------------------
@@ -445,10 +468,13 @@ def _parse_positions_xml(
     ``src/tests/fixtures/idsse_dfl_tracking_attr_enumeration.json`` lands
     in a dedicated bronze column. Nothing is dropped silently.
 
-    **Why two-pass (PR 1.7):** real DFL position XMLs have ball FrameSets
-    AFTER all player / referee FrameSets in the file. A single-pass parser
-    emitting player rows first would see an empty ball lookup dict and
-    produce NULL ball coordinates in bronze.
+    **Single pass, deferred row build (ADR-068):** real DFL position XMLs have
+    ball FrameSets AFTER all player / referee FrameSets, so player rows cannot be
+    joined to ball coordinates inline. The file is read ONCE: ball FrameSets fill
+    ``ball_by_frame`` + the period ball-min while player FrameSets are collected in
+    file order; player rows are then built in a post-stream replay once the ball
+    join is complete. Byte-identical to the prior two-pass parser (validated by the
+    lakehouse DFL golden), at one file read instead of two. (Was two-pass, PR 1.7.)
 
     Returns rows grouped by period so callers can process and release each
     half independently, halving peak DataFrame memory.
@@ -474,7 +500,7 @@ def _parse_positions_xml(
     canonical_match_id = idsse_native_match_id(match_id)
 
     # Ball data per (period, frame_n). Each entry is a dict carrying every
-    # DFL ball Frame attribute plus the ball-only ones. Populated in pass 1.
+    # DFL ball Frame attribute plus the ball-only ones. Populated during the single pass.
     ball_by_frame: dict[tuple[int, int], dict[str, object]] = {}
     ball_miss_count = 0  # Player frames where ball lookup returned None
 
@@ -482,60 +508,58 @@ def _parse_positions_xml(
     # timestamps (see PR 1.6).
     period_first_frame: dict[int, int] = {}
 
-    # ── PASS 1: ball FrameSets → populate ball_by_frame + period_first_frame ──
+    # ── SINGLE PASS (ADR-068): read the position file ONCE. Ball FrameSets populate ball_by_frame
+    #    + period_first_frame (ball-min per period); player FrameSets are COLLECTED in file order,
+    #    with row building DEFERRED. DFL position XMLs place the ball FrameSets AFTER the player
+    #    FrameSets, so a single pass emitting player rows inline would see an empty ball lookup --
+    #    hence collect-then-replay: player rows are built below, once ball_by_frame and the ball-min
+    #    seed are COMPLETE. Byte-identical to the prior two-pass parser (ball then players): the
+    #    replay processes player frames in the SAME file order, seeded from the SAME complete
+    #    ball-min, with the SAME inline period_first_frame update. Was two full file reads. ──
+    player_frames: list[_PlayerFrame] = []  # file order == the old pass-2 processing order
     for _event, elem in ET.iterparse(pos_path, events=("end",)):  # noqa: S314
         if elem.tag != "FrameSet":
             continue
 
         team_id_lower = elem.get("TeamId", "").lower()
-        if team_id_lower != "ball":
-            elem.clear()
-            continue
-
         section = elem.get("GameSection", "")
         period = _SECTION_TO_PERIOD.get(section)
-        if period is None:
-            logger.warning(
-                "Unrecognized GameSection %r in match %s — skipping FrameSet",
-                section,
-                match_id,
-            )
+
+        if team_id_lower == "ball":
+            if period is None:
+                logger.warning(
+                    "Unrecognized GameSection %r in match %s — skipping FrameSet",
+                    section,
+                    match_id,
+                )
+                elem.clear()
+                continue
+            for frame_el in elem.iter("Frame"):
+                n = int(frame_el.get("N", "0"))
+                ball_by_frame[(period, n)] = {
+                    "ball_x": _parse_float_or_none(frame_el.get("X", "")),
+                    "ball_y": _parse_float_or_none(frame_el.get("Y", "")),
+                    "ball_z": _parse_float_or_none(frame_el.get("Z", "")),
+                    "ball_s": _parse_float_or_none(frame_el.get("S", "")),
+                    "ball_a": _parse_float_or_none(frame_el.get("A", "")),
+                    "ball_d": _parse_float_or_none(frame_el.get("D", "")),
+                    "ball_m": _parse_bool_or_none(frame_el.get("M", "")),
+                    "ball_t": frame_el.get("T", "") or None,
+                    "ball_possession": frame_el.get("BallPossession", "") or None,
+                    "ball_status": frame_el.get("BallStatus", "") or None,
+                }
+                cur = period_first_frame.get(period)
+                if cur is None or n < cur:
+                    period_first_frame[period] = n
             elem.clear()
             continue
 
-        for frame_el in elem.iter("Frame"):
-            n = int(frame_el.get("N", "0"))
-            ball_entry: dict[str, object] = {
-                "ball_x": _parse_float_or_none(frame_el.get("X", "")),
-                "ball_y": _parse_float_or_none(frame_el.get("Y", "")),
-                "ball_z": _parse_float_or_none(frame_el.get("Z", "")),
-                "ball_s": _parse_float_or_none(frame_el.get("S", "")),
-                "ball_a": _parse_float_or_none(frame_el.get("A", "")),
-                "ball_d": _parse_float_or_none(frame_el.get("D", "")),
-                "ball_m": _parse_bool_or_none(frame_el.get("M", "")),
-                "ball_t": frame_el.get("T", "") or None,
-                "ball_possession": frame_el.get("BallPossession", "") or None,
-                "ball_status": frame_el.get("BallStatus", "") or None,
-            }
-            ball_by_frame[(period, n)] = ball_entry
-            cur = period_first_frame.get(period)
-            if cur is None or n < cur:
-                period_first_frame[period] = n
-        elem.clear()
-
-    # ── PASS 2: player FrameSets → emit per-player tracking rows ──
-    for _event, elem in ET.iterparse(pos_path, events=("end",)):  # noqa: S314
-        if elem.tag != "FrameSet":
-            continue
-
-        team_id_lower = elem.get("TeamId", "").lower()
-        # Pass 2 skips ball (already handled) and referee (not tracked).
-        if team_id_lower in ("ball", "referee"):
+        # Referee FrameSets are not tracked (and, matching the old pass 2, are never warned on section).
+        if team_id_lower == "referee":
             elem.clear()
             continue
 
-        section = elem.get("GameSection", "")
-        period = _SECTION_TO_PERIOD.get(section)
+        # Player FrameSet: collect per-frame data; row building is deferred to the replay below.
         if period is None:
             logger.warning(
                 "Unrecognized GameSection %r in match %s — skipping FrameSet",
@@ -548,7 +572,6 @@ def _parse_positions_xml(
         team_id = elem.get("TeamId", "") or None
         person_id = elem.get("PersonId", "")
         team_label = player_team_map.get(person_id, "unknown")
-        period_rows = rows_by_period[period]
 
         for frame_el in elem.iter("Frame"):
             n = int(frame_el.get("N", "0"))
@@ -561,68 +584,90 @@ def _parse_positions_xml(
             if x is None or y is None:
                 continue
 
-            cur = period_first_frame.get(period)
-            if cur is None or n < cur:
-                period_first_frame[period] = n
-            period_start = period_first_frame[period]
-            timestamp = (n - period_start) / _FRAME_RATE
-
-            ball_lookup = ball_by_frame.get((period, n))
-            if ball_lookup is None:
-                ball_miss_count += 1
-            ball_entry: dict[str, object] = (
-                ball_lookup
-                if ball_lookup is not None
-                else {
-                    "ball_x": None,
-                    "ball_y": None,
-                    "ball_z": None,
-                    "ball_s": None,
-                    "ball_a": None,
-                    "ball_d": None,
-                    "ball_m": None,
-                    "ball_t": None,
-                    "ball_possession": None,
-                    "ball_status": None,
-                }
+            player_frames.append(
+                _PlayerFrame(
+                    period=period,
+                    n=n,
+                    x=x,
+                    y=y,
+                    person_id=person_id,
+                    team_id=team_id,
+                    team_label=team_label,
+                    t=frame_el.get("T", "") or None,
+                    s=_parse_float_or_none(frame_el.get("S", "")),
+                    a=_parse_float_or_none(frame_el.get("A", "")),
+                    d=_parse_float_or_none(frame_el.get("D", "")),
+                    m=_parse_bool_or_none(frame_el.get("M", "")),
+                )
             )
-
-            row: dict[str, object] = {
-                # Existing columns
-                "period": period,
-                "frame": n,
-                "timestamp": round(timestamp, 4),
-                "player_id": person_id,
-                "team": team_label,
-                "x": x,
-                "y": y,
-                "match_id": canonical_match_id,
-                "frame_rate": _FRAME_RATE,
-                # New per-player DFL Frame attrs
-                "team_id": team_id,
-                "t": frame_el.get("T", "") or None,
-                "s": _parse_float_or_none(frame_el.get("S", "")),
-                "a": _parse_float_or_none(frame_el.get("A", "")),
-                "d": _parse_float_or_none(frame_el.get("D", "")),
-                "m": _parse_bool_or_none(frame_el.get("M", "")),
-                # Per-match metadata (sourced from <General> in matchinformation XML).
-                # Same value for every row of a given match — replicated here for
-                # parity with bronze.idsse_events (asserted by
-                # test_idsse_match_metadata_parity.py). Empty string when the
-                # XML lacked the attribute or the caller passed _EMPTY_MATCH_METADATA
-                # (test path with no companion matchinfo).
-                "competition_native_id": metadata.competition_id,
-                "season_native_id": metadata.season_id,
-                "home_team_id_native": metadata.home_team_id,
-                "away_team_id_native": metadata.away_team_id,
-                # Ball-joined cols
-                **ball_entry,
-            }
-            if gk_player_ids is not None:
-                row["is_goalkeeper"] = person_id in gk_player_ids
-            period_rows.append(row)
-
         elem.clear()
+
+    # ── REPLAY: build player rows in the collected (file) order, seeded from the now-COMPLETE
+    #    ball-min, updating period_first_frame inline exactly as the old pass 2 did (byte-identical). ──
+    for pf in player_frames:
+        period = pf.period
+        n = pf.n
+
+        cur = period_first_frame.get(period)
+        if cur is None or n < cur:
+            period_first_frame[period] = n
+        period_start = period_first_frame[period]
+        timestamp = (n - period_start) / _FRAME_RATE
+
+        ball_lookup = ball_by_frame.get((period, n))
+        if ball_lookup is None:
+            ball_miss_count += 1
+        ball_entry: dict[str, object] = (
+            ball_lookup
+            if ball_lookup is not None
+            else {
+                "ball_x": None,
+                "ball_y": None,
+                "ball_z": None,
+                "ball_s": None,
+                "ball_a": None,
+                "ball_d": None,
+                "ball_m": None,
+                "ball_t": None,
+                "ball_possession": None,
+                "ball_status": None,
+            }
+        )
+
+        row: dict[str, object] = {
+            # Existing columns
+            "period": period,
+            "frame": n,
+            "timestamp": round(timestamp, 4),
+            "player_id": pf.person_id,
+            "team": pf.team_label,
+            "x": pf.x,
+            "y": pf.y,
+            "match_id": canonical_match_id,
+            "frame_rate": _FRAME_RATE,
+            # New per-player DFL Frame attrs
+            "team_id": pf.team_id,
+            "t": pf.t,
+            "s": pf.s,
+            "a": pf.a,
+            "d": pf.d,
+            "m": pf.m,
+            # Per-match metadata (sourced from <General> in matchinformation XML).
+            # Same value for every row of a given match — replicated here for
+            # parity with bronze.idsse_events (asserted by
+            # test_idsse_match_metadata_parity.py). Empty string when the
+            # XML lacked the attribute or the caller passed _EMPTY_MATCH_METADATA
+            # (test path with no companion matchinfo).
+            "competition_native_id": metadata.competition_id,
+            "season_native_id": metadata.season_id,
+            "home_team_id_native": metadata.home_team_id,
+            "away_team_id_native": metadata.away_team_id,
+            # Ball-joined cols
+            **ball_entry,
+        }
+        if gk_player_ids is not None:
+            row["is_goalkeeper"] = pf.person_id in gk_player_ids
+        rows_by_period[period].append(row)
 
     logger.info("Parsed %d ball frames for match %s", len(ball_by_frame), match_id)
     if ball_miss_count > 0 and len(ball_by_frame) > 0:

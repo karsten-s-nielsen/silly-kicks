@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import (
     align_join_keys,
     canonical_id,
@@ -122,9 +123,12 @@ def _off_ball_runs_kernel(
     _validate_ltr(frames)
 
     # Partition by game_id to prevent period_id collisions across games
+    # ADR-068: build the per-game lookup ONCE instead of re-filtering `frames` per game (replaces a
+    # raw `==` mask -> group_rows canonicalizes the key per ADR-019; byte-identical on aligned dtypes).
+    frame_groups = group_rows(frames, "game_id")
     results = []
     for game_id, game_actions in actions.groupby("game_id", sort=False):
-        game_frames = frames[frames["game_id"] == game_id]
+        game_frames = frame_groups.get(game_id)
         if game_frames.empty:
             results.append(empty.reindex(game_actions.index))
             continue

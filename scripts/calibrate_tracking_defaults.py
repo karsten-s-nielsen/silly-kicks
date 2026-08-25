@@ -107,6 +107,18 @@ def _assert_match_game_id_consistent(provider: str, mid: str, actions, frames) -
         )
 
 
+def _load_budget_bytes(*, fraction: float = 0.6) -> int:
+    """RAM fail-fast budget for :func:`_load_fold` (ADR-068): a fraction of AVAILABLE memory, so the
+    guard fires on a constrained container (HF-Jobs, small VM) and effectively never on a large box
+    (DGX). Falls back to a conservative fixed assumption when ``psutil`` is unavailable."""
+    try:
+        import psutil
+
+        return int(psutil.virtual_memory().available * fraction)
+    except Exception:
+        return int(8 * 1e9 * fraction)  # conservative 8 GB assumption when psutil is absent
+
+
 def _load_fold(args):
     """Wire the chosen loader into the {provider: [(actions, frames, home)]} fold + match_ids.
 
@@ -138,10 +150,26 @@ def _load_fold(args):
         load_kwargs["cache_dir"] = args.cache_dir
     fold: dict[str, list[tuple]] = {}
     used_ids: dict[str, list[str]] = {}
+    # ADR-068 RAM fail-fast: the fold IS the objective's input (no shards, load-everything is
+    # intentional -- see the docstring), so a SILENT cap would corrupt the sweep. Instead REFUSE
+    # loudly before an OOM: accumulate the fold's footprint and raise the moment it passes a
+    # fraction of available RAM, naming the existing bound flags. `--allow-large` disables it (DGX).
+    budget = None if getattr(args, "allow_large", False) else _load_budget_bytes()
+    fold_bytes = 0
     for provider, mid, actions, frames, home in loader.load_matches(**load_kwargs):  # type: ignore[reportArgumentType]
         _assert_match_game_id_consistent(provider, mid, actions, frames)
         fold.setdefault(provider, []).append((actions, frames, home))
         used_ids.setdefault(provider, []).append(mid)
+        if budget is not None:
+            fold_bytes += int(actions.memory_usage(deep=True).sum()) + int(frames.memory_usage(deep=True).sum())
+            if fold_bytes > budget:
+                raise RuntimeError(
+                    f"_load_fold: the calibration corpus has accumulated {fold_bytes / 1e9:.1f} GB, "
+                    f"past the {budget / 1e9:.1f} GB fail-fast budget (60% of available RAM). A silent "
+                    f"subset would corrupt the sweep (the fold IS the objective's input), so this "
+                    f"refuses BEFORE an OOM. Bound the corpus with --max-matches-per-provider / "
+                    f"--tracking-limit, or pass --allow-large on a box that can hold the full corpus."
+                )
     return fold, used_ids
 
 
@@ -339,6 +367,13 @@ def main() -> None:
         "--allow-dirty",
         action="store_true",
         help="permit a dev run from a modified tree; the report still records dirty: true",
+    )
+    ap.add_argument(
+        "--allow-large",
+        action="store_true",
+        help="skip the RAM fail-fast guard in _load_fold (default: refuse BEFORE OOM when the "
+        "accumulating fold would exceed available memory). Use on a box you know can hold the "
+        "full corpus, e.g. DGX.",
     )
     args = ap.parse_args()
 

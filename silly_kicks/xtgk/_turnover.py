@@ -24,12 +24,80 @@ import pandas as pd
 from sklearn.exceptions import NotFittedError
 
 import silly_kicks.spadl.config as spadlconfig
-from silly_kicks.spadl.utils import add_possessions
+from silly_kicks.spadl.utils import _sort_actions_chronological_or_action_id, add_possessions
 from silly_kicks.xtgk._moves import _is_turnover
 from silly_kicks.xtgk._possession_value import M, N, PossessionValue, PressureLevel, mirror_zone
 from silly_kicks.xthreat._grid import _get_flat_indexes
 
 _SHOT = spadlconfig.actiontype_id["shot"]
+
+
+def _equality_codes(series: pd.Series) -> np.ndarray:
+    """Map ``series`` to int64 codes that preserve ``==`` EXACTLY, so the turnover scan can run on a
+    numeric (numba-compatible, dtype-agnostic) array (ADR-068). ``pd.factorize`` gives equal values
+    equal codes; the one place it would diverge from a raw ``==`` is NA -- factorize collapses every
+    NA to a single ``-1`` (so ``-1 == -1`` would read as "same"), but raw ``NaN == NaN`` is False.
+    So each NA gets a DISTINCT negative code, reproducing NaN-never-equals-NaN (GS null-actor teams,
+    ADR-027). game_id is NA-free (fit's input guard) and possession_id is an int; only team_id hits
+    this in practice."""
+    codes, _ = pd.factorize(series, use_na_sentinel=True)
+    codes = np.asarray(codes, dtype=np.int64).copy()
+    na = codes == -1
+    n_na = int(na.sum())
+    if n_na:
+        codes[na] = -np.arange(1, n_na + 1, dtype=np.int64)  # distinct negatives; real codes are >= 0
+    return codes
+
+
+def _opp_first_shot_scan(
+    turn: np.ndarray,
+    game_c: np.ndarray,
+    poss_c: np.ndarray,
+    team_c: np.ndarray,
+    typ: np.ndarray,
+    xg: np.ndarray,
+    t: np.ndarray,
+    shot_id: int,
+    window: float,
+) -> np.ndarray:
+    """Per turnover, the xG of the opponent's first post-turnover shot. VERBATIM arithmetic of the
+    prior nested loop, on equality-preserving int codes: match boundary (``game_c``) always bounds
+    the scan; ``poss_c`` skips the loser's own possession; ``team_c`` equal = ball back (break); a
+    finite window is passed as-is and ``window=inf`` reproduces ``window_seconds is None`` (the
+    ``t[j]-t[i] > inf`` test is always False). @njit-compiled when numba is present."""
+    n = turn.shape[0]
+    out = np.zeros(n, dtype=np.float64)
+    for i in range(n):
+        if not turn[i]:
+            continue
+        gi = game_c[i]
+        pi = poss_c[i]
+        team_i = team_c[i]
+        ti = t[i]
+        for j in range(i + 1, n):
+            if game_c[j] != gi or (t[j] - ti) > window:
+                break  # out of the match boundary / bounded window
+            if poss_c[j] == pi:
+                continue  # still the loser's own (briefly interrupted) possession
+            if team_c[j] == team_i:
+                break  # ball back with the loser -> no opponent-threat credit
+            if typ[j] == shot_id:
+                out[i] = xg[j]
+                break
+    return out
+
+
+# The numba dispatcher and the pure-Python fn share this call signature; annotate so callers
+# (and pyright) see one callable regardless of whether numba resolved.
+_opp_first_shot_scan_fast: Callable[..., np.ndarray]
+try:  # numba accelerates the O(n*k) scan ~100x; pure-Python fallback stays byte-identical (ADR-068)
+    from numba import njit as _njit
+
+    _opp_first_shot_scan_fast = _njit(cache=True)(_opp_first_shot_scan)
+    _NUMBA_TURNOVER = True
+except Exception:  # numba absent (it is an optional extra) -> the pure-Python kernel above
+    _opp_first_shot_scan_fast = _opp_first_shot_scan
+    _NUMBA_TURNOVER = False
 
 
 @runtime_checkable
@@ -117,6 +185,12 @@ class EmpiricalTurnoverValue:
                 "so a missing/null game_id lets the scan charge a turnover with an opponent shot from a "
                 "different match. (ADR-017/019 input guard.)"
             )
+        # ``_opp_first_shot_after_turnover`` is a POSITIONAL forward scan: its correctness requires rows
+        # contiguous-by-game AND chronological within a game. A mart read (e.g. Databricks EXTERNAL_LINKS +
+        # Arrow chunks) carries NO order guarantee, so sort here rather than trust the caller -- V_opp is a
+        # pure function of event CONTENT, not input row order (ADR-065 robust key; period_id is load-bearing
+        # because time_seconds is period-relative). A no-op on already-chronological input.
+        a = _sort_actions_chronological_or_action_id(a)
         if "possession_id" not in a.columns:
             a = add_possessions(a)
         pl = pressure_levels or PressureLevels().fit(a[pressure_column])
@@ -165,30 +239,28 @@ class EmpiricalTurnoverValue:
     ) -> np.ndarray:
         """Per turnover, the xG of the OPPONENT's first shot over their won possession (possession-bound,
         ``window_seconds=None``) or within a bounded window (a finite ``window_seconds``). Bounds: the match
-        boundary (``game_id``) always; the ball returning to the loser always; the time cap only if finite."""
-        out = np.zeros(len(a), dtype=float)
-        team = a["team_id"].to_numpy()
-        typ = a["type_id"].to_numpy()
+        boundary (``game_id``) always; the ball returning to the loser always; the time cap only if finite.
+
+        ADR-068: the O(n*k) forward scan runs in :func:`_opp_first_shot_scan` on equality-preserving int
+        codes (numba-compiled when available; byte-identical pure-Python fallback otherwise). ``a`` is
+        pre-sorted chronologically by ``fit`` (item A), which the scan relies on."""
         xg = a[xg_column].fillna(0.0).to_numpy(dtype=float)
-        game = a["game_id"].to_numpy()
-        poss = a["possession_id"].to_numpy()
         t = a["time_seconds"].to_numpy(dtype=float)
-        turn = a["_turnover"].to_numpy()
-        n = len(a)
-        for i in range(n):
-            if not turn[i]:
-                continue
-            for j in range(i + 1, n):
-                if game[j] != game[i] or (window_seconds is not None and (t[j] - t[i]) > window_seconds):
-                    break  # out of the match boundary / bounded window
-                if poss[j] == poss[i]:
-                    continue  # still the loser's own (briefly interrupted) possession
-                if team[j] == team[i]:
-                    break  # ball back with the loser -> no opponent-threat credit
-                if typ[j] == _SHOT:
-                    out[i] = xg[j]
-                    break
-        return out
+        turn = a["_turnover"].to_numpy(dtype=bool)
+        typ = a["type_id"].to_numpy(dtype=np.int64)
+        # window_seconds=None => inf, so `(t[j]-t[i]) > inf` is always False (== the None branch).
+        window = np.inf if window_seconds is None else float(window_seconds)
+        return _opp_first_shot_scan_fast(
+            turn,
+            _equality_codes(a["game_id"]),
+            _equality_codes(a["possession_id"]),
+            _equality_codes(a["team_id"]),
+            typ,
+            xg,
+            t,
+            _SHOT,
+            window,
+        )
 
     def _check(self):
         if not self._fitted:

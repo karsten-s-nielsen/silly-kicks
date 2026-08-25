@@ -85,6 +85,39 @@ def test_faithful_vopp_bin_widening_non_vacuous():
     assert tc.value(z0, p) == pytest.approx(0.10, abs=1e-6)  # block mean, NOT native 0.0 (fallback fired)
 
 
+def test_fit_is_row_order_invariant():
+    """ADR-065: ``_opp_first_shot_after_turnover`` is a POSITIONAL forward scan, so ``fit`` must sort
+    the frame -- ``V_opp`` is a pure function of event CONTENT, never of input row order. A mart read
+    (e.g. a Databricks EXTERNAL_LINKS + Arrow-chunk result) carries NO order guarantee; an unsorted
+    frame previously produced a silently-wrong turnover surface (the loss the lakehouse hit and
+    worked around caller-side with ``ORDER BY``). Guards both the present- and absent-``possession_id``
+    entry paths."""
+    # 3 deep-cell turnovers, each followed by its opponent's shot xg=0.30 -> correct V_opp = 0.30.
+    rows: list[dict] = []
+    for k in range(3):
+        rows.append(_turnover(2 * k, 1, 5.0, 34.0, 10.0 + 10.0 * k, poss=2 * k + 1))
+        rows.append(_oppshot(2 * k + 1, 2, 12.0 + 10.0 * k, poss=2 * k + 2, xg=0.30))
+    z = int(flat_zones([5.0], [34.0])[0])
+
+    tc_ord, p_ord = _fit(rows, min_support=1)
+    # Non-vacuity: the chronological fit is CORRECT (ground truth), so an order-invariance pass
+    # below cannot be "both legs equally wrong" (CLAUDE.md both-sides rule).
+    assert tc_ord.value(z, p_ord) == pytest.approx(0.30, abs=1e-9)
+
+    # A full reversal (each shot now precedes its turnover positionally) and a fixed non-trivial
+    # permutation must BOTH reproduce the chronological surfaces byte-for-byte -- for the
+    # possession_id-present path (marts carry it) AND the absent path (add_possessions re-derives it).
+    orderings = {"reversed": rows[::-1], "permuted": [rows[i] for i in (5, 0, 3, 2, 1, 4)]}
+    for with_poss in (True, False):
+        for label, reordered in orderings.items():
+            rr = reordered if with_poss else [{k: v for k, v in r.items() if k != "possession_id"} for r in reordered]
+            tc, p = _fit(rr, min_support=1)
+            assert p == p_ord, f"{label}/poss={with_poss}: pressure tercile drifted"
+            for pl in (1, 2, 3):
+                assert np.array_equal(tc.surface(pl), tc_ord.surface(pl)), f"{label}/poss={with_poss}: surface p={pl}"
+                assert np.array_equal(tc.support(pl), tc_ord.support(pl)), f"{label}/poss={with_poss}: support p={pl}"
+
+
 def test_possession_bound_vs_10s_scope():
     rows = [
         _turnover(0, 1, 5.0, 34.0, 10.0, poss=1),
