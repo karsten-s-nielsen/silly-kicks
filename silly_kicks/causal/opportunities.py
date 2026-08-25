@@ -29,6 +29,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as _spc
 from silly_kicks.tracking._ball_carrier import derive_team_in_possession, infer_ball_carrier
@@ -258,10 +259,13 @@ def build_opportunities(
     spells: list[dict] = []
     for (gid, per), g in poss.groupby(["game_id", "period_id"], sort=False):
         g = g.sort_values(["time_seconds", "frame_id"])
+        # ADR-068: build the per-frame lookup ONCE per (game, period) instead of re-filtering the
+        # whole period slice `g[g["frame_id"] == fid]` on every frame (was O(n_frames^2) per period).
+        frame_groups = group_rows(g, "frame_id")
         frame_keys = list(dict.fromkeys(zip(g["frame_id"].tolist(), g["time_seconds"].tolist(), strict=True)))
         spell: dict | None = None
         for fid, t in frame_keys:
-            grp = g[g["frame_id"] == fid]
+            grp = frame_groups.get(fid)
             team, goal_x, in_dom = _frame_domain_state(grp, goal_map, gid, per, advance_m, cfg)
             if (  # spell continues iff same team, still in domain, under the dedup cap (R2-L2: same_id)
                 spell is not None

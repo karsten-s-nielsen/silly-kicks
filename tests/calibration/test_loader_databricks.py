@@ -57,6 +57,8 @@ def test_databricks_loader_provider_allowlist():
 
 def test_databricks_loader_parameterizes_match_id(monkeypatch):
     # The match_id must be passed as a bound parameter, never interpolated into the SQL string.
+    # ADR-068 batched the per-match WHERE into ONE `match_id IN (...)` query per table, but each id
+    # is STILL a generated bound placeholder (%(mid0)s, ...) -- the injection-safety property holds.
     seen = []
 
     class _SpyCursor(_FakeCursor):
@@ -92,8 +94,9 @@ def test_databricks_loader_parameterizes_match_id(monkeypatch):
     where_calls = [c for c in seen if "WHERE match_id" in c[0]]
     assert where_calls, "expected a parameterized WHERE query"
     for sql, params in where_calls:
-        assert "%(mid)s" in sql and "m1; DROP TABLE x" not in sql  # bound, not interpolated
-        assert params == {"mid": "m1; DROP TABLE x"}
+        # IN-list of generated bound placeholders; the malicious id is bound, never in the SQL text.
+        assert "match_id IN (%(mid0)s)" in sql and "m1; DROP TABLE x" not in sql
+        assert params == {"mid0": "m1; DROP TABLE x"}
 
 
 def _mart_row(match_id, action_type, action_result, **kw):

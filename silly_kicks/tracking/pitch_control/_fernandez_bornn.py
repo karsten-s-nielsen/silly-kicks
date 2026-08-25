@@ -14,6 +14,7 @@ import pandas as pd
 
 from silly_kicks.id_compat import ids_match
 
+from ._grids import pitch_grid
 from ._params import FernandezBornnParams
 from ._surface import PitchControlSurface
 
@@ -93,8 +94,8 @@ def compute_fernandez_bornn(
         surface = compute_fernandez_bornn(frame, 1, FernandezBornnParams())
         surface.at_point(52.5, 34.0)  # -> 0.55
     """
-    grid_x = np.linspace(0, 105.0, params.grid_cells_x)
-    grid_y = np.linspace(0, 68.0, params.grid_cells_y)
+    # ADR-068: cached, read-only grid + targets (built once per (grid_cells_x, grid_cells_y)).
+    grid_x, grid_y, targets = pitch_grid(params.grid_cells_x, params.grid_cells_y)
 
     # Filter players (no ball rows, no NaN positions)
     players = frame[~frame["is_ball"].astype(bool)].copy()
@@ -109,11 +110,6 @@ def compute_fernandez_bornn(
             method="fernandez_bornn",
             attacking_team_id=attacking_team_id,
         )
-
-    # Build target grid
-    gx, gy = np.meshgrid(grid_x, grid_y)
-    targets = np.column_stack([gx.ravel(), gy.ravel()])  # (n_targets, 2)
-    targets.shape[0]
     n_players = len(players)
 
     # Extract player data

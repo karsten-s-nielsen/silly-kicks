@@ -1274,7 +1274,7 @@ class TestCoverShadowComplexityGuard:
     flake on a slow runner.
     """
 
-    def test_lane_control_called_once_per_receiver(self, fitted_xt):
+    def test_lane_setup_hoisted_and_core_once_per_receiver(self, fitted_xt):
         from unittest.mock import patch
 
         import silly_kicks.tracking._cover_shadows as cs
@@ -1305,21 +1305,35 @@ class TestCoverShadowComplexityGuard:
                 (45.0, 55.0),
             ],
         )
-        with patch.object(cs, "lane_control", wraps=cs.lane_control) as spy:
+        # ADR-068: the baseline hoists the frame-level lane_control SETUP (man-marker classification)
+        # out of the per-receiver loop. So `_lane_control_setup` runs ONCE, `_lane_control_core` runs
+        # once per receiver, and the full `lane_control` is NOT called from the baseline at all.
+        with (
+            patch.object(cs, "_lane_control_setup", wraps=cs._lane_control_setup) as setup_spy,
+            patch.object(cs, "_lane_control_core", wraps=cs._lane_control_core) as core_spy,
+            patch.object(cs, "lane_control", wraps=cs.lane_control) as full_spy,
+        ):
             result = cs._compute_cover_shadow_dict(
                 frame, (50.0, 34.0), 2, fitted_xt, goal_map=HOME_GOAL_MAP, detailed=False
             )
 
         assert result is not None
         n_dangerous = result["n_potential_receivers"]
-        # Meaningful multi-receiver fixture (else the guard is vacuous):
+        # Meaningful multi-receiver fixture (else the setup-hoist guard is vacuous):
         assert n_dangerous >= 2
-        # Exactly one lane_control per receiver (the n_blocked first loop); the vectorized
-        # leave-one-out must call NONE. The old loop would be n_dangerous x n_blockers.
-        assert spy.call_count == n_dangerous, (
-            f"lane_control called {spy.call_count}x for {n_dangerous} receivers -- expected once each; "
-            "a regression to the per-(blocker, receiver) loop would call it n_dangerous x n_blockers times"
+        # Man-marker classification (inside setup) runs ONCE, not once per receiver -- the whole point
+        # of the ADR-068 hoist. Pre-hoist this would be n_dangerous.
+        assert setup_spy.call_count == 1, (
+            f"_lane_control_setup called {setup_spy.call_count}x -- expected once (man-marker "
+            "classification must be hoisted out of the per-receiver baseline loop)"
         )
+        # Exactly one core evaluation per receiver; a regression to the per-(blocker, receiver) loop
+        # would be n_dangerous x n_blockers.
+        assert core_spy.call_count == n_dangerous, (
+            f"_lane_control_core called {core_spy.call_count}x for {n_dangerous} receivers -- expected once each"
+        )
+        # The full lane_control (which re-does setup) must not be used inside the baseline anymore.
+        assert full_spy.call_count == 0
 
 
 def test_per_blocker_delta_is_non_negative_before_the_clamp():

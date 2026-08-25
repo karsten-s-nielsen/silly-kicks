@@ -76,11 +76,11 @@ def compare_xtgk_distributions(sc, gs, *, bands=_BANDS, offset_tol=_OFFSET_TOL, 
     return bands_out, verdict
 
 
-def _collect(providers, max_per_provider, tracking_limit, xt):
+def _collect(providers, max_per_provider, tracking_limit, xt, cache_dir=None):
     """Return a long df of (provider, dist, xt_gk) for in-scope scored GK distributions."""
     rows = []
     for prov, mid, actions, frames, _home in load_matches(
-        providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit
+        providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit, cache_dir=cache_dir
     ):
         try:
             out = add_xt_gk(actions, frames, xt)  # type: ignore[reportArgumentType]
@@ -111,6 +111,13 @@ def main() -> int:
     ap.add_argument("--gs-provider", default="gradientsports", help="a native-completion (gs-variant) provider")
     ap.add_argument("--max-per-provider", type=int, default=6)
     ap.add_argument("--tracking-limit", type=int, default=999999)
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="ADR-068: persist each downloaded pining tracking artifact here and reuse it. Without "
+        "it, every match is fetched TWICE per run (once for the shared xT grid fit, once per "
+        "provider in the scoring pass); with it, the second fetch is a disk read.",
+    )
     args = ap.parse_args()
 
     # One shared, FROZEN xT grid fit on the combined corpus -> both providers scored on the SAME grid
@@ -121,15 +128,16 @@ def main() -> int:
         providers=[args.gs_provider, "skillcorner"],
         max_per_provider=args.max_per_provider,
         tracking_limit=10,
+        cache_dir=args.cache_dir,
     ):
         combined.append(actions)
     xt = ExpectedThreat(l=16, w=12)
     xt.fit(pd.concat(combined, ignore_index=True))
 
     print("=== scoring SkillCorner ===", flush=True)
-    sc = _collect(["skillcorner"], args.max_per_provider, args.tracking_limit, xt)
+    sc = _collect(["skillcorner"], args.max_per_provider, args.tracking_limit, xt, cache_dir=args.cache_dir)
     print(f"=== scoring {args.gs_provider} ===", flush=True)
-    gs = _collect([args.gs_provider], args.max_per_provider, args.tracking_limit, xt)
+    gs = _collect([args.gs_provider], args.max_per_provider, args.tracking_limit, xt, cache_dir=args.cache_dir)
 
     print("\n=== per-band SC-vs-GS xt_gk comparison ===", flush=True)
     bands_out, verdict = compare_xtgk_distributions(sc, gs)

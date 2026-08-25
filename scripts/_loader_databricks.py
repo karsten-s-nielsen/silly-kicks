@@ -147,12 +147,29 @@ def load_matches(
                 ]
             if max_per_provider is not None:
                 ids = list(ids)[:max_per_provider]
+            ids = list(ids)
+            if not ids:
+                continue
+            # ADR-068: ONE IN-list query per table (was 2 per match = 2N round-trips), then split
+            # client-side. `_convert` is order-insensitive (ADR-065), so a batched split reproduces
+            # the same actions/frames content per match. Each match_id is PARAMETERIZED (M5) via a
+            # generated placeholder -- never f-string-interpolated. `group_rows` gives an ADR-019
+            # dtype-safe per-match split; `.reset_index(drop=True)` mirrors a fresh per-match query.
+            from silly_kicks._frame_index import group_rows
+
+            ph = ", ".join(f"%(mid{i})s" for i in range(len(ids)))
+            params = {f"mid{i}": mid for i, mid in enumerate(ids)}
+            all_frames = _query_param(cur, f"SELECT * FROM {t_tracking} WHERE match_id IN ({ph})", params)  # noqa: S608
+            all_events = _query_param(cur, f"SELECT * FROM {t_events} WHERE match_id IN ({ph})", params)  # noqa: S608
+            frames_by_mid = group_rows(all_frames, "match_id")
+            events_by_mid = group_rows(all_events, "match_id")
             for mid in ids:
-                # Table from allowlist; match_id PARAMETERIZED (M5) — never f-string-interpolated.
-                raw_frames = _query_param(cur, f"SELECT * FROM {t_tracking} WHERE match_id = %(mid)s", {"mid": mid})  # noqa: S608
-                raw_events = _query_param(cur, f"SELECT * FROM {t_events} WHERE match_id = %(mid)s", {"mid": mid})  # noqa: S608
+                raw_frames = frames_by_mid.get(mid).reset_index(drop=True)
+                raw_events = events_by_mid.get(mid).reset_index(drop=True)
                 actions, frames, home = _convert(provider, raw_events, raw_frames)
                 if tracking_limit is not None:
+                    # head() over an unspecified DB row order -- arbitrary both before and after this
+                    # change (the per-match query had no ORDER BY either); it only bounds memory.
                     frames = frames.head(tracking_limit)
                 yield provider, str(mid), actions, frames, home
         cur.close()

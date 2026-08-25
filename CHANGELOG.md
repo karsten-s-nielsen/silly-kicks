@@ -66,6 +66,59 @@ any corpus pass — never per-game-3-in via the `for_each` abort.
   both layers are no-ops on every bundled corpus; they fire only on a detection-discarding builder. The
   `keeper_detection_mask` all-null message is unified (provider-generic); no test pinned the old prefix.
 
+## [4.92.0] — 2026-08-25
+
+Eliminates the repo-wide **rescan-in-loop O(n²)** defect class the 2026-08-24 optimization audit
+found (a full-table filter inside a per-item loop, invisible at test scale, biting only at real-match
+0.95–3.2 M-row scale — a downstream lakehouse consumer, not CI, reported the first instance). The
+rescan-in-loop remediations and the turnover **scan** (item B) are **output-preserving** (parity test
++ structural call-count guard per site) — **NOT a VAEP/model-retrain trigger**. **Two deliberate
+exceptions**, called out below: the turnover **fit** (item A) is a correctness fix that shifts
+downstream `EmpiricalTurnoverValue` (V_opp) values on a non-chronological corpus, and
+`_load_fold` gains a RAM fail-fast.
+
+- **New leaf seam `silly_kicks/_frame_index.py` (`group_rows`/`RowGroups`, ADR-068):** an O(1)
+  dtype-safe row-group lookup (`groupby().indices`, ADR-019-canonical keys, empty-frame-on-miss,
+  raises on a mixed-dtype-key collision) replacing `df[df[k]==v]`-in-a-loop across 9 sites —
+  `causal/opportunities.py`, `causal/_confounders.py`, `tracking/defensive_credit/_resolution.py`,
+  `tracking/_gk_identification.py`, `tracking/_off_ball_runs.py`, `tracking/_run_values.py`,
+  `spadl/_skillcorner_inference.py` (windowed nearest-after, exact-sort preserved), plus the
+  databricks loader split.
+- **`vaep/labels.py` possession labels** (`_scores_possession`/`_concedes_possession`) vectorized
+  (team-aware reverse-cumulative; was unbounded O(k²) scalar `.loc` with no break on the xG path) —
+  byte-identical, oracle-verified both modes.
+- **Loop-invariant hoists:** `PitchControlSurface` interpolator cache; pitch-control grid/meshgrid
+  memoized (`pitch_control/_grids.py`); `causal/matching._cluster_reassign` grouping hoisted out of
+  the seed loop; `spadl.add_gk_role` (+ atomic) `ids_isin` hoisted out of the lookback loop;
+  cover-shadow baseline man-marker classification hoisted once via a `lane_control` setup/core split.
+- **`providers/sportec/parse.py` single-pass** DFL position parse (one file read + deferred replay,
+  was two) — byte-identical (lakehouse DFL golden); header corrected: silly-kicks now owns this
+  parser (the lakehouse's delete-and-depend removed its copy).
+- **Turnover scan (item B)** (`xtgk/_turnover.py::_opp_first_shot_after_turnover`) rewritten as
+  `numba`-@njit on equality-preserving int codes with a pure-Python fallback — **byte-identical**
+  (exact-equivalence oracle, both windows), ~O(n²)→compiled-O(n·k).
+- **Turnover fit row-order robustness (item A, ADR-065) — VALUE-CHANGING on unordered input.**
+  `EmpiricalTurnoverValue.fit` now sorts to the robust `(game_id, period_id, time_seconds,
+  action_id)` key before the positional scan. This is a **correctness fix, NOT output-preserving on a
+  non-chronological corpus**: the Databricks EXTERNAL_LINKS/Arrow-chunk mart read carries no order
+  guarantee (the reversed-input `0.20`-vs-`0.30` defect the lakehouse reported), so a V_opp fit on
+  unordered rows shifts to its correct value. silly-kicks bundles no turnover artifact (**no
+  silly-kicks retrain**), but **any consumer that fit `EmpiricalTurnoverValue` (V_opp) on an unordered
+  mart corpus must RE-FIT and diff**; a no-op only where the fit corpus was already sorted.
+- **Script driver resilience/RAM:** `_xtgk_comparability` `--cache-dir` (was 2× download/run);
+  `_loader_databricks` one IN-list query per table (was 2N, each match_id still a bound placeholder —
+  injection-safe); `_loader_pining_to_cache` resume (skip already-cached, re-fetch only missing —
+  crash-safe: a match counts as cached only when BOTH `frames.parquet` AND `meta.json` exist, so a
+  crash between the two writes re-does the match instead of losing `home_team_id`). **Operator-facing
+  change:** `calibrate_tracking_defaults._load_fold` now **fails loud (RAM-aware) before an OOM**
+  instead of risking a silent subset calibration — opt out with `--allow-large` (Hyrum: an operator
+  relying on the old unbounded load must pass it).
+- **C4 docs (final-review):** corrected the stale glossary-container feature-column count in
+  `docs/c4/architecture.dsl` (341 → 349, `len(FEATURE_GLOSSARY)`) and re-rendered
+  `architecture.html` (Graphviz `dot`; viewBoxes unchanged). New gate
+  `tests/test_c4_feature_column_count.py` pins the number to the code (mirroring the aggregator-count
+  gate), so — unlike the ungated number that drifted — it cannot go stale again.
+
 ## [4.91.0] — 2026-08-23
 
 Cover-shadow σ/λ discrimination re-tuning + expected-receiver model (ADR-066, PR-S162) -- an
