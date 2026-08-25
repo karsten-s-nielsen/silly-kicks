@@ -28,7 +28,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze -> converter input): Sportec/DFL (golden-pinned, [parse-dfl] extra) + SB360 freeze-frames -> tracking frames + visible_area (no extra). ADR-031/054." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 349 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 352 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
         }
 
         // --- Relationships: Context level ---
