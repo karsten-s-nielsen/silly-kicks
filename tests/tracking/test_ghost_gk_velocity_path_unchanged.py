@@ -22,6 +22,15 @@ training environment was pinned to Python 3.12 -- and these numbers are against 
 weights. The intermediate capture is not recorded here on purpose: a baseline that pins weights
 which were never shipped documents nothing.)
 
+**RE-CAPTURED AGAIN at the ADR-067 native-SkillCorner re-fit (position-only cycle) -- revisited, not
+absorbed.** The bundled ghost ``default`` was re-fit onto the NATIVE SkillCorner corpus (removing the
+kloppy y-inversion contamination; ``training_commit=a0fc9f9``), which is again a DECLARED re-fit of
+the bundled weights -- the one condition under which this baseline is expected to move. Measured
+effect on this fixture (``sb360-fixture-2``), the prior box-constant kloppy ``default`` (de8ca604)
+versus the SHIPPED native weights, 6 rows, all finite: **max |dx| 0.2029 m, max |dy| 0.8237 m,
+mean 0.2218 m, median 0.1608 m**. The baseline now pins the POST-native-re-fit positions, so the
+tripwire still fails on any future degradation-class change that moves them.
+
 Corollary worth keeping: this is the ONLY committed golden that pins bundled-model OUTPUT.
 ``ghost_gk_kde_golden.npz`` stores input FEATURES (outputs are computed fresh) and
 ``ghost_gk_refactor_golden.npz`` uses locally-fit models, so neither moves on a re-fit -- verified

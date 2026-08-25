@@ -430,24 +430,8 @@ _entry(
             ),
         },
         "defender_absent": {
-            "press_commitment": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "press_commitment_closing_speed": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
-            ),
+            "press_commitment": AxisVerdict("all_nan", "honest_nan"),
+            "press_commitment_closing_speed": AxisVerdict("all_nan", "honest_nan"),
             "press_commitment_source": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -459,24 +443,8 @@ _entry(
             ),
         },
         "gk_one_end": {
-            "press_commitment": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "press_commitment_closing_speed": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
-            ),
+            "press_commitment": AxisVerdict("all_nan", "honest_nan"),
+            "press_commitment_closing_speed": AxisVerdict("all_nan", "honest_nan"),
             "press_commitment_source": AxisVerdict(
                 "differs",
                 "differs_by_design",

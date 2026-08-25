@@ -26,9 +26,23 @@ seam by the declared velocity marker.
   `feature_set` (incl. save/load serialization) + a genuinely single-frame-capable extractor path.
 - **Trainers** gain `--feature-set position_only` (threaded to prepare + the model + the shard token);
   a reported comparability artifact quantifies the velocity-vs-position-only skill cost.
-- **Behavior change (retrain / Hyrum trigger):** SB360 xShot/xCross/ghost go NaN → value (once the
-  variants are bundled); **velocity-bearing frames are byte-identical**. gkdv's ghost arm begins to
-  work on SB360. See `docs/PRIVATE_CONSUMERS.md`.
+- **Behavior change (retrain / Hyrum trigger):** SB360 xShot/xCross/ghost go NaN → value now that the
+  variants are **BUNDLED** — xShot/xCross `position_only` PUBLIC defaults (`training_commit` = the
+  Phase-A commit), ghost `position_only` RESTRICTED full-native (owner-tier corpus; a machine-checkable
+  `reproducibility` caveat rides in its `metrics.json`). **The ghost `default` was ALSO re-fit on the
+  native SkillCorner corpus** (removing the kloppy y-inversion contamination; `training_commit` = the
+  guardrails commit) — a **velocity-bearing retrain trigger for the ghost default** (served positions
+  move up to ~0.75 m on the velocity-bearing golden, which was re-captured). xShot/xCross velocity-bearing
+  frames stay byte-identical (auto-select serves the unchanged `default`). **gkdv's ghost arm now works
+  on SB360:** the ghost POSITION serves via the `position_only` variant, so `build_ghost_frames` and the
+  pitch-control **threat-suppression** arm (`delta_threat_suppression`) compute on velocity-less
+  freeze-frames (pitch control has a valid zero-velocity positional model, ADR-063). The
+  **accessible-space** arm (`delta_das`) STRUCTURALLY needs velocity, so it now degrades to honest-NaN
+  there — the ADR-043 consumer-degrade `add_das` uses, `DasUnscoreableError` caught in `delta_das` —
+  rather than propagating a crash (a behaviour change for a gkdv caller running `delta_das` over a
+  velocity-less freeze-frame set). A reported comparability (`docs/research/position_only_variants/`)
+  quantifies the position-only cost: ghost MAE **+0.034 m**, xShot PR-AUC **−0.039**, xCross PR-AUC
+  **−0.025**. See `docs/PRIVATE_CONSUMERS.md`.
 
 ### Detection-aware visibility guardrails (ADR-068)
 

@@ -105,15 +105,30 @@ def _freeze_frame(*, declare: str, with_velocity: bool) -> tuple[pd.DataFrame, p
     return frames, actions
 
 
-def test_declared_unavailable_degrades_to_nan_rather_than_crashing() -> None:
+def test_declared_unavailable_degrades_to_nan_rather_than_crashing(monkeypatch) -> None:
     """The SB360 freeze-frame case: a DECLARED absence is data, not a malformed input.
 
     This is the exact input the sb360 audit probe supplies, and it raised `KeyError: 'vx'` -- which
     an upstream handler then read as "this aggregator emits no columns at all".
+
+    With the position_only variant BUNDLED (commit 2) a declared frame now SERVES a value via that
+    variant (real-weights serve covered in test_position_only_bundled). This remains the FALLBACK
+    contract -- a declared absence must degrade to NaN, never crash -- so the unbundled path is FORCED
+    here to keep the graceful-degradation branch (the thing this test exists for) covered.
     """
+    import silly_kicks.tracking._xcross_attempt as _xc
+
+    def _boom(cls, v):
+        if v == "position_only":
+            raise FileNotFoundError
+        raise AssertionError("must NOT fall back to the default on velocity-less frames")
+
+    monkeypatch.setattr(_xc.XCrossAttemptModel, "from_variant", classmethod(_boom))
+
     frames, actions = _freeze_frame(declare=SPEED_SOURCE_UNAVAILABLE, with_velocity=False)
 
-    out = T.add_xcross_attempt(actions, frames, home_team_id="A")
+    with pytest.warns(UserWarning, match="position_only"):
+        out = T.add_xcross_attempt(actions, frames, home_team_id="A")
 
     assert "xcross_attempt" in out.columns, (
         "the column vanished entirely -- a consumer cannot distinguish that from the aggregator "

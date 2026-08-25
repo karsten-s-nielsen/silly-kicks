@@ -2,8 +2,6 @@
   "feature_names": [
     "ball_x",
     "ball_y",
-    "ball_vx",
-    "ball_vy",
     "ball_distance_to_goal",
     "defensive_line_x",
     "defensive_line_depth",
@@ -22,10 +20,7 @@
     "ball_to_goal_angle",
     "ball_to_nearest_attacker_dist",
     "defending_team_compactness",
-    "ball_in_own_half",
-    "ball_speed",
-    "defensive_line_speed",
-    "defending_centroid_vx"
+    "ball_in_own_half"
   ],
   "grid_spec": {
     "x_min": 0.0,
@@ -44,29 +39,29 @@
     "gamma": 0.25
   },
   "sklearn_version": "1.9.0",
-  "training_commit": "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a",
-  "training_platform": "dgx-spark-aarch64",
+  "training_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba",
+  "training_platform": "Linux-6.17.0-1014-nvidia-aarch64-with-glibc2.39",
   "corpus_provenance": {
     "providers": [
       "gradientsports",
       "skillcorner",
       "sportec"
     ],
-    "n_games": 179,
-    "n_rows": 36000
+    "n_games": 173,
+    "n_rows": 966197
   },
   "serve_estimator": "boosted_mean",
   "version": "1.3.0",
   "stores_training_data": false,
   "pitch_length": 105.0,
   "pitch_width": 68.0,
-  "feature_set": "faithful",
+  "feature_set": "position_only",
   "chirality": {
     "version": "chirality-probe-1",
     "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
     "outputs": [
-      2.7028606615,
-      32.4338939123
+      2.0330952255,
+      32.5543893962
     ]
   },
   "feature_contract": {
@@ -75,8 +70,6 @@
     "fingerprint": [
       17.0,
       20.0,
-      -3.0,
-      1.0,
       22.0227155455,
       9.0,
       7.0,
@@ -95,10 +88,7 @@
       -0.6889243882,
       6.4717868475,
       180.5,
-      1.0,
-      3.1622776602,
-      -2025.0,
-      -2070.0
+      1.0
     ],
     "constants": {
       "penalty_area_half_width": 20.16,

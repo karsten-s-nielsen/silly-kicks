@@ -184,29 +184,18 @@ def test_every_aggregator_emits_at_least_one_column() -> None:
 #: ``(entry, column)`` pairs adjudicated ``not_exercised`` under EVERY visibility roster --
 #: exercised NOWHERE in the sweep. A STANDING PIN, not a cycle deliverable: adding a roster cannot
 #: shrink it for a column already exercised on a sibling roster, because "unexercised everywhere"
-#: is a strictly stronger predicate than "unexercised on the roster in question". The `gk_one_end`
-#: cycle deliberately left this set UNCHANGED while reclaiming five columns under its own roster.
+#: is a strictly stronger predicate than "unexercised on the roster in question".
 #:
-#: It gained ONE member when `add_xcross_attempt` was repaired -- see the entry below. A member
-#: arriving because an aggregator became VISIBLE is not the regression this pin hunts; the
-#: regression is a column that was exercised somewhere and stopped being. The failure message
-#: distinguishes them, so read WHICH direction moved before rebaselining.
+#: sb360-fixture-2 (the ADR-067 position-only cycle) SHRANK this set from five members to one. The
+#: realistic striker ahead of the ball made `add_xshot_occurrence` and `add_xcross_attempt` SCORE
+#: (differs) on >=1 roster, and made the two `add_press_commitment` columns RUN to honest-NaN on
+#: defender_absent + gk_one_end rather than finding no scoreable domain -- so all four columns now
+#: light up somewhere and leave this set. A column lighting up is a GAIN, not the regression this
+#: pin hunts (a column exercised somewhere that stopped being); the failure message distinguishes
+#: the directions, so read WHICH moved before rebaselining.
 _EXPECTED_DARK_COLUMNS = {
     # The fixture has no pressing sequence, so the argmax-defender identity never has a domain.
     ("add_cover_shadows", "max_single_defender_player_id"),
-    # `no_signal` on all three rosters; TF-51 needs a press the fixture does not stage.
-    ("add_press_commitment", "press_commitment"),
-    ("add_press_commitment", "press_commitment_closing_speed"),
-    # A fitted model over a freeze-frame domain the fixture does not produce.
-    ("add_xshot_occurrence", "xshot_occurrence"),
-    # NEWLY VISIBLE, not newly dark. `add_xcross_attempt` used to raise `KeyError: 'vx'` on the
-    # freeze-frame probe, `_regenerate.py` swallowed that into `cols = ()`, and the aggregator
-    # therefore had NO columns and NO verdicts -- so it could not appear here however dark it was.
-    # With the ADR-054 velocity contract honoured it probes cleanly, and both legs score NaN
-    # because the fixture stages no in-possession wide-area cross. Same class as the
-    # `add_xshot_occurrence` entry above: a fitted model over a domain this fixture does not
-    # produce.
-    ("add_xcross_attempt", "xcross_attempt"),
 }
 
 
@@ -284,12 +273,16 @@ def test_boundary_entries_declare_admissible_provenance():
     coverage (ADR-053 Part 4). Population derived from BOUNDARY_ENTRY_POINTS -- a new boundary
     entry without a provenance fails here.
 
-    KNOWN LIMIT (spec Part 4): this gate locks HALF the distinction. `works`=>`structural` is tight
-    (a value that cannot move was not substantively handled). `differs_by_design`/`silent_degrade`
-    =>`substantive` is enforceable but inert this cycle. But `honest_nan` is OBSERVATIONALLY
-    AMBIGUOUS -- self-refusal (substantive) and inherited-refusal (structural, gkdv) both produce
-    `all_nan`, so the gate CANNOT check gkdv's `structural` choice; it is author-asserted, forced
-    only to carry a rationale. This is the machine-checkability ceiling, named deliberately.
+    KNOWN LIMIT (spec Part 4): this gate locks HALF the distinction. `differs_by_design`/
+    `silent_degrade` => `substantive` is enforced and now LIVE (gkdv.build_ghost_frames and
+    gkdv.delta_threat_suppression became substantive when the ghost POSITION started serving on the
+    velocity-less leg via the position_only variant, ADR-067). `works` => `structural` is tight ONLY
+    for an entry with NO substantive cell: a `works` cell WITHIN a substantive entry is a coincidental
+    no-move scene (delta_threat scores 0.0 on both legs for a no-threat goalkick), not evidence of
+    frame-blindness, so it is exempt. `honest_nan` remains OBSERVATIONALLY AMBIGUOUS -- self-refusal
+    (substantive) and inherited-refusal / structural-degrade (structural, gkdv.delta_das) both produce
+    `all_nan`, so the gate CANNOT check that `structural` choice; it is author-asserted, forced only
+    to carry a rationale. This is the machine-checkability ceiling, named deliberately.
 
     Cannot be landed red against the correct Task-1 state (add_restart_coordinates is already
     `structural`+`works`), so it was MUTATION-VERIFIED (ADR-051), both admissibility branches: see
@@ -305,16 +298,27 @@ def test_boundary_entries_declare_admissible_provenance():
             f"{name}: registered boundary entry carries verdict_provenance {prov!r}, not in "
             f"{sorted(VERDICT_PROVENANCE)}. Declare substantive/structural (spec Part 4)."
         )
+        # An entry is SUBSTANTIVE if ANY cell moves because of the function (differs_by_design /
+        # silent_degrade). A `works` cell WITHIN such an entry is a coincidental no-move scene --
+        # e.g. gkdv.delta_threat_suppression scores 0.0 on both legs for the no-threat goalkick on
+        # the gk_one_end roster -- NOT evidence the function is frame-blind, so it does not force
+        # `structural`. The `works -> structural` lock still applies to an entry with NO substantive
+        # cell, which is where a genuinely frame-blind entry (add_restart_coordinates, xt_gk_v2)
+        # would otherwise mislabel itself substantive.
+        has_substantive = any(
+            v.adjudication in {"differs_by_design", "silent_degrade"} for _a, _r, _c, v in iter_verdicts(entry)
+        )
         for _axis, _roster, col, v in iter_verdicts(entry):
-            if v.adjudication == "works":
-                assert prov == "structural", (
-                    f"{name}.{col}: `works` (from `identical`) forces `structural` -- a value that "
-                    f"cannot move across the velocity legs was not substantively handled. Got {prov!r}."
-                )
             if v.adjudication in {"differs_by_design", "silent_degrade"}:
                 assert prov == "substantive", (
                     f"{name}.{col}: {v.adjudication!r} forces `substantive` -- the value moved "
                     f"because of the function. Got {prov!r}."
+                )
+            elif v.adjudication == "works" and not has_substantive:
+                assert prov == "structural", (
+                    f"{name}.{col}: `works` (from `identical`) in an entry with NO substantive cell "
+                    f"forces `structural` -- a value that cannot move across the velocity legs was "
+                    f"not substantively handled. Got {prov!r}."
                 )
         if prov == "structural":
             assert entry.provenance_rationale, (

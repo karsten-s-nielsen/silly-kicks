@@ -10,6 +10,27 @@ import silly_kicks.tracking as T
 from tests.sb360 import _calls as C
 from tests.sb360._registry import ADAPTERS, AxisVerdict, _entry
 
+#: The ghost-position SB360 unlock (ADR-067): the freeze-frame leg auto-selects the position_only
+#: ghost variant (velocity-less) while the tracking leg serves the velocity default, so the two legs
+#: legitimately predict DIFFERENT keeper positions -- a differing served ghost, not a fabrication.
+#: Applicability is region_support (the served position responds to the frame), so this is a LIVE
+#: signal, unlike the keeper-insensitive gkdv threat arm (which gkdv now declines on velocity-less
+#: frames -- see silly_kicks/gkdv/_engine.py::_DROP_VELOCITY_UNAVAILABLE).
+_PO_GHOST_UNLOCK_RATIONALE = (
+    "SB360 unlock (ADR-067): the freeze-frame leg auto-selects the position_only ghost variant "
+    "(velocity-less) while the tracking leg serves the velocity default, so the legs legitimately "
+    "predict different keeper positions -- a differing served ghost, not a fabrication. "
+    "[measured cause=velocity]"
+)
+
+
+_SB360_F2_XSHOT_XCROSS_DIFFERS = (
+    "sb360-fixture-2 adds a striker ahead of the ball, so this now scores; the freeze-frame leg "
+    "auto-selects the position_only variant (velocity-less) and the tracking leg the velocity "
+    "default (ADR-067), so the two variants legitimately produce different scores. "
+    "[measured cause=velocity]"
+)
+
 _entry(
     "add_ghost_gk",
     C.generic(T.add_ghost_gk),
@@ -19,17 +40,11 @@ _entry(
         "ghost_gk_source",
     ),
     velocity={
-        "ghost_gk_x": AxisVerdict("all_nan", "honest_nan"),
-        "ghost_gk_y": AxisVerdict("all_nan", "honest_nan"),
-        "ghost_gk_source": AxisVerdict(
-            "differs",
-            "differs_by_design",
-            rationale=(
-                "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                "designed das_source to do exactly this. [measured cause=velocity]"
-            ),
-        ),
+        "ghost_gk_x": AxisVerdict("differs", "differs_by_design", rationale=_PO_GHOST_UNLOCK_RATIONALE),
+        "ghost_gk_y": AxisVerdict("differs", "differs_by_design", rationale=_PO_GHOST_UNLOCK_RATIONALE),
+        # Both legs now identify the keeper natively (the velocity-less leg no longer degrades to
+        # `velocity_unavailable`), so the source string matches across legs -> identical -> works.
+        "ghost_gk_source": AxisVerdict("identical", "works"),
     },
     visibility={
         "gk_absent": {
@@ -66,21 +81,13 @@ _entry(
             ),
         },
         "defender_absent": {
-            "ghost_gk_x": AxisVerdict("all_nan", "honest_nan"),
-            "ghost_gk_y": AxisVerdict("all_nan", "honest_nan"),
-            "ghost_gk_source": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                    "designed das_source to do exactly this. [measured cause=velocity]"
-                ),
-            ),
+            "ghost_gk_x": AxisVerdict("differs", "differs_by_design", rationale=_PO_GHOST_UNLOCK_RATIONALE),
+            "ghost_gk_y": AxisVerdict("differs", "differs_by_design", rationale=_PO_GHOST_UNLOCK_RATIONALE),
+            "ghost_gk_source": AxisVerdict("identical", "works"),
         },
         "gk_one_end": {
-            "ghost_gk_x": AxisVerdict("all_nan", "honest_nan"),
-            "ghost_gk_y": AxisVerdict("all_nan", "honest_nan"),
+            "ghost_gk_x": AxisVerdict("differs", "differs_by_design", rationale=_PO_GHOST_UNLOCK_RATIONALE),
+            "ghost_gk_y": AxisVerdict("differs", "differs_by_design", rationale=_PO_GHOST_UNLOCK_RATIONALE),
             "ghost_gk_source": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -93,13 +100,13 @@ _entry(
         },
     },
     applicability={
-        "ghost_gk_x": "no_support",
-        "ghost_gk_y": "no_support",
+        "ghost_gk_x": "region_support",
+        "ghost_gk_y": "region_support",
         "ghost_gk_source": "no_support",
     },
     applicability_deltas={
-        "ghost_gk_x": {"extreme": 0.0, "near": 0.0},
-        "ghost_gk_y": {"extreme": 0.0, "near": 0.0},
+        "ghost_gk_x": {"extreme": 0.0, "near": 6.118495295800017},
+        "ghost_gk_y": {"extreme": 0.0, "near": 0.8690661909824939},
         "ghost_gk_source": {"extreme": 0.0, "near": 0.0},
     },
 )
@@ -637,48 +644,24 @@ _entry(
     columns=("xcross_attempt",),
     velocity={
         "xcross_attempt": AxisVerdict(
-            "no_signal",
-            "not_exercised",
-            rationale=(
-                "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                "occurrence context, or blocking defender to score). A fixture inadequacy, not a library property "
-                "-- widening the fixture would move it. [measured cause=velocity+frame_count]"
-            ),
+            "differs",
+            "differs_by_design",
+            rationale=_SB360_F2_XSHOT_XCROSS_DIFFERS,
         ),
     },
     visibility={
         "gk_absent": {
             "xcross_attempt": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_XSHOT_XCROSS_DIFFERS,
             ),
         },
         "defender_absent": {
-            "xcross_attempt": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
-            ),
+            "xcross_attempt": AxisVerdict("all_nan", "honest_nan"),
         },
         "gk_one_end": {
-            "xcross_attempt": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
-            ),
+            "xcross_attempt": AxisVerdict("all_nan", "honest_nan"),
         },
     },
     applicability={
@@ -695,52 +678,24 @@ _entry(
     columns=("xshot_occurrence",),
     velocity={
         "xshot_occurrence": AxisVerdict(
-            "no_signal",
-            "not_exercised",
-            rationale=(
-                "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                "occurrence context, or blocking defender to score). A fixture inadequacy, not a library property "
-                "-- widening the fixture would move it. [measured cause=velocity+frame_count] "
-                "NOTE: the velocity-fabrication guard IS enforced structurally -- by the static "
-                "velocity-feature contract gate (tests/tracking/test_velocity_feature_contract.py), NOT by "
-                "this fixture. A not_exercised model is invisible to a runtime audit, which is exactly why "
-                "fixture widening was deliberately declined in favour of the systemic gate (ADR-054)."
-            ),
+            "differs",
+            "differs_by_design",
+            rationale=_SB360_F2_XSHOT_XCROSS_DIFFERS,
         ),
     },
     visibility={
         "gk_absent": {
             "xshot_occurrence": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_XSHOT_XCROSS_DIFFERS,
             ),
         },
         "defender_absent": {
-            "xshot_occurrence": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
-            ),
+            "xshot_occurrence": AxisVerdict("all_nan", "honest_nan"),
         },
         "gk_one_end": {
-            "xshot_occurrence": AxisVerdict(
-                "no_signal",
-                "not_exercised",
-                rationale=(
-                    "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                    "occurrence context, or blocking defender to score). A fixture inadequacy, not a library "
-                    "property -- widening the fixture would move it. [measured cause=velocity+frame_count]"
-                ),
-            ),
+            "xshot_occurrence": AxisVerdict("all_nan", "honest_nan"),
         },
     },
     applicability={

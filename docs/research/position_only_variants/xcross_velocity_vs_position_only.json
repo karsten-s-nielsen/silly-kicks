@@ -1,0 +1,23 @@
+{
+  "model": "xcross",
+  "delta": {
+    "pr_auc": {
+      "velocity": 0.0861285781607539,
+      "position_only": 0.061119334574545284,
+      "delta": 0.02500924358620861
+    },
+    "brier": {
+      "velocity": 0.029545026645064355,
+      "position_only": 0.029961612075567245,
+      "delta": -0.00041658543050289085
+    },
+    "log_loss": {
+      "velocity": 0.12700540721416473,
+      "position_only": 0.13242643624544143,
+      "delta": -0.005421029031276697
+    }
+  },
+  "run_commit": "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean"
+}

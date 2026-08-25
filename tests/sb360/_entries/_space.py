@@ -10,6 +10,13 @@ import silly_kicks.tracking as T
 from tests.sb360 import _calls as C
 from tests.sb360._registry import ADAPTERS, AxisVerdict, _entry
 
+_SB360_F2_VELOCITY_DIFFERS = (
+    "sb360-fixture-2 adds a striker ahead of the ball, making this xT/pitch-control value "
+    "non-vacuous; it is computed via the zero-velocity positional model on the freeze-frame leg "
+    "(ADR-063) and the velocity-informed model on the tracking leg, so the legs legitimately "
+    "differ. [measured cause=velocity]"
+)
+
 _entry(
     "add_cover_shadows",
     ADAPTERS["add_cover_shadows"](T.add_cover_shadows),
@@ -22,7 +29,11 @@ _entry(
         "max_single_defender_player_id",
     ),
     velocity={
-        "n_blocked_receivers": AxisVerdict("identical", "works"),
+        "n_blocked_receivers": AxisVerdict(
+            "differs",
+            "differs_by_design",
+            rationale=_SB360_F2_VELOCITY_DIFFERS,
+        ),
         "n_potential_receivers": AxisVerdict("identical", "works"),
         "blocking_score": AxisVerdict(
             "differs",
@@ -357,7 +368,11 @@ _entry(
     visibility={
         "gk_absent": {
             "obso_actual": AxisVerdict("identical", "works"),
-            "obso_peak": AxisVerdict("identical", "works"),
+            "obso_peak": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "obso_optimal": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -370,7 +385,11 @@ _entry(
             "obso_epv_source": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
-            "obso_actual": AxisVerdict("identical", "works"),
+            "obso_actual": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "obso_peak": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -393,7 +412,11 @@ _entry(
             "obso_epv_source": AxisVerdict("identical", "works"),
         },
         "gk_one_end": {
-            "obso_actual": AxisVerdict("identical", "works"),
+            "obso_actual": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "obso_peak": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -504,7 +527,11 @@ _entry(
     visibility={
         "gk_absent": {
             "obso_actual": AxisVerdict("identical", "works"),
-            "obso_peak": AxisVerdict("identical", "works"),
+            "obso_peak": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "obso_optimal": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -515,7 +542,11 @@ _entry(
                 ),
             ),
             "obso_epv_source": AxisVerdict("identical", "works"),
-            "pausa_temporal": AxisVerdict("identical", "works"),
+            "pausa_temporal": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "pausa_spatial": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -537,7 +568,11 @@ _entry(
             ),
         },
         "defender_absent": {
-            "obso_actual": AxisVerdict("identical", "works"),
+            "obso_actual": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "obso_peak": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -558,7 +593,11 @@ _entry(
                 ),
             ),
             "obso_epv_source": AxisVerdict("identical", "works"),
-            "pausa_temporal": AxisVerdict("identical", "works"),
+            "pausa_temporal": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "pausa_spatial": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -580,7 +619,11 @@ _entry(
             ),
         },
         "gk_one_end": {
-            "obso_actual": AxisVerdict("identical", "works"),
+            "obso_actual": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "obso_peak": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -601,7 +644,11 @@ _entry(
                 ),
             ),
             "obso_epv_source": AxisVerdict("identical", "works"),
-            "pausa_temporal": AxisVerdict("identical", "works"),
+            "pausa_temporal": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
             "pausa_spatial": AxisVerdict(
                 "differs",
                 "differs_by_design",
@@ -663,10 +710,18 @@ _entry(
             "pitch_control_at_target__spearman": AxisVerdict("identical", "works"),
         },
         "defender_absent": {
-            "pitch_control_at_target__spearman": AxisVerdict("identical", "works"),
+            "pitch_control_at_target__spearman": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
         },
         "gk_one_end": {
-            "pitch_control_at_target__spearman": AxisVerdict("identical", "works"),
+            "pitch_control_at_target__spearman": AxisVerdict(
+                "differs",
+                "differs_by_design",
+                rationale=_SB360_F2_VELOCITY_DIFFERS,
+            ),
         },
     },
     applicability={

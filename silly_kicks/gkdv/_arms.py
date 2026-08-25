@@ -216,15 +216,30 @@ def delta_das(
             "build_ghost_frames returned them, restricted identically on both legs."
         )
 
-    # ONE direction, inferred from the FACTUAL frames, applied to BOTH legs. Neither leg
-    # may infer for itself.
-    direction = _das_port.pin_direction(actual_frame)
-    actual_pinned = actual_frame.copy()
-    actual_pinned["attacking_direction"] = pd.Series(direction).to_numpy()
-    ghost_pinned = ghost_frame.copy()
-    ghost_pinned["attacking_direction"] = pd.Series(direction).to_numpy()
+    # DAS (accessible space) STRUCTURALLY requires velocity -- a player's reachable area is a
+    # function of their velocity -- so on a declared velocity-less freeze frame (SB360) it is
+    # genuinely undefined, and DAS-input validation raises the DEGRADABLE ``DasUnscoreableError``.
+    # Degrade to NaN at this consumer edge, the ADR-043 pattern ``add_das`` uses via ``das_source``,
+    # rather than crashing a mixed-provider pass: unlike ``delta_threat_suppression`` (whose pitch
+    # control has a valid zero-velocity positional model, ADR-063), delta_das cannot be computed
+    # without velocity, so honest-NaN is the only correct value. The raise fires in
+    # ``pin_direction``'s DAS-input validation as well as in ``team_das``, so BOTH sit inside the
+    # guard. ONLY the declared-unscoreable case is caught; a forgotten ``derive_velocities()`` (a
+    # different error) still propagates loud.
+    from silly_kicks.tracking import DasUnscoreableError
 
-    kwargs = {"attacking_team_id": attacking_team_id, "direction_col": "attacking_direction"}
-    actual = _das_port.team_das(actual_pinned, **kwargs)
-    ghost = _das_port.team_das(ghost_pinned, **kwargs)
+    try:
+        # ONE direction, inferred from the FACTUAL frames, applied to BOTH legs. Neither leg
+        # may infer for itself.
+        direction = _das_port.pin_direction(actual_frame)
+        actual_pinned = actual_frame.copy()
+        actual_pinned["attacking_direction"] = pd.Series(direction).to_numpy()
+        ghost_pinned = ghost_frame.copy()
+        ghost_pinned["attacking_direction"] = pd.Series(direction).to_numpy()
+
+        kwargs = {"attacking_team_id": attacking_team_id, "direction_col": "attacking_direction"}
+        actual = _das_port.team_das(actual_pinned, **kwargs)
+        ghost = _das_port.team_das(ghost_pinned, **kwargs)
+    except DasUnscoreableError:
+        return float("nan")
     return float(actual - ghost)

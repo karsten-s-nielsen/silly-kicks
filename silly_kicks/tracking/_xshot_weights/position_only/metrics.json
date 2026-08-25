@@ -1,0 +1,45 @@
+{
+  "run_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "shipped_variant": "public",
+  "n_rows": 156110,
+  "n_positive": 34650,
+  "providers": [
+    "idsse",
+    "skillcorner"
+  ],
+  "candidates": {
+    "public": {
+      "params": {
+        "n_estimators": 150.30902308255034,
+        "max_depth": 5.1121741035066215,
+        "learning_rate": 0.06465599543062533,
+        "min_child_weight": 17.228384202220838,
+        "reg_lambda": 4.398069633632561
+      },
+      "metrics": {
+        "pr_auc": 0.3065819349186868,
+        "brier": 0.16699706315994262,
+        "log_loss": 0.5109103977680206,
+        "pr_auc_std": 0.02242147853479626,
+        "positive_rate": 0.2219588751521363,
+        "base_rate_brier": 0.17269313289333468,
+        "n_usable_folds": 5
+      },
+      "providers": [
+        "idsse",
+        "skillcorner"
+      ]
+    }
+  },
+  "acceptance": {
+    "enough_usable_folds": true,
+    "pr_auc_gt_base_rate": true,
+    "brier_lt_base_rate_brier": true,
+    "log_loss_lt_uniform": true
+  },
+  "estimates_are_cv_not_shipped_fit": true,
+  "artifact_size_bytes": 436819,
+  "reproducibility": "public"
+}

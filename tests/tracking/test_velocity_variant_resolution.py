@@ -199,9 +199,16 @@ def test_xcross_declared_serves_via_position_only(monkeypatch):
     assert out["xcross_attempt"].notna().any()  # position_only served a value on velocity-less frames
 
 
-def test_xshot_declared_no_bundled_position_only_returns_nan_not_default():
-    # Phase-A state (no bundled position_only): auto-select falls back to NaN, NEVER the default
-    # velocity model -- the load-bearing asymmetry -- and warns.
+def test_xshot_declared_no_bundled_position_only_returns_nan_not_default(monkeypatch):
+    # The position_only variant is BUNDLED as of commit 2, so this FORCES the unbundled path to keep
+    # the NaN-not-default asymmetry covered at the compute seam: auto-select falls back to NaN, NEVER
+    # the default velocity model, and warns. (Bundled-serves is on real weights in test_position_only_bundled.)
+    def _boom(cls, v):
+        if v == "position_only":
+            raise FileNotFoundError
+        raise AssertionError("must NOT fall back to the default velocity model on velocity-less frames")
+
+    monkeypatch.setattr(_xs.XShotOccurrenceModel, "from_variant", classmethod(_boom))
     frames = _declare_unavailable(_synthetic_match_frames(n_frames=5))
     with pytest.warns(UserWarning, match="position_only"):
         out = _xs.compute_xshot_occurrence(frames, model=None, home_team_id=1)
@@ -272,13 +279,23 @@ def test_add_xshot_emits_variant_provenance_column():
     # pandas 3, so `dtype == object` is a spurious cross-major failure (ADR-057).
     assert all(isinstance(v, str) for v in out["xshot_occurrence_variant"])
 
-    # Declared velocity-less -> auto-select chooses position_only (unbundled -> NaN value + warn), but
-    # the PROVENANCE still records the chosen variant.
+    # Declared velocity-less -> auto-select chooses position_only. The variant is BUNDLED as of commit
+    # 2, so the real-weights serve is covered in test_position_only_bundled; here we FORCE the unbundled
+    # fallback so the provenance-on-NaN branch stays covered -- the PROVENANCE still records the chosen
+    # variant even when the value falls back to NaN.
+    from unittest.mock import patch
+
+    def _boom(cls, v):
+        if v == "position_only":
+            raise FileNotFoundError
+        raise AssertionError("must NOT fall back to the default velocity model on velocity-less frames")
+
     declared = _declare_unavailable(frames)
-    with pytest.warns(UserWarning, match="position_only"):
-        out2 = _xs.add_xshot_occurrence(actions, declared, home_team_id=1)
+    with patch.object(_xs.XShotOccurrenceModel, "from_variant", classmethod(_boom)):
+        with pytest.warns(UserWarning, match="position_only"):
+            out2 = _xs.add_xshot_occurrence(actions, declared, home_team_id=1)
     assert (out2["xshot_occurrence_variant"] == "position_only").all()
-    assert out2["xshot_occurrence"].isna().all()  # NaN value (unbundled), NOT the default model
+    assert out2["xshot_occurrence"].isna().all()  # NaN value (forced-unbundled), NOT the default model
 
 
 def test_add_xshot_explicit_override_is_custom():
@@ -395,18 +412,29 @@ def _fitted_position_only_ghost():
     return _gg.GhostGkModel(feature_set="position_only", n_estimators=8, max_depth=3).fit(X, labels)
 
 
-def test_gkdv_serve_ghost_positions_serves_rows_on_declared_frame_with_po_model():
+def test_gkdv_serve_ghost_positions_serves_rows_on_declared_frame_with_po_model(monkeypatch):
     # The gkdv unlock (Task 5 Step 5): serve_ghost_gk_positions on a DECLARED (velocity-less, SB360)
     # freeze frame yields ROWS once a position_only ghost model is available -- it was ZERO under the
     # ADR-054 refusal, so gkdv's ghost arm could not work on SB360. BOTH sides asserted: the refusal
-    # (model=None, no bundled PO -> 0 rows) AND the unlock (an explicit PO model -> rows).
+    # (auto-select, NO PO variant available -> 0 rows) AND the unlock (an explicit PO model -> rows).
+    # The position_only ghost is BUNDLED as of commit 2, so the refusal branch is FORCED unbundled here
+    # (its real bundled serve is covered in test_position_only_bundled).
     from silly_kicks.tracking import serve_ghost_gk_positions
+
+    monkeypatch.delenv("SILLY_KICKS_GHOST_GK_PATH", raising=False)
+
+    def _boom(cls, v):
+        if v == "position_only":
+            raise FileNotFoundError
+        raise AssertionError("must NOT fall back to the default on velocity-less frames")
+
+    monkeypatch.setattr(_gg.GhostGkModel, "from_variant", classmethod(_boom))
 
     declared = _declare_unavailable(_make_ghost_gk_frames())
 
-    # WAS zero: no PO model available (auto-select, PO unbundled) -> serve REFUSES, returns no rows.
+    # Auto-select with no AVAILABLE PO variant (forced unbundled) -> serve REFUSES, returns no rows.
     refused = serve_ghost_gk_positions(declared, model=None, home_team_id=1)
-    assert len(refused) == 0, "auto-select with no bundled PO variant must refuse (no rows), not fabricate"
+    assert len(refused) == 0, "auto-select with no available PO variant must refuse (no rows), not fabricate"
 
     # NOW rows: an explicit position_only model -> serve extracts the 21-col PO vector and predicts.
     out = serve_ghost_gk_positions(declared, model=_fitted_position_only_ghost(), home_team_id=1)

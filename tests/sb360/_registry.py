@@ -211,9 +211,16 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: two boundary entries (spec Part 2/Task 5). Same shape as `build_ghost_frames`: one emitted
 #: column each (`delta_das`, `delta_threat_suppression`), `no_signal` -> `not_exercised` under
 #: `gk_absent` ONLY (both keepers gone -> no eligible frame on either leg), and `honest_nan` on
-#: the other two rosters. That is +2 tuples, one per column. This is the FINAL bump -- every
-#: BOUNDARY_ENTRY_POINT is now registered and `UNAUDITABLE_BOUNDARY` is empty.
-NOT_EXERCISED_BUDGET = 54
+#: the other two rosters. That was the final boundary bump -- every BOUNDARY_ENTRY_POINT is
+#: registered and `UNAUDITABLE_BOUNDARY` is empty.
+#:
+#: LOWERED 54 -> 42 by sb360-fixture-2 (the ADR-067 position-only cycle): the realistic striker
+#: ahead of the ball made `add_xshot_occurrence` and `add_xcross_attempt` probe cleanly and produce
+#: real observations (differs / honest-NaN) across all four axes -- eight tuples -- and made
+#: `add_press_commitment`'s two columns run to honest-NaN on defender_absent + gk_one_end -- four
+#: more, twelve total, all previously `no_signal` -> `not_exercised`. A budget can only FALL when the
+#: fixture exercises MORE, a coverage gain rather than the fixture-inadequacy this bound hunts.
+NOT_EXERCISED_BUDGET = 42
 
 
 def _entry(

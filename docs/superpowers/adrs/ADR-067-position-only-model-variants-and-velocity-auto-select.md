@@ -104,3 +104,28 @@ most signal is positional.
   (deterministic; `from_variant` cached) leaves `compute_*` byte-identical.
 - **SB360-native training.** Rejected: 30 licensed matches, goalkick frame-existence ~44% — far too
   small; the variants train on the full-tracking corpus with velocity dropped and serve on SB360.
+
+## Amendment — Phase B bundle: gkdv on SB360, fixture realism, the ADR-053 gate
+
+Bundling the position-only ghost made gkdv's counterfactual arms *reachable* on SB360 for the first
+time (`serve_ghost_gk_positions` now serves via the position_only variant), which surfaced three
+follow-ons, all folded into the bundle commit:
+
+- **`delta_das` degrades honestly; `delta_threat_suppression` computes.** Accessible space
+  STRUCTURALLY requires velocity, so on a velocity-less freeze frame `delta_das` now catches
+  `DasUnscoreableError` → NaN (the ADR-043 consumer-degrade `add_das` uses via `das_source`) instead
+  of propagating a crash. `delta_threat_suppression` needs no such degrade — pitch control has a valid
+  zero-velocity positional model (ADR-063) — so it produces a positional-only value. An interim "gkdv
+  declines velocity-less frames wholesale" workaround was **rejected and reverted**: it dodged the
+  audit symptom instead of giving each arm its correct behaviour.
+- **The SB360 audit fixture gained a realistic striker (`sb360-fixture-2`).** With no attacking
+  receiver ahead of the ball the threat arm is legitimately 0 on both legs, so `delta_threat` read a
+  masked `0==0` `identical` that certified nothing. A central striker ahead of the ball makes the arm
+  non-vacuous — the keeper's threat-suppression now measurably moves the value across legs — which is
+  the property the audit exists to check.
+- **The ADR-053 provenance gate was refined for the first MIXED boundary entry.** `delta_threat` is
+  substantive where there is threat but a coincidental `0==0` `works` on the no-threat goalkick roster
+  — a mix the gate's per-cell `works→structural` lock could not express. The refinement: an entry is
+  `substantive` if ANY cell moves (`differs_by_design`/`silent_degrade`), exempting coincidental
+  `works` cells; an entry with NO substantive cell still locks `works→structural`, so genuinely
+  frame-blind entries (`add_restart_coordinates`, `xt_gk_v2`) are unaffected. See ADR-053.
