@@ -135,13 +135,69 @@ def validate_corpus_providers(providers: list[str]) -> None:
 
     Without this the check fires inside ``keeper_detection_mask``, i.e. after the full per-game
     extraction -- the expensive part. Same rule, same single source
-    (``_ghost_gk.validate_provider``); only the moment it fires changes, from "after an hour" to
-    "immediately".
+    (``_provider_visibility.validate_provider``); only the moment it fires changes, from "after an
+    hour" to "immediately".
     """
-    from silly_kicks.tracking._ghost_gk import validate_provider
+    from silly_kicks.tracking._provider_visibility import validate_provider
 
     for provider in providers:
         validate_provider(provider)
+
+
+def validate_corpus_visibility(provider_by_path: dict[Path, str]) -> None:
+    """Fail BEFORE extraction on a detection-aware shard whose ``visibility`` was discarded.
+
+    The build-time guard (``materialize_tc3_frames._guard_provider_frames``) is the primary defense,
+    but a corpus can predate it or be hand-assembled, so the trainer re-checks at consume time -- the
+    same class of pre-flight as :func:`validate_corpus_providers`, one stage earlier than the per-frame
+    :func:`keeper_detection_mask` (which fires only after the expensive extraction).
+
+    Reads parquet ``null_count`` METADATA (zero data pages) for EVERY detection-aware shard, so a
+    MIXED corpus (one tail-kloppy shard among good ones) is caught, not just a systematic one. Raises
+    the shared remedy message (rebuild via ``tracking.skillcorner``); also raises if a detection-aware
+    shard dropped the ``visibility`` column entirely (M2, consume side). A shard whose statistics are
+    unavailable falls back to reading the one column.
+    """
+    import pyarrow.parquet as pq
+
+    from silly_kicks.tracking._provider_visibility import (
+        _DETECTION_AWARE_PROVIDERS,
+        _detection_discarded_message,
+    )
+
+    for path, provider in provider_by_path.items():
+        if provider not in _DETECTION_AWARE_PROVIDERS:
+            continue
+        pf = pq.ParquetFile(path)
+        if "visibility" not in pf.schema_arrow.names:
+            raise ValueError(
+                f"{path.name}: provider {provider!r} carries a detection flag, but the shard has NO "
+                "`visibility` column -- the pipeline dropped it. Build these frames with "
+                "tracking.skillcorner instead (spec 4.3)."
+            )
+        meta = pf.metadata
+        num_rows = meta.num_rows
+        if num_rows == 0:
+            continue  # an empty shard is not a discarded-flag signal
+        # Flat tc3 schema: arrow field order == parquet leaf-column order.
+        col_idx = pf.schema_arrow.names.index("visibility")
+        null_count = 0
+        stats_ok = True
+        for rg in range(meta.num_row_groups):
+            stats = meta.row_group(rg).column(col_idx).statistics
+            nc = getattr(stats, "null_count", None) if stats is not None else None
+            if nc is None:
+                stats_ok = False
+                break
+            null_count += nc
+        if not stats_ok:
+            # No usable metadata -> read the one column and decide honestly (rare path).
+            vis = pf.read(columns=["visibility"]).column("visibility").to_pandas()
+            if vis.isna().all():
+                raise ValueError(f"{path.name}: {_detection_discarded_message(provider)}")
+            continue
+        if null_count == num_rows:
+            raise ValueError(f"{path.name}: {_detection_discarded_message(provider)}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -324,9 +380,9 @@ def main() -> None:
         sys.exit(1)
 
     # Fail fast on an unclassified provider, BEFORE any extraction or fitting. The membership rule
-    # lives in _ghost_gk.validate_provider (single source); only the moment it fires changes. It
-    # previously fired inside keeper_detection_mask -- i.e. after the full per-game extraction, the
-    # expensive part -- so a typo'd provider cost an hour before anything said so.
+    # lives in _provider_visibility.validate_provider (single source); only the moment it fires
+    # changes. It previously fired inside keeper_detection_mask -- i.e. after the full per-game
+    # extraction, the expensive part -- so a typo'd provider cost an hour before anything said so.
     #
     # Reads ONE column from ONE row group per file: seconds, against an extraction measured in tens
     # of minutes. A file with no `source_provider` column contributes nothing here; that case is
@@ -335,16 +391,23 @@ def main() -> None:
     import pyarrow.parquet as pq
 
     discovered: set[str] = set()
+    provider_by_path: dict[Path, str] = {}
     for p in parquets:
         pf = pq.ParquetFile(p)
         if "source_provider" not in pf.schema_arrow.names or pf.num_row_groups == 0:
             continue
         col = pf.read_row_group(0, columns=["source_provider"])["source_provider"]
         if len(col):
-            discovered.add(str(col[0].as_py()))
+            prov = str(col[0].as_py())
+            discovered.add(prov)
+            provider_by_path[p] = prov
     if discovered:
         validate_corpus_providers(sorted(discovered))
         print(f"Providers validated up front: {sorted(discovered)}")
+        # And, for every detection-aware shard, that its visibility flag actually survived -- BEFORE
+        # extraction, so a kloppy-discarded corpus fails HERE, not an hour in via keeper_detection_mask.
+        # Reads null_count metadata only, so it also catches a MIXED corpus (one tail-kloppy shard).
+        validate_corpus_visibility(provider_by_path)
     else:
         print("No source_provider column present; provider validation happens during extraction.")
 

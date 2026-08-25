@@ -30,6 +30,28 @@ seam by the declared velocity marker.
   variants are bundled); **velocity-bearing frames are byte-identical**. gkdv's ghost arm begins to
   work on SB360. See `docs/PRIVATE_CONSUMERS.md`.
 
+### Detection-aware visibility guardrails (ADR-068)
+
+Prevents the class of failure that surfaced when the ghost trainer aborted mid-corpus on stale
+kloppy-built SkillCorner frames (`visibility=None`): a detection-aware provider whose per-player
+detection flag was discarded now fails **loud** at BOTH the build seam and the consume seam, before
+any corpus pass — never per-game-3-in via the `for_each` abort.
+
+- **One shared rule** `assert_detection_aware_visibility` + the provider visibility taxonomy
+  (`_DETECTION_AWARE_PROVIDERS` / `_FULLY_OBSERVED_PROVIDERS` / `validate_provider`) move to a neutral
+  private `tracking/_provider_visibility.py` (the 4.53.0 `_id_compat` clean-break precedent — a rule
+  multiple consumers must obey does not belong inside one consumer's private module).
+  `keeper_detection_mask` stays in `_ghost_gk` and delegates; the break is genuine (a module alias, no
+  transitive re-export — pinned by a negative test).
+- **Layer 1 (build-time):** `materialize_tc3_frames` refuses to write a detection-aware shard whose
+  `visibility` was dropped or is entirely null, so the poison never becomes a shard.
+- **Layer 2 (consume-time):** the ghost-trainer pre-flight reads parquet `null_count` **metadata** for
+  every detection-aware shard — catching a MIXED corpus (one tail-kloppy shard), not just a systematic
+  one — before any extraction or fit.
+- **Additive; no model change, no retrain.** The native path already carries a real `visibility`, so
+  both layers are no-ops on every bundled corpus; they fire only on a detection-discarding builder. The
+  `keeper_detection_mask` all-null message is unified (provider-generic); no test pinned the old prefix.
+
 ## [4.91.0] — 2026-08-23
 
 Cover-shadow σ/λ discrimination re-tuning + expected-receiver model (ADR-066, PR-S162) -- an

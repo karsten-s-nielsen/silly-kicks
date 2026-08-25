@@ -33,6 +33,7 @@ from silly_kicks.id_compat import ids_match, same_id
 from silly_kicks.spadl import config as spadlconfig
 
 from . import _geometry as _geo
+from . import _provider_visibility as _pv
 from ._ball_carrier import DEFAULT_CARRIER_PARAMS, infer_ball_carrier
 from ._gk_resolve import resolve_defended_goals
 from ._velocity_availability import (
@@ -273,54 +274,19 @@ _GOAL_Y = _FIELD_WIDTH / 2.0  # 34.0
 _VELOCITY_WINDOW_S = 0.5
 _SET_PIECE_DECAY_SECONDS = 10.0
 
-# Which providers' feeds carry a per-player detection flag (spec 4.3).
-# A null `visibility` is AMBIGUOUS: for a fully-observed provider it means "no flag exists and
-# none is needed"; for a detection-aware provider it means "the pipeline DISCARDED the flag"
-# (the kloppy gateway hard-codes visibility=None). Reading the second as the first would train
-# ghost-GK on interpolator output -- ~80% of SkillCorner keeper positions are extrapolated.
-_DETECTION_AWARE_PROVIDERS = frozenset({"skillcorner"})
-# metrica is full optical tracking (all players every frame, NO detection flag) -- fully observed
-# like the native providers. Classifying it here keeps ghost-GK trainable on metrica (a pre-PR
-# capability the always-run detected-only filter would otherwise crash); metrica's exclusion from
-# the registered GKDV corpora is a separate corpus-composition decision (Tier-2 data quality).
-_FULLY_OBSERVED_PROVIDERS = frozenset({"gradientsports", "sportec", "idsse", "metrica"})
-
-
-def validate_provider(provider: str) -> None:
-    """Raise unless ``provider`` is classified as detection-aware or fully observed.
-
-    Single source for the membership rule: both :func:`keeper_detection_mask` and the ghost trainer's
-    startup check call this. Two copies of the set would drift the moment a provider is added --
-    and the failure mode of that drift is silent, because an unclassified provider only surfaces
-    deep inside a training run, after the expensive extraction.
-
-    Raises ``ValueError`` naming the two sets and their current members.
-
-    Examples
-    --------
-    >>> validate_provider("gradientsports")
-    """
-    known = _DETECTION_AWARE_PROVIDERS | _FULLY_OBSERVED_PROVIDERS
-    if provider not in known:
-        raise ValueError(
-            f"unclassified provider {provider!r}: add it to _DETECTION_AWARE_PROVIDERS or "
-            f"_FULLY_OBSERVED_PROVIDERS -- an unknown provider is NOT assumed observed. "
-            f"Known: {sorted(known)}"
-        )
+# The provider visibility taxonomy (`_DETECTION_AWARE_PROVIDERS`, `_FULLY_OBSERVED_PROVIDERS`), the
+# `validate_provider` membership rule, and the all-null `assert_detection_aware_visibility` rule live
+# in the neutral `_provider_visibility` module (imported above as `_pv`) -- accessed qualified, never
+# `from ._provider_visibility import ...`, so those names are NOT re-exported from `_ghost_gk` (a
+# transitive re-export would silently keep the old import path alive; single source is the point).
 
 
 def keeper_detection_mask(visibility: pd.Series, *, provider: str) -> np.ndarray:
     """Rows whose keeper was ACTUALLY DETECTED. Fail-closed on the ambiguous null (spec 4.3)."""
-    validate_provider(provider)
-    if provider in _FULLY_OBSERVED_PROVIDERS:
+    _pv.validate_provider(provider)
+    if provider in _pv._FULLY_OBSERVED_PROVIDERS:
         return np.ones(len(visibility), dtype=bool)
-    if visibility.isna().all():
-        raise ValueError(
-            f"keeper_detection_mask: provider {provider!r} carries a detection flag, but "
-            "`visibility` is entirely null -- the pipeline discarded it (the kloppy gateway "
-            "hard-codes visibility=None). Build these frames with tracking.skillcorner instead; "
-            "training on undetected keepers means training on the interpolator (spec 4.3)."
-        )
+    _pv.assert_detection_aware_visibility(visibility, provider=provider)
     return visibility.fillna(False).astype(bool).to_numpy()
 
 
