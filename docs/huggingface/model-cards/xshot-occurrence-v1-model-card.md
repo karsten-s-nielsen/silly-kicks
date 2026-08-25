@@ -40,6 +40,7 @@ distance/bearing, and the 5 nearest defenders + 5 nearest attackers.
 |---|---|---|---|
 | `default` (`public`) | 17 matches &mdash; SkillCorner + IDSSE, redistributable | **bundled in the wheel** | **Default choice** &mdash; offline, fully reproducible, no restricted data |
 | `sc_extended` | + 98 owner-tier SkillCorner matches (179 total) | **this repo** (HF-only) | Yes, if you can accept a Hub download and the corpus caveats below — it beat `public` on held-out folds |
+| `sc_extended_position_only` | 179 owner-tier matches, **velocity features dropped** (26-feature) | **separate repo** `silly-kicks/xshot-occurrence-position-only-v1` (HF-only) | Yes, if scoring **velocity-less** frames (StatsBomb-360 freeze frames) with owner-tier access — a stronger position-only model than the bundled `position_only`. Reachable ONLY via `from_variant("sc_extended_position_only")`; asking for `sc_extended` still returns the **faithful** model (ADR-070). |
 
 `sc_extended` is HF-only because it is trained on **restricted** data and cannot be
 redistributed inside the PyPI wheel. Only learned parameters are published here &mdash; **no raw

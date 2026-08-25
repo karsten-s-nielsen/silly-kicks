@@ -4,9 +4,10 @@
 Verifies SHA-256 + a sanity prediction, uploads the folder, then re-downloads via from_hub and
 asserts identical predictions. ``--verify-only`` stops before upload (no network/token needed).
 
-NOTE: PR-B shipped the ``public`` variant bundled-in-wheel with NO Hub repo (the paired
-public-vs-full test degraded public generalization in all 5 folds -- mirrors xS). This script
-exists for the contingency where a future ``full`` variant DOES ship to Hub.
+Publishes to ``silly-kicks/xcross-attempt-v1`` (faithful ``sc_extended``) or, via ``--repo-id``, to
+``silly-kicks/xcross-attempt-position-only-v1`` (the position-only owner-tier variant, ADR-070). The
+verify sample is chosen from the artifact's ``feature_set`` so a position-only fit is not fed a
+faithful-width sample.
 
 Requires: silly-kicks[xgboost,xcross].
 """
@@ -27,20 +28,31 @@ def main() -> None:
     ap.add_argument("--verify-only", action="store_true")
     args = ap.parse_args()
 
-    from silly_kicks.tracking._xcross_attempt import XCROSS_FEATURE_NAMES_FAITHFUL, XCrossAttemptModel
+    from silly_kicks.tracking._xcross_attempt import (
+        XCROSS_FEATURE_NAMES_FAITHFUL,
+        XCROSS_FEATURE_NAMES_POSITION_ONLY,
+        XCrossAttemptModel,
+    )
 
     art = Path(args.artifact_dir)
     model = XCrossAttemptModel.load(art)  # SHA-256 verified
-    sample = pd.DataFrame(np.zeros((3, len(XCROSS_FEATURE_NAMES_FAITHFUL))), columns=XCROSS_FEATURE_NAMES_FAITHFUL)
+    # Feature-set-aware verify sample (ADR-070): a position-only fit has a shorter vector; a hard-coded
+    # faithful sample would raise an xgboost feature-count mismatch.
+    names = (
+        XCROSS_FEATURE_NAMES_POSITION_ONLY if model.feature_set == "position_only" else XCROSS_FEATURE_NAMES_FAITHFUL
+    )
+    sample = pd.DataFrame(np.zeros((3, len(names))), columns=names)
     local_pred = model.predict_proba(sample)
-    print(f"Loaded + verified {art}; sample preds {local_pred.tolist()}")
+    print(f"Loaded + verified {art} (feature_set={model.feature_set}); sample preds {local_pred.tolist()}")
     if args.verify_only:
         print("verify-only: not uploading.")
         return
 
     from huggingface_hub import HfApi
 
-    HfApi().upload_folder(folder_path=str(art), repo_id=args.repo_id, repo_type="model")
+    api = HfApi()
+    api.create_repo(repo_id=args.repo_id, repo_type="model", exist_ok=True)  # no-op if it exists
+    api.upload_folder(folder_path=str(art), repo_id=args.repo_id, repo_type="model")
     back = XCrossAttemptModel.from_hub(args.repo_id)
     np.testing.assert_allclose(local_pred, back.predict_proba(sample), rtol=0, atol=0)
     print(f"Published to {args.repo_id} + round-trip verified.")

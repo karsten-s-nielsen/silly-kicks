@@ -5,6 +5,24 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.94.0] — 2026-08-25
+
+Position-only Hub variant for xShot / xCross (minor; `sc_extended_position_only`; PR-S165, ADR-070). The owner-tier
+POSITION-ONLY xShot/xCross models can now be served from the HuggingFace Hub as a **separate** variant
+key + repo, never overwriting the faithful `sc_extended` slot.
+
+- **`_HUB_VARIANTS` gains `sc_extended_position_only`**, mapped by a new `_HUB_REPOS` dict to
+  `silly-kicks/{xshot-occurrence,xcross-attempt}-position-only-v1`; `from_variant` routes each Hub key
+  to its own repo. `from_variant("sc_extended")` still returns the **faithful** model — a caller asking
+  for it can never silently receive a velocity-less model (the position-only Hub model is reachable
+  only by its own explicit name; the velocity-keyed auto-select never routes to a Hub key).
+- **The publish scripts are feature-set-aware:** `publish_xshot_occurrence.py` / `publish_xcross_attempt.py`
+  pick the verify sample's column set from the artifact's `feature_set` (a position-only fit is 26/15
+  cols vs the faithful 27/16, which the old hard-coded faithful sample rejected), and call
+  `create_repo(exist_ok=True)` before upload so the new repo is created on first publish.
+- **Additive; no retrain trigger; no change to any bundled or existing Hub artifact.** Ghost is
+  unchanged (its position-only variant is bundled in the wheel; its Hub variant `full` stays faithful).
+
 ## [4.93.0] — 2026-08-25
 
 Position-only model variants + velocity-keyed auto-select (minor; ADR-067, PR-S164). `XShotOccurrenceModel`,
