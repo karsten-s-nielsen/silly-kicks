@@ -101,7 +101,12 @@ _VARIANT_CACHE: dict = {}
 # to the Hub-hosted RESTRICTED sc_extended artifact; the bundled "default" IS the public arm.
 # Resolve the alias BEFORE the cache (spec 2026-07-20 §8).
 _VARIANT_ALIASES = {"public": "default"}
-_HUB_VARIANTS = frozenset({"sc_extended"})
+_HF_REPO_ID_POSITION_ONLY = "silly-kicks/xcross-attempt-position-only-v1"
+#: See _xshot_occurrence.py for the full rationale (ADR-070): ``sc_extended`` is the FAITHFUL
+#: velocity-bearing model; ``sc_extended_position_only`` is a SEPARATE key + repo so a caller asking
+#: for ``sc_extended`` never silently receives a velocity-less model. Auto-select never routes here.
+_HUB_REPOS = {"sc_extended": _HF_REPO_ID, "sc_extended_position_only": _HF_REPO_ID_POSITION_ONLY}
+_HUB_VARIANTS = frozenset(_HUB_REPOS)
 _INT_PARAMS = ("n_estimators", "max_depth", "min_child_weight")
 
 
@@ -809,7 +814,7 @@ class XCrossAttemptModel:
         if (weights_dir / "SHA256SUMS").exists():
             model = cls.load(weights_dir)
         elif variant in _HUB_VARIANTS:
-            model = cls.from_hub(_HF_REPO_ID)
+            model = cls.from_hub(_HUB_REPOS[variant])
         else:
             raise FileNotFoundError(
                 f"No bundled xCrossAttempt weights for variant {variant!r} at {weights_dir}. "

@@ -459,6 +459,19 @@ def main(argv=None) -> None:
         "for a model that scores on velocity-less SB360 freeze frames. 'extended' is NOT exposed here.",
     )
     ap.add_argument(
+        "--ship-variant",
+        choices=["public", "sc_extended", "full"],
+        default=None,
+        help="Operator override: force-ship THIS variant regardless of the fixed-sequence "
+        "bundle-selection verdict. The gate decides the WHEEL bundle; the Hub sc_extended repo is the "
+        "owner-tier ARCHIVE and holds sc_extended even when it does not clear the improvement gate "
+        "(a marginal, noise-sensitive fold-consistency bar). The paired test still runs and its "
+        "verdict + deltas are recorded in metrics.json (candidates.paired), so the override is fully "
+        "audited; only the shipped model changes. Uses the SAME corpus mask the gate would, so the "
+        "fitted model is identical to a gate-selected ship of that variant. Requires the "
+        "multi-candidate (run_paired) corpus. Default None = normal gate-selected ship.",
+    )
+    ap.add_argument(
         "--allow-dirty",
         action="store_true",
         help="Train from a modified working tree. The run still records run_tree_dirty=true in "
@@ -618,6 +631,13 @@ def main(argv=None) -> None:
             full_vs_sc=full_vs_sc,
         )
         print(f"Fixed-sequence verdict: ship {shipped} -- {why}")
+        if args.ship_variant is not None:
+            # Operator override: the Hub sc_extended repo is the owner-tier ARCHIVE and holds
+            # sc_extended regardless of the bundle-selection gate. The gate verdict + deltas above
+            # are still recorded in candidates["paired"], so this override is fully auditable.
+            why = f"operator --ship-variant override (fixed-sequence gate verdict was: {shipped} -- {why})"
+            shipped = args.ship_variant
+            print(f"Ship-variant override: forcing ship {shipped}. {why}")
         ship_mask = cand_masks[shipped]
         # The paired test DECIDED the corpus; the shipped model is tuned once on ALL of it (the
         # per-fold params never leave the paired comparison -- they were held-out estimates).
@@ -639,6 +659,13 @@ def main(argv=None) -> None:
             "why": why,
         }
     else:
+        if args.ship_variant is not None:
+            raise SystemExit(
+                "--ship-variant requires the multi-candidate (run_paired) corpus (public + owner "
+                "SkillCorner + gradientsports) so the variant masks and the TF-19 probe cohort exist. "
+                "The current corpus is single-candidate; drop --ship-variant (this path already ships "
+                "one visibility-labeled variant)."
+            )
         params_all = _hpo_once(X, y, groups, out, "single", args.n_trials, negative_subsample=ns, seed=seed)
         ship_mask = np.ones(len(X), bool)
         # Label from the SHIP MASK's visibility composition (spec 3.2), never the provider name: a

@@ -5,6 +5,38 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.94.0] — 2026-08-25
+
+Position-only Hub variant for xShot / xCross (minor; `sc_extended_position_only`; PR-S165, ADR-070, ADR-071, ADR-072). The owner-tier
+POSITION-ONLY xShot/xCross models can now be served from the HuggingFace Hub as a **separate** variant
+key + repo, never overwriting the faithful `sc_extended` slot.
+
+- **`_HUB_VARIANTS` gains `sc_extended_position_only`**, mapped by a new `_HUB_REPOS` dict to
+  `silly-kicks/{xshot-occurrence,xcross-attempt}-position-only-v1`; `from_variant` routes each Hub key
+  to its own repo. `from_variant("sc_extended")` still returns the **faithful** model — a caller asking
+  for it can never silently receive a velocity-less model (the position-only Hub model is reachable
+  only by its own explicit name; the velocity-keyed auto-select never routes to a Hub key).
+- **The publish scripts are feature-set-aware:** `publish_xshot_occurrence.py` / `publish_xcross_attempt.py`
+  pick the verify sample's column set from the artifact's `feature_set` (a position-only fit is 26/15
+  cols vs the faithful 27/16, which the old hard-coded faithful sample rejected), and call
+  `create_repo(exist_ok=True)` before upload so the new repo is created on first publish.
+- **Additive; no retrain trigger; no change to any bundled or existing Hub artifact.** Ghost is
+  unchanged (its position-only variant is bundled in the wheel; its Hub variant `full` stays faithful).
+- **`--ship-variant` operator override on the xCross trainer (ADR-071):** force-ship a specific
+  variant (e.g. `sc_extended`) regardless of the fixed-sequence bundle-selection gate, so the Hub
+  `sc_extended` **archive** can be regenerated deterministically when the owner-tier model marginally
+  misses the bundle bar (a noise-sensitive fold-consistency rule). The gate verdict + per-fold deltas
+  are still recorded in `metrics.json` (`candidates.paired`), so the override is fully auditable; the
+  fitted model is identical to a gate-selected ship of that variant. xCross-only — xShot's 2-provider
+  path completes cleanly (no TF-19 substitution-probe requirement). Scripts-only; no library change.
+- **Hub publish hardening (ADR-072):** `scripts/_hub_publish.py` uploads a **model-only allowlist**
+  and **fail-closes on any nested repo path** after upload — a defense-in-depth control born from an
+  incident where `upload_folder(artifact_dir)` briefly shipped the trainers' co-located
+  `_feature_cache/` / `shards/` (raw restricted frames) / `_probe_sample/` to public repos (remediated
+  by delete + recreate model-only). All five Hub artifacts (xShot/xCross `sc_extended` faithful +
+  position-only, ghost `full`) were re-fit and re-published, fixing the load-time `IntegrityError`
+  broken since 4.74.0; the model cards were refreshed to the re-fit's actual corpus + metrics.
+
 ## [4.93.0] — 2026-08-25
 
 Position-only model variants + velocity-keyed auto-select (minor; ADR-067, PR-S164). `XShotOccurrenceModel`,

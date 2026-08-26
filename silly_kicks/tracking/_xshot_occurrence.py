@@ -335,7 +335,14 @@ _VARIANT_CACHE: dict = {}  # P3: memoize bundled loads (default-list serve perf)
 # Resolve the alias BEFORE the cache so the request maps to the reproducible bundled model
 # (spec 2026-07-20 §8).
 _VARIANT_ALIASES = {"public": "default"}
-_HUB_VARIANTS = frozenset({"sc_extended"})
+_HF_REPO_ID_POSITION_ONLY = "silly-kicks/xshot-occurrence-position-only-v1"
+#: Owner-tier, never-bundled variants served from HuggingFace Hub, mapped to their repo. ``sc_extended``
+#: is the FAITHFUL velocity-bearing model existing consumers ask for by name; ``sc_extended_position_only``
+#: is a SEPARATE key + repo (ADR-070) so a caller requesting ``sc_extended`` can never silently receive a
+#: velocity-less model -- the position-only Hub model is reachable ONLY by its own explicit name, and the
+#: velocity-keyed auto-select (``variant_key_for_velocity``) still never routes to either.
+_HUB_REPOS = {"sc_extended": _HF_REPO_ID, "sc_extended_position_only": _HF_REPO_ID_POSITION_ONLY}
+_HUB_VARIANTS = frozenset(_HUB_REPOS)
 _INT_PARAMS = ("n_estimators", "max_depth", "min_child_weight")
 
 
@@ -628,8 +635,8 @@ class XShotOccurrenceModel:
         weights_dir = _XSHOT_WEIGHTS_ROOT / variant
         if (weights_dir / "SHA256SUMS").exists():
             model = cls.load(weights_dir)
-        elif variant in _HUB_VARIANTS:  # the Hub-hosted variants
-            model = cls.from_hub(_HF_REPO_ID)
+        elif variant in _HUB_VARIANTS:  # the Hub-hosted (owner-tier) variants
+            model = cls.from_hub(_HUB_REPOS[variant])
         else:
             raise FileNotFoundError(
                 f"No bundled xShotOccurrence weights for variant {variant!r} at {weights_dir}. "

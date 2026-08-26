@@ -23,20 +23,31 @@ def main() -> None:
     ap.add_argument("--verify-only", action="store_true")
     args = ap.parse_args()
 
-    from silly_kicks.tracking._xshot_occurrence import XSHOT_FEATURE_NAMES_FAITHFUL, XShotOccurrenceModel
+    from silly_kicks.tracking._xshot_occurrence import (
+        XSHOT_FEATURE_NAMES_FAITHFUL,
+        XSHOT_FEATURE_NAMES_POSITION_ONLY,
+        XShotOccurrenceModel,
+    )
 
     art = Path(args.artifact_dir)
     model = XShotOccurrenceModel.load(art)  # SHA-256 verified
-    sample = pd.DataFrame(np.zeros((3, len(XSHOT_FEATURE_NAMES_FAITHFUL))), columns=XSHOT_FEATURE_NAMES_FAITHFUL)
+    # Feature-set-aware verify sample: a position-only artifact was fit on the SHORTER vector, so a
+    # hard-coded faithful (27-col) sample raises an xgboost feature-count mismatch (ADR-070). Pick the
+    # column set the artifact actually declares.
+    names = XSHOT_FEATURE_NAMES_POSITION_ONLY if model.feature_set == "position_only" else XSHOT_FEATURE_NAMES_FAITHFUL
+    sample = pd.DataFrame(np.zeros((3, len(names))), columns=names)
     local_pred = model.predict_proba(sample)
-    print(f"Loaded + verified {art}; sample preds {local_pred.tolist()}")
+    print(f"Loaded + verified {art} (feature_set={model.feature_set}); sample preds {local_pred.tolist()}")
     if args.verify_only:
         print("verify-only: not uploading.")
         return
 
+    from _hub_publish import upload_model_only
     from huggingface_hub import HfApi
 
-    HfApi().upload_folder(folder_path=str(art), repo_id=args.repo_id, repo_type="model")
+    api = HfApi()
+    api.create_repo(repo_id=args.repo_id, repo_type="model", exist_ok=True)  # no-op if it exists
+    upload_model_only(api, str(art), args.repo_id)  # model-only allowlist + leak guard
     back = XShotOccurrenceModel.from_hub(args.repo_id)
     np.testing.assert_allclose(local_pred, back.predict_proba(sample), rtol=0, atol=0)
     print(f"Published to {args.repo_id} + round-trip verified.")

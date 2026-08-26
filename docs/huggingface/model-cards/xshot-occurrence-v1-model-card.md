@@ -13,94 +13,63 @@ library_name: silly-kicks
 
 # xShotOccurrence v1 (`sc_extended`) &mdash; Shot-Occurrence Propensity from Tracking State
 
-> **Read this first.** This repo serves the **`sc_extended`** variant, which is **NOT bundled
-> with the `silly-kicks` wheel** — it is trained on restricted owner-tier data and cannot be
-> redistributed there. That is a **licensing** constraint, not a quality one: `sc_extended`
-> **cleared** its pre-registered paired test. Pick the variant that matches your situation —
-> see [Which variant should I use?](#which-variant-should-i-use).
+> **Read this first.** This repo serves the **`sc_extended`** (owner-tier) variant. It is **NOT
+> bundled with the `silly-kicks` wheel** because it is trained on **restricted owner-tier data that
+> cannot be redistributed** inside a PyPI package — a **licensing** constraint. Only the learned
+> parameters are published here. If you do not have owner-tier access, use the bundled `default`
+> variant instead — see [Which variant should I use?](#which-variant-should-i-use).
 
 ## Model Description
 
-`XShotOccurrenceModel` is a deterministic-XGBoost classifier estimating **P(a shot is
-attempted by the in-possession team within ~1 s of a tracking frame)** &mdash; the xS surface of
-the GKDV research arc (TF-16).
+`XShotOccurrenceModel` is a deterministic-XGBoost classifier estimating **P(a shot is attempted by
+the in-possession team within ~1 s of a tracking frame)** &mdash; the xS surface of the GKDV research
+arc (TF-16).
 
-Paper-faithful **27-feature** extractor in goal-relative coordinates via the shared
-`_geometry` helper: ball r/θ/z/speed, an `openGoal` goal-mouth obstruction term, GK
-distance/bearing, and the 5 nearest defenders + 5 nearest attackers.
+Paper-faithful **27-feature** extractor in goal-relative coordinates via the shared `_geometry`
+helper: ball r/θ/z/speed, an `openGoal` goal-mouth obstruction term, GK distance/bearing, and the 5
+nearest defenders + 5 nearest attackers.
 
 - Domain filter: alive-ball, **attacking third**
-- Trained on **2,024,373** rows / **366,834** positives (18.9% positive rate)
-- `prepare_xshot_training_data` always returns the **faithful** class distribution; negative
-  subsampling lives in a separate train-only helper.
+- Feature set: **`faithful`** (velocity-bearing, 27 features)
+- Trained on **964,263** rows / **182,517** positives (18.9% positive rate)
 
 ## Which variant should I use?
 
 | Variant | Corpus | Where it lives | Use it? |
 |---|---|---|---|
 | `default` (`public`) | 17 matches &mdash; SkillCorner + IDSSE, redistributable | **bundled in the wheel** | **Default choice** &mdash; offline, fully reproducible, no restricted data |
-| `sc_extended` | + 98 owner-tier SkillCorner matches (179 total) | **this repo** (HF-only) | Yes, if you can accept a Hub download and the corpus caveats below — it beat `public` on held-out folds |
+| `sc_extended` | **115 matches** &mdash; 7 IDSSE + 108 SkillCorner (incl. **98 owner-tier**) | **this repo** (HF-only) | Yes, if you have owner-tier access and can accept a Hub download + the corpus caveats below |
+| `sc_extended_position_only` | same 115-match corpus, **velocity features dropped** (26-feature) | **separate repo** `silly-kicks/xshot-occurrence-position-only-v1` (HF-only) | Yes, if scoring **velocity-less** frames (StatsBomb-360 freeze frames) with owner-tier access — a stronger position-only model than the bundled `position_only`. Reachable ONLY via `from_variant("sc_extended_position_only")`; asking for `sc_extended` still returns this **faithful** model (ADR-070). |
 
-`sc_extended` is HF-only because it is trained on **restricted** data and cannot be
-redistributed inside the PyPI wheel. Only learned parameters are published here &mdash; **no raw
-provider tracking data**, and no artifact from which raw rows can be reconstructed (every
-booster leaf aggregates ≥ 9 samples by the binding `min_child_weight` floor).
+## Why this variant is HF-only
 
-## Why this variant is HF-only (it did NOT fail its paired test)
+`sc_extended` is HF-only for **licensing**, not quality: it is trained on **restricted owner-tier
+SkillCorner data** that cannot be redistributed inside the PyPI wheel (ADR-038). Only learned
+parameters are published here &mdash; **no raw provider tracking data** (only split thresholds, feature indices and leaf values are stored — no per-sample training data).
 
-**`sc_extended` CLEARED the pre-registered paired test.** It is HF-only because it is trained
-on **restricted owner-tier data and cannot be redistributed inside the PyPI wheel** (ADR-038)
-— a licensing constraint, not a quality verdict.
-
-The Stage-B run's own record:
-
-```
-"shipped": "sc_extended",
-"why": "sc_extended clears; full does not dominate it -- ties go to less data"
-```
-
-Stage-B deltas vs `public`, held out on public folds: `[-0.008, +0.009, +0.005, +0.029,
-+0.023]` — positive in 4 of 5 folds, mean **+0.0117**. The registered rule
-(`scripts/_paired.py::clears_rule`: positive in ≥ K−1 of K folds **and** a positive mean)
-returns **True**.
-
-### Do not misread the BUNDLED artifact's paired block
-
-The bundled `default` artifact carries a *different* run's record — **Stage A**, whose corpus
-contained **no owner-tier SkillCorner rows at all**. There,
-`cand_masks["sc_extended"] = is_public | is_sc_private` with `is_sc_private` **empty**, so the
-`sc_extended` candidate was the *same mask* as `public`: the same model scored against itself.
-Its deltas are `[0.0, 0.0, 0.0, 0.0, 0.0]` **by construction** — a degenerate self-comparison,
-not a measured null — and since the rule requires strictly positive values, zero fails and the
-fixed sequence stops. That is why `public` is the bundled default.
-
-Reading those zeros as "`sc_extended` failed" is a trap; an earlier revision of this card fell
-into it. `docs/research/tf19_pr2/decision_table.md` has the Stage A / Stage B split correct.
-
-The separate 4.9.0 verdict — that owner-tier Gradient Sports data degraded public
-held-out PR-AUC in all 5 folds — concerned the `full` arm, not `sc_extended`.
+This artifact was produced by a **two-provider (IDSSE + SkillCorner) single-candidate** run: the
+corpus **is** the owner-tier `sc_extended` tier, so there is no paired comparison against `public`
+(that comparison governs the *wheel bundle* selection, not this archive; ADR-071). The bundled
+`default`/`public` model remains the reproducible offline choice.
 
 ## Held-out CV (5 folds, out-of-fold)
 
 | Metric | Value | Baseline |
 |---|---|---|
-| PR-AUC | 0.5968 (± 0.0133) | base rate 0.1888 |
-| Brier | 0.1110 | base-rate Brier 0.1532 |
-| Log loss | 0.3613 | &mdash; |
+| PR-AUC | 0.5851 (± 0.0436) | base rate 0.1893 |
+| Brier | 0.1131 | base-rate Brier 0.1534 |
+| Log loss | 0.3671 | &mdash; |
 
-All four acceptance gates pass. Estimates are **CV, not the shipped fit**.
+All four acceptance gates pass (`enough_usable_folds`, `pr_auc_gt_base_rate`,
+`brier_lt_base_rate_brier`, `log_loss_lt_uniform`). Estimates are **CV, not the shipped fit**.
+`training_commit`: `1ce63ef`.
 
 ## TF-19 status: the shot arm has never been measured
 
-Unlike its xCross sibling, this model carries **no GK-substitution probe, no GK-block
-ablation and no permutation importance** in `metrics.json`. That is **blocked, not missing**:
-
-- The registered xS probe rule and its locked constants shipped in silly-kicks 4.47.0
-  (`tracking/_model_eval.py::evaluate_xs_probe`, `PROBE_WRAPPERS["xs"]`).
-- `xs_substitution_probe` consumes **ghost-substituted `targets`** produced by the
-  `silly_kicks/gkdv/` engine, which is ADR-037's PR-3 and does not exist yet.
-
-**A TF-19 spec must not assume the shot arm is healthy.** It is *unmeasured*, not validated.
+Unlike its xCross sibling, this model carries **no GK-substitution probe** in `metrics.json`. That is
+**blocked, not missing**: `xs_substitution_probe` consumes ghost-substituted targets from the GKDV
+engine, and the registered xS probe has not been run against this arm. **A TF-19 spec must not assume
+the shot arm is healthy** — it is *unmeasured*, not validated.
 
 ## Usage
 
@@ -111,44 +80,33 @@ model = XShotOccurrenceModel.from_variant("default")       # recommended, bundle
 model = XShotOccurrenceModel.from_variant("sc_extended")   # this repo, downloads from the Hub
 ```
 
-Requires `pip install silly-kicks[xshot]` and **silly-kicks >= 4.74.0**.
+Requires `pip install silly-kicks[xshot]` and **silly-kicks >= 4.74.0** (the `sc_extended_position_only`
+sibling repo requires **>= 4.94.0**, which introduced its variant key — ADR-070).
 
-> **Version floor raised in 4.74.0 (was >= 4.51.0), and this is a hard requirement, not a
-> recommendation.** These weights were retrained on a corrected goal-relative transform
-> (`geometry_version: goal-relative-2`). ADR-051 found the previous transform was **chiral**: it had
-> `to_goal_relative_x` and no `to_goal_relative_y`, so `goal_x=105` was an x-only mirror while
-> `goal_x=0` was the identity -- the two goal ends used frames of opposite handedness, every radial
-> feature stayed byte-identical, and every bearing negated between them. One physical scene therefore
-> scored differently depending which end the attacking team was attacking.
->
-> `load()`'s feature-contract prong is **fail-closed**, so an older silly-kicks will refuse these
-> weights with `IntegrityError` rather than serve them against the geometry they were not fit on.
-> That refusal is the guard working. Pin `silly-kicks>=4.74.0` alongside this artifact.
->
-> `from_hub()` currently takes no `revision` argument, so it always resolves this repo's default
-> branch -- meaning a client cannot yet pin a specific artifact revision. Until it can, treat the
-> library version as the pin. Previous revisions remain addressable by commit SHA in this repo's git
-> history.
+> **The `>= 4.74.0` floor is a hard requirement.** These weights are on the corrected goal-relative
+> transform (`geometry_version: goal-relative-2`); ADR-051 found the previous transform was **chiral**
+> (an x-only mirror at one goal end, identity at the other), so one physical scene scored differently
+> depending which end the attacking team attacked. `load()`'s feature-contract prong is **fail-closed**,
+> so an older silly-kicks refuses these weights with `IntegrityError` rather than serve them against the
+> geometry they were not fit on. `from_hub()` takes no `revision` argument yet, so treat the library
+> version as the pin; prior revisions are addressable by commit SHA in this repo's git history.
 
 ## Integrity and load-time guards
 
-`load()` is **fail-closed** on two independent checks:
-
-1. **SHA256SUMS** verified before anything is parsed.
-2. **Chirality fingerprint** (ADR-040) &mdash; the model re-runs its own outputs on a fixed
-   y-asymmetric probe frame and compares to the recorded fingerprint. It raises on a mismatch
-   **and on a missing one**, because every pre-PR-2 artifact belongs to the y-mirrored
-   mis-served class. This enforcement is what caught the xgboost 3.x `base_score`
-   serialization bug, which 2.x silently drops to `0.5`.
+`load()` is **fail-closed** on two independent checks: (1) **SHA256SUMS** verified before anything is
+parsed; (2) **chirality fingerprint** (ADR-040) — the model re-runs its own outputs on a fixed
+y-asymmetric probe frame and compares to the recorded fingerprint, raising on a mismatch **and on a
+missing one**. A `base_score` guard handles the xgboost 3.x bracketed-string serialization that 2.x
+silently drops to `0.5`.
 
 ## Limitations
 
-- **Not the bundled model** (restricted corpus, so it cannot ship in the wheel). This is a redistribution limit, not a performance one.
-- **No GK measurement exists for this arm at all** &mdash; see the TF-19 section.
-- Trained on a corpus that is **179 matches, heavily Real Madrid** &mdash; the 98 owner-tier
-  additions are one club, so club/style confounding is real and unquantified here.
-- SkillCorner keepers are detected in only **~19.6%** of frames (~80% interpolated), which is
-  why GKDV *measurement* is registered to Gradient Sports frames only (ADR-038 §5).
+- **Not the bundled model** (restricted corpus). This is a redistribution limit, not a performance one.
+- **No GK measurement exists for this arm at all** — see the TF-19 section.
+- Trained on **115 matches, heavily one-club** — the 98 owner-tier additions are a single club, so
+  club/style confounding is real and unquantified here.
+- SkillCorner keepers are detected in only **~19.6%** of frames (~80% interpolated), which is why GKDV
+  *measurement* is registered to Gradient Sports frames only (ADR-038 §5).
 - Estimates are cross-validated, not a held-out test of the shipped fit.
 
 ## References
@@ -156,8 +114,8 @@ Requires `pip install silly-kicks[xshot]` and **silly-kicks >= 4.74.0**.
 See the `NOTICE` file in the silly-kicks repository for full bibliographic citations.
 
 - Attribution: arXiv:2512.00203.
-- Decisions: ADR-011 (trained-model lifecycle), ADR-037 (TF-19 re-gate),
-  ADR-038 (corpus + visibility), ADR-040 (chirality enforcement).
+- Decisions: ADR-011 (trained-model lifecycle), ADR-037 (TF-19 re-gate), ADR-038 (corpus + visibility),
+  ADR-040 (chirality enforcement), ADR-070 (position-only Hub variant), ADR-071 (owner-tier archive).
 
 ## Model Files
 

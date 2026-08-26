@@ -67,9 +67,10 @@ def main() -> None:
         print("verify-only: not uploading.")
         return
 
+    from _hub_publish import upload_model_only
     from huggingface_hub import HfApi
 
-    HfApi().upload_folder(folder_path=str(art), repo_id=args.repo_id, repo_type="model")
+    upload_model_only(HfApi(), str(art), args.repo_id)  # model-only allowlist + leak guard
 
     # Round-trip. `error` on the contract category, not a filter -- the point of this publish is
     # that the served artifact no longer warns, so a warning here is a FAILED publish, not noise.
