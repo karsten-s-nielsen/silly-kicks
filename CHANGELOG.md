@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.94.0] — 2026-08-25
 
-Position-only Hub variant for xShot / xCross (minor; `sc_extended_position_only`; PR-S165, ADR-070). The owner-tier
+Position-only Hub variant for xShot / xCross (minor; `sc_extended_position_only`; PR-S165, ADR-070, ADR-071). The owner-tier
 POSITION-ONLY xShot/xCross models can now be served from the HuggingFace Hub as a **separate** variant
 key + repo, never overwriting the faithful `sc_extended` slot.
 
@@ -22,6 +22,13 @@ key + repo, never overwriting the faithful `sc_extended` slot.
   `create_repo(exist_ok=True)` before upload so the new repo is created on first publish.
 - **Additive; no retrain trigger; no change to any bundled or existing Hub artifact.** Ghost is
   unchanged (its position-only variant is bundled in the wheel; its Hub variant `full` stays faithful).
+- **`--ship-variant` operator override on the xCross trainer (ADR-071):** force-ship a specific
+  variant (e.g. `sc_extended`) regardless of the fixed-sequence bundle-selection gate, so the Hub
+  `sc_extended` **archive** can be regenerated deterministically when the owner-tier model marginally
+  misses the bundle bar (a noise-sensitive fold-consistency rule). The gate verdict + per-fold deltas
+  are still recorded in `metrics.json` (`candidates.paired`), so the override is fully auditable; the
+  fitted model is identical to a gate-selected ship of that variant. xCross-only — xShot's 2-provider
+  path completes cleanly (no TF-19 substitution-probe requirement). Scripts-only; no library change.
 
 ## [4.93.0] — 2026-08-25
 
