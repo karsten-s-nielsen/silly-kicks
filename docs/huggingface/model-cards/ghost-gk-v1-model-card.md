@@ -144,7 +144,7 @@ while production served the KDE **mode** (≈4.65 m):
 |-----------|------------------------|---------|
 | old card number (`predict_mean`, sklearn, phase-categorical) | ≈1.1 m | never served (unavailable after `load()`) |
 | KDE mode (≤ v4.12) | ≈4.65 m | served through 4.12 |
-| **boosted mean (4.14.0, reconstructed pickle-free)** | **1.07 m** (5-fold aggregate) | **served now** |
+| **boosted mean (reconstructed pickle-free)** | **1.13 m** (current `full` re-fit, 5-fold aggregate; per-provider GS 1.08 / SkillCorner 1.18 / Sportec 1.67) | **served now** |
 
 The 4.14.0 number is re-measured at re-fit on the same held-out split as the mode (not copied from the
 old ≈1.1 m card, which was a *different*, phase-categorical model). An intermediate design that served

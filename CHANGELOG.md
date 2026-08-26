@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.94.0] — 2026-08-25
 
-Position-only Hub variant for xShot / xCross (minor; `sc_extended_position_only`; PR-S165, ADR-070, ADR-071). The owner-tier
+Position-only Hub variant for xShot / xCross (minor; `sc_extended_position_only`; PR-S165, ADR-070, ADR-071, ADR-072). The owner-tier
 POSITION-ONLY xShot/xCross models can now be served from the HuggingFace Hub as a **separate** variant
 key + repo, never overwriting the faithful `sc_extended` slot.
 
@@ -29,6 +29,13 @@ key + repo, never overwriting the faithful `sc_extended` slot.
   are still recorded in `metrics.json` (`candidates.paired`), so the override is fully auditable; the
   fitted model is identical to a gate-selected ship of that variant. xCross-only — xShot's 2-provider
   path completes cleanly (no TF-19 substitution-probe requirement). Scripts-only; no library change.
+- **Hub publish hardening (ADR-072):** `scripts/_hub_publish.py` uploads a **model-only allowlist**
+  and **fail-closes on any nested repo path** after upload — a defense-in-depth control born from an
+  incident where `upload_folder(artifact_dir)` briefly shipped the trainers' co-located
+  `_feature_cache/` / `shards/` (raw restricted frames) / `_probe_sample/` to public repos (remediated
+  by delete + recreate model-only). All five Hub artifacts (xShot/xCross `sc_extended` faithful +
+  position-only, ghost `full`) were re-fit and re-published, fixing the load-time `IntegrityError`
+  broken since 4.74.0; the model cards were refreshed to the re-fit's actual corpus + metrics.
 
 ## [4.93.0] — 2026-08-25
 

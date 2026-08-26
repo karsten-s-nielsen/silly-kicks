@@ -42,11 +42,12 @@ def main() -> None:
         print("verify-only: not uploading.")
         return
 
+    from _hub_publish import upload_model_only
     from huggingface_hub import HfApi
 
     api = HfApi()
     api.create_repo(repo_id=args.repo_id, repo_type="model", exist_ok=True)  # no-op if it exists
-    api.upload_folder(folder_path=str(art), repo_id=args.repo_id, repo_type="model")
+    upload_model_only(api, str(art), args.repo_id)  # model-only allowlist + leak guard
     back = XShotOccurrenceModel.from_hub(args.repo_id)
     np.testing.assert_allclose(local_pred, back.predict_proba(sample), rtol=0, atol=0)
     print(f"Published to {args.repo_id} + round-trip verified.")
