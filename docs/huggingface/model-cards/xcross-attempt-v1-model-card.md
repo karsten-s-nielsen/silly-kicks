@@ -67,11 +67,22 @@ All four acceptance gates pass (`enough_usable_folds`, `pr_auc_gt_base_rate`,
 
 ## TF-19 GK-substitution probe
 
-`metrics.json` carries the frozen **GK-substitution probe** (`gk_substitution_probe`), GK-block
-ablation and permutation importance for this arm. The `tf19_ready` verdict follows ADR-037's frozen
-two-prong gate (ratio + absolute floor); consult `metrics.json` for the exact recorded values on this
-re-fit rather than a hard-coded card number. Per ADR-037, a `gated_clean_fail` routes TF-19 to **GK
-feature engineering** — explicitly *not* "no signal."
+The frozen **GK-substitution probe** (`gk_substitution_probe` in `metrics.json`; 200 frames; ADR-037's
+two-prong gate — ratio ≥ 2.0 × the nearest-defender control **and** an absolute floor ≥ 0.01):
+
+| Metric | Value |
+|---|---|
+| `gk_median_abs_delta` | 0.00625 |
+| `nearest_def_median_abs_delta` | 0.00329 |
+| ratio (gk / control) | 1.90× — **misses** (needs ≥ 2.0) |
+| absolute floor | 0.00625 < 0.01 — **misses** |
+| **`tf19_ready`** | **false** |
+
+The GK-block ablation shows the GK confounder block *does* carry signal (removing it drops held-out
+PR-AUC by 0.0089), but the substitution probe does not clear the frozen gate. Per ADR-037 this is a
+`gated_clean_fail` — TF-19 routes to **GK feature engineering**, explicitly *not* "no signal." Do not
+build a TF-19 consumer on this surface. (The position-only sibling — `xcross-attempt-position-only-v1` —
+*does* clear the gate; see its card.)
 
 ## Usage
 
@@ -104,7 +115,7 @@ silently drops to `0.5`.
 ## Limitations
 
 - **Not the bundled model** (restricted corpus). This is a redistribution limit, not a performance one.
-- Consult `metrics.json` for the `tf19_ready` verdict before building a TF-19 consumer on this surface.
+- `tf19_ready = false` (see the TF-19 section) — do not build a TF-19 consumer on this surface.
 - Trained on an owner-tier corpus that is **heavily one-club** (the 98 owner-tier additions are a
   single club), so club/style confounding is real and unquantified here.
 - SkillCorner keepers are detected in only **~19.6%** of frames (~80% interpolated), which is why GKDV

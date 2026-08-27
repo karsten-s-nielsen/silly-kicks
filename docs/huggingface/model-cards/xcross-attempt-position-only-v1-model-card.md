@@ -63,6 +63,23 @@ All four acceptance gates pass. Estimates are **CV, not the shipped fit**. Dropp
 discrimination vs the faithful model (PR-AUC 0.189 → 0.130) — the trade is that this model *runs at
 all* on velocity-less frames.
 
+## TF-19 GK-substitution probe
+
+The frozen **GK-substitution probe** (`gk_substitution_probe` in `metrics.json`; 200 frames; ADR-037's
+two-prong gate — ratio ≥ 2.0 × the nearest-defender control **and** an absolute floor ≥ 0.01):
+
+| Metric | Value |
+|---|---|
+| `gk_median_abs_delta` | 0.01639 |
+| `nearest_def_median_abs_delta` | 0.00664 |
+| ratio (gk / control) | 2.47× — **clears** (≥ 2.0) |
+| absolute floor | 0.01639 ≥ 0.01 — **clears** |
+| **`tf19_ready`** | **true** |
+
+This position-only variant **clears both prongs** of the frozen TF-19 gate — the only one of the four
+xShot/xCross re-fits to do so. The GK-block ablation is consistent (removing the GK block drops
+held-out PR-AUC by 0.0023). See ADR-037 for the gate definition.
+
 ## Usage
 
 ```python
@@ -87,7 +104,8 @@ non-finite (NaN-filled) velocity feature — this model expects those columns **
 - **Not the bundled model** (restricted corpus). Redistribution limit, not a performance one.
 - **Weaker than the faithful `sc_extended`** by construction (velocity dropped) — use only when frames
   lack velocity.
-- Consult `metrics.json` for the `tf19_ready` verdict before building a TF-19 consumer on this surface.
+- `tf19_ready = true` (see the TF-19 section) — this variant clears the frozen gate, but the verdict is
+  a routing signal, not a construct-validity claim; validate before building a headline TF-19 consumer.
 - Trained on an owner-tier corpus that is **heavily one-club**; club/style confounding is real and
   unquantified.
 - Estimates are cross-validated, not a held-out test of the shipped fit.
