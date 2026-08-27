@@ -2125,3 +2125,39 @@ class TestDasUnscoreableTaxonomy:
         monkeypatch.setattr(das_mod, "_import_accessible_space", lambda: _FakeAsModule(behaviour))
         with pytest.raises(ValueError, match="absent from the input index"):
             add_das(_das_actions([(1, "Home")]), _live_frames((1,)))
+
+
+def test_get_individual_das_mixed_batch_nans_bad_frame_not_crash():
+    """A batch of [simulatable, non-simulatable] frames must NaN the bad frame, never raise
+    and never fabricate a score. get_individual_das is already called this way by add_das
+    (features.py single-pass), so this pins a production-relied-upon third-party contract.
+    Version-noted: accessible_space==2.0.15."""
+    pytest.importorskip("accessible_space")
+    from silly_kicks.tracking import get_individual_das
+
+    _carrier = "ball_carrier_player_id"
+
+    def good(fid):
+        rows = [
+            dict(player_id="gk1", team_id="1", is_ball=False, is_goalkeeper=True, x=10.0, y=34.0, vx=0.0, vy=0.0),
+            dict(player_id="d1", team_id="1", is_ball=False, is_goalkeeper=False, x=20.0, y=30.0, vx=0.3, vy=0.1),
+            dict(player_id="a1", team_id="2", is_ball=False, is_goalkeeper=False, x=30.0, y=34.0, vx=1.0, vy=0.0),
+            dict(player_id="a2", team_id="2", is_ball=False, is_goalkeeper=False, x=40.0, y=38.0, vx=1.0, vy=0.2),
+            dict(player_id="ball", team_id=None, is_ball=True, is_goalkeeper=False, x=40.0, y=34.0, vx=0.0, vy=0.0),
+        ]
+        for r in rows:
+            r.update(game_id=1, period_id=1, frame_id=fid, team_in_possession="2")
+        df = pd.DataFrame(rows)
+        df[_carrier] = pd.Series(["a2"] * len(df), dtype="string", index=df.index)
+        return df
+
+    bad = good(2)
+    bad = bad[~bad["is_ball"].astype(bool)].reset_index(drop=True)  # NO ball row -> non-simulatable
+
+    out = get_individual_das(pd.concat([good(1), bad], ignore_index=True))  # must NOT raise
+    players = out[~out["is_ball"].astype(bool)]
+    das_by_frame = {fid: sub["DAS"] for fid, sub in players.groupby("frame_id")}
+
+    assert das_by_frame[1].notna().any(), "the simulatable frame must score"
+    assert float(das_by_frame[1].dropna().sum()) > 0.0
+    assert not das_by_frame[2].notna().any(), "the non-simulatable frame's DAS must be all-NaN, not a fabricated score"

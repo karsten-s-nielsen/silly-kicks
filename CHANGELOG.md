@@ -5,6 +5,31 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.97.0] — 2026-08-27
+
+**Batched GKDV arms** — `gkdv.delta_das_batch` / `delta_threat_suppression_batch` make ONE
+accessible-space call per leg over a unit's scored frames instead of one per frame (PR-S168, ADR-075).
+This is what makes gkdv viable at production scale: measured **~90× at unit scale** (~2600 s → ~30 s per
+~2000-frame unit; the DAS arm is **~630×** the threat arm's per-frame cost, so DAS-batching is the whole
+win). gkdv had never completed a production run — its per-frame loop exceeded the drain's 2700 s
+per-unit watchdog. **No retrain, no re-materialize** (gkdv has never produced output), C4-free.
+
+- **`delta_das_batch`** pins attacking direction ONCE over the unit (more robust than the historical
+  per-frame pin — free because gkdv has no persisted output) and reduces per
+  `(game_id, period_id, frame_id)` with `sum(min_count=1)`, so a non-simulatable frame is honest-NaN,
+  never a fictional `0.0`; a whole-batch `DasUnscoreableError` (velocity-less / dead-ball unit) →
+  all-NaN over the keys. A Series `attacking_team_id_by_frame` missing a scored-frame key **RAISES**.
+- **`delta_threat_suppression_batch`** is a batch-first API (thin loop; the threat arm is ~1 ms/frame —
+  0.16 % of the DAS cost, so **no vectorized spearman kernel**, measured YAGNI; that ~1 ms/frame rests
+  on the already-shipped 4.92.0 pitch-control hoists). It is possession-independent, so it scores where
+  DAS degrades to NaN — the two arms are independently scoreable (no symmetric guard).
+- The single-frame `delta_das` / `delta_threat_suppression` are now **thin wrappers** over the batch
+  (output unchanged on scoreable frames; the previously-latent all-NaN → `0.0` edge becomes honest NaN).
+- The mixed-batch NaN (a non-simulatable frame NaN'd *inside* a batch, not raised) is a version-pinned
+  `accessible-space` contract already relied on by `add_das`'s single-pass call, guarded by
+  `tests/tracking/test_das.py::test_get_individual_das_mixed_batch_nans_bad_frame_not_crash`; a
+  batch-level pre-filter is deliberately declined (the exposure is system-wide, not gkdv-specific).
+
 ## [4.96.0] — 2026-08-26
 
 CI wall-clock **< 10 min** via a duration-sharded test matrix (tests + workflow + docs only; PR-S167,
