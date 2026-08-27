@@ -182,14 +182,29 @@ walks `.venv/` and `calibration_runs/` and reports ~234 vendored errors that are
 which is enough noise to hide the real ones. `pyright` runs **bare** (config-driven include), and
 neither tool is on PATH — use `python -m`.
 
-CI runs a bulk suite step serial (`--benchmark-skip`) on every matrix leg and a benchmark
-*measurements* step single-threaded (`--benchmark-only`) on the primary leg only (see the
-slow-test-gating note below for the per-leg split). There are no wall-clock
-`assert ms < budget` perf tests — performance regressions are guarded by
-**deterministic structural guards** (call-count spies on each function's dominant
-primitive; see `tests/_perf_structural.py` + the `*_perf_budget.py` files), which
-never flake on shared runners. (An xdist parallelization was tried and reverted: it
-regressed py3.12 on the 4-core/7GB CI runners — memory/JIT pressure.)
+CI **duration-shards** the bulk suite across parallel jobs via `pytest-split` (ADR-074)
+(`--splits 3 --group ${{ matrix.shard }}`, matrix `os × python × shard[1..3]`), each shard on its
+own runner (the `xdist -n auto` memory-kill on the 4-core/7GB runners is why intra-job parallelism
+was reverted — sharding gives the parallelism without the shared-memory contention). The split is
+balanced by the committed **`.test_durations`**; **without it pytest-split's count-mode split is
+NON-DETERMINISTIC (measured: shard sizes drift run-to-run and can under-cover), so `.test_durations`
+is committed.** The committed file is **CI-MEASURED** (a local `--store-durations` mis-balances — CI
+is ~2× local and per-py-version relative timings differ; measured: a local-durations shard ran 11:26
+vs 5:50 on CI, whereas the CI-measured file balances all three primary shards to ~7.3 min). **To
+regenerate:** temporarily re-add a `durations-capture` job (full `pytest -m "not e2e"
+--store-durations` under the warm numba cache, `include-hidden-files: true` on the upload since
+`.test_durations` is a dotfile), download its `test-durations-ci` artifact, commit it, and remove the
+job (a permanent ~20-min serial capture would become the wall-clock bottleneck). Regenerate when the
+suite shifts materially or a shard drifts toward budget; balance is tuned for the ubuntu primary leg
+(others may run hotter — acceptable, the runtime `shard-reconcile` job still proves completeness). `-p no:randomly` pins collection order (a shuffle plugin would break the partition;
+`tests/test_ci_shard_wiring.py` bans it). Coverage is proved two ways: the static
+`tests/test_ci_shard_wiring.py` (contiguous `1..N`, `--splits == N`, `-p no:randomly`, numba-cache
+key covers all `@njit` files) and the runtime `shard-reconcile` job (node-ID `union == full ∧
+pairwise-disjoint`, per leg). Benchmark *measurements* run single-threaded in a **standalone**
+`benchmark` job (off the shard critical path). Windows is the binding leg (undivided ~1:49 install);
+numba (`NUMBA_CACHE_DIR` + `actions/cache`) + pip caching are prioritized there. There are no
+wall-clock `assert ms < budget` perf tests — performance regressions are guarded by **deterministic
+structural guards** (call-count spies; `tests/_perf_structural.py` + the `*_perf_budget.py` files).
 
 **CI's pandas-major span is DECLARED, not inherited (ADR-057).** The matrix is OS × Python with no
 pandas axis, yet it spans both majors: `pyproject.toml` pins `pandas>=2.1.1,!=3.0.4` with **no upper

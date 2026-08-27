@@ -5,6 +5,41 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.96.0] — 2026-08-26
+
+CI wall-clock **< 10 min** via a duration-sharded test matrix (tests + workflow + docs only; PR-S167,
+ADR-074; second commit of the 4.95.0 scale-guard branch). **Consumer impact: none** — `silly_kicks` is
+byte-identical apart from the version string; no retrain, C4-free. Released for traceability.
+
+CI took **22–25 min** (measured; the bottleneck is a single serial `pytest` process per leg — primary
+`not e2e` 20:19, windows `not slow` 17:48). `pytest-xdist -n auto` inside one job was already reverted
+(4-core/7 GB memory-kill). A `--durations=0` profile put a real floor under the design: the longest
+single test is **39 s** (no multi-minute indivisible test), so sharding is not floor-limited; the
+binding constraint is the **Windows install (1:49, undivided)**.
+
+- **Duration-sharding via `pytest-split`.** The `test` job becomes `os × python × shard[1..3]`; each job
+  runs `pytest … --splits 3 --group ${{ matrix.shard }}` on its own runner (no shared-memory
+  contention). Balanced by a **committed `.test_durations`** — verified: with it the split is
+  deterministic (identical shard sets across runs) and complete (`sum == full`); **without it the
+  count-mode split is non-deterministic** (shard sizes drift run-to-run, can under-cover), which is why
+  the file is committed. Local shards are ~6 min each despite 1251/4621/2067 counts — duration-balancing
+  works.
+- **ADR-023 slow-gating preserved** (primary shards run `@slow`; non-primary exclude it);
+  **`-p no:randomly`** pins collection order.
+- **Benchmark is a standalone parallel job** (off the shard critical path); doctest + pandas-major run
+  on each leg's **shard 1** only (the pandas artifact name has no shard component, so N shards would
+  collide and `upload-artifact@v4` hard-fails).
+- **Numba disk cache** (`NUMBA_CACHE_DIR` + `actions/cache`; no source change — kernels already
+  `@njit(cache=_NUMBA_CACHE)`) + **pip caching**, prioritized on the Windows leg.
+- **Two anti-silent-drop guards:** static `tests/test_ci_shard_wiring.py` (contiguous `1..N`,
+  `--splits == N`, `-p no:randomly`, benchmark-standalone, numba-cache key covers every `@njit` file via
+  AST incl. `_turnover.py`'s call form) and a runtime `shard-reconcile` job proving the node-ID sets
+  **partition** each leg's suite (`union == full ∧ pairwise-disjoint`) — the only guard that catches
+  cross-runner collection divergence.
+- Coverage preserved in full (decision A); trimming Windows to the platform-/version-sensitive subset
+  (lever **B-Windows**) is the recorded next lever. **16 jobs, ~14 peak-concurrent** (< the Free-plan
+  account-wide 20 cap).
+
 ## [4.95.0] — 2026-08-26
 
 Sub-quadratic-growth test harness — **scale blind-spot closure** (tests + docs only; PR-S166, ADR-073;

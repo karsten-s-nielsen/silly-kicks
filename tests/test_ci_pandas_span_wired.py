@@ -140,3 +140,27 @@ def test_every_test_leg_records_its_pandas_major() -> None:
     assert "matrix.os" in name and "matrix.python-version" in name, (
         f"artifact name {name!r} is not per-leg; every leg would collide on one artifact"
     )
+
+
+def test_pandas_major_record_and_upload_are_shard_1_gated() -> None:
+    """Under sharding, the record + upload run on shard 1 ONLY. The artifact name has NO shard
+    component, so if all N shards of a leg recorded it they would collide on one name and
+    upload-artifact@v4 hard-fails on the duplicate. Pins the ``matrix.shard == 1`` gate on both steps."""
+
+    def guard(s: dict) -> str:
+        g = "".join(str(s.get("if", "")).split())
+        g = g[3:-2] if g.startswith("${{") and g.endswith("}}") else g
+        return g.replace("'", "").replace('"', "")
+
+    steps = yaml.safe_load(_CI.read_text(encoding="utf-8"))["jobs"]["test"]["steps"]
+    record = [s for s in steps if "Record resolved pandas major" in str(s.get("name", ""))]
+    uploads = [
+        s
+        for s in steps
+        if "upload-artifact" in str(s.get("uses", "")) and "pandas-major" in str(s.get("with", {}).get("name", ""))
+    ]
+    assert record and uploads, "pandas-major record/upload steps missing"
+    for s in record + uploads:
+        assert "matrix.shard==1" in guard(s), (
+            f"pandas-major step must be shard-1-gated (else N shards collide on one artifact name), got {guard(s)!r}"
+        )

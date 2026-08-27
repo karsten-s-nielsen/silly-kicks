@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current (unreleased branch)**: Sub-quadratic-growth test harness — scale blind-spot closure (4.95.0; ADR-073; optimization-audit follow-up to ADR-068 / 4.92.0). Adds `tests/_perf_structural.assert_subquadratic_growth(measure_work, *, sizes=(256,1024,4096), max_exponent=1.5)`, which asserts the empirical **operation-count growth exponent** stays ≤ 1.5 (deterministic integer counts, small fixtures, every CI leg — never wall-clock), closing the gap where `call_counter`/benchmarks are blind to a single-call-internally-O(n²) regression (the 4.92.0 turnover bug reached a lakehouse report, not CI). Each adopter supplies a SCOPED counter (the `rows_scanned_counter` rescan proxy, a compiled-kernel counting-array, or a constant-work equality guard); a `tests/_scale_guarded.SCALE_GUARDED` registry + meta-assertions force every `group_rows` caller to register a guard. Applied to **12 adopters** (all 8 `group_rows` sites + `_opp_first_shot_scan`, `_possession_labels`, both `add_possessions`), plus the **mismatched-dtype** characterization tests ADR-068 deferred (2 seam-level + one end-to-end per library `group_rows` consumer, 7). Tests + docs only — no `silly_kicks` behaviour change, no retrain, C4-free. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Current (unreleased branch)**: CI wall-clock < 10 min via a **duration-sharded** test matrix (4.96.0; ADR-074; on top of the 4.95.0 scale-guard harness, ADR-073, in the same branch). The serial ~20-min-per-leg bulk suite is split across parallel jobs with `pytest-split` (`os × python × shard[1..3]`), each shard on its own runner (the `xdist` memory-kill can't recur); the split is duration-balanced by a committed **`.test_durations`** (measured: without it the count-mode split is non-deterministic and can under-cover). Benchmark becomes a **standalone** parallel job; numba (`NUMBA_CACHE_DIR` + `actions/cache`) + pip caching are prioritized on the install-bound Windows leg. Coverage is preserved in full (decision A; the **B-Windows** trim is the recorded next lever) and proved two ways — the static `tests/test_ci_shard_wiring.py` and a runtime `shard-reconcile` job (node-ID `union == full ∧ pairwise-disjoint`, per leg). Tests + workflow + docs only — no `silly_kicks` runtime change, no retrain, C4-free. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -59,6 +59,14 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   the lakehouse-parity goldens, which is why it is its own change.
 ### Blocked or Deferred
 
+- **CI lever (B-Windows) — trim Windows to the platform-/version-sensitive subset (next latency/cost
+  lever after the duration-sharding, ADR-074).** Sharding preserves ALL coverage; every leg runs its
+  full suite in parallel shards. If minutes/cost — or principle — later warrant it, the next lever is to
+  stop running the full ~7,900 pure-logic tests on windows-latest (2× slower + 2× billing) and run only
+  the platform-/version-sensitive subset there (path handling, CRLF, the pandas-3 copy-on-write class,
+  golden/snapshot). Owner-decided coverage change; deferred, not built. Also: the committed
+  `.test_durations` is regenerated (`pytest -m "not e2e" --store-durations`) when the suite shifts
+  materially or a shard drifts toward budget (see CLAUDE.md Testing).
 - **Missing ball-touch detection to enrich event↔frame sync (candidate future enhancement; anchors on
   TF-43 ELASTIC).** External prior-art **PathCRF** (KDD 2026, arXiv:2602.12080; code
   `github.com/hyunsungkim-ds/pathcrf`, **MPL-2.0 → reimplement, do NOT lift into MIT**) recovers ball
