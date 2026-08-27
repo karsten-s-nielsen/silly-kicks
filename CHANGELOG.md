@@ -5,6 +5,93 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.96.0] — 2026-08-26
+
+CI wall-clock **< 10 min** via a duration-sharded test matrix (tests + workflow + docs only; PR-S167,
+ADR-074; second commit of the 4.95.0 scale-guard branch). **Consumer impact: none** — `silly_kicks` is
+byte-identical apart from the version string; no retrain, C4-free. Released for traceability.
+
+CI took **22–25 min** (measured; the bottleneck is a single serial `pytest` process per leg — primary
+`not e2e` 20:19, windows `not slow` 17:48). `pytest-xdist -n auto` inside one job was already reverted
+(4-core/7 GB memory-kill). A `--durations=0` profile put a real floor under the design: the longest
+single test is **39 s** (no multi-minute indivisible test), so sharding is not floor-limited; the
+binding constraint is the **Windows install (1:49, undivided)**.
+
+- **Duration-sharding via `pytest-split`.** The `test` job becomes `os × python × shard[1..3]`; each job
+  runs `pytest … --splits 3 --group ${{ matrix.shard }}` on its own runner (no shared-memory
+  contention). Balanced by a **committed `.test_durations`** — verified: with it the split is
+  deterministic (identical shard sets across runs) and complete (`sum == full`); **without it the
+  count-mode split is non-deterministic** (shard sizes drift run-to-run, can under-cover), which is why
+  the file is committed. Local shards are ~6 min each despite 1251/4621/2067 counts — duration-balancing
+  works.
+- **ADR-023 slow-gating preserved** (primary shards run `@slow`; non-primary exclude it);
+  **`-p no:randomly`** pins collection order.
+- **Benchmark is a standalone parallel job** (off the shard critical path); doctest + pandas-major run
+  on each leg's **shard 1** only (the pandas artifact name has no shard component, so N shards would
+  collide and `upload-artifact@v4` hard-fails).
+- **Numba disk cache** (`NUMBA_CACHE_DIR` + `actions/cache`; no source change — kernels already
+  `@njit(cache=_NUMBA_CACHE)`) + **pip caching**, prioritized on the Windows leg.
+- **Two anti-silent-drop guards:** static `tests/test_ci_shard_wiring.py` (contiguous `1..N`,
+  `--splits == N`, `-p no:randomly`, benchmark-standalone, numba-cache key covers every `@njit` file via
+  AST incl. `_turnover.py`'s call form) and a runtime `shard-reconcile` job proving the node-ID sets
+  **partition** each leg's suite (`union == full ∧ pairwise-disjoint`) — the only guard that catches
+  cross-runner collection divergence.
+- Coverage preserved in full (decision A); trimming Windows to the platform-/version-sensitive subset
+  (lever **B-Windows**) is the recorded next lever. **16 jobs, ~14 peak-concurrent** (< the Free-plan
+  account-wide 20 cap).
+
+## [4.95.0] — 2026-08-26
+
+Sub-quadratic-growth test harness — **scale blind-spot closure** (tests + docs only; PR-S166, ADR-073;
+optimization-audit follow-up to ADR-068 / 4.92.0). **Consumer impact: none** — `silly_kicks` is
+byte-identical apart from the version string; no VAEP/model-retrain trigger, C4-free (aggregator count
+unchanged). Released for traceability.
+
+silly-kicks guarded performance with two layers that are **both blind to a scale-only O(n²)
+regression**: the structural guards (`call_counter` / `row_iteration_counter`, the `*_perf_budget.py`
+set) are scale-INVARIANT — a `calls == 1` assertion passes whether the one call is internally O(n) or
+O(n²) — and pytest-benchmark only *measures*, never asserts. The 4.92.0 turnover bug (ADR-068) was
+exactly this shape: one `EmpiricalTurnoverValue.fit` call, internally O(n²), invisible to
+`call_counter`, only measured — and it reached a downstream lakehouse report instead of CI. This cycle
+closes that gap and pays down the per-site mismatched-dtype tests the ADR-068 review deferred.
+
+- **`tests/_perf_structural.assert_subquadratic_growth(measure_work, *, sizes=(256,1024,4096),
+  max_exponent=1.5, work_floor=1, degenerate_ok=False)`** asserts the empirical **operation-count
+  growth exponent** `log(work_hi/work_lo)/log(size_hi/size_lo) <= max_exponent`. Because the counts
+  are integers the exponent is exact and the guard **never flakes**; fixed overhead only biases the
+  exponent *down*. Reference exponents at these sizes: linear 1.0, n·log n 1.16, n^1.5 1.50 (boundary),
+  quadratic 2.0 — a **quadratic-ish detector** by design.
+- **`rows_scanned_counter()`** context manager — the rescan proxy — counts three seams: boolean-mask
+  `__getitem__` / `.loc[mask]`, `.groupby` construction (catches an in-loop `groupby` rebuild), and
+  axis-0 `.take`, with a **re-entrancy depth guard** so `df[mask]`'s internal `.take` is not
+  double-counted and an axis filter so column-selection `.take(axis=1)` is not counted.
+- **`tests/_scale_guarded.SCALE_GUARDED` registry + `tests/test_scale_guard_registry.py`
+  meta-assertions** force coverage: every `group_rows` caller (AST-derived) must register a guard,
+  every entry must resolve to a collected test, and a degenerate-by-design entry (`_possession_labels`,
+  whose vectorized path issues zero `.loc`) must carry a discriminating companion.
+- Applied to **12 adopters** — the 8 `group_rows`-calling functions (`causal`/`tracking`/`spadl`
+  sites) plus `_opp_first_shot_scan` (compiled turnover kernel, counted via a counting-array on its
+  pure-Python fallback), `_possession_labels` (exercised via `_scores_possession`), and both the std +
+  atomic `add_possessions`.
+- **Each `group_rows` guard was proven DISCRIMINATING**, not merely green: a rescan shim (the
+  pre-ADR-068 raw-`==` defect) monkeypatched into each adopter drives the growth exponent to ~2 while
+  the shipped code stays ~1. This surfaced a **guard-that-cannot-guard** class — a rescan is
+  O(groups × table), so a fixture that scales a *within-group* dimension (frames within one game, a
+  fixed 2×2 `(game,team)` set) leaves the loop count constant, the regressed rescan linear, and the
+  guard passing on the bug. The `_off_ball_runs_kernel` / `detect_off_ball_runs` / `derive_goalkeepers`
+  fixtures were corrected to scale the number of **games** (the realistic batched-corpus axis). Durable
+  rule recorded in `CLAUDE.md` and ADR-073: a growth fixture must scale the group/loop dimension.
+- Ships the **mismatched-dtype** characterization tests deferred by the ADR-068 review
+  (`tests/test_group_rows_consumer_dtype.py`): 2 seam-level + **one end-to-end test per library
+  `group_rows` consumer (7)**, each exercised with a numeric `by`-key baseline vs a string `by`-key
+  input, pinning the dtype-canonicalisation contract end-to-end (the databricks query-builder is
+  covered by the constant-query guard instead).
+
+**Known limits** (stated in ADR-073, not discovered): sub-n^1.5 regressions are out of scope by design;
+a quadratic sharing its counter with a large linear co-term can be masked at small n; a brand-new
+rescan that neither routes through `group_rows` nor rebuilds a `groupby` in-loop is not force-caught
+(the AST rescan-lint was considered and **declined**, per the ADR-019 id-compat lint lesson).
+
 ## [4.94.0] — 2026-08-25
 
 Position-only Hub variant for xShot / xCross (minor; `sc_extended_position_only`; PR-S165, ADR-070, ADR-071, ADR-072). The owner-tier

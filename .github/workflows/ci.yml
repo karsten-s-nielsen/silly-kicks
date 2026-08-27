@@ -42,9 +42,17 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      # fail-fast: false -- one shard failing must NOT cancel the others; the full picture (which
+      # shard/leg is red, the shard-reconcile partition) is what we want. See the CI-parallelization ADR.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.11", "3.12"]
+        # Duration-sharded via pytest-split (--splits/--group), one shard per parallel job on its own
+        # runner -- so the `xdist -n auto` memory-kill (see the bulk-step comment) cannot recur. N=3,
+        # kept consistent with `--splits 3` by tests/test_ci_shard_wiring.py; the runtime
+        # shard-reconcile job proves the shards partition each leg's suite (union == full, disjoint).
+        shard: [1, 2, 3]
         exclude:
           - os: windows-latest
             python-version: "3.10"
@@ -53,7 +61,7 @@ jobs:
         include:
           # Augments the existing ubuntu-3.12 leg (GitHub merges a matching include rather
           # than creating a new leg) with primary: true -- the single source of truth for
-          # "which leg runs the platform-invariant @slow set + the benchmark step". See ADR-023.
+          # "which leg runs the platform-invariant @slow set". See ADR-023.
           - os: ubuntu-latest
             python-version: "3.12"
             primary: true
@@ -66,11 +74,28 @@ jobs:
       # loader-shape drift in consumer pipelines that pin against silly-kicks
       # main. See feedback_home_team_id_heuristic_fragile.md.
       SILLY_KICKS_ASSERT_INVARIANTS: "1"
+      # Lever C: persist numba's compiled @njit kernels across runs (actions/cache below). Most
+      # impactful on the install/numba-bound windows leg, whose 1:49 install sharding cannot divide.
+      NUMBA_CACHE_DIR: ${{ github.workspace }}/.numba_cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
+          # Caches the pip wheel-DOWNLOAD cache (not the built/installed env, and not same-commit
+          # parallel jobs -- they race to populate; the win is subsequent commits). Test jobs only;
+          # the lint job's exact typing pins (ADR-057) are untouched.
+          cache: pip
+      # Lever C -- restore/persist numba's on-disk compiled @njit kernels. The two hashFiles patterns
+      # cover ALL 4 numba files: 3 @njit-DECORATED (_numba_kernels, _ghost_gk_numba, _ball_carrier_numba
+      # via the glob) + 1 CALL-form (_turnover.py:96 `_njit(cache=True)(...)`, listed explicitly). Pinned
+      # by tests/test_ci_shard_wiring.py::test_numba_cache_key_covers_all_njit_files so a NEW @njit file
+      # fails CI until the key is extended. A narrow key (not silly_kicks/**/*.py) is deliberate: it
+      # survives across PRs that touch non-numba code, which is what actually helps the windows floor.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.numba_cache
+          key: numba-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('silly_kicks/tracking/**/*_numba*.py', 'silly_kicks/xtgk/_turnover.py') }}
       # `das` (accessible-space) is installed on EVERY leg, not just the primary one: the
       # TF-28 DAS suites are all `importorskip`-guarded, so without the extra they SKIP
       # rather than fail, and they had therefore never run in CI at all. gkdv's DAS arm
@@ -78,12 +103,14 @@ jobs:
       # direction-inference subtlety inside it -- a guard that never runs is not a guard.
       # The arm's own STRUCTURAL direction-pinning guard needs no extra and runs regardless.
       - run: pip install -e ".[kloppy,xgboost,das,test]"
-      # Bulk suite (serial). xdist `-n auto` was reverted: on the 4-core/7GB CI runners it
-      # regressed py3.12 from pass to a memory/JIT-pressure kill (4x heavy ML imports + 4x numba
-      # compiles + the ghost-GK suite), the opposite of the 16-core local speedup. The dominant
-      # ghost-GK cost is instead cut at the source (exact cpu-numba KDE backend + shrunk golden).
-      # Perf budgets are now deterministic structural guards in the bulk (no wall-clock), so this
-      # step is stable; the pure benchmark *measurements* run single-threaded below for clean timing.
+      # Bulk suite, DURATION-SHARDED across parallel jobs. xdist `-n auto` was reverted: on the
+      # 4-core/7GB CI runners it regressed py3.12 to a memory/JIT-pressure kill (4x heavy ML imports +
+      # 4x numba compiles + the ghost-GK suite), the opposite of the 16-core local speedup. Sharding
+      # gives the parallelism xdist could not -- each `--splits 3 --group <shard>` runs on its OWN
+      # runner, so there is no shared-memory contention. `-p no:randomly` pins collection order (the
+      # partition is only valid if every shard collects identically); the split is balanced by the
+      # committed `.test_durations`. Perf budgets are deterministic structural guards (no wall-clock);
+      # the benchmark *measurements* run single-threaded in the standalone `benchmark` job for clean timing.
       #
       # Slow-test gating (ADR-023): the platform-/interpreter-INVARIANT heavy tests (train-script
       # smokes, same-run internal-consistency/parity, calibration cache-equivalence) carry
@@ -91,15 +118,12 @@ jobs:
       # full fast/contract suite with `not slow`. Version-sensitive tests (golden/snapshot/absolute)
       # are deliberately NOT marked slow -- they stay on all legs (OS + interpreter axes). The
       # partition is structural (matrix.primary) and guarded by tests/test_ci_slow_gating_wired.py.
-      # Mutually-exclusive `if:`s keep every leg at exactly ONE bulk pytest process.
+      # pytest-split re-computes the split WITHIN each leg's marker selection, so a leg's 3 shards
+      # always cover exactly that leg's set.
       - if: ${{ !matrix.primary }}
-        run: pytest tests/ -m "not e2e and not slow" --benchmark-skip --tb=short --durations=25
+        run: pytest tests/ -m "not e2e and not slow" --splits 3 --group ${{ matrix.shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
       - if: ${{ matrix.primary }}
-        run: pytest tests/ -m "not e2e" --benchmark-skip --tb=short --durations=25
-      # Benchmark measurements (no hard timing asserts after the structural-guard conversion), run
-      # single-threaded on the primary leg only so the recorded numbers are clean trend data.
-      - if: ${{ matrix.primary }}
-        run: pytest tests/ -m "not e2e" --benchmark-only --tb=short
+        run: pytest tests/ -m "not e2e" --splits 3 --group ${{ matrix.shard }} -p no:randomly --benchmark-skip --tb=short --durations=25
       # Public-API doctest enforcement (PR-S124). Initial scope: the PUBLIC surface only --
       # `--ignore-glob="*/_[!_]*.py"` skips single-underscore private modules while KEEPING dunder
       # `__init__.py`, so runnable examples on non-underscore modules are executed and stay honest.
@@ -107,19 +131,44 @@ jobs:
       # deliberately NOT executed here, to bound CI wall-clock. Runs on EVERY leg because doctest
       # output (repr) is version-sensitive; verified green on py3.10 + py3.14. No `addopts` in
       # pyproject, and `testpaths` is ignored when a path is passed, so no `-o` override is needed.
-      - run: pytest --doctest-modules silly_kicks/ --ignore-glob="*/_[!_]*.py" --tb=short
+      # NOT sharded (a separate invocation over MODULES, not the test suite) -- so it runs on each
+      # leg's shard 1 only (once per leg), gated by test_ci_doctest_wired.py.
+      - if: ${{ matrix.shard == 1 }}
+        run: pytest --doctest-modules silly_kicks/ --ignore-glob="*/_[!_]*.py" --tb=short
       # Record which pandas MAJOR this leg actually resolved. pandas is pinned
       # `>=2.1.1,!=3.0.4` with no upper bound, so pip picks the newest compatible version per
       # interpreter and pandas 3 needs Python >= 3.11 -- which is why ubuntu-3.10 lands on
       # pandas 2 and every other leg on pandas 3. That differential coverage was never declared,
-      # only inherited; the `pandas-span` job below asserts it still exists.
-      - name: Record resolved pandas major
+      # only inherited; the `pandas-span` job below asserts it still exists. Recorded on shard 1
+      # ONLY -- the artifact name has no shard component, so N shards would collide and
+      # upload-artifact@v4 hard-fails on the duplicate. Gated by test_ci_pandas_span_wired.py.
+      - if: ${{ matrix.shard == 1 }}
+        name: Record resolved pandas major
         run: |
           python -c "import pandas, pathlib; pathlib.Path('pandas-major.txt').write_text(pandas.__version__.split('.')[0])"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - if: ${{ matrix.shard == 1 }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pandas-major-${{ matrix.os }}-${{ matrix.python-version }}
           path: pandas-major.txt
+      # Node-ID lists for the shard-reconcile job. `shell: bash` is REQUIRED: windows-latest defaults
+      # to pwsh where `grep` is absent and `sort` is Sort-Object -- the pipe would redden every Windows
+      # shard. Each shard uploads its own set; shard 1 also uploads that leg's FULL set (no --splits),
+      # and shard-reconcile asserts union(shards) == full and pairwise-disjoint, per leg.
+      - shell: bash
+        run: pytest tests/ -m "${{ matrix.primary && 'not e2e' || 'not e2e and not slow' }}" --splits 3 --group ${{ matrix.shard }} -p no:randomly --co -q | grep -E "^tests/.*::" | sort > shard-nodeids.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shard-nodeids-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.shard }}
+          path: shard-nodeids.txt
+      - if: ${{ matrix.shard == 1 }}
+        shell: bash
+        run: pytest tests/ -m "${{ matrix.primary && 'not e2e' || 'not e2e and not slow' }}" -p no:randomly --co -q | grep -E "^tests/.*::" | sort > full-nodeids.txt
+      - if: ${{ matrix.shard == 1 }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: full-nodeids-${{ matrix.os }}-${{ matrix.python-version }}
+          path: full-nodeids.txt
 
   # Asserts what tests/test_ci_pandas_span_wired.py CANNOT see. That guard reads `ci.yml`, so it
   # catches a matrix edit -- but a span collapse caused by a DEPENDENCY constraint (adding
@@ -151,4 +200,93 @@ jobs:
                        f"tests/test_ci_pandas_span_wired.py cannot see it, which is why this job "
                        f"exists.")
           print(f"pandas majors covered: {sorted(majors)}")
+          PY
+
+  # Benchmark MEASUREMENTS on the primary environment, STANDALONE + parallel so they never sit on a
+  # shard's critical path (spec N1: latency is the constraint; a standalone job hides fully behind the
+  # ~7-min shards and contributes 0 to wall-clock). No hard timing asserts after the structural-guard
+  # conversion; single-threaded for clean trend data.
+  benchmark:
+    runs-on: ubuntu-latest
+    env:
+      SILLY_KICKS_ASSERT_INVARIANTS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[kloppy,xgboost,das,test]"
+      - run: pytest tests/ -m "not e2e" --benchmark-only --tb=short
+
+  # Runtime PARTITION proof (the enumerate-and-conserve guard this repo wants): the shards must cover
+  # each leg's suite EXACTLY -- union(shard node-ID sets) == full set AND pairwise-disjoint, per leg.
+  # Strictly stronger than a count sum (which cancels a dup against a drop) and the only guard that can
+  # catch cross-runner COLLECTION DIVERGENCE (a module-top importorskip resolving differently on one
+  # machine after an install flake). Complements the pre-flight tests/test_ci_shard_wiring.py. Modeled
+  # on pandas-span (fails loud on zero artifacts rather than passing having observed NOTHING).
+  shard-reconcile:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: shard-nodeids-*
+          path: shards/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: full-nodeids-*
+          path: fulls/
+      - name: Shards must PARTITION each leg's suite (union == full, pairwise-disjoint)
+        env:
+          EXPECTED_N: "3"   # keep consistent with the shard axis; test_ci_shard_wiring.py pins the axis to 1..N
+        run: |
+          python - <<'PY'
+          import os, pathlib, sys
+
+          N = int(os.environ["EXPECTED_N"])
+          # artifact dir names: shard-nodeids-<os>-<py>-<shard> and full-nodeids-<os>-<py>. leg = "<os>-<py>"
+          # (e.g. ubuntu-latest-3.12); <os>/<py> contain '-'/'.', so parse by stripping the known prefix
+          # and (for shards) the trailing -<shard>, never by a fragile regex.
+          def leg_shard(name): return name[len("shard-nodeids-"):].rsplit("-", 1)[0]
+          def leg_full(name):  return name[len("full-nodeids-"):]
+          # node IDs can contain spaces (parametrized: test[a b]) -> read one-per-LINE, never .split().
+          # A real pytest --co node ID starts with the rootdir-relative path ("tests/..."); require that
+          # so a warning line like "  Test: tests/x.py::y, argvalues type: generator" (leading spaces)
+          # is NOT mistaken for a node ID (it was, and every shard printed it -> false "duplicate").
+          def load(p): return {ln for ln in p.read_text().splitlines() if ln.startswith("tests/") and "::" in ln}
+
+          shards, fulls = {}, {}
+          for f in pathlib.Path("shards").rglob("shard-nodeids.txt"):
+              shards.setdefault(leg_shard(f.parent.name), []).append(load(f))
+          for f in pathlib.Path("fulls").rglob("full-nodeids.txt"):
+              fulls[leg_full(f.parent.name)] = load(f)
+
+          # non-vacuity on BOTH sides + leg-set symmetry -- an empty download must FAIL, not "OK: 0 legs".
+          assert fulls,  "::error::no full-nodeids artifacts -- reconcile would pass vacuously"
+          assert shards, "::error::no shard-nodeids artifacts -- reconcile would pass vacuously"
+
+          errs = []
+          if set(shards) != set(fulls):
+              errs.append(f"leg mismatch: shards={sorted(shards)} fulls={sorted(fulls)}")
+          for lg in sorted(set(shards) | set(fulls)):
+              groups, full = shards.get(lg), fulls.get(lg)
+              if groups is None: errs.append(f"{lg}: full present but NO shard artifacts"); continue
+              if full is None:   errs.append(f"{lg}: shard artifacts present but NO full to compare"); continue
+              if len(groups) != N: errs.append(f"{lg}: {len(groups)} shard artifacts, expected {N} (a shard is missing)")
+              seen = set()
+              for g in groups:
+                  dup = seen & g
+                  if dup: errs.append(f"{lg}: {len(dup)} node(s) in >1 shard e.g. {sorted(dup)[:3]}")
+                  seen |= g
+              missing, extra = full - seen, seen - full
+              if missing: errs.append(f"{lg}: {len(missing)} test(s) in NO shard e.g. {sorted(missing)[:3]}")
+              if extra:   errs.append(f"{lg}: {len(extra)} test(s) not in full set e.g. {sorted(extra)[:3]}")
+
+          if errs:
+              # A red here can also mean cross-runner COLLECTION DIVERGENCE (a module-top importorskip
+              # resolving differently on one machine) -- that is the INTENDED catch. Diagnose the
+              # diverging node IDs; never "fix" it by weakening this guard.
+              sys.exit("::error::shard partition broken (or cross-runner collection divergence):\n" + "\n".join(errs))
+          print(f"OK: {len(fulls)} legs, {N} shards each partition the full suite exactly")
           PY

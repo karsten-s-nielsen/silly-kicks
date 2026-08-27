@@ -103,6 +103,7 @@ narrative deliberately lives elsewhere; grep these rather than re-adding paragra
 - Config DataFrames (`actiontypes_df()`, etc.) are cached with `@functools.cache`.
 - Vectorized dispatch: converters use `np.select` over pre-flattened columns, not `apply(axis=1)`.
 - **No rescan-in-loop; use `silly_kicks._frame_index.group_rows` (ADR-068).** A full-table filter inside a per-item loop (`df[df["frame_id"]==fid]`, `df[(df["a"]==x)&(df["b"]==y)]`, or a positional forward scan) is O(n·m) where O(n) is available — the class the 2026-08-24 audit found in 9 sites across `causal`/`tracking`/`spadl`/`scripts` (invisible at test scale, biting only at real-match 0.95–3.2 M rows). Build the grouping ONCE with `group_rows(df, by)` (dtype-safe `groupby().indices` lookup, empty-frame-on-miss, raises on ADR-019 canonicalisation collision) and `.get(key)` per item. The turnover scan (numba-@njit on equality-preserving int codes + pure-Python fallback) and the cover-shadow baseline (setup/core hoist) are the loop-shaped variants of the same fix. All output-preserving (parity test + structural call-count guard per site); **not** a retrain trigger.
+- **Item/row-looping primitives carry a sub-quadratic-growth guard (ADR-073).** `call_counter` is scale-INVARIANT (a `calls==1` assertion passes whether the one call is internally O(n) or O(n²)) and benchmarks only MEASURE — so a single-call-internally-O(n²) (the 4.92.0 turnover bug) reaches a lakehouse report, not CI. `tests/_perf_structural.assert_subquadratic_growth(measure_work, *, sizes=(256,1024,4096), max_exponent=1.5)` asserts the empirical operation-count growth EXPONENT stays ≤ 1.5 (deterministic integer counts, small fixtures, every leg — never wall-clock; a quadratic-ish detector, sub-n^1.5 is out of scope). Each adopter supplies a SCOPED counter that isolates the super-linear-suspect op: `rows_scanned_counter` is the rescan proxy (boolean-mask `__getitem__` + `.groupby` + axis-0 `.take`, with a re-entrancy depth guard so `df[mask]`'s internal take is not double-counted); a compiled kernel counts its pure-Python fallback via a counting-array; a constant-work primitive (databricks IN-batch) uses an equality guard. A NEW `group_rows` caller MUST register a guard in `tests/_scale_guarded.SCALE_GUARDED` (meta-assertion enforces the superset of AST-derived callers + degenerate-companion). **A growth fixture MUST scale the GROUP (loop-iteration) dimension, not a within-group one** — a rescan is O(groups×table), so a constant loop count (single game / fixed team set) leaves the regressed rescan LINEAR and the guard passes on the bug (a guard that cannot guard; `assert_subquadratic_growth` passing is necessary, not sufficient — each adopter needs the regression-goes-quadratic proof). Known limit: a new rescan that neither routes through `group_rows` NOR rebuilds a `groupby` in-loop is not force-caught (no reliable AST signal); the AST rescan-lint was considered and DECLINED (ADR-019 lint lesson).
 - All `warnings.warn()` calls include `stacklevel=2`.
 - ML naming conventions (uppercase `X`, `Y`, `Pscores`) are allowed in `vaep/` and `xthreat/*.py` per ruff per-file-ignores.
 - **`detect_input_convention` must require DISCRIMINATING evidence, and DEFER when it has none (ADR-059).** Rule 1 infers `POSSESSION_PERSPECTIVE` from *"every reliable (match, team, period) group attacks high-x"* — but `reliable` is filtered to `n >= min_shots_per_group_medium` (5), so when that filter removes the low-side groups an all-high survivor set is an **artifact of the filter, not a measurement**. Measured wrong on **2 of 36** real Gradient Sports matches, at `confidence="medium"`, against a converter that correctly declares `PER_PERIOD_ABSOLUTE`. Rule 1 now fires only on a configuration an absolute convention could not produce — **two distinct teams reliable in the SAME period**, or **one team reliable across TWO periods** — and otherwise returns `convention=None` with a diagnostic naming why. **Deferral is the safe direction and that asymmetry is the whole argument:** `validate_input_convention` reads `None` as "keep the caller's declared convention", so a false ambiguous leaves output correct and loses only a cross-check, while a false positive contradicts a correct declaration and **raises** under `on_mismatch="raise"`. The second clause **IS** the guard TF-22 added inline to the ABSOLUTE branch in 3.0.1 — both branches now call `_a_team_spans_periods`, ONE spelling; the first clause is deliberately NOT given to that branch, because separating `ABSOLUTE` from `PER_PERIOD` requires observing a team ACROSS periods and a single shared "is this discriminating?" helper would silently loosen TF-22. Rule 1 is what validates statsbomb + skillcorner, so the coverage risk is a SILENT downgrade to ambiguous: `test_statsbomb_raw_detected_as_possession_perspective` guards it on 3 real matches; SkillCorner is guarded by `test_skillcorner_raw_detected_as_possession_perspective` on real public match `1886347` (`PUBLIC_CORPUS` registers TEN redistributable SkillCorner matches — **visibility is keyed PER MATCH, never on the provider name**, which is the inference `scripts/_corpus.py` exists to prevent and which was made anyway while reading that very file). Its fixture deliberately retains a below-threshold group, so it exercises the sparse-drop shape that caused the misfire and still classifies. **The durable rule: "no counter-evidence" is not evidence — when a FILTER precedes a universal claim, ask what the filter removed.**
@@ -181,14 +182,29 @@ walks `.venv/` and `calibration_runs/` and reports ~234 vendored errors that are
 which is enough noise to hide the real ones. `pyright` runs **bare** (config-driven include), and
 neither tool is on PATH — use `python -m`.
 
-CI runs a bulk suite step serial (`--benchmark-skip`) on every matrix leg and a benchmark
-*measurements* step single-threaded (`--benchmark-only`) on the primary leg only (see the
-slow-test-gating note below for the per-leg split). There are no wall-clock
-`assert ms < budget` perf tests — performance regressions are guarded by
-**deterministic structural guards** (call-count spies on each function's dominant
-primitive; see `tests/_perf_structural.py` + the `*_perf_budget.py` files), which
-never flake on shared runners. (An xdist parallelization was tried and reverted: it
-regressed py3.12 on the 4-core/7GB CI runners — memory/JIT pressure.)
+CI **duration-shards** the bulk suite across parallel jobs via `pytest-split` (ADR-074)
+(`--splits 3 --group ${{ matrix.shard }}`, matrix `os × python × shard[1..3]`), each shard on its
+own runner (the `xdist -n auto` memory-kill on the 4-core/7GB runners is why intra-job parallelism
+was reverted — sharding gives the parallelism without the shared-memory contention). The split is
+balanced by the committed **`.test_durations`**; **without it pytest-split's count-mode split is
+NON-DETERMINISTIC (measured: shard sizes drift run-to-run and can under-cover), so `.test_durations`
+is committed.** The committed file is **CI-MEASURED** (a local `--store-durations` mis-balances — CI
+is ~2× local and per-py-version relative timings differ; measured: a local-durations shard ran 11:26
+vs 5:50 on CI, whereas the CI-measured file balances all three primary shards to ~7.3 min). **To
+regenerate:** temporarily re-add a `durations-capture` job (full `pytest -m "not e2e"
+--store-durations` under the warm numba cache, `include-hidden-files: true` on the upload since
+`.test_durations` is a dotfile), download its `test-durations-ci` artifact, commit it, and remove the
+job (a permanent ~20-min serial capture would become the wall-clock bottleneck). Regenerate when the
+suite shifts materially or a shard drifts toward budget; balance is tuned for the ubuntu primary leg
+(others may run hotter — acceptable, the runtime `shard-reconcile` job still proves completeness). `-p no:randomly` pins collection order (a shuffle plugin would break the partition;
+`tests/test_ci_shard_wiring.py` bans it). Coverage is proved two ways: the static
+`tests/test_ci_shard_wiring.py` (contiguous `1..N`, `--splits == N`, `-p no:randomly`, numba-cache
+key covers all `@njit` files) and the runtime `shard-reconcile` job (node-ID `union == full ∧
+pairwise-disjoint`, per leg). Benchmark *measurements* run single-threaded in a **standalone**
+`benchmark` job (off the shard critical path). Windows is the binding leg (undivided ~1:49 install);
+numba (`NUMBA_CACHE_DIR` + `actions/cache`) + pip caching are prioritized there. There are no
+wall-clock `assert ms < budget` perf tests — performance regressions are guarded by **deterministic
+structural guards** (call-count spies; `tests/_perf_structural.py` + the `*_perf_budget.py` files).
 
 **CI's pandas-major span is DECLARED, not inherited (ADR-057).** The matrix is OS × Python with no
 pandas axis, yet it spans both majors: `pyproject.toml` pins `pandas>=2.1.1,!=3.0.4` with **no upper

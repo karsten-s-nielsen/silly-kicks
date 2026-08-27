@@ -2,7 +2,7 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
-**Current (unreleased branch)**: Position-only Hub variant + owner-tier archive publishing (4.94.0; ADR-070, ADR-071; closes the position-only-variants cycle). The owner-tier **position-only** xShot/xCross models are published to the HuggingFace Hub as a **separate** variant key + repo (`sc_extended_position_only` → `silly-kicks/{xshot-occurrence,xcross-attempt}-position-only-v1`), reachable ONLY via `from_variant("sc_extended_position_only")` — `from_variant("sc_extended")` still returns the faithful (velocity-bearing) model (ADR-070). A `--ship-variant` override on the xCross trainer force-produces the owner-tier `sc_extended` **archive** independent of the noise-sensitive wheel-bundle selection gate, with the gate verdict + deltas still recorded in `metrics.json` for audit (ADR-071). All five Hub artifacts (xShot/xCross `sc_extended` faithful + position-only, ghost `full`) were re-fit and re-published, fixing the load-time `IntegrityError` broken since 4.74.0. The publish scripts are hardened to upload a **model-only allowlist** + fail-closed nested-path leak guard (`scripts/_hub_publish.py`), born from an incident where the trainer's co-located caches / raw-frame shards were briefly published. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
+**Current (unreleased branch)**: CI wall-clock < 10 min via a **duration-sharded** test matrix (4.96.0; ADR-074; on top of the 4.95.0 scale-guard harness, ADR-073, in the same branch). The serial ~20-min-per-leg bulk suite is split across parallel jobs with `pytest-split` (`os × python × shard[1..3]`), each shard on its own runner (the `xdist` memory-kill can't recur); the split is duration-balanced by a committed **`.test_durations`** (measured: without it the count-mode split is non-deterministic and can under-cover). Benchmark becomes a **standalone** parallel job; numba (`NUMBA_CACHE_DIR` + `actions/cache`) + pip caching are prioritized on the install-bound Windows leg. Coverage is preserved in full (decision A; the **B-Windows** trim is the recorded next lever) and proved two ways — the static `tests/test_ci_shard_wiring.py` and a runtime `shard-reconcile` job (node-ID `union == full ∧ pairwise-disjoint`, per leg). Tests + workflow + docs only — no `silly_kicks` runtime change, no retrain, C4-free. Per-version history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -59,6 +59,14 @@ repairs. Report: [docs/research/sb360_coverage/](docs/research/sb360_coverage/).
   the lakehouse-parity goldens, which is why it is its own change.
 ### Blocked or Deferred
 
+- **CI lever (B-Windows) — trim Windows to the platform-/version-sensitive subset (next latency/cost
+  lever after the duration-sharding, ADR-074).** Sharding preserves ALL coverage; every leg runs its
+  full suite in parallel shards. If minutes/cost — or principle — later warrant it, the next lever is to
+  stop running the full ~7,900 pure-logic tests on windows-latest (2× slower + 2× billing) and run only
+  the platform-/version-sensitive subset there (path handling, CRLF, the pandas-3 copy-on-write class,
+  golden/snapshot). Owner-decided coverage change; deferred, not built. Also: the committed
+  `.test_durations` is regenerated (`pytest -m "not e2e" --store-durations`) when the suite shifts
+  materially or a shard drifts toward budget (see CLAUDE.md Testing).
 - **Missing ball-touch detection to enrich event↔frame sync (candidate future enhancement; anchors on
   TF-43 ELASTIC).** External prior-art **PathCRF** (KDD 2026, arXiv:2602.12080; code
   `github.com/hyunsungkim-ds/pathcrf`, **MPL-2.0 → reimplement, do NOT lift into MIT**) recovers ball

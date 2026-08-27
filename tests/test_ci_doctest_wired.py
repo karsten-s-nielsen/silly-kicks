@@ -48,6 +48,15 @@ def test_public_doctest_step_is_wired_on_every_leg() -> None:
     assert "matrix.primary" not in guard, f"the public-doctest step must run on EVERY leg, not be gated by {guard!r}"
 
 
+def test_doctest_runs_once_per_leg_on_shard_1() -> None:
+    """Under sharding, doctest is a separate MODULE invocation (not sharded), so it must run on each
+    leg's shard 1 ONLY -- once per leg, not N times. `matrix.primary not in guard` above still holds
+    (shard==1 is per-leg, not primary-only); this pins the shard-1 gating so it can't drift to every
+    shard (wasteful) or off a leg."""
+    guard = _guard(_doctest_steps()[0].get("if", "")).replace("'", "").replace('"', "")
+    assert "matrix.shard==1" in guard, f"doctest must be gated on shard 1 (once per leg), got {guard!r}"
+
+
 def test_ignore_glob_excludes_privates_but_keeps_dunder_and_public() -> None:
     """Semantic check on the glob itself (fnmatch, exactly how pytest's --ignore-glob matches):
     it must skip single-underscore private modules while KEEPING dunder ``__init__.py`` and public
