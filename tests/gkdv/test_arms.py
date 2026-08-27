@@ -270,16 +270,19 @@ def test_das_arm_passes_ONE_pinned_direction_to_BOTH_legs(monkeypatch):
 
     calls: list[dict] = []
 
-    def _stub_team_das(frames, *, attacking_team_id, direction_col):
+    def _stub_team_das_by_frame(frames, attacking_team_id_by_frame, *, direction_col):
         calls.append(
             {
                 "col": direction_col,
                 "values": tuple(frames[direction_col]) if direction_col in frames else None,
             }
         )
-        return float(len(calls))  # synthetic -- NO delegation, NO library
+        # delta_das delegates to delta_das_batch, which reduces via team_das_by_frame (ONE per leg);
+        # return a per-frame Series (synthetic -- NO delegation to the library).
+        key = pd.MultiIndex.from_frame(frames[["game_id", "period_id", "frame_id"]].drop_duplicates())
+        return pd.Series([float(len(calls))], index=key)
 
-    monkeypatch.setattr(port, "team_das", _stub_team_das)
+    monkeypatch.setattr(port, "team_das_by_frame", _stub_team_das_by_frame)
 
     actual = _port_frames()
     ghost = actual.copy()
@@ -319,7 +322,13 @@ def test_das_arm_does_not_mutate_its_inputs(monkeypatch):
     import silly_kicks.gkdv._das_port as port
 
     monkeypatch.setattr(port, "pin_direction", lambda frames: pd.Series([1.0] * len(frames)))
-    monkeypatch.setattr(port, "team_das", lambda frames, **kwargs: 1.0)
+    monkeypatch.setattr(
+        port,
+        "team_das_by_frame",
+        lambda frames, atid, *, direction_col: pd.Series(
+            [1.0], index=pd.MultiIndex.from_frame(frames[["game_id", "period_id", "frame_id"]].drop_duplicates())
+        ),
+    )
 
     actual, ghost = _port_frames(), _port_frames()
     before_actual, before_ghost = actual.copy(deep=True), ghost.copy(deep=True)
@@ -334,11 +343,19 @@ def test_das_arm_rejects_row_misaligned_legs(monkeypatch):
     import silly_kicks.gkdv._das_port as port
 
     monkeypatch.setattr(port, "pin_direction", lambda frames: pd.Series([1.0] * len(frames)))
-    monkeypatch.setattr(port, "team_das", lambda frames, **kwargs: 1.0)
+    monkeypatch.setattr(
+        port,
+        "team_das_by_frame",
+        lambda frames, atid, *, direction_col: pd.Series(
+            [1.0], index=pd.MultiIndex.from_frame(frames[["game_id", "period_id", "frame_id"]].drop_duplicates())
+        ),
+    )
 
     actual = _port_frames()
     misaligned = actual.iloc[::-1]  # same rows, same length, DIFFERENT order
-    with pytest.raises(ValueError, match="row-aligned"):
+    # delta_das delegates to delta_das_batch, whose _assert_legs_aligned raises on the
+    # (game_id, period_id, frame_id, player_id) content order (fires before any scoring).
+    with pytest.raises(ValueError, match="not aligned"):
         delta_das(actual, misaligned, attacking_team_id=2)
 
 

@@ -16,7 +16,12 @@ by ``tests/gkdv/test_import_allowlist.py``.
 See NOTICE for full bibliographic citations.
 """
 
-from ._arms import delta_das, delta_threat_suppression
+from ._arms import (
+    delta_das,
+    delta_das_batch,
+    delta_threat_suppression,
+    delta_threat_suppression_batch,
+)
 from ._engine import GkdvParams, GkdvReport, build_ghost_frames, provenance_to_targets
 from ._metric import aggregate_by_keeper
 from ._validate import (
@@ -36,6 +41,8 @@ __all__ = [
     "behavioural_anchoring_verdict",
     "build_ghost_frames",
     "delta_das",
+    "delta_das_batch",
     "delta_threat_suppression",
+    "delta_threat_suppression_batch",
     "provenance_to_targets",
 ]

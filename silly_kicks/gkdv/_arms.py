@@ -24,9 +24,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from silly_kicks.tracking import GoalMap
 
+import numpy as np
 import pandas as pd
 
 from ._engine import _DEFAULT_PARAMS, GkdvParams
+
+_FRAME_KEY = ["game_id", "period_id", "frame_id"]
 
 
 def delta_threat_suppression(
@@ -105,29 +108,20 @@ def delta_threat_suppression(
     keepers without first restricting to scored frames is the one mistake this arm cannot
     detect for you.
     """
-    from silly_kicks import tracking
-    from silly_kicks.tracking import SpearmanParams
-
-    # `lambda_gk` is the ONLY term through which this arm sees the keeper, so it must be
-    # FORWARDED rather than left to the pitch-control default -- otherwise a caller raising
-    # it would silently get the default gain and the registered params echoed into
-    # GkdvReport would misreport the run. `__post_init__` guarantees "spearman" here, which
-    # is what makes the concrete SpearmanParams construction type-correct; a future GK-aware
-    # method joining that allowlist must extend this mapping too, or it lands back on the
-    # default gain. Every other field takes its SpearmanParams default, so the default
-    # GkdvParams is byte-identical to passing `params=None`.
-    kwargs = {
-        "attacking_team_id": attacking_team_id,
-        "xt": xt,
-        "goal_map": goal_map,
-        "method": params.pitch_control_method,
-        "params": SpearmanParams(lambda_gk=params.lambda_gk),
-    }
-    # Module-attribute access at CALL time so a spy can intercept both legs and assert the
-    # method pin -- see tests/gkdv/test_arms.py.
-    actual = tracking.compute_threat_pc(actual_frame, **kwargs)
-    ghost = tracking.compute_threat_pc(ghost_frame, **kwargs)
-    return float(actual - ghost)
+    # Single-frame arm: a thin wrapper over delta_threat_suppression_batch on a one-frame stack.
+    # The batch forwards `lambda_gk` into SpearmanParams and pins the method identically into both
+    # legs via the same `tracking.compute_threat_pc` seam (`__post_init__` guarantees "spearman"),
+    # so the method-pin spy in tests/gkdv/test_arms.py intercepts both legs unchanged.
+    return float(
+        delta_threat_suppression_batch(
+            actual_frame,
+            ghost_frame,
+            attacking_team_id_by_frame=attacking_team_id,
+            xt=xt,
+            goal_map=goal_map,
+            params=params,
+        ).iloc[0]
+    )
 
 
 def delta_das(
@@ -201,45 +195,149 @@ def delta_das(
     Requires the optional ``accessible-space`` dependency (the ``[das]`` extra); without
     it the call raises rather than silently returning ``0.0``.
     """
-    from . import _das_port  # module-attribute access at CALL time -> stubbable
+    # Single-frame arm: a thin wrapper over delta_das_batch on a one-frame stack. A one-frame unit
+    # pins direction from that frame (identical to the historical per-frame pin), and the batch owns
+    # the row-alignment guard, the DasUnscoreableError -> NaN degrade, and the min_count=1 reduce
+    # (so a non-simulatable single frame is an honest NaN, not a fictional 0.0).
+    return float(
+        delta_das_batch(actual_frame, ghost_frame, attacking_team_id_by_frame=attacking_team_id, params=params).iloc[0]
+    )
 
-    # The pin is applied POSITIONALLY to both legs, so a ghost whose rows do not line up
-    # with the factual frame would silently receive another row's direction -- a per-row
-    # sign flip, invisible in the returned scalar. `build_ghost_frames` returns the full
-    # input with only the keeper's coordinates rewritten, so the index is preserved; a
-    # caller that has reordered or filtered one leg has broken the counterfactual anyway.
-    if not actual_frame.index.equals(ghost_frame.index):
+
+def _assert_legs_aligned(actual_frames: pd.DataFrame, ghost_frames: pd.DataFrame, *, fn: str) -> None:
+    """Raise unless the factual and ghost stacks are row-for-row identical on
+    ``(game_id, period_id, frame_id, player_id)`` order.
+
+    Both batch arms apply the pinned direction / iterate the two legs POSITIONALLY, so a reordered
+    or filtered ghost would be scored against another row's state -- a per-row error invisible in the
+    returned scalars. ``build_ghost_frames`` preserves the input order (only the keeper's coordinates
+    are rewritten), so a correct caller passes.
+    """
+    cols = [*_FRAME_KEY, "player_id"]
+    a = actual_frames[cols].reset_index(drop=True)
+    g = ghost_frames[cols].reset_index(drop=True)
+    if not a.equals(g):
         raise ValueError(
-            "delta_das: the factual and ghost frames are not row-aligned (differing index). "
-            "The pinned direction is applied positionally, so a misaligned ghost would be "
-            "scored against another row's attacking direction. Pass the frames as "
-            "build_ghost_frames returned them, restricted identically on both legs."
+            f"{fn}: the factual and ghost frames are not aligned on {cols} order. The pinned "
+            "direction is applied positionally, so a misaligned ghost would be scored against "
+            "another row's attacking direction. Pass the frames as build_ghost_frames returned "
+            "them, restricted identically on both legs."
         )
 
-    # DAS (accessible space) STRUCTURALLY requires velocity -- a player's reachable area is a
-    # function of their velocity -- so on a declared velocity-less freeze frame (SB360) it is
-    # genuinely undefined, and DAS-input validation raises the DEGRADABLE ``DasUnscoreableError``.
-    # Degrade to NaN at this consumer edge, the ADR-043 pattern ``add_das`` uses via ``das_source``,
-    # rather than crashing a mixed-provider pass: unlike ``delta_threat_suppression`` (whose pitch
-    # control has a valid zero-velocity positional model, ADR-063), delta_das cannot be computed
-    # without velocity, so honest-NaN is the only correct value. The raise fires in
-    # ``pin_direction``'s DAS-input validation as well as in ``team_das``, so BOTH sit inside the
-    # guard. ONLY the declared-unscoreable case is caught; a forgotten ``derive_velocities()`` (a
-    # different error) still propagates loud.
+
+def _frame_key_index(frames: pd.DataFrame) -> pd.MultiIndex:
+    return pd.MultiIndex.from_frame(frames[_FRAME_KEY].drop_duplicates())
+
+
+def delta_das_batch(actual_frames, ghost_frames, *, attacking_team_id_by_frame, params=_DEFAULT_PARAMS):
+    """Batched Delta-DAS: one accessible-space call per leg over all a unit's scored frames.
+
+    See :func:`delta_das` for the per-frame semantics; this is its amortized batch form. Direction is
+    pinned ONCE over the unit and the same column feeds both legs. Returns a ``pd.Series`` indexed by
+    ``(game_id, period_id, frame_id)``, value ``das(actual) - das(ghost)`` (attacker-value units, so
+    **negative = deterrent**). A frame with no finite attacking DAS on either leg is NaN
+    (``min_count=1``), never a fictional 0.0; a wholly unscoreable unit (velocity-less / dead-ball) is
+    all-NaN over its frame keys.
+
+    ``attacking_team_id_by_frame`` is a scalar (one attacking team for the whole unit) or a
+    ``pd.Series`` indexed by ``(game_id, period_id, frame_id)``; a Series missing a scored-frame key
+    RAISES (fail-loud) rather than silently NaN-ing that frame.
+
+    Examples
+    --------
+    Both legs MUST come from the SAME ``build_ghost_frames`` call, restricted identically to the
+    engine's scored set::
+
+        from silly_kicks.gkdv import build_ghost_frames, delta_das_batch
+
+        ghost_frames, provenance, report = build_ghost_frames(frames, home_team_id=1)
+        scored = provenance.loc[provenance["drop_reason"].isna(), ["game_id", "period_id", "frame_id"]]
+        actual = frames.merge(scored, on=["game_id", "period_id", "frame_id"])
+        ghost = ghost_frames.merge(scored, on=["game_id", "period_id", "frame_id"])
+
+        deltas = delta_das_batch(actual, ghost, attacking_team_id_by_frame=2)
+    """
     from silly_kicks.tracking import DasUnscoreableError
 
-    try:
-        # ONE direction, inferred from the FACTUAL frames, applied to BOTH legs. Neither leg
-        # may infer for itself.
-        direction = _das_port.pin_direction(actual_frame)
-        actual_pinned = actual_frame.copy()
-        actual_pinned["attacking_direction"] = pd.Series(direction).to_numpy()
-        ghost_pinned = ghost_frame.copy()
-        ghost_pinned["attacking_direction"] = pd.Series(direction).to_numpy()
+    from . import _das_port
 
-        kwargs = {"attacking_team_id": attacking_team_id, "direction_col": "attacking_direction"}
-        actual = _das_port.team_das(actual_pinned, **kwargs)
-        ghost = _das_port.team_das(ghost_pinned, **kwargs)
+    _assert_legs_aligned(actual_frames, ghost_frames, fn="delta_das_batch")
+    keys = _frame_key_index(actual_frames)
+    try:
+        direction = _das_port.pin_direction(actual_frames)  # ONCE over the unit
+        actual_pinned = actual_frames.copy()
+        actual_pinned["attacking_direction"] = direction.to_numpy()
+        ghost_pinned = ghost_frames.copy()
+        ghost_pinned["attacking_direction"] = direction.to_numpy()
+        actual = _das_port.team_das_by_frame(
+            actual_pinned, attacking_team_id_by_frame, direction_col="attacking_direction"
+        )
+        ghost = _das_port.team_das_by_frame(
+            ghost_pinned, attacking_team_id_by_frame, direction_col="attacking_direction"
+        )
     except DasUnscoreableError:
-        return float("nan")
-    return float(actual - ghost)
+        return pd.Series(np.nan, index=keys, name="delta_das")
+    delta = (actual - ghost).reindex(keys)  # NaN propagates; reindex pins order/coverage to the keys
+    delta.name = "delta_das"
+    return delta
+
+
+def delta_threat_suppression_batch(
+    actual_frames, ghost_frames, *, attacking_team_id_by_frame, xt, goal_map, params=_DEFAULT_PARAMS
+):
+    """Batched Delta-GK-threat-suppression, matching :func:`delta_das_batch`'s index/shape.
+
+    A thin per-frame loop -- the threat arm is ~1 ms/frame (0.16 % of the DAS cost), so no vectorized
+    kernel. Both legs are iterated as two aligned ``groupby(KEY)`` streams (identical key order after
+    the alignment guard), so there is no per-frame rescan of the ghost stack.
+
+    Unlike :func:`delta_das_batch` there is NO ``DasUnscoreableError`` catch: ``compute_threat_pc``
+    takes ``attacking_team_id`` explicitly and reads no ``team_in_possession``, so it always scores
+    from positions -- the two arms are independently scoreable (a velocity-less frame is DAS-NaN but
+    threat-valued), which is correct because they measure different things.
+
+    Returns a ``pd.Series`` indexed by ``(game_id, period_id, frame_id)`` (attacker-value units, so
+    **negative = deterrent**).
+
+    Examples
+    --------
+    Same call shape as :func:`delta_das_batch`; both legs from one ``build_ghost_frames`` call,
+    restricted identically to the scored set::
+
+        from silly_kicks.gkdv import build_ghost_frames, delta_threat_suppression_batch
+        from silly_kicks.tracking import resolve_defended_goals
+
+        ghost_frames, provenance, report = build_ghost_frames(frames, home_team_id=1)
+        goal_map = resolve_defended_goals(frames)
+        deltas = delta_threat_suppression_batch(
+            actual, ghost, attacking_team_id_by_frame=2, xt=fitted_xt, goal_map=goal_map
+        )
+    """
+    from silly_kicks import tracking
+    from silly_kicks.tracking import SpearmanParams
+
+    from . import _das_port
+
+    _assert_legs_aligned(actual_frames, ghost_frames, fn="delta_threat_suppression_batch")
+    att_per_frame = _das_port._attacking_team_by_frame(actual_frames, attacking_team_id_by_frame)  # shared resolver
+    base = {
+        "xt": xt,
+        "goal_map": goal_map,
+        "method": params.pitch_control_method,
+        "params": SpearmanParams(lambda_gk=params.lambda_gk),
+    }
+    out = {}
+    for (ka, a_sub), (kg, g_sub) in zip(
+        actual_frames.groupby(_FRAME_KEY), ghost_frames.groupby(_FRAME_KEY), strict=True
+    ):
+        assert ka == kg  # noqa: S101 -- _assert_legs_aligned guarantees identical group keys
+        atk = att_per_frame[ka]
+        a = tracking.compute_threat_pc(a_sub, attacking_team_id=atk, **base)
+        g = tracking.compute_threat_pc(g_sub, attacking_team_id=atk, **base)
+        out[ka] = float(a - g)
+    idx = _frame_key_index(actual_frames)
+    if not out:
+        return pd.Series(np.nan, index=idx, name="delta_threat_suppression")
+    s = pd.Series(out, name="delta_threat_suppression")
+    s.index = pd.MultiIndex.from_tuples(list(s.index), names=_FRAME_KEY)
+    return s.reindex(idx)
