@@ -79,18 +79,25 @@ def resolve_responsible_defenders(
     if mode == "lane_blocker":
         return _lane_blocker(fr, acting_team_id, flip, anchor_x, anchor_y, params)
 
+    threshold = params._proximity_threshold(anchor_x, anchor_y)
     out = opponents_within(
         fr,
         anchor_x=anchor_x,
         anchor_y=anchor_y,
         acting_team_id=acting_team_id,
-        threshold_m=params._proximity_threshold(anchor_x, anchor_y),
+        threshold_m=threshold,
         flip=flip,
     )
     if out.empty:
         return _empty()
     out = out.copy()
     out["resolution"] = mode  # "nearest" / "all_within" / "all_within_beyond_nearest"
+    # Task 6 (ADR-077): carry the resolution ANCHOR + box-aware search radius so the FOV companion
+    # can rebuild the proximity DISK this mode searched. Purely ADDITIVE -- the net/plus/minus/n
+    # aggregate reads only signed_value/team_id, so these columns leave it byte-identical.
+    out["origin_x"] = float(anchor_x)
+    out["origin_y"] = float(anchor_y)
+    out["region_radius"] = float(threshold)
 
     if mode == "nearest":
         return out.iloc[[0]].reset_index(drop=True)
@@ -133,7 +140,9 @@ def _lane_blocker(
     if in_corridor.any():
         cand = np.where(in_corridor)[0]
         best = cand[np.argmin(perp[cand])]
-        return _single_row(opp, int(best), float(origin_dist[best]), RESOLUTION_LANE)
+        # Task 6: the lane region is the shot->goal CORRIDOR (rebuilt from the origin + lane params),
+        # not a disk -- so region_radius is NaN.
+        return _single_row(opp, int(best), float(origin_dist[best]), RESOLUTION_LANE, origin_x, origin_y, float("nan"))
     # fallback: nearest non-GK within the box-aware origin threshold (a real xG-sizable block still
     # deserves an approximate attributee over NaN/no-row, B8) -- recorded as nearest_fallback.
     thr = params._proximity_threshold(origin_x, origin_y)
@@ -141,17 +150,31 @@ def _lane_blocker(
     if within.any():
         cand = np.where(within)[0]
         best = cand[np.argmin(origin_dist[cand])]
-        return _single_row(opp, int(best), float(origin_dist[best]), RESOLUTION_NEAREST_FALLBACK)
+        # Task 6: the fallback searched a proximity DISK of the box-aware origin threshold.
+        return _single_row(
+            opp, int(best), float(origin_dist[best]), RESOLUTION_NEAREST_FALLBACK, origin_x, origin_y, float(thr)
+        )
     return _empty()
 
 
-def _single_row(opp: pd.DataFrame, pos: int, distance_m: float, resolution: str) -> pd.DataFrame:
+def _single_row(
+    opp: pd.DataFrame,
+    pos: int,
+    distance_m: float,
+    resolution: str,
+    origin_x: float,
+    origin_y: float,
+    region_radius: float,
+) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "player_id": [opp["player_id"].to_numpy()[pos]],
             "team_id": [opp["team_id"].to_numpy()[pos]],
             "distance_m": [distance_m],
             "resolution": [resolution],
+            "origin_x": [float(origin_x)],
+            "origin_y": [float(origin_y)],
+            "region_radius": [float(region_radius)],
         }
     )
 
@@ -163,5 +186,8 @@ def _empty() -> pd.DataFrame:
             "team_id": [],
             "distance_m": pd.Series([], dtype="float64"),
             "resolution": pd.Series([], dtype="object"),
+            "origin_x": pd.Series([], dtype="float64"),
+            "origin_y": pd.Series([], dtype="float64"),
+            "region_radius": pd.Series([], dtype="float64"),
         }
     )

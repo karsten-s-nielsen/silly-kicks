@@ -72,6 +72,13 @@ class CreditRow:
     frame_id: object
     sizing: str
     resolution: str  # how the credited player was determined (Item 2, RESOLUTION_VALUES)
+    # Task 6 (ADR-077): the resolution ANCHOR (action-LTR) + box-aware search radius the FOV
+    # companion rebuilds this credit's region from. Populated for the proximity/lane defender-
+    # resolved rows; an anchor_actor row (event-resolved passer/recoverer) keeps the NaN defaults ->
+    # its region is _NO_REGION. region_radius is NaN for the lane corridor (a corridor, not a disk).
+    origin_x: float = float("nan")
+    origin_y: float = float("nan")
+    region_radius: float = float("nan")
 
 
 @dataclass
@@ -208,6 +215,9 @@ def _shot_credit(ctx: RuleContext, *, rule: str, sign: float, mode: str) -> list
                 frame_id=ctx.frame_id,
                 sizing=SIZING_XG,
                 resolution=d["resolution"],  # the mode that actually resolved (lane / nearest_fallback / nearest)
+                origin_x=d["origin_x"],
+                origin_y=d["origin_y"],
+                region_radius=d["region_radius"],
             )
         )
     return rows
@@ -260,6 +270,9 @@ def rule_pressure_pass_fail(ctx: RuleContext) -> list[CreditRow]:
             ctx.frame_id,
             sizing,
             d["resolution"],  # +presser: proximity-resolved
+            d["origin_x"],
+            d["origin_y"],
+            d["region_radius"],
         ),
         CreditRow(
             a["game_id"],
@@ -297,6 +310,9 @@ def rule_forced_bad_touch(ctx: RuleContext) -> list[CreditRow]:
             ctx.frame_id,
             _xt_sizing_token(ctx),
             d["resolution"],
+            d["origin_x"],
+            d["origin_y"],
+            d["region_radius"],
         )
     ]
 
@@ -324,6 +340,9 @@ def rule_synchronized_final_third_pressure(ctx: RuleContext) -> list[CreditRow]:
             ctx.frame_id,
             sizing,
             d["resolution"],
+            d["origin_x"],
+            d["origin_y"],
+            d["region_radius"],
         )
         for _, d in defs.iterrows()
     ]
@@ -406,6 +425,9 @@ def rule_beaten_1v1(ctx: RuleContext) -> list[CreditRow]:
             ctx.frame_id,
             SIZING_XG,
             d["resolution"],
+            d["origin_x"],
+            d["origin_y"],
+            d["region_radius"],
         )
     ]
 
@@ -435,6 +457,9 @@ def rule_failed_cross_block(ctx: RuleContext) -> list[CreditRow]:
                 ctx.frame_id,
                 SIZING_XG,
                 d["resolution"],
+                d["origin_x"],
+                d["origin_y"],
+                d["region_radius"],
             )
         )
     # +blocker if the resulting shot was blocked (nearest opp to the shot origin)
@@ -454,6 +479,9 @@ def rule_failed_cross_block(ctx: RuleContext) -> list[CreditRow]:
                     ctx.frame_id,
                     SIZING_XG,
                     b["resolution"],
+                    b["origin_x"],
+                    b["origin_y"],
+                    b["region_radius"],
                 )
             )
     return rows
@@ -490,6 +518,9 @@ def rule_failed_marking_through_ball(ctx: RuleContext) -> list[CreditRow]:
             ctx.frame_id,
             SIZING_XG,
             d["resolution"],
+            d["origin_x"],
+            d["origin_y"],
+            d["region_radius"],
         )
     ]
 

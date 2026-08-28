@@ -5,6 +5,7 @@ and docs/superpowers/specs/2026-04-30-tracking-namespace-pr1-design.md s 4.2.
 """
 
 import dataclasses
+from typing import Any
 
 TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     "game_id": "int64",
@@ -321,6 +322,58 @@ class VelocityRegimeDiagnosis:
     regime: str
     speed_source_counts: dict[str, int]
     has_velocity_columns: bool
+    message: str
+
+
+#: Every action's ``visible_area`` polygon covers the pitch (share >= ``full_coverage_floor``): a
+#: full-tracking or whole-pitch-observed set. Nothing to warn about.
+FOV_REGIME_FULL = "full_coverage"
+#: No action reaches full coverage: the provider ships a cropped field of view (a broadcast crop, a
+#: partial 360 polygon) on every observed action.
+FOV_REGIME_CROPPED = "fov_cropped"
+#: No action carries an observed polygon at all -- every row is ``no_polygon`` / ``degenerate`` /
+#: ``unlinked``. Nothing was published about what any camera saw.
+FOV_REGIME_ABSENT = "absent"
+#: Full-coverage actions coexist with cropped/absent ones. Scoring the set under one FOV assumption
+#: is incoherent, so this is the fail-loud case (like ``VELOCITY_REGIME``'s ``MIXED``).
+FOV_REGIME_MIXED = "mixed"
+#: A zero-row visible_area table. Reported rather than smuggled into another regime, and it does NOT
+#: raise -- FOLLOWING the siblings (``validate_velocity_regime`` / ``validate_time_base`` return a
+#: diagnosis on empty input rather than departing from them).
+FOV_REGIME_EMPTY = "empty"
+FOV_REGIME_VALUES: tuple[str, ...] = (
+    FOV_REGIME_FULL,
+    FOV_REGIME_CROPPED,
+    FOV_REGIME_ABSENT,
+    FOV_REGIME_MIXED,
+    FOV_REGIME_EMPTY,
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class FovDiagnosis:
+    """Whether a frame set's per-action visible_area is full / cropped / absent, before scoring.
+
+    Fourth member of the ``validate_time_base`` / ``validate_velocity_regime`` / ``validate_id_dtypes``
+    family (ADR-017, ADR-019), and produced by ``silly_kicks.tracking.utils.validate_fov``. A
+    freeze-frame provider does not see the whole pitch, and whether it ships a full, cropped or absent
+    field of view is a property of the WHOLE action set -- like ``VelocityRegimeDiagnosis`` -- so it is
+    a diagnostic rather than a per-row column that would carry a constant. The per-action observed
+    fractions that DO vary row-to-row are the observability companions (Task 4), not this.
+
+    Attributes:
+        regime: one of :data:`FOV_REGIME_VALUES`.
+        observed_pitch_fraction: ``action_id`` -> observed pitch fraction, only for ``observed``
+            actions (the ``visible_area_source`` tokens live in :data:`VISIBLE_AREA_SOURCE_VALUES`).
+        source_counts: ``visible_area_source`` token -> action count.
+        n_actions: number of actions considered.
+        message: human-readable summary, and the text of the raise when one occurs.
+    """
+
+    regime: str
+    observed_pitch_fraction: dict[Any, float]
+    source_counts: dict[str, int]
+    n_actions: int
     message: str
 
 

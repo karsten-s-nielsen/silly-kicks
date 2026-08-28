@@ -60,7 +60,7 @@ from silly_kicks.id_compat import (
 )
 from silly_kicks.spadl import config as spadlconfig
 
-from . import _kernels
+from . import _fov_registry, _kernels
 from ._action_orientation import (
     FIELD_LENGTH,
     FIELD_WIDTH,
@@ -87,13 +87,7 @@ from ._gk_resolve import (
 from ._packing import PackingParams, secured_reception
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
-from ._visibility import (
-    REGION_OBSERVATION_DEGENERATE_REGION,
-    VISIBLE_AREA_UNLINKED,
-    _polygons_by_action,
-    add_visible_area_coverage,
-    classify_region_observation,
-)
+from ._visibility import add_visible_area_coverage
 from ._warnings import IgnoredSurfaceInputsWarning, SyntheticEPVWarning
 from ._xcross_attempt import xcross_attempt_xfns
 from ._xshot_occurrence import xshot_occurrence_xfns
@@ -442,86 +436,91 @@ def defenders_in_triangle_to_goal(
     return _kernels._defenders_in_triangle_to_goal(actions["start_x"], actions["start_y"], ctx)
 
 
-#: The three count features whose region-of-interest can be checked against a 360 polygon. Order
-#: fixes the emitted companion-column order. ``actor_speed`` is excluded: it reads a single player,
-#: not a region, so a coverage fraction is meaningless for it.
-_VISIBILITY_COMPANION_FEATURES = (
-    "nearest_defender_distance",
-    "receiver_zone_density",
-    "defenders_in_triangle_to_goal",
-)
+def _fov_linked_action_ids(ctx) -> set:
+    """The canonical action-ids that link to a frame -- the FOV companion link overlay.
 
-
-def _append_visibility_companions(
-    out: pd.DataFrame,
-    actions: pd.DataFrame,
-    ctx,
-    visible_area: pd.DataFrame,
-    *,
-    receiver_zone_radius: float,
-    nearest_dist,
-) -> pd.DataFrame:
-    """Append the six ``<feature>_observed_fraction``/``_observed_source`` companions.
-
-    Additive: called ONLY when ``visible_area`` is supplied, and it touches no primary column.
-    Each source is one of :data:`REGION_OBSERVATION_SOURCE_VALUES` plus ``unlinked`` (an
-    action<->frame fact overlaid here, exactly as the primary ``frame_id`` is NaN for an unlinked
-    action). The NEAREST-DEFENDER region is an inscribed disk of radius = the measured distance, so
-    a NaN distance (no opponent, or unlinked) has no radius -> ``degenerate_region``, never a
-    fabricated fraction.
-
-    Orientation (R2-G): the provider polygon and every region are raw-SPADL in ONE frame -- the
-    kernels do not re-orient (goal fixed at x=105) -- so a caller feeding re-oriented frames would
-    have to re-orient the polygon to match. SB360, the only supplier today, is action-LTR already.
+    Used by :func:`_append_engine_companions`: overlays the action<->frame link the same way the
+    primary ``frame_id`` provenance does, so an action linking to no frame classifies ``unlinked``.
     """
-    polygons = _polygons_by_action(visible_area)
-    linked = {
+    return {
         canonical_id(a)
         for a, f in zip(ctx.pointers["action_id"], ctx.pointers["frame_id"], strict=False)
         if pd.notna(f)
     }
-    sx = actions["start_x"].to_numpy(dtype=float)
-    sy = actions["start_y"].to_numpy(dtype=float)
-    ex = actions["end_x"].to_numpy(dtype=float)
-    ey = actions["end_y"].to_numpy(dtype=float)
-    nd = np.asarray(nearest_dist, dtype=float)
 
-    n = len(actions)
-    frac = {name: np.full(n, np.nan) for name in _VISIBILITY_COMPANION_FEATURES}
-    src: dict[str, list[str]] = {name: [] for name in _VISIBILITY_COMPANION_FEATURES}
 
-    for i, aid in enumerate(actions["action_id"]):
-        if canonical_id(aid) not in linked:
-            for name in _VISIBILITY_COMPANION_FEATURES:
-                src[name].append(VISIBLE_AREA_UNLINKED)
-            continue
-        polygon = polygons.get(canonical_id(aid))  # None -> classify -> no_polygon
+def _append_engine_companions(
+    out: pd.DataFrame,
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    registry_key: str,
+    visible_area: pd.DataFrame,
+    extras: dict,
+    links: pd.DataFrame | None = None,
+    ctx=None,
+    sx=None,
+    sy=None,
+    nearest_dist=None,
+) -> pd.DataFrame:
+    """Build the linked set + :class:`RegionCtx` and append the ``registry_key`` companions (ADR-077).
 
-        triangle = np.array(
-            [
-                [sx[i], sy[i]],
-                [_kernels._GOAL_X, _kernels._GOAL_LEFT_POST_Y],
-                [_kernels._GOAL_X, _kernels._GOAL_RIGHT_POST_Y],
-            ]
-        )
-        frac["defenders_in_triangle_to_goal"][i], s_tri = classify_region_observation(polygon, triangle)
-        src["defenders_in_triangle_to_goal"].append(s_tri)
+    The ONE seam every engine-path FOV companion routes through. Each aggregator computes only its
+    own region inputs -- ``extras`` (per-metric params like the oval/link radii or the receiver
+    radius) and, where the region anchor is NOT the raw action start, ``sx``/``sy`` -- then calls
+    this once. The actor anchor DEFAULTS to the action's own ``start_x``/``start_y`` (the common
+    case); ``add_xt_gk`` overrides ``sx``/``sy`` with the RESOLVED GK origin, and
+    ``add_action_context`` supplies ``nearest_dist``. The END anchor (``ex``/``ey``, used by the
+    receiver disk and the packing band) is always the action's ``end_x``/``end_y``.
 
-        receiver_disk = _kernels._inscribed_disk(ex[i], ey[i], receiver_zone_radius)
-        frac["receiver_zone_density"][i], s_rz = classify_region_observation(polygon, receiver_disk)
-        src["receiver_zone_density"].append(s_rz)
+    ``ctx`` may be a pre-resolved action<->frame context -- ``add_action_context`` already builds one
+    for its primary metrics, so it passes it through to avoid a redundant re-link; every other site
+    leaves it ``None`` and it is resolved from ``links``.
+    """
+    if ctx is None:
+        ctx = _resolve_action_frame_context(actions, frames, links=links)
+    linked = _fov_linked_action_ids(ctx)
 
-        if not np.isfinite(nd[i]):
-            src["nearest_defender_distance"].append(REGION_OBSERVATION_DEGENERATE_REGION)
-        else:
-            defender_disk = _kernels._inscribed_disk(sx[i], sy[i], nd[i])
-            frac["nearest_defender_distance"][i], s_nd = classify_region_observation(polygon, defender_disk)
-            src["nearest_defender_distance"].append(s_nd)
+    def _coord(arr, col):
+        return actions[col].to_numpy(dtype=float) if arr is None else arr
 
-    for name in _VISIBILITY_COMPANION_FEATURES:
-        out[f"{name}_observed_fraction"] = frac[name]
-        out[f"{name}_observed_source"] = src[name]
-    return out
+    region_ctx = _fov_registry.RegionCtx(
+        sx=_coord(sx, "start_x"),
+        sy=_coord(sy, "start_y"),
+        ex=actions["end_x"].to_numpy(dtype=float),
+        ey=actions["end_y"].to_numpy(dtype=float),
+        nearest_dist=None if nearest_dist is None else np.asarray(nearest_dist, dtype=float),
+        extras=extras,
+    )
+    return _fov_registry.append_observability_companions(
+        out,
+        actions,
+        entries=_fov_registry.OBSERVABILITY_REGISTRY[registry_key],
+        visible_area=visible_area,
+        linked_ids=linked,
+        ctx=region_ctx,
+    )
+
+
+def _append_fixed_zone_companions(out, actions, frames, *, links, visible_area, registry_key):
+    """Append the fixed action-LTR pitch-zone FOV companions for ``registry_key`` (ADR-077).
+
+    The aggregate-position metrics (``add_defensive_line`` / ``add_team_shape`` /
+    ``add_player_influence``) integrate over a CONSTANT pitch band keyed only on the column's
+    ROLE, so their region builders consult neither ``goal_map`` nor ``team_id`` (see
+    :mod:`silly_kicks.tracking._fov_registry`). A thin wrapper over
+    :func:`_append_engine_companions` with the action's own start/end anchor and ``extras={}`` --
+    the zone is fixed geometry; the named wrapper keeps that intent at the three call sites.
+    """
+    return _append_engine_companions(
+        out,
+        actions,
+        frames,
+        registry_key=registry_key,
+        visible_area=visible_area,
+        extras={},
+        links=links,
+    )
 
 
 @nan_safe_enrichment
@@ -575,12 +574,14 @@ def add_action_context(
     dt = _kernels._defenders_in_triangle_to_goal(actions["start_x"], actions["start_y"], ctx)
     out["defenders_in_triangle_to_goal"] = dt.astype("Int64")
     if visible_area is not None:
-        out = _append_visibility_companions(
+        out = _append_engine_companions(
             out,
             actions,
-            ctx,
-            visible_area,
-            receiver_zone_radius=receiver_zone_radius,
+            frames,
+            registry_key="add_action_context",
+            visible_area=visible_area,
+            extras={"receiver_radius": receiver_zone_radius},
+            ctx=ctx,  # reuse the context already resolved for the primary metrics (no re-link)
             nearest_dist=out["nearest_defender_distance"],
         )
     # Provenance: skip if already present (idempotent with other add_* enrichments)
@@ -1152,12 +1153,22 @@ def add_pressure_on_actor(
     links: pd.DataFrame | None = None,
     methods: tuple[Method, ...] = ("andrienko_oval",),
     params_per_method: dict[Method, PressureParams] | None = None,
+    visible_area: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with one ``pressure_on_actor__<m>`` column per method
     + 4 linkage-provenance columns.
 
     Validates all (method, params) pairs BEFORE computing any column
     (transactional behavior per spec section 8.5).
+
+    When ``visible_area`` (an ``action_id`` -> polygon table) is supplied AND
+    ``"andrienko_oval"`` is among ``methods``, TWO companion columns are appended --
+    ``pressure_on_actor__andrienko_oval_observed_fraction`` and ``_observed_source`` -- reporting
+    how much of the Andrienko directional-oval region the provider actually observed (ADR-077).
+    Opt-in and additive: the ``pressure_on_actor__*`` columns are byte-identical with and without
+    ``visible_area``, and ``pressure_on_actor`` / ``pressure_default_xfns`` are untouched, so no
+    VAEP feature changes (ADR-009). The companion is emitted only for ``andrienko_oval`` because
+    the other methods do not produce that column.
 
     Examples
     --------
@@ -1175,6 +1186,24 @@ def add_pressure_on_actor(
         params = params_per_method.get(m)
         s = pressure_on_actor(actions, frames, method=m, params=params, links=links)
         out[f"pressure_on_actor__{m}"] = s.values
+
+    if visible_area is not None and "andrienko_oval" in methods:
+        ap = params_per_method.get("andrienko_oval")
+        ap = ap if isinstance(ap, AndrienkoParams) else AndrienkoParams()
+        out = _append_engine_companions(
+            out,
+            actions,
+            frames,
+            registry_key="add_pressure_on_actor",
+            visible_area=visible_area,
+            extras={
+                "oval_d_front": ap.d_front,
+                "oval_d_back": ap.d_back,
+                "goal_x": _kernels._GOAL_X,
+                "goal_y": _kernels._GOAL_Y_CENTER,
+            },
+            links=links,
+        )
 
     # Provenance: skip if already present (idempotent with other add_* enrichments)
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
@@ -1372,11 +1401,19 @@ def add_defensive_line(
     links: pd.DataFrame | None = None,
     goal_map: GoalMap | None = None,
     n: int | Literal["adaptive"] = 4,
+    visible_area: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with 6 defensive-line columns + 4 linkage-provenance columns.
 
     Provenance columns (frame_id, time_offset_seconds, link_quality_score,
     n_candidate_frames) are skipped if they already exist on the input DataFrame.
+
+    When ``visible_area`` (an ``action_id`` -> polygon table) is supplied, TWO companion columns
+    are appended -- ``defensive_line_x_observed_fraction`` + ``_observed_source`` -- reporting how
+    much of the defending team's defended-third band (a FIXED action-LTR pitch zone; ADR-077) the
+    provider observed. Opt-in and additive: the six primary columns are byte-identical with and
+    without ``visible_area``, and ``defensive_line_xfns`` is untouched, so no VAEP feature changes
+    (ADR-009).
 
     See NOTICE for full bibliographic citations.
 
@@ -1399,6 +1436,11 @@ def add_defensive_line(
     for col in ("defensive_line_x", "back_line_high_x", "compactness_x", "lateral_width", "max_lateral_gap"):
         out[col] = df[col]
     out["back_n_count"] = df["back_n_count"].astype("Int64")
+
+    if visible_area is not None:
+        out = _append_fixed_zone_companions(
+            out, actions, frames, links=links, visible_area=visible_area, registry_key="add_defensive_line"
+        )
 
     # Provenance: skip if already present (idempotent with other add_* enrichments)
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
@@ -1528,6 +1570,7 @@ def add_packing(
     goal_map: GoalMap | None = None,
     links: pd.DataFrame | None = None,
     params: PackingParams | None = None,
+    visible_area: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Append the five TF-49 packing columns (Impect-faithful bypass counts).
 
@@ -1567,6 +1610,15 @@ def add_packing(
     Gradient Sports dribbles before silly-kicks 4.49.0 shipped placeholder
     ends (``start == end``) and are honestly NaN (spec s5.6); post-fix only
     period-last carries remain placeholders.
+
+    When ``visible_area`` (an ``action_id`` -> polygon table) is supplied, SIX companion columns
+    are appended -- ``<col>_observed_fraction`` + ``<col>_observed_source`` for each of the three
+    region-COUNT columns (``packing_made`` / ``packing_net`` / ``packing_goal_threat``) --
+    reporting how much of the passer->receiver x-band the provider observed (ADR-077). Opt-in and
+    additive: the primary columns are byte-identical with and without ``visible_area``, and
+    ``packing_xfns`` is untouched, so no VAEP feature changes (ADR-009). ``packing_receiver_
+    player_id`` / ``packing_secured`` are not counts and ``line_x`` is a position, so none is
+    companioned.
 
     Idempotent provenance columns; accepts caller-supplied ``links``. Returns
     a NEW frame (ADR-033). See NOTICE for full bibliographic citations.
@@ -1639,6 +1691,17 @@ def add_packing(
     out["packing_receiver_player_id"] = receiver
     out["packing_secured"] = secured
     # line_x is kernel-internal (feeds secured); deliberately NOT an output column.
+
+    if visible_area is not None:
+        out = _append_engine_companions(
+            out,
+            actions,
+            frames,
+            registry_key="add_packing",
+            visible_area=visible_area,
+            extras={},
+            links=links,
+        )
 
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     existing = [c for c in provenance_cols if c in out.columns]
@@ -2267,11 +2330,21 @@ def add_team_shape(
     frames: pd.DataFrame,
     *,
     links: pd.DataFrame | None = None,
+    visible_area: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with 20 team-shape columns (10 metrics x 2 teams).
 
     Provenance columns (frame_id, time_offset_seconds, link_quality_score,
     n_candidate_frames) are skipped if they already exist on the input.
+
+    When ``visible_area`` (an ``action_id`` -> polygon table) is supplied, FOUR companion columns
+    are appended -- ``team_shape_centroid_{attacking,defending}_observed_fraction`` +
+    ``_observed_source`` -- reporting how much of each team's OWN half (a FIXED action-LTR pitch
+    zone; ADR-077) the provider observed. There is NO ``team_shape_centroid`` column: the two
+    companions annotate the ``team_shape_centroid_{x,y}_{attacking,defending}`` centroid pairs (the
+    acting team's LOW-end half and the opponent's HIGH-end half). Opt-in and additive: the 20
+    primary columns are byte-identical with and without ``visible_area``, and ``team_shape_xfns``
+    is untouched, so no VAEP feature changes (ADR-009).
 
     See NOTICE for full bibliographic citations.
 
@@ -2374,6 +2447,11 @@ def add_team_shape(
             suffix = "attacking" if same_id(tid, action_team) else "defending"
             for metric in metrics:
                 out.at[idx, f"team_shape_{metric}_{suffix}"] = shape_row[metric]
+
+    if visible_area is not None:
+        out = _append_fixed_zone_companions(
+            out, actions, frames, links=links, visible_area=visible_area, registry_key="add_team_shape"
+        )
 
     # Provenance: skip if already present
     provenance_cols = [
@@ -4671,12 +4749,21 @@ def add_player_influence(
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     tau_seconds: float = 1.0,
     pitch_control_cache: PitchControlCache | None = None,
+    visible_area: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich actions with 7 player-influence columns + 4 provenance.
 
     Columns: actor_reachable_area_m2, off_ball_xt_team, off_ball_xt_opponent,
     off_ball_xt_diff, reachable_area_team, reachable_area_opponent,
     reachable_area_diff.
+
+    When ``visible_area`` (an ``action_id`` -> polygon table) is supplied, TWO companion columns
+    are appended -- ``off_ball_xt_team_observed_fraction`` + ``_observed_source`` -- reporting how
+    much of the attacking/possession team's attacking half (a FIXED action-LTR pitch zone;
+    ADR-077) the provider observed. Only ``off_ball_xt_team`` is companioned; the other columns are
+    not region-based counts. Opt-in and additive: the seven primary columns are byte-identical with
+    and without ``visible_area``, and ``player_influence_xfns`` is untouched, so no VAEP feature
+    changes (ADR-009).
 
     Examples
     --------
@@ -4699,6 +4786,11 @@ def add_player_influence(
     )
     for col in batch.columns:
         out[col] = batch[col].values
+
+    if visible_area is not None:
+        out = _append_fixed_zone_companions(
+            out, actions, frames, links=links, visible_area=visible_area, registry_key="add_player_influence"
+        )
 
     # Provenance (idempotent skip-guard)
     provenance_cols = [
@@ -6160,6 +6252,7 @@ def _compute_space_creation_for_action(
     *,
     home_team_id: int | str,
     attacks_rtl: bool = False,
+    fov_cropped: bool = False,
     transition_grid: np.ndarray | None = None,
     epv_grid: np.ndarray | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
@@ -6181,9 +6274,15 @@ def _compute_space_creation_for_action(
     deriving orientation from it is the D3 defect class (ADR-051 D1).
     ``home_team_id`` is retained in the signature but deliberately unread; D3
     retires it by disuse rather than by removal.
+
+    ``fov_cropped`` is the real per-action FOV signal (ADR-077, M4): when True and
+    the linked frame carries only ONE team, this is a legitimate SB360 FOV crop, so
+    the two-team guard is relaxed and ``compute_space_created`` softens the opponent
+    side to NaN. Falsy (no polygon / full coverage) keeps the loud corrupt-frame
+    raise. ``add_space_creation`` resolves it from
+    :func:`~silly_kicks.tracking.add_visible_area_coverage`.
     """
     from ._space_creation import _unique_team_ids, compute_space_created
-    from ._velocity_availability import velocity_unavailable_by_design
 
     team_id = action_row["team_id"]
     player_id = action_row["player_id"]
@@ -6193,12 +6292,14 @@ def _compute_space_creation_for_action(
         return dict(_SPACE_CREATION_NAN_ROW)
 
     # Loud two-team guard with the action/frame key (lakehouse contract: a resolvable actor on a
-    # corrupt frame must raise, not silently emit NaN). Marker-gated FOV softening (spec Part 2): a
-    # legitimate velocity-unavailable-by-design (SB360) ONE-team FOV crop is NOT corrupt -- let it
-    # through so compute_space_created softens the opponent side to NaN. A full-tracking one-team
-    # frame, or 0/3+ teams, is genuinely corrupt and still raises with the action/frame context.
+    # corrupt frame must raise, not silently emit NaN). FOV-gated softening (ADR-077, M4): a
+    # legitimate ONE-team SB360 FOV crop (``fov_cropped`` True -- this action's ``visible_area``
+    # polygon is present and cropped, resolved by ``add_space_creation``) is NOT corrupt -- let it
+    # through so ``compute_space_created`` softens the opponent side to NaN. A full-coverage or
+    # no-polygon one-team frame (``fov_cropped`` falsy), or 0/3+ teams, is genuinely corrupt and
+    # still raises with the action/frame context. RETIRES the ADR-054 velocity proxy.
     team_ids_in_frame = _unique_team_ids(frame)
-    if len(team_ids_in_frame) != 2 and not (velocity_unavailable_by_design(frame) and len(team_ids_in_frame) == 1):
+    if len(team_ids_in_frame) != 2 and not (fov_cropped and len(team_ids_in_frame) == 1):
         raise ValueError(
             "space_creation opponent perspective requires exactly two team ids "
             f"in the linked frame; found {list(team_ids_in_frame)!r} "
@@ -6217,6 +6318,7 @@ def _compute_space_creation_for_action(
         pitch_control_cache=pitch_control_cache,
         include_opponent_perspective=True,
         attacks_rtl=attacks_rtl,
+        fov_cropped=fov_cropped,
     )
 
     actor_row = result[ids_match(result["player_id"], player_id)]
@@ -6243,6 +6345,8 @@ def add_space_creation(
     xt: ExpectedThreat | None = None,
     pitch_control_method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     pitch_control_cache: PitchControlCache | None = None,
+    visible_area: pd.DataFrame | None = None,
+    full_coverage_floor: float = 0.98,
 ) -> pd.DataFrame:
     """Enrich actions with per-actor space creation columns.
 
@@ -6268,6 +6372,22 @@ def add_space_creation(
         joining the two must not meet conflicting columns.
     pitch_control_method : str
         Pitch control model.
+    visible_area : pd.DataFrame or None
+        Opt-in per-action FOV signal (ADR-077, M4): ``action_id`` -> ``polygon``
+        ``(N, 2)`` SPADL vertices, as produced by
+        ``silly_kicks.providers.statsbomb.shape_snapshots``. When supplied, a
+        one-team (opponent-perspective) frame is SOFTENED to NaN on the opponent
+        side (``space_opponent_source == "unresolved_one_team"``) ONLY when this
+        action's polygon is present AND FOV-cropped (observed pitch fraction below
+        ``full_coverage_floor``); a full-coverage or absent polygon keeps the loud
+        corrupt-frame raise. When ``None`` (the default), every one-team frame
+        raises -- so an SB360 opponent-perspective crop now REQUIRES ``visible_area``
+        to soften (it previously softened on the velocity marker; ADR-054 retired).
+        Purely additive: it never changes ``space_created_m2`` or any two-team frame.
+    full_coverage_floor : float, default 0.98
+        Observed pitch fraction at or above which an action counts as full-coverage
+        (matches :func:`~silly_kicks.tracking.validate_fov`'s default). Below it, a
+        present polygon is FOV-cropped.
 
     Returns
     -------
@@ -6339,6 +6459,22 @@ def add_space_creation(
     # degrade the two emitted columns -- it EXCHANGES them for the acting team.
     _flip = acting_team_attacks_rtl(actions, frames)
 
+    # ADR-077 (M4): resolve the REAL per-action FOV signal that governs one-team softening, from the
+    # caller-supplied `visible_area` polygons. `fov_cropped[i]` is True iff this action's polygon is
+    # OBSERVED and covers less than `full_coverage_floor` of the pitch (add_visible_area_coverage
+    # returns rows in `actions` order, so position i aligns with the loop below). Without
+    # `visible_area` every position stays False -> a one-team frame raises (the honest default; this
+    # RETIRES the ADR-054 velocity proxy that softened on the velocity marker).
+    fov_cropped_by_pos: np.ndarray | None = None
+    if visible_area is not None:
+        from ._visibility import VISIBLE_AREA_OBSERVED, add_visible_area_coverage
+
+        _cov = add_visible_area_coverage(actions, visible_area=visible_area, links=links)
+        _src = _cov["visible_area_source"].to_numpy()
+        _frac = _cov["visible_area_fraction"].to_numpy(dtype=float)
+        # NaN fractions (non-observed sources) compare False against the floor -> not cropped.
+        fov_cropped_by_pos = (_src == VISIBLE_AREA_OBSERVED) & (_frac < full_coverage_floor)
+
     for col in _SPACE_CREATION_COLUMNS:
         out[col] = np.nan
     # Seeded SEPARATELY from the float pre-seed above on purpose -- see the identical
@@ -6366,6 +6502,7 @@ def add_space_creation(
             frame,
             home_team_id=home_team_id,
             attacks_rtl=bool(_flip.iloc[i]),
+            fov_cropped=bool(fov_cropped_by_pos[i]) if fov_cropped_by_pos is not None else False,
             transition_grid=transition_grid,
             epv_grid=epv_grid,
             pitch_control_method=pitch_control_method,
@@ -6777,6 +6914,7 @@ def add_xt_gk(
     *,
     links: pd.DataFrame | None = None,
     params: XtGkParams | None = None,
+    visible_area: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Add xT-GK columns (xt_gk_base/pev/rav/dzv/pressure + composite xt_gk + the three
     provenance columns xt_gk_origin_source/xt_gk_dest_source/xt_gk_origin_confidence) per
@@ -6790,6 +6928,19 @@ def add_xt_gk(
     removed it. RAV uses a fitted GkCompletionModel (the bundled GS ``default``); the [das]
     extra is no longer required.
 
+    When ``visible_area`` (an ``action_id`` -> polygon table) is supplied, TWO FOV-observability
+    companions are appended -- ``xt_gk_pressure_observed_fraction`` / ``_observed_source`` and
+    ``xt_gk_pev_observed_fraction`` / ``_observed_source`` (ADR-077) -- reporting how much of the
+    pressure region the provider actually observed. ``xt_gk_pressure`` (rho) and ``xt_gk_pev`` both
+    flow through ``pressure_on_actor`` centred on the RESOLVED GK origin, so both share the
+    method-dispatched pressure ROI: the Andrienko directional oval for
+    ``params.pressure_method == "andrienko_oval"`` (default), the effective-support disk for
+    ``"link_zones"``, and ``degenerate_region`` (NaN) for the velocity-derived ``"bekkers_pi"``.
+    The composite ``xt_gk`` gets NO companion (it mixes a region-dependent term with the
+    GK-geometry base/rav/dzv -- no honest single fraction, M1). Opt-in and additive: the six
+    xt_gk value columns are byte-identical with and without ``visible_area``, and ``xt_gk_xfns`` is
+    untouched, so no VAEP feature changes (ADR-009).
+
     See NOTICE for full bibliographic citations (Eyestone xT-GK).
     """
     out = actions.copy()
@@ -6798,6 +6949,35 @@ def add_xt_gk(
     comp = compute_xt_gk(actions, frames, xt=xt, params=params, links=pointers)
     for c in comp.columns:
         out[c] = comp[c].to_numpy()
+
+    if visible_area is not None:
+        # The pressure ROI is centred on the RESOLVED GK origin (compute_xt_gk feeds
+        # pressure_on_actor sub_for_pressure["start_x"] = origin_x, NOT the raw start_x), so the
+        # RegionCtx anchor is xt_gk_origin_x/_y -- NaN on out-of-scope rows -> degenerate_region.
+        # compute_xt_gk always runs pressure_on_actor with DEFAULT pressure params (XtGkParams
+        # carries only the METHOD), so the oval / link radii come from the dataclass defaults.
+        p = params or XtGkParams()
+        ap = AndrienkoParams()
+        lp = LinkParams()
+        out = _append_engine_companions(
+            out,
+            actions,
+            frames,
+            registry_key="add_xt_gk",
+            visible_area=visible_area,
+            # Anchor is the RESOLVED GK origin, NOT the raw start_x (see the comment above).
+            sx=out["xt_gk_origin_x"].to_numpy(dtype=float),
+            sy=out["xt_gk_origin_y"].to_numpy(dtype=float),
+            extras={
+                "pressure_method": p.pressure_method,
+                "link_effective_radius": max(lp.r_hoz, lp.r_lz, lp.r_hz),
+                "oval_d_front": ap.d_front,
+                "oval_d_back": ap.d_back,
+                "goal_x": _kernels._GOAL_X,
+                "goal_y": _kernels._GOAL_Y_CENTER,
+            },
+            links=pointers,
+        )
 
     # Idempotent provenance merge (skip if any provenance column already present).
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
@@ -7047,11 +7227,21 @@ def add_defensive_credit(
     on_target_column: str = "shot_on_target_derived",
     links: pd.DataFrame | None = None,
     params=None,
+    visible_area: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Per-action defending-team defensive-credit aggregate (TF-51). See NOTICE for citations.
 
     No ``home_team_id``: the split derives from ``team_id != acting-team``. Links ONCE and threads
     the pointers through the aggregate + the provenance merge (single-link perf budget).
+
+    When ``visible_area`` (an ``action_id`` -> polygon table, e.g. from
+    ``silly_kicks.providers.statsbomb.shape_snapshots``) is supplied, TWO companion columns are
+    appended -- ``defensive_credit_observed_fraction`` + ``defensive_credit_observed_source`` -- the
+    mode-aware FOV-observability rollup over the defending credit set (ADR-077): each credit's region
+    is the proximity DISK / shot->goal CORRIDOR it searched (an ``anchor_actor`` credit has no
+    region), and the per-action fraction is the credit-magnitude-weighted mean over the region-bearing
+    OBSERVED credits. OPT-IN and additive: the primary net/plus/minus/n columns are byte-identical
+    with and without ``visible_area``, and this is NOT an xfns factory (ADR-009).
 
     Examples
     --------
@@ -7071,6 +7261,7 @@ def add_defensive_credit(
         on_target_column=on_target_column,
         links=pointers,
         params=params,
+        visible_area=visible_area,
     )
     provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
     if not any(c in out.columns for c in provenance_cols) and len(pointers) > 0:

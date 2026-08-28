@@ -296,6 +296,38 @@ def _dc_invoke(inputs):
     return F.add_defensive_credit(inputs[0], inputs[1], xg_column="xg", xt=inputs[2])
 
 
+def _full_pitch_visible(actions) -> pd.DataFrame:
+    """A full-pitch ``visible_area`` polygon table keyed on ``actions``' action_ids.
+
+    The construction shared BYTE-IDENTICALLY by every ADR-077 companion purity variant: one
+    full-pitch polygon per action. The companion path is the branch that reads the caller-supplied
+    polygon ndarray, so ADR-033 registers a `with_visible_area` variant beside each no-visible_area
+    default -- the array-reading branch is exactly where an in-place clip would leak into the
+    caller's object.
+    """
+    poly = np.array([[0.0, 0.0], [105.0, 0.0], [105.0, 68.0], [0.0, 68.0]])
+    return pd.DataFrame({"action_id": list(actions["action_id"]), "polygon": [poly] * len(actions)})
+
+
+def _dc_va_inputs():
+    """`add_defensive_credit` inputs WITH a `visible_area` polygon table (ADR-077 companion branch).
+
+    The rollup companion path reads a caller-supplied polygon ndarray, so ADR-033 requires it as a
+    second variant alongside the no-visible_area default -- the array-reading branch is where an
+    in-place clip would leak into the caller's object. The polygon table is the FOURTH element.
+    """
+    a = make_actions().copy()
+    a["xg"] = 0.2
+    a["shot_blocked"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    a["cross_blocked"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    a["shot_on_target_derived"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    return [a, make_frames(), _fresh_xt(), _full_pitch_visible(a)]
+
+
+def _dc_va_invoke(inputs):
+    return F.add_defensive_credit(inputs[0], inputs[1], xg_column="xg", xt=inputs[2], visible_area=inputs[3])
+
+
 # ---------------------------------------------------------------------------
 # The ONE canonical registry. Key = "<package>:<add_name>".
 # Variant = (variant_name, build_inputs: () -> list, invoke: (inputs) -> result_df).
@@ -327,20 +359,33 @@ def _visible_area_invoke(inputs):
 
 
 def _action_context_va_inputs():
-    """`add_action_context` inputs WITH a `visible_area` polygon table (companion branch).
+    """`add_action_context` inputs WITH a `visible_area` polygon table: [actions, frames, visible].
 
     The companion path is the only one that reads a caller-supplied polygon ndarray, so ADR-033
     requires it as a second variant alongside the no-visible_area default -- the array-reading
     branch is exactly where an in-place clip would leak into the caller's object.
     """
     actions = make_actions()
-    poly = np.array([[0.0, 0.0], [105.0, 0.0], [105.0, 68.0], [0.0, 68.0]])
-    visible = pd.DataFrame({"action_id": list(actions["action_id"]), "polygon": [poly] * len(actions)})
-    return [actions, make_frames(), visible]
+    return [actions, make_frames(), _full_pitch_visible(actions)]
 
 
 def _action_context_va_invoke(inputs):
     return F.add_action_context(inputs[0], inputs[1], visible_area=inputs[2])
+
+
+def _xtf_va_inputs():
+    """`visible_area` inputs for the xt-positional aggregators: [actions, frames, xt, visible].
+
+    Shared BYTE-IDENTICALLY by `add_player_influence`, `add_space_creation` and `add_xt_gk` -- each
+    takes a positional `xt` with the polygon table as the FOURTH element, and their built inputs are
+    identical (only the invoke differs per aggregator). ADR-033 registers this `with_visible_area`
+    variant beside each no-visible_area default so the array-reading companion path is exercised: the
+    pressure-ROI clip (xt_gk), the off-ball-threat zone (player_influence), and the one-team
+    opponent-perspective softening decision (space_creation, which reads the polygon via
+    `add_visible_area_coverage` even though the two-team `make_frames` fixture never softens).
+    """
+    actions = make_actions()
+    return [actions, make_frames(), _fresh_xt(), _full_pitch_visible(actions)]
 
 
 PURITY_ENTRIES: dict[str, list[tuple]] = {
@@ -429,8 +474,22 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: F.add_das(i[0], i[1], links=i[2]),
         ),
     ],
-    "tracking:add_defensive_credit": _one(_dc_inputs, _dc_invoke),
-    "tracking:add_defensive_line": _one(_std_inputs, _std_invoke(F.add_defensive_line, n=4)),
+    # ADR-077/ADR-033: the visible_area rollup companion path reads a caller-supplied polygon
+    # ndarray, so the conditional-column branch needs its own purity variant alongside the default.
+    "tracking:add_defensive_credit": [
+        ("no_visible_area", _dc_inputs, _dc_invoke),
+        ("with_visible_area", _dc_va_inputs, _dc_va_invoke),
+    ],
+    # ADR-077/ADR-033: the visible_area companion path reads a caller-supplied polygon ndarray,
+    # so the conditional-column branch needs its own purity variant alongside the default.
+    "tracking:add_defensive_line": [
+        ("no_visible_area", _std_inputs, _std_invoke(F.add_defensive_line, n=4)),
+        (
+            "with_visible_area",
+            _action_context_va_inputs,
+            lambda i: F.add_defensive_line(i[0], i[1], n=4, visible_area=i[2]),
+        ),
+    ],
     "tracking:add_elastic_sync": _one(_std_inputs, _std_invoke(F.add_elastic_sync)),
     # add_ghost_gk branches on `"ghost_gk_x" in frames.columns` (precompute short-circuit aliasing frames)
     # -> a variant per branch, incl. the alias path.
@@ -484,17 +543,38 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             _std_inputs,
             lambda i: F.add_packing(i[0], i[1], params=tracking.PackingParams(include_gk=True, back_line_n=3)),
         ),
+        # ADR-077/ADR-033: the visible_area companion path reads a caller-supplied polygon ndarray,
+        # so the conditional-column branch needs its own purity variant.
+        ("with_visible_area", _action_context_va_inputs, lambda i: F.add_packing(i[0], i[1], visible_area=i[2])),
     ],
     "tracking:add_pausa": [
         ("default", _std_inputs, _std_invoke(F.add_pausa)),
         ("xt_supplied", _xtf_inputs, lambda i: F.add_pausa(i[0], i[1], xt=i[2])),
     ],
     "tracking:add_pitch_control": _one(_std_inputs, _std_invoke(F.add_pitch_control)),
-    "tracking:add_player_influence": _one(_xtf_inputs, _xtf_map_invoke(F.add_player_influence)),
+    # ADR-077/ADR-033: add_player_influence conditionally appends the off_ball_xt_team companion
+    # when visible_area is supplied -> both branches registered (the array-reading companion path).
+    "tracking:add_player_influence": [
+        ("no_visible_area", _xtf_inputs, _xtf_map_invoke(F.add_player_influence)),
+        (
+            "with_visible_area",
+            _xtf_va_inputs,
+            lambda i: F.add_player_influence(i[0], i[1], i[2], visible_area=i[3]),
+        ),
+    ],
     "tracking:add_pre_shot_gk_angle": _one(_std_inputs, lambda i: F.add_pre_shot_gk_angle(i[0], frames=i[1])),
     "tracking:add_pre_shot_gk_position": _one(_std_inputs, _std_invoke(F.add_pre_shot_gk_position)),
     "tracking:add_press_commitment": _one(_std_inputs, _std_invoke(F.add_press_commitment)),
-    "tracking:add_pressure_on_actor": _one(_std_inputs, _std_invoke(F.add_pressure_on_actor)),
+    # ADR-077/ADR-033: add_pressure_on_actor conditionally appends the andrienko_oval companion when
+    # visible_area is supplied -> both branches (companion-present / -absent) are registered.
+    "tracking:add_pressure_on_actor": [
+        ("no_visible_area", _std_inputs, _std_invoke(F.add_pressure_on_actor)),
+        (
+            "with_visible_area",
+            _action_context_va_inputs,
+            lambda i: F.add_pressure_on_actor(i[0], i[1], visible_area=i[2]),
+        ),
+    ],
     # add_shape_graph / add_xcross_attempt / add_xshot_occurrence share the links-optimization branch
     # `links is not None and "frame_id" in links.columns` (body assigns a LOCAL frame-id set, never a
     # column) -> a supplied-links variant also confirms they don't mutate caller-supplied links.
@@ -514,12 +594,26 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             _xtf_inputs,
             lambda i: F.add_space_creation(i[0], i[1], home_team_id=5, xt=i[2]),
         ),
+        (
+            "with_visible_area",
+            _xtf_va_inputs,
+            lambda i: F.add_space_creation(i[0], i[1], home_team_id=5, xt=i[2], visible_area=i[3]),
+        ),
     ],
     "tracking:add_structural_pass": _one(_std_inputs, _std_invoke(F.add_structural_pass)),
     "tracking:add_sync_score": _one(
         lambda: [make_actions(), _fresh_links()], lambda i: tracking.add_sync_score(i[0], i[1])
     ),
-    "tracking:add_team_shape": _one(_std_inputs, _std_invoke(F.add_team_shape)),
+    # ADR-077/ADR-033: the visible_area companion path reads a caller-supplied polygon ndarray,
+    # so the conditional-column branch needs its own purity variant alongside the default.
+    "tracking:add_team_shape": [
+        ("no_visible_area", _std_inputs, _std_invoke(F.add_team_shape)),
+        (
+            "with_visible_area",
+            _action_context_va_inputs,
+            lambda i: F.add_team_shape(i[0], i[1], visible_area=i[2]),
+        ),
+    ],
     "tracking:add_xcross_attempt": [
         ("internal_link", _std_inputs, _std_invoke(tracking.add_xcross_attempt, home_team_id=5)),
         (
@@ -536,7 +630,16 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: tracking.add_xshot_occurrence(i[0], i[1], home_team_id=5, links=i[2]),
         ),
     ],
-    "tracking:add_xt_gk": _one(_xtf_inputs, _xtf_map_invoke(F.add_xt_gk)),
+    # ADR-077/ADR-033: the visible_area companion path reads a caller-supplied polygon ndarray (the
+    # pressure-ROI clip), so the conditional-column branch needs its own purity variant.
+    "tracking:add_xt_gk": [
+        ("no_visible_area", _xtf_inputs, _xtf_map_invoke(F.add_xt_gk)),
+        (
+            "with_visible_area",
+            _xtf_va_inputs,
+            lambda i: F.add_xt_gk(i[0], i[1], i[2], visible_area=i[3]),
+        ),
+    ],
     # ---- atomic.tracking (add_sync_score at the package level; 15 feature mirrors below) ----
     "atomic.tracking:add_sync_score": _one(
         lambda: [_atomic_actions(with_gk_role=False), _fresh_atomic_links()],
