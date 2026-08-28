@@ -523,9 +523,10 @@ def test_numba_loop_matches_numpy_closed_form():
 def test_ghost_gk_does_not_eagerly_import_numba():
     """Importing _ghost_gk must NOT transitively import numba or _ghost_gk_numba.
 
-    numba is loaded lazily only on the cpu-numba path (inside _kde_density_numba), so a bare
-    `import silly_kicks.tracking._ghost_gk` stays dependency-light. If this fails, an eager
-    top-level `from ._ghost_gk_numba import ...` slipped in -- move it into _kde_density_numba.
+    numba is loaded lazily on the cpu-numba KDE path (inside _kde_density_numba) AND the leaf
+    kernels (inside _use_ghost_numba), so a bare `import silly_kicks.tracking._ghost_gk` stays
+    dependency-light. If this fails, an eager top-level `from ._ghost_gk_numba import ...` slipped
+    in -- move it into _kde_density_numba or _use_ghost_numba.
     """
     import importlib
     import sys

@@ -5,6 +5,33 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.98.0] — 2026-08-27
+
+**Ghost-GK serving numba** — the boosted-tree **leaf traversal** is now numba-accelerated,
+**BIT-IDENTICALLY**, with a numpy fallback (PR-S169, ADR-076). The leaf walk is a shared hot loop:
+`_vectorized_leaf_values` backs the production `predict_mean` (serving), `_vectorized_leaf_indices`
+backs the KDE query leaf-match (`predict_density`) and `fit()`'s training leaf-match. One exact `@njit`
+kernel pair accelerates all three. Measured **11.8×** on `predict_mean` (500-tree model, 3000 rows =
+a Metrica game: 922 ms → 78 ms per traversal), `np.array_equal` max |Δ| = 0.000e+00. **No retrain, no
+re-materialize, no artifact change, C4-free** — every golden / chirality / feature-contract test passes
+unchanged.
+
+- **Hexagonal dispatch.** `_vectorized_leaf_*` are the numpy PORT (reference + fallback); two serial
+  `@njit` kernels in `tracking/_ghost_gk_numba.py` (`_leaf_values_numba` / `_leaf_indices_numba`) are
+  the ADAPTER; an internal `_FlatTrees` value object (per-tree **LOCAL** left/right + offsets + six
+  field arrays) is passed EXPLICITLY. numba is auto-used when the `[numba]` extra is installed, numpy
+  otherwise; `SILLY_KICKS_GHOST_FORCE_NUMPY=1` forces the numpy path (both adapters covered on every
+  CI leg). The numba import is LAZY (a bare `import _ghost_gk` stays numba-free). `_flat_trees` /
+  `_flat_trees_y` are derived state cached at `fit`/`load`, never serialized.
+- **The convergence-guard fidelity is ASYMMETRIC by design:** `_leaf_values_numba` RAISES on a
+  >depth-cap tree (it reads `value`), matching numpy; `_leaf_indices_numba` does NOT (it never reads
+  `value` and returns the non-converged LOCAL index) — a guard there would itself break bit-identity.
+- **`predict_density`'s default `kde_backend` is now `"auto"`** = `cpu-numba` if numba is usable, else
+  `vectorized` — the fastest **EXACT** backend (≤1e-9 of `vectorized`; the KDE golden already runs
+  `cpu-numba`). **`fft`/`fft-cic` stay an explicit opt-in** (approximate on the raw grid — the default
+  stays exact). A caller relying on the previous implicit `vectorized` default now gets `cpu-numba`;
+  pass `kde_backend="vectorized"` to pin the exact numpy raw grid. Every explicit backend is unchanged.
+
 ## [4.97.0] — 2026-08-27
 
 **Batched GKDV arms** — `gkdv.delta_das_batch` / `delta_threat_suppression_batch` make ONE
