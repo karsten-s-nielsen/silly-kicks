@@ -26,13 +26,20 @@ from silly_kicks.id_compat import (
 from silly_kicks.reflection import TRACKING_REFLECTION_KINDS, reflect
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
+from ._visibility import VISIBLE_AREA_OBSERVED
 from .schema import (
     EMPTY,
+    FOV_REGIME_ABSENT,
+    FOV_REGIME_CROPPED,
+    FOV_REGIME_EMPTY,
+    FOV_REGIME_FULL,
+    FOV_REGIME_MIXED,
     MIXED,
     POSITIONAL_ONLY,
     SPEED_SOURCE_UNAVAILABLE,
     VELOCITY_INFORMED,
     VELOCITY_MISSING,
+    FovDiagnosis,
     IdDtypeDiagnosis,
     LinkReport,
     TimeBaseDiagnosis,
@@ -685,6 +692,89 @@ def validate_velocity_regime(
         if on_mismatch == "warn":
             warnings.warn(message, stacklevel=2)
     return VelocityRegimeDiagnosis(regime, counts, has_cols, message)
+
+
+def validate_fov(
+    visible_area: pd.DataFrame,
+    *,
+    links: pd.DataFrame | None = None,
+    full_coverage_floor: float = 0.98,
+    on_mismatch: Literal["warn", "raise", "ignore"] = "raise",
+) -> FovDiagnosis:
+    """Report the field-of-view regime of a per-action visible_area table, before scoring.
+
+    Fourth member of the :func:`validate_time_base` / :func:`validate_velocity_regime` /
+    :func:`validate_id_dtypes` family (ADR-017, ADR-019). Takes ``visible_area`` only (plus optional
+    ``links`` for the ``unlinked`` overlay) -- FOV is a property of the per-action polygons alone, and
+    an unread ``frames`` / ``actions`` parameter would repeat the dead-parameter defect recorded
+    against ``space_creation``.
+
+    Empty input never raises; a ``mixed`` set (some actions full-coverage, others cropped/absent)
+    raises (default) / warns / is silent, exactly like :func:`validate_velocity_regime`'s ``mixed``.
+
+    Parameters
+    ----------
+    visible_area : pd.DataFrame
+        ``action_id`` -> ``polygon`` ``(N, 2)`` SPADL vertices, as produced by
+        ``silly_kicks.providers.statsbomb.shape_snapshots``.
+    links : pd.DataFrame or None
+        Optional ``link_actions_to_frames`` pointers. When given, an action with no linked frame is
+        tagged ``unlinked`` rather than ``no_polygon``.
+    full_coverage_floor : float, default 0.98
+        Observed pitch fraction at or above which an action counts as full-coverage.
+    on_mismatch : {"warn", "raise", "ignore"}, default "raise"
+        What to do when the regime is ``mixed``. An EMPTY visible_area never raises.
+
+    Returns
+    -------
+    FovDiagnosis
+
+    Examples
+    --------
+    Check the FOV regime before scoring anything that assumes whole-pitch observation::
+
+        diagnosis = validate_fov(visible_area, on_mismatch="warn")
+        if diagnosis.regime == "fov_cropped":
+            ...  # the provider observed only part of the pitch on every action
+    """
+    # Local import: used only on this one code path, so keep the _visibility dependency out of
+    # module import time (no cycle exists -- _visibility does not import utils).
+    from ._visibility import add_visible_area_coverage
+
+    n = 0 if visible_area is None else len(visible_area)
+    if n == 0:
+        return FovDiagnosis(FOV_REGIME_EMPTY, {}, {}, 0, "fov regime: empty visible_area.")
+    actions = pd.DataFrame({"action_id": visible_area["action_id"].to_numpy()})
+    cov = add_visible_area_coverage(actions, visible_area=visible_area, links=links)
+    src = cov["visible_area_source"]
+    frac = cov["visible_area_fraction"]
+    source_counts = {str(k): int(v) for k, v in src.value_counts(dropna=False).items()}
+    observed = src == VISIBLE_AREA_OBSERVED
+    obs_frac = {aid: float(f) for aid, f, o in zip(cov["action_id"], frac, observed, strict=True) if o}
+    n_obs = int(observed.sum())
+    n_full = int((observed & (frac >= full_coverage_floor)).sum())
+    # Discriminator = full-COEXISTS-with-not-full (P1). `mixed` is the fail-loud case the spec
+    # defines as "full-coverage actions mixed with cropped/absent ones", reachable ONLY by
+    # 0 < n_full < n -- a naive `elif n_full > 0` branch chain never reaches it.
+    if n_obs == 0:
+        regime = FOV_REGIME_ABSENT
+    elif n_full == n:
+        regime = FOV_REGIME_FULL
+    elif n_full == 0:
+        # No full action; partial polygons (plus any absent gaps of a partial provider).
+        regime = FOV_REGIME_CROPPED
+    else:  # 0 < n_full < n: full-coverage actions coexist with cropped/absent ones
+        regime = FOV_REGIME_MIXED
+    message = f"fov regime: {regime} ({n_obs}/{n} observed, {n_full} full >= {full_coverage_floor})."
+    if regime == FOV_REGIME_MIXED:
+        message += (
+            " Some actions are full-coverage and others are cropped/absent; scoring the set as one FOV is incoherent."
+        )
+        if on_mismatch == "raise":
+            raise ValueError(message)
+        if on_mismatch == "warn":
+            warnings.warn(message, stacklevel=2)
+    return FovDiagnosis(regime, obs_frac, source_counts, n, message)
 
 
 def validate_time_base(

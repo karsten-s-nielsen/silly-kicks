@@ -310,6 +310,21 @@ def audited_surface() -> set[str]:
     ``links``/``home_team_id`` only -- never ``visible_area`` -- so the companions never appear in a
     verdict block, and their absence is CORRECT, not an omission.
 
+    The ADR-077 FOV-observability cycle EXTENDS the exact same opt-in companion pattern to seven more
+    aggregators (``add_pressure_on_actor`` / ``add_packing`` / ``add_defensive_line`` /
+    ``add_team_shape`` / ``add_player_influence`` / ``add_xt_gk`` / ``add_defensive_credit`` -- eight
+    companioned total, joining ``add_action_context``'s ADR-062 companions), routed
+    through the single ``tracking._fov_registry`` engine, plus the ``validate_fov`` / ``FovDiagnosis``
+    frame-set diagnostic. Every one of those companions is gated on the SAME ``visible_area is not
+    None`` opt-in the ``generic`` adapter never supplies, so they are outside this surface for the
+    IDENTICAL reason -- a two-leg full-coverage fixture makes a visibility companion vacuous
+    (``identical -> works`` on a polygon both legs share), the "coverage denominator masquerading as a
+    signal" trap. ``validate_fov`` is a diagnostic, not an ``add_*``, and emits no feature column at
+    all. The FOV companions ARE verified, from both sides, in ``tests/tracking/test_fov_*.py`` (the
+    registry engine, the per-metric tight-ROI and aggregate-zone both-sides tests, the completeness
+    gate) and on the real licensed corpus by ``tests/tracking/test_fov_companions_licensed_e2e.py`` +
+    ``scripts/validate_sb360_licensed_corpus.py``. This scope decision is recorded in ADR-077.
+
     The tempting "fix" is a third, observed-region axis. It was tried and REJECTED. The ADR-053 audit
     is a TWO-LEG (Leg A vs Leg B) fabrication detector, and the companions depend on the polygon +
     action geometry, not on kinematics or roster -- so on the full-coverage fixture polygon both legs

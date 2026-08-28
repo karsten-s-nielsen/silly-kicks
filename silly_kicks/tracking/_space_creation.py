@@ -23,7 +23,7 @@ import pandas as pd
 
 from silly_kicks.id_compat import ids_match
 
-from ._velocity_availability import velocity_unavailable_by_design, zero_velocity_if_unavailable
+from ._velocity_availability import zero_velocity_if_unavailable
 
 if TYPE_CHECKING:
     from .pitch_control import PitchControlCache
@@ -99,6 +99,7 @@ def compute_space_created(
     pitch_control_cache: PitchControlCache | None = None,
     include_opponent_perspective: bool = False,
     attacks_rtl: bool = False,
+    fov_cropped: bool | None = None,
 ) -> pd.DataFrame:
     """Per-player space creation via leave-one-out differential OBSO.
 
@@ -160,6 +161,17 @@ def compute_space_created(
         — never from ``home_team_id``, which encodes identity, not direction
         (ADR-051 D1).  Default False preserves the pre-4.71.0 behaviour for
         already-attack-oriented callers.
+    fov_cropped : bool or None
+        Real per-action FOV signal (ADR-077, M4) governing one-team softening
+        when ``include_opponent_perspective=True``: soften (opponent side ->
+        NaN, ``space_opponent_source == "unresolved_one_team"``) iff True; else
+        raise on a one-team frame. True means this action's ``visible_area``
+        polygon is present AND FOV-cropped (observed pitch fraction below the
+        full-coverage floor). ``None``/``False`` (no FOV signal / full coverage)
+        is the honest default: a one-team frame is then corrupt, not a crop, and
+        raises. Resolved by :func:`add_space_creation` from
+        :func:`~silly_kicks.tracking.add_visible_area_coverage`; a two-team frame
+        ignores it (the opponent always resolves).
 
     Returns
     -------
@@ -184,12 +196,17 @@ def compute_space_created(
     opponent_team_id = None
     opponent_source: str | None = None  # meaningful only when include_opponent_perspective
     if include_opponent_perspective:
-        # Marker-gated FOV softening (spec Part 2): a legitimate velocity-unavailable-by-design
-        # (SB360) one-team freeze-frame degrades the opponent side to NaN rather than aborting the
-        # whole batch; a full-tracking one-team frame is still corrupt and still raises. The velocity
-        # marker is a PRAGMATIC PROXY for FOV-legitimacy (they coincide only in today's providers;
-        # ADR-054 amendment) -- migrate to a real frame-level FOV/visibility signal when one exists.
-        _mode = "nan" if velocity_unavailable_by_design(frame) else "raise"
+        # FOV-gated softening (ADR-077, M4): a legitimate one-team SB360 FOV crop degrades the
+        # opponent side to NaN rather than aborting the whole batch; a full-tracking one-team frame
+        # is still corrupt and still raises. Softening is driven by the action's REAL per-action FOV
+        # signal, ``fov_cropped`` -- True iff this action's ``visible_area`` polygon is present AND
+        # FOV-cropped (observed pitch fraction below the full-coverage floor), resolved by the caller
+        # (``add_space_creation``) from ``add_visible_area_coverage`` / ``validate_fov``. A missing
+        # polygon or full coverage leaves ``fov_cropped`` falsy -> raise. This RETIRES the ADR-054
+        # velocity proxy (velocity-less != FOV-cropped in general; they coincided only in today's
+        # providers). ``None``/``False`` is the honest default: with no FOV signal, a one-team frame
+        # is corrupt, not a crop.
+        _mode = "nan" if fov_cropped else "raise"
         opponent_team_id = _resolve_opponent_team_id(frame, attacking_team_id, on_unresolvable=_mode)
         opponent_source = "resolved" if opponent_team_id is not None else "unresolved_one_team"
     opponent_resolved = include_opponent_perspective and opponent_team_id is not None

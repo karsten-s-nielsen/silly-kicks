@@ -5,6 +5,63 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.99.0] — 2026-08-28
+
+**SB360 FOV-observability** — a first-class field-of-view visibility signal plus single-sourced,
+opt-in `visible_area` metric companions (PR-S170, ADR-077). Every region- or aggregate-based tracking
+metric silently under-reports on StatsBomb-360, where a defender outside the broadcast FOV lowers a
+count, shifts a mean, or shrinks a pressure value with nothing in the output saying so. This cycle
+makes FOV-observability first-class and single-sourced. **Everything is additive and opt-in: primary
+feature columns are byte-identical with and without `visible_area`, so there is NO VAEP retrain**; no
+new action-coupled aggregator (C4 count unchanged).
+
+- **`validate_fov` / `FovDiagnosis`** — a public frame-set diagnostic, the fourth member of the
+  `validate_time_base` / `validate_velocity_regime` / `validate_id_dtypes` family. Regimes
+  `full_coverage` / `fov_cropped` / `absent` / `mixed` (reachable only at `0 < n_full < n`) / `empty`
+  (a zero-row `visible_area` table, reported rather than smuggled into another regime); consumes only
+  the per-action `visible_area` polygon table; never raises on empty input.
+- **One observability model — the observed *area* fraction of a convex region.** A per-contributor
+  "roster fraction" is vacuous on a freeze-frame (a cropped-out player is absent from the frame
+  entirely → fraction ≡ ≈1.0, silent in exactly the biased case). Every companioned metric declares a
+  convex region (a tight ROI, or a fixed action-LTR zone) and the companion is
+  `region_observed_fraction(polygon, region)` — a right-half crop yields 0.5, never a lie near 1.0.
+- **A declarative registry engine** (`tracking/_fov_registry.py`) emits `<column>_observed_fraction` /
+  `_observed_source` for each metric through ONE code path. ADR-062's three-column `add_action_context`
+  helper is retired into it **byte-identically** (parity-gated).
+- **Opt-in `visible_area` kwarg on seven more aggregators** (eight companioned total, joining
+  `add_action_context`'s ADR-062 companions — which this cycle retired into the shared engine
+  byte-identically)**:** `add_pressure_on_actor` (Andrienko oval),
+  `add_packing` (passer→receiver band), `add_defensive_line` (defended third), `add_team_shape` (four
+  centroid columns → two role companions), `add_player_influence` (`off_ball_xt_team`), `add_xt_gk`
+  (`xt_gk_pressure` / `xt_gk_pev`, method-dispatched pressure ROI; the composite `xt_gk` is exempt),
+  and `add_defensive_credit` (a resolution-mode-aware, credit-magnitude-weighted per-action rollup).
+  Aggregate-position zones are FIXED action-LTR bands keyed on the column's role — NOT a `goal_map`,
+  which was verified to mis-orient away-possession actions (the polygon and metrics are all action-LTR).
+- **`space_creation` correctness fix — the velocity-FOV proxy is retired onto the real signal.**
+  `add_space_creation` / `compute_space_created` gain a `fov_cropped` parameter; opponent-perspective
+  one-team softening now keys on the real per-action FOV signal instead of the
+  `velocity_unavailable_by_design` proxy (ADR-054 amendment discharged, not re-worded).
+  **⚠ Caller-facing behaviour change:** opponent-perspective softening of a one-team frame now
+  REQUIRES `visible_area` — a one-team frame WITHOUT it now **raises** where it previously softened on
+  the velocity marker. `space_created_m2` and every two-team-frame path are unaffected (no VAEP retrain).
+- **⚠ Hyrum — `compute_defensive_credits` long-form widened by three additive columns**
+  (`origin_x` / `origin_y` / `region_radius`, appended at the END — the per-credit resolution anchor +
+  search radius the FOV rollup rebuilds each credit's region from). Column-name readers are unaffected;
+  fixed-position/count consumers of the long-form see three new trailing columns.
+- **A two-axis completeness gate** (`test_fov_completeness_gate.py`): every FOV-sensitive column must
+  carry a companion or an exemption-with-reason. `required` is the union of the SB360 audit's
+  `region_support` tag (a single-player-perturbation axis, tracking `add_*` surface, boundary entries
+  excluded structurally) and a hand-curated `_AGGREGATE_FOV_SENSITIVE` bucket for the aggregate metrics
+  the perturbation probe structurally misses. Exemptions: the composite `xt_gk`, and `ghost_gk_x` /
+  `ghost_gk_y` (a learned model with no single clean ROI — a bespoke ghost-observability model is a
+  later cycle).
+- **Docs/audit:** the opt-in companions are glossary-exempt (absent from default-config
+  `emitted_columns()`, like ADR-062's) so the `feature_glossary` count does NOT grow, and outside the
+  default-config SB360 audit surface (a two-leg full-coverage fixture makes a visibility companion
+  vacuous) — recorded at `tests/sb360/_registry.py::audited_surface` and verified on the real licensed
+  corpus by the licensed e2e + `scripts/validate_sb360_licensed_corpus.py`. All FOV primitives live in
+  the neutral `_visibility.py` / `_polygon.py` (Sutherland–Hodgman clipping, already in `NOTICE`); zero
+  pitch-control / DAS dependency.
 ## [4.98.0] — 2026-08-27
 
 **Ghost-GK serving numba** — the boosted-tree **leaf traversal** is now numba-accelerated,

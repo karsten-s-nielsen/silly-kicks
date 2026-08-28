@@ -786,6 +786,10 @@ _EXAMPLES_DEBT: dict[str, str] = {
         "The diagnosis type returned by validate_velocity_regime, third member of the "
         "validate_time_base / validate_id_dtypes family; demonstrated on the validator."
     ),
+    "silly_kicks/tracking/schema.py::FovDiagnosis": (
+        "The diagnosis type returned by validate_fov, fourth member of the validate_time_base / "
+        "validate_velocity_regime / validate_id_dtypes family; demonstrated on the validator."
+    ),
     "silly_kicks/tracking/schema.py::IdDtypeDiagnosis.has_mismatch": (
         "True when action and frame id dtypes would silently mis-resolve against each other."
     ),

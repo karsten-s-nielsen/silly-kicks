@@ -26,6 +26,10 @@ _LONG_COLS = [
     "frame_id",
     "sizing",
     "resolution",
+    # ADR-077/Task 6: additive per-credit region-anchor columns (proximity/lane FOV companion).
+    "origin_x",
+    "origin_y",
+    "region_radius",
 ]
 
 
