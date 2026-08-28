@@ -22,7 +22,7 @@ import os
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import Any, Literal, NamedTuple, overload
 
 import numpy as np
 import pandas as pd
@@ -45,6 +45,44 @@ from ._velocity_availability import (
 from ._velocity_availability import (
     velocity_unavailable_by_design as _velocity_unavailable_by_design,
 )
+
+# Optional numba acceleration for the boosted-tree leaf traversal (ADR-013 / ADR-008
+# pattern): the ``@njit`` kernels are the ADAPTER, the numpy ``_vectorized_leaf_*`` bodies are
+# the PORT + fallback. The import is LAZY (bound on first use, never at module import) so a bare
+# ``import _ghost_gk`` stays dependency-light -- the contract pinned by
+# ``test_ghost_gk_does_not_eagerly_import_numba``, mirroring the KDE ``cpu-numba`` path. The
+# kernels are bound as MODULE ATTRIBUTES so the dispatch (and test spies) resolve them at call
+# time. ``SILLY_KICKS_GHOST_FORCE_NUMPY=1`` forces the numpy path so both adapters run on every
+# CI leg.
+_HAS_GHOST_NUMBA: bool | None = None  # None = availability not yet probed
+_leaf_values_numba: Any = None
+_leaf_indices_numba: Any = None
+
+
+def _use_ghost_numba() -> bool:
+    """True iff the numba leaf kernels should serve (installed AND not force-numpy).
+
+    Lazily imports and binds :func:`_leaf_values_numba` / :func:`_leaf_indices_numba` as module
+    attributes on first call; the import is NOT performed at module load (keeps a bare
+    ``import _ghost_gk`` numba-free). The ``_HAS_GHOST_NUMBA is None`` guard makes the bind
+    happen exactly once, so a test spy that monkeypatches a kernel is never clobbered by a
+    re-import.
+    """
+    global _HAS_GHOST_NUMBA, _leaf_values_numba, _leaf_indices_numba
+    if os.environ.get("SILLY_KICKS_GHOST_FORCE_NUMPY", "") == "1":
+        return False
+    if _HAS_GHOST_NUMBA is None:
+        try:
+            from ._ghost_gk_numba import _leaf_indices_numba as _li
+            from ._ghost_gk_numba import _leaf_values_numba as _lv
+
+            _leaf_values_numba = _lv
+            _leaf_indices_numba = _li
+            _HAS_GHOST_NUMBA = True
+        except ImportError:  # pragma: no cover - exercised only without the [numba] extra
+            _HAS_GHOST_NUMBA = False
+    return bool(_HAS_GHOST_NUMBA)
+
 
 # ---------------------------------------------------------------------------
 # Grid constants (fixed for API stability — see spec Density Grid)
@@ -1191,7 +1229,55 @@ def prepare_ghost_gk_training_data(
 # ---------------------------------------------------------------------------
 
 
-def _vectorized_leaf_indices(nodes_list: list[np.ndarray], X: np.ndarray) -> np.ndarray:
+class _FlatTrees(NamedTuple):
+    """Trees flattened for the numba kernels: per-tree LOCAL left/right + offsets.
+
+    ``offsets[t]..offsets[t+1]`` is tree ``t``'s node block; ``left``/``right`` stay LOCAL
+    (child index within the tree), so the kernel walks ``cur = left[base+cur]`` and accesses
+    ``left[base + cur]`` -- remapping to global would double-add ``base``. Derived state,
+    never serialized (rebuilt from ``_tree_nodes`` at ``fit``/``load``).
+    """
+
+    left: np.ndarray
+    right: np.ndarray
+    feat: np.ndarray
+    thr: np.ndarray
+    miss: np.ndarray
+    val: np.ndarray
+    offsets: np.ndarray
+
+
+def _flatten_trees(nodes_list: list[np.ndarray]) -> _FlatTrees:
+    """Concatenate a list of per-tree structured node arrays into flat, dtype-pinned arrays.
+
+    The ``@njit`` kernels cannot take a Python list of structured arrays, so the six node
+    fields are concatenated across trees into 1-D arrays plus an ``offsets`` index (one entry
+    per tree + 1). ``left``/``right`` are kept per-tree LOCAL (NOT offset-shifted); see
+    :class:`_FlatTrees`.
+    """
+    offsets = np.zeros(len(nodes_list) + 1, dtype=np.int64)
+    for i, t in enumerate(nodes_list):
+        offsets[i + 1] = offsets[i] + len(t)
+
+    def cat(field: str, dt: type) -> np.ndarray:
+        if not nodes_list:
+            return np.zeros(0, dtype=dt)
+        return np.concatenate([t[field] for t in nodes_list]).astype(dt)
+
+    return _FlatTrees(
+        left=cat("left", np.int64),
+        right=cat("right", np.int64),
+        feat=cat("feature_idx", np.int64),
+        thr=cat("num_threshold", np.float64),
+        miss=cat("missing_go_to_left", np.int64),
+        val=cat("value", np.float64),
+        offsets=offsets,
+    )
+
+
+def _vectorized_leaf_indices(
+    nodes_list: list[np.ndarray], X: np.ndarray, *, flat: _FlatTrees | None = None
+) -> np.ndarray:
     """Vectorized tree traversal for all trees at once.
 
     Parameters
@@ -1201,12 +1287,20 @@ def _vectorized_leaf_indices(nodes_list: list[np.ndarray], X: np.ndarray) -> np.
         left, right, feature_idx, num_threshold, missing_go_to_left.
     X : np.ndarray
         Feature matrix, shape (n_samples, n_features).
+    flat : _FlatTrees | None
+        Pre-flattened form of ``nodes_list`` (see :func:`_flatten_trees`). When supplied AND
+        the ``[numba]`` extra is installed (and ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is unset),
+        the traversal dispatches to the bit-identical ``@njit`` adapter. Otherwise the numpy
+        body below runs (the reference + fallback).
 
     Returns
     -------
     np.ndarray
         Shape (n_samples, n_trees) — leaf node index per sample per tree.
     """
+    if flat is not None and _use_ghost_numba():
+        return _leaf_indices_numba(flat.left, flat.right, flat.feat, flat.thr, flat.miss, flat.val, flat.offsets, X)
+
     n_samples = X.shape[0]
     n_trees = len(nodes_list)
     leaves = np.zeros((n_samples, n_trees), dtype=np.intp)
@@ -1244,7 +1338,9 @@ def _vectorized_leaf_indices(nodes_list: list[np.ndarray], X: np.ndarray) -> np.
     return leaves
 
 
-def _vectorized_leaf_values(nodes_list: list[np.ndarray], X: np.ndarray) -> np.ndarray:
+def _vectorized_leaf_values(
+    nodes_list: list[np.ndarray], X: np.ndarray, *, flat: _FlatTrees | None = None
+) -> np.ndarray:
     """Sum of the reached-leaf ``value`` across all trees — the HGBR raw additive prediction.
 
     Sibling of :func:`_vectorized_leaf_indices`: identical traversal, but instead of
@@ -1266,6 +1362,11 @@ def _vectorized_leaf_values(nodes_list: list[np.ndarray], X: np.ndarray) -> np.n
         ``feature_idx``, ``num_threshold``, ``missing_go_to_left``, ``value``).
     X : np.ndarray
         Feature matrix, shape (n_samples, n_features); fit-time column order.
+    flat : _FlatTrees | None
+        Pre-flattened form of ``nodes_list`` (see :func:`_flatten_trees`). When supplied AND
+        the ``[numba]`` extra is installed (and ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is unset),
+        the traversal dispatches to the bit-identical ``@njit`` adapter. Otherwise the numpy
+        body below runs (the reference + fallback). Bit-identical either way (``np.array_equal``).
 
     Returns
     -------
@@ -1277,6 +1378,9 @@ def _vectorized_leaf_values(nodes_list: list[np.ndarray], X: np.ndarray) -> np.n
     >>> # baseline + _vectorized_leaf_values(trees, X) == regressor.predict(X)
     >>> # (see tests/tracking/test_ghost_gk_serve_mean.py parity gate)
     """
+    if flat is not None and _use_ghost_numba():
+        return _leaf_values_numba(flat.left, flat.right, flat.feat, flat.thr, flat.miss, flat.val, flat.offsets, X)
+
     n_samples = X.shape[0]
     total = np.zeros(n_samples, dtype=np.float64)
 
@@ -1667,6 +1771,10 @@ class GhostGkModel:
         self._verbose = verbose
         self._tree_nodes: list[np.ndarray] | None = None
         self._tree_nodes_y: list[np.ndarray] | None = None
+        # Derived state: the two ensembles flattened for the numba leaf kernels, cached at
+        # fit()/load() (never serialized — rebuilt from _tree_nodes). See _flatten_trees.
+        self._flat_trees: _FlatTrees | None = None
+        self._flat_trees_y: _FlatTrees | None = None
         self._baseline_x: float | None = None
         self._baseline_y: float | None = None
         self._training_gk_x: np.ndarray | None = None
@@ -1767,6 +1875,11 @@ class GhostGkModel:
         self._tree_nodes = [tree_list[0].nodes.copy() for tree_list in regressor._predictors]
         self._tree_nodes_y = [tree_list[0].nodes.copy() for tree_list in regressor_y._predictors]
 
+        # Flatten once for the numba leaf kernels (derived state; predict_mean / predict_density /
+        # the training leaf-match below all dispatch through these). Bit-identical to the numpy path.
+        self._flat_trees = _flatten_trees(self._tree_nodes)
+        self._flat_trees_y = _flatten_trees(self._tree_nodes_y)
+
         # Per-regressor additive baseline (numpy-2 safe: shape (1,1), bare float(ndarray)
         # warns/raises under numpy>=2 — go through .item()).
         self._baseline_x = float(regressor._baseline_prediction.item())
@@ -1774,7 +1887,7 @@ class GhostGkModel:
 
         # Keep training leaves + labels — the KDE / predict_density still needs them
         # (the gk_x leaf partition + the joint (gk_x, gk_y) labels for the density/mode/spread).
-        self._training_leaves = _vectorized_leaf_indices(self._tree_nodes, X)
+        self._training_leaves = _vectorized_leaf_indices(self._tree_nodes, X, flat=self._flat_trees)
         self._training_gk_x = np.array(y_x, copy=True)
         self._training_gk_y = np.asarray(y_y, dtype=np.float64).copy()
 
@@ -1811,7 +1924,8 @@ class GhostGkModel:
         the serialized tree node arrays + baselines via :func:`_vectorized_leaf_values`,
         so it is deterministic, sklearn-version-independent at inference, and identical
         after :meth:`fit` and :meth:`load`. Cheap — pure leaf traversal, no leaf-match,
-        no grid KDE.
+        no grid KDE; numba-accelerated (bit-identical) when the ``[numba]`` extra is
+        installed, numpy fallback otherwise (via the cached :attr:`_flat_trees`).
 
         Returns shape (n_samples, 2) — served (x, y).
 
@@ -1835,28 +1949,35 @@ class GhostGkModel:
         # mis-predict.
         X = features[self._feature_names()].values.astype(np.float64)
         out = np.empty((len(X), 2), dtype=np.float64)
-        out[:, 0] = self._baseline_x + _vectorized_leaf_values(self._tree_nodes, X)
-        out[:, 1] = self._baseline_y + _vectorized_leaf_values(self._tree_nodes_y, X)
+        out[:, 0] = self._baseline_x + _vectorized_leaf_values(self._tree_nodes, X, flat=self._flat_trees)
+        out[:, 1] = self._baseline_y + _vectorized_leaf_values(self._tree_nodes_y, X, flat=self._flat_trees_y)
         return out
 
-    def predict_density(self, features: pd.DataFrame, *, kde_backend: str = "vectorized") -> list[GhostGkDensity]:
+    def predict_density(self, features: pd.DataFrame, *, kde_backend: str = "auto") -> list[GhostGkDensity]:
         """Full density prediction per sample.
 
         Computes leaf co-occurrence weights, weighted 2D KDE, grid evaluation.
 
         Parameters
         ----------
-        kde_backend : {"vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "vectorized"
-            KDE kernel. "vectorized" (cpu-numpy) is the default closed-form path; "scipy" is the
-            reference oracle; "cpu-numba" runs the serial @njit fused loop (~10x the hot loop,
-            value-equivalent within golden tolerance) and requires the ``[numba]`` extra; "fft"
-            is the binned-convolution backend (O(k + m log m); ~2000x on the full-k production
-            regime) -- faithful on mean/spread and on the mode for UNIMODAL grids, but on near-tie
-            MULTIMODAL grids the NGP snap can flip the emitted mode by several metres, and it is NOT
-            bit-faithful on the raw ``probabilities`` grid. "fft-cic" adds CIC (bilinear) binning:
-            ~76% fewer multimodal mode flips + tighter raw grid than "fft" (NGP) at ~2x the bin
-            cost. PREFER "fft-cic" over "fft" for new FFT consumers unless you need NGP's extra speed
-            on known-unimodal data; use "vectorized"/"cpu-numba" for an exact raw grid. See ADR-014.
+        kde_backend : {"auto", "vectorized", "scipy", "cpu-numba", "fft", "fft-cic"}, default "auto"
+            KDE kernel. "auto" (the default) resolves to the fastest EXACT backend: "cpu-numba"
+            when the ``[numba]`` extra is installed (and ``SILLY_KICKS_GHOST_FORCE_NUMPY`` is
+            unset), else "vectorized". "cpu-numba" is exact within ~1e-9 of "vectorized"/"scipy"
+            (numba ``exp`` vs numpy ``exp``; the KDE golden already runs "cpu-numba"), so the
+            default is exact-arithmetic -- a caller relying on the previous implicit "vectorized"
+            default now gets "cpu-numba"; pass ``kde_backend="vectorized"`` to pin the exact numpy
+            raw grid. "vectorized" (cpu-numpy) is the closed-form path; "scipy" is the reference
+            oracle; "cpu-numba" runs the serial @njit fused loop (~10x the hot loop) and requires
+            the ``[numba]`` extra; "fft" is the binned-convolution backend (O(k + m log m); ~2000x
+            on the full-k production regime) -- faithful on mean/spread and on the mode for UNIMODAL
+            grids, but on near-tie MULTIMODAL grids the NGP snap can flip the emitted mode by
+            several metres, and it is NOT bit-faithful on the raw ``probabilities`` grid. "fft-cic"
+            adds CIC (bilinear) binning: ~76% fewer multimodal mode flips + tighter raw grid than
+            "fft" (NGP) at ~2x the bin cost. "fft"/"fft-cic" stay an explicit opt-in (approximate on
+            the raw grid -- the gold-standard default stays exact). PREFER "fft-cic" over "fft" for
+            new FFT consumers unless you need NGP's extra speed on known-unimodal data; use
+            "auto"/"vectorized"/"cpu-numba" for an exact raw grid. See ADR-014.
 
         Examples
         --------
@@ -1877,13 +1998,18 @@ class GhostGkModel:
             )
             raise RuntimeError(msg)
 
+        # Resolve "auto" to the fastest EXACT backend: cpu-numba if numba is usable, else the
+        # numpy closed-form. fft stays an explicit opt-in (approximate on the raw grid).
+        if kde_backend == "auto":
+            kde_backend = "cpu-numba" if _use_ghost_numba() else "vectorized"
+
         training_gk_x = self._training_gk_x
         training_gk_y = self._training_gk_y
 
         # Reindex to the canonical fit-time column order (same positional guard as
         # predict_mean): the leaf traversal indexes X[:, feature_idx] positionally.
         X = features[self._feature_names()].values.astype(np.float64)
-        query_leaves = _vectorized_leaf_indices(self._tree_nodes, X)
+        query_leaves = _vectorized_leaf_indices(self._tree_nodes, X, flat=self._flat_trees)
 
         # Precompute grid mesh
         grid_xx, grid_yy = np.meshgrid(_GRID_X, _GRID_Y, indexing="ij")
@@ -2157,6 +2283,9 @@ class GhostGkModel:
         )
         model._tree_nodes = tree_nodes
         model._tree_nodes_y = tree_nodes_y
+        # Rebuild the flat-tree cache (derived state, not serialized) for the numba leaf kernels.
+        model._flat_trees = _flatten_trees(tree_nodes)
+        model._flat_trees_y = _flatten_trees(tree_nodes_y)
         model._baseline_x = baseline_x
         model._baseline_y = baseline_y
         model._training_gk_x = training_gk_x
