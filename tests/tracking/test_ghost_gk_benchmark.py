@@ -28,7 +28,9 @@ def test_leaf_traversal_performance(trained_model, benchmark):
     batch = pd.concat([X] * 2, ignore_index=True).iloc[:1000]
     X_arr = batch.values.astype(np.float64)
 
-    result = benchmark(lambda: _vectorized_leaf_indices(model._tree_nodes, X_arr))
+    # Measure the PRODUCTION path: pass the cached flat trees so the traversal dispatches to the
+    # numba kernel when installed (matching predict_mean/predict_density), not the numpy fallback.
+    result = benchmark(lambda: _vectorized_leaf_indices(model._tree_nodes, X_arr, flat=model._flat_trees))
     assert result.shape == (1000, 50)
 
 
