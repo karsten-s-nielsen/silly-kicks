@@ -322,6 +322,19 @@ def main() -> None:
 
     args = parse_args()
 
+    # Refuse to fit a SHIPPABLE ghost artifact under a scikit-learn outside the supported fit range
+    # (VSSOT-IMPL-03). HistGradientBoosting produces different trees across sklearn versions (measured:
+    # same corpus/commit/pandas under 1.7.2 vs 1.9.0 -> different weights, different sha256). The
+    # `[train]` extra pins `scikit-learn>=1.9,<2` but marker-gates it to python>=3.11 (sklearn 1.9
+    # dropped 3.10), so `pip install .[train]` on py3.10 silently resolves an older sklearn. This makes
+    # that footgun LOUD at the fit-time entry point rather than shipping mismatched weights. Kept here,
+    # not in GhostGkModel.fit(): the non-slow library unit tests fit toy models on the leg's own
+    # sklearn (1.7.2 on py3.10) and a library-level raise would redden those legs; this trainer's own
+    # smokes are all @slow (primary 3.12 leg, sklearn 1.9.0).
+    from scripts._train_guard import require_training_sklearn
+
+    print(f"scikit-learn {require_training_sklearn()} (within the supported fit range for bundled weights)")
+
     # FIRST, before any parquet is read or any model is fitted. This trainer stamps
     # `training_commit` into the SHIPPED artifact's metadata.json, and it used to read that SHA
     # from a bare `git rev-parse HEAD` -- which returns the same commit whether or not the tree is

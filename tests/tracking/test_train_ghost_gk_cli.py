@@ -15,8 +15,18 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from scripts._train_guard import sklearn_supports_training
 from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
 from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
+
+# VSSOT-IMPL-03: these smokes run the ghost trainer end to end, which now REFUSES to fit under a
+# scikit-learn outside the supported range [1.9, 2). Skip (don't fail) when the env is out of range --
+# CI's 3.12 primary leg (where these @slow tests run) always resolves sklearn>=1.9, so this never
+# reduces real coverage; it only spares a stale dev env (e.g. sklearn 1.8.0) or a future 2.0.
+pytestmark = pytest.mark.skipif(
+    not sklearn_supports_training(),
+    reason="ghost trainer requires scikit-learn in [1.9, 2) (VSSOT-IMPL-03 fit-time guard)",
+)
 
 
 def _tiny_cache(root: Path, n_games: int = 2) -> None:
