@@ -5,6 +5,43 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.101.0] — 2026-08-29
+
+**Single source of truth for the package version** (PR-S172, ADR-079). The version was hand-maintained in two
+places that could silently disagree — `pyproject.toml` `[project] version` and
+`silly_kicks/__init__.py` `__version__` — the drift that had to be caught by hand every release. It
+now lives in exactly one editable file, mirroring `ruthless-efficiency` (its ADR-002). **No runtime
+or behaviour change; no retrain; C4-free.**
+
+- **`silly_kicks/_version.py` (new)** holds the one `__version__` literal (import-free, so tooling can
+  read the version without importing the package). `pyproject.toml` `[project]` declares
+  `dynamic = ["version"]` with `[tool.hatch.version] path = "silly_kicks/_version.py"`, and
+  `silly_kicks/__init__.py` re-exports it. The wheel/sdist metadata and the runtime
+  `silly_kicks.__version__` now derive from one source and cannot drift.
+- **Release procedure:** bump `silly_kicks/_version.py` only; `uv.lock` follows from `uv lock`, the
+  metadata follows from hatchling. A broken `[tool.hatch.version] path` fails CI at `pip install -e`.
+- **Guard:** `tests/test_version_single_source.py` catches *reintroduction* of a second version
+  source (a static `version` re-added to `[project]`, or a hard-coded literal back in `__init__`) —
+  the one thing deleting the duplication cannot prevent. Preferred over a consistency test, which can
+  only fail after the inconsistency has already shipped (ADR-002's reasoning).
+- **Lockfile correction (surfaced by the new `uv lock`-based release procedure).** The committed
+  `uv.lock` silently violated the `[train]` extra's declared `scikit-learn>=1.9` floor (it carried
+  `1.8.0`) because `scikit-learn 1.9.0` — the only release satisfying `>=1.9` — dropped Python 3.10
+  while the package is `requires-python>=3.10`, so `uv lock` could not resolve the universal graph at
+  all. The `[train]` sklearn floor is now marker-gated to `python_version >= '3.11'` (the supported
+  fit platform; mirrors the `[golden-master]` extra), keeping Python 3.10 support (ADR-057 relies on
+  the 3.10 CI leg for pandas-2 coverage). Re-locking moved `scikit-learn` to `1.9.0` on py≥3.11 and
+  filled two pre-existing lock gaps (`pytest-split`, `narwhals`). CI installs via `pip install -e`
+  (not `uv sync`), so this does not change CI resolution; no runtime or API change.
+- **Training-reproducibility hardening around that marker (VSSOT-IMPL-03).** The `[train]` sklearn
+  pin gains an **upper bound** — `scikit-learn>=1.9,<2` — mirroring the neighbouring `xgboost>=2.0,<4.0`,
+  because a floor with no ceiling would drift to a future major that (by the same measurement) changes
+  the trees. And the ghost trainer (`scripts/train_ghost_gk.py`) now **fails loud at fit time**
+  (`scripts/_train_guard.require_training_sklearn`) if scikit-learn is outside `[1.9, 2)`, so a py3.10
+  install of `[train]` can no longer silently fit and ship ghost weights under an older sklearn. The
+  guard is ghost-scoped by design: the logistic bundles fit a convex, version-stable problem and their
+  own provenance checks compare the major version only, so 1.7 vs 1.9 is a non-issue for them.
+
 ## [4.100.0] — 2026-08-28
 
 **SB360 as a first-class tracking-feature provider** — one keeper-identity resolver, a canonical

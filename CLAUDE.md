@@ -91,7 +91,7 @@ narrative deliberately lives elsewhere; grep these rather than re-adding paragra
 | Question | Source |
 |---|---|
 | What shipped in a release, and what it broke | `CHANGELOG.md` (every version, keyed by `PR-Snnn`) |
-| Why a design is the way it is | `docs/superpowers/adrs/` (ADR-001..ADR-061 plus `ADR-TEMPLATE.md`, referenced inline throughout) |
+| Why a design is the way it is | `docs/superpowers/adrs/` (ADR-001..ADR-079 plus `ADR-TEMPLATE.md`, referenced inline throughout) |
 | What is planned or blocked | `TODO.md` |
 | The measurement behind a claim | `docs/research/<topic>/` |
 | Specs and plans | `docs/superpowers/specs/`, `docs/superpowers/plans/` |
@@ -99,6 +99,7 @@ narrative deliberately lives elsewhere; grep these rather than re-adding paragra
 
 ## Key conventions
 
+- **The package version is single-sourced in `silly_kicks/_version.py` (ADR-079).** `pyproject.toml` `[project]` is `dynamic = ["version"]` with `[tool.hatch.version] path = "silly_kicks/_version.py"`, and `silly_kicks/__init__.py` re-exports it — so the wheel/sdist metadata and the runtime `silly_kicks.__version__` derive from ONE literal and cannot drift. Bump that **one** file for a release; `uv.lock` follows from `uv lock` (never hand-edit it), and the metadata follows from hatchling. A typo in the `[tool.hatch.version] path` fails CI at `pip install -e`, so it can't lie dormant until release. Guarded by `tests/test_version_single_source.py` (catches *reintroduction* of a second source, which deletion alone cannot).
 - No pandera — schemas are plain Python dicts (`SPADL_COLUMNS`, `ATOMIC_SPADL_COLUMNS`).
 - Config DataFrames (`actiontypes_df()`, etc.) are cached with `@functools.cache`.
 - Vectorized dispatch: converters use `np.select` over pre-flattened columns, not `apply(axis=1)`.

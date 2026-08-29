@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts._train_guard import sklearn_supports_training
 from silly_kicks.tracking._ghost_gk import GRID_NX, GRID_NY, GhostGkModel
 from tests.tracking.test_ghost_gk import _fitted_model, _make_ghost_gk_frames
 
@@ -359,6 +360,14 @@ class TestRoundTripTrainPredict:
         assert np.all(preds[:, 0] <= 35)
 
 
+# VSSOT-IMPL-03: the smoke invokes the ghost trainer end to end, which now REFUSES to fit under a
+# scikit-learn outside the supported range [1.9, 2). Skip (don't fail) when the env is out of range --
+# scoped to THIS class so the other integration tests in this module (which fit toy models directly)
+# are unaffected. CI's 3.12 primary leg (where @slow runs) always resolves sklearn>=1.9.
+@pytest.mark.skipif(
+    not sklearn_supports_training(),
+    reason="ghost trainer requires scikit-learn in [1.9, 2) (VSSOT-IMPL-03 fit-time guard)",
+)
 class TestTrainScriptSmoke:
     """Train script runs on synthetic data and produces artifacts."""
 
