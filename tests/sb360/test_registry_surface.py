@@ -136,6 +136,19 @@ def test_applicability_classes_are_declared():
             assert cls in V.APPLICABILITY, f"{name}.{col}: undeclared applicability class {cls!r}"
 
 
+def test_audited_surface_documents_the_new_producer_exclusion():
+    """The producer + resolver are outside the audit; the deliberate exclusion must be documented.
+
+    ``run_tracking_features`` (an orchestrator) and ``resolve_keeper_identities`` (an identity mapping)
+    are neither ``add_*`` nor ``BOUNDARY_ENTRY_POINTS``, so ``audited_surface`` picks up neither -- a
+    scope note keeps that exclusion documented rather than silent.
+    """
+    doc = audited_surface.__doc__ or ""
+    assert "run_tracking_features" in doc and "resolve_keeper_identities" in doc, (
+        "audited_surface must document why the producer + resolver are outside the audit"
+    )
+
+
 def test_not_exercised_count_is_within_its_locked_budget():
     actual = sum(
         1

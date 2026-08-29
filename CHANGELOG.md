@@ -5,6 +5,45 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.100.0] — 2026-08-28
+
+**SB360 as a first-class tracking-feature provider** — one keeper-identity resolver, a canonical
+`add_*` call convention, and a provider-agnostic feature producer (PR-S171, ADR-078). StatsBomb-360
+freeze-frames are anonymous (numbered rows, no player identity), so every GK-domain aggregator that
+keys on *which* keeper had nothing to key on and scored NaN. This cycle resolves the real keeper
+identity onto the anonymous frames and unlocks the SB360 GK features. **Retrain / Hyrum trigger
+(intended): SB360 GK-domain features go from honest-NaN to VALUES**; non-GK / non-SB360 output is
+byte-identical, and there is no new action-coupled aggregator (C4 count stays 33).
+
+- **`tracking.resolve_keeper_identities(actions, frames, *, identity, roster=None)`** — the ONE
+  keeper-identity resolver (ADR-055 single-source). `identity="native"` DELEGATES to the existing
+  TF-13 `defending_gk_from_frames` / `acting_gk_from_frames`; `identity="roster"` is the SB360
+  event-›roster-›derivation-›NA precedence ladder (a goal-kick actor overrides a stale roster starter,
+  flagged as a `conflict`). Returns a PURE `{(game, period, team) → KeeperIdentity(gk_id, source,
+  conflict)}` map + a conserving `KeeperIdentityReport`; `keeper_id_source` vocabulary
+  `{event, roster, native, derived, unresolved}`. Under `identity="roster"` a synthetic `{0,1}` team
+  pair (or a wrong-match roster) RAISES.
+- **Two pure placement helpers** — `add_defending_gk_player_id` stamps the opponent keeper's id on the
+  action grain; `apply_keeper_identities_to_frames` is the identity→frame bridge that stamps the
+  resolved real id onto the anonymous keeper rows so `add_pre_shot_gk_position`'s
+  `frame.player_id == defending_gk_player_id` match succeeds (without it the SB360 GK features stay NaN).
+- **Canonical `add_*` call convention** — pinned by `tests/tracking/test_call_convention_registry.py`:
+  `frames` is never keyword-only; a required fitted model may be the 3rd positional argument (the five
+  positional-`xt` aggregators keep their 108 call sites unchanged — no correctness payoff to churning
+  them). The sole deviation, `add_pre_shot_gk_angle`'s keyword-only `frames`, is fixed (main + atomic
+  mirror).
+- **`tracking.run_tracking_features(...)`** — a provider-agnostic producer (an orchestrator, NOT a new
+  aggregator): resolves keeper identity once, bridges it onto both grains (frame bridge on the roster
+  path only), pre-links + shares one `PitchControlCache`, injects the caller-supplied `xt` / `xg_column`
+  per family (`FAMILY_MODEL_REQUIREMENTS`), runs each family under a per-family guard, and returns the
+  enriched actions + a conserving `TrackingFeaturesReport`. A family whose model is absent is SKIPPED
+  (honest absence); a velocity-constitutive metric stays NaN whether it self-degrades (`add_das` →
+  `das_source="unscoreable_frame"`) or is skipped (ADR-063).
+- **`scripts/_sb_battery.py` single-sources its model routing** from the library's
+  `FAMILY_MODEL_REQUIREMENTS`, so the SB360 audit `_entries/*` stay byte-identical.
+- **Component 2 (deterministic snapshot id dtypes) carries NO work** — already shipped in 4.79.0
+  (ADR-057/058). The ADR-054 `_defending_goal` stale note is closed (→ ADR-055).
+
 ## [4.99.0] — 2026-08-28
 
 **SB360 FOV-observability** — a first-class field-of-view visibility signal plus single-sourced,

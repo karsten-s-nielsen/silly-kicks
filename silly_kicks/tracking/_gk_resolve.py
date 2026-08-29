@@ -131,6 +131,7 @@ def _gk_from_frames_linked(
     *,
     same_team: bool,
     tolerance_seconds: float,
+    links: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Shared body of the two public resolvers: per-action GK player_id from the LINKED frame.
 
@@ -138,7 +139,11 @@ def _gk_from_frames_linked(
     whose team matches (``same_team=True``, the ACTING team's GK) or differs (``same_team=False``, the
     OPPOSING/defending GK) from the action's team. Deterministic lowest-player_id tiebreak; output cast
     to frames' ``player_id`` dtype. ``same_team=False`` reproduces the original
-    ``defending_gk_from_frames`` byte-for-byte (only the team predicate is parameterized)."""
+    ``defending_gk_from_frames`` byte-for-byte (only the team predicate is parameterized).
+
+    ``links`` is the codebase's pre-linking thread-through: when supplied (the pointers output of
+    ``link_actions_to_frames``), the per-call link is SKIPPED and the caller-supplied pointers are used
+    -- byte-identical, since the pointers already bake in the caller's tolerance."""
     pid_dtype = frames["player_id"].dtype
 
     n = len(actions)
@@ -147,7 +152,10 @@ def _gk_from_frames_linked(
     if n == 0 or len(frames) == 0:
         return out
 
-    pointers, _report = link_actions_to_frames(actions, frames, tolerance_seconds=tolerance_seconds)
+    if links is None:
+        pointers, _report = link_actions_to_frames(actions, frames, tolerance_seconds=tolerance_seconds)
+    else:
+        pointers = links
 
     gk_rows = frames[(frames["is_goalkeeper"] == True) & (~frames["is_ball"])].copy()  # noqa: E712
     if gk_rows.empty:
@@ -209,6 +217,7 @@ def defending_gk_from_frames(
     frames: pd.DataFrame,
     *,
     tolerance_seconds: float = 0.2,
+    links: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Per-action defending-GK player_id resolved from tracking frames.
 
@@ -244,7 +253,7 @@ def defending_gk_from_frames(
 
     See NOTICE for full bibliographic citations.
     """
-    return _gk_from_frames_linked(actions, frames, same_team=False, tolerance_seconds=tolerance_seconds)
+    return _gk_from_frames_linked(actions, frames, same_team=False, tolerance_seconds=tolerance_seconds, links=links)
 
 
 def acting_gk_from_frames(
@@ -252,6 +261,7 @@ def acting_gk_from_frames(
     frames: pd.DataFrame,
     *,
     tolerance_seconds: float = 0.2,
+    links: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Per-action ACTING-team GK player_id resolved from tracking frames (mirror of
     :func:`defending_gk_from_frames` with the team predicate inverted, CR 2026-07-01).
@@ -286,7 +296,7 @@ def acting_gk_from_frames(
 
     See NOTICE for full bibliographic citations.
     """
-    out = _gk_from_frames_linked(actions, frames, same_team=True, tolerance_seconds=tolerance_seconds)
+    out = _gk_from_frames_linked(actions, frames, same_team=True, tolerance_seconds=tolerance_seconds, links=links)
     need = out.isna().to_numpy()
     if not need.any() or len(frames) == 0:
         return out

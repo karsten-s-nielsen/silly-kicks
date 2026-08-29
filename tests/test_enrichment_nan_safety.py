@@ -79,6 +79,9 @@ _TRACKING_NEEDS_EXTRA = {
     # ADR-055: not "needs extra kwargs" in the usual sense -- it takes NO frames at all
     # (`(actions, *, visible_area, links)`), so the standard-signature test cannot call it.
     "add_visible_area_coverage",
+    # ADR-054 keeper-identity placement: takes `(actions, keeper_map)`, not `(actions, frames)`,
+    # so the standard-signature test cannot call it -- its own branch builds a keeper_map.
+    "add_defending_gk_player_id",
     "add_xt_gk",
     "add_off_ball_run_values",
     # Cycle B: newly VISIBLE to the registry once discovery widened to the package. All three
@@ -841,6 +844,24 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         frames["vx"] = 0.0
         frames["vy"] = 0.0
         out = helper(actions, frames)
+    elif name == "add_defending_gk_player_id":
+        # Takes `(actions, keeper_map)`, not frames. The NaN-IDENTIFIER surface this gate fuzzes is
+        # `actions.team_id`: the fixture's row 2 has a NaN team, which cannot resolve an opponent,
+        # so it must route to the documented per-row NA default rather than crash. The map covers
+        # the fixture teams (1, 2) so the resolvable rows produce a real stamp.
+        from silly_kicks.id_compat import canonical_id
+        from silly_kicks.tracking import KeeperIdentity
+
+        keeper_map = {
+            (canonical_id(1), 1, canonical_id(1)): KeeperIdentity(gk_id=100, source="roster", conflict=False),
+            (canonical_id(1), 1, canonical_id(2)): KeeperIdentity(gk_id=200, source="roster", conflict=False),
+        }
+        out = helper(actions, keeper_map)
+        # Non-vacuity: the NaN-team row (row 2) took the documented NA default, and a resolvable
+        # row produced a real stamp -- so the helper actually ran rather than degrading wholesale.
+        nan_team = actions["team_id"].isna().to_numpy()
+        assert out.loc[nan_team, "defending_gk_player_id"].isna().all()
+        assert out.loc[~nan_team, "defending_gk_player_id"].notna().any()
     else:
         out = helper(actions, frames)
     assert isinstance(out, pd.DataFrame), f"{name} returned {type(out).__name__}, expected pd.DataFrame"

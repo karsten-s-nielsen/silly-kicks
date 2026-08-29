@@ -263,6 +263,19 @@ REGISTERED_AGGREGATORS = {name for name in dir(F) if name.startswith("add_") and
 # unaccounted public function rather than passing unnoticed.
 NON_LINKED_AGGREGATORS: dict[str, str] = {
     # "add_xxx": "reason it compares no action/frame/home_team ids",
+    "add_defending_gk_player_id": (
+        "Takes NO frames -- its second positional is a keeper_map, not a frames DataFrame -- so this "
+        "gate's permutation (which varies actions/frames/home_team_id dtypes) reaches no action-vs-"
+        "frame id comparison. Its SOLE output is the id column `defending_gk_player_id`, which "
+        "`_is_id_col` excludes from the value comparison, so an AGGREGATORS entry would be vacuous. "
+        "Its own id-dtype hazard -- the opponent lookup routes team ids through `canonical_id` against "
+        "the canonical keeper_map keys -- IS exercised across dtypes by "
+        "tests/tracking/test_keeper_placement_helpers.py (int action team_id vs canonical string map "
+        "keys) and tests/tracking/test_keeper_identity_contracts.py::"
+        "test_roster_keys_match_across_id_dtypes_via_id_compat (int AND string roster keys both "
+        "resolve). The enumerated id-scalar registry cross-check does not flag it: it has no id-scalar "
+        "(`*_id`) parameter."
+    ),
     "add_visible_area_coverage": (
         "Takes NO frames -- inspect.signature is (actions, *, visible_area, links) -- so there is no "
         "action-vs-frame id comparison for THIS gate's permutation (which varies actions/frames/"
