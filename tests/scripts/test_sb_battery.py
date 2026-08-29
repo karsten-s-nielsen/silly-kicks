@@ -29,6 +29,38 @@ def test_adapter_map_is_single_sourced_in_sb_battery():
         assert fn.__module__ == "scripts._sb_battery", f"{name} resolves to {fn.__module__}"
 
 
+def test_model_routing_derives_from_the_library():
+    """ADAPTER_MAP's model-injection groupings are single-sourced from the library, not re-encoded.
+
+    The production producer (``run_tracking_features``) and this audit read ONE map --
+    ``silly_kicks.tracking._run_features.FAMILY_MODEL_REQUIREMENTS`` -- of which family needs which
+    injected model, so a drift on either side fails here rather than diverging silently.
+    """
+    from silly_kicks.tracking._run_features import FAMILY_MODEL_REQUIREMENTS
+
+    # Every family the library classifies is routed by the battery.
+    for name in FAMILY_MODEL_REQUIREMENTS:
+        assert name in B.ADAPTER_MAP, f"{name} classified by the library but absent from ADAPTER_MAP"
+
+    # Each model-routing requirement code resolves to exactly its audit adapter (not a second copy).
+    by_req = {
+        "xt_positional": B.with_xt,
+        "xt_keyword": B.with_xt_keyword,
+        "xg": B.defensive_credit,
+        "link": B.sync_score,
+        "visible_area": B.visible_area_coverage,
+    }
+    for name, req in FAMILY_MODEL_REQUIREMENTS.items():
+        if req in by_req:
+            assert B.ADAPTER_MAP[name] is by_req[req], f"{name} ({req}) routed to the wrong audit adapter"
+
+    # The library's gk_prereq set is exactly the two families keeping the GK-prerequisite adapters.
+    gk_prereq = {n for n, r in FAMILY_MODEL_REQUIREMENTS.items() if r == "gk_prereq"}
+    assert gk_prereq == set(B._GK_PREREQ_ADAPTERS)
+    assert B.ADAPTER_MAP["add_pre_shot_gk_position"] is B.pre_shot_gk_position
+    assert B.ADAPTER_MAP["add_pre_shot_gk_angle"] is B.pre_shot_gk_angle
+
+
 def test_call_aggregator_action_context_emits_columns():
     actions, frames, links = F.build_leg_a()
     result = B.call_aggregator("add_action_context", actions, frames, links, F.HOME_TEAM_ID)

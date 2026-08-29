@@ -49,7 +49,7 @@ def test_registry_has_no_stale_entries():
 
 def test_registry_surface_is_the_expected_size():
     """Pins the count so a silent export change is visible in the diff."""
-    assert len(_public_add_names()) == 34, sorted(_public_add_names())
+    assert len(_public_add_names()) == 35, sorted(_public_add_names())
 
 
 @pytest.mark.parametrize("name", sorted(MIRROR_ENTRIES))

@@ -838,8 +838,8 @@ def pre_shot_gk_angle_off_goal_line(actions: pd.DataFrame, frames: pd.DataFrame)
 @nan_safe_enrichment
 def add_pre_shot_gk_angle(
     actions: pd.DataFrame,
-    *,
     frames: pd.DataFrame,
+    *,
     links: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Atomic-SPADL aggregator: 2 GK-angle columns at the linked frame.

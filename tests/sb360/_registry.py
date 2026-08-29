@@ -339,6 +339,16 @@ def audited_surface() -> set[str]:
     gate), and ``scripts/validate_sb360_licensed_corpus.py`` (all five degradation tokens observed on
     the real licensed corpus). This reinterprets the design spec's §9 (which proposed the axis); the
     reinterpretation is recorded in ADR-062 and routed back to review. See the plan's Task 6.
+
+    SCOPE NOTE (SB360 first-class-provider cycle) -- ``run_tracking_features`` and
+    ``resolve_keeper_identities`` are DELIBERATELY outside this surface. ``run_tracking_features`` is an
+    ORCHESTRATOR (a ``run_*``, not an ``add_*``): it adds no feature column of its own, it runs the
+    already-audited ``add_*`` family, and its correctness is proven by composition-equivalence in
+    ``tests/tracking/test_run_tracking_features.py`` -- a per-family SB360 verdict on it would only
+    re-audit the members this registry already covers. ``resolve_keeper_identities`` returns an identity
+    MAPPING (a ``resolve_*``), not action-grain feature columns, so it has no per-column verdict to
+    record. Neither is an ``add_*`` nor a ``BOUNDARY_ENTRY_POINTS`` member, so ``audited_surface`` picks
+    up neither automatically; recording the exclusion here keeps it documented, not silent.
     """
     return public_add_star() | set(BOUNDARY_ENTRY_POINTS)
 

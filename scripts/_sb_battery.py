@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 import silly_kicks.tracking as tracking
+from silly_kicks.tracking._run_features import FAMILY_MODEL_REQUIREMENTS
 
 
 @functools.cache
@@ -215,6 +216,33 @@ def visible_area_coverage(fn):
     return call
 
 
+def defending_gk_player_id(fn):
+    """``add_defending_gk_player_id(actions, keeper_map)`` takes NO frames.
+
+    So it cannot use :func:`generic`, which forwards ``(actions, frames, ...)``. The keeper_map is
+    built from the ACTIONS (identical on both legs, since only the FRAMES differ between Leg A and
+    Leg B), so the stamped ``defending_gk_player_id`` is frame-INDEPENDENT: it produces the same
+    output on the freeze-frame leg and the velocity-bearing leg by construction. That is the honest
+    verdict -- an opponent-keeper id cannot fabricate off freeze-frame kinematics because it never
+    reads a frame. The synthetic keeper ids need not be real: the audit compares the two legs, and
+    both build the same map from the same actions.
+    """
+
+    def call(actions, frames, links, home_team_id):
+        from silly_kicks.id_compat import canonical_id
+        from silly_kicks.tracking import KeeperIdentity
+
+        keeper_map = {}
+        seen = actions[["game_id", "period_id", "team_id"]].dropna().drop_duplicates()
+        for i, (g, p, t) in enumerate(zip(seen["game_id"], seen["period_id"], seen["team_id"], strict=True)):
+            keeper_map[(canonical_id(g), p, canonical_id(t))] = KeeperIdentity(
+                gk_id=900 + i, source="roster", conflict=False
+            )
+        return fn(actions, keeper_map)
+
+    return call
+
+
 def with_pressure_methods(fn):
     """``add_pressure_on_actor`` audits BOTH the default ``andrienko_oval`` AND the velocity-derived
     ``bekkers_pi`` -- the latter is opt-in (not in the default ``methods`` tuple), so ``generic``
@@ -231,36 +259,49 @@ def with_pressure_methods(fn):
     return call
 
 
-#: Aggregators whose signature does not fit the :func:`generic` adapter. Hand-written rather than
-#: guessed: an adapter that supplies a default for a required argument turns a wrong call into a
-#: recorded verdict about the library.
-ADAPTER_MAP: dict[str, Callable] = {
-    # Require a fitted ExpectedThreat.
-    "add_cover_shadows": with_xt,
-    "add_gk_influence": with_xt,
-    "add_off_ball_run_values": with_xt,
-    "add_player_influence": with_xt,
-    "add_xt_gk": with_xt,
-    # Requires an xg_column too -- silly-kicks ships no xG model.
-    "add_defensive_credit": defensive_credit,
-    # xt is KEYWORD-only with a None default; left unset they take the SYNTHETIC EPV path
-    # and emit SyntheticEPVWarning, which CI escalates -- recording `raises_a` for a
-    # function that works fine when handed the xT a real consumer supplies.
-    "add_obso": with_xt_keyword,
-    "add_pausa": with_xt_keyword,
-    "add_space_creation": with_xt_keyword,
-    # frames is keyword-only here, positional in its sibling; both need the GK prerequisite.
-    "add_pre_shot_gk_angle": pre_shot_gk_angle,
+#: Model-injection routing is SINGLE-SOURCED from the library
+#: (:data:`silly_kicks.tracking._run_features.FAMILY_MODEL_REQUIREMENTS`): the production producer
+#: (``run_tracking_features``) and this audit read ONE map of which family needs which injected model,
+#: so the two can never disagree about it. Only the audit-synthesized INPUTS (:func:`audit_xt`,
+#: ``audit_xg=0.12``, the fixed ``visible_area`` polygon) stay LOCAL -- an audit concern, not the
+#: library's. A library requirement code maps to the audit adapter that supplies that model:
+_MODEL_ROUTING_ADAPTERS: dict[str, Callable] = {
+    "xt_positional": with_xt,  # a fitted ExpectedThreat as the 3rd positional arg
+    "xt_keyword": with_xt_keyword,  # xt keyword-only; unset -> SyntheticEPVWarning (CI-escalated)
+    "xg": defensive_credit,  # an xg_column silly-kicks does not ship, plus xt
+    "link": sync_score,  # add_sync_score(actions, links), no frames
+    "visible_area": visible_area_coverage,  # no frames, REQUIRES visible_area
+}
+
+#: The ``gk_prereq`` families keep their two distinct call-shape adapters: both supply the same
+#: ``defending_gk_player_id`` prerequisite, but they are kept SEPARATE (not unified) so
+#: :mod:`tests.sb360._calls` can re-export each by name and the committed ``_entries`` stay
+#: byte-identical. The library classifies BOTH as ``gk_prereq``; ``test_sb_battery`` pins that agreement.
+_GK_PREREQ_ADAPTERS: dict[str, Callable] = {
     "add_pre_shot_gk_position": pre_shot_gk_position,
-    # Takes `links` as its second POSITIONAL argument and no frames at all.
-    "add_sync_score": sync_score,
-    # A jersey/roster helper over different inputs, returning a tuple of frames.
+    "add_pre_shot_gk_angle": pre_shot_gk_angle,
+}
+
+#: Call-shape adapters the library map does NOT classify (they take different inputs / audit a method
+#: sweep, not a model injection): the jersey/roster helper, the keeper-identity placement stamp
+#: (frame-independent, identical on both legs), and the pressure two-method sweep.
+_CALL_SHAPE_ADAPTERS: dict[str, Callable] = {
     "add_gradientsports_player_ids": gradientsports_player_ids,
-    # Takes NO frames and REQUIRES `visible_area`, so the generic adapter raises TypeError.
-    "add_visible_area_coverage": visible_area_coverage,
-    # Audits the opt-in velocity-derived bekkers_pi method alongside the default andrienko_oval, so
-    # the ADR-063 honest-NaN tier (spec Part 4) is exercised by the two-leg fixture.
+    "add_defending_gk_player_id": defending_gk_player_id,
     "add_pressure_on_actor": with_pressure_methods,
+}
+
+#: The per-aggregator adapter map, ASSEMBLED from the single-sourced library routing (never a second
+#: hand-maintained copy of the groupings). Each library-classified family takes its model-routing
+#: adapter or (for ``gk_prereq``) its call-shape adapter; the call-shape specials are added on top.
+ADAPTER_MAP: dict[str, Callable] = {
+    **{
+        name: _MODEL_ROUTING_ADAPTERS[req]
+        for name, req in FAMILY_MODEL_REQUIREMENTS.items()
+        if req in _MODEL_ROUTING_ADAPTERS
+    },
+    **_GK_PREREQ_ADAPTERS,
+    **_CALL_SHAPE_ADAPTERS,
 }
 
 

@@ -164,6 +164,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/xthreat/_physical.py",
     "silly_kicks/tracking/_warnings.py",
     "silly_kicks/tracking/_receiver.py",
+    "silly_kicks/tracking/_run_features.py",
     "silly_kicks/tracking/_run_values.py",
     "silly_kicks/tracking/defensive_credit/_params.py",
     "silly_kicks/tracking/defensive_credit/_orchestration.py",
@@ -213,6 +214,9 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_ball_carrier.py",
     "silly_kicks/tracking/_defensive_line.py",
     "silly_kicks/tracking/_elastic_sync.py",
+    # ADR-055 single-source keeper-identity resolver, reached via `tracking.__all__` from this
+    # cycle. Documented on export rather than deferred -- a brand-new public module ships clean.
+    "silly_kicks/tracking/_keeper_identity.py",
     "silly_kicks/tracking/_line_breaking.py",
     "silly_kicks/tracking/_obso.py",
     "silly_kicks/tracking/_packing.py",

@@ -328,6 +328,29 @@ def _dc_va_invoke(inputs):
     return F.add_defensive_credit(inputs[0], inputs[1], xg_column="xg", xt=inputs[2], visible_area=inputs[3])
 
 
+def _defending_gk_map():
+    """A resolved keeper map covering the make_actions/make_frames teams (home 5, opponent 6)."""
+    from silly_kicks.id_compat import canonical_id
+    from silly_kicks.tracking import KeeperIdentity
+
+    return {
+        (canonical_id(1), 1, canonical_id(5)): KeeperIdentity(gk_id=901, source="roster", conflict=False),
+        (canonical_id(1), 1, canonical_id(6)): KeeperIdentity(gk_id=902, source="roster", conflict=False),
+    }
+
+
+def _defending_gk_inputs():
+    """`add_defending_gk_player_id(actions, keeper_map)` inputs. Actions carry no pre-populated
+    `defending_gk_player_id` so the helper STAMPS a new column; the keeper_map dict is the second
+    input (not a DataFrame/Series/ndarray, so it is not snapshotted, but the `out is not input` check
+    still applies to it)."""
+    return [make_actions().drop(columns=["defending_gk_player_id"]), _defending_gk_map()]
+
+
+def _defending_gk_invoke(inputs):
+    return F.add_defending_gk_player_id(inputs[0], inputs[1])
+
+
 # ---------------------------------------------------------------------------
 # The ONE canonical registry. Key = "<package>:<add_name>".
 # Variant = (variant_name, build_inputs: () -> list, invoke: (inputs) -> result_df).
@@ -476,6 +499,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     ],
     # ADR-077/ADR-033: the visible_area rollup companion path reads a caller-supplied polygon
     # ndarray, so the conditional-column branch needs its own purity variant alongside the default.
+    "tracking:add_defending_gk_player_id": _one(_defending_gk_inputs, _defending_gk_invoke),
     "tracking:add_defensive_credit": [
         ("no_visible_area", _dc_inputs, _dc_invoke),
         ("with_visible_area", _dc_va_inputs, _dc_va_invoke),

@@ -530,8 +530,28 @@ def _run_visible_area_coverage():
     return actions, F.add_visible_area_coverage(actions, visible_area=visible)
 
 
+def _run_defending_gk_player_id():
+    """`add_defending_gk_player_id(actions, keeper_map)` -- an IDENTITY stamp, not a frame feature.
+
+    It takes a keeper_map (not frames), so the `_std` (actions, frames) call shape cannot exercise
+    it; a dedicated runner builds a map covering the fixture's teams (home 5, opponent 6) and drops
+    the pre-populated `defending_gk_player_id` so the stamp is a genuinely ADDED column. The stamped
+    column is an id (object dtype), non-null on every action (team 5 -> opponent 6's keeper 902), and
+    dtype-exempt from the non-constant check (it is not a float metric)."""
+    from silly_kicks.id_compat import canonical_id
+    from silly_kicks.tracking import KeeperIdentity, KeeperIdentityMap
+
+    actions = make_actions().drop(columns=["defending_gk_player_id"])
+    m: KeeperIdentityMap = {
+        (canonical_id(1), 1, canonical_id(5)): KeeperIdentity(gk_id=901, source="roster", conflict=False),
+        (canonical_id(1), 1, canonical_id(6)): KeeperIdentity(gk_id=902, source="roster", conflict=False),
+    }
+    return actions, F.add_defending_gk_player_id(actions, m)
+
+
 ENTRIES: dict[str, object] = {
     "add_action_context": _std(F.add_action_context),
+    "add_defending_gk_player_id": _run_defending_gk_player_id,
     "add_visible_area_coverage": _run_visible_area_coverage,
     "add_actor_pre_window": _std(F.add_actor_pre_window),
     # detailed=True is REQUIRED here, not incidental: `max_single_defender_player_id` is gated to

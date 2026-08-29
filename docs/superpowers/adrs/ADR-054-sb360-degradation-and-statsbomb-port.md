@@ -118,7 +118,8 @@ players reach SPADL through the same affine WITH `crc`, so omitting it would off
   exactly that, and the two ALREADY disagree on the no-GK-rows fallback. It is also an ADR-028 D3
   orientation defect, but `_ghost_gk.py` is not in the pinned D3 unit
   (`tests/tracking/test_mirror_registry.py:294-311` asserts exactly three files), so it is queued in
-  `TODO.md` rather than assumed covered.
+  `TODO.md` rather than assumed covered. → RESOLVED by ADR-055 (4.77.0): the fork was deleted and
+  replaced by the canonical `GoalMap`; no TODO row ever existed.
 * **The `snapshot_to_tracking_frames` dtype pin** and the four unauditable boundary entry points.
 
 ## Three defects this cycle found in its own guards
