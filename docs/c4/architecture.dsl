@@ -25,10 +25,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator; physical_grid resampling. ADR-041." "Python" "Library"
             xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate), metric compute_xt_gk_v2 over 3 injected ports, resolved-GK-geometry edge (apply_resolved_gk_geometry), bundled rho weights." "Python" "Library"
             gkdv = container "silly_kicks.gkdv" "GKDV v1 (TF-19): ghost-substitution engine (build_ghost_frames) + two gate-independent physics arms (delta-DAS, delta-threat-suppression) in attacker-value units (negative = deterrent). ADR-043." "Python" "Library"
+            restdefense = container "silly_kicks.restdefense" "TF-60 rest defense Layer 1: rearguard structure KPIs (numerical superiority, zone occupancy, line/GK height) at the in-possession action grid; GoalMap-oriented; SB360 FOV-aware. ADR-080." "Python" "Library"
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze -> converter input): Sportec/DFL (golden-pinned, [parse-dfl] extra) + SB360 freeze-frames -> tracking frames + visible_area (no extra). ADR-031/054." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 352 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 363 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
         }
 
         // --- Relationships: Context level ---
@@ -79,6 +80,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         // --- Relationships: GKDV v1 (TF-19 PR-3) ---
         analyst -> gkdv "Values keeper positioning against a league-average ghost via" "build_ghost_frames + delta_das / delta_threat_suppression"
         gkdv -> tracking "Consumes PUBLIC tracking seams + ONE confined private DAS port (_das_port.py); never the reverse (allowlist-gated)" "Python import"
+        restdefense -> tracking "Consumes PUBLIC tracking seams (GoalMap, defensive line, team shape, linkage, FOV) only; never the reverse (allowlist-gated)" "Python import"
         gkdv -> xthreat "Weights the pitch-control field by per-cell threat with an injected fitted model" "ExpectedThreat"
         gkdv -> accessibleSpace "Sums per-player DAS under ONE direction pinned on the factual frames via" "_das_port / get_individual_das()"
 

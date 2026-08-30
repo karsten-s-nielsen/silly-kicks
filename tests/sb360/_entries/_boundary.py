@@ -11,6 +11,7 @@ import pandas as pd
 import silly_kicks.spadl as spadl
 from silly_kicks.gkdv import GkdvParams, build_ghost_frames
 from silly_kicks.id_compat import canonical_id, ids_equal, same_id
+from silly_kicks.restdefense import RD_LAYER1_COLUMNS
 from silly_kicks.xtgk import DeltaV, PressureLevels, State, compute_xt_gk_v2
 from tests.sb360._registry import AxisVerdict, _entry
 
@@ -357,4 +358,71 @@ _entry(
     applicability_deltas={"delta_threat_suppression": {"extreme": 0.0, "near": 0.0}},
     verdict_provenance="substantive",
     provenance_rationale=_GKDV_DELTA_THREAT_RATIONALE,
+)
+
+
+# --- TF-60 restdefense (ADR-080): the Layer-1 rest-defense structure sampler ------------------
+def _call_rest_defense(actions, frames, links, home_team_id):
+    """``compute_rest_defense`` projected to per-ACTION (its samples table is per-scored-sample).
+
+    Left-joins the Layer-1 metric columns back onto ``actions`` so both legs align row-for-row;
+    an unscored action lands NaN. ``home_team_id`` is unused -- restdefense takes direction from
+    the ``GoalMap`` (ADR-055), never team identity."""
+    from silly_kicks.restdefense import RD_LAYER1_COLUMNS, compute_rest_defense
+
+    samples, _ = compute_rest_defense(actions, frames, links=links)
+    cols = ["action_id", *RD_LAYER1_COLUMNS, "rd_geometry_source"]
+    metrics = samples[cols].drop_duplicates(subset=["action_id"])
+    return actions[["action_id"]].merge(metrics, on="action_id", how="left")
+
+
+# The Layer-1 metrics are POSITIONAL (counts, line/GK heights, rearguard shape) -- they read no
+# velocity -- so both legs (velocity-less freeze-frame Leg A, velocity-bearing Leg B) share identical
+# positions and observe `identical` -> `works`. `works` here means restdefense fabricates nothing
+# through a kinematic input it never reads (a frame-coupling tripwire), NOT that its output is
+# SB360-computable in general -- keeper identity must be resolved+bridged upstream (ADR-078). Hence
+# verdict_provenance=`structural`: a value that cannot move across the velocity legs was not
+# substantively handled.
+_RD_ALL = tuple(RD_LAYER1_COLUMNS)
+_RD_GK_COLS = ("rd_gk_line_height", "rd_gk_to_line_distance")
+_RD_GK_ABSENT_RATIONALE = (
+    "The gk_absent roster removes BOTH keepers, so the GK-position metrics have no keeper to read in "
+    "EITHER leg -> both all-NaN -> no_signal, unexercisable. The count/line/shape columns still "
+    "observe `identical`. [measured cause=n/a]"
+)
+_RD_PROVENANCE_RATIONALE = (
+    "Positional (velocity-invariant) Layer-1 structure metrics: both legs share identical positions "
+    "so every column observes `identical`. `works` means no fabrication through a kinematic input "
+    "restdefense never reads -- a frame-coupling regression tripwire -- NOT that the metrics are "
+    "SB360-computable end-to-end (keeper identity is resolved+bridged upstream, ADR-078). Structural."
+)
+
+_entry(
+    "restdefense.compute_rest_defense",
+    _call_rest_defense,
+    columns=_RD_ALL,
+    velocity={c: AxisVerdict("identical", _WORKS) for c in _RD_ALL},
+    visibility={
+        "gk_absent": {
+            c: (
+                AxisVerdict("no_signal", "not_exercised", rationale=_RD_GK_ABSENT_RATIONALE)
+                if c in _RD_GK_COLS
+                else AxisVerdict("identical", _WORKS)
+            )
+            for c in _RD_ALL
+        },
+        "defender_absent": {c: AxisVerdict("identical", _WORKS) for c in _RD_ALL},
+        "gk_one_end": {c: AxisVerdict("identical", _WORKS) for c in _RD_ALL},
+    },
+    # Single-player perturbation: the count/line/shape metrics aggregate over the whole samples table
+    # and a one-player move (to a corner far from the ball) crosses no band boundary -> no_support;
+    # the two GK-position metrics are moved by relocating the (far-from-ball) keeper -> support_data_defined.
+    applicability={c: ("support_data_defined" if c in _RD_GK_COLS else "no_support") for c in _RD_ALL},
+    applicability_deltas={
+        **{c: {"extreme": 0.0, "near": 0.0} for c in _RD_ALL if c not in _RD_GK_COLS},
+        "rd_gk_line_height": {"extreme": 4.1871955840515085, "near": 0.0},
+        "rd_gk_to_line_distance": {"extreme": 4.187195584051494, "near": 0.0},
+    },
+    verdict_provenance="structural",
+    provenance_rationale=_RD_PROVENANCE_RATIONALE,
 )

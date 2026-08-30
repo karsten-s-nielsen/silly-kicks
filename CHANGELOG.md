@@ -5,6 +5,51 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.102.0] — 2026-08-30
+
+**TF-60 rest-defense structure metrics — Layer 1 (PR-S173, ADR-080).** A new hexagonal
+`silly_kicks.restdefense` package (a new C4 container) ships the DESCRIPTIVE rest-defense structure
+KPIs — how much rearguard cover an IN-POSSESSION team keeps while attacking. Sampled at the
+in-possession team's on-ball **action grid** (the one grain available on both continuous tracking and
+StatsBomb-360 freeze-frames), oriented entirely via `resolve_defended_goals`/`GoalMap` (ADR-055; never
+team identity). **Additive — no existing feature changes, no VAEP retrain, in no default xfn list;
+C4 gains one container (no action-coupled aggregator; the tracking count stays 33).**
+
+- **Public surface:** `compute_rest_defense(actions, frames, *, goal_map=None, links=None,
+  visible_area=None, params=…) -> (samples, RestDefenseReport)`, `summarize_rest_defense(samples, *,
+  by="possession"|"match")`, `RestDefenseParams` (frozen, `for_provider`), `RestDefenseReport`,
+  `RD_LAYER1_COLUMNS`, `RD_SAMPLE_KEYS`. Eleven Layer-1 metrics: `rd_num_superiority` (+ GK-inclusive
+  variant), `rd_zone_occupancy`, `rd_line_height`, `rd_line_height_relative`, `rd_compactness_x`,
+  `rd_width`, `rd_depth`, `rd_shape_2_3_vs_3_2`, `rd_gk_line_height`, `rd_gk_to_line_distance`. The GK
+  folded into the rearguard as a first-class agent — the literature gap (Forcher 2023 excludes it).
+- **New public counting primitive** `count_goalside` (behind-the-ball / numerical-superiority count),
+  the first public goal-side counting surface (prior art was `GhostGkModel`'s private
+  `defenders_behind_ball`); `group_rows`-batched + scale-guarded (ADR-068/073).
+- **Layering:** consumes `silly_kicks.tracking` PUBLIC seams only; nothing imports `restdefense` and
+  `tracking` never imports it (2-direction import-allowlist gate). Full CI-gate suite: liveness,
+  purity (ADR-033), id-dtype invariance (ADR-019), orientation/D3 (ADR-051/055), FOV completeness
+  (ADR-077), SB360 boundary audit (ADR-053), scale-guard (ADR-073), glossary (ADR-048), `@e2e`
+  method gate on a real linked tracking match + a real SB360 match.
+- **SB360 FOV companions (ADR-077, opt-in):** `visible_area=` emits `<col>_observed_fraction` /
+  `_observed_source` for the count columns (observed-area fraction of a fixed action-LTR zone); the
+  primary columns are byte-identical with and without it.
+- **Provenance + honest NA (never a 0 masquerading as a measurement):** every sample carries
+  `rd_geometry_source` (`resolved` / `guessed` / `unresolved`, closed vocabulary — `guessed` = a
+  `GoalMap` `allow_guess` outfield-mean fallback whose defended-goal end is an inference, which matters
+  on FOV-cropped SB360). An unresolvable goal end yields honest-NaN metrics (`GoalEndUnresolvedError`
+  is caught at the orchestrator edge as defence-in-depth behind the per-team pre-filter), and a
+  non-two-team frame set yields `pd.NA` numerical superiority (the absent opponent count would
+  otherwise fabricate a 0, reading A's whole rearguard as "superiority").
+- **Calibratable defaults ship un-tuned** (`min_ball_advance_m`, `zone_depth_m`, `danger_field_weight`)
+  with an empty `for_provider` override map (ADR-066); a per-provider tune is a separate gated apply
+  PR (ADR-009). Descriptive KPIs only — NOT the source papers' weak success-prediction models
+  (Forcher AUC ≈ 0.60). Layers 2–3 (danger valuation, counterfactual GK/outfield arms) are later cycles.
+- **NOTICE:** new Layer-1 methodology entries (Forcher 2023, Peters 2025, Memmert 2022, Dash 2025,
+  FIFA EFI + StatsBomb/Wyscout practitioner GK-depth). Also **corrects two pre-existing mis-cited
+  arXiv IDs** in the TF-14 defensive-line block: `arXiv:2511.06191` was attributed to Herold 2022 (it
+  is Dash et al. 2025, back-four spatial control — the paper `compute_defensive_line` implements) and
+  `arXiv:2511.00121` to Forcher 2022 (it is Yagi et al. 2025, line-break); both verified against arXiv.
+
 ## [4.101.0] — 2026-08-29
 
 **Single source of truth for the package version** (PR-S172, ADR-079). The version was hand-maintained in two
