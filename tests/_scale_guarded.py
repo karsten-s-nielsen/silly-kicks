@@ -31,6 +31,8 @@ SCALE_GUARDED: dict[str, str] = {
     "silly_kicks.vaep.labels._possession_labels": "test__possession_labels_loc_is_subquadratic",
     "silly_kicks.spadl.utils.add_possessions": "test_add_possessions_is_subquadratic",
     "silly_kicks.atomic.spadl.utils.add_possessions": "test_atomic_add_possessions_is_subquadratic",
+    "silly_kicks.restdefense._counting.count_goalside_by_sample": ("test_count_goalside_by_sample_is_subquadratic"),
+    "silly_kicks.restdefense._compute._score_samples": "test_score_samples_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

@@ -247,25 +247,65 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   velocity-direction penalty. Defaults from paper + canonical implementation
   (UnravelSports/unravelsports, BSD-3-Clause).
 
-- Herold, M., Goes, F., Nopp, S., Bauer, P., Thompson, C., & Meyer, T.
-  (2022). "Machine learning-based analysis of match performance indicators
-  for classifying match outcomes in professional football." arXiv:2511.06191.
-  Used by: silly_kicks.tracking._defensive_line.compute_defensive_line (TF-14).
-  Defensive-line height, compactness, and lateral spread as match-outcome
-  discriminators. Default N=4.
+- Dash, S., Ide, K., Umemoto, R., Amino, K., & Fujii, K. (2025).
+  "Prediction-based evaluation of back-four defense with spatial control in
+  soccer." arXiv:2511.06191.
+  Used by: silly_kicks.tracking._defensive_line.compute_defensive_line (TF-14);
+  silly_kicks.restdefense._structure (TF-60 relative line height).
+  Defensive-line height, compactness (space control), and lateral spread
+  (stretch index) as back-four defensive indicators. Default N=4.
+  (Corrected 2026-08: arXiv:2511.06191 was previously mis-attributed to Herold
+  et al. 2022; it is a Nov-2025 ID and belongs to this Dash et al. 2025 paper --
+  which is the back-four-indicators work compute_defensive_line implements.
+  Verified against arxiv.org/abs/2511.06191.)
 
-- Forcher, L., Forcher, L., Altmann, S., Stein, T., Biermann, H., Dutt, M.,
-  & Memmert, D. (2022). "How to defend against the pass into the box? Using
-  explainable machine learning to identify defensive strategies." KDD Workshop
-  on Data Science for Sports Analytics. arXiv:2511.00121.
-  Used by: silly_kicks.tracking._defensive_line (TF-14).
-  Back-line shape as defensive feature for pass-into-box models.
+- Yagi, S., Ichikawa, J., & Ichinose, G. (2025). "Analysis of Line Break
+  prediction models for detecting defensive breakthrough in football."
+  arXiv:2511.00121.
+  Used by: silly_kicks.tracking._line_breaking (TF-32) -- literature reference
+  for line-break detection (the shipped detector is 1D Ward clustering, below).
+  (Corrected 2026-08: arXiv:2511.00121 was previously mis-attributed to a
+  Forcher et al. 2022 pass-into-box paper; it is a Nov-2025 ID and belongs to
+  this Yagi et al. 2025 line-break paper. Verified against arxiv.org/abs/2511.00121.)
 
 - FIFA (2022). "Enhanced Football Intelligence: Physical Report —
   FIFA World Cup Qatar 2022."
-  Used by: silly_kicks.tracking._defensive_line (TF-14).
+  Used by: silly_kicks.tracking._defensive_line (TF-14);
+  silly_kicks.restdefense._structure (TF-60 GK line height + GK-to-line distance).
   Practitioner documentation of 4-back defensive-line metrics at tournament
   level. Validates the N=4 default and line-height / compactness operationalisation.
+  The only source reporting GK line height + GK-to-defensive-line distance as
+  tracked numbers (WC2022 keeper ~13 m from goal, ~20 m from the line) --
+  descriptive, never a citable formula.
+
+- Forcher et al. (2023). "The Success Factors of Rest Defense in Soccer."
+  Journal of Sports Science and Medicine (JSSM; PMC10690503 / PubMed 38045740;
+  Bundesliga 2020/21, 153 games).
+  Used by: silly_kicks.restdefense._structure (TF-60).
+  Rest-defense team KPI battery -- numerical superiority behind the ball
+  (rd_num_superiority, ~1.69 +/- 1.00) and attacker space-control in the
+  rest-defense area (~11.5 %). silly-kicks ships the DESCRIPTIVE KPIs, NOT the
+  paper's weak (AUC ~0.60) rest-defense-success model. The paper explicitly
+  excludes the goalkeeper -- the gap TF-60's GK-inclusive variant fills.
+
+- Peters et al. (2025). "A rule-based approach to classify counterpressing
+  situations and their relationship with rest defence." International Journal of
+  Performance Analysis in Sport 26(1). DOI 10.1080/24748668.2025.2473799.
+  Used by: silly_kicks.restdefense._structure (TF-60).
+  Rest defence as a headcount in a defined zone at the moment of loss
+  (rd_zone_occupancy); the count relates to shot + territory concession.
+
+- Memmert et al. (2022). "Towards Expected Counter: Evaluating Counter-Attacks
+  with Tracking Data." MIT Sloan Sports Analytics / MLSA.
+  Used by: silly_kicks.restdefense._structure (TF-60).
+  "Players behind the ball" as the single strongest counterattack predictor;
+  the spare-man-deficit framing behind rd_num_superiority.
+
+- Practitioner GK-depth references (labelled as such, no citable formula):
+  StatsBomb "Aggressive Distance" and Wyscout "Sweeper Keeper" event-based
+  sweeper-distance definitions.
+  Used by: silly_kicks.restdefense._structure (TF-60) -- context for
+  rd_gk_line_height / rd_gk_to_line_distance (the tracked-geometry form).
 
 - IFAB. "Laws of the Game", Law 1 (The Field of Play).
   Used by: silly_kicks.spadl.config (penalty_area_half_width, penalty_area_depth).

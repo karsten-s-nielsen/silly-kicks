@@ -36,3 +36,4 @@ def test_each_leg_is_non_vacuous():
     assert "pitch_control_at_target__spearman" in {_base(c) for c in E._xfns_columns()}
     assert "start_coord_source" in {_base(c) for c in E._spadl_enricher_columns()}  # add_restart_coordinates
     assert E._vaep_columns(), "vaep leg empty (stubbed?) -- anchor with a real xfns_default column"
+    assert "rd_num_superiority" in {_base(c) for c in E._restdefense_columns()}  # TF-60 compute_rest_defense

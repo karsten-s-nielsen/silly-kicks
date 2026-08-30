@@ -281,6 +281,12 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/xtgk/_retention_labels.py",
     "silly_kicks/xtgk/_turnover.py",
     "silly_kicks/xtgk/_validate.py",
+    # restdefense (TF-60 PR1): the three modules that DEFINE its public surface (RestDefenseParams,
+    # compute_rest_defense/summarize_rest_defense, RestDefenseReport). _columns.py holds only
+    # constants (no top-level defs), so it is not discovered.
+    "silly_kicks/restdefense/_config.py",
+    "silly_kicks/restdefense/_compute.py",
+    "silly_kicks/restdefense/_report.py",
 )
 
 

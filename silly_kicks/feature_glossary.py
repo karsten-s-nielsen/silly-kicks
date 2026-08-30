@@ -139,7 +139,7 @@ _A_SOTUDEH = "Sotudeh, H. (2026)"  # shape graph
 #: data source rather than left blank, because "where does this come from" is the question the
 #: attribution field answers.
 _A_SB360 = "StatsBomb 360 visible_area (provider data)"
-_A_DEFENSIVE_LINE = "arXiv:2511.06191"  # Herold 2022 (defensive-line discriminators)
+_A_DEFENSIVE_LINE = "arXiv:2511.06191"  # Dash et al. 2025 (back-four spatial-control indicators)
 _A_TEAM_SHAPE = "Zhang, G., Kempe, M."  # Zhang 2025 (canonical team-shape metrics)
 _A_DAS = "Bischofberger, J., & Baca, A. (2026)"  # Dangerous Accessible Space
 _A_ANDRIENKO = "Andrienko, G."  # Andrienko 2017 oval pressure
@@ -155,6 +155,11 @@ _A_DEFENSIVE_CREDIT = "arXiv:2606.19931"  # Bischofberger 2026 xDT turnover sizi
 _A_PRESS_COMMITMENT = "TF-51 v2 pressure-commitment cue"  # practitioner concept (PSG/Luis Enrique; Sumpter)
 _A_XSHOT = "arXiv:2512.00203"  # Pipping 2026 xShotOccurrence
 _A_XCROSS = "arXiv:2505.11841"  # Cao 2025 xCrossAttempt
+_A_FORCHER_2023 = "Forcher et al. (2023)"  # rest-defense KPI battery (TF-60)
+_A_PETERS_2025 = "Peters et al. (2025)"  # rest-defense zone occupancy (TF-60)
+_A_FIFA_2022 = "FIFA (2022)"  # practitioner GK line-height / GK-to-line distance (TF-60)
+
+_M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 
 
 def _onehot_entries() -> list[FeatureColumn]:
@@ -1657,6 +1662,103 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         ),
         unit="dimensionless",
         emitting_module=_M_GHOST_GK,
+    ),
+    # -- TF-60 rest-defense Layer-1 structure KPIs (restdefense._structure) ---------------------
+    FeatureColumn(
+        name="rd_num_superiority",
+        definition=(
+            "Numerical superiority behind the ball: (# in-possession-team players between the ball "
+            "and its own goal) minus (# opponent players in the same band), keeper excluded."
+        ),
+        unit="count",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_FORCHER_2023,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="rd_num_superiority_gk",
+        definition=(
+            "As rd_num_superiority but INCLUDING the in-possession team's keeper in its count when "
+            "the keeper is behind the ball (the coaches' '+1'; the novel GK-inclusive variant)."
+        ),
+        unit="count",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_FORCHER_2023,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="rd_zone_occupancy",
+        definition=(
+            "Headcount of the in-possession team's players (keeper included) inside the "
+            "danger-behind-the-line zone (between the rearguard line and the own goal)."
+        ),
+        unit="count",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_PETERS_2025,
+    ),
+    FeatureColumn(
+        name="rd_line_height",
+        definition="Rearguard defensive-line distance (m) from the in-possession team's own goal.",
+        unit="metres",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_DEFENSIVE_LINE,
+    ),
+    FeatureColumn(
+        name="rd_line_height_relative",
+        definition=(
+            "Rearguard-line height minus ball height, both measured from the own goal (m); "
+            "negative means the line sits behind the ball."
+        ),
+        unit="metres",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_DEFENSIVE_LINE,
+    ),
+    FeatureColumn(
+        name="rd_compactness_x",
+        definition="Longitudinal (x) spread of the in-possession team's rearguard back line (m).",
+        unit="metres",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_DEFENSIVE_LINE,
+    ),
+    FeatureColumn(
+        name="rd_width",
+        definition="Rearguard lateral width (m) -- the y-spread of the in-possession team's back line.",
+        unit="metres",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_DEFENSIVE_LINE,
+    ),
+    FeatureColumn(
+        name="rd_depth",
+        definition="Whole-team front-to-back length (m) of the in-possession team's outfield shape.",
+        unit="metres",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_TEAM_SHAPE,
+    ),
+    FeatureColumn(
+        name="rd_shape_2_3_vs_3_2",
+        definition=(
+            "Rest-defense stagger label 'n_deeper-n_shallower' from the largest-gap 2-line split of "
+            "the behind-the-ball outfield unit (e.g. '3-2' / '2-3'; a generic 'n-m' off 5 players)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_RESTDEFENSE,
+    ),
+    FeatureColumn(
+        name="rd_gk_line_height",
+        definition="In-possession team's keeper distance (m) from its own goal.",
+        unit="metres",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_FIFA_2022,
+    ),
+    FeatureColumn(
+        name="rd_gk_to_line_distance",
+        definition=(
+            "Keeper height minus rearguard-line height (m) for the in-possession team (the FIFA "
+            "coupled-unit gap); usually negative (keeper deeper than the line)."
+        ),
+        unit="metres",
+        emitting_module=_M_RESTDEFENSE,
+        attribution=_A_FIFA_2022,
     ),
 )
 

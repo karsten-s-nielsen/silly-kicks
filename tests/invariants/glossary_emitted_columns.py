@@ -13,8 +13,10 @@ columns they PRODUCE):
    ``silly_kicks.atomic.spadl`` mirrors (on a small atomic scene).
 4. ``_vaep_columns`` -- ``vaep.base.xfns_default`` + ``vaep.hybrid.hybrid_xfns_default`` on a gamestates
    fixture.
+5. ``_restdefense_columns`` -- ``restdefense.compute_rest_defense`` (TF-60) on the restdefense fixture;
+   a ``compute_*`` the name-shape discovery misses, so it is run explicitly here.
 
-``emitted_columns`` is the base-normalised union of all four legs (the gamestate-slot marker
+``emitted_columns`` is the base-normalised union of all five legs (the gamestate-slot marker
 ``_a{i}`` is stripped so the glossary is keyed on the base/semantic name).
 
 COMPLETENESS CEILING (honest): the coverage gate is only as complete as this harness. The per-leg
@@ -150,6 +152,23 @@ def _vaep_columns() -> set[str]:
     return cols
 
 
+def _restdefense_columns() -> set[str]:
+    """Derived Layer-1 rest-defense columns emitted by compute_rest_defense (TF-60).
+
+    compute_rest_defense is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg runs it on the restdefense fixture and returns the DERIVED metric columns (the
+    sample keys are subtracted by ``_base_schema_and_provenance``; possession_id / is_possession_loss /
+    rd_geometry_source are structural/provenance, not features). A NEW emitted metric appears here and
+    fails the coverage gate until documented (the run-and-diff anti-rot property)."""
+    from silly_kicks.restdefense._compute import compute_rest_defense
+    from tests.restdefense._fixtures import make_rest_defense_fixture
+
+    actions, frames = make_rest_defense_fixture()
+    samples, _report = compute_rest_defense(actions, frames)
+    structural = {"possession_id", "is_possession_loss", "rd_geometry_source"}
+    return set(samples.columns) - structural
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -171,5 +190,11 @@ def _base_schema_and_provenance() -> set[str]:
 
 def emitted_columns() -> set[str]:
     """Base-normalised union of DERIVED columns emitted by every default-config producer."""
-    raw = _tracking_add_star_columns() | _xfns_columns() | _spadl_enricher_columns() | _vaep_columns()
+    raw = (
+        _tracking_add_star_columns()
+        | _xfns_columns()
+        | _spadl_enricher_columns()
+        | _vaep_columns()
+        | _restdefense_columns()
+    )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

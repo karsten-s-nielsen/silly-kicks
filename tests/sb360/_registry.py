@@ -73,6 +73,7 @@ BOUNDARY_ENTRY_POINTS: frozenset[str] = frozenset(
         "gkdv.delta_threat_suppression",
         "xtgk.compute_xt_gk_v2",
         "spadl.add_restart_coordinates",
+        "restdefense.compute_rest_defense",
     }
 )
 
@@ -220,7 +221,14 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: `add_press_commitment`'s two columns run to honest-NaN on defender_absent + gk_one_end -- four
 #: more, twelve total, all previously `no_signal` -> `not_exercised`. A budget can only FALL when the
 #: fixture exercises MORE, a coverage gain rather than the fixture-inadequacy this bound hunts.
-NOT_EXERCISED_BUDGET = 42
+#:
+#: RAISED 42 -> 44 by registering `restdefense.compute_rest_defense` as a boundary entry (TF-60,
+#: ADR-080). The 2 new tuples are its GK-position columns (`rd_gk_line_height`,
+#: `rd_gk_to_line_distance`) under `gk_absent` ONLY: that roster removes BOTH keepers, so the GK
+#: metrics have no keeper to read in EITHER leg -> both all-NaN -> `no_signal`, which admits only
+#: `not_exercised`. The other nine Layer-1 columns stay `identical`/`works` (positional, both legs
+#: agree), and the two GK columns are exercised (`identical`) on `defender_absent` + `gk_one_end`.
+NOT_EXERCISED_BUDGET = 44
 
 
 def _entry(

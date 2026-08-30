@@ -354,6 +354,36 @@ def test_atomic_add_possessions_is_subquadratic():
     assert_subquadratic_growth(measure, sizes=(1500, 3000, 6000), label="atomic_add_possessions")
 
 
+# ============================ restdefense count_goalside (TF-60) ============================
+def test_count_goalside_by_sample_is_subquadratic():
+    from silly_kicks.restdefense._counting import count_goalside_by_sample
+
+    def measure(n):  # n = number of frames == number of samples (the loop dimension)
+        from tests.restdefense._fixtures import make_scaling_fixture
+
+        frames, samples = make_scaling_fixture(n)
+        with rows_scanned_counter() as c:
+            count_goalside_by_sample(samples, frames, team_col="team_id", ball_x_col="ball_x", goal_x_col="own_goal_x")
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="count_goalside_by_sample")
+
+
+def test_score_samples_is_subquadratic():
+    from silly_kicks.restdefense._compute import _score_samples
+    from silly_kicks.restdefense._config import RestDefenseParams
+
+    def measure(n):  # n = number of samples == number of frames (the loop dimension)
+        from tests.restdefense._fixtures import make_score_scaling_fixture
+
+        keep, frames, opp_map = make_score_scaling_fixture(n)
+        with rows_scanned_counter() as c:
+            _score_samples(keep, frames, opp_map, RestDefenseParams())
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="_score_samples")
+
+
 # ============================ #3 compute_defensive_credits ============================
 def _scaled_defensive_credit_input(n) -> tuple[pd.DataFrame, pd.DataFrame]:
     from tests.tracking._defensive_credit_fixtures import frame_with_defender, one_action
