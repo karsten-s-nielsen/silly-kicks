@@ -27,7 +27,7 @@ from silly_kicks.tracking import (
 from ._columns import (
     RD_FRAME_KEYS,
     RD_GEOMETRY_SOURCE,
-    RD_LAYER1_COLUMNS,
+    RD_METRIC_COLUMNS,
     RD_NUM_SUPERIORITY,
     RD_NUM_SUPERIORITY_GK,
     RD_SAMPLE_KEYS,
@@ -35,15 +35,16 @@ from ._columns import (
     RD_ZONE_OCCUPANCY,
 )
 from ._config import RestDefenseParams
+from ._danger import layer2_metrics
 from ._fov import append_fov_companions
 from ._report import RestDefenseReport
 from ._structure import SampleContext, layer1_metrics
 from ._windows import _GOAL_UNRESOLVED, select_rest_defense_samples
 
 _COUNT_COLS = [RD_NUM_SUPERIORITY, RD_NUM_SUPERIORITY_GK, RD_ZONE_OCCUPANCY]
-_FLOAT_METRIC_COLS = [c for c in RD_LAYER1_COLUMNS if c not in _COUNT_COLS and c != RD_SHAPE_STAGGER]
+_FLOAT_METRIC_COLS = [c for c in RD_METRIC_COLUMNS if c not in _COUNT_COLS and c != RD_SHAPE_STAGGER]
 _SAMPLE_META = ["possession_id", "is_possession_loss"]
-_OUTPUT_COLS = [*RD_SAMPLE_KEYS, *_SAMPLE_META, *RD_LAYER1_COLUMNS, RD_GEOMETRY_SOURCE]
+_OUTPUT_COLS = [*RD_SAMPLE_KEYS, *_SAMPLE_META, *RD_METRIC_COLUMNS, RD_GEOMETRY_SOURCE]
 # The engine columns (compute_defensive_line / compute_team_shape names) threaded into each
 # SampleContext -- NOT the RD_* output names (e.g. rd_compactness_x IS compute_defensive_line's
 # compactness_x, but the emitted column is renamed).
@@ -134,11 +135,16 @@ def _score_samples(
     *,
     groups: RowGroups | None = None,
     geom_src: dict | None = None,
+    xt=None,
+    goal_map=None,
+    pitch_control_cache=None,
 ) -> pd.DataFrame:
-    """Per-sample Layer-1 metrics (one ``group_rows`` pass; ADR-068/073). NaN row for unresolved geometry.
+    """Per-sample Layer-1 + Layer-2 metrics (one ``group_rows`` pass; ADR-068/073). NaN row for
+    unresolved geometry. Layer 2 reuses the SAME per-sample ``frame_rows`` -- no new looping pass.
 
     ``geom_src`` (from :func:`_geometry_source_by_key`) labels each scored row "resolved" vs "guessed"
-    (IMPL-02); absent -> "resolved" (the historical default; used by the scale guard)."""
+    (IMPL-02); absent -> "resolved" (the historical default; used by the scale guard). ``xt`` /
+    ``goal_map`` / ``pitch_control_cache`` feed Layer 2 (all NaN when ``xt`` is None; P2-02)."""
     if groups is None:
         groups = group_rows(frames, tuple(RD_FRAME_KEYS))
     gsrc = geom_src or {}
@@ -160,9 +166,14 @@ def _score_samples(
                 team_length=_f(row.team_length),
             )
             m = layer1_metrics(frame_rows, ctx, params=params)
+            m.update(
+                layer2_metrics(
+                    frame_rows, ctx, xt=xt, goal_map=goal_map, params=params, pitch_control_cache=pitch_control_cache
+                )
+            )
             m[RD_GEOMETRY_SOURCE] = gsrc.get(key, "resolved")  # "resolved" or "guessed" (IMPL-02)
         else:  # goal_end_unresolved -> honest-NaN row (ADR-055)
-            m = {c: pd.NA for c in RD_LAYER1_COLUMNS}
+            m = {c: pd.NA for c in RD_METRIC_COLUMNS}
             m[RD_GEOMETRY_SOURCE] = "unresolved"
         rows.append(m)
     return pd.DataFrame(rows, index=keep.index)
@@ -177,8 +188,10 @@ def compute_rest_defense(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
+    xt=None,
     goal_map=None,
     links: pd.DataFrame | None = None,
+    pitch_control_cache=None,
     visible_area: pd.DataFrame | None = None,
     params: RestDefenseParams = _DEFAULT_PARAMS,
 ) -> tuple[pd.DataFrame, RestDefenseReport]:
@@ -222,7 +235,16 @@ def compute_rest_defense(
         dl, ts = None, None
     keep = _merge_engine_cols(keep, dl, ts)
     geom_src = _geometry_source_by_key(keep, goal_map)
-    metrics = _score_samples(keep, frames, _opponent_map(frames), params, geom_src=geom_src).reset_index(drop=True)
+    metrics = _score_samples(
+        keep,
+        frames,
+        _opponent_map(frames),
+        params,
+        geom_src=geom_src,
+        xt=xt,
+        goal_map=goal_map,
+        pitch_control_cache=pitch_control_cache,
+    ).reset_index(drop=True)
 
     base = keep[[*RD_SAMPLE_KEYS, *_SAMPLE_META]].reset_index(drop=True)
     samples = pd.concat([base, metrics], axis=1)

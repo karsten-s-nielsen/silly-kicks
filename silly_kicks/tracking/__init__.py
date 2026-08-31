@@ -170,6 +170,7 @@ __all__ = [
     "compute_defensive_line",
     "compute_ghost_gk",
     "compute_gk_completion",
+    "compute_gk_influence",
     "compute_obso_surface",
     "compute_packing_metrics",
     "compute_pass_obso",
@@ -306,6 +307,7 @@ __all__ = [
     "xcross_attempt_xfns",
     "xshot_occurrence_xfns",
     "xt_gk_xfns",
+    "zero_velocity_if_unavailable",
 ]
 
 from . import (
@@ -360,6 +362,7 @@ from ._ghost_gk import (
 )
 from ._gk_completion import GkCompletionModel, compute_gk_completion
 from ._gk_geometry import resolve_gk_geometry, resolve_restart_geometry
+from ._gk_influence import compute_gk_influence
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_obso
 from ._packing import PackingParams, compute_packing_metrics, secured_reception
@@ -379,6 +382,7 @@ from ._snapshot import snapshot_to_tracking_frames
 from ._space_creation import SpaceCreationParams, compute_space_created
 from ._structural_pass import StructuralPassParams, compute_structural_pass_metrics
 from ._team_shape import compute_team_shape
+from ._velocity_availability import zero_velocity_if_unavailable
 from ._visibility import (
     REGION_OBSERVATION_DEGENERATE_REGION,
     REGION_OBSERVATION_SOURCE_VALUES,

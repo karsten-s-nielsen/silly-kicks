@@ -39,6 +39,11 @@ def _player(fid, t, team_id, player_id, x, y, *, gk=False):
         "is_goalkeeper": gk,
         "x": float(x),
         "y": float(y),
+        # vx/vy present but ZERO (TF-60 PR2): pitch control runs (frames are NOT velocity-declared-
+        # absent, so `#5` reachable computes a real number), and zero velocity is point-reflection-
+        # invariant so a0/a2 stay exact mirrors.
+        "vx": 0.0,
+        "vy": 0.0,
         "ball_state": "alive",
         "source_provider": _SRC,
     }
@@ -57,6 +62,8 @@ def _ball(fid, t, x, y=34.0):
         "is_goalkeeper": False,
         "x": float(x),
         "y": y,
+        "vx": 0.0,
+        "vy": 0.0,
         "ball_state": "alive",
         "source_provider": _SRC,
     }
@@ -163,6 +170,68 @@ def make_rest_defense_fixture() -> tuple[pd.DataFrame, pd.DataFrame]:
         }
     )
     return actions, frames
+
+
+def make_fitted_xt():
+    """A fitted ExpectedThreat (x-increasing grid), matching the tracking ``fitted_xt`` fixture."""
+    import numpy as np
+
+    from silly_kicks.xthreat import ExpectedThreat
+
+    xt = ExpectedThreat(l=16, w=12)
+    xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+    return xt
+
+
+def make_keeper_sensitive_fixture():
+    """``(actions, frames, xt)`` where A (team 1, in possession, attacks right, defends x=0) keeps a
+    keeper ALONE in the deep zone and B (team 2) has a counter-receiver broken in BEHIND A's
+    rearguard -- so removing A's keeper measurably raises B's deep danger (the non-vacuity anchor).
+
+    The layout is load-bearing (see ``tests/tracking/test_compute_threat_pc``): the keeper registers
+    in the threat integral only when it is the NEAREST defender to cells inside a dangerous B
+    receiver's Voronoi region, so no A outfielder sits between the keeper (x=4) and the back line
+    (x~28), and B's striker (x=14) sits in that keeper-only deep zone. Zero velocities."""
+    fid, t = 200, 10.0
+    rows = [
+        _player(fid, t, 1, 101, 4.0, 34.0, gk=True),  # A keeper, alone deep
+        _player(fid, t, 1, 102, 26.0, 20.0),  # A back-4 (defensive_line_x ~ 28)
+        _player(fid, t, 1, 103, 26.0, 48.0),
+        _player(fid, t, 1, 104, 30.0, 20.0),
+        _player(fid, t, 1, 105, 30.0, 48.0),
+        _player(fid, t, 1, 106, 58.0, 30.0),  # A attacker near the ball
+        _player(fid, t, 2, 201, 14.0, 34.0),  # B striker broken in behind (keeper-only zone)
+        _player(fid, t, 2, 202, 48.0, 22.0),  # B rest, upfield
+        _player(fid, t, 2, 203, 52.0, 46.0),
+        _player(fid, t, 2, 204, 68.0, 30.0),
+        _player(fid, t, 2, 205, 72.0, 20.0),
+        _player(fid, t, 2, 206, 100.0, 34.0, gk=True),  # B keeper
+        _ball(fid, t, 60.0),  # ball with A, committed forward
+    ]
+    frames = pd.DataFrame(rows)
+    frames["team_id"] = frames["team_id"].astype("Int64")
+    frames["player_id"] = frames["player_id"].astype("Int64")
+    frames["is_ball"] = frames["is_ball"].astype(bool)
+    frames["is_goalkeeper"] = frames["is_goalkeeper"].astype(bool)
+    actions = pd.DataFrame(
+        {
+            "game_id": [_GAME],
+            "period_id": [_PERIOD],
+            "action_id": [0],
+            "team_id": pd.array([1], dtype="Int64"),
+            "player_id": pd.array([106], dtype="Int64"),
+            "type_id": [0],
+            "type_name": ["pass"],
+            "result_id": [1],
+            "result_name": ["success"],
+            "start_x": [60.0],
+            "start_y": [34.0],
+            "end_x": [70.0],
+            "end_y": [34.0],
+            "time_seconds": [10.04],
+        }
+    )
+    return actions, frames, make_fitted_xt()
 
 
 def make_scaling_fixture(n_frames: int) -> tuple[pd.DataFrame, pd.DataFrame]:

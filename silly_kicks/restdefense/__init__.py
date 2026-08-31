@@ -16,16 +16,25 @@ See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
-from ._columns import RD_LAYER1_COLUMNS, RD_SAMPLE_KEYS
+from ._columns import (
+    RD_LAYER1_COLUMNS,
+    RD_LAYER2_COLUMNS,
+    RD_METRIC_COLUMNS,
+    RD_SAMPLE_KEYS,
+)
 from ._compute import compute_rest_defense, summarize_rest_defense
 from ._config import RestDefenseParams
 from ._report import RestDefenseReport
+from ._wfield import WFieldParams
 
 __all__ = [
     "RD_LAYER1_COLUMNS",
+    "RD_LAYER2_COLUMNS",
+    "RD_METRIC_COLUMNS",
     "RD_SAMPLE_KEYS",
     "RestDefenseParams",
     "RestDefenseReport",
+    "WFieldParams",
     "compute_rest_defense",
     "summarize_rest_defense",
 ]

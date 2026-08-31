@@ -257,11 +257,17 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_ghost_gk.py",
     "silly_kicks/tracking/_gk_completion.py",
     "silly_kicks/tracking/_gk_geometry.py",
+    # compute_gk_influence exported for restdefense._danger (TF-60 PR2); its pre-existing
+    # zone/return-type helpers are deferred one at a time in `_EXAMPLES_DEBT`.
+    "silly_kicks/tracking/_gk_influence.py",
     "silly_kicks/tracking/_gk_resolve.py",
     "silly_kicks/tracking/_restart_report.py",
     "silly_kicks/tracking/_shape_graph.py",
     "silly_kicks/tracking/_shot_goalmouth.py",
     "silly_kicks/tracking/_structural_pass.py",
+    # zero_velocity_if_unavailable exported for restdefense._danger (TF-60 PR2); its pre-existing
+    # velocity-availability helpers are deferred one at a time in `_EXAMPLES_DEBT`.
+    "silly_kicks/tracking/_velocity_availability.py",
     "silly_kicks/tracking/_xcross_attempt.py",
     "silly_kicks/tracking/_xshot_occurrence.py",
     "silly_kicks/tracking/_xt_gk.py",
@@ -287,6 +293,9 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/restdefense/_config.py",
     "silly_kicks/restdefense/_compute.py",
     "silly_kicks/restdefense/_report.py",
+    # TF-60 PR2 Layer-2 danger valuation: WFieldParams (exported) + build_w_field. Brand-new module,
+    # ships clean (both documented on export).
+    "silly_kicks/restdefense/_wfield.py",
 )
 
 
@@ -309,6 +318,19 @@ _PUBLIC_MODULE_FILES = (
 #: are skipped by the walker, because a stub whose body is `...` cannot carry an example and
 #: so could never let its own entry burn down.
 _EXAMPLES_DEBT: dict[str, str] = {
+    # --- TF-60 PR2: _velocity_availability.py became a public module (zero_velocity_if_unavailable
+    # exported for restdefense._danger). These three are INTERNAL ADR-063/067 helpers, in no __all__ --
+    # they ride the module's discovery. Deferred rather than documented; the module is public only via
+    # zero_velocity_if_unavailable, which carries a real example.
+    "silly_kicks/tracking/_velocity_availability.py::velocity_unavailable_by_design": (
+        "Internal ADR-063 predicate: True iff every row declares speed_source='unavailable'. Not exported."
+    ),
+    "silly_kicks/tracking/_velocity_availability.py::variant_key_for_velocity": (
+        "Internal ADR-067 resolver mapping a frame set to its velocity model variant key. Not exported."
+    ),
+    "silly_kicks/tracking/_velocity_availability.py::velocity_availability_is_mixed": (
+        "Internal ADR-067 predicate: True iff the velocity declaration is inconsistent across rows. Not exported."
+    ),
     # --- atomic-SPADL configuration ---
     "silly_kicks/atomic/spadl/config.py::actiontypes_df": (
         "Atomic-SPADL action-type lookup table -- the functools-cached accessor behind the config constants."

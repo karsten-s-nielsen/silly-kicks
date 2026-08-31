@@ -158,8 +158,10 @@ _A_XCROSS = "arXiv:2505.11841"  # Cao 2025 xCrossAttempt
 _A_FORCHER_2023 = "Forcher et al. (2023)"  # rest-defense KPI battery (TF-60)
 _A_PETERS_2025 = "Peters et al. (2025)"  # rest-defense zone occupancy (TF-60)
 _A_FIFA_2022 = "FIFA (2022)"  # practitioner GK line-height / GK-to-line distance (TF-60)
+_A_NOVILLO_2025 = "Novillo et al. (2025)"  # λ_GK-included control behind the line (TF-60 PR2)
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
+_M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
 
 
 def _onehot_entries() -> list[FeatureColumn]:
@@ -1759,6 +1761,58 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="metres",
         emitting_module=_M_RESTDEFENSE,
         attribution=_A_FIFA_2022,
+    ),
+    # -- TF-60 rest-defense Layer-2 danger valuation (restdefense._danger; PR2, ADR-081) ----------
+    FeatureColumn(
+        name="rd_attacker_space_control",
+        definition=(
+            "Opponent (counter-attacker) team's pitch-control share of the danger-behind-the-line "
+            "zone Z (between the in-possession team's rearguard line and its own goal)."
+        ),
+        unit="ratio",
+        emitting_module=_M_RESTDEFENSE_DANGER,
+        attribution=_A_FORCHER_2023,
+        higher_is_better=False,  # more opponent control of the rest-defense zone = worse for the defender
+    ),
+    FeatureColumn(
+        name="rd_danger_behind_line",
+        definition=(
+            "Threat-weighted counter-danger of zone Z: the xT-toward-own-goal-weighted pitch-control "
+            "threat of the opponent's dangerous receivers, with the in-possession keeper EXCLUDED "
+            "from control (GK-blind)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_RESTDEFENSE_DANGER,
+        attribution=_A_NOVILLO_2025,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="rd_danger_behind_line_gk",
+        definition=(
+            "As rd_danger_behind_line but with the in-possession keeper INCLUDED as a control agent "
+            "(lambda_gk); the keeper's deterrent contribution is rd_danger_behind_line minus this."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_RESTDEFENSE_DANGER,
+        attribution=_A_NOVILLO_2025,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="rd_gk_coverage_behind_line",
+        definition="In-possession keeper's mean share of its team's pitch control over the danger zone Z.",
+        unit="ratio",
+        emitting_module=_M_RESTDEFENSE_DANGER,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="rd_gk_reachable_coverage_m2",
+        definition=(
+            "Area (m^2) of zone Z the in-possession keeper can reach before any defender can "
+            "(TF-15 reachable-area form); honest-NaN on velocity-less providers."
+        ),
+        unit="m^2",
+        emitting_module=_M_RESTDEFENSE_DANGER,
+        higher_is_better=True,
     ),
 )
 

@@ -5,6 +5,35 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.103.0] — 2026-08-30
+
+**TF-60 rest-defense — Layer 2 danger-behind-line valuation (PR-S174, ADR-081).** Five additive
+Tier-1 columns on the `compute_rest_defense` samples table quantifying the opponent's counter-danger
+in the zone behind the in-possession team's rearguard line, with the in-possession keeper folded in
+as a first-class control agent. **Additive — no existing column changes, no VAEP retrain, in no
+default xfn list; C4 unchanged.**
+
+- **New columns** (via a new `silly_kicks/restdefense/_danger.py` + `_wfield.py`):
+  `rd_attacker_space_control` (team B's pitch-control share of the danger zone Z; Forcher 2023),
+  `rd_danger_behind_line` (threat-weighted counter-danger, GK-blind) + `rd_danger_behind_line_gk`
+  (with A's keeper as a `lambda_gk` control agent; the GK deterrent contribution is the difference;
+  Novillo 2025), `rd_gk_coverage_behind_line` (keeper's control share of Z), and
+  `rd_gk_reachable_coverage_m2` (TF-15 reachable-area ∩ Z; **Tier-2 → honest-NaN on velocity-less
+  providers**, ADR-063). An opt-in OBPV `w_field` re-weighting (`RestDefenseParams.danger_field_weight`
+  + `WFieldParams`, off by default, un-tuned per ADR-009; Ogawa 2025).
+- **The whole Layer-2 family is gated on a fitted `xt`** — without one, all five columns are NaN
+  before any pitch-control call, so Layer-1-only callers are byte-identical to PR1 (no cost, no
+  velocity precondition). Reuses TF-7 `compute_threat_pc` / `control_in_region` and TF-15
+  `compute_gk_influence`, oriented via `GoalMap` (ADR-055).
+- **Additive tracking seams (default-`None` byte-identical, no retrain):** `compute_threat_pc` gains
+  an optional per-cell `field_weight` hook, `compute_gk_influence` gains an optional `region`, and
+  `zero_velocity_if_unavailable` + `compute_gk_influence` are newly exported from `tracking`.
+- **CI gates:** liveness, purity (ADR-033, `visible_area`/`field_weight` branches), id-dtype
+  invariance (ADR-019), orientation/D3 Gate C, FOV completeness (ADR-077), counterfactual non-vacuity
+  (GK-inclusion + `w_field` measurably move the danger), SB360 boundary audit (four pitch-control
+  metrics `differs_by_design`, reachable m² `honest_nan`; entry now `substantive`), glossary (ADR-048),
+  NOTICE attribution (ADR-005; Novillo 2025, Ogawa 2025).
+
 ## [4.102.0] — 2026-08-30
 
 **TF-60 rest-defense structure metrics — Layer 1 (PR-S173, ADR-080).** A new hexagonal

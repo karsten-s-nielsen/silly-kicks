@@ -9,13 +9,21 @@ Two complementary gates:
 
 import pandas as pd
 
-from silly_kicks.restdefense import RD_LAYER1_COLUMNS, RestDefenseParams
+from silly_kicks.restdefense import RD_METRIC_COLUMNS, RestDefenseParams
 from silly_kicks.restdefense._compute import compute_rest_defense
 from silly_kicks.tracking import resolve_defended_goals
-from tests.restdefense._fixtures import make_rest_defense_fixture
+from tests.restdefense._fixtures import make_fitted_xt, make_rest_defense_fixture
 
-_GATE_C_MUST_MOVE = ["rd_line_height", "rd_gk_to_line_distance", "rd_num_superiority"]
-_NUMERIC = [c for c in RD_LAYER1_COLUMNS if c != "rd_shape_2_3_vs_3_2"]
+# Direction-dependent columns that MUST move when the GoalMap is swapped. The two Layer-2 zone-Z
+# metrics flip because Z flips ends with the defended goal (space control + gk coverage over Z).
+_GATE_C_MUST_MOVE = [
+    "rd_line_height",
+    "rd_gk_to_line_distance",
+    "rd_num_superiority",
+    "rd_attacker_space_control",
+    "rd_gk_coverage_behind_line",
+]
+_NUMERIC = [c for c in RD_METRIC_COLUMNS if c != "rd_shape_2_3_vs_3_2"]
 
 
 def _resolved_by_action(samples):
@@ -37,8 +45,9 @@ def test_gate_c_swapping_the_goal_map_moves_geometry():
     # min_ball_advance_m=0 keeps every sample scored under BOTH maps, so the committed-forward gate
     # (which also reads own_goal_x) cannot confound the geometry-moves assertion -- only the map moves.
     params = RestDefenseParams(min_ball_advance_m=0.0)
-    correct, _ = compute_rest_defense(actions, frames, params=params)
-    swapped, _ = compute_rest_defense(actions, frames, goal_map=_swapped_goal_map(frames), params=params)
+    xt = make_fitted_xt()
+    correct, _ = compute_rest_defense(actions, frames, xt=xt, params=params)
+    swapped, _ = compute_rest_defense(actions, frames, xt=xt, goal_map=_swapped_goal_map(frames), params=params)
     a, b = _resolved_by_action(correct), _resolved_by_action(swapped)
     common = a.index.intersection(b.index)
     assert len(common) >= 1
@@ -48,11 +57,12 @@ def test_gate_c_swapping_the_goal_map_moves_geometry():
 
 def test_direction_invariance_under_point_reflection():
     actions, frames = make_rest_defense_fixture()
-    base, _ = compute_rest_defense(actions, frames)
+    xt = make_fitted_xt()
+    base, _ = compute_rest_defense(actions, frames, xt=xt)
     reflected = frames.copy()
     reflected["x"] = 105.0 - reflected["x"]
     reflected["y"] = 68.0 - reflected["y"]
-    mirrored, _ = compute_rest_defense(actions, reflected, goal_map=resolve_defended_goals(reflected))
+    mirrored, _ = compute_rest_defense(actions, reflected, xt=xt, goal_map=resolve_defended_goals(reflected))
     a, b = _resolved_by_action(base), _resolved_by_action(mirrored)
     assert list(a.index) == list(b.index)
     for c in _NUMERIC:

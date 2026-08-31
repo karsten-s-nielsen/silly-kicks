@@ -12,6 +12,8 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 
+from ._wfield import WFieldParams
+
 
 @dataclass(frozen=True)
 class RestDefenseParams:
@@ -31,6 +33,9 @@ class RestDefenseParams:
         the strip depth (metres from the own goal). *(calibratable)*
     danger_field_weight:
         Opt-in OBPV ``w_field`` re-weighting of the deep-zone threat (Layer 2, PR2). *(calibratable)*
+    w_field_params:
+        Shape parameters for the OBPV ``w_field`` (applied only when ``danger_field_weight``); a
+        frozen :class:`WFieldParams` with un-tuned spec-time defaults (ADR-009). *(calibratable)*
     possession_stride:
         Sample every Nth in-possession action (cost control; 1 = every action).
 
@@ -46,6 +51,7 @@ class RestDefenseParams:
     min_ball_advance_m: float = 52.5
     zone_depth_m: float | None = None
     danger_field_weight: bool = False
+    w_field_params: WFieldParams = field(default_factory=WFieldParams)
     possession_stride: int = 1
     _is_universal_default: bool = field(default=False, compare=False, repr=False)
 

@@ -42,3 +42,16 @@ def test_summarize_is_pure():
     out = summarize_rest_defense(samples, by="match")
     pd.testing.assert_frame_equal(samples, s_before)
     assert out is not samples
+
+
+def test_compute_is_pure_with_xt_and_field_weight():
+    """ADR-033: the Layer-2 path (xt + danger_field_weight) must not mutate caller inputs -- it builds
+    a keeper-removed frame via boolean indexing (a new object), never in place."""
+    from silly_kicks.restdefense import RestDefenseParams
+    from tests.restdefense._fixtures import make_fitted_xt
+
+    actions, frames = make_rest_defense_fixture()
+    a_before, f_before = actions.copy(), frames.copy()
+    compute_rest_defense(actions, frames, xt=make_fitted_xt(), params=RestDefenseParams(danger_field_weight=True))
+    pd.testing.assert_frame_equal(actions, a_before)
+    pd.testing.assert_frame_equal(frames, f_before)

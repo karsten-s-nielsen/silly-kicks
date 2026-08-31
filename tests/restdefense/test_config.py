@@ -33,3 +33,23 @@ def test_frozen():
         raise AssertionError("expected FrozenInstanceError")
     except dataclasses.FrozenInstanceError:
         pass
+
+
+def test_w_field_params_defaults_and_frozen():
+    from silly_kicks.restdefense import WFieldParams
+
+    p = RestDefenseParams()
+    assert isinstance(p.w_field_params, WFieldParams)
+    wp = p.w_field_params
+    assert (wp.x_midpoint_m, wp.x_steepness_m, wp.y_center_m, wp.y_sigma_m) == (30.0, 8.0, 34.0, 20.0)
+    try:
+        wp.x_midpoint_m = 1.0  # type: ignore[misc]
+        raise AssertionError("expected FrozenInstanceError")
+    except dataclasses.FrozenInstanceError:
+        pass
+
+
+def test_adding_w_field_params_does_not_break_is_default_or_for_provider():
+    assert RestDefenseParams.default().is_default() is True
+    assert RestDefenseParams().is_default() is False
+    assert RestDefenseParams.for_provider("skillcorner") == RestDefenseParams()

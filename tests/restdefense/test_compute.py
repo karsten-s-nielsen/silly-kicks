@@ -2,19 +2,24 @@
 
 import pandas as pd
 
-from silly_kicks.restdefense import RD_LAYER1_COLUMNS, RestDefenseReport
+from silly_kicks.restdefense import (
+    RD_LAYER1_COLUMNS,
+    RD_LAYER2_COLUMNS,
+    RD_METRIC_COLUMNS,
+    RestDefenseReport,
+)
 from silly_kicks.restdefense._columns import RD_GEOMETRY_SOURCE, RD_SAMPLE_KEYS
 from silly_kicks.restdefense._compute import compute_rest_defense, summarize_rest_defense
 from silly_kicks.tracking import resolve_defended_goals
-from tests.restdefense._fixtures import make_rest_defense_fixture
+from tests.restdefense._fixtures import make_fitted_xt, make_rest_defense_fixture
 
 
 def test_scored_rows_are_fully_populated_and_pinned():
     actions, frames = make_rest_defense_fixture()
-    samples, report = compute_rest_defense(actions, frames)
+    samples, report = compute_rest_defense(actions, frames, xt=make_fitted_xt())
     resolved = samples[samples[RD_GEOMETRY_SOURCE] == "resolved"]
     assert len(resolved) == 3  # a0, a1, a2
-    for c in RD_LAYER1_COLUMNS:
+    for c in RD_METRIC_COLUMNS:  # Layer 1 + Layer 2 (a fitted xt is supplied)
         assert resolved[c].notna().all(), f"{c} has NaN on a resolved row"
     a0 = resolved[resolved["action_id"] == 0].iloc[0]
     assert a0["rd_num_superiority"] == 4
@@ -33,14 +38,33 @@ def test_output_schema_and_dtypes():
         *RD_SAMPLE_KEYS,
         "possession_id",
         "is_possession_loss",
-        *RD_LAYER1_COLUMNS,
+        *RD_METRIC_COLUMNS,
         RD_GEOMETRY_SOURCE,
     ]
     assert list(samples.columns) == expected
     for c in ("rd_num_superiority", "rd_num_superiority_gk", "rd_zone_occupancy"):
         assert str(samples[c].dtype) == "Int64"
     assert str(samples["rd_line_height"].dtype) == "float64"
+    for c in RD_LAYER2_COLUMNS:  # all five Layer-2 metrics are float64
+        assert str(samples[c].dtype) == "float64", f"{c} is {samples[c].dtype}"
     assert samples["is_possession_loss"].dtype == bool
+
+
+def test_layer2_columns_populated_with_xt():
+    actions, frames = make_rest_defense_fixture()
+    samples, _ = compute_rest_defense(actions, frames, xt=make_fitted_xt())
+    resolved = samples[samples[RD_GEOMETRY_SOURCE] == "resolved"]
+    for c in RD_LAYER2_COLUMNS:
+        assert resolved[c].notna().any(), f"{c} all-NaN on the fixture with a fitted xt"
+
+
+def test_layer2_all_nan_without_xt_layer1_preserved():
+    actions, frames = make_rest_defense_fixture()
+    samples, _ = compute_rest_defense(actions, frames)  # no xt -> Layer 2 gated off entirely (P2-02)
+    resolved = samples[samples[RD_GEOMETRY_SOURCE] == "resolved"]
+    for c in RD_LAYER2_COLUMNS:
+        assert resolved[c].isna().all(), f"{c} should be all-NaN without xt (Layer-2 gate)"
+    assert resolved["rd_num_superiority"].notna().any()  # Layer 1 unchanged from PR1
 
 
 def test_conservation():

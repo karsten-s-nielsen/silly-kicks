@@ -295,6 +295,21 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   Rest defence as a headcount in a defined zone at the moment of loss
   (rd_zone_occupancy); the count relates to shot + territory concession.
 
+- Novillo et al. (2025). "Offside Control." Chaos, Solitons & Fractals
+  197:116445.
+  Used by: silly_kicks.restdefense._danger (TF-60 PR2).
+  Differentiates the goalkeeper inside a pitch-control danger model via a higher
+  GK control rate (lambda_GK ~ 3x outfield) and measures control behind the
+  opponent's offside/last line -- the anchor for rd_danger_behind_line and its
+  GK-inclusive variant rd_danger_behind_line_gk.
+
+- Ogawa et al. (2025). "Space evaluation at the starting point of soccer
+  transitions." arXiv:2505.14711 (OBPV).
+  Used by: silly_kicks.restdefense._wfield (TF-60 PR2).
+  A transition-zone field-value weighting (longitudinal sigmoid x lateral
+  Gaussian) adopted as the opt-in w_field re-weighting of the deep-zone threat
+  (RestDefenseParams.danger_field_weight; off by default, un-tuned per ADR-009).
+
 - Memmert et al. (2022). "Towards Expected Counter: Evaluating Counter-Attacks
   with Tracking Data." MIT Sloan Sports Analytics / MLSA.
   Used by: silly_kicks.restdefense._structure (TF-60).

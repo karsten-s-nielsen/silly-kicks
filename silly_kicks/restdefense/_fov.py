@@ -29,9 +29,14 @@ from silly_kicks.tracking import (
 )
 
 from ._columns import (
+    RD_ATTACKER_SPACE_CONTROL,
     RD_COMPACTNESS_X,
+    RD_DANGER_BEHIND_LINE,
+    RD_DANGER_BEHIND_LINE_GK,
     RD_DEPTH,
+    RD_GK_COVERAGE_BEHIND_LINE,
     RD_GK_LINE_HEIGHT,
+    RD_GK_REACHABLE_COVERAGE_M2,
     RD_GK_TO_LINE_DISTANCE,
     RD_LINE_HEIGHT,
     RD_LINE_HEIGHT_RELATIVE,
@@ -46,10 +51,20 @@ from ._geometry import danger_zone_bounds
 _PITCH_WIDTH = float(spadlconfig.field_width)
 
 #: The FOV-sensitive count/region columns. ``rd_num_superiority`` and ``rd_num_superiority_gk`` share
-#: the behind-the-ball BAND region (the keeper-inclusion changes the count, not the region);
-#: ``rd_zone_occupancy`` uses the danger-zone region.
+#: the behind-the-ball BAND region (the keeper-inclusion changes the count, not the region); the
+#: danger-zone (Z) region covers ``rd_zone_occupancy`` AND every Layer-2 metric (TF-60 PR2): the three
+#: region-Z metrics (space control, gk coverage, reachable m^2) are literally scored over Z, and the
+#: two danger integrals are whole-pitch-but-xT-concentrated-in-Z, so the Z ROI is the honest "was the
+#: counter-danger zone observed" flag (they are more FOV-sensitive than the exempt position metrics).
 _BAND_COLUMNS = (RD_NUM_SUPERIORITY, RD_NUM_SUPERIORITY_GK)
-_ZONE_COLUMNS = (RD_ZONE_OCCUPANCY,)
+_ZONE_COLUMNS = (
+    RD_ZONE_OCCUPANCY,
+    RD_ATTACKER_SPACE_CONTROL,
+    RD_DANGER_BEHIND_LINE,
+    RD_DANGER_BEHIND_LINE_GK,
+    RD_GK_COVERAGE_BEHIND_LINE,
+    RD_GK_REACHABLE_COVERAGE_M2,
+)
 FOV_SENSITIVE_COLUMNS = (*_BAND_COLUMNS, *_ZONE_COLUMNS)
 
 #: Layer-1 columns that receive NO FOV companion, each with a reason -- the ADR-077 companion model

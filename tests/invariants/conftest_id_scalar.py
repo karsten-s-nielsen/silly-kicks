@@ -831,6 +831,21 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
             ),
         ),
         _e(
+            # TF-60 PR2: newly public (exported for restdefense._danger). TWO id scalars
+            # (attacking_team_id + gk_player_id), so `s` is a tuple: attacking = team 5, defending
+            # keeper = team 6's GK (player 2). gk_player_id resolves via `ids_match` internally.
+            "silly_kicks.tracking._gk_influence.compute_gk_influence",
+            lambda s: T.compute_gk_influence(
+                single_frame(),
+                attacking_team_id=s[0],
+                gk_player_id=s[1],
+                xt=xt_model(),
+                goal_map=goal_map_like_home_team_id(single_frame(), s[0]),
+            ),
+            matched=(HOME, 2),
+            mismatched=(as_str(HOME), as_str(2)),
+        ),
+        _e(
             "silly_kicks.tracking._cover_shadows.lane_control",
             lambda s: T.lane_control(
                 single_frame(),
