@@ -6,12 +6,12 @@ reverse) must reproduce the all-numeric metrics exactly."""
 
 import pandas as pd
 
-from silly_kicks.restdefense import RD_LAYER1_COLUMNS
+from silly_kicks.restdefense import RD_METRIC_COLUMNS
 from silly_kicks.restdefense._compute import compute_rest_defense
-from tests.restdefense._fixtures import make_rest_defense_fixture
+from tests.restdefense._fixtures import make_fitted_xt, make_rest_defense_fixture
 
 _ID_COLS = ["game_id", "team_id", "player_id"]
-_NUMERIC = [c for c in RD_LAYER1_COLUMNS if c != "rd_shape_2_3_vs_3_2"]
+_NUMERIC = [c for c in RD_METRIC_COLUMNS if c != "rd_shape_2_3_vs_3_2"]
 
 
 def _stringify(df, cols):
@@ -38,13 +38,15 @@ def _assert_metrics_equal(a, b):
 
 def test_string_frame_ids_match_numeric():
     actions, frames = make_rest_defense_fixture()
-    base, _ = compute_rest_defense(actions, frames)
-    out, _ = compute_rest_defense(actions, _stringify(frames, _ID_COLS))
+    xt = make_fitted_xt()
+    base, _ = compute_rest_defense(actions, frames, xt=xt)
+    out, _ = compute_rest_defense(actions, _stringify(frames, _ID_COLS), xt=xt)
     _assert_metrics_equal(base, out)
 
 
 def test_string_action_ids_match_numeric():
     actions, frames = make_rest_defense_fixture()
-    base, _ = compute_rest_defense(actions, frames)
-    out, _ = compute_rest_defense(_stringify(actions, _ID_COLS), frames)
+    xt = make_fitted_xt()
+    base, _ = compute_rest_defense(actions, frames, xt=xt)
+    out, _ = compute_rest_defense(_stringify(actions, _ID_COLS), frames, xt=xt)
     _assert_metrics_equal(base, out)

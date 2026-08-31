@@ -23,6 +23,8 @@ from .pitch_control import PitchControlCache, PitchControlParams, compute_pitch_
 from .pitch_control._surface import PitchControlSurface
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from silly_kicks.xthreat import ExpectedThreat
 
 
@@ -729,11 +731,16 @@ def _voronoi_threat(
     *,
     attacking_team_id: int | str,
     goal_map: GoalMap,
+    field_weight: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
 ) -> tuple[float, dict]:
     """Compute threat via Voronoi-partitioned grid sum.
 
     Returns (total_threat, per_receiver_threat_dict).
     per_receiver_threat_dict maps player_id -> threat for dangerous receivers.
+
+    ``field_weight``, when supplied, is a callable ``w(grid_x, grid_y) -> (ny, nx)`` of per-cell
+    weights in ABSOLUTE pitch coords (TF-60 PR2); it is multiplied into the oriented threat grid
+    before the Voronoi partition-sum. Default None = unweighted (byte-identical).
     """
     from scipy.spatial.distance import cdist
 
@@ -791,6 +798,11 @@ def _voronoi_threat(
         # y->68-y), and an x-only mirror is exact only for a y-symmetric grid.
         threat_grid = xt_vals[::-1, ::-1] * surface.surface
 
+    # TF-60 PR2: optional per-cell re-weighting of the ORIENTED threat grid (e.g. OBPV w_field).
+    # Applied after orientation so the caller's absolute-coord weight aligns with the surface grid.
+    if field_weight is not None:
+        threat_grid = threat_grid * field_weight(x_coords, y_coords)
+
     # Voronoi partition over ALL outfield attackers (not just dangerous)
     all_att_pos = attackers_outfield[["x", "y"]].to_numpy(dtype=np.float64)
     all_att_ids = attackers_outfield["player_id"].to_numpy()
@@ -819,6 +831,7 @@ def compute_threat_pc(
     goal_map: GoalMap,
     method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
     params: PitchControlParams | None = None,
+    field_weight: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
 ) -> float:
     """xT-weighted Voronoi pitch-control threat integral for ``frame``.
 
@@ -851,6 +864,10 @@ def compute_threat_pc(
         Pitch-control method. Keep ``"spearman"`` for a keeper-aware value.
     params : PitchControlParams | None
         Pitch-control parameters.
+    field_weight : Callable | None
+        Optional per-cell weight ``w(grid_x, grid_y) -> (ny, nx)`` in absolute pitch coords,
+        multiplied into the oriented threat grid before the Voronoi partition (default None =
+        unweighted; TF-60 PR2 -- e.g. an OBPV ``w_field`` re-weighting of the deep zone).
 
     Returns
     -------
@@ -880,7 +897,9 @@ def compute_threat_pc(
     # still raises. Without this the bare compute_pitch_control below refuses a declared frame too.
     frame = zero_velocity_if_unavailable(frame, method=method)
     surface = compute_pitch_control(frame, attacking_team_id, method=method, params=params)
-    threat, _per_receiver = _voronoi_threat(surface, xt, frame, attacking_team_id=attacking_team_id, goal_map=goal_map)
+    threat, _per_receiver = _voronoi_threat(
+        surface, xt, frame, attacking_team_id=attacking_team_id, goal_map=goal_map, field_weight=field_weight
+    )
     return float(threat)
 
 

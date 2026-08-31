@@ -243,6 +243,7 @@ def compute_gk_influence(
     gk_reaction_time: float = 0.4,
     gk_max_acceleration: float = 7.0,
     pitch_control_cache: PitchControlCache | None = None,
+    region: tuple[float, float, float, float] | None = None,
 ) -> GkInfluence:
     """Per-frame GK influence measurement (all three primitives).
 
@@ -289,6 +290,11 @@ def compute_gk_influence(
         GK-specific reaction time (seconds).
     gk_max_acceleration : float, default 7.0
         GK-specific max acceleration (m/s^2).
+    region : tuple[float, float, float, float] | None
+        Optional ``(x_min, x_max, y_min, y_max)`` restricting the reachable-area (primitive b) sum
+        to cells whose centre lies in the region (default None = whole pitch; TF-60 PR2). The
+        velocity-suppression to NaN (ADR-063) is applied first, so a declared-velocity-less frame
+        stays NaN regardless of the region.
 
     Returns
     -------
@@ -477,9 +483,24 @@ def compute_gk_influence(
     else:
         unique_cells = tti_gk <= tau_seconds
 
+    # TF-60 PR2: optional region restriction (e.g. the danger-behind-line zone Z). `targets` (built
+    # above) are the per-cell centres aligned to `unique_cells`; the velocity-suppression still
+    # applies first (ADR-063), so a declared-velocity-less frame is NaN regardless of the region.
+    if region is not None:
+        rx_min, rx_max, ry_min, ry_max = region
+        in_region = (
+            (targets[:, 0] >= rx_min)
+            & (targets[:, 0] <= rx_max)
+            & (targets[:, 1] >= ry_min)
+            & (targets[:, 1] <= ry_max)
+        )
+        counted_cells = unique_cells & in_region
+    else:
+        counted_cells = unique_cells
+
     # Tier-2 SUPPRESSION (ADR-063 PREFERRED D1): on a declared-velocity-less frame the zero-
     # velocity reachable area is a systematically biased physical estimate, withheld as NaN.
-    reachable_area_m2 = float("nan") if _velocity_less else float(unique_cells.sum() * cell_area)
+    reachable_area_m2 = float("nan") if _velocity_less else float(counted_cells.sum() * cell_area)
 
     # --- Primitive (c): zone closing times ---
     # The zone loop still runs on the velocity-less branch so the zone-keyed COLUMNS exist (as NaN)

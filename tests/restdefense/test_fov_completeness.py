@@ -10,7 +10,7 @@ The shared tracking FOV completeness gate excludes non-``add_*`` / boundary surf
 import numpy as np
 import pandas as pd
 
-from silly_kicks.restdefense import RD_LAYER1_COLUMNS
+from silly_kicks.restdefense import RD_METRIC_COLUMNS
 from silly_kicks.restdefense._compute import compute_rest_defense
 from silly_kicks.restdefense._fov import _OBSERVABILITY_EXEMPT, FOV_SENSITIVE_COLUMNS
 from silly_kicks.tracking import REGION_OBSERVATION_SOURCE_VALUES, VISIBLE_AREA_UNLINKED
@@ -25,9 +25,9 @@ def test_partition_is_exact_and_disjoint():
     sensitive = set(FOV_SENSITIVE_COLUMNS)
     exempt = set(_OBSERVABILITY_EXEMPT)
     assert sensitive.isdisjoint(exempt), sensitive & exempt
-    assert sensitive | exempt == set(RD_LAYER1_COLUMNS), (
-        f"uncovered: {set(RD_LAYER1_COLUMNS) - (sensitive | exempt)}; "
-        f"extra: {(sensitive | exempt) - set(RD_LAYER1_COLUMNS)}"
+    assert sensitive | exempt == set(RD_METRIC_COLUMNS), (
+        f"uncovered: {set(RD_METRIC_COLUMNS) - (sensitive | exempt)}; "
+        f"extra: {(sensitive | exempt) - set(RD_METRIC_COLUMNS)}"
     )
     for col, reason in _OBSERVABILITY_EXEMPT.items():
         assert isinstance(reason, str) and reason.strip(), f"{col} exempt without a reason"

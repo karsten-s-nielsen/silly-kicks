@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import pytest
 
-from silly_kicks.restdefense import RD_LAYER1_COLUMNS, RestDefenseParams
+from silly_kicks.restdefense import RD_METRIC_COLUMNS, RestDefenseParams
 from silly_kicks.restdefense._compute import compute_rest_defense, summarize_rest_defense
+from tests.restdefense._fixtures import make_fitted_xt
 
 pytestmark = pytest.mark.e2e
 
@@ -33,10 +34,13 @@ def _assert_method(samples, report):
     resolved = samples[samples["rd_geometry_source"] == "resolved"]
     assert len(resolved) > 0, "no resolved rest-defense samples on a real match"
     assert report.n_frames_scored + sum(report.drop_reasons.values()) == report.n_frames_in
-    for c in RD_LAYER1_COLUMNS:
+    for c in RD_METRIC_COLUMNS:  # Layer 1 + Layer 2 all present
         assert c in samples.columns
     for c in _GK_COLS:
         assert resolved[c].notna().any(), f"{c} all-NaN on a real match -- GK identity did not resolve"
+    # Layer 2 ran (a fitted xt was supplied): the Tier-1 pitch-control space control is populated on
+    # both provider classes (SB360 via the zero-velocity model).
+    assert resolved["rd_attacker_space_control"].notna().any(), "Layer-2 space control all-NaN on a real match"
 
 
 def test_e2e_linked_tracking_method():
@@ -53,10 +57,18 @@ def test_e2e_linked_tracking_method():
         pytest.skip(f"lakehouse-derived tracking slim unavailable: {exc}")
 
     assert frames["is_goalkeeper"].astype("boolean").fillna(False).any(), "fixture has no native keeper rows"
+    # Layer 2 (pitch control) needs velocity; a real continuous-tracking consumer derives it. The
+    # committed slim is positions-only, so a forgotten derive here is exactly the ADR-063 fail-loud.
+    from silly_kicks.tracking import derive_velocities, smooth_frames
+
+    frames = derive_velocities(smooth_frames(frames))
     actions = synthesize_actions(frames, n_actions=N_ACTIONS_PER_PROVIDER)
 
-    samples, report = compute_rest_defense(actions, frames, params=_PARAMS)
+    samples, report = compute_rest_defense(actions, frames, xt=make_fitted_xt(), params=_PARAMS)
     _assert_method(samples, report)
+    # Velocity-bearing tracking: the Tier-2 reachable-area metric computes a real value here.
+    resolved = samples[samples["rd_geometry_source"] == "resolved"]
+    assert resolved["rd_gk_reachable_coverage_m2"].notna().any(), "Tier-2 reachable area all-NaN on real tracking"
 
     # Both rollup grains reduce without error and stay one-row-per-group.
     per_poss = summarize_rest_defense(samples, by="possession")
@@ -106,12 +118,18 @@ def test_e2e_sb360_open_method():
     keeper_map, _kr = resolve_keeper_identities(actions, frames, identity="roster", roster=roster)
     frames = apply_keeper_identities_to_frames(frames, keeper_map)
 
-    samples, report = compute_rest_defense(actions, frames, visible_area=visible_area, params=_PARAMS)
+    samples, report = compute_rest_defense(
+        actions, frames, xt=make_fitted_xt(), visible_area=visible_area, params=_PARAMS
+    )
     _assert_method(samples, report)
+
+    resolved = samples[samples["rd_geometry_source"] == "resolved"]
+    # SB360 is velocity-declared-absent: the Tier-2 reachable-area metric is honest-NaN (ADR-063),
+    # while the Tier-1 space control lifts (asserted in _assert_method).
+    assert resolved["rd_gk_reachable_coverage_m2"].isna().all(), "Tier-2 reachable area should be NaN on SB360"
 
     # FOV companions degrade honestly on a real cropped match: at least one action's count region is
     # partially observed (a fraction strictly inside the band) -- the SB360 coverage signal.
-    resolved = samples[samples["rd_geometry_source"] == "resolved"]
     frac = resolved["rd_num_superiority_observed_fraction"].dropna()
     assert ((frac > 0.0) & (frac < 1.0)).any(), (
         "no partially-observed rest-defense count on a full SB360 match -- the FOV companion is a rubber stamp"

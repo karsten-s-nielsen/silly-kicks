@@ -92,6 +92,16 @@ def zero_velocity_if_unavailable(frames: pd.DataFrame, *, method: str = "spearma
     place, so it is internally inconsistent if passed ONWARD (a consumer reading ``speed_source``
     sees "unavailable" on a frame that now carries velocity columns). That is fine for the
     immediate pitch-control call it is built for; do not forward it.
+
+    Examples
+    --------
+    Prepare a tracking frame for a Spearman pitch-control call::
+
+        from silly_kicks.tracking import zero_velocity_if_unavailable
+
+        prepared = zero_velocity_if_unavailable(frame, method="spearman")
+        # `prepared is frame` when vx/vy are present; a zero-velocity COPY on a declared-velocity-
+        # less SB360 freeze-frame; a ValueError if vx/vy are missing and NOT declared unavailable.
     """
     if "vx" in frames.columns and "vy" in frames.columns:
         return frames

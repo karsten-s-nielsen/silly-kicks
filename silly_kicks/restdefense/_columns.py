@@ -34,6 +34,24 @@ RD_LAYER1_COLUMNS = [
     RD_GK_TO_LINE_DISTANCE,
 ]
 
+# Layer-2 metric column bases (one per spec §7.2 row; TF-60 PR2).
+RD_ATTACKER_SPACE_CONTROL = "rd_attacker_space_control"
+RD_DANGER_BEHIND_LINE = "rd_danger_behind_line"
+RD_DANGER_BEHIND_LINE_GK = "rd_danger_behind_line_gk"
+RD_GK_COVERAGE_BEHIND_LINE = "rd_gk_coverage_behind_line"
+RD_GK_REACHABLE_COVERAGE_M2 = "rd_gk_reachable_coverage_m2"
+
+RD_LAYER2_COLUMNS = [
+    RD_ATTACKER_SPACE_CONTROL,
+    RD_DANGER_BEHIND_LINE,
+    RD_DANGER_BEHIND_LINE_GK,
+    RD_GK_COVERAGE_BEHIND_LINE,
+    RD_GK_REACHABLE_COVERAGE_M2,
+]
+
+#: All emitted metric columns (Layer 1 + Layer 2); the canonical list every gate iterates.
+RD_METRIC_COLUMNS = [*RD_LAYER1_COLUMNS, *RD_LAYER2_COLUMNS]
+
 #: Provenance for the goal-end resolution behind every geometry-dependent metric.
 RD_GEOMETRY_SOURCE = "rd_geometry_source"  # {"resolved", "guessed", "unresolved"}
 

@@ -11,7 +11,7 @@ import pandas as pd
 import silly_kicks.spadl as spadl
 from silly_kicks.gkdv import GkdvParams, build_ghost_frames
 from silly_kicks.id_compat import canonical_id, ids_equal, same_id
-from silly_kicks.restdefense import RD_LAYER1_COLUMNS
+from silly_kicks.restdefense import RD_LAYER1_COLUMNS, RD_LAYER2_COLUMNS
 from silly_kicks.xtgk import DeltaV, PressureLevels, State, compute_xt_gk_v2
 from tests.sb360._registry import AxisVerdict, _entry
 
@@ -365,64 +365,119 @@ _entry(
 def _call_rest_defense(actions, frames, links, home_team_id):
     """``compute_rest_defense`` projected to per-ACTION (its samples table is per-scored-sample).
 
-    Left-joins the Layer-1 metric columns back onto ``actions`` so both legs align row-for-row;
-    an unscored action lands NaN. ``home_team_id`` is unused -- restdefense takes direction from
-    the ``GoalMap`` (ADR-055), never team identity."""
-    from silly_kicks.restdefense import RD_LAYER1_COLUMNS, compute_rest_defense
+    Left-joins ALL metric columns (Layer 1 + the PR2 Layer 2) back onto ``actions`` so both legs
+    align row-for-row; an unscored action lands NaN. A fitted ``xt`` (the shared ``audit_xt``) is
+    passed so the Layer-2 danger/threat columns are actually exercised (without one they are all-NaN,
+    P2-02). ``home_team_id`` is unused -- restdefense takes direction from the ``GoalMap`` (ADR-055),
+    never team identity."""
+    from scripts._sb_battery import audit_xt
+    from silly_kicks.restdefense import RD_METRIC_COLUMNS, compute_rest_defense
 
-    samples, _ = compute_rest_defense(actions, frames, links=links)
-    cols = ["action_id", *RD_LAYER1_COLUMNS, "rd_geometry_source"]
+    samples, _ = compute_rest_defense(actions, frames, links=links, xt=audit_xt())
+    cols = ["action_id", *RD_METRIC_COLUMNS, "rd_geometry_source"]
     metrics = samples[cols].drop_duplicates(subset=["action_id"])
     return actions[["action_id"]].merge(metrics, on="action_id", how="left")
 
 
-# The Layer-1 metrics are POSITIONAL (counts, line/GK heights, rearguard shape) -- they read no
-# velocity -- so both legs (velocity-less freeze-frame Leg A, velocity-bearing Leg B) share identical
-# positions and observe `identical` -> `works`. `works` here means restdefense fabricates nothing
-# through a kinematic input it never reads (a frame-coupling tripwire), NOT that its output is
-# SB360-computable in general -- keeper identity must be resolved+bridged upstream (ADR-078). Hence
-# verdict_provenance=`structural`: a value that cannot move across the velocity legs was not
-# substantively handled.
-_RD_ALL = tuple(RD_LAYER1_COLUMNS)
+# Layer 1 is POSITIONAL (counts, line/GK heights, rearguard shape) -- reads no velocity -> both legs
+# `identical` -> `works`. Layer 2 (PR2) READS velocity via the Spearman pitch-control surface, so the
+# four pitch-control metrics DIFFER by design across the velocity legs (Leg A the zero-velocity model,
+# Leg B velocity-bearing -- ADR-063 Tier-1 lift, a valid positional model, NOT a fabrication) and the
+# reachable-area metric is Tier-2 honest-NaN on the velocity-less leg. Those differs_by_design cells
+# make the entry verdict_provenance=`substantive` (measured -- see the boundary probe).
+_RD_L1 = tuple(RD_LAYER1_COLUMNS)
+_RD_L2 = tuple(RD_LAYER2_COLUMNS)
+_RD_ALL = (*_RD_L1, *_RD_L2)
 _RD_GK_COLS = ("rd_gk_line_height", "rd_gk_to_line_distance")
+_RD_L2_PITCH = (
+    "rd_attacker_space_control",
+    "rd_danger_behind_line",
+    "rd_danger_behind_line_gk",
+    "rd_gk_coverage_behind_line",
+)
+_RD_REACHABLE = "rd_gk_reachable_coverage_m2"
 _RD_GK_ABSENT_RATIONALE = (
     "The gk_absent roster removes BOTH keepers, so the GK-position metrics have no keeper to read in "
     "EITHER leg -> both all-NaN -> no_signal, unexercisable. The count/line/shape columns still "
     "observe `identical`. [measured cause=n/a]"
 )
-_RD_PROVENANCE_RATIONALE = (
-    "Positional (velocity-invariant) Layer-1 structure metrics: both legs share identical positions "
-    "so every column observes `identical`. `works` means no fabrication through a kinematic input "
-    "restdefense never reads -- a frame-coupling regression tripwire -- NOT that the metrics are "
-    "SB360-computable end-to-end (keeper identity is resolved+bridged upstream, ADR-078). Structural."
+_RD_L2_DIFFERS_RATIONALE = (
+    "Layer-2 pitch-control metric: Leg A uses the zero-velocity positional model (SB360 declared "
+    "velocity-less), Leg B the velocity-bearing model at identical positions, so the value DIFFERS "
+    "BY DESIGN -- the ADR-063 Tier-1 lift, a valid model, not a fabrication. [measured cause=velocity]"
 )
+_RD_L2_GK_ABSENT_RATIONALE = (
+    "The gk_absent roster removes BOTH keepers: the danger integrals lose GoalMap orientation "
+    "(compute_threat_pc's attacked-goal is unresolvable) and the keeper-share/reachable metrics have "
+    "no keeper, so BOTH legs are NaN -> no_signal, unexercisable on this roster."
+)
+_RD_PROVENANCE_RATIONALE = (
+    "SUBSTANTIVE: the Layer-2 pitch-control metrics DIFFER by design across the velocity legs (Leg A "
+    "zero-velocity, Leg B velocity-bearing -- ADR-063 Tier-1 lift), so the entry substantively handles "
+    "the frame kinematics. Layer-1 `works` cells are the velocity-invariant positional metrics; the "
+    "reachable-area honest-NaN is the Tier-2 suppression. Keeper identity is resolved+bridged upstream "
+    "(ADR-078); `works`/`differs_by_design` are frame-coupling verdicts, not an end-to-end SB360 claim."
+)
+
+
+def _rd_l2_velocity() -> dict:
+    """Layer-2 velocity/defender_absent/gk_one_end verdicts: 4 pitch metrics differ-by-design, the
+    reachable m^2 is Tier-2 honest-NaN. (Measured identical across those three axes.)"""
+    out = {c: AxisVerdict("differs", "differs_by_design", rationale=_RD_L2_DIFFERS_RATIONALE) for c in _RD_L2_PITCH}
+    out[_RD_REACHABLE] = AxisVerdict("all_nan", "honest_nan")
+    return out
+
 
 _entry(
     "restdefense.compute_rest_defense",
     _call_rest_defense,
     columns=_RD_ALL,
-    velocity={c: AxisVerdict("identical", _WORKS) for c in _RD_ALL},
+    velocity={**{c: AxisVerdict("identical", _WORKS) for c in _RD_L1}, **_rd_l2_velocity()},
     visibility={
         "gk_absent": {
-            c: (
-                AxisVerdict("no_signal", "not_exercised", rationale=_RD_GK_ABSENT_RATIONALE)
-                if c in _RD_GK_COLS
-                else AxisVerdict("identical", _WORKS)
-            )
-            for c in _RD_ALL
+            **{
+                c: (
+                    AxisVerdict("no_signal", "not_exercised", rationale=_RD_GK_ABSENT_RATIONALE)
+                    if c in _RD_GK_COLS
+                    else AxisVerdict("identical", _WORKS)
+                )
+                for c in _RD_L1
+            },
+            # space control is keeper-blind so it still computes (differs by design); the danger
+            # integrals + keeper metrics have no orientation/keeper on the gk_absent roster.
+            "rd_attacker_space_control": AxisVerdict(
+                "differs", "differs_by_design", rationale=_RD_L2_DIFFERS_RATIONALE
+            ),
+            "rd_danger_behind_line": AxisVerdict("no_signal", "not_exercised", rationale=_RD_L2_GK_ABSENT_RATIONALE),
+            "rd_danger_behind_line_gk": AxisVerdict("no_signal", "not_exercised", rationale=_RD_L2_GK_ABSENT_RATIONALE),
+            "rd_gk_coverage_behind_line": AxisVerdict(
+                "no_signal", "not_exercised", rationale=_RD_L2_GK_ABSENT_RATIONALE
+            ),
+            _RD_REACHABLE: AxisVerdict("no_signal", "not_exercised", rationale=_RD_L2_GK_ABSENT_RATIONALE),
         },
-        "defender_absent": {c: AxisVerdict("identical", _WORKS) for c in _RD_ALL},
-        "gk_one_end": {c: AxisVerdict("identical", _WORKS) for c in _RD_ALL},
+        "defender_absent": {**{c: AxisVerdict("identical", _WORKS) for c in _RD_L1}, **_rd_l2_velocity()},
+        "gk_one_end": {**{c: AxisVerdict("identical", _WORKS) for c in _RD_L1}, **_rd_l2_velocity()},
     },
-    # Single-player perturbation: the count/line/shape metrics aggregate over the whole samples table
-    # and a one-player move (to a corner far from the ball) crosses no band boundary -> no_support;
-    # the two GK-position metrics are moved by relocating the (far-from-ball) keeper -> support_data_defined.
-    applicability={c: ("support_data_defined" if c in _RD_GK_COLS else "no_support") for c in _RD_ALL},
+    # Single-player perturbation (measured): the L1 count/line/shape metrics don't move (no_support);
+    # the L1 GK-position metrics and the L2 danger/coverage metrics move via the relocated player.
+    applicability={
+        **{c: ("support_data_defined" if c in _RD_GK_COLS else "no_support") for c in _RD_L1},
+        "rd_attacker_space_control": "support_data_defined",
+        "rd_danger_behind_line": "region_support",
+        "rd_danger_behind_line_gk": "support_data_defined",
+        "rd_gk_coverage_behind_line": "support_data_defined",
+        _RD_REACHABLE: "no_support",
+    },
     applicability_deltas={
-        **{c: {"extreme": 0.0, "near": 0.0} for c in _RD_ALL if c not in _RD_GK_COLS},
+        **{c: {"extreme": 0.0, "near": 0.0} for c in _RD_L1 if c not in _RD_GK_COLS},
         "rd_gk_line_height": {"extreme": 4.1871955840515085, "near": 0.0},
         "rd_gk_to_line_distance": {"extreme": 4.187195584051494, "near": 0.0},
+        "rd_attacker_space_control": {"extreme": 0.09693340625715541, "near": 0.1514530228682487},
+        "rd_danger_behind_line": {"extreme": 0.0, "near": 53.55889976083222},
+        "rd_danger_behind_line_gk": {"extreme": 21.750992002529074, "near": 51.468371064050416},
+        "rd_gk_coverage_behind_line": {"extreme": 0.00318693089850397, "near": 14.992021306830027},
+        _RD_REACHABLE: {"extreme": 0.0, "near": 0.0},
     },
-    verdict_provenance="structural",
+    verdict_provenance="substantive",
     provenance_rationale=_RD_PROVENANCE_RATIONALE,
 )

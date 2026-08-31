@@ -228,7 +228,14 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: metrics have no keeper to read in EITHER leg -> both all-NaN -> `no_signal`, which admits only
 #: `not_exercised`. The other nine Layer-1 columns stay `identical`/`works` (positional, both legs
 #: agree), and the two GK columns are exercised (`identical`) on `defender_absent` + `gk_one_end`.
-NOT_EXERCISED_BUDGET = 44
+#:
+#: RAISED 44 -> 48 by the TF-60 PR2 Layer-2 columns (ADR-081). Four new tuples under `gk_absent`
+#: ONLY: `rd_danger_behind_line`, `rd_danger_behind_line_gk`, `rd_gk_coverage_behind_line`,
+#: `rd_gk_reachable_coverage_m2` -- with BOTH keepers gone the danger integrals lose GoalMap
+#: orientation and the keeper metrics have no keeper, so both legs are NaN -> `no_signal`. The fifth
+#: Layer-2 column (`rd_attacker_space_control`) is keeper-blind and still computes (differs_by_design),
+#: and all five are exercised (`differs`/`honest_nan`) on velocity + `defender_absent` + `gk_one_end`.
+NOT_EXERCISED_BUDGET = 48
 
 
 def _entry(
