@@ -18,6 +18,8 @@ Predicts where a league-average goalkeeper would position themselves given the c
 
 Part of the [silly-kicks](https://github.com/karsten-s-nielsen/silly-kicks) soccer analytics library (GKDV research program, TF-18, Layer 2).
 
+> **Rest-defense / high sweeper?** The `default`/`full` variants here train on a fixed x &isin; [0, 30] m goal-relative box and **saturate at 30 m** &mdash; they cannot place an in-possession keeper who has pushed up to 30&ndash;45 m. For that regime, see the separate extended-grid (x_max = 52.5 m) model [`ghost-gk-sweeper-v1`](https://huggingface.co/silly-kicks/ghost-gk-sweeper-v1) (and its velocity-less companion [`ghost-gk-sweeper-position-only-v1`](https://huggingface.co/silly-kicks/ghost-gk-sweeper-position-only-v1)) &mdash; TF-60, ADR-083.
+
 ## Model Description
 
 Standard goalkeeper evaluation metrics (xGOT, save percentage, goals prevented) measure what happens *after* a shot is taken. Ghost-GK addresses the upstream question: *given the current game state, where should the goalkeeper be standing?*
