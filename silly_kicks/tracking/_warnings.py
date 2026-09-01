@@ -12,6 +12,7 @@ synthetic-surface notice must not also silence a genuine misuse signal.
 from __future__ import annotations
 
 __all__ = [
+    "GoalkeeperClampWarning",
     "IgnoredSurfaceInputsWarning",
     "MissingFeatureContractWarning",
     "OrientationUnresolvedWarning",
@@ -19,6 +20,29 @@ __all__ = [
     "SyntheticEPVWarning",
     "UnverifiableFeatureContractWarning",
 ]
+
+
+class GoalkeeperClampWarning(UserWarning):
+    """A provider clamps the goalkeeper's tracked position to a hard maximum distance from goal.
+
+    Some broadcast-tracking providers constrain the keeper to a fixed "goalkeeper zone". Measured:
+    Gradient Sports pins every keeper at exactly 27.5 m from its own goal and never beyond, so any
+    GK-depth / sweeper / ghost-GK analysis on that provider is invalid past the ceiling. The signature
+    is a hard ceiling on the keeper's goal-relative x with an anomalous PILEUP at that ceiling (a
+    natural keeper has ~0 mass at its max). Reported by
+    :func:`silly_kicks.tracking.validate_gk_position_clamp` and emitted automatically when the native
+    Gradient Sports adapter builds frames. It is a data-quality NOTICE about the provider, not a
+    misuse signal, and its own category so a consumer can silence it without silencing genuine misuse.
+
+    Examples
+    --------
+    Escalate a clamped-keeper corpus to an error before a GK-positioning study::
+
+        import warnings
+        from silly_kicks.tracking import GoalkeeperClampWarning
+
+        warnings.filterwarnings("error", category=GoalkeeperClampWarning)
+    """
 
 
 class SyntheticEPVWarning(UserWarning):

@@ -20,6 +20,7 @@ from silly_kicks.id_compat import (
     _as_bool,
     _raw_comparable,
     align_join_keys,
+    canonical_id,
     canonical_id_series,
     ids_match,
 )
@@ -27,6 +28,7 @@ from silly_kicks.reflection import TRACKING_REFLECTION_KINDS, reflect
 
 from ._action_orientation import acting_team_attacks_rtl, reproject_to_action_ltr
 from ._visibility import VISIBLE_AREA_OBSERVED
+from ._warnings import GoalkeeperClampWarning
 from .schema import (
     EMPTY,
     FOV_REGIME_ABSENT,
@@ -40,6 +42,7 @@ from .schema import (
     VELOCITY_INFORMED,
     VELOCITY_MISSING,
     FovDiagnosis,
+    GkClampDiagnosis,
     IdDtypeDiagnosis,
     LinkReport,
     TimeBaseDiagnosis,
@@ -692,6 +695,106 @@ def validate_velocity_regime(
         if on_mismatch == "warn":
             warnings.warn(message, stacklevel=2)
     return VelocityRegimeDiagnosis(regime, counts, has_cols, message)
+
+
+def validate_gk_position_clamp(
+    frames: pd.DataFrame,
+    *,
+    min_keeper_frames: int = 200,
+    ceiling_tol_m: float = 0.1,
+    pileup_threshold: float = 0.01,
+    warn: bool = True,
+) -> GkClampDiagnosis:
+    """Report whether a provider clamps the goalkeeper to a hard maximum distance from its goal.
+
+    Fifth member of the :func:`validate_time_base` / :func:`validate_velocity_regime` /
+    :func:`validate_fov` diagnostic family. Some broadcast-tracking providers constrain the keeper to
+    a fixed "goalkeeper zone": measured, Gradient Sports pins every keeper at exactly 27.5 m from its
+    own goal and never beyond (verified on the raw provider data across matches), so any GK-depth /
+    sweeper / ghost-GK analysis on that provider is invalid past the ceiling. The signature is a hard
+    ceiling on the keeper's distance from the nearest goal line with an anomalous PILEUP at that
+    ceiling -- a natural keeper spends ~0 frames at its single highest sweep, a clamped one is pinned
+    at the ceiling in many frames. Distance is ``min(x, 105 - x)`` on ``x`` clipped to the pitch (the
+    keeper is always near its OWN goal, the nearest one), so no orientation / goal-map is needed and
+    the check is convention-free.
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Tracking frames with ``game_id``, ``team_id``, ``is_goalkeeper``, ``is_ball``, ``x``.
+    min_keeper_frames : int, default 200
+        Skip a ``(game_id, team_id)`` keeper with fewer frames -- the pileup fraction is noise below it.
+    ceiling_tol_m : float, default 0.1
+        A frame within this many metres of the observed ceiling counts as "at the ceiling". Tight by
+        design: the clamp is a sharp SPIKE at the ceiling, so a wide window would count a natural
+        taper's near-max frames and false-positive.
+    pileup_threshold : float, default 0.01
+        A unit is CLAMPED iff its at-the-ceiling fraction reaches this. A natural keeper is ~0.
+    warn : bool, default True
+        Emit :class:`GoalkeeperClampWarning` when any unit is clamped.
+
+    Returns
+    -------
+    GkClampDiagnosis
+
+    Examples
+    --------
+    Flag a clamped-keeper corpus before a GK-positioning study::
+
+        diagnosis = validate_gk_position_clamp(frames)
+        if diagnosis.clamped:
+            ...  # GK depth is unreliable past diagnosis.ceiling_by_unit[unit]
+    """
+    req = {"game_id", "team_id", "is_goalkeeper", "is_ball", "x"}
+    if not req.issubset(frames.columns) or len(frames) == 0:
+        return GkClampDiagnosis(False, (), {}, {}, 0, "gk position clamp: no usable keeper data.")
+
+    # `_as_bool` resolves NA to False and pins non-nullable np.bool_ (is_goalkeeper / is_ball are bool
+    # per the frame schema, so this is the NA-safe coercion the family uses). A keeper is a non-ball
+    # is_goalkeeper row.
+    is_gk = _as_bool(frames["is_goalkeeper"]) & (~_as_bool(frames["is_ball"]))
+    gk = frames.loc[is_gk, ["game_id", "team_id", "x"]]
+    gk = gk[gk["x"].notna()]
+    if gk.empty:
+        return GkClampDiagnosis(False, (), {}, {}, 0, "gk position clamp: no keeper rows.")
+
+    clipped = np.clip(gk["x"].to_numpy(float), 0.0, 105.0)
+    gk = gk.assign(_dist=np.minimum(clipped, 105.0 - clipped))  # distance from the nearest goal line
+
+    clamped_units: list[tuple[str, str]] = []
+    ceiling_by_unit: dict[tuple[str, str], float] = {}
+    pileup_by_unit: dict[tuple[str, str], float] = {}
+    n_units = 0
+    for (g, t), grp in gk.groupby(["game_id", "team_id"], sort=False):
+        d = grp["_dist"].to_numpy(float)
+        if len(d) < min_keeper_frames:
+            continue
+        n_units += 1
+        ceiling = float(d.max())
+        pileup = float(np.mean(d >= ceiling - ceiling_tol_m))
+        if pileup >= pileup_threshold:
+            cg, ct = canonical_id(g), canonical_id(t)
+            if not isinstance(cg, str) or not isinstance(ct, str):  # keeper ids are always real; narrows to str
+                continue
+            key = (cg, ct)
+            clamped_units.append(key)
+            ceiling_by_unit[key] = ceiling
+            pileup_by_unit[key] = pileup
+
+    clamped = len(clamped_units) > 0
+    if clamped:
+        worst = min(ceiling_by_unit.values())
+        message = (
+            f"gk position clamp: {len(clamped_units)} of {n_units} keeper unit(s) show a hard ceiling "
+            f"with a pileup (min ceiling {worst:.1f} m from goal). The provider clamps the goalkeeper "
+            f"to a 'keeper zone' (e.g. Gradient Sports clamps at 27.5 m); GK-depth analysis is invalid "
+            f"past the ceiling."
+        )
+    else:
+        message = f"gk position clamp: none of {n_units} keeper unit(s) clamped."
+    if warn and clamped:
+        warnings.warn(message, GoalkeeperClampWarning, stacklevel=2)
+    return GkClampDiagnosis(clamped, tuple(clamped_units), ceiling_by_unit, pileup_by_unit, n_units, message)
 
 
 def validate_fov(

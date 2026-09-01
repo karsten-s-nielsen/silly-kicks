@@ -1,0 +1,108 @@
+{
+  "feature_names": [
+    "ball_x",
+    "ball_y",
+    "ball_vx",
+    "ball_vy",
+    "ball_distance_to_goal",
+    "defensive_line_x",
+    "defensive_line_depth",
+    "defensive_line_width",
+    "attackers_in_box",
+    "nearest_attacker_to_goal_x",
+    "attacker_centroid_x",
+    "attacker_centroid_y",
+    "defenders_behind_ball",
+    "deepest_defender_x",
+    "phase",
+    "team_in_possession",
+    "score_diff",
+    "time_seconds",
+    "period_id",
+    "ball_to_goal_angle",
+    "ball_to_nearest_attacker_dist",
+    "defending_team_compactness",
+    "ball_in_own_half",
+    "ball_speed",
+    "defensive_line_speed",
+    "defending_centroid_vx"
+  ],
+  "grid_spec": {
+    "x_min": 0.0,
+    "x_max": 52.5,
+    "y_min": 18.0,
+    "y_max": 50.0,
+    "nx": 105,
+    "ny": 64,
+    "resolution": 0.5
+  },
+  "n_estimators": 500,
+  "max_depth": 8,
+  "carrier_params": {
+    "tolerance_m": 3.0,
+    "beta": 0.0,
+    "gamma": 0.25
+  },
+  "sklearn_version": "1.9.0",
+  "training_commit": "adafb72a7f16456c3775d3a45709c2655dda3ce5",
+  "training_platform": "dgx-spark-aarch64",
+  "corpus_provenance": {
+    "providers": [
+      "gradientsports",
+      "skillcorner",
+      "sportec"
+    ],
+    "n_games": 179,
+    "n_rows": 1048834
+  },
+  "serve_estimator": "boosted_mean",
+  "version": "1.3.0",
+  "stores_training_data": false,
+  "pitch_length": 105.0,
+  "pitch_width": 68.0,
+  "feature_set": "faithful",
+  "chirality": {
+    "version": "chirality-probe-1",
+    "frame_sha256": "60ac605a31b32c94cd56ab8f4d730b65d37f26b3221ad26e9d75d161d817ee89",
+    "outputs": [
+      2.0261173273,
+      32.4614887424
+    ]
+  },
+  "feature_contract": {
+    "version": "feature-contract-1",
+    "probe_sha256": "9f17a54c10b8237f1f60ac7f84953ac8948b90e92bbc45eabc7bc3378138b398",
+    "fingerprint": [
+      17.0,
+      20.0,
+      -3.0,
+      1.0,
+      22.0227155455,
+      9.0,
+      7.0,
+      29.0,
+      1.0,
+      15.0,
+      30.6,
+      29.569,
+      4.0,
+      6.0,
+      0.0,
+      0.0,
+      1.0,
+      10.0,
+      1.0,
+      -0.6889243882,
+      6.4717868475,
+      180.5,
+      1.0,
+      3.1622776602,
+      -2025.0,
+      -2070.0
+    ],
+    "constants": {
+      "penalty_area_half_width": 20.16,
+      "penalty_area_depth": 16.5
+    }
+  }
+}

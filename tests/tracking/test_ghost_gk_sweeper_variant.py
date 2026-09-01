@@ -10,7 +10,6 @@ from ._ghost_toy import (
     home_defending_x0,
     home_team_of,
     load_sportec_slim_frames,
-    translated_training_set,
     two_team_frames,
 )
 
@@ -92,20 +91,17 @@ def test_compute_ghost_gk_runs_on_extended_grid_mean_path():
 # --- Task 6: the two-sided saturation-vs-tracking gate ------------------------------------------
 def test_default_saturates_and_sweeper_tracks_upfield():
     """Translate a clean scene upfield: the shipped default caps its predicted keeper at ~30 m while
-    a toy extended-grid model tracks past it. Direction, not magnitude (survives the toy->real swap)."""
+    the BUNDLED sweeper tracks past it. Direction, not magnitude -- the thresholds hold with wide
+    margin on the real weights (measured default 29.8 m vs sweeper 45.9 m at delta=25), which is what
+    lets them survive a future re-fit; do NOT tighten them to the current fit's magnitude."""
     from silly_kicks.id_compat import canonical_id
     from silly_kicks.tracking import derive_velocities, serve_ghost_gk_positions
-    from silly_kicks.tracking._ghost_gk import prepare_ghost_gk_training_data
     from silly_kicks.tracking.preprocess import smooth_frames
 
     base = load_sportec_slim_frames()
     home = home_defending_x0(base)
 
-    sweeper = GhostGkModel(n_estimators=40, max_depth=4, grid_spec=_SWEEPER_GRID)
-    feats, labs = prepare_ghost_gk_training_data(
-        translated_training_set(base), home_team_id=home, subsample_fps=None, grid_spec=_SWEEPER_GRID
-    )
-    sweeper.fit(feats, labs)
+    sweeper = GhostGkModel.from_variant("sweeper")  # the real bundled extended-grid model
 
     def pred_max(model, delta):
         f = base.copy()
@@ -116,7 +112,7 @@ def test_default_saturates_and_sweeper_tracks_upfield():
         return float(svh["ghost_gr_x"].max())
 
     d25 = pred_max(None, 25)  # shipped default: cannot exceed its 30 m ceiling
-    s25 = pred_max(sweeper, 25)  # toy sweeper: places a keeper well past 30 m
+    s25 = pred_max(sweeper, 25)  # bundled sweeper: places a keeper well past 30 m
     assert d25 <= 31.0, f"default should saturate <=30 m, got {d25:.1f}"
     assert s25 > 33.0, f"sweeper should track past 30 m, got {s25:.1f}"
     assert s25 - d25 > 3.0, f"legs must measurably differ (non-vacuity), got {s25 - d25:.1f}"
