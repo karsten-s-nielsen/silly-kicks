@@ -201,6 +201,15 @@ def convert_to_frames(
         if cfg.derive_velocity:
             final = derive_velocities(final, config=cfg)
 
+    # TF-60: Gradient Sports clamps the goalkeeper's tracked position to a hard 27.5 m from goal
+    # (verified on the raw provider data across matches) -- a keeper who sweeps higher is pinned at the
+    # ceiling. Warn (GoalkeeperClampWarning, filterable) so a GK-depth / sweeper / ghost-GK consumer
+    # knows the keeper is unreliable past the ceiling. Detection is a keeper-only groupby (cheap) and a
+    # no-op below min_keeper_frames, so a small slice never warns spuriously. ADR-083.
+    from .utils import validate_gk_position_clamp
+
+    validate_gk_position_clamp(final, warn=True)
+
     return final, report
 
 

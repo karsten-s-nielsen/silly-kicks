@@ -378,6 +378,37 @@ class FovDiagnosis:
 
 
 @dataclasses.dataclass(frozen=True)
+class GkClampDiagnosis:
+    """Whether a provider clamps the goalkeeper's tracked position to a hard max distance from goal.
+
+    A data-quality diagnostic, produced by ``silly_kicks.tracking.utils.validate_gk_position_clamp``.
+    Some broadcast-tracking providers constrain the keeper to a fixed "goalkeeper zone": measured,
+    Gradient Sports pins every keeper at exactly 27.5 m from its own goal and never beyond, so any
+    GK-depth / sweeper / ghost-GK analysis on that provider is invalid past the ceiling. The signature
+    is a hard ceiling on the keeper's goal-relative x with an anomalous PILEUP at that ceiling (a
+    natural keeper has ~0 mass at its max). Whether a provider clamps is a property of the WHOLE frame
+    set -- like ``VelocityRegimeDiagnosis`` / ``FovDiagnosis`` -- so it is a diagnostic rather than a
+    per-row column that would carry a constant. Oriented via ``resolve_defended_goals`` (ADR-055;
+    never team identity).
+
+    Attributes:
+        clamped: True iff any examined ``(game_id, team_id)`` keeper shows the clamp signature.
+        clamped_units: the canonical ``(game_id, team_id)`` keys whose keeper is clamped.
+        ceiling_by_unit: canonical ``(game_id, team_id)`` -> detected ceiling (m from own goal).
+        pileup_by_unit: canonical ``(game_id, team_id)`` -> fraction of keeper frames at the ceiling.
+        n_units: number of ``(game_id, team_id)`` keeper units examined (>= ``min_keeper_frames``).
+        message: human-readable summary, and the text of the warning when one is emitted.
+    """
+
+    clamped: bool
+    clamped_units: tuple[tuple[str, str], ...]
+    ceiling_by_unit: dict[tuple[str, str], float]
+    pileup_by_unit: dict[tuple[str, str], float]
+    n_units: int
+    message: str
+
+
+@dataclasses.dataclass(frozen=True)
 class TimeBaseDiagnosis:
     """Per-period action-vs-frame time-range diagnosis (time-base mismatch hypothesis).
 
