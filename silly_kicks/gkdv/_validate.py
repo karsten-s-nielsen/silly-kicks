@@ -75,6 +75,34 @@ TERCILE_SEPARATION_M: float = 0.5
 #: direction after seeing the data.
 EXPECTED_DIRECTION: dict[str, str] = {"delta_das": "negative", "delta_threat": "negative"}
 
+#: Arm OUTPUT column -> :data:`EXPECTED_DIRECTION` key. The threat arm's OUTPUT column is
+#: ``delta_threat_suppression`` (``_arms.py``), but its registered direction key is ``delta_threat``;
+#: this is the canonical bridge, so a new arm cannot silently skip its §6.2 sign check and an unmapped
+#: arm raises rather than passing.
+_ARM_DIRECTION_KEY: dict[str, str] = {
+    "delta_das": "delta_das",
+    "delta_threat_suppression": "delta_threat",
+}
+
+
+def expected_direction_for_arm(arm_column: str) -> str:
+    """The expected sign for an arm's OUTPUT column (``"negative"`` == deterrent).
+
+    The threat arm emits ``delta_threat_suppression`` while :data:`EXPECTED_DIRECTION` is keyed on
+    ``delta_threat``; this bridges the arm column to its direction key so every arm column resolves.
+    An arm column absent from :data:`_ARM_DIRECTION_KEY` raises ``KeyError`` (never a silent skip).
+
+    Examples
+    --------
+    >>> from silly_kicks.gkdv import expected_direction_for_arm
+    >>> expected_direction_for_arm("delta_das")
+    'negative'
+    >>> expected_direction_for_arm("delta_threat_suppression")
+    'negative'
+    """
+    return EXPECTED_DIRECTION[_ARM_DIRECTION_KEY[arm_column]]
+
+
 #: The two Layer 4 verdicts. ``uninterpretable`` is NOT a failure of the keepers -- it is a
 #: statement that the ICC computed on this arm carries no information about them.
 _ANCHORED = "anchored"

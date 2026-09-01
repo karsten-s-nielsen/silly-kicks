@@ -205,10 +205,13 @@ _PUBLIC_MODULE_FILES = (
     # gkdv (TF-19 PR-3): the four modules that DEFINE its public surface. The registry
     # previously named `gkdv/__init__.py`, which has zero top-level defs -- a vacuous entry
     # that read as coverage while all four of these were unchecked. `test_no_registered_entry_
-    # is_vacuous` now blocks that shape.
+    # is_vacuous` now blocks that shape. `_probe.py` (TF-19 A+2) adds the physics-arm probe
+    # surface (dose imposer + Layer-0/Layer-1 verdicts + paired-vector controls), re-exported
+    # via `gkdv.__all__` -- a brand-new public module ships clean, like `_keeper_identity.py`.
     "silly_kicks/gkdv/_arms.py",
     "silly_kicks/gkdv/_engine.py",
     "silly_kicks/gkdv/_metric.py",
+    "silly_kicks/gkdv/_probe.py",
     "silly_kicks/gkdv/_validate.py",
     # tracking: per-feature primitive + result modules reached via `tracking.__all__`.
     "silly_kicks/tracking/_ball_carrier.py",

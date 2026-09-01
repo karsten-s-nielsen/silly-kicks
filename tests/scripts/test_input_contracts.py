@@ -59,6 +59,7 @@ _DECLARING = (
     "measure_covariate_invariance",
     "build_gkdv_arm_values",
     "measure_gs_shot_distribution",
+    "build_tf19_instrument_responsiveness",
 )
 
 _RESEARCH = pathlib.Path(__file__).resolve().parents[2] / "docs" / "research"
