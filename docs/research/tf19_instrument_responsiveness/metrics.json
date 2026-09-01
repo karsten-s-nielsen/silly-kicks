@@ -1,0 +1,131 @@
+{
+  "verdicts": {
+    "delta_das": {
+      "layer0": "instrument_void",
+      "layer1": "not_responsive",
+      "n_domain": 123430,
+      "medians": {
+        "real_med": 0.4132680867151146,
+        "sat_med": 0.12487400122309511,
+        "gk_med": 0.05623065656490933,
+        "nd_med": 0.34993350421862424,
+        "placebo_p95": 2.9379755403315837
+      },
+      "n_placebo": 370290
+    },
+    "delta_threat_suppression": {
+      "layer0": "arm_unscoreable",
+      "layer1": "arm_unscoreable",
+      "n_domain": 0,
+      "reason": "needs a fitted ExpectedThreat; the package ships no loader (see build_gkdv_arm_values)"
+    }
+  },
+  "named_keeper": {
+    "arm": "delta_das",
+    "expected_direction": "negative",
+    "n_keepers": 40,
+    "n_gate_eligible": 32,
+    "n_eligible_sign_matches_expected": 15,
+    "n_unresolved_keeper_frames": 0,
+    "behavioural_anchoring": "uninterpretable",
+    "min_nonzero": 20,
+    "min_games": 2
+  },
+  "named_keeper_prior": {
+    "expected_deterrent": {
+      "Alisson": "negative",
+      "Neuer": "negative"
+    },
+    "caveated": {
+      "Ter Stegen": "0_min",
+      "Onana": "descriptive_only"
+    },
+    "locked": "2026-08-29 (before the owner run)",
+    "check": {
+      "Alisson": {
+        "expected_sign": "negative",
+        "n_matched_keepers": 1,
+        "observed_signs": [
+          "negative"
+        ],
+        "gate_eligible": [
+          true
+        ],
+        "meets_prior": true
+      },
+      "Neuer": {
+        "expected_sign": "negative",
+        "n_matched_keepers": 1,
+        "observed_signs": [
+          "positive"
+        ],
+        "gate_eligible": [
+          true
+        ],
+        "meets_prior": false
+      }
+    }
+  },
+  "keeper_identity": {
+    "n_keeper_teams": 276,
+    "n_keeper_teams_resolved": 276,
+    "n_keeper_teams_unresolved": 0,
+    "n_unresolved_keeper_frames": 0
+  },
+  "registered_constants": {
+    "SATURATING_MULTIPLE": 5.0,
+    "PHYSICS_ARM_PROBE_RATIO": 2.0,
+    "R": 3,
+    "MIN_DOMAIN_FRAMES": 200,
+    "REGIME_I_LADDER_M": 2.0,
+    "REALISTIC_MIN_DISP_M": 2.0,
+    "saturating_positions": {
+      "goalline": "defended goal-line centre",
+      "x30_gr_m": 30.0
+    }
+  },
+  "provider_support": {
+    "gradientsports": {
+      "delta_das": "scoreable",
+      "delta_threat_suppression": "arm_unscoreable_no_xt"
+    }
+  },
+  "n_frames_scored": 123430,
+  "generation": "b78992842482c8ad",
+  "n_attempted": 0,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "run_commit": "07a88f69ce12ab07a229678f6f1c48db56893072",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "partition": "all",
+  "input_contract": {
+    "version": 1,
+    "driver": "build_tf19_instrument_responsiveness",
+    "params": {
+      "gkdv": {
+        "domain_ball_to_goal_m": 35.0,
+        "ghost_keeps_actual_velocity": true,
+        "lambda_gk": 3.0,
+        "pitch_control_method": "spearman",
+        "possession_stride": 5
+      },
+      "min_domain_frames": 200,
+      "physics_arm_probe_ratio": 2.0,
+      "r": 3,
+      "realistic_min_disp_m": 2.0,
+      "regime_i_ladder_m": 2.0,
+      "saturating_multiple": 5.0,
+      "saturating_x30_gr": 30.0
+    },
+    "extractors": [
+      "silly_kicks.gkdv._probe",
+      "silly_kicks.gkdv._arms",
+      "silly_kicks.gkdv._engine"
+    ],
+    "models": [
+      "silly_kicks.tracking._ghost_gk.GhostGkModel"
+    ],
+    "digest": "7463ea33acdf0c867e37f043f6346d63da5f68f8c813fc32882a5a951f09f014"
+  }
+}
