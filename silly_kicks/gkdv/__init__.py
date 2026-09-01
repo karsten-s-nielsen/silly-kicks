@@ -24,11 +24,18 @@ from ._arms import (
 )
 from ._engine import GkdvParams, GkdvReport, build_ghost_frames, provenance_to_targets
 from ._metric import aggregate_by_keeper
+from ._probe import (
+    impose_defending_keeper_dose,
+    layer0_instrument_verdict,
+    layer1_responsiveness_verdict,
+    paired_vector_controls,
+)
 from ._validate import (
     EXPECTED_DIRECTION,
     ICC_ANCHORS,
     TERCILE_SEPARATION_M,
     behavioural_anchoring_verdict,
+    expected_direction_for_arm,
 )
 
 __all__ = [
@@ -44,5 +51,10 @@ __all__ = [
     "delta_das_batch",
     "delta_threat_suppression",
     "delta_threat_suppression_batch",
+    "expected_direction_for_arm",
+    "impose_defending_keeper_dose",
+    "layer0_instrument_verdict",
+    "layer1_responsiveness_verdict",
+    "paired_vector_controls",
     "provenance_to_targets",
 ]

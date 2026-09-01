@@ -121,6 +121,11 @@ ARTIFACT_DRIVERS = (
     # docs/research/position_only_variants/ -- a CITED number (the ADR's "reported comparability
     # cost"), so the tree it ran on is recorded. Flagged by this gate on its first run.
     "compare_position_only_variants",
+    # The TF-19 A+2 physics-arm instrument-validity + responsiveness cycle. Walks the pining
+    # corpus (`load_matches`) and writes docs/research verdicts (Layer-0/1 verdicts, the §6.1
+    # gate_eligible census, the §6.2 named-keeper sign table) whose numbers are cited -- so the
+    # tree it ran on is recorded. Reported-not-gated, but a cited artifact all the same.
+    "build_tf19_instrument_responsiveness",
 )
 
 

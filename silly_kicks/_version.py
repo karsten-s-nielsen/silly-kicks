@@ -9,4 +9,4 @@ read the version without importing the (heavy) ``silly_kicks`` package.
 
 from __future__ import annotations
 
-__version__ = "4.103.0"
+__version__ = "4.104.0"

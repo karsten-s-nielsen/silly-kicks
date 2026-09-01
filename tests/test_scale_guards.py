@@ -416,3 +416,93 @@ def test_compute_defensive_credits_is_subquadratic(fitted_xt):
         return c["n"]
 
     assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="compute_defensive_credits")
+
+
+# ==================== gkdv paired-vector controls (ADR-073, TF-19 A+2) ====================
+def _paired_vector_controls_input(n_frames: int):
+    """``n_frames`` scales the LOOP dimension (one target per frame), so the group COUNT scales while
+    each group's SIZE stays fixed. That is the ADR-073 discrimination proof: ``group_rows`` builds the
+    grouping ONCE and does one O(1) ``.get`` per target -> O(T); a full-table filter over ``outfield``
+    per target (the regression this guards) rescans T*players rows T times -> O(T^2). Scaling frames
+    (not players-per-frame) is what keeps a regressed version quadratic and the fix linear."""
+    frame_rows = []
+    target_rows = []
+    for f in range(n_frames):
+        for i in range(3):  # team-1 (defending) outfielders
+            frame_rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": f,
+                    "team_id": 1,
+                    "player_id": 100 + i,
+                    "is_ball": False,
+                    "is_goalkeeper": False,
+                    "x": 20.0 + i,
+                    "y": 30.0 + i,
+                }
+            )
+        frame_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "team_id": 1,
+                "player_id": 199,
+                "is_ball": False,
+                "is_goalkeeper": True,
+                "x": 4.0,
+                "y": 34.0,
+            }
+        )
+        frame_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "team_id": 2,
+                "player_id": 200,
+                "is_ball": False,
+                "is_goalkeeper": False,
+                "x": 50.0,
+                "y": 34.0,
+            }
+        )
+        frame_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "team_id": None,
+                "player_id": None,
+                "is_ball": True,
+                "is_goalkeeper": False,
+                "x": 40.0,
+                "y": 34.0,
+            }
+        )
+        target_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "defending_team_id": 1,
+                "actual_x": 4.0,
+                "actual_y": 34.0,
+                "imp_x": 0.0,
+                "imp_y": 34.0,
+            }
+        )
+    return pd.DataFrame(frame_rows), pd.DataFrame(target_rows)
+
+
+def test_paired_vector_controls_is_subquadratic():
+    from silly_kicks.gkdv._probe import paired_vector_controls
+
+    def measure(n):
+        frames, targets = _paired_vector_controls_input(n)
+        with rows_scanned_counter() as c:
+            paired_vector_controls(frames, targets, r=1, rng=np.random.default_rng(0))
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(128, 256, 512), label="paired_vector_controls")
