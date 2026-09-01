@@ -130,6 +130,74 @@ def _mean_from_counters(total: float, n: float) -> float:
     return float(total) / float(n) if n else float("nan")
 
 
+def high_sweeper_stratum_mae(preds, labels, *, threshold: float = 30.0) -> float:
+    """Euclidean MAE over the HIGH-SWEEPER stratum only (labels with ``gk_x > threshold``).
+
+    TF-60 PR3 sec 7.3: the sweeper re-fit must be validated to predict the >30 m regime, not merely
+    lower the overall error. NaN on an empty stratum (nothing to average) -- reported, not gated.
+    """
+    gx = np.asarray(labels["gk_x"], dtype=float)
+    gy = np.asarray(labels["gk_y"], dtype=float)
+    mask = gx > threshold
+    if not mask.any():
+        return float("nan")
+    dx = preds[mask, 0] - gx[mask]
+    dy = preds[mask, 1] - gy[mask]
+    return float(np.mean(np.sqrt(dx * dx + dy * dy)))
+
+
+def per_provider_high_sweeper_coverage(labels, provider_labels, *, threshold: float = 30.0) -> dict:
+    """Per-provider fraction of retained keeper labels above ``threshold`` (goal-relative x).
+
+    TF-60 PR3 sec 6: the high-sweeper stratum leans on the full-tracking providers (sportec/GS); this
+    reports each provider's >30 m coverage so a consumer knows the provenance of the high regime.
+    """
+    gx = np.asarray(labels["gk_x"], dtype=float)
+    provs = np.asarray(provider_labels)
+    out: dict[str, float] = {}
+    for p in sorted({str(x) for x in provs.tolist()}):
+        sel = provs == p
+        out[p] = float(np.mean(gx[sel] > threshold)) if sel.any() else float("nan")
+    return out
+
+
+def grid_spec_from_args(grid_x_max):
+    """The `GhostGridSpec` a run trains on: DEFAULT_GHOST_GRID unless `--grid-x-max` extends the
+    ceiling (TF-60 PR3). Only x_max is swept; y and resolution stay at the default (sec 5)."""
+    from silly_kicks.tracking._ghost_gk import DEFAULT_GHOST_GRID, GhostGridSpec
+
+    if grid_x_max is None:
+        return DEFAULT_GHOST_GRID
+    return GhostGridSpec(
+        x_min=DEFAULT_GHOST_GRID.x_min,
+        x_max=float(grid_x_max),
+        y_min=DEFAULT_GHOST_GRID.y_min,
+        y_max=DEFAULT_GHOST_GRID.y_max,
+        resolution=DEFAULT_GHOST_GRID.resolution,
+    )
+
+
+def build_extraction_inputs(*, feature_set, grid_x_max, subsample_fps, carrier_params, with_actions):
+    """The DECLARED shard-generation inputs (the digest `for_each`/`generation_dir` keys shards on).
+
+    Extracted from `main()` so the stale-shard-token behavior is BEHAVIOURALLY testable without a full
+    training run (TF-60 PR3): `grid_x_max` changes the shard's label ROWS (which keepers survive the
+    domain filter), so it MUST key the generation or a re-run with a lifted ceiling silently reuses the
+    stale <=30 m shards (the 4.77.1 trap; `feature_set` is here for the same reason -- 26 vs 21 cols).
+    `geometry` is `cache_token()` (the penalty-area constants). main() no longer builds the dict inline.
+    """
+    return {
+        "extractor": "prepare_ghost_gk_training_data",
+        "feature_set": feature_set,
+        "grid_x_max": grid_x_max,
+        "geometry": cache_token(),
+        "subsample_fps": subsample_fps,
+        "carrier_params": dict(carrier_params),
+        "with_actions": with_actions,
+        "detected_targets_only": True,
+    }
+
+
 def validate_corpus_providers(providers: list[str]) -> None:
     """Fail on an unclassified provider BEFORE any loading or fitting.
 
@@ -223,9 +291,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--carrier-tolerance", type=float, default=None, help="Carrier radius m (default: library)")
     parser.add_argument(
         "--variant",
-        choices=["default", "full"],
+        choices=["default", "full", "sweeper", "sweeper_position_only"],
         default="full",
-        help="Which variant this run produces (recorded in metrics/metadata)",
+        help="Which variant this run produces (recorded in metrics.json). TF-60 PR3 adds the "
+        "rest-defense `sweeper`/`sweeper_position_only` names so the extended-grid run can name "
+        "what it produces (the bundled artifact self-describes via grid_spec+feature_set; this is "
+        "the diagnostics label + the plan's B1 invocation).",
     )
     parser.add_argument(
         "--feature-set",
@@ -233,6 +304,15 @@ def parse_args() -> argparse.Namespace:
         default="faithful",
         help="'faithful' (velocity-bearing, 26 feats) or 'position_only' (5 velocity feats dropped, 21) "
         "for a model that scores on lone velocity-less SB360 freeze frames.",
+    )
+    parser.add_argument(
+        "--grid-x-max",
+        type=float,
+        default=None,
+        help="TF-60 PR3: extended goal-relative label ceiling for the rest-defense `sweeper` variant "
+        "(e.g. 52.5). None (default) uses the frozen 30 m DEFAULT_GHOST_GRID. Lifting the cap RETAINS "
+        "the high-sweeper labels the 30 m grid drops as 'rushes'. Keyed into the shard-generation "
+        "token so a re-run with a new ceiling cannot reuse stale <=30 m shards (4.77.1).",
     )
     parser.add_argument(
         "--subsample-cap",
@@ -520,19 +600,24 @@ def main() -> None:
     # drift into naming different generations for the same run.
     from scripts._driver import generation_dir
 
-    extraction_inputs: dict[str, object] = {
-        "extractor": "prepare_ghost_gk_training_data",
-        # feature_set changes the shard's feature columns (26 vs 21) -> MUST key the generation (4.77.1).
-        "feature_set": args.feature_set,
-        "geometry": cache_token(),
-        "subsample_fps": args.subsample_fps,
-        "carrier_params": dict(cp),
-        # Presence only. The score/phase context depends on the actions THEMSELVES, which no digest
-        # this driver can afford would capture; `generation_dir` states that ceiling -- a token
-        # closes silent omission, not mis-declaration.
-        "with_actions": bool(actions_by_game),
-        "detected_targets_only": True,
-    }
+    # TF-60 PR3: the label domain the shards are extracted against. Lifting the ceiling CHANGES the
+    # shard ROWS (high-sweeper labels retained), so `grid_x_max` MUST key the shard generation -- the
+    # exact 4.77.1 stale-shard trap the feature_set token precedent guards.
+    grid_spec = grid_spec_from_args(args.grid_x_max)
+    print(f"Label-domain grid: x_max={grid_spec.x_max} (default is 30.0; --grid-x-max={args.grid_x_max})")
+
+    # Single-sourced via `build_extraction_inputs` (TF-60 PR3) so the stale-shard-token behavior
+    # (grid_x_max / feature_set key the generation) is behaviourally testable without a full run.
+    # `with_actions` is presence-only: the score/phase context depends on the actions THEMSELVES,
+    # which no digest this driver can afford would capture -- a token closes silent omission, not
+    # mis-declaration.
+    extraction_inputs: dict[str, object] = build_extraction_inputs(
+        feature_set=args.feature_set,
+        grid_x_max=grid_spec.x_max,
+        subsample_fps=args.subsample_fps,
+        carrier_params=cp,
+        with_actions=bool(actions_by_game),
+    )
     shard_root = cache_dir / "shards"
     generation = generation_dir(shard_root, token_inputs=extraction_inputs)
 
@@ -634,6 +719,7 @@ def main() -> None:
                 subsample_fps=args.subsample_fps,
                 carrier_params=cp,
                 feature_set=args.feature_set,
+                grid_spec=grid_spec,  # TF-60 PR3: the label-domain ceiling (default 30 m; sweeper 52.5)
                 return_meta=True,
             )
             # Zeroed, not merely cleared: `counters` runs for every ATTEMPTED item, and a
@@ -822,6 +908,7 @@ def main() -> None:
             max_depth=args.max_depth,
             verbose=1,
             feature_set=args.feature_set,
+            grid_spec=grid_spec,
         )
         fit_t0 = time.time()
         model.fit(X_train, y_train, carrier_params=cp)
@@ -865,6 +952,11 @@ def main() -> None:
                 "mae_y": mae_y,
                 "mae_euclidean": mae_euclid,
                 "per_provider": per_prov,
+                # TF-60 PR3: out-of-sample euclid MAE over the >30 m high-sweeper stratum on this
+                # fold's test set (NaN if the fold has no high labels). Reported, not gated (sec 7.3).
+                "high_sweeper_mae": high_sweeper_stratum_mae(
+                    preds, {"gk_x": y_test["gk_x"].values, "gk_y": y_test["gk_y"].values}
+                ),
             }
         )
 
@@ -889,6 +981,7 @@ def main() -> None:
         max_depth=args.max_depth,
         verbose=1,
         feature_set=args.feature_set,
+        grid_spec=grid_spec,
     )
     final_t0 = time.time()
     final_model.fit(features, labels, carrier_params=cp)
@@ -1049,6 +1142,13 @@ def main() -> None:
         "cv_mae_euclidean_mean": float(np.mean(mae_e_vals)),
         "cv_mae_euclidean_std": float(np.std(mae_e_vals)),
         "per_provider_mae_euclidean": per_prov_agg,
+        # TF-60 PR3 (sec 6/sec 7.3): the extended label domain + high-sweeper diagnostics. REPORTED, not
+        # gated -- the stratum-MAE acceptance bar is set with the corpus evidence, not pre-committed.
+        "grid_x_max": grid_spec.x_max,
+        "high_sweeper_stratum_mae_mean": float(np.nanmean([m["high_sweeper_mae"] for m in fold_metrics])),
+        "per_provider_high_sweeper_coverage": per_provider_high_sweeper_coverage(
+            {"gk_x": labels["gk_x"].to_numpy()}, provider_labels
+        ),
         "acceptance": {
             "overall_mae_lt_2m": float(np.mean(mae_e_vals)) < 2.0,
             "per_provider_mae_lt_3m": all(v < 3.0 for v in per_prov_agg.values()),

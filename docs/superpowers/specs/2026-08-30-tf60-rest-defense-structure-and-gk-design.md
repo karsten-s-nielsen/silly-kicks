@@ -2,7 +2,10 @@
 
 - **Status:** APPROVED (owner + independent review, 2 rounds each) — PR1 (Layer 1) implemented; the
   `rd_width` / `rd_depth` shape semantics were ratified as "Option B" by the owner on 2026-08-30 after
-  the `/review-impl` gate, and §7.1 is corrected to match. PR2–PR5 remain On-Deck.
+  the `/review-impl` gate, and §7.1 is corrected to match. PR2 (Layer 2) shipped (4.103.0). **The arc
+  was reshaped 2026-08-30 by the §9 finding (see §17):** PR3 is now the rest-defense GK-ghost re-fit, and
+  the Layer-3 arms + ghost-outfield each shift down by one. Inline PR-numbers in §3–§16 use the **new**
+  numbering.
 - **Date:** 2026-08-30
 - **Feature:** TF-60 (On-Deck; top-ranked of the 2026-08 research batch)
 - **Decision record:** ADR-080 (written)
@@ -30,7 +33,7 @@ rollups plus a distinguished **moment-of-loss** snapshot:
    line (threat-weighted pitch control, with the in-possession keeper included as a `lambda_gk` control
    agent), and attacker space-control in the rest-defense area.
 3. **Layer 3 — counterfactual deterrent arms** (the novel valuation): ghost the in-possession team's
-   keeper (and, in PR5, its deepest field defenders) to a league-average baseline and price how much the
+   keeper (and, in PR6, its deepest field defenders) to a league-average baseline and price how much the
    *actual* positioning suppresses the opponent's counter-danger. Attacker-value units, so **negative =
    deterrent**, matching the gkdv sign convention.
 
@@ -149,7 +152,7 @@ deterrent (Layer 3) occupy that gap.
   TF-45 entry) and glossed by ADR-055. The library ships raw per-`(team, window)` quantities.
 - **No action-coupled `add_*` on the primary surface.** TF-60's primary output is a `compute_*` table, not
   an `actions`-enriching aggregator. (The ghost-outfield model in `tracking/` may ship an `add_ghost_outfield`
-  mirror; that, if included, is the one C4-aggregator-count change and is scoped to PR4.)
+  mirror; that, if included, is the one C4-aggregator-count change and is scoped to PR5.)
 
 ---
 
@@ -186,7 +189,7 @@ silly_kicks/
 
 - **+1 container**: `restdefense`. Required to be modelled by the C4 completeness gate.
 - **+0 or +1 tracking aggregator**: only if the ghost-outfield model ships an `add_ghost_outfield`
-  action-coupled mirror (decided in PR4). The rest-defense primary surface adds no action-coupled
+  action-coupled mirror (decided in PR5). The rest-defense primary surface adds no action-coupled
   aggregator.
 - C4 diagram regenerated in the PR that first introduces the container (PR1), via the `mad-scientist-skills:c4`
   pipeline with the pinned Graphviz `dot`.
@@ -297,7 +300,7 @@ separate gated PR (ADR-009).
 | `rd_gk_coverage_behind_line` | fraction of `Z` the keeper controls — pitch-control-share form (universal) | **novel** | T1 |
 | `rd_gk_reachable_coverage_m2` | `area(GK reachable region ∩ Z)` — TF-15 reachable-area (m²) form | **novel**; TF-15 | T-vel (honest-NaN on SB360, ADR-063 Tier-2) |
 
-### 7.3 Layer 3 — counterfactual deterrent arms (PR3 = GK; PR5 = outfield)
+### 7.3 Layer 3 — counterfactual deterrent arms (GK arms = PR4; outfield arm = PR6; GK-ghost re-fit = PR3, see §17)
 
 All arms are `actual − ghost` in **attacker-value units → negative = deterrent** (gkdv convention). Ghost
 positions come from a league-average model in the **same frame state** (not a fixed goal-line), so the
@@ -305,10 +308,10 @@ counterfactual reacts to the game situation.
 
 | Column (base) | Definition | Ghost source | Anchor | Tier | PR |
 |---|---|---|---|---|---|
-| `rd_gk_deter_threat` | `threat_pc(B, actual) − threat_pc(B, ghost-A-keeper)` | `serve_ghost_gk_positions` | Le 2017; Novillo 2025; gkdv lineage | T1 (positional) | PR3 |
-| `rd_gk_deter_space` | `DAS(B, actual) − DAS(B, ghost-A-keeper)` behind the line | `serve_ghost_gk_positions` | Bischofberger & Baca 2026 | T-vel | PR3 |
-| `rd_outfield_deter_threat` | `threat_pc(B, actual) − threat_pc(B, ghost-A-rearguard)` | `serve_ghost_outfield_positions` (new model) | Kim 2026 (DEFCON); Le 2017 | T1 (positional) | PR5 |
-| `rd_outfield_deter_space` | `DAS(B, actual) − DAS(B, ghost-A-rearguard)` behind the line | `serve_ghost_outfield_positions` | Bischofberger & Baca 2026 | T-vel | PR5 |
+| `rd_gk_deter_threat` | `threat_pc(B, actual) − threat_pc(B, ghost-A-keeper)` | `serve_ghost_gk_positions` (`rest_defense` variant, PR3) | Le 2017; Novillo 2025; gkdv lineage | T1 (positional) | PR4 |
+| `rd_gk_deter_space` | `DAS(B, actual) − DAS(B, ghost-A-keeper)` behind the line | `serve_ghost_gk_positions` (`rest_defense` variant, PR3) | Bischofberger & Baca 2026 | T-vel | PR4 |
+| `rd_outfield_deter_threat` | `threat_pc(B, actual) − threat_pc(B, ghost-A-rearguard)` | `serve_ghost_outfield_positions` (new model) | Kim 2026 (DEFCON); Le 2017 | T1 (positional) | PR6 |
+| `rd_outfield_deter_space` | `DAS(B, actual) − DAS(B, ghost-A-rearguard)` behind the line | `serve_ghost_outfield_positions` | Bischofberger & Baca 2026 | T-vel | PR6 |
 
 **Reuse, not reimplementation:** the differencing is `gkdv`'s generic `delta_threat_suppression_batch`
 (threat) and `delta_das_batch` (space) — read from the code, these take two aligned frame legs +
@@ -375,15 +378,20 @@ build_restdefense_ghost_frames(
 - The two legs (`actual`, `cf`) are handed to `_arms.py`, which restricts to the scored set and calls the
   gkdv delta seams with `attacking_team_id_by_frame = B` (the future counter-attacker).
 
-**Validity risk (flagged, §20):** the shipped `GhostGkModel` was exercised by gkdv only in the
-defending-near-attacked-goal domain. Its validity for the **in-possession high-sweeper** state must be
-checked in PR3 (does its training distribution cover own-possession keeper frames?). If coverage is
-inadequate, PR3 adds a rest-defense-appropriate GK-ghost variant rather than trusting an out-of-domain
-serve. This is a gate, not an assumption.
+**Validity risk (RESOLVED 2026-08-30 — the gate FIRED):** the shipped `GhostGkModel` was exercised by gkdv
+only in the defending-near-attacked-goal domain, and its validity for the **in-possession high-sweeper**
+state was measured (`docs/research/tf60_ghost_gk_in_possession_validity/`). Outcome: it is **structurally
+inadequate** — `prepare_ghost_gk_training_data` drops every keeper label above `GRID_X_MAX = 30 m` as
+"sweeper rushes," so `predict_mean` hard-saturates at ~30 m and cannot place a keeper at the 30–45 m an
+in-possession sweeper occupies; the `ghost_out_of_box` flag is blind to it (the model clips its own output
+to ≤30 m). Per the owner ruling, the arms therefore do **not** trust an out-of-domain serve — a
+rest-defense-appropriate **extended-grid GK-ghost variant** is re-fit in a dedicated cycle *before* the arms
+(sub-spec `2026-08-30-tf60-restdefense-gk-ghost-refit-design.md`; §17 arc reshaped). This was a gate, not an
+assumption.
 
 ---
 
-## 10. The ghost-outfield model (`tracking/_ghost_outfield.py`, PR4 — its own sub-spec)
+## 10. The ghost-outfield model (`tracking/_ghost_outfield.py`, PR5 — its own sub-spec)
 
 A new trained positioning model, **mirroring `GhostGkModel`** (verified structure: `fit` / `predict_mean`
 (deterministic boosted HGBR) / `predict_density` / `save` / `load` with chirality + feature-contract
@@ -400,7 +408,7 @@ guards / `from_variant` / `from_hub`; npz + JSON + `SHA256SUMS`, pickle-free, fa
 - **Data-visibility discipline** (ADR-038 fail-closed corpus): a *bundled public* model trains on a
   public-only corpus; owner-tier variants (`sc_extended`-style) train on owner data and are **not** bundled.
   Same discipline as ghost-GK / xShot / xCross.
-- **This section is interface-level.** PR4 gets a dedicated sub-spec (target parametrisation, feature list,
+- **This section is interface-level.** PR5 gets a dedicated sub-spec (target parametrisation, feature list,
   training corpus, validation harness, HF publishing) exactly as TF-18/16/17 each did. It ships as **one
   cycle** (code + pipeline + bundled weights).
 
@@ -449,10 +457,10 @@ from silly_kicks.restdefense import (
     merge_rest_defense,            # (samples, *arms) -> samples left-joined with the arm tables (§14)
     build_restdefense_ghost_frames,
     rest_defense_gk_deterrent,     # (actions, frames, *, xt, ghost_gk_model, ...) -> arm columns
-    rest_defense_outfield_deterrent,  # (actions, frames, *, xt, ghost_outfield_model, ...) [PR5]
+    rest_defense_outfield_deterrent,  # (actions, frames, *, xt, ghost_outfield_model, ...) [PR6]
     RestDefenseReport, RestDefenseGhostReport,
 )
-from silly_kicks.tracking import serve_ghost_outfield_positions, GhostOutfieldModel  # PR4
+from silly_kicks.tracking import serve_ghost_outfield_positions, GhostOutfieldModel  # PR5
 ```
 
 - `xt` (fitted `ExpectedThreat`) is a **required, caller-supplied** model for the threat-weighted metrics
@@ -583,11 +591,11 @@ Applied results are **reported, never gated** (repo convention); *methods* are C
 - **Glossary** (ADR-048): every emitted column documented in `feature_glossary.py` (companions
   glossary-exempt, as ADR-062/077).
 - **Import allowlist**: `tracking` never imports `restdefense`.
-- **Ghost-outfield model** (PR4): golden / chirality / feature-contract / integrity-on-load gates mirroring
+- **Ghost-outfield model** (PR5): golden / chirality / feature-contract / integrity-on-load gates mirroring
   the ghost-GK suite; `position_only` variant round-trips.
 - **Sub-quadratic growth** (ADR-073) for the new counting/looping primitive.
 - **End-to-end method gate** (`@e2e`, owner/fixture-gated, following the `worldcup-hdf5-e2e` precedent):
-  run `compute_rest_defense` / `summarize_rest_defense` (and, at PR3+, the arms) on **≥1 real linked
+  run `compute_rest_defense` / `summarize_rest_defense` (and, at PR4+, the arms) on **≥1 real linked
   tracking match** (exercises `link_actions_to_frames` coverage + native keeper identity + full-coverage
   FOV) **and ≥1 real SB360 match** (exercises `resolve_keeper_identities(identity="roster")` +
   `apply_keeper_identities_to_frames` + FOV-partial companions on a genuinely cropped advanced-ball
@@ -600,19 +608,27 @@ Applied results are **reported, never gated** (repo convention); *methods* are C
 
 ## 17. Decomposition into cycles
 
-Five cycles, each a single fully-tested squash-merged branch with its own version bump + tag (owner
-approves each commit / merge / tag separately). Docs land **in the first commit of each branch** (no
-standalone doc commit).
+**Six cycles** (reshaped 2026-08-30 by the §9 finding — see below), each a single fully-tested
+squash-merged branch with its own version bump + tag (owner approves each commit / merge / tag
+separately). Docs land **in the first commit of each branch** (no standalone doc commit).
+
+**Arc reshaped 2026-08-30:** the §9 in-possession-validity gate FIRED — the shipped `GhostGkModel`
+hard-saturates at its trained-label ceiling `GRID_X_MAX = 30 m` and cannot represent the in-possession
+high-sweeper regime (`docs/research/tf60_ghost_gk_in_possession_validity/`). Per the owner ruling, a
+**rest-defense GK-ghost re-fit model cycle is inserted before the GK arms** (its own sub-spec,
+`2026-08-30-tf60-restdefense-gk-ghost-refit-design.md`), mirroring the existing model→arm shape (ghost-
+outfield model → outfield arm). Original PR3–PR5 shift down by one.
 
 | Cycle | Content | New model? | C4 |
 |---|---|---|---|
 | **PR1** | `restdefense/` package skeleton + `RestDefenseParams` + geometry + counting primitive + **Layer 1** KPIs + windows/sampling + all CI-gate registrations + ADR-080 | no | +1 container (regenerate C4) |
 | **PR2** | **Layer 2** danger-behind-line valuation (`control_in_region` / `compute_threat_pc` / GK-as-control-agent) | no | — |
-| **PR3** | **Layer 3 GK arms** (`build_restdefense_ghost_frames(which="keeper")` + threat + space; reuse gkdv delta seams; ghost-GK in-possession validity gate §9) | no | — |
-| **PR4** | **ghost-outfield model** `tracking/_ghost_outfield.py` (code + training pipeline + bundled weights + fail-closed loader + guards + HF publish) — **its own sub-spec** | yes | +1 tracking aggregator iff `add_ghost_outfield` ships |
-| **PR5** | **Layer 3 outfield arm** (`build_restdefense_ghost_frames(which="rearguard")` consuming the PR4 model) | no | — |
+| **PR3 (NEW)** | **Rest-defense GK-ghost re-fit** — extended-grid additive `GhostGkModel` variant (grid becomes first-class; label cap lifted; `default`/`position_only`/`full` frozen; **no GKDV/VAEP retrain**) + bundled weights + HF publish — **its own sub-spec** | yes | — |
+| **PR4** (was PR3) | **Layer 3 GK arms** (`build_restdefense_ghost_frames(which="keeper")` + threat + space; reuse gkdv delta seams; **consume the PR3 `rest_defense` variant**) | no | — |
+| **PR5** (was PR4) | **ghost-outfield model** `tracking/_ghost_outfield.py` (code + training pipeline + bundled weights + fail-closed loader + guards + HF publish) — **its own sub-spec** | yes | +1 tracking aggregator iff `add_ghost_outfield` ships |
+| **PR6** (was PR5) | **Layer 3 outfield arm** (`build_restdefense_ghost_frames(which="rearguard")` consuming the PR5 model) | no | — |
 
-Each cycle leaves `main` green and coherent; PR2–PR5 each depend only on the prior cycle's public surface.
+Each cycle leaves `main` green and coherent; PR2–PR6 each depend only on the prior cycle's public surface.
 
 ---
 
@@ -663,13 +679,16 @@ the same reference block.
 
 ## 20. Open questions and risks
 
-1. **Ghost-GK in-possession validity (PR3 gate).** The shipped `GhostGkModel` was used by gkdv only in the
-   defending-near-attacked-goal domain. Its validity on the **in-possession high-sweeper** state must be
-   measured in PR3; if the training distribution under-covers own-possession keeper frames, PR3 adds a
-   rest-defense GK-ghost variant rather than serving out-of-domain. **This is a gate, not an assumption.**
-2. **Ghost-outfield target parametrisation (PR4 sub-spec).** Per-slot deepest-N positions vs a whole-rearguard
+1. **Ghost-GK in-possession validity (gate FIRED, RESOLVED 2026-08-30).** Measured
+   (`docs/research/tf60_ghost_gk_in_possession_validity/`): the shipped model hard-saturates at the 30 m
+   trained-label ceiling and cannot represent the in-possession high-sweeper. The arc is reshaped — an
+   extended-grid rest-defense GK-ghost variant is re-fit in a dedicated cycle before the arms (sub-spec
+   `2026-08-30-tf60-restdefense-gk-ghost-refit-design.md`). The **authoritative DGX-corpus fraction of
+   committed-forward frames above 30 m** is the one open sub-item, deferred to and measured inside that
+   re-fit cycle (owner: "qualitative finding is enough to proceed"). This was a gate, not an assumption.
+2. **Ghost-outfield target parametrisation (PR5 sub-spec).** Per-slot deepest-N positions vs a whole-rearguard
    set-prediction; how to handle a variable rearguard size; leakage-safe feature list — deferred to the
-   PR4 sub-spec.
+   PR5 sub-spec.
 3. **Committed-forward gate default.** `min_ball_advance_m = 52.5` (past halfway) is a spec-time default;
    calibration deferred (empty `for_provider` map). Sensitivity to be probed and reported.
 4. **Deep-zone threat weighting.** Whether to adopt OBPV's `w_field` (opt-in, off by default) vs relying on

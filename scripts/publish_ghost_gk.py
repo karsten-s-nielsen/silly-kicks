@@ -56,7 +56,12 @@ def main() -> None:
         )
 
     model = GhostGkModel.load(art)  # SHA-256 + chirality + feature contract all verified here
-    sample = pd.DataFrame(np.zeros((3, len(GHOST_GK_FEATURE_NAMES))), columns=GHOST_GK_FEATURE_NAMES)
+    # Build the sanity sample from the ARTIFACT's own feature_names, not the hardcoded faithful 26:
+    # a position_only variant (default or the TF-60 `sweeper_position_only`) has 21 features, and a
+    # 26-column sample would fail predict_mean on it. Fall back to the faithful names for a
+    # pre-feature_names artifact.
+    feature_names = meta.get("feature_names", GHOST_GK_FEATURE_NAMES)
+    sample = pd.DataFrame(np.zeros((3, len(feature_names))), columns=feature_names)
     local_pred = model.predict_mean(sample)
     print(f"Loaded + verified {art}")
     print(f"  declared constants: {contract.get('constants')}")

@@ -109,6 +109,64 @@ _GRID_Y = np.linspace(
 )
 
 
+@dataclasses.dataclass(frozen=True)
+class GhostGridSpec:
+    """The ghost-GK label/density grid as a first-class per-model value (TF-60 PR3).
+
+    Historically the grid lived only in the module-level ``GRID_*`` constants, so a
+    differently-gridded artifact was silently served on the default 30 m grid. Making it a
+    per-model value (restored on :meth:`GhostGkModel.load`) lets the additive ``sweeper`` variant
+    carry an EXTENDED label domain (``x_max = 52.5``) while ``default`` stays byte-identical.
+
+    ``nx``/``ny`` are DERIVED (not stored), and :meth:`to_metadata_dict` emits the exact current
+    7-key metadata shape so ``default``'s ``metadata.json`` is byte-identical after the refactor.
+
+    Mirrors xthreat's ``GridSpec`` (ADR-021) for the grid-as-dataclass idiom; the save/load-restore
+    aspect is new here (``ExpectedThreat`` has no persistence).
+    """
+
+    x_min: float
+    x_max: float
+    y_min: float
+    y_max: float
+    resolution: float
+
+    @property
+    def nx(self) -> int:
+        return round((self.x_max - self.x_min) / self.resolution)
+
+    @property
+    def ny(self) -> int:
+        return round((self.y_max - self.y_min) / self.resolution)
+
+    def to_metadata_dict(self) -> dict:
+        """The EXACT current 7-key ``grid_spec`` metadata (order + derived nx/ny).
+
+        A naive ``dataclasses.asdict`` would emit 5 keys and change ``default``'s ``metadata.json``
+        SHA. The 7-key shape (with derived ``nx``/``ny``) keeps the byte-identity contract.
+        """
+        return {
+            "x_min": self.x_min,
+            "x_max": self.x_max,
+            "y_min": self.y_min,
+            "y_max": self.y_max,
+            "nx": self.nx,
+            "ny": self.ny,
+            "resolution": self.resolution,
+        }
+
+
+#: The default (30 m) grid — equal to the module ``GRID_*`` constants, so the grid-first-class
+#: refactor is a pure no-op for the frozen ``default``/``position_only``/``full`` variants.
+DEFAULT_GHOST_GRID = GhostGridSpec(
+    x_min=GRID_X_MIN,
+    x_max=GRID_X_MAX,
+    y_min=GRID_Y_MIN,
+    y_max=GRID_Y_MAX,
+    resolution=GRID_RESOLUTION,
+)
+
+
 # ---------------------------------------------------------------------------
 # Warning categories
 # ---------------------------------------------------------------------------
@@ -209,7 +267,7 @@ _ENV_VAR = "SILLY_KICKS_GHOST_GK_PATH"
 _WEIGHTS_ROOT = Path(__file__).parent / "_ghost_gk_weights"
 
 #: Valid model variant names for the ``model`` parameter.
-GhostGkVariant = Literal["default", "full", "position_only"]
+GhostGkVariant = Literal["default", "full", "position_only", "sweeper", "sweeper_position_only"]
 
 
 _HF_REPO_ID = "silly-kicks/ghost-gk-v1"
@@ -283,7 +341,25 @@ def _resolve_ghost_model_for_frames(
 
     An env-var override (``SILLY_KICKS_GHOST_GK_PATH``) also counts as an explicit override -> the env
     model, keyed ``"custom"`` -- so auto-select fires only when the caller has chosen nothing at all.
+
+    TF-60 PR3: the ``"sweeper"`` FAMILY ROOT is the one exception to "an explicit name is custom" -- it
+    velocity-keys WITHIN its family (faithful ``sweeper`` <-> ``sweeper_position_only``), the way the
+    None path velocity-keys the default family. This branch is purely ADDITIVE: gkdv passes
+    ``None``/``"default"``/an instance and never reaches it, so every frozen-variant path stays
+    byte-identical. The env override still wins (guarded below), so ``"sweeper"`` + an env path is the
+    env model, unchanged.
     """
+    if model == "sweeper" and os.environ.get(_ENV_VAR) is None:
+        base = _variant_key_for_velocity(frames)  # "default" | "position_only"
+        key = "sweeper_position_only" if base == "position_only" else "sweeper"
+        try:
+            return GhostGkModel.from_variant(key), key
+        except FileNotFoundError:
+            if key == "sweeper_position_only":
+                # NaN degrade, NEVER the (velocity-invalid) default -- the ADR-067 asymmetry.
+                return None, key
+            raise
+
     if model is not None or os.environ.get(_ENV_VAR) is not None:
         return _resolve_model(model), "custom"
     key = _variant_key_for_velocity(frames)
@@ -1073,6 +1149,7 @@ def prepare_ghost_gk_training_data(
     subsample_fps: float | None = ...,
     carrier_params: dict | None = ...,
     feature_set: GhostFeatureSet = ...,
+    grid_spec: GhostGridSpec = ...,
     return_meta: Literal[False] = ...,
 ) -> tuple[pd.DataFrame, pd.DataFrame]: ...
 
@@ -1086,6 +1163,7 @@ def prepare_ghost_gk_training_data(
     subsample_fps: float | None = ...,
     carrier_params: dict | None = ...,
     feature_set: GhostFeatureSet = ...,
+    grid_spec: GhostGridSpec = ...,
     return_meta: Literal[True],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: ...
 
@@ -1098,6 +1176,7 @@ def prepare_ghost_gk_training_data(
     subsample_fps: float | None = 1.0,
     carrier_params: dict | None = None,
     feature_set: GhostFeatureSet = "faithful",
+    grid_spec: GhostGridSpec = DEFAULT_GHOST_GRID,
     return_meta: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Assemble training features + labels from one game's tracking frames.
@@ -1201,12 +1280,15 @@ def prepare_ghost_gk_training_data(
     if features.shape[1] != len(_expected_names):
         raise ValueError(f"Expected {len(_expected_names)} features, got {features.shape[1]}")
 
-    # Filter label domain (sweeper-keeper rushes, off-pitch artifacts)
+    # Filter label domain to the target grid (TF-60 PR3: `grid_spec`, not the module constants).
+    # `default` uses DEFAULT_GHOST_GRID -> byte-identical; the `sweeper` grid (x_max=52.5) RETAINS
+    # the high-sweeper labels the 30 m cap used to drop as "rushes". Genuinely off-pitch coordinates
+    # still fall outside any real grid and are dropped.
     in_domain = (
-        (labels["gk_x"] >= GRID_X_MIN)
-        & (labels["gk_x"] <= GRID_X_MAX)
-        & (labels["gk_y"] >= GRID_Y_MIN)
-        & (labels["gk_y"] <= GRID_Y_MAX)
+        (labels["gk_x"] >= grid_spec.x_min)
+        & (labels["gk_x"] <= grid_spec.x_max)
+        & (labels["gk_y"] >= grid_spec.y_min)
+        & (labels["gk_y"] <= grid_spec.y_max)
     )
     n_out = int((~in_domain).sum())
     if n_out > 0:
@@ -1764,8 +1846,13 @@ class GhostGkModel:
         max_depth: int = 8,
         verbose: int = 0,
         feature_set: GhostFeatureSet = "faithful",
+        grid_spec: GhostGridSpec = DEFAULT_GHOST_GRID,
     ):
         self.feature_set: GhostFeatureSet = feature_set
+        # First-class per-model grid (TF-60 PR3). `default` uses DEFAULT_GHOST_GRID (the module
+        # constants), so the refactor is byte-identical for the frozen variants; the additive
+        # `sweeper` variant carries an extended label domain (x_max=52.5).
+        self.grid_spec: GhostGridSpec = grid_spec
         self._n_estimators = n_estimators
         self._max_depth = max_depth
         self._verbose = verbose
@@ -1986,6 +2073,17 @@ class GhostGkModel:
             densities = model.predict_density(X_test)
             densities[0].probabilities.sum()  # ~1.0
         """
+        # TF-60 PR3: the KDE density grid is still the module-global DEFAULT_GHOST_GRID; an
+        # extended-grid variant (e.g. `sweeper`) would be scored on the wrong 30 m grid. Fail LOUD
+        # (never a silently-wrong density). This guard is on predict_density ONLY -- the mean path
+        # (predict_mean / serve_ghost_gk_positions / compute_ghost_gk) is grid-independent and works
+        # on the extended grid. See spec 2026-08-30 §4.2.
+        if self.grid_spec != DEFAULT_GHOST_GRID:
+            raise ValueError(
+                "predict_density: extended-grid density is not supported (the KDE grid is the "
+                "default 30 m grid). Use predict_mean / serve_ghost_gk_positions for a non-default "
+                "grid variant; the density path stays on DEFAULT_GHOST_GRID (spec 2026-08-30 §4.2)."
+            )
         if self._tree_nodes is None or self._tree_nodes_y is None:
             msg = "Model not fitted. Call .fit() or .load() first."
             raise RuntimeError(msg)
@@ -2143,15 +2241,9 @@ class GhostGkModel:
             # feature_set-appropriate (21 for position_only): the recorded names must match the
             # trees actually fitted, not the faithful 26 (mirrors the xShot/xCross save fix).
             "feature_names": self._feature_names(),
-            "grid_spec": {
-                "x_min": GRID_X_MIN,
-                "x_max": GRID_X_MAX,
-                "y_min": GRID_Y_MIN,
-                "y_max": GRID_Y_MAX,
-                "nx": GRID_NX,
-                "ny": GRID_NY,
-                "resolution": GRID_RESOLUTION,
-            },
+            # Per-model grid (TF-60 PR3). `to_metadata_dict()` emits the EXACT current 7-key shape
+            # with derived nx/ny, so `default` (DEFAULT_GHOST_GRID) is byte-identical.
+            "grid_spec": self.grid_spec.to_metadata_dict(),
             "n_estimators": self._n_estimators,
             "max_depth": self._max_depth,
             "carrier_params": self.carrier_params,
@@ -2299,6 +2391,21 @@ class GhostGkModel:
         model.training_platform = metadata.get("training_platform")
         model._sklearn_version = metadata.get("sklearn_version")
         model.corpus_provenance = metadata.get("corpus_provenance")
+
+        # Restore the per-model grid (TF-60 PR3). Back-compat: a pre-refactor artifact has no
+        # `grid_spec` key -> DEFAULT_GHOST_GRID (the old module-constant behaviour). nx/ny are
+        # DERIVED, so any recorded nx/ny is ignored.
+        gs = metadata.get("grid_spec")
+        if gs is None:
+            model.grid_spec = DEFAULT_GHOST_GRID
+        else:
+            model.grid_spec = GhostGridSpec(
+                x_min=gs["x_min"],
+                x_max=gs["x_max"],
+                y_min=gs["y_min"],
+                y_max=gs["y_max"],
+                resolution=gs["resolution"],
+            )
 
         # Informational provenance only (NOT a correctness guard): inference is
         # sklearn-version-independent — it reads stored npz dtype arrays and imports no
@@ -2799,6 +2906,9 @@ def serve_ghost_gk_positions(
             "ghost_gr_x": positions[:, 0],
             "ghost_gr_y": positions[:, 1],
             "ghost_clamped": clamped.astype(bool),
-            "ghost_out_of_box": (positions[:, 0] > GRID_X_MAX),
+            # Variant-relative ceiling (TF-60 PR3): the sweeper variant's trained hull is 52.5 m, so
+            # a 40 m sweeper is IN-box for it while out-of-box for `default` (30 m). `_resolved` is
+            # the model _serve_positions_core resolved and returned.
+            "ghost_out_of_box": (positions[:, 0] > _resolved.grid_spec.x_max),
         }
     )

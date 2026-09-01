@@ -1058,6 +1058,7 @@ _SKIP_SYMBOLS = frozenset(
         "ConversionReport",  # TypedDict
         "CausalEstimate",  # frozen dataclass — fields are the documentation (DetectionResult precedent)
         "DetectionResult",  # frozen dataclass — fields are the documentation
+        "GhostGridSpec",  # frozen dataclass — ghost-GK label grid; fields are the documentation (TF-60 PR3, internal)
         "InputConvention",  # str-Enum — members are the documentation
         "OpportunityConfig",  # frozen dataclass — fields are the documentation (DetectionResult precedent)
         "PitchControlParams",  # type alias union — components have examples
