@@ -216,33 +216,6 @@ def visible_area_coverage(fn):
     return call
 
 
-def defending_gk_player_id(fn):
-    """``add_defending_gk_player_id(actions, keeper_map)`` takes NO frames.
-
-    So it cannot use :func:`generic`, which forwards ``(actions, frames, ...)``. The keeper_map is
-    built from the ACTIONS (identical on both legs, since only the FRAMES differ between Leg A and
-    Leg B), so the stamped ``defending_gk_player_id`` is frame-INDEPENDENT: it produces the same
-    output on the freeze-frame leg and the velocity-bearing leg by construction. That is the honest
-    verdict -- an opponent-keeper id cannot fabricate off freeze-frame kinematics because it never
-    reads a frame. The synthetic keeper ids need not be real: the audit compares the two legs, and
-    both build the same map from the same actions.
-    """
-
-    def call(actions, frames, links, home_team_id):
-        from silly_kicks.id_compat import canonical_id
-        from silly_kicks.tracking import KeeperIdentity
-
-        keeper_map = {}
-        seen = actions[["game_id", "period_id", "team_id"]].dropna().drop_duplicates()
-        for i, (g, p, t) in enumerate(zip(seen["game_id"], seen["period_id"], seen["team_id"], strict=True)):
-            keeper_map[(canonical_id(g), p, canonical_id(t))] = KeeperIdentity(
-                gk_id=900 + i, source="roster", conflict=False
-            )
-        return fn(actions, keeper_map)
-
-    return call
-
-
 def with_pressure_methods(fn):
     """``add_pressure_on_actor`` audits BOTH the default ``andrienko_oval`` AND the velocity-derived
     ``bekkers_pi`` -- the latter is opt-in (not in the default ``methods`` tuple), so ``generic``
@@ -283,11 +256,13 @@ _GK_PREREQ_ADAPTERS: dict[str, Callable] = {
 }
 
 #: Call-shape adapters the library map does NOT classify (they take different inputs / audit a method
-#: sweep, not a model injection): the jersey/roster helper, the keeper-identity placement stamp
-#: (frame-independent, identical on both legs), and the pressure two-method sweep.
+#: sweep, not a model injection): the jersey/roster helper and the pressure two-method sweep.
+#: ``add_defending_gk_player_id`` was here until the keeper-identity resolver was promoted to the
+#: public ``silly_kicks.keeper_identity`` module (breaking move, no shim): it left
+#: ``tracking.__all__``, so it is no longer in the SB360 audit's ``registered_add_star_aggregators``
+#: surface and needs no call-shape adapter.
 _CALL_SHAPE_ADAPTERS: dict[str, Callable] = {
     "add_gradientsports_player_ids": gradientsports_player_ids,
-    "add_defending_gk_player_id": defending_gk_player_id,
     "add_pressure_on_actor": with_pressure_methods,
 }
 

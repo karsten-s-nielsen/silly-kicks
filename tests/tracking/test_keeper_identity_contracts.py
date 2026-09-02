@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from silly_kicks.id_compat import canonical_id
-from silly_kicks.tracking._keeper_identity import resolve_keeper_identities
+from silly_kicks.keeper_identity import resolve_keeper_identities
 
 
 def _actions():

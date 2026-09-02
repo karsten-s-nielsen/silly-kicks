@@ -5,7 +5,7 @@ import dataclasses
 import pandas as pd
 import pytest
 
-from silly_kicks.tracking._keeper_identity import (
+from silly_kicks.keeper_identity import (
     KEEPER_ID_SOURCE_DERIVED,
     KEEPER_ID_SOURCE_EVENT,
     KEEPER_ID_SOURCE_NATIVE,

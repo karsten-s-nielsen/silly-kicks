@@ -9,8 +9,9 @@ magnitudes the Layer-0 / Layer-1 verdicts pool over the whole corpus:
 * Layer 1 (responsiveness): ``gk_abs`` (the imposed 2 m ladder dose, Regime I) vs ``nd_abs`` (the
   paired-vector control -- the nearest defending-team outfielder displaced by the SAME vector).
 
-Each scored frame is attributed to the REAL defending keeper via ``tracking.resolve_keeper_identities``
-(ADR-078 single-source): the native path returns the frame keeper id (velocity-bearing providers), the
+Each scored frame is attributed to the REAL defending keeper via
+``silly_kicks.keeper_identity.resolve_keeper_identities`` (ADR-078 single-source): the native path
+returns the frame keeper id (velocity-bearing providers), the
 roster path resolves SB360's anonymous keeper. The map is threaded DRIVER-side (ADR-037: gkdv reaches
 ``tracking`` only through ``_das_port``; scripts may import ``tracking`` freely).
 
@@ -362,10 +363,10 @@ def _measure_match(item, *, rng_seed: int) -> tuple[pd.DataFrame, dict]:
     """
     from silly_kicks.gkdv import delta_das_batch
     from silly_kicks.gkdv._probe import impose_defending_keeper_dose, paired_vector_controls
+    from silly_kicks.keeper_identity import resolve_keeper_identities
     from silly_kicks.tracking import (
         derive_team_in_possession,
         infer_ball_carrier,
-        resolve_keeper_identities,
     )
 
     _provider, _match_id, actions, frames, home_team_id = item

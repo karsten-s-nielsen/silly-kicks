@@ -16,6 +16,7 @@ See ``docs/superpowers/specs/2026-06-16-dfl-parse-port-design.md``.
 
 from __future__ import annotations
 
+from .appearances import extract_keeper_appearances
 from .parse import (
     MatchInfo,
     SportecEventBronze,
@@ -35,6 +36,7 @@ __all__ = [
     "SportecTrackingBronze",
     "derive_idsse_home_team_start_left",
     "derive_idsse_home_team_start_left_extratime",
+    "extract_keeper_appearances",
     "parse_dfl_events",
     "parse_dfl_match_info",
     "parse_dfl_tracking",

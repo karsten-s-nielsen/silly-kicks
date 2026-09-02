@@ -103,13 +103,18 @@ from tests.tracking._goal_map_helpers import goal_map_like_home_team_id
 # Discovery
 # --------------------------------------------------------------------------------------
 
-#: The five packages ADR-019 names as consuming the id-identity contract.
+#: The packages ADR-019 names as consuming the id-identity contract. ``silly_kicks.keeper_identity``
+#: is a MODULE (not a package) added when the keeper-identity resolver was promoted out of
+#: ``tracking/_keeper_identity.py`` (breaking move, no shim): ``KeeperIdentity`` is discovered here
+#: rather than via the old ``tracking.features`` re-export. ``_public_modules`` handles a plain module
+#: (no ``__path__`` -> it is walked as a single module).
 PACKAGES = (
     "silly_kicks.spadl",
     "silly_kicks.atomic",
     "silly_kicks.vaep",
     "silly_kicks.causal",
     "silly_kicks.tracking",
+    "silly_kicks.keeper_identity",
 )
 
 #: Entity-id COLLECTIONS resolved against an id column (``.isin``). Same hazard as a scalar:
@@ -1228,7 +1233,7 @@ NOT_INVARIANT: dict[str, str] = {
         "in `player_share` stays a raw `==` on purpose: `team_id` is drawn from `player_team_ids` "
         "itself (a same-source compare that cannot mismatch by construction, ADR-043 decision 6)."
     ),
-    "silly_kicks.tracking._keeper_identity.KeeperIdentity": (
+    "silly_kicks.keeper_identity.KeeperIdentity": (
         "VALUE OBJECT, like PitchControlSurface: discovery keys on the NamedTuple constructor "
         "`inspect.signature(KeeperIdentity)` sees, whose `gk_id` field ends in `_id`. But `gk_id` "
         'is STORED, never resolved against an id column -- constructing with 920 vs "920" stores '
@@ -1237,6 +1242,25 @@ NOT_INVARIANT: dict[str, str] = {
         "dtype (the roster/native paths deliberately keep the RAW id as `gk_id`). The dtype-safe "
         "comparisons that BUILD the value live in `resolve_keeper_identities` (canonical keys + "
         "id_compat, ADR-055), which takes no id scalar and so is not discovered here."
+    ),
+    "silly_kicks.keeper_identity.KeeperSegment": (
+        "VALUE OBJECT, like KeeperIdentity and PitchControlSurface: discovery keys on the "
+        "NamedTuple constructor `inspect.signature(KeeperSegment)` sees, whose `team_id` and "
+        "`player_id` fields end in `_id`. Both are STORED, never resolved against an id column -- a "
+        "KeeperSegment is a plain data container for one keeper's on-pitch tenure, so constructing "
+        'with 10 vs "10" stores 10 vs "10", faithfully recording its input rather than comparing. '
+        "Forcing invariance would forbid an extractor from preserving its provider's own id dtype "
+        "(DFL/SkillCorner ids are strings). The only comparisons that CONSUME these segments live "
+        "in `build_keeper_appearances_from_segments`, which compares period bounds only (no id)."
+    ),
+    "silly_kicks.keeper_identity.build_keeper_appearances_from_segments": (
+        "WRITER, not comparator: its `game_id` scalar (plus each segment's `team_id`/`player_id`) "
+        "is written VERBATIM into the emitted port rows, never resolved against an id column. Its "
+        "ONLY comparisons are period bounds (`start_period <= period <= end_period`) and `start >= "
+        "end` time slices -- no id is ever compared against an id, so a value-equal scalar of a "
+        "different dtype yields a legitimately different-dtype output column, the function "
+        "faithfully recording its caller's chosen id representation. The same rule that exempts "
+        "`add_gradientsports_player_ids` and the kloppy `convert_to_actions` writer below."
     ),
 }
 

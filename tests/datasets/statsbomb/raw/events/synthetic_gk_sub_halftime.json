@@ -1,0 +1,58 @@
+[
+  {
+    "type": {"id": 35, "name": "Starting XI"},
+    "period": 1,
+    "timestamp": "00:00:00.000",
+    "team": {"id": 100, "name": "Home FC"},
+    "tactics": {
+      "formation": 442,
+      "lineup": [
+        {"player": {"id": 9001, "name": "Home Keeper"}, "position": {"id": 1, "name": "Goalkeeper"}, "jersey_number": 1},
+        {"player": {"id": 9002, "name": "Home Center Back"}, "position": {"id": 3, "name": "Center Back"}, "jersey_number": 4}
+      ]
+    }
+  },
+  {
+    "type": {"id": 35, "name": "Starting XI"},
+    "period": 1,
+    "timestamp": "00:00:00.000",
+    "team": {"id": 200, "name": "Away FC"},
+    "tactics": {
+      "formation": 433,
+      "lineup": [
+        {"player": {"id": 9202, "name": "Away Left Back"}, "position": {"id": 6, "name": "Left Back"}, "jersey_number": 3},
+        {"player": {"id": 9201, "name": "Away Keeper"}, "position": {"id": 1, "name": "Goalkeeper"}, "jersey_number": 1}
+      ]
+    }
+  },
+  {
+    "type": {"id": 34, "name": "Half End"},
+    "period": 1,
+    "timestamp": "00:47:03.221",
+    "team": {"id": 100, "name": "Home FC"}
+  },
+  {
+    "type": {"id": 19, "name": "Substitution"},
+    "period": 2,
+    "timestamp": "00:00:00.000",
+    "team": {"id": 100, "name": "Home FC"},
+    "player": {"id": 9001, "name": "Home Keeper"},
+    "position": {"id": 1, "name": "Goalkeeper"},
+    "substitution": {
+      "outcome": {"id": 103, "name": "Tactical"},
+      "replacement": {"id": 9098, "name": "Home HT Sub Keeper"}
+    }
+  },
+  {
+    "type": {"id": 19, "name": "Substitution"},
+    "period": 2,
+    "timestamp": "00:05:00.000",
+    "team": {"id": 200, "name": "Away FC"},
+    "player": {"id": 9201, "name": "Away Keeper"},
+    "position": {"id": 1, "name": "Goalkeeper"},
+    "substitution": {
+      "outcome": {"id": 102, "name": "Injury"},
+      "replacement": {"id": 9298, "name": "Away Injury Sub Keeper"}
+    }
+  }
+]

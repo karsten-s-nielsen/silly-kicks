@@ -84,20 +84,6 @@ from ._gk_resolve import (
     gk_distribution_mask,
     resolve_defended_goals,
 )
-from ._keeper_identity import (
-    KEEPER_ID_SOURCE_DERIVED,
-    KEEPER_ID_SOURCE_EVENT,
-    KEEPER_ID_SOURCE_NATIVE,
-    KEEPER_ID_SOURCE_ROSTER,
-    KEEPER_ID_SOURCE_UNRESOLVED,
-    KEEPER_ID_SOURCE_VALUES,
-    KeeperIdentity,
-    KeeperIdentityMap,
-    KeeperIdentityReport,
-    add_defending_gk_player_id,
-    apply_keeper_identities_to_frames,
-    resolve_keeper_identities,
-)
 from ._packing import PackingParams, secured_reception
 from ._shot_goalmouth import ShotGoalmouthParams, compute_shot_goalmouth
 from ._structural_pass import StructuralPassParams
@@ -120,17 +106,8 @@ from .utils import _resolve_action_frame_context, link_actions_to_frames
 _STANDARD_SHOT_TYPE_IDS = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_freekick", "shot_penalty"))
 
 __all__ = [
-    "KEEPER_ID_SOURCE_DERIVED",
-    "KEEPER_ID_SOURCE_EVENT",
-    "KEEPER_ID_SOURCE_NATIVE",
-    "KEEPER_ID_SOURCE_ROSTER",
-    "KEEPER_ID_SOURCE_UNRESOLVED",
-    "KEEPER_ID_SOURCE_VALUES",
     "GoalEndUnresolvedError",
     "GoalMap",
-    "KeeperIdentity",
-    "KeeperIdentityMap",
-    "KeeperIdentityReport",
     "Method",
     "acting_gk_from_frames",
     "actor_arc_length_pre_window",
@@ -142,7 +119,6 @@ __all__ = [
     "add_actor_pre_window",
     "add_cover_shadows",
     "add_das",
-    "add_defending_gk_player_id",
     "add_defensive_line",
     "add_elastic_sync",
     "add_ghost_gk",
@@ -165,7 +141,6 @@ __all__ = [
     "add_space_creation",
     "add_team_shape",
     "add_visible_area_coverage",
-    "apply_keeper_identities_to_frames",
     "back_line_high_x",
     "back_n_count",
     "ball_carrier_at_action",
@@ -218,7 +193,6 @@ __all__ = [
     "reachable_area_team",
     "receiver_zone_density",
     "resolve_defended_goals",
-    "resolve_keeper_identities",
     "shape_graph_xfns",
     "shot_crossing_y",
     "shot_crossing_z",

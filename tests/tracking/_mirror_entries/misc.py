@@ -27,7 +27,6 @@ def register() -> None:
     import pandas as pd
 
     from silly_kicks.tracking import (
-        add_defending_gk_player_id,
         add_defensive_credit,
         add_elastic_sync,
         add_gradientsports_player_ids,
@@ -273,51 +272,11 @@ def register() -> None:
         },
     )
 
-    # ------------------------------------------------------------------
-    # add_defending_gk_player_id (ADR-054 SB360 keeper-identity placement)
-    # ------------------------------------------------------------------
-    # A keeper-IDENTITY placement helper, NOT a tracking-feature aggregator. It stamps the
-    # opponent keeper's id from a keeper_map and reads NO frame coordinate at all -- its signature
-    # is (actions, keeper_map). The map here is built from the ACTIONS (identical on both Gate A
-    # legs, since mirror_frames touches only frames), so the emitted `defending_gk_player_id` is
-    # frame-INDEPENDENT and byte-identical base-vs-mirror by construction. Its single emitted
-    # column is an IDENTIFIER, not geometry, so it is `exempt` (undefined under a mirror rather
-    # than invariant under one), Gate B skips (`role="unused"`: no home_team_id), and Gate C skips
-    # (no `call_with_map`). What is left is the anti-rot registration plus a smoke check that the
-    # call runs on both legs -- the honest ceiling for a frame-blind id stamp.
-    _DEFENDING_GK_IDENTIFIER = (
-        "opponent-keeper IDENTIFIER, not geometry: this helper reads no frame coordinate (it takes "
-        "actions + a keeper_map), so the column is undefined under a frame mirror rather than "
-        "invariant under one. It is frame-independent and byte-identical base-vs-mirror by "
-        "construction."
-    )
-
-    def _call_defending_gk(actions, _frames, _home_team_id):
-        from silly_kicks.id_compat import canonical_id
-        from silly_kicks.tracking import KeeperIdentity
-
-        # Map built from the ACTIONS (leg-independent): one synthetic keeper id per (game, period,
-        # team), so every action's opponent resolves in the two-team canonical scene.
-        keeper_map = {}
-        seen = actions[["game_id", "period_id", "team_id"]].dropna().drop_duplicates()
-        for i, (g, p, t) in enumerate(zip(seen["game_id"], seen["period_id"], seen["team_id"], strict=True)):
-            keeper_map[(canonical_id(g), p, canonical_id(t))] = KeeperIdentity(
-                gk_id=900 + i, source="roster", conflict=False
-            )
-        return add_defending_gk_player_id(actions, keeper_map)
-
-    _entry(
-        "add_defending_gk_player_id",
-        _call_defending_gk,
-        {"defending_gk_player_id": "exempt"},
-        tol=1e-12,
-        basis=(
-            "no tolerance is exercised -- the single emitted column is an identifier and is exempt "
-            "(see the block comment above). The entry's whole value is the anti-rot registration "
-            "plus a smoke check that the call runs on both legs; 1e-12 is recorded only so the "
-            "field is not a bare number nobody can revisit."
-        ),
-        role="unused",
-        non_vacuity=(),
-        exempt={"defending_gk_player_id": _DEFENDING_GK_IDENTIFIER},
-    )
+    # NOTE: ``add_defending_gk_player_id`` was registered here until the keeper-identity resolver was
+    # promoted to the public ``silly_kicks.keeper_identity`` module (breaking move, no shim). It left
+    # ``tracking.__all__``, so it is no longer part of the ADR-051 mirror-registry surface (which is
+    # pinned to ``tracking.__all__`` in both directions) and its entry was removed with it. It was a
+    # frame-blind id stamp -- its mirror verdict was structural (anti-rot + smoke check), not
+    # geometry -- and its purity / id-dtype / NaN-safety coverage is preserved by discovering it at its
+    # new home ``silly_kicks.keeper_identity`` (the ``_discover(keeper_identity_pkg)`` /
+    # keeper_identity-prefix leg of those gates) and ``tests/tracking/test_keeper_placement_helpers.py``.

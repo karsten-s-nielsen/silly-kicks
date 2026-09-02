@@ -3,8 +3,12 @@ from __future__ import annotations
 import pandas as pd
 
 import silly_kicks.tracking as T
+from silly_kicks.keeper_identity import (
+    add_defending_gk_player_id,
+    apply_keeper_identities_to_frames,
+    resolve_keeper_identities,
+)
 from silly_kicks.spadl import config as spadlconfig
-from silly_kicks.tracking import add_defending_gk_player_id, apply_keeper_identities_to_frames
 
 
 def _sb360_fixture():
@@ -43,7 +47,7 @@ def _sb360_fixture():
 
 def test_add_defending_gk_player_id_stamps_opponent_keeper_and_is_pure():
     actions, frames = _sb360_fixture()
-    m, _ = T.resolve_keeper_identities(actions, frames, identity="roster", roster={10: 901, 20: 902})
+    m, _ = resolve_keeper_identities(actions, frames, identity="roster", roster={10: 901, 20: 902})
     snap = actions.copy(deep=True)
     out = add_defending_gk_player_id(actions, m)
     pd.testing.assert_frame_equal(actions, snap)  # pure
@@ -53,7 +57,7 @@ def test_add_defending_gk_player_id_stamps_opponent_keeper_and_is_pure():
 
 def test_frame_bridge_stamps_real_id_onto_the_synthetic_keeper_row_and_is_pure():
     actions, frames = _sb360_fixture()
-    m, _ = T.resolve_keeper_identities(actions, frames, identity="roster", roster={10: 901, 20: 902})
+    m, _ = resolve_keeper_identities(actions, frames, identity="roster", roster={10: 901, 20: 902})
     snap = frames.copy(deep=True)
     bridged = apply_keeper_identities_to_frames(frames, m)
     pd.testing.assert_frame_equal(frames, snap)  # pure -- caller's frames untouched
@@ -66,7 +70,7 @@ def test_bridge_unlocks_pre_shot_gk_position_the_R1_deliverable():
     synthetic). With the bridge (real keeper id on the frame row + on the action), it produces a real
     position."""
     actions, frames = _sb360_fixture()
-    m, _ = T.resolve_keeper_identities(actions, frames, identity="roster", roster={10: 901, 20: 902})
+    m, _ = resolve_keeper_identities(actions, frames, identity="roster", roster={10: 901, 20: 902})
     stamped_actions = add_defending_gk_player_id(actions, m)
 
     # WITHOUT the bridge: the synthetic keeper id (a small int) != 902 -> NaN.
@@ -82,7 +86,7 @@ def test_bridge_tolerates_a_dtype_incompatible_roster_id():
     """A roster gk_id the frames' player_id column cannot hold (a str id into the Int64 snapshot
     column) is bridged by promoting to object -- it must NOT raise (defensive; live SB360 ids are ints)."""
     actions, frames = _sb360_fixture()
-    m, _ = T.resolve_keeper_identities(actions, frames, identity="roster", roster={10: 901, 20: "GK-902"})
+    m, _ = resolve_keeper_identities(actions, frames, identity="roster", roster={10: 901, 20: "GK-902"})
     bridged = apply_keeper_identities_to_frames(frames, m)  # must NOT raise despite a str id into Int64
     krow = bridged[(bridged["team_id"] == 20) & bridged["is_goalkeeper"].astype("boolean").fillna(False)]
     assert (krow["player_id"] == "GK-902").all()

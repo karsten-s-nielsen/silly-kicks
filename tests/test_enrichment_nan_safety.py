@@ -20,6 +20,7 @@ import pytest
 import silly_kicks.atomic.spadl as atomic_spadl
 import silly_kicks.atomic.spadl.config as atomic_spadlcfg
 import silly_kicks.atomic.spadl.utils as atomic_utils
+import silly_kicks.keeper_identity as keeper_identity_pkg
 import silly_kicks.spadl as std_spadl
 import silly_kicks.spadl.config as spadlcfg
 import silly_kicks.spadl.utils as std_utils
@@ -46,9 +47,17 @@ def _discover(module) -> tuple:
 # The discovery SCOPE was the defect, not the decorations. Measured: package discovery adds exactly
 # those three and drops nothing (29 -> 32); `spadl` and `atomic.spadl` are unchanged at 7 and 5,
 # because their public `add_*` all happen to live in `utils`.
+#
+# `silly_kicks.keeper_identity` is scanned alongside `tracking`: the keeper-identity resolver was
+# promoted out of `tracking/_keeper_identity.py` to that public top-level module (breaking move, no
+# shim), so its @nan_safe_enrichment helper `add_defending_gk_player_id` -- which left
+# `tracking.__all__` and the `tracking` package namespace -- would otherwise fall out of this scan
+# and lose its NaN-identifier fuzz. It is still part of the public enrichment family ADR-003 guards,
+# discovered at its new home `silly_kicks.keeper_identity` via the `_discover(keeper_identity_pkg)`
+# leg below, so it stays in `TRACKING_ENRICHMENTS`.
 STD_ENRICHMENTS = _discover(std_spadl)
 ATOMIC_ENRICHMENTS = _discover(atomic_spadl)
-TRACKING_ENRICHMENTS = _discover(tracking_pkg)
+TRACKING_ENRICHMENTS = _discover(tracking_pkg) + _discover(keeper_identity_pkg)
 # Split: helpers needing only (actions, frames) vs those needing extra kwargs
 _TRACKING_NEEDS_EXTRA = {
     "add_cover_shadows",
@@ -850,7 +859,7 @@ def test_tracking_helper_extra_kwargs_nan_safe(helper, tracking_nan_laced_fixtur
         # so it must route to the documented per-row NA default rather than crash. The map covers
         # the fixture teams (1, 2) so the resolvable rows produce a real stamp.
         from silly_kicks.id_compat import canonical_id
-        from silly_kicks.tracking import KeeperIdentity
+        from silly_kicks.keeper_identity import KeeperIdentity
 
         keeper_map = {
             (canonical_id(1), 1, canonical_id(1)): KeeperIdentity(gk_id=100, source="roster", conflict=False),
