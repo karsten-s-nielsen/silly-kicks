@@ -10,6 +10,7 @@ import functools
 import numpy as np
 import pandas as pd
 
+import silly_kicks.keeper_identity as _keeper_identity_mod
 from silly_kicks.tracking import features as F
 
 
@@ -253,8 +254,17 @@ AGGREGATORS = [
     _a(F.add_pressure_on_actor, "add_pressure_on_actor[link_zones]", methods=("link_zones",)),
 ]
 
+
 # Public add_* surface -- the meta-assertion (B3) checks AGGREGATORS covers all LINKED ones.
-REGISTERED_AGGREGATORS = {name for name in dir(F) if name.startswith("add_") and callable(getattr(F, name))}
+# `silly_kicks.keeper_identity` is enumerated alongside `tracking.features`: the keeper-identity
+# resolver was promoted to that public top-level module (breaking move, no shim), so
+# `add_defending_gk_player_id` lives there now, NOT in `tracking.features` -- and its id-dtype
+# coverage (the NON_LINKED exemption below) is re-homed rather than silently dropped.
+def _add_star_names(module) -> set[str]:
+    return {name for name in dir(module) if name.startswith("add_") and callable(getattr(module, name))}
+
+
+REGISTERED_AGGREGATORS = _add_star_names(F) | _add_star_names(_keeper_identity_mod)
 
 # Aggregators that legitimately compare NO ids. Each entry MUST carry a one-line "compares no
 # ids" justification (N-d). The cross-check is the enumerated id-scalar registry

@@ -33,13 +33,11 @@ _NOT_ACTION_COUPLED: dict[str, str] = {
         "jersey-number -> player_id helper. Enriches a ROSTER, takes no actions frame, and emits "
         "no per-action column, so it is not one of the aggregators the DSL sentence counts."
     ),
-    "add_defending_gk_player_id": (
-        "keeper-IDENTITY placement helper -- the apply-half of resolve_keeper_identities on the "
-        "action grain. It stamps the resolved opponent-keeper id from a keeper_map; it takes NO "
-        "frames, links no action to a frame, and computes no tracking-derived geometry, so it is "
-        "not one of the spatial/GKDV tracking-feature aggregators the DSL sentence counts. Its "
-        "per-action column is an identifier applied from a precomputed map, not a per-frame feature."
-    ),
+    # ``add_defending_gk_player_id`` was exempted here until the keeper-identity resolver was promoted
+    # to the public ``silly_kicks.keeper_identity`` module (breaking move, no shim). It left
+    # ``tracking.__all__``, so it drops out of ``_registered_add_star()`` entirely -- both the
+    # registered count and this exemption set fall by one, leaving the DSL's action-coupled count
+    # unchanged.
 }
 
 

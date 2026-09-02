@@ -8,6 +8,7 @@ See NOTICE for the StatsBomb Public Data License (non-commercial).
 
 from __future__ import annotations
 
+from .appearances import extract_keeper_appearances
 from .parse import (
     ACTING_TEAM_ID,
     OPPONENT_TEAM_ID,
@@ -25,6 +26,7 @@ __all__ = [
     "JoinReport",
     "acting_side_gk_visible",
     "defending_gk_visible",
+    "extract_keeper_appearances",
     "observed_pitch_fraction",
     "polygon_to_spadl",
     "shape_snapshots",

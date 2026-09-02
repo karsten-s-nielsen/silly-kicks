@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.id_compat import canonical_id
-from silly_kicks.tracking._keeper_identity import (
+from silly_kicks.keeper_identity import (
     KEEPER_ID_SOURCE_EVENT,
     KEEPER_ID_SOURCE_ROSTER,
     KEEPER_ID_SOURCE_UNRESOLVED,

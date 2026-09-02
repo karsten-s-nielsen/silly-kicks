@@ -3,12 +3,13 @@ from __future__ import annotations
 import pandas as pd
 
 import silly_kicks.tracking as T
-from silly_kicks.spadl import config as spadlconfig
-from silly_kicks.tracking import (
+from silly_kicks.keeper_identity import (
     add_defending_gk_player_id,
     apply_keeper_identities_to_frames,
-    run_tracking_features,
+    resolve_keeper_identities,
 )
+from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.tracking import run_tracking_features
 
 ROSTER = {10: 901, 20: 902}
 
@@ -57,7 +58,7 @@ def test_producer_equals_composing_the_add_star_calls_after_the_same_resolution(
     # AND the frame bridge; without the frame bridge, add_pre_shot_gk_position finds no keeper row on
     # the synthetically-numbered SB360 frames and returns NaN -- and the equality would pass VACUOUSLY
     # (NaN == NaN). The single-sourced helpers guarantee baseline == producer.
-    m, _ = T.resolve_keeper_identities(actions, frames, identity="roster", roster=ROSTER)
+    m, _ = resolve_keeper_identities(actions, frames, identity="roster", roster=ROSTER)
     base = T.add_pre_shot_gk_position(
         add_defending_gk_player_id(actions, m),
         apply_keeper_identities_to_frames(frames, m),

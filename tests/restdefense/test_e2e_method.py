@@ -82,13 +82,13 @@ def test_e2e_sb360_open_method():
     from statsbombpy import sb  # type: ignore[import-not-found]
 
     from scripts._sb_raw import flatten_events
-    from silly_kicks.providers.statsbomb import shape_snapshots
-    from silly_kicks.spadl.statsbomb import convert_to_actions
-    from silly_kicks.tracking import (
+    from silly_kicks.keeper_identity import (
         apply_keeper_identities_to_frames,
         resolve_keeper_identities,
-        snapshot_to_tracking_frames,
     )
+    from silly_kicks.providers.statsbomb import shape_snapshots
+    from silly_kicks.spadl.statsbomb import convert_to_actions
+    from silly_kicks.tracking import snapshot_to_tracking_frames
 
     # Women's World Cup 2023, a full open-360 competition (72:107).
     try:

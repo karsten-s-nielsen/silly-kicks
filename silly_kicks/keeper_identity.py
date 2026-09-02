@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections import Counter
+from collections.abc import Iterable, Sequence
 from typing import Any, Literal, NamedTuple, TypeAlias
 
 import numpy as np
@@ -21,12 +22,35 @@ import pandas as pd
 from silly_kicks._nan_safety import nan_safe_enrichment
 from silly_kicks.id_compat import canonical_id, ids_match, same_id
 
-# Bound at MODULE TOP by NAME (ADR-055 single-source): the native path DELEGATES to these TF-13
-# frame resolvers rather than re-deriving keeper identity from frames. Importing the names here (not
-# ``from . import _gk_resolve`` + attribute access) is what lets a consumer/test patch
-# ``silly_kicks.tracking._keeper_identity.defending_gk_from_frames`` as a module attribute.
-from ._gk_resolve import acting_gk_from_frames, defending_gk_from_frames
-from .utils import link_actions_to_frames
+# NOTE (ADR-055 single-source): the native path DELEGATES to the TF-13 frame resolvers
+# ``defending_gk_from_frames`` / ``acting_gk_from_frames`` (and links via ``link_actions_to_frames``)
+# rather than re-deriving keeper identity from frames. Those imports are LAZY -- made inside
+# ``_resolve_from_native`` -- because importing ``silly_kicks.tracking._gk_resolve`` /
+# ``silly_kicks.tracking.utils`` runs ``silly_kicks.tracking.__init__`` (numba + ~30 submodules), and
+# ``import silly_kicks.keeper_identity`` must stay tracking-free. A test that needs to prove the
+# delegation patches the DEFINITION SITE ``silly_kicks.tracking._gk_resolve.defending_gk_from_frames``
+# (a module attribute of ``_gk_resolve``), which the lazy per-call import resolves afresh.
+
+__all__ = [
+    "DEFENDING_GK_SOURCE_VALUES",
+    "KEEPER_APPEARANCE_COLUMNS",
+    "KEEPER_APPEARANCE_SOURCE_VALUES",
+    "KEEPER_ID_SOURCE_DERIVED",
+    "KEEPER_ID_SOURCE_EVENT",
+    "KEEPER_ID_SOURCE_NATIVE",
+    "KEEPER_ID_SOURCE_ROSTER",
+    "KEEPER_ID_SOURCE_UNRESOLVED",
+    "KEEPER_ID_SOURCE_VALUES",
+    "KeeperIdentity",
+    "KeeperIdentityMap",
+    "KeeperIdentityReport",
+    "KeeperSegment",
+    "add_defending_gk_player_id",
+    "apply_keeper_identities_to_frames",
+    "build_keeper_appearances_from_segments",
+    "resolve_keeper_identities",
+    "validate_keeper_appearances",
+]
 
 #: SPADL ``type_name`` for a goal kick (``spadl/config.py`` ``actiontypes[22]``). A goal-kick actor
 #: event names the acting team's keeper, so it is the most authoritative rung for that team-period.
@@ -57,6 +81,192 @@ KEEPER_ID_SOURCE_VALUES: tuple[str, ...] = (
 )
 
 
+# --- Keeper appearance-interval port (TF-59, spec §5.3) --------------------------------------------
+# A normalized ``KeeperAppearances`` table: one row per keeper's on-pitch interval, injected by an
+# extractor (Tasks 4-8 produce it; the interval-resolution consumer reads it). Plain-dict schema
+# (house style; no pandera). Contracts:
+#   * Times are PERIOD-RELATIVE (they reset each period), matching SPADL ``time_seconds`` (ADR-017);
+#     an extractor converts its provider's native time (frames / clock / minute) into this base.
+#     ``end_time_seconds`` may be ``+inf`` / NaN, meaning "to the period end".
+#   * The three ids are ``object`` (string-tolerant), NOT ``Int64``: DFL ids are strings
+#     (``MatchInfo.gk_player_ids: frozenset[str]``) and SkillCorner ids are strings, so ``Int64`` would
+#     drop them. The port tolerates string AND numeric ids un-coerced; comparisons downstream route
+#     through ``id_compat`` (ADR-019).
+#: Column -> dtype schema for the ``KeeperAppearances`` port. ids ``object`` (see the note above).
+KEEPER_APPEARANCE_COLUMNS: dict[str, str] = {
+    "game_id": "object",
+    "team_id": "object",
+    "player_id": "object",
+    "period_id": "int64",
+    "start_time_seconds": "float64",
+    "end_time_seconds": "float64",
+    "source": "object",
+}
+
+#: Closed vocabulary for the ``source`` provenance token of a keeper appearance interval.
+KEEPER_APPEARANCE_SOURCE_VALUES: tuple[str, ...] = (
+    "native_intervals",
+    "sub_events",
+    "starting_xi",
+    "emergency_keeper",
+)
+
+#: Closed vocabulary for the ``defending_gk_source`` provenance column, emitted ONLY on the
+#: appearance-resolution path of :func:`add_defending_gk_player_id` (the ADR-054 source-column
+#: pattern). ``appearance`` -- a covering interval named the keeper and it AGREES with the coarse
+#: map; ``appearance_map_conflict`` -- a covering interval named a keeper who DISAGREES with the
+#: coarse map (spec §5.4 appearance-vs-map cross-check); ``map_fallback`` -- no interval covered the
+#: action's ``time_seconds`` (an appearance gap), so the coarse ``keeper_map`` governed; ``unresolved``
+#: -- neither rung named a keeper (never a fabricated id; ADR-027).
+DEFENDING_GK_SOURCE_VALUES: tuple[str, ...] = (
+    "appearance",
+    "map_fallback",
+    "appearance_map_conflict",
+    "unresolved",
+)
+
+
+def validate_keeper_appearances(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate a ``KeeperAppearances`` frame against the port contract; return it unchanged.
+
+    Raises ``ValueError`` on a missing column, a negative ``start_time_seconds`` (times are
+    period-relative, so ``>= 0``; ADR-017), any interval with ``start >= end`` (a NaN / ``+inf`` end
+    passes -- it means "to the period end"), or an out-of-vocabulary ``source`` token. Does NOT coerce
+    id dtypes: ids stay whatever the caller supplied (string or numeric), so DFL/SkillCorner string
+    ids survive un-coerced and downstream comparisons route through ``id_compat`` (ADR-019).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import pandas as pd
+    >>> from silly_kicks.keeper_identity import validate_keeper_appearances
+    >>> appearances = pd.DataFrame(
+    ...     {
+    ...         "game_id": ["g1"], "team_id": ["DFL-CLU-00000G"], "player_id": ["DFL-OBJ-0027AX"],
+    ...         "period_id": [1], "start_time_seconds": [0.0], "end_time_seconds": [np.inf],
+    ...         "source": ["starting_xi"],
+    ...     }
+    ... )
+    >>> validate_keeper_appearances(appearances)["player_id"].tolist()
+    ['DFL-OBJ-0027AX']
+
+    See NOTICE for full bibliographic citations.
+    """
+    missing = [c for c in KEEPER_APPEARANCE_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"keeper appearances missing column(s): {missing}")
+    start = df["start_time_seconds"]
+    end = df["end_time_seconds"]
+    if (start < 0).any():
+        raise ValueError("start_time_seconds must be period-relative (>= 0)")
+    # A NaN / +inf end never satisfies `start >= end` (means "to period end"), so only a finite
+    # end that precedes its start raises here.
+    if (start >= end).any():
+        raise ValueError("each appearance needs start < end")
+    bad_sources = set(df["source"].dropna()) - set(KEEPER_APPEARANCE_SOURCE_VALUES)
+    if bad_sources:
+        raise ValueError(f"unknown appearance source(s): {sorted(bad_sources)}")
+    return df
+
+
+class KeeperSegment(NamedTuple):
+    """One keeper's on-pitch TENURE, spanning ``(start_period, start_time) -> (end_period, end_time)``.
+
+    Provider-agnostic input to :func:`build_keeper_appearances_from_segments`: an extractor builds a
+    list of these (one per keeper tenure -- opened by a starter / substitution / emergency-keeper
+    event, closed by the next keeper change or left open to the match end) and the builder decomposes
+    them into the per-period port rows. Times are PERIOD-RELATIVE (ADR-017), matching the port; ids are
+    stored RAW (string or numeric), so DFL/SkillCorner string ids survive un-coerced. ``end_time`` may
+    be ``float("inf")`` -- "still on at the match end". ``source`` is one of
+    :data:`KEEPER_APPEARANCE_SOURCE_VALUES`.
+
+    Examples
+    --------
+    >>> import math
+    >>> from silly_kicks.keeper_identity import KeeperSegment
+    >>> seg = KeeperSegment(
+    ...     team_id="DFL-CLU-0", player_id="DFL-OBJ-1", source="starting_xi",
+    ...     start_period=1, start_time=0.0, end_period=2, end_time=math.inf,
+    ... )
+    >>> (seg.player_id, seg.source, math.isinf(seg.end_time))
+    ('DFL-OBJ-1', 'starting_xi', True)
+    """
+
+    team_id: object
+    player_id: object
+    source: str
+    start_period: int
+    start_time: float
+    end_period: int
+    end_time: float
+
+
+def build_keeper_appearances_from_segments(
+    segments: Iterable[KeeperSegment],
+    periods: Sequence[int],
+    *,
+    game_id: object,
+) -> pd.DataFrame:
+    """Decompose provider-agnostic keeper SEGMENTS into the per-``(game, period_id, team)`` port rows.
+
+    This is the ONE per-period decomposition every extractor reuses (spec §5.5). The port keys
+    appearances per ``(game, period_id, team)`` and the consumer looks up the covering interval WITHIN
+    a single period, so each :class:`KeeperSegment` -- a ``(start_period, start_time) ->
+    (end_period, end_time)`` tenure -- is split into one row per period ``p`` in ``periods`` it spans
+    (``start_period <= p <= end_period``): the entry period starts at ``start_time`` (else ``0.0``) and
+    the exit period ends at ``end_time`` (else ``+inf``, i.e. "to the period end"). A period slice with
+    ``start >= end`` (no tenure -- e.g. a keeper subbed at the very start of a period) is DROPPED, which
+    also elides a segment that opens at a period boundary it has no time in. So an unsubbed keeper in a
+    two-period match gets TWO rows, a half-time change splits cleanly at the boundary, and extra-time
+    periods are handled by construction (the segment simply spans more periods).
+
+    Builds the DataFrame in :data:`KEEPER_APPEARANCE_COLUMNS` order and returns
+    :func:`validate_keeper_appearances` of it (raises on a malformed segment set). PURE -- ``segments``
+    is only read.
+
+    Examples
+    --------
+    A full-match starter over two periods decomposes into one open row per period:
+
+    >>> import math
+    >>> from silly_kicks.keeper_identity import (
+    ...     KeeperSegment, build_keeper_appearances_from_segments,
+    ... )
+    >>> seg = KeeperSegment(
+    ...     team_id=10, player_id=901, source="starting_xi",
+    ...     start_period=1, start_time=0.0, end_period=2, end_time=math.inf,
+    ... )
+    >>> ap = build_keeper_appearances_from_segments([seg], [1, 2], game_id="g1")
+    >>> list(ap["period_id"])
+    [1, 2]
+
+    See NOTICE for full bibliographic citations.
+    """
+    inf = float("inf")
+    rows: list[dict[str, object]] = []
+    for seg in segments:
+        for period in periods:
+            if not (seg.start_period <= period <= seg.end_period):
+                continue
+            start = seg.start_time if period == seg.start_period else 0.0
+            end = seg.end_time if period == seg.end_period else inf
+            if start >= end:
+                continue
+            rows.append(
+                {
+                    "game_id": game_id,
+                    "team_id": seg.team_id,
+                    "player_id": seg.player_id,
+                    "period_id": period,
+                    "start_time_seconds": start,
+                    "end_time_seconds": end,
+                    "source": seg.source,
+                }
+            )
+    appearances = pd.DataFrame(rows, columns=list(KEEPER_APPEARANCE_COLUMNS)).astype(KEEPER_APPEARANCE_COLUMNS)
+    return validate_keeper_appearances(appearances)
+
+
 class KeeperIdentity(NamedTuple):
     """One resolved keeper identity for a ``(game, period, team)``.
 
@@ -66,7 +276,7 @@ class KeeperIdentity(NamedTuple):
 
     Examples
     --------
-    >>> from silly_kicks.tracking import KeeperIdentity, KEEPER_ID_SOURCE_NATIVE
+    >>> from silly_kicks.keeper_identity import KeeperIdentity, KEEPER_ID_SOURCE_NATIVE
     >>> ident = KeeperIdentity(gk_id=920, source=KEEPER_ID_SOURCE_NATIVE, conflict=False)
     >>> (ident.gk_id, ident.source, ident.conflict)
     (920, 'native', False)
@@ -91,7 +301,7 @@ class KeeperIdentityReport:
 
     Examples
     --------
-    >>> from silly_kicks.tracking import KeeperIdentityReport
+    >>> from silly_kicks.keeper_identity import KeeperIdentityReport
     >>> report = KeeperIdentityReport(
     ...     n_teams_in=2, n_resolved=2, n_unresolved=0, n_conflict=0, source_counts={"native": 2}
     ... )
@@ -108,19 +318,24 @@ class KeeperIdentityReport:
 
 def resolve_keeper_identities(
     actions: pd.DataFrame,
-    frames: pd.DataFrame,
+    frames: pd.DataFrame | None = None,
     *,
     identity: Literal["native", "roster"],
     roster: dict | None = None,
 ) -> tuple[KeeperIdentityMap, KeeperIdentityReport]:
     """Resolve the real keeper identity per ``(game, period, team)``. See module docstring.
 
+    ``frames`` is OPTIONAL for ``identity="roster"``: when omitted, the resolver enumerates the
+    ``(game, period, team)`` triples from ``actions`` themselves (the event-only path, for callers
+    with no tracking frames). ``identity="native"`` reads frame positions, so it REQUIRES ``frames``
+    -- calling it with ``frames=None`` raises ``ValueError``.
+
     Examples
     --------
     Native providers carry a real keeper ``player_id`` on their ``is_goalkeeper`` frame rows, so
     ``identity="native"`` DELEGATES to the TF-13 frame resolvers (ADR-055 single-source)::
 
-        from silly_kicks.tracking import resolve_keeper_identities
+        from silly_kicks.keeper_identity import resolve_keeper_identities
 
         identities, report = resolve_keeper_identities(actions, frames, identity="native")
         keeper = identities[(game_id, period_id, team_id)]
@@ -147,6 +362,8 @@ def resolve_keeper_identities(
 def add_defending_gk_player_id(
     actions: pd.DataFrame,
     keeper_map: KeeperIdentityMap,
+    *,
+    appearances: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Stamp each action's DEFENDING keeper id (the opponent's keeper) from a resolved map.
 
@@ -161,6 +378,18 @@ def add_defending_gk_player_id(
     unresolvable (no ``(game, period)`` entry, a NaN action team, not exactly one other team, or the
     resolved opponent's ``gk_id`` is itself NA). PURE -- ``actions`` is never mutated.
 
+    Interval-granular resolution (``appearances``, TF-59 spec §5.4). When a validated
+    :func:`validate_keeper_appearances` table is supplied, each action's defending keeper is the
+    opponent's keeper whose ``[start_time_seconds, end_time_seconds)`` interval COVERS the action's
+    ``time_seconds`` -- so a mid-period keeper substitution is dated exactly and attribution flips at
+    the sub minute. An action whose time falls in an appearance GAP falls back to the coarse
+    ``keeper_map``. The defending team is still derived from ``keeper_map`` exactly as the coarse path
+    does (the opponent within ``(game, period)``). The appearance path ALSO emits a
+    ``defending_gk_source`` provenance column over :data:`DEFENDING_GK_SOURCE_VALUES` (the ADR-054
+    source-column pattern), which records the appearance-vs-map cross-check. **When ``appearances`` is
+    omitted the output is BYTE-IDENTICAL to the coarse path and carries NO ``defending_gk_source``
+    column**, so every existing caller is unaffected.
+
     Examples
     --------
     Stamp the defending keeper's id from a resolved identity map. The map keys are canonical
@@ -169,7 +398,7 @@ def add_defending_gk_player_id(
 
     >>> import pandas as pd
     >>> from silly_kicks.id_compat import canonical_id
-    >>> from silly_kicks.tracking import KeeperIdentity, add_defending_gk_player_id
+    >>> from silly_kicks.keeper_identity import KeeperIdentity, add_defending_gk_player_id
     >>> actions = pd.DataFrame(
     ...     {"action_id": [0], "game_id": [1], "period_id": [1], "team_id": [10], "type_name": ["shot"]}
     ... )
@@ -182,17 +411,86 @@ def add_defending_gk_player_id(
 
     See NOTICE for full bibliographic citations.
     """
-    # {(canonical game, canonical period) -> {canonical team -> KeeperIdentity}}. Period is
-    # canonicalized on BOTH the map-key and the lookup side, so a raw-int map period matches a
-    # raw-int action period regardless of representation (int vs np.int64 vs Int64); game/team are
-    # re-canonicalized defensively (canonical_id is idempotent on an already-canonical key).
+    out = actions.copy()
+    # The coarse per-action opponent-derivation + map lookup is factored into ``_coarse_defending_gk``
+    # so the omit path can return it UNCHANGED (byte-identical to the historical output) and the
+    # appearance path can reuse it as the interval-gap fallback + the cross-check comparand.
+    fallback = _coarse_defending_gk(actions, keeper_map)
+    if appearances is None:
+        # Byte-identical omit path: the coarse Series is the ONLY new column and NO
+        # ``defending_gk_source`` provenance is emitted, so every existing caller is unaffected.
+        out["defending_gk_player_id"] = fallback
+        return out
+
+    # Interval-granular path (spec §5.4). The defending team is the SAME opponent the coarse path
+    # derives from ``keeper_map``; the covering interval (if any) supersedes the coarse map and the
+    # appearance-vs-map cross-check is recorded in ``defending_gk_source``.
+    intervals = _index_appearances(appearances)
+    # Group ONCE before the loop (the sibling ``_coarse_defending_gk`` already does this) so
+    # ``_defending_team_for`` does not rebuild ``_by_game_period(keeper_map)`` per action.
+    by_gp = _by_game_period(keeper_map)
+    vals: list[object] = []
+    srcs: list[str] = []
+    for i, (game, period, team, t) in enumerate(
+        zip(actions["game_id"], actions["period_id"], actions["team_id"], actions["time_seconds"], strict=True)
+    ):
+        opp = _defending_team_for(game, period, team, by_gp)
+        # ``period`` (raw) matches the raw period ``_index_appearances`` keys on; ``opp`` is already a
+        # canonical key (``canonical_id`` is idempotent). ``None`` opponent -> no interval lookup.
+        key = (canonical_id(game), period, canonical_id(opp)) if opp is not None else None
+        gk = _keeper_covering(intervals.get(key, ()), t) if key is not None else pd.NA
+        coarse = fallback.iloc[i]
+        if gk is not pd.NA:
+            # A covering interval governs; ``appearance_map_conflict`` iff it disagrees with the
+            # coarse map (both present). ``same_id`` is the dtype-safe comparand (ADR-019).
+            src = "appearance_map_conflict" if (coarse is not pd.NA and not same_id(gk, coarse)) else "appearance"
+            vals.append(gk)
+        elif coarse is not pd.NA:
+            src = "map_fallback"
+            vals.append(coarse)
+        else:
+            src = "unresolved"
+            vals.append(pd.NA)
+        srcs.append(src)
+
+    # object dtype: the stored gk_id keeps its provider representation (the roster/native/appearance
+    # paths store the RAW id) and a heterogeneous NA is representable; downstream matching routes
+    # through the dtype-safe ``id_compat`` seam (ADR-019).
+    out["defending_gk_player_id"] = pd.Series(vals, index=out.index, dtype="object")
+    out["defending_gk_source"] = pd.Series(srcs, index=out.index, dtype="object")
+    return out
+
+
+def _by_game_period(
+    keeper_map: KeeperIdentityMap,
+) -> dict[tuple[object, object], dict[object, KeeperIdentity]]:
+    """Group a resolved ``keeper_map`` into ``{(canonical game, canonical period) -> {canonical team
+    -> KeeperIdentity}}``.
+
+    Period is canonicalized on BOTH the map-key and (downstream) the lookup side, so a raw-int map
+    period matches a raw-int action period regardless of representation (int vs np.int64 vs Int64);
+    game/team are re-canonicalized defensively (``canonical_id`` is idempotent on an already-canonical
+    key). A NA-team map key names no team and can never be an opponent, so it is skipped.
+    """
     by_gp: dict[tuple[object, object], dict[object, KeeperIdentity]] = {}
     for (g, p, t), ident in keeper_map.items():
         ct = canonical_id(t)
         if ct is pd.NA:
-            continue  # a NA-team map key names no team and can never be an opponent
+            continue
         by_gp.setdefault((canonical_id(g), canonical_id(p)), {})[ct] = ident
+    return by_gp
 
+
+def _coarse_defending_gk(actions: pd.DataFrame, keeper_map: KeeperIdentityMap) -> pd.Series:
+    """The coarse per-action DEFENDING keeper id (the historical ``add_defending_gk_player_id`` body).
+
+    For each action the defending keeper is the SINGLE OTHER team's keeper within the action's
+    ``(game, period)`` group of ``keeper_map``; ``pd.NA`` where the opponent is unresolvable (no
+    ``(game, period)`` entry, a NaN action team, or not exactly one other team). Returned as an
+    ``object`` Series indexed by ``actions.index`` -- byte-identical to the pre-refactor output, which
+    the omit path returns unchanged.
+    """
+    by_gp = _by_game_period(keeper_map)
     values: list[object] = []
     for game, period, team in zip(actions["game_id"], actions["period_id"], actions["team_id"], strict=True):
         ct = canonical_id(team)
@@ -204,14 +502,79 @@ def add_defending_gk_player_id(
         # already-canonical keys dtype-safely; a match on more/fewer than one is unresolvable.
         opponents = [k for k in group if not same_id(k, ct)]
         values.append(group[opponents[0]].gk_id if len(opponents) == 1 else pd.NA)
+    return pd.Series(values, index=actions.index, dtype="object")
 
-    out = actions.copy()
-    # object dtype: the stored gk_id keeps its provider representation (roster/native paths store
-    # the RAW id) and a heterogeneous NA is representable. Downstream matching against a frame's
-    # player_id routes through the dtype-safe `id_compat` seam (ADR-019), so no numeric dtype is
-    # required here.
-    out["defending_gk_player_id"] = pd.Series(values, index=out.index, dtype="object")
-    return out
+
+def _defending_team_for(
+    g: object,
+    p: object,
+    team: object,
+    by_gp: dict[tuple[object, object], dict[object, KeeperIdentity]],
+) -> object | None:
+    """The single OTHER team present in ``keeper_map`` for this action's ``(game, period)``.
+
+    The SAME opponent derivation :func:`_coarse_defending_gk` uses (the opponent is the one canonical
+    team key that is not the acting team). Takes the pre-grouped ``by_gp`` -- built ONCE by the caller
+    via :func:`_by_game_period` -- so the grouping is not rebuilt per action. Returns that canonical
+    team key, or ``None`` when the group is absent, the acting team is NA, or there is not exactly one
+    opponent (so the interval lookup is skipped and the coarse fallback governs). Consistent with the
+    coarse path by construction (both read the shared ``_by_game_period`` grouping).
+    """
+    ct = canonical_id(team)
+    if ct is pd.NA:
+        return None
+    group = by_gp.get((canonical_id(g), canonical_id(p)))
+    if group is None:
+        return None
+    opponents = [k for k in group if not same_id(k, ct)]
+    return opponents[0] if len(opponents) == 1 else None
+
+
+def _index_appearances(
+    appearances: pd.DataFrame,
+) -> dict[tuple[object, object, object], list[tuple[float, float, object]]]:
+    """Group a validated ``KeeperAppearances`` table into ``{(canonical game, period, canonical team)
+    -> [(start, end, gk), ...] sorted by start}``.
+
+    Game and team keys are canonical (ADR-055 rule 2 / ADR-019), so an ``Int64`` appearances id
+    matches a python-int action id; ``period_id`` is used AS-IS (the ``KeeperIdentityMap`` "period
+    used as-is" contract), matching the raw action period the lookup keys on. ``gk`` is stored RAW
+    (its provider representation) like the roster/native paths -- canonicalization is for keys and
+    comparisons, never the stored value. A NA-team appearance names no keeper interval and is skipped.
+    """
+    index: dict[tuple[object, object, object], list[tuple[float, float, object]]] = {}
+    for g, p, team, gk, start, end in zip(
+        appearances["game_id"],
+        appearances["period_id"],
+        appearances["team_id"],
+        appearances["player_id"],
+        appearances["start_time_seconds"],
+        appearances["end_time_seconds"],
+        strict=True,
+    ):
+        ct = canonical_id(team)
+        if ct is pd.NA:
+            continue
+        index.setdefault((canonical_id(g), p, ct), []).append((float(start), float(end), gk))
+    for rows in index.values():
+        rows.sort(key=lambda r: r[0])
+    return index
+
+
+def _keeper_covering(rows: Sequence[tuple[float, float, object]], t: float) -> object:
+    """Return the ``gk`` of the first interval covering ``t`` (``start <= t < end``), else ``pd.NA``.
+
+    ``rows`` are pre-sorted by start (:func:`_index_appearances`), so the first match is the covering
+    interval. An ``end`` of ``+inf`` / NaN is OPEN (unbounded to the period end). A NaN ``t`` (no
+    action time) covers nothing -> ``pd.NA``.
+    """
+    if pd.isna(t):
+        return pd.NA
+    for start, end, gk in rows:
+        open_end = pd.isna(end) or end == float("inf")
+        if start <= t and (open_end or t < end):
+            return gk
+    return pd.NA
 
 
 def apply_keeper_identities_to_frames(
@@ -239,7 +602,7 @@ def apply_keeper_identities_to_frames(
 
     >>> import pandas as pd
     >>> from silly_kicks.id_compat import canonical_id
-    >>> from silly_kicks.tracking import KeeperIdentity, apply_keeper_identities_to_frames
+    >>> from silly_kicks.keeper_identity import KeeperIdentity, apply_keeper_identities_to_frames
     >>> frames = pd.DataFrame(
     ...     {
     ...         "game_id": [1, 1], "period_id": [1, 1], "frame_id": [0, 0],
@@ -325,10 +688,15 @@ def _build_report(result_map: KeeperIdentityMap) -> KeeperIdentityReport:
 
 def _resolve_from_roster(
     actions: pd.DataFrame,
-    frames: pd.DataFrame,
+    frames: pd.DataFrame | None,
     roster: dict | None,
 ) -> tuple[KeeperIdentityMap, KeeperIdentityReport]:
     """SB360 injected-roster + goal-kick-event source-precedence ladder (event > roster).
+
+    ``frames`` may be ``None`` (the event-only path): the seed ``(game, period, team)`` triples and
+    the match's teams are then enumerated from ``actions`` themselves instead of the frames' non-ball
+    rows. Both branches feed the SAME downstream applicability guard, seed loop and goal-kick
+    override, so the frames-supplied path stays byte-identical.
 
     Pure: never mutates ``actions`` or ``frames`` (reads derived Series / operates on local copies).
     """
@@ -337,11 +705,22 @@ def _resolve_from_roster(
     #: (e.g. ``Int64``) need not match the roster key dtype (e.g. Python ``int``).
     canonical_roster = {canonical_id(k): v for k, v in roster.items()}
 
-    # The match's teams come from the frames' non-ball rows (ADR-062 numbers SB360 rows, so a real
-    # team_id is what an applicable roster is keyed on). `.astype("boolean").fillna(False)` guards a
-    # string/object `is_ball` qualifier (ADR-019 astype-bool trap) before negating.
-    non_ball = ~frames["is_ball"].astype("boolean").fillna(False)
-    frame_team_values = frames.loc[non_ball, "team_id"].dropna().unique()
+    if frames is None:
+        # Event-only path: the match's teams and the seed (game, period, team) triples both come
+        # from the actions' non-NA team rows. `frame_team_values` and `seed_df` are the SAME shapes
+        # the frames branch builds, so every downstream consumer below is source-agnostic.
+        has_team = actions["team_id"].notna()
+        frame_team_values = actions.loc[has_team, "team_id"].dropna().unique()
+        seed_df = (
+            actions.loc[has_team, ["game_id", "period_id", "team_id"]].dropna(subset=["team_id"]).drop_duplicates()
+        )
+    else:
+        # The match's teams come from the frames' non-ball rows (ADR-062 numbers SB360 rows, so a
+        # real team_id is what an applicable roster is keyed on). `.astype("boolean").fillna(False)`
+        # guards a string/object `is_ball` qualifier (ADR-019 astype-bool trap) before negating.
+        non_ball = ~frames["is_ball"].astype("boolean").fillna(False)
+        frame_team_values = frames.loc[non_ball, "team_id"].dropna().unique()
+        seed_df = frames.loc[non_ball, ["game_id", "period_id", "team_id"]].dropna(subset=["team_id"]).drop_duplicates()
 
     # Roster-APPLICABILITY guard (P3): if NONE of the frame team-ids intersects a roster key, the
     # roster does not describe THIS match -- the synthetic {0,1} fallback (parse.py) is the primary
@@ -351,17 +730,20 @@ def _resolve_from_roster(
     roster_key_series = pd.Series(list(roster.keys()))
     applies = any(ids_match(roster_key_series, t).any() for t in frame_team_values)
     if not applies:
-        frame_teams = {canonical_id(t) for t in frame_team_values}
+        present_teams = {canonical_id(t) for t in frame_team_values}
         roster_keys = set(canonical_roster.keys())
+        # The teams came from the frames' non-ball rows OR (event-only path) the actions' team rows;
+        # name the actual source so the message is accurate regardless of which branch ran above.
+        source = "frame" if frames is not None else "action"
         raise ValueError(
-            f"roster names none of this match's teams: frame teams {frame_teams}, "
+            f"roster names none of this match's teams: {source} teams {present_teams}, "
             f"roster keys {roster_keys} (the synthetic {{0,1}} fallback is one instance)"
         )
 
-    # Seed every (game, period, team) present in the frames from the roster; a team with no roster
-    # entry stays NA + "unresolved" (counted, never fabricated).
+    # Seed every (game, period, team) witnessed above from the roster; a team with no roster entry
+    # stays NA + "unresolved" (counted, never fabricated). `seed_df` was built source-agnostically
+    # above (frames' non-ball rows, or actions' team rows on the event-only path).
     result_map: KeeperIdentityMap = {}
-    seed_df = frames.loc[non_ball, ["game_id", "period_id", "team_id"]].dropna(subset=["team_id"]).drop_duplicates()
     for gid_raw, pid, tid_raw in zip(seed_df["game_id"], seed_df["period_id"], seed_df["team_id"], strict=True):
         tid = canonical_id(tid_raw)
         key = (canonical_id(gid_raw), pid, tid)
@@ -409,7 +791,7 @@ def _resolve_from_roster(
 
 def _resolve_from_native(
     actions: pd.DataFrame,
-    frames: pd.DataFrame,
+    frames: pd.DataFrame | None,
 ) -> tuple[KeeperIdentityMap, KeeperIdentityReport]:
     """Native-provider keeper identity by DELEGATING to the TF-13 frame resolvers (ADR-055).
 
@@ -424,6 +806,21 @@ def _resolve_from_native(
 
     Pure: never mutates ``actions`` or ``frames`` (reads derived Series / builds local structures).
     """
+    if frames is None:
+        # The native path reads keeper POSITIONS from frames (it delegates to the TF-13 frame
+        # resolvers), so it cannot run without them -- unlike the event-only roster path.
+        raise ValueError("native identity requires frames")
+
+    # Lazy import (see the module-top NOTE): importing these from ``silly_kicks.tracking`` runs the
+    # heavy tracking ``__init__``, so it is deferred to the native path -- keeping
+    # ``import silly_kicks.keeper_identity`` tracking-free. Patch the definition site
+    # ``silly_kicks.tracking._gk_resolve.{defending,acting}_gk_from_frames`` to intercept the delegation.
+    from silly_kicks.tracking._gk_resolve import (
+        acting_gk_from_frames,
+        defending_gk_from_frames,
+    )
+    from silly_kicks.tracking.utils import link_actions_to_frames
+
     # The TF-13 resolvers link through ``link_actions_to_frames``, which requires ``source_provider``
     # (used ONLY for the discarded per-provider link-rate report, never for the nearest-frame match or
     # the resolved keeper ids). A minimal native frame set may omit it, so add a placeholder on a LOCAL

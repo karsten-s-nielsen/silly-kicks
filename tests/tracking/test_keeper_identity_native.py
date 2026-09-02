@@ -4,9 +4,8 @@ from unittest import mock
 
 import pandas as pd
 
-import silly_kicks.tracking as T
 from silly_kicks.id_compat import canonical_id
-from silly_kicks.tracking._keeper_identity import (
+from silly_kicks.keeper_identity import (
     KEEPER_ID_SOURCE_DERIVED,
     KEEPER_ID_SOURCE_NATIVE,
     resolve_keeper_identities,
@@ -58,19 +57,27 @@ def test_native_path_source_reflects_is_goalkeeper_source():
 
 
 def test_native_path_delegates_and_does_not_reimplement():
-    """Single-source (ADR-055): the native path CALLS the TF-13 resolvers."""
-    real_def = T.defending_gk_from_frames
-    real_act = T.acting_gk_from_frames
+    """Single-source (ADR-055): the native path CALLS the TF-13 resolvers.
+
+    The resolver lazy-imports them inside ``_resolve_from_native`` (keeping
+    ``silly_kicks.keeper_identity`` tracking-free), so the patch targets the DEFINITION SITE
+    ``silly_kicks.tracking._gk_resolve`` -- which the per-call lazy import resolves afresh -- rather
+    than a module attribute of ``keeper_identity``.
+    """
+    import silly_kicks.tracking._gk_resolve as GK
+
+    real_def, real_act = GK.defending_gk_from_frames, GK.acting_gk_from_frames
     with (
-        mock.patch("silly_kicks.tracking._keeper_identity.defending_gk_from_frames", wraps=real_def) as md,
-        mock.patch("silly_kicks.tracking._keeper_identity.acting_gk_from_frames", wraps=real_act) as ma,
+        mock.patch("silly_kicks.tracking._gk_resolve.defending_gk_from_frames", wraps=real_def) as md,
+        mock.patch("silly_kicks.tracking._gk_resolve.acting_gk_from_frames", wraps=real_act) as ma,
     ):
         resolve_keeper_identities(_actions(), _frames(), identity="native")
     assert md.called, "native path must delegate to defending_gk_from_frames, not reimplement it"
     assert ma.called, "native path must delegate to acting_gk_from_frames, not reimplement it"
 
 
-def test_resolver_is_exported_from_tracking():
-    assert hasattr(T, "resolve_keeper_identities")
-    assert T.resolve_keeper_identities is resolve_keeper_identities
-    assert set(T.KEEPER_ID_SOURCE_VALUES) == {"event", "roster", "native", "derived", "unresolved"}
+def test_resolver_is_exported_from_keeper_identity():
+    import silly_kicks.keeper_identity as K
+
+    assert K.resolve_keeper_identities is resolve_keeper_identities
+    assert set(K.KEEPER_ID_SOURCE_VALUES) == {"event", "roster", "native", "derived", "unresolved"}

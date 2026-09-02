@@ -331,7 +331,7 @@ def _dc_va_invoke(inputs):
 def _defending_gk_map():
     """A resolved keeper map covering the make_actions/make_frames teams (home 5, opponent 6)."""
     from silly_kicks.id_compat import canonical_id
-    from silly_kicks.tracking import KeeperIdentity
+    from silly_kicks.keeper_identity import KeeperIdentity
 
     return {
         (canonical_id(1), 1, canonical_id(5)): KeeperIdentity(gk_id=901, source="roster", conflict=False),
@@ -348,7 +348,9 @@ def _defending_gk_inputs():
 
 
 def _defending_gk_invoke(inputs):
-    return F.add_defending_gk_player_id(inputs[0], inputs[1])
+    from silly_kicks.keeper_identity import add_defending_gk_player_id
+
+    return add_defending_gk_player_id(inputs[0], inputs[1])
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +501,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     ],
     # ADR-077/ADR-033: the visible_area rollup companion path reads a caller-supplied polygon
     # ndarray, so the conditional-column branch needs its own purity variant alongside the default.
-    "tracking:add_defending_gk_player_id": _one(_defending_gk_inputs, _defending_gk_invoke),
+    "keeper_identity:add_defending_gk_player_id": _one(_defending_gk_inputs, _defending_gk_invoke),
     "tracking:add_defensive_credit": [
         ("no_visible_area", _dc_inputs, _dc_invoke),
         ("with_visible_area", _dc_va_inputs, _dc_va_invoke),
@@ -717,6 +719,10 @@ _PKG_MOD = {
     "atomic.spadl": "silly_kicks.atomic.spadl",
     "tracking": "silly_kicks.tracking",
     "atomic.tracking": "silly_kicks.atomic.tracking",
+    # The keeper-identity resolver was promoted to this public top-level module (breaking move, no
+    # shim): `add_defending_gk_player_id` lives here, NOT in `tracking`, so its purity coverage is
+    # re-homed to a `keeper_identity:` prefix rather than dropped.
+    "keeper_identity": "silly_kicks.keeper_identity",
 }
 
 
@@ -728,6 +734,7 @@ SPADL_REGISTERED = _registered_for("spadl")
 ATOMIC_SPADL_REGISTERED = _registered_for("atomic.spadl")
 TRACKING_REGISTERED = _registered_for("tracking")
 ATOMIC_TRACKING_REGISTERED = _registered_for("atomic.tracking")
+KEEPER_IDENTITY_REGISTERED = _registered_for("keeper_identity")
 
 
 def _exported_add_surface(prefix: str) -> set[str]:
@@ -787,6 +794,7 @@ def test_meta_registration_complete_per_package():
         ("atomic.spadl", ATOMIC_SPADL_REGISTERED),
         ("tracking", TRACKING_REGISTERED),
         ("atomic.tracking", ATOMIC_TRACKING_REGISTERED),
+        ("keeper_identity", KEEPER_IDENTITY_REGISTERED),
     ):
         exported = _exported_add_surface(prefix)
         assert exported == registered_subset, (
@@ -802,6 +810,7 @@ def test_meta_all_public_add_defs_are_exported():
     the defining submodule (not at the re-export package)."""
     import silly_kicks.atomic.spadl.utils
     import silly_kicks.atomic.tracking.features
+    import silly_kicks.keeper_identity
     import silly_kicks.spadl.utils
     import silly_kicks.tracking.features
 
@@ -810,6 +819,7 @@ def test_meta_all_public_add_defs_are_exported():
         (silly_kicks.tracking.features, "tracking"),
         (silly_kicks.atomic.spadl.utils, "atomic.spadl"),
         (silly_kicks.atomic.tracking.features, "atomic.tracking"),
+        (silly_kicks.keeper_identity, "keeper_identity"),
     ):
         missing = _defined_add_defs(submod) - _exported_add_surface(prefix)
         assert not missing, f"{submod.__name__}: public add_* defs missing from {prefix} export surface: {missing}"

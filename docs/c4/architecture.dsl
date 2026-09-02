@@ -20,7 +20,7 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
 
             spadl = container "silly_kicks.spadl" "SPADL event conversion (23 action types) from 7 providers + a kloppy gateway; enrichments (possessions, game state, GK analytics), block-detection columns, canonical pitch/penalty-area constants." "Python" "Library"
             vaep = container "silly_kicks.vaep" "VAEP action valuation: features, action/possession/time-windowed labels, and gradient-boosted models. HybridVAEP removes result leakage; optional Expected-Threat feature factory." "Python" "Library"
-            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, adapters, linkage, spatial/GKDV models, 33 action-coupled aggregators, keeper-identity resolver + run_tracking_features producer, feature-contract guard." "Python" "Library"
+            tracking = container "silly_kicks.tracking" "Per-frame tracking: schema, adapters, linkage, spatial/GKDV models, 33 action-coupled aggregators, run_tracking_features producer, native GK derivation (_gk_resolve), feature-contract guard." "Python" "Library"
             atomic = container "silly_kicks.atomic" "Atomic SPADL/VAEP: continuous 33-type action representation with full enrichment parity. Mirrors tracking.features for atomic-shaped columns." "Python" "Library"
             xthreat = container "silly_kicks.xthreat" "Expected Threat (xT): pluggable transition family (Singh counts / KDE-smoothed) + value iteration on a variable-resolution grid; held-out transition-NLL evaluator; physical_grid resampling. ADR-041." "Python" "Library"
             xtgk = container "silly_kicks.xtgk" "xT-GK v2: possession value V(z,p) (Markov surface + deep-zone gate), metric compute_xt_gk_v2 over 3 injected ports, resolved-GK-geometry edge (apply_resolved_gk_geometry), bundled rho weights." "Python" "Library"
@@ -28,8 +28,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             restdefense = container "silly_kicks.restdefense" "TF-60 rest defense Layer 1: rearguard structure KPIs (numerical superiority, zone occupancy, line/GK height) at the in-possession action grid; GoalMap-oriented; SB360 FOV-aware. ADR-080." "Python" "Library"
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
-            providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze -> converter input): Sportec/DFL (golden-pinned, [parse-dfl] extra) + SB360 freeze-frames -> tracking frames + visible_area (no extra). ADR-031/054." "Python" "Library"
+            providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
             glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 368 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
         }
 
         // --- Relationships: Context level ---
@@ -108,6 +109,12 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
 
         // --- Relationships: SB360 parse port (ADR-054) ---
         providers -> tracking "Shapes SB360 freeze-frames to tracking frames + per-action visible_area polygons via" "snapshot_to_tracking_frames"
+
+        // --- Relationships: keeper-identity resolver + appearance port (ADR-078/084) ---
+        analyst -> keeper_identity "Resolves which keeper faced each shot (event-only or frame-native) + interval-granular defending-GK id via" "resolve_keeper_identities / add_defending_gk_player_id"
+        tracking -> keeper_identity "run_tracking_features resolves keeper identity + bridges it onto anonymous frames via" "resolve_keeper_identities / apply_keeper_identities_to_frames"
+        keeper_identity -> tracking "Lazy-delegates the native frame-based GK derivation to, adding no import-time edge, via" "tracking._gk_resolve"
+        providers -> keeper_identity "Emit the normalized KeeperAppearances interval port from native appearance/substitution encodings via" "build_keeper_appearances_from_segments"
     }
 
     views {

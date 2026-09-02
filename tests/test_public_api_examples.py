@@ -217,9 +217,6 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/tracking/_ball_carrier.py",
     "silly_kicks/tracking/_defensive_line.py",
     "silly_kicks/tracking/_elastic_sync.py",
-    # ADR-055 single-source keeper-identity resolver, reached via `tracking.__all__` from this
-    # cycle. Documented on export rather than deferred -- a brand-new public module ships clean.
-    "silly_kicks/tracking/_keeper_identity.py",
     "silly_kicks/tracking/_line_breaking.py",
     "silly_kicks/tracking/_obso.py",
     "silly_kicks/tracking/_packing.py",
@@ -244,6 +241,10 @@ _PUBLIC_MODULE_FILES = (
     # public module this release. Documented on promotion rather than deferred: a
     # brand-new public module should not ship already in debt.
     "silly_kicks/id_compat.py",
+    # ADR-055 single-source keeper-identity resolver, promoted from `tracking/_keeper_identity.py`
+    # to this repo-wide public module (breaking move, no shim). Documented on promotion rather than
+    # deferred: a brand-new public module should not ship already in debt.
+    "silly_kicks/keeper_identity.py",
     # --- modules that were WHOLLY unenforced under the module-level debt bucket ---
     # Every one of them is now enforced; the individual symbols that lack an example are
     # excused one at a time in `_EXAMPLES_DEBT`. Between them they hold 150 already-
@@ -299,6 +300,13 @@ _PUBLIC_MODULE_FILES = (
     # TF-60 PR2 Layer-2 danger valuation: WFieldParams (exported) + build_w_field. Brand-new module,
     # ships clean (both documented on export).
     "silly_kicks/restdefense/_wfield.py",
+    # TF-59 PR1: the per-provider keeper-appearance extractors (one public `extract_keeper_appearances`
+    # each), feeding the ADR-055 keeper-identity port. Brand-new public modules -- documented on
+    # creation (each carries a real Examples section), not deferred.
+    "silly_kicks/providers/statsbomb/appearances.py",
+    "silly_kicks/providers/sportec/appearances.py",
+    "silly_kicks/providers/gradientsports/appearances.py",
+    "silly_kicks/providers/skillcorner/appearances.py",
 )
 
 

@@ -36,13 +36,13 @@ from typing import Literal
 import pandas as pd
 
 import silly_kicks.tracking as tracking
-
-from ._keeper_identity import (
+from silly_kicks.keeper_identity import (
     KeeperIdentityReport,
     add_defending_gk_player_id,
     apply_keeper_identities_to_frames,
     resolve_keeper_identities,
 )
+
 from .pitch_control import PitchControlCache
 from .utils import link_actions_to_frames
 
