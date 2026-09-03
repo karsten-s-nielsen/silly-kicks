@@ -1,6 +1,6 @@
 """Union of derived columns emitted by every default-config producer (run-and-diff), base-normalised.
 
-Five legs, each running its producers at default config on a real fixture and diffing the columns
+Six legs, each running its producers at default config on a real fixture and diffing the columns
 they ADD (or, for the ``*_xfns`` / vaep legs whose transformers return a feature-only frame, the
 columns they PRODUCE):
 
@@ -15,8 +15,10 @@ columns they PRODUCE):
    fixture.
 5. ``_restdefense_columns`` -- ``restdefense.compute_rest_defense`` (TF-60) on the restdefense fixture;
    a ``compute_*`` the name-shape discovery misses, so it is run explicitly here.
+6. ``_shot_stopping_columns`` -- ``shot_stopping.compute_shot_stopping`` (TF-59 PR2) on a tiny fixture;
+   likewise a ``compute_*`` the name-shape discovery misses, run explicitly here.
 
-``emitted_columns`` is the base-normalised union of all five legs (the gamestate-slot marker
+``emitted_columns`` is the base-normalised union of all six legs (the gamestate-slot marker
 ``_a{i}`` is stripped so the glossary is keyed on the base/semantic name).
 
 COMPLETENESS CEILING (honest): the coverage gate is only as complete as this harness. The per-leg
@@ -169,6 +171,40 @@ def _restdefense_columns() -> set[str]:
     return set(samples.columns) - structural
 
 
+def _shot_stopping_columns() -> set[str]:
+    """Derived shot-stopping metric columns emitted by compute_shot_stopping (TF-59 PR2).
+
+    compute_shot_stopping is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg runs it on a tiny fixture and returns the DERIVED metric columns (the sample
+    keys game_id/player_id + the structural team_id are not features). A NEW emitted metric appears here
+    and fails the coverage gate until documented (the run-and-diff anti-rot property)."""
+    import pandas as pd
+
+    from silly_kicks.shot_stopping import SHOT_STOPPING_METRIC_COLUMNS, compute_shot_stopping
+    from silly_kicks.spadl import config as spadlconfig
+
+    actions = pd.DataFrame(
+        [
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "team_id": 10,
+                "type_id": spadlconfig.actiontype_id["shot"],
+                "result_id": spadlconfig.result_id["fail"],
+                "psxg": 0.3,
+                "defending_gk_player_id": 99,
+                "defending_gk_team_id": 20,
+                "shot_blocked": pd.NA,
+            }
+        ]
+    )
+    actions["shot_blocked"] = actions["shot_blocked"].astype("boolean")
+    actions["defending_gk_player_id"] = actions["defending_gk_player_id"].astype("object")
+    actions["defending_gk_team_id"] = actions["defending_gk_team_id"].astype("object")
+    samples, _ = compute_shot_stopping(actions, psxg_column="psxg")
+    return set(SHOT_STOPPING_METRIC_COLUMNS) & set(samples.columns)
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -196,5 +232,6 @@ def emitted_columns() -> set[str]:
         | _spadl_enricher_columns()
         | _vaep_columns()
         | _restdefense_columns()
+        | _shot_stopping_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

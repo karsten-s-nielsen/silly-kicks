@@ -303,6 +303,15 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   opponent's offside/last line -- the anchor for rd_danger_behind_line and its
   GK-inclusive variant rd_danger_behind_line_gk.
 
+- Goals Saved Above Expected (PSxG-based GSAA). Post-Shot xG (PSxG) is a
+  widely-used shot-quality model (StatsBomb Post-Shot xG; American Soccer
+  Analysis GSAA is the shots-faced aggregation).
+  Used by: silly_kicks.shot_stopping._compute (TF-59 PR2).
+  Goals Prevented == GSAA = sum(PSxG faced) - goals conceded, per (goalkeeper,
+  match). silly-kicks ships NO xG/PSxG model -- PSxG is INJECTED (port pattern,
+  cf. xg_column in vaep/labels.py). The formula is standard; own goals, blocked
+  shots and the penalty shootout are excluded, penalties reported both ways.
+
 - Ogawa et al. (2025). "Space evaluation at the starting point of soccer
   transitions." arXiv:2505.14711 (OBPV).
   Used by: silly_kicks.restdefense._wfield (TF-60 PR2).

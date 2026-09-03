@@ -276,8 +276,9 @@ NON_LINKED_AGGREGATORS: dict[str, str] = {
     "add_defending_gk_player_id": (
         "Takes NO frames -- its second positional is a keeper_map, not a frames DataFrame -- so this "
         "gate's permutation (which varies actions/frames/home_team_id dtypes) reaches no action-vs-"
-        "frame id comparison. Its SOLE output is the id column `defending_gk_player_id`, which "
-        "`_is_id_col` excludes from the value comparison, so an AGGREGATORS entry would be vacuous. "
+        "frame id comparison. Its output id columns are `defending_gk_player_id` AND "
+        "`defending_gk_team_id` (ADR-085), both excluded by `_is_id_col` from the value comparison, "
+        "so an AGGREGATORS entry would be vacuous. "
         "Its own id-dtype hazard -- the opponent lookup routes team ids through `canonical_id` against "
         "the canonical keeper_map keys -- IS exercised across dtypes by "
         "tests/tracking/test_keeper_placement_helpers.py (int action team_id vs canonical string map "

@@ -274,17 +274,26 @@ class KeeperIdentity(NamedTuple):
     ``source`` still records the WINNING rung per precedence, so the disagreement is a separate,
     durable signal, never a lost warning.
 
+    ``team_id`` is the keeper's OWN team in its RAW representation -- the same team the (canonical)
+    map key names, but stored so a consumer recovers the provider-native id without re-deriving it
+    (ADR-085; the map key is canonical, so the raw team would otherwise be lost). Defaulted to
+    ``pd.NA`` for back-compat: :func:`resolve_keeper_identities` populates it from the actions/frames
+    it enumerates, and a hand-built map that omits it reads NA. It is why
+    :func:`add_defending_gk_player_id` can stamp the authoritative ``defending_gk_team_id`` even for
+    an opponent that never appears in the actions (a frame-seeded map).
+
     Examples
     --------
     >>> from silly_kicks.keeper_identity import KeeperIdentity, KEEPER_ID_SOURCE_NATIVE
-    >>> ident = KeeperIdentity(gk_id=920, source=KEEPER_ID_SOURCE_NATIVE, conflict=False)
-    >>> (ident.gk_id, ident.source, ident.conflict)
-    (920, 'native', False)
+    >>> ident = KeeperIdentity(gk_id=920, source=KEEPER_ID_SOURCE_NATIVE, conflict=False, team_id=7)
+    >>> (ident.gk_id, ident.source, ident.conflict, ident.team_id)
+    (920, 'native', False, 7)
     """
 
     gk_id: object
     source: str
     conflict: bool
+    team_id: object = pd.NA
 
 
 #: ``{(canonical game_id, period_id, canonical team_id) -> KeeperIdentity}``. ``game_id`` and
@@ -374,9 +383,16 @@ def add_defending_gk_player_id(
     and looked up in it. Every id build/lookup routes through ``id_compat`` (ADR-019), so the
     action ``team_id`` dtype need not match the map-key dtype.
 
-    Returns a COPY with a new ``defending_gk_player_id`` column; ``pd.NA`` where the opponent is
+    Returns a COPY with new ``defending_gk_player_id`` + ``defending_gk_team_id`` columns -- the
+    defending keeper and its AUTHORITATIVE team, the opponent the resolver used to select the keeper.
+    BOTH are read from ``keeper_map``: the team is the opponent entry's ``KeeperIdentity.team_id`` in
+    its RAW provider representation (ADR-085), so it resolves even for an opponent that never appears
+    in ``actions`` (a frame-seeded map) and joins via ``id_compat`` (ADR-019) when the consumer's dim
+    table uses another representation. ``defending_gk_player_id`` is ``pd.NA`` where the opponent is
     unresolvable (no ``(game, period)`` entry, a NaN action team, not exactly one other team, or the
-    resolved opponent's ``gk_id`` is itself NA). PURE -- ``actions`` is never mutated.
+    resolved opponent's ``gk_id`` is itself NA); ``defending_gk_team_id`` is NA for the SAME structural
+    reasons OR where the map value carries no ``team_id`` (a hand-built map that omitted it) -- INDEPENDENT
+    of the keeper (a row can carry a known team with an NA keeper). PURE -- ``actions`` is never mutated.
 
     Interval-granular resolution (``appearances``, TF-59 spec §5.4). When a validated
     :func:`validate_keeper_appearances` table is supplied, each action's defending keeper is the
@@ -387,8 +403,9 @@ def add_defending_gk_player_id(
     does (the opponent within ``(game, period)``). The appearance path ALSO emits a
     ``defending_gk_source`` provenance column over :data:`DEFENDING_GK_SOURCE_VALUES` (the ADR-054
     source-column pattern), which records the appearance-vs-map cross-check. **When ``appearances`` is
-    omitted the output is BYTE-IDENTICAL to the coarse path and carries NO ``defending_gk_source``
-    column**, so every existing caller is unaffected.
+    omitted the output carries ``defending_gk_player_id`` + ``defending_gk_team_id`` but NO
+    ``defending_gk_source`` column** -- ADR-085 amends ADR-084's byte-identity-when-omitted contract
+    with the additive team column; existing column VALUES are unchanged.
 
     Examples
     --------
@@ -403,11 +420,18 @@ def add_defending_gk_player_id(
     ...     {"action_id": [0], "game_id": [1], "period_id": [1], "team_id": [10], "type_name": ["shot"]}
     ... )
     >>> keeper_map = {
-    ...     (canonical_id(1), 1, canonical_id(10)): KeeperIdentity(gk_id=901, source="roster", conflict=False),
-    ...     (canonical_id(1), 1, canonical_id(20)): KeeperIdentity(gk_id=902, source="roster", conflict=False),
+    ...     (canonical_id(1), 1, canonical_id(10)): KeeperIdentity(
+    ...         gk_id=901, source="roster", conflict=False, team_id=10
+    ...     ),
+    ...     (canonical_id(1), 1, canonical_id(20)): KeeperIdentity(
+    ...         gk_id=902, source="roster", conflict=False, team_id=20
+    ...     ),
     ... }
-    >>> add_defending_gk_player_id(actions, keeper_map)["defending_gk_player_id"].tolist()
+    >>> out = add_defending_gk_player_id(actions, keeper_map)
+    >>> out["defending_gk_player_id"].tolist()  # team 10 is defended by team 20's keeper
     [902]
+    >>> out["defending_gk_team_id"].tolist()  # the authoritative opponent team, from the map VALUE
+    [20]
 
     See NOTICE for full bibliographic citations.
     """
@@ -417,9 +441,12 @@ def add_defending_gk_player_id(
     # appearance path can reuse it as the interval-gap fallback + the cross-check comparand.
     fallback = _coarse_defending_gk(actions, keeper_map)
     if appearances is None:
-        # Byte-identical omit path: the coarse Series is the ONLY new column and NO
-        # ``defending_gk_source`` provenance is emitted, so every existing caller is unaffected.
+        # Omit path: the coarse keeper Series + the authoritative defending team (ADR-085), and NO
+        # ``defending_gk_source`` provenance. (ADR-085 amends ADR-084's byte-identity-when-omitted
+        # contract: the omit path now carries the additive ``defending_gk_team_id`` column too --
+        # existing column VALUES are unchanged.)
         out["defending_gk_player_id"] = fallback
+        out["defending_gk_team_id"] = _coarse_defending_team(actions, keeper_map)
         return out
 
     # Interval-granular path (spec §5.4). The defending team is the SAME opponent the coarse path
@@ -457,6 +484,7 @@ def add_defending_gk_player_id(
     # paths store the RAW id) and a heterogeneous NA is representable; downstream matching routes
     # through the dtype-safe ``id_compat`` seam (ADR-019).
     out["defending_gk_player_id"] = pd.Series(vals, index=out.index, dtype="object")
+    out["defending_gk_team_id"] = _coarse_defending_team(actions, keeper_map)
     out["defending_gk_source"] = pd.Series(srcs, index=out.index, dtype="object")
     return out
 
@@ -528,6 +556,33 @@ def _defending_team_for(
         return None
     opponents = [k for k in group if not same_id(k, ct)]
     return opponents[0] if len(opponents) == 1 else None
+
+
+def _coarse_defending_team(actions: pd.DataFrame, keeper_map: KeeperIdentityMap) -> pd.Series:
+    """The DEFENDING (opponent) team id per action -- the authoritative team the resolver used to pick
+    the defending keeper (ADR-085).
+
+    The opponent IDENTITY is derived from ``keeper_map`` exactly as :func:`_coarse_defending_gk` /
+    :func:`_defending_team_for` do (the single OTHER canonical team in the action's ``(game, period)``),
+    and the RAW team is read straight from that opponent's ``KeeperIdentity.team_id`` -- the resolver's
+    own provider representation, populated by :func:`resolve_keeper_identities`. Reading the team from
+    the map VALUE (rather than recovering it from ``actions``) makes it available even for an opponent
+    that never appears in ``actions`` (a frame-seeded map) -- the case a from-``actions`` recovery
+    returned NA for. ``pd.NA`` where the opponent is unresolvable (as :func:`_coarse_defending_gk`) OR
+    where the opponent's map entry carries no ``team_id`` (a hand-built map that omitted it). Independent
+    of the keeper: a row can carry a KNOWN team with an NA keeper.
+    """
+    by_gp = _by_game_period(keeper_map)
+    vals: list[object] = []
+    for g, p, team in zip(actions["game_id"], actions["period_id"], actions["team_id"], strict=True):
+        opp = _defending_team_for(g, p, team, by_gp)
+        if opp is None:
+            vals.append(pd.NA)
+        else:
+            # ``opp`` is a canonical team key drawn FROM this (game, period) group, so the lookup exists;
+            # ``.team_id`` is the resolver's raw team (or NA if a hand-built map omitted it).
+            vals.append(by_gp[(canonical_id(g), canonical_id(p))][opp].team_id)
+    return pd.Series(vals, index=actions.index, dtype="object")
 
 
 def _index_appearances(
@@ -747,12 +802,17 @@ def _resolve_from_roster(
     for gid_raw, pid, tid_raw in zip(seed_df["game_id"], seed_df["period_id"], seed_df["team_id"], strict=True):
         tid = canonical_id(tid_raw)
         key = (canonical_id(gid_raw), pid, tid)
+        # ``team_id=tid_raw`` stores the keeper's OWN team in its RAW representation (ADR-085) so
+        # ``add_defending_gk_player_id`` recovers the authoritative opponent team from the map value
+        # rather than the actions -- the map key is canonical, which would otherwise lose the raw id.
         if tid in canonical_roster:
             result_map[key] = KeeperIdentity(
-                gk_id=canonical_roster[tid], source=KEEPER_ID_SOURCE_ROSTER, conflict=False
+                gk_id=canonical_roster[tid], source=KEEPER_ID_SOURCE_ROSTER, conflict=False, team_id=tid_raw
             )
         else:
-            result_map[key] = KeeperIdentity(gk_id=pd.NA, source=KEEPER_ID_SOURCE_UNRESOLVED, conflict=False)
+            result_map[key] = KeeperIdentity(
+                gk_id=pd.NA, source=KEEPER_ID_SOURCE_UNRESOLVED, conflict=False, team_id=tid_raw
+            )
 
     # Goal-kick event override (event > roster). A goal-kick actor names the acting team's keeper,
     # so it beats a stale roster after a substitution. Restricted to (game, period, team) tuples the
@@ -784,7 +844,11 @@ def _resolve_from_roster(
             if prior.source == KEEPER_ID_SOURCE_ROSTER and not same_id(prior.gk_id, winner_gk):
                 # roster-vs-event: both named a keeper and they differ.
                 conflict = True
-            result_map[key] = KeeperIdentity(gk_id=winner_gk, source=KEEPER_ID_SOURCE_EVENT, conflict=conflict)
+            # The override replaces this key's seed entry with the event-sourced keeper but the TEAM
+            # is unchanged (same ``(game, period, team)`` key) -- carry the seed's raw ``team_id`` (ADR-085).
+            result_map[key] = KeeperIdentity(
+                gk_id=winner_gk, source=KEEPER_ID_SOURCE_EVENT, conflict=conflict, team_id=prior.team_id
+            )
 
     return result_map, _build_report(result_map)
 
@@ -849,6 +913,16 @@ def _resolve_from_native(
     for gid_raw, tid_raw in zip(team_frames["game_id"], team_frames["team_id"], strict=True):
         teams_by_game.setdefault(canonical_id(gid_raw), set()).add(canonical_id(tid_raw))
 
+    # {canonical team_id -> RAW team_id}: recover the provider-native team representation from the
+    # frames' non-ball rows so a resolved KeeperIdentity carries its own raw team (ADR-085). Every
+    # opponent an action derives comes from ``teams_by_game`` (these same rows), so the opponent's raw
+    # team is always present here -- the map value is self-sufficient for ``add_defending_gk_player_id``.
+    raw_team_by_canonical: dict[object, object] = {}
+    for tid_raw in team_frames["team_id"]:
+        ct = canonical_id(tid_raw)
+        if ct is not pd.NA and ct not in raw_team_by_canonical:
+            raw_team_by_canonical[ct] = tid_raw
+
     # {(canonical game_id, canonical team_id, canonical player_id) -> is_goalkeeper_source}. First
     # non-null wins per keeper (a keeper's source is constant across the frames it appears in). Absent
     # column -> empty map -> every resolved keeper defaults to "native" (a real provider player_id).
@@ -904,8 +978,11 @@ def _resolve_from_native(
 
     result_map: KeeperIdentityMap = {}
     for key, obs in observations.items():
+        raw_team = raw_team_by_canonical.get(key[2], pd.NA)  # key[2] is the canonical team (ADR-085)
         if not obs:
-            result_map[key] = KeeperIdentity(gk_id=pd.NA, source=KEEPER_ID_SOURCE_UNRESOLVED, conflict=False)
+            result_map[key] = KeeperIdentity(
+                gk_id=pd.NA, source=KEEPER_ID_SOURCE_UNRESOLVED, conflict=False, team_id=raw_team
+            )
             continue
         canon_ids = [c for _, _, c in obs]
         counts = Counter(canon_ids)
@@ -923,6 +1000,6 @@ def _resolve_from_native(
         game, _period, team = key
         src = source_by_gtp.get((game, team, winner_c))
         source = KEEPER_ID_SOURCE_DERIVED if src == KEEPER_ID_SOURCE_DERIVED else KEEPER_ID_SOURCE_NATIVE
-        result_map[key] = KeeperIdentity(gk_id=winner_raw, source=source, conflict=conflict)
+        result_map[key] = KeeperIdentity(gk_id=winner_raw, source=source, conflict=conflict, team_id=raw_team)
 
     return result_map, _build_report(result_map)

@@ -21,7 +21,7 @@ def test_public_home_exports_the_resolver():
     assert callable(resolve_keeper_identities)
     assert callable(add_defending_gk_player_id)
     assert callable(apply_keeper_identities_to_frames)
-    assert KeeperIdentity._fields == ("gk_id", "source", "conflict")
+    assert KeeperIdentity._fields == ("gk_id", "source", "conflict", "team_id")  # team_id added (ADR-085)
     assert set(KEEPER_ID_SOURCE_VALUES) == {"event", "roster", "native", "derived", "unresolved"}
 
 

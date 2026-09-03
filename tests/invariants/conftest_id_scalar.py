@@ -1235,13 +1235,14 @@ NOT_INVARIANT: dict[str, str] = {
     ),
     "silly_kicks.keeper_identity.KeeperIdentity": (
         "VALUE OBJECT, like PitchControlSurface: discovery keys on the NamedTuple constructor "
-        "`inspect.signature(KeeperIdentity)` sees, whose `gk_id` field ends in `_id`. But `gk_id` "
-        'is STORED, never resolved against an id column -- constructing with 920 vs "920" stores '
-        '920 vs "920", a container faithfully recording its input rather than a comparison. '
-        "Forcing invariance would forbid the resolver from preserving its provider's own keeper-id "
-        "dtype (the roster/native paths deliberately keep the RAW id as `gk_id`). The dtype-safe "
-        "comparisons that BUILD the value live in `resolve_keeper_identities` (canonical keys + "
-        "id_compat, ADR-055), which takes no id scalar and so is not discovered here."
+        "`inspect.signature(KeeperIdentity)` sees, whose `gk_id` AND `team_id` fields end in `_id`. "
+        'But both are STORED, never resolved against an id column -- constructing with 920 vs "920" '
+        'stores 920 vs "920", a container faithfully recording its input rather than a comparison. '
+        "Forcing invariance would forbid the resolver from preserving its provider's own dtypes (the "
+        "roster/native paths deliberately keep the RAW keeper id as `gk_id` and the RAW team as "
+        "`team_id`, ADR-085). The dtype-safe comparisons that BUILD the value live in "
+        "`resolve_keeper_identities` (canonical keys + id_compat, ADR-055), which takes no id scalar "
+        "and so is not discovered here."
     ),
     "silly_kicks.keeper_identity.KeeperSegment": (
         "VALUE OBJECT, like KeeperIdentity and PitchControlSurface: discovery keys on the "

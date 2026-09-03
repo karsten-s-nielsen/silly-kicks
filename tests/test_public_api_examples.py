@@ -300,6 +300,12 @@ _PUBLIC_MODULE_FILES = (
     # TF-60 PR2 Layer-2 danger valuation: WFieldParams (exported) + build_w_field. Brand-new module,
     # ships clean (both documented on export).
     "silly_kicks/restdefense/_wfield.py",
+    # shot_stopping (TF-59 PR2): the three modules that DEFINE its public surface (ShotStoppingParams,
+    # compute_shot_stopping, ShotStoppingReport). _columns.py holds only constants (no top-level defs),
+    # so it is not discovered. Brand-new public modules -- documented on creation, not deferred.
+    "silly_kicks/shot_stopping/_config.py",
+    "silly_kicks/shot_stopping/_compute.py",
+    "silly_kicks/shot_stopping/_report.py",
     # TF-59 PR1: the per-provider keeper-appearance extractors (one public `extract_keeper_appearances`
     # each), feeding the ADR-055 keeper-identity port. Brand-new public modules -- documented on
     # creation (each carries a real Examples section), not deferred.

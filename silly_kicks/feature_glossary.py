@@ -159,9 +159,11 @@ _A_FORCHER_2023 = "Forcher et al. (2023)"  # rest-defense KPI battery (TF-60)
 _A_PETERS_2025 = "Peters et al. (2025)"  # rest-defense zone occupancy (TF-60)
 _A_FIFA_2022 = "FIFA (2022)"  # practitioner GK line-height / GK-to-line distance (TF-60)
 _A_NOVILLO_2025 = "Novillo et al. (2025)"  # λ_GK-included control behind the line (TF-60 PR2)
+_A_GSAA = "Goals Saved Above Expected (PSxG-based GSAA)"  # TF-59 PR2 shot-stopping (StatsBomb PSxG / ASA GSAA)
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
+_M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
 
 
 def _onehot_entries() -> list[FeatureColumn]:
@@ -1812,6 +1814,78 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         ),
         unit="m^2",
         emitting_module=_M_RESTDEFENSE_DANGER,
+        higher_is_better=True,
+    ),
+    # -- TF-59 PR2 GK shot-stopping (shot_stopping._compute) --------------------------------------
+    FeatureColumn(
+        name="shots_faced",
+        definition=(
+            "On-target, unblocked, in-play shots faced by this keeper in the match (own goals, "
+            "blocked shots and the penalty shootout excluded); PSxG-presence is the on-target gate."
+        ),
+        unit="count",
+        emitting_module=_M_SHOT_STOPPING,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="goals_conceded",
+        definition="Goals scored on the on-target shots this keeper faced (successful shot-class actions).",
+        unit="count",
+        emitting_module=_M_SHOT_STOPPING,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="psxg_faced",
+        definition=(
+            "Sum of injected Post-Shot xG over the on-target shots this keeper faced -- the expected "
+            "goals conceded given shot quality."
+        ),
+        unit="xG",
+        emitting_module=_M_SHOT_STOPPING,
+        attribution=_A_GSAA,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="goals_prevented",
+        definition=(
+            "Goals Prevented == GSAA: sum(PSxG faced) minus goals conceded -- goals saved above the "
+            "post-shot expectation. Positive = better than an average keeper on the same shots."
+        ),
+        unit="xG",
+        emitting_module=_M_SHOT_STOPPING,
+        attribution=_A_GSAA,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="shots_faced_excl_penalties",
+        definition="As shots_faced but excluding in-play penalties (shot_penalty rows).",
+        unit="count",
+        emitting_module=_M_SHOT_STOPPING,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="goals_conceded_excl_penalties",
+        definition="As goals_conceded but excluding in-play penalties.",
+        unit="count",
+        emitting_module=_M_SHOT_STOPPING,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="psxg_faced_excl_penalties",
+        definition="As psxg_faced but excluding in-play penalties.",
+        unit="xG",
+        emitting_module=_M_SHOT_STOPPING,
+        attribution=_A_GSAA,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="goals_prevented_excl_penalties",
+        definition=(
+            "As goals_prevented (GSAA) but excluding in-play penalties -- open-play + free-kick shot-stopping."
+        ),
+        unit="xG",
+        emitting_module=_M_SHOT_STOPPING,
+        attribution=_A_GSAA,
         higher_is_better=True,
     ),
 )
