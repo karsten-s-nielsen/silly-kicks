@@ -160,10 +160,14 @@ _A_PETERS_2025 = "Peters et al. (2025)"  # rest-defense zone occupancy (TF-60)
 _A_FIFA_2022 = "FIFA (2022)"  # practitioner GK line-height / GK-to-line distance (TF-60)
 _A_NOVILLO_2025 = "Novillo et al. (2025)"  # λ_GK-included control behind the line (TF-60 PR2)
 _A_GSAA = "Goals Saved Above Expected (PSxG-based GSAA)"  # TF-59 PR2 shot-stopping (StatsBomb PSxG / ASA GSAA)
+_A_TERRITORY = "Sumpter, Soccermatics / Twelve.football 'Earpiece' (module 10.2)"  # TF-54 territorial dominance
+_A_DUELS = "Glickman, 'The Glicko-2 rating system'"  # TF-55 Glicko-2 duel ratings
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
 _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
+_M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
+_M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
 
 
 def _onehot_entries() -> list[FeatureColumn]:
@@ -1887,6 +1891,161 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_SHOT_STOPPING,
         attribution=_A_GSAA,
         higher_is_better=True,
+    ),
+    # --- TF-54 territorial dominance (silly_kicks.territory) ---
+    FeatureColumn(
+        name="territory_xt_conceded",
+        definition=(
+            "Sum of injected xT at the destination of COMPLETED opponent passes whose end lands inside "
+            "this defender's trimmed defensive hull -- threat that reached the player's territory."
+        ),
+        unit="xT",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="territory_xt_prevented",
+        definition=(
+            "Sum of injected xT at the destination of FAILED opponent passes whose end (death/recovery "
+            "location) lands inside the hull -- threat that died in the player's territory."
+        ),
+        unit="xT",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="territory_xt_net",
+        definition="territory_xt_conceded - territory_xt_prevented (net threat through the territory).",
+        unit="xT",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="territory_xt_conceded_forward",
+        definition="territory_xt_conceded restricted to FORWARD opponent passes (end_x > origin_x + threshold).",
+        unit="xT",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="territory_xt_prevented_forward",
+        definition="territory_xt_prevented restricted to FORWARD opponent passes.",
+        unit="xT",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="territory_passes_into_hull",
+        definition="Count of opponent passes (valued) whose destination lands inside this defender's hull.",
+        unit="count",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="territory_xt_conceded_rate",
+        definition="territory_xt_conceded / territory_passes_into_hull (NaN on zero volume).",
+        unit="xT",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="territory_xt_prevented_rate",
+        definition="territory_xt_prevented / territory_passes_into_hull (NaN on zero volume).",
+        unit="xT",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="territory_hull_area_m2",
+        definition="Area of the trimmed convex defensive hull -- the size of the player's defensive territory.",
+        unit="m^2",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="territory_hull_centroid_x",
+        definition="x of the centroid of the trimmed defensive-action locations (action-LTR frame).",
+        unit="metres",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="territory_hull_centroid_y",
+        definition="y of the centroid of the trimmed defensive-action locations (action-LTR frame).",
+        unit="metres",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="territory_defensive_actions_in_hull",
+        definition="Count of the player's own defensive actions inside their hull (descriptive context).",
+        unit="count",
+        emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    # --- TF-55 Glicko-2 duel ratings (silly_kicks.duels) ---
+    FeatureColumn(
+        name="duel_rating",
+        definition=(
+            "Glicko-2 rating of the player after this match's duels -- a pairwise skill estimate over "
+            "duel win/loss outcomes (seeded at 1500, rating period = match)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_DUELS,
+        attribution=_A_DUELS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="duel_rating_deviation",
+        definition="Glicko-2 rating deviation (RD) -- the uncertainty of duel_rating; shrinks with duels contested.",
+        unit="dimensionless",
+        emitting_module=_M_DUELS,
+        attribution=_A_DUELS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="duel_volatility",
+        definition="Glicko-2 volatility -- expected fluctuation of the player's duel rating over time.",
+        unit="dimensionless",
+        emitting_module=_M_DUELS,
+        attribution=_A_DUELS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="duels_contested",
+        definition="Count of ground duels the player contested in this match (won + lost).",
+        unit="count",
+        emitting_module=_M_DUELS,
+        attribution=_A_DUELS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="duels_won",
+        definition="Count of the player's contested ground duels won in this match.",
+        unit="count",
+        emitting_module=_M_DUELS,
+        attribution=_A_DUELS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="duels_lost",
+        definition="Count of the player's contested ground duels lost in this match.",
+        unit="count",
+        emitting_module=_M_DUELS,
+        attribution=_A_DUELS,
+        higher_is_better=False,
     ),
 )
 

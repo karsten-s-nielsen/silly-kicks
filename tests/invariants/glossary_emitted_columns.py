@@ -1,6 +1,6 @@
 """Union of derived columns emitted by every default-config producer (run-and-diff), base-normalised.
 
-Six legs, each running its producers at default config on a real fixture and diffing the columns
+Eight legs, each running its producers at default config on a real fixture and diffing the columns
 they ADD (or, for the ``*_xfns`` / vaep legs whose transformers return a feature-only frame, the
 columns they PRODUCE):
 
@@ -17,8 +17,12 @@ columns they PRODUCE):
    a ``compute_*`` the name-shape discovery misses, so it is run explicitly here.
 6. ``_shot_stopping_columns`` -- ``shot_stopping.compute_shot_stopping`` (TF-59 PR2) on a tiny fixture;
    likewise a ``compute_*`` the name-shape discovery misses, run explicitly here.
+7. ``_territory_columns`` -- ``territory.compute_territorial_dominance`` (TF-54) on a tiny fixture; a
+   ``compute_*`` the name-shape discovery misses, run explicitly here.
+8. ``_duel_columns`` -- ``duels.compute_duel_ratings`` (TF-55) on a tiny native fixture; likewise a
+   ``compute_*`` the name-shape discovery misses, run explicitly here.
 
-``emitted_columns`` is the base-normalised union of all six legs (the gamestate-slot marker
+``emitted_columns`` is the base-normalised union of all eight legs (the gamestate-slot marker
 ``_a{i}`` is stripped so the glossary is keyed on the base/semantic name).
 
 COMPLETENESS CEILING (honest): the coverage gate is only as complete as this harness. The per-leg
@@ -205,6 +209,95 @@ def _shot_stopping_columns() -> set[str]:
     return set(SHOT_STOPPING_METRIC_COLUMNS) & set(samples.columns)
 
 
+def _territory_columns() -> set[str]:
+    """Derived territorial-dominance metric columns emitted by compute_territorial_dominance (TF-54).
+
+    compute_territorial_dominance is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape
+    discovery misses it; this leg runs it on a tiny fixture (a defender hull + an opponent pass into it,
+    a uniform toy xT) and returns the DERIVED metric columns (the sample keys game_id/player_id + the
+    provenance territory_hull_source are not features). A NEW emitted metric appears here and fails the
+    coverage gate until documented (the run-and-diff anti-rot property)."""
+    import numpy as np
+    import pandas as pd
+
+    from silly_kicks.spadl import config as spadlconfig
+    from silly_kicks.territory import TERRITORY_METRIC_COLUMNS, TerritoryParams, compute_territorial_dominance
+    from silly_kicks.xthreat import ExpectedThreat
+
+    xt = ExpectedThreat()
+    xt.xT = np.full(np.asarray(xt.xT).shape, 0.1, dtype=float)
+    s = spadlconfig.result_id["success"]
+    rows = [
+        {
+            "game_id": 1,
+            "period_id": 1,
+            "team_id": 10,
+            "player_id": 1,
+            "type_id": spadlconfig.actiontype_id["tackle"],
+            "result_id": s,
+            "start_x": x,
+            "start_y": y,
+            "end_x": x,
+            "end_y": y,
+            "time_seconds": 10.0,
+        }
+        for x, y in [(5, 20), (15, 20), (15, 48), (5, 48)]
+    ]
+    rows.append(
+        {
+            "game_id": 1,
+            "period_id": 1,
+            "team_id": 20,
+            "player_id": 99,
+            "type_id": spadlconfig.actiontype_id["pass"],
+            "result_id": s,
+            "start_x": 80,
+            "start_y": 40,
+            "end_x": 95,
+            "end_y": 40,
+            "time_seconds": 20.0,
+        }
+    )
+    actions = pd.DataFrame(rows)
+    actions["action_id"] = range(len(actions))
+    samples, _ = compute_territorial_dominance(actions, xt=xt, params=TerritoryParams(trim_fraction=1.0))
+    return set(TERRITORY_METRIC_COLUMNS) & set(samples.columns)
+
+
+def _duel_columns() -> set[str]:
+    """Derived Glicko-2 duel-rating metric columns emitted by compute_duel_ratings (TF-55).
+
+    compute_duel_ratings is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg runs it on a tiny native fixture (one sportec-style tackle carrying winner/loser)
+    and returns the DERIVED metric columns (the sample keys game_id/player_id + the provenance
+    duel_winner_source are not features). A NEW emitted metric appears here and fails the coverage gate
+    until documented (the run-and-diff anti-rot property)."""
+    import pandas as pd
+
+    from silly_kicks.duels import DUEL_METRIC_COLUMNS, compute_duel_ratings
+
+    actions = pd.DataFrame(
+        [
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "action_id": 0,
+                "time_seconds": 5.0,
+                "team_id": 10,
+                "player_id": 100,
+                "type_id": 9,  # tackle
+                "result_id": 1,  # success
+                "tackle_winner_player_id": 100,
+                "tackle_winner_team_id": 10,
+                "tackle_loser_player_id": 200,
+                "tackle_loser_team_id": 20,
+            }
+        ]
+    )
+    samples, _ = compute_duel_ratings(actions)
+    return set(DUEL_METRIC_COLUMNS) & set(samples.columns)
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -233,5 +326,7 @@ def emitted_columns() -> set[str]:
         | _vaep_columns()
         | _restdefense_columns()
         | _shot_stopping_columns()
+        | _territory_columns()
+        | _duel_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

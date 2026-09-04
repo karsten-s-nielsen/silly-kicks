@@ -306,6 +306,19 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/shot_stopping/_config.py",
     "silly_kicks/shot_stopping/_compute.py",
     "silly_kicks/shot_stopping/_report.py",
+    # territory (TF-54): the three modules that DEFINE its public surface (TerritoryParams,
+    # compute_territorial_dominance, TerritoryReport). _columns.py / _hull.py hold constants + an
+    # internal geometry helper (not part of the discovered public surface). Documented on creation.
+    "silly_kicks/territory/_config.py",
+    "silly_kicks/territory/_compute.py",
+    "silly_kicks/territory/_report.py",
+    # duels (TF-55): the modules that DEFINE its public surface (DuelRatingParams, GlickoState,
+    # update_glicko, compute_duel_ratings, DuelRatingReport, extract_duels + DuelGame/DuelExtractReport).
+    # _columns.py holds constants. Documented on creation.
+    "silly_kicks/duels/_config.py",
+    "silly_kicks/duels/_compute.py",
+    "silly_kicks/duels/_report.py",
+    "silly_kicks/duels/_extract.py",
     # TF-59 PR1: the per-provider keeper-appearance extractors (one public `extract_keeper_appearances`
     # each), feeding the ADR-055 keeper-identity port. Brand-new public modules -- documented on
     # creation (each carries a real Examples section), not deferred.
