@@ -27,10 +27,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             gkdv = container "silly_kicks.gkdv" "GKDV v1 (TF-19): ghost-substitution engine (build_ghost_frames) + two gate-independent physics arms (delta-DAS, delta-threat-suppression) in attacker-value units (negative = deterrent). ADR-043." "Python" "Library"
             restdefense = container "silly_kicks.restdefense" "TF-60 rest defense Layer 1: rearguard structure KPIs (numerical superiority, zone occupancy, line/GK height) at the in-possession action grid; GoalMap-oriented; SB360 FOV-aware. ADR-080." "Python" "Library"
             shot_stopping = container "silly_kicks.shot_stopping" "TF-59 GK shot-stopping: Goals Prevented / GSAA per (keeper, match) from an INJECTED per-shot Post-Shot xG + the resolved defending keeper; own goals / blocked / shootout excluded. ADR-085." "Python" "Library"
+            territory = container "silly_kicks.territory" "TF-54 territorial dominance: opponent passes into a defender's trimmed own-half defensive hull, valued conceded (completed) vs prevented (failed) by an INJECTED fitted xT. Event-only." "Python" "Library"
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 376 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 388 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
             keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
         }
 
@@ -121,6 +122,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         analyst -> shot_stopping "Computes Goals Prevented / GSAA from an injected per-shot Post-Shot xG via" "compute_shot_stopping()"
         shot_stopping -> spadl "Reads SPADL action-type / result ids from" "Python import"
         shot_stopping -> keeper_identity "Reads the resolved defending keeper id + team stamped by" "add_defending_gk_player_id()"
+        analyst -> territory "Computes territorial dominance (threat conceded/prevented through a defender's hull) from an injected fitted xT via" "compute_territorial_dominance()"
+        territory -> spadl "Reads SPADL config + action-type / result ids from" "Python import"
+        territory -> xthreat "Values opponent passes at their destination with an injected fitted model via" "values_at_points"
     }
 
     views {

@@ -312,6 +312,15 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   cf. xg_column in vaep/labels.py). The formula is standard; own goals, blocked
   shots and the penalty shootout are excluded, penalties reported both ways.
 
+- Territorial dominance ("Van Dijk" metric).
+  Attribution: Sumpter, Soccermatics / Twelve.football 'Earpiece' (module 10.2).
+  Used by: silly_kicks.territory._compute (TF-54).
+  For a defender, the trimmed convex hull of their own-half defensive-action
+  locations is their "territory"; opponent passes whose destination lands inside
+  it are valued by an INJECTED fitted ExpectedThreat (silly-kicks ships NO xT
+  model) -- threat conceded (completed) vs prevented (failed). Descriptive; no
+  VAEP path.
+
 - Ogawa et al. (2025). "Space evaluation at the starting point of soccer
   transitions." arXiv:2505.14711 (OBPV).
   Used by: silly_kicks.restdefense._wfield (TF-60 PR2).
