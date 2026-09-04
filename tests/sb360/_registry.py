@@ -364,6 +364,17 @@ def audited_surface() -> set[str]:
     MAPPING (a ``resolve_*``), not action-grain feature columns, so it has no per-column verdict to
     record. Neither is an ``add_*`` nor a ``BOUNDARY_ENTRY_POINTS`` member, so ``audited_surface`` picks
     up neither automatically; recording the exclusion here keeps it documented, not silent.
+
+    SCOPE NOTE (TF-60 PR5 ghost-outfield) -- ``serve_ghost_outfield_positions`` is likewise outside this
+    surface. It is a SERVE seam (like ``serve_ghost_gk_positions``, which carries no verdict either),
+    not an ``add_*`` that emits a VAEP feature column, and BOUNDARY_ENTRY_POINTS is for frame-consuming
+    functions OUTSIDE ``tracking.__all__`` -- this one lives inside it. The ghost-outfield model ships
+    no ``add_ghost_outfield`` aggregator, so there is no add_* to carry an indirect verdict the way
+    ``add_ghost_gk`` covers the ghost-GK serve. Its SB360 behaviour -- the FOV-cropped rearguard is
+    honest-NaN (``fov_cropped``), NEVER a fabricated ghost for a promoted midfielder (spec 8) -- is
+    verified DIRECTLY by ``tests/tracking/test_ghost_outfield_model.py`` (the
+    ``test_serve_fov_cropped_rearguard_is_honest_nan`` / ``_observed_rearguard_is_computed`` pair),
+    which is stronger than an all-NaN paired-leg verdict would be on a bundled-weight-free artifact.
     """
     return public_add_star() | set(BOUNDARY_ENTRY_POINTS)
 

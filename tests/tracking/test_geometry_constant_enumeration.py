@@ -15,6 +15,7 @@ SK = Path(__file__).resolve().parents[2] / "silly_kicks"
 
 _MODULES = [
     SK / "tracking" / "_ghost_gk.py",
+    SK / "tracking" / "_ghost_outfield.py",
     SK / "tracking" / "_xshot_occurrence.py",
     SK / "tracking" / "_xcross_attempt.py",
     SK / "tracking" / "defensive_credit" / "_params.py",
@@ -48,6 +49,20 @@ _EXEMPT = {
         "are invisible to the same predicate purely because their names lack the substring -- so "
         "this entry records a naming coincidence, not a decision about geometry."
     ),
+    # TF-60 PR5 (_ghost_outfield.py): the model NAME 'OUTFIELD' contains the substring 'FIELD', so
+    # the name-based enumerator flags every *OUTFIELD* constant. None carries a geometry VALUE a
+    # contract could declare -- they are feature-name lists, a variant literal, key/target column
+    # lists, and a feature_set literal. The genuine geometry constants the outfield extractor reads
+    # (_FIELD_LENGTH / _FIELD_WIDTH / _GOAL_Y) are already exempt above (pitch-covered). Same
+    # naming-coincidence class as GHOST_GK_GOAL_END_UNRESOLVED.
+    "GHOST_OUTFIELD_FEATURE_NAMES": "naming coincidence ('OUTFIELD'~'FIELD'): feature-name list, no geometry value",
+    "GHOST_OUTFIELD_SOURCE_VALUES": "naming coincidence ('OUTFIELD'~'FIELD'): provenance vocab, no geometry",
+    "GHOST_OUTFIELD_FEATURE_NAMES_POSITION_ONLY": "naming coincidence ('OUTFIELD'~'FIELD'): feature-name list",
+    "GhostOutfieldFeatureSet": "naming coincidence ('OUTFIELD'~'FIELD'): feature_set Literal, no geometry value",
+    "GhostOutfieldVariant": "naming coincidence ('OUTFIELD'~'FIELD'): variant-name Literal, no geometry value",
+    "_GHOST_OUTFIELD_VELOCITY_FEATURES": "naming coincidence ('OUTFIELD'~'FIELD'): feature-name tuple",
+    "_OUTFIELD_KEY_COLS": "naming coincidence ('OUTFIELD'~'FIELD'): join-key column list, no geometry value",
+    "_OUTFIELD_TARGET_COLS": "naming coincidence ('OUTFIELD'~'FIELD'): target column list, no geometry value",
 }
 
 

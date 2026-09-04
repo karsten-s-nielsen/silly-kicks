@@ -136,6 +136,7 @@ _ROOT_MODULE = "silly_kicks"
 # `test_derived_surface_is_fully_accounted_for` -- this list can no longer silently rot.
 _PUBLIC_MODULE_FILES = (
     "silly_kicks/reflection.py",
+    "silly_kicks/tracking/_ghost_outfield.py",
     "silly_kicks/tracking/_visibility.py",
     "silly_kicks/reporting.py",
     "silly_kicks/feature_glossary.py",
@@ -485,6 +486,19 @@ _EXAMPLES_DEBT: dict[str, str] = {
     ),
     "silly_kicks/tracking/_ghost_gk.py::serve_ghost_gk_positions": (
         "Serving helper returning the model's ghost keeper positions for a set of frames."
+    ),
+    # --- TF-60 PR5 ghost-outfield: same shape as the ghost-GK trio above. IntegrityError is a
+    # bare exception category; serve/coherence both need a real linked match + a fitted model to
+    # demonstrate, so they carry a written note here rather than a synthetic literal block.
+    "silly_kicks/tracking/_ghost_outfield.py::IntegrityError": (
+        "Artifact-integrity error category raised by GhostOutfieldModel.load on a tampered or "
+        "chirality/feature-contract-mismatched artifact."
+    ),
+    "silly_kicks/tracking/_ghost_outfield.py::serve_ghost_outfield_positions": (
+        "Serving helper returning the model's ghost rearguard positions for a set of frames."
+    ),
+    "silly_kicks/tracking/_ghost_outfield.py::ghost_rearguard_coherence": (
+        "Reported (not gated) coherence measure over a served ghost-rearguard table."
     ),
     # --- TF-24 calibration harness (ADR-009). The class XtBandwidthObjective needs a real
     # multi-match corpus AND a fitted frozen-xT artifact plus an Optuna trial to demonstrate;
