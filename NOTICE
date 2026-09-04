@@ -321,6 +321,15 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   model) -- threat conceded (completed) vs prevented (failed). Descriptive; no
   VAEP path.
 
+- Glicko-2 duel ratings.
+  Attribution: Glickman, 'The Glicko-2 rating system'.
+  Used by: silly_kicks.duels._compute (TF-55).
+  A pairwise skill rating (rating + rating deviation + volatility) estimated per
+  player from ground-duel win/loss outcomes, with the match as the rating period
+  (the SCALE=173.7178 transform, the Illinois volatility update, and inactivity
+  RD growth). Native winner/loser on sportec (tackle_winner/loser); derived from
+  the tackle / take_on result adjacency elsewhere. Descriptive; no VAEP path.
+
 - Ogawa et al. (2025). "Space evaluation at the starting point of soccer
   transitions." arXiv:2505.14711 (OBPV).
   Used by: silly_kicks.restdefense._wfield (TF-60 PR2).

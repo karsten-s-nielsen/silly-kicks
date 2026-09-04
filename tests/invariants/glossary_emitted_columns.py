@@ -1,6 +1,6 @@
 """Union of derived columns emitted by every default-config producer (run-and-diff), base-normalised.
 
-Seven legs, each running its producers at default config on a real fixture and diffing the columns
+Eight legs, each running its producers at default config on a real fixture and diffing the columns
 they ADD (or, for the ``*_xfns`` / vaep legs whose transformers return a feature-only frame, the
 columns they PRODUCE):
 
@@ -19,8 +19,10 @@ columns they PRODUCE):
    likewise a ``compute_*`` the name-shape discovery misses, run explicitly here.
 7. ``_territory_columns`` -- ``territory.compute_territorial_dominance`` (TF-54) on a tiny fixture; a
    ``compute_*`` the name-shape discovery misses, run explicitly here.
+8. ``_duel_columns`` -- ``duels.compute_duel_ratings`` (TF-55) on a tiny native fixture; likewise a
+   ``compute_*`` the name-shape discovery misses, run explicitly here.
 
-``emitted_columns`` is the base-normalised union of all seven legs (the gamestate-slot marker
+``emitted_columns`` is the base-normalised union of all eight legs (the gamestate-slot marker
 ``_a{i}`` is stripped so the glossary is keyed on the base/semantic name).
 
 COMPLETENESS CEILING (honest): the coverage gate is only as complete as this harness. The per-leg
@@ -262,6 +264,40 @@ def _territory_columns() -> set[str]:
     return set(TERRITORY_METRIC_COLUMNS) & set(samples.columns)
 
 
+def _duel_columns() -> set[str]:
+    """Derived Glicko-2 duel-rating metric columns emitted by compute_duel_ratings (TF-55).
+
+    compute_duel_ratings is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg runs it on a tiny native fixture (one sportec-style tackle carrying winner/loser)
+    and returns the DERIVED metric columns (the sample keys game_id/player_id + the provenance
+    duel_winner_source are not features). A NEW emitted metric appears here and fails the coverage gate
+    until documented (the run-and-diff anti-rot property)."""
+    import pandas as pd
+
+    from silly_kicks.duels import DUEL_METRIC_COLUMNS, compute_duel_ratings
+
+    actions = pd.DataFrame(
+        [
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "action_id": 0,
+                "time_seconds": 5.0,
+                "team_id": 10,
+                "player_id": 100,
+                "type_id": 9,  # tackle
+                "result_id": 1,  # success
+                "tackle_winner_player_id": 100,
+                "tackle_winner_team_id": 10,
+                "tackle_loser_player_id": 200,
+                "tackle_loser_team_id": 20,
+            }
+        ]
+    )
+    samples, _ = compute_duel_ratings(actions)
+    return set(DUEL_METRIC_COLUMNS) & set(samples.columns)
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -291,5 +327,6 @@ def emitted_columns() -> set[str]:
         | _restdefense_columns()
         | _shot_stopping_columns()
         | _territory_columns()
+        | _duel_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()
