@@ -32,12 +32,18 @@ import numpy as np
 import pandas as pd
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Publish a Ghost-GK artifact to HuggingFace Hub.")
     ap.add_argument("--artifact-dir", required=True)
     ap.add_argument("--repo-id", default="silly-kicks/ghost-gk-v1")
+    ap.add_argument(
+        "--model-card",
+        default=None,
+        help="Path to the model card (.md). REQUIRED for a real publish; uploaded as README.md. "
+        "Making it a required input is deliberate -- a hand-staged card is how it gets dropped.",
+    )
     ap.add_argument("--verify-only", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     from silly_kicks.tracking._ghost_gk import GHOST_GK_FEATURE_NAMES, GhostGkModel
 
@@ -72,10 +78,13 @@ def main() -> None:
         print("verify-only: not uploading.")
         return
 
-    from _hub_publish import upload_model_only
+    if not args.model_card:
+        raise SystemExit("--model-card is REQUIRED for a real publish (uploaded as README.md).")
+
+    from _hub_publish import publish_model_with_card
     from huggingface_hub import HfApi
 
-    upload_model_only(HfApi(), str(art), args.repo_id)  # model-only allowlist + leak guard
+    publish_model_with_card(HfApi(), str(art), args.repo_id, model_card=args.model_card)
 
     # Round-trip. `error` on the contract category, not a filter -- the point of this publish is
     # that the served artifact no longer warns, so a warning here is a FAILED publish, not noise.

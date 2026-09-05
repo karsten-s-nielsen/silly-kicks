@@ -16,12 +16,18 @@ import numpy as np
 import pandas as pd
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--artifact-dir", required=True)
     ap.add_argument("--repo-id", default="silly-kicks/xshot-occurrence-v1")
+    ap.add_argument(
+        "--model-card",
+        default=None,
+        help="Path to the model card (.md). REQUIRED for a real publish; uploaded as README.md. "
+        "Making it a required input is deliberate -- a hand-staged card is how it gets dropped.",
+    )
     ap.add_argument("--verify-only", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     from silly_kicks.tracking._xshot_occurrence import (
         XSHOT_FEATURE_NAMES_FAITHFUL,
@@ -42,15 +48,16 @@ def main() -> None:
         print("verify-only: not uploading.")
         return
 
-    from _hub_publish import upload_model_only
+    if not args.model_card:
+        raise SystemExit("--model-card is REQUIRED for a real publish (uploaded as README.md).")
+
+    from _hub_publish import publish_model_with_card
     from huggingface_hub import HfApi
 
-    api = HfApi()
-    api.create_repo(repo_id=args.repo_id, repo_type="model", exist_ok=True)  # no-op if it exists
-    upload_model_only(api, str(art), args.repo_id)  # model-only allowlist + leak guard
+    publish_model_with_card(HfApi(), str(art), args.repo_id, model_card=args.model_card)  # create + card + model-only
     back = XShotOccurrenceModel.from_hub(args.repo_id)
     np.testing.assert_allclose(local_pred, back.predict_proba(sample), rtol=0, atol=0)
-    print(f"Published to {args.repo_id} + round-trip verified.")
+    print(f"Published to {args.repo_id} (weights + model card as README) + round-trip verified.")
 
 
 if __name__ == "__main__":
