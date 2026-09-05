@@ -8,6 +8,7 @@ Plan: docs/superpowers/plans/2026-09-04-tf60-pr5-ghost-outfield-model.md
 from __future__ import annotations
 
 import hashlib
+import json
 
 import numpy as np
 import pandas as pd
@@ -16,13 +17,17 @@ import pytest
 from silly_kicks.id_compat import ids_match
 from silly_kicks.tracking._ghost_outfield import (
     _GHOST_OUTFIELD_VELOCITY_FEATURES,
+    _WEIGHTS_ROOT,
     GHOST_OUTFIELD_FEATURE_NAMES,
     GHOST_OUTFIELD_FEATURE_NAMES_POSITION_ONLY,
     GHOST_OUTFIELD_SOURCE_VALUES,
     GhostOutfieldFeatureSet,
     GhostOutfieldModel,
     IntegrityError,
+    _canonical_frame_sha,
     _extract_all_ghost_outfield_features,
+    _outfield_probe_actions,
+    _outfield_probe_frame,
     _resolve_outfield_model_for_frames,
     ghost_rearguard_coherence,
     serve_ghost_outfield_positions,
@@ -319,6 +324,71 @@ def test_mixed_velocity_availability_raises():
     mixed = pd.concat([good, bad], ignore_index=True)
     with pytest.raises(ValueError, match="mixed"):
         serve_ghost_outfield_positions(mixed, model=None, home_team_id=1, actions=_toy_actions())
+
+
+# --------------------------------------------------------------------------- #
+# Bundled-artifact CI gate (loads the REAL committed weights -- runs on every leg / both pandas
+# majors; the toy-model tests above never touch the bundled artifacts). IMPL-06.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("variant", ["default", "position_only"])
+def test_bundled_weights_load_and_predict_finite(variant):
+    """The COMMITTED bundled artifact loads (SHA-256 + chirality + feature-contract) and predicts
+    finite. Unlike the toy-model tests, this loads the REAL weights via ``from_variant``, so it runs
+    on EVERY CI leg -- both pandas majors (ADR-057) -- and is the gate that catches a pandas-major
+    chirality frame-hash skew (the class of bug that otherwise ships all-NaN)."""
+    assert (_WEIGHTS_ROOT / variant / "SHA256SUMS").exists(), (
+        f"bundled {variant} weights are MISSING -- a dropped artifact, asserted (never skipped)"
+    )
+    model = GhostOutfieldModel.from_variant(variant)  # the fail-closed load-guards run here
+    assert model.feature_set == ("position_only" if variant == "position_only" else "faithful")
+    feats = _extract_all_ghost_outfield_features(
+        _outfield_probe_frame(), _outfield_probe_actions(), home_team_id="A", feature_set=model.feature_set
+    )
+    preds = model.predict_mean(feats)
+    assert preds.shape[1] == 2 and np.isfinite(preds).all()
+
+
+def test_present_but_corrupt_bundle_raises_not_variant_unavailable(tmp_path, monkeypatch):
+    """IMPL-06b: a PRESENT-but-unloadable artifact must RAISE at the serve resolver, never silently
+    serve an all-NaN ``variant_unavailable`` column that hides the corruption (a bad SHA, a
+    pandas-major chirality skew, ...). An ABSENT variant stays honest-NaN --- see
+    ``test_missing_position_only_serves_nan_not_default``."""
+    model, _ = _fit_toy(n_frames=40)
+    model.save(tmp_path / "default")
+    # Corrupt model.npz WITHOUT re-stamping SHA256SUMS -> the SHA-256 check fails on load.
+    npz = tmp_path / "default" / "model.npz"
+    npz.write_bytes(npz.read_bytes() + b"tamper")
+    monkeypatch.setenv("SILLY_KICKS_GHOST_OUTFIELD_PATH", str(tmp_path))
+    with pytest.raises(IntegrityError):
+        _resolve_outfield_model_for_frames(_toy_two_team_frame(), None)
+    with pytest.raises(IntegrityError):
+        serve_ghost_outfield_positions(_toy_two_team_frame(), model=None, home_team_id=1, actions=_toy_actions())
+
+
+def test_canonical_frame_sha_is_cross_major_invariant():
+    """IMPL-06c: the chirality/contract frame hash must be IDENTICAL across pandas majors, or a bundle
+    hashed under one major fails its load-time frame-hash check under the other (ADR-057; CI's test
+    legs float to pandas 3). The real gap is the probe's ball-row ``team_id``/``player_id`` = ``None``,
+    which stays ``None`` on pandas 2 (JSON ``null``) but coerces to a float ``NaN`` on pandas 3 (JSON
+    ``NaN``) --- ``.item()`` alone does NOT bridge None<->NaN. These assertions are major-AGNOSTIC (they
+    hold on whatever host runs them; CI runs both majors)."""
+    # (1) PRIMARY cross-major gate: the REAL probe hashes to the bundled artifact's stored digest on
+    #     WHATEVER major runs this. A major-fragile hash fails here on the pandas-3 legs (the r4 red).
+    stored = json.loads((_WEIGHTS_ROOT / "default" / "metadata.json").read_text())["chirality"]["frame_sha256"]
+    assert _canonical_frame_sha(_outfield_probe_frame()) == stored
+
+    # (2) A None cell and a NaN cell canonicalize to the SAME digest (the None<->NaN gap .item() does
+    #     not bridge). Minimal frames, so it is major-agnostic.
+    f_none = pd.DataFrame({"k": ["A", None], "v": [1.0, 2.0]})
+    f_nan = pd.DataFrame({"k": ["A", np.nan], "v": [1.0, 2.0]})
+    assert _canonical_frame_sha(f_none) == _canonical_frame_sha(f_nan)
+
+    # (3) Red-green: the NA-normalization is load-bearing -- a hash WITHOUT it serializes a NaN cell as
+    #     the JSON token ``NaN`` (vs the canonical ``null``), the very skew that differs across majors.
+    naive = hashlib.sha256(json.dumps(f_nan.to_dict("records"), sort_keys=True, default=str).encode()).hexdigest()
+    assert naive != _canonical_frame_sha(f_nan)
 
 
 # --------------------------------------------------------------------------- #

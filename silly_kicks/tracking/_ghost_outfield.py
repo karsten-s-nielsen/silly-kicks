@@ -36,6 +36,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import math
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -480,15 +481,58 @@ def _outfield_probe_actions() -> pd.DataFrame:
     )
 
 
+def _canonical_frame_sha(frame: pd.DataFrame) -> str:
+    """SHA-256 of the probe frame, pandas-major-INVARIANT (ADR-057).
+
+    ``frame.to_dict("records")`` yields native Python scalars on pandas 2 but numpy scalars on
+    pandas 3, and ``json.dumps(..., default=str)`` then serializes a native float as the JSON number
+    ``10.0`` but a numpy float (routed through ``default=str``) as the JSON STRING ``"10.0"`` -- a
+    different digest per pandas major. A bundled artifact whose chirality frame-hash was recorded
+    under one major would then fail its load-time frame-hash check under the other (measured: the
+    bundled ghost-outfield weights load under pandas 2.3.3 and fail under pandas 3.0.2), and CI spans
+    both majors (ADR-057). Coercing every value to a native scalar with ``.item()`` before serializing
+    makes the digest identical across majors; on pandas 2 it reproduces the digest the existing
+    bundled artifacts already store (verified byte-identical: ``aa21057f...``), so the fix is
+    backward-compatible with NO metadata regeneration.
+
+    NOTE: the shared ``_chirality.chirality_fingerprint`` carries the same fragile pattern for the
+    other bundled models (xS / xCross / ghost-GK); that is a pre-existing cross-cutting issue tracked
+    separately, not touched here.
+    """
+
+    def _native(v: object) -> object:
+        # A missing value has THREE representations across pandas majors -- the probe's ball row
+        # carries team_id/player_id = None, which stays None on pandas 2 (JSON ``null``) but coerces
+        # to a float NaN on pandas 3 (JSON ``NaN``); nullable columns can also yield pd.NA. Collapse
+        # all of them to a single canonical None FIRST, so the digest is identical across majors
+        # (None-vs-NaN is the gap .item() alone does not bridge -- the r4 review finding). The values
+        # come from ``to_dict("records")`` so each is a scalar; the guard is belt-and-braces against
+        # pd.isna returning an array (which would make ``bool`` raise).
+        if v is None or v is pd.NA:
+            return None
+        # float NaN covers both native ``float('nan')`` and ``np.float64('nan')`` (np.float64 subclasses
+        # float), which is what a None id becomes on pandas 3. Guarded by isinstance so non-numeric
+        # values (the string ids) never reach math.isnan.
+        if isinstance(v, float) and math.isnan(v):
+            return None
+        # numpy scalars carry .item() -> native Python; native scalars pass through unchanged.
+        item = getattr(v, "item", None)
+        return item() if callable(item) else v
+
+    records = [{k: _native(v) for k, v in rec.items()} for rec in frame.to_dict("records")]
+    return hashlib.sha256(json.dumps(records, sort_keys=True, default=str).encode()).hexdigest()
+
+
 def _outfield_chirality_block(model: GhostOutfieldModel) -> dict:
     """Behavioral chirality fingerprint (ADR-037) on the outfield probe: extractor + served mean.
 
     Built directly (not via ``chirality_fingerprint``, which hardcodes the ghost-GK canonical frame),
     so it runs on the outfield-shaped probe; the load-time check reuses the frame-agnostic
-    ``verify_chirality``.
+    ``verify_chirality``. The frame hash goes through :func:`_canonical_frame_sha` so it is
+    pandas-major-invariant (ADR-057).
     """
     frame = _outfield_probe_frame()
-    frame_sha = hashlib.sha256(json.dumps(frame.to_dict("records"), sort_keys=True, default=str).encode()).hexdigest()
+    frame_sha = _canonical_frame_sha(frame)
     feats = _extract_all_ghost_outfield_features(
         frame, _outfield_probe_actions(), home_team_id="A", feature_set=model.feature_set
     )
@@ -511,7 +555,7 @@ def _outfield_feature_contract_block(feature_set: GhostOutfieldFeatureSet = "fai
     rather than via ``feature_contract``, which hardcodes the ghost-GK contract frame.
     """
     frame = _outfield_probe_frame()
-    probe_sha = hashlib.sha256(json.dumps(frame.to_dict("records"), sort_keys=True, default=str).encode()).hexdigest()
+    probe_sha = _canonical_frame_sha(frame)  # pandas-major-invariant (ADR-057), same as the chirality block
     feats = _extract_all_ghost_outfield_features(
         frame, _outfield_probe_actions(), home_team_id="A", feature_set=feature_set
     )
@@ -920,10 +964,16 @@ def _resolve_outfield_model_for_frames(
     if isinstance(model, GhostOutfieldModel):
         return model, "custom"
     base = model if isinstance(model, str) else _variant_key_for_velocity(frames)
-    try:
-        return GhostOutfieldModel.from_variant(base), base  # type: ignore[arg-type]
-    except (FileNotFoundError, IntegrityError, OSError):
+    root = Path(os.environ.get(_ENV_VAR, _WEIGHTS_ROOT))
+    if not (root / base / "SHA256SUMS").exists():
+        # Variant is NOT bundled -> honest-NaN (ADR-067). A missing position_only is never replaced
+        # by default (the resolver never falls back to a different key).
         return None, base
+    # The artifact IS present: a SHA-256 / chirality / feature-contract failure is CORRUPTION, not
+    # "unavailable" -- let IntegrityError (and any FileNotFoundError from a truncated bundle)
+    # PROPAGATE rather than silently serving an all-NaN "variant_unavailable" column that would hide
+    # a bad artifact (e.g. a pandas-major chirality skew) from every consumer (IMPL-06b).
+    return GhostOutfieldModel.from_variant(base), base  # type: ignore[arg-type]
 
 
 def _rearguard_region_ltr(goal_x: float) -> np.ndarray:

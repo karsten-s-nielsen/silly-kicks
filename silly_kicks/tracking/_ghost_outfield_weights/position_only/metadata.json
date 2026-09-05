@@ -1,0 +1,73 @@
+{
+  "feature_names": [
+    "ball_x",
+    "ball_y",
+    "ball_distance_to_own_goal",
+    "ball_to_own_goal_angle",
+    "ball_in_own_half",
+    "opp_in_def_third_count",
+    "opp_deepest_x",
+    "opp_forward_centroid_x",
+    "opp_forward_centroid_y",
+    "ball_to_deepest_opp_dist",
+    "phase",
+    "team_in_possession",
+    "score_diff",
+    "time_seconds",
+    "period_id",
+    "slot_index"
+  ],
+  "n_estimators": 500,
+  "max_depth": 8,
+  "sklearn_version": "1.9.0",
+  "training_commit": "b68328a1697851d0ff96f8b11039d5d2ee375f5d",
+  "training_platform": "dgx-spark-aarch64",
+  "corpus_provenance": {
+    "n_games": 179,
+    "n_rows": 4170920,
+    "variant": "position_only"
+  },
+  "serve_estimator": "boosted_mean",
+  "version": "1.0.0",
+  "stores_training_data": false,
+  "pitch_length": 105.0,
+  "pitch_width": 68.0,
+  "feature_set": "position_only",
+  "chirality": {
+    "version": "outfield-chirality-1",
+    "frame_sha256": "aa21057f7aad69edf97d501dd978e48d2cf494089ce54f64b7c0d68d7a705cab",
+    "outputs": [
+      35.7195424504,
+      19.6610617345,
+      34.5779568262,
+      30.0059459796,
+      34.6629091761,
+      39.6995835537,
+      36.0358154767,
+      49.854994995
+    ]
+  },
+  "feature_contract": {
+    "version": "outfield-feature-contract-1",
+    "probe_sha256": "aa21057f7aad69edf97d501dd978e48d2cf494089ce54f64b7c0d68d7a705cab",
+    "fingerprint": [
+      55.0,
+      30.0,
+      55.1452627158,
+      -0.0725994537,
+      0.0,
+      2.0,
+      20.0,
+      43.75,
+      36.25,
+      35.3553390593,
+      0.0,
+      1.0,
+      0.0,
+      10.0,
+      1.0,
+      1.0
+    ],
+    "constants": {}
+  }
+}

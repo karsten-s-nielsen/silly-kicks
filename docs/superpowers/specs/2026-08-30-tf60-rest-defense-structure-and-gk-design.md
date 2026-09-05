@@ -619,14 +619,25 @@ high-sweeper regime (`docs/research/tf60_ghost_gk_in_possession_validity/`). Per
 `2026-08-30-tf60-restdefense-gk-ghost-refit-design.md`), mirroring the existing model→arm shape (ghost-
 outfield model → outfield arm). Original PR3–PR5 shift down by one.
 
+**Execution reordered 2026-09-04:** PR5 (ghost-outfield model) is built **before** PR4 (GK arms).
+The PR NUMBERS are unchanged (PR4 = GK arms, PR5 = ghost-outfield model, PR6 = outfield arm); only
+the build ORDER changed. Rationale (TF-19 A+2 instrument analysis): PR6's outfield arm depends on the
+PR5 model, and the outfield ΔDAS instrument is the arc's strongest (accessible space is
+outfield-dominated; the Gradient Sports keeper clamp does not apply to outfielders), whereas the
+keeper ΔDAS arm (PR4) is a weak instrument — so building PR5→PR6 first delivers the soundest part
+earliest. See `TODO.md` (TF-60 row) for the instrument analysis.
+
+Status (2026-09-05): PR1 SHIPPED (4.102.0, ADR-080); PR2 SHIPPED (4.103.0, ADR-081); PR3 SHIPPED
+(4.105.0, ADR-083); **PR5 SHIPPED (4.109.0, ADR-087)**; PR4 + PR6 remain.
+
 | Cycle | Content | New model? | C4 |
 |---|---|---|---|
-| **PR1** | `restdefense/` package skeleton + `RestDefenseParams` + geometry + counting primitive + **Layer 1** KPIs + windows/sampling + all CI-gate registrations + ADR-080 | no | +1 container (regenerate C4) |
-| **PR2** | **Layer 2** danger-behind-line valuation (`control_in_region` / `compute_threat_pc` / GK-as-control-agent) | no | — |
-| **PR3 (NEW)** | **Rest-defense GK-ghost re-fit** — extended-grid additive `GhostGkModel` variant (grid becomes first-class; label cap lifted; `default`/`position_only`/`full` frozen; **no GKDV/VAEP retrain**) + bundled weights + HF publish — **its own sub-spec** | yes | — |
-| **PR4** (was PR3) | **Layer 3 GK arms** (`build_restdefense_ghost_frames(which="keeper")` + threat + space; reuse gkdv delta seams; **consume the PR3 `rest_defense` variant**) | no | — |
-| **PR5** (was PR4) | **ghost-outfield model** `tracking/_ghost_outfield.py` (code + training pipeline + bundled weights + fail-closed loader + guards + HF publish) — **its own sub-spec** | yes | +1 tracking aggregator iff `add_ghost_outfield` ships |
-| **PR6** (was PR5) | **Layer 3 outfield arm** (`build_restdefense_ghost_frames(which="rearguard")` consuming the PR5 model) | no | — |
+| **PR1** — SHIPPED 4.102.0 | `restdefense/` package skeleton + `RestDefenseParams` + geometry + counting primitive + **Layer 1** KPIs + windows/sampling + all CI-gate registrations + ADR-080 | no | +1 container (regenerate C4) |
+| **PR2** — SHIPPED 4.103.0 | **Layer 2** danger-behind-line valuation (`control_in_region` / `compute_threat_pc` / GK-as-control-agent) | no | — |
+| **PR3** — SHIPPED 4.105.0 | **Rest-defense GK-ghost re-fit** — extended-grid additive `GhostGkModel` variant (grid becomes first-class; label cap lifted; `default`/`position_only`/`full` frozen; **no GKDV/VAEP retrain**) + bundled weights + HF publish — **its own sub-spec** | yes | — |
+| **PR5** — SHIPPED 4.109.0 (built before PR4) | **ghost-outfield model** `tracking/_ghost_outfield.py` (code + training pipeline + bundled weights + fail-closed loader + guards + HF publish) — **its own sub-spec (ADR-087)** | yes | +0 (serve seam `serve_ghost_outfield_positions`; **no** `add_ghost_outfield` aggregator — C4-free) |
+| **PR4** | **Layer 3 GK arms** (`build_restdefense_ghost_frames(which="keeper")` + threat + space; reuse gkdv delta seams; **consume the PR3 `sweeper` variant**) | no | — |
+| **PR6** | **Layer 3 outfield arm** (`build_restdefense_ghost_frames(which="rearguard")` consuming the PR5 model) | no | — |
 
 Each cycle leaves `main` green and coherent; PR2–PR6 each depend only on the prior cycle's public surface.
 
