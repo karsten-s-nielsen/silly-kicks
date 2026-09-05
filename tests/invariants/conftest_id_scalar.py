@@ -921,6 +921,16 @@ def _tracking_model_entries() -> list[IdScalarEntry]:
             lambda s: T.serve_ghost_gk_positions(ghost_frames(), home_team_id=s),
         ),
         _e(
+            # home_team_id enters ONLY the score-perspective via same_id (ADR-019); no bundled
+            # ghost-outfield weights exist yet, so the serve emits keyed NaN-ghost rows (variant
+            # unavailable). The invariance under test is the id-resolution of home_team_id +
+            # the carrier-derived team keys, which is exactly what a dtype swap would break.
+            "silly_kicks.tracking._ghost_outfield.serve_ghost_outfield_positions",
+            lambda s: T.serve_ghost_outfield_positions(
+                tracking_frames().assign(team_in_possession=HOME), home_team_id=s
+            ),
+        ),
+        _e(
             "silly_kicks.tracking._xshot_occurrence.add_xshot_occurrence",
             lambda s: T.add_xshot_occurrence(tracking_actions(), frames_attacking_wide(), home_team_id=s),
             live_columns=("xshot_occurrence",),

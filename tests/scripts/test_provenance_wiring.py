@@ -84,6 +84,10 @@ ARTIFACT_DRIVERS = (
     # audited. Enrolled in ONE go deliberately. A partial roll-out is exactly how the prose version
     # of this rule failed twice, and it is why this gate exists at all.
     "train_ghost_gk",
+    # TF-60 PR5. Trains the ghost-outfield rearguard model + writes parameters-only bundled weights
+    # (same class as the other weight trainers: stamps `training_commit` into the shipped
+    # metadata.json + `run_commit`/`run_tree_dirty` into metrics.json).
+    "train_ghost_outfield",
     "train_gk_completion",
     "train_gk_retention",
     "train_xcross_attempt",

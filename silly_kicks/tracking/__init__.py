@@ -33,6 +33,7 @@ __all__ = [
     "GHOST_GK_SOURCE_VALUES",
     "GHOST_GK_UNLINKED",
     "GHOST_GK_VELOCITY_UNAVAILABLE",
+    "GHOST_OUTFIELD_SOURCE_VALUES",
     "GRADIENTSPORTS_TRACKING_FRAMES_COLUMNS",
     "KLOPPY_TRACKING_FRAMES_COLUMNS",
     "METRICA_TRACKING_FRAMES_COLUMNS",
@@ -63,6 +64,8 @@ __all__ = [
     "GhostGkDensity",
     "GhostGkModel",
     "GhostGkVariant",
+    "GhostOutfieldModel",
+    "GhostOutfieldVariant",
     "GkClampDiagnosis",
     "GkCompletionModel",
     "GoalEndUnresolvedError",
@@ -271,6 +274,7 @@ __all__ = [
     "secured_reception",
     "select_back_line_players",
     "serve_ghost_gk_positions",
+    "serve_ghost_outfield_positions",
     "shape_graph_xfns",
     "shot_crossing_y",
     "shot_crossing_z",
@@ -350,6 +354,12 @@ from ._ghost_gk import (
     compute_ghost_gk,
     prepare_ghost_gk_training_data,
     serve_ghost_gk_positions,
+)
+from ._ghost_outfield import (
+    GHOST_OUTFIELD_SOURCE_VALUES,
+    GhostOutfieldModel,
+    GhostOutfieldVariant,
+    serve_ghost_outfield_positions,
 )
 from ._gk_completion import GkCompletionModel, compute_gk_completion
 from ._gk_geometry import resolve_gk_geometry, resolve_restart_geometry

@@ -7,6 +7,10 @@ silly_kicks/tracking/_xcross_weights/** binary
 # already normalizes CRLF before hashing, so this is churn prevention, not a bug fix --
 # without it the bundled metadata.json flips to CRLF on the next checkout.
 silly_kicks/tracking/_ghost_gk_weights/** binary
+# Ghost-outfield (TF-60 PR5) is the same fingerprint-bearing model.npz + metadata.json + SHA256SUMS
+# bundle as ghost-GK, so it gets the same whole-directory pin. load() normalizes CRLF before hashing,
+# so this is churn prevention (keeps the committed SHA byte-exact across OS), not a bug fix.
+silly_kicks/tracking/_ghost_outfield_weights/** binary
 # GK-completion (4.73.0), pinned NARROWLY -- only the SHA-verified pair, not the whole directory
 # like the three above. Its `_sha` normalizes CRLF before hashing, so verification was never at risk;
 # the pin exists to stop model.json flipping to CRLF on the next checkout and producing a spurious

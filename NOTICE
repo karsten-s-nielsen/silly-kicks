@@ -669,6 +669,22 @@ The implementations are independent Python translations of the published
 methodologies, not derived from any source code. Licensed under the same
 terms as silly-kicks (MIT License).
 
+The ghost-outfield rearguard-positioning model in
+silly_kicks/tracking/_ghost_outfield.py (PR-S180, TF-60 PR5) is the outfield
+sibling of the ghost-GK model above and implements methodologies described in:
+
+- Le, H. M., Yue, Y., Carr, P. & Lucey, P. (2017). "Data-Driven Ghosting
+  Using Deep Imitation Learning." MIT Sloan Sports Analytics Conference.
+  (Ghost player positioning concept; league-average baselines. The
+  silly-kicks model predicts a league-average rest-defense rearguard position
+  per (frame, team, lateral slot) with gradient-boosted MEAN ensembles -- the
+  boosted-mean point-estimate variant, NOT the RFCDE/KDE density estimation the
+  ghost-GK model uses.)
+
+The implementation is an independent Python translation of the published
+methodology, not derived from any source code. Licensed under the same terms
+as silly-kicks (MIT License).
+
 The GKDV re-gate + physics-arms counterfactuals (the TF-19 cycle, ADR-037;
 the silly_kicks/gkdv/ package itself ships in ADR-043) build on:
 

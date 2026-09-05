@@ -227,6 +227,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "silly_kicks/xtgk/*.py" = ["N803", "N806", "E741"]
 # Ghost-GK: ML-style uppercase X for feature matrices
 "silly_kicks/tracking/_ghost_gk.py" = ["N803", "N806"]
+"silly_kicks/tracking/_ghost_outfield.py" = ["N803", "N806"]
 "silly_kicks/tracking/_receiver.py" = ["N803", "N806"]
 # Ghost-GK scripts: ML-style uppercase X, Y
 "scripts/train_ghost_gk.py" = ["N803", "N806"]
