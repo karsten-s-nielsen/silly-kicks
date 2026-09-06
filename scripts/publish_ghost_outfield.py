@@ -29,6 +29,13 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Publish a ghost-outfield artifact to HuggingFace Hub.")
     ap.add_argument("--artifact-dir", required=True)
     ap.add_argument("--repo-id", default="silly-kicks/ghost-outfield-v1")
+    ap.add_argument(
+        "--model-card",
+        default=None,
+        help="Path to the model card (.md). REQUIRED for a real publish; uploaded as the repo's "
+        "README.md. Making it a required input is deliberate -- a card staged by hand is exactly how "
+        "the model card gets dropped from a release.",
+    )
     ap.add_argument("--verify-only", action="store_true")
     args = ap.parse_args(argv)
 
@@ -60,10 +67,15 @@ def main(argv: list[str] | None = None) -> None:
         print("verify-only: not uploading.")
         return
 
-    from _hub_publish import upload_model_only
+    # A real publish MUST carry a model card -- refuse (before any network) rather than ship a
+    # card-less Hub repo. Staging + upload is the shared _hub_publish seam.
+    if not args.model_card:
+        raise SystemExit("--model-card is REQUIRED for a real publish (uploaded as README.md).")
+
+    from _hub_publish import publish_model_with_card
     from huggingface_hub import HfApi
 
-    upload_model_only(HfApi(), str(art), args.repo_id)  # model-only allowlist + leak guard
+    publish_model_with_card(HfApi(), str(art), args.repo_id, model_card=args.model_card)
 
     from silly_kicks.tracking import MissingFeatureContractWarning
 
@@ -71,7 +83,7 @@ def main(argv: list[str] | None = None) -> None:
         warnings.simplefilter("error", MissingFeatureContractWarning)
         back = GhostOutfieldModel.from_hub(args.repo_id)
     np.testing.assert_allclose(local_pred, back.predict_mean(sample), rtol=0, atol=0)
-    print(f"Published to {args.repo_id} + round-trip verified (no MissingFeatureContractWarning).")
+    print(f"Published to {args.repo_id} (weights + model card as README) + round-trip verified.")
 
 
 if __name__ == "__main__":

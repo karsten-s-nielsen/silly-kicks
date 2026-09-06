@@ -5,6 +5,14 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.110.0] — 2026-09-05
+
+**Model-publish hardening: every publish goes through one card-required seam (PR-S181, ADR-088).** The Hugging Face publishers had two latent defects that shipped an *incomplete* repo silently: (1) the model card was a manual "copy it to README.md first" pre-step that gets forgotten (dropped in TF-60 PR3, nearly again in PR5), and (2) ghost-outfield's weights file `model.npz` was never in `MODEL_ONLY_ALLOWLIST`, so `upload_model_only` would have uploaded metadata + `SHA256SUMS` + README but **no weights** — and no test covered the upload path. **Scripts-only: `scripts/` is not in the wheel, so the shipped library is byte-identical to 4.109.0; the version bump signals a significant change to the release/publish process.**
+
+- **One `_hub_publish.publish_model_with_card` seam** used by all four publishers (`publish_{ghost_gk,ghost_outfield,xshot_occurrence,xcross_attempt}.py`): it **requires `--model-card`** (refuses a card-less publish before any network), creates the repo idempotently (`create_repo(exist_ok=True)` — closing a ghost-GK/ghost-outfield gap), and stages the allowlisted model files **plus the card as `README.md`** into a temp dir before a model-only upload. A card-less, weightless, or missing-repo publish is now **unrepresentable**.
+- `model.npz` added to `MODEL_ONLY_ALLOWLIST`; the exact-match allowlist guard updated.
+- New tests (`tests/scripts/test_hub_publish_guard.py`, `tests/scripts/test_train_ghost_outfield.py`): the seam creates the repo + stages the card, refuses a missing card before any api call, and every file a ghost-outfield `save()` emits is allowlisted.
+
 ## [4.109.0] — 2026-09-05
 
 **TF-60 PR5 — ghost-outfield rearguard-positioning model (PR-S180, ADR-087).** The outfield sibling of the frozen ghost-GK model (ADR-083): a trained league-average rest-defense rearguard baseline that PR6's outfield counterfactual arm will consume. `silly_kicks/tracking/_ghost_outfield.py::GhostOutfieldModel` — **gradient-boosted MEAN x/y ensembles** (HGBR, not the ghost-GK RFCDE/KDE density path — the arm needs a point estimate) predicting a league-average position per `(frame, team, lateral slot)`, served by `serve_ghost_outfield_positions` (a serve seam, **NOT** an `add_*` aggregator). **Additive — no existing feature changes, no VAEP/tracking retrain, no re-materialize, in NO default xfn list, C4 aggregator count unchanged (33).**

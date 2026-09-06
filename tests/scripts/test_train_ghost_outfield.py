@@ -283,3 +283,41 @@ def test_publish_verify_only_and_contract_refusal(tmp_path):
         json.dump(meta, f, indent=2)
     with pytest.raises(SystemExit):
         publish_main(["--artifact-dir", str(art), "--verify-only"])
+
+
+def test_real_publish_requires_a_model_card(tmp_path):
+    """A real publish (not --verify-only) RAISES -- before any network I/O -- unless a valid
+    --model-card is given. You cannot ship a card-less Hub repo: making the card a required input is
+    the structural fix for the recurring model-card drop."""
+    from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel
+
+    art = tmp_path / "art"
+    frames = _tiny_frames("G0", n_frames=40)
+    GhostOutfieldModel(n_estimators=15, max_depth=3).fit(frames, None, home_team_id=1).save(art)
+    # no --model-card -> refuse (before network)
+    with pytest.raises(SystemExit, match="model-card"):
+        publish_main(["--artifact-dir", str(art), "--repo-id", "silly-kicks/x"])
+    # a non-existent card -> refuse (before network)
+    with pytest.raises(SystemExit, match="does not exist"):
+        publish_main(
+            ["--artifact-dir", str(art), "--repo-id", "silly-kicks/x", "--model-card", str(tmp_path / "nope.md")]
+        )
+
+
+def test_ghost_outfield_artifact_files_are_all_hub_allowlisted(tmp_path):
+    """The Hub publisher uploads ONLY ``MODEL_ONLY_ALLOWLIST``; a ghost-outfield ``save()`` writes
+    ``model.npz``, which was MISSING from that allowlist -> the weights would be silently SKIPPED,
+    publishing a repo with metadata + SHA256SUMS but NO weights. Every file ``save()`` emits must be
+    allowlisted."""
+    from scripts._hub_publish import MODEL_ONLY_ALLOWLIST
+    from silly_kicks.tracking._ghost_outfield import GhostOutfieldModel
+
+    art = tmp_path / "art"
+    frames = _tiny_frames("G0", n_frames=40)
+    GhostOutfieldModel(n_estimators=15, max_depth=3).fit(frames, None, home_team_id=1).save(art)
+    emitted = {p.name for p in art.iterdir() if p.is_file()}
+    assert "model.npz" in emitted  # the weights file this test guards
+    missing = emitted - set(MODEL_ONLY_ALLOWLIST)
+    assert not missing, f"ghost-outfield save() emits files not in the Hub allowlist: {sorted(missing)}"
+    # (The shared publish_model_with_card seam -- create_repo + card-as-README staging -- is covered
+    # in tests/scripts/test_hub_publish_guard.py.)
