@@ -265,6 +265,9 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 "scripts/train_xcross_attempt.py" = ["N803", "N806", "T201"]
 # xT-GK GK-distribution completion: ML-style uppercase X feature matrices (logistic model).
 "silly_kicks/tracking/_gk_completion.py" = ["N803", "N806"]
+# TF-54b expected-passing pass-completion model: ML-style uppercase X/Z feature matrices (logistic model).
+"silly_kicks/expected_passing/_model.py" = ["N803", "N806"]
+"silly_kicks/expected_passing/_features.py" = ["N806"]
 # xT-GK completion trainer: ML-style uppercase X + human-readable run summary (T201).
 "scripts/train_gk_completion.py" = ["N803", "N806", "T201"]
 # xT-GK v2 retention (rho) trainer: ML-style uppercase X + human-readable run summary (T201).

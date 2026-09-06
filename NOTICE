@@ -321,6 +321,34 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   model) -- threat conceded (completed) vs prevented (failed). Descriptive; no
   VAEP path.
 
+- Counterfactual territorial "threat prevented" (TF-54b, the reserved
+  method="counterfactual" valuation).
+  Attribution: Sumpter, Soccermatics / Twelve.football 'Earpiece' (module 10.2)
+  -- the same territorial-dominance lens as TF-54 above, extended to a
+  GSAA-style expected-minus-realized headline (cf. the Goals Saved Above
+  Expected entry above, silly_kicks.shot_stopping._compute / ADR-085): opponent
+  passes aimed into a defender's hull are valued at (fitted completion
+  probability - realized outcome) x injected xT(target), integrating a failed
+  pass's unresolved intended target over its death-direction cone's modeled
+  transition distribution.
+  Used by: silly_kicks.territory._counterfactual (TF-54b).
+  Counterfactual defensive valuation more broadly (ghosting -- simulating a
+  player's positioning against a learned baseline) is a RESERVED comparator,
+  NOT implemented here: Le, D., Yue, Y., Carr, P., & Lucey, P. (2017).
+  "Data-Driven Ghosting using Deep Imitation Learning." MIT Sloan Sports
+  Analytics Conference.
+
+- Expected-passing / pass-completion modelling (the field-standard "expected
+  pass" concept -- P(complete | origin -> target geometry) -- in the spirit of:
+  Power, P., Ruiz, H., Wei, X., & Lucey, P. (2017). "Not all passes are created
+  equal: Objectively measuring the risk and reward of passes in soccer from
+  tracking data." KDD '17.
+  Used by: silly_kicks.expected_passing._model (PassCompletionModel, TF-54b).
+  An event-only logistic completion model injected into TF-54b's counterfactual
+  territorial valuation (silly-kicks ships NO pass-completion model; port
+  pattern, ADR-022 idiom). No numeric result or feature set is reproduced from
+  the cited paper -- the citation records the concept lineage.
+
 - Glicko-2 duel ratings.
   Attribution: Glickman, 'The Glicko-2 rating system'.
   Used by: silly_kicks.duels._compute (TF-55).

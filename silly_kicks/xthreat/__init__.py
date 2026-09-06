@@ -3,6 +3,7 @@
 See NOTICE for full bibliographic citations.
 """
 
+from silly_kicks.xthreat._counterfactual_seam import DestinationProfile, destination_profiles
 from silly_kicks.xthreat._eval import (
     compute_holdout_nll,
     compute_holdout_nll_per_group,
@@ -27,6 +28,7 @@ from silly_kicks.xthreat._transitions import (
 from silly_kicks.xthreat._value_iteration import value_iteration
 
 __all__ = [
+    "DestinationProfile",
     "ExpectedThreat",
     "GridSpec",
     "KDEParams",
@@ -36,6 +38,7 @@ __all__ = [
     "XtParams",
     "compute_holdout_nll",
     "compute_holdout_nll_per_group",
+    "destination_profiles",
     "holdout_split",
     "kde_smoothed_transition_matrix",
     "physical_grid",

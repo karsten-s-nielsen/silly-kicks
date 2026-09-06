@@ -18,7 +18,11 @@ columns they PRODUCE):
 6. ``_shot_stopping_columns`` -- ``shot_stopping.compute_shot_stopping`` (TF-59 PR2) on a tiny fixture;
    likewise a ``compute_*`` the name-shape discovery misses, run explicitly here.
 7. ``_territory_columns`` -- ``territory.compute_territorial_dominance`` (TF-54) on a tiny fixture; a
-   ``compute_*`` the name-shape discovery misses, run explicitly here.
+   ``compute_*`` the name-shape discovery misses, run explicitly here. Runs it TWICE -- once at the
+   default ``method="completed_failed"`` (the v1 12 metric columns) and once at
+   ``method="counterfactual"`` (TF-54b, injecting a toy completion model) so the 4 counterfactual-only
+   METRIC columns are also seen as emitted (``territory_target_source`` is provenance, excluded the
+   same way ``territory_hull_source`` already is -- see ``silly_kicks/territory/_columns.py``).
 8. ``_duel_columns`` -- ``duels.compute_duel_ratings`` (TF-55) on a tiny native fixture; likewise a
    ``compute_*`` the name-shape discovery misses, run explicitly here.
 
@@ -210,18 +214,33 @@ def _shot_stopping_columns() -> set[str]:
 
 
 def _territory_columns() -> set[str]:
-    """Derived territorial-dominance metric columns emitted by compute_territorial_dominance (TF-54).
+    """Derived territorial-dominance metric columns emitted by compute_territorial_dominance (TF-54 +
+    TF-54b).
 
     compute_territorial_dominance is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape
     discovery misses it; this leg runs it on a tiny fixture (a defender hull + an opponent pass into it,
-    a uniform toy xT) and returns the DERIVED metric columns (the sample keys game_id/player_id + the
-    provenance territory_hull_source are not features). A NEW emitted metric appears here and fails the
-    coverage gate until documented (the run-and-diff anti-rot property)."""
+    a uniform toy xT) TWICE and returns the union of DERIVED metric columns from both legs:
+
+    1. Default ``method="completed_failed"`` -- the v1 12 metric columns (the sample keys
+       game_id/player_id + the provenance territory_hull_source are not features, excluded via the
+       ``TERRITORY_METRIC_COLUMNS`` intersection).
+    2. ``method="counterfactual"`` (TF-54b), injecting a toy constant-completion model -- the 4
+       counterfactual-only METRIC columns (``territory_target_source`` is provenance, excluded the same
+       way ``territory_hull_source`` is above -- see ``silly_kicks/territory/_columns.py``).
+
+    A NEW emitted metric in either leg appears here and fails the coverage gate until documented (the
+    run-and-diff anti-rot property)."""
     import numpy as np
     import pandas as pd
 
     from silly_kicks.spadl import config as spadlconfig
-    from silly_kicks.territory import TERRITORY_METRIC_COLUMNS, TerritoryParams, compute_territorial_dominance
+    from silly_kicks.territory import (
+        TERRITORY_METRIC_COLUMNS,
+        CounterfactualParams,
+        TerritoryParams,
+        compute_territorial_dominance,
+    )
+    from silly_kicks.territory._columns import _COUNTERFACTUAL_ONLY_COLUMNS, TR_TARGET_SOURCE
     from silly_kicks.xthreat import ExpectedThreat
 
     xt = ExpectedThreat()
@@ -260,8 +279,25 @@ def _territory_columns() -> set[str]:
     )
     actions = pd.DataFrame(rows)
     actions["action_id"] = range(len(actions))
+
     samples, _ = compute_territorial_dominance(actions, xt=xt, params=TerritoryParams(trim_fraction=1.0))
-    return set(TERRITORY_METRIC_COLUMNS) & set(samples.columns)
+    cols = set(TERRITORY_METRIC_COLUMNS) & set(samples.columns)
+
+    class _ConstCompletion:
+        def predict_completion(self, ox, oy, tx, ty):
+            return np.full(np.asarray(tx, dtype=float).shape, 0.6)
+
+    cf_samples, _ = compute_territorial_dominance(
+        actions,
+        xt=xt,
+        method="counterfactual",
+        completion_model=_ConstCompletion(),  # type: ignore[arg-type]
+        params=TerritoryParams(trim_fraction=1.0),
+        cf_params=CounterfactualParams.default(),
+    )
+    cf_metric_cols = set(_COUNTERFACTUAL_ONLY_COLUMNS) - {TR_TARGET_SOURCE}
+    cols |= cf_metric_cols & set(cf_samples.columns)
+    return cols
 
 
 def _duel_columns() -> set[str]:

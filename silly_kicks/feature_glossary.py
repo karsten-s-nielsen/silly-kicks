@@ -167,6 +167,7 @@ _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Laye
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
 _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
 _M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
+_M_TERRITORY_COUNTERFACTUAL = "silly_kicks.territory._counterfactual"  # TF-54b q*c*xT counterfactual valuation
 _M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
 
 
@@ -1992,6 +1993,61 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         definition="Count of the player's own defensive actions inside their hull (descriptive context).",
         unit="count",
         emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    # --- TF-54b counterfactual territorial "threat prevented" (silly_kicks.territory._counterfactual) ---
+    # method="counterfactual"-ONLY columns (spec sec 5.3). territory_target_source (provenance, the
+    # {observed, modeled, unresolved} vocabulary) is DELIBERATELY EXCLUDED here -- it mirrors
+    # territory_hull_source above, which is likewise never glossaried (structural provenance, not a
+    # metric; see the _COUNTERFACTUAL_ONLY_COLUMNS comment in silly_kicks/territory/_columns.py).
+    FeatureColumn(
+        name="territory_expected_threat_faced",
+        definition=(
+            "Sum of fitted completion probability x injected xT(target) over opponent passes aimed into "
+            "this defender's hull (completed valued at the observed end, failed over the modeled target "
+            "distribution) -- the threat the territory was expected to face, independent of the outcome."
+        ),
+        unit="xT",
+        emitting_module=_M_TERRITORY_COUNTERFACTUAL,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,  # an exposure/volume quantity, not itself a defender-quality judgment
+    ),
+    FeatureColumn(
+        name="territory_xt_prevented_above_expectation",
+        definition=(
+            "Sum of (completion probability - realized outcome) x injected xT(target) over aimed-in "
+            "opponent passes -- a GSAA-style expected-minus-realized headline (cf. silly_kicks."
+            "shot_stopping's goals_prevented, ADR-085): positive means the defender's territory conceded "
+            "less threat than the completion-weighted expectation."
+        ),
+        unit="xT",
+        emitting_module=_M_TERRITORY_COUNTERFACTUAL,
+        attribution=_A_TERRITORY,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="territory_passes_aimed_into_hull",
+        definition=(
+            "Count of opponent passes (completed + failed) whose intended target -- observed end for a "
+            "completed pass, modeled death-direction-cone target for a failed one -- lands inside this "
+            "defender's hull; the counterfactual scoring denominator (distinct from the v1 "
+            "territory_passes_into_hull, which counts observed ends only)."
+        ),
+        unit="count",
+        emitting_module=_M_TERRITORY_COUNTERFACTUAL,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="territory_mean_completion_faced",
+        definition=(
+            "Mean fitted completion probability over the opponent passes aimed into this defender's hull "
+            "-- an interpretability companion to territory_expected_threat_faced / "
+            "territory_xt_prevented_above_expectation."
+        ),
+        unit="probability",
+        emitting_module=_M_TERRITORY_COUNTERFACTUAL,
         attribution=_A_TERRITORY,
         higher_is_better=None,
     ),

@@ -137,7 +137,9 @@ def test_injected_model_guard():
 
 def test_method_family():
     acts = _actions(_HULL_CORNERS)
-    with pytest.raises(NotImplementedError, match="counterfactual"):
+    # counterfactual is now implemented (TF-54b); without an injected completion_model it raises
+    # (a fitted pass-completion model is required -- silly-kicks ships none).
+    with pytest.raises(ValueError, match="completion_model"):
         compute_territorial_dominance(acts, xt=_toy_xt(), method="counterfactual")
     with pytest.raises(ValueError, match="unknown method"):
         compute_territorial_dominance(acts, xt=_toy_xt(), method="bogus")
