@@ -8,10 +8,11 @@ Frame reconciliation (ADR-028): the hull is in the DEFENDER's action-LTR frame w
 passes are in the opponent's frame -- a 180 degree point reflection apart. Hull MEMBERSHIP reflects the
 opponent pass end into the defender frame ``(105 - end_x, 68 - end_y)``; the xT VALUE is taken on the
 pass end in the opponent's OWN frame (``values_at_points``). A failed pass's SPADL ``end`` is the
-death/recovery location, not the intended target (``_derive_end_coordinates``), so this default measures
-"threat that reached / died in the territory", not "threat that would have been created" -- the reserved
-``counterfactual`` method exists to close that gap with a model (spec §5.3). Output ids are RAW; keepers
-are grouped on the CANONICAL id (ADR-019). PURE -- never mutates ``actions``.
+death/recovery location, not the intended target (``_derive_end_coordinates``), so the default
+``completed_failed`` method measures "threat that reached / died in the territory", not "threat that
+would have been created" -- the ``counterfactual`` method (TF-54b, ``_counterfactual.py``) closes that
+gap by modeling the failed pass's intended target over its death-direction cone (spec §5.1/5.2). Output
+ids are RAW; keepers are grouped on the CANONICAL id (ADR-019). PURE -- never mutates ``actions``.
 
 See NOTICE for full bibliographic citations.
 """
@@ -28,7 +29,6 @@ from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.xthreat import require_fitted_xt, values_at_points
 
 from ._columns import (
-    TERRITORY_COLUMNS,
     TERRITORY_METHODS,
     TR_DEF_ACTIONS_IN_HULL,
     TR_HULL_AREA,
@@ -43,15 +43,20 @@ from ._columns import (
     TR_XT_PREVENTED,
     TR_XT_PREVENTED_FWD,
     TR_XT_PREVENTED_RATE,
+    columns_for_method,
 )
-from ._config import TerritoryParams
+from ._config import CounterfactualParams, TerritoryParams
+from ._counterfactual import counterfactual_rows
 from ._hull import build_trimmed_hull
 from ._report import TerritoryReport
 
-if TYPE_CHECKING:  # duck-typed at runtime (ADR-022) -- no runtime xthreat.ExpectedThreat edge
+if TYPE_CHECKING:  # duck-typed at runtime (ADR-022) -- no runtime xthreat / completion-model edge
     from collections.abc import Collection
 
+    from silly_kicks.expected_passing import PassCompletionModel
     from silly_kicks.xthreat import ExpectedThreat
+
+    from ._counterfactual import DefenderGroup
 
 _DEFAULT = TerritoryParams()
 _PASS_TYPE_ID = spadlconfig.actiontype_id["pass"]  # SPADL uses type_id; type_name is add_names-only
@@ -65,12 +70,20 @@ def compute_territorial_dominance(
     xt: ExpectedThreat,
     method: str = "completed_failed",
     window: Collection | None = None,
-    params: TerritoryParams = _DEFAULT,
+    params: TerritoryParams | CounterfactualParams = _DEFAULT,
+    completion_model: PassCompletionModel | None = None,
+    cf_params: CounterfactualParams | None = None,
 ) -> tuple[pd.DataFrame, TerritoryReport]:
     """Territorial dominance per defender. Returns ``(samples, TerritoryReport)``.
 
     ``window=None`` -> one row per ``(game_id, player_id)``; a ``window`` (a collection of ``game_id``s)
     -> one row per ``player_id`` pooled over those games (the hull re-derived over the pooled actions).
+
+    ``method="completed_failed"`` (default) values opponent passes at their observed end.
+    ``method="counterfactual"`` (TF-54b) requires an injected ``completion_model`` and models each
+    failed pass's intended target over its death-direction cone (spec §5.1/5.2); its
+    ``CounterfactualParams`` may be passed either as ``cf_params=`` or directly as ``params=`` (in which
+    case the hull uses the default ``TerritoryParams``).
 
     Examples
     --------
@@ -86,9 +99,21 @@ def compute_territorial_dominance(
     require_fitted_xt(xt, caller="compute_territorial_dominance")
     if method not in TERRITORY_METHODS:
         raise ValueError(f"unknown method {method!r}; expected one of {sorted(TERRITORY_METHODS)}")
-    if method == "counterfactual":
-        raise NotImplementedError(
-            "the 'counterfactual' prevented-valuation is a construct-validated follow-on; see spec §2"
+
+    # Resolve the hull/defensive params (always a TerritoryParams) and, for the counterfactual method,
+    # its CounterfactualParams. Passing a CounterfactualParams directly as `params` is a convenience that
+    # keeps the hull on the default TerritoryParams (the method has no hull knobs of its own).
+    if isinstance(params, CounterfactualParams):
+        territory_params: TerritoryParams = _DEFAULT
+        cf: CounterfactualParams = params
+    else:
+        territory_params = params
+        cf = cf_params if cf_params is not None else CounterfactualParams.default()
+
+    if method == "counterfactual" and completion_model is None:
+        raise ValueError(
+            "method='counterfactual' requires a fitted completion_model "
+            "(silly-kicks ships no pass-completion model; inject one -- spec §5b)."
         )
 
     fl = float(spadlconfig.field_length)
@@ -101,12 +126,12 @@ def compute_territorial_dominance(
 
     # --- defensive actions that seed each hull (own-half, real player) ---
     # SPADL carries type_id (type_name is add_names-only); map the params' type NAMES to ids.
-    def_type_ids = frozenset(spadlconfig.actiontype_id[n] for n in params.defensive_action_types)
+    def_type_ids = frozenset(spadlconfig.actiontype_id[n] for n in territory_params.defensive_action_types)
     is_def = (
         a["type_id"].isin(def_type_ids)
         & a["player_id"].notna()
         & a["team_id"].notna()  # a defender must have a real team (so the opponent is well-defined)
-        & (a["start_x"] < params.own_half_max_x)
+        & (a["start_x"] < territory_params.own_half_max_x)
     )
     defs = a.loc[is_def, ["game_id", "player_id", "team_id", "start_x", "start_y"]].copy()
 
@@ -114,19 +139,37 @@ def compute_territorial_dominance(
     passes = a.loc[a["type_id"] == _PASS_TYPE_ID, _PASS_COLS].copy()
     passes["_xt_end"] = values_at_points(xt, passes["end_x"].to_numpy(), passes["end_y"].to_numpy())
     passes["_completed"] = (passes["result_id"] == _SUCCESS).to_numpy()
-    passes["_forward"] = (passes["end_x"] - passes["start_x"]).to_numpy() > params.forward_threshold_m
+    passes["_forward"] = (passes["end_x"] - passes["start_x"]).to_numpy() > territory_params.forward_threshold_m
     passes["_g"] = canonical_id_series(passes["game_id"])
     passes["_t"] = canonical_id_series(passes["team_id"])
     passes_by_game: dict[object, pd.DataFrame] = {g: sub for g, sub in passes.groupby("_g", sort=False)}
 
-    empty = pd.DataFrame({c: pd.Series(dtype=t) for c, t in TERRITORY_COLUMNS.items()})
+    out_columns = columns_for_method(method)
+    empty = pd.DataFrame({c: pd.Series(dtype=t) for c, t in out_columns.items()})
     if defs.empty:
-        return empty, TerritoryReport(params, 0, 0, 0, 0, len(passes), 0)
+        report = TerritoryReport(territory_params, 0, 0, 0, 0, len(passes), 0)
+        return empty, report
 
     defs["_g"] = canonical_id_series(defs["game_id"])
     defs["_p"] = canonical_id_series(defs["player_id"])
     defs["_t"] = canonical_id_series(defs["team_id"])
     group_cols = ["_p"] if window is not None else ["_g", "_p"]
+
+    if method == "counterfactual":
+        return _counterfactual_dispatch(
+            defs,
+            passes,
+            passes_by_game,
+            group_cols=group_cols,
+            window=window,
+            xt=xt,
+            completion_model=completion_model,  # type: ignore[arg-type]  (guarded non-None above)
+            territory_params=territory_params,
+            cf=cf,
+            out_columns=out_columns,
+            fl=fl,
+            fw=fw,
+        )
 
     rows: list[dict] = []
     n_scored = n_degenerate = n_into_total = 0
@@ -136,7 +179,7 @@ def compute_territorial_dominance(
         team_canon = drows["_t"].iloc[0]
         def_xy = drows[["start_x", "start_y"]].to_numpy(dtype=float)
 
-        hull = build_trimmed_hull(def_xy, trim_fraction=params.trim_fraction)
+        hull = build_trimmed_hull(def_xy, trim_fraction=territory_params.trim_fraction)
         base = {"game_id": game_raw, "player_id": player_raw}
         if hull is None:
             n_degenerate += 1
@@ -187,14 +230,67 @@ def compute_territorial_dominance(
             }
         )
 
-    out = pd.DataFrame(rows).reindex(columns=list(TERRITORY_COLUMNS)).astype(TERRITORY_COLUMNS)
+    out = pd.DataFrame(rows).reindex(columns=list(out_columns)).astype(out_columns)
     report = TerritoryReport(
-        params,
+        territory_params,
         n_players_in=n_scored + n_degenerate,
         n_scored=n_scored,
         n_degenerate_hull=n_degenerate,
         n_no_actions=0,
         n_passes_considered=len(passes),
         n_passes_into_hull=n_into_total,
+    )
+    return out, report
+
+
+def _counterfactual_dispatch(
+    defs: pd.DataFrame,
+    passes: pd.DataFrame,
+    passes_by_game: dict[object, pd.DataFrame],
+    *,
+    group_cols: list[str],
+    window: Collection | None,
+    xt: ExpectedThreat,
+    completion_model: PassCompletionModel,
+    territory_params: TerritoryParams,
+    cf: CounterfactualParams,
+    out_columns: dict[str, str],
+    fl: float,
+    fw: float,
+) -> tuple[pd.DataFrame, TerritoryReport]:
+    """Build the pre-hull'd defender groups (the hull uses ``territory_params.trim_fraction``) and hand
+    them to ``counterfactual_rows`` for the ``q * c * xT`` valuation, then assemble the frame + report."""
+    groups: list[DefenderGroup] = []
+    for _key, drows in defs.groupby(group_cols, sort=False):
+        player_raw = drows["player_id"].iloc[0]
+        game_raw = pd.NA if window is not None else drows["game_id"].iloc[0]
+        team_canon = drows["_t"].iloc[0]
+        def_xy = drows[["start_x", "start_y"]].to_numpy(dtype=float)
+        hull = build_trimmed_hull(def_xy, trim_fraction=territory_params.trim_fraction)
+        games = list(dict.fromkeys(drows["_g"].tolist()))
+        groups.append((player_raw, game_raw, team_canon, hull, def_xy, games))
+
+    rows, census = counterfactual_rows(
+        groups,
+        passes_by_game,
+        xt=xt,
+        completion_model=completion_model,
+        params=cf,
+        fl=fl,
+        fw=fw,
+        window=window,
+    )
+
+    out = pd.DataFrame(rows).reindex(columns=list(out_columns)).astype(out_columns)
+    report = TerritoryReport(
+        territory_params,
+        n_players_in=census["n_scored"] + census["n_degenerate_hull"],
+        n_scored=census["n_scored"],
+        n_degenerate_hull=census["n_degenerate_hull"],
+        n_no_actions=0,
+        n_passes_considered=len(passes),
+        n_passes_into_hull=census["n_passes_into_hull"],
+        n_target_modeled=census["n_target_modeled"],
+        n_target_unresolved=census["n_target_unresolved"],
     )
     return out, report

@@ -60,6 +60,7 @@ _DECLARING = (
     "build_gkdv_arm_values",
     "measure_gs_shot_distribution",
     "build_tf19_instrument_responsiveness",
+    "validate_territory_counterfactual",
 )
 
 _RESEARCH = pathlib.Path(__file__).resolve().parents[2] / "docs" / "research"

@@ -19,9 +19,16 @@ from ._columns import (
     TERRITORY_HULL_SOURCE_VALUES,
     TERRITORY_METHODS,
     TERRITORY_METRIC_COLUMNS,
+    TERRITORY_TARGET_SOURCE_VALUES,
+    TR_EXPECTED_THREAT_FACED,
+    TR_MEAN_COMPLETION_FACED,
+    TR_PASSES_AIMED_INTO_HULL,
+    TR_TARGET_SOURCE,
+    TR_XT_PREVENTED_ABOVE_EXPECTATION,
+    columns_for_method,
 )
 from ._compute import compute_territorial_dominance
-from ._config import TerritoryParams
+from ._config import CounterfactualParams, TerritoryParams
 from ._report import TerritoryReport
 
 __all__ = [
@@ -29,7 +36,15 @@ __all__ = [
     "TERRITORY_HULL_SOURCE_VALUES",
     "TERRITORY_METHODS",
     "TERRITORY_METRIC_COLUMNS",
+    "TERRITORY_TARGET_SOURCE_VALUES",
+    "TR_EXPECTED_THREAT_FACED",
+    "TR_MEAN_COMPLETION_FACED",
+    "TR_PASSES_AIMED_INTO_HULL",
+    "TR_TARGET_SOURCE",
+    "TR_XT_PREVENTED_ABOVE_EXPECTATION",
+    "CounterfactualParams",
     "TerritoryParams",
     "TerritoryReport",
+    "columns_for_method",
     "compute_territorial_dominance",
 ]

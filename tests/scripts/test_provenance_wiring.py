@@ -130,6 +130,14 @@ ARTIFACT_DRIVERS = (
     # gate_eligible census, the §6.2 named-keeper sign table) whose numbers are cited -- so the
     # tree it ran on is recorded. Reported-not-gated, but a cited artifact all the same.
     "build_tf19_instrument_responsiveness",
+    # --- TF-54b counterfactual territorial-dominance cycle (both owner-run, both cite numbers) ---
+    # `train_pass_completion` bundles the default PassCompletionModel weights (stamps
+    # `training_commit`, same class as the other five weight trainers); `validate_territory_counterfactual`
+    # runs the pre-registered construct-validity battery over the public corpus and writes
+    # `metrics.json` + `named_defender_signs.parquet` whose promotion verdict is cited -- so the tree
+    # each ran on is recorded.
+    "train_pass_completion",
+    "validate_territory_counterfactual",
 )
 
 

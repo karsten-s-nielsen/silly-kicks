@@ -163,6 +163,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/xthreat/_value_iteration.py",
     "silly_kicks/xthreat/_eval.py",
     "silly_kicks/xthreat/_physical.py",
+    "silly_kicks/xthreat/_counterfactual_seam.py",
     "silly_kicks/tracking/_warnings.py",
     "silly_kicks/tracking/_receiver.py",
     "silly_kicks/tracking/_run_features.py",
@@ -308,11 +309,16 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/shot_stopping/_compute.py",
     "silly_kicks/shot_stopping/_report.py",
     # territory (TF-54): the three modules that DEFINE its public surface (TerritoryParams,
-    # compute_territorial_dominance, TerritoryReport). _columns.py / _hull.py hold constants + an
-    # internal geometry helper (not part of the discovered public surface). Documented on creation.
+    # compute_territorial_dominance, TerritoryReport). _hull.py holds only an internal geometry
+    # helper (not part of the discovered public surface). Documented on creation.
     "silly_kicks/territory/_config.py",
     "silly_kicks/territory/_compute.py",
     "silly_kicks/territory/_report.py",
+    # territory (TF-54b SPEC-04): _columns.py gained a public function (columns_for_method, the
+    # per-method column/dtype resolver) alongside its pre-existing constant-only exports (constants
+    # are not FunctionDef/ClassDef, so they never triggered this gate on their own -- P1 requires
+    # inspect.isfunction/isclass). Documented on creation.
+    "silly_kicks/territory/_columns.py",
     # duels (TF-55): the modules that DEFINE its public surface (DuelRatingParams, GlickoState,
     # update_glicko, compute_duel_ratings, DuelRatingReport, extract_duels + DuelGame/DuelExtractReport).
     # _columns.py holds constants. Documented on creation.
@@ -320,6 +326,12 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/duels/_compute.py",
     "silly_kicks/duels/_report.py",
     "silly_kicks/duels/_extract.py",
+    # expected_passing (TF-54b): _model.py DEFINES the public surface (PassCompletionModel,
+    # PassCompletionIntegrityError), re-exported via the package __all__. _features.py is
+    # underscore-named and re-exports nothing, so it is not part of the discovered public surface.
+    # Brand-new public module -- documented on creation (every public symbol carries a real
+    # Examples section), not deferred.
+    "silly_kicks/expected_passing/_model.py",
     # TF-59 PR1: the per-provider keeper-appearance extractors (one public `extract_keeper_appearances`
     # each), feeding the ADR-055 keeper-identity port. Brand-new public modules -- documented on
     # creation (each carries a real Examples section), not deferred.
