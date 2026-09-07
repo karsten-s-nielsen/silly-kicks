@@ -59,3 +59,24 @@ RD_GEOMETRY_SOURCE = "rd_geometry_source"  # {"resolved", "guessed", "unresolved
 #: "guessed" = a GoalMap allow_guess fallback (its metrics are computed but the end is an inference,
 #: which matters on FOV-cropped SB360, IMPL-02); "unresolved" = no end at all -> honest-NaN metrics.
 RD_GEOMETRY_SOURCE_VALUES = ("resolved", "guessed", "unresolved")
+
+# Layer-3 counterfactual deterrent arm columns (TF-60, ADR-089). `negative = deterrent` (attacker-value
+# units; the gkdv sign convention). Keyed on RD_SAMPLE_KEYS; a separate table joined onto the samples
+# via merge_rest_defense (honest-NaN on arm-dropped rows).
+RD_GK_DETER_THREAT = "rd_gk_deter_threat"
+RD_GK_DETER_SPACE = "rd_gk_deter_space"
+RD_GK_SOURCE = "rd_gk_source"
+RD_OUTFIELD_DETER_THREAT = "rd_outfield_deter_threat"
+RD_OUTFIELD_DETER_SPACE = "rd_outfield_deter_space"
+RD_OUTFIELD_SOURCE = "rd_outfield_source"
+
+RD_GK_ARM_COLUMNS = [RD_GK_DETER_THREAT, RD_GK_DETER_SPACE]
+RD_OUTFIELD_ARM_COLUMNS = [RD_OUTFIELD_DETER_THREAT, RD_OUTFIELD_DETER_SPACE]
+RD_ARM_COLUMNS = [*RD_GK_ARM_COLUMNS, *RD_OUTFIELD_ARM_COLUMNS]
+
+#: Shared domain provenance for an arm sample. "computed" = build_restdefense_ghost_frames scored the
+#: sample's frame; "ghost_missing" = the frame was in-domain but no finite ghost was served (incl. an
+#: honest fov_cropped/variant_unavailable NaN); "unlinked"/"unresolved"/"fov_cropped" reserved for the
+#: full vocabulary. The DAS (space) arm's velocity-NaN is NOT a token -- it is a self-describing NaN
+#: value + validate_velocity_regime (ADR-054: value-changes -> column, interpretation-changes -> diagnostic).
+RD_ARM_SOURCE_VALUES = ("computed", "ghost_missing", "unlinked", "unresolved", "fov_cropped")

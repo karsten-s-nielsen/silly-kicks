@@ -5175,25 +5175,29 @@ def add_ghost_gk(
     ghost_cols = deduped.set_index("action_id")[["ghost_gk_x", "ghost_gk_y"]]
     out = out.merge(ghost_cols, left_on="action_id", right_index=True, how="left")
 
-    # ADR-028: emit in action-LTR. The model serves goal-relative coords (defended goal
-    # at x=0, y kept in absolute-frame terms). In action-LTR the defended goal is x=105,
-    # so x -> 105 - gr_x UNIFORMLY (gr_x already measures from the defended goal). y mirrors
-    # only for away-team actions (the per-action 180-degree reflection). density_spread is
-    # a dispersion magnitude -> invariant.
-    # Nullable: <NA> marks an action whose direction the frames do not resolve. Note the x/y
-    # asymmetry -- `ghost_gk_x` is flip-INDEPENDENT, so an unresolved row could emit a valid x
-    # beside an unknowable y. Both are nulled instead: a half-placed keeper is not a keeper
-    # position, and every consumer of this pair uses both coordinates.
+    # ADR-028 + ADR-089: emit in action-LTR. The model now serves BOTH-AXES goal-relative coords
+    # (defended goal at x=0, AND y point-reflected for a high-x defended goal per ADR-089 -- gr_y is
+    # no longer "absolute-frame y"). In action-LTR the attacked goal (= the keeper's defended goal) is
+    # at x=105. The keeper's goal-relative flip is the COMPLEMENT of the acting team's action flip
+    # (the keeper defends the goal the actor attacks), so the per-action 180-degree reflection CANCELS
+    # against the model's own goal-relative flip and BOTH axes reproject UNIFORMLY:
+    #   x -> 105 - gr_x   and   y -> 68 - gr_y
+    # (Under the pre-ADR-089 x-only model, gr_y was absolute-frame y and only y mirrored, and only for
+    # away actions; that flip-gated form double-flipped once the model's y became goal-relative.)
+    # density_spread is a dispersion magnitude -> invariant.
+    # Nullable: <NA> marks an action whose direction the frames do not resolve. `ghost_gk_x` is
+    # flip-INDEPENDENT, so an unresolved row could emit a valid x beside an unknowable orientation;
+    # both are nulled instead, because a half-placed keeper is not a keeper position and every consumer
+    # of this pair uses both coordinates.
     _flip_nullable = acting_team_attacks_rtl(actions, frames).reindex(out.index)
     direction_unresolved = _flip_nullable.isna().to_numpy()
-    flip = _flip_nullable.fillna(False).to_numpy(dtype=bool)
     gx = out["ghost_gk_x"].to_numpy(dtype="float64")
     gy = out["ghost_gk_y"].to_numpy(dtype="float64")
     out["ghost_gk_x"] = np.where(direction_unresolved, np.nan, FIELD_LENGTH - gx)
-    out["ghost_gk_y"] = np.where(direction_unresolved, np.nan, np.where(flip, FIELD_WIDTH - gy, gy))
+    out["ghost_gk_y"] = np.where(direction_unresolved, np.nan, FIELD_WIDTH - gy)
 
-    # Provenance. Placed AFTER the ADR-028 reprojection; the order is free, because NaN is
-    # invariant under both `FIELD_LENGTH - gx` and `np.where(flip, FIELD_WIDTH - gy, gy)`.
+    # Provenance. Placed AFTER the ADR-028/ADR-089 reprojection; the order is free, because NaN is
+    # invariant under both `FIELD_LENGTH - gx` and `FIELD_WIDTH - gy`.
     #
     # `no_keeper` and `unlinked` are distinct facts with distinct remedies: an action that reached
     # a frame carrying no DEFENDING keeper did reach a frame, and calling it "unlinked" states

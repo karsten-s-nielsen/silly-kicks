@@ -74,6 +74,8 @@ BOUNDARY_ENTRY_POINTS: frozenset[str] = frozenset(
         "xtgk.compute_xt_gk_v2",
         "spadl.add_restart_coordinates",
         "restdefense.compute_rest_defense",
+        "restdefense.rest_defense_outfield_deterrent",
+        "restdefense.rest_defense_gk_deterrent",
     }
 )
 
@@ -235,7 +237,15 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: orientation and the keeper metrics have no keeper, so both legs are NaN -> `no_signal`. The fifth
 #: Layer-2 column (`rd_attacker_space_control`) is keeper-blind and still computes (differs_by_design),
 #: and all five are exercised (`differs`/`honest_nan`) on velocity + `defender_absent` + `gk_one_end`.
-NOT_EXERCISED_BUDGET = 48
+#:
+#: RAISED 48 -> 52 by registering the two TF-60 Layer-3 deterrent arms (ADR-089:
+#: `restdefense.rest_defense_outfield_deterrent` + `restdefense.rest_defense_gk_deterrent`). Four new
+#: tuples under `gk_absent` ONLY -- each arm's two columns (threat + space): with BOTH keepers gone the
+#: goal orientation is unresolvable, so the threat leg refuses (GoalEndUnresolvedError -> honest-NaN,
+#: ADR-055) and the space leg produces no comparable signal, so both legs are NaN -> `no_signal`. On
+#: velocity + `defender_absent` + `gk_one_end` both arms are exercised (threat `differs_by_design`, the
+#: ADR-063 zero-velocity pitch-control lift; space `honest_nan`, the velocity-required DAS degrade).
+NOT_EXERCISED_BUDGET = 52
 
 
 def _entry(

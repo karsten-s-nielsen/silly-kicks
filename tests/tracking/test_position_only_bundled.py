@@ -36,8 +36,9 @@ from silly_kicks.tracking.schema import SPEED_SOURCE_UNAVAILABLE
 pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.UnverifiableFeatureContractWarning")
 
 _WEIGHTS_ROOT = pathlib.Path(_gg.__file__).parent
-_C1 = "0ce2c2187e09212440063f15494915f0f4a5f2ba"  # Phase-A commit (position-only weights' training_commit)
-_C2 = "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a"  # guardrails commit (faithful-ghost re-fit's training_commit)
+_C1 = "0ce2c2187e09212440063f15494915f0f4a5f2ba"  # ADR-067 commit (xshot/xcross position-only training_commit)
+_C2 = "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a"  # ADR-067 native-SkillCorner ghost re-fit (SUPERSEDED by _C3)
+_C3 = "22678fdcb1aa3bdf687b1b50bcf56a122769691d"  # ADR-089 both-axes ghost re-fit (TF-60 Layer-3; all 5 GK variants)
 
 
 def _declare_unavailable(frames: pd.DataFrame) -> pd.DataFrame:
@@ -80,20 +81,25 @@ def test_bundled_position_only_loads_clean(name, cls, root, n_feat):
 def test_bundled_position_only_carry_training_provenance():
     # Bundled weights must be traceable to a commit (test_artifact_provenance_output enforces this
     # over the whole surface; pinned here to the position_only trio for a focused, in-place check).
-    for root in ("_xshot_weights", "_xcross_weights", "_ghost_gk_weights"):
+    # The ADR-089 both-axes cycle re-fit the GHOST variant only (=> _C3); xshot/xcross position_only
+    # are untouched and stay at their ADR-067 commit (_C1).
+    expected = {"_xshot_weights": _C1, "_xcross_weights": _C1, "_ghost_gk_weights": _C3}
+    for root, want in expected.items():
         meta = json.loads((_WEIGHTS_ROOT / root / "position_only" / "metadata.json").read_text(encoding="utf-8"))
-        assert meta.get("training_commit") == _C1, f"{root}/position_only training_commit"
+        assert meta.get("training_commit") == want, f"{root}/position_only training_commit"
 
 
-def test_bundled_ghost_default_is_the_native_refit():
-    # scope item (b): the bundled ghost `default` was re-fit on the native SkillCorner corpus at the
-    # guardrails commit, replacing the kloppy-contaminated weights. A velocity-bearing retrain trigger
-    # (the velocity-path golden was re-captured; see test_ghost_gk_velocity_path_unchanged).
+def test_bundled_ghost_default_is_the_both_axes_refit():
+    # The bundled ghost `default` was last re-fit under the ADR-089 both-axes convention unification
+    # (TF-60 Layer-3), at commit _C3 -- superseding the ADR-067 native-SkillCorner re-fit (_C2). Still
+    # the same 179-match corpus (incl. skillcorner), still faithful/26-feature. A velocity-bearing
+    # retrain trigger (the velocity-path golden was re-captured; see
+    # test_ghost_gk_velocity_path_unchanged, whose docstring records the measured move).
     _clear_variant_caches()
     m = _gg.GhostGkModel.from_variant("default")
     assert m.feature_set == "faithful"
     meta = json.loads((_WEIGHTS_ROOT / "_ghost_gk_weights" / "default" / "metadata.json").read_text(encoding="utf-8"))
-    assert meta["training_commit"] == _C2
+    assert meta["training_commit"] == _C3
     assert meta["feature_set"] == "faithful"
     assert len(meta["feature_names"]) == 26
     assert "skillcorner" in meta["corpus_provenance"]["providers"]

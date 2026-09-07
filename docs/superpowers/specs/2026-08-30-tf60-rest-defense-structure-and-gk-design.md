@@ -627,8 +627,18 @@ outfield-dominated; the Gradient Sports keeper clamp does not apply to outfielde
 keeper ΔDAS arm (PR4) is a weak instrument — so building PR5→PR6 first delivers the soundest part
 earliest. See `TODO.md` (TF-60 row) for the instrument analysis.
 
-Status (2026-09-05): PR1 SHIPPED (4.102.0, ADR-080); PR2 SHIPPED (4.103.0, ADR-081); PR3 SHIPPED
-(4.105.0, ADR-083); **PR5 SHIPPED (4.109.0, ADR-087)**; PR4 + PR6 remain.
+**Arc reshaped again 2026-09-06 (owner-directed): PR4 + PR6 are FOLDED into ONE "gold-standard"
+cycle** (its own design + plan, `2026-09-06-tf60-layer3-arms-and-gk-convention-unification-*`,
+ADR-089), which ALSO unifies the ghost-GK goal-relative convention to the correct both-axes 180deg
+point reflection (retrain all 5 variants) and moves the goal-relative->frame conversion into the two
+ghost serves. The Layer-3 arms are the same (`build_restdefense_ghost_frames(which="keeper"|"rearguard")`
++ `rest_defense_{gk,outfield}_deterrent`), plus an instrument-validity probe (`restdefense/_probe.py`),
+a corpus driver + applied construct-validity report, and the gkdv re-materialize + TF-19 sign-off
+re-run IN-cycle. Two provenance-mandated commits (code, then re-fit weights + applied artifacts).
+
+Status (2026-09-06): PR1 SHIPPED (4.102.0, ADR-080); PR2 SHIPPED (4.103.0, ADR-081); PR3 SHIPPED
+(4.105.0, ADR-083); PR5 SHIPPED (4.109.0, ADR-087); **PR4 + PR6 folded into the ADR-089 cycle
+(in progress, 4.111.0)**.
 
 | Cycle | Content | New model? | C4 |
 |---|---|---|---|
@@ -636,10 +646,9 @@ Status (2026-09-05): PR1 SHIPPED (4.102.0, ADR-080); PR2 SHIPPED (4.103.0, ADR-0
 | **PR2** — SHIPPED 4.103.0 | **Layer 2** danger-behind-line valuation (`control_in_region` / `compute_threat_pc` / GK-as-control-agent) | no | — |
 | **PR3** — SHIPPED 4.105.0 | **Rest-defense GK-ghost re-fit** — extended-grid additive `GhostGkModel` variant (grid becomes first-class; label cap lifted; `default`/`position_only`/`full` frozen; **no GKDV/VAEP retrain**) + bundled weights + HF publish — **its own sub-spec** | yes | — |
 | **PR5** — SHIPPED 4.109.0 (built before PR4) | **ghost-outfield model** `tracking/_ghost_outfield.py` (code + training pipeline + bundled weights + fail-closed loader + guards + HF publish) — **its own sub-spec (ADR-087)** | yes | +0 (serve seam `serve_ghost_outfield_positions`; **no** `add_ghost_outfield` aggregator — C4-free) |
-| **PR4** | **Layer 3 GK arms** (`build_restdefense_ghost_frames(which="keeper")` + threat + space; reuse gkdv delta seams; **consume the PR3 `sweeper` variant**) | no | — |
-| **PR6** | **Layer 3 outfield arm** (`build_restdefense_ghost_frames(which="rearguard")` consuming the PR5 model) | no | — |
+| **PR4 + PR6 (folded, ADR-089)** — in progress, 4.111.0 | **Layer 3 GK + outfield arms** (`build_restdefense_ghost_frames(which="keeper"|"rearguard")` + `rest_defense_{gk,outfield}_deterrent`; reuse gkdv delta seams; GK arm consumes the PR3 `sweeper` variant) + instrument probe + corpus driver + construct-validity report; **ghost-GK both-axes convention unification (retrain all 5 variants)** + serve-returns-frame-coords + gkdv re-materialize + TF-19 sign-off re-run | no (retrain of the ghost-GK variants only) | +0 (C4-free) |
 
-Each cycle leaves `main` green and coherent; PR2–PR6 each depend only on the prior cycle's public surface.
+Each cycle leaves `main` green and coherent; PR2 onward each depend only on the prior cycle's public surface.
 
 ---
 

@@ -357,7 +357,6 @@ def _build_provenance(
     served: pd.DataFrame,
     eligible: pd.DataFrame,
     dropped: pd.DataFrame,
-    goal_map: GoalMap,
 ) -> pd.DataFrame:
     """Per-(frame, gk_team) provenance for eligible frames + one row per dropped frame.
 
@@ -380,16 +379,10 @@ def _build_provenance(
     scored = left.merge(right, on=[*_FRAME_KEYS, "gk_team_id"], how="left")
 
     if len(scored):
-        defended = np.array(
-            [
-                _goal_lookup(goal_map, g, p, t)
-                for g, p, t in zip(scored["game_id"], scored["period_id"], scored["gk_team_id"], strict=True)
-            ],
-            dtype=float,
-        )
-        gr_x = scored["ghost_gr_x"].to_numpy(dtype=float)
-        scored["ghost_x"] = np.where(defended == 0.0, gr_x, _FIELD_LENGTH - gr_x)
-        scored["ghost_y"] = scored["ghost_gr_y"].to_numpy(dtype=float)
+        # Frame coordinates come straight from the serve (ADR-089 both-axes inverse); gkdv no
+        # longer re-derives them. The legacy `ghost_y = ghost_gr_y` was x-only and mislocated an
+        # away-team keeper once the ghost-GK model became both-axes -- `scored` already carries the
+        # serve's correct ghost_x/ghost_y (from serve_ghost_gk_positions, merged above).
         scored["displacement_m"] = np.hypot(
             scored["ghost_x"].to_numpy(dtype=float) - scored["actual_x"].to_numpy(dtype=float),
             scored["ghost_y"].to_numpy(dtype=float) - scored["actual_y"].to_numpy(dtype=float),
@@ -558,7 +551,7 @@ def build_ghost_frames(
         carrier=carrier[[*_FRAME_KEYS, "ball_carrier_team_id"]],
         link_frame_ids=set(eligible["frame_id"].unique()),
     )
-    prov = _build_provenance(src, served=served, eligible=eligible, dropped=dropped, goal_map=goal_map)
+    prov = _build_provenance(src, served=served, eligible=eligible, dropped=dropped)
     cf = _write_back(src, provenance=prov, params=params)
 
     scored_rows = prov[prov["drop_reason"].isna()]

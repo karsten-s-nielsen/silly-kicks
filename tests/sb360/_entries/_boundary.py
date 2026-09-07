@@ -481,3 +481,126 @@ _entry(
     verdict_provenance="substantive",
     provenance_rationale=_RD_PROVENANCE_RATIONALE,
 )
+
+
+# --- TF-60 restdefense Layer-3 deterrent arms (ADR-089) ---------------------------------------------
+def _call_rest_defense_outfield(actions, frames, links, home_team_id):
+    """``rest_defense_outfield_deterrent`` projected to per-ACTION. Ghosts team A's rearguard
+    (outfielders) to the league-average GhostOutfieldModel and prices opponent B's counter-danger via
+    gkdv's generic delta seams. A fitted ``xt`` (the shared ``audit_xt``) is required for the threat
+    leg (P2-02); ``home_team_id`` is unused (direction from the GoalMap, ADR-055)."""
+    from scripts._sb_battery import audit_xt
+    from silly_kicks.restdefense import rest_defense_outfield_deterrent
+    from silly_kicks.tracking import GhostOutfieldModel
+
+    arm, _ = rest_defense_outfield_deterrent(
+        actions,
+        frames,
+        links=links,
+        xt=audit_xt(),
+        ghost_outfield_model=GhostOutfieldModel.from_variant("default"),
+        home_team_id=home_team_id,
+    )
+    cols = ["action_id", "rd_outfield_deter_threat", "rd_outfield_deter_space"]
+    metrics = arm[cols].drop_duplicates(subset=["action_id"])
+    return actions[["action_id"]].merge(metrics, on="action_id", how="left")
+
+
+def _call_rest_defense_gk(actions, frames, links, home_team_id):
+    """``rest_defense_gk_deterrent`` projected to per-ACTION. Ghosts team A's OWN keeper to the SWEEPER
+    ghost-GK variant (never the frozen default -- the arm contract, ADR-089); prices B's counter-danger."""
+    from scripts._sb_battery import audit_xt
+    from silly_kicks.restdefense import rest_defense_gk_deterrent
+    from silly_kicks.tracking import GhostGkModel
+
+    arm, _ = rest_defense_gk_deterrent(
+        actions,
+        frames,
+        links=links,
+        xt=audit_xt(),
+        ghost_gk_model=GhostGkModel.from_variant("sweeper"),
+        home_team_id=home_team_id,
+    )
+    cols = ["action_id", "rd_gk_deter_threat", "rd_gk_deter_space"]
+    metrics = arm[cols].drop_duplicates(subset=["action_id"])
+    return actions[["action_id"]].merge(metrics, on="action_id", how="left")
+
+
+_RD_ARM_THREAT_RATIONALE = (
+    "The threat arm prices B's counter-danger via compute_threat_pc (pitch control), which has a valid "
+    "zero-velocity positional model (ADR-063): Leg A (SB360 declared velocity-less) uses it, Leg B the "
+    "velocity-bearing model at identical positions, so the deterrent value DIFFERS BY DESIGN where there "
+    "is counter-threat to suppress -- a SUBSTANTIVE counterfactual, not a fabrication. [measured cause=velocity]"
+)
+_RD_ARM_SPACE_RATIONALE = (
+    "The space arm prices B's accessible space via delta_das_batch, which STRUCTURALLY requires velocity, "
+    "so on the velocity-less freeze-frame leg it degrades to honest-NaN (the ADR-043 DasUnscoreableError "
+    "degrade) while the tracking leg scores -- an honest all-NaN, not a fabrication. [measured cause=velocity]"
+)
+_RD_ARM_GK_ABSENT_RATIONALE = (
+    "The gk_absent roster removes BOTH keepers, so goal orientation is unresolvable: the threat leg "
+    "REFUSES (compute_threat_pc raises GoalEndUnresolvedError, caught -> honest-NaN per ADR-055) and the "
+    "space leg produces no comparable signal, so both columns are all-NaN on both legs -> no_signal, "
+    "unexercisable on this roster. Real full-tracking data always resolves the goal. [measured cause=n/a]"
+)
+_RD_ARM_PROVENANCE_RATIONALE = (
+    "SUBSTANTIVE: the threat arm DIFFERS by design across the velocity legs (ADR-063 Tier-1 pitch-control "
+    "lift), so the entry substantively handles the frame kinematics; the space arm's honest-NaN is the "
+    "Tier-2 velocity suppression. These are frame-coupling verdicts, not an end-to-end SB360 claim -- the "
+    "arms are reported-not-gated and in no default xfn list."
+)
+
+
+def _rd_arm_axis(threat_col, space_col) -> dict:
+    """The velocity/defender_absent/gk_one_end verdicts (identical across those three axes, measured):
+    the threat column differs-by-design, the space column honest-NaN."""
+    return {
+        threat_col: AxisVerdict("differs", "differs_by_design", rationale=_RD_ARM_THREAT_RATIONALE),
+        space_col: AxisVerdict("all_nan", "honest_nan"),
+    }
+
+
+def _rd_arm_gk_absent(threat_col, space_col) -> dict:
+    return {
+        threat_col: AxisVerdict("no_signal", "not_exercised", rationale=_RD_ARM_GK_ABSENT_RATIONALE),
+        space_col: AxisVerdict("no_signal", "not_exercised", rationale=_RD_ARM_GK_ABSENT_RATIONALE),
+    }
+
+
+_entry(
+    "restdefense.rest_defense_outfield_deterrent",
+    _call_rest_defense_outfield,
+    columns=("rd_outfield_deter_threat", "rd_outfield_deter_space"),
+    velocity=_rd_arm_axis("rd_outfield_deter_threat", "rd_outfield_deter_space"),
+    visibility={
+        "gk_absent": _rd_arm_gk_absent("rd_outfield_deter_threat", "rd_outfield_deter_space"),
+        "defender_absent": _rd_arm_axis("rd_outfield_deter_threat", "rd_outfield_deter_space"),
+        "gk_one_end": _rd_arm_axis("rd_outfield_deter_threat", "rd_outfield_deter_space"),
+    },
+    applicability={"rd_outfield_deter_threat": "support_data_defined", "rd_outfield_deter_space": "no_support"},
+    applicability_deltas={
+        "rd_outfield_deter_threat": {"extreme": 20.677871732033793, "near": 2.897806559257674},
+        "rd_outfield_deter_space": {"extreme": 0.0, "near": 0.0},
+    },
+    verdict_provenance="substantive",
+    provenance_rationale=_RD_ARM_PROVENANCE_RATIONALE,
+)
+
+_entry(
+    "restdefense.rest_defense_gk_deterrent",
+    _call_rest_defense_gk,
+    columns=("rd_gk_deter_threat", "rd_gk_deter_space"),
+    velocity=_rd_arm_axis("rd_gk_deter_threat", "rd_gk_deter_space"),
+    visibility={
+        "gk_absent": _rd_arm_gk_absent("rd_gk_deter_threat", "rd_gk_deter_space"),
+        "defender_absent": _rd_arm_axis("rd_gk_deter_threat", "rd_gk_deter_space"),
+        "gk_one_end": _rd_arm_axis("rd_gk_deter_threat", "rd_gk_deter_space"),
+    },
+    applicability={"rd_gk_deter_threat": "support_data_defined", "rd_gk_deter_space": "no_support"},
+    applicability_deltas={
+        "rd_gk_deter_threat": {"extreme": 18.67303789806789, "near": 0.3223387073246613},
+        "rd_gk_deter_space": {"extreme": 0.0, "near": 0.0},
+    },
+    verdict_provenance="substantive",
+    provenance_rationale=_RD_ARM_PROVENANCE_RATIONALE,
+)

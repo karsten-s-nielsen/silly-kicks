@@ -8,6 +8,46 @@ import pytest
 from _loader_pining import _skillcorner_bronze
 
 
+def test_parquet_tracking_reads_identically_to_jsonl():
+    """SkillCorner's newer artifact schema ships tracking as a PARQUET table (nested
+    ``ball_data``/``player_data`` struct+list columns) instead of ``_tracking_extrapolated.jsonl``.
+    ``build_skillcorner_frames`` must read the parquet into the SAME per-frame record shape and
+    produce BYTE-IDENTICAL frames -- pyarrow returns the list-of-struct ``player_data`` as a numpy
+    array, which the bronze builder's ``rec.get("player_data") or []`` cannot evaluate, so it is
+    coerced to a list. Verified against real corpus matches (frame counts match the vetted tc3 cache
+    exactly); this pins it in CI on the committed real slice.
+    """
+    import json
+    import pathlib
+
+    import pandas as pd
+    from _loader_pining import build_skillcorner_frames
+
+    fx = pathlib.Path(__file__).resolve().parents[1] / "datasets" / "tracking" / "yident" / "skillcorner"
+    meta_path = fx / "match.json"
+    jsonl_path = fx / "tracking_slice.jsonl"
+
+    records = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        pq_path = pathlib.Path(d) / "skillcorner_x_tracking.parquet"
+        pd.DataFrame(records).to_parquet(pq_path)  # nested dict/list -> parquet struct/list
+
+        frames_jsonl, _ = build_skillcorner_frames(
+            {"metadata": str(meta_path), "tracking": str(jsonl_path)}, match_id="x", tracking_limit=None
+        )
+        frames_pq, _ = build_skillcorner_frames(
+            {"metadata": str(meta_path), "tracking": str(pq_path)}, match_id="x", tracking_limit=None
+        )
+
+    assert len(frames_pq) == len(frames_jsonl) > 0
+    pd.testing.assert_frame_equal(
+        frames_jsonl.reset_index(drop=True), frames_pq.reset_index(drop=True), check_like=True
+    )
+
+
 def test_bronze_carries_detection_and_ball_z_and_pitch_dims():
     meta = {
         "pitch_length": 104.0,

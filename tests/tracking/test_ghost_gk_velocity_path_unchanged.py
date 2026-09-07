@@ -31,6 +31,25 @@ versus the SHIPPED native weights, 6 rows, all finite: **max |dx| 0.2029 m, max 
 mean 0.2218 m, median 0.1608 m**. The baseline now pins the POST-native-re-fit positions, so the
 tripwire still fails on any future degradation-class change that moves them.
 
+**RE-CAPTURED AGAIN at the ADR-089 both-axes convention re-fit (TF-60 Layer-3) -- revisited, not
+absorbed.** All five bundled ghost-GK variants were re-fit after the goal-relative feature transform
+was unified from x-only to the correct both-axes 180-degree point reflection (signed-y features + the
+target ``gk_y`` now flip for a defended goal at high x; ADR-089/ADR-051 8b). Because the model's
+served ``gr_y`` became goal-relative rather than absolute-frame y, ``add_ghost_gk``'s action-LTR
+reprojection changed from a flip-GATED ``y -> 68 - gr_y`` (away only) to a UNIFORM ``y -> 68 - gr_y``:
+the keeper's goal-relative flip is the complement of the acting team's action flip, so the per-action
+reflection cancels against the model's own and both axes reproject uniformly. (The flip-gated form
+double-flipped the flip=False rows once the model's y became goal-relative -- caught by
+``test_ghost_gk_mirror_invariant``, which was transient-red on the chirality mismatch during Phase A
+and so had not yet exercised its assertion.) This is a DECLARED re-fit + reprojection correction -- the
+condition under which this baseline is expected to move. Measured effect on this fixture
+(``sb360-fixture-2``), the prior ADR-067 native ``default`` (a0fc9f9) versus the SHIPPED both-axes
+weights (``training_commit=22678fd``) with the corrected reprojection, 6 rows, all finite:
+**max |dx| 0.5631 m, max |dy| 2.3927 m, mean 0.7452 m, median 0.2735 m** -- the small x delta and the
+larger y delta are the both-axes signature. The baseline pins the POST-both-axes positions; the model
+``gr_y`` is bit-identical across numpy 2.2.6 (py3.10) and 2.4.2 (py3.12+) (verified) and the uniform
+``68 - gr_y`` is a deterministic transform of it, so ``assert_array_equal`` holds on every CI leg.
+
 Corollary worth keeping: this is the ONLY committed golden that pins bundled-model OUTPUT.
 ``ghost_gk_kde_golden.npz`` stores input FEATURES (outputs are computed fresh) and
 ``ghost_gk_refactor_golden.npz`` uses locally-fit models, so neither moves on a re-fit -- verified

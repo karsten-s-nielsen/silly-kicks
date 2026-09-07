@@ -506,3 +506,108 @@ def test_paired_vector_controls_is_subquadratic():
         return c["n"]
 
     assert_subquadratic_growth(measure, sizes=(128, 256, 512), label="paired_vector_controls")
+
+
+# ============== restdefense paired-vector controls (ADR-073, TF-60 Layer-3) ==============
+def _paired_vector_controls_rd_input(n_frames: int):
+    """``n_frames`` scales the LOOP (group) dimension: one dose target per frame, so the group COUNT
+    scales while each group's SIZE is fixed. group_rows builds the pool grouping ONCE + one O(1) .get
+    per frame -> O(T); a per-target rescan of the A-outfield pool would be O(T*players) -> O(T^2)."""
+    frame_rows = []
+    target_rows = []
+    for f in range(n_frames):
+        # A (team 1): keeper + 1 rearguard TARGET + 3 non-target outfielders (the control pool).
+        frame_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "team_id": 1,
+                "player_id": 190,
+                "is_ball": False,
+                "is_goalkeeper": True,
+                "x": 4.0,
+                "y": 34.0,
+            }
+        )
+        frame_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "team_id": 1,
+                "player_id": 100,
+                "is_ball": False,
+                "is_goalkeeper": False,
+                "x": 18.0,
+                "y": 30.0,
+            }  # rearguard target
+        )
+        for i in range(3):
+            frame_rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": f,
+                    "team_id": 1,
+                    "player_id": 110 + i,
+                    "is_ball": False,
+                    "is_goalkeeper": False,
+                    "x": 40.0 + i,
+                    "y": 30.0 + i,
+                }  # pool
+            )
+        frame_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "team_id": 2,
+                "player_id": 200,
+                "is_ball": False,
+                "is_goalkeeper": False,
+                "x": 80.0,
+                "y": 34.0,
+            }
+        )
+        frame_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "team_id": None,
+                "player_id": None,
+                "is_ball": True,
+                "is_goalkeeper": False,
+                "x": 50.0,
+                "y": 34.0,
+            }
+        )
+        target_rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "team_id": 1,
+                "player_id": 100,
+                "actual_x": 18.0,
+                "actual_y": 30.0,
+                "imp_x": 15.0,
+                "imp_y": 30.0,
+                "frame_vec_x": -3.0,
+                "frame_vec_y": 0.0,
+            }
+        )
+    return pd.DataFrame(frame_rows), pd.DataFrame(target_rows)
+
+
+def test_paired_vector_controls_rd_is_subquadratic():
+    from silly_kicks.restdefense._probe import paired_vector_controls
+
+    def measure(n):
+        frames, targets = _paired_vector_controls_rd_input(n)
+        with rows_scanned_counter() as c:
+            paired_vector_controls(frames, targets, r=1, rng=np.random.default_rng(0))
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(128, 256, 512), label="paired_vector_controls_rd")
