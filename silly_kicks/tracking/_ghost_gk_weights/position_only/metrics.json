@@ -1,6 +1,6 @@
 {
-  "n_games": 173,
-  "n_samples": 966197,
+  "n_games": 179,
+  "n_samples": 1039502,
   "n_providers": 3,
   "providers": [
     "gradientsports",
@@ -9,30 +9,37 @@
   ],
   "cv_folds": 5,
   "subsample_fps": 1.0,
-  "variant": "full",
+  "variant": "default",
   "carrier_params": {
     "tolerance_m": 3.0,
     "beta": 0.0,
     "gamma": 0.25
   },
-  "training_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba",
-  "run_commit": "0ce2c2187e09212440063f15494915f0f4a5f2ba",
+  "training_commit": "4bda048b898669227a648a5f853c4314f7fdebe3",
+  "run_commit": "4bda048b898669227a648a5f853c4314f7fdebe3",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
   "hyperparameters": {
     "n_estimators": 500,
     "max_depth": 8
   },
-  "cv_mae_x_mean": 0.1680071911244539,
-  "cv_mae_x_std": 0.006081734392022603,
-  "cv_mae_y_mean": 1.1154806467718994,
-  "cv_mae_y_std": 0.032205023731503774,
-  "cv_mae_euclidean_mean": 1.1677056803754549,
-  "cv_mae_euclidean_std": 0.03344352465935537,
+  "cv_mae_x_mean": 0.16557404667061446,
+  "cv_mae_x_std": 0.0035845710767746274,
+  "cv_mae_y_mean": 1.096384912610031,
+  "cv_mae_y_std": 0.034341150155643076,
+  "cv_mae_euclidean_mean": 1.147711665204172,
+  "cv_mae_euclidean_std": 0.03518337583931125,
   "per_provider_mae_euclidean": {
-    "gradientsports": 1.1026230365296334,
-    "skillcorner": 1.2205057894302473,
-    "sportec": 1.7020457661603046
+    "gradientsports": 1.0854972872538218,
+    "skillcorner": 1.2098417690565202,
+    "sportec": 1.7000038117484682
+  },
+  "grid_x_max": 30.0,
+  "high_sweeper_stratum_mae_mean": NaN,
+  "per_provider_high_sweeper_coverage": {
+    "gradientsports": 0.0,
+    "skillcorner": 0.0,
+    "sportec": 0.0
   },
   "acceptance": {
     "overall_mae_lt_2m": true,
@@ -40,7 +47,7 @@
     "cross_fold_std_lt_05m": true,
     "artifact_size_lt_15mb": true
   },
-  "artifact_size_bytes": 2385491,
+  "artifact_size_bytes": 2389906,
   "detection_selection_bias": {
     "keeper_depth_detected_mean": 5.050323365342181,
     "keeper_depth_undetected_mean": 15.526409784723722,
@@ -52,5 +59,5 @@
     "note": "Detected keeper frames are a SELECTION-BIASED sample (the camera sees the keeper when the ball is near him), so they over-represent the engaged/advanced keeper and under-sample the deep sweeper regime GKDV cares about. Depth = goal-relative x. This is a stated limitation, not a gate -- no rule in this cycle detects it. Both bias axes are measured here: keeper depth AND ball-to-keeper distance (goal-relative; detected frames are expected to show a SMALLER ball-to-keeper distance, which IS the selection mechanism). See spec 4.3 rev 5."
   },
   "reproducibility": "restricted",
-  "reproducibility_note": "Trained on the full 179-match native corpus including gradientsports (owner-tier); not reproducible from public data. The public idsse+skillcorner arm collapsed to 0 usable folds on 17 public matches, so the restricted full-corpus position_only variant is bundled per the Risk-1 decision gate."
+  "reproducibility_note": "Trained on the full 179-match native corpus including gradientsports (owner-tier) and non-public SkillCorner matches; not reproducible from public data. Re-fit under the ADR-089 both-axes goal-relative convention unification (TF-60 Layer-3, training_commit 4bda048), same restricted corpus as the ADR-067 native re-fit it supersedes."
 }

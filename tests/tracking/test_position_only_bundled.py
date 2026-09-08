@@ -8,7 +8,8 @@ exercises the REAL bundled artifacts:
 * the ``add_*`` / serve path produces a VALUE + provenance ``"position_only"`` on a declared
   velocity-less frame (the SB360 unlock -- it was honest-NaN in 4.90.0);
 * the RESTRICTED ghost bundle carries a machine-checkable reproducibility caveat (M4);
-* the ghost ``default`` bundle is the native-SkillCorner re-fit (``training_commit=a0fc9f9``).
+* the ghost ``default`` bundle is the ADR-089 both-axes re-fit (``training_commit=_C3``), superseding
+  the ADR-067 native-SkillCorner re-fit (``_C2=a0fc9f9``).
 
 The bundled artifacts were fingerprinted on the DGX (pandas 3), so on a pandas-2 runtime their
 ``probe_sha256`` mismatches and ``load()`` emits a TOLERATED ``UnverifiableFeatureContractWarning``
@@ -38,7 +39,7 @@ pytestmark = pytest.mark.filterwarnings("ignore::silly_kicks.tracking.Unverifiab
 _WEIGHTS_ROOT = pathlib.Path(_gg.__file__).parent
 _C1 = "0ce2c2187e09212440063f15494915f0f4a5f2ba"  # ADR-067 commit (xshot/xcross position-only training_commit)
 _C2 = "a0fc9f9ab2d1f40b5a44f0b5131ea14e374e0c1a"  # ADR-067 native-SkillCorner ghost re-fit (SUPERSEDED by _C3)
-_C3 = "22678fdcb1aa3bdf687b1b50bcf56a122769691d"  # ADR-089 both-axes ghost re-fit (TF-60 Layer-3; all 5 GK variants)
+_C3 = "4bda048b898669227a648a5f853c4314f7fdebe3"  # ADR-089 both-axes ghost re-fit (TF-60 Layer-3; all 5 GK variants)
 
 
 def _declare_unavailable(frames: pd.DataFrame) -> pd.DataFrame:

@@ -44,7 +44,7 @@ double-flipped the flip=False rows once the model's y became goal-relative -- ca
 and so had not yet exercised its assertion.) This is a DECLARED re-fit + reprojection correction -- the
 condition under which this baseline is expected to move. Measured effect on this fixture
 (``sb360-fixture-2``), the prior ADR-067 native ``default`` (a0fc9f9) versus the SHIPPED both-axes
-weights (``training_commit=22678fd``) with the corrected reprojection, 6 rows, all finite:
+weights (``training_commit=4bda048``) with the corrected reprojection, 6 rows, all finite:
 **max |dx| 0.5631 m, max |dy| 2.3927 m, mean 0.7452 m, median 0.2735 m** -- the small x delta and the
 larger y delta are the both-axes signature. The baseline pins the POST-both-axes positions; the model
 ``gr_y`` is bit-identical across numpy 2.2.6 (py3.10) and 2.4.2 (py3.12+) (verified) and the uniform
