@@ -345,11 +345,16 @@ def _named_keeper_check(per_keeper: pd.DataFrame, names_map: dict) -> tuple[pd.D
 
 def _keeper_for(keeper_map: dict, game, period, team):
     """Resolved defending keeper id for a ``(game, period, team)`` -- map keys are (canonical game,
-    period AS-IS, canonical team) per ADR-078; NA when the team's keeper is unresolved."""
+    period AS-IS, canonical team) per ADR-078; NA when the team's keeper is unresolved.
+
+    Returns the CANONICAL (string) id, never the raw ``gk_id``: raw ids are int for Gradient Sports
+    and str for SkillCorner/IDSSE, so a mixed-provider ``keeper_key`` column is an unwritable
+    mixed-dtype object (pyarrow ArrowInvalid on the parquet combine); canonical_id yields a
+    consistent string (ADR-019)."""
     from silly_kicks.id_compat import canonical_id
 
     ident = keeper_map.get((canonical_id(game), period, canonical_id(team)))
-    return ident.gk_id if ident is not None else pd.NA
+    return canonical_id(ident.gk_id) if ident is not None else pd.NA
 
 
 def _measure_match(item, *, rng_seed: int) -> tuple[pd.DataFrame, dict]:
@@ -441,6 +446,12 @@ def _measure_match(item, *, rng_seed: int) -> tuple[pd.DataFrame, dict]:
 
     rows = base.join([realistic_abs, saturating_abs, gk_abs, nd_abs, *placebo, realistic_signed]).reset_index()
     rows["arm"] = _DAS_ARM
+    # Canonical (string) provider-identity columns (ADR-019): game_id (from _FRAME_KEYS) / keeper_key mix
+    # int (GS) / str (SC/IDSSE) across providers, an unwritable mixed-dtype object column on the combine.
+    from silly_kicks.id_compat import canonical_id_series
+
+    for _idc in ("game_id", "keeper_key"):
+        rows[_idc] = canonical_id_series(rows[_idc])
     return rows[_SHARD_COLUMNS], keeper_counts
 
 

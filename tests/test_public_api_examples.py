@@ -301,6 +301,13 @@ _PUBLIC_MODULE_FILES = (
     # TF-60 PR2 Layer-2 danger valuation: WFieldParams (exported) + build_w_field. Brand-new module,
     # ships clean (both documented on export).
     "silly_kicks/restdefense/_wfield.py",
+    # TF-60 Layer-3 (ADR-089): the ghost-frame ENGINE (build_restdefense_ghost_frames) + its report
+    # (RestDefenseGhostReport) remain public. _arms.py and _probe.py are NOT here: their symbols are no
+    # longer re-exported from the package __init__ -- the deterrent arms were demoted to experimental
+    # per ADR-089's validity study -- so the surface gate does not discover them, and registering either
+    # would trip test_registered_modules_are_still_public.
+    "silly_kicks/restdefense/_counterfactual.py",
+    "silly_kicks/restdefense/_ghost_report.py",
     # shot_stopping (TF-59 PR2): the three modules that DEFINE its public surface (ShotStoppingParams,
     # compute_shot_stopping, ShotStoppingReport). _columns.py holds only constants (no top-level defs),
     # so it is not discovered. Brand-new public modules -- documented on creation, not deferred.

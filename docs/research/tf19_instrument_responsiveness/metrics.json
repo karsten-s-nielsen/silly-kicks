@@ -3,15 +3,15 @@
     "delta_das": {
       "layer0": "instrument_void",
       "layer1": "not_responsive",
-      "n_domain": 123430,
+      "n_domain": 241716,
       "medians": {
-        "real_med": 0.4132680867151146,
-        "sat_med": 0.12487400122309511,
-        "gk_med": 0.05623065656490933,
-        "nd_med": 0.34993350421862424,
-        "placebo_p95": 2.9379755403315837
+        "real_med": 0.4646317492823595,
+        "sat_med": 0.12163621907727462,
+        "gk_med": 0.05630699292122188,
+        "nd_med": 0.33847450588515215,
+        "placebo_p95": 2.8346335353020593
       },
-      "n_placebo": 370290
+      "n_placebo": 725148
     },
     "delta_threat_suppression": {
       "layer0": "arm_unscoreable",
@@ -23,9 +23,9 @@
   "named_keeper": {
     "arm": "delta_das",
     "expected_direction": "negative",
-    "n_keepers": 40,
-    "n_gate_eligible": 32,
-    "n_eligible_sign_matches_expected": 15,
+    "n_keepers": 116,
+    "n_gate_eligible": 74,
+    "n_eligible_sign_matches_expected": 35,
     "n_unresolved_keeper_frames": 0,
     "behavioural_anchoring": "uninterpretable",
     "min_nonzero": 20,
@@ -57,18 +57,18 @@
         "expected_sign": "negative",
         "n_matched_keepers": 1,
         "observed_signs": [
-          "positive"
+          "negative"
         ],
         "gate_eligible": [
           true
         ],
-        "meets_prior": false
+        "meets_prior": true
       }
     }
   },
   "keeper_identity": {
-    "n_keeper_teams": 276,
-    "n_keeper_teams_resolved": 276,
+    "n_keeper_teams": 744,
+    "n_keeper_teams_resolved": 744,
     "n_keeper_teams_unresolved": 0,
     "n_unresolved_keeper_frames": 0
   },
@@ -88,17 +88,24 @@
     "gradientsports": {
       "delta_das": "scoreable",
       "delta_threat_suppression": "arm_unscoreable_no_xt"
+    },
+    "skillcorner": {
+      "delta_das": "scoreable",
+      "delta_threat_suppression": "arm_unscoreable_no_xt"
+    },
+    "idsse": {
+      "delta_das": "scoreable",
+      "delta_threat_suppression": "arm_unscoreable_no_xt"
     }
   },
-  "n_frames_scored": 123430,
+  "n_frames_scored": 241716,
   "generation": "b78992842482c8ad",
-  "n_attempted": 0,
-  "n_failed": 0,
-  "n_counters_unrecorded": 0,
-  "run_commit": "07a88f69ce12ab07a229678f6f1c48db56893072",
+  "n_shards": 179,
+  "n_matches": 179,
+  "reduce_mode": "manual-shard-read: the driver's reduce functions applied over exactly the 179-match corpus shards. The driver's --match-ids-json=None reduce would re-stream the full provider manifest (>179); scientific content is identical (same functions), frame re-enumeration skipped.",
+  "run_commit": "a867f9b326b0ef71ed000185292b698e93183d32",
   "run_tree_dirty": false,
   "run_tree_state": "clean",
-  "partition": "all",
   "input_contract": {
     "version": 1,
     "driver": "build_tf19_instrument_responsiveness",

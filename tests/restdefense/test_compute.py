@@ -14,6 +14,24 @@ from silly_kicks.tracking import resolve_defended_goals
 from tests.restdefense._fixtures import make_fitted_xt, make_rest_defense_fixture
 
 
+def test_no_committed_sample_returns_empty_not_a_crash():
+    """A match where NO action is committed-forward returns an empty samples table with the declared
+    columns (never a crash). Regression: the metric-column cast loop assumed >=1 scored sample, so a
+    zero-committed match raised KeyError('rd_num_superiority') -- which would kill a whole corpus pass
+    at the first such match (ADR-052: an empty result must still be representable, not fatal)."""
+    actions, frames = make_rest_defense_fixture()
+    frames = frames.copy()
+    ball = frames["is_ball"].astype(bool)
+    # Put each frame's ball near the in-possession team's OWN goal -> nothing committed-forward.
+    frames.loc[ball & (frames["frame_id"] == 102), "x"] = 104.0  # frame 102 is away (defends x=105)
+    frames.loc[ball & (frames["frame_id"] != 102), "x"] = 1.0  # the rest are home (defends x=0)
+    samples, report = compute_rest_defense(actions, frames, xt=make_fitted_xt())
+    assert len(samples) == 0
+    assert report.n_frames_scored == 0
+    for c in (*RD_SAMPLE_KEYS, *RD_METRIC_COLUMNS, RD_GEOMETRY_SOURCE):
+        assert c in samples.columns  # declared columns present even when empty
+
+
 def test_scored_rows_are_fully_populated_and_pinned():
     actions, frames = make_rest_defense_fixture()
     samples, report = compute_rest_defense(actions, frames, xt=make_fitted_xt())

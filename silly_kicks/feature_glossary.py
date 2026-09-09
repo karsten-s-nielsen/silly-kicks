@@ -1820,6 +1820,10 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_RESTDEFENSE_DANGER,
         higher_is_better=True,
     ),
+    # TF-60 Layer-3 counterfactual deterrent arms (restdefense._arms; ADR-089) are DELIBERATELY not
+    # glossaried: an out-of-sample validity study found the outfield arms confounded with attacking
+    # commitment, so they ship as experimental code, not public metrics, pending the
+    # counterfactual-counter redesign. See docs/research/tf60_layer3_construct_validity/.
     # -- TF-59 PR2 GK shot-stopping (shot_stopping._compute) --------------------------------------
     FeatureColumn(
         name="shots_faced",

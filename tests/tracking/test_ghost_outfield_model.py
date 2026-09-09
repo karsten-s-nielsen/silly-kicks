@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 
 from silly_kicks.id_compat import ids_match
+from silly_kicks.tracking import resolve_defended_goals
 from silly_kicks.tracking._ghost_outfield import (
     _GHOST_OUTFIELD_VELOCITY_FEATURES,
     _WEIGHTS_ROOT,
@@ -292,6 +293,29 @@ def test_serve_is_orientation_invariant_under_frame_mirror():
     assert len(m) == 4
     assert np.allclose(m["ghost_gr_x_a"], m["ghost_gr_x_b"], atol=1e-6)
     assert np.allclose(m["ghost_gr_y_a"], m["ghost_gr_y_b"], atol=1e-6)
+
+
+def test_serve_emits_frame_coords_matching_the_both_axes_inverse():
+    """TF-60 Task 4: ghost_x/_y are the model's own both-axes inverse of ghost_gr_x/_y (ADR-089).
+
+    Served on the frame (team 1 defends x=0 -> flip=False) AND its point reflection (team 1
+    defends x=105 -> flip=True), so both flip values are exercised. The serve must not re-derive
+    orientation -- it uses the same resolve_defended_goals end the extractor used.
+    """
+    model, frames = _fit_toy()
+    one = frames[frames["frame_id"] == frames["frame_id"].iloc[0]].copy()
+    for fr in (one, _point_reflect_frames(one)):
+        out = serve_ghost_outfield_positions(fr, model=model, home_team_id=1, actions=_toy_actions())
+        assert {"ghost_x", "ghost_y"} <= set(out.columns)
+        assert len(out) == 4
+        gm = resolve_defended_goals(fr)
+        for _, r in out.iterrows():
+            end = gm.get(r["game_id"], r["period_id"], r["team_id"], allow_guess=True)
+            flip = end is not None and end > 50.0
+            exp_x = (105.0 - r["ghost_gr_x"]) if flip else r["ghost_gr_x"]
+            exp_y = (68.0 - r["ghost_gr_y"]) if flip else r["ghost_gr_y"]
+            np.testing.assert_allclose(r["ghost_x"], exp_x, atol=1e-9)
+            np.testing.assert_allclose(r["ghost_y"], exp_y, atol=1e-9)
 
 
 def test_variant_key_default_on_velocity_bearing_frames():

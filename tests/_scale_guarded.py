@@ -34,6 +34,7 @@ SCALE_GUARDED: dict[str, str] = {
     "silly_kicks.restdefense._counting.count_goalside_by_sample": ("test_count_goalside_by_sample_is_subquadratic"),
     "silly_kicks.restdefense._compute._score_samples": "test_score_samples_is_subquadratic",
     "silly_kicks.gkdv._probe.paired_vector_controls": "test_paired_vector_controls_is_subquadratic",
+    "silly_kicks.restdefense._probe.paired_vector_controls": "test_paired_vector_controls_rd_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

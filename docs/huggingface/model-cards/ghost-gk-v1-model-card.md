@@ -146,7 +146,7 @@ while production served the KDE **mode** (≈4.65 m):
 |-----------|------------------------|---------|
 | old card number (`predict_mean`, sklearn, phase-categorical) | ≈1.1 m | never served (unavailable after `load()`) |
 | KDE mode (≤ v4.12) | ≈4.65 m | served through 4.12 |
-| **boosted mean (reconstructed pickle-free)** | **1.13 m** (current `full` re-fit, 5-fold aggregate; per-provider GS 1.08 / SkillCorner 1.18 / Sportec 1.67) | **served now** |
+| **boosted mean (reconstructed pickle-free)** | **1.126 m** (both-axes re-fit, 5-fold aggregate; per-provider GS 1.071 / SkillCorner 1.162 / Sportec 1.672) | **served now** |
 
 The 4.14.0 number is re-measured at re-fit on the same held-out split as the mode (not copied from the
 old ≈1.1 m card, which was a *different*, phase-categorical model). An intermediate design that served
@@ -160,6 +160,16 @@ gk_y tree ensemble + baselines for the reconstruction; `serve_estimator = "boost
 now trains `phase` numerically (closing a latent KDE categorical-routing capability gap). Both the
 bundled `default` and this Hub `full` model are re-fit; old-format artifacts fail closed on load with a
 clear "re-fit required" error.
+
+> **Both-axes goal-relative re-fit (silly-kicks 4.111.0 / ADR-089; `training_commit=4bda048`).** These
+> weights were re-fit after the ghost-GK feature extractor was corrected to apply the full **180°
+> goal-relative point reflection (both axes)**. The previous convention flipped only x (`105 − x`),
+> leaving the signed-y features (`ball_y`, `ball_vy`, `ball_to_goal_angle`, `attacker_centroid_y`) and
+> the **target `gk_y`** in absolute frame coordinates — so one physical scene scored differently at the
+> two goal ends, and away-team keepers were mislocated in y. The served `ghost_gk_x/y` change (chiefly
+> for away-team keepers); the feature-contract + chirality fingerprints change, so **pre-4.111.0
+> artifacts fail closed on load**. The aggregate held-out MAE is essentially unchanged (the correction
+> affects a subset — away-team keepers).
 
 > **Parameters-only (4.54.0; ADR-044).** The artifact format is now `metadata.version = 1.3.0`
 > (`stores_training_data = false`): the per-sample density arrays (`training_gk_x/y`, `training_leaves`)

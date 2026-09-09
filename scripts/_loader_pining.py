@@ -631,11 +631,26 @@ def build_skillcorner_frames(paths, match_id, tracking_limit):
     home_team_id = str(meta["home_team"]["id"])  # required kw-only arg below
 
     tpath = str(paths["tracking"])
-    opener = gzip.open if tpath.endswith(".gz") else open
-    with opener(tpath, "rt", encoding="utf-8") as fh:  # type: ignore[operator]
-        first = fh.read(1)
-        fh.seek(0)
-        raw = json.load(fh) if first == "[" else [json.loads(line) for line in fh if line.strip()]
+    if tpath.endswith(".parquet"):
+        # SkillCorner's newer artifact schema ships tracking as a PARQUET table (one row per frame,
+        # nested `ball_data`/`player_data` struct+list columns) instead of the older
+        # `_tracking_extrapolated.jsonl`. Read it into the SAME list-of-records shape the bronze
+        # builder consumes -- the per-frame dicts carry identical keys (`frame`, `period`,
+        # `timestamp`, `ball_data`, `player_data` with `x`/`y`/`player_id`/`is_detected`). pyarrow
+        # returns the list-of-struct `player_data` as a NUMPY object array, which the builder's
+        # `rec.get("player_data") or []` and `_head_with_player_data`'s `if not rec.get("player_data")`
+        # cannot evaluate (numpy truth-value is ambiguous), so coerce it to a plain list.
+        raw = pd.read_parquet(tpath).to_dict("records")
+        for rec in raw:
+            pdata = rec.get("player_data")
+            if pdata is not None and not isinstance(pdata, list):
+                rec["player_data"] = list(pdata)
+    else:
+        opener = gzip.open if tpath.endswith(".gz") else open
+        with opener(tpath, "rt", encoding="utf-8") as fh:  # type: ignore[operator]
+            first = fh.read(1)
+            fh.seek(0)
+            raw = json.load(fh) if first == "[" else [json.loads(line) for line in fh if line.strip()]
 
     if tracking_limit:
         raw = _head_with_player_data(raw, tracking_limit)

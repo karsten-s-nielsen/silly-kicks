@@ -25,6 +25,7 @@ from silly_kicks.tracking import (
 )
 
 from ._columns import (
+    RD_ARM_COLUMNS,
     RD_FRAME_KEYS,
     RD_GEOMETRY_SOURCE,
     RD_METRIC_COLUMNS,
@@ -223,6 +224,19 @@ def compute_rest_defense(
     scored_mask = reason.isna()
     keep = windows[scored_mask | reason.eq(_GOAL_UNRESOLVED)].reset_index(drop=True)
 
+    # No sample survived the gate (e.g. a match with no committed-forward possession). Return an empty
+    # table carrying the declared columns + a conserving report, never a crash: the metric-column cast
+    # loop below assumes >=1 scored sample, and a corpus driver WILL meet a zero-committed match (a
+    # crash there kills the whole pass). "Ran, produced nothing" stays representable (ADR-052).
+    if not len(keep):
+        report = RestDefenseReport(
+            params=params,
+            n_frames_in=len(windows),
+            n_frames_scored=0,
+            drop_reasons={str(k): int(v) for k, v in reason.dropna().value_counts().items()},
+        )
+        return pd.DataFrame(columns=_OUTPUT_COLS), report
+
     # ADR-055 build-once. _engine_tables pre-filters to resolvable teams because
     # compute_defensive_line raises GoalEndUnresolvedError per-CALL (all teams), not per-sample, so a
     # naive edge-catch would lose EVERY team's line when one is unresolved -- the pre-filter degrades
@@ -295,6 +309,9 @@ def summarize_rest_defense(samples: pd.DataFrame, *, by: Literal["possession", "
 
     resolved = samples[samples[RD_GEOMETRY_SOURCE] == "resolved"]
     numeric = [*_COUNT_COLS, *_FLOAT_METRIC_COLS]
+    # TF-60 Layer-3: also mean any arm columns present in a merged table (spec 6.4). "if present" so a
+    # Layer-1/2-only samples table (no arm columns) is byte-identical to PR1/PR2.
+    numeric += [c for c in RD_ARM_COLUMNS if c in samples.columns]
     grouped = resolved.groupby(keys, dropna=False, sort=False)
     agg = grouped[numeric].mean(numeric_only=True)
     agg["n_samples"] = grouped.size()

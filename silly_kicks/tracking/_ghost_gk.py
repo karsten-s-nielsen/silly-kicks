@@ -382,6 +382,33 @@ def _resolve_ghost_model_for_frames(
 _FIELD_LENGTH = spadlconfig.field_length  # 105.0
 _FIELD_WIDTH = spadlconfig.field_width  # 68.0
 _GOAL_Y = _FIELD_WIDTH / 2.0  # 34.0
+
+
+# --- Goal-relative transforms (ADR-089: the full 180-degree point reflection) ---
+# Module-level and self-inverse, so the extractor, the target-label builder, and
+# serve_ghost_gk_positions all share ONE formula and cannot drift (spec 4.3/5.1). `flip`
+# is True iff the defended goal is at high x. Both axes flip -- x AND y -- so a scene and
+# its point reflection to the other goal produce identical goal-relative coordinates.
+def _to_gr_x(x: float, flip: bool) -> float:
+    """Goal-relative x under the point reflection (flip iff the defended goal is at high x)."""
+    return (_FIELD_LENGTH - x) if flip else x
+
+
+def _to_gr_y(y: float, flip: bool) -> float:
+    """Goal-relative y under the point reflection (BOTH axes flip; ADR-089)."""
+    return (_FIELD_WIDTH - y) if flip else y
+
+
+def _to_gr_vx(vx: float, flip: bool) -> float:
+    """The point reflection NEGATES a velocity component."""
+    return -vx if flip else vx
+
+
+def _to_gr_vy(vy: float, flip: bool) -> float:
+    """The point reflection NEGATES a velocity component (vy alike)."""
+    return -vy if flip else vy
+
+
 # The penalty-area constants that used to live here (`_PENALTY_AREA_X`, `_PENALTY_AREA_Y_MIN/MAX`,
 # a 40.3 m box) are GONE: both the predicate and the contract declaration now read `spadlconfig`
 # through `_geo.in_penalty_area_goal_relative_array`. ADR-050 §6 closed.
@@ -731,14 +758,8 @@ def extract_ghost_gk_features(
         features = extract_ghost_gk_features(frame, gk_team_id=1, goal_x=0.0)
         features.shape  # (1, 26)
     """
-    # --- Coordinate transform ---
+    # --- Coordinate transform (ADR-089 both-axes; helpers are module-level, shared with serve) ---
     flip = goal_x > 50.0
-
-    def to_gr_x(x: float) -> float:
-        return (_FIELD_LENGTH - x) if flip else x
-
-    def to_gr_vx(vx: float) -> float:
-        return -vx if flip else vx
 
     # --- Ball ---
     ball = frame_data[frame_data["is_ball"].astype(bool)]
@@ -750,10 +771,10 @@ def extract_ghost_gk_features(
     else:
         bx_raw = by_raw = bvx_raw = bvy_raw = np.nan
 
-    ball_x = to_gr_x(bx_raw)
-    ball_y = by_raw
-    ball_vx = to_gr_vx(bvx_raw)
-    ball_vy = bvy_raw
+    ball_x = _to_gr_x(bx_raw, flip)
+    ball_y = _to_gr_y(by_raw, flip)
+    ball_vx = _to_gr_vx(bvx_raw, flip)
+    ball_vy = _to_gr_vy(bvy_raw, flip)
     ball_speed = float(np.sqrt(bvx_raw**2 + bvy_raw**2)) if not np.isnan(bvx_raw) else np.nan
     ball_dist = float(np.sqrt(ball_x**2 + (ball_y - _GOAL_Y) ** 2)) if not np.isnan(ball_x) else np.nan
 
@@ -776,7 +797,7 @@ def extract_ghost_gk_features(
 
     # --- Defensive line ---
     if len(defending) > 0:
-        def_xs = np.asarray(defending["x"].apply(to_gr_x).values)
+        def_xs = np.asarray(defending["x"].apply(lambda v: _to_gr_x(v, flip)).values)
         sorted_xs = np.sort(def_xs)
         n_back = min(4, len(sorted_xs))
         defensive_line_x = float(np.median(sorted_xs[:n_back]))
@@ -786,19 +807,19 @@ def extract_ghost_gk_features(
         defensive_line_x = deepest_defender_x = defensive_line_width = np.nan
 
     if len(gk_rows) > 0 and not np.isnan(defensive_line_x):
-        gk_x_gr = to_gr_x(float(gk_rows["x"].iloc[0]))
+        gk_x_gr = _to_gr_x(float(gk_rows["x"].iloc[0]), flip)
         defensive_line_depth = abs(defensive_line_x - gk_x_gr)
     else:
         defensive_line_depth = np.nan
 
     # --- Attacking players ---
     if len(attacking) > 0:
-        atk_xs = np.asarray(attacking["x"].apply(to_gr_x).values)
-        atk_ys = np.asarray(attacking["y"].values)
+        atk_xs = np.asarray(attacking["x"].apply(lambda v: _to_gr_x(v, flip)).values)
+        atk_ys = np.asarray(attacking["y"].apply(lambda v: _to_gr_y(v, flip)).values)
         nearest_atk_x = float(np.min(atk_xs))
         atk_cx = float(np.mean(atk_xs))
         atk_cy = float(np.mean(atk_ys))
-        # `atk_xs` is already goal-relative (via `to_gr_x`), which is what the helper expects.
+        # atk_xs/atk_ys are goal-relative (both axes, ADR-089), which is what the helper expects.
         in_box = _geo.in_penalty_area_goal_relative_array(atk_xs, atk_ys)
         attackers_in_box = int(np.sum(in_box))
     else:
@@ -807,7 +828,7 @@ def extract_ghost_gk_features(
 
     # --- Defenders behind ball ---
     if len(defending) > 0 and not np.isnan(ball_x):
-        def_xs_arr = np.asarray(defending["x"].apply(to_gr_x).values)
+        def_xs_arr = np.asarray(defending["x"].apply(lambda v: _to_gr_x(v, flip)).values)
         defenders_behind_ball = int(np.sum(def_xs_arr < ball_x))
     else:
         defenders_behind_ball = 0
@@ -816,14 +837,20 @@ def extract_ghost_gk_features(
     ball_to_goal_angle = float(np.arctan2(ball_y - _GOAL_Y, ball_x)) if not np.isnan(ball_x) else np.nan
 
     if len(attacking) > 0 and not np.isnan(ball_x):
-        atk_xs_rel = np.asarray(attacking["x"].apply(to_gr_x).values)
-        dists = np.sqrt((atk_xs_rel - ball_x) ** 2 + (np.asarray(attacking["y"].values) - ball_y) ** 2)
+        atk_xs_rel = np.asarray(attacking["x"].apply(lambda v: _to_gr_x(v, flip)).values)
+        atk_ys_rel = np.asarray(attacking["y"].apply(lambda v: _to_gr_y(v, flip)).values)
+        dists = np.sqrt((atk_xs_rel - ball_x) ** 2 + (atk_ys_rel - ball_y) ** 2)
         ball_to_nearest_atk = float(np.min(dists))
     else:
         ball_to_nearest_atk = np.nan
 
     if len(defending) >= 3:
-        coords = np.column_stack([np.asarray(defending["x"].apply(to_gr_x).values), np.asarray(defending["y"].values)])
+        coords = np.column_stack(
+            [
+                np.asarray(defending["x"].apply(lambda v: _to_gr_x(v, flip)).values),
+                np.asarray(defending["y"].apply(lambda v: _to_gr_y(v, flip)).values),
+            ]
+        )
         try:
             hull = ConvexHull(coords)
             compactness = float(hull.volume)
@@ -850,7 +877,7 @@ def extract_ghost_gk_features(
         def_line_speed = np.nan
 
     if prev_defending_centroid_x is not None and len(defending) > 0:
-        def_cx = float(np.mean(np.asarray(defending["x"].apply(to_gr_x).values)))
+        def_cx = float(np.mean(np.asarray(defending["x"].apply(lambda v: _to_gr_x(v, flip)).values)))
         def_centroid_vx = (def_cx - prev_defending_centroid_x) / dt
     else:
         def_centroid_vx = np.nan
@@ -1090,11 +1117,13 @@ def _extract_all_ghost_gk_features(
                 )
                 feature_rows.append(feat)
 
-                # GK position in goal-relative coords for labels
+                # GK position in goal-relative coords for labels (ADR-089: both axes flip,
+                # so the target matches the both-axes features and serve_ghost_gk_positions'
+                # inverse).
                 gk_x_raw = float(gk_row["x"])
                 gk_y_raw = float(gk_row["y"])
-                gk_x_gr = (_FIELD_LENGTH - gk_x_raw) if flip else gk_x_raw
-                gk_y_gr = gk_y_raw
+                gk_x_gr = _to_gr_x(gk_x_raw, flip)
+                gk_y_gr = _to_gr_y(gk_y_raw, flip)
 
                 meta_rows.append(
                     {
@@ -2893,18 +2922,46 @@ def serve_ghost_gk_positions(
                 "gk_team_id": _empty_join_key("team_id", "float64"),
                 "ghost_gr_x": pd.Series(dtype=float),
                 "ghost_gr_y": pd.Series(dtype=float),
+                "ghost_x": pd.Series(dtype=float),
+                "ghost_y": pd.Series(dtype=float),
                 "ghost_clamped": pd.Series(dtype=bool),
                 "ghost_out_of_box": pd.Series(dtype=bool),
             }
         )
+    # Frame coordinates from the model's OWN goal-relative inverse (ADR-089 both axes), so no
+    # consumer re-derives orientation (spec 4). The defended-goal end per (game, period, gk_team)
+    # comes from the SAME resolve_defended_goals seam the extractor's target labels used; flip iff
+    # the defended goal is at high x. np.where is the vectorized _to_gr_x/_to_gr_y (a per-row flip
+    # cannot use the scalar-flip helper); test_serve_emits_frame_coords_matching_the_inverse pins the
+    # equivalence. A row whose end is unresolvable (served but guess-only miss) -> NaN, never a guess.
+    _gr_x = positions[:, 0]
+    _gr_y = positions[:, 1]
+    _goal_map = resolve_defended_goals(frames)
+    _defended = np.array(
+        [
+            (np.nan if (_e := _goal_map.get(g, p, t, allow_guess=True)) is None else float(_e))
+            for g, p, t in zip(
+                meta["game_id"].to_numpy(),
+                meta["period_id"].to_numpy(),
+                meta["gk_team_id"].to_numpy(),
+                strict=True,
+            )
+        ],
+        dtype=float,
+    )
+    _flip = _defended > 50.0
+    _ghost_x = np.where(np.isnan(_defended), np.nan, np.where(_flip, _FIELD_LENGTH - _gr_x, _gr_x))
+    _ghost_y = np.where(np.isnan(_defended), np.nan, np.where(_flip, _FIELD_WIDTH - _gr_y, _gr_y))
     return pd.DataFrame(
         {
             "game_id": meta["game_id"].to_numpy(),
             "period_id": meta["period_id"].to_numpy(),
             "frame_id": meta["frame_id"].to_numpy(),
             "gk_team_id": meta["gk_team_id"].to_numpy(),
-            "ghost_gr_x": positions[:, 0],
-            "ghost_gr_y": positions[:, 1],
+            "ghost_gr_x": _gr_x,
+            "ghost_gr_y": _gr_y,
+            "ghost_x": _ghost_x,
+            "ghost_y": _ghost_y,
             "ghost_clamped": clamped.astype(bool),
             # Variant-relative ceiling (TF-60 PR3): the sweeper variant's trained hull is 52.5 m, so
             # a 40 m sweeper is IN-box for it while out-of-box for `default` (30 m). `_resolved` is

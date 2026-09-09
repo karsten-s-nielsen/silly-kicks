@@ -56,6 +56,10 @@ ARTIFACT_DRIVERS = (
     # sweep is owed -- a cited number, so the tree it ran on has to be recorded.
     "check_stage1_argmax",
     "build_gkdv_arm_values",
+    # TF-60 Layer-3 (ADR-089). Writes docs/research/tf60_layer3_construct_validity's arm-values table
+    # (per-sample outfield + keeper deterrent arms + Layer-1 anchors + resolved keeper), whose Spearman /
+    # named-keeper numbers are cited -- a corpus-fit xT surface + external pining data, so provenance.
+    "build_tf60_layer3_arm_values",
     "calibrate_xt_bandwidth",
     "measure_cover_shadow_argmax_agreement",
     "build_layer2_spells",

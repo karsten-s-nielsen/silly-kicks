@@ -944,6 +944,8 @@ _SERVE_OUTPUT_COLS: list[str] = [
     "player_id",
     "ghost_gr_x",
     "ghost_gr_y",
+    "ghost_x",
+    "ghost_y",
     "ghost_outfield_source",
 ]
 
@@ -1122,6 +1124,31 @@ def serve_ghost_outfield_positions(
         # means the deepest-n VISIBLE selection is untrustworthy, so override those ghosts to NaN.
         if visible_area is not None and len(out):
             _apply_fov_cropping(out, frames, visible_area)
+
+    # Frame coordinates from the model's OWN both-axes inverse (ADR-089), computed AFTER any FOV
+    # override so a cropped/variant-unavailable row (ghost_gr_x/_y NaN) stays NaN. The defended-goal
+    # end per (game, period, team) comes from resolve_defended_goals; flip iff it is at high x.
+    # np.where is the vectorized _gr_x/_gr_y (a per-row flip cannot use the scalar-flip helper);
+    # the equivalence is pinned by the Task-4 serve inverse test.
+    if len(out):
+        _gm = resolve_defended_goals(frames)
+        _defended = np.array(
+            [
+                (np.nan if (_e := _gm.get(g, p, t, allow_guess=True)) is None else float(_e))
+                for g, p, t in zip(
+                    out["game_id"].to_numpy(), out["period_id"].to_numpy(), out["team_id"].to_numpy(), strict=True
+                )
+            ],
+            dtype=float,
+        )
+        _flip = _defended > 50.0
+        _grx = out["ghost_gr_x"].to_numpy(dtype=float)
+        _gry = out["ghost_gr_y"].to_numpy(dtype=float)
+        out["ghost_x"] = np.where(np.isnan(_defended), np.nan, np.where(_flip, _FIELD_LENGTH - _grx, _grx))
+        out["ghost_y"] = np.where(np.isnan(_defended), np.nan, np.where(_flip, _FIELD_WIDTH - _gry, _gry))
+    else:
+        out["ghost_x"] = pd.Series(dtype=float)
+        out["ghost_y"] = pd.Series(dtype=float)
     return out[_SERVE_OUTPUT_COLS]
 
 

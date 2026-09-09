@@ -303,6 +303,19 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   opponent's offside/last line -- the anchor for rd_danger_behind_line and its
   GK-inclusive variant rd_danger_behind_line_gk.
 
+- Le et al. (2017) -- Le, H. M., Yue, Y., Carr, P. & Lucey, P. "Data-Driven
+  Ghosting Using Deep Imitation Learning."
+  Used by: silly_kicks.restdefense._counterfactual + silly_kicks.restdefense._arms
+  (TF-60 Layer 3, ADR-089). The deterrent arms are ghosting-counterfactual
+  differences (actual rearguard/keeper vs a league-average ghost) taken over
+  gkdv's generic delta seams -- the same ghosting-counterfactual application the
+  GKDV physics arms use, applied to the in-possession team's rest defense. The
+  ghost is a trained league-average baseline (ghost-outfield, ADR-087; ghost-GK
+  sweeper, ADR-083), not the Le et al. imitation-learning model.
+- Kim, ... (2026). "DEFCON: Defensive Coordination ... Graph Neural Networks."
+  arXiv:2512.10355. DEFCON-GNN. Comparator context for the rest-defense
+  counterfactual framing (TF-60 Layer 3); not implemented.
+
 - Goals Saved Above Expected (PSxG-based GSAA). Post-Shot xG (PSxG) is a
   widely-used shot-quality model (StatsBomb Post-Shot xG; American Soccer
   Analysis GSAA is the shots-faced aggregation).

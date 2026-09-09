@@ -235,6 +235,9 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: orientation and the keeper metrics have no keeper, so both legs are NaN -> `no_signal`. The fifth
 #: Layer-2 column (`rd_attacker_space_control`) is keeper-blind and still computes (differs_by_design),
 #: and all five are exercised (`differs`/`honest_nan`) on velocity + `defender_absent` + `gk_one_end`.
+#:
+#: (The two TF-60 Layer-3 deterrent arms were briefly registered here at +4 but demoted to experimental
+#: -- not public metrics -- per ADR-089's validity study, so they carry no boundary verdict.)
 NOT_EXERCISED_BUDGET = 48
 
 

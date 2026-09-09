@@ -240,6 +240,8 @@ def main() -> None:
         # ONCE per match, from the FULL frames: the seam's quantity is the MEAN GK x per
         # (game, period, team), so a per-frame map would be a different estimator.
         goal_map = resolve_defended_goals(frames)
+        from silly_kicks.id_compat import canonical_id_series  # identity columns canonicalized at the DataFrame below
+
         for rec in scored.to_dict("records"):
             gid, per, fid = rec["game_id"], rec["period_id"], rec["frame_id"]
             actual = _frame_slice(frames, gid, per, fid)
@@ -272,7 +274,12 @@ def main() -> None:
         # An EMPTY frame still writes a shard (see `_driver.write_shard`): absent means "not yet
         # run", present-and-empty means "run, scored nothing". Conflating them would make a resume
         # silently recompute.
-        return pd.DataFrame(match_rows, columns=["keeper_key", "game_id", "period_id", "frame_id", "arm", "arm_value"])
+        df = pd.DataFrame(match_rows, columns=["keeper_key", "game_id", "period_id", "frame_id", "arm", "arm_value"])
+        # Canonical (string) provider-identity columns (ADR-019): game_id / keeper_key mix int (GS) /
+        # str (SC/IDSSE) across providers, an unwritable mixed-dtype object column on the parquet combine.
+        for _idc in ("game_id", "keeper_key"):
+            df[_idc] = canonical_id_series(df[_idc])
+        return df
 
     # `reconcile` is deliberately NOT used here: this driver writes TWO per-arm tables
     # (`arm_values_delta_das` / `_delta_threat`) from one shard set, and `reconcile` writes a

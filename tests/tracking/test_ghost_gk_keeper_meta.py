@@ -42,8 +42,8 @@ def test_meta_gk_player_id_aligns_with_its_label():
     ``labels`` -- if a filter is applied to features/labels but not (identically) to meta,
     keeper identity silently drifts onto the wrong row. Build a fixture with TWO distinct
     keepers across several frames whose goal-relative *y* differs by identity (home GK at
-    gr-y 30, away GK at gr-y 40), then assert every ``meta.gk_player_id`` carries the label
-    of the keeper it names.
+    gr-y 30, away GK at raw y 40 -> gr-y 28 under the both-axes transform), then assert every
+    ``meta.gk_player_id`` carries the label of the keeper it names.
     """
     from silly_kicks.tracking import prepare_ghost_gk_training_data
     from tests.tracking.test_ghost_gk import _make_ghost_gk_frames
@@ -51,9 +51,11 @@ def test_meta_gk_player_id_aligns_with_its_label():
     parts = []
     for fid in range(1, 6):
         fr = _make_ghost_gk_frames(frame_id=fid, timestamp=float(fid))
-        # Give the two keepers DISTINCT goal-relative y so identity is checkable.
-        # Only x flips under the goal-relative transform; y is preserved, so the raw y IS
-        # the goal-relative y for both ends. Home GK "p1" -> gr-y 30; away GK "a1" -> gr-y 40.
+        # Give the two keepers DISTINCT goal-relative y so identity is checkable. Under the ADR-089
+        # both-axes goal-relative transform BOTH x and y flip for a high-x defended goal: the home GK
+        # "p1" defends the low-x goal (flip=False) so gr-y = raw y = 30; the away GK "a1" defends the
+        # high-x goal (flip=True) so gr-y = 68 - 40 = 28. The two gr-y stay DISTINCT (30 vs 28), so a
+        # meta/label misalignment still surfaces below.
         fr.loc[(fr["player_id"] == "p1") & fr["is_goalkeeper"], "y"] = 30.0
         fr.loc[(fr["player_id"] == "a1") & fr["is_goalkeeper"], "y"] = 40.0
         parts.append(fr)
@@ -69,8 +71,9 @@ def test_meta_gk_player_id_aligns_with_its_label():
     assert "gk_player_id" in meta.columns
     assert "gk_visibility" in meta.columns
 
-    # Identity <-> label: the row whose keeper is "p1" carries the y=30 label; "a1" -> y=40.
-    for pid, expected_y in (("p1", 30.0), ("a1", 40.0)):
+    # Identity <-> label: the row whose keeper is "p1" carries the gr-y=30 label; "a1" -> gr-y=28
+    # (raw y 40 point-reflected for its high-x defended goal, ADR-089 both-axes transform).
+    for pid, expected_y in (("p1", 30.0), ("a1", 28.0)):
         sub = meta[meta["gk_player_id"] == pid]
         assert len(sub) > 0, f"no rows for keeper {pid}"
         assert np.allclose(labels.loc[sub.index, "gk_y"].to_numpy(), expected_y)
