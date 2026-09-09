@@ -1,0 +1,1043 @@
+{
+  "run_commit": "a867f9b326b0ef71ed000185292b698e93183d32",
+  "run_tree_dirty": false,
+  "n_turnovers": 15113,
+  "n_games": 179,
+  "by_provider_counts": {
+    "gradientsports": 7796,
+    "skillcorner": 6449,
+    "idsse": 868
+  },
+  "counter_danger_summary": {
+    "max_xt_mean": 0.01962,
+    "shot_rate": 0.0298
+  },
+  "ALL": {
+    "label": "all-179",
+    "n_turnovers": 15113,
+    "n_games": 179,
+    "rd_outfield_deter_threat__spearman": {
+      "n": 14794,
+      "spearman_rho": 0.0131,
+      "spearman_p": 0.11193609515123952,
+      "ols_arm_coef": -0.001245,
+      "ols_arm_t": -2.566,
+      "valid_direction (rho>0 & p<0.05)": false
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_turnoverx": {
+      "n": 14794,
+      "n_treated": 7397,
+      "att": 0.001327,
+      "se": 0.000562,
+      "att_over_se": 2.361,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.012
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_commitment": {
+      "n": 14955,
+      "n_treated": 7477,
+      "att": 0.000495,
+      "se": 0.000518,
+      "att_over_se": 0.955,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.043
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_both": {
+      "n": 14789,
+      "n_treated": 7394,
+      "att": 0.00137,
+      "se": 0.000523,
+      "att_over_se": 2.622,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.036
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_none": {
+      "n": 14960,
+      "n_treated": 7480,
+      "att": -0.000826,
+      "se": 0.000606,
+      "att_over_se": -1.363,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.03
+    },
+    "rd_outfield_deter_threat__mediation": {
+      "n": 14794,
+      "a_arm_to_turnoverx": [
+        2.99649,
+        9.8
+      ],
+      "b_turnoverx_to_counter": [
+        0.000356,
+        27.52
+      ],
+      "total_effect": 0.000124,
+      "NDE_direct": [
+        -0.000943,
+        -1.95
+      ],
+      "NIE_indirect": 0.001067,
+      "NIE_sobel_z": 9.24,
+      "prop_mediated": 8.587
+    },
+    "rd_gk_deter_threat__spearman": {
+      "n": 14794,
+      "spearman_rho": 0.0196,
+      "spearman_p": 0.017331813020716173,
+      "ols_arm_coef": 0.002615,
+      "ols_arm_t": 1.054,
+      "valid_direction (rho>0 & p<0.05)": true
+    },
+    "rd_gk_deter_threat__ATT_ctrl_turnoverx": {
+      "n": 14794,
+      "n_treated": 7397,
+      "att": -0.001415,
+      "se": 0.000545,
+      "att_over_se": -2.598,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.036
+    },
+    "rd_gk_deter_threat__ATT_ctrl_commitment": {
+      "n": 14955,
+      "n_treated": 7477,
+      "att": -0.002309,
+      "se": 0.000569,
+      "att_over_se": -4.057,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.015
+    },
+    "rd_gk_deter_threat__ATT_ctrl_both": {
+      "n": 14789,
+      "n_treated": 7394,
+      "att": -0.001841,
+      "se": 0.00057,
+      "att_over_se": -3.232,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.012
+    },
+    "rd_gk_deter_threat__ATT_ctrl_none": {
+      "n": 14960,
+      "n_treated": 7480,
+      "att": -0.001255,
+      "se": 0.000528,
+      "att_over_se": -2.378,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.029
+    },
+    "rd_gk_deter_threat__mediation": {
+      "n": 14794,
+      "a_arm_to_turnoverx": [
+        -0.24365,
+        -0.16
+      ],
+      "b_turnoverx_to_counter": [
+        0.000354,
+        27.46
+      ],
+      "total_effect": 0.003111,
+      "NDE_direct": [
+        0.003197,
+        1.3
+      ],
+      "NIE_indirect": -8.6e-05,
+      "NIE_sobel_z": -0.16,
+      "prop_mediated": -0.028
+    },
+    "rd_outfield_deter_space__spearman": {
+      "n": 14794,
+      "spearman_rho": 0.1002,
+      "spearman_p": 2.64001596767725e-34,
+      "ols_arm_coef": 0.001195,
+      "ols_arm_t": 1.112,
+      "valid_direction (rho>0 & p<0.05)": true
+    },
+    "rd_outfield_deter_space__ATT_ctrl_turnoverx": {
+      "n": 14794,
+      "n_treated": 7397,
+      "att": -3.6e-05,
+      "se": 0.000582,
+      "att_over_se": -0.063,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.084
+    },
+    "rd_outfield_deter_space__ATT_ctrl_commitment": {
+      "n": 14955,
+      "n_treated": 7477,
+      "att": -0.000458,
+      "se": 0.000557,
+      "att_over_se": -0.822,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.08
+    },
+    "rd_outfield_deter_space__ATT_ctrl_both": {
+      "n": 14789,
+      "n_treated": 7394,
+      "att": 0.000372,
+      "se": 0.000583,
+      "att_over_se": 0.639,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.097
+    },
+    "rd_outfield_deter_space__ATT_ctrl_none": {
+      "n": 14960,
+      "n_treated": 7480,
+      "att": -0.003504,
+      "se": 0.000672,
+      "att_over_se": -5.212,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.05
+    },
+    "rd_outfield_deter_space__mediation": {
+      "n": 14794,
+      "a_arm_to_turnoverx": [
+        8.72412,
+        12.96
+      ],
+      "b_turnoverx_to_counter": [
+        0.000353,
+        27.2
+      ],
+      "total_effect": 0.00406,
+      "NDE_direct": [
+        0.000982,
+        0.92
+      ],
+      "NIE_indirect": 0.003077,
+      "NIE_sobel_z": 11.7,
+      "prop_mediated": 0.758
+    },
+    "rd_gk_deter_space__spearman": {
+      "n": 14794,
+      "spearman_rho": 0.012,
+      "spearman_p": 0.14539898714578267,
+      "ols_arm_coef": 0.000294,
+      "ols_arm_t": 0.013,
+      "valid_direction (rho>0 & p<0.05)": false
+    },
+    "rd_gk_deter_space__ATT_ctrl_turnoverx": {
+      "n": 14794,
+      "n_treated": 7397,
+      "att": -0.000752,
+      "se": 0.00056,
+      "att_over_se": -1.341,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.029
+    },
+    "rd_gk_deter_space__ATT_ctrl_commitment": {
+      "n": 14955,
+      "n_treated": 7477,
+      "att": -0.000642,
+      "se": 0.00056,
+      "att_over_se": -1.146,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.037
+    },
+    "rd_gk_deter_space__ATT_ctrl_both": {
+      "n": 14789,
+      "n_treated": 7394,
+      "att": -0.000985,
+      "se": 0.000549,
+      "att_over_se": -1.793,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.025
+    },
+    "rd_gk_deter_space__ATT_ctrl_none": {
+      "n": 14960,
+      "n_treated": 7480,
+      "att": -0.000637,
+      "se": 0.000572,
+      "att_over_se": -1.113,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.028
+    },
+    "rd_gk_deter_space__mediation": {
+      "n": 14794,
+      "a_arm_to_turnoverx": [
+        26.1423,
+        1.84
+      ],
+      "b_turnoverx_to_counter": [
+        0.000354,
+        27.44
+      ],
+      "total_effect": 0.017879,
+      "NDE_direct": [
+        0.008626,
+        0.39
+      ],
+      "NIE_indirect": 0.009253,
+      "NIE_sobel_z": 1.83,
+      "prop_mediated": 0.518
+    }
+  },
+  "full_tracking_only (sportec/idsse)": {
+    "label": "full-tracking",
+    "n_turnovers": 868,
+    "n_games": 7,
+    "rd_outfield_deter_threat__spearman": {
+      "n": 781,
+      "spearman_rho": -0.0264,
+      "spearman_p": 0.46117857995913314,
+      "ols_arm_coef": -0.004192,
+      "ols_arm_t": -1.357,
+      "valid_direction (rho>0 & p<0.05)": false
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_turnoverx": {
+      "n": 781,
+      "n_treated": 390,
+      "att": 0.002379,
+      "se": 0.003169,
+      "att_over_se": 0.751,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.071
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_commitment": {
+      "n": 781,
+      "n_treated": 390,
+      "att": 0.002106,
+      "se": 0.003505,
+      "att_over_se": 0.601,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.051
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_both": {
+      "n": 781,
+      "n_treated": 390,
+      "att": 0.003032,
+      "se": 0.003139,
+      "att_over_se": 0.966,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.088
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_none": {
+      "n": 781,
+      "n_treated": 390,
+      "att": 0.004217,
+      "se": 0.003063,
+      "att_over_se": 1.377,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.104
+    },
+    "rd_outfield_deter_threat__mediation": {
+      "n": 781,
+      "a_arm_to_turnoverx": [
+        1.15489,
+        0.67
+      ],
+      "b_turnoverx_to_counter": [
+        0.000459,
+        7.19
+      ],
+      "total_effect": -0.003661,
+      "NDE_direct": [
+        -0.004192,
+        -1.36
+      ],
+      "NIE_indirect": 0.000531,
+      "NIE_sobel_z": 0.66,
+      "prop_mediated": -0.145
+    },
+    "rd_gk_deter_threat__spearman": {
+      "n": 781,
+      "spearman_rho": 0.0045,
+      "spearman_p": 0.9009758675105025,
+      "ols_arm_coef": -0.000543,
+      "ols_arm_t": -0.096,
+      "valid_direction (rho>0 & p<0.05)": false
+    },
+    "rd_gk_deter_threat__ATT_ctrl_turnoverx": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.002297,
+      "se": 0.003564,
+      "att_over_se": -0.644,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.037
+    },
+    "rd_gk_deter_threat__ATT_ctrl_commitment": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.004587,
+      "se": 0.003988,
+      "att_over_se": -1.15,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.045
+    },
+    "rd_gk_deter_threat__ATT_ctrl_both": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.007032,
+      "se": 0.004531,
+      "att_over_se": -1.552,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.075
+    },
+    "rd_gk_deter_threat__ATT_ctrl_none": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.003551,
+      "se": 0.003917,
+      "att_over_se": -0.907,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.083
+    },
+    "rd_gk_deter_threat__mediation": {
+      "n": 781,
+      "a_arm_to_turnoverx": [
+        -4.49717,
+        -1.42
+      ],
+      "b_turnoverx_to_counter": [
+        0.000457,
+        7.13
+      ],
+      "total_effect": -0.002598,
+      "NDE_direct": [
+        -0.000543,
+        -0.1
+      ],
+      "NIE_indirect": -0.002055,
+      "NIE_sobel_z": -1.39,
+      "prop_mediated": 0.791
+    },
+    "rd_outfield_deter_space__spearman": {
+      "n": 781,
+      "spearman_rho": 0.0573,
+      "spearman_p": 0.10936960266114282,
+      "ols_arm_coef": -0.002649,
+      "ols_arm_t": -0.298,
+      "valid_direction (rho>0 & p<0.05)": false
+    },
+    "rd_outfield_deter_space__ATT_ctrl_turnoverx": {
+      "n": 781,
+      "n_treated": 390,
+      "att": 0.003981,
+      "se": 0.003503,
+      "att_over_se": 1.137,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.055
+    },
+    "rd_outfield_deter_space__ATT_ctrl_commitment": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.000736,
+      "se": 0.004235,
+      "att_over_se": -0.174,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.049
+    },
+    "rd_outfield_deter_space__ATT_ctrl_both": {
+      "n": 781,
+      "n_treated": 390,
+      "att": 0.003962,
+      "se": 0.003127,
+      "att_over_se": 1.267,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.039
+    },
+    "rd_outfield_deter_space__ATT_ctrl_none": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.000417,
+      "se": 0.004158,
+      "att_over_se": -0.1,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.136
+    },
+    "rd_outfield_deter_space__mediation": {
+      "n": 781,
+      "a_arm_to_turnoverx": [
+        -3.69742,
+        -0.74
+      ],
+      "b_turnoverx_to_counter": [
+        0.000457,
+        7.14
+      ],
+      "total_effect": -0.004338,
+      "NDE_direct": [
+        -0.002649,
+        -0.3
+      ],
+      "NIE_indirect": -0.001689,
+      "NIE_sobel_z": -0.74,
+      "prop_mediated": 0.389
+    },
+    "rd_gk_deter_space__spearman": {
+      "n": 781,
+      "spearman_rho": 0.0766,
+      "spearman_p": 0.03236914454987824,
+      "ols_arm_coef": 0.008681,
+      "ols_arm_t": 0.177,
+      "valid_direction (rho>0 & p<0.05)": true
+    },
+    "rd_gk_deter_space__ATT_ctrl_turnoverx": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.002025,
+      "se": 0.003951,
+      "att_over_se": -0.513,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.029
+    },
+    "rd_gk_deter_space__ATT_ctrl_commitment": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.003379,
+      "se": 0.003679,
+      "att_over_se": -0.918,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.009
+    },
+    "rd_gk_deter_space__ATT_ctrl_both": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.003243,
+      "se": 0.004331,
+      "att_over_se": -0.749,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.055
+    },
+    "rd_gk_deter_space__ATT_ctrl_none": {
+      "n": 781,
+      "n_treated": 390,
+      "att": -0.003452,
+      "se": 0.004356,
+      "att_over_se": -0.792,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.073
+    },
+    "rd_gk_deter_space__mediation": {
+      "n": 781,
+      "a_arm_to_turnoverx": [
+        23.16436,
+        0.84
+      ],
+      "b_turnoverx_to_counter": [
+        0.000457,
+        7.14
+      ],
+      "total_effect": 0.019266,
+      "NDE_direct": [
+        0.008681,
+        0.18
+      ],
+      "NIE_indirect": 0.010585,
+      "NIE_sobel_z": 0.84,
+      "prop_mediated": 0.549
+    }
+  },
+  "gradientsports_only": {
+    "label": "GS",
+    "n_turnovers": 7796,
+    "n_games": 64,
+    "rd_outfield_deter_threat__spearman": {
+      "n": 7564,
+      "spearman_rho": 0.0422,
+      "spearman_p": 0.00024008315583174438,
+      "ols_arm_coef": -0.000881,
+      "ols_arm_t": -1.41,
+      "valid_direction (rho>0 & p<0.05)": true
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_turnoverx": {
+      "n": 7564,
+      "n_treated": 3782,
+      "att": 0.001112,
+      "se": 0.000685,
+      "att_over_se": 1.624,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.019
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_commitment": {
+      "n": 7725,
+      "n_treated": 3862,
+      "att": 0.00115,
+      "se": 0.000632,
+      "att_over_se": 1.819,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.022
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_both": {
+      "n": 7559,
+      "n_treated": 3779,
+      "att": 0.000323,
+      "se": 0.000711,
+      "att_over_se": 0.455,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.036
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_none": {
+      "n": 7730,
+      "n_treated": 3865,
+      "att": -0.000163,
+      "se": 0.000704,
+      "att_over_se": -0.231,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.01
+    },
+    "rd_outfield_deter_threat__mediation": {
+      "n": 7564,
+      "a_arm_to_turnoverx": [
+        2.88446,
+        6.54
+      ],
+      "b_turnoverx_to_counter": [
+        0.000432,
+        26.61
+      ],
+      "total_effect": 0.000366,
+      "NDE_direct": [
+        -0.000881,
+        -1.41
+      ],
+      "NIE_indirect": 0.001247,
+      "NIE_sobel_z": 6.35,
+      "prop_mediated": 3.409
+    },
+    "rd_gk_deter_threat__spearman": {
+      "n": 7564,
+      "spearman_rho": 0.0301,
+      "spearman_p": 0.008765205962920112,
+      "ols_arm_coef": 0.001734,
+      "ols_arm_t": 0.483,
+      "valid_direction (rho>0 & p<0.05)": true
+    },
+    "rd_gk_deter_threat__ATT_ctrl_turnoverx": {
+      "n": 7564,
+      "n_treated": 3782,
+      "att": -0.000929,
+      "se": 0.000806,
+      "att_over_se": -1.153,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.03
+    },
+    "rd_gk_deter_threat__ATT_ctrl_commitment": {
+      "n": 7725,
+      "n_treated": 3862,
+      "att": -0.001295,
+      "se": 0.000694,
+      "att_over_se": -1.866,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.023
+    },
+    "rd_gk_deter_threat__ATT_ctrl_both": {
+      "n": 7559,
+      "n_treated": 3779,
+      "att": -0.00135,
+      "se": 0.000766,
+      "att_over_se": -1.764,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.024
+    },
+    "rd_gk_deter_threat__ATT_ctrl_none": {
+      "n": 7730,
+      "n_treated": 3865,
+      "att": -0.001351,
+      "se": 0.000706,
+      "att_over_se": -1.914,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.007
+    },
+    "rd_gk_deter_threat__mediation": {
+      "n": 7564,
+      "a_arm_to_turnoverx": [
+        7.9684,
+        3.13
+      ],
+      "b_turnoverx_to_counter": [
+        0.00043,
+        26.54
+      ],
+      "total_effect": 0.005163,
+      "NDE_direct": [
+        0.001734,
+        0.48
+      ],
+      "NIE_indirect": 0.003429,
+      "NIE_sobel_z": 3.11,
+      "prop_mediated": 0.664
+    },
+    "rd_outfield_deter_space__spearman": {
+      "n": 7564,
+      "spearman_rho": 0.1182,
+      "spearman_p": 6.304993176206241e-25,
+      "ols_arm_coef": 0.002687,
+      "ols_arm_t": 1.832,
+      "valid_direction (rho>0 & p<0.05)": true
+    },
+    "rd_outfield_deter_space__ATT_ctrl_turnoverx": {
+      "n": 7564,
+      "n_treated": 3782,
+      "att": -0.000691,
+      "se": 0.000827,
+      "att_over_se": -0.835,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.067
+    },
+    "rd_outfield_deter_space__ATT_ctrl_commitment": {
+      "n": 7725,
+      "n_treated": 3862,
+      "att": 0.000184,
+      "se": 0.000668,
+      "att_over_se": 0.275,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.074
+    },
+    "rd_outfield_deter_space__ATT_ctrl_both": {
+      "n": 7559,
+      "n_treated": 3779,
+      "att": -0.00059,
+      "se": 0.00075,
+      "att_over_se": -0.787,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.077
+    },
+    "rd_outfield_deter_space__ATT_ctrl_none": {
+      "n": 7730,
+      "n_treated": 3865,
+      "att": -0.003658,
+      "se": 0.000732,
+      "att_over_se": -5.0,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.01
+    },
+    "rd_outfield_deter_space__mediation": {
+      "n": 7564,
+      "a_arm_to_turnoverx": [
+        8.60641,
+        8.34
+      ],
+      "b_turnoverx_to_counter": [
+        0.000428,
+        26.28
+      ],
+      "total_effect": 0.006368,
+      "NDE_direct": [
+        0.002687,
+        1.83
+      ],
+      "NIE_indirect": 0.003681,
+      "NIE_sobel_z": 7.95,
+      "prop_mediated": 0.578
+    },
+    "rd_gk_deter_space__spearman": {
+      "n": 7564,
+      "spearman_rho": 0.0101,
+      "spearman_p": 0.3800501814796879,
+      "ols_arm_coef": 0.002116,
+      "ols_arm_t": 0.056,
+      "valid_direction (rho>0 & p<0.05)": false
+    },
+    "rd_gk_deter_space__ATT_ctrl_turnoverx": {
+      "n": 7564,
+      "n_treated": 3782,
+      "att": 0.00019,
+      "se": 0.000697,
+      "att_over_se": 0.273,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.041
+    },
+    "rd_gk_deter_space__ATT_ctrl_commitment": {
+      "n": 7725,
+      "n_treated": 3862,
+      "att": 9.4e-05,
+      "se": 0.000727,
+      "att_over_se": 0.129,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.024
+    },
+    "rd_gk_deter_space__ATT_ctrl_both": {
+      "n": 7559,
+      "n_treated": 3779,
+      "att": -0.00017,
+      "se": 0.000707,
+      "att_over_se": -0.24,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.059
+    },
+    "rd_gk_deter_space__ATT_ctrl_none": {
+      "n": 7730,
+      "n_treated": 3865,
+      "att": -0.000275,
+      "se": 0.00077,
+      "att_over_se": -0.357,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.008
+    },
+    "rd_gk_deter_space__mediation": {
+      "n": 7564,
+      "a_arm_to_turnoverx": [
+        58.18118,
+        2.18
+      ],
+      "b_turnoverx_to_counter": [
+        0.000431,
+        26.57
+      ],
+      "total_effect": 0.027166,
+      "NDE_direct": [
+        0.002116,
+        0.06
+      ],
+      "NIE_indirect": 0.02505,
+      "NIE_sobel_z": 2.18,
+      "prop_mediated": 0.922
+    }
+  },
+  "skillcorner_only": {
+    "label": "SC",
+    "n_turnovers": 6449,
+    "n_games": 108,
+    "rd_outfield_deter_threat__spearman": {
+      "n": 6449,
+      "spearman_rho": 0.0183,
+      "spearman_p": 0.14252756353152782,
+      "ols_arm_coef": -0.000284,
+      "ols_arm_t": -0.39,
+      "valid_direction (rho>0 & p<0.05)": false
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_turnoverx": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": 0.001377,
+      "se": 0.000788,
+      "att_over_se": 1.749,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.019
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_commitment": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": 2e-06,
+      "se": 0.000855,
+      "att_over_se": 0.003,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.023
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_both": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": 0.001215,
+      "se": 0.000744,
+      "att_over_se": 1.633,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.024
+    },
+    "rd_outfield_deter_threat__ATT_ctrl_none": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": 0.000226,
+      "se": 0.000746,
+      "att_over_se": 0.303,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.038
+    },
+    "rd_outfield_deter_threat__mediation": {
+      "n": 6449,
+      "a_arm_to_turnoverx": [
+        3.39165,
+        8.17
+      ],
+      "b_turnoverx_to_counter": [
+        0.000199,
+        9.17
+      ],
+      "total_effect": 0.000392,
+      "NDE_direct": [
+        -0.000284,
+        -0.39
+      ],
+      "NIE_indirect": 0.000676,
+      "NIE_sobel_z": 6.1,
+      "prop_mediated": 1.723
+    },
+    "rd_gk_deter_threat__spearman": {
+      "n": 6449,
+      "spearman_rho": 0.0279,
+      "spearman_p": 0.02526095000520211,
+      "ols_arm_coef": 0.024539,
+      "ols_arm_t": 3.174,
+      "valid_direction (rho>0 & p<0.05)": true
+    },
+    "rd_gk_deter_threat__ATT_ctrl_turnoverx": {
+      "n": 6449,
+      "n_treated": 3103,
+      "att": -0.001115,
+      "se": 0.000742,
+      "att_over_se": -1.504,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.028
+    },
+    "rd_gk_deter_threat__ATT_ctrl_commitment": {
+      "n": 6449,
+      "n_treated": 3103,
+      "att": -0.001763,
+      "se": 0.00076,
+      "att_over_se": -2.32,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.034
+    },
+    "rd_gk_deter_threat__ATT_ctrl_both": {
+      "n": 6449,
+      "n_treated": 3103,
+      "att": -0.002213,
+      "se": 0.000846,
+      "att_over_se": -2.615,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.046
+    },
+    "rd_gk_deter_threat__ATT_ctrl_none": {
+      "n": 6449,
+      "n_treated": 3103,
+      "att": -0.002163,
+      "se": 0.000934,
+      "att_over_se": -2.316,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.032
+    },
+    "rd_gk_deter_threat__mediation": {
+      "n": 6449,
+      "a_arm_to_turnoverx": [
+        -14.95148,
+        -3.36
+      ],
+      "b_turnoverx_to_counter": [
+        0.000201,
+        9.31
+      ],
+      "total_effect": 0.02153,
+      "NDE_direct": [
+        0.024539,
+        3.17
+      ],
+      "NIE_indirect": -0.003009,
+      "NIE_sobel_z": -3.16,
+      "prop_mediated": -0.14
+    },
+    "rd_outfield_deter_space__spearman": {
+      "n": 6449,
+      "spearman_rho": 0.068,
+      "spearman_p": 4.627799728816633e-08,
+      "ols_arm_coef": 0.000593,
+      "ols_arm_t": 0.402,
+      "valid_direction (rho>0 & p<0.05)": true
+    },
+    "rd_outfield_deter_space__ATT_ctrl_turnoverx": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": -0.000735,
+      "se": 0.000881,
+      "att_over_se": -0.835,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.063
+    },
+    "rd_outfield_deter_space__ATT_ctrl_commitment": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": -0.002712,
+      "se": 0.001022,
+      "att_over_se": -2.654,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.095
+    },
+    "rd_outfield_deter_space__ATT_ctrl_both": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": -0.001562,
+      "se": 0.000961,
+      "att_over_se": -1.625,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.073
+    },
+    "rd_outfield_deter_space__ATT_ctrl_none": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": -0.001545,
+      "se": 0.000824,
+      "att_over_se": -1.875,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.097
+    },
+    "rd_outfield_deter_space__mediation": {
+      "n": 6449,
+      "a_arm_to_turnoverx": [
+        9.77259,
+        11.73
+      ],
+      "b_turnoverx_to_counter": [
+        0.000197,
+        9.03
+      ],
+      "total_effect": 0.00252,
+      "NDE_direct": [
+        0.000593,
+        0.4
+      ],
+      "NIE_indirect": 0.001927,
+      "NIE_sobel_z": 7.15,
+      "prop_mediated": 0.765
+    },
+    "rd_gk_deter_space__spearman": {
+      "n": 6449,
+      "spearman_rho": 0.0104,
+      "spearman_p": 0.40391520654313723,
+      "ols_arm_coef": 0.002184,
+      "ols_arm_t": 0.04,
+      "valid_direction (rho>0 & p<0.05)": false
+    },
+    "rd_gk_deter_space__ATT_ctrl_turnoverx": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": -0.001348,
+      "se": 0.000857,
+      "att_over_se": -1.574,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.025
+    },
+    "rd_gk_deter_space__ATT_ctrl_commitment": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": -0.000304,
+      "se": 0.000788,
+      "att_over_se": -0.386,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.01
+    },
+    "rd_gk_deter_space__ATT_ctrl_both": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": -0.001889,
+      "se": 0.000835,
+      "att_over_se": -2.263,
+      "valid_ATT<0_sig": true,
+      "max_abs_smd_post": 0.032
+    },
+    "rd_gk_deter_space__ATT_ctrl_none": {
+      "n": 6449,
+      "n_treated": 3224,
+      "att": -0.000485,
+      "se": 0.000941,
+      "att_over_se": -0.516,
+      "valid_ATT<0_sig": false,
+      "max_abs_smd_post": 0.023
+    },
+    "rd_gk_deter_space__mediation": {
+      "n": 6449,
+      "a_arm_to_turnoverx": [
+        -20.35031,
+        -0.64
+      ],
+      "b_turnoverx_to_counter": [
+        0.000198,
+        9.18
+      ],
+      "total_effect": -0.001854,
+      "NDE_direct": [
+        0.002184,
+        0.04
+      ],
+      "NIE_indirect": -0.004038,
+      "NIE_sobel_z": -0.64,
+      "prop_mediated": 2.178
+    }
+  }
+}

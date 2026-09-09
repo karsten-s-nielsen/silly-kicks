@@ -49,12 +49,21 @@ The frozen `default`/`position_only`/`full` variants are **unchanged** &mdash; a
 
 | Metric | Value |
 |---|---|
-| Held-out CV euclidean MAE | **1.164 m** (per-provider: Gradient Sports 1.095 / SkillCorner 1.217 / Sportec 1.742) |
-| Boosted-reconstruction parity vs sklearn | 1.28e-13 (exact) |
-| **> 30 m high-sweeper stratum MAE** | **~2.03 m** |
+| Held-out CV euclidean MAE | **1.157 m** (per-provider: Gradient Sports 1.087 / SkillCorner 1.216 / Sportec 1.724) |
+| Boosted-reconstruction parity vs sklearn | 1.78e-13 (exact) |
+| **> 30 m high-sweeper stratum MAE** | **~1.98 m** |
 
 `> 30 m` coverage is IDSSE/Sportec-dominated (11.5 %); SkillCorner 0.24 %; **Gradient Sports 0.0 %**
 (see the data caveat).
+
+> **Both-axes goal-relative re-fit (silly-kicks 4.111.0 / ADR-089; `training_commit=4bda048`).** These
+> weights were re-fit after the ghost-GK feature extractor was corrected to apply the full **180°
+> goal-relative point reflection (both axes)** — the previous convention flipped only x, leaving the
+> signed-y features (the velocity-less variant keeps `ball_y`, `ball_to_goal_angle`,
+> `attacker_centroid_y`) and the target `gk_y` in absolute frame coordinates, mislocating away-team
+> keepers in y. The served `ghost_gk_x/y` change (chiefly for away-team keepers) and the
+> feature-contract + chirality fingerprints change, so **pre-4.111.0 artifacts fail closed on load**.
+> The aggregate MAE is essentially unchanged (the correction affects the away-team subset).
 
 ## Training data
 
@@ -96,5 +105,5 @@ Le et al. 2017 (MIT Sloan); Dutta et al. 2024 (arXiv:2406.17220); Pospisil &amp;
 ## More information
 
 - **License:** [MIT](https://opensource.org/licenses/MIT) &middot; **Library:**
-  [silly-kicks](https://pypi.org/project/silly-kicks/) (v4.105.0+) &middot;
-  [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-067 / ADR-083.
+  [silly-kicks](https://pypi.org/project/silly-kicks/) (**v4.111.0+** for these both-axes weights) &middot;
+  [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-067 / ADR-083 / ADR-089.

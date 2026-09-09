@@ -3,8 +3,15 @@
 Rest defense (*Restverteidigung*) is the defensive rearguard an IN-POSSESSION team keeps while
 attacking, to blunt the opponent's counter after a loss. This package ships the descriptive
 Layer-1 structure KPIs (numerical superiority behind the ball, rest-defense zone occupancy,
-rearguard shape, GK line-height and GK-to-line distance), sampled at the in-possession team's
-on-ball action grid so it works on both continuous tracking and StatsBomb-360 freeze-frames.
+rearguard shape, GK line-height and GK-to-line distance) plus the Layer-2 danger-behind-line
+valuation, sampled at the in-possession team's on-ball action grid so it works on both continuous
+tracking and StatsBomb-360 freeze-frames.
+
+The Layer-3 counterfactual deterrent arms (``_arms``) are present as EXPERIMENTAL code, not public
+metrics: an out-of-sample validity study (``docs/research/tf60_layer3_construct_validity/``) found
+the outfield deterrent arms confounded with attacking commitment, so the arm functions and their
+columns are NOT part of the public surface, pending the counterfactual-counter redesign (ADR-089).
+The metric-free ghost-frame engine ``build_restdefense_ghost_frames`` + its report stay public.
 
 Hexagonal: consumes ``silly_kicks.tracking`` (and, in later cycles, ``silly_kicks.gkdv``) PUBLIC
 seams only; NOTHING imports ``restdefense`` and ``tracking`` must never import it (pinned by
@@ -16,25 +23,10 @@ See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
-from ._arms import (
-    merge_rest_defense,
-    rest_defense_gk_deterrent,
-    rest_defense_outfield_deterrent,
-)
 from ._columns import (
-    RD_ARM_COLUMNS,
-    RD_ARM_SOURCE_VALUES,
-    RD_GK_ARM_COLUMNS,
-    RD_GK_DETER_SPACE,
-    RD_GK_DETER_THREAT,
-    RD_GK_SOURCE,
     RD_LAYER1_COLUMNS,
     RD_LAYER2_COLUMNS,
     RD_METRIC_COLUMNS,
-    RD_OUTFIELD_ARM_COLUMNS,
-    RD_OUTFIELD_DETER_SPACE,
-    RD_OUTFIELD_DETER_THREAT,
-    RD_OUTFIELD_SOURCE,
     RD_SAMPLE_KEYS,
 )
 from ._compute import compute_rest_defense, summarize_rest_defense
@@ -45,19 +37,9 @@ from ._report import RestDefenseReport
 from ._wfield import WFieldParams
 
 __all__ = [
-    "RD_ARM_COLUMNS",
-    "RD_ARM_SOURCE_VALUES",
-    "RD_GK_ARM_COLUMNS",
-    "RD_GK_DETER_SPACE",
-    "RD_GK_DETER_THREAT",
-    "RD_GK_SOURCE",
     "RD_LAYER1_COLUMNS",
     "RD_LAYER2_COLUMNS",
     "RD_METRIC_COLUMNS",
-    "RD_OUTFIELD_ARM_COLUMNS",
-    "RD_OUTFIELD_DETER_SPACE",
-    "RD_OUTFIELD_DETER_THREAT",
-    "RD_OUTFIELD_SOURCE",
     "RD_SAMPLE_KEYS",
     "RestDefenseGhostReport",
     "RestDefenseParams",
@@ -65,8 +47,5 @@ __all__ = [
     "WFieldParams",
     "build_restdefense_ghost_frames",
     "compute_rest_defense",
-    "merge_rest_defense",
-    "rest_defense_gk_deterrent",
-    "rest_defense_outfield_deterrent",
     "summarize_rest_defense",
 ]

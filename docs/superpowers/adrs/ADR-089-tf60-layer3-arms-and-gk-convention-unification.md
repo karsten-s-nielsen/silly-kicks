@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Date** | 2026-09-06 |
-| **Status** | Accepted |
+| **Status** | Accepted; **amended 2026-09-08** — Layer-3 arm *metrics* demoted to experimental after an out-of-sample validity study (see the amendment section). The ghost-GK both-axes convention fix + re-fit weights + correctness bugs still ship. |
 | **Deciders** | Karsten Nielsen |
 
 ## Context
@@ -61,10 +61,50 @@ Ship as one cycle (two provenance-mandated commits — code, then re-fit weights
 
 5. **The gkdv re-materialize + TF-19 sign-off re-run are IN this cycle** (Phase B, from the new weights).
 
-6. **A corpus driver + applied construct-validity report** (`scripts/build_tf60_layer3_arm_values.py`;
+6. **A corpus driver + applied validity study** (`scripts/build_tf60_layer3_arm_values.py`;
    `docs/research/tf60_layer3_construct_validity/`). xT is fit once on the loaded corpus and injected —
    the established convention for a reported-not-gated corpus measurement driver that needs an
    `ExpectedThreat` (`measure_cover_shadow_argmax_agreement.py`; silly-kicks ships no xT model).
+
+## Amendment (2026-09-08): out-of-sample validity → Layer-3 arm metrics demoted to experimental
+
+The Phase-B applied study (Decision 6) ran on the full 179-match corpus
+(`docs/research/tf60_layer3_construct_validity/findings.md`). **The naive counterfactual deterrent
+arms did not survive it as deterrent metrics**, so — applying the standing rule that a metric which
+fails its validation must not ship as that metric — the arm **metrics are demoted to experimental**:
+removed from `silly_kicks.restdefense`'s public surface (`__all__`, `feature_glossary`, the SB360
+boundary audit), with the code retained in the private `restdefense._arms` / `_counterfactual`
+modules for the redesign. The metric-free ghost-frame **engine** (`build_restdefense_ghost_frames`)
++ its report stay public.
+
+**Finding (decisive test — matched predictive validity against the opponent's realized
+counter-danger, n=15,113 turnovers over 179 games):**
+
+- The two **outfield** arms are **confounded by attacking commitment**. The outfield-space arm's
+  apparently-strong signal (matched ATT −0.0035, t −5.2 with no controls) collapses to ≈0 once
+  commitment is controlled (t −0.82); a natural-effects mediation attributes **~76 %** of its effect
+  to *where the turnover happens* (turnover-x), with a direct effect of ≈0 (t 0.92). The arm is a
+  commitment proxy, not a clean deterrent — one physical rearguard reads as "deterrent" mostly
+  because a committed team concedes turnovers higher up the pitch and turnover height drives
+  counter-danger.
+- Only the **keeper-threat** arm is control-robust (matched ATT −0.0013…−0.0023 xT, significant in
+  all four control sets, not mediated) — but it is pooled/SkillCorner-driven, marginal on Gradient
+  Sports, underpowered on full tracking (n=781), so it is not an independently-validated metric
+  either.
+- Convergent validity against the team's own Layer-1 structure is weak and was the wrong criterion;
+  the pre-registered named-keeper prior (Alisson/Neuer → deterrent) is not confirmed on the arm.
+
+**What still ships this cycle** (all independent of the arms' validity): the ghost-GK both-axes
+convention fix + the five re-fit variants, the five correctness bugs, the mixed-provider
+validation-driver fix, the gkdv re-materialize / TF-19 sign-off re-run against the new weights, and
+the study itself.
+
+**Registered next program:** a **within-turnover counterfactual counter** — price B's realized
+counter-danger under the actual vs a league-average ghost rearguard while **holding the turnover
+event fixed**, which removes the commitment confound the possession-aggregate arm conflates. Because
+the mediation shows the outfield arm's direct effect is ≈0, the redesign may confirm the outfield
+deterrent is small and the keeper is the real lever. Spec:
+`docs/superpowers/specs/2026-09-08-tf60-counterfactual-counter-redesign-design.md`.
 
 ## The "keeper-agnostic" property is STRUCTURAL isolation, not value invariance (correction)
 
@@ -129,13 +169,12 @@ a real value bug. The velocity-path output golden was re-captured against the co
 - **Phase-A transient-red:** between Commit 1 and Commit 2 the bundled ghost-GK tests (golden / chirality
   / feature-contract / any `model=None` bundled load) are red on load; the branch is green at its tip
   (Commit 2, the `--merge` gate) once the re-fit weights are bundled.
-- **SB360 boundary-audit registration for the two arms — DONE.** Both `rest_defense_outfield_deterrent`
-  and `rest_defense_gk_deterrent` are registered in `BOUNDARY_ENTRY_POINTS` with per-column verdicts
-  *observed by execution* (both arms: threat `differs_by_design` — the ADR-063 zero-velocity
-  pitch-control lift; space `honest_nan` — the velocity-required DAS degrade; `gk_absent`
-  `not_exercised` — no keeper/orientation), and `NOT_EXERCISED_BUDGET` 48→52. The verdicts that load the
-  bundled ghost-GK are green at the Commit-2 tip (re-fit weights), the same sequencing the gkdv entries
-  followed.
+- **SB360 boundary-audit registration for the two arms — REVERTED by the 2026-09-08 amendment.** The
+  arms were briefly registered in `BOUNDARY_ENTRY_POINTS` (`NOT_EXERCISED_BUDGET` 48→52) with per-column
+  verdicts observed by execution, but the demotion removes them: the arms are experimental, not public
+  metrics, so they carry no boundary verdict and `NOT_EXERCISED_BUDGET` stays 48. The ghost-GK
+  chirality/feature-contract entries that load the bundled variants are still green at the Commit-2 tip
+  (re-fit weights).
 - **A fifth bug (FINDING-5): `rest_defense_outfield_deterrent` crashed on keeperless frames.** Observing
   the SB360 `gk_absent` verdict surfaced it: on a both-keepers-removed frame the goal orientation is
   unresolvable, so `compute_threat_pc` raises `GoalEndUnresolvedError`, and the outfield arm — which
@@ -152,12 +191,12 @@ a real value bug. The velocity-path output golden was re-captured against the co
   into the same per-frame record shape (coercing the numpy `player_data` to a list); verified against
   real corpus matches (frame counts match the vetted tc3 cache exactly) + a parquet-vs-jsonl equivalence
   test. The re-fit *weights* are unaffected (training reads the tc3 cache, never the raw loader).
-- **The 4 restdefense arm columns are documented in `feature_glossary` (`emitting_module=_arms`, with an
-  emitted-columns leg so the entries are non-stale) and carry a spec-§10 liveness gate** (non-NaN +
-  non-constant on the `computed` rows of the multi-domain fixture; both arms measured live). The arms
-  are dtype-safe via `id_compat`; the id-scalar completeness registry is genuinely **N/A** here — its
-  population is `spadl`/`atomic`/`vaep`/`causal`/`tracking` (restdefense, like gkdv, is not in it), which
-  spec §10's "id-scalar registry *if a new public id-scalar function is added*" already accommodates.
+- **The 4 restdefense arm columns are NOT glossaried (reverted by the 2026-09-08 amendment).** They were
+  briefly documented in `feature_glossary` with an emitted-columns leg + a spec-§10 liveness gate, but the
+  demotion removes the glossary entries and the emitted-columns leg (an experimental metric is not a
+  glossaried public feature); the C4 derived-feature-column count reverts 398→394. The arm liveness check
+  is retained as an experimental-engine test in `tests/restdefense/test_arms.py` (relocated out of the
+  shipped-metric liveness gate). The arms remain dtype-safe via `id_compat`.
 
 Attribution: Le et al. 2017 (ghosting); Kim 2026 (DEFCON-GNN, comparator); Bischofberger & Baca 2026
 (rest-defense framing). See `NOTICE`.

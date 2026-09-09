@@ -57,14 +57,13 @@ def _conserves(report) -> bool:
 
 @pytest.mark.e2e
 def test_layer3_arms_on_real_linked_tracking(real_linked_tracking_match, fitted_corpus_xt):
-    from silly_kicks.restdefense import (
-        RD_GK_DETER_THREAT,
-        RD_OUTFIELD_DETER_THREAT,
-        compute_rest_defense,
+    from silly_kicks.restdefense import compute_rest_defense
+    from silly_kicks.restdefense._arms import (
         merge_rest_defense,
         rest_defense_gk_deterrent,
         rest_defense_outfield_deterrent,
     )
+    from silly_kicks.restdefense._columns import RD_GK_DETER_THREAT, RD_OUTFIELD_DETER_THREAT
     from silly_kicks.tracking import GhostGkModel, GhostOutfieldModel
 
     actions, frames, home = real_linked_tracking_match
@@ -88,7 +87,8 @@ def test_layer3_arms_on_real_linked_tracking(real_linked_tracking_match, fitted_
 @pytest.mark.e2e
 def test_layer3_arms_on_real_sb360(real_sb360_match, fitted_corpus_xt):
     from silly_kicks.keeper_identity import apply_keeper_identities_to_frames, resolve_keeper_identities
-    from silly_kicks.restdefense import compute_rest_defense, rest_defense_outfield_deterrent
+    from silly_kicks.restdefense import compute_rest_defense
+    from silly_kicks.restdefense._arms import rest_defense_outfield_deterrent
     from silly_kicks.tracking import GhostOutfieldModel
 
     actions, frames, visible_area, roster, home = real_sb360_match

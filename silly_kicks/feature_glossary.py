@@ -165,8 +165,6 @@ _A_DUELS = "Glickman, 'The Glicko-2 rating system'"  # TF-55 Glicko-2 duel ratin
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
-_M_RESTDEFENSE_ARMS = "silly_kicks.restdefense._arms"  # TF-60 Layer-3 counterfactual deterrent arms
-_A_LE_2017 = "Le et al. (2017)"  # data-driven ghosting counterfactual (TF-60 Layer-3, ADR-089)
 _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
 _M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
 _M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
@@ -1822,53 +1820,10 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_RESTDEFENSE_DANGER,
         higher_is_better=True,
     ),
-    # -- TF-60 Layer-3 counterfactual deterrent arms (restdefense._arms; ADR-089) -----------------
-    FeatureColumn(
-        name="rd_outfield_deter_threat",
-        definition=(
-            "Outfield-rearguard deterrent (threat): actual - league-average-ghost of the opponent's "
-            "xT-weighted counter-danger (compute_threat_pc), in attacker-value units so NEGATIVE = "
-            "deterrent. The ghost repositions only the in-possession team's deepest-n field defenders."
-        ),
-        unit="dimensionless",
-        emitting_module=_M_RESTDEFENSE_ARMS,
-        attribution=_A_LE_2017,
-        higher_is_better=False,
-    ),
-    FeatureColumn(
-        name="rd_outfield_deter_space",
-        definition=(
-            "Outfield-rearguard deterrent (space): actual - league-average-ghost of the opponent's "
-            "dangerous accessible space ( delta_das_batch), attacker-value units so NEGATIVE = "
-            "deterrent. Honest-NaN on velocity-less providers (DAS is velocity-constitutive, ADR-063)."
-        ),
-        unit="m^2",
-        emitting_module=_M_RESTDEFENSE_ARMS,
-        attribution=_A_LE_2017,
-        higher_is_better=False,
-    ),
-    FeatureColumn(
-        name="rd_gk_deter_threat",
-        definition=(
-            "Keeper deterrent (threat): as rd_outfield_deter_threat but the ghost repositions the "
-            "in-possession keeper to a league-average sweeper baseline. NEGATIVE = deterrent."
-        ),
-        unit="dimensionless",
-        emitting_module=_M_RESTDEFENSE_ARMS,
-        attribution=_A_LE_2017,
-        higher_is_better=False,
-    ),
-    FeatureColumn(
-        name="rd_gk_deter_space",
-        definition=(
-            "Keeper deterrent (space): as rd_outfield_deter_space but the ghost repositions the "
-            "in-possession keeper. NEGATIVE = deterrent; honest-NaN on velocity-less providers."
-        ),
-        unit="m^2",
-        emitting_module=_M_RESTDEFENSE_ARMS,
-        attribution=_A_LE_2017,
-        higher_is_better=False,
-    ),
+    # TF-60 Layer-3 counterfactual deterrent arms (restdefense._arms; ADR-089) are DELIBERATELY not
+    # glossaried: an out-of-sample validity study found the outfield arms confounded with attacking
+    # commitment, so they ship as experimental code, not public metrics, pending the
+    # counterfactual-counter redesign. See docs/research/tf60_layer3_construct_validity/.
     # -- TF-59 PR2 GK shot-stopping (shot_stopping._compute) --------------------------------------
     FeatureColumn(
         name="shots_faced",

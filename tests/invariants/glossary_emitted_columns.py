@@ -175,29 +175,6 @@ def _restdefense_columns() -> set[str]:
     return set(samples.columns) - structural
 
 
-def _restdefense_arm_columns() -> set[str]:
-    """Derived Layer-3 deterrent-arm columns emitted by rest_defense_{outfield,gk}_deterrent (ADR-089).
-
-    The arms are ``compute_*`` (not ``add_*``/``*_xfns``), so the name-shape discovery misses them; this
-    leg runs BOTH arms with toy-fit ghost models + a fitted xT on the restdefense fixture and returns the
-    four arm columns (the sample keys + the ``*_source`` provenance are not features). An empty arm table
-    still carries the columns, so the leg is robust to a fixture that scores nothing. A NEW arm metric
-    appears here and fails the coverage gate until documented (the run-and-diff anti-rot property)."""
-    from silly_kicks.restdefense._arms import rest_defense_gk_deterrent, rest_defense_outfield_deterrent
-    from silly_kicks.restdefense._columns import RD_ARM_COLUMNS
-    from tests.restdefense._fixtures import make_fitted_xt, make_rest_defense_fixture
-    from tests.tracking.test_ghost_gk import _fitted_model
-    from tests.tracking.test_ghost_outfield_model import _fit_toy
-
-    actions, frames = make_rest_defense_fixture()
-    xt = make_fitted_xt()
-    of_arm, _ = rest_defense_outfield_deterrent(
-        actions, frames, xt=xt, ghost_outfield_model=_fit_toy()[0], home_team_id=1
-    )
-    gk_arm, _ = rest_defense_gk_deterrent(actions, frames, xt=xt, ghost_gk_model=_fitted_model()[0], home_team_id=1)
-    return (set(of_arm.columns) | set(gk_arm.columns)) & set(RD_ARM_COLUMNS)
-
-
 def _shot_stopping_columns() -> set[str]:
     """Derived shot-stopping metric columns emitted by compute_shot_stopping (TF-59 PR2).
 
@@ -348,7 +325,6 @@ def emitted_columns() -> set[str]:
         | _spadl_enricher_columns()
         | _vaep_columns()
         | _restdefense_columns()
-        | _restdefense_arm_columns()
         | _shot_stopping_columns()
         | _territory_columns()
         | _duel_columns()

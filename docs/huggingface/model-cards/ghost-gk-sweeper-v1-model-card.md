@@ -58,12 +58,20 @@ variant; consumers opt in via `from_variant("sweeper")`.
 
 | Metric | Value |
 |---|---|
-| Held-out CV euclidean MAE | **1.142 m** (per-provider: Gradient Sports 1.078 / SkillCorner 1.167 / Sportec 1.734) |
-| Boosted-reconstruction parity vs sklearn | 1.21e-13 (exact &mdash; safe to publish) |
-| **> 30 m high-sweeper stratum MAE** | **~2.06 m** (the sweeper *places* high keepers where the default is blind) |
+| Held-out CV euclidean MAE | **1.137 m** (per-provider: Gradient Sports 1.072 / SkillCorner 1.171 / Sportec 1.713) |
+| Boosted-reconstruction parity vs sklearn | 1.14e-13 (exact &mdash; safe to publish) |
+| **> 30 m high-sweeper stratum MAE** | **~2.00 m** (the sweeper *places* high keepers where the default is blind) |
 
 The `> 30 m` (high-sweeper) coverage of the training corpus is **IDSSE/Sportec-dominated (11.5 %)**;
 SkillCorner 0.24 %; **Gradient Sports 0.0 %** &mdash; see the data caveat below.
+
+> **Both-axes goal-relative re-fit (silly-kicks 4.111.0 / ADR-089; `training_commit=4bda048`).** These
+> weights were re-fit after the ghost-GK feature extractor was corrected to apply the full **180°
+> goal-relative point reflection (both axes)** — the previous convention flipped only x, leaving the
+> signed-y features and the target `gk_y` in absolute frame coordinates, mislocating away-team keepers
+> in y. The served `ghost_gk_x/y` change (chiefly for away-team keepers) and the feature-contract +
+> chirality fingerprints change, so **pre-4.111.0 artifacts fail closed on load**. The aggregate MAE is
+> essentially unchanged (the correction affects the away-team subset).
 
 ## Training data
 
@@ -107,5 +115,5 @@ Pospisil &amp; Lee 2018 (RFCDE, arXiv:1804.05753). See the silly-kicks `NOTICE` 
 ## More information
 
 - **License:** [MIT](https://opensource.org/licenses/MIT) &middot; **Library:**
-  [silly-kicks](https://pypi.org/project/silly-kicks/) (v4.105.0+) &middot;
-  [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-083.
+  [silly-kicks](https://pypi.org/project/silly-kicks/) (**v4.111.0+** for these both-axes weights) &middot;
+  [GitHub](https://github.com/karsten-s-nielsen/silly-kicks) &middot; ADR-083 / ADR-089.

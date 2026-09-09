@@ -1,0 +1,185 @@
+{
+  "run_commit": "a867f9b326b0ef71ed000185292b698e93183d32",
+  "run_tree_dirty": false,
+  "provenance": {
+    "arm_values_run_commit": "a867f9b326b0ef71ed000185292b698e93183d32",
+    "arm_values_run_tree_dirty": false,
+    "arm_values_n_manifests": 30
+  },
+  "n_rows": 101598,
+  "n_matches": 179,
+  "n_keepers": 116,
+  "outfield": {
+    "threat_vs_num_superiority": {
+      "n": 101598,
+      "rho": -0.0478,
+      "p_one_sided": 1.1033497657393992e-52,
+      "ci95": [
+        -0.0539,
+        -0.0416
+      ],
+      "criterion_rho<0_p<0.05_|rho|>=0.10": false
+    },
+    "threat_vs_neg_compactness": {
+      "n": 101598,
+      "rho": 0.1319,
+      "p_one_sided": 1.0,
+      "ci95": [
+        0.1258,
+        0.1379
+      ],
+      "criterion_rho<0_p<0.05_|rho|>=0.10": false
+    },
+    "space_vs_num_superiority": {
+      "n": 101598,
+      "rho": 0.0064,
+      "p_one_sided": 0.9794139150205309,
+      "ci95": [
+        0.0003,
+        0.0126
+      ],
+      "criterion_rho<0_p<0.05_|rho|>=0.10": false
+    },
+    "space_vs_neg_compactness": {
+      "n": 101598,
+      "rho": 0.0271,
+      "p_one_sided": 1.0,
+      "ci95": [
+        0.0209,
+        0.0332
+      ],
+      "criterion_rho<0_p<0.05_|rho|>=0.10": false
+    }
+  },
+  "keeper": {
+    "runnable": true,
+    "named_found": [
+      {
+        "name": "Alisson",
+        "median": 0.0,
+        "count": 1553
+      },
+      {
+        "name": "Neuer",
+        "median": 0.0,
+        "count": 1343
+      }
+    ],
+    "n_named": 2,
+    "n_rest": 114,
+    "corpus_median": 0.0,
+    "mwu_U": 100.0,
+    "p_one_sided_less": 0.3549573666661694,
+    "criterion_below_median_p<0.05": false,
+    "adr060_diff_named_minus_rest": -0.00019,
+    "adr060_pooled_se": 0.00011,
+    "adr060_effect_over_se": -1.671
+  },
+  "keeper_table_top": [
+    {
+      "keeper_key": "25627",
+      "median": -0.0034085856323313735,
+      "mean": -0.0038336371592821274,
+      "count": 216,
+      "name": null
+    },
+    {
+      "keeper_key": "DFL-OBJ-0001HW",
+      "median": -0.0021171502836301315,
+      "mean": -0.009625925027338179,
+      "count": 199,
+      "name": null
+    },
+    {
+      "keeper_key": "DFL-OBJ-0028LZ",
+      "median": -0.002113954019697939,
+      "mean": -0.011385630957704071,
+      "count": 298,
+      "name": null
+    },
+    {
+      "keeper_key": "7604",
+      "median": -0.00035697766402620346,
+      "mean": -0.012047301762095978,
+      "count": 158,
+      "name": null
+    },
+    {
+      "keeper_key": "26481",
+      "median": -0.00029501873965553926,
+      "mean": -0.006670690259936514,
+      "count": 123,
+      "name": null
+    },
+    {
+      "keeper_key": "16849",
+      "median": -0.0001694878753799589,
+      "mean": -0.0010819307467425363,
+      "count": 179,
+      "name": null
+    },
+    {
+      "keeper_key": "32441",
+      "median": -0.00016088536160929756,
+      "mean": -0.0006675837473932749,
+      "count": 210,
+      "name": null
+    },
+    {
+      "keeper_key": "13899",
+      "median": -1.6555530581996436e-06,
+      "mean": -0.0035515465803623073,
+      "count": 421,
+      "name": null
+    },
+    {
+      "keeper_key": "29119",
+      "median": 0.0,
+      "mean": -0.003608999156959782,
+      "count": 359,
+      "name": null
+    },
+    {
+      "keeper_key": "4602",
+      "median": 0.0,
+      "mean": 0.0023665183412347407,
+      "count": 1343,
+      "name": "Neuer"
+    },
+    {
+      "keeper_key": "435",
+      "median": 0.0,
+      "mean": -0.002127944905431191,
+      "count": 852,
+      "name": null
+    },
+    {
+      "keeper_key": "3968",
+      "median": 0.0,
+      "mean": 0.0013463992629403588,
+      "count": 421,
+      "name": null
+    },
+    {
+      "keeper_key": "34718",
+      "median": 0.0,
+      "mean": 0.004185383385130799,
+      "count": 355,
+      "name": null
+    },
+    {
+      "keeper_key": "34483",
+      "median": 0.0,
+      "mean": -0.00031340291971583805,
+      "count": 678,
+      "name": null
+    },
+    {
+      "keeper_key": "3443",
+      "median": 0.0,
+      "mean": -0.008706541101995204,
+      "count": 146,
+      "name": null
+    }
+  ]
+}

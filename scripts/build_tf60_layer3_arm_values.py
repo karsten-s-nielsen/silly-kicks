@@ -133,8 +133,8 @@ def measure_match(
     import pandas as pd
 
     from silly_kicks.keeper_identity import resolve_keeper_identities
-    from silly_kicks.restdefense import (
-        compute_rest_defense,
+    from silly_kicks.restdefense import compute_rest_defense
+    from silly_kicks.restdefense._arms import (
         merge_rest_defense,
         rest_defense_gk_deterrent,
         rest_defense_outfield_deterrent,
