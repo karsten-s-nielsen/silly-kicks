@@ -74,6 +74,7 @@ BOUNDARY_ENTRY_POINTS: frozenset[str] = frozenset(
         "xtgk.compute_xt_gk_v2",
         "spadl.add_restart_coordinates",
         "restdefense.compute_rest_defense",
+        "territorial_defense.compute_territorial_defense",
     }
 )
 
@@ -238,7 +239,26 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #:
 #: (The two TF-60 Layer-3 deterrent arms were briefly registered here at +4 but demoted to experimental
 #: -- not public metrics -- per ADR-089's validity study, so they carry no boundary verdict.)
-NOT_EXERCISED_BUDGET = 48
+#:
+#: NET 48 -> 49 by the TF-54b `territorial_defense.compute_territorial_defense` registration + the
+#: sb360-fixture-3 extension. +3: territorial_defense's three metric columns (`a_threat_suppressed`,
+#: `b_threat_suppressed`, `b_attribution_slippage`) under `gk_absent` ONLY -- that roster removes BOTH
+#: keepers, so resolve_defended_goals cannot orient the threat and both arms honest-NaN on both legs
+#: (GoalEndUnresolvedError caught at the edge, ADR-055) -> no_signal -> not_exercised. `a_threat_
+#: suppressed` / `b_threat_suppressed` ARE exercised (differs) on velocity + `defender_absent` +
+#: `gk_one_end`. -2: the added velocity-bearing interception frames now EXERCISE
+#: `add_press_commitment`'s velocity-gated `press_commitment` + `press_commitment_closing_speed` on
+#: the velocity axis (was no_signal -> not_exercised, now all_nan -> honest_nan) -- a coverage GAIN.
+#: +3 (IMPL-01, 4.112.0): `b_attribution_slippage` is honest-NaN on SB360 -- the position-chosen
+#: contesting defender is an anonymous NON-actor, so attribution is un-measurable (ADR-027, never a
+#: fabricated 0.0) -> no_signal -> not_exercised on velocity + `defender_absent` + `gk_one_end` too
+#: (it was `identical`->works before the honesty fix). Net 49 -> 52.
+#: -2 (ADR-091, per-action goal resolution): `gk_absent` for `territorial_defense` was 3 not_exercised
+#: (all columns no_signal, when the per-match resolve_defended_goals needed a keeper). The SB360 default
+#: is now `per_action_ltr`, which resolves the goal from the action-LTR CONVENTION (GK-independent), so
+#: the two threat arms SCORE under `gk_absent` (differs_by_design); only `b_attribution_slippage` stays
+#: not_exercised there. gk_absent 3 -> 1 not_exercised. Net 52 -> 50.
+NOT_EXERCISED_BUDGET = 50
 
 
 def _entry(

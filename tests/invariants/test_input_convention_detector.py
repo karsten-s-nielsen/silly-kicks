@@ -328,7 +328,7 @@ def test_tf22_detector_dense_absolute_frame_home_right_classifies_correctly():
 # downgrade to ambiguous is the coverage risk that tightening it creates.
 # ---------------------------------------------------------------------------
 
-#: One of the ten SkillCorner matches `scripts/_corpus.py::PUBLIC_CORPUS` registers as
+#: One of the twenty SkillCorner matches `scripts/_corpus.py::PUBLIC_CORPUS` registers as
 #: redistributable. Its `visibility` field reads `public` on the pining record itself -- checked,
 #: not inferred from the provider name, which is the exact mistake `_corpus.py` exists to prevent.
 _SKILLCORNER_PUBLIC_MATCH = "1886347"

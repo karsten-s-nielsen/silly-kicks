@@ -16,6 +16,16 @@ class Hull:
 
     ``contains`` is vectorized (an ``(M, 2)`` array of query points -> an ``(M,)`` bool array); a single
     ``(2,)`` point returns a numpy bool.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from silly_kicks.territory import build_trimmed_hull
+    >>> hull = build_trimmed_hull(
+    ...     np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]), trim_fraction=1.0
+    ... )
+    >>> round(hull.area, 1), bool(hull.contains(np.array([5.0, 5.0])))
+    (100.0, True)
     """
 
     __slots__ = ("_delaunay", "area", "centroid")
@@ -28,6 +38,18 @@ class Hull:
         self.centroid = (float(c[0]), float(c[1]))
 
     def contains(self, xy: np.ndarray) -> np.ndarray:
+        """Vectorized point-in-hull test: an ``(M, 2)`` array -> ``(M,)`` bool; a ``(2,)`` point -> bool.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from silly_kicks.territory import build_trimmed_hull
+        >>> hull = build_trimmed_hull(
+        ...     np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]), trim_fraction=1.0
+        ... )
+        >>> hull.contains(np.array([[5.0, 5.0], [50.0, 50.0]])).tolist()
+        [True, False]
+        """
         return self._delaunay.find_simplex(np.asarray(xy, dtype=float)) >= 0
 
 
@@ -36,6 +58,16 @@ def build_trimmed_hull(defensive_actions_xy: np.ndarray, *, trim_fraction: float
 
     ``defensive_actions_xy`` is an ``(N, 2)`` array; NaN rows are dropped. Keeps
     ``max(3, ceil(N * trim_fraction))`` points nearest the centroid (never fewer than a triangle).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from silly_kicks.territory import build_trimmed_hull
+    >>> pts = np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]])
+    >>> build_trimmed_hull(pts, trim_fraction=1.0) is not None
+    True
+    >>> build_trimmed_hull(np.array([[0.0, 0.0], [1.0, 1.0]]), trim_fraction=1.0) is None  # < 3 points
+    True
     """
     xy = np.asarray(defensive_actions_xy, dtype=float)
     if xy.ndim != 2 or xy.shape[1] != 2:

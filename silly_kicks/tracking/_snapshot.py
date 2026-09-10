@@ -181,6 +181,17 @@ def snapshot_to_tracking_frames(
     frames = frames[list(TRACKING_FRAMES_COLUMNS.keys())]
     frames = _cast_to_declared_schema(frames)
 
+    # `is_actor` is a SNAPSHOT-ONLY extension column (TF-54b actor bridge). The SB360 actor is the
+    # only reliable outfield identity, so it rides through to the frames -- but it is NOT part of the
+    # base TRACKING_FRAMES_COLUMNS (continuous tracking has no per-frame actor), so it is appended
+    # AFTER the base-schema select, and only when the caller's snapshots carry it (a caller without
+    # it gets byte-identical output). Player rows carry the real flag; ball rows are never the actor.
+    # Row order matches the concat above (player rows then ball rows), so positional alignment holds.
+    if "is_actor" in snapshots.columns:
+        player_actor = player["is_actor"].to_numpy()
+        ball_actor = np.zeros(len(ball_frames), dtype=bool)
+        frames["is_actor"] = pd.Series(np.concatenate([player_actor, ball_actor]), index=frames.index).astype("boolean")
+
     # --- links ---
     links = pd.DataFrame(
         {

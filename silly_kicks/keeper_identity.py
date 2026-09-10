@@ -46,6 +46,7 @@ __all__ = [
     "KeeperIdentityReport",
     "KeeperSegment",
     "add_defending_gk_player_id",
+    "apply_actor_identities_to_frames",
     "apply_keeper_identities_to_frames",
     "build_keeper_appearances_from_segments",
     "resolve_keeper_identities",
@@ -709,6 +710,63 @@ def apply_keeper_identities_to_frames(
             # id_compat regardless of the stored dtype.
             new_pid = new_pid.astype("object")
             new_pid.iat[pos] = gk_id
+    out["player_id"] = new_pid
+    return out
+
+
+def apply_actor_identities_to_frames(frames: pd.DataFrame, actions: pd.DataFrame) -> pd.DataFrame:
+    """Stamp each action's real ``player_id`` onto its single ``is_actor`` SB360 frame row.
+
+    The outfield analogue of :func:`apply_keeper_identities_to_frames` (ADR-078 bridge pattern;
+    lives in this shared ``keeper_identity`` module per the ADR-084 promotion), scoped to the ONE
+    row SB360 reliably identifies: the freeze-frame carries no player identity except the ``actor``
+    flag, and the acting player's real id is on the SPADL action. PURE (returns a new frame, never
+    mutates the input); ADR-019 id-safe (canonical keys + an object-dtype fallback for a foreign id
+    dtype); non-actor rows keep their synthetic ids. Keyed on ``frame_id == action_id`` -- the
+    snapshot port sets ``frame_id = action_id``.
+
+    Parameters
+    ----------
+    frames : pd.DataFrame
+        Snapshot-derived tracking frames carrying an ``is_actor`` column (see
+        :func:`silly_kicks.tracking.snapshot_to_tracking_frames`).
+    actions : pd.DataFrame
+        SPADL actions carrying ``action_id`` and the acting player's real ``player_id``.
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of ``frames`` with the real ``player_id`` stamped on each ``is_actor`` row.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> frames = pd.DataFrame(
+    ...     {"frame_id": [1, 1], "player_id": [0, 1], "is_actor": [False, True]}
+    ... )
+    >>> actions = pd.DataFrame({"action_id": [1], "player_id": [77]})
+    >>> apply_actor_identities_to_frames(frames, actions)["player_id"].tolist()
+    [0, 77]
+    """
+    out = frames.copy()
+    is_actor = out["is_actor"].astype("boolean").fillna(False).to_numpy(dtype=bool)
+    if not is_actor.any():
+        return out
+    by_action = {canonical_id(a): pid for a, pid in zip(actions["action_id"], actions["player_id"], strict=True)}
+    new_pid = out["player_id"].copy()
+    frame_ids = out["frame_id"].to_numpy()
+    for i in np.flatnonzero(is_actor):
+        pos = int(i)
+        pid: Any = by_action.get(canonical_id(frame_ids[pos]))
+        if pid is None or pd.isna(pid):
+            continue  # no matching action, or an NA real id -> leave the synthetic id
+        try:
+            new_pid.iat[pos] = pid
+        except (TypeError, ValueError):
+            # A real id whose dtype the player_id column cannot hold (e.g. a str id into an int
+            # column) -- promote to object so ANY id type bridges (id_compat keeps matches dtype-safe).
+            new_pid = new_pid.astype("object")
+            new_pid.iat[pos] = pid
     out["player_id"] = new_pid
     return out
 

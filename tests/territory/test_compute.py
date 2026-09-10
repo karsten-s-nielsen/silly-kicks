@@ -137,7 +137,10 @@ def test_injected_model_guard():
 
 def test_method_family():
     acts = _actions(_HULL_CORNERS)
-    with pytest.raises(NotImplementedError, match="counterfactual"):
+    # `counterfactual` was a reserved NotImplementedError door on main; TF-54b removed it (the
+    # counterfactual valuation now lives in the separate territorial_defense package), so it is
+    # now simply an unknown method for the event-only territory metric.
+    with pytest.raises(ValueError, match="unknown method"):
         compute_territorial_dominance(acts, xt=_toy_xt(), method="counterfactual")
     with pytest.raises(ValueError, match="unknown method"):
         compute_territorial_dominance(acts, xt=_toy_xt(), method="bogus")

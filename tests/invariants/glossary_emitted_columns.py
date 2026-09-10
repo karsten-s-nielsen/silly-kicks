@@ -1,6 +1,6 @@
 """Union of derived columns emitted by every default-config producer (run-and-diff), base-normalised.
 
-Eight legs, each running its producers at default config on a real fixture and diffing the columns
+Nine legs, each running its producers at default config on a real fixture and diffing the columns
 they ADD (or, for the ``*_xfns`` / vaep legs whose transformers return a feature-only frame, the
 columns they PRODUCE):
 
@@ -21,6 +21,8 @@ columns they PRODUCE):
    ``compute_*`` the name-shape discovery misses, run explicitly here.
 8. ``_duel_columns`` -- ``duels.compute_duel_ratings`` (TF-55) on a tiny native fixture; likewise a
    ``compute_*`` the name-shape discovery misses, run explicitly here.
+9. ``_territorial_defense_columns`` -- ``territorial_defense.compute_territorial_defense`` (TF-54b) on
+   the two-arm e2e fixture; likewise a ``compute_*`` the name-shape discovery misses, run here.
 
 ``emitted_columns`` is the base-normalised union of all eight legs (the gamestate-slot marker
 ``_a{i}`` is stripped so the glossary is keyed on the base/semantic name).
@@ -298,6 +300,24 @@ def _duel_columns() -> set[str]:
     return set(DUEL_METRIC_COLUMNS) & set(samples.columns)
 
 
+def _territorial_defense_columns() -> set[str]:
+    """Derived TF-54b territorial-defense metric columns emitted by compute_territorial_defense.
+
+    compute_territorial_defense is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape
+    discovery misses it; this leg runs it on the two-arm e2e fixture and returns the DERIVED metric
+    columns (the sample keys game_id/player_id, the counts a_frames_scored/b_frames_scored, and the
+    provenance td_source are not features). A NEW emitted metric appears here and fails the coverage
+    gate until documented (the run-and-diff anti-rot property)."""
+    from silly_kicks.territorial_defense import compute_territorial_defense
+    from tests.territorial_defense._fixtures import make_e2e_fixture, make_fitted_xt
+
+    # make_e2e_fixture is match-oriented -> match_ltr; the emitted COLUMN set is convention-invariant.
+    actions, frames = make_e2e_fixture()
+    samples, _ = compute_territorial_defense(actions, frames, xt=make_fitted_xt(), frame_convention="match_ltr")
+    structural = {"game_id", "player_id", "a_frames_scored", "b_frames_scored", "td_source"}
+    return set(samples.columns) - structural
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -328,5 +348,6 @@ def emitted_columns() -> set[str]:
         | _shot_stopping_columns()
         | _territory_columns()
         | _duel_columns()
+        | _territorial_defense_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

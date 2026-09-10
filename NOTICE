@@ -343,6 +343,19 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   RD growth). Native winner/loser on sportec (tackle_winner/loser); derived from
   the tackle / take_on result adjacency elsewhere. Descriptive; no VAEP path.
 
+- Territorial defense (SB360 counterfactual).
+  Attribution: Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting).
+  Used by: silly_kicks.territorial_defense._arms (TF-54b).
+  How much a defender's POSITIONING suppresses the attacking team's threat on SB360
+  freeze-frames, via a model-free removal (marginal-contribution) counterfactual:
+  compute_threat_pc(defender removed) - compute_threat_pc(actual), in xT units. Arm A
+  is action-anchored (identity-exact); Arm B is hull-based (attribution-approximate).
+  Validated as an INSTRUMENT, NOT player-attributable -- the marginal-removal delta is
+  team-conditioned by construction, so per-defender numbers are NOT a defender ranking
+  (the defender-vs-team confound is unidentifiable on a single-tournament / national-team
+  corpus; a crossed defender+team ICC over a multi-club transfer corpus is the future
+  gate). Descriptive; no VAEP path.
+
 - Ogawa et al. (2025). "Space evaluation at the starting point of soccer
   transitions." arXiv:2505.14711 (OBPV).
   Used by: silly_kicks.restdefense._wfield (TF-60 PR2).

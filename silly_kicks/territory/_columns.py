@@ -9,10 +9,11 @@ from __future__ import annotations
 #: Grain keys.
 TERRITORY_KEYS = ["game_id", "player_id"]
 
-#: The `method=` valuation family (spec §5.3). ``completed_failed`` is the default + only implemented
-#: leg; ``counterfactual`` is a reserved typed door (raises NotImplementedError until its own
-#: construct-validated follow-on).
-TERRITORY_METHODS = frozenset({"completed_failed", "counterfactual"})
+#: The `method=` valuation family (spec §5.3). ``completed_failed`` is the sole event-only leg. The
+#: TF-54b counterfactual "prevented" valuation is NOT a method here -- it moved to the separate
+#: tracking-consuming ``silly_kicks.territorial_defense`` package (SB360 spatial counterfactual), so
+#: the former reserved ``counterfactual`` door was removed rather than left as dead NotImplementedError.
+TERRITORY_METHODS = frozenset({"completed_failed"})
 
 # Metric column names (spec §5.6). xT / area / coords / rates -> float64; counts -> Int64.
 TR_XT_CONCEDED = "territory_xt_conceded"

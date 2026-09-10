@@ -38,13 +38,14 @@ def test_label_is_never_public_when_the_ship_mask_contains_restricted_rows():
     assert artifact_label(providers={"skillcorner", "gradientsports"}, all_public=False) == "full"
 
 
-def test_public_corpus_is_the_known_17():
-    assert len(PUBLIC_CORPUS["skillcorner"]) == 10
+def test_public_corpus_is_the_known_27():
+    # SkillCorner grew 10 -> 20 on 2026-09-09 (a second public drop); IDSSE unchanged at 7 -> 27 total.
+    assert len(PUBLIC_CORPUS["skillcorner"]) == 20
     assert len(PUBLIC_CORPUS["idsse"]) == 7
 
 
 def test_public_corpus_skillcorner_matches_the_sample_loader():
-    # The 10 public SkillCorner ids are LICENSING-critical and duplicated in
+    # The 20 public SkillCorner ids are LICENSING-critical and duplicated in
     # tests/_skillcorner_sample.MATCH_IDS (the sample loader). Guard the two literals against drift:
     # a divergence could load-as-sample a match not registered-as-public, or the reverse.
     from tests._skillcorner_sample import MATCH_IDS
