@@ -22,6 +22,7 @@ from ._columns import (
 )
 from ._compute import compute_territorial_dominance
 from ._config import TerritoryParams
+from ._hull import Hull, build_trimmed_hull
 from ._report import TerritoryReport
 
 __all__ = [
@@ -29,7 +30,9 @@ __all__ = [
     "TERRITORY_HULL_SOURCE_VALUES",
     "TERRITORY_METHODS",
     "TERRITORY_METRIC_COLUMNS",
+    "Hull",
     "TerritoryParams",
     "TerritoryReport",
+    "build_trimmed_hull",
     "compute_territorial_dominance",
 ]

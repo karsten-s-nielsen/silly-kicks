@@ -9,9 +9,11 @@ passes are in the opponent's frame -- a 180 degree point reflection apart. Hull 
 opponent pass end into the defender frame ``(105 - end_x, 68 - end_y)``; the xT VALUE is taken on the
 pass end in the opponent's OWN frame (``values_at_points``). A failed pass's SPADL ``end`` is the
 death/recovery location, not the intended target (``_derive_end_coordinates``), so this default measures
-"threat that reached / died in the territory", not "threat that would have been created" -- the reserved
-``counterfactual`` method exists to close that gap with a model (spec §5.3). Output ids are RAW; keepers
-are grouped on the CANONICAL id (ADR-019). PURE -- never mutates ``actions``.
+"threat that reached / died in the territory", not "threat that would have been created" -- the
+counterfactual "prevented" valuation that closes that gap now lives in the tracking-consuming
+``silly_kicks.territorial_defense`` package (TF-54b / ADR-090); the former reserved ``counterfactual``
+door was removed. Output ids are RAW; keepers are grouped on the CANONICAL id (ADR-019). PURE -- never
+mutates ``actions``.
 
 See NOTICE for full bibliographic citations.
 """
@@ -86,10 +88,6 @@ def compute_territorial_dominance(
     require_fitted_xt(xt, caller="compute_territorial_dominance")
     if method not in TERRITORY_METHODS:
         raise ValueError(f"unknown method {method!r}; expected one of {sorted(TERRITORY_METHODS)}")
-    if method == "counterfactual":
-        raise NotImplementedError(
-            "the 'counterfactual' prevented-valuation is a construct-validated follow-on; see spec §2"
-        )
 
     fl = float(spadlconfig.field_length)
     fw = float(spadlconfig.field_width)

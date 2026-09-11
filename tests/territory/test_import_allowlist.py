@@ -46,13 +46,25 @@ def test_territory_never_imports_tracking():
     assert not offenders, f"{offenders}: territory is event-only -- must NEVER import silly_kicks.tracking."
 
 
-def test_nothing_imports_territory():
-    offenders = [
-        py.relative_to(ROOT).as_posix()
-        for py in sorted(ROOT.rglob("*.py"))
-        if not py.is_relative_to(TERRITORY) and _imports_territory(py)
-    ]
-    assert not offenders, f"{offenders}: nothing in silly_kicks should import territory (a leaf metric)."
+#: The ONE sanctioned importer of territory: territorial_defense reuses the trimmed defensive hull
+#: (``build_trimmed_hull``/``Hull``) as Arm B's membership test -- the single-source of the hull
+#: definition (ADR-090 / TF-54b Decision 4). territory stays a leaf otherwise.
+_SANCTIONED_TERRITORY_IMPORTERS = ("territorial_defense/",)  # relative to the silly_kicks package dir (ROOT)
+
+
+def test_only_territorial_defense_imports_territory():
+    offenders = []
+    for py in sorted(ROOT.rglob("*.py")):
+        if py.is_relative_to(TERRITORY) or not _imports_territory(py):
+            continue
+        rel = py.relative_to(ROOT).as_posix()
+        if any(rel.startswith(s) for s in _SANCTIONED_TERRITORY_IMPORTERS):
+            continue
+        offenders.append(rel)
+    assert not offenders, (
+        f"{offenders}: only territorial_defense may import territory (the ADR-090 hull single-source); "
+        "territory is otherwise a leaf metric."
+    )
 
 
 def test_public_surface_exists():

@@ -17,6 +17,12 @@ import pandas as pd
 
 from tests.sb360._fixture import build_leg_a
 
+#: The pre-territorial_defense scene (action_ids 0-5). TF-54b (ADR-090) extended the SHARED SB360
+#: fixture with actions 6-9 (interceptions + an opponent pass) for its boundary-audit entry; those are
+#: irrelevant to FOV observability, so this fixture stays scoped to the original scene -- keeping the
+#: byte-identical ADR-062 companion golden valid without regenerating it.
+_ORIGINAL_SCENE_IDS = (0, 1, 2, 3, 4, 5)
+
 #: action_ids that receive the cropping polygon. Action 3 is deliberately OMITTED so its regions
 #: classify as ``no_polygon`` -- exercising that companion source alongside ``observed``.
 _CROPPED_ACTIONS = (0, 1, 2, 4, 5)
@@ -31,15 +37,15 @@ def _legs():
 
 
 def tiny_actions() -> pd.DataFrame:
-    """Canonical-SPADL actions that all link in Leg A."""
+    """Canonical-SPADL actions that all link in Leg A (the original 6-action scene; ADR-090)."""
     actions, _frames, _links = _legs()
-    return actions
+    return actions[actions["action_id"].isin(_ORIGINAL_SCENE_IDS)].reset_index(drop=True)
 
 
 def tiny_frames() -> pd.DataFrame:
-    """Freeze-frame tracking frames (one per action), built by the real producer."""
+    """Freeze-frame tracking frames (one per action), built by the real producer (original scene)."""
     _actions, frames, _links = _legs()
-    return frames
+    return frames[frames["frame_id"].isin(_ORIGINAL_SCENE_IDS)].reset_index(drop=True)
 
 
 def tiny_visible_area() -> pd.DataFrame:

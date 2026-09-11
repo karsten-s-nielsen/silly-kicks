@@ -15,16 +15,28 @@ from pathlib import Path
 
 SAMPLE_DIR = Path(os.environ.get("SKILLCORNER_SAMPLE_DIR", r"C:\Users\Karsten\AppData\Local\Temp\skillcorner_sample"))
 
+# The redistributable public SkillCorner set (must equal PUBLIC_CORPUS["skillcorner"] -- guarded by
+# tests/scripts/test_corpus_taxonomy.py). Grew 10 -> 20 on 2026-09-09 (a second public drop).
 MATCH_IDS = [
+    "1874553",
     "1886347",
     "1899585",
     "1925299",
+    "1927964",
     "1953632",
+    "1959846",
+    "1986691",
     "1996435",
+    "1996436",
     "2006229",
+    "2006363",
+    "2007448",
+    "2007721",
+    "2010085",
     "2011166",
     "2013725",
     "2015213",
+    "2016236",
     "2017461",
 ]
 

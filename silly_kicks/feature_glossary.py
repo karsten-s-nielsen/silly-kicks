@@ -168,6 +168,9 @@ _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 d
 _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
 _M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
 _M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
+# TF-54b territorial_defense was DEMOTED to experimental (ADR-090 construct-validity: instrument_void),
+# so its three columns carry no glossary entry -- the code is retained privately for the redesign
+# (mirrors the TF-60 Layer-3 arms). NOTICE keeps the attribution for the retained code.
 
 
 def _onehot_entries() -> list[FeatureColumn]:

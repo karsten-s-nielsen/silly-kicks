@@ -35,6 +35,21 @@ SCALE_GUARDED: dict[str, str] = {
     "silly_kicks.restdefense._compute._score_samples": "test_score_samples_is_subquadratic",
     "silly_kicks.gkdv._probe.paired_vector_controls": "test_paired_vector_controls_is_subquadratic",
     "silly_kicks.restdefense._probe.paired_vector_controls": "test_paired_vector_controls_rd_is_subquadratic",
+    "silly_kicks.territorial_defense._engine.classify_arm_a_domain": "test_classify_arm_a_domain_is_subquadratic",
+    "silly_kicks.territorial_defense._compute._score_arm_a": "test_score_arm_a_is_subquadratic",
+    "silly_kicks.territorial_defense._compute._score_arm_b": "test_score_arm_b_is_subquadratic",
+    # arm_a_threat_suppressed_batch groups BOTH legs via group_rows (L9); scales the frame-group dim.
+    "silly_kicks.territorial_defense._arms.arm_a_threat_suppressed_batch": "test_arm_a_batch_is_subquadratic",
+    # The public entry builds group_rows ONCE (L7) and threads it into classify + both arms.
+    "silly_kicks.territorial_defense._compute.compute_territorial_defense": (
+        "test_compute_territorial_defense_is_subquadratic"
+    ),
+    # _distinct_defenders groups the defensive actions once (ADR-068); it is driven (transitively) by
+    # the _score_arm_b guard, which scales GAMES so its per-defender group lookup stays linear.
+    "silly_kicks.territorial_defense._compute._distinct_defenders": "test_score_arm_b_is_subquadratic",
+    # The validation driver's per-scored-frame dose-battery loop: group_rows over the frames ONCE, one
+    # .get per scored Arm-A frame (scales the scored-frame dimension within a single match).
+    "scripts.validate_territorial_defense._measure_match": "test_td_measure_match_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

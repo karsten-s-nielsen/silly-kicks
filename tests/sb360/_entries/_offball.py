@@ -372,21 +372,24 @@ _entry(
     ),
     velocity={
         "press_commitment": AxisVerdict(
-            "no_signal",
-            "not_exercised",
+            "all_nan",
+            "honest_nan",
             rationale=(
-                "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                "occurrence context, or blocking defender to score). A fixture inadequacy, not a library property "
-                "-- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                "Exercised by the TF-54b sb360-fixture-3 interception frames: add_press_commitment's "
+                "bekkers_pi pressure is velocity-GATED (ADR-063 Tier-3), so the velocity-less freeze-frame "
+                "leg is honest-NaN while the velocity-bearing tracking leg scores -- an honest all-NaN on "
+                "Leg A, not a fabrication (previously no_signal/not_exercised; the widened fixture moved it). "
+                "[measured cause=velocity]"
             ),
         ),
         "press_commitment_closing_speed": AxisVerdict(
-            "no_signal",
-            "not_exercised",
+            "all_nan",
+            "honest_nan",
             rationale=(
-                "The fixture does not produce this column's domain on either leg (no pressing sequence, shot- "
-                "occurrence context, or blocking defender to score). A fixture inadequacy, not a library property "
-                "-- widening the fixture would move it. [measured cause=velocity+frame_count]"
+                "Exercised by the TF-54b sb360-fixture-3 interception frames: closing speed is a "
+                "velocity-derived quantity (ADR-063 Tier-3), so the velocity-less freeze-frame leg is "
+                "honest-NaN while the tracking leg scores -- an honest all-NaN on Leg A, not a fabrication "
+                "(previously no_signal/not_exercised; the widened fixture moved it). [measured cause=velocity]"
             ),
         ),
         "press_commitment_source": AxisVerdict(

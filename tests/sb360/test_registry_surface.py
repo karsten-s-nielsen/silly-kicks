@@ -209,6 +209,9 @@ def test_every_aggregator_emits_at_least_one_column() -> None:
 _EXPECTED_DARK_COLUMNS = {
     # The fixture has no pressing sequence, so the argmax-defender identity never has a domain.
     ("add_cover_shadows", "max_single_defender_player_id"),
+    # (territorial_defense.compute_territorial_defense's b_attribution_slippage was here, but the metric
+    # was DEMOTED to experimental in 4.112.0 -- ADR-090 construct-validity -- so it carries no boundary
+    # verdict at all now.)
 }
 
 

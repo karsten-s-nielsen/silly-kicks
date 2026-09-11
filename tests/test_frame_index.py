@@ -65,3 +65,18 @@ def test_contains_single_and_multi_key():
     g = group_rows(df, ("game_id", "frame_id"))
     assert (2, 10) in g  # multi-key membership: pass a tuple
     assert (2, 11) not in g
+
+
+def test_keys_returns_canonical_keys_usable_in_get():
+    df = _frames()
+    # single-key: canonical scalars (Int64 -> str "10"/"11"); each round-trips through get()
+    g = group_rows(df, "frame_id")
+    assert set(g.keys()) == {"10", "11"}
+    for k in g.keys():
+        assert not g.get(k).empty
+    # multi-key: canonical tuples, splattable into get() -> the same rows the boolean filter gives
+    gm = group_rows(df, ("game_id", "frame_id"))
+    assert set(gm.keys()) == {("1", "10"), ("1", "11"), ("2", "10")}
+    got = gm.get(*("2", "10"))
+    exp = df[(df["game_id"] == 2) & (df["frame_id"] == 10)]
+    pd.testing.assert_frame_equal(got, exp)

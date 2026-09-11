@@ -10,10 +10,34 @@ from __future__ import annotations
 
 import numpy as np
 
-# The 17 matches we may redistribute. Drift here fails the run loudly (spec 3.2).
+# The 27 matches we may redistribute. Drift here fails the run loudly (spec 3.2). SkillCorner grew
+# 10 -> 20 on 2026-09-09 (a second public drop, uploaded to pining-for-the-data); the pre-existing
+# bundled xshot/xcross/ghost models were trained on the ORIGINAL public 17 (10 SkillCorner + 7 IDSSE)
+# and are NOT retrained by this change -- their model cards' "17 matches" is a correct historical fact.
 PUBLIC_CORPUS: dict[str, frozenset[str]] = {
     "skillcorner": frozenset(
-        {"1886347", "1899585", "1925299", "1953632", "1996435", "2006229", "2011166", "2013725", "2015213", "2017461"}
+        {
+            "1874553",
+            "1886347",
+            "1899585",
+            "1925299",
+            "1927964",
+            "1953632",
+            "1959846",
+            "1986691",
+            "1996435",
+            "1996436",
+            "2006229",
+            "2006363",
+            "2007448",
+            "2007721",
+            "2010085",
+            "2011166",
+            "2013725",
+            "2015213",
+            "2016236",
+            "2017461",
+        }
     ),
     "idsse": frozenset(
         {
@@ -49,7 +73,7 @@ def artifact_label(*, providers: set[str], all_public: bool) -> str:
 
 
 def assert_public_corpus(visibility: dict[tuple[str, str], str], *, expect_full_public_arm: bool = False) -> None:
-    """No match may claim `public` unless it is one of the registered 17 (spec 3.2, reviewer m4).
+    """No match may claim `public` unless it is one of the registered 27 (spec 3.2, reviewer m4).
 
     SUBSET by default (nothing unregistered may call itself public -- a LICENSING failure). Equality
     only when expect_full_public_arm=True, the maintainer run that loads every public provider (the

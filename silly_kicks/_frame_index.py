@@ -67,6 +67,16 @@ class RowGroups:
         # single-key: pass the scalar; multi-key: pass a tuple, e.g. `(2, 10) in groups`.
         return self._canon(key) in self._indices
 
+    def keys(self) -> list:
+        """The CANONICAL group keys (ADR-019), each usable directly in :meth:`get` (splat a tuple).
+
+        Single-key -> a list of canonical scalars; multi-key -> a list of canonical tuples. Lets an
+        iterate-and-match caller (e.g. a batched two-frame arm) enumerate + look up groups dtype-safely
+        instead of a raw ``dict(tuple(df.groupby(...)))``, whose raw-tuple keys mis-compare across a
+        dtype skew between two frame sets.
+        """
+        return list(self._indices.keys())
+
 
 def group_rows(df: pd.DataFrame, by: str | tuple[str, ...]) -> RowGroups:
     """Build a :class:`RowGroups` O(1) lookup over ``df`` grouped by ``by``. See the module docstring."""

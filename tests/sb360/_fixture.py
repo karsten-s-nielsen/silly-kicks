@@ -29,7 +29,7 @@ import pandas as pd
 
 from silly_kicks.tracking import link_actions_to_frames, snapshot_to_tracking_frames
 
-FIXTURE_VERSION = "sb360-fixture-2"
+FIXTURE_VERSION = "sb360-fixture-3"
 
 HOME_TEAM_ID = 1
 AWAY_TEAM_ID = 2
@@ -39,6 +39,14 @@ _GAME_ID = 7
 _PERIOD = 1
 
 #: (action_id, type_name, team_id, player_id, start_x, start_y, end_x, end_y, time_seconds)
+#:
+#: Actions 6-9 (TF-54b) give the territorial_defense boundary entry a domain the attacking-oriented
+#: base scene lacks: three own-half interceptions by home defender #13 (Arm A + the trimmed hull) and
+#: one away pass whose end reflects into that hull (Arm B). Their frames use `_SUPPRESSION_BASE` so
+#: #13 is the deep-centre sole coverer and away #25 is a receiver broken in behind -- removing #13
+#: raises the away threat (non-vacuous). The base scene (0-5) is UNCHANGED, so the pre-existing
+#: entries' verdicts on those anchors are preserved; only the added frames + the `is_actor` column
+#: are new (FIXTURE_VERSION bumped to sb360-fixture-3).
 _ACTIONS: tuple[tuple, ...] = (
     (0, "pass", HOME_TEAM_ID, 10, 52.5, 34.0, 70.0, 40.0, 300.0),
     (1, "cross", HOME_TEAM_ID, 11, 88.0, 8.0, 98.0, 34.0, 320.0),
@@ -46,7 +54,35 @@ _ACTIONS: tuple[tuple, ...] = (
     (3, "goalkick", AWAY_TEAM_ID, 20, 5.5, 34.0, 45.0, 20.0, 360.0),
     (4, "dribble", HOME_TEAM_ID, 13, 60.0, 50.0, 68.0, 52.0, 380.0),
     (5, "throw_in", AWAY_TEAM_ID, 21, 40.0, 68.0, 48.0, 55.0, 400.0),
+    (6, "interception", HOME_TEAM_ID, 13, 30.0, 20.0, 34.0, 24.0, 420.0),
+    (7, "interception", HOME_TEAM_ID, 13, 35.0, 44.0, 39.0, 40.0, 440.0),
+    (8, "interception", HOME_TEAM_ID, 13, 40.0, 30.0, 44.0, 34.0, 460.0),
+    (9, "pass", AWAY_TEAM_ID, 21, 50.0, 34.0, 70.0, 34.0, 480.0),
 )
+
+#: Actions whose frames use the suppression layout (TF-54b territorial_defense domain).
+_SUPPRESSION_ACTION_IDS = frozenset({6, 7, 8, 9})
+
+#: Per-player base-position OVERRIDE inside suppression frames (home defends x=0, away attacks x=0).
+#: Only these three move; every other player keeps its base, sitting upfield (x>=30) and clear of the
+#: deep-centre zone, so #13 at (4, 34) is the sole home coverer there. Ball is at the action start
+#: (x=30-50), so away #25 at (10, 34) is "ahead of the ball" and registers as a dangerous receiver.
+_SUPPRESSION_BASE: dict[int, tuple[float, float]] = {
+    10: (2.0, 60.0),  # home keeper -> top corner (does not cover the deep centre)
+    13: (4.0, 34.0),  # D -> deep centre, the sole coverer + the actor of 6/7/8
+    25: (10.0, 34.0),  # away receiver -> broken in behind, in D's zone
+}
+
+#: Acting player per action_id (for the `is_actor` freeze-frame flag, TF-54b actor bridge).
+_ACTOR_BY_ACTION: dict[int, int] = {aid: pid for aid, _, _, pid, _, _, _, _, _ in _ACTIONS}
+
+
+def _base_pos(action_id: int, player: dict) -> tuple[float, float]:
+    """Base position for ``player`` in ``action_id``'s frame -- the suppression override on 6-9."""
+    if action_id in _SUPPRESSION_ACTION_IDS and player["player_id"] in _SUPPRESSION_BASE:
+        return _SUPPRESSION_BASE[player["player_id"]]
+    return float(player["base_x"]), float(player["base_y"])
+
 
 #: ALLOWLIST of parameter names that are genuinely temporal frame windows.
 #:
@@ -349,14 +385,16 @@ def build_leg_a(*, roster: str = "full", id_dtype: str = "int64"):
     for aid, _, _, _, _, _, _, _, t in _ACTIONS:
         for idx, p in enumerate(layout):
             dx, dy = _offset(aid, idx, t)
+            bx, by = _base_pos(aid, p)
             snap_rows.append(
                 {
                     "action_id": aid,
                     "team_id": p["team_id"],
                     "player_id": p["player_id"],
                     "is_goalkeeper": bool(p["is_goalkeeper"]),
-                    "x": float(p["base_x"] + dx),
-                    "y": float(p["base_y"] + dy),
+                    "is_actor": p["player_id"] == _ACTOR_BY_ACTION.get(aid),
+                    "x": float(bx + dx),
+                    "y": float(by + dy),
                 }
             )
     snapshots = _cast_ids(pd.DataFrame(snap_rows), id_dtype)
@@ -395,6 +433,7 @@ def build_leg_b(*, roster: str = "full", id_dtype: str = "int64"):
                 # Position matches Leg A exactly at t == t0 by construction.
                 dx, dy = _offset(aid, idx, float(t))
                 vx, vy = _velocity(aid, idx, float(t))
+                bx, by = _base_pos(aid, p)
                 rows.append(
                     {
                         "game_id": _GAME_ID,
@@ -406,8 +445,9 @@ def build_leg_b(*, roster: str = "full", id_dtype: str = "int64"):
                         "team_id": p["team_id"],
                         "is_ball": False,
                         "is_goalkeeper": bool(p["is_goalkeeper"]),
-                        "x": float(p["base_x"] + dx),
-                        "y": float(p["base_y"] + dy),
+                        "is_actor": p["player_id"] == _ACTOR_BY_ACTION.get(aid),
+                        "x": float(bx + dx),
+                        "y": float(by + dy),
                         "z": np.nan,
                         "speed": float(np.hypot(vx, vy)),
                         "vx": float(vx),
@@ -434,6 +474,7 @@ def build_leg_b(*, roster: str = "full", id_dtype: str = "int64"):
                     "team_id": np.nan,
                     "is_ball": True,
                     "is_goalkeeper": False,
+                    "is_actor": False,
                     "x": b_x,
                     "y": b_y,
                     "z": b_z,

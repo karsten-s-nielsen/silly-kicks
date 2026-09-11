@@ -307,6 +307,10 @@ def shape_snapshots(
                         "action_id": action_id,
                         "team_id": acting_team if bool(row.get("teammate")) else opponent_team,
                         "is_goalkeeper": bool(row.get("keeper")),
+                        # SB360 marks exactly one actor per freeze-frame; it is the only reliable
+                        # outfield identity (the acting player's real id is on the SPADL action), so
+                        # re-plumb it here for the actor bridge (TF-54b). Absent key -> False.
+                        "is_actor": bool(row.get("actor")),
                         "x": float(x),
                         "y": float(y),
                     }
@@ -321,7 +325,7 @@ def shape_snapshots(
         if len(poly) or raw_area:
             poly_rows.append({"action_id": action_id, "polygon": poly})
 
-    snapshots = pd.DataFrame(snap_rows, columns=["action_id", "team_id", "is_goalkeeper", "x", "y"])
+    snapshots = pd.DataFrame(snap_rows, columns=["action_id", "team_id", "is_goalkeeper", "is_actor", "x", "y"])
     # `player_id` is REQUIRED by the tests' contract check but must not claim identity: emit it as
     # a per-row synthetic so a consumer sees the column and its docstring, not a silent absence.
     snapshots["player_id"] = np.arange(len(snapshots))

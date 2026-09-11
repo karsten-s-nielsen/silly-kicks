@@ -1,6 +1,6 @@
-"""Scale-guard adopters (ADR-073): each of the 12 highest-risk primitives carries a growth (or
-constant) guard proving it stays sub-quadratic at scale. See tests/_perf_structural.py and the
-SCALE_GUARDED registry."""
+"""Scale-guard adopters (ADR-073): each highest-risk group_rows primitive carries a growth (or
+constant) guard proving it stays sub-quadratic at scale. The exact population is the SCALE_GUARDED
+registry (pinned to the AST-derived caller set); see tests/_perf_structural.py and tests/_scale_guarded.py."""
 
 import numpy as np
 import pandas as pd
@@ -611,3 +611,132 @@ def test_paired_vector_controls_rd_is_subquadratic():
         return c["n"]
 
     assert_subquadratic_growth(measure, sizes=(128, 256, 512), label="paired_vector_controls_rd")
+
+
+# ==================== territorial_defense (ADR-090 / TF-54b) ====================
+def _td_scaling_upstream(n):
+    """Scaled ``(actions, frames, domain, goal_map, xt)`` -- the upstream steps (select domain +
+    resolve goals) run OUTSIDE the counter so each guard isolates ONE function's group_rows site."""
+    from silly_kicks.territorial_defense._engine import select_arm_a_domain
+    from silly_kicks.tracking import resolve_defended_goals
+    from tests.territorial_defense._fixtures import make_fitted_xt, make_td_scaling_fixture
+
+    actions, frames = make_td_scaling_fixture(n)
+    return actions, frames, select_arm_a_domain(actions), resolve_defended_goals(frames), make_fitted_xt()
+
+
+def test_classify_arm_a_domain_is_subquadratic():
+    from silly_kicks.territorial_defense._engine import classify_arm_a_domain
+
+    def measure(n):
+        _actions, frames, domain, gm, _xt = _td_scaling_upstream(n)
+        with rows_scanned_counter() as c:
+            classify_arm_a_domain(domain, frames, goal_map_for=lambda *a: gm)  # O(1) group_rows.get per domain row
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="classify_arm_a_domain")
+
+
+def test_score_arm_a_is_subquadratic(monkeypatch):
+    import silly_kicks.territorial_defense._compute as C
+    from silly_kicks.territorial_defense._engine import classify_arm_a_domain
+
+    # Stub the pitch-control arm to a constant so the guard isolates the group_rows frame-lookup +
+    # remove_player_row growth (spec decision 4: count only the suspect op), not the O(1)-per-frame
+    # pitch-control cost.
+    monkeypatch.setattr(C, "arm_a_threat_suppressed", lambda *a, **k: 0.0)
+
+    def measure(n):
+        _actions, frames, domain, gm, xt = _td_scaling_upstream(n)
+        classified = classify_arm_a_domain(domain, frames, goal_map_for=lambda *a: gm)
+        with rows_scanned_counter() as c:
+            C._score_arm_a(classified, frames, xt=xt, goal_map_for=lambda *a: gm, params=C._DEFAULT_PARAMS)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="_score_arm_a")
+
+
+def test_td_measure_match_is_subquadratic(monkeypatch):
+    # The validation DRIVER (scripts/validate_territorial_defense._measure_match) builds group_rows over
+    # the match frames ONCE and does one .get per scored Arm-A frame (ADR-068). Stub pitch control (both
+    # the driver's bound `compute_threat_pc` and the arms' `tracking.compute_threat_pc`) so the guard
+    # isolates that build + per-frame get growth, not the O(1)-per-frame pitch-control cost.
+    import silly_kicks.tracking as T
+    from scripts import validate_territorial_defense as V
+    from tests.territorial_defense._fixtures import make_fitted_xt, single_match_scored
+
+    monkeypatch.setattr(V, "compute_threat_pc", lambda *a, **k: 0.5)
+    monkeypatch.setattr(T, "compute_threat_pc", lambda *a, **k: 0.5)
+    xt = make_fitted_xt()
+
+    def measure(n):
+        actions, frames = single_match_scored(n)
+        with rows_scanned_counter() as c:
+            V._measure_match(("statsbomb", 1, actions, frames, 1, None), xt=xt)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="td_measure_match")
+
+
+def test_arm_a_batch_is_subquadratic(monkeypatch):
+    # arm_a_threat_suppressed_batch groups BOTH legs via group_rows ONCE (ADR-019/ADR-068) and does one
+    # .get per frame-group. Stub the per-frame pitch-control arm so the counter isolates the group_rows
+    # build + per-group .get growth (scaling the frame-GROUP dimension), not the O(1)-per-frame cost.
+    import silly_kicks.territorial_defense._arms as A
+
+    monkeypatch.setattr(A, "arm_a_threat_suppressed", lambda *a, **k: 0.0)
+
+    def measure(n):
+        actual = pd.DataFrame(
+            {
+                "game_id": [1] * n,
+                "period_id": [1] * n,
+                "frame_id": list(range(n)),
+                "player_id": [10] * n,
+                "x": [1.0] * n,
+                "y": [1.0] * n,
+                "is_ball": [False] * n,
+            }
+        )
+        cf = actual.copy()
+        with rows_scanned_counter() as c:
+            A.arm_a_threat_suppressed_batch(actual, cf, attacking_team_id_by_frame=1, xt=None, goal_map=None)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="arm_a_threat_suppressed_batch")
+
+
+def test_score_arm_b_is_subquadratic(monkeypatch):
+    import silly_kicks.territorial_defense._compute as C
+
+    # Stub the pitch-control arm; the guard isolates the ADR-068 seam -- opponent passes grouped by
+    # game ONCE vs a per-defender full-passes rescan. Scaling GAMES makes the rescan quadratic and the
+    # grouped-once lookup linear (see make_td_scaling_fixture).
+    monkeypatch.setattr(C, "arm_b_threat_suppressed", lambda *a, **k: (0.0, (52.5, 34.0)))
+
+    def measure(n):
+        actions, frames, domain, gm, xt = _td_scaling_upstream(n)
+        with rows_scanned_counter() as c:
+            C._score_arm_b(actions, frames, domain, xt=xt, goal_map_for=lambda *a: gm, params=C._DEFAULT_PARAMS)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="_score_arm_b")
+
+
+def test_compute_territorial_defense_is_subquadratic(monkeypatch):
+    # The public entry point builds group_rows over the frames ONCE (L7) and threads it into classify +
+    # both arms (they do NOT rebuild). Stub the pitch-control arms so the counter isolates the
+    # orchestrator's group_rows build + threaded per-frame/-defender .get growth (scaling GAMES, so the
+    # ADR-068 grouped-once lookups stay linear while a rescan would go quadratic).
+    import silly_kicks.territorial_defense._compute as C
+
+    monkeypatch.setattr(C, "arm_a_threat_suppressed", lambda *a, **k: 0.0)
+    monkeypatch.setattr(C, "arm_b_threat_suppressed", lambda *a, **k: (0.0, (52.5, 34.0)))
+
+    def measure(n):
+        actions, frames, _domain, _gm, xt = _td_scaling_upstream(n)
+        with rows_scanned_counter() as c:
+            C.compute_territorial_defense(actions, frames, xt=xt, frame_convention="match_ltr")
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="compute_territorial_defense")

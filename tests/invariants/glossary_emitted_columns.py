@@ -1,6 +1,6 @@
 """Union of derived columns emitted by every default-config producer (run-and-diff), base-normalised.
 
-Eight legs, each running its producers at default config on a real fixture and diffing the columns
+Nine legs, each running its producers at default config on a real fixture and diffing the columns
 they ADD (or, for the ``*_xfns`` / vaep legs whose transformers return a feature-only frame, the
 columns they PRODUCE):
 
@@ -21,6 +21,9 @@ columns they PRODUCE):
    ``compute_*`` the name-shape discovery misses, run explicitly here.
 8. ``_duel_columns`` -- ``duels.compute_duel_ratings`` (TF-55) on a tiny native fixture; likewise a
    ``compute_*`` the name-shape discovery misses, run explicitly here.
+
+(TF-54b ``territorial_defense.compute_territorial_defense`` was a 9th leg, removed when the metric was
+DEMOTED to experimental in 4.112.0 -- ADR-090 construct-validity -- so it emits no default-config column.)
 
 ``emitted_columns`` is the base-normalised union of all eight legs (the gamestate-slot marker
 ``_a{i}`` is stripped so the glossary is keyed on the base/semantic name).

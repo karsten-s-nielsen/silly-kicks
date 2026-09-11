@@ -37,5 +37,5 @@ def test_dtypes():
 
 
 def test_method_family_and_source_vocab():
-    assert TERRITORY_METHODS == frozenset({"completed_failed", "counterfactual"})
+    assert TERRITORY_METHODS == frozenset({"completed_failed"})
     assert TERRITORY_HULL_SOURCE_VALUES == frozenset({"resolved", "degenerate", "no_actions"})

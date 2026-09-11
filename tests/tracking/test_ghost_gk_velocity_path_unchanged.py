@@ -68,10 +68,22 @@ from tests.sb360._fixture import build_leg_b
 
 _BASELINE = pathlib.Path(__file__).parent / "data" / "ghost_velocity_path_baseline.npz"
 
+#: The ORIGINAL 6-action scene (action_id 0-5). TF-54b (ADR-090) extended the SHARED SB360 fixture
+#: with actions 6-9 (interceptions + an opponent pass) for its boundary-audit entry; those are
+#: irrelevant to this bundled-ghost velocity-invariance tripwire, and the existing 6 served positions
+#: are byte-identical with vs without them (verified: max|delta| 0.0). Slicing to the original scene
+#: keeps the golden valid WITHOUT regenerating a bundled-model-output golden -- honouring this
+#: docstring's "revisited, not absorbed" rule (the fixture grew; the model output did not move).
+_ORIGINAL_SCENE_IDS = (0, 1, 2, 3, 4, 5)
+
 
 def _serve():
+    # Serve on the FULL fixture (linking needs the actions' real frames), then restrict the OUTPUT to
+    # the original scene by action_id. The td actions (6-9) append rows the golden never covered; the
+    # original 6 rows are byte-identical with vs without them (verified max|delta| 0.0).
     actions, frames, _links = build_leg_b()
     out = T.add_ghost_gk(actions, frames, home_team_id=1)
+    out = out[out["action_id"].isin(_ORIGINAL_SCENE_IDS)]
     return out[["ghost_gk_x", "ghost_gk_y"]].to_numpy(dtype=float)
 
 

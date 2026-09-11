@@ -10,9 +10,13 @@ from silly_kicks.xthreat._params import GridSpec, KDEParams
 
 
 def singh_transition_matrix(actions: pd.DataFrame, grid: GridSpec) -> npt.NDArray[np.float64]:
-    """Row-normalized empirical move-transition counts (classic Singh 2018).
+    """Empirical move-transition matrix (classic Singh 2018): successful moves per (start,end) over
+    ALL moves per start cell. Byte-identical to the legacy
+    ``_move_transition_matrix(actions, grid.n_zones_x, grid.n_zones_y)``.
 
-    Byte-identical to the legacy ``_move_transition_matrix(actions, grid.n_zones_x, grid.n_zones_y)``.
+    NOTE: rows are **sub-stochastic** — ``Σ_j T[i,j] = P(success | move from i) ≤ 1`` (the missing
+    mass is the failure probability). Contrast ``kde_smoothed_transition_matrix``, whose rows ARE
+    row-stochastic (density normalized to 1).
 
     Examples
     --------
@@ -20,7 +24,7 @@ def singh_transition_matrix(actions: pd.DataFrame, grid: GridSpec) -> npt.NDArra
 
         from silly_kicks.xthreat import GridSpec, singh_transition_matrix
 
-        T = singh_transition_matrix(actions, GridSpec(16, 12))  # (192, 192) row-stochastic
+        T = singh_transition_matrix(actions, GridSpec(16, 12))  # (192, 192), rows sub-stochastic
     """
     l, w = grid.n_zones_x, grid.n_zones_y
     n = w * l

@@ -15,6 +15,11 @@ from silly_kicks.restdefense import RD_LAYER1_COLUMNS, RD_LAYER2_COLUMNS
 from silly_kicks.xtgk import DeltaV, PressureLevels, State, compute_xt_gk_v2
 from tests.sb360._registry import AxisVerdict, _entry
 
+# TF-54b territorial_defense.compute_territorial_defense was registered here as a boundary entry but
+# was DEMOTED to experimental (ADR-090 construct-validity: the removal arm is instrument_void), so it
+# is no longer a PUBLIC frame-consuming entry point and carries no SB360 boundary verdict -- mirrors
+# the TF-60 Layer-3 arms. The code is retained privately for the redesign.
+
 
 def _call_restart_coordinates(actions, frames, links, home_team_id):
     """``add_restart_coordinates(actions, *, frames, links)`` -- no ``home_team_id``."""

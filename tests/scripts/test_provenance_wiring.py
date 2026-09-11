@@ -60,6 +60,15 @@ ARTIFACT_DRIVERS = (
     # (per-sample outfield + keeper deterrent arms + Layer-1 anchors + resolved keeper), whose Spearman /
     # named-keeper numbers are cited -- a corpus-fit xT surface + external pining data, so provenance.
     "build_tf60_layer3_arm_values",
+    # TF-54b territorial-defense construct-validity battery. Writes
+    # docs/research/territorial_defense_construct_validity/metrics.json (pooled probe verdicts + the
+    # locked elite-defender face-validity prior) from a per-match-fit xT + external SB360 pining data
+    # -- a cited number, so provenance. Owner-run, reported-not-gated.
+    "validate_territorial_defense",
+    # TF-54b PassCompletionModel weight trainer (kept per Decision 3; carried with the expected_passing
+    # seam). Writes parameters-only bundled weights + metrics.json stamping training_commit -- the same
+    # class as the other weight trainers (train_receiver_model / train_ghost_gk / train_ghost_outfield).
+    "train_pass_completion",
     "calibrate_xt_bandwidth",
     "measure_cover_shadow_argmax_agreement",
     "build_layer2_spells",
