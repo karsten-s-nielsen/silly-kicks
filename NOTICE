@@ -343,18 +343,33 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   RD growth). Native winner/loser on sportec (tackle_winner/loser); derived from
   the tackle / take_on result adjacency elsewhere. Descriptive; no VAEP path.
 
-- Territorial defense (SB360 counterfactual).
+- Territorial defense (SB360 counterfactual) -- DEMOTED to experimental (ADR-090).
   Attribution: Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting).
-  Used by: silly_kicks.territorial_defense._arms (TF-54b).
+  Used by: silly_kicks.territorial_defense._arms (TF-54b) -- PRIVATE (demoted; no public surface).
   How much a defender's POSITIONING suppresses the attacking team's threat on SB360
   freeze-frames, via a model-free removal (marginal-contribution) counterfactual:
   compute_threat_pc(defender removed) - compute_threat_pc(actual), in xT units. Arm A
   is action-anchored (identity-exact); Arm B is hull-based (attribution-approximate).
-  Validated as an INSTRUMENT, NOT player-attributable -- the marginal-removal delta is
-  team-conditioned by construction, so per-defender numbers are NOT a defender ranking
-  (the defender-vs-team confound is unidentifiable on a single-tournament / national-team
-  corpus; a crossed defender+team ICC over a multi-club transfer corpus is the future
-  gate). Descriptive; no VAEP path.
+  NOT construct-validated and NOT player-attributable -- the owner-run battery (321 SB360
+  matches) found the removal arm instrument_void / not_responsive, and the marginal-removal
+  delta is team-conditioned by construction, so per-defender numbers are NOT a defender
+  ranking (the defender-vs-team confound is unidentifiable on a single-tournament /
+  national-team corpus; a crossed defender+team ICC over a multi-club transfer corpus is the
+  future gate). DEMOTED to experimental per the standing rule (a metric that fails validation
+  must not ship as that metric): no public surface; the code is retained privately for the
+  replacement-ghost redesign, and this attribution stands for that retained code. Descriptive; no VAEP path.
+
+- Expected pass-completion (pass-completion probability).
+  Attribution: Power et al. 2017, "Not All Passes Are Created Equal" (KDD) -- the pass
+  risk (completion-probability) methodology, and the broader expected-passing / xPass
+  literature.
+  Used by: silly_kicks.expected_passing.PassCompletionModel (TF-54b).
+  An event-only logistic P(complete | origin -> target geometry) over 10 geometric
+  features (distance, angle-to-goal, forward/lateral components, origin/target x/y +
+  pitch thirds); no tracking, no teammate positions. Shipped as a REUSABLE SEAM with
+  bundled default weights (public StatsBomb open-data WC2022) -- the event-only "threat
+  prevented" counterfactual cone it was built to weight was not carried into this cycle,
+  so no shipped feature consumes it yet. Descriptive; no VAEP path.
 
 - Ogawa et al. (2025). "Space evaluation at the starting point of soccer
   transitions." arXiv:2505.14711 (OBPV).

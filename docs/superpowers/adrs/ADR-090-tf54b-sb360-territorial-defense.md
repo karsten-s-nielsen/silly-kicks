@@ -91,7 +91,8 @@ sister GK-distribution metric (eyestone collaboration) passed its own face-valid
 
 ### Positive
 
-- A spatial, identity-exact (Arm A) territorial-defense **instrument** on SB360 freeze-frames.
+- A spatial, identity-exact (Arm A) territorial-defense **mechanism** on SB360 freeze-frames (its
+  construct validity is measured in commit 2 — see the negative result below).
 - The actor bridge `apply_actor_identities_to_frames` is **independently useful** (the eyestone GK
   build-up-decision metric is a concrete second consumer) — hence its shared `keeper_identity.py` home.
 - `expected_passing.PassCompletionModel` + `xthreat.destination_profiles` land as **reusable
@@ -102,11 +103,14 @@ sister GK-distribution metric (eyestone collaboration) passed its own face-valid
 
 ### Negative
 
-- **Not player-attributable** (team-confound, above) — per-defender numbers are not a ranking.
+- **Not player-attributable** (team-confound, above) — per-defender numbers are not a ranking. **And NOT
+  construct-validated even as an instrument**: the commit-2 battery returned `instrument_void` (see the
+  construct-validity result below).
 - Arm A is **narrow** (identity-exact only on the actor's own defensive actions); Arm B carries
   **attribution slippage** (the contesting defender may not be D — reported as `b_attribution_slippage`).
-- `PassCompletionModel.bundled()` raises `FileNotFoundError` until the owner-run weights land (commit 2);
-  two `bundled()` tests skip until then.
+- `PassCompletionModel` ships as a **reusable seam** — commit 2 bundles its public-corpus default weights
+  (`bundled()` now serves them; the `bundled()` test runs), but no shipped feature consumes it yet
+  (the event-only counterfactual cone it was built to weight was not carried into this cycle).
 - The metric is **reported-not-gated** — the construct-validity battery is owner-run (DGX/corpus) and
   promotes NO default (any promotion is a separate ADR-009 decision).
 
@@ -122,6 +126,37 @@ sister GK-distribution metric (eyestone collaboration) passed its own face-valid
   unrepresentable, mirroring `GkdvParams`); the arms accept **no `pitch_control_cache`** (ADR-043
   landmine: the identity-keyed cache would serve the factual surface to the counterfactual and collapse
   every delta to exactly 0).
+
+### Construct-validity result (commit 2, reported-not-gated)
+
+The owner-run battery ran on the full **321-match** StatsBomb-360 corpus (clean `training_commit`
+provenance; artifact `docs/research/territorial_defense_construct_validity/`) and returned a **NEGATIVE**
+verdict:
+
+- **Layer 0 (instrument validity): `instrument_void`.** Dosing the contesting defender ±2 m (realistic)
+  or ±10 m (saturating) moves the pooled threat by a **median of 0.0**, while a random single-player
+  placebo move reaches p95 0.137. `n_domain = 23,366` ≫ the 200-frame floor, so this is *not* an
+  `arm_unscoreable` coverage artefact — the response is genuinely zero at the median.
+- **Layer 1 (responsiveness): `not_responsive`** (`defender_med 0.0 < TD_PROBE_RATIO × max(nd_med,
+  placebo_p95)`).
+- **Named-defender face-validity 2/3** (Van Dijk +7.4e-05, Gvardiol +1.9e-03 positive; Otamendi
+  negative) — at noise-level magnitudes, so face-validity corroboration only.
+- **Arm-B slippage honest-NaN** (`n = 0`) on anonymous SB360 frames (ADR-027; the designed behaviour).
+
+On crowded penalty-box freeze-frames a single defender's small displacement is absorbed by the
+remaining players, so the marginal-removal / marginal-displacement threat delta is a very weak signal —
+the probe working as designed, not a null "no-effect" claim. This mirrors the TF-60 Layer-3 and
+xtgk_v2 construct-validity outcomes.
+
+**DECISION: DEMOTED to experimental** (owner-approved, 4.112.0 commit 2). Per the standing rule -- a
+metric that fails its validation must not ship as that metric -- the public metric surface is REMOVED:
+`compute_territorial_defense` + the arms out of `territorial_defense.__all__` (now empty), the three
+columns out of `feature_glossary` (glossary count reverts -3 -> 394), and the entry out of the SB360
+boundary audit (`BOUNDARY_ENTRY_POINTS`; `NOT_EXERCISED_BUDGET` 50->46). The code is RETAINED in the
+private `._compute` / `._arms` / `._engine` modules (imported by the `scripts`/tests consumers from the
+private path) for the replacement-ghost redesign; the `territorial_defense` C4 container stays (the code
+exists; no analyst-facing edge) and `NOTICE` keeps the attribution for the retained code. This mirrors
+the TF-60 Layer-3 demotion (ADR-089). No retrain, no re-materialize.
 
 ## CLAUDE.md Amendment
 

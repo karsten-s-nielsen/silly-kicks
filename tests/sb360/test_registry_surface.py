@@ -209,11 +209,9 @@ def test_every_aggregator_emits_at_least_one_column() -> None:
 _EXPECTED_DARK_COLUMNS = {
     # The fixture has no pressing sequence, so the argmax-defender identity never has a domain.
     ("add_cover_shadows", "max_single_defender_player_id"),
-    # IMPL-01 (4.112.0): Arm-B attribution is un-measurable on SB360 under EVERY roster -- the
-    # position-chosen contesting defender is an anonymous NON-actor (only the actor carries a real
-    # id), so is-D cannot be compared -> honest-NaN -> no_signal -> not_exercised everywhere (ADR-027,
-    # never a fabricated 0.0). Measurable only on full-tracking providers with per-player ids.
-    ("territorial_defense.compute_territorial_defense", "b_attribution_slippage"),
+    # (territorial_defense.compute_territorial_defense's b_attribution_slippage was here, but the metric
+    # was DEMOTED to experimental in 4.112.0 -- ADR-090 construct-validity -- so it carries no boundary
+    # verdict at all now.)
 }
 
 

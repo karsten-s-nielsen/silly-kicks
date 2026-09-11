@@ -50,7 +50,7 @@ class TerritorialDefenseParams:
 
     Examples
     --------
-    >>> from silly_kicks.territorial_defense import TerritorialDefenseParams
+    >>> from silly_kicks.territorial_defense._config import TerritorialDefenseParams  # DEMOTED (ADR-090)
     >>> p = TerritorialDefenseParams()
     >>> p.defensive_action_type_ids, p.pitch_control_method
     ((9, 10, 18), 'spearman')

@@ -337,13 +337,11 @@ _PUBLIC_MODULE_FILES = (
     # Brand-new public module -- documented on creation (every public symbol carries a real
     # Examples section), not deferred.
     "silly_kicks/expected_passing/_model.py",
-    # territorial_defense (TF-54b): _config.py / _report.py DEFINE the public surface
-    # (TerritorialDefenseParams, TerritorialDefenseReport), re-exported via the package __all__.
-    # _columns.py holds only constants (not FunctionDef/ClassDef), so it is not discovered. Brand-new
-    # public modules -- documented on creation (Params/Report carry Examples), not deferred.
-    "silly_kicks/territorial_defense/_config.py",
-    "silly_kicks/territorial_defense/_report.py",
-    "silly_kicks/territorial_defense/_compute.py",
+    # territorial_defense (TF-54b): DEMOTED to experimental (ADR-090 construct-validity: instrument_void),
+    # so _config/_report/_compute no longer DEFINE a public surface (the package __all__ is now empty) --
+    # they are retained as private modules for the replacement-ghost redesign and carry no public-API-example
+    # obligation. Removed from this registry when the metric was demoted (the "unexported" case of
+    # test_registered_modules_are_still_public); their docstring examples now import from the private path.
     # TF-59 PR1: the per-provider keeper-appearance extractors (one public `extract_keeper_appearances`
     # each), feeding the ADR-055 keeper-identity port. Brand-new public modules -- documented on
     # creation (each carries a real Examples section), not deferred.

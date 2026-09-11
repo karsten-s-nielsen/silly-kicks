@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import warnings
 from pathlib import Path
 
@@ -112,22 +113,29 @@ def render_model_card(metrics: dict) -> str:
     bss_line = ""
     if np.isfinite(brier) and np.isfinite(noskill) and noskill > 0.0:
         bss_line = f" (Brier skill score {1.0 - brier / noskill:.3f} vs the base-rate baseline)"
+    # A source-faithful reproduce command: open-data uses --source open-data (the bundled default);
+    # the pining cross-check uses --source pining --providers.
+    m_open = re.match(r"statsbomb-open \(competition (\d+), season (\d+)\)", str(providers))
+    if m_open:
+        reproduce_args = f"--source open-data --competition-id {m_open.group(1)} --season-id {m_open.group(2)}"
+    else:
+        reproduce_args = f"--source pining --providers {providers}"
     return f"""# Pass-completion model -- `default` variant (TF-54b)
 
-**What it is.** The event-only pass-completion probability `P(complete | origin -> target geometry)`
-that the TF-54b territorial counterfactual (`silly_kicks.territory`, `method="counterfactual"`) uses to
-weight the threat a defender's territory prevented. Logistic regression; sklearn at fit, pure-numpy
-`sigmoid(Xb)` at serve (no runtime sklearn). Loaded via
-`silly_kicks.expected_passing.PassCompletionModel.bundled()`; injected into
-`compute_territorial_dominance(..., completion_model=)`.
+**What it is.** An event-only pass-completion probability `P(complete | origin -> target geometry)`,
+shipped as a reusable seam. Logistic regression; sklearn at fit, pure-numpy `sigmoid(Xb)` at serve
+(no runtime sklearn). Loaded via `silly_kicks.expected_passing.PassCompletionModel.bundled()`. Carried
+from the unmerged `ab9001c` alongside `xthreat.destination_profiles`; the event-only "threat prevented"
+counterfactual cone it was built to weight was not carried into the TF-54b cycle, so no shipped feature
+consumes it yet -- it is library infrastructure for a future consumer.
 
 **Label construct.** SPADL `result_id == success` = the pass reached a teammate. Completed passes are
 labelled at their real end; failed passes at their SPADL death/recovery location (the field-standard
 expected-passing label).
 
 **Features (event-only, 10).** distance, angle-to-goal, forward and lateral components, origin/target
-x and y, origin/target pitch-third. No tracking, no teammate positions. At serve for a FAILED pass the
-model is evaluated at the HYPOTHESISED target (a cone-restricted xT grid zone), within the geometry
+x and y, origin/target pitch-third. No tracking, no teammate positions. A consumer scoring a FAILED
+pass evaluates the model at a HYPOTHESISED target (e.g. an xT-grid destination), within the geometry
 range completed passes already cover.
 
 **Training corpus + metrics.** {n_matches} match(es) from `{providers}` ({n_rows} finite-coordinate
@@ -135,10 +143,10 @@ pass rows). GroupKFold-by-match out-of-fold: AUC {auc:.3f}, ECE {ece:.3f}, Brier
 rate {base:.3f}{bss_line}. See `metrics.json`.
 
 **Missing-value policy.** A non-finite coordinate yields an all-NaN feature row and a NaN probability
-(never a fabricated value); the counterfactual seam drops-and-counts such a target.
+(never a fabricated value); a consumer drops-and-counts such a target.
 
 **Provenance + reproduction.** Reproduce with `python scripts/train_pass_completion.py --out <DIR>
---providers {providers}`. `metrics.json` records `training_commit` ({commit}) and the tree state (this
+{reproduce_args}`. `metrics.json` records `training_commit` ({commit}) and the tree state (this
 bundle was produced from a clean tree). Pickle-free JSON + SHA256 envelope (`model.json` +
 `SHA256SUMS`) with a feature contract + chirality probe; `load()` is fail-closed
 (ADR-011/016/040/044/050). Every bundled model carries a card (ADR-088). Attribution:

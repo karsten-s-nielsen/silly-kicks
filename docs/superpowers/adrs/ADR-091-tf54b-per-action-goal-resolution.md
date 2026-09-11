@@ -8,6 +8,12 @@
 | **Corrects** | ADR-090 (an implicit, undocumented frame-convention assumption in the compute) |
 | **Spec** | `docs/superpowers/specs/2026-09-10-tf54b-per-action-goal-resolution-design.md` |
 
+> **Note (4.112.0 commit 2):** `compute_territorial_defense` and `action_ltr_goal_map` were subsequently
+> **DEMOTED to experimental** (ADR-090's construct-validity battery found the removal arm
+> `instrument_void`) — both are now PRIVATE (`territorial_defense._compute` / `._engine`), no public
+> surface. The per-frame goal-resolution decision below still STANDS and is retained in that private code
+> for the replacement-ghost redesign; only the import path changed (public → `._compute`/`._engine`).
+
 ## Context
 
 ADR-090 shipped `compute_territorial_defense` — a removal-counterfactual valuation of a defender's

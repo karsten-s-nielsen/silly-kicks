@@ -3,11 +3,10 @@
 import pandas as pd
 import pytest
 
-from silly_kicks.territorial_defense import (
-    TD_SAMPLE_COLUMNS,
-    TD_SOURCE_VALUES,
-    compute_territorial_defense,
-)
+# territorial_defense was DEMOTED to experimental (ADR-090); the metric is retained on the private
+# ``._compute`` / ``._columns`` path for the redesign.
+from silly_kicks.territorial_defense._columns import TD_SAMPLE_COLUMNS, TD_SOURCE_VALUES
+from silly_kicks.territorial_defense._compute import compute_territorial_defense
 
 from ._fixtures import make_e2e_fixture, make_fitted_xt, make_per_action_ltr_fixture
 

@@ -87,9 +87,10 @@ def compute_territorial_defense(
 
     Examples
     --------
-    Runs on SB360-shaped ``actions``/``frames`` with a fitted ``xt`` (default per-action convention)::
+    Runs on SB360-shaped ``actions``/``frames`` with a fitted ``xt`` (default per-action convention).
+    DEMOTED to experimental (ADR-090) -- imported from the private ``._compute`` path::
 
-        from silly_kicks.territorial_defense import compute_territorial_defense
+        from silly_kicks.territorial_defense._compute import compute_territorial_defense
         samples, report = compute_territorial_defense(actions, frames, xt=xt)
         # samples: one row per (game_id, player_id); report conserves over the Arm-A domain.
     """

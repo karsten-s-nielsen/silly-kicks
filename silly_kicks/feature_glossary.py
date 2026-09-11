@@ -168,10 +168,9 @@ _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 d
 _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
 _M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
 _M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
-_M_TERRITORIAL_DEFENSE = "silly_kicks.territorial_defense._arms"  # TF-54b SB360 territorial-defense counterfactual
-_A_TERRITORIAL_DEFENSE = (
-    "Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting)"
-)
+# TF-54b territorial_defense was DEMOTED to experimental (ADR-090 construct-validity: instrument_void),
+# so its three columns carry no glossary entry -- the code is retained privately for the redesign
+# (mirrors the TF-60 Layer-3 arms). NOTICE keeps the attribution for the retained code.
 
 
 def _onehot_entries() -> list[FeatureColumn]:
@@ -2053,48 +2052,6 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="count",
         emitting_module=_M_DUELS,
         attribution=_A_DUELS,
-        higher_is_better=False,
-    ),
-    FeatureColumn(
-        name="a_threat_suppressed",
-        definition=(
-            "TF-54b Arm A (identity-exact): summed threat the defender's positioning neutralized at "
-            "their own defensive actions, as compute_threat_pc(defender removed) - "
-            "compute_threat_pc(actual) in xT units (positive = suppressed). An INSTRUMENT-level, "
-            "team-conditioned estimate -- NOT a defender ranking (the defender-vs-team confound is "
-            "unidentifiable on a single-tournament / national-team corpus; see NOTICE / CLAUDE.md)."
-        ),
-        unit="xT",
-        emitting_module=_M_TERRITORIAL_DEFENSE,
-        attribution=_A_TERRITORIAL_DEFENSE,
-        higher_is_better=True,
-    ),
-    FeatureColumn(
-        name="b_threat_suppressed",
-        definition=(
-            "TF-54b Arm B (attribution-approximate): summed threat suppressed on opponent passes into "
-            "the defender's trimmed territory hull, removing the nearest-to-target defending player, "
-            "in xT units (positive = suppressed). An INSTRUMENT-level, team-conditioned estimate -- "
-            "NOT a defender ranking (same team-confound limit as a_threat_suppressed)."
-        ),
-        unit="xT",
-        emitting_module=_M_TERRITORIAL_DEFENSE,
-        attribution=_A_TERRITORIAL_DEFENSE,
-        higher_is_better=True,
-    ),
-    FeatureColumn(
-        name="b_attribution_slippage",
-        definition=(
-            "TF-54b Arm B attribution error: the measured rate at which the position-chosen "
-            "contesting defender is NOT the hull-owner D (over the subset where identity is known); "
-            "LOWER = tighter attribution, 0.0 = perfect. Honest-NaN when NO contesting defender's "
-            "identity is measurable (e.g. anonymous SB360 opponent-pass frames), NEVER a fabricated "
-            "0.0 (ADR-027). Shipped alongside b_threat_suppressed so its approximation is visible; "
-            "NOT a defender ranking."
-        ),
-        unit="ratio",
-        emitting_module=_M_TERRITORIAL_DEFENSE,
-        attribution=_A_TERRITORIAL_DEFENSE,
         higher_is_better=False,
     ),
 )

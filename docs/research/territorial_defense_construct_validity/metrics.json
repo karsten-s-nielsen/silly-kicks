@@ -1,0 +1,110 @@
+{
+  "n_defenders": 6852,
+  "n_frames_scored": 30218,
+  "n_arm_a_scored": 6359,
+  "n_arm_b_scored": 3271,
+  "expected_direction": {
+    "a_threat_suppressed": "positive",
+    "b_threat_suppressed": "positive"
+  },
+  "verdicts": {
+    "layer0": "instrument_void",
+    "layer1": "not_responsive",
+    "n_domain": 23366,
+    "medians": {
+      "real_med": 0.0,
+      "sat_med": 0.0,
+      "defender_med": 0.0,
+      "nd_med": 0.0,
+      "placebo_p95": 0.13674537173694984
+    },
+    "n_placebo": 70098
+  },
+  "arm_b_slippage": {
+    "mean_attribution_slippage": NaN,
+    "n": 0
+  },
+  "elite_defender_prior": {
+    "prior_locked": "2026-09-09 (before the owner run)",
+    "checks": [
+      {
+        "defender": "Van Dijk",
+        "expected": "positive",
+        "observed": "positive",
+        "meets_prior": true,
+        "n_matches": 10,
+        "mean_a_threat_suppressed": 7.430368211631677e-05
+      },
+      {
+        "defender": "Gvardiol",
+        "expected": "positive",
+        "observed": "positive",
+        "meets_prior": true,
+        "n_matches": 12,
+        "mean_a_threat_suppressed": 0.0018611329544707123
+      },
+      {
+        "defender": "Otamendi",
+        "expected": "positive",
+        "observed": "negative",
+        "meets_prior": false,
+        "n_matches": 7,
+        "mean_a_threat_suppressed": 0.0
+      }
+    ]
+  },
+  "cross_team_replication": {
+    "n_defenders_multi_game": 1477,
+    "identifies_confound": false,
+    "note": "A per-team decomposition needs a team column + cross-team appearances; WC2022 is one-player-one-national-team, so it has ZERO identifying power for the defender-vs-team confound. Ranking is a future ADR-009 gated on a crossed defender+team ICC over a multi-club transfer corpus."
+  },
+  "honest_limit": "Validated as an INSTRUMENT, NOT player-attributable: the marginal-removal delta is team-conditioned by construction; on a single-tournament / national-team corpus the defender-vs-team confound is unidentifiable, so per-defender numbers are NOT a ranking.",
+  "generation": "ca64ce4d91c9e6a1",
+  "n_attempted": 321,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "run_commit": "ce0401a9f6d38f99333ffcefa047b0211f317f7d",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_territorial_defense",
+    "params": {
+      "elite_defender_prior": {
+        "Gvardiol": "positive",
+        "Otamendi": "positive",
+        "Van Dijk": "positive"
+      },
+      "elite_defender_prior_locked": "2026-09-09 (before the owner run)",
+      "min_domain_frames": 200,
+      "n_placebo": 3,
+      "realistic_disp_m": 2.0,
+      "saturating_disp_m": 10.0,
+      "saturating_multiple": 5.0,
+      "td_probe_ratio": 2.0,
+      "territorial_defense": {
+        "arm_b_rule": "nearest_to_target",
+        "defensive_action_type_ids": [
+          9,
+          10,
+          18
+        ],
+        "lambda_gk": 3.0,
+        "local_radius_m": 10.0,
+        "min_defenders_after_removal": 1,
+        "min_local_observed_fraction": 0.7,
+        "own_half_max_x": 52.5,
+        "pitch_control_method": "spearman",
+        "trim_fraction": 0.7
+      }
+    },
+    "extractors": [
+      "silly_kicks.territorial_defense._arms",
+      "silly_kicks.territorial_defense._engine"
+    ],
+    "models": [
+      "silly_kicks.territorial_defense._probe"
+    ],
+    "digest": "b78933c4f20758b57787f3b45ced52bfeae277be76d08428cc6431058869be09"
+  }
+}

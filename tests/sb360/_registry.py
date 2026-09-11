@@ -74,7 +74,9 @@ BOUNDARY_ENTRY_POINTS: frozenset[str] = frozenset(
         "xtgk.compute_xt_gk_v2",
         "spadl.add_restart_coordinates",
         "restdefense.compute_rest_defense",
-        "territorial_defense.compute_territorial_defense",
+        # territorial_defense.compute_territorial_defense was DEMOTED to experimental (ADR-090:
+        # instrument_void) -- no longer a PUBLIC boundary entry, so it carries no SB360 verdict
+        # (mirrors the TF-60 Layer-3 arms).
     }
 )
 
@@ -258,7 +260,12 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: is now `per_action_ltr`, which resolves the goal from the action-LTR CONVENTION (GK-independent), so
 #: the two threat arms SCORE under `gk_absent` (differs_by_design); only `b_attribution_slippage` stays
 #: not_exercised there. gk_absent 3 -> 1 not_exercised. Net 52 -> 50.
-NOT_EXERCISED_BUDGET = 50
+#: LOWERED 50 -> 46 by DEMOTING `territorial_defense.compute_territorial_defense` to experimental
+#: (ADR-090 construct-validity: the removal arm is instrument_void). Removing its boundary entry drops
+#: its 4 `b_attribution_slippage` not_exercised tuples (velocity + all three visibility rosters); the
+#: shared sb360-fixture-3 interception frames STAY (their add_press_commitment coverage gain is
+#: independent of the demoted metric). Mirrors the TF-60 Layer-3 removal.
+NOT_EXERCISED_BUDGET = 46
 
 
 def _entry(

@@ -30,11 +30,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             territory = container "silly_kicks.territory" "TF-54 territorial dominance: opponent passes into a defender's trimmed own-half defensive hull, valued conceded (completed) vs prevented (failed) by an INJECTED fitted xT. Event-only." "Python" "Library"
             duels = container "silly_kicks.duels" "TF-55 Glicko-2 duel ratings: per-(player, match) rating / deviation / volatility from ground-duel win/loss (native sportec winner-loser, else tackle / take_on adjacency); match = rating period." "Python" "Library"
             expected_passing = container "silly_kicks.expected_passing" "Event-only Expected-Passing model (PassCompletionModel): P(pass completes | origin->target geometry); pickle-free JSON+SHA256 with chirality + feature-contract fail-closed load. TF-54b." "Python" "Library"
-            territorial_defense = container "silly_kicks.territorial_defense" "TF-54b SB360 territorial defense: how much a defender's positioning suppresses attacking threat, via a model-free removal (marginal-contribution) counterfactual delta. Instrument, not a ranking." "Python" "Library"
+            territorial_defense = container "silly_kicks.territorial_defense" "TF-54b SB360 territorial-defense counterfactual -- DEMOTED to experimental (ADR-090: arm found instrument_void); no public surface, code retained privately for the redesign." "Python" "Library"
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 397 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 394 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
             keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
         }
 
@@ -132,7 +132,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         duels -> spadl "Reads SPADL action-type / result ids + canonical id helpers from" "Python import"
         analyst -> expected_passing "Fits / serves the event-only pass-completion model via" "PassCompletionModel"
         expected_passing -> spadl "Reads SPADL actions + canonical id helpers from" "Python import"
-        analyst -> territorial_defense "Computes SB360 territorial-defense threat-suppression (removal counterfactual) via" "compute_territorial_defense()"
+        # No analyst -> territorial_defense edge: the metric was DEMOTED to experimental (ADR-090,
+        # construct-validity: instrument_void), so there is no public analyst-facing API. The container
+        # is retained (private code, for the replacement-ghost redesign) with its internal deps below.
         territorial_defense -> tracking "Reads player positions + pitch-control threat, goal map, visibility from" "compute_threat_pc / resolve_defended_goals"
         territorial_defense -> territory "Reuses the trimmed defensive hull (Arm B membership) via" "build_trimmed_hull / Hull"
         territorial_defense -> keeper_identity "Stamps the acting player's real id onto the SB360 actor row via" "apply_actor_identities_to_frames"

@@ -12,114 +12,13 @@ import silly_kicks.spadl as spadl
 from silly_kicks.gkdv import GkdvParams, build_ghost_frames
 from silly_kicks.id_compat import canonical_id, ids_equal, same_id
 from silly_kicks.restdefense import RD_LAYER1_COLUMNS, RD_LAYER2_COLUMNS
-from silly_kicks.territorial_defense import compute_territorial_defense
 from silly_kicks.xtgk import DeltaV, PressureLevels, State, compute_xt_gk_v2
-from silly_kicks.xthreat import ExpectedThreat
 from tests.sb360._registry import AxisVerdict, _entry
 
-
-def _td_xt() -> ExpectedThreat:
-    """A fitted x-increasing toy xT (matches the territorial_defense unit fixture)."""
-    xt = ExpectedThreat(l=16, w=12)
-    xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
-    return xt
-
-
-_TD_XT = _td_xt()
-
-
-def _td_anchor_frames(frames, links):
-    """Project each action to its ANCHOR frame and re-stamp ``frame_id = action_id`` so
-    ``compute_territorial_defense``'s snapshot convention (frame_id == action_id) holds on BOTH legs.
-    Leg A's links are identity (frame_id already == action_id), so this is a no-op there; Leg B maps
-    each action to the linked neighbourhood anchor. Frame ids matched canonically (ADR-019)."""
-    parts = []
-    for aid, fid in zip(links["action_id"], links["frame_id"], strict=True):
-        if pd.isna(fid):
-            continue
-        sub = frames[ids_equal(frames["frame_id"], pd.Series(fid, index=frames.index)).to_numpy()].copy()
-        sub["frame_id"] = aid
-        parts.append(sub)
-    return pd.concat(parts, ignore_index=True) if parts else frames.iloc[0:0].copy()
-
-
-_TD_COLS = ("a_threat_suppressed", "b_threat_suppressed", "b_attribution_slippage")
-
-
-def _call_territorial_defense(actions, frames, links, home_team_id):
-    """Run compute_territorial_defense on the anchor-projected frames (TF-54b). The Arm-A domain is
-    the fixture's interception actions 6-8 (home #13); Arm B reads its own-half hull + the away pass
-    (action 9). Both arms difference the xT-weighted pitch-control threat: TTI uses velocity, so the
-    freeze-frame leg is an ADR-063 Tier-1 POSITIONAL LIFT that legitimately DIFFERS from the tracking
-    leg (a substantive, valid difference). The slippage is positional -> velocity-invariant."""
-    anchor = _td_anchor_frames(frames, links)
-    samples, _report = compute_territorial_defense(actions, anchor, xt=_TD_XT)
-    return samples[list(_TD_COLS)]
-
-
-_TD_THREAT_RATIONALE = (
-    "Arm A/B threat suppression is an xT-weighted pitch-control differential; pitch control's "
-    "time-to-intercept USES velocity, so the velocity-less freeze-frame leg is an ADR-063 Tier-1 "
-    "positional LIFT that legitimately differs from the velocity-informed tracking leg -- a "
-    "SUBSTANTIVE, valid difference, not a fabrication. [measured cause=velocity]"
-)
-_TD_SLIPPAGE_RATIONALE = (
-    "b_attribution_slippage is honest-NaN on SB360 (IMPL-01): the position-chosen contesting defender "
-    "is a NON-actor with an anonymous snapshot-numbered id -- only the ACTOR is identified (the actor "
-    "bridge stamps the passer, not the defenders) -- so attribution is un-measurable on BOTH legs "
-    "(ADR-027 honest-NaN, NEVER a fabricated 0.0). Both legs NaN -> `no_signal`, which admits only "
-    "`not_exercised`. [measured cause=n/a]"
-)
-_TD_GK_ABSENT_RATIONALE = (
-    "gk_absent removes both keepers, but the SB360 default (per_action_ltr) resolves the attacked goal "
-    "from the action-LTR CONVENTION (action_ltr_goal_map: the acting team attacks x=105), NOT from GK "
-    "positions -- so the arms still SCORE (a GK-independent, FOV-proof resolution; ADR-091). The threat "
-    "differential is the ADR-063 Tier-1 positional lift that differs across velocity legs, same as the "
-    "other rosters. (Pre-ADR-091, the per-match resolve_defended_goals needed a keeper, so gk_absent was "
-    "unexercisable no_signal.) [measured cause=velocity]"
-)
-
-
-def _v_td_threat() -> AxisVerdict:
-    return AxisVerdict("differs", "differs_by_design", rationale=_TD_THREAT_RATIONALE)
-
-
-def _v_td_slip() -> AxisVerdict:
-    return AxisVerdict("no_signal", "not_exercised", rationale=_TD_SLIPPAGE_RATIONALE)
-
-
-def _td_exercised() -> dict:
-    return {
-        "a_threat_suppressed": _v_td_threat(),
-        "b_threat_suppressed": _v_td_threat(),
-        "b_attribution_slippage": _v_td_slip(),
-    }
-
-
-def _td_gk_absent() -> dict:
-    # per_action_ltr resolves the goal from the action-LTR convention (no GK), so gk_absent SCORES the
-    # threat arms (GK-independent, ADR-091); slippage stays honest-NaN (anonymous defenders).
-    threat = AxisVerdict("differs", "differs_by_design", rationale=_TD_GK_ABSENT_RATIONALE)
-    return {
-        "a_threat_suppressed": threat,
-        "b_threat_suppressed": threat,
-        "b_attribution_slippage": _v_td_slip(),
-    }
-
-
-_entry(
-    "territorial_defense.compute_territorial_defense",
-    _call_territorial_defense,
-    columns=_TD_COLS,
-    velocity=_td_exercised(),
-    visibility={
-        "gk_absent": _td_gk_absent(),
-        "defender_absent": _td_exercised(),
-        "gk_one_end": _td_exercised(),
-    },
-    verdict_provenance="substantive",
-    provenance_rationale=_TD_THREAT_RATIONALE,
-)
+# TF-54b territorial_defense.compute_territorial_defense was registered here as a boundary entry but
+# was DEMOTED to experimental (ADR-090 construct-validity: the removal arm is instrument_void), so it
+# is no longer a PUBLIC frame-consuming entry point and carries no SB360 boundary verdict -- mirrors
+# the TF-60 Layer-3 arms. The code is retained privately for the redesign.
 
 
 def _call_restart_coordinates(actions, frames, links, home_team_id):

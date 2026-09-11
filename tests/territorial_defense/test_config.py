@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from silly_kicks.territorial_defense import TerritorialDefenseParams
+from silly_kicks.territorial_defense._config import TerritorialDefenseParams  # DEMOTED (ADR-090): private path
 
 
 def test_defaults():

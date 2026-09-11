@@ -40,8 +40,11 @@ import pandas as pd
 from scripts._input_contract import declare_inputs
 from silly_kicks._frame_index import group_rows
 from silly_kicks.keeper_identity import apply_actor_identities_to_frames
-from silly_kicks.territorial_defense import compute_territorial_defense
+
+# territorial_defense was DEMOTED to experimental (ADR-090); the metric is retained on the private
+# ``._compute`` path -- this reported-not-gated battery consumes it from there for the redesign work.
 from silly_kicks.territorial_defense._arms import arm_a_threat_suppressed
+from silly_kicks.territorial_defense._compute import compute_territorial_defense
 from silly_kicks.territorial_defense._config import TerritorialDefenseParams
 from silly_kicks.territorial_defense._engine import (
     action_ltr_goal_map,

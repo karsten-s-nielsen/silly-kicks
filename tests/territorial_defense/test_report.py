@@ -1,6 +1,8 @@
 """TF-54b TerritorialDefenseReport conservation (ADR-042 dropped-and-counted)."""
 
-from silly_kicks.territorial_defense import TerritorialDefenseParams, TerritorialDefenseReport
+# DEMOTED (ADR-090): the metric + its types are retained on the private path for the redesign.
+from silly_kicks.territorial_defense._config import TerritorialDefenseParams
+from silly_kicks.territorial_defense._report import TerritorialDefenseReport
 
 
 def test_conservation_holds():

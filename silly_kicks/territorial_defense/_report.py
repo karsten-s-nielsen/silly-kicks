@@ -27,7 +27,8 @@ class TerritorialDefenseReport:
     --------
     Both conservations hold exactly:
 
-    >>> from silly_kicks.territorial_defense import TerritorialDefenseParams, TerritorialDefenseReport
+    >>> from silly_kicks.territorial_defense._config import TerritorialDefenseParams  # DEMOTED (ADR-090)
+    >>> from silly_kicks.territorial_defense._report import TerritorialDefenseReport
     >>> r = TerritorialDefenseReport(
     ...     TerritorialDefenseParams(), 10, 6, {"fov_cropped_local": 3, "removal_undersupported": 1},
     ...     arm_b_n_in=8, arm_b_n_scored=5, arm_b_drop_reasons={"removal_undersupported": 2, "missing_frame": 1},

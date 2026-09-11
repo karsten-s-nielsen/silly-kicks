@@ -80,8 +80,18 @@ def _imports_territorial_defense(path: pathlib.Path) -> bool:
     return False
 
 
-def test_territorial_defense_public_surface_exists():
-    from silly_kicks.territorial_defense import TD_SAMPLE_KEYS
+def test_territorial_defense_public_surface_is_demoted():
+    """TF-54b was DEMOTED to experimental (ADR-090 construct-validity: the removal arm is
+    instrument_void), so the public metric surface is removed -- the package imports cleanly but
+    re-exports nothing, and the metric lives only on the retained private ``._compute`` path (mirrors
+    the TF-60 Layer-3 arms). The private code is still importable for the redesign."""
+    import silly_kicks.territorial_defense as td
+
+    assert td.__all__ == [], f"expected an empty public surface after demotion, got {td.__all__}"
+    assert not hasattr(td, "compute_territorial_defense"), "the demoted metric must not be re-exported"
+    # Retained privately for the redesign:
+    from silly_kicks.territorial_defense._columns import TD_SAMPLE_KEYS
+    from silly_kicks.territorial_defense._compute import compute_territorial_defense  # noqa: F401
 
     assert TD_SAMPLE_KEYS == ["game_id", "player_id"]
 
