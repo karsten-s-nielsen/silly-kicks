@@ -65,6 +65,11 @@ ARTIFACT_DRIVERS = (
     # locked elite-defender face-validity prior) from a per-match-fit xT + external SB360 pining data
     # -- a cited number, so provenance. Owner-run, reported-not-gated.
     "validate_territorial_defense",
+    # TF-62 GK build-up decision-quality construct-validity battery. Writes
+    # docs/research/gk_decision_construct_validity/metrics.json (native-tier responsiveness /
+    # discrimination / net-of-team / transfer verdicts) from owner-tier SkillCorner GI data
+    # -- aggregate stats over external data, cited; owner-run, reported-not-gated -> provenance.
+    "validate_gk_decision",
     # TF-54b PassCompletionModel weight trainer (kept per Decision 3; carried with the expected_passing
     # seam). Writes parameters-only bundled weights + metrics.json stamping training_commit -- the same
     # class as the other weight trainers (train_receiver_model / train_ghost_gk / train_ghost_outfield).

@@ -599,6 +599,39 @@ def _end_from_mean_x(mean_x: float) -> float:
     return 0.0 if mean_x < spadlconfig.field_length / 2.0 else spadlconfig.field_length
 
 
+def action_ltr_goal_map(game_id, period_id, *, acting_team_id, opponent_team_id) -> GoalMap:
+    """Per-action-LTR goal map for ONE frame (ADR-028): the acting team of the frame's action attacks
+    x=105 (defends 0); the opponent defends x=105.
+
+    Correct by the per-action-LTR CONVENTION -- no GK, so it is FOV-proof where a per-frame
+    :func:`resolve_defended_goals` would fail on a keeperless freeze-frame, and unambiguous where a
+    per-MATCH ``resolve_defended_goals`` is bimodal (a team's keeper sits at x=0 in its own actions and
+    x=105 in the opponent's). This resolves a DIFFERENT frame convention from ground truth than
+    ``resolve_defended_goals`` (which ESTIMATES the match-oriented defended end from mean GK x); it is
+    NOT an ADR-055 fork -- both return a :class:`GoalMap` and route through its real opponent-lookup
+    ``attacked_goal``. Keys canonical (ADR-055 rule 2), so a Python ``int``/``str`` lookup resolves.
+
+    Promoted to this PUBLIC tracking seam by ADR-092 / TF62-SPEC-09 (was ``territorial_defense._engine``);
+    the ONE implementation of the per-action-LTR defended goal end (ADR-055), consumed by
+    ``territorial_defense`` and ``gk_decision``.
+
+    Examples
+    --------
+    >>> gm = action_ltr_goal_map(7, 1, acting_team_id=1, opponent_team_id=2)
+    >>> gm.attacked_goal(7, 1, 1, allow_guess=True)   # acting team attacks the opponent's end
+    105.0
+    >>> gm.attacked_goal(7, 1, 2, allow_guess=True)   # opponent attacks the acting team's end
+    0.0
+    """
+    g, p = canonical_id(game_id), canonical_id(period_id)
+    fl = float(spadlconfig.field_length)
+    resolved = {
+        (g, p, canonical_id(acting_team_id)): 0.0,
+        (g, p, canonical_id(opponent_team_id)): fl,
+    }
+    return GoalMap(MappingProxyType(resolved), MappingProxyType({}), frozenset())
+
+
 def resolve_defended_goals(frames: pd.DataFrame) -> GoalMap:
     """Build the pinned goal map. THE single implementation of the rule.
 

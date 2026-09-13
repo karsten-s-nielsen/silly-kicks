@@ -1316,4 +1316,16 @@ NOT_EXERCISABLE: dict[str, str] = {
         "`kloppy` dependency plus a real EventDataset built from on-disk XML fixtures, so an "
         "entry here would silently skip on any CI leg without that extra."
     ),
+    "silly_kicks.tracking._gk_resolve.action_ltr_goal_map": (
+        "WRITER/CONSTRUCTOR, not a comparator (promoted to a public tracking seam by ADR-092 / "
+        "TF62-SPEC-09). It builds a GoalMap keyed on `canonical_id(acting_team_id)` / "
+        "`canonical_id(opponent_team_id)` (+ canonical game/period) and never compares a caller id "
+        "against an id COLUMN, so the raw-`==` mis-resolution this gate catches cannot arise -- the "
+        "canonicalization IS the safety, and the only id comparison (the lookup) happens later in "
+        "`GoalMap.attacked_goal`, covered by `resolve_defended_goals`' own tests. A "
+        "matched/mismatched-value-equal pair (1 vs '1') would yield GoalMaps with IDENTICAL canonical "
+        "keys, but the raw return (a GoalMap with no value equality) is not the one-value-two-dtype "
+        "axis this harness compares -- the same 'writer, not comparator' rule that exempts the kloppy "
+        "`convert_to_actions` above and `add_gradientsports_player_ids`."
+    ),
 }

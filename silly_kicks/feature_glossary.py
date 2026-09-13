@@ -162,12 +162,14 @@ _A_NOVILLO_2025 = "Novillo et al. (2025)"  # λ_GK-included control behind the l
 _A_GSAA = "Goals Saved Above Expected (PSxG-based GSAA)"  # TF-59 PR2 shot-stopping (StatsBomb PSxG / ASA GSAA)
 _A_TERRITORY = "Sumpter, Soccermatics / Twelve.football 'Earpiece' (module 10.2)"  # TF-54 territorial dominance
 _A_DUELS = "Glickman, 'The Glicko-2 rating system'"  # TF-55 Glicko-2 duel ratings
+_A_GK_DECISION = "J. Eyestone, xT-GK collaboration (2026)"  # TF-62 GK build-up Decision-Value extension
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
 _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
 _M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
 _M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
+_M_GK_DECISION = "silly_kicks.gk_decision._compute"  # TF-62 GK build-up decision-quality (chosen-vs-available)
 # TF-54b territorial_defense was DEMOTED to experimental (ADR-090 construct-validity: instrument_void),
 # so its three columns carry no glossary entry -- the code is retained privately for the redesign
 # (mirrors the TF-60 Layer-3 arms). NOTICE keeps the attribution for the retained code.
@@ -2053,6 +2055,62 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_DUELS,
         attribution=_A_DUELS,
         higher_is_better=False,
+    ),
+    # --- TF-62 GK build-up decision-quality (chosen-vs-available; option value = completion x progression) ---
+    FeatureColumn(
+        name="decision_value",
+        definition=(
+            "GK build-up decision value: EV(chosen distribution option) minus the mean EV of the options "
+            "available -- positive = the keeper chose a better-than-average option (EV = pass-completion x "
+            "(1 + opponents bypassed)). Scores the CHOICE, normalising out the team-created option set."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_GK_DECISION,
+        attribution=_A_GK_DECISION,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="sel_efficiency",
+        definition=(
+            "Selection efficiency: EV(chosen option) / EV(best available option), in [0, 1] (1 = picked the best)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_GK_DECISION,
+        attribution=_A_GK_DECISION,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="decision_pct",
+        definition=(
+            "Fraction of the available alternatives the chosen option beats by EV (ties count half); "
+            "random choice = 0.5."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_GK_DECISION,
+        attribution=_A_GK_DECISION,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="chosen_ev",
+        definition=(
+            "Expected value of the option the keeper chose (completion x (1 + opponents bypassed)); "
+            "a raw/context term, not a decision-quality score on its own."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_GK_DECISION,
+        attribution=_A_GK_DECISION,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="best_ev",
+        definition=(
+            "Expected value of the best available option in the decision's option set "
+            "(a team/context term, not keeper-attributable)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_GK_DECISION,
+        attribution=_A_GK_DECISION,
+        higher_is_better=None,
     ),
 )
 

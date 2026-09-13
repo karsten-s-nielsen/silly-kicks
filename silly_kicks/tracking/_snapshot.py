@@ -226,14 +226,17 @@ def _cast_to_declared_schema(frames: pd.DataFrame) -> pd.DataFrame:
     the base at nullable ``Int64`` the port can satisfy its own declaration.
 
     **Identifier columns follow the caller's domain, using the two declarations ADR-058 already
-    established -- no seventh variant.** Genuinely-string ids (the kloppy family's ``object``) are
-    left alone; numeric ids take the base. Deciding per COLUMN rather than per frame is deliberate:
-    a caller can legitimately pair a numeric ``game_id`` with string ``team_id``s, and picking one
-    variant for the whole frame would corrupt one or the other.
+    established -- no seventh variant.** Genuinely-string ids are left alone; numeric ids take the
+    base. Deciding per COLUMN rather than per frame is deliberate: a caller can legitimately pair a
+    numeric ``game_id`` with string ``team_id``s, and picking one variant for the whole frame would
+    corrupt one or the other. The "genuine string" test is ``not is_numeric_dtype`` -- NOT
+    ``== object`` -- because a string id is ``object`` on pandas 2 but the pyarrow-backed ``str``
+    dtype on pandas 3, so ``== object`` misses it and casts ``"m1"`` to the ``int64`` base (ADR-057
+    cross-major trap: assert the behaviour, never the dtype literal).
     """
     for col, declared in TRACKING_FRAMES_COLUMNS.items():
-        if col in _ID_COLUMNS and frames[col].dtype == object:
-            continue  # genuine string ids -- KLOPPY_TRACKING_FRAMES_COLUMNS declares `object`
+        if col in _ID_COLUMNS and not pd.api.types.is_numeric_dtype(frames[col].dtype):
+            continue  # genuine string ids (object on pandas 2, str/string[pyarrow] on pandas 3) -- keep
         if str(frames[col].dtype) != declared:
             # Routed through `pandas_dtype` because the schema stores dtypes as `str` and
             # pandas-stubs types `astype`'s parameter as a literal union, not `str`.
