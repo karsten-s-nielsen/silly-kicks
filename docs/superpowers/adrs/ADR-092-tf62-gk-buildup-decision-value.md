@@ -126,7 +126,7 @@ The battery `scripts/validate_gk_decision.py` (ADR-052 shards, ADR-037 clean-tre
   discriminating (keeper ICC 0.03–0.04, p=0 vs a permutation null), net-of-team real (club-adjusted ICC
   0.07, p=0), transfer inconclusive → **ranking not licensed** (as designed).
 - **Reconstruction fidelity** (Rosetta Stone, per `(keeper, game_id)`) at the shipped default: sel-eff ρ
-  ≈ 0.30, decision_value ρ ≈ 0.26 (p<0.001) — moderate, significant; the engine is native-faithful.
+  ≈ 0.24, decision_value ρ ≈ 0.25 (both p<0.001, n=1,764 pairs) — moderate, significant; the engine is native-faithful.
 - **SB360 reachability sweep** (a threshold GRID): SB360 inverts at reachability 0.5 (the bundled WC2022
   xPass runs generous on SB360, 95% of options ≥0.5, so a 0.5 filter can't bite) and is **responsive at
   0.85** — so **the shipped default is 0.85** (0.5 was a useless default: inert on the native tier,
