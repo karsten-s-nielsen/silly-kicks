@@ -1,0 +1,114 @@
+{
+  "artifact": "tf57_elastic_scoring_tuning_provenance",
+  "run_commit": "e611aa18e5f14e6f4a823b0f3da37cf438f36488",
+  "run_tree_dirty": false,
+  "run_environment": "DGX-Spark",
+  "run_time_utc": "2026-09-14T16:31:21.700197+00:00",
+  "silly_kicks_version": "4.114.0",
+  "git": {
+    "commit": "e611aa18e5f14e6f4a823b0f3da37cf438f36488",
+    "tree_dirty": false,
+    "describe": "e611aa1 feat(elastic-sync): TF-57 event\u2194tracking sync via extended Needleman\u2013Wunsch (ELASTIC v2) replaces the greedy TF-43 aligner -- silly-kicks 4.114.0 (PR-S185, ADR-093)"
+  },
+  "corpus": {
+    "matches": [
+      "J03WMX",
+      "J03WN1",
+      "J03WPY"
+    ],
+    "source": "Sportec Open DFL (Bassek 2025) + ELASTIC re-annotation (CC BY 4.0)"
+  },
+  "openevolve_config": {
+    "tool": "openevolve (LLM code-search over _score)",
+    "random_seed": 42,
+    "max_iterations": 120,
+    "early_stopping_patience": 30,
+    "early_stopping_metric": "combined_score",
+    "population_size": 40,
+    "num_islands": 3,
+    "migration_interval": 20,
+    "models": [
+      "anthropic/claude-sonnet-5 (w0.8)",
+      "anthropic/claude-opus-4.8 (w0.2)"
+    ],
+    "fitness": "score_peak (primary) + 0.5*max(0,W2_gain) - 2*max(0,W2_regression) - 2*max(0,coverage_regression)",
+    "corpus": "WC2022 CC-BY 3-match (J03WMX/J03WN1/J03WPY)",
+    "shipped_weights": {
+      "w_ba": 0.6,
+      "w_pbd": 1.6,
+      "w_kd": 0.8,
+      "w_dyn": 1.0
+    }
+  },
+  "headline": {
+    "pooled_w2": 0.8624,
+    "mean_w2": 0.8622,
+    "min_fold_w2": 0.8474,
+    "score_peak": 0.7452,
+    "per_match_w2": {
+      "J03WMX": 0.8481,
+      "J03WN1": 0.8474,
+      "J03WPY": 0.8912
+    },
+    "reception_w5": {
+      "J03WMX": 0.8961,
+      "J03WN1": 0.8377,
+      "J03WPY": 0.8726
+    }
+  },
+  "held_out_loo": {
+    "mean_held_out_w2": 0.8604,
+    "grid_size": 27,
+    "folds": [
+      {
+        "held_out": "J03WMX",
+        "fit_on": [
+          "J03WN1",
+          "J03WPY"
+        ],
+        "selected_w": [
+          0.6,
+          2.0,
+          0.8,
+          1.0
+        ],
+        "fit_score_peak": 0.764,
+        "held_out_w2": 0.8488,
+        "shipped_rank_on_fit": 3
+      },
+      {
+        "held_out": "J03WN1",
+        "fit_on": [
+          "J03WMX",
+          "J03WPY"
+        ],
+        "selected_w": [
+          0.6,
+          1.6,
+          0.6,
+          1.0
+        ],
+        "fit_score_peak": 0.7486,
+        "held_out_w2": 0.8394,
+        "shipped_rank_on_fit": 7
+      },
+      {
+        "held_out": "J03WPY",
+        "fit_on": [
+          "J03WMX",
+          "J03WN1"
+        ],
+        "selected_w": [
+          0.6,
+          2.0,
+          0.8,
+          1.0
+        ],
+        "fit_score_peak": 0.7363,
+        "held_out_w2": 0.8929,
+        "shipped_rank_on_fit": 8
+      }
+    ],
+    "objective": "max pooled score_peak on fit matches; W2 measured on held-out"
+  }
+}
