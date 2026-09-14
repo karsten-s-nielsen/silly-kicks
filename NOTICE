@@ -343,6 +343,22 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   RD growth). Native winner/loser on sportec (tackle_winner/loser); derived from
   the tackle / take_on result adjacency elsewhere. Descriptive; no VAEP path.
 
+- GK build-up Decision-quality (xT-GK "Decision Value" extension).
+  Attribution: J. Eyestone, xT-GK collaboration (2026) -- App1 "Decision Value = xT-GK(chosen)
+  - E[xT-GK(alternatives)]". Option-value methodology reuses the expected-passing / xPass
+  literature (Power et al. 2017) via the injected silly_kicks.expected_passing.PassCompletionModel.
+  Used by: silly_kicks.gk_decision._compute (TF-62).
+  A per-GK-build-up-decision chosen-vs-available score: decision_value = EV(chosen) - mean EV of
+  the available options, with EV = pass-completion x (1 + opponents bypassed). Scoring the choice
+  against the option set the keeper could have played normalises out the team-created option set by
+  construction. The native tier consumes SkillCorner Game-Intelligence passing_option sets; the
+  reconstruction tiers (SB360 / full-tracking) reconstruct the option set from freeze-frame / tracking
+  positions with the injected PassCompletionModel xPass, the reused silly_kicks.tracking.compute_packing_metrics
+  progression, and the tracking.action_ltr_goal_map orientation seam. Deliverable = method + calibrated
+  uncertainty + a multi-provider path -- NOT a keeper leaderboard (the keeper-vs-team confound is
+  unidentifiable without a multi-club transfer corpus; ranking is a future ADR-009 gate).
+  Descriptive; no VAEP path.
+
 - Territorial defense (SB360 counterfactual) -- DEMOTED to experimental (ADR-090).
   Attribution: Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting).
   Used by: silly_kicks.territorial_defense._arms (TF-54b) -- PRIVATE (demoted; no public surface).

@@ -31,10 +31,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             duels = container "silly_kicks.duels" "TF-55 Glicko-2 duel ratings: per-(player, match) rating / deviation / volatility from ground-duel win/loss (native sportec winner-loser, else tackle / take_on adjacency); match = rating period." "Python" "Library"
             expected_passing = container "silly_kicks.expected_passing" "Event-only Expected-Passing model (PassCompletionModel): P(pass completes | origin->target geometry); pickle-free JSON+SHA256 with chirality + feature-contract fail-closed load. TF-54b." "Python" "Library"
             territorial_defense = container "silly_kicks.territorial_defense" "TF-54b SB360 territorial-defense counterfactual -- DEMOTED to experimental (ADR-090: arm found instrument_void); no public surface, code retained privately for the redesign." "Python" "Library"
+            gk_decision = container "silly_kicks.gk_decision" "TF-62 GK build-up decision-quality (chosen-vs-available): decision_value = EV(chosen) - mean EV(available); option value = xPass x (1 + opponents bypassed); native SkillCorner GI tier (PR1)." "Python" "Library"
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 394 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 399 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
             keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
         }
 
@@ -130,6 +131,8 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         territory -> xthreat "Values opponent passes at their destination with an injected fitted model via" "values_at_points"
         analyst -> duels "Computes per-(player, match) Glicko-2 duel ratings from ground-duel win/loss outcomes via" "compute_duel_ratings()"
         duels -> spadl "Reads SPADL action-type / result ids + canonical id helpers from" "Python import"
+        // --- Relationships: TF-62 GK build-up decision-quality ---
+        analyst -> gk_decision "Computes GK build-up decision value (chosen-vs-available option EV) via" "compute_gk_decision_value()"
         analyst -> expected_passing "Fits / serves the event-only pass-completion model via" "PassCompletionModel"
         expected_passing -> spadl "Reads SPADL actions + canonical id helpers from" "Python import"
         # No analyst -> territorial_defense edge: the metric was DEMOTED to experimental (ADR-090,

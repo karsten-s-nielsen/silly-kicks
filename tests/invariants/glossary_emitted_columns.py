@@ -21,11 +21,13 @@ columns they PRODUCE):
    ``compute_*`` the name-shape discovery misses, run explicitly here.
 8. ``_duel_columns`` -- ``duels.compute_duel_ratings`` (TF-55) on a tiny native fixture; likewise a
    ``compute_*`` the name-shape discovery misses, run explicitly here.
+9. ``_gk_decision_columns`` -- ``gk_decision.compute_gk_decision_value`` (TF-62) on a tiny SkillCorner-GI
+   option set via the native adapter; likewise a ``compute_*`` the name-shape discovery misses, run here.
 
-(TF-54b ``territorial_defense.compute_territorial_defense`` was a 9th leg, removed when the metric was
+(TF-54b ``territorial_defense.compute_territorial_defense`` was another leg, removed when the metric was
 DEMOTED to experimental in 4.112.0 -- ADR-090 construct-validity -- so it emits no default-config column.)
 
-``emitted_columns`` is the base-normalised union of all eight legs (the gamestate-slot marker
+``emitted_columns`` is the base-normalised union of all nine legs (the gamestate-slot marker
 ``_a{i}`` is stripped so the glossary is keyed on the base/semantic name).
 
 COMPLETENESS CEILING (honest): the coverage gate is only as complete as this harness. The per-leg
@@ -301,6 +303,46 @@ def _duel_columns() -> set[str]:
     return set(DUEL_METRIC_COLUMNS) & set(samples.columns)
 
 
+def _gk_decision_columns() -> set[str]:
+    """Derived GK build-up decision-quality metric columns emitted by compute_gk_decision_value (TF-62).
+
+    compute_gk_decision_value is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg runs it on a tiny SkillCorner-GI-shaped option set (one GK possession, 3 options,
+    one chosen) via the native adapter and returns the DERIVED metric columns (the sample keys
+    game_id/period_id/decision_id/keeper/keeper_raw/team_id + n_options + provenance option_set_source are
+    not features). A NEW emitted metric appears here and fails the coverage gate until documented (the
+    run-and-diff anti-rot property)."""
+    import pandas as pd
+
+    from silly_kicks.gk_decision import SkillCornerGIOptionSet, compute_gk_decision_value
+    from silly_kicks.gk_decision._columns import GK_DECISION_METRIC_COLUMNS
+
+    def _opt(target_player_id, target_x, target_y, is_chosen, completion, opponents_bypassed):
+        return dict(
+            game_id="1",
+            period_id=1,
+            decision_id="p1",
+            possessor_id=99,
+            team_id=10,
+            target_player_id=target_player_id,
+            target_x=target_x,
+            target_y=target_y,
+            is_chosen=is_chosen,
+            completion=completion,
+            opponents_bypassed=opponents_bypassed,
+        )
+
+    parsed = pd.DataFrame(
+        [
+            _opt(11, -20.0, 5.0, False, 0.98, 1.0),
+            _opt(12, -6.0, -21.0, True, 0.66, 8.0),
+            _opt(13, -40.0, -12.0, False, 0.99, 1.0),
+        ]
+    )
+    samples, _ = compute_gk_decision_value(SkillCornerGIOptionSet(parsed, keeper_ids=[99]))
+    return set(GK_DECISION_METRIC_COLUMNS) & set(samples.columns)
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -331,5 +373,6 @@ def emitted_columns() -> set[str]:
         | _shot_stopping_columns()
         | _territory_columns()
         | _duel_columns()
+        | _gk_decision_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

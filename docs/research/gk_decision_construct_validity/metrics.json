@@ -1,0 +1,211 @@
+{
+  "run_commit": "22575debf4e36baa063db49de8d914d9c4dea87d",
+  "run_tree_dirty": false,
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_gk_decision",
+    "metric_columns": [
+      "decision_value",
+      "sel_efficiency",
+      "decision_pct"
+    ],
+    "option_value": "completion_progression",
+    "min_per_keeper": 5,
+    "reconstruction_seams": [
+      "PassCompletionModel",
+      "compute_packing_metrics",
+      "action_ltr_goal_map",
+      "reachability_min_xpass"
+    ],
+    "digest": "c345986c6dbfba87905ecfda698ef7633b2c4a1d95469a118ddd327f2638ba69"
+  },
+  "verdicts": {
+    "n_decisions": 22934,
+    "n_keepers": 153,
+    "n_teams": 92,
+    "n_crossing_keepers": 17,
+    "responsiveness": {
+      "decision_pct_mean": 0.5651355068849516,
+      "decision_pct_t_vs_0.5": 26.958182320520685,
+      "decision_value_mean": 0.2738089372866205,
+      "decision_value_t_vs_0": 27.255771442344308
+    },
+    "discrimination_one_way": {
+      "decision_value": {
+        "icc": 0.0392312222881301,
+        "null_p95": 0.0012793614939240808,
+        "p": 0.0,
+        "n_keepers": 149,
+        "n": 22921
+      },
+      "sel_efficiency": {
+        "icc": 0.03678195808446405,
+        "null_p95": 0.0012112039123026936,
+        "p": 0.0,
+        "n_keepers": 149,
+        "n": 22921
+      },
+      "decision_pct": {
+        "icc": 0.02822105273285598,
+        "null_p95": 0.0013077755885996922,
+        "p": 0.0,
+        "n_keepers": 149,
+        "n": 22921
+      }
+    },
+    "net_of_team": {
+      "decision_value": {
+        "club_adjusted": {
+          "icc": 0.0607459588362619,
+          "null_p95": 0.0014993894155638538,
+          "p": 0.0,
+          "n_keepers": 113,
+          "n": 17879
+        },
+        "team_fixed_effect": {
+          "icc": 0.002625541361638428,
+          "null_p95": 0.001365186117013912,
+          "p": 0.0,
+          "n_keepers": 149,
+          "n": 22921
+        },
+        "team_one_way": {
+          "icc": 0.03577853519254902,
+          "null_p95": 0.0010641420488839437,
+          "p": 0.0,
+          "n_keepers": 91,
+          "n": 22930
+        }
+      },
+      "sel_efficiency": {
+        "club_adjusted": {
+          "icc": 0.07295144377792914,
+          "null_p95": 0.0013620147672441909,
+          "p": 0.0,
+          "n_keepers": 113,
+          "n": 17879
+        },
+        "team_fixed_effect": {
+          "icc": 0.0023496411318613504,
+          "null_p95": 0.0013491180329766427,
+          "p": 0.004,
+          "n_keepers": 149,
+          "n": 22921
+        },
+        "team_one_way": {
+          "icc": 0.03338495355918984,
+          "null_p95": 0.001116437454864459,
+          "p": 0.0,
+          "n_keepers": 91,
+          "n": 22930
+        }
+      },
+      "decision_pct": {
+        "club_adjusted": {
+          "icc": 0.05257335205858051,
+          "null_p95": 0.001417148871874142,
+          "p": 0.0,
+          "n_keepers": 113,
+          "n": 17879
+        },
+        "team_fixed_effect": {
+          "icc": 0.00031941883849456916,
+          "null_p95": 0.0012858095260610835,
+          "p": 0.318,
+          "n_keepers": 149,
+          "n": 22921
+        },
+        "team_one_way": {
+          "icc": 0.026088504730310297,
+          "null_p95": 0.0010819059968925789,
+          "p": 0.0,
+          "n_keepers": 91,
+          "n": 22930
+        }
+      }
+    },
+    "transfer": {
+      "decision_value": {
+        "n_transfer_keepers": 11,
+        "sign_agreement": 0.6363636363636364,
+        "resid_corr": 0.045454545454545456
+      },
+      "sel_efficiency": {
+        "n_transfer_keepers": 11,
+        "sign_agreement": 0.5454545454545454,
+        "resid_corr": -0.10000000000000002
+      },
+      "decision_pct": {
+        "n_transfer_keepers": 11,
+        "sign_agreement": 0.45454545454545453,
+        "resid_corr": -0.18181818181818182
+      }
+    },
+    "reconstruction": {
+      "fidelity": {
+        "decision_value": {
+          "rho": 0.24686487720732028,
+          "p": 6.677472822294513e-26,
+          "n": 1764,
+          "n_recon": 6227,
+          "n_native": 1765
+        },
+        "sel_efficiency": {
+          "rho": 0.23797208425776903,
+          "p": 3.916945045416906e-24,
+          "n": 1764,
+          "n_recon": 6227,
+          "n_native": 1765
+        }
+      },
+      "sb360_reachability_sweep": {
+        "curve": [
+          {
+            "threshold": 0.0,
+            "decision_pct_mean": 0.3977966630439158,
+            "decision_pct_t_vs_0.5": -14.76753098459555,
+            "sel_efficiency_mean": 0.5672233203688697,
+            "n_decisions": 2366
+          },
+          {
+            "threshold": 0.5,
+            "decision_pct_mean": 0.40225092015045383,
+            "decision_pct_t_vs_0.5": -14.031648177757244,
+            "sel_efficiency_mean": 0.5693766048183401,
+            "n_decisions": 2359
+          },
+          {
+            "threshold": 0.7,
+            "decision_pct_mean": 0.42907607002678966,
+            "decision_pct_t_vs_0.5": -9.765216205505414,
+            "sel_efficiency_mean": 0.59232494531056,
+            "n_decisions": 2293
+          },
+          {
+            "threshold": 0.85,
+            "decision_pct_mean": 0.547263382303276,
+            "decision_pct_t_vs_0.5": 5.2859014814416225,
+            "sel_efficiency_mean": 0.7238456453947592,
+            "n_decisions": 1880
+          },
+          {
+            "threshold": 0.9,
+            "decision_pct_mean": 0.6145121732903688,
+            "decision_pct_t_vs_0.5": 10.300340578776694,
+            "sel_efficiency_mean": 0.8033755334895656,
+            "n_decisions": 1330
+          },
+          {
+            "threshold": 0.95,
+            "decision_pct_mean": 0.7149789029535863,
+            "decision_pct_t_vs_0.5": 10.967715328960114,
+            "sel_efficiency_mean": 0.891632392881107,
+            "n_decisions": 395
+          }
+        ],
+        "recommended_threshold": 0.85,
+        "shipped_default": 0.85
+      }
+    }
+  }
+}

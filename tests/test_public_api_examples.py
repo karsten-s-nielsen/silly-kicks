@@ -349,6 +349,18 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/providers/sportec/appearances.py",
     "silly_kicks/providers/gradientsports/appearances.py",
     "silly_kicks/providers/skillcorner/appearances.py",
+    # TF-62 GK build-up decision-quality: the modules that DEFINE its public surface
+    # (GkDecisionParams, GkDecisionReport, OptionSet, SkillCornerGIOptionSet, option_value,
+    # compute_gk_decision_value, summarize_gk_decision) re-exported via the package __all__, plus the
+    # SkillCorner GI parse port (parse_passing_options). _columns.py holds constants only. Brand-new
+    # public modules -- documented on creation (every public symbol carries a real Examples section).
+    "silly_kicks/gk_decision/_config.py",
+    "silly_kicks/gk_decision/_report.py",
+    "silly_kicks/gk_decision/_optionset.py",
+    "silly_kicks/gk_decision/_value.py",
+    "silly_kicks/gk_decision/_compute.py",
+    "silly_kicks/gk_decision/_reconstruct.py",
+    "silly_kicks/providers/skillcorner/gi.py",
 )
 
 

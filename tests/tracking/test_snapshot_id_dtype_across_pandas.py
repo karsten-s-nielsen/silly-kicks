@@ -170,3 +170,25 @@ def test_the_id_dtype_no_longer_depends_on_the_pandas_MAJOR() -> None:
         f"'float64' or 'Float64' here means the cast was lost and float-valued ids are back -- the "
         f"exact shape ADR-019 records as rendering '366.0' against a clean '366'."
     )
+
+
+def test_a_string_game_id_is_KEPT_not_cast_to_the_numeric_base() -> None:
+    """A string id from a LITERAL is ``object`` on pandas 2 but the pyarrow-backed ``str`` dtype on
+    pandas 3, so ``_cast_to_declared_schema``'s "keep genuine string ids" test MUST be
+    ``not is_numeric_dtype`` -- NOT ``== object``, which misses the pandas-3 ``str`` dtype and casts
+    ``'m1'`` to the ``int64`` base (``ValueError: invalid literal for int() with base 10: 'm1'``).
+
+    Built via a literal (``game_id="m1"``), NOT ``astype("object")``: the object cast is caught by
+    BOTH the old and the fixed predicate, so it never exercises the bug -- only the pandas-3 default
+    ``str`` dtype from a bare string literal does. The CI pandas-3 legs are where this goes red; on
+    pandas 2 it documents the intent. ADR-057 cross-major trap: assert the behaviour, not the dtype.
+    """
+    actions = _actions().assign(game_id=["m1"])  # a STRING game_id (pandas-3 default `str`, pandas-2 object)
+    frames, _links = T.snapshot_to_tracking_frames(_snapshots("Int64"), actions)  # must not raise on pandas 3
+    assert not pd.api.types.is_numeric_dtype(frames["game_id"].dtype), (
+        f"string game_id was cast to numeric {frames['game_id'].dtype!r} on pandas {pd.__version__} -- "
+        f"the ADR-057 `== object` trap (a pandas-3 str id is not `object`, so it fell through to the base)."
+    )
+    assert ids_match(frames["game_id"], "m1").all(), (
+        f"string game_id 'm1' no longer compares equal after the snapshot on pandas {pd.__version__}"
+    )

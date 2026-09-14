@@ -10,15 +10,13 @@ All gates are dropped-AND-COUNTED (ADR-042): a frame that cannot be scored is as
 
 from __future__ import annotations
 
-from types import MappingProxyType
-
 import numpy as np
 import pandas as pd
 
 from silly_kicks._frame_index import group_rows
 from silly_kicks.id_compat import canonical_id, ids_match
-from silly_kicks.spadl import config as spadlconfig
-from silly_kicks.tracking import GoalMap, region_observed_fraction
+from silly_kicks.tracking import action_ltr_goal_map as action_ltr_goal_map
+from silly_kicks.tracking import region_observed_fraction
 
 from ._config import _DEFAULT_PARAMS, TerritorialDefenseParams
 from ._report import TerritorialDefenseReport
@@ -35,35 +33,6 @@ NO_DEFENDERS = "no_defenders"
 UNRESOLVED_GEOMETRY = "unresolved_geometry"
 FOV_CROPPED_LOCAL = "fov_cropped_local"
 REMOVAL_UNDERSUPPORTED = "removal_undersupported"
-
-
-def action_ltr_goal_map(game_id, period_id, *, acting_team_id, opponent_team_id) -> GoalMap:
-    """Per-action-LTR goal map for ONE frame (ADR-028): the acting team of the frame's action attacks
-    x=105 (defends 0); the opponent defends x=105.
-
-    Correct by the per-action-LTR CONVENTION -- no GK, so it is FOV-proof where a per-frame
-    :func:`resolve_defended_goals` would fail on a keeperless freeze-frame, and unambiguous where a
-    per-MATCH ``resolve_defended_goals`` is bimodal (a team's keeper sits at x=0 in its own actions and
-    x=105 in the opponent's). This resolves a DIFFERENT frame convention from ground truth than
-    ``resolve_defended_goals`` (which ESTIMATES the match-oriented defended end from mean GK x); it is
-    NOT an ADR-055 fork -- both return a :class:`GoalMap` and route through its real opponent-lookup
-    ``attacked_goal``. Keys canonical (ADR-055 rule 2), so a Python ``int``/``str`` lookup resolves.
-
-    Examples
-    --------
-    >>> gm = action_ltr_goal_map(7, 1, acting_team_id=1, opponent_team_id=2)
-    >>> gm.attacked_goal(7, 1, 1, allow_guess=True)   # acting team attacks the opponent's end
-    105.0
-    >>> gm.attacked_goal(7, 1, 2, allow_guess=True)   # opponent attacks the acting team's end
-    0.0
-    """
-    g, p = canonical_id(game_id), canonical_id(period_id)
-    fl = float(spadlconfig.field_length)
-    resolved = {
-        (g, p, canonical_id(acting_team_id)): 0.0,
-        (g, p, canonical_id(opponent_team_id)): fl,
-    }
-    return GoalMap(MappingProxyType(resolved), MappingProxyType({}), frozenset())
 
 
 def remove_player_row(frame: pd.DataFrame, *, player_pos: int) -> pd.DataFrame:
