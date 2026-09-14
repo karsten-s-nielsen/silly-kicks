@@ -148,7 +148,7 @@ _A_CASCIOLI = "Cascioli, L., Wang, A."  # cover shadows
 _A_ANZER_BAUER = "Anzer, G., & Bauer, P. (2021)"  # shot xG / GK-position / xGOT lineage
 _A_LUCEY = "Lucey, P., Bialkowski, A."  # defenders-in-triangle / nearest-defender
 _A_POWER = "Power, P., Ruiz, H."  # receiver-zone risk/reward
-_A_ELASTIC = "arXiv:2508.09238"  # Kim 2025 ELASTIC
+_A_ELASTIC = "arXiv:2608.30227"  # Kim 2026 ELASTIC v2 (extended Needleman-Wunsch)
 _A_GK_GEOMETRY = "Eyestone, J. (2025)"  # xT-GK
 _A_GHOST_GK = "arXiv:2406.17220"  # Dutta 2024 NFL Ghosts (RFCDE density ghosting)
 _A_DEFENSIVE_CREDIT = "arXiv:2606.19931"  # Bischofberger 2026 xDT turnover sizing
@@ -1269,17 +1269,17 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_TRACKING_UTILS,
         higher_is_better=True,
     ),
-    # -- ELASTIC sync (TF-43) -------------------------------------------------------------------
+    # -- ELASTIC v2 sync (TF-57; extended Needleman-Wunsch) -------------------------------------
     FeatureColumn(
         name="elastic_frame_id",
-        definition="Tracking frame the ELASTIC refinement aligns this action to.",
+        definition="Tracking frame the ELASTIC-NW alignment places this action's START (touch) at.",
         unit="dimensionless",
         emitting_module=_M_ELASTIC,
         attribution=_A_ELASTIC,
     ),
     FeatureColumn(
         name="elastic_confidence",
-        definition="Confidence (0-1) of the ELASTIC event-to-frame alignment.",
+        definition="Confidence (0-1) of the ELASTIC-NW event-start-to-frame alignment (the matched pairwise score).",
         unit="ratio",
         emitting_module=_M_ELASTIC,
         attribution=_A_ELASTIC,
@@ -1287,7 +1287,35 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="elastic_error_seconds",
-        definition="Estimated time misalignment (s) between the action and its ELASTIC-aligned frame.",
+        definition="Estimated time misalignment (s) between the action and its ELASTIC-NW-aligned start frame.",
+        unit="seconds",
+        emitting_module=_M_ELASTIC,
+        attribution=_A_ELASTIC,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="elastic_receive_frame_id",
+        definition=(
+            "Tracking frame of the action's jointly-detected END (reception / out / goal), from the "
+            "ELASTIC-NW virtual termination event; NaN where none was inserted or matched."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_ELASTIC,
+        attribution=_A_ELASTIC,
+    ),
+    FeatureColumn(
+        name="elastic_receive_confidence",
+        definition="Confidence (0-1) of the ELASTIC-NW reception/termination-frame alignment.",
+        unit="ratio",
+        emitting_module=_M_ELASTIC,
+        attribution=_A_ELASTIC,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="elastic_receive_error_seconds",
+        definition=(
+            "Estimated time misalignment (s) between the expected reception time and its ELASTIC-NW-aligned frame."
+        ),
         unit="seconds",
         emitting_module=_M_ELASTIC,
         attribution=_A_ELASTIC,

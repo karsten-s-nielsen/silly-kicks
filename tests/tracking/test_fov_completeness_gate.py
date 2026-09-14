@@ -57,8 +57,8 @@ from tests.sb360._registry import (
 #: Two categories are excluded from ``required``:
 #:
 #: 1. ``support_data_defined`` columns (e.g. ``actor_arc_length_pre_window`` /
-#:    ``actor_displacement_pre_window`` / ``elastic_confidence``) are TEMPORAL -- a pre-action window
-#:    or a cross-frame confidence -- NOT an area integrated over a region, so a ``visible_area``
+#:    ``actor_displacement_pre_window``) are TEMPORAL -- a pre-action window --
+#:    NOT an area integrated over a region, so a ``visible_area``
 #:    observed-fraction is not the right observability model for them. They are neither
 #:    ``region_support`` nor in ``_AGGREGATE_FOV_SENSITIVE``, so they never enter ``required``.
 #: 2. The BOUNDARY-surface columns (``gkdv`` / ``xtgk`` v2 / ``spadl.add_restart_coordinates``) are a
@@ -68,8 +68,8 @@ from tests.sb360._registry import (
 #:    region/area companion model -- they have their own observability story -- so they are excluded
 #:    structurally by the registry's ``BOUNDARY_ENTRY_POINTS`` surface distinction.
 _SCOPE_JUSTIFICATION: str = (
-    "support_data_defined columns (actor_arc_length_pre_window / actor_displacement_pre_window / "
-    "elastic_confidence) are temporal, not area, so a visible_area observed-fraction is not their "
+    "support_data_defined columns (actor_arc_length_pre_window / actor_displacement_pre_window) "
+    "are temporal, not area, so a visible_area observed-fraction is not their "
     "observability model -- excluded from required. The gkdv / xtgk-v2 / spadl.add_restart_coordinates "
     "BOUNDARY entries (BOUNDARY_ENTRY_POINTS, outside tracking.__all__, verdict_provenance non-None) "
     "are a counterfactual boundary surface outside this cycle's region/area companion model -- their "
@@ -187,7 +187,6 @@ def test_gate_scope_justification_present():
     # (1) The justification documents the support_data_defined (temporal) exclusion, naming examples.
     assert "support_data_defined" in j
     assert "actor_arc_length_pre_window" in j or "actor_displacement_pre_window" in j
-    assert "elastic_confidence" in j
     assert "temporal" in j and "not area" in j
 
     # (2) The justification documents the boundary-surface exclusion, naming the mechanism.
@@ -198,7 +197,7 @@ def test_gate_scope_justification_present():
     # (3) Non-vacuity: each documented category actually EXISTS in the registry.
     #     (3a) the named support_data_defined examples really carry that tag.
     sdd = _support_data_defined_columns()
-    assert {"actor_arc_length_pre_window", "actor_displacement_pre_window", "elastic_confidence"} <= sdd
+    assert {"actor_arc_length_pre_window", "actor_displacement_pre_window"} <= sdd
     #     None of them is region_support / aggregate -- so they legitimately never enter `required`.
     assert sdd.isdisjoint(_required_columns())
     #     (3b) the named boundary region_support columns really exist and are excluded from `required`.

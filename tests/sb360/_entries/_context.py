@@ -126,150 +126,47 @@ _entry(
     },
 )
 
+_ELASTIC_SB360_START_COLS = (
+    "elastic_frame_id",
+    "elastic_confidence",
+    "elastic_error_seconds",
+)
+_ELASTIC_SB360_RECV_COLS = (
+    "elastic_receive_frame_id",
+    "elastic_receive_confidence",
+    "elastic_receive_error_seconds",
+)
+_ELASTIC_SB360_COLS = _ELASTIC_SB360_START_COLS + _ELASTIC_SB360_RECV_COLS
+_ELASTIC_HONEST_NAN_RATIONALE = (
+    "ELASTIC-NW is continuous-only: candidate detection needs a dense ball trajectory. The freeze-frame "
+    "Leg A (POSITIONAL_ONLY, no trajectory) returns an honest empty alignment (all-NaN) -- "
+    "align_events_to_frames declines freeze-frame input rather than fabricate a sync from disconnected "
+    "snapshots. The synthetic full-tracking Leg B aligns this event; the leg difference is a data-regime "
+    "boundary, not a library defect."
+)
+
+
+def _el_hn() -> AxisVerdict:
+    return AxisVerdict("all_nan", "honest_nan", rationale=_ELASTIC_HONEST_NAN_RATIONALE)
+
+
 _entry(
     "add_elastic_sync",
     C.generic(T.add_elastic_sync),
-    columns=(
-        "elastic_frame_id",
-        "elastic_confidence",
-        "elastic_error_seconds",
-    ),
-    velocity={
-        "elastic_frame_id": AxisVerdict(
-            "differs",
-            "differs_by_design",
-            rationale=(
-                "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
-            ),
-        ),
-        "elastic_confidence": AxisVerdict(
-            "differs",
-            "differs_by_design",
-            rationale=(
-                "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they differ "
-                "in BOTH velocity availability and temporal support, so the isolation probe could not attribute "
-                "the change to one of them. The value is honest on each leg; what a consumer must not do is "
-                "compare a freeze-frame number against a tracking number as though they were the same "
-                "measurement. [measured cause=velocity+frame_count]"
-            ),
-        ),
-        "elastic_error_seconds": AxisVerdict(
-            "differs",
-            "differs_by_design",
-            rationale=(
-                "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
-            ),
-        ),
-    },
+    columns=_ELASTIC_SB360_COLS,
+    velocity={c: _el_hn() for c in _ELASTIC_SB360_COLS},
     visibility={
-        "gk_absent": {
-            "elastic_frame_id": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                    "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "elastic_confidence": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they "
-                    "differ in BOTH velocity availability and temporal support, so the isolation probe could not "
-                    "attribute the change to one of them. The value is honest on each leg; what a consumer must "
-                    "not do is compare a freeze-frame number against a tracking number as though they were the "
-                    "same measurement. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "elastic_error_seconds": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                    "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
-                ),
-            ),
-        },
-        "defender_absent": {
-            "elastic_frame_id": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                    "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "elastic_confidence": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they "
-                    "differ in BOTH velocity availability and temporal support, so the isolation probe could not "
-                    "attribute the change to one of them. The value is honest on each leg; what a consumer must "
-                    "not do is compare a freeze-frame number against a tracking number as though they were the "
-                    "same measurement. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "elastic_error_seconds": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                    "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
-                ),
-            ),
-        },
-        "gk_one_end": {
-            "elastic_frame_id": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                    "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "elastic_confidence": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "Both legs compute this from inputs they actually hold -- nothing is imputed -- but they "
-                    "differ in BOTH velocity availability and temporal support, so the isolation probe could not "
-                    "attribute the change to one of them. The value is honest on each leg; what a consumer must "
-                    "not do is compare a freeze-frame number against a tracking number as though they were the "
-                    "same measurement. [measured cause=velocity+frame_count]"
-                ),
-            ),
-            "elastic_error_seconds": AxisVerdict(
-                "differs",
-                "differs_by_design",
-                rationale=(
-                    "A provenance column: its job is to report WHICH path produced the value, so reporting a "
-                    "different path on a freeze-frame leg than on a tracking leg is correct behaviour. ADR-043 "
-                    "designed das_source to do exactly this. [measured cause=velocity+frame_count]"
-                ),
-            ),
-        },
+        # Every elastic column is all-NaN on the freeze-frame Leg A (POSITIONAL_ONLY -> empty
+        # alignment). The synthetic full-tracking Leg B aligns both the start AND the reception on
+        # every roster, so every column is all_nan/honest_nan (the leg difference is a data-regime
+        # boundary, not a defect). Reception included: with the central-difference accel the
+        # candidate-detection now surfaces a reception touch on Leg B even on the reduced rosters.
+        "gk_absent": {c: _el_hn() for c in _ELASTIC_SB360_COLS},
+        "defender_absent": {c: _el_hn() for c in _ELASTIC_SB360_COLS},
+        "gk_one_end": {c: _el_hn() for c in _ELASTIC_SB360_COLS},
     },
-    applicability={
-        "elastic_frame_id": "no_support",
-        "elastic_confidence": "support_data_defined",
-        "elastic_error_seconds": "no_support",
-    },
-    applicability_deltas={
-        "elastic_frame_id": {"extreme": 0.0, "near": 0.0},
-        "elastic_confidence": {"extreme": 0.00039999999999995595, "near": 0.1839000000000004},
-        "elastic_error_seconds": {"extreme": 0.0, "near": 0.0},
-    },
+    applicability={c: "no_support" for c in _ELASTIC_SB360_COLS},
+    applicability_deltas={c: {"extreme": 0.0, "near": 0.0} for c in _ELASTIC_SB360_COLS},
 )
 
 _entry(
