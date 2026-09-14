@@ -241,6 +241,37 @@ def test_low_coverage_message_carries_time_base_hint():
         link_actions_to_frames(actions, frames)
 
 
+def test_enforce_link_coverage_hint_flag(recwarn):
+    """TF57-SPEC-08: the near-disjoint time-base hint fires by DEFAULT (byte-identical), and is
+    dropped only under suppress_time_base_hint=True (the confidence-gated elastic-linker path).
+    The per-period floor still fires in both cases."""
+    import warnings
+
+    from silly_kicks.tracking.utils import _enforce_link_coverage
+
+    actions, frames = _mismatch_inputs()
+    _, report = link_actions_to_frames(actions, frames, on_low_coverage="ignore")
+
+    # default: floor + time-base mismatch hint
+    with pytest.warns(UserWarning, match="time-base mismatch"):
+        _enforce_link_coverage(actions, frames, report, min_link_rate=0.5, on_low_coverage="warn")
+
+    # suppressed: floor fires, hint absent
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        _enforce_link_coverage(
+            actions,
+            frames,
+            report,
+            min_link_rate=0.5,
+            on_low_coverage="warn",
+            suppress_time_base_hint=True,
+        )
+    msgs = " ".join(str(x.message) for x in w)
+    assert "below min_link_rate" in msgs
+    assert "time-base mismatch" not in msgs
+
+
 def test_sparsity_warns_without_mismatch_hint():
     # Tighten min_link_rate; ranges overlap (uniform sparsity) -> warn but NO mismatch claim.
     frames = pd.DataFrame([_frame_row(1, i, float(i)) for i in range(0, 100, 10)])  # every 10s

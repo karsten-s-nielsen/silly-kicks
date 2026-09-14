@@ -500,6 +500,167 @@ def link_actions_to_frames(
     return pointers, report
 
 
+def link_actions_to_frames_elastic(
+    actions: pd.DataFrame,
+    frames: pd.DataFrame,
+    *,
+    params=None,
+    min_link_rate: float = 0.5,
+    on_low_coverage: Literal["warn", "raise", "ignore"] = "warn",
+) -> tuple[pd.DataFrame, LinkReport]:
+    """ELASTIC-NW alternative to :func:`link_actions_to_frames`, under the SAME contract (ADR-004).
+
+    Aligns actions to frames via the extended-Needleman-Wunsch engine
+    (:func:`silly_kicks.tracking.align_events_to_frames`) and maps the result onto the canonical
+    pointer schema + :class:`LinkReport`, so it is a drop-in for the ``links=`` kwarg across the
+    ``add_*`` family. The guarded time-based :func:`link_actions_to_frames` stays the default; this
+    is an *alternative strategy*, not a replacement. Requires continuous tracking with player
+    identity + ``team_id`` (SB360 freeze-frames are unsupported).
+
+    Semantics that DIFFER from the time-based linker (documented, deliberate):
+
+    - ``link_quality_score`` is the NW match confidence in ``[0, 1]`` (NOT ``1 - |dt|/tolerance``).
+    - ``n_candidate_frames`` is the per-action count of ball-touch candidate frames in the action's
+      time neighbourhood (``+/- 5 s``) that pass the actor-membership gate -- the event's viable
+      competing candidates. Per-action and non-constant, so ``LinkReport.n_actions_multi_candidate``
+      stays meaningful (it is NOT the canonical "frames within a time tolerance").
+    - ``LinkReport.tolerance_seconds`` is ``NaN``: elastic linking is confidence-gated, not
+      time-tolerance-gated.
+
+    Examples
+    --------
+    Pre-link once with the NW strategy, then feed the pointers to any ``add_*`` tracking feature via
+    ``links=`` -- a drop-in for the time-based default (a real match's ``actions`` and continuous
+    ``frames`` are required; no docstring fixture can stand in for tracking data)::
+
+        from silly_kicks.tracking import link_actions_to_frames_elastic, add_pressure_on_actor
+
+        pointers, report = link_actions_to_frames_elastic(actions, frames)
+        enriched = add_pressure_on_actor(actions, frames, links=pointers)
+        # report.tolerance_seconds is NaN (confidence-gated, not time-tolerance-gated);
+        # pointers["link_quality_score"] is the NW match confidence in [0, 1].
+    """
+    from silly_kicks.id_compat import canonical_id_series
+
+    from ._elastic_sync import (
+        _WINDOW_MARGIN_SECONDS,
+        ElasticSyncParams,
+        _detect_candidate_frames,
+        _fit_frame_time_relationship,
+        align_events_to_frames,
+    )
+
+    if params is None:
+        params = ElasticSyncParams()
+
+    empty_ptr = pd.DataFrame(
+        {
+            "action_id": pd.Series([], dtype="int64"),
+            "frame_id": pd.Series([], dtype="Int64"),
+            "time_offset_seconds": pd.Series([], dtype="float64"),
+            "n_candidate_frames": pd.Series([], dtype="int64"),
+            "link_quality_score": pd.Series([], dtype="float64"),
+        }
+    )
+    if len(actions) == 0:
+        return empty_ptr, LinkReport(0, 0, 0, 0, {}, 0.0, float("nan"))
+
+    # Detect candidates ONCE and thread them into the aligner (which would otherwise re-detect
+    # internally) -- we need them here anyway for n_candidate_frames. Byte-identical, one fewer pass.
+    candidates = _detect_candidate_frames(frames, params=params)
+    align = align_events_to_frames(actions, frames, params=params, _candidates=candidates)
+    align_idx = align.set_index("action_id") if len(align) else None
+    fits = _fit_frame_time_relationship(frames)
+    margin = params.frame_rate * _WINDOW_MARGIN_SECONDS
+
+    cand_by_gp = {
+        gp: (np.array([c.frame_id for c in cl], dtype=np.int64), [c.players for c in cl])
+        for gp, cl in candidates.items()
+    }
+
+    a_ids = actions["action_id"].to_numpy()
+    a_games = actions["game_id"].to_numpy()
+    a_periods = actions["period_id"].to_numpy()
+    a_times = actions["time_seconds"].to_numpy(dtype=float)
+    a_players = canonical_id_series(actions["player_id"]).to_numpy()
+    a_games_canon = canonical_id_series(actions["game_id"]).to_numpy()
+
+    rows = []
+    for i in range(len(actions)):
+        a_id = int(a_ids[i])
+        t = float(a_times[i])
+        gp = (a_games_canon[i], int(a_periods[i]))
+        actor = a_players[i]
+        fit = fits.get((a_games[i], a_periods[i]))
+        slope = fit[0] if fit is not None else float(params.frame_rate)
+        intercept = fit[1] if fit is not None else 0.0
+
+        frame: object = pd.NA
+        conf = float("nan")
+        offset = float("nan")
+        if align_idx is not None and a_id in align_idx.index:
+            fv = align_idx.at[a_id, "elastic_frame_id"]
+            if pd.notna(fv):
+                frame = int(fv)  # type: ignore[arg-type]  # .at[scalar] Scalar (pandas-stubs)
+                conf = float(align_idx.at[a_id, "elastic_confidence"])  # type: ignore[arg-type]  # .at Scalar
+                aligned = (frame - intercept) / slope if slope else frame / params.frame_rate
+                offset = t - aligned
+
+        n_cand = 0
+        gp_data = cand_by_gp.get(gp)
+        if gp_data is not None:
+            cf, cplayers = gp_data
+            nominal = slope * t + intercept
+            lo = int(np.searchsorted(cf, nominal - margin, side="left"))
+            hi = int(np.searchsorted(cf, nominal + margin, side="right"))
+            for k in range(lo, hi):
+                if actor in cplayers[k]:
+                    n_cand += 1
+        rows.append((a_id, frame, offset, n_cand, conf))
+
+    ptr = pd.DataFrame(
+        rows,
+        columns=["action_id", "frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"],
+    )
+    ptr["action_id"] = ptr["action_id"].astype("int64")
+    ptr["frame_id"] = ptr["frame_id"].astype("Int64")
+    ptr["time_offset_seconds"] = ptr["time_offset_seconds"].astype("float64")
+    ptr["n_candidate_frames"] = ptr["n_candidate_frames"].astype("int64")
+    ptr["link_quality_score"] = ptr["link_quality_score"].astype("float64")
+
+    n_in = len(actions)
+    linked_mask = ptr["frame_id"].notna()
+    n_linked = int(linked_mask.sum())
+    n_multi = int((ptr["n_candidate_frames"] > 1).sum())
+    max_off = float(ptr.loc[linked_mask, "time_offset_seconds"].abs().max()) if n_linked else 0.0
+    _lk_by_period = actions.assign(_lk=linked_mask.to_numpy()).groupby("period_id")["_lk"].mean()
+    per_period = {int(p): float(v) for p, v in _lk_by_period.items()}  # type: ignore[arg-type]  # groupby key Hashable
+    per_provider: dict[str, float] = {}
+    if n_linked and "source_provider" in frames.columns:
+        prov = frames["source_provider"].dropna()
+        if len(prov):
+            per_provider[str(prov.mode().iloc[0])] = n_linked / n_in
+    report = LinkReport(
+        n_actions_in=n_in,
+        n_actions_linked=n_linked,
+        n_actions_unlinked=n_in - n_linked,
+        n_actions_multi_candidate=n_multi,
+        per_provider_link_rate=per_provider,
+        max_time_offset_seconds=max_off,
+        tolerance_seconds=float("nan"),
+        per_period_link_rate=per_period,
+    )
+    _enforce_link_coverage(
+        actions,
+        frames,
+        report,
+        min_link_rate=min_link_rate,
+        on_low_coverage=on_low_coverage,
+        suppress_time_base_hint=True,
+    )
+    return ptr, report
+
+
 def _enforce_link_coverage(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
@@ -507,16 +668,29 @@ def _enforce_link_coverage(
     *,
     min_link_rate: float,
     on_low_coverage: Literal["warn", "raise", "ignore"],
+    suppress_time_base_hint: bool = False,
 ) -> None:
-    """Per-period low-coverage policy for link_actions_to_frames. See ADR-017."""
+    """Per-period low-coverage policy for link_actions_to_frames. See ADR-017.
+
+    ``suppress_time_base_hint`` (opt-in, default False) drops the near-disjoint "suspected
+    time-base mismatch" hint. It exists for the confidence-gated elastic linker
+    (:func:`link_actions_to_frames_elastic`), where low coverage is a synchronization-confidence
+    signal, not a time-base problem, so that hint would misattribute the cause. **The default path
+    is byte-identical** (TF57-SPEC-08): with the default False the diagnosis runs and the hint fires
+    exactly as before.
+    """
     if on_low_coverage == "ignore" or not report.per_period_link_rate:
         return
     offending = {p: r for p, r in report.per_period_link_rate.items() if r < min_link_rate}
     if not offending:
         return
 
-    diag = _diagnose_time_base(actions, frames)  # lazy: only on a tripped guard
-    suspected = set(diag.suspected_mismatch_periods)
+    if suppress_time_base_hint:
+        diag = None
+        suspected: set = set()
+    else:
+        diag = _diagnose_time_base(actions, frames)  # lazy: only on a tripped guard
+        suspected = set(diag.suspected_mismatch_periods)
     worst_first = sorted(offending, key=lambda p: offending[p])
 
     def _line(p: int) -> str:
@@ -526,7 +700,7 @@ def _enforce_link_coverage(
             f"link_actions_to_frames: period {p} link_rate {offending[p]:.2f} "
             f"({n_total} actions, {n_unlinked} unlinked) below min_link_rate {min_link_rate:g}."
         )
-        if p in suspected:
+        if p in suspected and diag is not None:
             a_min, a_max = diag.per_period_action_range[p]
             frng = diag.per_period_frame_range.get(p)
             frames_desc = f"frames [{frng[0]:g}, {frng[1]:g}]" if frng else "no frames"

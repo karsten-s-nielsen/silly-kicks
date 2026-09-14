@@ -740,3 +740,73 @@ def test_compute_territorial_defense_is_subquadratic(monkeypatch):
         return c["n"]
 
     assert_subquadratic_growth(measure, sizes=(64, 128, 256), label="compute_territorial_defense")
+
+
+# ============================ ELASTIC-NW align (TF-57) ============================
+def test_elastic_align_is_subquadratic():
+    """align_events_to_frames calls group_rows in BOTH _detect_candidate_frames (feasible
+    (frame,player) groups) and _build_frame_lookups (merged player-ball distances). This scales the
+    episode + frame dimensions TOGETHER so a rescan-in-loop (O(episodes*frames)) would go quadratic;
+    the real code windows candidates via np.searchsorted -> linear."""
+    import pandas as pd
+
+    from silly_kicks.tracking import align_events_to_frames
+
+    def _fixture(n):
+        n_frames = n * 10
+        rows = []
+        for f in range(n_frames):
+            t = f / 25.0
+            bx = 20.0 + float(f % 50)  # sawtooth -> ball moves, candidates exist
+            rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": f,
+                    "time_seconds": t,
+                    "player_id": None,
+                    "team_id": None,
+                    "x": bx,
+                    "y": 34.0,
+                    "z": float("nan"),
+                    "is_ball": True,
+                }
+            )
+            for pid in range(4):
+                rows.append(
+                    {
+                        "game_id": 1,
+                        "period_id": 1,
+                        "frame_id": f,
+                        "time_seconds": t,
+                        "player_id": f"p{pid}",
+                        "team_id": 1 + pid % 2,
+                        "x": 20.0 + pid * 20.0,
+                        "y": 34.0,
+                        "z": float("nan"),
+                        "is_ball": False,
+                    }
+                )
+        frames = pd.DataFrame(rows)
+        actions = pd.DataFrame(
+            {
+                "action_id": range(n),
+                "game_id": [1] * n,
+                "period_id": [1] * n,
+                "time_seconds": [i * 0.4 for i in range(n)],
+                "player_id": [f"p{i % 4}" for i in range(n)],
+                "team_id": [1 + i % 2 for i in range(n)],  # alternating team -> ~n possessions (episodes)
+                "type_id": [0] * n,
+                "type_name": ["pass"] * n,
+                "result_name": ["success"] * n,
+            }
+        )
+        return actions, frames
+
+    def measure(n):
+        actions, frames = _fixture(n)
+        with rows_scanned_counter() as c:
+            align_events_to_frames(actions, frames)
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="elastic_align")

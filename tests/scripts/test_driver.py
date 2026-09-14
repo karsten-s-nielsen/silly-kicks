@@ -1,7 +1,8 @@
 """Unit tests for the shared corpus-driver seam.
 
 The digest itself is NOT tested here — it is `ruthless.fingerprint`, which carries its own golden
-table of 44 pinned literals and a stated stability contract (ruthless 0.4.0). These tests pin what
+table of pinned literals and a stated stability contract (the dependency floor is now ruthless
+>=0.6.0; the contract has held since fingerprint became public in 0.4.0). These tests pin what
 `_driver` adds on top: that a token names a DIRECTORY, that an empty declaration needs a reason, and
 that path inputs are normalised before they reach the digest.
 """

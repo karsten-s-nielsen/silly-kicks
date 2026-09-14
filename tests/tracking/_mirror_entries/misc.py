@@ -27,6 +27,7 @@ def register() -> None:
     import pandas as pd
 
     from silly_kicks.tracking import (
+        ElasticSyncParams,
         add_defensive_credit,
         add_elastic_sync,
         add_gradientsports_player_ids,
@@ -84,13 +85,11 @@ def register() -> None:
     # add_elastic_sync
     # ------------------------------------------------------------------
     def _call_elastic_sync(actions, frames, _home):
-        # min_confidence=0.0 disables ONLY the drop threshold; the ELASTIC scoring and frame
-        # selection under test are untouched. Required because the canonical scene's ball is
-        # stationary across all three frames -> ball_accel == 0 -> the 0.6-weighted acceleration
-        # term vanishes and every action scores below the 0.1 default (measured: all four rows
-        # all-NaN at 0.1 and at 0.05; at 0.02 only the HOME rows survive, which would leave the
-        # away population -- the only rows an ADR-028 defect touches -- empty).
-        return add_elastic_sync(actions, frames, min_confidence=0.0)
+        # min_confidence=0.0 disables ONLY the NW drop threshold; the ELASTIC-NW scoring and frame
+        # selection under test are untouched. Kept because the canonical scene is short, so some
+        # touches score below the 0.5 default; disabling the threshold keeps the away population
+        # (the only rows an ADR-028 defect touches) non-empty.
+        return add_elastic_sync(actions, frames, params=ElasticSyncParams(min_confidence=0.0))
 
     _entry(
         "add_elastic_sync",
@@ -99,17 +98,20 @@ def register() -> None:
             "elastic_frame_id": "invariant",
             "elastic_confidence": "invariant",
             "elastic_error_seconds": "invariant",
+            "elastic_receive_frame_id": "invariant",
+            "elastic_receive_confidence": "invariant",
+            "elastic_receive_error_seconds": "invariant",
         },
         tol=1e-9,
         basis=(
-            "the ELASTIC score is built from two MAGNITUDES -- ball acceleration and player-ball "
-            "distance -- and a point reflection is a rigid isometry, so both are preserved "
-            "exactly; measured 0.0 base-vs-mirror. Discriminating power is genuine but PARTIAL: "
-            "moving the players +9 m in y moves elastic_confidence by 0.0105, yet an x-ONLY "
-            "mirror also leaves it at 0.0, because ball and players reflect TOGETHER and any "
-            "isometry preserves the distances. This entry therefore proves the columns are "
-            "geometry-derived and mirror-stable; it cannot by itself distinguish a full point "
-            "reflection from a partial one."
+            "the ELASTIC-NW score is built from MAGNITUDES -- ball acceleration and player-ball "
+            "distances -- and the alignment is a global order-preserving DP over them; a point "
+            "reflection is a rigid isometry, so every distance/acceleration and hence the matched "
+            "frames + confidences are preserved exactly (measured 0.0 base-vs-mirror). Discriminating "
+            "power is genuine but PARTIAL: an x-ONLY mirror also leaves it at 0.0, because ball and "
+            "players reflect TOGETHER and any isometry preserves the distances. This entry proves "
+            "the columns (start + reception) are geometry-derived and mirror-stable; it cannot by "
+            "itself distinguish a full point reflection from a partial one."
         ),
         role="unused",
         non_vacuity=("elastic_confidence", "elastic_frame_id"),

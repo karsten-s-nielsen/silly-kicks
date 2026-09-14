@@ -3325,7 +3325,7 @@ wheels = [
 
 [[package]]
 name = "ruthless-efficiency"
-version = "0.4.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -3333,9 +3333,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0d/e1/021bb292dbdf339777b05f54c12d0b409ca023c296dc0132b8ad711606f9/ruthless_efficiency-0.4.0.tar.gz", hash = "sha256:62fe4a440fb88701a34090a58a4deefc3633f7302c3db89955d2a539c8104d69", size = 892505, upload-time = "2026-07-31T04:14:37.915Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d0/0f/0639ef7f0bb34879299258e0cbd55b3390f7181acd17d2fb1d2b3cde3b77/ruthless_efficiency-0.6.0.tar.gz", hash = "sha256:19253396be5453f7e7b14713c6db05267989f74eb3863725c585e367e44cd48d", size = 898968, upload-time = "2026-09-13T17:57:50.346Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/40/2c20e3a49d91f3350764edf3eedc070709180f26888b264bf4c92a471d4a/ruthless_efficiency-0.4.0-py3-none-any.whl", hash = "sha256:8ac82404353f0ea0b2015b6529645a1aa708f11f1aaf28268cafcbfebb58753c", size = 69931, upload-time = "2026-07-31T04:14:36.392Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/44/9b8109e1254a0e020eeee8de7272b9805976171c0c529c6677439987346e/ruthless_efficiency-0.6.0-py3-none-any.whl", hash = "sha256:2461d62c682f0bb336d9f6a94a6f5bc4e5f92c02d6889ed0742a926e2369a724", size = 72348, upload-time = "2026-09-13T17:57:49.007Z" },
 ]
 
 [package.optional-dependencies]
@@ -3743,9 +3743,9 @@ requires-dist = [
     { name = "pytest-split", marker = "extra == 'test'", specifier = ">=0.9.0" },
     { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
-    { name = "ruthless-efficiency", extras = ["optuna"], marker = "extra == 'calibration'", specifier = ">=0.4.0" },
-    { name = "ruthless-efficiency", extras = ["optuna"], marker = "extra == 'test'", specifier = ">=0.4.0" },
-    { name = "ruthless-efficiency", extras = ["optuna"], marker = "extra == 'train'", specifier = ">=0.4.0" },
+    { name = "ruthless-efficiency", extras = ["optuna"], marker = "extra == 'calibration'", specifier = ">=0.6.0" },
+    { name = "ruthless-efficiency", extras = ["optuna"], marker = "extra == 'test'", specifier = ">=0.6.0" },
+    { name = "ruthless-efficiency", extras = ["optuna"], marker = "extra == 'train'", specifier = ">=0.6.0" },
     { name = "scikit-learn", specifier = ">=1.3.1" },
     { name = "scikit-learn", marker = "python_full_version >= '3.11' and extra == 'train'", specifier = ">=1.9,<2" },
     { name = "scipy", specifier = ">=1.10.0" },

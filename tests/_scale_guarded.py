@@ -50,6 +50,12 @@ SCALE_GUARDED: dict[str, str] = {
     # The validation driver's per-scored-frame dose-battery loop: group_rows over the frames ONCE, one
     # .get per scored Arm-A frame (scales the scored-frame dimension within a single match).
     "scripts.validate_territorial_defense._measure_match": "test_td_measure_match_is_subquadratic",
+    # ELASTIC-NW (TF-57): both group_rows callers run INSIDE align_events_to_frames -- candidate
+    # detection groups the feasible (frame,player) rows ONCE; _build_frame_lookups groups the merged
+    # player-ball distances ONCE. The shared guard scales the episode + frame dimensions together so a
+    # rescan-in-loop (O(episodes*frames)) would go quadratic; the real code uses searchsorted.
+    "silly_kicks.tracking._elastic_sync._detect_candidate_frames": "test_elastic_align_is_subquadratic",
+    "silly_kicks.tracking._elastic_sync._build_frame_lookups": "test_elastic_align_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

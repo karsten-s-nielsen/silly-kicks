@@ -321,6 +321,85 @@ def _run_sync_score():
     return links, add_sync_score(_actions(), links)
 
 
+def _run_elastic_sync():
+    """Domain-appropriate scene for ELASTIC-NW (the generic 5-window fixture lacks a clean
+    pass-to-teammate chain, so its reception columns are 100%-null and its confidences barely
+    vary). Same pattern as _run_das / _run_shot_goalmouth. The ball rests at each of four team-1
+    players in turn and hops between them at DIFFERENT speeds; players carry small y-offsets and
+    the action times are misaligned by different amounts -- so both the start AND reception columns
+    are live and non-constant (confidence/error vary across touches)."""
+    xs = {"e0": 20.0, "e1": 45.0, "e2": 70.0, "e3": 90.0}
+    # distinct |y - 34| per receiver so reception confidences (via s_PBD) differ, not just frames
+    ys = {"e0": 34.0, "e1": 33.2, "e2": 35.1, "e3": 33.5}
+
+    def ball_x(f: int) -> float:
+        if f <= 10:
+            return 20.0
+        if f <= 18:  # e0 -> e1, fast
+            return 20.0 + (45.0 - 20.0) * (f - 10) / 8.0
+        if f <= 28:
+            return 45.0
+        if f <= 40:  # e1 -> e2, medium
+            return 45.0 + (70.0 - 45.0) * (f - 28) / 12.0
+        if f <= 48:
+            return 70.0
+        if f <= 62:  # e2 -> e3, slow
+            return 70.0 + (90.0 - 70.0) * (f - 48) / 14.0
+        return 90.0
+
+    rows = []
+    for f in range(71):
+        t = f / 25.0
+        rows.append(
+            {
+                "game_id": 1,
+                "period_id": 1,
+                "frame_id": f,
+                "time_seconds": t,
+                "player_id": None,
+                "team_id": None,
+                "x": ball_x(f),
+                "y": 34.0,
+                "z": float("nan"),
+                "is_ball": True,
+            }
+        )
+        for p, x in xs.items():
+            rows.append(
+                {
+                    "game_id": 1,
+                    "period_id": 1,
+                    "frame_id": f,
+                    "time_seconds": t,
+                    "player_id": p,
+                    "team_id": 1,
+                    "x": x,
+                    "y": ys[p],
+                    "z": float("nan"),
+                    "is_ball": False,
+                }
+            )
+    frames = pd.DataFrame(rows)
+    actions = pd.DataFrame(
+        {
+            "action_id": [0, 1, 2],
+            "game_id": [1, 1, 1],
+            "period_id": [1, 1, 1],
+            # OFF the 25 fps frame grid by DIFFERENT amounts (not k/25) so the two reception
+            # midpoints land at distinct offsets from their matched frames -> elastic_receive_error_
+            # seconds varies. On-grid times (e.g. 0.36/1.20/1.88 == 9/30/47 frames) collapse both
+            # receptions to one error value and the non-constant liveness check fails.
+            "time_seconds": [0.34, 1.26, 1.82],
+            "player_id": ["e0", "e1", "e2"],
+            "team_id": [1, 1, 1],
+            "type_id": [0, 0, 0],
+            "type_name": ["pass"] * 3,
+            "result_name": ["success"] * 3,
+        }
+    )
+    return actions, F.add_elastic_sync(actions, frames)
+
+
 def _run_defensive_credit():
     """Self-contained domain scene (P-6): the shared 5-window fixture never puts a defender within
     threshold of a shot, so no POSITIVE credit fires and defensive_credit_plus is constant-0. This
@@ -547,7 +626,7 @@ ENTRIES: dict[str, object] = {
     "add_das": _run_das,
     "add_defensive_credit": _run_defensive_credit,
     "add_defensive_line": _std(F.add_defensive_line, n=4),
-    "add_elastic_sync": _std(F.add_elastic_sync),
+    "add_elastic_sync": _run_elastic_sync,
     "add_ghost_gk": _std(F.add_ghost_gk, home_team_id=5),
     "add_gk_completion": _std(F.add_gk_completion),
     "add_gk_influence": _xtf_map(F.add_gk_influence),

@@ -1,71 +1,141 @@
-"""`add_elastic_sync` must resolve player-ball distance regardless of the frames' id dtype.
+"""ELASTIC-NW alignment must resolve the actor-membership gate regardless of id dtype (ADR-019).
 
-ADR-019 defect, found when `snapshot_to_tracking_frames` started casting its ids: the
-player-ball distance lookup keyed on ``merged["player_id"].astype(str)`` while the query keyed on
-``str(action_row["player_id"])``. With a FLOAT id column -- which is what a concat produces whenever
-a frame set carries an NA id, i.e. every ball row -- the lookup stored ``"10.0"`` and the query
-asked for ``"10"``. Measured: every lookup missed, `dist` fell to ``inf``, `proximity_score` to 0,
-and `elastic_confidence` collapsed to exactly ``accel_weight / (accel_weight + proximity_weight)``
-= **0.6 on every row**.
+The actor-membership hard gate (``actor in candidate.players``) joins the action's ``player_id`` to
+the frames' player ids. This is the exact seam of the historical constant-0.6 collapse: a FLOAT id
+column -- which a concat produces whenever a frame set carries an NA id, i.e. every ball row --
+rendered ``"10.0"`` on one side and ``"10"`` on the other, so every membership check missed. Under
+the greedy algorithm that surfaced as a constant 0.6 confidence; under NW a total miss surfaces as
+an EMPTY alignment (every score 0 < min_confidence). Both are "a plausible result from a computation
+that did not happen".
 
-A constant 0.6 is the shape this repo keeps naming: a plausible number from a computation that did
-not happen. The SB360 audit recorded it as ``identical`` -> ``works``, because BOTH legs were
-equally broken -- a one-sided check cannot see a defect that degrades both arms the same way.
-
-CLAUDE.md already records this exact trap ("`str(5.0)` iterrows-upcast player-influence/cover-shadow
-mislabel"); this module was not on the surface the ADR-043 registry sweep enumerated, because that
-registry covers id-SCALAR arguments of public functions and this is an internal dict key.
+These tests feed one physical scene under four id dtypes on each side and require BYTE-IDENTICAL,
+non-empty output -- the property a raw ``==`` / ``astype(str)`` join cannot satisfy.
 """
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
-from silly_kicks.tracking._elastic_sync import _build_player_ball_distance_lookup
+from silly_kicks.tracking._elastic_sync import align_events_to_frames
+
+_DTYPES = ["python_int", "float", "Int64", "string"]
 
 
-def _frames(player_id_values) -> pd.DataFrame:
+def _alignable():
+    """A scene the NW aligns: four team-1 players (numeric ids) at fixed x; the ball rests at each
+    in turn and hops between them; three passes at the kick frames."""
+    xs = {10: 20.0, 11: 45.0, 12: 70.0, 13: 90.0}
+
+    def ball_x(f: int) -> float:
+        if f <= 10:
+            return 20.0
+        if f <= 20:
+            return 20.0 + 2.5 * (f - 10)
+        if f <= 30:
+            return 45.0
+        if f <= 40:
+            return 45.0 + 2.5 * (f - 30)
+        if f <= 50:
+            return 70.0
+        if f <= 60:
+            return 70.0 + 2.0 * (f - 50)
+        return 90.0
+
     rows = []
-    for frame_id in (1, 2):
-        for pid, x in zip(player_id_values, (10.0, 20.0), strict=True):
-            rows.append(dict(game_id=7, period_id=1, frame_id=frame_id, player_id=pid, x=x, y=34.0, is_ball=False))
-        rows.append(dict(game_id=7, period_id=1, frame_id=frame_id, player_id=None, x=15.0, y=34.0, is_ball=True))
-    return pd.DataFrame(rows)
-
-
-@pytest.mark.parametrize(
-    ("label", "values"),
-    [
-        ("python_int", [10, 11]),
-        ("float", [10.0, 11.0]),
-        ("Int64", pd.array([10, 11], dtype="Int64")),
-        ("string", ["10", "11"]),
-    ],
-)
-def test_distance_lookup_keys_are_canonical_whatever_the_id_dtype(label, values) -> None:
-    """One physical scene, four id dtypes, ONE key set. Anything else is a silent join-miss."""
-    lookup = _build_player_ball_distance_lookup(_frames(values))
-
-    player_keys = {key[3] for key in lookup}
-    assert player_keys == {"10", "11"}, (
-        f"id dtype {label!r} produced lookup keys {sorted(player_keys)}. The query side builds its "
-        f"key from the ACTION's player_id, so any rendering other than the canonical one misses "
-        f"every row -- silently, because a miss reads as 'infinitely far from the ball' rather than "
-        f"as an error."
+    for f in range(71):
+        t = f / 25.0
+        rows.append(
+            {
+                "game_id": 7,
+                "period_id": 1,
+                "frame_id": f,
+                "time_seconds": t,
+                "player_id": None,
+                "team_id": None,
+                "x": ball_x(f),
+                "y": 34.0,
+                "z": float("nan"),
+                "is_ball": True,
+            }
+        )
+        for pid, x in xs.items():
+            rows.append(
+                {
+                    "game_id": 7,
+                    "period_id": 1,
+                    "frame_id": f,
+                    "time_seconds": t,
+                    "player_id": pid,
+                    "team_id": 1,
+                    "x": x,
+                    "y": 34.0,
+                    "z": float("nan"),
+                    "is_ball": False,
+                }
+            )
+    frames = pd.DataFrame(rows)
+    actions = pd.DataFrame(
+        {
+            "action_id": [0, 1, 2],
+            "game_id": [7, 7, 7],
+            "period_id": [1, 1, 1],
+            "time_seconds": [0.4, 1.2, 2.0],
+            "player_id": [10, 11, 12],
+            "team_id": [1, 1, 1],
+            "type_id": [0, 0, 0],
+            "type_name": ["pass"] * 3,
+            "result_name": ["success"] * 3,
+        }
     )
+    return frames, actions
 
 
-def test_a_float_id_column_still_resolves_a_real_distance() -> None:
-    """The behavioural consequence, not just the key shape.
+def _cast_ids(df: pd.DataFrame, cols, dtype: str) -> pd.DataFrame:
+    out = df.copy()
+    for col in cols:
+        if dtype == "float":
+            out[col] = out[col].astype("float64")
+        elif dtype == "Int64":
+            out[col] = out[col].astype("Int64")
+        elif dtype == "string":
+            out[col] = out[col].map(lambda v: v if pd.isna(v) else str(int(v)))
+        # "python_int": leave as-is (object column with python ints + None on ball rows)
+    return out
 
-    A miss returns `inf` from the caller's `.get(..., inf)` default, which becomes
-    `proximity_score = 0` and a constant confidence. This asserts the distance is finite and
-    correct, so the defect cannot return as a differently-shaped key.
-    """
-    lookup = _build_player_ball_distance_lookup(_frames([10.0, 11.0]))
 
-    dist = lookup[(np.int64(7), np.int64(1), 1, "10")]
-    assert np.isfinite(dist), "player-ball distance is infinite -- the lookup missed"
-    assert dist == pytest.approx(5.0), f"player at x=10, ball at x=15, same y: expected 5.0, got {dist}"
+def _reference() -> pd.DataFrame:
+    frames, actions = _alignable()
+    return align_events_to_frames(actions, frames).reset_index(drop=True)
+
+
+@pytest.mark.parametrize("dtype", _DTYPES)
+def test_invariant_to_frame_player_id_dtype(dtype):
+    """Vary the FRAMES' player/team id dtype; the alignment is byte-identical and non-empty."""
+    frames, actions = _alignable()
+    frames = _cast_ids(frames, ["player_id", "team_id"], dtype)
+    result = align_events_to_frames(actions, frames).reset_index(drop=True)
+    assert len(result) > 0, f"frame id dtype {dtype!r} produced NO matches -- the membership join missed"
+    pd.testing.assert_frame_equal(result, _reference())
+
+
+@pytest.mark.parametrize("dtype", _DTYPES)
+def test_invariant_to_action_player_id_dtype(dtype):
+    """Vary the ACTIONS' player/team id dtype; the alignment is byte-identical and non-empty."""
+    frames, actions = _alignable()
+    actions = _cast_ids(actions, ["player_id", "team_id"], dtype)
+    result = align_events_to_frames(actions, frames).reset_index(drop=True)
+    assert len(result) > 0, f"action id dtype {dtype!r} produced NO matches -- the membership join missed"
+    pd.testing.assert_frame_equal(result, _reference())
+
+
+def test_no_constant_confidence_collapse():
+    """The behavioural anti-regression: real, varying confidences -- not a single fabricated value
+    (the greedy 0.6) nor an all-NaN/empty result (the NW manifestation of a total membership miss)."""
+    frames, actions = _alignable()
+    # the exact historical trigger: float id columns (ball NA upcasts int -> float -> "10.0")
+    frames = _cast_ids(frames, ["player_id", "team_id"], "float")
+    result = align_events_to_frames(actions, frames)
+    conf = result["elastic_confidence"].dropna()
+    assert len(conf) > 0
+    assert (conf > 0.0).all() and (conf <= 1.0).all()

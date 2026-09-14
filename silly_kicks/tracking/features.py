@@ -6801,23 +6801,27 @@ def add_elastic_sync(
     actions: pd.DataFrame,
     frames: pd.DataFrame,
     *,
-    window_seconds: float = 1.0,
-    accel_weight: float = 0.6,
-    proximity_weight: float = 0.4,
-    min_confidence: float = 0.1,
-    frame_rate: int = 25,
+    params=None,
 ) -> pd.DataFrame:
-    """Enrich actions with ELASTIC event-tracking alignment columns.
+    """Enrich actions with ELASTIC v2 (Needleman-Wunsch) event-tracking alignment columns.
 
-    Runs the ELASTIC algorithm (Kim et al. 2025) to find the best-matching
-    tracking frame for each action, returning alternative frame pointers
-    with confidence scores.
+    Runs the extended-NW ELASTIC engine (Kim et al. 2026) to align each action to its ball-touch
+    frame, returning alternative frame pointers with confidence scores plus the jointly-detected
+    reception (event-end) frame. Requires continuous tracking with player identity + ``team_id``.
+
+    Parameters
+    ----------
+    actions, frames : pd.DataFrame
+        SPADL actions and long-form tracking frames.
+    params : ElasticSyncParams or None
+        Algorithm parameters (None uses defaults).
 
     Returns
     -------
     pd.DataFrame
         Actions enriched with ``elastic_frame_id``, ``elastic_confidence``,
-        ``elastic_error_seconds`` columns.
+        ``elastic_error_seconds`` (event start) plus ``elastic_receive_frame_id``,
+        ``elastic_receive_confidence``, ``elastic_receive_error_seconds`` (event end / reception).
 
     Examples
     --------
@@ -6825,21 +6829,25 @@ def add_elastic_sync(
 
         from silly_kicks.tracking.features import add_elastic_sync
         enriched = add_elastic_sync(actions, frames)
+        # start: elastic_frame_id / elastic_confidence / elastic_error_seconds
+        # end:   elastic_receive_frame_id / elastic_receive_confidence / elastic_receive_error_seconds
     """
     from ._elastic_sync import ElasticSyncParams, align_events_to_frames
 
-    params = ElasticSyncParams(
-        window_seconds=window_seconds,
-        accel_weight=accel_weight,
-        proximity_weight=proximity_weight,
-        min_confidence=min_confidence,
-        frame_rate=frame_rate,
-    )
+    if params is None:
+        params = ElasticSyncParams()
 
     alignment = align_events_to_frames(actions, frames, params=params)
     out = actions.copy()
 
-    _elastic_cols = ["elastic_frame_id", "elastic_confidence", "elastic_error_seconds"]
+    _elastic_cols = [
+        "elastic_frame_id",
+        "elastic_confidence",
+        "elastic_error_seconds",
+        "elastic_receive_frame_id",
+        "elastic_receive_confidence",
+        "elastic_receive_error_seconds",
+    ]
     for col in _elastic_cols:
         out[col] = np.nan
 
@@ -6857,18 +6865,12 @@ def add_elastic_sync(
     return out
 
 
-def elastic_sync_xfns(
-    *,
-    window_seconds: float = 1.0,
-    accel_weight: float = 0.6,
-    proximity_weight: float = 0.4,
-    min_confidence: float = 0.1,
-    frame_rate: int = 25,
-) -> list:
+def elastic_sync_xfns(*, params=None) -> list:
     """Factory returning FrameAwareTransformers for ELASTIC sync features.
 
     Produces 2 features x 3 gamestates = 6 VAEP columns:
-    ``elastic_confidence``, ``elastic_error_seconds``.
+    ``elastic_confidence``, ``elastic_error_seconds``. (The frame pointers -- including the
+    reception frame -- are not VAEP features and are not lifted.)
 
     Examples
     --------
@@ -6881,28 +6883,10 @@ def elastic_sync_xfns(
     xfns_out = []
     for col_name in col_names:
 
-        def _helper(
-            actions,
-            frames,
-            *,
-            _col=col_name,
-            _ws=window_seconds,
-            _aw=accel_weight,
-            _pw=proximity_weight,
-            _mc=min_confidence,
-            _fr=frame_rate,
-        ):
+        def _helper(actions, frames, *, _col=col_name, _params=params):
             if frames is None:
                 return pd.Series(np.nan, index=actions.index, name=_col)
-            enriched = add_elastic_sync(
-                actions,
-                frames,
-                window_seconds=_ws,
-                accel_weight=_aw,
-                proximity_weight=_pw,
-                min_confidence=_mc,
-                frame_rate=_fr,
-            )
+            enriched = add_elastic_sync(actions, frames, params=_params)
             return enriched[_col].rename(_col)
 
         _helper.__name__ = col_name

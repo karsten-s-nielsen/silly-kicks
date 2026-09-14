@@ -265,6 +265,13 @@ SB360_ENTRIES: dict[str, Sb360Entry] = {}
 #: its 4 `b_attribution_slippage` not_exercised tuples (velocity + all three visibility rosters); the
 #: shared sb360-fixture-3 interception frames STAY (their add_press_commitment coverage gain is
 #: independent of the demoted metric). Mirrors the TF-60 Layer-3 removal.
+#: ADR-093 (TF-57 ELASTIC-NW) adds NO not_exercised tuples. add_elastic_sync is continuous-only and
+#: REFUSES freeze-frame input (POSITIONAL_ONLY) -> honest all-NaN on Leg A for EVERY column. The
+#: synthetic full-tracking Leg B aligns both the START and the RECEPTION on every roster -- the
+#: central-difference acceleration surfaces a reception touch even under the reduced `gk_absent` /
+#: `gk_one_end` rosters -- so all six elastic columns are all_nan -> honest_nan, none no_signal.
+#: (An earlier draft counted the reception columns as +6 not_exercised, before the central-diff accel
+#: change made Leg B align a reception on the reduced rosters; that no longer holds.) Net stays 46.
 NOT_EXERCISED_BUDGET = 46
 
 
