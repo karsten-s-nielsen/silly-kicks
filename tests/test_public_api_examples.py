@@ -156,6 +156,8 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/atomic/spadl/base.py",
     "silly_kicks/vaep/base.py",
     "silly_kicks/vaep/hybrid.py",
+    "silly_kicks/vaep/adjusted.py",
+    "silly_kicks/xsuccess/_model.py",
     "silly_kicks/atomic/vaep/base.py",
     "silly_kicks/xthreat/_model.py",
     "silly_kicks/xthreat/_params.py",

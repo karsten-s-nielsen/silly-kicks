@@ -386,6 +386,108 @@ class VAEP:
         vaep_values = self._vaep.value(game_actions_with_names, p_scores, p_concedes)
         return vaep_values
 
+    def _surgical_result_flip(
+        self,
+        game: pd.Series,
+        game_actions: fs.Actions,
+        *,
+        frames: pd.DataFrame | None = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+        """Build the surgical success/fail counterfactual feature matrices (TF-61, spec §7.2).
+
+        Overrides ONLY the current action's (a0) result-encoding feature columns to success/fail,
+        holding locations, goalscore, and the predecessors' (a1/a2) real result features fixed —
+        the ceteris-paribus counterfactual that isolates a0's completion (the gold-standard form,
+        not the paper's whole-dataset flip). Returns ``(X, X_succ, X_fail, a0_result_cols)``.
+
+        Raises ``ValueError`` if forcing a0's result changes no feature (a HybridVAEP / result-free
+        xfn set makes the counterfactual a no-op — the non-vacuity guard).
+        """
+        import silly_kicks.spadl.config as _cfg
+
+        X = self.compute_features(game, game_actions, frames=frames)
+        succ = game_actions.copy()
+        succ["result_id"] = _cfg.result_id["success"]
+        fail = game_actions.copy()
+        fail["result_id"] = _cfg.result_id["fail"]
+        Xs = self.compute_features(game, succ, frames=frames)
+        Xf = self.compute_features(game, fail, frames=frames)
+        a0_cols = [c for c in X.columns if c.endswith("_a0") and not Xs[c].equals(Xf[c])]
+        if not a0_cols:
+            raise ValueError(
+                "rate_adjusted requires a STANDARD result-bearing VAEP: forcing the current action's "
+                "result changed no feature, so the success/fail counterfactual is a no-op (e.g. "
+                "HybridVAEP removes the a0 result feature)."
+            )
+        X_succ = X.copy()
+        X_succ.loc[:, a0_cols] = Xs[a0_cols].to_numpy()
+        X_fail = X.copy()
+        X_fail.loc[:, a0_cols] = Xf[a0_cols].to_numpy()
+        return X, X_succ, X_fail, a0_cols
+
+    def rate_adjusted(
+        self,
+        game: pd.Series,
+        game_actions: fs.Actions,
+        xsuccess_model: Any,
+        *,
+        frames: pd.DataFrame | None = None,
+        return_components: bool = False,
+    ) -> pd.DataFrame:
+        """Risk-aware, outcome-bias-free VAEP (TF-61, Paul/Klemp/Memmert 2025; spec §7).
+
+        Re-scores the *already-fitted* P_scores/P_concedes classifiers on the surgical success/fail
+        result-feature counterfactual (:meth:`_surgical_result_flip`), weights by the injected
+        ``xsuccess_model`` (``P(success)`` per action), and runs the *existing* ``formula.value``
+        delta machinery via :func:`silly_kicks.vaep.adjusted.adjusted_value`. **No retrain.**
+
+        Requires a STANDARD (result-bearing) VAEP — raises on HybridVAEP (the flip is a no-op).
+        A NaN ``xSuccess`` (non-finite action) propagates to a NaN adjusted value (never fabricated).
+
+        Parameters
+        ----------
+        game, game_actions : the SPADL game + actions (as :meth:`rate`).
+        xsuccess_model : an object exposing ``predict_success(actions) -> np.ndarray`` (e.g.
+            :class:`silly_kicks.xsuccess.XSuccessModel`), injected (port pattern).
+        frames : optional tracking frames, threaded to every feature build for frame-aware xfns.
+        return_components : also return ``p_scores_success_adj`` / ``p_concedes_fail_adj`` (the
+            paper's aggregate-vs-xG validation quantities).
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``offensive_value`` / ``defensive_value`` / ``vaep_value`` (adjusted), one row per action.
+
+        Examples
+        --------
+        Rate a game's actions with outcome bias removed, reusing a fitted STANDARD (result-bearing)
+        VAEP and a bundled xSuccess model (a real ``game`` / ``game_actions`` frame is required, so
+        this is an illustrative block rather than a runnable doctest)::
+
+            from silly_kicks.vaep import VAEP
+            from silly_kicks.xsuccess import XSuccessModel
+
+            v = VAEP().fit(X, y)                       # standard VAEP (NOT HybridVAEP)
+            xs = XSuccessModel.bundled()               # or XSuccessModel().fit(actions)
+            adj = v.rate_adjusted(game, game_actions, xs)
+            adj[["offensive_value", "defensive_value", "vaep_value"]].head()
+        """
+        if not self.__models:
+            raise NotFittedError()
+        from .adjusted import adjusted_value
+
+        actions_named = self._add_names(game_actions)  # type: ignore
+        _, X_succ, X_fail, _ = self._surgical_result_flip(game, game_actions, frames=frames)
+        p_scores_success = self._estimate_probabilities(X_succ).iloc[:, 0].to_numpy()
+        p_concedes_fail = self._estimate_probabilities(X_fail).iloc[:, 1].to_numpy()
+        xs = np.asarray(xsuccess_model.predict_success(game_actions), dtype=float)
+        out = adjusted_value(actions_named, p_scores_success, p_concedes_fail, xs)
+        if return_components:
+            out = out.copy()
+            out["p_scores_success_adj"] = xs * p_scores_success
+            out["p_concedes_fail_adj"] = (1.0 - xs) * p_concedes_fail
+        return out
+
     def score(self, X: pd.DataFrame, y: pd.DataFrame) -> dict[str, dict[str, float]]:
         """Evaluate the fit of the model on the given test data and labels.
 

@@ -273,6 +273,14 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "RUF"]
 # TF-54b expected-passing pass-completion model: ML-style uppercase X/Z feature matrices (logistic model).
 "silly_kicks/expected_passing/_model.py" = ["N803", "N806"]
 "silly_kicks/expected_passing/_features.py" = ["N806"]
+# TF-61 xSuccess: ML-style uppercase X feature matrices (xgboost model + HPO objective).
+"silly_kicks/xsuccess/_model.py" = ["N803", "N806"]
+"silly_kicks/xsuccess/_features.py" = ["N806"]
+"silly_kicks/xsuccess/_objective.py" = ["N803", "N806"]
+# TF-61 xSuccess trainer/evolve/publish: ML-style uppercase X + human-readable run summary (T201).
+"scripts/train_xsuccess.py" = ["N803", "N806", "T201"]
+"scripts/evolve_xsuccess_features.py" = ["N803", "N806", "T201"]
+"scripts/publish_xsuccess.py" = ["T201"]
 # xT-GK completion trainer: ML-style uppercase X + human-readable run summary (T201).
 "scripts/train_gk_completion.py" = ["N803", "N806", "T201"]
 # xT-GK v2 retention (rho) trainer: ML-style uppercase X + human-readable run summary (T201).

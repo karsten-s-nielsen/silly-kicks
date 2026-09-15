@@ -2,6 +2,8 @@
 
 Quick-reference action items. Architectural decisions live in [docs/superpowers/adrs/](docs/superpowers/adrs/).
 
+**In progress (unreleased) — TF-61: xSuccess (event-only END-BLIND action-completion) + VAEP_adjusted (outcome-bias-free VAEP).** Code committed first; bundled weights + validation land in Commit 2. Version / PR-S / ADR unclaimed until Commit 2 (a concurrent session may release first; provisional ~4.115.0). Detail in [CHANGELOG.md](CHANGELOG.md); remove the TF-61 On-Deck row on release.
+
 **Current — 4.114.0 (PR-S185, ADR-093): TF-57 — ELASTIC v2 event↔tracking sync.** A clean-room extended-Needleman–Wunsch aligner (Kim et al., CIKM 2026) replaces the greedy TF-43 aligner — DGX W2 0.862 (~11×), held-out-validated — plus a `link_actions_to_frames_elastic` linker and 3 `elastic_receive_*` columns. `elastic_*` re-materialize; no default VAEP retrain. Full detail in [CHANGELOG.md](CHANGELOG.md).
 
 ---

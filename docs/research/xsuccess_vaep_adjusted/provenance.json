@@ -1,0 +1,73 @@
+{
+  "artifact": "TF-61 xSuccess OpenEvolve feature-representation discovery (Stage A)",
+  "discipline": "ADR-093 (OpenEvolve provenance + held-out validation); the evolve PROCESS is documented, not required to be bit-reproducible; the OUTPUT decision is committed",
+  "run_commit": "pending-commit-1 (seed ships -> the committed silly_kicks/xsuccess/_features.py IS the Stage-A output; no code depends on a specific evolve-run SHA)",
+  "run_tree_dirty": true,
+  "run_tree_note": "the DGX-Spark run used a non-git synced tree (~/silly-kicks-tf61) with --allow-dirty; the evolve output is a DECISION (seed vs evolved), reviewed by hand, not a bundled weight artifact",
+  "date": "2026-09-15",
+  "corpus": {
+    "role": "DISCOVERY subsample only (feature-representation search needs signal, not full-corpus coverage); the FINAL bundled model trains on the full redistributable open-data corpus at Commit-2",
+    "competition": "StatsBomb Open Data WC2022 (competition_id=43, season_id=106)",
+    "n_matches": 64,
+    "n_onball_actions": 138945,
+    "success_rate": 0.863,
+    "loader": "scripts._sb_open_data.load_open_data_matches (redistributable by construction; TF61-IMPL-01)"
+  },
+  "fitness": {
+    "held_out": "StratifiedGroupKFold-by-match, n_splits=5 (this IS the held-out CV; no separate in-sample number reported)",
+    "metric": "mean held-out log-loss (lower better); brier + n_features reported alongside",
+    "leakage_guard": "hard END-BLIND check in-fitness (_assert_end_blind): inject synthetic end_x/end_y -> features must be byte-identical, else reject (the ReceiverModel bar, spec 6.4)",
+    "single_sourced": "the evolve fitness reuses the committed driver scripts/evolve_xsuccess_features.py::evaluate_candidate, so it is byte-identical to the offline --candidate scoring path"
+  },
+  "openevolve": {
+    "package": "openevolve==0.3.2",
+    "proposer": "OpenRouter; anthropic/claude-sonnet-5 (weight 0.80) + anthropic/claude-opus-4.8 (weight 0.20)",
+    "iterations": 100,
+    "database": {"population_size": 40, "num_islands": 3, "archive_size": 25, "migration_interval": 20},
+    "diff_based_evolution": true,
+    "temperature": 0.8,
+    "per_model_budget_usd": {"sonnet-5": 6.0, "opus-4.8": 4.0},
+    "openrouter_spend_usd_both_runs": 12.69
+  },
+  "runs": [
+    {
+      "fitness_model": "xgboost (PRIMARY / shipping family): XGBClassifier(n_estimators=200, max_depth=4, learning_rate=0.1, tree_method=hist)",
+      "seed_logloss": 0.22782834768295288,
+      "seed_brier": 0.07083580195903778,
+      "seed_n_features": 35,
+      "winner_logloss": 0.22726245522499083,
+      "winner_brier": 0.07066620886325836,
+      "winner_n_features": 85,
+      "winner_generation": 6,
+      "winner_iteration": 40,
+      "delta_logloss": 0.00056589245796205,
+      "winner_program": "evolved_xgboost_winner.py",
+      "verdict": "NULL gain (~0.2% relative). A gradient-boosted tree already learns the geometry/interactions from the raw representation, so hand/evolved features are largely redundant -- a low ceiling by construction."
+    },
+    {
+      "fitness_model": "per_type_logistic-proxy (FALLBACK family; commissioned by owner to fully exercise OpenEvolve where representation matters): standardized LogisticRegression(C=1.0)",
+      "seed_logloss": 0.23559934921790573,
+      "seed_brier": 0.07309834587517029,
+      "seed_n_features": 35,
+      "winner_logloss": 0.22860797768400584,
+      "winner_brier": 0.0711076729383526,
+      "winner_n_features": 152,
+      "winner_generation": 8,
+      "winner_iteration": 96,
+      "delta_logloss": 0.00699137153389989,
+      "winner_program": "evolved_logistic_winner.py",
+      "verdict": "REAL gain (~3% relative), closing ~80% of the linear-vs-tree gap (0.2356 -> 0.2286, near XGBoost's 0.2278). Principled, interpretable, END-BLIND geometry (goal-mouth subtended angle, y-symmetry about the pitch centre, log/exp-decay location transforms, smooth sin/cos bearing for a GLM) + systematic per-type/bodypart geometry interactions."
+    }
+  ],
+  "pre_registered_margin": {
+    "spec_state": "spec 6.1 / SPEC-06 cites 'a pre-registered margin' but NO numeric value was ever pinned in the spec or plan (a gap, recorded honestly rather than back-dated).",
+    "recorded_at_decision": ">= 0.005 absolute held-out log-loss improvement",
+    "robustness": "the primary (XGBoost) delta is 0.00057 -- NULL under any sane threshold (even a permissive 0.001), so the seed-ships decision does NOT depend on the margin choice."
+  },
+  "decision": {
+    "outcome": "SHIP THE SEED for the shared silly_kicks/xsuccess/_features.py (unchanged). Stage A is evaluated against the shipping family (XGBoost primary, spec 5.4); its gain is null.",
+    "logistic_finding": "The fallback family (per_type_logistic) WOULD benefit from the evolved geometry, but it ships only if the calibrated XGBoost fails the per-type calibration gate (spec 9.1) at Commit-2.",
+    "deferral": "Owner decision (2026-09-15): DEFER the logistic finding to the Commit-2 family gate. If the fallback is selected there, adopt a family-specific evolved builder for it then (evolved_logistic_winner.py is the candidate). Not folded into the shared builder now (would bloat the XGBoost feature contract 35->152 columns for ~0 XGBoost gain).",
+    "both_winners_end_blind": "confirmed by hand-review AND by the in-fitness end-invariance guard (both winners passed; a leaking candidate scores -1e9)."
+  }
+}

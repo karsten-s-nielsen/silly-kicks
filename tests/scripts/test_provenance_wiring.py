@@ -148,6 +148,12 @@ ARTIFACT_DRIVERS = (
     # gate_eligible census, the §6.2 named-keeper sign table) whose numbers are cited -- so the
     # tree it ran on is recorded. Reported-not-gated, but a cited artifact all the same.
     "build_tf19_instrument_responsiveness",
+    # TF-61 xSuccess. `train_xsuccess` writes parameters-only bundled weights + metrics.json stamping
+    # training_commit (same class as train_pass_completion / the weight trainers). `evolve_xsuccess_features`
+    # writes the Stage-A feature-evolution provenance.json (run_commit/tree state + fitness) whose result
+    # decides the shipped representation -- both consume the public open-data corpus, so provenance.
+    "train_xsuccess",
+    "evolve_xsuccess_features",
 )
 
 
