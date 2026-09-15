@@ -1,0 +1,625 @@
+{
+  "run_commit": "19a5883103f6528dc153112e3f991ae75805aea3",
+  "run_tree_dirty": false,
+  "comparison": {
+    "n_providers": 2,
+    "per_kpi": {
+      "box_to_shot_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.033338221385326765,
+            "split_half_r": 0.12794926777956528
+          },
+          "wyscout": {
+            "icc": 0.030639656524047487,
+            "split_half_r": 0.1250483901608609
+          }
+        },
+        "icc_spread": 0.0026985648612792776,
+        "poolable": true
+      },
+      "box_touches": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.3510248649881361,
+            "split_half_r": 0.7212853976488214
+          },
+          "wyscout": {
+            "icc": 0.2529577912245399,
+            "split_half_r": 0.5886197484547718
+          }
+        },
+        "icc_spread": 0.09806707376359625,
+        "poolable": true
+      },
+      "box_touches_post_recovery": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.21853820548992495,
+            "split_half_r": 0.5535393043037867
+          },
+          "wyscout": {
+            "icc": 0.10500619673792368,
+            "split_half_r": 0.27923019966143275
+          }
+        },
+        "icc_spread": 0.11353200875200127,
+        "poolable": true
+      },
+      "breakout_center": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.20620417850859848,
+            "split_half_r": 0.5169472971361276
+          },
+          "wyscout": {
+            "icc": 0.1251302762769137,
+            "split_half_r": 0.2966106412802246
+          }
+        },
+        "icc_spread": 0.08107390223168479,
+        "poolable": true
+      },
+      "breakout_center_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.0920390667137396,
+            "split_half_r": 0.2600090627368987
+          },
+          "wyscout": {
+            "icc": 0.07672749082557354,
+            "split_half_r": 0.2645610457556073
+          }
+        },
+        "icc_spread": 0.015311575888166062,
+        "poolable": true
+      },
+      "breakout_left": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.13263231801563052,
+            "split_half_r": 0.41621649253524934
+          },
+          "wyscout": {
+            "icc": 0.10798060223306204,
+            "split_half_r": 0.44588219088066827
+          }
+        },
+        "icc_spread": 0.024651715782568487,
+        "poolable": true
+      },
+      "breakout_left_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.07371591969613743,
+            "split_half_r": 0.19142640031181934
+          },
+          "wyscout": {
+            "icc": 0.08841197739402037,
+            "split_half_r": 0.2648962665315022
+          }
+        },
+        "icc_spread": 0.014696057697882944,
+        "poolable": true
+      },
+      "breakout_right": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.17526411754997098,
+            "split_half_r": 0.5742202815063495
+          },
+          "wyscout": {
+            "icc": 0.14272004755730497,
+            "split_half_r": 0.4254448990228796
+          }
+        },
+        "icc_spread": 0.032544069992666014,
+        "poolable": true
+      },
+      "breakout_right_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.07115099388860999,
+            "split_half_r": 0.1900090069887875
+          },
+          "wyscout": {
+            "icc": 0.07796279420472532,
+            "split_half_r": 0.2079119699170609
+          }
+        },
+        "icc_spread": 0.006811800316115335,
+        "poolable": true
+      },
+      "buildup_final_quarter": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.24471567798100605,
+            "split_half_r": 0.528970188055314
+          },
+          "wyscout": {
+            "icc": 0.15908042530353264,
+            "split_half_r": 0.42923375644842265
+          }
+        },
+        "icc_spread": 0.0856352526774734,
+        "poolable": true
+      },
+      "buildup_led_opp_shot": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.18715272509318,
+            "split_half_r": 0.5189746797883139
+          },
+          "wyscout": {
+            "icc": 0.09932960438025147,
+            "split_half_r": 0.3347139067907056
+          }
+        },
+        "icc_spread": 0.08782312071292854,
+        "poolable": true
+      },
+      "buildup_next_phase": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.1316902856312916,
+            "split_half_r": 0.37878772088506923
+          },
+          "wyscout": {
+            "icc": 0.04867031775711325,
+            "split_half_r": 0.34722988103794517
+          }
+        },
+        "icc_spread": 0.08301996787417834,
+        "poolable": true
+      },
+      "buildup_opp_int_own_half": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.10068031606218769,
+            "split_half_r": 0.26234561181044164
+          },
+          "wyscout": {
+            "icc": 0.056665583358640435,
+            "split_half_r": 0.34565228361647393
+          }
+        },
+        "icc_spread": 0.044014732703547256,
+        "poolable": true
+      },
+      "buildup_opp_won_own_half": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.2610294058396054,
+            "split_half_r": 0.5364532309172625
+          },
+          "wyscout": {
+            "icc": 0.1912267761641188,
+            "split_half_r": 0.5193374265249644
+          }
+        },
+        "icc_spread": 0.06980262967548659,
+        "poolable": true
+      },
+      "buildup_stayed_phase_one": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.1934465868955805,
+            "split_half_r": 0.3439818116884834
+          },
+          "wyscout": {
+            "icc": 0.0450645820124013,
+            "split_half_r": 0.1551355573324245
+          }
+        },
+        "icc_spread": 0.1483820048831792,
+        "poolable": true
+      },
+      "buildup_success_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.3295993723137985,
+            "split_half_r": 0.6590365064189899
+          },
+          "wyscout": {
+            "icc": 0.23171913802119898,
+            "split_half_r": 0.5080810636070681
+          }
+        },
+        "icc_spread": 0.09788023429259951,
+        "poolable": true
+      },
+      "counterpress_regain_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.11980762890235598,
+            "split_half_r": 0.4533023222284866
+          },
+          "wyscout": {
+            "icc": 0.1138412016939909,
+            "split_half_r": 0.22075570903082994
+          }
+        },
+        "icc_spread": 0.0059664272083650854,
+        "poolable": true
+      },
+      "counterpress_regains": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.13398057879208078,
+            "split_half_r": 0.6083672916360618
+          },
+          "wyscout": {
+            "icc": 0.10516362484397093,
+            "split_half_r": 0.2494009571434845
+          }
+        },
+        "icc_spread": 0.028816953948109847,
+        "poolable": true
+      },
+      "defensive_action_height_m": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.21240306607907852,
+            "split_half_r": 0.42225248040936125
+          },
+          "wyscout": {
+            "icc": 0.10703542682279774,
+            "split_half_r": 0.12082429194936803
+          }
+        },
+        "icc_spread": 0.10536763925628079,
+        "poolable": true
+      },
+      "defensive_intensity": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.17323873978248266,
+            "split_half_r": 0.6973746689252948
+          },
+          "wyscout": {
+            "icc": 0.09301638936346181,
+            "split_half_r": 0.1841967038553564
+          }
+        },
+        "icc_spread": 0.08022235041902086,
+        "poolable": true
+      },
+      "field_tilt_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.36318974765302886,
+            "split_half_r": 0.7062433835039107
+          },
+          "wyscout": {
+            "icc": 0.2487764763914776,
+            "split_half_r": 0.4623855936783462
+          }
+        },
+        "icc_spread": 0.11441327126155126,
+        "poolable": true
+      },
+      "final_third_entries": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.29070968067252273,
+            "split_half_r": 0.666933392606297
+          },
+          "wyscout": {
+            "icc": 0.21923019298881302,
+            "split_half_r": 0.4737537042682454
+          }
+        },
+        "icc_spread": 0.07147948768370971,
+        "poolable": true
+      },
+      "final_third_entries_post_recovery": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.25066394164237393,
+            "split_half_r": 0.6251799014381971
+          },
+          "wyscout": {
+            "icc": 0.25546296621655856,
+            "split_half_r": 0.5980021578326599
+          }
+        },
+        "icc_spread": 0.004799024574184629,
+        "poolable": true
+      },
+      "final_third_to_box_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.1884895733562888,
+            "split_half_r": 0.42517271575141574
+          },
+          "wyscout": {
+            "icc": 0.09106884591994788,
+            "split_half_r": 0.28925419088852206
+          }
+        },
+        "icc_spread": 0.09742072743634092,
+        "poolable": true
+      },
+      "high_opportunity_shots": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.1903757582755763,
+            "split_half_r": 0.4654862327090182
+          },
+          "wyscout": {
+            "icc": NaN,
+            "split_half_r": NaN
+          }
+        },
+        "icc_spread": null,
+        "poolable": false
+      },
+      "high_opportunity_shots_post_recovery": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.0824653165764608,
+            "split_half_r": 0.346821178120659
+          },
+          "wyscout": {
+            "icc": NaN,
+            "split_half_r": NaN
+          }
+        },
+        "icc_spread": null,
+        "poolable": false
+      },
+      "long_ball_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.43470404758624953,
+            "split_half_r": 0.711405025538283
+          },
+          "wyscout": {
+            "icc": 0.4250563108119121,
+            "split_half_r": 0.7869910196075212
+          }
+        },
+        "icc_spread": 0.009647736774337445,
+        "poolable": true
+      },
+      "pass_tempo": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.257081461856505,
+            "split_half_r": 0.6421773696341254
+          },
+          "wyscout": {
+            "icc": 0.2041308743003788,
+            "split_half_r": 0.622254114351966
+          }
+        },
+        "icc_spread": 0.052950587556126194,
+        "poolable": true
+      },
+      "poss_to_final_third_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.33427843743703917,
+            "split_half_r": 0.6442181911970871
+          },
+          "wyscout": {
+            "icc": 0.25993308436985546,
+            "split_half_r": 0.5804452553102644
+          }
+        },
+        "icc_spread": 0.0743453530671837,
+        "poolable": true
+      },
+      "possessions_retained_after_ns_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.3982320364475991,
+            "split_half_r": 0.6863104281090091
+          },
+          "wyscout": {
+            "icc": 0.3631599097584554,
+            "split_half_r": 0.7457967159330913
+          }
+        },
+        "icc_spread": 0.03507212668914367,
+        "poolable": true
+      },
+      "post_regain_failed_first_passes": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.2911652907220335,
+            "split_half_r": 0.691431870789689
+          },
+          "wyscout": {
+            "icc": 0.2602804789010991,
+            "split_half_r": 0.8107372656372824
+          }
+        },
+        "icc_spread": 0.030884811820934388,
+        "poolable": true
+      },
+      "post_regain_forward_first_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.22082197890796548,
+            "split_half_r": 0.5478022266378267
+          },
+          "wyscout": {
+            "icc": 0.17503412033682045,
+            "split_half_r": 0.6683417324893114
+          }
+        },
+        "icc_spread": 0.045787858571145035,
+        "poolable": true
+      },
+      "post_regain_second_pass_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.38857767930110126,
+            "split_half_r": 0.6477231858936257
+          },
+          "wyscout": {
+            "icc": 0.2581262526371246,
+            "split_half_r": 0.6555081732760974
+          }
+        },
+        "icc_spread": 0.1304514266639767,
+        "poolable": true
+      },
+      "ppda": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.15593120035608765,
+            "split_half_r": 0.4169936143050143
+          },
+          "wyscout": {
+            "icc": 0.0762664793937563,
+            "split_half_r": 0.10138363191912358
+          }
+        },
+        "icc_spread": 0.07966472096233135,
+        "poolable": true
+      },
+      "recoveries": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.25179348358839426,
+            "split_half_r": 0.7329953278275576
+          },
+          "wyscout": {
+            "icc": 0.19107925359881128,
+            "split_half_r": 0.525140059266757
+          }
+        },
+        "icc_spread": 0.06071422998958298,
+        "poolable": true
+      },
+      "recoveries_within_ns_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.11980762890235598,
+            "split_half_r": 0.4533023222284866
+          },
+          "wyscout": {
+            "icc": 0.1138412016939909,
+            "split_half_r": 0.22075570903082994
+          }
+        },
+        "icc_spread": 0.0059664272083650854,
+        "poolable": true
+      },
+      "recovery_line_height_m": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.2523264730397072,
+            "split_half_r": 0.5268711381140387
+          },
+          "wyscout": {
+            "icc": 0.15893962373853932,
+            "split_half_r": 0.3848900402484842
+          }
+        },
+        "icc_spread": 0.09338684930116786,
+        "poolable": true
+      },
+      "shots": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.23857931359882087,
+            "split_half_r": 0.6009997231864429
+          },
+          "wyscout": {
+            "icc": 0.188983984637652,
+            "split_half_r": 0.41153432235784254
+          }
+        },
+        "icc_spread": 0.04959532896116886,
+        "poolable": true
+      },
+      "shots_post_recovery": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.1402456100131485,
+            "split_half_r": 0.4371822970317029
+          },
+          "wyscout": {
+            "icc": 0.07657366251002057,
+            "split_half_r": 0.1057652873627396
+          }
+        },
+        "icc_spread": 0.06367194750312793,
+        "poolable": true
+      },
+      "switch_press_n": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.0866519314338666,
+            "split_half_r": 0.2152743441403934
+          },
+          "wyscout": {
+            "icc": 0.0870286617328337,
+            "split_half_r": 0.40960453814691483
+          }
+        },
+        "icc_spread": 0.00037673029896710675,
+        "poolable": true
+      },
+      "switch_press_success_pct": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.024084592010138975,
+            "split_half_r": 0.006386992975344973
+          },
+          "wyscout": {
+            "icc": 0.006854513895265723,
+            "split_half_r": -0.07722917748183027
+          }
+        },
+        "icc_spread": 0.017230078114873253,
+        "poolable": true
+      },
+      "time_to_defensive_action_s": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.19424788527184758,
+            "split_half_r": 0.5704258226075639
+          },
+          "wyscout": {
+            "icc": 0.12138072730785436,
+            "split_half_r": 0.44093670401389523
+          }
+        },
+        "icc_spread": 0.07286715796399322,
+        "poolable": true
+      },
+      "time_to_recovery_s": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.3115311986155529,
+            "split_half_r": 0.7748521459790015
+          },
+          "wyscout": {
+            "icc": 0.18616678400042444,
+            "split_half_r": 0.48509142661560584
+          }
+        },
+        "icc_spread": 0.12536441461512846,
+        "poolable": true
+      },
+      "turnover_line_height_m": {
+        "providers": {
+          "statsbomb": {
+            "icc": 0.31197795697848824,
+            "split_half_r": 0.617297026590191
+          },
+          "wyscout": {
+            "icc": 0.2369812181885931,
+            "split_half_r": 0.48054858579943954
+          }
+        },
+        "icc_spread": 0.07499673878989513,
+        "poolable": true
+      }
+    }
+  }
+}

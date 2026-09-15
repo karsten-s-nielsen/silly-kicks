@@ -343,6 +343,43 @@ def _gk_decision_columns() -> set[str]:
     return set(GK_DECISION_METRIC_COLUMNS) & set(samples.columns)
 
 
+def _team_metrics_columns() -> set[str]:
+    """Derived team-KPI metric columns emitted by compute_team_kpis (TF-52).
+
+    compute_team_kpis is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg runs it on a tiny 2-team fixture (with an injected xG on the shot) and returns
+    the DERIVED metric columns (the sample keys game_id/team_id are not features). A NEW emitted metric
+    appears here and fails the coverage gate until documented (the run-and-diff anti-rot property)."""
+    import pandas as pd
+
+    from silly_kicks.spadl import config as spadlconfig
+    from silly_kicks.team_metrics import TEAM_KPI_METRIC_COLUMNS, compute_team_kpis
+
+    p = spadlconfig.actiontype_id["pass"]
+    shot = spadlconfig.actiontype_id["shot"]
+    interception = spadlconfig.actiontype_id["interception"]
+    succ = spadlconfig.result_id["success"]
+
+    rows = [
+        {"team_id": 10, "type_id": p, "time_seconds": 0.0, "start_x": 30.0, "xg": float("nan")},
+        {"team_id": 10, "type_id": shot, "time_seconds": 4.0, "start_x": 95.0, "xg": 0.3},
+        {"team_id": 20, "type_id": p, "time_seconds": 8.0, "start_x": 50.0, "xg": float("nan")},
+        {"team_id": 20, "type_id": p, "time_seconds": 10.0, "start_x": 50.0, "xg": float("nan")},
+        {"team_id": 10, "type_id": interception, "time_seconds": 12.0, "start_x": 40.0, "xg": float("nan")},
+    ]
+    actions = pd.DataFrame(rows)
+    actions["game_id"] = 1
+    actions["period_id"] = 1
+    actions["result_id"] = succ
+    actions["player_id"] = range(len(actions))
+    actions["start_y"] = 34.0
+    actions["end_x"] = actions["start_x"]
+    actions["end_y"] = 34.0
+    actions["action_id"] = range(len(actions))
+    samples, _ = compute_team_kpis(actions, xg_column="xg")
+    return set(TEAM_KPI_METRIC_COLUMNS) & set(samples.columns)
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -374,5 +411,6 @@ def emitted_columns() -> set[str]:
         | _territory_columns()
         | _duel_columns()
         | _gk_decision_columns()
+        | _team_metrics_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

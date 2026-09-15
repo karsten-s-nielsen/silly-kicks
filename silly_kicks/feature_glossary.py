@@ -25,6 +25,8 @@ Unit = Literal[
     "m^2",
     "m/s",
     "m/s^2",
+    "passes/min",
+    "actions/min",
     "seconds",
     "degrees",
     "radians",
@@ -163,6 +165,7 @@ _A_GSAA = "Goals Saved Above Expected (PSxG-based GSAA)"  # TF-59 PR2 shot-stopp
 _A_TERRITORY = "Sumpter, Soccermatics / Twelve.football 'Earpiece' (module 10.2)"  # TF-54 territorial dominance
 _A_DUELS = "Glickman, 'The Glicko-2 rating system'"  # TF-55 Glicko-2 duel ratings
 _A_GK_DECISION = "J. Eyestone, xT-GK collaboration (2026)"  # TF-62 GK build-up Decision-Value extension
+_A_TEAM_METRICS = "Twelve.football match-report glossary + MSC Bootcamp practitioner KPIs"  # TF-52 team KPIs
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
@@ -170,6 +173,10 @@ _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-sto
 _M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
 _M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
 _M_GK_DECISION = "silly_kicks.gk_decision._compute"  # TF-62 GK build-up decision-quality (chosen-vs-available)
+_M_TEAM_PRESSING = "silly_kicks.team_metrics._pressing"  # TF-52 pressing / defensive KPIs
+_M_TEAM_PROGRESSION = "silly_kicks.team_metrics._progression"  # TF-52 progression / possession KPIs
+_M_TEAM_BUILDUP = "silly_kicks.team_metrics._buildup"  # TF-52 build-up / post-regain / switch KPIs
+_M_TEAM_COMPUTE = "silly_kicks.team_metrics._compute"  # TF-52 within-Ns post-recovery companions
 # TF-54b territorial_defense was DEMOTED to experimental (ADR-090 construct-validity: instrument_void),
 # so its three columns carry no glossary entry -- the code is retained privately for the redesign
 # (mirrors the TF-60 Layer-3 arms). NOTICE keeps the attribution for the retained code.
@@ -2138,6 +2145,392 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="dimensionless",
         emitting_module=_M_GK_DECISION,
         attribution=_A_GK_DECISION,
+        higher_is_better=None,
+    ),
+    # --- TF-52 team KPIs: pressing / defensive (silly_kicks.team_metrics._pressing) ---
+    FeatureColumn(
+        name="ppda",
+        definition=(
+            "Passes Per Defensive Action: opponent passes divided by the team's defensive actions "
+            "(tackle/interception/foul), both in the opponent's defensive 60% of the pitch. Lower = "
+            "more intense pressing."
+        ),
+        unit="ratio",
+        emitting_module=_M_TEAM_PRESSING,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="defensive_intensity",
+        definition="Defensive actions (tackle/interception/foul) per minute out of possession.",
+        unit="actions/min",
+        emitting_module=_M_TEAM_PRESSING,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="time_to_defensive_action_s",
+        definition="Mean seconds from losing possession to the team's first defensive action.",
+        unit="seconds",
+        emitting_module=_M_TEAM_PRESSING,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="time_to_recovery_s",
+        definition=(
+            "Mean seconds from losing possession to regaining it (counter-press speed); losses never "
+            "regained are excluded from the mean."
+        ),
+        unit="seconds",
+        emitting_module=_M_TEAM_PRESSING,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="recoveries",
+        definition="Number of ball recoveries (possessions won from the opponent).",
+        unit="count",
+        emitting_module=_M_TEAM_PRESSING,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="recoveries_within_ns_pct",
+        definition=(
+            "Fraction of recoveries won within counterpress_seconds of losing the ball (gegenpressing "
+            "execution); over recoveries with a measurable prior loss."
+        ),
+        unit="ratio",
+        emitting_module=_M_TEAM_PRESSING,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="counterpress_regains",
+        definition="Counter-press regains within the configured window (seconds XOR opponent-passes-to-regain).",
+        unit="count",
+        emitting_module=_M_TEAM_PRESSING,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="counterpress_regain_pct",
+        definition="Fraction of losses regained within the configured counter-press window.",
+        unit="ratio",
+        emitting_module=_M_TEAM_PRESSING,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    # --- TF-52 team KPIs: progression / possession (silly_kicks.team_metrics._progression) ---
+    FeatureColumn(
+        name="field_tilt_pct",
+        definition=(
+            "Share of both teams' final-third open-play touches made by this team (territorial "
+            "dominance in the attacking third)."
+        ),
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="pass_tempo",
+        definition="Passes per minute of possession.",
+        unit="passes/min",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="long_ball_pct",
+        definition="Fraction of the team's own-half passes travelling more than long_ball_distance_m.",
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="defensive_action_height_m",
+        definition="Mean x (m, own attacking direction) of the team's defensive actions.",
+        unit="metres",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="recovery_line_height_m",
+        definition="Mean x (m) of the team's open-play ball recoveries.",
+        unit="metres",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="turnover_line_height_m",
+        definition="Mean x (m) where the team's open-play possessions ended (turnover location).",
+        unit="metres",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="poss_to_final_third_pct",
+        definition="Fraction of open-play possessions that reached the final third.",
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="final_third_entries",
+        definition=(
+            "Number of the team's actions carrying the ball across x = 2*field_length/3 into the final "
+            "third (started outside, ended inside), in the team's own attacking frame."
+        ),
+        unit="count",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="final_third_to_box_pct",
+        definition="Fraction of final-third possessions that reached the penalty box.",
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="box_touches",
+        definition="Number of the team's actions started inside the attacking penalty box.",
+        unit="count",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="box_to_shot_pct",
+        definition="Fraction of box-entering possessions that produced a shot.",
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="shots",
+        definition="Raw count of all shots (open-play, set-piece, and penalty) taken by the team.",
+        unit="count",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="high_opportunity_shots",
+        definition=(
+            "Number of non-penalty shots with injected pre-shot xG above high_opportunity_xg "
+            "(NaN if no xG column is injected)."
+        ),
+        unit="count",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="breakout_left",
+        definition="Possessions that progressed past halfway through the left channel.",
+        unit="count",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="breakout_center",
+        definition="Possessions that progressed past halfway through the central channel.",
+        unit="count",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="breakout_right",
+        definition="Possessions that progressed past halfway through the right channel.",
+        unit="count",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="breakout_left_pct",
+        definition="Share of the team's halfway breakouts through the left channel.",
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="breakout_center_pct",
+        definition="Share of the team's halfway breakouts through the central channel.",
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="breakout_right_pct",
+        definition="Share of the team's halfway breakouts through the right channel.",
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="possessions_retained_after_ns_pct",
+        definition=(
+            "Fraction of open-play possessions held for at least retained_after_seconds (possession security)."
+        ),
+        unit="ratio",
+        emitting_module=_M_TEAM_PROGRESSION,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    # --- TF-52 team KPIs: build-up / post-regain / switch (silly_kicks.team_metrics._buildup) ---
+    FeatureColumn(
+        name="buildup_final_quarter",
+        definition="Build-ups (own-build-up-zone open-play possessions) that reached the final quarter.",
+        unit="count",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="buildup_next_phase",
+        definition="Build-ups that crossed halfway (into the next phase) but not the final quarter.",
+        unit="count",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="buildup_opp_int_own_half",
+        definition="Build-ups lost to an opponent interception in the team's own half.",
+        unit="count",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="buildup_stayed_phase_one",
+        definition="Build-ups that stayed in phase one (no progression, no clear own-half loss).",
+        unit="count",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="buildup_opp_won_own_half",
+        definition="Build-ups lost to the opponent in the team's own half (other than an interception).",
+        unit="count",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="buildup_led_opp_shot",
+        definition="Build-ups lost whose immediate opponent possession produced a shot.",
+        unit="count",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="buildup_success_pct",
+        definition="Fraction of build-ups that progressed to the next phase or the final quarter.",
+        unit="ratio",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="post_regain_second_pass_pct",
+        definition=(
+            "Second-pass completion rate after a regain (possession security); over recoveries that had a second pass."
+        ),
+        unit="ratio",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="post_regain_failed_first_passes",
+        definition="Number of recoveries whose first pass failed.",
+        unit="count",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="post_regain_forward_first_pct",
+        definition="Fraction of recoveries whose first action played forward (end_x > start_x).",
+        unit="ratio",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="switch_press_success_pct",
+        definition=(
+            "Over the opponent's short goal kicks: fraction the team kept switch-free AND regained. "
+            "Small-N (see switch_press_n)."
+        ),
+        unit="ratio",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="switch_press_n",
+        definition="Number of opponent short goal kicks faced (the switch-press sample size).",
+        unit="count",
+        emitting_module=_M_TEAM_BUILDUP,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    # --- TF-52 team KPIs: within-Ns post-recovery companions (silly_kicks.team_metrics._compute) ---
+    # The transition-output block re-computed within post_recovery_window_seconds of a recovery.
+    FeatureColumn(
+        name="final_third_entries_post_recovery",
+        definition="Final-third entries made within post_recovery_window_seconds of a recovery.",
+        unit="count",
+        emitting_module=_M_TEAM_COMPUTE,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="box_touches_post_recovery",
+        definition="Box touches made within post_recovery_window_seconds of a recovery.",
+        unit="count",
+        emitting_module=_M_TEAM_COMPUTE,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="shots_post_recovery",
+        definition="Shots taken within post_recovery_window_seconds of a recovery.",
+        unit="count",
+        emitting_module=_M_TEAM_COMPUTE,
+        attribution=_A_TEAM_METRICS,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="high_opportunity_shots_post_recovery",
+        definition=(
+            "High-opportunity shots taken within post_recovery_window_seconds of a recovery "
+            "(NaN if no xG column is injected)."
+        ),
+        unit="count",
+        emitting_module=_M_TEAM_COMPUTE,
+        attribution=_A_TEAM_METRICS,
         higher_is_better=None,
     ),
 )
