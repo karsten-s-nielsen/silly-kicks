@@ -38,3 +38,4 @@ def test_each_leg_is_non_vacuous():
     assert E._vaep_columns(), "vaep leg empty (stubbed?) -- anchor with a real xfns_default column"
     assert "rd_num_superiority" in {_base(c) for c in E._restdefense_columns()}  # TF-60 compute_rest_defense
     assert "decision_value" in {_base(c) for c in E._gk_decision_columns()}  # TF-62 compute_gk_decision_value
+    assert "ppda" in {_base(c) for c in E._team_metrics_columns()}  # TF-52 compute_team_kpis

@@ -148,6 +148,11 @@ ARTIFACT_DRIVERS = (
     # gate_eligible census, the §6.2 named-keeper sign table) whose numbers are cited -- so the
     # tree it ran on is recorded. Reported-not-gated, but a cited artifact all the same.
     "build_tf19_instrument_responsiveness",
+    # TF-52 team-KPI reliability study. Runs compute_team_kpis over PUBLIC StatsBomb open data and
+    # writes docs/research/tf52_team_kpi_reliability/metrics.json (per-KPI ICC / split-half / Type-II
+    # verdicts + possession ground truth) -- a cited number over external data; owner-run,
+    # reported-not-gated -> provenance. Public corpus, so reproducible by anyone.
+    "validate_team_kpi_reliability",
 )
 
 

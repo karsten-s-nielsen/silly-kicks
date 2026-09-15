@@ -359,6 +359,17 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   unidentifiable without a multi-club transfer corpus; ranking is a future ADR-009 gate).
   Descriptive; no VAEP path.
 
+- Event-only team-match KPIs.
+  Attribution: Twelve.football match-report glossary + MSC Bootcamp practitioner KPIs.
+  Used by: silly_kicks.team_metrics (TF-52; ._pressing / ._progression / ._buildup / ._compute).
+  Per-(game, team) event-only KPIs over SPADL actions, resting on the shared spadl.add_possessions
+  possession primitive: the Twelve match-report glossary (PPDA, field tilt, pass tempo, line heights,
+  recoveries, conversion chain, long-ball %, high-opportunity shots) plus the event-based
+  practitioner set (counter-press windows -- seconds XOR passes, incl. Tigres "The Hunt" <=3 passes --
+  post-regain security, the 6-state build-up outcome taxonomy, breakout-by-channel, switch-conditioned
+  press). Definitions from the Twelve.football glossary and the Modern Soccer Coach Bootcamp Webinar 3
+  practitioner material (Tigres Femenil / Clemson / Coventry academy). Descriptive; no VAEP path.
+
 - Territorial defense (SB360 counterfactual) -- DEMOTED to experimental (ADR-090).
   Attribution: Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting).
   Used by: silly_kicks.territorial_defense._arms (TF-54b) -- PRIVATE (demoted; no public surface).
