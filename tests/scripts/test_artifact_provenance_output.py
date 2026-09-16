@@ -69,6 +69,14 @@ _UNPROVENANCED: dict[str, str] = {
         "in this same cycle. The artifact predates that wiring, so it will carry `run_commit` from "
         "its next owner-run (Databricks gold marts, owner-tier). Burn this entry down then."
     ),
+    "docs/research/xsuccess_vaep_adjusted/provenance.json": (
+        "an OpenEvolve feature-DISCOVERY record (ADR-093), not a measurement feeding a published "
+        "number. Per ADR-093 the evolve PROCESS is documented, not required to be bit-reproducible; "
+        "the search ran on an intentional `--allow-dirty` DGX dev tree (a non-git synced copy), so "
+        "`run_tree_dirty` is honestly true. The OUTCOME (seed ships; the shipped `_features.py` IS "
+        "the record) is commit-independent. The BUNDLED model's clean `training_commit` lands in "
+        "Commit-2's weights metadata, policed by `test_bundled_weights_carry_training_provenance`."
+    ),
 }
 
 
@@ -77,7 +85,12 @@ def _research_artifacts() -> list[pathlib.Path]:
 
 
 def _bundled_metadata() -> list[pathlib.Path]:
-    return sorted(_ROOT.glob("silly_kicks/**/_*_weights/*/metadata.json"))
+    # The tracking models live under `_*_weights/<variant>/metadata.json`; xSuccess (TF-61) uses a
+    # FLAT `silly_kicks/xsuccess/weights/metadata.json` (no variant subdir), so it is added explicitly
+    # -- the `_*_weights/*/` glob cannot reach it, and its training provenance must still be policed.
+    return sorted(_ROOT.glob("silly_kicks/**/_*_weights/*/metadata.json")) + sorted(
+        _ROOT.glob("silly_kicks/xsuccess/weights/metadata.json")
+    )
 
 
 @pytest.mark.parametrize("path", _research_artifacts(), ids=_rel)

@@ -49,6 +49,25 @@ Speak Louder Than Goals: Valuing Player Actions in Soccer." Proc. KDD '19.
 The HybridVAEP variant (silly_kicks/vaep/hybrid.py) is a result-leakage-
 removal variant introduced in this fork; no separate academic citation.
 
+The xSuccess action-completion model (silly_kicks/xsuccess/) and the
+outcome-bias-free VAEP_adjusted rating (silly_kicks/vaep/adjusted.py,
+VAEP.rate_adjusted) implement: Paul, Y., Klemp, M., & Memmert, D. (2025).
+"Beyond Outcome Bias: Incorporating Action Completion Probability and
+Risk-Return into Soccer Evaluation Models." Machine Learning and Data
+Mining for Sports Analytics (MLSA 2025), paper 225. The event-only
+completion model generalises the pass-completion idea of Anzer, G., &
+Bauer, P. (2022). "Expected Passes." Data Mining and Knowledge Discovery
+36(1), 295-317, to all on-ball action types; the risk-return separation
+rests on expected-utility theory (Bernoulli, D. (1738/1954), "Exposition
+of a New Theory on the Measurement of Risk," Econometrica 22(1); von
+Neumann, J., & Morgenstern, O. (1953), "Theory of Games and Economic
+Behavior"). The gradient-boosted classifier is XGBoost: Chen, T., &
+Guestrin, C. (2016). "XGBoost: A Scalable Tree Boosting System." Proc.
+KDD '16. The feature representation is discovered offline with OpenEvolve
+(an open implementation of AlphaEvolve-style LLM-driven program search);
+the committed representation is deterministic and the search is
+provenance-recorded, not a runtime dependency.
+
 The Atomic-SPADL representation and Atomic-VAEP framework
 (silly_kicks/atomic/) implement: Decroos, T., Robberechts, P., & Davis, J.
 (2020). "Introducing Atomic-SPADL: A New Way to Represent Event Stream Data."
