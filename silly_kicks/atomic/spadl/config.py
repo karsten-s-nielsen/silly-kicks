@@ -28,7 +28,12 @@ bodyparts_df = _spadl.bodyparts_df
 actiontypes = [
     *_spadl.actiontypes,
     "receival",
-    "interception",
+    # NOTE: "interception" is NOT re-appended here -- it is inherited from `_spadl.actiontypes`
+    # at index 10. The duplicate append made `actiontype_id` (which keeps the LAST occurrence)
+    # resolve interception->24, silently shadowing the std interception events (idx 10) that
+    # `convert_to_atomic` keeps unremapped. Removing it unifies interception at idx 10 and lets the
+    # synthetic pass-interception atoms (tagged via the symbolic `actiontype_id["interception"]`)
+    # share that id. See ADR / spec 2026-09-15-tf51-item4.
     "out",
     "offside",
     "goal",

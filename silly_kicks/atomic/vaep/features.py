@@ -196,7 +196,7 @@ def actiontype_onehot(actions: Actions) -> Features:
 
         states = gamestates(atomic, nb_prev_actions=3)
         feats = actiontype_onehot(states)
-        # feats has 33 boolean columns per slot (one per atomic action type).
+        # feats has 32 boolean columns per slot (one per atomic action type).
     """
     X = {}
     for type_id, type_name in enumerate(atomicspadl.actiontypes):
