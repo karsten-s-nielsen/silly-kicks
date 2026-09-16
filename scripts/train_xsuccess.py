@@ -244,6 +244,14 @@ def main() -> None:
     model = XSuccessModel().fit(pooled, family=args.family, params=best_params)
     wdir = dest / "weights"
     model.save(wdir)
+    # Spec S5.5 / ADR-052 / ADR-056: the bundled metadata.json carries training provenance too.
+    # `save()` writes the model envelope; the trainer stamps the commit it alone knows (metadata.json
+    # is not in SHA256SUMS, so this does not affect the model.json hash the fail-closed load verifies).
+    _meta_path = wdir / "metadata.json"
+    _meta = json.loads(_meta_path.read_text(encoding="utf-8"))
+    _meta["training_commit"] = prov["commit"]
+    _meta["run_tree_dirty"] = prov["dirty"]
+    _meta_path.write_text(json.dumps(_meta, indent=2) + "\n", encoding="utf-8")
 
     out = {
         **metrics,

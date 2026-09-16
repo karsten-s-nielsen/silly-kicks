@@ -85,7 +85,12 @@ def _research_artifacts() -> list[pathlib.Path]:
 
 
 def _bundled_metadata() -> list[pathlib.Path]:
-    return sorted(_ROOT.glob("silly_kicks/**/_*_weights/*/metadata.json"))
+    # The tracking models live under `_*_weights/<variant>/metadata.json`; xSuccess (TF-61) uses a
+    # FLAT `silly_kicks/xsuccess/weights/metadata.json` (no variant subdir), so it is added explicitly
+    # -- the `_*_weights/*/` glob cannot reach it, and its training provenance must still be policed.
+    return sorted(_ROOT.glob("silly_kicks/**/_*_weights/*/metadata.json")) + sorted(
+        _ROOT.glob("silly_kicks/xsuccess/weights/metadata.json")
+    )
 
 
 @pytest.mark.parametrize("path", _research_artifacts(), ids=_rel)

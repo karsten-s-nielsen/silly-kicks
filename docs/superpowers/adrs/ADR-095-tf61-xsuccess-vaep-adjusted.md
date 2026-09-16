@@ -1,9 +1,9 @@
-# ADR-094: TF-61 — xSuccess (event-only action-completion) + VAEP_adjusted (outcome-bias-free VAEP)
+# ADR-095: TF-61 — xSuccess (event-only action-completion) + VAEP_adjusted (outcome-bias-free VAEP)
 
 | Field | Value |
 |---|---|
 | **Date** | 2026-09-15 |
-| **Status** | Proposed — number PROVISIONAL (reconciled at commit-prep after `git fetch && git merge origin/main`; a concurrent silly-kicks session may claim 094 first) |
+| **Status** | Accepted — released as 4.116.0 / PR-S187 / ADR-095 (the concurrent TF-52 session released first and took 4.115.0 / PR-S186 / ADR-094) |
 | **Deciders** | Karsten Nielsen |
 
 Design doc: `docs/superpowers/specs/2026-09-14-tf61-xsuccess-vaep-adjusted-design.md` (rev 4). Plan: `docs/superpowers/plans/2026-09-14-tf61-xsuccess-vaep-adjusted.md`.

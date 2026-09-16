@@ -37,3 +37,26 @@ matters) found real value **for the fallback family only**. Per owner decision (
 **deferred to the Commit-2 family gate**: if the fallback is selected there, adopt a family-specific
 evolved builder for it then (`evolved_logistic_winner.py` is the candidate). It is *not* folded into the
 shared builder now — that would bloat the XGBoost feature contract 35 → 152 columns for ~0 XGBoost gain.
+
+## Commit 2 — bundled model + validation
+
+**Bundled `default` model** (`silly_kicks/xsuccess/weights/`, `training_commit 12e5677`, clean tree):
+calibrated XGBoost (xgboost family) trained on the **full redistributable StatsBomb open-data corpus —
+3,961 matches / 7,974,436 on-ball actions** (80 comp:season pairs, enumerated in `metadata.json` /
+`MODEL_CARD.md`), Optuna HPO 30 trials. GroupKFold-by-match out-of-fold: **AUC 0.895, Brier 0.084**
+(base rate 0.835).
+
+**§9.1 xSuccess calibration — family gate PASS, the calibrated XGBoost ships** (the `per_type_logistic`
+fallback is not triggered; the Stage-A logistic finding stays moot):
+- Calibration-in-the-large: sum(pred) / sum(obs) ratio **1.0000** (6,658,306 / 6,658,333).
+- Per-type reliability: max |pred - obs| **0.006** (shot_penalty), mean **0.001** across 21 types (all < 0.6%).
+
+**§9.2 VAEP_adjusted validation** (WC2022: 64 games, 138,945 actions, 1,384 shots with xG, 425 players;
+StatsBomb xG injected -- silly-kicks ships none):
+- **Outcome-bias reduction (the paper's headline):** corr(value, realized success) **0.154 -> 0.004**;
+  success-minus-fail value gap **0.0159 -> 0.0003**. The adjusted value is decoupled from the realized outcome.
+- **xG alignment:** per-player shot-value vs xG Pearson **0.423 -> 0.547** -- the adjusted value tracks
+  EXPECTED quality (xG) *better* while decoupling from realized goals, so de-biasing does not break the
+  value scale.
+
+Reported-not-gated (applied results; ADR-009).

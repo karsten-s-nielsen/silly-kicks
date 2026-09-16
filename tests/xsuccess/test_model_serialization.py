@@ -56,8 +56,12 @@ def test_per_type_logistic_roundtrip(tmp_path):
     assert np.allclose(m.predict_success(a), m2.predict_success(a), atol=1e-6, equal_nan=True)
 
 
-def test_bundled_loads_or_skips():
-    try:
-        XSuccessModel.bundled()
-    except FileNotFoundError:
-        pytest.skip("weights bundled in Commit 2 (the train/bundle execution task)")
+def test_bundled_loads_and_predicts():
+    # Weights bundled in Commit 2 -> bundled() must load (fail-closed SHA + feature-contract +
+    # chirality) and serve finite probabilities in [0, 1]. No skip: the artifact is committed.
+    from silly_kicks.xsuccess._features import _probe_actions
+
+    m = XSuccessModel.bundled()
+    p = np.asarray(m.predict_success(_probe_actions()), dtype=float)
+    assert np.all(np.isfinite(p)), "bundled xSuccess produced a non-finite probability"
+    assert ((p >= 0.0) & (p <= 1.0)).all(), "bundled xSuccess probability out of [0, 1]"
