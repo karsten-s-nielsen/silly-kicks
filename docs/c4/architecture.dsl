@@ -33,10 +33,11 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
             xsuccess = container "silly_kicks.xsuccess" "TF-61 event-only END-BLIND action-completion (XSuccessModel): P(success|context) over all on-ball types; calibrated XGBoost, pickle-free JSON+SHA256 fail-closed load; feeds VAEP.rate_adjusted." "Python" "Library"
             territorial_defense = container "silly_kicks.territorial_defense" "TF-54b SB360 territorial-defense counterfactual -- DEMOTED to experimental (ADR-090: arm found instrument_void); no public surface, code retained privately for the redesign." "Python" "Library"
             gk_decision = container "silly_kicks.gk_decision" "TF-62 GK build-up decision-quality (chosen-vs-available): decision_value = EV(chosen) - mean EV(available); option value = xPass x (1 + opponents bypassed); native SkillCorner GI tier (PR1)." "Python" "Library"
+            team_metrics = container "silly_kicks.team_metrics" "TF-52 event-only per-(game,team) team KPIs: Twelve match-report glossary + practitioner set (PPDA, field tilt, tempo, counter-press, build-up, breakout, switch press)." "Python" "Library"
             causal = container "silly_kicks.causal" "Causal-validation toolkit: PS matching (ATT/ATNT, Abadie-Imbens SEs), spell-opportunity builder (action or covariate-threshold treatment), plasmode ATT power behind a firewall. ADR-015." "Python" "Library"
             calibration = container "silly_kicks.calibration + scripts/" "Optuna calibration harness (objectives/CV/gates + frozen exogenous xT) + scripts/ CLI, loaders, trainers, and a shared corpus-driver seam: resumable per-item shards + clean-tree provenance. ADR-052." "Python (optional [calibration] extra)" "Library"
             providers = container "silly_kicks.providers" "Raw-data parse ports (bytes -> bronze): Sportec/DFL + SB360 freeze-frames -> frames + visible_area; keeper-appearance extractors (4 providers) -> KeeperAppearances port. ADR-031/054/084." "Python" "Library"
-            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 402 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
+            glossary = container "silly_kicks.feature_glossary + reporting" "Machine-readable glossary of all 446 derived feature columns (CI-gated, NOTICE-linked, inspection-enumerated) + describe_level direction-aware z-bucket reporting helper. ADR-048." "Python" "Library"
             keeper_identity = container "silly_kicks.keeper_identity" "Public keeper-identity resolver (event-only or frame-native) + injected KeeperAppearances interval port + per-period builder + defending-GK attribution at the sub minute. ADR-078/084." "Python" "Library"
         }
 
@@ -139,6 +140,9 @@ workspace "silly-kicks" "Football action classification (SPADL) and valuation (V
         analyst -> xsuccess "Fits / serves the event-only action-completion model via" "XSuccessModel"
         xsuccess -> spadl "Reads SPADL actions + canonical id helpers from" "Python import"
         vaep -> xsuccess "Weights score/concede deltas by completion probability (VAEP_adjusted) via" "Python import"
+        // --- Relationships: TF-52 event-only team KPIs ---
+        analyst -> team_metrics "Computes event-only per-(game, team) team KPIs (pressing, progression, build-up, counter-press) via" "compute_team_kpis()"
+        team_metrics -> spadl "Reads SPADL actions, add_possessions, reflection + canonical id helpers from" "Python import"
         # No analyst -> territorial_defense edge: the metric was DEMOTED to experimental (ADR-090,
         # construct-validity: instrument_void), so there is no public analyst-facing API. The container
         # is retained (private code, for the replacement-ghost redesign) with its internal deps below.

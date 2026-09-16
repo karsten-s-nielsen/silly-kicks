@@ -79,6 +79,94 @@ def test_add_possessions_is_subquadratic():
     assert_subquadratic_growth(measure, sizes=(1500, 3000, 6000), label="add_possessions")
 
 
+# ============================ TF-52 team KPIs (game-scaling growth) ============================
+def _team_kpi_games(n_games):
+    """n GAMES, 2 teams each (fixed 6 actions/game): scales the (game_id, team_id) loop dimension."""
+    from silly_kicks.spadl import config as spadlconfig
+
+    p = spadlconfig.actiontype_id["pass"]
+    i = spadlconfig.actiontype_id["interception"]
+    succ = spadlconfig.result_id["success"]
+    base = [
+        (10, p, 0.0, 30.0),
+        (10, p, 4.0, 75.0),
+        (20, p, 8.0, 50.0),
+        (20, p, 10.0, 50.0),
+        (10, i, 12.0, 40.0),
+        (10, p, 14.0, 45.0),
+    ]
+    rows = []
+    for gi in range(n_games):
+        for team, typ, t, x in base:
+            rows.append(
+                {
+                    "game_id": f"g{gi}",
+                    "period_id": 1,
+                    "team_id": team,
+                    "player_id": 0,
+                    "type_id": typ,
+                    "result_id": succ,
+                    "time_seconds": t,
+                    "start_x": x,
+                    "start_y": 34.0,
+                    "end_x": x,
+                    "end_y": 34.0,
+                }
+            )
+    df = pd.DataFrame(rows)
+    df["action_id"] = range(len(df))
+    return df
+
+
+def _team_kpi_prepared(n_games):
+    from silly_kicks.team_metrics import TeamKpiParams
+    from silly_kicks.team_metrics._possession import add_possession_context, build_spells, possession_minutes
+
+    ctx = add_possession_context(_team_kpi_games(n_games), params=TeamKpiParams())
+    spells = build_spells(ctx)
+    minutes = possession_minutes(spells)
+    return ctx, spells, minutes
+
+
+def test_compute_pressing_kpis_is_subquadratic():
+    from silly_kicks.team_metrics import TeamKpiParams
+    from silly_kicks.team_metrics._pressing import compute_pressing_kpis
+
+    def measure(n):
+        ctx, spells, minutes = _team_kpi_prepared(n)
+        with rows_scanned_counter() as c:
+            compute_pressing_kpis(ctx, spells, minutes, params=TeamKpiParams())
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="compute_pressing_kpis")
+
+
+def test_compute_progression_kpis_is_subquadratic():
+    from silly_kicks.team_metrics import TeamKpiParams
+    from silly_kicks.team_metrics._progression import compute_progression_kpis
+
+    def measure(n):
+        ctx, spells, minutes = _team_kpi_prepared(n)
+        with rows_scanned_counter() as c:
+            compute_progression_kpis(ctx, spells, minutes, xg_column=None, params=TeamKpiParams())
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="compute_progression_kpis")
+
+
+def test_compute_buildup_kpis_is_subquadratic():
+    from silly_kicks.team_metrics import TeamKpiParams
+    from silly_kicks.team_metrics._buildup import compute_buildup_kpis
+
+    def measure(n):
+        ctx, spells, _minutes = _team_kpi_prepared(n)
+        with rows_scanned_counter() as c:
+            compute_buildup_kpis(ctx, spells, params=TeamKpiParams())
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="compute_buildup_kpis")
+
+
 # ============================ #9 turnover (counting-array, inner-j) ============================
 class _CountingArray:
     """1-D array wrapper counting element reads -- proxy for inner-scan work (spec Section 4.2)."""

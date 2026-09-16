@@ -1,0 +1,336 @@
+{
+  "run_commit": "19a5883103f6528dc153112e3f991ae75805aea3",
+  "run_tree_dirty": false,
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_team_kpi_reliability",
+    "provider": "wyscout",
+    "metric_columns": [
+      "ppda",
+      "defensive_intensity",
+      "time_to_defensive_action_s",
+      "time_to_recovery_s",
+      "recoveries",
+      "recoveries_within_ns_pct",
+      "counterpress_regains",
+      "counterpress_regain_pct",
+      "field_tilt_pct",
+      "pass_tempo",
+      "long_ball_pct",
+      "defensive_action_height_m",
+      "recovery_line_height_m",
+      "turnover_line_height_m",
+      "poss_to_final_third_pct",
+      "final_third_entries",
+      "final_third_to_box_pct",
+      "box_touches",
+      "box_to_shot_pct",
+      "shots",
+      "high_opportunity_shots",
+      "breakout_left",
+      "breakout_center",
+      "breakout_right",
+      "breakout_left_pct",
+      "breakout_center_pct",
+      "breakout_right_pct",
+      "possessions_retained_after_ns_pct",
+      "buildup_final_quarter",
+      "buildup_next_phase",
+      "buildup_opp_int_own_half",
+      "buildup_stayed_phase_one",
+      "buildup_opp_won_own_half",
+      "buildup_led_opp_shot",
+      "buildup_success_pct",
+      "post_regain_second_pass_pct",
+      "post_regain_failed_first_passes",
+      "post_regain_forward_first_pct",
+      "switch_press_success_pct",
+      "switch_press_n",
+      "final_third_entries_post_recovery",
+      "box_touches_post_recovery",
+      "shots_post_recovery",
+      "high_opportunity_shots_post_recovery"
+    ],
+    "min_teams": 3,
+    "comparability_icc_tol": 0.2,
+    "digest": "1eab1a162bd8dd44525f80dccf1efae8533b0e11da5a253b645a6a092c1086cb"
+  },
+  "verdicts": {
+    "reliability": {
+      "n_teams": 142,
+      "n_matches": 1941,
+      "per_kpi": {
+        "ppda": {
+          "icc": 0.0762664793937563,
+          "split_half_r": 0.10138363191912358,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "defensive_intensity": {
+          "icc": 0.09301638936346181,
+          "split_half_r": 0.1841967038553564,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "time_to_defensive_action_s": {
+          "icc": 0.12138072730785436,
+          "split_half_r": 0.44093670401389523,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "time_to_recovery_s": {
+          "icc": 0.18616678400042444,
+          "split_half_r": 0.48509142661560584,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "recoveries": {
+          "icc": 0.19107925359881128,
+          "split_half_r": 0.525140059266757,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "recoveries_within_ns_pct": {
+          "icc": 0.1138412016939909,
+          "split_half_r": 0.22075570903082994,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "counterpress_regains": {
+          "icc": 0.10516362484397093,
+          "split_half_r": 0.2494009571434845,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "counterpress_regain_pct": {
+          "icc": 0.1138412016939909,
+          "split_half_r": 0.22075570903082994,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "field_tilt_pct": {
+          "icc": 0.2487764763914776,
+          "split_half_r": 0.4623855936783462,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "pass_tempo": {
+          "icc": 0.2041308743003788,
+          "split_half_r": 0.622254114351966,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "long_ball_pct": {
+          "icc": 0.4250563108119121,
+          "split_half_r": 0.7869910196075212,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "defensive_action_height_m": {
+          "icc": 0.10703542682279774,
+          "split_half_r": 0.12082429194936803,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "recovery_line_height_m": {
+          "icc": 0.15893962373853932,
+          "split_half_r": 0.3848900402484842,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "turnover_line_height_m": {
+          "icc": 0.2369812181885931,
+          "split_half_r": 0.48054858579943954,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "poss_to_final_third_pct": {
+          "icc": 0.25993308436985546,
+          "split_half_r": 0.5804452553102644,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "final_third_entries": {
+          "icc": 0.21923019298881302,
+          "split_half_r": 0.4737537042682454,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "final_third_to_box_pct": {
+          "icc": 0.09106884591994788,
+          "split_half_r": 0.28925419088852206,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "box_touches": {
+          "icc": 0.2529577912245399,
+          "split_half_r": 0.5886197484547718,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "box_to_shot_pct": {
+          "icc": 0.030639656524047487,
+          "split_half_r": 0.1250483901608609,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "shots": {
+          "icc": 0.188983984637652,
+          "split_half_r": 0.41153432235784254,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "high_opportunity_shots": {
+          "icc": NaN,
+          "split_half_r": NaN,
+          "n_teams_paired": 0,
+          "n_observed": 0
+        },
+        "breakout_left": {
+          "icc": 0.10798060223306204,
+          "split_half_r": 0.44588219088066827,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "breakout_center": {
+          "icc": 0.1251302762769137,
+          "split_half_r": 0.2966106412802246,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "breakout_right": {
+          "icc": 0.14272004755730497,
+          "split_half_r": 0.4254448990228796,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "breakout_left_pct": {
+          "icc": 0.08841197739402037,
+          "split_half_r": 0.2648962665315022,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "breakout_center_pct": {
+          "icc": 0.07672749082557354,
+          "split_half_r": 0.2645610457556073,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "breakout_right_pct": {
+          "icc": 0.07796279420472532,
+          "split_half_r": 0.2079119699170609,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "possessions_retained_after_ns_pct": {
+          "icc": 0.3631599097584554,
+          "split_half_r": 0.7457967159330913,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "buildup_final_quarter": {
+          "icc": 0.15908042530353264,
+          "split_half_r": 0.42923375644842265,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "buildup_next_phase": {
+          "icc": 0.04867031775711325,
+          "split_half_r": 0.34722988103794517,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "buildup_opp_int_own_half": {
+          "icc": 0.056665583358640435,
+          "split_half_r": 0.34565228361647393,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "buildup_stayed_phase_one": {
+          "icc": 0.0450645820124013,
+          "split_half_r": 0.1551355573324245,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "buildup_opp_won_own_half": {
+          "icc": 0.1912267761641188,
+          "split_half_r": 0.5193374265249644,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "buildup_led_opp_shot": {
+          "icc": 0.09932960438025147,
+          "split_half_r": 0.3347139067907056,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "buildup_success_pct": {
+          "icc": 0.23171913802119898,
+          "split_half_r": 0.5080810636070681,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "post_regain_second_pass_pct": {
+          "icc": 0.2581262526371246,
+          "split_half_r": 0.6555081732760974,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "post_regain_failed_first_passes": {
+          "icc": 0.2602804789010991,
+          "split_half_r": 0.8107372656372824,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "post_regain_forward_first_pct": {
+          "icc": 0.17503412033682045,
+          "split_half_r": 0.6683417324893114,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "switch_press_success_pct": {
+          "icc": 0.006854513895265723,
+          "split_half_r": -0.07722917748183027,
+          "n_teams_paired": 135,
+          "n_observed": 3579
+        },
+        "switch_press_n": {
+          "icc": 0.0870286617328337,
+          "split_half_r": 0.40960453814691483,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "final_third_entries_post_recovery": {
+          "icc": 0.25546296621655856,
+          "split_half_r": 0.5980021578326599,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "box_touches_post_recovery": {
+          "icc": 0.10500619673792368,
+          "split_half_r": 0.27923019966143275,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "shots_post_recovery": {
+          "icc": 0.07657366251002057,
+          "split_half_r": 0.1057652873627396,
+          "n_teams_paired": 136,
+          "n_observed": 3882
+        },
+        "high_opportunity_shots_post_recovery": {
+          "icc": NaN,
+          "split_half_r": NaN,
+          "n_teams_paired": 0,
+          "n_observed": 0
+        }
+      }
+    },
+    "possession_ground_truth": {
+      "n_matches": 0,
+      "recall_mean": NaN,
+      "precision_mean": NaN,
+      "f1_mean": NaN
+    }
+  }
+}

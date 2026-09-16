@@ -56,6 +56,12 @@ SCALE_GUARDED: dict[str, str] = {
     # rescan-in-loop (O(episodes*frames)) would go quadratic; the real code uses searchsorted.
     "silly_kicks.tracking._elastic_sync._detect_candidate_frames": "test_elastic_align_is_subquadratic",
     "silly_kicks.tracking._elastic_sync._build_frame_lookups": "test_elastic_align_is_subquadratic",
+    # TF-52 team KPIs: every family compute_* builds group_rows ONCE over (game_id[, team_id]) and
+    # .get per (game, team) in the loop. The growth fixtures scale the GAME dimension (2 teams each),
+    # so a per-(game, team) rescan of the full actions/spells would be O(games^2).
+    "silly_kicks.team_metrics._pressing.compute_pressing_kpis": "test_compute_pressing_kpis_is_subquadratic",
+    "silly_kicks.team_metrics._progression.compute_progression_kpis": ("test_compute_progression_kpis_is_subquadratic"),
+    "silly_kicks.team_metrics._buildup.compute_buildup_kpis": "test_compute_buildup_kpis_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

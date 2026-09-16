@@ -30,6 +30,27 @@ def test_player_id_to_name_builds_the_join_and_tolerates_missing():
     assert got == {3097: "Virgil van Dijk", 5487: "Josko Gvardiol", 99: None}
 
 
+def test_event_id_to_xg_extracts_nested_statsbomb_xg():
+    events = [
+        {"id": "e1", "shot": {"statsbomb_xg": 0.35}},
+        {"id": "e2", "shot": {"statsbomb_xg": None}},  # shot without an xg value -> excluded
+        {"id": "e3", "pass": {"length": 12}},  # not a shot -> excluded
+        {"id": "e4", "shot": {"statsbomb_xg": 0.08}},
+        {"shot": {"statsbomb_xg": 0.5}},  # no event id -> excluded (nothing to join on)
+    ]
+    got = loader._event_id_to_xg(events)
+    assert got == {"e1": 0.35, "e4": 0.08}
+
+
+def test_assert_statsbomb_open_data_mode_fails_closed_on_credentials(monkeypatch):
+    monkeypatch.delenv("SB_USERNAME", raising=False)
+    monkeypatch.delenv("SB_PASSWORD", raising=False)
+    loader.assert_statsbomb_open_data_mode()  # no creds -> open-data (public) mode -> no raise
+    monkeypatch.setenv("SB_PASSWORD", "secret")
+    with pytest.raises(SystemExit, match="public-only"):
+        loader.assert_statsbomb_open_data_mode()
+
+
 def test_values_handles_both_dict_and_list_payloads():
     # statsbombpy fmt="dict" returns id-keyed dict; older/list versions return a list.
     assert loader._values({10: "a", 20: "b"}) == ["a", "b"]

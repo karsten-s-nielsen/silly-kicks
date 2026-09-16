@@ -154,6 +154,11 @@ ARTIFACT_DRIVERS = (
     # decides the shipped representation -- both consume the public open-data corpus, so provenance.
     "train_xsuccess",
     "evolve_xsuccess_features",
+    # TF-52 team-KPI reliability study. Runs compute_team_kpis over PUBLIC StatsBomb open data and
+    # writes docs/research/tf52_team_kpi_reliability/metrics.json (per-KPI ICC / split-half / Type-II
+    # verdicts + possession ground truth) -- a cited number over external data; owner-run,
+    # reported-not-gated -> provenance. Public corpus, so reproducible by anyone.
+    "validate_team_kpi_reliability",
 )
 
 

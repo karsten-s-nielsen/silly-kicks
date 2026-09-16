@@ -363,6 +363,14 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/gk_decision/_compute.py",
     "silly_kicks/gk_decision/_reconstruct.py",
     "silly_kicks/providers/skillcorner/gi.py",
+    # team_metrics (TF-52): the three modules that DEFINE its public surface (TeamKpiParams +
+    # CounterpressWindow, compute_team_kpis, TeamKpiReport) re-exported via the package __all__.
+    # _columns/_possession/_pressing/_progression/_buildup/_orientation are underscore-named and
+    # re-export nothing, so they are not discovered. Brand-new public modules -- documented on creation
+    # (every public symbol carries a real Examples section).
+    "silly_kicks/team_metrics/_config.py",
+    "silly_kicks/team_metrics/_compute.py",
+    "silly_kicks/team_metrics/_report.py",
 )
 
 
