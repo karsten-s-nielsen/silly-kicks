@@ -159,6 +159,14 @@ ARTIFACT_DRIVERS = (
     # verdicts + possession ground truth) -- a cited number over external data; owner-run,
     # reported-not-gated -> provenance. Public corpus, so reproducible by anyone.
     "validate_team_kpi_reliability",
+    # TF-53 match-outcome cycle. `train_match_outcome_dependence` fits the Dixon-Coles rho on the PUBLIC
+    # StatsBomb open-data corpus and writes parameters-only bundled weights + SHA256SUMS stamping
+    # training_commit (same class as train_pass_completion / the weight trainers).
+    "train_match_outcome_dependence",
+    # `validate_match_outcome_calibration` runs the win/draw/loss simplex over the public open-data corpus
+    # and writes docs/research/tf53_match_outcome_calibration/metrics.json (per-config Brier / calibration
+    # slope / xPoints bias) -- a cited number over external data; owner-run, reported-not-gated.
+    "validate_match_outcome_calibration",
 )
 
 

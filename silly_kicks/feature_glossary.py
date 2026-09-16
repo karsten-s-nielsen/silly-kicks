@@ -34,6 +34,7 @@ Unit = Literal[
     "count",
     "xT",
     "xG",
+    "points",
     "ratio",
     "dimensionless",
 ]
@@ -166,6 +167,7 @@ _A_TERRITORY = "Sumpter, Soccermatics / Twelve.football 'Earpiece' (module 10.2)
 _A_DUELS = "Glickman, 'The Glicko-2 rating system'"  # TF-55 Glicko-2 duel ratings
 _A_GK_DECISION = "J. Eyestone, xT-GK collaboration (2026)"  # TF-62 GK build-up Decision-Value extension
 _A_TEAM_METRICS = "Twelve.football match-report glossary + MSC Bootcamp practitioner KPIs"  # TF-52 team KPIs
+_A_MATCH_OUTCOME = "Dixon & Coles (1997); Poisson-binomial goal model; Sumpter, Soccermatics (module 3)"  # TF-53
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
@@ -177,6 +179,7 @@ _M_TEAM_PRESSING = "silly_kicks.team_metrics._pressing"  # TF-52 pressing / defe
 _M_TEAM_PROGRESSION = "silly_kicks.team_metrics._progression"  # TF-52 progression / possession KPIs
 _M_TEAM_BUILDUP = "silly_kicks.team_metrics._buildup"  # TF-52 build-up / post-regain / switch KPIs
 _M_TEAM_COMPUTE = "silly_kicks.team_metrics._compute"  # TF-52 within-Ns post-recovery companions
+_M_MATCH_OUTCOME = "silly_kicks.match_outcome._compute"  # TF-53 match-outcome win/draw/loss + xPoints
 # TF-54b territorial_defense was DEMOTED to experimental (ADR-090 construct-validity: instrument_void),
 # so its three columns carry no glossary entry -- the code is retained privately for the redesign
 # (mirrors the TF-60 Layer-3 arms). NOTICE keeps the attribution for the retained code.
@@ -2532,6 +2535,53 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_TEAM_COMPUTE,
         attribution=_A_TEAM_METRICS,
         higher_is_better=None,
+    ),
+    # --- TF-53 match outcome: win/draw/loss + xPoints (silly_kicks.match_outcome._compute) ---
+    FeatureColumn(
+        name="p_win",
+        definition=(
+            "Probability this team wins the match, from the exact Poisson-binomial goal distributions of "
+            "both teams (per-shot xG, not Poisson(sum xG)); the two opt-in corrections shift it."
+        ),
+        unit="probability",
+        emitting_module=_M_MATCH_OUTCOME,
+        attribution=_A_MATCH_OUTCOME,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="p_draw",
+        definition="Probability the match is drawn, from the two teams' goal PMFs (equal-scoreline mass).",
+        unit="probability",
+        emitting_module=_M_MATCH_OUTCOME,
+        attribution=_A_MATCH_OUTCOME,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="p_loss",
+        definition="Probability this team loses the match, from the two teams' goal PMFs.",
+        unit="probability",
+        emitting_module=_M_MATCH_OUTCOME,
+        attribution=_A_MATCH_OUTCOME,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="xpoints",
+        definition=(
+            "Expected league points from the win/draw/loss simplex: 3 * p_win + p_draw -- the team's "
+            "deserved points given chance quality, in [0, 3]."
+        ),
+        unit="points",
+        emitting_module=_M_MATCH_OUTCOME,
+        attribution=_A_MATCH_OUTCOME,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="expected_goals",
+        definition="Sum of this team's injected per-shot xG in the match (total expected goals).",
+        unit="xG",
+        emitting_module=_M_MATCH_OUTCOME,
+        attribution=_A_MATCH_OUTCOME,
+        higher_is_better=True,
     ),
 )
 

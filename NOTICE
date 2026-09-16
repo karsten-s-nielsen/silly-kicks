@@ -389,6 +389,17 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   press). Definitions from the Twelve.football glossary and the Modern Soccer Coach Bootcamp Webinar 3
   practitioner material (Tigres Femenil / Clemson / Coventry academy). Descriptive; no VAEP path.
 
+- Event-only match-outcome / win-probability / xPoints.
+  Attribution: Dixon & Coles (1997); Poisson-binomial goal model; Sumpter, Soccermatics (module 3).
+  Used by: silly_kicks.match_outcome._compute (TF-53).
+  Per-(game, team) win/draw/loss probabilities + expected league points (xPoints) from injected
+  per-shot xG. The goal count is the EXACT Poisson-binomial distribution over each shot's Bernoulli
+  (a DP convolution -- NOT Poisson(sum xG), which discards chance quality); the two-team scoreline
+  simplex is the outer product of the marginals. Two opt-in honesty corrections: possession-collapse
+  (same-possession rebound shots combined as 1 - prod(1 - xg)) and the Dixon & Coles (1997) low-score
+  tau reweighting for cross-team dependence (a fitted rho, MLE on the public StatsBomb open-data
+  corpus). Own goals counted by result (ADR-018). Descriptive; opt-in, in no default VAEP xfn list.
+
 - Territorial defense (SB360 counterfactual) -- DEMOTED to experimental (ADR-090).
   Attribution: Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting).
   Used by: silly_kicks.territorial_defense._arms (TF-54b) -- PRIVATE (demoted; no public surface).

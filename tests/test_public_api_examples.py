@@ -371,6 +371,17 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/team_metrics/_config.py",
     "silly_kicks/team_metrics/_compute.py",
     "silly_kicks/team_metrics/_report.py",
+    # match_outcome (TF-53): the modules that DEFINE its public surface -- MatchOutcomeParams (_config),
+    # MatchOutcomeReport (_report), compute_match_outcome (_compute), goal_count_pmf +
+    # match_outcome_probabilities (_pmf), DependenceModel + MatchOutcomeIntegrityError + apply_dependence
+    # + dixon_coles_tau (_dependence) -- re-exported via the package __all__. _columns.py holds constants
+    # only; _collapse.py re-exports nothing. Brand-new public modules -- documented on creation (every
+    # public symbol carries a real Examples section).
+    "silly_kicks/match_outcome/_config.py",
+    "silly_kicks/match_outcome/_report.py",
+    "silly_kicks/match_outcome/_compute.py",
+    "silly_kicks/match_outcome/_pmf.py",
+    "silly_kicks/match_outcome/_dependence.py",
 )
 
 

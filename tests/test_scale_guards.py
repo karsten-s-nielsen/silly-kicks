@@ -167,6 +167,49 @@ def test_compute_buildup_kpis_is_subquadratic():
     assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="compute_buildup_kpis")
 
 
+def _match_outcome_games(n_games):
+    """n GAMES, 2 teams each (2 shots/team): scales the game_id loop dimension for compute_match_outcome."""
+    from silly_kicks.spadl import config as spadlconfig
+
+    shot = spadlconfig.actiontype_id["shot"]
+    succ = spadlconfig.result_id["success"]
+    base = [(10, 0.5), (10, 0.2), (20, 0.3), (20, 0.1)]
+    rows = []
+    for gi in range(n_games):
+        for k, (team, xg) in enumerate(base):
+            rows.append(
+                {
+                    "game_id": f"g{gi}",
+                    "period_id": 1,
+                    "team_id": team,
+                    "player_id": 0,
+                    "type_id": shot,
+                    "result_id": succ,
+                    "time_seconds": float(k),
+                    "start_x": 90.0,
+                    "start_y": 34.0,
+                    "end_x": 90.0,
+                    "end_y": 34.0,
+                    "xg": xg,
+                }
+            )
+    df = pd.DataFrame(rows)
+    df["action_id"] = range(len(df))
+    return df
+
+
+def test_compute_match_outcome_is_subquadratic():
+    from silly_kicks.match_outcome import compute_match_outcome
+
+    def measure(n):
+        fx = _match_outcome_games(n)
+        with rows_scanned_counter() as c:
+            compute_match_outcome(fx, xg_column="xg")
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="compute_match_outcome")
+
+
 # ============================ #9 turnover (counting-array, inner-j) ============================
 class _CountingArray:
     """1-D array wrapper counting element reads -- proxy for inner-scan work (spec Section 4.2)."""

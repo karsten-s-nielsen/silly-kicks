@@ -62,6 +62,9 @@ SCALE_GUARDED: dict[str, str] = {
     "silly_kicks.team_metrics._pressing.compute_pressing_kpis": "test_compute_pressing_kpis_is_subquadratic",
     "silly_kicks.team_metrics._progression.compute_progression_kpis": ("test_compute_progression_kpis_is_subquadratic"),
     "silly_kicks.team_metrics._buildup.compute_buildup_kpis": "test_compute_buildup_kpis_is_subquadratic",
+    # TF-53 match-outcome: compute_match_outcome builds group_rows ONCE over game_id and .get per game;
+    # the growth fixture scales the GAME dimension so a per-game full-table rescan would go O(games^2).
+    "silly_kicks.match_outcome._compute.compute_match_outcome": "test_compute_match_outcome_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.
