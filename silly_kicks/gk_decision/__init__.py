@@ -25,7 +25,13 @@ ADR-009 gate). See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
-from ._columns import GK_DECISION_DROP_REASONS, OPTION_SET_SOURCE_VALUES
+from ._columns import (
+    GK_DECISION_DROP_REASONS,
+    GK_DECISION_KEYS,
+    GK_DECISION_METRIC_COLUMNS,
+    GK_DECISION_SAMPLE_COLUMNS,
+    OPTION_SET_SOURCE_VALUES,
+)
 from ._compute import compute_gk_decision_value, summarize_gk_decision
 from ._config import GkDecisionParams
 from ._optionset import OptionSet, SkillCornerGIOptionSet
@@ -35,6 +41,9 @@ from ._value import option_value
 
 __all__ = [
     "GK_DECISION_DROP_REASONS",
+    "GK_DECISION_KEYS",
+    "GK_DECISION_METRIC_COLUMNS",
+    "GK_DECISION_SAMPLE_COLUMNS",
     "OPTION_SET_SOURCE_VALUES",
     "GkDecisionParams",
     "GkDecisionReport",
