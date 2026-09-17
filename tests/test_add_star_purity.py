@@ -328,6 +328,25 @@ def _dc_va_invoke(inputs):
     return F.add_defensive_credit(inputs[0], inputs[1], xg_column="xg", xt=inputs[2], visible_area=inputs[3])
 
 
+def _adc_atomic_inputs():
+    """Atomic `add_defensive_credit` inputs: atomic actions with the injected analytics threaded as
+    `preserve_native` would (TF-51 Item 4). Mirrors `_dc_inputs` for the atomic representation."""
+    a = _atomic_actions_full().copy()
+    a["xg"] = 0.2
+    a["shot_blocked"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    a["cross_blocked"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    a["shot_on_target_derived"] = pd.array([pd.NA] * len(a), dtype="boolean")
+    return [a, make_frames(), _fresh_xt()]
+
+
+def _adc_atomic_va_inputs():
+    """Atomic `add_defensive_credit` inputs WITH a `visible_area` polygon table (ADR-077/ADR-033: the
+    companion path reads a caller-supplied polygon ndarray, so it needs its own purity variant)."""
+    inp = _adc_atomic_inputs()
+    inp.append(_full_pitch_visible(inp[0]))
+    return inp
+
+
 def _defending_gk_map():
     """A resolved keeper map covering the make_actions/make_frames teams (home 5, opponent 6)."""
     from silly_kicks.id_compat import canonical_id
@@ -666,7 +685,7 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
             lambda i: F.add_xt_gk(i[0], i[1], i[2], visible_area=i[3]),
         ),
     ],
-    # ---- atomic.tracking (add_sync_score at the package level; 15 feature mirrors below) ----
+    # ---- atomic.tracking (add_sync_score at the package level; 16 feature mirrors below) ----
     "atomic.tracking:add_sync_score": _one(
         lambda: [_atomic_actions(with_gk_role=False), _fresh_atomic_links()],
         lambda i: atr.add_sync_score(i[0], i[1]),
@@ -674,6 +693,18 @@ PURITY_ENTRIES: dict[str, list[tuple]] = {
     "atomic.tracking:add_action_context": _one(_astd_inputs, _std_invoke(atf.add_action_context)),
     "atomic.tracking:add_actor_pre_window": _one(_astd_inputs, _std_invoke(atf.add_actor_pre_window)),
     "atomic.tracking:add_cover_shadows": _one(_axtf_inputs, _xtf_map_invoke(atf.add_cover_shadows)),
+    "atomic.tracking:add_defensive_credit": [
+        (
+            "no_visible_area",
+            _adc_atomic_inputs,
+            lambda i: atf.add_defensive_credit(i[0], i[1], xg_column="xg", xt=i[2]),
+        ),
+        (
+            "with_visible_area",
+            _adc_atomic_va_inputs,
+            lambda i: atf.add_defensive_credit(i[0], i[1], xg_column="xg", xt=i[2], visible_area=i[3]),
+        ),
+    ],
     "atomic.tracking:add_ghost_gk": [
         ("compute", _astd_inputs, _std_invoke(atf.add_ghost_gk, home_team_id=5)),
         (

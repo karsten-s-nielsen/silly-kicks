@@ -212,6 +212,25 @@ def _aggregate_defensive_credit(
         links=links,
         params=params,
     )
+    return _rollup_defending_aggregate(actions, long, params=params, visible_area=visible_area, links=links)
+
+
+def _rollup_defending_aggregate(
+    actions: pd.DataFrame,
+    long: pd.DataFrame,
+    *,
+    params,
+    visible_area=None,
+    links=None,
+) -> pd.DataFrame:
+    """Assemble the per-action defending-team aggregate from a PRE-COMPUTED long-form. Pure.
+
+    Splits the caller's OWN ``actions`` frame (never a synthesized/adapted one) into net/plus/minus/n
+    over the DEFENDING credits (credited team != acting team), and appends the ADR-077 FOV companions
+    when ``visible_area`` is given. Shared verbatim by the standard ``_aggregate_defensive_credit`` and
+    the atomic-SPADL mirror (TF-51 Item 4) -- the ONE rollup, so the two representations cannot drift.
+    ``params`` is consumed only by the ``visible_area`` companion rollup (unused when it is ``None``).
+    """
     out = actions.copy()
     act_team = actions.set_index("action_id")["team_id"]
     if long.empty:

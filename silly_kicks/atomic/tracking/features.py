@@ -29,6 +29,7 @@ from silly_kicks.tracking._structural_pass import (
 )
 from silly_kicks.tracking._xcross_attempt import add_xcross_attempt, xcross_attempt_xfns
 from silly_kicks.tracking._xshot_occurrence import add_xshot_occurrence, xshot_occurrence_xfns
+from silly_kicks.tracking.defensive_credit import DefensiveCreditParams
 from silly_kicks.tracking.feature_framework import lift_to_states
 from silly_kicks.tracking.features import (
     actor_reachable_area_m2,
@@ -69,6 +70,7 @@ __all__ = [
     "add_action_context",
     "add_actor_pre_window",
     "add_cover_shadows",
+    "add_defensive_credit",
     "add_ghost_gk",
     "add_gk_influence",
     "add_off_ball_run_values",
@@ -93,6 +95,8 @@ __all__ = [
     "atomic_pressure_default_xfns",
     "atomic_tracking_default_xfns",
     "ball_carrier_at_action",
+    "compute_bravery",
+    "compute_defensive_credits",
     "compute_structural_pass_metrics",
     "cover_shadow_xfns",
     "defenders_in_triangle_to_goal",
@@ -256,6 +260,229 @@ def _packing_atomic_adapter(actions: pd.DataFrame, params: PackingParams) -> pd.
     adapted["type_id"] = std_ids
     adapted["result_id"] = np.where(success, spadlconfig.result_id["success"], spadlconfig.result_id["fail"])
     return adapted
+
+
+# --- TF-51 Item 4: defensive-credit atomic mirror -------------------------------------------------
+# The six std types the TF-51 credit rules anchor on (tackle/interception/clearance are NOT here --
+# no rule tests those std types; recovery keys on the opponent team-change, not on a type).
+_DC_DOMAIN_TYPES = ("pass", "cross", "shot", "shot_penalty", "take_on", "bad_touch")
+
+
+def _defensive_credit_atomic_adapter(actions: pd.DataFrame, params: DefensiveCreditParams) -> pd.DataFrame:
+    """Re-lift the atom stream into a std-shaped stream for the TF-51 credit engine (faithful).
+
+    Endpoints from ``x,y,dx,dy``; std ``type_id`` for the six rule-anchor types (else ``non_action``);
+    a per-type next-atom ``result_id`` -- pass/cross succeed iff the NEXT atom (same game+period) is a
+    ``receival`` OR a SAME-TEAM keeper reception; take_on succeeds iff the next atom is same-team and NOT
+    an ``interception``/``out`` (a retained dribble-past, NOT a pass reception); shot/shot_penalty
+    succeed iff the next atom is ``goal``; bad_touch and every off-domain atom -> ``fail``.
+    ``possession_id`` is NOT synthesized here -- ``with_possessions`` derives it downstream from
+    time/team, not from ``result_id``. Pure: the caller frame is never mutated
+    (``_structural_pass_atomic_endpoints`` copies)."""
+    adapted = _structural_pass_atomic_endpoints(actions)  # start/end + copy
+    n = len(actions)
+    type_id = actions["type_id"].to_numpy()
+
+    std_ids = np.full(n, spadlconfig.actiontype_id["non_action"], dtype="int64")
+    for name in _DC_DOMAIN_TYPES:
+        mask = type_id == atomicconfig.actiontype_id[name]  # NaN-safe (NaN != int)
+        std_ids[mask] = spadlconfig.actiontype_id[name]
+
+    next_type = np.full(n, -1.0)
+    same_gp = np.zeros(n, dtype=bool)
+    if n > 1:
+        next_type[:-1] = type_id[1:]
+        game = actions["game_id"].to_numpy()
+        period = actions["period_id"].to_numpy()
+        same_gp[:-1] = (game[1:] == game[:-1]) & (period[1:] == period[:-1])
+    team_s = actions["team_id"].reset_index(drop=True)
+    next_team_same = ids_equal(team_s, team_s.shift(-1)).to_numpy()
+
+    recv = atomicconfig.actiontype_id["receival"]
+    keeper = [atomicconfig.actiontype_id["keeper_pick_up"], atomicconfig.actiontype_id["keeper_claim"]]
+    goal = atomicconfig.actiontype_id["goal"]
+    interception = atomicconfig.actiontype_id["interception"]
+    out_id = atomicconfig.actiontype_id["out"]
+
+    is_pass_like = np.isin(type_id, [atomicconfig.actiontype_id["pass"], atomicconfig.actiontype_id["cross"]])
+    is_take_on = type_id == atomicconfig.actiontype_id["take_on"]
+    is_shot_like = np.isin(type_id, [atomicconfig.actiontype_id["shot"], atomicconfig.actiontype_id["shot_penalty"]])
+
+    pass_ok = same_gp & ((next_type == recv) | (np.isin(next_type, keeper) & next_team_same))
+    take_on_ok = same_gp & next_team_same & ~np.isin(next_type, [interception, out_id])
+    shot_ok = same_gp & (next_type == goal)
+    success = (is_pass_like & pass_ok) | (is_take_on & take_on_ok) | (is_shot_like & shot_ok)
+
+    adapted["type_id"] = std_ids
+    adapted["result_id"] = np.where(success, spadlconfig.result_id["success"], spadlconfig.result_id["fail"])
+    return adapted
+
+
+def _require_columns(actions: pd.DataFrame, required, *, fn: str) -> None:
+    """Fail LOUD (ADR-043) if an injected, non-atom-derivable column a TF-51 metric needs is absent.
+
+    ``convert_to_atomic`` strips everything but the 13 atomic columns, so ``xg`` / ``shot_blocked`` /
+    ``cross_blocked`` reach the mirror only when the caller threaded them through ``preserve_native``.
+    A missing one must raise here rather than silently produce an all-NaN credit column."""
+    missing = [c for c in required if c not in actions.columns]
+    if missing:
+        raise ValueError(
+            f"{fn} (atomic): required column(s) {missing} absent. Injected analytics are not "
+            f"atom-derivable -- thread them through the conversion: "
+            f"convert_to_atomic(std_actions, preserve_native=['xg', 'shot_blocked', 'cross_blocked'])."
+        )
+
+
+def compute_defensive_credits(
+    actions,
+    frames,
+    *,
+    xg_column,
+    xt,
+    blocked_column="shot_blocked",
+    on_target_column="shot_on_target_derived",
+    links=None,
+    params=None,
+):
+    """Atomic-SPADL mirror of tracking.defensive_credit.compute_defensive_credits (TF-51, faithful).
+
+    Re-lifts the atom stream (:func:`_defensive_credit_atomic_adapter`) and delegates to the standard
+    engine; ``with_possessions`` runs INSIDE the standard entry on the adapted (result_id-bearing)
+    stream. Window params (``resulting_shot_max_actions`` / ``recovery_max_actions``) count ATOM rows
+    here -- denser than standard actions (faithful, per the TF-51 Item 4 spec). See NOTICE.
+
+    Examples
+    --------
+    Long-form per-(action, credited player, rule) rows on atomic actions (the injected analytics must
+    be threaded through the conversion; needs a fitted ``ExpectedThreat``)::
+
+        atomic = convert_to_atomic(std_actions, preserve_native=["xg", "shot_blocked", "cross_blocked"])
+        credits = compute_defensive_credits(atomic, frames, xg_column="xg", xt=xt)
+        credits.groupby("player_id")["signed_value"].sum()  # per-player rollup
+    """
+    from silly_kicks.tracking.defensive_credit import compute_defensive_credits as _std
+
+    params = params or DefensiveCreditParams()
+    _require_columns(actions, [xg_column, blocked_column], fn="compute_defensive_credits")
+    adapted = _defensive_credit_atomic_adapter(actions, params)
+    return _std(
+        adapted,
+        frames,
+        xg_column=xg_column,
+        xt=xt,
+        blocked_column=blocked_column,
+        on_target_column=on_target_column,
+        links=links,
+        params=params,
+    )
+
+
+def _aggregate_defensive_credit(
+    actions,
+    frames,
+    *,
+    xg_column,
+    xt,
+    blocked_column="shot_blocked",
+    on_target_column="shot_on_target_derived",
+    links=None,
+    params=None,
+    visible_area=None,
+):
+    """Atomic per-action defending-team aggregate: computes the atomic long-form and applies the
+    shared ``_rollup_defending_aggregate`` (TF-51 Item 4) on the CALLER's atomic frame -- so the
+    adapter's synthesized ``type_id``/``result_id``/``start_*`` never leak into the enrichment."""
+    from silly_kicks.tracking.defensive_credit._orchestration import _rollup_defending_aggregate
+
+    params = params or DefensiveCreditParams()
+    long = compute_defensive_credits(
+        actions,
+        frames,
+        xg_column=xg_column,
+        xt=xt,
+        blocked_column=blocked_column,
+        on_target_column=on_target_column,
+        links=links,
+        params=params,
+    )
+    return _rollup_defending_aggregate(actions, long, params=params, visible_area=visible_area, links=links)
+
+
+def add_defensive_credit(
+    actions,
+    frames,
+    *,
+    xg_column,
+    xt,
+    blocked_column="shot_blocked",
+    on_target_column="shot_on_target_derived",
+    links=None,
+    params=None,
+    visible_area=None,
+):
+    """Atomic-SPADL mirror of tracking.add_defensive_credit (TF-51). See NOTICE.
+
+    Faithful (delegates on the atom stream); ships NO ``*_xfns`` (F4 result-leakage). Links ONCE and
+    threads the pointers through the aggregate + the provenance merge. When ``visible_area`` (an
+    ``action_id`` -> polygon table) is supplied, appends the ADR-077 FOV-observability companions
+    (``defensive_credit_observed_fraction`` / ``_observed_source``); the primary net/plus/minus/n
+    columns are byte-identical with and without it.
+
+    Examples
+    --------
+    Per-action defending-team aggregate on atomic actions::
+
+        atomic = convert_to_atomic(std_actions, preserve_native=["xg", "shot_blocked", "cross_blocked"])
+        out = add_defensive_credit(atomic, frames, xg_column="xg", xt=xt)
+        out[["defensive_credit_net", "defensive_credit_plus", "n_defensive_credits"]].head()
+    """
+    from silly_kicks.tracking.utils import link_actions_to_frames
+
+    pointers = links if links is not None else link_actions_to_frames(actions, frames)[0]
+    out = _aggregate_defensive_credit(
+        actions,
+        frames,
+        xg_column=xg_column,
+        xt=xt,
+        blocked_column=blocked_column,
+        on_target_column=on_target_column,
+        links=pointers,
+        params=params,
+        visible_area=visible_area,
+    )
+    provenance_cols = ["frame_id", "time_offset_seconds", "n_candidate_frames", "link_quality_score"]
+    if not any(c in out.columns for c in provenance_cols) and len(pointers) > 0:
+        ptr = pointers.drop_duplicates("action_id").set_index("action_id")[provenance_cols]
+        out = out.merge(ptr, left_on="action_id", right_index=True, how="left")
+    return out
+
+
+def compute_bravery(actions, *, shot_blocked_column="shot_blocked", cross_blocked_column="cross_blocked"):
+    """Atomic-SPADL mirror of tracking.defensive_credit.compute_bravery (TF-51, event-only). See NOTICE.
+
+    ``shot`` and open-play ``cross`` survive atomic intact (shared standard ids), so their bravery is
+    exact. Atomic ``_simplify`` collapses ``corner_crossed``/``freekick_crossed`` into ``corner``/
+    ``freekick``, so set-piece crosses are UNOBSERVABLE -> ``bravery_set_piece_crosses`` = NaN and
+    ``n_set_piece_crosses_faced`` = <NA> (ADR-027; never a conflated crossed+short overcount). The
+    headline ``bravery_pct_known_domain`` (shots + open-play crosses only) is unaffected.
+
+    Examples
+    --------
+    Event-only per-team bravery on atomic actions (no frames/xt; block columns threaded natively)::
+
+        atomic = convert_to_atomic(std_actions, preserve_native=["shot_blocked", "cross_blocked"])
+        bravery = compute_bravery(atomic)
+        bravery[["team_id", "bravery_pct_known_domain", "n_set_piece_crosses_faced"]]
+    """
+    from silly_kicks.tracking.defensive_credit import compute_bravery as _std
+
+    _require_columns(actions, [shot_blocked_column, cross_blocked_column], fn="compute_bravery")
+    out = _std(actions, shot_blocked_column=shot_blocked_column, cross_blocked_column=cross_blocked_column)
+    if not out.empty:
+        out = out.copy()
+        out["bravery_set_piece_crosses"] = np.nan
+        out["n_set_piece_crosses_faced"] = pd.array([pd.NA] * len(out), dtype="Int64")
+    return out
 
 
 def add_packing(actions, frames, *, goal_map=None, links=None, params=None):
