@@ -15,7 +15,7 @@ See NOTICE for full bibliographic citations.
 
 from __future__ import annotations
 
-from ._columns import DUEL_COLUMNS, DUEL_METRIC_COLUMNS, DUEL_WINNER_SOURCE_VALUES
+from ._columns import DUEL_COLUMNS, DUEL_KEYS, DUEL_METRIC_COLUMNS, DUEL_WINNER_SOURCE_VALUES
 from ._compute import compute_duel_ratings, update_glicko
 from ._config import DuelRatingParams, GlickoState
 from ._extract import DuelExtractReport, DuelGame, extract_duels
@@ -23,6 +23,7 @@ from ._report import DuelRatingReport
 
 __all__ = [
     "DUEL_COLUMNS",
+    "DUEL_KEYS",
     "DUEL_METRIC_COLUMNS",
     "DUEL_WINNER_SOURCE_VALUES",
     "DuelExtractReport",

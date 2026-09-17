@@ -17,6 +17,7 @@ from __future__ import annotations
 from ._columns import (
     TERRITORY_COLUMNS,
     TERRITORY_HULL_SOURCE_VALUES,
+    TERRITORY_KEYS,
     TERRITORY_METHODS,
     TERRITORY_METRIC_COLUMNS,
 )
@@ -28,6 +29,7 @@ from ._report import TerritoryReport
 __all__ = [
     "TERRITORY_COLUMNS",
     "TERRITORY_HULL_SOURCE_VALUES",
+    "TERRITORY_KEYS",
     "TERRITORY_METHODS",
     "TERRITORY_METRIC_COLUMNS",
     "Hull",
