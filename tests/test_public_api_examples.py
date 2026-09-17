@@ -318,7 +318,9 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/shot_stopping/_compute.py",
     "silly_kicks/shot_stopping/_report.py",
     # territory (TF-54): the modules that DEFINE its public surface (TerritoryParams,
-    # compute_territorial_dominance, TerritoryReport). _columns.py holds only constants. _hull.py's
+    # compute_territorial_dominance, TerritoryReport). _columns.py no longer holds only constants --
+    # TF-54b added the public top-level function columns_for_method (the TERRITORY_METHODS schema
+    # resolver, carrying its own doctest), so _columns.py is now discovered and listed here. _hull.py's
     # Hull + build_trimmed_hull were PROMOTED to the public surface in TF-54b (Decision 4: the SB360
     # territorial_defense package reuses the v1 hull via the public seam, single-sourcing the hull
     # definition), so _hull.py is now listed here and its symbols carry Examples.
@@ -326,6 +328,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/territory/_compute.py",
     "silly_kicks/territory/_report.py",
     "silly_kicks/territory/_hull.py",
+    "silly_kicks/territory/_columns.py",
     # duels (TF-55): the modules that DEFINE its public surface (DuelRatingParams, GlickoState,
     # update_glicko, compute_duel_ratings, DuelRatingReport, extract_duels + DuelGame/DuelExtractReport).
     # _columns.py holds constants. Documented on creation.

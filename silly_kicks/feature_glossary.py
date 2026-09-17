@@ -173,6 +173,7 @@ _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Laye
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
 _M_SHOT_STOPPING = "silly_kicks.shot_stopping._compute"  # TF-59 PR2 GK shot-stopping (GP / GSAA)
 _M_TERRITORY = "silly_kicks.territory._compute"  # TF-54 territorial dominance (trimmed hull x injected xT)
+_M_TERRITORY_CF = "silly_kicks.territory._counterfactual"  # TF-54b counterfactual q*c*xT prevented-valuation
 _M_DUELS = "silly_kicks.duels._compute"  # TF-55 Glicko-2 duel ratings (per-match rating period)
 _M_GK_DECISION = "silly_kicks.gk_decision._compute"  # TF-62 GK build-up decision-quality (chosen-vs-available)
 _M_TEAM_PRESSING = "silly_kicks.team_metrics._pressing"  # TF-52 pressing / defensive KPIs
@@ -2039,6 +2040,61 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         definition="Count of the player's own defensive actions inside their hull (descriptive context).",
         unit="count",
         emitting_module=_M_TERRITORY,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    # --- TF-54b counterfactual "threat prevented" (silly_kicks.territory._counterfactual, method="counterfactual") ---
+    # Emitted ONLY under method="counterfactual"; the completion-weighted expected-minus-realized (GSAA
+    # idiom -- TF-59/ADR-085) valuation of opponent passes AIMED into the hull. See NOTICE for citations.
+    FeatureColumn(
+        name="territory_xt_prevented_above_expectation",
+        definition=(
+            "GSAA-style headline: Sum over opponent passes AIMED into the hull of "
+            "(P_complete - outcome) * xT(target) -- the threat the defender's territory prevented above "
+            "what the aimed passes were expected to yield (== territory_expected_threat_faced - "
+            "territory_xt_conceded). For a failed pass the target is modeled over the death-direction "
+            "cone's transition distribution; for a completed pass the target is its observed end."
+        ),
+        unit="xT",
+        emitting_module=_M_TERRITORY_CF,
+        attribution=_A_TERRITORY,
+        higher_is_better=True,
+    ),
+    FeatureColumn(
+        name="territory_expected_threat_faced",
+        definition=(
+            "Sum over opponent passes AIMED into the hull of P_complete * xT(target) -- the EXPECTED "
+            "threat the defender's territory faced (the 'expected' leg of the above-expectation headline). "
+            "Descriptive magnitude of danger the opponent aimed at this territory, not a defender-quality "
+            "score on its own (higher can simply mean the zone was tested more)."
+        ),
+        unit="xT",
+        emitting_module=_M_TERRITORY_CF,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="territory_passes_aimed_into_hull",
+        definition=(
+            "Count of opponent passes AIMED into the hull that were scored (completed passes ending in the "
+            "hull + failed passes whose death-direction cone intersects it, with resolvable targets) -- the "
+            "counterfactual scoring denominator (method='counterfactual' rate denominator). Descriptive."
+        ),
+        unit="count",
+        emitting_module=_M_TERRITORY_CF,
+        attribution=_A_TERRITORY,
+        higher_is_better=None,
+    ),
+    FeatureColumn(
+        name="territory_mean_completion_faced",
+        definition=(
+            "Mean modeled pass-completion probability c over the passes aimed into the hull "
+            "(interpretability companion for the expected/above-expectation legs). Descriptive -- a higher "
+            "mean means the aimed passes were geometrically easier, which is opponent context, not "
+            "defender quality."
+        ),
+        unit="probability",
+        emitting_module=_M_TERRITORY_CF,
         attribution=_A_TERRITORY,
         higher_is_better=None,
     ),

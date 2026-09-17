@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.territory import TerritoryParams, compute_territorial_dominance
+from silly_kicks.territory._columns import TERRITORY_COLUMNS
 from silly_kicks.xthreat import ExpectedThreat
+
+#: v1 completed_failed golden captured from main @ the pre-cone _compute.py (Task 5 step 2). Object key
+#: columns (game_id/player_id) store as int64 in parquet, so the loaded frame is re-cast to the declared
+#: schema (.astype(TERRITORY_COLUMNS)) -- the same canonical dtypes compute() emits -- before comparison,
+#: which makes this a true value+dtype byte-identity guard on the schema, not a parquet-storage artifact.
+_V1_SNAPSHOT_PATH = pathlib.Path(__file__).with_name("data") / "territory_v1_snapshot.parquet"
 
 _SUCCESS = spadlconfig.result_id["success"]
 _FAIL = spadlconfig.result_id["fail"]
@@ -65,6 +74,32 @@ def _actions(rows):
 
 # Defender team 10, player 1: a rectangle hull x in [5,15], y in [20,48] (own half), centroid (10,34).
 _HULL_CORNERS = [_def(1, 1, 10, 5, 20), _def(1, 1, 10, 15, 20), _def(1, 1, 10, 15, 48), _def(1, 1, 10, 5, 48)]
+
+
+def _v1_snapshot_scene():
+    # The exact scene that seeded tests/territory/data/territory_v1_snapshot.parquet: player 1 resolved
+    # rectangle hull + player 2 degenerate (2 actions) + completed/failed/out-of-hull passes. Exercises
+    # BOTH branches of the v1 grouping loop (resolved metrics/rates AND degenerate NaN-metric row).
+    return _actions(
+        [
+            *_HULL_CORNERS,
+            _def(1, 2, 10, 30, 20),
+            _def(1, 2, 10, 35, 20),
+            _pass(1, 20, 80, 40, 95, 40, completed=True),  # reflected (10,28) IN hull -> conceded (fwd)
+            _pass(1, 20, 80, 30, 98, 30, completed=False),  # reflected (7,38) IN hull -> prevented (fwd)
+            _pass(1, 20, 40, 40, 50, 40, completed=True),  # reflected (55,28) OUT -> ignored
+        ]
+    )
+
+
+def test_completed_failed_byte_identical_to_v1():
+    # The default (completed_failed) output must stay byte-identical to the committed v1 golden through
+    # the cone-dispatch _compute.py rewrite. The snapshot was captured on the UNEDITED _compute.py, so
+    # this passes before the rewrite (a real regression guard) and MUST still pass after it.
+    out, _ = compute_territorial_dominance(_v1_snapshot_scene(), xt=_toy_xt(0.1), params=_KEEP_ALL)
+    assert list(out.columns) == list(TERRITORY_COLUMNS)
+    expected = pd.read_parquet(_V1_SNAPSHOT_PATH).astype(TERRITORY_COLUMNS)
+    pd.testing.assert_frame_equal(out, expected)
 
 
 def test_conceded_prevented_exact():
@@ -137,10 +172,10 @@ def test_injected_model_guard():
 
 def test_method_family():
     acts = _actions(_HULL_CORNERS)
-    # `counterfactual` was a reserved NotImplementedError door on main; TF-54b removed it (the
-    # counterfactual valuation now lives in the separate territorial_defense package), so it is
-    # now simply an unknown method for the event-only territory metric.
-    with pytest.raises(ValueError, match="unknown method"):
+    # TF-54b re-adds the `counterfactual` door (the joint q*c*xT prevented-valuation, spec §5.1/5.2).
+    # It requires an INJECTED completion_model (silly-kicks ships none); calling it without one raises
+    # ValueError naming that requirement (ADR-NNN -- a legitimate revived contract, not test-weakening).
+    with pytest.raises(ValueError, match="requires a fitted completion_model"):
         compute_territorial_dominance(acts, xt=_toy_xt(), method="counterfactual")
     with pytest.raises(ValueError, match="unknown method"):
         compute_territorial_dominance(acts, xt=_toy_xt(), method="bogus")

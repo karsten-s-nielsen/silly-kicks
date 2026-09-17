@@ -109,14 +109,23 @@ def render_model_card(metrics: dict) -> str:
     n_matches = metrics.get("n_matches", "?")
     providers = metrics.get("providers", "?")
     commit = metrics.get("training_commit", "?")
+    n_competitions = metrics.get("n_competitions")
     noskill = base * (1.0 - base)
     bss_line = ""
     if np.isfinite(brier) and np.isfinite(noskill) and noskill > 0.0:
         bss_line = f" (Brier skill score {1.0 - brier / noskill:.3f} vs the base-rate baseline)"
-    # A source-faithful reproduce command: open-data uses --source open-data (the bundled default);
-    # the pining cross-check uses --source pining --providers.
+    # A source-faithful reproduce command: the full public open-data corpus uses --all-competitions;
+    # a single tournament uses --source open-data --competition-id/--season-id; the pining cross-check
+    # uses --source pining --providers.
     m_open = re.match(r"statsbomb-open \(competition (\d+), season (\d+)\)", str(providers))
-    if m_open:
+    corpus_note = ""
+    if n_competitions is not None:
+        reproduce_args = "--all-competitions"
+        corpus_note = (
+            f" This bundle was fit on the full public open-data corpus "
+            f"({n_competitions} (competition, season) releases in the StatsBomb open-data manifest)."
+        )
+    elif m_open:
         reproduce_args = f"--source open-data --competition-id {m_open.group(1)} --season-id {m_open.group(2)}"
     else:
         reproduce_args = f"--source pining --providers {providers}"
@@ -139,8 +148,8 @@ pass evaluates the model at a HYPOTHESISED target (e.g. an xT-grid destination),
 range completed passes already cover.
 
 **Training corpus + metrics.** {n_matches} match(es) from `{providers}` ({n_rows} finite-coordinate
-pass rows). GroupKFold-by-match out-of-fold: AUC {auc:.3f}, ECE {ece:.3f}, Brier {brier:.3f} vs base
-rate {base:.3f}{bss_line}. See `metrics.json`.
+pass rows).{corpus_note} GroupKFold-by-match out-of-fold: AUC {auc:.3f}, ECE {ece:.3f}, Brier
+{brier:.3f} vs base rate {base:.3f}{bss_line}. See `metrics.json`.
 
 **Missing-value policy.** A non-finite coordinate yields an all-NaN feature row and a NaN probability
 (never a fabricated value); a consumer drops-and-counts such a target.
@@ -154,7 +163,12 @@ expected-passing / pass-completion modelling -- see NOTICE.
 """
 
 
-def main() -> None:
+#: WC2022 (competition 43, season 106) -- the single-competition default corpus (open-data).
+_DEFAULT_COMPETITION_ID = 43
+_DEFAULT_SEASON_ID = 106
+
+
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", required=True, help="run dir OUTSIDE the repo (shards + weights/ + metrics.json)")
     ap.add_argument(
@@ -164,8 +178,17 @@ def main() -> None:
         help="'open-data' = PUBLIC StatsBomb open data (redistributable; the bundled default) via statsbombpy; "
         "'pining' = the pining providers (owner-tier cross-check).",
     )
-    ap.add_argument("--competition-id", type=int, default=43, help="open-data competition (default 43 = World Cup)")
-    ap.add_argument("--season-id", type=int, default=106, help="open-data season (default 106 = 2022)")
+    # Defaults are None so we can DISTINGUISH an explicit --competition-id/--season-id from the
+    # WC2022 default, which is what makes --all-competitions a real mutual exclusion; an unset value
+    # resolves to WC2022 below, keeping the single-competition path byte-identical.
+    ap.add_argument("--competition-id", type=int, default=None, help="open-data competition (default 43 = World Cup)")
+    ap.add_argument("--season-id", type=int, default=None, help="open-data season (default 106 = 2022)")
+    ap.add_argument(
+        "--all-competitions",
+        action="store_true",
+        help="re-fit on the FULL public open-data corpus (every (competition, season) in the open-data "
+        "manifest); mutually exclusive with --competition-id/--season-id (--source open-data only).",
+    )
     ap.add_argument("--providers", default="statsbomb", help="comma-separated pining providers (--source pining only)")
     ap.add_argument("--max-per-provider", type=int, default=None, help="cap the number of matches (both sources)")
     ap.add_argument("--tracking-limit", type=int, default=None, help="cap frames parsed per match (pining only)")
@@ -175,7 +198,13 @@ def main() -> None:
         help='JSON {"statsbomb": ["3869685", ...]} pinning WHICH matches this process handles.',
     )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact marked dirty)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+
+    if args.all_competitions:
+        if args.source != "open-data":
+            ap.error("--all-competitions requires --source open-data")
+        if args.competition_id is not None or args.season_id is not None:
+            ap.error("--all-competitions is mutually exclusive with --competition-id/--season-id")
 
     # Clean-tree guard FIRST, before any corpus work. This trainer writes BUNDLED weights, and an
     # artifact whose provenance is unknown is one nobody can reproduce or audit later (ADR-052).
@@ -193,17 +222,44 @@ def main() -> None:
     # The bundled default trains on PUBLIC StatsBomb open data (redistributable -> publicly reproducible);
     # --source pining is the owner-tier cross-check. Both yield the same (provider, id, actions, frames,
     # home) tuple so for_each is source-agnostic.
-    if args.source == "open-data":
-        from scripts._sb_open_data import load_open_data_matches
+    competitions: list[tuple[int, int]] | None = None
+    if args.all_competitions:
+        # Full public open-data corpus: every (competition, season) in the manifest, chained. The
+        # fail-closed public-only guard runs BEFORE any load so a private-API pull can never bundle.
+        import scripts._sb_open_data as sbod
 
-        corpus_label = f"statsbomb-open (competition {args.competition_id}, season {args.season_id})"
-        matches_iter = load_open_data_matches(
-            competition_id=args.competition_id,
-            season_id=args.season_id,
+        sbod.assert_statsbomb_open_data_mode()
+        comps: list[tuple[int, int]] = [(int(c[0]), int(c[1])) for c in sbod.all_open_competitions()]
+        competitions = comps
+        corpus_label = f"statsbomb-open (all {len(comps)} open-data competitions)"
+
+        def _all_matches():
+            for competition_id, season_id in comps:
+                yield from sbod.load_open_data_matches(
+                    competition_id=competition_id,
+                    season_id=season_id,
+                    match_ids=(match_ids or {}).get("statsbomb"),
+                    max_matches=args.max_per_provider,
+                )
+
+        matches_iter = _all_matches()
+        # A different corpus MUST invalidate the shard generation (4.77.1 stale-shard rule): the sorted
+        # competition list is the corpus identity, so a re-run on the same --out with a different corpus
+        # resolves to a DIFFERENT generation directory and cannot silently reuse WC2022-only shards.
+        source_token = {"source": "open-data-all", "competitions": sorted(comps)}
+    elif args.source == "open-data":
+        import scripts._sb_open_data as sbod
+
+        competition_id = _DEFAULT_COMPETITION_ID if args.competition_id is None else args.competition_id
+        season_id = _DEFAULT_SEASON_ID if args.season_id is None else args.season_id
+        corpus_label = f"statsbomb-open (competition {competition_id}, season {season_id})"
+        matches_iter = sbod.load_open_data_matches(
+            competition_id=competition_id,
+            season_id=season_id,
             match_ids=(match_ids or {}).get("statsbomb"),
             max_matches=args.max_per_provider,
         )
-        source_token = {"source": "open-data", "competition_id": args.competition_id, "season_id": args.season_id}
+        source_token = {"source": "open-data", "competition_id": competition_id, "season_id": season_id}
     else:
         from scripts._loader_pining import load_matches
         from scripts._partition import providers_for_slice
@@ -260,6 +316,11 @@ def main() -> None:
         "run_tree_state": prov.get("tree_state"),
         **res.manifest(),
     }
+    if competitions is not None:
+        # The full-corpus re-fit records WHICH competitions it spanned (and how many), so the card and
+        # a downstream reader can tell a full-corpus bundle apart from a single-tournament one.
+        out["n_competitions"] = len(competitions)
+        out["competitions"] = [list(c) for c in sorted(competitions)]
     (dest / "metrics.json").write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
     # The bundled model carries a MODEL_CARD.md next to its weights (ADR-088), generated from the
     # metrics so it ships with the weights (into silly_kicks/expected_passing/weights/) and cannot drift.

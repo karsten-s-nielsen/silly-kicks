@@ -346,12 +346,32 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
 
 - Territorial dominance ("Van Dijk" metric).
   Attribution: Sumpter, Soccermatics / Twelve.football 'Earpiece' (module 10.2).
-  Used by: silly_kicks.territory._compute (TF-54).
+  Used by: silly_kicks.territory._compute (TF-54);
+  silly_kicks.territory._counterfactual (TF-54b, method="counterfactual", ADR-NNN).
   For a defender, the trimmed convex hull of their own-half defensive-action
   locations is their "territory"; opponent passes whose destination lands inside
   it are valued by an INJECTED fitted ExpectedThreat (silly-kicks ships NO xT
-  model) -- threat conceded (completed) vs prevented (failed). Descriptive; no
-  VAEP path.
+  model) -- threat conceded (completed) vs prevented (failed). The default
+  method="completed_failed" (TF-54) values every pass at its observed SPADL end;
+  because a FAILED pass's end is the death/recovery location, not the intended
+  target, that "prevented" leg under-counts.
+  The non-default method="counterfactual" (TF-54b) closes that gap with the GSAA
+  "expected - realized" framing the house shipped for goalkeepers (TF-59, ADR-085):
+  for every opponent pass AIMED into the territory,
+  prevented_above_expectation = (P_complete - outcome) * xT(target), summed. A
+  completed pass is valued at its observed end; a failed pass's intended target is
+  modeled over its death-direction cone's transition distribution q, each
+  hypothesized target weighted by an INJECTED pass-completion probability c
+  (silly_kicks.expected_passing.PassCompletionModel; see the Expected
+  pass-completion entry below) and the INJECTED xT value. Ships available-but-
+  non-default with a construct-validity report; promoting the default is a
+  separate ADR-009 decision.
+  Player-attributability caveat: like the SB360 territorial-defense sibling
+  (ADR-090), the per-(defender, match) counterfactual is team-conditioned by
+  construction, so a defender RANKING is licensed only if the corpus can separate
+  the defender-intrinsic component from the team component -- a crossed
+  defender+team intraclass-correlation (ICC) identifiability question that is
+  measured by a pre-registered census, not assumed. Descriptive; no VAEP path.
 
 - Glicko-2 duel ratings.
   Attribution: Glickman, 'The Glicko-2 rating system'.
@@ -424,9 +444,12 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   An event-only logistic P(complete | origin -> target geometry) over 10 geometric
   features (distance, angle-to-goal, forward/lateral components, origin/target x/y +
   pitch thirds); no tracking, no teammate positions. Shipped as a REUSABLE SEAM with
-  bundled default weights (public StatsBomb open-data WC2022) -- the event-only "threat
-  prevented" counterfactual cone it was built to weight was not carried into this cycle,
-  so no shipped feature consumes it yet. Descriptive; no VAEP path.
+  bundled default weights (public StatsBomb open-data, re-fit + re-bundled on the broad
+  open-data corpus for TF-54b, ADR-NNN). Consumed as the completion weight c in the
+  TF-54b territorial "threat prevented" counterfactual cone
+  (silly_kicks.territory._counterfactual; see the Territorial dominance entry above) and
+  as the xPass in the TF-62 GK build-up Decision-quality reconstruction tiers. Descriptive;
+  no VAEP path.
 
 - Ogawa et al. (2025). "Space evaluation at the starting point of soccer
   transitions." arXiv:2505.14711 (OBPV).
