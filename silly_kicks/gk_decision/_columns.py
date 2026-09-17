@@ -50,3 +50,8 @@ GK_DECISION_SAMPLE_COLUMNS: tuple[str, ...] = (
     "n_options",
     "option_set_source",
 )
+
+#: Summarize / mart grain -- summarize_gk_decision groups ["keeper", "game_id"] (_compute.py:122).
+#: compute -> per-decision samples; summarize -> per-(game_id, keeper). GK_DECISION_KEYS is the
+#: summarize/mart grain (SK-EXPORT: uniform metric-family output contract).
+GK_DECISION_KEYS: tuple[str, ...] = ("game_id", "keeper")

@@ -388,24 +388,66 @@ def _lineup_team_map(match_id: str) -> dict:
     ``assert_statsbomb_open_data_mode`` guard runs before any corpus pull). A player is on exactly one
     team per match, so the lineup fully determines each defender's team -- the identity the metric
     output (keyed on ``player_id`` only) does not carry.
+
+    The ``sb.lineups(fmt="dict")`` payload shape VARIES across statsbombpy versions / open-data
+    competitions, and this MUST reach the real player dicts in every case (a shape whose players it
+    cannot reach silently maps ZERO defenders -- worse than a crash, because it looks like a match with
+    no defenders rather than a parse failure):
+
+    1. The confirmed real shape (verified on the live corpus, match 3879673):
+       ``{team_id(int): {"team_id":..., "team_name":..., "lineup":[player_dict, ...]}}`` -- the players
+       live in ``roster["lineup"]``; the team id is ``roster["team_id"]`` (falling back to the
+       top-level key, which IS the team id int, if the roster dict lacks it).
+    2. The list form (WC2022): ``{team_name: [player_dict, ...]}`` -- players are the list; team id is
+       each player dict's own ``team_id``.
+    3. The pid-keyed form: ``{team_name: {player_id: player_dict}}`` -- players are ``roster.values()``;
+       team id is each player dict's own ``team_id``.
+
+    A stray non-dict entry INSIDE a resolved players iterable is skipped (a defensive backstop only);
+    the primary logic reaches the real player dicts, so real defenders still map.
     """
     from statsbombpy import sb  # type: ignore[import-not-found]  # optional network dep; function-local
 
     lineups = sb.lineups(match_id=int(match_id), fmt="dict")
     out: dict = {}
-    for team_name, roster in lineups.items():  # noqa: B007 -- key is the team name, value is the roster
-        for player in _values(roster):
+    for top_key, roster in lineups.items():
+        # Resolve the iterable of PLAYER DICTS + the roster-level team id (shape 1's "lineup"/"team_id"
+        # wrapper vs the bare list/pid-keyed forms of shapes 2 & 3).
+        if isinstance(roster, dict) and "lineup" in roster:
+            players_iter = roster["lineup"]  # shape 1: the wrapped lineup list
+        elif isinstance(roster, dict):
+            players_iter = roster.values()  # shape 3: pid-keyed player dicts
+        else:
+            players_iter = roster  # shape 2: a bare list of player dicts
+
+        if isinstance(roster, dict) and "team_id" in roster:
+            team_id_from_roster = roster["team_id"]  # shape 1: the roster carries its own team id
+        elif _looks_like_team_id(top_key):
+            team_id_from_roster = top_key  # shape 1 fallback: the top-level key IS the team id int
+        else:
+            team_id_from_roster = None  # shapes 2 & 3: the top key is a team NAME -> use per-player id
+
+        for player in players_iter:
+            if not isinstance(player, dict):
+                continue  # backstop: a stray non-dict entry never crashes the corpus pass
             pid = player.get("player_id")
-            tid = player.get("team_id")
+            tid = player.get("team_id") or team_id_from_roster
             if pid is None or tid is None:
                 continue
             out[canonical_id(pid)] = tid
     return out
 
 
-def _values(payload) -> list:
-    """statsbombpy returns a dict (``fmt="dict"``) or a list depending on version (mirrors _sb_open_data)."""
-    return list(payload.values()) if isinstance(payload, dict) else list(payload)
+def _looks_like_team_id(key) -> bool:
+    """A top-level lineups key is a team id (shape 1) rather than a team NAME (shapes 2/3) iff it is an
+    integral value -- an ``int`` or a digit string. A team NAME is a non-numeric ``str``."""
+    if isinstance(key, bool):  # bool is an int subclass; a team id is never a bool
+        return False
+    if isinstance(key, int):
+        return True
+    if isinstance(key, str):
+        return key.strip().lstrip("-").isdigit()
+    return False
 
 
 def _score_match(item, *, xt, completion_model) -> pd.DataFrame:

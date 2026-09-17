@@ -20,11 +20,14 @@ from build_territory_ranking_census import (
     MIN_MULTI_TEAM_DEFENDERS,
     MIN_PASSES_FACED,
     POWER_FLOOR,
+    _lineup_team_map,
     build_ranking,
     census_gate,
     tier1_counts,
     tier2_icc,
 )
+
+from silly_kicks.id_compat import canonical_id
 
 _VOLUME_COL = "territory_passes_aimed_into_hull"
 _METRIC_COL = "territory_xt_prevented_above_expectation"
@@ -250,6 +253,186 @@ def test_build_ranking_filters_below_volume_defenders():
     ranked = build_ranking(df, licensed=True, min_passes_faced=30)
     assert ranked is not None
     assert set(ranked["player_id"]) == {"hi"}  # 'lo' filtered out despite the higher metric value
+
+
+# --------------------------------------------------------------------------------------------------
+# _lineup_team_map: robust to ALL statsbombpy roster shapes + defensive on non-dict entries -- and it
+# MUST MAP the players, not skip them (a skip-only "fix" reads as a match with zero defenders, which
+# is worse than a crash because it looks like real data).
+#
+# `sb.lineups(fmt="dict")` returns `{top_key: roster}`, and the roster VARIES across statsbombpy
+# versions / open-data competitions:
+#
+#   (1) The CONFIRMED real shape (verified on the live corpus, match 3879673): the top-level dict is
+#       keyed by team_id(int) and each roster is a WRAPPER dict
+#       `{"team_id":..., "team_name":..., "lineup":[player_dict, ...]}`. The players live in
+#       `roster["lineup"]`; the team id is `roster["team_id"]` (or the top-level key). The prior
+#       `for player in _values(roster)` iterated `[team_id(int), team_name(str), lineup(list)]` and its
+#       `isinstance(player, dict)` skip dropped ALL THREE -> ZERO players mapped (silent data loss).
+#   (2) The list form (WC2022, which the probe used): `{team_name: [player_dict, ...]}`. Players are the
+#       list; team id is each player dict's own `team_id`.
+#   (3) The pid-keyed form: `{team_name: {player_id: player_dict}}`. Players are `roster.values()`; team
+#       id is each player dict's own `team_id`.
+#
+# The map must reach the real PLAYER DICTS in every shape, MAP them to their team id, and never crash on
+# a stray non-dict entry. The shape-(1) test below asserts the players ARE MAPPED (exact contents), so
+# it FAILS against a skip-only implementation.
+# --------------------------------------------------------------------------------------------------
+
+
+def _install_fake_lineups(monkeypatch, lineups_by_match: dict):
+    """Inject a fake `statsbombpy` module so `_lineup_team_map`'s function-local import resolves
+    (statsbombpy is a scripts-only network dep, not installed in CI). `sb.lineups(match_id, fmt=...)`
+    returns the stubbed per-match `{top_key: roster}` payload."""
+    import sys
+    import types
+
+    fake_sb = types.SimpleNamespace(lineups=lambda match_id, fmt="dict": lineups_by_match[int(match_id)])
+    fake_mod = types.ModuleType("statsbombpy")
+    fake_mod.sb = fake_sb  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "statsbombpy", fake_mod)
+
+
+def test_lineup_team_map_team_id_keyed_lineup_wrapper_shape(monkeypatch):
+    """Shape (1): the CONFIRMED real corpus shape -- top-level `{team_id(int): {"team_id","team_name",
+    "lineup":[player_dict,...]}}`. EVERY player must map to its team id (a NON-EMPTY, EXACT map). This
+    is the test a skip-only implementation FAILS: iterating `roster.values()` and dropping non-dicts
+    would map ZERO players here, so asserting exact non-empty contents (not "did not raise") is what
+    exposes the silent data loss."""
+    _install_fake_lineups(
+        monkeypatch,
+        {
+            # top-level keyed by team_id (int); roster is the "lineup"-wrapper dict.
+            777: {
+                230: {
+                    "team_id": 230,
+                    "team_name": "Team A",
+                    "lineup": [
+                        {"player_id": 1, "team_id": 230},
+                        {"player_id": 2, "team_id": 230},
+                    ],
+                },
+                228: {
+                    "team_id": 228,
+                    "team_name": "Team B",
+                    "lineup": [
+                        {"player_id": 3, "team_id": 228},
+                    ],
+                },
+            }
+        },
+    )
+    out = _lineup_team_map("777")
+    # Non-empty AND exact: every player is mapped to the correct raw team_id (a skip-only fix -> {}).
+    assert out == {canonical_id(1): 230, canonical_id(2): 230, canonical_id(3): 228}
+    assert out  # explicit: the map is NOT empty (the skip-only-implementation defect)
+
+
+def test_lineup_team_map_lineup_wrapper_missing_player_team_id_falls_back_to_roster(monkeypatch):
+    """Shape (1) fallback: when a wrapped player dict lacks its own `team_id`, the roster-level
+    `team_id` (and, absent that, the top-level team_id key) supplies it -- so the player still maps."""
+    _install_fake_lineups(
+        monkeypatch,
+        {
+            888: {
+                # roster dict carries team_id; players do not -> fall back to roster["team_id"].
+                230: {
+                    "team_id": 230,
+                    "team_name": "Team A",
+                    "lineup": [{"player_id": 1}, {"player_id": 2}],
+                },
+                # roster dict LACKS team_id; the top-level key IS the team id int -> fall back to it.
+                228: {
+                    "team_name": "Team B",
+                    "lineup": [{"player_id": 3}],
+                },
+            }
+        },
+    )
+    out = _lineup_team_map("888")
+    assert out == {canonical_id(1): 230, canonical_id(2): 230, canonical_id(3): 228}
+
+
+def test_lineup_team_map_list_of_dicts_roster_shape(monkeypatch):
+    """Shape (2): a `list[player_dict]` roster (the WC2022 form the probe used) maps via each player's
+    own `team_id` (the top key is a team NAME, so no roster-level id to fall back to)."""
+    _install_fake_lineups(
+        monkeypatch,
+        {
+            111: {
+                "Team A": [
+                    {"player_id": 1, "team_id": 900},
+                    {"player_id": 2, "team_id": 900},
+                ],
+                "Team B": [
+                    {"player_id": 3, "team_id": 901},
+                ],
+            }
+        },
+    )
+    out = _lineup_team_map("111")
+    assert out == {canonical_id(1): 900, canonical_id(2): 900, canonical_id(3): 901}
+
+
+def test_lineup_team_map_dict_keyed_roster_shape(monkeypatch):
+    """Shape (3): a `{player_id: player_dict}` roster maps correctly -- iterate the player DICTS
+    (values), never the int player_id keys; team id comes from each player dict's own `team_id`."""
+    _install_fake_lineups(
+        monkeypatch,
+        {
+            222: {
+                "Team A": {
+                    1: {"player_id": 1, "team_id": 900},
+                    2: {"player_id": 2, "team_id": 900},
+                },
+                "Team B": {
+                    3: {"player_id": 3, "team_id": 901},
+                },
+            }
+        },
+    )
+    out = _lineup_team_map("222")
+    assert out == {canonical_id(1): 900, canonical_id(2): 900, canonical_id(3): 901}
+
+
+def test_lineup_team_map_skips_non_dict_entries_without_crashing(monkeypatch):
+    """A stray non-dict entry INSIDE a resolved players iterable (an int / None) is skipped, no crash,
+    and the OTHER real players still map -- exercised across all three roster shapes."""
+    _install_fake_lineups(
+        monkeypatch,
+        {
+            333: {
+                # shape (1): a stray non-dict inside a "lineup" list.
+                230: {
+                    "team_id": 230,
+                    "team_name": "Team A",
+                    "lineup": [
+                        {"player_id": 1, "team_id": 230},
+                        7,  # stray non-dict entry
+                        None,
+                        {"player_id": 2, "team_id": 230},
+                    ],
+                },
+                # shape (2): a bare list with a stray non-dict.
+                "Team B": [
+                    {"player_id": 3, "team_id": 901},
+                    "junk",  # stray non-dict entry
+                ],
+                # shape (3): a pid-keyed roster whose values include a stray non-dict.
+                "Team C": {
+                    4: {"player_id": 4, "team_id": 902},
+                    99: 99,  # stray non-dict value
+                },
+            }
+        },
+    )
+    out = _lineup_team_map("333")
+    assert out == {
+        canonical_id(1): 230,
+        canonical_id(2): 230,
+        canonical_id(3): 901,
+        canonical_id(4): 902,
+    }
 
 
 # --------------------------------------------------------------------------------------------------
