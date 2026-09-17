@@ -16,7 +16,7 @@
 - **Real SPADL `type_id`/`result_id` (ints)** via `from silly_kicks.spadl import config as spadlconfig` (`spadlconfig.actiontype_id[...]`/`result_id[...]`); NEVER `type_name`/`result_name`.
 - **ADR-019:** canonical-id grouping via `id_compat` (`canonical_id_series`/`canonical_id`), raw id emitted; no raw `==` on ids.
 - **ADR-042:** conservation census; honest-NaN, never a fabricated 0.
-- **ADR-009:** `for_provider` ships EMPTY; the module changes no default; the calibration study is reported-not-gated; the bundled ρ is an OPT-IN method, default stays `independent`.
+- **ADR-009:** `for_provider` ships EMPTY; the calibration study is reported-not-gated. **AMENDED (ADR-097, commit 2):** the DEFAULT was promoted from `independent` to **both corrections ON** on the measured full-corpus calibration (paired per-match Brier: dixon_coles beats independent on 77.3% of matches, p≈1e-124; both beats independent on 68.7%, p≈1e-71) + the correctness of `collapse` — the separate ADR-009-gated decision this plan anticipated. `"independent"` remains opt-in. The default compute path now requires the bundled ρ (fail-closed).
 - **ADR-037/052/056:** the two scripts adopt `require_clean_tree` + `run_commit`, `for_each` shards, `declare_inputs`.
 - **Commit discipline:** each commit needs the owner's explicit approval for that specific commit; no micro-commits; 2 commits total (§Delivery).
 - **Event-only:** never import `tracking`; AST import-allowlist both directions; nothing imports `match_outcome`.

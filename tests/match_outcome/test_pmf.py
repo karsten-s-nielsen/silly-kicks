@@ -7,7 +7,11 @@ from itertools import product
 import numpy as np
 import pytest
 
-from silly_kicks.match_outcome import goal_count_pmf, match_outcome_probabilities
+from silly_kicks.match_outcome import MatchOutcomeParams, goal_count_pmf, match_outcome_probabilities
+
+#: Naive baseline (both corrections OFF) -- the package default is now both ON (ADR-097), so the
+#: exact PB-simplex assertions below pin independent explicitly.
+_INDEP = MatchOutcomeParams(same_possession="independent", team_dependence="independent")
 
 
 def _brute_force_pmf(xgs: list[float]) -> np.ndarray:
@@ -38,16 +42,16 @@ def test_pmf_edges():
 def test_outcome_probs_sum_to_one_and_symmetric():
     home = goal_count_pmf([0.4, 0.2, 0.1])
     away = goal_count_pmf([0.3, 0.3])
-    ph, pd_, pa = match_outcome_probabilities(home, away)
+    ph, pd_, pa = match_outcome_probabilities(home, away, params=_INDEP)
     assert abs(ph + pd_ + pa - 1.0) < 1e-12
-    # symmetric inputs -> symmetric outputs; draw = sum of matched-score products
+    # symmetric inputs -> symmetric outputs; independent draw = sum of matched-score products
     s = goal_count_pmf([0.5, 0.25])
-    ph2, pd2, pa2 = match_outcome_probabilities(s, s)
+    ph2, pd2, pa2 = match_outcome_probabilities(s, s, params=_INDEP)
     assert abs(ph2 - pa2) < 1e-12
     assert abs(pd2 - float((s * s).sum())) < 1e-12
 
 
 def test_single_shot_each():
-    # one 0.5 shot each: draw = 0.5*0.5 (0-0) + 0.5*0.5 (1-1) = 0.5; win = loss = 0.25
-    ph, pd_, pa = match_outcome_probabilities(goal_count_pmf([0.5]), goal_count_pmf([0.5]))
+    # one 0.5 shot each (independent): draw = 0.5*0.5 (0-0) + 0.5*0.5 (1-1) = 0.5; win = loss = 0.25
+    ph, pd_, pa = match_outcome_probabilities(goal_count_pmf([0.5]), goal_count_pmf([0.5]), params=_INDEP)
     assert abs(pd_ - 0.5) < 1e-12 and abs(ph - 0.25) < 1e-12 and abs(pa - 0.25) < 1e-12

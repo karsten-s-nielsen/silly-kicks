@@ -9,7 +9,10 @@ from silly_kicks.match_outcome import MatchOutcomeParams, compute_match_outcome
 from silly_kicks.match_outcome._collapse import collapse_team_xgs
 from tests.match_outcome._helpers import PASS, SHOT, make_actions, rows_by
 
-_COLLAPSE = MatchOutcomeParams(same_possession="collapse")
+# Isolate the collapse axis: both hold team_dependence="independent" so only same_possession differs
+# (the package DEFAULT now sets team_dependence="dixon_coles" too, ADR-097).
+_INDEP = MatchOutcomeParams(same_possession="independent", team_dependence="independent")
+_COLLAPSE_ONLY = MatchOutcomeParams(same_possession="collapse", team_dependence="independent")
 
 
 def test_collapse_combines_same_possession():
@@ -38,8 +41,8 @@ def test_compute_collapse_differs_on_same_possession():
             {"team_id": 20, "type_id": SHOT, "xg": 0.3, "time_seconds": 30.0},
         ]
     )
-    indep = rows_by(compute_match_outcome(fx, xg_column="xg")[0])
-    coll = rows_by(compute_match_outcome(fx, xg_column="xg", params=_COLLAPSE)[0])
+    indep = rows_by(compute_match_outcome(fx, xg_column="xg", params=_INDEP)[0])
+    coll = rows_by(compute_match_outcome(fx, xg_column="xg", params=_COLLAPSE_ONLY)[0])
     # independent team10 pmf = PB([0.5,0.5]); collapsed = PB([0.75]) -> different p_win
     assert abs(indep[10]["p_win"] - coll[10]["p_win"]) > 1e-3
     for r in (indep, coll):
@@ -57,6 +60,10 @@ def test_compute_collapse_identical_when_all_distinct():
             {"team_id": 20, "type_id": SHOT, "xg": 0.3, "time_seconds": 30.0},
         ]
     )
-    indep = compute_match_outcome(fx, xg_column="xg")[0].sort_values("team_id").reset_index(drop=True)
-    coll = compute_match_outcome(fx, xg_column="xg", params=_COLLAPSE)[0].sort_values("team_id").reset_index(drop=True)
+    indep = compute_match_outcome(fx, xg_column="xg", params=_INDEP)[0].sort_values("team_id").reset_index(drop=True)
+    coll = (
+        compute_match_outcome(fx, xg_column="xg", params=_COLLAPSE_ONLY)[0]
+        .sort_values("team_id")
+        .reset_index(drop=True)
+    )
     pd.testing.assert_frame_equal(indep, coll)

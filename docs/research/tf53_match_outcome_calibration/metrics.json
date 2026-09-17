@@ -1,0 +1,118 @@
+{
+  "n_matches": 3961,
+  "per_config": [
+    {
+      "config": "both",
+      "n": 7922,
+      "brier": 0.4911013390476169,
+      "calibration_slope": 0.9177870344984318,
+      "mean_xpoints": 1.385559731173362,
+      "mean_points": 1.3935874779096187,
+      "xpoints_bias": -0.008027746736256614
+    },
+    {
+      "config": "collapse",
+      "n": 7922,
+      "brier": 0.4913208291928017,
+      "calibration_slope": 0.9190536531895238,
+      "mean_xpoints": 1.3838790051877983,
+      "mean_points": 1.3935874779096187,
+      "xpoints_bias": -0.009708472721820405
+    },
+    {
+      "config": "dixon_coles",
+      "n": 7922,
+      "brier": 0.4917592355275972,
+      "calibration_slope": 0.9095184585383558,
+      "mean_xpoints": 1.3864516556859112,
+      "mean_points": 1.3935874779096187,
+      "xpoints_bias": -0.007135822223707455
+    },
+    {
+      "config": "independent",
+      "n": 7922,
+      "brier": 0.49196733243887486,
+      "calibration_slope": 0.9107731618920519,
+      "mean_xpoints": 1.3847836252137153,
+      "mean_points": 1.3935874779096187,
+      "xpoints_bias": -0.008803852695903336
+    }
+  ],
+  "cv_rho_by_fold": [
+    {
+      "fold": 0,
+      "rho": 0.03321870410725598,
+      "n_train_games": 3168,
+      "n_test_games": 793,
+      "heldout_brier_dixon": 0.4770878341742308,
+      "heldout_brier_indep": 0.4770212607862476
+    },
+    {
+      "fold": 1,
+      "rho": 0.0251531023055417,
+      "n_train_games": 3169,
+      "n_test_games": 792,
+      "heldout_brier_dixon": 0.5023601435738355,
+      "heldout_brier_indep": 0.5027670488272493
+    },
+    {
+      "fold": 2,
+      "rho": 0.022416271522589567,
+      "n_train_games": 3169,
+      "n_test_games": 792,
+      "heldout_brier_dixon": 0.480778597978747,
+      "heldout_brier_indep": 0.480987775505139
+    },
+    {
+      "fold": 3,
+      "rho": 0.010196522521677773,
+      "n_train_games": 3169,
+      "n_test_games": 792,
+      "heldout_brier_dixon": 0.5065579658526073,
+      "heldout_brier_indep": 0.5066926656781897
+    },
+    {
+      "fold": 4,
+      "rho": 0.017034291882158277,
+      "n_train_games": 3169,
+      "n_test_games": 792,
+      "heldout_brier_dixon": 0.49203016055522364,
+      "heldout_brier_indep": 0.49238678270014036
+    }
+  ],
+  "note": "Reported-not-gated (ADR-009): the study changes NO library default. The dixon_coles/both arms use a per-fold rho (grouped by game_id, held-out), never the bundled weights.",
+  "generation": "7b399d45e94e2d57",
+  "n_attempted": 3961,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "run_commit": "dd133e0bde1c56328bbdd8dabd5ce1643004faf1",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_match_outcome_calibration",
+    "params": {
+      "configs": [
+        "independent",
+        "collapse",
+        "dixon_coles",
+        "both"
+      ],
+      "default_folds": 5,
+      "match_outcome": {
+        "_is_universal_default": false,
+        "possession_max_gap_seconds": 7.0,
+        "same_possession": "independent",
+        "team_dependence": "independent"
+      }
+    },
+    "extractors": [
+      "silly_kicks.match_outcome._pmf",
+      "silly_kicks.match_outcome._collapse"
+    ],
+    "models": [
+      "silly_kicks.match_outcome._dependence"
+    ],
+    "digest": "b3ddb7772f7f396c6c5e0599bf158191853ddd05d3e283edd7e42bca73cf7b36"
+  }
+}

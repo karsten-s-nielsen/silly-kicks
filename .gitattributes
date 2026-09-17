@@ -15,6 +15,12 @@ silly_kicks/tracking/_ghost_outfield_weights/** binary
 # + chirality) + SHA256SUMS + MODEL_CARD.md. Whole-directory pin like the four above, so Windows
 # autocrlf cannot flip the checksummed model.json or bloat the large metadata.json diff on checkout.
 silly_kicks/xsuccess/weights/** binary
+# Match-outcome (TF-53) bundled Dixon-Coles rho: model.json (SHA-verified) + SHA256SUMS. Whole-directory
+# pin like the five above. UNLIKE ghost-GK/gk-completion/receiver, DependenceModel.load hashes the RAW
+# bytes (no CRLF normalization -- byte-exact, like xshot/xcross), so this pin is LOAD-BEARING for
+# verification, not churn prevention: without it Windows autocrlf flips model.json to CRLF on checkout
+# and the SHA-256 no longer matches SHA256SUMS -> MatchOutcomeIntegrityError (caught on windows CI).
+silly_kicks/match_outcome/weights/** binary
 # GK-completion (4.73.0), pinned NARROWLY -- only the SHA-verified pair, not the whole directory
 # like the three above. Its `_sha` normalizes CRLF before hashing, so verification was never at risk;
 # the pin exists to stop model.json flipping to CRLF on the next checkout and producing a spurious

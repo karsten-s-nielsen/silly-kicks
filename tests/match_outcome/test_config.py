@@ -17,10 +17,11 @@ def test_default_and_for_provider():
     assert MatchOutcomeParams.for_provider("wyscout") == MatchOutcomeParams()
 
 
-def test_defaults_are_naive_baseline():
+def test_defaults_are_both_corrections():
+    # ADR-097: default is both corrections ON (collapse on correctness, dixon_coles on measured evidence).
     p = MatchOutcomeParams()
-    assert p.same_possession == "independent"
-    assert p.team_dependence == "independent"
+    assert p.same_possession == "collapse"
+    assert p.team_dependence == "dixon_coles"
 
 
 def test_post_init_rejects_invalid_enums():

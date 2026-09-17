@@ -65,7 +65,15 @@ add nothing here (wrong shape). The only fitted parameter in the whole design is
   simplex → `p_win/draw/loss`; `xPoints = 3·p_win + p_draw`.
 - Distribution surfaced via the two primitives (§2), so nothing is thrown away.
 
-## 4. Rung 3 — two ORTHOGONAL corrections (composable, both opt-in)
+## 4. Rung 3 — two ORTHOGONAL corrections (composable)
+
+> **AMENDED (ADR-097, commit 2):** the DEFAULT was promoted from `independent` to **both corrections ON**
+> — `collapse` on correctness (same-possession shots are not independent trials) + `dixon_coles` on the
+> measured full-corpus calibration (paired per-match Brier: dixon_coles beats independent on 77.3% of
+> matches, Wilcoxon p≈1e-124; both beats independent on 68.7%, p≈1e-71). `"independent"` remains opt-in on
+> either axis. This supersedes the "both opt-in / DEFAULT stays independent" statements in this §4 and §5
+> below (which described the pre-promotion design); the promotion is the ADR-009-gated separate decision §5
+> anticipated, taken on the study's evidence.
 
 They act at different stages, so `MatchOutcomeParams` carries **two independent string-dispatched
 axes** (house `method=`/frozen-params idiom, like `xthreat`/`gk_decision`), both defaulting to the

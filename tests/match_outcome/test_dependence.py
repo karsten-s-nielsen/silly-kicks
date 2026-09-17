@@ -102,7 +102,13 @@ def test_compute_dixon_coles_fails_closed_without_bundled_weights():
 
 def test_compute_dixon_coles_and_collapse_compose(monkeypatch):
     monkeypatch.setattr(_dependence, "resolve_rho", lambda params: 0.1)
-    indep = rows_by(compute_match_outcome(_two_team(), xg_column="xg")[0])
+    indep = rows_by(
+        compute_match_outcome(
+            _two_team(),
+            xg_column="xg",
+            params=MatchOutcomeParams(same_possession="independent", team_dependence="independent"),
+        )[0]
+    )
     dc = rows_by(
         compute_match_outcome(_two_team(), xg_column="xg", params=MatchOutcomeParams(team_dependence="dixon_coles"))[0]
     )

@@ -5,8 +5,12 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from silly_kicks.match_outcome import compute_match_outcome
+from silly_kicks.match_outcome import MatchOutcomeParams, compute_match_outcome
 from tests.match_outcome._helpers import PASS, SHOT, make_actions, rows_by
+
+#: The naive baseline (both corrections OFF) -- used where a test asserts exact Poisson-binomial math.
+#: The package DEFAULT is now both corrections ON (ADR-097), so PB-core assertions pin this explicitly.
+_INDEP = MatchOutcomeParams(same_possession="independent", team_dependence="independent")
 
 
 def _two_team(xgs_home, xgs_away, *, home=10, away=20, game_id=1):
@@ -54,7 +58,7 @@ def test_no_shots_team_scores_zero():
 
 def test_nan_xg_shot_excluded_but_counted():
     fx = _two_team([0.5, float("nan")], [0.3], game_id=1)  # one NaN-xg shot for team 10
-    s, rep = compute_match_outcome(fx, xg_column="xg")
+    s, rep = compute_match_outcome(fx, xg_column="xg", params=_INDEP)  # PB-core math: pin independent
     assert rep.n_shots == 3 and rep.n_shots_with_xg == 2 and rep.n_shots_null_xg == 1
     # the NaN shot is dropped from the pmf -> team 10 pmf is that of a single 0.5 shot
     r = rows_by(s)
@@ -71,7 +75,7 @@ def test_face_validity_ordering_and_magnitude():
     # West Ham (0.41 win in the course) has HIGHER total xG than Arsenal (0.33)
     arsenal = [0.3, 0.25, 0.2, 0.15, 0.15, 0.12, 0.1, 0.1, 0.1, 0.1]  # ~1.57
     westham = [0.4, 0.3, 0.25, 0.2, 0.15, 0.12, 0.1, 0.1, 0.1]  # ~1.72
-    s, _ = compute_match_outcome(_two_team(arsenal, westham), xg_column="xg")
+    s, _ = compute_match_outcome(_two_team(arsenal, westham), xg_column="xg", params=_INDEP)  # PB-core anchor
     r = rows_by(s)
     r10, r20 = r[10], r[20]
     assert r20["p_win"] > r10["p_win"]  # higher-xG team more likely to win
@@ -88,3 +92,24 @@ def test_order_insensitive_and_pure():
         s1.sort_values("team_id").reset_index(drop=True), s2.sort_values("team_id").reset_index(drop=True)
     )
     pd.testing.assert_frame_equal(fx, before)  # input unmutated
+
+
+def test_default_is_both_corrections():
+    # ADR-097: the package default is collapse + dixon_coles, not the naive independent baseline.
+    assert MatchOutcomeParams().same_possession == "collapse"
+    assert MatchOutcomeParams().team_dependence == "dixon_coles"
+    # Behaviourally: on a fixture with a same-possession multi-shot (collapse bites) and both teams
+    # scoring (dixon tau bites), the DEFAULT compute (loads the bundled rho) differs from independent.
+    fx = make_actions(
+        [
+            {"team_id": 10, "type_id": SHOT, "xg": 0.5, "time_seconds": 0.0},
+            {"team_id": 10, "type_id": SHOT, "xg": 0.5, "time_seconds": 0.5},  # same possession as prev
+            {"team_id": 20, "type_id": SHOT, "xg": 0.4, "time_seconds": 30.0},
+        ],
+        game_id=1,
+    )
+    default = rows_by(compute_match_outcome(fx, xg_column="xg")[0])  # both (bundled rho)
+    indep = rows_by(compute_match_outcome(fx, xg_column="xg", params=_INDEP)[0])
+    assert abs(default[10]["p_win"] - indep[10]["p_win"]) > 1e-3  # corrections move the number
+    for r in (default, indep):  # both remain valid simplices
+        assert abs(r[10]["p_win"] + r[10]["p_draw"] + r[10]["p_loss"] - 1.0) < 1e-12
