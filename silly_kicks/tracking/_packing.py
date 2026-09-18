@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
@@ -116,40 +117,24 @@ def _direction_multiplier(dx: float, dy: float, params: PackingParams) -> float:
     return params.back_multiplier
 
 
-def compute_packing_metrics(
+def _packing_setup(
     frame: pd.DataFrame,
     *,
     attacking_team_id: int | str,
     goal_map: GoalMap,
-    passer_xy: tuple[float, float],
-    receiver_xy: tuple[float, float],
-    params: PackingParams | None = None,
-) -> dict[str, float]:
-    """Per-frame packing metrics for ONE linked frame (pure; schema-agnostic endpoints).
+    params: PackingParams,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """The loop-INVARIANT packing setup: the defender x-array ``dx_`` and back-line x-array ``bx``,
+    both mirrored into attack-positive x, computed ONCE per (frame, attacking_team, goal_map).
 
-    Returns packing_made / packing_net / packing_goal_threat / line_x. NaN when the
-    frame is empty, endpoints are non-finite, or no eligible defender exists.
-    Defender extraction + away-mirror duplicated from _structural_pass.py by design.
-
-    Examples
-    --------
-    Compute packing metrics for a single pass on a frame::
-
-        from silly_kicks.tracking import compute_packing_metrics
-        m = compute_packing_metrics(
-            frame, attacking_team_id=1, home_team_id=1,
-            passer_xy=(50.0, 34.0), receiver_xy=(70.0, 34.0),
-        )
-        m["packing_made"]
+    Everything here is independent of ``passer_xy``/``receiver_xy`` -- the expensive defender
+    extraction, the ``goal_map`` lookups and ``select_back_line_players`` -- so the batch hoists it
+    out of the per-receiver loop (loop-invariant computation, optimization-audit finding #1). Returns
+    ``(dx_, bx)`` where ``dx_ is None`` means "no eligible defender -> all-NaN metrics" and
+    ``bx is None`` means "no back line -> goal_threat NaN" (an EMPTY ``bx`` array is distinct: it
+    yields ``goal_threat == 0.0``, matching the scalar). Raises ``GoalEndUnresolvedError`` on an
+    unresolvable map -- invariant of the receiver, so it fires once for the whole batch.
     """
-    if params is None:
-        params = PackingParams()
-
-    if frame is None or len(frame) == 0:
-        return dict(_NAN_METRICS)
-    if not all(np.isfinite(v) for v in (*passer_xy, *receiver_xy)):
-        return dict(_NAN_METRICS)
-
     # Defender extraction + away-mirror deliberately duplicated from _structural_pass.py
     # (frozen-kernel isolation; consolidation trigger = 3rd consumer, ADR-039). NOTE the
     # deliberate divergence: packing mirrors X ONLY (all three counts are x-interval
@@ -160,10 +145,9 @@ def compute_packing_metrics(
     opp_all = players[~ids_match(players["team_id"], attacking_team_id).to_numpy()]
     opp = opp_all if params.include_gk else opp_all[~opp_all["is_goalkeeper"].astype(bool).to_numpy()]
     dx_ = opp["x"].to_numpy(dtype="float64")
-    ok = np.isfinite(dx_)
-    dx_ = dx_[ok]
+    dx_ = dx_[np.isfinite(dx_)]
     if dx_.size == 0:
-        return dict(_NAN_METRICS)
+        return None, None
 
     # Direction from the map, never from team IDENTITY (ADR-051 D3). The mirror is needed
     # exactly when the ACTING team attacks x=0, which is what `attacked_goal` answers -- and it
@@ -181,49 +165,142 @@ def compute_packing_metrics(
     if mirror:
         dx_ = 105.0 - dx_
 
-    p, r = np.asarray(passer_xy, float), np.asarray(receiver_xy, float)
-    made = float(np.count_nonzero((dx_ > p[0]) & (dx_ <= r[0])))
-    bypassed = dx_[(dx_ > p[0]) & (dx_ <= r[0])]
-    line_x = float(bypassed.max()) if bypassed.size else np.nan
-
-    lo, hi = min(p[0], r[0]), max(p[0], r[0])
-    interval = float(np.count_nonzero((dx_ > lo) & (dx_ <= hi)))
-    net = _direction_multiplier(r[0] - p[0], r[1] - p[1], params) * interval
-
-    # Goal-threat: select-then-mirror. select_back_line_players wants the DEFENDING
+    # Goal-threat back line: select-then-mirror. select_back_line_players wants the DEFENDING
     # team's id (its "own goal" is the defending team's) -- resolve it NaN-safely from
     # the frame's non-attacking players (review blocker 3). Caveat: the helper
     # short-circuits len(outfield) < 3 -> returns outfield unselected (sparse frames).
     def_team_vals = opp_all["team_id"].dropna().unique()
     if len(def_team_vals) == 0:
-        gt = np.nan
-    else:
-        # The DEFENDING team's own end -- `get`, not `attacked_goal`: this selects the players
-        # nearest the goal they defend. Distinct from the mirror above, which asks where the
-        # ATTACKING team is going; `packing_goal_threat` is the only emitted column that
-        # witnesses this site, which is why it is named in the entry's gate_c_must_move.
-        _def_end = goal_map.get(_gid, _pid, def_team_vals[0], allow_guess=True)
-        if _def_end is None:
-            raise GoalEndUnresolvedError(
-                f"packing: goal_map does not resolve the end defended by {def_team_vals[0]!r} "
-                f"in (game={_gid!r}, period={_pid!r})."
-            )
-        back = select_back_line_players(
-            frame,
-            def_team_vals[0],
-            _def_end == 0.0,
-            n=params.back_line_n,
+        return dx_, None
+    # The DEFENDING team's own end -- `get`, not `attacked_goal`: this selects the players
+    # nearest the goal they defend. Distinct from the mirror above, which asks where the
+    # ATTACKING team is going; `packing_goal_threat` is the only emitted column that
+    # witnesses this site, which is why it is named in the entry's gate_c_must_move.
+    _def_end = goal_map.get(_gid, _pid, def_team_vals[0], allow_guess=True)
+    if _def_end is None:
+        raise GoalEndUnresolvedError(
+            f"packing: goal_map does not resolve the end defended by {def_team_vals[0]!r} "
+            f"in (game={_gid!r}, period={_pid!r})."
         )
-        if len(back) == 0:
-            gt = np.nan
-        else:
-            bx = back["x"].to_numpy(dtype="float64")
-            bx = bx[np.isfinite(bx)]
-            if mirror:
-                bx = 105.0 - bx
-            gt = float(np.count_nonzero((bx > p[0]) & (bx <= r[0])))
+    back = select_back_line_players(frame, def_team_vals[0], _def_end == 0.0, n=params.back_line_n)
+    if len(back) == 0:
+        return dx_, None
+    bx = back["x"].to_numpy(dtype="float64")
+    bx = bx[np.isfinite(bx)]
+    if mirror:
+        bx = 105.0 - bx
+    return dx_, bx
 
+
+def compute_packing_metrics_batch(
+    frame: pd.DataFrame,
+    *,
+    attacking_team_id: int | str,
+    goal_map: GoalMap,
+    passer_xy: tuple[float, float],
+    receivers: npt.ArrayLike,
+    params: PackingParams | None = None,
+) -> dict[str, np.ndarray]:
+    """Packing metrics for MANY receivers from ONE frame + passer (the batched kernel).
+
+    The loop-invariant defender/back-line setup is hoisted via :func:`_packing_setup` and only the
+    cheap per-receiver counts vary, so N option targets cost one setup instead of N. Byte-identical
+    to N scalar :func:`compute_packing_metrics` calls (gated by ``tests/tracking/test_packing_batch``).
+
+    ``receivers`` is an ``(n, 2)`` array of ``(x, y)`` endpoints. Returns a dict of four length-``n``
+    float arrays (``packing_made`` / ``packing_net`` / ``packing_goal_threat`` / ``line_x``). A
+    non-finite receiver row is NaN; an empty frame or a non-finite passer makes EVERY row NaN.
+    Raises ``GoalEndUnresolvedError`` on an unresolvable ``goal_map`` (receiver-invariant).
+
+    Examples
+    --------
+    Value several option targets from a single keeper distribution::
+
+        from silly_kicks.tracking import compute_packing_metrics_batch
+        out = compute_packing_metrics_batch(
+            frame, attacking_team_id=1, goal_map=gm,
+            passer_xy=(50.0, 34.0), receivers=np.array([[70.0, 34.0], [60.0, 20.0]]),
+        )
+        out["packing_made"]  # length-2 array
+    """
+    if params is None:
+        params = PackingParams()
+    receivers = np.asarray(receivers, dtype=float).reshape(-1, 2)
+    n = len(receivers)
+
+    def _all_nan() -> dict[str, np.ndarray]:
+        return {k: np.full(n, np.nan) for k in ("packing_made", "packing_net", "packing_goal_threat", "line_x")}
+
+    if frame is None or len(frame) == 0:
+        return _all_nan()
+    if not all(np.isfinite(v) for v in passer_xy):
+        return _all_nan()
+    dx_, bx = _packing_setup(frame, attacking_team_id=attacking_team_id, goal_map=goal_map, params=params)
+    if dx_ is None:
+        return _all_nan()
+
+    p0, p1 = float(passer_xy[0]), float(passer_xy[1])
+    made = np.empty(n)
+    net = np.empty(n)
+    gt = np.empty(n)
+    line_x = np.empty(n)
+    for i in range(n):
+        rx, ry = receivers[i]
+        if not (np.isfinite(rx) and np.isfinite(ry)):
+            made[i] = net[i] = gt[i] = line_x[i] = np.nan
+            continue
+        r0, r1 = float(rx), float(ry)
+        sel = (dx_ > p0) & (dx_ <= r0)
+        made[i] = float(np.count_nonzero(sel))
+        bypassed = dx_[sel]
+        line_x[i] = float(bypassed.max()) if bypassed.size else np.nan
+        lo, hi = (p0, r0) if p0 <= r0 else (r0, p0)
+        interval = float(np.count_nonzero((dx_ > lo) & (dx_ <= hi)))
+        net[i] = _direction_multiplier(r0 - p0, r1 - p1, params) * interval
+        gt[i] = np.nan if bx is None else float(np.count_nonzero((bx > p0) & (bx <= r0)))
     return {"packing_made": made, "packing_net": net, "packing_goal_threat": gt, "line_x": line_x}
+
+
+def compute_packing_metrics(
+    frame: pd.DataFrame,
+    *,
+    attacking_team_id: int | str,
+    goal_map: GoalMap,
+    passer_xy: tuple[float, float],
+    receiver_xy: tuple[float, float],
+    params: PackingParams | None = None,
+) -> dict[str, float]:
+    """Per-frame packing metrics for ONE linked frame (pure; schema-agnostic endpoints).
+
+    Returns packing_made / packing_net / packing_goal_threat / line_x. NaN when the
+    frame is empty, endpoints are non-finite, or no eligible defender exists. Thin scalar wrapper
+    over :func:`compute_packing_metrics_batch` (n=1); the receiver-finiteness guard is retained HERE
+    so a non-finite receiver returns NaN WITHOUT triggering the batch's goal_map raise (the scalar
+    checked receiver finiteness before the invariant work). Defender extraction + away-mirror
+    duplicated from _structural_pass.py by design.
+
+    Examples
+    --------
+    Compute packing metrics for a single pass on a frame::
+
+        from silly_kicks.tracking import compute_packing_metrics
+        m = compute_packing_metrics(
+            frame, attacking_team_id=1, goal_map=gm,
+            passer_xy=(50.0, 34.0), receiver_xy=(70.0, 34.0),
+        )
+        m["packing_made"]
+    """
+    if not all(np.isfinite(v) for v in (*passer_xy, *receiver_xy)):
+        return dict(_NAN_METRICS)
+    out = compute_packing_metrics_batch(
+        frame,
+        attacking_team_id=attacking_team_id,
+        goal_map=goal_map,
+        passer_xy=passer_xy,
+        receivers=np.asarray([receiver_xy], dtype=float),
+        params=params,
+    )
+    return {k: float(out[k][0]) for k in ("packing_made", "packing_net", "packing_goal_threat", "line_x")}
 
 
 _SHOT_TYPES = frozenset(spadlconfig.actiontype_id[n] for n in ("shot", "shot_penalty", "shot_freekick"))
