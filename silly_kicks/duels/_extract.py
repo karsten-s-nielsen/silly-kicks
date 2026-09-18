@@ -8,7 +8,7 @@ duels (no clear winner) are EXCLUDED and counted (owner ruling; ADR-042). ids vi
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 import pandas as pd
 
@@ -98,20 +98,37 @@ def _extract_native(a: pd.DataFrame) -> tuple[list[DuelGame], DuelExtractReport]
     tackles = a[a["type_id"] == _TACKLE]
     games: list[DuelGame] = []
     n_candidate = n_excluded = 0
-    for _, r in tackles.iterrows():
-        winner, loser = r.get("tackle_winner_player_id"), r.get("tackle_loser_player_id")
+    # itertuples over the ≤7 native-duel columns present (faster than iterrows; the column select keeps
+    # the row a NAMED tuple regardless of the actions frame's total width -- itertuples falls back to a
+    # nameless tuple past 255 columns). getattr keeps the winner/loser reads absent-safe (the old .get).
+    cols = [
+        c
+        for c in (
+            "game_id",
+            "period_id",
+            "time_seconds",
+            "tackle_winner_player_id",
+            "tackle_winner_team_id",
+            "tackle_loser_player_id",
+            "tackle_loser_team_id",
+        )
+        if c in tackles.columns
+    ]
+    for r in tackles[cols].itertuples(index=False):
+        winner = getattr(r, "tackle_winner_player_id", None)
+        loser = getattr(r, "tackle_loser_player_id", None)
         if pd.isna(winner) or pd.isna(loser):
             continue  # a tackle row without a native winner/loser is not a native duel
         n_candidate += 1
         games.append(
             DuelGame(
-                r["game_id"],
-                r["period_id"],
-                float(r["time_seconds"]),
+                r.game_id,
+                r.period_id,
+                float(cast(float, r.time_seconds)),  # itertuples attr is Scalar under pandas-stubs
                 winner,
-                r.get("tackle_winner_team_id"),
+                getattr(r, "tackle_winner_team_id", None),
                 loser,
-                r.get("tackle_loser_team_id"),
+                getattr(r, "tackle_loser_team_id", None),
                 "native",
             )
         )

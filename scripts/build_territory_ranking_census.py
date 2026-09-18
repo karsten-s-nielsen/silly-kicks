@@ -42,10 +42,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from _crossed_icc import bootstrap_icc_ci, crossed_variance_components  # scripts/ on sys.path (conftest)
+from _crossed_icc import bootstrap_icc_and_power  # scripts/ on sys.path (conftest)
 
 from scripts._input_contract import declare_inputs
 from silly_kicks.id_compat import canonical_id, canonical_id_series
+from silly_kicks.spadl import SPADL_COLUMNS
 from silly_kicks.territory import (
     TR_PASSES_AIMED_INTO_HULL,
     TR_XT_PREVENTED_ABOVE_EXPECTATION,
@@ -163,7 +164,7 @@ def tier1_counts(defender_team_metric: pd.DataFrame, *, min_passes_faced: int) -
 def tier2_icc(defender_team_metric: pd.DataFrame) -> dict:
     """Tier-2 crossed defender+team ICC on the metric value, with a bootstrap CI + power proxy.
 
-    Runs the Task-10 ``crossed_variance_components`` + ``bootstrap_icc_ci`` on the metric value keyed
+    Runs the Task-10 ``bootstrap_icc_and_power`` (one merged CI+power bootstrap) on the metric value keyed
     by ``(defender, team)`` (ADR-019 canonical codes). Only run when Tier-1 clears -- the census
     driver gates the call.
 
@@ -190,41 +191,23 @@ def tier2_icc(defender_team_metric: pd.DataFrame) -> dict:
     if len(y) == 0:
         return {"icc": float("nan"), "lo": float("nan"), "power": float("nan"), "n_boot_effective": 0}
 
-    ci = bootstrap_icc_ci(y, defender_codes, team_codes, n_boot=_N_BOOT, alpha=_ALPHA, rng_seed=_BOOT_SEED)
+    # ONE bootstrap pass yields BOTH the CI and the power (the two former loops drew the same resamples
+    # from the same seed; merging halves the crossed-model fits, byte-identical).
+    res = bootstrap_icc_and_power(
+        y,
+        defender_codes,
+        team_codes,
+        n_boot=_N_BOOT,
+        alpha=_ALPHA,
+        effect_size=ICC_EFFECT_SIZE,
+        rng_seed=_BOOT_SEED,
+    )
     return {
-        "icc": ci["icc"],
-        "lo": ci["lo"],
-        "power": _bootstrap_power(y, defender_codes, team_codes),
-        "n_boot_effective": ci["n_boot_effective"],
+        "icc": res["icc"],
+        "lo": res["lo"],
+        "power": res["power"],
+        "n_boot_effective": res["n_boot_effective"],
     }
-
-
-def _bootstrap_power(y, defender_codes, team_codes) -> float:
-    """Fraction of with-replacement defender-cluster bootstrap ICC draws that clear ``ICC_EFFECT_SIZE``.
-
-    Mirrors ``bootstrap_icc_ci``'s cluster resampling (whole defenders WITH replacement) so the power
-    proxy is drawn from the same design the CI is; a non-finite replicate is excluded from the
-    denominator (never counted as a detection). NaN when no finite replicate exists.
-    """
-    y = np.asarray(y, dtype=float)
-    defender_codes = np.asarray(defender_codes)
-    team_codes = np.asarray(team_codes)
-    unique_def = np.unique(defender_codes)
-    k = len(unique_def)
-    if k == 0:
-        return float("nan")
-    members = [np.flatnonzero(defender_codes == d) for d in unique_def]
-    rng = np.random.default_rng(_BOOT_SEED)
-    detections = total = 0
-    for _ in range(_N_BOOT):
-        picked = rng.integers(0, k, size=k)
-        idx = np.concatenate([members[j] for j in picked])
-        val = crossed_variance_components(y[idx], defender_codes[idx], team_codes[idx])["icc_defender"]
-        if np.isfinite(val):
-            total += 1
-            if val >= ICC_EFFECT_SIZE:
-                detections += 1
-    return (detections / total) if total else float("nan")
 
 
 def census_gate(census: dict) -> dict:
@@ -497,7 +480,15 @@ def _fit_disjoint_models(fit_actions: list[pd.DataFrame]):
 
     if not fit_actions:
         raise SystemExit("no fit-corpus matches: the leakage-disjoint split left nothing to fit xt/completion on")
-    pooled = pd.concat(fit_actions, ignore_index=True)
+    # Memory: xt.fit + PassCompletionModel.fit read only SPADL-canonical columns (type_id/result_id/
+    # start_x/y/end_x/y), so prune each fit-match to its SPADL_COLUMNS intersection BEFORE the concat.
+    # Complete-by-construction (both fits are pure SPADL consumers) + stable (SPADL_COLUMNS is the schema
+    # SSOT, not a hand-list) + drops only non-canonical extras (preserve_native/enriched/tracking joins)
+    # -> lower peak memory on the ~half-corpus pool. Byte-identical fit (tests/scripts/
+    # test_build_territory_ranking_census::test_fit_disjoint_models_column_prune_is_byte_identical).
+    _keep = list(SPADL_COLUMNS)
+    pruned = [a[[c for c in _keep if c in a.columns]] for a in fit_actions]
+    pooled = pd.concat(pruned, ignore_index=True)
     xt = ExpectedThreat().fit(pooled)
     completion_model = PassCompletionModel().fit(pooled)
     return xt, completion_model

@@ -20,6 +20,7 @@ from build_territory_ranking_census import (
     MIN_MULTI_TEAM_DEFENDERS,
     MIN_PASSES_FACED,
     POWER_FLOOR,
+    _fit_disjoint_models,
     _lineup_team_map,
     build_ranking,
     census_gate,
@@ -27,7 +28,10 @@ from build_territory_ranking_census import (
     tier2_icc,
 )
 
+from silly_kicks.expected_passing import PassCompletionModel
 from silly_kicks.id_compat import canonical_id
+from silly_kicks.spadl import config as spadlconfig
+from silly_kicks.xthreat import ExpectedThreat
 
 _VOLUME_COL = "territory_passes_aimed_into_hull"
 _METRIC_COL = "territory_xt_prevented_above_expectation"
@@ -660,3 +664,70 @@ def test_competitions_json_is_mutually_exclusive_with_competition_id(monkeypatch
     )
     with pytest.raises(SystemExit):
         census.main()
+
+
+# --------------------------------------------------------------------------------------------------
+# #2 fit-corpus column prune -- byte-identity gate (optimization-audit).
+# --------------------------------------------------------------------------------------------------
+def _fittable_actions(*, n=240, seed=0) -> pd.DataFrame:
+    """A small deterministic SPADL action frame fittable by BOTH xt and PassCompletionModel.
+
+    Passes (mixed success/fail) drive the completion logistic; passes/dribbles/shots across the
+    pitch drive the xt transition + scoring/move probabilities. Coordinates + results are seeded so
+    the fit is reproducible; quality is irrelevant -- the gate compares two fits of the SAME data.
+    """
+    rng = np.random.default_rng(seed)
+    _T = spadlconfig.actiontype_id
+    _R = spadlconfig.result_id
+    types = rng.choice([_T["pass"], _T["dribble"], _T["cross"], _T["shot"]], size=n, p=[0.6, 0.25, 0.1, 0.05])
+    results = rng.choice([_R["success"], _R["fail"]], size=n, p=[0.7, 0.3])
+    return pd.DataFrame(
+        {
+            "game_id": 1,
+            "period_id": rng.integers(1, 3, n),
+            "action_id": np.arange(n),
+            "time_seconds": np.sort(rng.uniform(0, 3000, n)),
+            "team_id": rng.integers(1, 3, n),
+            "player_id": rng.integers(1, 23, n),
+            "start_x": rng.uniform(0, 105, n),
+            "start_y": rng.uniform(0, 68, n),
+            "end_x": rng.uniform(0, 105, n),
+            "end_y": rng.uniform(0, 68, n),
+            "type_id": types,
+            "result_id": results,
+            "bodypart_id": 0,
+        }
+    )
+
+
+def test_fit_disjoint_models_column_prune_is_byte_identical():
+    """The SPADL_COLUMNS prune in ``_fit_disjoint_models`` must not change the fitted xt or
+    completion model: the pruned fit is byte-identical to a full-frame fit, proving the prune keeps
+    every column both fits read AND that the dropped non-canonical extras never affected the fit.
+    """
+    acts = _fittable_actions().assign(
+        preserve_native_foo=1.0,  # non-SPADL extras that the prune must drop
+        enriched_start_x=lambda d: d["start_x"] + 1.0,
+        tracking_join_col="z",
+    )
+    xt_pruned, cm_pruned = _fit_disjoint_models([acts])
+    xt_full = ExpectedThreat().fit(acts)
+    cm_full = PassCompletionModel().fit(acts)
+
+    # Bind fitted attributes to locals BEFORE the array_equal calls: pyright drops member-access
+    # narrowing (xt.xT / cm._coef are ndarray|None) after any intervening call, but keeps LOCAL
+    # narrowing across calls. All are non-None post-fit.
+    xtp, xtf = xt_pruned.xT, xt_full.xT
+    tmp, tmf = xt_pruned.transition_matrix, xt_full.transition_matrix
+    coefp, coeff = cm_pruned._coef, cm_full._coef
+    meanp, meanf = cm_pruned._mean, cm_full._mean
+    scalep, scalef = cm_pruned._scale, cm_full._scale
+    assert xtp is not None and xtf is not None and tmp is not None and tmf is not None  # fitted
+    assert coefp is not None and coeff is not None and meanp is not None and meanf is not None
+    assert scalep is not None and scalef is not None
+    assert np.array_equal(xtp, xtf)
+    assert np.array_equal(tmp, tmf)
+    assert np.array_equal(coefp, coeff)
+    assert cm_pruned._intercept == cm_full._intercept
+    assert np.array_equal(meanp, meanf)
+    assert np.array_equal(scalep, scalef)
