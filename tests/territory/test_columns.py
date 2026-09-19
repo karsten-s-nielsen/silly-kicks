@@ -7,6 +7,7 @@ from silly_kicks.territory._columns import (
     TERRITORY_HULL_SOURCE_VALUES,
     TERRITORY_METHODS,
     TERRITORY_METRIC_COLUMNS,
+    TERRITORY_TARGET_SOURCE_VALUES,
     TR_HULL_SOURCE,
 )
 
@@ -37,5 +38,6 @@ def test_dtypes():
 
 
 def test_method_family_and_source_vocab():
-    assert TERRITORY_METHODS == frozenset({"completed_failed"})
+    assert TERRITORY_METHODS == frozenset({"completed_failed", "counterfactual"})
     assert TERRITORY_HULL_SOURCE_VALUES == frozenset({"resolved", "degenerate", "no_actions"})
+    assert TERRITORY_TARGET_SOURCE_VALUES == frozenset({"observed", "modeled", "unresolved"})

@@ -7,7 +7,7 @@ freeze-frames are already action-LTR (verified: actor position == action start),
 The action anchors (``start_x/y``, ``end_x/y``) are ALWAYS action-LTR (standard SPADL, ADR-028) and are
 NEVER reflected -- only the match-LTR FRAME is. Reflecting the action too would DOUBLE-reflect every
 away-possession decision (pinned by ``test_orientation_mirror_invariance_away_possession``'s contract leg).
-``opponents_bypassed`` reuses :func:`silly_kicks.tracking.compute_packing_metrics` ``["packing_made"]``
+``opponents_bypassed`` reuses :func:`silly_kicks.tracking.compute_packing_metrics_batch` ``["packing_made"]``
 (ADR-039 single definition), fed the promoted public :func:`silly_kicks.tracking.action_ltr_goal_map`.
 The chosen option is the ACTUAL pass end (never snapped to a teammate). The reachability filter
 (``GkDecisionParams.reachability_min_xpass``) prunes unreachable ALTERNATIVES -- the spike's load-bearing
@@ -30,7 +30,7 @@ from silly_kicks.id_compat import ids_isin, ids_match, same_id
 from silly_kicks.spadl import config as spadlconfig
 from silly_kicks.tracking import (
     action_ltr_goal_map,
-    compute_packing_metrics,
+    compute_packing_metrics_batch,
     link_actions_to_frames,
     region_observed_fraction,
     resolve_defended_goals,
@@ -204,27 +204,32 @@ class ReconstructedOptionSet:
             if d[nearest] <= self._params.receiver_exclusion_m:
                 cand = cand.drop(index=nearest).reset_index(drop=True)
         gm = action_ltr_goal_map(a["game_id"], a["period_id"], acting_team_id=keeper_team, opponent_team_id=opp_team)
-        # chosen = the ACTUAL pass end (never snapped); then the surviving alternatives.
-        targets = [(pass_end[0], pass_end[1], True)]
-        targets += [(float(c["x"]), float(c["y"]), False) for _, c in cand.iterrows()]
-        tx = np.array([t[0] for t in targets], dtype=float)
-        ty = np.array([t[1] for t in targets], dtype=float)
+        # chosen = the ACTUAL pass end (never snapped) at index 0; then the surviving alternatives in
+        # `cand` order (a reset_index'd frame, so .to_numpy preserves the old iterrows order).
+        cand_x = cand["x"].to_numpy(dtype=float)
+        cand_y = cand["y"].to_numpy(dtype=float)
+        tx = np.concatenate([[pass_end[0]], cand_x])
+        ty = np.concatenate([[pass_end[1]], cand_y])
+        chosen = np.zeros(len(tx), dtype=bool)
+        chosen[0] = True
         comp = np.asarray(
-            self._xpass.predict_completion(
-                np.full(len(targets), keeper_xy[0]), np.full(len(targets), keeper_xy[1]), tx, ty
-            ),
+            self._xpass.predict_completion(np.full(len(tx), keeper_xy[0]), np.full(len(tx), keeper_xy[1]), tx, ty),
             dtype=float,
         )
-        byp = np.array(
-            [
-                compute_packing_metrics(
-                    frame, attacking_team_id=keeper_team, goal_map=gm, passer_xy=keeper_xy, receiver_xy=(x, y)
-                )["packing_made"]
-                for x, y in zip(tx, ty, strict=True)
-            ],
+        # opponents_bypassed for ALL targets in ONE packing call: the defender extraction + back-line
+        # selection + goal_map lookups are invariant across targets (only the receiver varies), so the
+        # batch hoists them out of the per-target loop (opt-audit #1). Byte-identical to the old
+        # per-target compute_packing_metrics loop (tests/tracking/test_packing_batch).
+        byp = np.asarray(
+            compute_packing_metrics_batch(
+                frame,
+                attacking_team_id=keeper_team,
+                goal_map=gm,
+                passer_xy=keeper_xy,
+                receivers=np.column_stack([tx, ty]),
+            )["packing_made"],
             dtype=float,
         )
-        chosen = np.array([t[2] for t in targets], dtype=bool)
         # reachability: drop unreachable ALTERNATIVES; the chosen option is never dropped (it was played).
         thr = self._params.reachability_min_xpass
         keep = chosen | (np.isfinite(comp) & (comp >= thr))

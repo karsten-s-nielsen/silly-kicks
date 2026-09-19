@@ -799,6 +799,19 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
             ),
         ),
         _e(
+            # Batched sibling of compute_packing_metrics (perf hoist): same `attacking_team_id` id
+            # scalar under test, same canonically-keyed map -- one receiver row so it is the n=1
+            # image of the scalar entry above.
+            "silly_kicks.tracking._packing.compute_packing_metrics_batch",
+            lambda s: T.compute_packing_metrics_batch(
+                single_frame(),
+                attacking_team_id=s,
+                goal_map=goal_map_like_home_team_id(single_frame(), s),
+                passer_xy=passer,
+                receivers=[[receiver[0], receiver[1]]],
+            ),
+        ),
+        _e(
             "silly_kicks.tracking._structural_pass.compute_structural_pass_metrics",
             # ADR-051 D3: `home_team_id` -> `attacks_rtl: bool`. The direction is now a plain bool
             # and carries NO id, so the axis this entry exercises is `attacking_team_id` alone --

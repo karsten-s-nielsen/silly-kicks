@@ -168,6 +168,7 @@ __all__ = [
     "compute_gk_influence",
     "compute_obso_surface",
     "compute_packing_metrics",
+    "compute_packing_metrics_batch",
     "compute_pass_obso",
     "compute_pausa",
     "compute_pausa_batch",
@@ -368,7 +369,12 @@ from ._gk_geometry import resolve_gk_geometry, resolve_restart_geometry
 from ._gk_influence import compute_gk_influence
 from ._line_breaking import LineBreakingParams, detect_line_breaking
 from ._obso import ObsoParams, ObsoSurface, compute_obso_surface, compute_pass_obso
-from ._packing import PackingParams, compute_packing_metrics, secured_reception
+from ._packing import (
+    PackingParams,
+    compute_packing_metrics,
+    compute_packing_metrics_batch,
+    secured_reception,
+)
 from ._pausa import compute_pausa, compute_pausa_batch
 from ._player_influence import PlayerInfluence, compute_player_influence
 from ._receiver import (
