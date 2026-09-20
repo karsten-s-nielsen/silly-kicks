@@ -219,18 +219,29 @@ def _shot_stopping_columns() -> set[str]:
 
 
 def _territory_columns() -> set[str]:
-    """Derived territorial-dominance metric columns emitted by compute_territorial_dominance (TF-54).
+    """Derived territorial-dominance metric columns emitted by compute_territorial_dominance (TF-54/TF-54b).
 
     compute_territorial_dominance is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape
     discovery misses it; this leg runs it on a tiny fixture (a defender hull + an opponent pass into it,
-    a uniform toy xT) and returns the DERIVED metric columns (the sample keys game_id/player_id + the
-    provenance territory_hull_source are not features). A NEW emitted metric appears here and fails the
-    coverage gate until documented (the run-and-diff anti-rot property)."""
+    a uniform toy xT) under BOTH ``method`` values and returns the DERIVED metric columns. The default
+    ``completed_failed`` (TF-54) emits ``TERRITORY_METRIC_COLUMNS``; ``counterfactual`` (TF-54b, ADR-099)
+    ALSO emits the 4 cone metric columns (``territory_expected_threat_faced``,
+    ``territory_xt_prevented_above_expectation``, ``territory_passes_aimed_into_hull``,
+    ``territory_mean_completion_faced``). The sample keys game_id/player_id + the provenance columns
+    territory_hull_source / territory_target_source are NOT features (the latter mirrors the former --
+    provenance, never glossaried). A NEW emitted metric appears here and fails the coverage gate until
+    documented (the run-and-diff anti-rot property)."""
     import numpy as np
     import pandas as pd
 
     from silly_kicks.spadl import config as spadlconfig
-    from silly_kicks.territory import TERRITORY_METRIC_COLUMNS, TerritoryParams, compute_territorial_dominance
+    from silly_kicks.territory import (
+        TERRITORY_METRIC_COLUMNS,
+        CounterfactualParams,
+        TerritoryParams,
+        compute_territorial_dominance,
+    )
+    from silly_kicks.territory._columns import _COUNTERFACTUAL_ONLY_COLUMNS, TR_TARGET_SOURCE
     from silly_kicks.xthreat import ExpectedThreat
 
     xt = ExpectedThreat()
@@ -269,8 +280,35 @@ def _territory_columns() -> set[str]:
     )
     actions = pd.DataFrame(rows)
     actions["action_id"] = range(len(actions))
+
+    cols: set[str] = set()
     samples, _ = compute_territorial_dominance(actions, xt=xt, params=TerritoryParams(trim_fraction=1.0))
-    return set(TERRITORY_METRIC_COLUMNS) & set(samples.columns)
+    cols |= set(TERRITORY_METRIC_COLUMNS) & set(samples.columns)
+
+    # method="counterfactual" (TF-54b, ADR-099): the 4 cone METRIC columns become required. Injects a
+    # toy duck-typed completion model (silly-kicks ships no pass-completion model). TR_TARGET_SOURCE is
+    # PROVENANCE (the das_source idiom, mirroring territory_hull_source) -- excluded from the glossary,
+    # so the counterfactual-only METRIC set is _COUNTERFACTUAL_ONLY_COLUMNS minus that provenance key.
+    class _ConstCompletion:  # duck-typed PassCompletionModel port (ADR-022)
+        def predict_completion(self, ox, oy, tx, ty):
+            return np.full(np.asarray(tx, dtype=float).shape, 0.6)
+
+    cf_samples, _ = compute_territorial_dominance(
+        actions,
+        xt=xt,
+        method="counterfactual",
+        params=TerritoryParams(trim_fraction=1.0),
+        completion_model=_ConstCompletion(),  # type: ignore[arg-type]  (duck-typed PassCompletionModel port, ADR-022)
+        cf_params=CounterfactualParams.default(),
+    )
+    cf_metric_cols = set(_COUNTERFACTUAL_ONLY_COLUMNS) - {TR_TARGET_SOURCE}
+    # Non-vacuity guard: the & below would pass SILENTLY if the toy hull degenerated (empty cf_samples
+    # or a missing column), dropping the 4 cone columns from the required set and disarming the coverage
+    # gate. Pin the RED-proven non-degeneracy permanently so a future fixture regression fails HERE.
+    cf_emitted = cf_metric_cols & set(cf_samples.columns)
+    assert len(cf_emitted) == 4, f"cf toy fixture emitted {sorted(cf_emitted)} != the 4 cone columns -- gate is vacuous"
+    cols |= cf_emitted
+    return cols
 
 
 def _duel_columns() -> set[str]:

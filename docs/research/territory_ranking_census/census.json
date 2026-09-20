@@ -1,0 +1,78 @@
+{
+  "n_fit_matches": 1980,
+  "n_scored_matches": 1981,
+  "census": {
+    "tier1": {
+      "n_defenders": 5989,
+      "n_multi_team_defenders": 1103,
+      "n_cells": 7276,
+      "n_qualifying_cells": 4964,
+      "n_rows": 41260
+    },
+    "tier2": {
+      "icc": 0.1334544173963773,
+      "lo": 0.12105729153114521,
+      "power": 1.0,
+      "n_boot_effective": 399
+    }
+  },
+  "verdict": {
+    "ranking_licensed": true,
+    "reason": "licensed: 1103 multi-team defenders (>= 20), ICC lo=0.1211 > 0.0, power=1.000 >= 0.8."
+  },
+  "ranking_licensed": true,
+  "n_ranked": 4239,
+  "constants": {
+    "MIN_MULTI_TEAM_DEFENDERS": 20,
+    "MIN_PASSES_FACED": 30,
+    "ICC_LOWER_FLOOR": 0.0,
+    "POWER_FLOOR": 0.8,
+    "ICC_EFFECT_SIZE": 0.05
+  },
+  "honest_limit": "A NEGATIVE verdict is EXPECTED on a single-club / national-team corpus: one player = one team, so the defender-vs-team confound is unidentifiable and a per-defender ranking is NOT licensed. The census measures this rather than assuming it; a multi-club transfer corpus is what supplies the cross-team observations a ranking needs.",
+  "generation": "1c2995f0cdb95cdc",
+  "n_attempted": 0,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "run_commit": "dd7ed4fcbd8efe2bab51e52e5bbbdf1b2fc5183c",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "input_contract": {
+    "version": 1,
+    "driver": "build_territory_ranking_census",
+    "params": {
+      "alpha": 0.1,
+      "boot_seed": 0,
+      "counterfactual": {
+        "_is_universal_default": false,
+        "direction_cone_degrees": 45.0,
+        "min_transition_support": 1e-06
+      },
+      "icc_effect_size": 0.05,
+      "icc_lower_floor": 0.0,
+      "min_multi_team_defenders": 20,
+      "min_passes_faced": 30,
+      "n_boot": 400,
+      "power_floor": 0.8,
+      "territory": {
+        "_is_universal_default": false,
+        "defensive_action_types": [
+          "tackle",
+          "interception",
+          "clearance"
+        ],
+        "forward_threshold_m": 0.0,
+        "own_half_max_x": 52.5,
+        "trim_fraction": 0.7
+      }
+    },
+    "extractors": [
+      "silly_kicks.territory._counterfactual",
+      "silly_kicks.territory._compute"
+    ],
+    "models": [
+      "scripts._crossed_icc"
+    ],
+    "digest": "d31112f4acd5741e3b9e4fcbba2818c6037a6306088cd6a08543a0ca9080262e"
+  }
+}

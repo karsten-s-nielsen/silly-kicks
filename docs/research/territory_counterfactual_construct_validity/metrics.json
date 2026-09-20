@@ -1,0 +1,169 @@
+{
+  "completion": {
+    "auc": 0.7938088035425022,
+    "ece": 0.006458317049585692,
+    "brier": 0.1293974242663771,
+    "base_rate": 0.7991601940613209,
+    "n": 3337914
+  },
+  "mechanism": {
+    "counterfactual_error": 8.590721244334652,
+    "baseline_death_error": 8.40937580162193,
+    "baseline_centroid_error": 15.510671471703928,
+    "n": 2665966,
+    "real_data_leg": {
+      "status": "not_computed_requires_owner_decision",
+      "reason": "a real failed pass's intended target is unobservable event-only; the leakage-free weak label (ADR-066 trajectory-to-next-touch) needs tracking, absent from this event-only corpus. Choosing an event-only weak label is an owner research-design decision, not a silent stub."
+    }
+  },
+  "elite_prior": {
+    "elite_quantile": 0.9854768436340164,
+    "n_elite_matched": 5,
+    "n_defenders": 6197,
+    "elite_quantiles": {
+      "Nicol\u00e1s Hern\u00e1n Otamendi": 0.9854768436340164,
+      "Antonio R\u00fcdiger": 0.9641762142972407,
+      "Virgil van Dijk": 0.995320316282072,
+      "Gerard Piqu\u00e9 Bernab\u00e9u": 1.0,
+      "Jo\u0161ko Gvardiol": 0.7740842343069227
+    },
+    "name_match_counts": {
+      "Gvardiol": {
+        "n_players": 1,
+        "player_ids": [
+          "33018"
+        ]
+      },
+      "Marquinhos": {
+        "n_players": 0,
+        "player_ids": []
+      },
+      "Otamendi": {
+        "n_players": 1,
+        "player_ids": [
+          "3090"
+        ]
+      },
+      "Pique": {
+        "n_players": 1,
+        "player_ids": [
+          "5213"
+        ]
+      },
+      "Rudiger": {
+        "n_players": 2,
+        "player_ids": [
+          "3167",
+          "42173"
+        ]
+      },
+      "van Dijk": {
+        "n_players": 1,
+        "player_ids": [
+          "3669"
+        ]
+      }
+    },
+    "names_not_uniquely_resolved": [
+      "Marquinhos",
+      "Rudiger"
+    ]
+  },
+  "secondary": {
+    "outcome_lens": {
+      "note": "reported-not-gating; possession-reaches-shot AUC not computed offline",
+      "auc": null
+    },
+    "reliability": {
+      "split_half_spearman": 0.32906235231763,
+      "n_common": 1736
+    },
+    "discriminant": {
+      "vs_v1_spearman": 0.9374717444570069,
+      "vs_volume_spearman": 0.9408814351842981,
+      "non_degeneracy_net_vs_neg_conceded_spearman": 0.7730635287889971,
+      "vs_team_strength_spearman": 0.27381909526890474,
+      "placebo_vs_team_strength_spearman": 0.28372210940000936,
+      "beats_shuffled_placebo": false
+    }
+  },
+  "n_folds": 5,
+  "n_matches": 3961,
+  "decision": {
+    "promote": false,
+    "completion_ok": true,
+    "mechanism_ok": false,
+    "prior_ok": true,
+    "brier_skill_score": 0.1938014832751146,
+    "real_data_leg_uncomputed": true,
+    "promote_scope": "promote reflects the synthetic mechanism + prior only; Primary-1 real-data leg is infeasible event-only (see mechanism.real_data_leg)"
+  },
+  "pre_registration": {
+    "elite_defender_prior": [
+      "Gvardiol",
+      "Marquinhos",
+      "Otamendi",
+      "Pique",
+      "Rudiger",
+      "van Dijk"
+    ],
+    "completion_auc_floor": 0.65,
+    "completion_ece_ceiling": 0.1,
+    "completion_brier_skill_floor": 0.1,
+    "elite_defender_top_quantile": 0.75,
+    "locked": "2026-09-17 (broad-corpus revival; before the owner run)"
+  },
+  "providers": "statsbomb-open (all_open_competitions)",
+  "n_competition_seasons": 80,
+  "generation": "c1d9510009a38fb9",
+  "n_attempted": 3961,
+  "n_failed": 0,
+  "n_counters_unrecorded": 0,
+  "run_commit": "6c75619eabd17935718245dcc02f092e2f450d42",
+  "run_tree_dirty": false,
+  "run_tree_state": "clean",
+  "input_contract": {
+    "version": 1,
+    "driver": "validate_territory_counterfactual",
+    "params": {
+      "completion_auc_floor": 0.65,
+      "completion_brier_skill_floor": 0.1,
+      "completion_ece_ceiling": 0.1,
+      "counterfactual": {
+        "_is_universal_default": false,
+        "direction_cone_degrees": 45.0,
+        "min_transition_support": 1e-06
+      },
+      "elite_defender_prior": [
+        "Gvardiol",
+        "Marquinhos",
+        "Otamendi",
+        "Pique",
+        "Rudiger",
+        "van Dijk"
+      ],
+      "elite_defender_top_quantile": 0.75,
+      "territory": {
+        "_is_universal_default": false,
+        "defensive_action_types": [
+          "tackle",
+          "interception",
+          "clearance"
+        ],
+        "forward_threshold_m": 0.0,
+        "own_half_max_x": 52.5,
+        "trim_fraction": 0.7
+      }
+    },
+    "extractors": [
+      "silly_kicks.territory._counterfactual",
+      "silly_kicks.territory._compute",
+      "silly_kicks.expected_passing._model"
+    ],
+    "models": [
+      "silly_kicks.expected_passing.PassCompletionModel",
+      "silly_kicks.xthreat.ExpectedThreat"
+    ],
+    "digest": "4ae3e7acbea7bb2c039486981f9745a43dd642827ce9f3c3bfefd301f268c3a6"
+  }
+}

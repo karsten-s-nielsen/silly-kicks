@@ -62,6 +62,8 @@ _DECLARING = (
     "build_tf19_instrument_responsiveness",
     "validate_territorial_defense",
     "validate_match_outcome_calibration",
+    "build_territory_ranking_census",
+    "validate_territory_counterfactual",
 )
 
 _RESEARCH = pathlib.Path(__file__).resolve().parents[2] / "docs" / "research"
