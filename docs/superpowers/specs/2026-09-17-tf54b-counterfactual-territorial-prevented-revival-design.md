@@ -3,7 +3,7 @@
 **Status:** design (brainstorm-approved 2026-09-17; owner cleared scope/breaking, "gold standard").
 **Release coordinates:** the version / PR-Snnn are **NOT locked until Commit 2** (owner rule — another
 session may take a number first; re-derive from `main` at commit-prep). Any number in this doc is
-illustrative only. The **ADR number is NOT locked** — docs use the placeholder `ADR-NNN`; the real number
+illustrative only. The **ADR number is NOT locked** — docs use the placeholder `ADR-099`; the real number
 is assigned at release-prep (after `git fetch && git merge origin/main`), because another session may
 release first. (The branch's ADR-089 collides with `main`'s TF-60 Layer-3 ADR-089, and ADR-090 is the
 tracking sibling, so whatever number is free must be freshly taken then.)
@@ -26,7 +26,7 @@ parameter. **This revival re-adds the door and fills it with the real event-only
 Chesterton's Fence: the door was removed because it was a dead `NotImplementedError` after ADR-090 took
 the "counterfactual" name for the tracking path — **not** because the cone was rejected. The event-only
 cone is a *distinct mechanism* (no pitch control) and coexists with `territorial_defense` under the
-TF-54b family. ADR-NNN records this explicitly so a future reader does not read the re-add as reverting
+TF-54b family. ADR-099 records this explicitly so a future reader does not read the re-add as reverting
 ADR-090.
 
 **The v1 default and its documented defect.** v1 (`completed_failed`) values every opponent pass whose
@@ -82,7 +82,7 @@ asks *can defenders be separated from teams*. Neither implies the other.
    decides, **on measured evidence**, whether a defender **ranking** is licensed on the broad corpus; the
    ranking is published **in-cycle iff the gate clears** (owner decision 2026-09-17), else the cycle ships
    the metric only with the census reported (§8).
-5. **Fresh ADR-NNN** (the branch's ADR-089 collides with `main`'s TF-60 Layer-3 ADR-089; `main`'s ADR-090
+5. **Fresh ADR-099** (the branch's ADR-089 collides with `main`'s TF-60 Layer-3 ADR-089; `main`'s ADR-090
    is the tracking sibling).
 
 ## 2. Non-goals / scope boundaries
@@ -339,7 +339,7 @@ not in CI.
   constant + the locked census/ICC thresholds; `scripts/validate_territory_counterfactual.py` +
   `scripts/_synthetic_interception.py` + `scripts/build_territory_ranking_census.py`; all offline tests
   (§9, using fixture-fit models, not bundled weights); `feature_glossary` + `glossary_emitted_columns` +
-  `NOTICE`; C4 `dot` re-render (33 aggregators unchanged); version bump; `CHANGELOG`; **ADR-NNN**. Fully
+  `NOTICE`; C4 `dot` re-render (33 aggregators unchanged); version bump; `CHANGELOG`; **ADR-099**. Fully
   green: `-m "not e2e"` + ruff + ruff format + bare pyright. **Default stays `completed_failed`.** C4 is
   unchanged (the `expected_passing` container is already on `main`; no new container/aggregator/backend/
   model — re-render only if a structural element is actually added).
@@ -395,5 +395,5 @@ in this doc pins the number.
   door removed → re-add); **broad public open-data corpus** (~3,961 via `_sb_open_data`) not WC2022;
   **re-fit + re-bundle `PassCompletionModel`** on that corpus; **defender-ranking census + crossed-ICC gate**,
   ship the ranking artifact **in-cycle iff the gate clears** (else metric-only + reported census); ranking
-  stays a reported artifact + ADR-009 apply, not a library API; fresh **ADR-NNN** (ADR-089 collides,
+  stays a reported artifact + ADR-009 apply, not a library API; fresh **ADR-099** (ADR-089 collides,
   ADR-090 is the tracking sibling). Scope/breaking cleared by owner; gold-standard bar.

@@ -74,7 +74,7 @@ ARTIFACT_DRIVERS = (
     # seam). Writes parameters-only bundled weights + metrics.json stamping training_commit -- the same
     # class as the other weight trainers (train_receiver_model / train_ghost_gk / train_ghost_outfield).
     "train_pass_completion",
-    # TF-54b defender-RANKING census (ADR-NNN). Runs the territory counterfactual metric over the
+    # TF-54b defender-RANKING census (ADR-099). Runs the territory counterfactual metric over the
     # PUBLIC StatsBomb open-data corpus and writes docs/research census.json (Tier-1 identifiability
     # counts + Tier-2 crossed-ICC verdict) + (iff licensed) ranking.parquet -- a cited number over
     # external data; owner-run, reported-not-gated -> provenance. Public corpus, so reproducible.

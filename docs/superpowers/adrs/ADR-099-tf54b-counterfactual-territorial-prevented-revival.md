@@ -1,4 +1,4 @@
-# ADR-NNN: TF-54b counterfactual territorial "threat prevented" (revival) + broad-corpus validity + defender-ranking census
+# ADR-099: TF-54b counterfactual territorial "threat prevented" (revival) + broad-corpus validity + defender-ranking census
 
 | Field | Value |
 |---|---|
@@ -10,7 +10,7 @@
 > branch `origin/feat/tf54b-counterfactual-territorial-prevented` (commit `ab9001c`). That branch's
 > ADR-089 number now COLLIDES with `main`'s TF-60 Layer-3 (also ADR-089), and `main`'s ADR-090 is the
 > tracking-consuming SB360 sibling `silly_kicks.territorial_defense`. So the cone gets a FRESH number,
-> ADR-NNN. The cone mechanism itself (the quantity, `q`/`c`/`xT` components, membership, method-dependent
+> ADR-099. The cone mechanism itself (the quantity, `q`/`c`/`xT` components, membership, method-dependent
 > schema, worked-example golden, `CounterfactualParams`) is treated as SETTLED (it reached spec-review R2
 > APPROVE on the baseline design); the revival deltas -- re-added door, broad corpus, `PassCompletionModel`
 > re-fit, the crossed-ICC ranking census -- are the new decisions this ADR records.

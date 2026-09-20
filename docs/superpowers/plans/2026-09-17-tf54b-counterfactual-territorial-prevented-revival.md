@@ -46,7 +46,7 @@ v1-only files; the port re-applies the cone additions.
 - **Census/gate thresholds + the elite-defender prior are LOCKED constants committed in Commit 1** (the
   TF-19 `NAMED_KEEPER_PRIOR` idiom); `decide_promotion` / the census gate read ONLY those constants.
 - **Version / PR-Snnn NOT locked until Commit 2** — re-derive from `main` at commit-prep (`git fetch &&
-  git merge origin/main`). **ADR number NOT locked** — placeholder `ADR-NNN`, assigned at Commit 2 / release-prep (may not release first).
+  git merge origin/main`). **ADR number NOT locked** — placeholder `ADR-099`, assigned at Commit 2 / release-prep (may not release first).
 - **ADR-009 ranking posture** — the library ships only the per-`(defender, match)` primitive; a ranking is
   a reported artifact + an ADR-009 apply, never a library function.
 - **Test invocation (repo landmine, applies to every "Run" step)** — tests use
@@ -413,11 +413,11 @@ consumer-side).
 - [ ] **Step 4: Run — expect PASS** (`-m "not e2e"`; the full corpus run is `@e2e`, owner-run).
 - [ ] **Step 5:** No commit.
 
-## Task 13: Glossary + NOTICE + ADR-NNN
+## Task 13: Glossary + NOTICE + ADR-099
 
 **Files:**
 - Modify: `silly_kicks/feature_glossary.py`, `tests/invariants/glossary_emitted_columns.py`, `NOTICE`
-- Create: `docs/superpowers/adrs/ADR-NNN-tf54b-counterfactual-territorial-prevented-revival.md`
+- Create: `docs/superpowers/adrs/ADR-099-tf54b-counterfactual-territorial-prevented-revival.md`
 
 - [ ] **Step 1: Write failing test** — the glossary-coverage harness
       (`tests/invariants/glossary_emitted_columns.py`) must require the 4 cone METRIC columns
@@ -431,9 +431,9 @@ consumer-side).
       the counterfactual-method column set into `glossary_emitted_columns.py`.
 - [ ] **Step 3: Run — expect PASS.** Confirm `test_no_stale_entries` still passes (no over-documentation).
 - [ ] **Step 4: NOTICE** — add the counterfactual/expected-passing/GSAA/ICC references (spec §12); ADR-085
-      (TF-59 GSAA) confirmed as the analog. **ADR-NNN** — create from
+      (TF-59 GSAA) confirmed as the analog. **ADR-099** — create from
       `git show ab9001c:docs/superpowers/adrs/ADR-089-tf54b-counterfactual-territorial-prevented.md`,
-      renumber to the release-prep-assigned free number (placeholder `ADR-NNN` until then), and add the revival deltas: re-add-after-removal (Chesterton: dead
+      renumber to the release-prep-assigned free number (placeholder `ADR-099` until then), and add the revival deltas: re-add-after-removal (Chesterton: dead
       `NotImplementedError`, not rejection; coexists with ADR-090 tracking sibling), broad open-data corpus,
       `PassCompletionModel` re-fit+re-bundle, the crossed-cell census + ICC gate, and the "ship ranking
       in-cycle iff gate clears (ADR-009 apply, not a library API)" decision.
@@ -462,7 +462,7 @@ consumer-side).
 Version bump `silly_kicks/_version.py` + `CHANGELOG.md` entry + the resolved **ADR number** are ALL locked
 at **Commit 2 / release-prep** (owner ruling 2026-09-17 — may not release first, so version and ADR number
 could collide; `git fetch && git merge origin/main` first, then take the free number and replace the
-`ADR-NNN` placeholder + rename the ADR file). Commit 1 carries the `ADR-NNN` placeholder, no version bump,
+`ADR-099` placeholder + rename the ADR file). Commit 1 carries the `ADR-099` placeholder, no version bump,
 no CHANGELOG entry. Commit 1 =
 Tasks 1–13 code + tests + spec + ADR + glossary + NOTICE, docs included (provenance counts untracked as
 dirty). `completed_failed` byte-identical; default unchanged. **No commit without an explicit owner yes.**

@@ -1,4 +1,4 @@
-"""TF-54b defender-RANKING census + gate + ranking (owner-run, ADR-NNN ranking gate).
+"""TF-54b defender-RANKING census + gate + ranking (owner-run, ADR-099 ranking gate).
 
 Decides -- on MEASURED evidence -- whether a per-defender RANKING is licensed on a corpus for the
 ``territory`` counterfactual metric (``territory_xt_prevented_above_expectation``). A per-defender

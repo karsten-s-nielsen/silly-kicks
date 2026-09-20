@@ -224,7 +224,7 @@ def _territory_columns() -> set[str]:
     compute_territorial_dominance is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape
     discovery misses it; this leg runs it on a tiny fixture (a defender hull + an opponent pass into it,
     a uniform toy xT) under BOTH ``method`` values and returns the DERIVED metric columns. The default
-    ``completed_failed`` (TF-54) emits ``TERRITORY_METRIC_COLUMNS``; ``counterfactual`` (TF-54b, ADR-NNN)
+    ``completed_failed`` (TF-54) emits ``TERRITORY_METRIC_COLUMNS``; ``counterfactual`` (TF-54b, ADR-099)
     ALSO emits the 4 cone metric columns (``territory_expected_threat_faced``,
     ``territory_xt_prevented_above_expectation``, ``territory_passes_aimed_into_hull``,
     ``territory_mean_completion_faced``). The sample keys game_id/player_id + the provenance columns
@@ -285,7 +285,7 @@ def _territory_columns() -> set[str]:
     samples, _ = compute_territorial_dominance(actions, xt=xt, params=TerritoryParams(trim_fraction=1.0))
     cols |= set(TERRITORY_METRIC_COLUMNS) & set(samples.columns)
 
-    # method="counterfactual" (TF-54b, ADR-NNN): the 4 cone METRIC columns become required. Injects a
+    # method="counterfactual" (TF-54b, ADR-099): the 4 cone METRIC columns become required. Injects a
     # toy duck-typed completion model (silly-kicks ships no pass-completion model). TR_TARGET_SOURCE is
     # PROVENANCE (the das_source idiom, mirroring territory_hull_source) -- excluded from the glossary,
     # so the counterfactual-only METRIC set is _COUNTERFACTUAL_ONLY_COLUMNS minus that provenance key.

@@ -338,11 +338,14 @@ def secured_reception(
     passes its precomputed positions (one sort/groupby pass per match, not two).
 
     Rows with NaN ``line_x`` (nothing bypassed / no geometry) or an unresolved
-    receiver -> <NA>. The scan runs in ``action_id`` (canonical play) order within
-    each ``(game_id, period_id)`` group -- the same order the positions helper
-    resolves anchors in -- with non-decreasing ``time_seconds`` enforced in that
-    order. A caller-supplied ``possession_id`` with missing values never decides
-    the boundary test (NA-routed, the ADR-027 discipline).
+    receiver -> <NA>. The scan runs in ROBUST CHRONOLOGICAL order --
+    ``(time_seconds, action_id)`` with ``action_id`` as the tiebreak, the SAME key
+    ``_resolve_next_touch_positions`` resolves anchors in (spec 2026-08-20 §3d,
+    ADR-065) -- so a persisted mart with a non-chronological ``action_id`` is
+    ordered robustly, not rejected (mart reads bypass the ``_finalize_output``
+    guard). NaN ``time_seconds`` sorts last and resolves ``<NA>``. A caller-supplied
+    ``possession_id`` with missing values never decides the boundary test (NA-routed,
+    the ADR-027 discipline).
 
     Examples
     --------
@@ -393,15 +396,23 @@ def secured_reception(
     group_keys = [k for k in ("game_id", "period_id") if k in a.columns]
     groups = a.groupby(group_keys) if group_keys else [(None, a)]
     for _key, grp in groups:
-        # Scan in ACTION_ID (canonical play) order -- the SAME order the positions
-        # helper resolved the anchor in. Scanning positionally instead flips labels
-        # on time-tied rows whose positional order differs (execution-review D4).
-        sorted_grp = grp.sort_values("action_id", kind="stable") if "action_id" in grp.columns else grp
+        # Scan in the ROBUST CHRONOLOGICAL order -- (time_seconds, action_id) with action_id
+        # as the tiebreak -- the SAME key _resolve_next_touch_positions resolves the reception
+        # anchor in (spec 2026-08-20 §3d, ADR-065). A persisted mart may carry a
+        # non-chronological action_id (the _finalize_output guard only removes that for FRESH
+        # conversions; mart-reading consumers must re-establish order by time_seconds, NOT
+        # action_id alone). Scanning action_id-alone diverged from the anchor helper's order and
+        # mislabeled non-chronological marts (then raised). The action_id tiebreak keeps
+        # time-tied rows in action_id order (execution-review D4 preserved). Mirrors
+        # _resolve_next_touch_positions's stable, no-reset sort so `idx` maps into `a`'s positions;
+        # NaN time_seconds sorts last (resolves <NA>, never a violation -- finite-only, matching
+        # _assert_chronological_action_id).
+        _order_cols = [c for c in ("time_seconds", "action_id") if c in grp.columns]
+        sorted_grp = grp.sort_values(_order_cols, kind="stable") if _order_cols else grp
         idx = np.asarray(sorted_grp.index)
         t = time_s[idx]
-        if len(t) > 1 and not (np.diff(t) >= -1e-9).all():
-            raise ValueError("time_seconds must be non-decreasing within each (game_id, period_id) group")
-        t_last = t[-1] if len(t) else 0.0
+        t_finite = t[np.isfinite(t)]
+        t_last = float(t_finite[-1]) if len(t_finite) else 0.0
         rank = {int(p): i for i, p in enumerate(idx)}
         for li in range(len(idx)):
             gi = idx[li]

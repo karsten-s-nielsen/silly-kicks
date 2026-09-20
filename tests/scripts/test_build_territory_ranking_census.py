@@ -1,7 +1,7 @@
 """OFFLINE census/gate/ranking tests for build_territory_ranking_census (Task 11, TF-54b).
 
 The census driver decides -- on MEASURED evidence -- whether a per-defender RANKING is licensed on
-a corpus (the ADR-NNN ranking gate). Its numbers come from a networked corpus pass, but the DECISION
+a corpus (the ADR-099 ranking gate). Its numbers come from a networked corpus pass, but the DECISION
 is a pure function of a per-``(defender, game, team)`` metric table + a lineup map, so every gate below
 runs on hand-built DataFrames with NO network and NO fitted model.
 

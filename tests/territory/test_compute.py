@@ -174,7 +174,7 @@ def test_method_family():
     acts = _actions(_HULL_CORNERS)
     # TF-54b re-adds the `counterfactual` door (the joint q*c*xT prevented-valuation, spec §5.1/5.2).
     # It requires an INJECTED completion_model (silly-kicks ships none); calling it without one raises
-    # ValueError naming that requirement (ADR-NNN -- a legitimate revived contract, not test-weakening).
+    # ValueError naming that requirement (ADR-099 -- a legitimate revived contract, not test-weakening).
     with pytest.raises(ValueError, match="requires a fitted completion_model"):
         compute_territorial_dominance(acts, xt=_toy_xt(), method="counterfactual")
     with pytest.raises(ValueError, match="unknown method"):

@@ -10,7 +10,7 @@ from __future__ import annotations
 TERRITORY_KEYS = ["game_id", "player_id"]
 
 #: The `method=` valuation family (spec §5.3). ``completed_failed`` is the default -- opponent passes
-#: valued at their observed end. ``counterfactual`` (TF-54b, ADR-NNN) is implemented: a
+#: valued at their observed end. ``counterfactual`` (TF-54b, ADR-099) is implemented: a
 #: completion-weighted expected-minus-realized valuation over a modeled failed-pass target
 #: distribution (requires an injected ``PassCompletionModel``).
 TERRITORY_METHODS = frozenset({"completed_failed", "counterfactual"})
