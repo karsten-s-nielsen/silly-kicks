@@ -5,6 +5,14 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.119.1] — 2026-09-19
+
+### Fixed — `secured_reception` (add_packing) orders by the robust chronological key (ADR-065 §3d retrofit)
+
+- **`tracking.secured_reception` (the `add_packing` core) was the one mart-reading `add_*` consumer ADR-065 §3d's robust-sort retrofit MISSED.** It ordered its per-`(game_id, period_id)` secured-window scan by `action_id` alone and hard-raised `ValueError: time_seconds must be non-decreasing…` on a persisted mart whose `action_id` is non-chronological — mart reads bypass the `_finalize_output` guard, so a stale/pre-ADR-065 corpus legitimately carries non-chronological `action_id`. It now orders by `(time_seconds, action_id)` — the SAME key its anchor helper `_resolve_next_touch_positions` already uses — so the window scan and the anchor resolution agree, and the raise is removed (non-decreasing by construction; NaN-`time_seconds` sorts last → `<NA>`, finite-only, matching `_assert_chronological_action_id`). Scanning `action_id`-alone had also silently **mislabeled** non-chronological marts (scan order ≠ anchor order), not merely crashed — the fix corrects both.
+- **Additive / crash-fix — no VAEP/tracking retrain, no re-materialize, C4-free.** Byte-identical secured labels on already-chronological input (every FRESH sk conversion; the full packing suite is the parity guard); new (correct) output only where it previously raised. Covers the atomic `add_packing` (delegates to the shared `secured_reception`). Reported by the luxury-lakehouse 4.119.0 adoption (IDSSE/DFL AC re-materialize). Decision: ADR-065 amendment.
+- **Anti-rot completeness gate** (`tests/spadl/test_action_id_primary_sort_gate.py`): an AST gate flags EVERY `action_id`-primary `sort_values` in the package — each must order by the robust `(time_seconds, action_id)` key or be `_EXEMPT`-with-reason (ADR-056 three-bucket; a name/AST lint cannot tell a safe `action_id` sort from an unsafe one — the ADR-019 lint was DELETED for exactly that — so the reviewed exemption is the mechanism). It flags the pre-fix `secured_reception` (would have caught this miss); the sole current exemption is `_kernels._actor_pre_window_kernel` (frame-grouping, not an action-mart scan). The §3d retrofit list is now enforced, not hand-maintained.
+
 ## [4.119.0] — 2026-09-17
 
 ### Added — uniform metric-family output-contract registry (PR-S190, ADR-098, SK-EXPORT)

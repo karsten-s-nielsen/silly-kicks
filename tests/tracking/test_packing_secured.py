@@ -382,3 +382,42 @@ def test_na_possession_never_decides_boundary():
     a["possession_id"] = pd.array([1, 1, pd.NA], dtype="Int64")
     out = secured_reception(a, _line_x(3))
     assert pd.isna(out.iloc[0])  # undecidable, not a false loss
+
+
+def test_non_chronological_action_id_ordered_robustly_not_rejected():
+    """ADR-065 s3d: a persisted mart may carry a non-chronological action_id (mart reads
+    bypass the _finalize_output guard). secured_reception orders by (time_seconds, action_id)
+    -- the SAME key _resolve_next_touch_positions uses -- so it is invariant to an action_id
+    relabel and does NOT reject it. Pre-fix this RAISED at the action_id-sorted np.diff."""
+    rows = [
+        {"team": A, "t": 10, "x": 40},
+        {"team": A, "t": 11, "x": 58},  # reception
+        {"team": B, "t": 12, "type": "foul", "x": 47},  # skipped
+        {"team": A, "t": 13, "type": "freekick_short", "x": 60},
+        {"team": A, "t": 15, "x": 62},  # beyond window (t_r+3=14), window observed
+    ]
+    n = len(rows)
+    good = secured_reception(_acts(rows), _line_x(n))
+    assert _is_true(good.iloc[0])  # chronological baseline unchanged (parity / no-retrain)
+
+    a_bad = _acts(rows)
+    a_bad["action_id"] = a_bad["action_id"].to_numpy()[::-1]  # non-chronological relabel
+    bad = secured_reception(a_bad, _line_x(n))  # pre-fix: ValueError (action_id-sorted np.diff)
+    pd.testing.assert_series_equal(bad, good, check_names=False)  # relabel-invariant
+
+
+def test_nan_time_row_does_not_crash_group_and_resolves_na():
+    """NaN time_seconds sorts last (finite-only, matching _assert_chronological_action_id) and
+    resolves <NA>; finite rows are unaffected. Pre-fix the group's np.diff over NaN RAISED."""
+    rows = [
+        {"team": A, "t": 10, "x": 40},
+        {"team": A, "t": 11, "x": 58},  # reception
+        {"team": A, "t": 13, "type": "freekick_short", "x": 60},
+        {"team": A, "t": 15, "x": 62},
+    ]
+    n = len(rows)
+    base = secured_reception(_acts(rows), _line_x(n))
+    a_nan = _acts([*rows, {"team": A, "t": np.nan, "x": 63}])
+    out = secured_reception(a_nan, _line_x(n + 1))  # pre-fix: ValueError (np.diff over NaN)
+    assert pd.isna(out.iloc[-1])  # NaN-time row -> <NA>
+    pd.testing.assert_series_equal(out.iloc[:n].reset_index(drop=True), base.reset_index(drop=True), check_names=False)
