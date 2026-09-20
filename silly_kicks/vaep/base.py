@@ -488,6 +488,61 @@ class VAEP:
             out["p_concedes_fail_adj"] = (1.0 - xs) * p_concedes_fail
         return out
 
+    def rate_ximpact(
+        self,
+        game: pd.Series,
+        game_actions: fs.Actions,
+        xsuccess_model: Any,
+        *,
+        win_prob_model: Any,
+        games: pd.DataFrame | None = None,
+        strength_column: str | None = None,
+        frames: pd.DataFrame | None = None,
+    ) -> pd.Series:
+        """Match-context-weighted action value (TF-63, xImpact): ``VAEP_adjusted x dP(win | goal)``.
+
+        Weights each action's outcome-bias-free value (:meth:`rate_adjusted`) by how much a goal at the
+        pre-action game state would swing the match result -- so a late equalizer scores high and a
+        garbage-time goal ≈ 0. **Raises on HybridVAEP** (inherited from :meth:`rate_adjusted`); a NaN
+        leverage (unresolved state) or NaN adjusted value propagates to NaN xImpact (never fabricated).
+
+        Parameters
+        ----------
+        game, game_actions : the SPADL game + actions (as :meth:`rate_adjusted`).
+        xsuccess_model : the injected ``P(success)`` model (as :meth:`rate_adjusted`).
+        win_prob_model : a fitted ``silly_kicks.win_probability.WinProbabilityModel`` (injected).
+        games : optional ``(game_id, home_team_id)`` frame; derived from ``game`` when omitted.
+        strength_column : optional per-row pre-match supremacy column on ``game_actions``.
+        frames : optional tracking frames, threaded to :meth:`rate_adjusted`.
+
+        Returns
+        -------
+        pandas.Series
+            ``ximpact`` per action, on the ``game_actions`` index.
+
+        Examples
+        --------
+        Weight a fitted STANDARD VAEP's outcome-bias-free value by in-game goal leverage (a real game +
+        a fitted win-probability model + an xSuccess model are required, so this is an illustrative
+        block)::
+
+            from silly_kicks.win_probability import WinProbabilityModel
+            from silly_kicks.xsuccess import XSuccessModel
+
+            xi = vaep_model.rate_ximpact(
+                game, game_actions, XSuccessModel.bundled(), win_prob_model=WinProbabilityModel.bundled()
+            )
+        """
+        from silly_kicks.win_probability import goal_leverage  # lazy: the vaep -> win_probability edge
+
+        from .ximpact import ximpact_values
+
+        adjusted = self.rate_adjusted(game, game_actions, xsuccess_model, frames=frames)
+        if games is None:
+            games = pd.DataFrame([{"game_id": game["game_id"], "home_team_id": game["home_team_id"]}])
+        leverage = goal_leverage(game_actions, model=win_prob_model, games=games, strength_column=strength_column)
+        return ximpact_values(adjusted, leverage)
+
     def score(self, X: pd.DataFrame, y: pd.DataFrame) -> dict[str, dict[str, float]]:
         """Evaluate the fit of the model on the given test data and labels.
 

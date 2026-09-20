@@ -43,7 +43,13 @@ _PKG: dict[str, tuple[str, str, str, str | None]] = {
 }
 
 #: xsuccess is a VAEP rating method (TF-61) with no mart column-set -> deliberately not in the registry.
-_EXEMPT: dict[str, str] = {"xsuccess": "VAEP rating method; emits no mart column-set (TF-61/ADR-095)"}
+#: win_probability emits per-ACTION feature-grain columns (p_win/.../win_prob_leverage), NOT a
+#: per-(entity, match) mart family -> exports WIN_PROBABILITY_COLUMNS (not *_METRIC_COLUMNS), so it is
+#: out of the derived enrollment set; recorded here for the decision (TF-63/ADR-100).
+_EXEMPT: dict[str, str] = {
+    "xsuccess": "VAEP rating method; emits no mart column-set (TF-61/ADR-095)",
+    "win_probability": "per-action feature-grain output; not a per-(entity,match) mart family (TF-63/ADR-100)",
+}
 #: nothing is un-derivable-and-un-enrolled.
 _UNDERIVABLE: frozenset[str] = frozenset()
 

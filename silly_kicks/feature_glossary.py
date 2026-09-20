@@ -168,6 +168,7 @@ _A_DUELS = "Glickman, 'The Glicko-2 rating system'"  # TF-55 Glicko-2 duel ratin
 _A_GK_DECISION = "J. Eyestone, xT-GK collaboration (2026)"  # TF-62 GK build-up Decision-Value extension
 _A_TEAM_METRICS = "Twelve.football match-report glossary + MSC Bootcamp practitioner KPIs"  # TF-52 team KPIs
 _A_MATCH_OUTCOME = "Dixon & Coles (1997); Poisson-binomial goal model; Sumpter, Soccermatics (module 3)"  # TF-53
+_A_WIN_PROB = "Paul, Klemp & Memmert (2025); Dixon & Robinson (1998); Robberechts, Van Haaren & Davis (2019)"  # TF-63
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
@@ -181,6 +182,7 @@ _M_TEAM_PROGRESSION = "silly_kicks.team_metrics._progression"  # TF-52 progressi
 _M_TEAM_BUILDUP = "silly_kicks.team_metrics._buildup"  # TF-52 build-up / post-regain / switch KPIs
 _M_TEAM_COMPUTE = "silly_kicks.team_metrics._compute"  # TF-52 within-Ns post-recovery companions
 _M_MATCH_OUTCOME = "silly_kicks.match_outcome._compute"  # TF-53 match-outcome win/draw/loss + xPoints
+_M_WIN_PROB = "silly_kicks.win_probability._compute"  # TF-63 in-game win probability + goal leverage
 # TF-54b territorial_defense was DEMOTED to experimental (ADR-090 construct-validity: instrument_void),
 # so its three columns carry no glossary entry -- the code is retained privately for the redesign
 # (mirrors the TF-60 Layer-3 arms). NOTICE keeps the attribution for the retained code.
@@ -2596,8 +2598,10 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     FeatureColumn(
         name="p_win",
         definition=(
-            "Probability this team wins the match, from the exact Poisson-binomial goal distributions of "
-            "both teams (per-shot xG, not Poisson(sum xG)); the two opt-in corrections shift it."
+            "Probability this team wins. Pre-match (match_outcome, TF-53): the exact Poisson-binomial goal "
+            "distributions of both teams (per-shot xG, not Poisson(sum xG)); the two opt-in corrections shift "
+            "it. Per-action (win_probability, TF-63): the in-game win probability at the action's game state, "
+            "from a forward Markov chain on the score difference."
         ),
         unit="probability",
         emitting_module=_M_MATCH_OUTCOME,
@@ -2606,7 +2610,11 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="p_draw",
-        definition="Probability the match is drawn, from the two teams' goal PMFs (equal-scoreline mass).",
+        definition=(
+            "Probability the match is drawn. Pre-match: equal-scoreline mass of the two teams' goal PMFs "
+            "(match_outcome, TF-53); per-action: the in-game draw probability at the action's game state "
+            "(win_probability, TF-63)."
+        ),
         unit="probability",
         emitting_module=_M_MATCH_OUTCOME,
         attribution=_A_MATCH_OUTCOME,
@@ -2614,7 +2622,10 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
     ),
     FeatureColumn(
         name="p_loss",
-        definition="Probability this team loses the match, from the two teams' goal PMFs.",
+        definition=(
+            "Probability this team loses. Pre-match: the two teams' goal PMFs (match_outcome, TF-53); "
+            "per-action: the in-game loss probability at the action's game state (win_probability, TF-63)."
+        ),
         unit="probability",
         emitting_module=_M_MATCH_OUTCOME,
         attribution=_A_MATCH_OUTCOME,
@@ -2637,6 +2648,20 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         unit="xG",
         emitting_module=_M_MATCH_OUTCOME,
         attribution=_A_MATCH_OUTCOME,
+        higher_is_better=True,
+    ),
+    # --- TF-63 in-game win probability / xImpact leverage (silly_kicks.win_probability._compute) ---
+    FeatureColumn(
+        name="win_prob_leverage",
+        definition=(
+            "Goal leverage at the action's pre-action game state: dP(win | goal) = P(win | score+1) - "
+            "P(win | score), the swing in the acting team's win probability from scoring one more goal. "
+            "High for a late equalizer, ≈ 0 in a decided (garbage-time) state. Weights VAEP_adjusted into "
+            "xImpact (VAEP.rate_ximpact)."
+        ),
+        unit="probability",
+        emitting_module=_M_WIN_PROB,
+        attribution=_A_WIN_PROB,
         higher_is_better=True,
     ),
 )
