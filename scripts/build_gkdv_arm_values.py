@@ -23,10 +23,12 @@ Usage (on the box, scripts/ on sys.path, pining token in env):
   python scripts/build_gkdv_arm_values.py --out <DIR> [--providers gradientsports] \
       [--arm das|threat|both] [--max-per-provider N] [--tracking-limit N]
 
-The `threat` arm is REFUSED, not defaulted: it needs a fitted ExpectedThreat, and none can be
-loaded (`ExpectedThreat` exposes only fit/interpolator/rate -- there is no serialization in the
-package, and `FrozenXt` wraps an already-fitted in-memory model). Fitting one in-process is a
-leakage decision that belongs in its own registered cycle.
+The `threat` arm is REFUSED, not defaulted: it needs a fitted ExpectedThreat, and this driver
+deliberately wires NO xT loader -- it exposes no xT input and never fits one in-process.
+(`ExpectedThreat` gained JSON serialization in 4.121.0 / ADR-100, so a fitted model CAN now be
+loaded in principle; choosing/loading one HERE is a leakage decision -- which corpus? disjoint
+from what? -- that belongs in its own registered cycle, so the driver keeps the threat arm
+unscoreable rather than hand it a model. `FrozenXt` wraps an already-fitted in-memory model.)
 """
 
 from __future__ import annotations
@@ -117,23 +119,22 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    # The threat arm is REFUSED here, and the reason is a library fact rather than a preference.
+    # The threat arm is REFUSED here as a DRIVER policy, and the reason is correctness, not taste.
     #
     # `compute_threat_pc` types `xt` as a required ExpectedThreat; before this cycle's guard it
     # returned 0.0 for None, so a threat pass would have persisted structural zeros and the ICC
     # computed on them would be degenerate while looking like a measurement.
     #
-    # And it cannot simply be handed one by path: `ExpectedThreat` exposes only fit/interpolator/
-    # rate -- there is NO serialization anywhere in the package, and `FrozenXt` is a provenance
-    # wrapper around an already-fitted in-memory model, not a loader. So the threat arm requires
-    # an IN-PROCESS fit on a chosen corpus, which is a leakage decision (which matches? disjoint
-    # from what?) that belongs in its own registered cycle -- not an inline default here.
+    # `ExpectedThreat` gained JSON serialization in 4.121.0 (ADR-100), so a fitted model CAN now be
+    # loaded in principle -- but this driver deliberately exposes no xT input and never fits one
+    # in-process: choosing a corpus to fit/load is a leakage decision (which matches? disjoint from
+    # what?) that belongs in its own registered cycle, not an inline default here. `FrozenXt` remains
+    # a provenance wrapper around an already-fitted in-memory model, not a loader for this path.
     if args.arm in ("threat", "both"):
         raise SystemExit(
-            "--arm threat|both is not runnable yet: it needs a fitted ExpectedThreat, and none "
-            "can be loaded (ExpectedThreat has no save/load; FrozenXt wraps an in-memory model). "
-            "Fitting one in-process is a registered leakage decision -- give the threat arm its "
-            "own cycle. Use --arm das."
+            "--arm threat|both is not runnable yet: it needs a fitted ExpectedThreat, and this "
+            "driver wires no xT loader (no xT input, no in-process fit). Choosing/loading one is a "
+            "registered leakage decision -- give the threat arm its own cycle. Use --arm das."
         )
 
     import numpy as np
