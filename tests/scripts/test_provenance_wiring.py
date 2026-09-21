@@ -74,7 +74,7 @@ ARTIFACT_DRIVERS = (
     # seam). Writes parameters-only bundled weights + metrics.json stamping training_commit -- the same
     # class as the other weight trainers (train_receiver_model / train_ghost_gk / train_ghost_outfield).
     "train_pass_completion",
-    # TF-63 WinProbabilityModel weight trainer (ADR-100). Fits on the PUBLIC StatsBomb open-data corpus
+    # TF-63 WinProbabilityModel weight trainer (ADR-101). Fits on the PUBLIC StatsBomb open-data corpus
     # and writes parameters-only bundled weights + metrics.json stamping training_commit -- the same
     # class as the other weight trainers (train_pass_completion / train_ghost_gk / train_ghost_outfield).
     "train_win_probability",

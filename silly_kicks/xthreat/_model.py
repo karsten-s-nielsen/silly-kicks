@@ -1,6 +1,11 @@
 """Expected Threat (xT) model — pluggable transition family. See NOTICE for citations."""
 
-from collections.abc import Callable
+import json
+import os
+from collections.abc import Callable, Mapping
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -17,9 +22,21 @@ from silly_kicks.xthreat._grid import (
     _get_successful_move_actions,
     _scoring_prob,
 )
-from silly_kicks.xthreat._params import GridSpec, KDEParams, Method, XtParams, validate_params_for_method
+from silly_kicks.xthreat._params import (
+    _METHOD_TO_PARAMS_TYPE,
+    GridSpec,
+    KDEParams,
+    Method,
+    XtParams,
+    validate_params_for_method,
+)
+from silly_kicks.xthreat._physical import require_fitted_xt
 from silly_kicks.xthreat._transitions import singh_transition_matrix
 from silly_kicks.xthreat._value_iteration import value_iteration
+
+#: Schema version stamped into ``ExpectedThreat.to_dict`` output; ``from_dict`` fail-closes on any
+#: other value (forward-compat door -- a newer schema is rejected loudly by an older reader).
+_SERIALIZE_FORMAT_VERSION = 1
 
 # NOTE: kde_smoothed_transition_matrix is lazy-imported inside fit() (below), NOT at module
 # top. This (a) lets the package import cleanly before KDE lands and (b) keeps `import
@@ -256,3 +273,123 @@ class ExpectedThreat:
 
         ratings[move_actions.index] = xT_end - xT_start
         return ratings
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the complete fitted state to a JSON-round-trippable dict.
+
+        ndarrays become nested Python lists and NumPy scalars become Python floats, so
+        ``json.dumps(xt.to_dict())`` is safe (no pickle). The stored arrays -- ``xT`` in
+        particular -- are round-tripped VERBATIM in their internal (y-inverted) storage
+        orientation (ADR-041); no normalization is applied on either leg. ``from_dict``
+        reconstructs a bit-identical model without re-fitting. See NOTICE for citations.
+
+        Raises
+        ------
+        NotFittedError
+            If the model has not been fitted (all-zero ``xT``).
+
+        Returns
+        -------
+        dict
+            A ``format_version``-tagged, JSON-safe dict of the fitted state.
+
+        Examples
+        --------
+        Persist a fitted model across a process boundary::
+
+            xt = ExpectedThreat().fit(actions)
+            blob = json.dumps(xt.to_dict())
+            xt2 = ExpectedThreat.from_dict(json.loads(blob))
+        """
+        if (
+            self.scoring_prob_matrix is None
+            or self.shot_prob_matrix is None
+            or self.move_prob_matrix is None
+            or self.transition_matrix is None
+            or not np.any(self.xT)
+        ):
+            raise NotFittedError("ExpectedThreat.to_dict() on an unfitted model; call fit() first.")
+        return {
+            "format_version": _SERIALIZE_FORMAT_VERSION,
+            "l": int(self.l),
+            "w": int(self.w),
+            "eps": float(self.eps),
+            "method": self.method,
+            "params": (asdict(self.params) if self.params is not None else None),
+            "xT": self.xT.tolist(),
+            "scoring_prob_matrix": self.scoring_prob_matrix.tolist(),
+            "shot_prob_matrix": self.shot_prob_matrix.tolist(),
+            "move_prob_matrix": self.move_prob_matrix.tolist(),
+            "transition_matrix": self.transition_matrix.tolist(),
+            "heatmaps": [h.tolist() for h in self.heatmaps],
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "ExpectedThreat":
+        """Reconstruct a fitted ExpectedThreat from :meth:`to_dict` output WITHOUT re-fitting.
+
+        Fail-closed: an unknown/missing ``format_version`` raises ``ValueError`` FIRST; a
+        missing required key raises ``KeyError``; a method/params mismatch raises ``TypeError``
+        (via ``validate_params_for_method`` in the constructor); an all-zero ``xT`` payload
+        fails ``require_fitted_xt`` (``NotFittedError``). Arrays are restored verbatim in their
+        stored orientation (ADR-041). See NOTICE for citations.
+
+        Parameters
+        ----------
+        d : Mapping
+            The dict produced by :meth:`to_dict` (or its JSON round-trip).
+
+        Returns
+        -------
+        ExpectedThreat
+            A fitted model producing bit-identical ``rate`` / ``destination_profiles`` output.
+
+        Examples
+        --------
+        Round-trip a fitted model::
+
+            xt2 = ExpectedThreat.from_dict(xt.to_dict())
+            # xt2.rate(actions) equals xt.rate(actions)
+        """
+        version = d.get("format_version")
+        if version != _SERIALIZE_FORMAT_VERSION:
+            raise ValueError(
+                f"unsupported ExpectedThreat format_version {version!r}; this reader supports "
+                f"{_SERIALIZE_FORMAT_VERSION}."
+            )
+        raw_params = d.get("params")
+        params = None if raw_params is None else _METHOD_TO_PARAMS_TYPE[d["method"]](**raw_params)
+        model = cls(l=d["l"], w=d["w"], eps=d["eps"], method=d["method"], params=params)
+        model.xT = np.asarray(d["xT"], dtype=np.float64)
+        model.scoring_prob_matrix = np.asarray(d["scoring_prob_matrix"], dtype=np.float64)
+        model.shot_prob_matrix = np.asarray(d["shot_prob_matrix"], dtype=np.float64)
+        model.move_prob_matrix = np.asarray(d["move_prob_matrix"], dtype=np.float64)
+        model.transition_matrix = np.asarray(d["transition_matrix"], dtype=np.float64)
+        model.heatmaps = [np.asarray(h, dtype=np.float64) for h in d["heatmaps"]]
+        require_fitted_xt(model, caller="from_dict")
+        return model
+
+    def save(self, path: str | os.PathLike[str]) -> None:
+        """Write :meth:`to_dict` as a UTF-8 JSON file (thin wrapper over ``to_dict``).
+
+        Examples
+        --------
+        Persist a fitted model to disk::
+
+            xt = ExpectedThreat().fit(actions)
+            xt.save("xt.json")
+        """
+        Path(path).write_text(json.dumps(self.to_dict()), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | os.PathLike[str]) -> "ExpectedThreat":
+        """Read a JSON file written by :meth:`save` and reconstruct via :meth:`from_dict`.
+
+        Examples
+        --------
+        Reload a persisted model and score with it::
+
+            xt = ExpectedThreat.load("xt.json")
+            values = xt.rate(actions)
+        """
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))

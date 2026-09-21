@@ -3,7 +3,7 @@
 - **Status:** Design (round-3 changes applied 2026-09-20 — TF63-SPEC-09/10/11 resolved, SPEC-12 folded in as a perf note; (b) self-contained Markov core stamped; awaiting re-review or plan)
 - **Date:** 2026-09-20
 - **Feature:** TF-63 (On Deck)
-- **Proposed decision record:** ADR-100 (to be written on approval)
+- **Proposed decision record:** ADR-101 (to be written on approval)
 - **Proposed release:** silly-kicks (next available minor from `main`; PR-S number assigned at ship)
 - **Source:** Paul, Klemp & Memmert 2025 (MLSA 2026, paper MLSA26_paper_326 — "Expected Impact on Match Outcome")
 - **Builds on:** TF-53 `match_outcome` (pre-match Poisson-binomial simplex, shipped), TF-61 `VAEP.rate_adjusted` (outcome-bias-free action value, shipped)

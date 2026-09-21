@@ -1,4 +1,4 @@
-"""Trainer: bundle the default WinProbabilityModel weights (TF-63, ADR-100).
+"""Trainer: bundle the default WinProbabilityModel weights (TF-63, ADR-101).
 
 Fits ``silly_kicks.win_probability.WinProbabilityModel`` on the PUBLIC StatsBomb open-data corpus and
 writes the pickle-free JSON + SHA256SUMS artifact via ``model.save(...)``, plus ``metrics.json``
@@ -211,7 +211,7 @@ def render_model_card(metrics: dict) -> str:
     n_matches = metrics.get("n_matches", "?")
     n_comp = metrics.get("n_competitions", "?")
     commit = metrics.get("training_commit", "?")
-    return f"""# In-game win-probability model -- `default` variant (TF-63, ADR-100)
+    return f"""# In-game win-probability model -- `default` variant (TF-63, ADR-101)
 
 **What it is.** A per-action in-game win-probability model: an interval-hazard logistic on
 `(score_diff, minutes_remaining, base_strength, home, man_advantage)` feeds a forward Markov chain on

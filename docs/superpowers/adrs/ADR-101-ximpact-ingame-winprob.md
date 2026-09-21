@@ -1,4 +1,4 @@
-# ADR-100: xImpact — match-context-weighted action value via a self-contained in-game win-probability model
+# ADR-101: xImpact — match-context-weighted action value via a self-contained in-game win-probability model
 
 | Field | Value |
 |---|---|
