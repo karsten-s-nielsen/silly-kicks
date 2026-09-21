@@ -56,11 +56,13 @@ def test_the_ball_row_is_never_mistaken_for_a_team():
 
 
 def test_threat_arm_is_refused_not_silently_defaulted(monkeypatch, capsys):
-    """The threat arm needs a fitted ExpectedThreat and NONE can be loaded: the class exposes only
-    fit/interpolator/rate (no save/load anywhere in the package) and `FrozenXt` wraps an
-    already-fitted in-memory model. Defaulting to `xt=None` would have persisted structural zeros
-    -- `compute_threat_pc` returned 0.0 for None before this cycle's guard -- and an ICC on a
-    constant column is degenerate while looking like a measurement. So it refuses, loudly."""
+    """The threat arm needs a fitted ExpectedThreat and this driver wires NO xT loader: it exposes
+    no xT input and never fits one in-process (`ExpectedThreat` gained JSON serialization in
+    4.121.0/ADR-100, but loading a chosen fitted model here is a leakage decision for its own cycle),
+    and `FrozenXt` wraps an already-fitted in-memory model. Defaulting to `xt=None` would have
+    persisted structural zeros -- `compute_threat_pc` returned 0.0 for None before this cycle's guard
+    -- and an ICC on a constant column is degenerate while looking like a measurement. So it refuses,
+    loudly."""
     import sys
 
     for arm in ("threat", "both"):
@@ -70,13 +72,23 @@ def test_threat_arm_is_refused_not_silently_defaulted(monkeypatch, capsys):
         assert "fitted ExpectedThreat" in str(excinfo.value)
 
 
-def test_expected_threat_really_has_no_loader():
-    """Pins the FACT the refusal rests on. If serialization is ever added, this goes red and the
-    refusal above should be revisited rather than left as folklore."""
+def test_serialization_exists_and_the_refusal_is_now_a_driver_policy():
+    """REVISIT of the old ``test_expected_threat_really_has_no_loader`` pin (its docstring told us to
+    revisit rather than leave folklore once serialization was added). ADR-100 (4.121.0) added
+    ``ExpectedThreat`` JSON serialization (``to_dict``/``from_dict``/``save``/``load``), so the
+    package-wide "no loader exists" fact the threat-arm refusal used to rest on is GONE. The refusal
+    is now a DRIVER policy: ``build_gkdv_arm_values`` wires no xT loader and never fits one
+    in-process, keeping the threat-arm ICC result unrepresentable HERE. The loud runtime refusal is
+    exercised by ``test_threat_arm_is_refused_not_silently_defaulted`` above; this pins the
+    relocation so removing the driver policy trips a test rather than sliding in silently."""
+    import inspect
+
     from silly_kicks.xthreat import ExpectedThreat
 
-    assert not hasattr(ExpectedThreat, "load")
-    assert not hasattr(ExpectedThreat, "save")
+    # Serialization now exists (ADR-100) -- the old absence pin can no longer hold.
+    assert hasattr(ExpectedThreat, "from_dict") and hasattr(ExpectedThreat, "save")
+    # The unrepresentability moved to the driver: it declares (and enforces) the no-loader policy.
+    assert "driver wires no xT loader" in inspect.getsource(mod)
 
 
 def test_only_the_DEFENDING_keeper_is_credited():

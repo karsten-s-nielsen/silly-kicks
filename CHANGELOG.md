@@ -5,6 +5,18 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.121.0] — 2026-09-20
+
+### Added — `ExpectedThreat` JSON serialize seam: `to_dict`/`from_dict`/`save`/`load` (PR-S193, ADR-100, SK-XT-SER)
+
+A fitted `silly_kicks.xthreat.ExpectedThreat` can now cross a process boundary without re-`fit()`. Requested by the luxury-lakehouse ExT-v2 fold (fit `wf-xt-grids` on HF Jobs, reconstruct in `territory_writer` on Databricks serverless to inject into the TF-54b `territory` counterfactual + `destination_profiles`; a consumer-side re-fit violates its boundedness gate). Purely additive — **no VAEP/tracking retrain, no re-materialize, C4-free** (methods on an existing class; `fit`/`rate`/`interpolator`/`values_at_points`/`destination_profiles` and the SK-xT-1 `singh_counts` frozen-oracle parity are byte-identical).
+
+- **`ExpectedThreat.to_dict() -> dict` / `from_dict(d) -> ExpectedThreat`** — the JSON-round-trippable serialization primitive (ndarrays → nested lists, no `pickle`; consumer policy forbids `pickle.loads`). Serializes `l`/`w`/`eps`/`method`/`params` + the 5 fitted arrays (`xT` + `scoring_prob_matrix`/`shot_prob_matrix`/`move_prob_matrix`/`transition_matrix`) + `heatmaps`; `grid` is derived in the constructor. `from_dict` reconstructs a **bit-identical** model WITHOUT re-fitting.
+- **`ExpectedThreat.save(path)` / `load(path)`** — thin UTF-8 JSON-file wrappers over `to_dict`/`from_dict` (single serialization source). No SHA256 sidecar: the SHA/chirality machinery (ADR-011/040/050) is for wheel-bundled artifacts; `ExpectedThreat` is consumer-fitted + consumer-persisted (the consumer owns integrity). ADR-100 Option D.
+- **Raw-orientation verbatim (ADR-041):** `xT` is stored y-inverted; the round-trip applies no normalization/transpose on either leg, so `rate`/`destination_profiles` stay bit-identical (guarded by the functional-equivalence test).
+- **Fail-closed `from_dict`:** a missing/unknown `format_version` (≠ 1) raises `ValueError` FIRST; a missing required key raises `KeyError`; a method/params mismatch raises `TypeError`; an all-zero `xT` payload fails `require_fitted_xt` (`NotFittedError`). `to_dict` on an unfitted model raises `NotFittedError`. Guarded by `tests/xthreat/test_serialize.py` (round-trip fidelity, functional equivalence incl. `destination_profiles`, unfitted-raises, both `singh_counts`/`kde_smoothed`, JSON boundary, fail-closed non-vacuity, `save`/`load` file). No `__all__`/`NOTICE`/glossary/C4 change. Decision: ADR-100.
+- **TF-19 gkdv co-change (blast radius, no behaviour change):** `scripts/build_gkdv_arm_values.py` refused the `threat`/`both` arm on the *fact* that `ExpectedThreat` had no `save`/`load` (the validation-harness "unrepresentable, not merely refused" discipline). That fact is now false, so the refusal is re-stated as an explicit DRIVER policy — the driver wires no xT loader and never fits one in-process — and stays loud + test-pinned (`test_threat_arm_is_refused_not_silently_defaulted`). The pre-authorised absence-pin `test_expected_threat_really_has_no_loader` (its docstring: "if serialization is ever added … revisit rather than leave as folklore") was retired → `test_serialization_exists_and_the_refusal_is_now_a_driver_policy`. The `SystemExit` message wording changed (Hyrum: it still contains "fitted ExpectedThreat").
+
 ## [4.120.0] — 2026-09-19
 
 ### Added — TF-54b Path B: event-only counterfactual territorial "threat prevented" cone + all-competitions PassCompletionModel re-fit + defender-ranking census (PR-S192, ADR-099)
