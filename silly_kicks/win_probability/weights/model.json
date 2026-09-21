@@ -1,0 +1,64 @@
+{
+  "beta": [
+    0.06367280620022119,
+    -0.004188194308036327,
+    0.3377726675620636,
+    0.19759292835239828,
+    0.4705670352612223
+  ],
+  "feature_contract": {
+    "probe_hazards": [
+      0.013440812058014418,
+      0.011151486386796217,
+      0.01920630107822669,
+      0.018955837200850673
+    ],
+    "probe_states": [
+      [
+        0,
+        90.0,
+        0.0,
+        1,
+        0
+      ],
+      [
+        1,
+        15.0,
+        0.3,
+        0,
+        -1
+      ],
+      [
+        -2,
+        45.0,
+        -0.5,
+        1,
+        1
+      ],
+      [
+        3,
+        5.0,
+        0.0,
+        0,
+        0
+      ]
+    ]
+  },
+  "feature_names": [
+    "score_diff",
+    "minutes_remaining",
+    "base_strength",
+    "home",
+    "man_advantage"
+  ],
+  "intercept": -4.116583007952873,
+  "isotonic": null,
+  "params": {
+    "ece_max": 0.1,
+    "interval_minutes": 1,
+    "lattice_pad": 10,
+    "leverage_nonneg_atol": 1e-09,
+    "regulation_minutes": 90,
+    "slope_tol": 0.25
+  }
+}
