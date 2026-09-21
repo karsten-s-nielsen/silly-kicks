@@ -74,6 +74,10 @@ ARTIFACT_DRIVERS = (
     # seam). Writes parameters-only bundled weights + metrics.json stamping training_commit -- the same
     # class as the other weight trainers (train_receiver_model / train_ghost_gk / train_ghost_outfield).
     "train_pass_completion",
+    # TF-63 WinProbabilityModel weight trainer (ADR-101). Fits on the PUBLIC StatsBomb open-data corpus
+    # and writes parameters-only bundled weights + metrics.json stamping training_commit -- the same
+    # class as the other weight trainers (train_pass_completion / train_ghost_gk / train_ghost_outfield).
+    "train_win_probability",
     # TF-54b defender-RANKING census (ADR-099). Runs the territory counterfactual metric over the
     # PUBLIC StatsBomb open-data corpus and writes docs/research census.json (Tier-1 identifiability
     # counts + Tier-2 crossed-ICC verdict) + (iff licensed) ranking.parquet -- a cited number over

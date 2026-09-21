@@ -457,6 +457,40 @@ def _match_outcome_columns() -> set[str]:
     return set(MATCH_OUTCOME_METRIC_COLUMNS) & set(samples.columns)
 
 
+def _win_probability_columns() -> set[str]:
+    """Derived in-game win-probability columns emitted by compute_win_probability (TF-63).
+
+    compute_win_probability is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg fits a tiny model on a 2-team fixture (goals across both periods) and runs it.
+    ``p_win``/``p_draw``/``p_loss`` share base names with match_outcome (idempotent in the union);
+    ``win_prob_leverage`` is new. ``win_prob_source`` is provenance (excluded). ``ximpact`` is a VAEP
+    rating-method output (VAEP.rate_ximpact), not a default-emitted feature -- glossary-exempt like
+    ``vaep_value``. A NEW emitted metric appears here and fails the coverage gate until documented."""
+    import pandas as pd
+
+    from silly_kicks.spadl import config as spadlconfig
+    from silly_kicks.win_probability import WinProbabilityModel, compute_win_probability
+
+    p = spadlconfig.actiontype_id["pass"]
+    shot = spadlconfig.actiontype_id["shot"]
+    succ = spadlconfig.result_id["success"]
+    fail = spadlconfig.result_id["fail"]
+    rows = [
+        {"period_id": 1, "team_id": 10, "type_id": shot, "result_id": succ, "time_seconds": 1800.0},  # A goal
+        {"period_id": 1, "team_id": 20, "type_id": shot, "result_id": fail, "time_seconds": 1500.0},
+        {"period_id": 2, "team_id": 20, "type_id": shot, "result_id": succ, "time_seconds": 900.0},  # B goal
+        {"period_id": 2, "team_id": 10, "type_id": p, "result_id": succ, "time_seconds": 2850.0},
+    ]
+    actions = pd.DataFrame(rows)
+    actions["game_id"] = 1
+    actions["action_id"] = range(len(actions))
+    games = pd.DataFrame({"game_id": [1], "home_team_id": [10]})
+    model = WinProbabilityModel().fit(actions, games=games)
+    samples, _ = compute_win_probability(actions, model=model, games=games)
+    metric = {"p_win", "p_draw", "p_loss", "win_prob_leverage"}
+    return metric & set(samples.columns)
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -490,5 +524,6 @@ def emitted_columns() -> set[str]:
         | _gk_decision_columns()
         | _team_metrics_columns()
         | _match_outcome_columns()
+        | _win_probability_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()

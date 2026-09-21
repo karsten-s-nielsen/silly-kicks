@@ -386,6 +386,19 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/match_outcome/_compute.py",
     "silly_kicks/match_outcome/_pmf.py",
     "silly_kicks/match_outcome/_dependence.py",
+    # win_probability (TF-63): the modules that DEFINE its public surface -- WinProbabilityParams
+    # (_config), WinProbabilityReport (_report), compute_win_probability + goal_leverage (_compute),
+    # WinProbabilityModel + WinProbabilityIntegrityError (_model) -- re-exported via the package __all__.
+    # _columns.py + _chain.py hold constants / an internal Markov-chain kernel (re-export nothing), so
+    # they are not discovered. Brand-new public modules -- documented on creation (every public symbol
+    # carries a real Examples section).
+    "silly_kicks/win_probability/_config.py",
+    "silly_kicks/win_probability/_report.py",
+    "silly_kicks/win_probability/_compute.py",
+    "silly_kicks/win_probability/_model.py",
+    # TF-63 xImpact combiner: vaep/ximpact.py is a dotted-path public module (P2) defining
+    # ximpact_values, called by VAEP.rate_ximpact. Documented on creation (runnable doctest).
+    "silly_kicks/vaep/ximpact.py",
 )
 
 

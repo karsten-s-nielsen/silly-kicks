@@ -35,6 +35,14 @@ silly_kicks/tracking/_gk_completion_weights/*/SHA256SUMS binary
 # `MODEL_CARD.md` stay TEXT so the coefficients/provenance remain reviewable.
 silly_kicks/tracking/_receiver_weights/*/model.json binary
 silly_kicks/tracking/_receiver_weights/*/SHA256SUMS binary
+# Win-probability (TF-63, ADR-101), pinned NARROWLY like GK-completion/receiver -- only the SHA-verified
+# pair. UNLIKE those, WinProbabilityModel.load hashes the RAW model.json bytes (read_bytes, no CRLF
+# normalization -- like match-outcome/xshot/xcross), so this pin is LOAD-BEARING for verification, not
+# churn prevention: without it Windows autocrlf flips model.json to CRLF on checkout and the SHA-256 no
+# longer matches SHA256SUMS -> WinProbabilityIntegrityError (caught on windows CI). `metrics.json` and
+# `MODEL_CARD.md` stay TEXT so the calibration numbers + provenance remain reviewable.
+silly_kicks/win_probability/weights/model.json binary
+silly_kicks/win_probability/weights/SHA256SUMS binary
 # StatsBomb 360 slice: byte-exact, never line-ending-converted. Its SOURCE_SHA records SHA-256
 # digests of these files, so autocrlf silently breaks verification -- CI caught exactly that:
 # the digest was computed on a CRLF working copy and ubuntu read LF. Same reason as the three

@@ -420,6 +420,18 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   tau reweighting for cross-team dependence (a fitted rho, MLE on the public StatsBomb open-data
   corpus). Own goals counted by result (ADR-018). Descriptive; opt-in, in no default VAEP xfn list.
 
+- In-game win probability + xImpact (match-context-weighted action value).
+  Attribution: Paul, Klemp & Memmert (2025); Dixon & Robinson (1998); Robberechts, Van Haaren & Davis (2019).
+  Used by: silly_kicks.win_probability._compute + silly_kicks.vaep.ximpact (TF-63).
+  A per-action in-game win-probability model: an interval-hazard logistic on
+  (score_diff, minutes_remaining, base_strength, home, man_advantage) feeds a forward Markov chain on
+  the score difference (a time- and state-dependent scoring process, per Dixon & Robinson 1998; the
+  in-game win-probability application follows Robberechts, Van Haaren & Davis 2019). The goal leverage
+  ΔP(win | goal) weights the outcome-bias-free VAEP_adjusted into xImpact (Paul, Klemp & Memmert 2025),
+  so a late equalizer scores high and a garbage-time goal ≈ 0. The pre-match strength prior is injected
+  (silly-kicks ships no betting-odds model), like the injected per-shot xG. Additive; opt-in; xImpact is
+  a VAEP rating method (VAEP.rate_ximpact), in no default xfn list.
+
 - Territorial defense (SB360 counterfactual) -- DEMOTED to experimental (ADR-090).
   Attribution: Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting).
   Used by: silly_kicks.territorial_defense._arms (TF-54b) -- PRIVATE (demoted; no public surface).
