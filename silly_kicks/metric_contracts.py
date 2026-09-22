@@ -417,6 +417,24 @@ METRIC_CONTRACTS: dict[str, MetricContract] = {
         ),
         "column_types": None,
     },
+    "positioning": {
+        "keys": ("game_id", "team_id"),
+        "metric_columns": ("positioning_gap", "threat_actual", "threat_optimum"),
+        "columns": (
+            "game_id",
+            "period_id",
+            "frame_id",
+            "team_id",
+            "positioning_gap",
+            "threat_actual",
+            "threat_optimum",
+            "n_movable",
+            "n_feasible_proposals",
+            "sa_converged",
+            "positioning_gap_source",
+        ),
+        "column_types": None,
+    },
 }
 
 __all__ = ["METRIC_CONTRACTS", "MetricContract"]

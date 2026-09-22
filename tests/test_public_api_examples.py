@@ -399,6 +399,19 @@ _PUBLIC_MODULE_FILES = (
     # TF-63 xImpact combiner: vaep/ximpact.py is a dotted-path public module (P2) defining
     # ximpact_values, called by VAEP.rate_ximpact. Documented on creation (runnable doctest).
     "silly_kicks/vaep/ximpact.py",
+    # positioning (TF-56): the modules that DEFINE its public surface -- the frozen params (_config),
+    # the Objective/Constraint/Optimizer protocols + built-ins (_objectives/_constraints/_optimizer),
+    # optimise_positions (_solve), compute_positioning_gap + summarize (_compute), PositioningReport
+    # (_report) -- all re-exported via the package __all__. _probe.py is commit-2 battery machinery,
+    # re-exports nothing, so it is not discovered. Brand-new public modules -- documented on creation
+    # (every public symbol carries a real Examples section / runnable doctest).
+    "silly_kicks/positioning/_config.py",
+    "silly_kicks/positioning/_objectives.py",
+    "silly_kicks/positioning/_constraints.py",
+    "silly_kicks/positioning/_optimizer.py",
+    "silly_kicks/positioning/_solve.py",
+    "silly_kicks/positioning/_compute.py",
+    "silly_kicks/positioning/_report.py",
 )
 
 

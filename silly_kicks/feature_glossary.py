@@ -169,6 +169,10 @@ _A_GK_DECISION = "J. Eyestone, xT-GK collaboration (2026)"  # TF-62 GK build-up 
 _A_TEAM_METRICS = "Twelve.football match-report glossary + MSC Bootcamp practitioner KPIs"  # TF-52 team KPIs
 _A_MATCH_OUTCOME = "Dixon & Coles (1997); Poisson-binomial goal model; Sumpter, Soccermatics (module 3)"  # TF-53
 _A_WIN_PROB = "Paul, Klemp & Memmert (2025); Dixon & Robinson (1998); Robberechts, Van Haaren & Davis (2019)"  # TF-63
+_A_POSITIONING = (
+    "Oonk & Shah (databallpy optimization, MIT); Spearman pitch control; Le et al. (2017) ghosting; "
+    "Pleuler TTI (Soccer Analytics Handbook)"  # TF-56
+)
 
 _M_RESTDEFENSE = "silly_kicks.restdefense._structure"  # TF-60 rest-defense Layer-1 structure metrics
 _M_RESTDEFENSE_DANGER = "silly_kicks.restdefense._danger"  # TF-60 PR2 Layer-2 danger valuation
@@ -183,6 +187,7 @@ _M_TEAM_BUILDUP = "silly_kicks.team_metrics._buildup"  # TF-52 build-up / post-r
 _M_TEAM_COMPUTE = "silly_kicks.team_metrics._compute"  # TF-52 within-Ns post-recovery companions
 _M_MATCH_OUTCOME = "silly_kicks.match_outcome._compute"  # TF-53 match-outcome win/draw/loss + xPoints
 _M_WIN_PROB = "silly_kicks.win_probability._compute"  # TF-63 in-game win probability + goal leverage
+_M_POSITIONING = "silly_kicks.positioning._compute"  # TF-56 prescriptive positioning gap (reachable optimum)
 # TF-54b territorial_defense was DEMOTED to experimental (ADR-090 construct-validity: instrument_void),
 # so its three columns carry no glossary entry -- the code is retained privately for the redesign
 # (mirrors the TF-60 Layer-3 arms). NOTICE keeps the attribution for the retained code.
@@ -2663,6 +2668,40 @@ FEATURE_GLOSSARY: dict[str, FeatureColumn] = _register(
         emitting_module=_M_WIN_PROB,
         attribution=_A_WIN_PROB,
         higher_is_better=True,
+    ),
+    # --- TF-56 prescriptive positioning gap (silly_kicks.positioning._compute) ---
+    FeatureColumn(
+        name="positioning_gap",
+        definition=(
+            "Attacking threat the realized defensive shape failed to suppress versus the best REACHABLE "
+            "repositioning: threat(actual) - threat(reachable optimum) >= 0, per defensive frame. The optimum "
+            "is a simulated-annealing search over the defending outfielders' positions under per-player "
+            "time-to-intercept reachability; 0 means the shape was already optimal within reach, higher means "
+            "more suppressible threat was left on the table."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_POSITIONING,
+        attribution=_A_POSITIONING,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="threat_actual",
+        definition="xT-weighted pitch-control threat the defence conceded at the FACTUAL shape (the SA incumbent-0).",
+        unit="dimensionless",
+        emitting_module=_M_POSITIONING,
+        attribution=_A_POSITIONING,
+        higher_is_better=False,
+    ),
+    FeatureColumn(
+        name="threat_optimum",
+        definition=(
+            "xT-weighted pitch-control threat at the best REACHABLE defensive shape found by the solver "
+            "(<= threat_actual by construction)."
+        ),
+        unit="dimensionless",
+        emitting_module=_M_POSITIONING,
+        attribution=_A_POSITIONING,
+        higher_is_better=False,
     ),
 )
 

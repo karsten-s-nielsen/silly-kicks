@@ -432,6 +432,18 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   (silly-kicks ships no betting-odds model), like the injected per-shot xG. Additive; opt-in; xImpact is
   a VAEP rating method (VAEP.rate_ximpact), in no default xfn list.
 
+- Prescriptive defensive-positioning optimiser + measured positioning gap.
+  Attribution: Oonk & Shah (databallpy optimization, MIT); Spearman pitch control; Le et al. (2017) ghosting; Pleuler TTI (Soccer Analytics Handbook).
+  Used by: silly_kicks.positioning._compute + silly_kicks.positioning._solve (TF-56).
+  A pure simulated-annealing solver (optimise_positions) searches for the best REACHABLE defensive
+  shape for a single tracking frame under a composable objective (default: xT-weighted pitch-control
+  threat suppression via compute_threat_pc) subject to per-player time-to-intercept reachability -- the
+  prescriptive sibling of the ghost-substitution counterfactual (Le et al. 2017). The SA schedule
+  (weighted composable objectives + constraints + Metropolis accept-worse with decaying temperature and
+  perturbation) follows databallpy's optimization module (Oonk & Shah, MIT). compute_positioning_gap
+  scores positioning_gap = threat(actual) - threat(reachable optimum) >= 0 per defensive frame, at
+  frame/team grain. Additive; a compute_* (not an add_*); in no default xfn list; ships no weights.
+
 - Territorial defense (SB360 counterfactual) -- DEMOTED to experimental (ADR-090).
   Attribution: Fernandez & Bornn 2018 (pitch control / marginal player value); Le et al. 2017 (data-driven ghosting).
   Used by: silly_kicks.territorial_defense._arms (TF-54b) -- PRIVATE (demoted; no public surface).
