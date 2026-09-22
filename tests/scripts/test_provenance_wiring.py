@@ -183,6 +183,12 @@ ARTIFACT_DRIVERS = (
     # and writes docs/research/tf53_match_outcome_calibration/metrics.json (per-config Brier / calibration
     # slope / xPoints bias) -- a cited number over external data; owner-run, reported-not-gated.
     "validate_match_outcome_calibration",
+    # TF-56 prescriptive positioning-gap construct-validity / responsiveness battery. Walks a bounded
+    # velocity-bearing tracking corpus (`load_matches`) with a within-corpus-fit xT and writes
+    # docs/research/tf56_positioning/metrics.json (the pooled Layer-0/1 verdicts + discrimination /
+    # non-degeneracy + the GO/NO-GO composite that DECIDES the metric column's ship status) -- a cited
+    # number over external data; owner-run. No bundled weights (pure solver).
+    "build_tf56_positioning_validity",
 )
 
 

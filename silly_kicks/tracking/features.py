@@ -1147,6 +1147,59 @@ def pressure_on_actor(
     return s.rename(f"pressure_on_actor__{method}")
 
 
+def pressure_on_target(
+    frame: pd.DataFrame,
+    player_id,
+    *,
+    method: str = "bekkers_pi",
+    params: PressureParams | None = None,
+) -> float:
+    """Pressing intensity exerted on ``player_id`` in a single tracking ``frame`` (a scalar).
+
+    A frame-level convenience over :func:`pressure_on_actor`: synthesizes a one-row action for
+    ``player_id`` at the frame's own ``(game_id, period_id, time_seconds)`` and the player's
+    position, links it to the single-frame set, and returns the scalar ``pressure_on_actor__<m>``.
+    REUSES the vectorized computer verbatim -- no pressure math is duplicated, and
+    :func:`add_pressure_on_actor` is untouched (the existing ``tests/tracking/test_pressure_*.py``
+    remain the guard). ``method`` is a plain ``str`` (not the ``Method`` Literal) BY DESIGN: this is
+    a scalar primitive, not a method-flavoured xfn, so it must not be auto-discovered by the ADR-005
+    suffixed-column contract; the value is validated inside :func:`pressure_on_actor`.
+
+    Returns NaN when ``player_id`` is absent from the frame, and (for ``bekkers_pi``) honest-NaN on
+    a declared-velocity-unavailable frame (ADR-063), inherited from :func:`pressure_on_actor`.
+
+    Used by :class:`silly_kicks.positioning.PressureObjective` (TF-56). See NOTICE for full
+    bibliographic citations.
+
+    Examples
+    --------
+    Pressing intensity on one player in a single tracking frame (a scalar, not a Series)::
+
+        from silly_kicks.tracking import pressure_on_target
+
+        pressure = pressure_on_target(frame, player_id=10, method="bekkers_pi")
+        # float (bekkers_pi: [0, 1], higher = more pressed); NaN if the player is absent.
+    """
+    players = frame[~frame["is_ball"].astype(bool)]
+    row = players[ids_match(players["player_id"], player_id)]
+    if len(row) == 0:
+        return float("nan")
+    r = row.iloc[0]
+    synth = pd.DataFrame(
+        {
+            "game_id": [r["game_id"]],
+            "period_id": [r["period_id"]],
+            "action_id": [0],
+            "time_seconds": [r["time_seconds"]],
+            "team_id": [r["team_id"]],
+            "player_id": [player_id],
+            "start_x": [float(r["x"])],
+            "start_y": [float(r["y"])],
+        }
+    )
+    return float(pressure_on_actor(synth, frame, method=method, params=params).iloc[0])  # type: ignore[arg-type]
+
+
 @nan_safe_enrichment
 def add_pressure_on_actor(
     actions: pd.DataFrame,

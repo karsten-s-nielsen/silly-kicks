@@ -46,6 +46,9 @@ models/
 # Claude Code
 .claude/
 
+# Serena MCP index (per-clone symbol cache + memories; regenerable, never committed)
+.serena/
+
 # Hypothesis property-test database (regenerated locally; never committed)
 .hypothesis/
 calibration_runs/

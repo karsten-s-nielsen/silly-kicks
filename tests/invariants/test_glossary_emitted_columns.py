@@ -40,3 +40,4 @@ def test_each_leg_is_non_vacuous():
     assert "decision_value" in {_base(c) for c in E._gk_decision_columns()}  # TF-62 compute_gk_decision_value
     assert "ppda" in {_base(c) for c in E._team_metrics_columns()}  # TF-52 compute_team_kpis
     assert "win_prob_leverage" in {_base(c) for c in E._win_probability_columns()}  # TF-63 compute_win_probability
+    assert "positioning_gap" in {_base(c) for c in E._positioning_columns()}  # TF-56 compute_positioning_gap

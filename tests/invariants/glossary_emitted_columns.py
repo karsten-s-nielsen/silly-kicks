@@ -491,6 +491,43 @@ def _win_probability_columns() -> set[str]:
     return metric & set(samples.columns)
 
 
+def _positioning_columns() -> set[str]:
+    """Derived positioning-gap metric columns emitted by compute_positioning_gap (TF-56).
+
+    compute_positioning_gap is a ``compute_*`` (not an ``add_*``/``*_xfns``), so the name-shape discovery
+    misses it; this leg runs it on a tiny in-domain two-team velocity frame (a defending unit vs an
+    in-possession attack, a uniform toy xT, a small iteration budget) and returns the DERIVED metric
+    columns (the sample keys game_id/team_id + the count/provenance columns are not features). A NEW
+    emitted metric appears here and fails the coverage gate until documented (the run-and-diff anti-rot
+    property)."""
+    import numpy as np
+
+    from silly_kicks.positioning import POSITIONING_METRIC_COLUMNS, PositioningParams, SAParams, compute_positioning_gap
+    from silly_kicks.xthreat import ExpectedThreat
+    from tests.tracking._gk_test_helpers import _make_two_team_frame
+
+    xt = ExpectedThreat(l=16, w=12)
+    xt.xT = np.tile(np.linspace(0.0, 1.0, 16), (12, 1))
+    frame = _make_two_team_frame(
+        home_positions=[(12.0, 30.0), (12.0, 38.0), (40.0, 34.0), (46.0, 30.0)],
+        away_positions=[(16.0, 30.0), (16.0, 38.0), (24.0, 34.0), (34.0, 44.0)],
+        home_gk_pos=(3.0, 34.0),
+        away_gk_pos=(100.0, 34.0),
+        home_velocities=[(-3.0, 0.0), (-3.0, 0.0), (0.0, 0.0), (0.0, 0.0)],
+        away_velocities=[(-2.0, 0.0), (-2.0, 0.0), (-2.0, 0.0), (-2.0, 0.0)],
+    )
+    ball = frame["is_ball"].astype(bool)
+    frame.loc[ball, "x"] = 26.0
+    frame.loc[ball, "y"] = 34.0
+    frame["ball_state"] = "alive"
+    frame["team_in_possession"] = 2
+    frame["speed_source"] = "derived"
+    frame["speed"] = np.hypot(frame["vx"].astype(float), frame["vy"].astype(float))
+    params = PositioningParams(sa=SAParams(num_iterations=10, patience=10))
+    samples, _ = compute_positioning_gap(frame, xt=xt, params=params)
+    return set(POSITIONING_METRIC_COLUMNS) & set(samples.columns)
+
+
 def _base_schema_and_provenance() -> set[str]:
     """Base schema + linkage-provenance column names -- EXCLUDED per spec Non-goal 1 (not derived features).
 
@@ -525,5 +562,6 @@ def emitted_columns() -> set[str]:
         | _team_metrics_columns()
         | _match_outcome_columns()
         | _win_probability_columns()
+        | _positioning_columns()
     )
     return {_base(c) for c in raw} - _base_schema_and_provenance()
