@@ -60,6 +60,15 @@ def _safe_divide(a: npt.ArrayLike, b: npt.ArrayLike) -> npt.NDArray[np.float64]:
     return np.divide(a, b, out=np.zeros_like(a, dtype="float64"), where=b != 0, casting="unsafe")
 
 
+def _scoring_prob_from_counts(goal_counts: npt.ArrayLike, shot_counts: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """Per-cell P(goal | shot) from raw zone counts -- the count-based core of :func:`_scoring_prob`.
+
+    No prior/smoothing: exactly ``_safe_divide(goal, shot)`` (0 where no shots). Shared by
+    ``fit(actions)`` (via ``_scoring_prob``) and ``ExpectedThreat.fit_from_counts`` so the two agree.
+    """
+    return _safe_divide(goal_counts, shot_counts)
+
+
 def _scoring_prob(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.float64]:
     """Compute the probability of scoring when taking a shot for each cell.
 
@@ -82,7 +91,7 @@ def _scoring_prob(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[
 
     shotmatrix = _count(shot_actions.start_x, shot_actions.start_y, l, w)
     goalmatrix = _count(goals.start_x, goals.start_y, l, w)  # type: ignore[reportAttributeAccessIssue]
-    return _safe_divide(goalmatrix, shotmatrix)
+    return _scoring_prob_from_counts(goalmatrix, shotmatrix)
 
 
 def _get_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
@@ -128,6 +137,19 @@ def _get_successful_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
     return move_actions[(move_actions.result_id == spadlconfig.result_id["success"])]  # type: ignore[reportReturnType]
 
 
+def _action_prob_from_counts(
+    shot_counts: npt.ArrayLike, move_counts: npt.ArrayLike
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Per-cell (P(shoot), P(move)) from raw zone counts -- the count-based core of :func:`_action_prob`.
+
+    ``total = move + shot``; returns ``(_safe_divide(shot, total), _safe_divide(move, total))``. No
+    smoothing. ``move_counts`` here is the VALID-START move population (matching ``_action_prob``), NOT
+    the Singh transition denominator (valid start AND end). Shared by ``fit`` + ``fit_from_counts``.
+    """
+    total = np.asarray(move_counts) + np.asarray(shot_counts)
+    return _safe_divide(shot_counts, total), _safe_divide(move_counts, total)
+
+
 def _action_prob(
     actions: pd.DataFrame, l: int = N, w: int = M
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
@@ -156,6 +178,5 @@ def _action_prob(
 
     movematrix = _count(move_actions.start_x, move_actions.start_y, l, w)
     shotmatrix = _count(shot_actions.start_x, shot_actions.start_y, l, w)
-    totalmatrix = movematrix + shotmatrix
 
-    return _safe_divide(shotmatrix, totalmatrix), _safe_divide(movematrix, totalmatrix)
+    return _action_prob_from_counts(shotmatrix, movematrix)

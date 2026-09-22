@@ -5,6 +5,17 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.123.0] — 2026-09-22
+
+### Added — `ExpectedThreat.fit_from_counts` + public zone-binning contract (PR-S195, ADR-102, SK-XT-COUNTS)
+
+A distributed-friendly counts-based fit so a producer can fit an xT grid in one Spark `groupBy` pass instead of pulling the full action corpus to the driver. Requested by the luxury-lakehouse ExT-grid producer (~9.5 M actions / 28 competitions timed out on `.toPandas()` + `pd.concat`). Purely additive — **no VAEP/tracking retrain, no re-materialize, C4-free**; `fit`/`rate`/`to_dict`/`from_dict` and the SK-xT-1 `singh_counts` frozen-oracle parity are byte-identical.
+
+- **`ExpectedThreat.fit_from_counts(*, shot_counts, goal_counts, move_counts, transition_start_counts, transition_counts, params=None)`** — builds the 4 probability matrices from raw integer zone counts (`(w, l)` per-zone + `(w·l, w·l)` transition), then runs the **identical** `value_iteration` → `xT`/`heatmaps`. Numerically identical to `fit(actions)` on the exact aggregates; the counts are **additive** across partitions/competitions (`global` = element-wise sum). Singh (count-based) transition only — a KDE `params` raises `ValueError`; wrong-shaped counts raise.
+- **Single-sourced count cores (D1):** `_scoring_prob`/`_action_prob`/`singh_transition_matrix` refactored into pure `_*_from_counts` cores + thin from-actions wrappers; `fit` and `fit_from_counts` call the same core, so they cannot drift. `fit(actions)` output byte-identical (parity-gated).
+- **Correctness crux — three move aggregates (D3):** `_action_prob`'s move-count masks NaN-**start** only, but `singh_transition_matrix` drops NaN-start-OR-end first, so the two populations differ. `move_counts` (valid start) feeds `_action_prob`; `transition_start_counts` (valid start+end) is the Singh row denominator; `transition_counts` (successful, valid start+end) is the numerator. A single move-count would silently diverge on any valid-start/NaN-end move — guarded by a named boundary fixture.
+- **Public zone-binning contract:** `ExpectedThreat.zones_of(xs, ys)` (`(zone_x, zone_y)`) + `flat_indexes_of(xs, ys)` (the **y-inverted** `(w-1-zone_y)·l + zone_x`, ADR-041) + `MOVE_TYPE_NAMES`/`SHOT_TYPE_NAME` class attributes — so a producer replicates sk's exact binning + filters in Spark SQL. **No smoothing/prior** (raw `_safe_divide`). Guarded by `tests/xthreat/test_fit_from_counts.py` (byte-identical matrices vs `fit`, additivity, ADR-100 round-trip, zone-binning parity incl. edges/clamp, KDE-raises, shape-guard). No `__all__`/`NOTICE`/glossary/C4 change. Decision: ADR-102.
+
 ## [4.122.0] — 2026-09-21
 
 ### Added — TF-63 xImpact: in-game win-probability model + `VAEP.rate_ximpact` (PR-S194, ADR-101)

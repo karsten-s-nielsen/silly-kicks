@@ -18,9 +18,12 @@ from silly_kicks.xthreat._grid import (
     M,
     N,
     _action_prob,
+    _action_prob_from_counts,
     _get_cell_indexes,
+    _get_flat_indexes,
     _get_successful_move_actions,
     _scoring_prob,
+    _scoring_prob_from_counts,
 )
 from silly_kicks.xthreat._params import (
     _METHOD_TO_PARAMS_TYPE,
@@ -31,7 +34,7 @@ from silly_kicks.xthreat._params import (
     validate_params_for_method,
 )
 from silly_kicks.xthreat._physical import require_fitted_xt
-from silly_kicks.xthreat._transitions import singh_transition_matrix
+from silly_kicks.xthreat._transitions import _singh_from_counts, singh_transition_matrix
 from silly_kicks.xthreat._value_iteration import value_iteration
 
 #: Schema version stamped into ``ExpectedThreat.to_dict`` output; ``from_dict`` fail-closes on any
@@ -86,6 +89,12 @@ class ExpectedThreat:
 
         xt = ExpectedThreat(l=24, w=16, method="kde_smoothed", params=KDEParams()).fit(actions)
     """
+
+    #: SPADL action-type names sk counts as a "move" (pass|dribble|cross; take_on excluded) and a
+    #: "shot" -- exposed so a counts producer replicates ``fit``'s internal filters exactly
+    #: (SK-XT-COUNTS). Sourced from ``spadlconfig.actiontype_id``; the values are the canonical keys.
+    MOVE_TYPE_NAMES: tuple[str, str, str] = ("pass", "dribble", "cross")
+    SHOT_TYPE_NAME: str = "shot"
 
     def __init__(
         self,
@@ -393,3 +402,117 @@ class ExpectedThreat:
             values = xt.rate(actions)
         """
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+
+    def fit_from_counts(
+        self,
+        *,
+        shot_counts: npt.NDArray[np.integer],
+        goal_counts: npt.NDArray[np.integer],
+        move_counts: npt.NDArray[np.integer],
+        transition_start_counts: npt.NDArray[np.integer],
+        transition_counts: npt.NDArray[np.integer],
+        params: XtParams | None = None,
+    ) -> "ExpectedThreat":
+        """Fit from pre-aggregated zone counts instead of a raw action DataFrame (SK-XT-COUNTS).
+
+        Builds the 4 probability matrices from the supplied integer counts with the SAME raw
+        ``_safe_divide`` / row-normalisation ``fit(actions)`` applies (there is NO smoothing/prior),
+        then runs the identical ``value_iteration`` -> ``self.xT`` / ``self.heatmaps``. Numerically
+        identical to ``ExpectedThreat(l, w).fit(actions)`` when the counts are the exact aggregates of
+        ``actions``. Because all inputs are sums, they are ADDITIVE across partitions/competitions
+        (``global`` counts = element-wise sum of per-competition counts) -- the property that lets a
+        producer fit in one distributed pass without pulling rows to a driver.
+
+        Counts must be computed on LTR-oriented actions (ADR-041), binned with :meth:`zones_of` /
+        :meth:`flat_indexes_of`. **Singh (count-based) transition only** -- a KDE request raises.
+
+        Parameters
+        ----------
+        shot_counts, goal_counts, move_counts : NDArray, shape (w, l)
+            Shots / goals(from shots) / ALL moves (``MOVE_TYPE_NAMES``, any result) originating per
+            zone, valid START. ``move_counts`` feeds the shoot-vs-move choice.
+        transition_start_counts : NDArray, shape (w, l)
+            Moves with a valid START *and* END (success + fail) per start zone -- the Singh row
+            denominator (DIFFERENT population from ``move_counts``).
+        transition_counts : NDArray, shape (w*l, w*l)
+            SUCCESSFUL moves ``flat(from) -> flat(to)`` (:meth:`flat_indexes_of`) -- the Singh numerator.
+        params : XtParams or None
+            Singh/default only; a KDE method/params raises ``ValueError``.
+
+        Raises
+        ------
+        ValueError
+            If ``params`` requests KDE, or any count array has the wrong shape.
+
+        Examples
+        --------
+        Fit the global grid from summed per-competition counts (one distributed pass)::
+
+            counts = spark_aggregate_zone_counts(all_actions)   # 5 count arrays, additive
+            xt = ExpectedThreat(l=16, w=12).fit_from_counts(**counts)
+            # xt.xT equals ExpectedThreat(16, 12).fit(all_actions).xT (within fp tolerance)
+        """
+        if self.method == "kde_smoothed" or isinstance(params, KDEParams):
+            raise ValueError(
+                "KDE transition is not a pure count aggregate; use fit(actions) for KDE, or "
+                "fit_from_counts with singh/default params."
+            )
+        n = self.w * self.l
+        for name, arr, shape in (
+            ("shot_counts", shot_counts, (self.w, self.l)),
+            ("goal_counts", goal_counts, (self.w, self.l)),
+            ("move_counts", move_counts, (self.w, self.l)),
+            ("transition_start_counts", transition_start_counts, (self.w, self.l)),
+            ("transition_counts", transition_counts, (n, n)),
+        ):
+            got = np.asarray(arr).shape
+            if got != shape:
+                raise ValueError(f"{name} has shape {got}, expected {shape}")
+        sc, gc, mc, tsc, tc = (
+            np.asarray(x, dtype=np.float64)
+            for x in (shot_counts, goal_counts, move_counts, transition_start_counts, transition_counts)
+        )
+        self.scoring_prob_matrix = _scoring_prob_from_counts(gc, sc)
+        self.shot_prob_matrix, self.move_prob_matrix = _action_prob_from_counts(sc, mc)
+        self.transition_matrix = _singh_from_counts(tc, tsc.ravel())
+        self.xT, self.heatmaps = value_iteration(
+            self.scoring_prob_matrix,
+            self.shot_prob_matrix,
+            self.move_prob_matrix,
+            self.transition_matrix,
+            eps=self.eps,
+        )
+        return self
+
+    def zones_of(self, xs: npt.ArrayLike, ys: npt.ArrayLike) -> tuple[npt.NDArray[np.int_], npt.NDArray[np.int_]]:
+        """Bin SPADL ``(x, y)`` coordinates to ``(zone_x, zone_y)`` -- sk's exact internal binning.
+
+        ``zone_x = clip(int(x / field_length * l), 0, l-1)``, ``zone_y`` analogously. Exposed so a
+        counts producer replicates the binning `fit` uses (SK-XT-COUNTS); see :meth:`flat_indexes_of`
+        for the y-inverted flat index the transition counts use.
+
+        Examples
+        --------
+        Bin an array of coordinates::
+
+            xt = ExpectedThreat(l=16, w=12)
+            zx, zy = xt.zones_of([0.0, 105.0], [0.0, 68.0])
+        """
+        xi, yj = _get_cell_indexes(pd.Series(xs), pd.Series(ys), self.l, self.w)
+        return xi.to_numpy(), yj.to_numpy()
+
+    def flat_indexes_of(self, xs: npt.ArrayLike, ys: npt.ArrayLike) -> npt.NDArray[np.int_]:
+        """Flat zone index of SPADL ``(x, y)`` -- ``(w-1 - zone_y)*l + zone_x`` (y-INVERTED, ADR-041).
+
+        This is the row/column ordering of ``transition_matrix`` / ``transition_counts``: row 0 is the
+        top of the pitch. A counts producer MUST index its ``transition_counts`` with this exact
+        formula, or the grid transposes in y silently.
+
+        Examples
+        --------
+        Flat index for the transition matrix::
+
+            xt = ExpectedThreat(l=16, w=12)
+            flat = xt.flat_indexes_of([10.0, 90.0], [20.0, 50.0])
+        """
+        return _get_flat_indexes(pd.Series(xs), pd.Series(ys), self.l, self.w).to_numpy()

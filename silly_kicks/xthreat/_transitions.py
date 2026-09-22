@@ -44,9 +44,24 @@ def singh_transition_matrix(actions: pd.DataFrame, grid: GridSpec) -> npt.NDArra
     counts = np.zeros((n, n))
     np.add.at(counts, (start_cell[is_success], end_cell[is_success]), 1.0)
 
+    return _singh_from_counts(counts, start_counts)
+
+
+def _singh_from_counts(transition_counts: npt.ArrayLike, start_counts: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """Row-normalise successful (from->to) move counts by the all-moves-per-start count -- the
+    count-based core of :func:`singh_transition_matrix` (shared with ``ExpectedThreat.fit_from_counts``).
+
+    ``start_counts`` (flat, length ``w*l``) is the denominator: moves with a VALID START *and* END per
+    start cell (success + fail) -- NOT the ``_action_prob`` valid-start-only population.
+    ``transition_counts`` ``(w*l, w*l)`` is the SUCCESSFUL from->to numerator. Rows are sub-stochastic
+    (``Σ_j T[i,j] = P(success | move from i) ≤ 1``); zero-start rows stay zero.
+    """
+    tc = np.asarray(transition_counts, dtype=np.float64)
+    sc = np.asarray(start_counts, dtype=np.float64)
+    n = sc.shape[0]
     transition_matrix = np.zeros((n, n))
-    nz = start_counts > 0
-    transition_matrix[nz] = counts[nz] / start_counts[nz, None]
+    nz = sc > 0
+    transition_matrix[nz] = tc[nz] / sc[nz, None]
     return transition_matrix
 
 
