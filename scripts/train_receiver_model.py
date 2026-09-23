@@ -363,26 +363,32 @@ def _candidate_count_distribution(rows: pd.DataFrame) -> dict:
     }
 
 
-def _load_corpus(provider: str, cache_dir):
-    """Stream ``(match_id, actions, frames)`` for the trained provider (ADR-052: a generator, never
-    list()). ``statsbomb`` -> SB360 freeze frames (positions-only, public variant); any tracking provider
-    (e.g. ``gradientsports``) -> real tracking frames WITH velocity, which the owner variant requires."""
-    if provider == "statsbomb":
-        from scripts._loader_pining import load_statsbomb_matches
+def _corpus_source(provider: str, cache_dir):
+    """The trained provider's corpus as ``(refs, load)`` (spec section 4.5): a cheap ref list plus a
+    single-match loader that yields ``(match_id, actions, frames)``. ``statsbomb`` -> SB360 freeze
+    frames (positions-only, public variant); any tracking provider (e.g. ``gradientsports``) -> real
+    tracking frames WITH velocity, which the owner variant requires. Both route through ``load_match``,
+    whose per-provider dispatch builds the right frames."""
+    from scripts._loader_pining import pining_source
 
-        return ((m[1], m[2], m[3]) for m in load_statsbomb_matches(cache_dir=cache_dir))  # F5: honor --cache-dir
-    from scripts._loader_pining import load_matches
+    refs, base_load = pining_source([provider], cache_dir=cache_dir)
 
-    return ((m[1], m[2], m[3]) for m in load_matches(providers=[provider], cache_dir=cache_dir))
+    def load(ref):
+        lm = base_load(ref)
+        return (lm.match_id, lm.actions, lm.frames)
+
+    return refs, load
 
 
 def _resolve_deployment(public_bundle, owner_model, provider, cache_dir, shard_root, out_dir, prov_commit) -> dict:
     """M-A(ii): pool per-match public-vs-owner failed-pass accuracy over the trained provider's corpus and
     reduce to ONE :func:`deployment_decision`. A SECOND sharded pass (its own generation), resumable."""
     public_model = ReceiverModel.load(public_bundle)
+    refs, load = _corpus_source(provider, cache_dir)
     res = for_each(
-        _load_corpus(provider, cache_dir),
-        key=lambda t: str(t[0]),
+        refs,
+        key=lambda ref: ref.match_id,  # pre-migration key was the match_id; _KEY_EXCEPTIONS
+        load=load,
         work=lambda t: _deployment_counts_for_match(public_model, owner_model, t[1], t[2], match_id=t[0]),
         shard_root=shard_root,
         token_inputs={
@@ -412,9 +418,11 @@ def _extract_provider_rows(provider, feature_set, shard_root, cache_dir, out_pat
     return ``(rows, coverage_counters)``. Primary and pool providers get DISTINCT generations (the token
     keys on ``provider``), so they never collide under one ``shard_root``."""
     strategy = labeling_strategy_for_provider(provider)
+    refs, load = _corpus_source(provider, cache_dir)
     res = for_each(
-        _load_corpus(provider, cache_dir),
-        key=lambda t: str(t[0]),
+        refs,
+        key=lambda ref: ref.match_id,  # pre-migration key was the match_id; _KEY_EXCEPTIONS
+        load=load,
         work=lambda t: extract_candidate_rows(t[1], t[2], feature_set=feature_set, labeling_strategy=strategy),
         shard_root=shard_root,
         token_inputs={

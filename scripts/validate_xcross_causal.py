@@ -158,16 +158,19 @@ def run(
     max_per_provider=None,
     tracking_limit=None,
     token=None,
+    cache_dir=None,
 ) -> dict:
-    from _loader_pining import load_matches  # scripts/ on sys.path at runtime (mirrors the trainer)
+    # scripts/ on sys.path at runtime (mirrors the trainer)
+    from _loader_pining import pining_source, resolve_cache_dir
 
     from scripts._driver import for_each, shard_path
     from silly_kicks.causal.opportunities import build_opportunities
 
     meta = _load_model_metadata()
+    cd = resolve_cache_dir(cache_dir)
 
     def _work(item):
-        provider, _mid, actions, frames, home = item
+        provider, _mid, actions, frames, home, *_ = item
         o = build_opportunities(frames, actions, home_team_id=home, model_metadata=meta)
         if o.empty:
             return None  # still writes an EMPTY shard: "ran, produced no opportunity"
@@ -176,11 +179,13 @@ def run(
         # column of its own (verified), so this neither shadows nor duplicates one.
         return o.assign(provider=str(provider))
 
+    refs, load = pining_source(
+        providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit, token=token, cache_dir=cd
+    )
     res = for_each(
-        load_matches(
-            providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit, token=token
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=Path(out) / "shards",
         # What determines an opportunity row: the builder and the model metadata whose confounders
@@ -201,7 +206,7 @@ def run(
     # Combined from THIS PASS'S keys, not `_driver.reconcile`: no partition surface here (no
     # --match-ids-json, no worker tag), so a whole-generation read would fold in matches from a
     # wider earlier run over the same --out. See `reconcile`'s docstring.
-    shards = [pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys]
+    shards = [pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys]
     opportunities = [f for f in shards if len(f)]
     all_opp = pd.concat(opportunities, ignore_index=True) if opportunities else pd.DataFrame(columns=["provider"])
 
@@ -271,6 +276,11 @@ def main() -> None:
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
     ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
+    ap.add_argument(
         "--allow-dirty",
         action="store_true",
         help="permit a dev run on a dirty tree; the artifact still records run_tree_dirty=true",
@@ -286,6 +296,7 @@ def main() -> None:
         a.seed,
         max_per_provider=a.max_per_provider,
         tracking_limit=a.tracking_limit,
+        cache_dir=a.cache_dir,
     )
 
 

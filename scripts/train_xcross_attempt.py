@@ -67,16 +67,11 @@ def _iter_matches_from_dir(data_dir: Path):
         yield prov, game_dir.name, actions, frames, frames["team_id"].dropna().iloc[0]
 
 
-def _iter_matches_from_pining(providers, max_per_provider, match_ids=None, cache_dir=None):
-    sys.path.insert(0, "scripts")
-    from _loader_pining import load_matches
-
-    yield from load_matches(
-        providers=providers,
-        match_ids=match_ids,
-        max_per_provider=max_per_provider,
-        cache_dir=cache_dir,
-    )
+def _source_key(item):
+    """The `for_each` key for BOTH sources: a `MatchRef` (pining) -> its `.key`, a --data-dir tuple
+    -> `(provider, match_id)`. Module-level so the key-pin gate can see it (_KEY_EXCEPTIONS)."""
+    key = getattr(item, "key", None)
+    return key if key is not None else (str(item[0]), str(item[1]))
 
 
 def _new_probe_cohort() -> dict:
@@ -99,6 +94,7 @@ def _extract(
     probe_providers=("gradientsports",),
     probe_comparison_providers=("skillcorner",),
     feature_set: XCrossFeatureSet = "faithful",
+    load=None,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[dict, dict, int]]:
     from scripts._driver import for_each, shard_path
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
@@ -122,7 +118,7 @@ def _extract(
     probe, comparison = _new_probe_cohort(), _new_probe_cohort()
 
     def _work(item):
-        prov, mid, actions, frames, home = item
+        prov, mid, actions, frames, home, *_ = item
         X, y, groups = prepare_xcross_training_data(
             frames,
             actions,
@@ -158,7 +154,8 @@ def _extract(
 
     res = for_each(
         source,
-        key=lambda item: (str(item[0]), str(item[1])),
+        key=_source_key,
+        load=load,
         work=_work,
         shard_root=shard_root,
         # Mirrors the xS trainer: extractor, horizon, domain filter, carrier params. The probe
@@ -178,7 +175,7 @@ def _extract(
     if res.failures:
         raise RuntimeError(f"{len(res.failures)} match(es) failed: {res.failures}. Re-run to retry only them.")
 
-    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
     if not parts:
         raise SystemExit("No usable training data.")
     combined = pd.concat(parts, ignore_index=True)
@@ -515,16 +512,23 @@ def main(argv=None) -> None:
     else:
         if args.providers:
             allowlist = json.load(open(args.match_ids_json)) if args.match_ids_json else None
-            source = _iter_matches_from_pining(
-                args.providers.split(","), args.max_per_provider, allowlist, cache_dir=args.cache_dir
+            sys.path.insert(0, "scripts")
+            from _loader_pining import pining_source
+
+            source, load = pining_source(
+                args.providers.split(","),
+                max_per_provider=args.max_per_provider,
+                match_ids=allowlist,
+                cache_dir=args.cache_dir,
             )
         else:
-            source = _iter_matches_from_dir(Path(args.data_dir))
+            source, load = _iter_matches_from_dir(Path(args.data_dir)), None
         t0 = time.time()
         X, y, groups, providers, match_ids, probe_bundle = _extract(
             source,
             args.horizon_seconds,
             feature_set=args.feature_set,
+            load=load,
             # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so
             # the "fresh --output-dir per corpus" discipline the fingerprint enforces covers them.
             shard_root=art / "shards",

@@ -160,6 +160,7 @@ _PUBLIC_MODULE_FILES = (
     "silly_kicks/vaep/adjusted.py",
     "silly_kicks/xsuccess/_model.py",
     "silly_kicks/atomic/vaep/base.py",
+    "silly_kicks/xthreat/_grid.py",
     "silly_kicks/xthreat/_model.py",
     "silly_kicks/xthreat/_params.py",
     "silly_kicks/xthreat/_transitions.py",

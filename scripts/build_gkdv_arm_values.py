@@ -101,6 +101,11 @@ def main() -> None:
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
     ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
+    ap.add_argument(
         "--match-ids-json",
         default=None,
         help=(
@@ -140,7 +145,7 @@ def main() -> None:
     import numpy as np
     import pandas as pd
 
-    from scripts._loader_pining import load_matches
+    from scripts._loader_pining import pining_source, resolve_cache_dir
     from silly_kicks.gkdv import build_ghost_frames, delta_das, delta_threat_suppression
     from silly_kicks.id_compat import ids_equal
     from silly_kicks.tracking import derive_team_in_possession, infer_ball_carrier, resolve_defended_goals
@@ -176,6 +181,7 @@ def main() -> None:
     # everything. Shards also make the run restartable -- an existing shard is skipped, so a
     # re-invocation resumes rather than recomputing surfaces that already cost hours.
     dest = Path(args.out)
+    cache_dir = resolve_cache_dir(args.cache_dir)
     xt_model = None  # unreachable-with-a-value today: the threat arm is refused above
 
     # Per-item counters that are NOT in the returned frame. `for_each`'s contract hands `counters`
@@ -185,9 +191,9 @@ def main() -> None:
     # is well-defined rather than a race.
     _last_report: dict = {}
 
-    # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
+    # `load` hands `_work` a LoadedMatch (provider, match_id, ACTIONS, FRAMES, home_team_id, ...).
     def _work(item):
-        _provider, match_id, _actions, frames, home_team_id = item
+        _provider, match_id, _actions, frames, home_team_id, *_ = item
         # The arms route through DAS, which REQUIRES `team_in_possession`; raw loader frames do
         # not carry it. Since ADR-043 removed the broad except that used to swallow this into an
         # all-NaN column, it now raises -- which is how this surfaced at all.
@@ -290,14 +296,17 @@ def main() -> None:
     from scripts._partition import write_table_atomically
 
     worker_tag = _worker_tag(args.match_ids_json)
+    refs, load = pining_source(
+        providers_for_slice(args.providers.split(","), match_ids),
+        match_ids=match_ids,
+        max_per_provider=args.max_per_provider,
+        tracking_limit=args.tracking_limit,
+        cache_dir=cache_dir,
+    )
     res = for_each(
-        load_matches(
-            providers=providers_for_slice(args.providers.split(","), match_ids),
-            match_ids=match_ids,
-            max_per_provider=args.max_per_provider,
-            tracking_limit=args.tracking_limit,
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         counters=lambda _item, _frame: dict(_last_report),
         shard_root=dest / "shards",

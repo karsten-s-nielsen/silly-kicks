@@ -48,15 +48,28 @@ def _match(game_id: int, *, complete: bool):
     return ("statsbomb", str(game_id), actions, pd.DataFrame(), 1)
 
 
-def _fake_open_matches_factory():
-    """A ``load_open_data_matches`` stand-in: 2 tiny matches per (competition, season)."""
+def _fake_open_data_source_factory(order=None):
+    """An ``open_data_source`` stand-in (Task 8.5): returns ``(refs, load)`` for 2 tiny matches per
+    (competition, season). ``order``, if given, records ``"load"`` the first time the loader runs
+    (the guard-order test asserts the public-only guard precedes the first match load)."""
+    from _fake_corpus import make_ref
 
-    def _load(*, competition_id, season_id, match_ids=None, max_matches=None):
-        base = competition_id * 1000 + season_id
-        yield _match(base + 1, complete=True)
-        yield _match(base + 2, complete=False)
+    def _source(comps, *, match_ids=None, max_matches=None, preserve_native=(), cache_dir=None):
+        refs, by_id = [], {}
+        for competition_id, season_id in comps:
+            base = competition_id * 1000 + season_id
+            for gid, complete in ((base + 1, True), (base + 2, False)):
+                refs.append(make_ref("statsbomb", str(gid)))
+                by_id[str(gid)] = _match(gid, complete=complete)
 
-    return _load
+        def _load(ref):
+            if order is not None and "load" not in order:
+                order.append("load")
+            return by_id[ref.match_id]
+
+        return refs, _load
+
+    return _source
 
 
 def test_all_competitions_trains_full_corpus_bundle(tmp_path, monkeypatch):
@@ -64,7 +77,7 @@ def test_all_competitions_trains_full_corpus_bundle(tmp_path, monkeypatch):
     ``n_competitions`` + the competition list; the card notes the full public open-data corpus."""
     comps = [(43, 106), (11, 90)]
     monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", lambda: list(comps))
-    monkeypatch.setattr("scripts._sb_open_data.load_open_data_matches", _fake_open_matches_factory())
+    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory())
     monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", lambda: None)
 
     out = tmp_path / "out"
@@ -94,14 +107,9 @@ def test_all_competitions_calls_the_public_only_guard_before_load(tmp_path, monk
         order.append("all_open_competitions")
         return [(43, 106)]
 
-    def _load(*, competition_id, season_id, match_ids=None, max_matches=None):
-        order.append("load")
-        yield _match(1, complete=True)
-        yield _match(2, complete=False)
-
     monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", _guard)
     monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", _all)
-    monkeypatch.setattr("scripts._sb_open_data.load_open_data_matches", _load)
+    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory(order))
 
     TPC.main(["--all-competitions", "--out", str(tmp_path / "out"), "--allow-dirty"])
     assert order[0] == "guard"
@@ -113,7 +121,7 @@ def test_all_competitions_token_DIFFERS_from_single_competition(tmp_path, monkey
     a re-run on the same ``--out`` cannot silently reuse the single-competition (WC2022) shards."""
     comps = [(43, 106), (11, 90)]
     monkeypatch.setattr("scripts._sb_open_data.all_open_competitions", lambda: list(comps))
-    monkeypatch.setattr("scripts._sb_open_data.load_open_data_matches", _fake_open_matches_factory())
+    monkeypatch.setattr("scripts._sb_open_data.open_data_source", _fake_open_data_source_factory())
     monkeypatch.setattr("scripts._sb_open_data.assert_statsbomb_open_data_mode", lambda: None)
 
     single_root = tmp_path / "single" / "shards"

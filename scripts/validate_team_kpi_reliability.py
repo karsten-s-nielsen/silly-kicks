@@ -239,32 +239,29 @@ def _pappalardo_home_team(match: dict) -> int:
 
 
 # --------------------------------------------------------------------------- corpus loaders (owner-run)
-def _load_statsbomb_open_matches(competitions, match_ids=None, *, max_matches=None):
-    """Yield ``(match_id, actions)`` for StatsBomb open-data matches (owner-run; needs statsbombpy).
+def _statsbomb_source(competitions, match_ids=None, *, max_matches=None, cache_dir=None):
+    """The StatsBomb open-data corpus as ``(refs, load)`` (Task 8.5; owner-run; needs statsbombpy).
 
     ``competitions is None`` -> the FULL open-data manifest (``all_open_competitions()``: every public
     ``(competition_id, season_id)`` StatsBomb releases -- thousands of matches, the broad reliability
     corpus). A ``[(competition_id, season_id), ...]`` list narrows it. Delegates to the shared
-    ``scripts._sb_open_data.load_open_data_matches`` (the ONE pyright-clean SB-open loader) with
-    ``preserve_native=("possession",)`` so the SPADL actions carry StatsBomb's native possession id for
-    the possession-foundation ground-truth leg. Both seams fail-closed on configured credentials. NOT
-    exercised in CI.
+    ``scripts._sb_open_data.open_data_source`` with ``preserve_native=("possession",)`` so the SPADL
+    actions carry StatsBomb's native possession id for the possession-foundation ground-truth leg;
+    ``load(ref)`` yields the ``(match_id, actions)`` pair ``_measure_match`` consumes. ``max_matches``
+    caps the GLOBAL count. Fail-closed on configured credentials. NOT exercised in CI.
     """
-    from scripts._sb_open_data import all_open_competitions, load_open_data_matches
+    from scripts._sb_open_data import all_open_competitions, open_data_source
 
     comps = list(competitions) if competitions is not None else all_open_competitions()
-    seen = 0
-    for competition_id, season_id in comps:
-        for _prov, mid, actions, _frames, _home in load_open_data_matches(
-            competition_id=competition_id,
-            season_id=season_id,
-            match_ids=match_ids,
-            preserve_native=("possession",),
-        ):
-            yield mid, actions
-            seen += 1
-            if max_matches is not None and seen >= max_matches:
-                return
+    refs, base_load = open_data_source(
+        comps, match_ids=match_ids, max_matches=max_matches, preserve_native=("possession",), cache_dir=cache_dir
+    )
+
+    def load(ref):
+        lm = base_load(ref)
+        return (lm.match_id, lm.actions)
+
+    return refs, load
 
 
 def _load_wyscout_pappalardo_matches(wyscout_dir, match_ids=None, *, max_matches=None):
@@ -306,12 +303,24 @@ def _load_wyscout_pappalardo_matches(wyscout_dir, match_ids=None, *, max_matches
                 return
 
 
-def _load_matches(provider, *, competitions, wyscout_dir, match_ids, max_matches):
+def _item_key(item):
+    """The ``for_each`` key for BOTH sources: a StatsBomb ``MatchRef`` -> its ``match_id``, a Wyscout
+    ``(match_id, actions)`` tuple -> its ``match_id`` (module-level so the key-pin gate sees it)."""
+    return str(item.match_id) if hasattr(item, "match_id") else str(item[0])
+
+
+def _load_matches(provider, *, competitions, wyscout_dir, match_ids, max_matches, cache_dir=None):
+    """Return ``(items, load)`` for the requested provider (Task 8.5).
+
+    StatsBomb -> ``(refs, load)`` (a cheap ref list + a single-match loader behind ``for_each``'s resume
+    check). Wyscout is FILE-based (local Pappalardo JSON, cheap to re-read), so it streams its
+    ``(match_id, actions)`` items with ``load=None`` -- there is no network round-trip to shard away.
+    """
     if provider == "wyscout":
         if not wyscout_dir:
             raise SystemExit("--wyscout-dir is required for --provider wyscout")
-        return _load_wyscout_pappalardo_matches(wyscout_dir, match_ids=match_ids, max_matches=max_matches)
-    return _load_statsbomb_open_matches(competitions, match_ids=match_ids, max_matches=max_matches)
+        return _load_wyscout_pappalardo_matches(wyscout_dir, match_ids=match_ids, max_matches=max_matches), None
+    return _statsbomb_source(competitions, match_ids=match_ids, max_matches=max_matches, cache_dir=cache_dir)
 
 
 def _measure_match(item) -> pd.DataFrame:
@@ -358,6 +367,9 @@ def main() -> None:
         help="JSON [[competition_id, season_id], ...] narrowing statsbomb (default: the FULL open-data manifest)",
     )
     ap.add_argument("--max-matches", type=int, default=None)
+    ap.add_argument(
+        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--list-matches", action="store_true", help="print available match ids as JSON and exit")
     ap.add_argument(
@@ -389,17 +401,16 @@ def main() -> None:
     )
 
     if args.list_matches:
-        ids = [
-            mid
-            for mid, _actions in _load_matches(
-                args.provider,
-                competitions=competitions,
-                wyscout_dir=args.wyscout_dir,
-                match_ids=match_ids,
-                max_matches=args.max_matches,
-            )
-        ]
-        print(json.dumps(ids, indent=2))
+        # LIST ids without loading: for StatsBomb the refs carry the ids (no per-match download).
+        items, _load = _load_matches(
+            args.provider,
+            competitions=competitions,
+            wyscout_dir=args.wyscout_dir,
+            match_ids=match_ids,
+            max_matches=args.max_matches,
+            cache_dir=args.cache_dir,
+        )
+        print(json.dumps([_item_key(it) for it in items], indent=2))
         return
 
     from scripts._driver import for_each
@@ -407,18 +418,19 @@ def main() -> None:
 
     dest = Path(args.out)
 
-    def _matches():
-        yield from _load_matches(
-            args.provider,
-            competitions=competitions,
-            wyscout_dir=args.wyscout_dir,
-            match_ids=match_ids,
-            max_matches=args.max_matches,
-        )
+    items, load = _load_matches(
+        args.provider,
+        competitions=competitions,
+        wyscout_dir=args.wyscout_dir,
+        match_ids=match_ids,
+        max_matches=args.max_matches,
+        cache_dir=args.cache_dir,
+    )
 
     res = for_each(
-        _matches(),
-        key=lambda item: (args.provider, str(item[0])),
+        items,
+        key=lambda item: (args.provider, _item_key(item)),
+        load=load,
         work=_measure_match,
         shard_root=dest / "shards",
         token_inputs={"metric": "team_kpi_reliability", "provider": args.provider, "schema": "team-kpi-3"},

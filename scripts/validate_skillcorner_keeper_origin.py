@@ -214,22 +214,31 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--match-ids-json", default=None)
     ap.add_argument("--max-per-provider", type=int, default=None)
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
     ap.add_argument("--allow-dirty", action="store_true")
     args = ap.parse_args()
 
     prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
-    from _loader_pining import load_matches
+    from _loader_pining import pining_source, resolve_cache_dir
 
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    cache_dir = resolve_cache_dir(args.cache_dir)
     match_ids = {"skillcorner": json.load(open(args.match_ids_json))} if args.match_ids_json else None
-    items = load_matches(providers=["skillcorner"], match_ids=match_ids, max_per_provider=args.max_per_provider)
 
+    refs, load = pining_source(
+        ["skillcorner"], match_ids=match_ids, max_per_provider=args.max_per_provider, cache_dir=cache_dir
+    )
     res = for_each(
-        items,
-        key=lambda m: ("skillcorner", str(m[1])),
-        work=lambda m: measure_match(*m),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
+        work=lambda m: measure_match(*m[:5]),  # LoadedMatch is a 7-tuple; measure_match takes the first 5
         shard_root=out / "shards",
         token_inputs={"schema": _SHARD_SCHEMA_VERSION, "driver": "skillcorner-keeper-origin"},
     )

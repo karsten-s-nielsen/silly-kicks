@@ -275,13 +275,39 @@ def _download_first(dest, artifacts, tries, *, tok, base, mid):
     return None
 
 
-def _load_gi_matches(*, token, cache_dir, match_ids, max_matches):
-    """Yield (match_id, gi_events, gk_ids) for owner-tier SkillCorner GI matches (both artifact schemas).
+#: The (suffix, role) candidate pairs that resolve a GI match's events / metadata artifact keys
+#: (both the canonical filename-suffix schema and the 2026-07 role schema).
+_GI_EV_TRIES = [("_dynamic_events.csv", "events"), (None, "events")]
+_GI_MD_TRIES = [("_match.json", "metadata"), (None, "metadata")]
 
-    Downloads the small GI artifacts (events csv/parquet + roster json) per match; raw data stays in
-    the (gitignored) cache and is never committed. Aggregate outputs only are shareable.
+
+def _resolve_gi_key(artifacts, tries):
+    """First artifact KEY matching any (suffix, role) in ``tries`` that is present, else ``None``.
+
+    Mirrors `_download_first`'s key resolution WITHOUT downloading, so `list_gi_refs` can decide a
+    match's GI-availability from the manifest alone (the resume-before-load contract, ADR-052 D14).
     """
-    from scripts._loader_pining import _base_url, _list_matches, _resolve_token
+    from scripts._loader_pining import _artifact_key
+
+    for suffix, role in tries:
+        try:
+            key = _artifact_key(artifacts, suffix=suffix, role=role)
+        except Exception:  # noqa: S112 -- this (suffix, role) is absent; try the next candidate
+            continue
+        if key in artifacts:
+            return key
+    return None
+
+
+def list_gi_refs(*, token, match_ids, max_matches):
+    """The SkillCorner GI matches a pass will ATTEMPT, as REFS, plus the ids with NO GI artifacts.
+
+    Lists the manifest ONCE and resolves each match's GI artifact keys WITHOUT downloading, so
+    ``for_each`` can key/skip a ref before paying its load (ADR-052 D14). A match whose manifest
+    carries no events OR no metadata artifact is COUNTED in ``unavailable`` (``n_gi_unavailable``),
+    never silently dropped -- a corpus that shrinks unnoticed is the failure this cycle removes.
+    """
+    from scripts._loader_pining import MatchRef, _base_url, _list_matches, _resolve_token
 
     tok = _resolve_token(token)
     base = _base_url()
@@ -289,20 +315,40 @@ def _load_gi_matches(*, token, cache_dir, match_ids, max_matches):
     ids = list(manifest) if match_ids is None else [m for m in match_ids if m in manifest]
     if max_matches is not None:
         ids = ids[:max_matches]
-    root = Path(cache_dir) if cache_dir else Path("gk_decision_gi_cache")
-    ev_tries = [("_dynamic_events.csv", "events"), (None, "events")]
-    md_tries = [("_match.json", "metadata"), (None, "metadata")]
+    refs, unavailable = [], []
     for mid in ids:
         artifacts = manifest[mid]["artifacts"]
-        dest = root / mid
-        dest.mkdir(parents=True, exist_ok=True)
-        ev_path = _download_first(dest, artifacts, ev_tries, tok=tok, base=base, mid=mid)
-        md_path = _download_first(dest, artifacts, md_tries, tok=tok, base=base, mid=mid)
-        if ev_path is None or md_path is None:
-            continue
-        gi = pd.read_parquet(ev_path) if ev_path.suffix == ".parquet" else pd.read_csv(ev_path, low_memory=False)
-        meta = json.loads(md_path.read_text(encoding="utf-8"))
-        yield mid, gi, _gk_ids_from_meta(meta)
+        if _resolve_gi_key(artifacts, _GI_EV_TRIES) and _resolve_gi_key(artifacts, _GI_MD_TRIES):
+            refs.append(MatchRef("skillcorner", str(mid), dict(artifacts)))
+        else:
+            unavailable.append(str(mid))
+    return refs, unavailable
+
+
+def load_gi_match(ref, *, token, cache_dir):
+    """Download ONE GI ref's small artifacts (events csv/parquet + roster json) -> (mid, gi, gk_ids).
+
+    The per-item load behind `for_each`'s resume check (ADR-052 D14). Raw data stays in the
+    (gitignored) cache and is never committed; aggregate outputs only are shareable. RAISES if an
+    artifact `list_gi_refs` resolved in the manifest cannot actually be fetched -- a recorded failure
+    `for_each` retries, never a silent skip.
+    """
+    from scripts._loader_pining import _base_url, _resolve_token
+
+    tok = _resolve_token(token)
+    base = _base_url()
+    root = Path(cache_dir) if cache_dir else Path("gk_decision_gi_cache")
+    dest = root / ref.match_id
+    dest.mkdir(parents=True, exist_ok=True)
+    ev_path = _download_first(dest, ref.artifacts, _GI_EV_TRIES, tok=tok, base=base, mid=ref.match_id)
+    md_path = _download_first(dest, ref.artifacts, _GI_MD_TRIES, tok=tok, base=base, mid=ref.match_id)
+    if ev_path is None or md_path is None:
+        raise RuntimeError(
+            f"skillcorner {ref.match_id}: GI events/metadata resolved in the manifest but did not download"
+        )
+    gi = pd.read_parquet(ev_path) if ev_path.suffix == ".parquet" else pd.read_csv(ev_path, low_memory=False)
+    meta = json.loads(md_path.read_text(encoding="utf-8"))
+    return ref.match_id, gi, _gk_ids_from_meta(meta)
 
 
 def _measure_match(item) -> pd.DataFrame:
@@ -382,15 +428,27 @@ def _per_keeper_match(samples: pd.DataFrame, value_col: str) -> pd.DataFrame:
     return samples.groupby(["keeper", "game_id"], dropna=False)[value_col].mean().reset_index()
 
 
-def _reconstruction_verdicts(*, token, cache_dir, sc_ids, sb_ids, max_matches) -> dict:
+def _combine_shards(res) -> pd.DataFrame:
+    """Concat a pass's per-match shards, reading from ``shard_keys`` (a marker-only excluded key has no
+    parquet, ADR-052 D13/interp 11) and dropping empties."""
+    from scripts._driver import shard_path
+
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if not f.empty]
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
+def _reconstruction_verdicts(*, native_samples, token, cache_dir, gi_ids, sb_ids, max_matches, dest) -> dict:
     """Owner-run reconstruction legs (NOT CI-exercised -- needs the owner-tier tracking + SB360 corpora).
 
-    Fidelity: per SkillCorner match, native-GI samples + reconstructed-from-tracking samples through the
-    SAME engine, aggregated per (keeper, game_id), Spearman (the RANKING what chosen-vs-available needs;
-    native GI and reconstructed keep different per-decision ids, so the Rosetta-Stone join is per keeper).
+    Both legs are resume-before-load ``for_each`` passes over match REFS (ADR-052 D14), combined from
+    ``shard_keys``. Fidelity: the reconstructed-from-tracking samples for each SkillCorner GI match,
+    joined per (keeper, game_id) against the NATIVE-GI ``native_samples`` this run already computed in
+    the native pass (never re-run through ``_measure_match``), Spearman (the RANKING chosen-vs-available
+    needs; native GI and reconstructed keep different per-decision ids, so the join is per keeper).
     SB360: naive (reachability 0) vs reachability-filtered reconstructed option sets -> the spec-3C sweep.
     """
-    from scripts._loader_pining import load_matches, load_statsbomb_matches
+    from scripts._driver import for_each
+    from scripts._loader_pining import pining_source
     from silly_kicks.expected_passing import PassCompletionModel
     from silly_kicks.gk_decision import GkDecisionParams
 
@@ -398,45 +456,57 @@ def _reconstruction_verdicts(*, token, cache_dir, sc_ids, sb_ids, max_matches) -
     default_reach = GkDecisionParams().reachability_min_xpass  # fidelity measured at the SHIPPED default (0.85)
     out: dict = {"fidelity": {}, "sb360_reachability_sweep": {}}
 
-    # -- Rosetta-Stone fidelity (SkillCorner native GI + tracking) --
-    native_rows, recon_rows = [], []
-    gi_by_id = {
-        mid: (gi, gk)
-        for mid, gi, gk in _load_gi_matches(token=token, cache_dir=cache_dir, match_ids=sc_ids, max_matches=max_matches)
-    }
-    for _prov, mid, actions, frames, _home in load_matches(
-        providers=["skillcorner"],
-        match_ids={"skillcorner": sc_ids} if sc_ids else None,
-        token=token,
-        max_per_provider=max_matches,
-        cache_dir=cache_dir,
-    ):
-        if mid not in gi_by_id:
-            continue
-        gi, gk_ids = gi_by_id[mid]
-        native_rows.append(_measure_match((mid, gi, gk_ids)))
-        recon_rows.append(
-            _recon_samples(actions, frames, xpass=xpass, convention="match_ltr", reachability=default_reach)
+    # -- Rosetta-Stone fidelity: reconstruct the SAME GI matches from tracking (sharded, resumable) --
+    if gi_ids:
+        sc_refs, sc_load = pining_source(
+            providers=["skillcorner"], match_ids={"skillcorner": gi_ids}, cache_dir=cache_dir, token=token
         )
-    native = pd.concat([r for r in native_rows if not r.empty], ignore_index=True) if native_rows else pd.DataFrame()
-    recon = pd.concat([r for r in recon_rows if not r.empty], ignore_index=True) if recon_rows else pd.DataFrame()
-    if not native.empty and not recon.empty:
-        for c in ("decision_value", "sel_efficiency"):
-            out["fidelity"][c] = fidelity_spearman(
-                _per_keeper_match(recon, c), _per_keeper_match(native, c), value_col=c, keys=["keeper", "game_id"]
-            )
+        recon_res = for_each(
+            sc_refs,
+            key=lambda r: r.key,
+            load=sc_load,
+            work=lambda m: _recon_samples(
+                m.actions, m.frames, xpass=xpass, convention="match_ltr", reachability=default_reach
+            ),
+            shard_root=dest / "recon_shards",
+            token_inputs={"leg": "sc_fidelity_recon", "reachability": default_reach, "schema": "gk-decision-recon-1"},
+            label="match",
+        )
+        recon = _combine_shards(recon_res)
+        if not native_samples.empty and not recon.empty:
+            for c in ("decision_value", "sel_efficiency"):
+                out["fidelity"][c] = fidelity_spearman(
+                    _per_keeper_match(recon, c),
+                    _per_keeper_match(native_samples, c),
+                    value_col=c,
+                    keys=["keeper", "game_id"],
+                )
 
     # -- SB360 reachability THRESHOLD sweep (grid; recommends the per-provider threshold, ADR-009) --
-    sb_option_rows = []
-    for _prov, _mid, actions, frames, _home, visible_area in load_statsbomb_matches(
-        match_ids=sb_ids, token=token, max_matches=max_matches, cache_dir=cache_dir
-    ):
-        rows = _recon_option_rows(
-            actions, frames, xpass=xpass, convention="per_action_ltr", visible_area=visible_area, apply_bridge=True
-        )
-        if not rows.empty:
-            sb_option_rows.append(rows)
-    sb_rows = pd.concat(sb_option_rows, ignore_index=True) if sb_option_rows else pd.DataFrame()
+    sb_refs, sb_load = pining_source(
+        providers=["statsbomb"],
+        match_ids={"statsbomb": sb_ids} if sb_ids else None,
+        max_per_provider=max_matches,
+        cache_dir=cache_dir,
+        token=token,
+    )
+    sb_res = for_each(
+        sb_refs,
+        key=lambda r: r.key,
+        load=sb_load,
+        work=lambda m: _recon_option_rows(
+            m.actions,
+            m.frames,
+            xpass=xpass,
+            convention="per_action_ltr",
+            visible_area=m.visible_area,
+            apply_bridge=True,
+        ),
+        shard_root=dest / "sb360_shards",
+        token_inputs={"leg": "sb360_reachability_sweep", "schema": "gk-decision-sb360-1"},
+        label="match",
+    )
+    sb_rows = _combine_shards(sb_res)
     if not sb_rows.empty:
         out["sb360_reachability_sweep"] = reachability_sweep(sb_rows)
     return out
@@ -474,42 +544,47 @@ def main() -> None:
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
 
     if args.list_matches:
-        ids = [
-            mid
-            for mid, _gi, _gk in _load_gi_matches(
-                token=args.token, cache_dir=args.cache_dir, match_ids=match_ids, max_matches=args.max_matches
-            )
-        ]
-        print(json.dumps(ids, indent=2))
+        # list_gi_refs resolves GI-availability from the manifest WITHOUT downloading (the old path
+        # downloaded every match's artifacts just to print ids).
+        refs, _unavailable = list_gi_refs(token=args.token, match_ids=match_ids, max_matches=args.max_matches)
+        print(json.dumps([r.match_id for r in refs], indent=2))
         return
 
     from scripts._driver import for_each
 
     dest = Path(args.out)
 
-    def _matches():
-        yield from _load_gi_matches(
-            token=args.token, cache_dir=args.cache_dir, match_ids=match_ids, max_matches=args.max_matches
-        )
-
+    # Native pass: resume-before-load over GI REFS (ADR-052 D14). A match whose manifest lacks GI
+    # artifacts is COUNTED (n_gi_unavailable), never silently dropped. The key is ("skillcorner",
+    # match_id) -- byte-identical to the pre-migration key, so finished native shards resume.
+    gi_refs, gi_unavailable = list_gi_refs(token=args.token, match_ids=match_ids, max_matches=args.max_matches)
     res = for_each(
-        _matches(),
-        key=lambda item: ("skillcorner", str(item[0])),
+        gi_refs,
+        key=lambda r: r.key,
+        load=lambda r: load_gi_match(r, token=args.token, cache_dir=args.cache_dir),
         work=_measure_match,
         shard_root=dest / "shards",
         token_inputs={"metric": "gk_decision_native", "schema": "gk-decision-native-1"},
         label="match",
     )
-    shard_files = sorted(res.shard_dir.glob("*.parquet"))
-    samples = pd.concat([pd.read_parquet(s) for s in shard_files], ignore_index=True) if shard_files else pd.DataFrame()
+    samples = _combine_shards(res)
     verdicts: dict = reduce_samples(samples) if not samples.empty else {"n_decisions": 0}
+    verdicts["n_gi_unavailable"] = len(gi_unavailable)
 
     if args.reconstruction:
         sb_ids = (
             json.loads(Path(args.sb_match_ids_json).read_text(encoding="utf-8")) if args.sb_match_ids_json else None
         )
+        # Native samples are read back from THIS run's native pass -- the reconstruction fidelity leg
+        # joins them per (keeper, game_id), never re-running _measure_match.
         verdicts["reconstruction"] = _reconstruction_verdicts(
-            token=args.token, cache_dir=args.cache_dir, sc_ids=match_ids, sb_ids=sb_ids, max_matches=args.max_matches
+            native_samples=samples,
+            token=args.token,
+            cache_dir=args.cache_dir,
+            gi_ids=[r.match_id for r in gi_refs],
+            sb_ids=sb_ids,
+            max_matches=args.max_matches,
+            dest=dest,
         )
 
     contract = declare_inputs(

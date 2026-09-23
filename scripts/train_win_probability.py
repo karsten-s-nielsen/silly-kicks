@@ -250,6 +250,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--season-id", type=int, default=None, help="open-data season (default 106 = 2022)")
     ap.add_argument("--all-competitions", action="store_true", help="full public open-data corpus (every release)")
     ap.add_argument("--max-matches", type=int, default=None, help="cap the number of matches")
+    ap.add_argument(
+        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact marked dirty)")
     args = ap.parse_args(argv)
 
@@ -287,17 +290,16 @@ def main(argv: list[str] | None = None) -> None:
         for mid, m in sb.matches(competition_id=cid, season_id=sid, fmt="dict").items():
             date_map[str(mid)] = str(m.get("match_date", ""))
 
-    def _matches():
-        for cid, sid in comps:
-            yield from sbod.load_open_data_matches(competition_id=cid, season_id=sid, max_matches=args.max_matches)
+    refs, load = sbod.open_data_source(comps, max_matches=args.max_matches, cache_dir=args.cache_dir)
 
     def _work(item):
-        _provider, mid, actions, _frames, home = item
+        _provider, mid, actions, _frames, home, *_ = item
         return match_shard(actions, home, date_map.get(str(mid), ""))
 
     res = for_each(
-        _matches(),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=dest / "shards",
         token_inputs={"model": "WinProbabilityModel", "cols": list(_SHARD_COLUMNS), "competitions": sorted(comps)},

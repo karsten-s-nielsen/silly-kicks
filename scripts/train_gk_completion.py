@@ -21,7 +21,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _loader_pining import load_matches
+from _loader_pining import pining_source
 
 from silly_kicks._calibration_metrics import ece as _ece
 from silly_kicks._calibration_metrics import reliability_slope as _reliability_slope
@@ -87,7 +87,7 @@ def _extract(providers, max_per_provider, tracking_limit, *, shard_root, cache_d
     from scripts._driver import for_each, shard_path
 
     def _work(item):
-        prov, mid, actions, frames, _home = item
+        prov, mid, actions, frames, _home, *_ = item
         try:
             X, y, groups = prepare_gk_completion_training_data(actions, frames=frames)
         except ValueError as exc:  # a single near-degenerate match shouldn't kill the run
@@ -101,14 +101,16 @@ def _extract(providers, max_per_provider, tracking_limit, *, shard_root, cache_d
         X["_group"] = groups
         return X
 
+    refs, load = pining_source(
+        providers,
+        max_per_provider=max_per_provider,
+        tracking_limit=tracking_limit,
+        cache_dir=cache_dir,
+    )
     res = for_each(
-        load_matches(
-            providers=providers,
-            max_per_provider=max_per_provider,
-            tracking_limit=tracking_limit,
-            cache_dir=cache_dir,
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=shard_root,
         # What determines a shard's CONTENT: the extractor and the frame depth it sees.
@@ -128,7 +130,7 @@ def _extract(providers, max_per_provider, tracking_limit, *, shard_root, cache_d
 
     # Combined from THIS PASS'S keys, not `_driver.reconcile`: no partition surface, so a
     # whole-generation read would fold in matches from a wider earlier run. See its docstring.
-    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
     if not parts:
         raise SystemExit("No usable training data.")
     return pd.concat(parts, ignore_index=True)

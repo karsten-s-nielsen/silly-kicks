@@ -197,6 +197,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help='JSON {"statsbomb": ["3869685", ...]} pinning WHICH matches this process handles.',
     )
+    ap.add_argument("--cache-dir", default=None, help="raw-artifact cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)")
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact marked dirty)")
     args = ap.parse_args(argv)
 
@@ -232,17 +233,12 @@ def main(argv: list[str] | None = None) -> None:
         comps: list[tuple[int, int]] = [(int(c[0]), int(c[1])) for c in sbod.all_open_competitions()]
         competitions = comps
         corpus_label = f"statsbomb-open (all {len(comps)} open-data competitions)"
-
-        def _all_matches():
-            for competition_id, season_id in comps:
-                yield from sbod.load_open_data_matches(
-                    competition_id=competition_id,
-                    season_id=season_id,
-                    match_ids=(match_ids or {}).get("statsbomb"),
-                    max_matches=args.max_per_provider,
-                )
-
-        matches_iter = _all_matches()
+        refs, load = sbod.open_data_source(
+            comps,
+            match_ids=(match_ids or {}).get("statsbomb"),
+            max_matches=args.max_per_provider,
+            cache_dir=args.cache_dir,
+        )
         # A different corpus MUST invalidate the shard generation (4.77.1 stale-shard rule): the sorted
         # competition list is the corpus identity, so a re-run on the same --out with a different corpus
         # resolves to a DIFFERENT generation directory and cannot silently reuse WC2022-only shards.
@@ -253,15 +249,16 @@ def main(argv: list[str] | None = None) -> None:
         competition_id = _DEFAULT_COMPETITION_ID if args.competition_id is None else args.competition_id
         season_id = _DEFAULT_SEASON_ID if args.season_id is None else args.season_id
         corpus_label = f"statsbomb-open (competition {competition_id}, season {season_id})"
-        matches_iter = sbod.load_open_data_matches(
-            competition_id=competition_id,
-            season_id=season_id,
+        refs, load = sbod.open_data_source(
+            [(competition_id, season_id)],
             match_ids=(match_ids or {}).get("statsbomb"),
             max_matches=args.max_per_provider,
+            cache_dir=args.cache_dir,
         )
         source_token = {"source": "open-data", "competition_id": competition_id, "season_id": season_id}
     else:
-        from scripts._loader_pining import load_matches
+        from scripts._events_admission import events_only_loader
+        from scripts._loader_pining import list_match_refs
         from scripts._partition import providers_for_slice
 
         # IMPL-05 footgun guard: pining weights are NOT guaranteed public. The bundled default must be
@@ -273,21 +270,25 @@ def main(argv: list[str] | None = None) -> None:
             stacklevel=2,
         )
         corpus_label = f"pining:{args.providers}"
-        matches_iter = load_matches(
+        # PassCompletionModel is EVENT-only, so this loads EVENTS ONLY (no wasteful tracking parse); the
+        # events-only actions are byte-identical to a full load's, so shards + token are unchanged. A
+        # SkillCorner ref goes through the admission edge (fail-closed); GS needs no verdict.
+        refs = list_match_refs(
             providers=providers_for_slice(args.providers.split(","), match_ids),
             match_ids=match_ids,
             max_per_provider=args.max_per_provider,
-            tracking_limit=args.tracking_limit,
         )
+        load, _admission = events_only_loader(refs, cache_dir=args.cache_dir)
         source_token = {"source": "pining", "providers": args.providers, "tracking_limit": args.tracking_limit}
 
     def _work(item):
-        _provider, match_id, actions, _frames, _home = item
+        _provider, match_id, actions, _frames, _home, *_ = item
         return pass_rows_for_match(actions, match_id)
 
     res = for_each(
-        matches_iter,
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=dest / "shards",
         token_inputs={"model": "PassCompletionModel", "feature_names": list(FEATURE_NAMES), **source_token},

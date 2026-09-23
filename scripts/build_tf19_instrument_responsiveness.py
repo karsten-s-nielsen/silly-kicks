@@ -374,7 +374,7 @@ def _measure_match(item, *, rng_seed: int) -> tuple[pd.DataFrame, dict]:
         infer_ball_carrier,
     )
 
-    _provider, _match_id, actions, frames, home_team_id = item
+    _provider, _match_id, actions, frames, home_team_id, *_ = item
 
     # Delta-DAS routes through accessible space, which REQUIRES team_in_possession; raw loader frames do
     # not carry it. The carrier is pinned ONCE (spec S4.1) and shared by the possession derivation.
@@ -461,6 +461,11 @@ def main() -> None:
     ap.add_argument("--providers", default="gradientsports")
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
     ap.add_argument("--min-nonzero", type=int, default=20, help="S6.1 gate_eligible floor (registered)")
     ap.add_argument("--min-games", type=int, default=2, help="S6.1 gate_eligible floor (registered)")
     ap.add_argument(
@@ -497,11 +502,12 @@ def main() -> None:
         return
 
     from scripts._driver import for_each
-    from scripts._loader_pining import load_matches
+    from scripts._loader_pining import pining_source, resolve_cache_dir
     from scripts._partition import providers_for_slice, worker_tag
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
     dest = Path(args.out)
+    cache_dir = resolve_cache_dir(args.cache_dir)
     worker = worker_tag(args.match_ids_json)
 
     _last_keeper: dict = {}
@@ -517,14 +523,17 @@ def main() -> None:
         _last_keeper.update(keeper_counts)
         return shard
 
+    refs, load = pining_source(
+        providers_for_slice(args.providers.split(","), match_ids),
+        match_ids=match_ids,
+        max_per_provider=args.max_per_provider,
+        tracking_limit=args.tracking_limit,
+        cache_dir=cache_dir,
+    )
     res = for_each(
-        load_matches(
-            providers=providers_for_slice(args.providers.split(","), match_ids),
-            match_ids=match_ids,
-            max_per_provider=args.max_per_provider,
-            tracking_limit=args.tracking_limit,
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         counters=lambda _item, _frame: dict(_last_keeper),  # keeper-identity totals, summed by for_each (S4.3)
         shard_root=dest / "shards",

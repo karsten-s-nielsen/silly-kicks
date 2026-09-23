@@ -12,6 +12,37 @@ import pytest
 import scripts.train_receiver_model as TRM
 from scripts.train_receiver_model import _R, _T
 
+
+def _install_corpus(monkeypatch, matches):
+    """Wire the refs+load seam (spec section 4.5): list refs per provider, load one match at a time.
+
+    ``matches`` are the old loader tuples ``(provider, mid, actions, frames, home[, visible_area])``.
+    """
+    from _fake_corpus import make_loaded, make_ref
+
+    import scripts._loader_pining as lp
+
+    by_key: dict = {}
+    refs_by_provider: dict = {}
+    for m in matches:
+        prov, mid, actions, frames, home = m[0], m[1], m[2], m[3], m[4]
+        va = m[5] if len(m) > 5 else None
+        by_key[(str(prov), str(mid))] = make_loaded(
+            prov, mid, actions=actions, frames=frames, home_team_id=home, visible_area=va
+        )
+        refs_by_provider.setdefault(str(prov), []).append(make_ref(prov, mid))
+
+    def _list(providers=None, **kw):
+        out: list = []
+        for p in providers or list(refs_by_provider):
+            out += refs_by_provider.get(str(p), [])
+        return out
+
+    monkeypatch.setattr(lp, "list_match_refs", _list)
+    monkeypatch.setattr(lp, "load_match", lambda ref, **kw: by_key[(str(ref.provider), str(ref.match_id))])
+    monkeypatch.setattr(lp, "resolve_cache_dir", lambda c=None: c)
+
+
 _ACT_COLS = [
     "action_id",
     "game_id",
@@ -57,7 +88,7 @@ def _match(game_id: int):
 
 
 def test_main_trains_bundle_with_provenance_and_m2_distribution(tmp_path, monkeypatch):
-    monkeypatch.setattr("scripts._loader_pining.load_statsbomb_matches", lambda *a, **k: iter([_match(1), _match(2)]))
+    _install_corpus(monkeypatch, [_match(1), _match(2)])
     monkeypatch.setattr(
         sys,
         "argv",
@@ -114,34 +145,30 @@ def _gs_match(game_id: int):
     return ("gradientsports", game_id, pd.DataFrame(acts, columns=_ACT_COLS), pd.concat(frames, ignore_index=True), 1)
 
 
-def test_load_corpus_routes_owner_provider_to_tracking_loader(monkeypatch):
-    """The owner (GS) variant needs REAL tracking frames with velocity, so --provider gradientsports must
-    load via load_matches, NOT load_statsbomb_matches (velocity-less SB360 would crash owner extraction)."""
-    seen = {}
+def test_corpus_source_routes_owner_provider_to_tracking_frames(monkeypatch):
+    """The owner (GS) variant needs REAL tracking frames WITH velocity; the public (statsbomb) variant
+    gets SB360 freeze frames (no velocity). Both route through `load_match`, whose per-provider dispatch
+    builds the right frames -- the seam lists per-provider refs and loads one match at a time."""
+    _install_corpus(monkeypatch, [_gs_match(1), _match(1)])
 
-    def fake_matches(providers, cache_dir):
-        seen["matches"] = providers
-        return iter([])
+    gs_refs, gs_load = TRM._corpus_source("gradientsports", None)
+    assert [r.provider for r in gs_refs] == ["gradientsports"]
+    _mid, _actions, gs_frames = gs_load(gs_refs[0])
+    assert gs_frames is not None
+    assert "vx" in gs_frames.columns  # tracking frames carry velocity
 
-    def fake_sb(*a, **k):
-        seen["sb"] = True
-        return iter([])
-
-    monkeypatch.setattr("scripts._loader_pining.load_matches", fake_matches)
-    monkeypatch.setattr("scripts._loader_pining.load_statsbomb_matches", fake_sb)
-    list(TRM._load_corpus("gradientsports", None))
-    assert seen.get("matches") == ["gradientsports"] and "sb" not in seen
-    list(TRM._load_corpus("statsbomb", None))
-    assert seen.get("sb") is True
+    sb_refs, sb_load = TRM._corpus_source("statsbomb", None)
+    assert [r.provider for r in sb_refs] == ["statsbomb"]
+    _mid, _actions, sb_frames = sb_load(sb_refs[0])
+    assert sb_frames is not None
+    assert "vx" not in sb_frames.columns  # SB360 freeze frames are velocity-less
 
 
 def test_owner_run_records_m_a_resolution(tmp_path, monkeypatch):
     """The owner (GS) variant records the M-A resolution in its provenanced manifest: velocity ablation
     (i, real) + -- given a public bundle -- the deployment gate (ii). Also pins that owner extraction runs
     on velocity frames end-to-end."""
-    monkeypatch.setattr(
-        "scripts._loader_pining.load_matches", lambda providers, cache_dir: iter([_gs_match(1), _gs_match(2)])
-    )
+    _install_corpus(monkeypatch, [_gs_match(1), _gs_match(2)])
     monkeypatch.setattr(
         TRM, "_resolve_deployment", lambda *a, **k: {"decisive": False, "margin": float("nan"), "n_scored": 0}
     )
@@ -187,7 +214,7 @@ def test_resolve_deployment_runs_the_real_second_pass(tmp_path, monkeypatch):
     pub = ReceiverModel("public").fit(X, y)
     pub.save(tmp_path / "pub")
     own = ReceiverModel("public").fit(X, y)  # a positions-only stand-in is enough for the plumbing
-    monkeypatch.setattr("scripts._loader_pining.load_matches", lambda providers, cache_dir: iter([_gs_match(1)]))
+    _install_corpus(monkeypatch, [_gs_match(1)])
     out = tmp_path / "out"
     out.mkdir()
     decision = TRM._resolve_deployment(tmp_path / "pub", own, "gradientsports", None, tmp_path / "sh", out, "abc123")
@@ -322,10 +349,7 @@ def test_main_pooled_records_the_gate_and_coverage(tmp_path, monkeypatch):
     """Q3 end-to-end: --pool-provider extracts the pool (GS/id), runs the earned-inclusion gate, and
     RECORDS it + label coverage in the provenanced manifest. The primary (statsbomb/trajectory) is the
     serve target."""
-    monkeypatch.setattr("scripts._loader_pining.load_statsbomb_matches", lambda *a, **k: iter([_match(1), _match(2)]))
-    monkeypatch.setattr(
-        "scripts._loader_pining.load_matches", lambda providers, cache_dir: iter([_gs_match(1), _gs_match(2)])
-    )
+    _install_corpus(monkeypatch, [_match(1), _match(2), _gs_match(1), _gs_match(2)])
     monkeypatch.setattr(
         sys,
         "argv",
@@ -390,8 +414,7 @@ def test_trajectory_excludes_actor_candidate_on_identity_less_frame():
 def test_empty_pool_does_not_flip_providers_trained(tmp_path, monkeypatch):
     """B-F1: a pool provider that yields nothing ties the gate (margin 0 -> keep_pool True) but contributed
     ZERO rows -- it must NOT be stamped into providers_trained / corpus_visibility."""
-    monkeypatch.setattr("scripts._loader_pining.load_statsbomb_matches", lambda *a, **k: iter([_match(1), _match(2)]))
-    monkeypatch.setattr("scripts._loader_pining.load_matches", lambda providers, cache_dir: iter([]))  # empty pool
+    _install_corpus(monkeypatch, [_match(1), _match(2)])  # statsbomb primary; empty gradientsports pool
     monkeypatch.setattr(
         sys,
         "argv",

@@ -3,6 +3,9 @@
 Keyed on (l, w) ints; GridSpec callers unpack via grid.n_zones_x / grid.n_zones_y.
 """
 
+import dataclasses
+from typing import TypedDict
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -69,6 +72,23 @@ def _scoring_prob_from_counts(goal_counts: npt.ArrayLike, shot_counts: npt.Array
     return _safe_divide(goal_counts, shot_counts)
 
 
+def _shot_zone_counts(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.int_]:
+    """Per-zone shot counts (valid START), ``(w, l)``.
+
+    The ONE extractor `fit()` (via `_scoring_prob` / `_action_prob`) and `ExpectedThreat.zone_counts`
+    both call, so the fit path and the counts path cannot diverge on which rows they count (spec §4.4).
+    """
+    shot_actions = actions[(actions.type_id == spadlconfig.actiontype_id["shot"])]
+    return _count(shot_actions.start_x, shot_actions.start_y, l, w)
+
+
+def _goal_zone_counts(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.int_]:
+    """Per-zone goal counts (shots with a successful result), valid START, ``(w, l)``. Shared extractor."""
+    shot_actions = actions[(actions.type_id == spadlconfig.actiontype_id["shot"])]
+    goals = shot_actions[(shot_actions.result_id == spadlconfig.result_id["success"])]
+    return _count(goals.start_x, goals.start_y, l, w)  # type: ignore[reportAttributeAccessIssue]
+
+
 def _scoring_prob(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.float64]:
     """Compute the probability of scoring when taking a shot for each cell.
 
@@ -86,12 +106,7 @@ def _scoring_prob(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[
     np.ndarray
         A matrix, denoting the probability of scoring for each cell.
     """
-    shot_actions = actions[(actions.type_id == spadlconfig.actiontype_id["shot"])]
-    goals = shot_actions[(shot_actions.result_id == spadlconfig.result_id["success"])]
-
-    shotmatrix = _count(shot_actions.start_x, shot_actions.start_y, l, w)
-    goalmatrix = _count(goals.start_x, goals.start_y, l, w)  # type: ignore[reportAttributeAccessIssue]
-    return _scoring_prob_from_counts(goalmatrix, shotmatrix)
+    return _scoring_prob_from_counts(_goal_zone_counts(actions, l, w), _shot_zone_counts(actions, l, w))
 
 
 def _get_move_actions(actions: pd.DataFrame) -> pd.DataFrame:
@@ -173,10 +188,116 @@ def _action_prob(
     movematrix : np.ndarray
         For each cell the probability of choosing to move.
     """
+    return _action_prob_from_counts(_shot_zone_counts(actions, l, w), _move_start_zone_counts(actions, l, w))
+
+
+def _move_start_zone_counts(actions: pd.DataFrame, l: int = N, w: int = M) -> npt.NDArray[np.int_]:
+    """Per-zone counts of ALL move actions (pass/dribble/cross, any result) by valid START, ``(w, l)``.
+
+    This is the ``_action_prob`` move population -- valid start only -- which DIFFERS from the Singh
+    transition denominator (valid start AND end). Shared by `fit()` and `zone_counts`."""
     move_actions = _get_move_actions(actions)
-    shot_actions = actions[(actions.type_id == spadlconfig.actiontype_id["shot"])]
+    return _count(move_actions.start_x, move_actions.start_y, l, w)
 
-    movematrix = _count(move_actions.start_x, move_actions.start_y, l, w)
-    shotmatrix = _count(shot_actions.start_x, shot_actions.start_y, l, w)
 
-    return _action_prob_from_counts(shotmatrix, movematrix)
+class _ZoneCountKwargs(TypedDict):
+    """The keyword arguments :meth:`ExpectedThreat.fit_from_counts` accepts (single serialization source)."""
+
+    shot_counts: npt.NDArray[np.integer]
+    goal_counts: npt.NDArray[np.integer]
+    move_counts: npt.NDArray[np.integer]
+    transition_start_counts: npt.NDArray[np.integer]
+    transition_counts: npt.NDArray[np.integer]
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class XtZoneCounts:
+    """The five per-zone integer count aggregates an xT fit reduces (SK-XT-COUNTS / spec §4.4).
+
+    Additive across partitions (``__add__`` sums element-wise), so a producer fits from one distributed
+    ``groupBy`` (per-competition counts summed) via :meth:`ExpectedThreat.fit_from_counts`. Built by
+    :meth:`ExpectedThreat.zone_counts` from the SAME extractors ``fit()`` uses, so a counts-based fit is
+    byte-identical to ``fit(actions)``. ``eq=False`` because the fields are ndarrays (no default ``==``).
+
+    Examples
+    --------
+    Sum per-match counts and fit one grid (Singh-only)::
+
+        total = XtZoneCounts.zeros(16, 12)
+        for actions in per_match_actions:
+            total = total + ExpectedThreat(l=16, w=12).zone_counts(actions)
+        xt = ExpectedThreat(l=16, w=12).fit_from_counts(**total.as_fit_kwargs())
+    """
+
+    l: int
+    w: int
+    shot_counts: npt.NDArray[np.int64]
+    goal_counts: npt.NDArray[np.int64]
+    move_counts: npt.NDArray[np.int64]
+    transition_start_counts: npt.NDArray[np.int64]
+    transition_counts: npt.NDArray[np.int64]
+
+    def __post_init__(self) -> None:
+        n = self.w * self.l
+        for name, shape in (
+            ("shot_counts", (self.w, self.l)),
+            ("goal_counts", (self.w, self.l)),
+            ("move_counts", (self.w, self.l)),
+            ("transition_start_counts", (self.w, self.l)),
+            ("transition_counts", (n, n)),
+        ):
+            arr = np.asarray(getattr(self, name), dtype=np.int64)
+            if arr.shape != shape:
+                raise ValueError(f"{name} has shape {arr.shape}, expected {shape} for (l={self.l}, w={self.w})")
+            object.__setattr__(self, name, arr)  # frozen: coerce to int64 in place
+
+    @classmethod
+    def zeros(cls, l: int, w: int) -> "XtZoneCounts":
+        """An all-zero counts object on an ``l`` x ``w`` grid -- the identity for :meth:`__add__`.
+
+        Examples
+        --------
+        Start a corpus reduction from the additive identity::
+
+            total = XtZoneCounts.zeros(16, 12)  # then: total = total + per_match_counts
+        """
+        n = w * l
+        return cls(
+            l,
+            w,
+            np.zeros((w, l), dtype=np.int64),
+            np.zeros((w, l), dtype=np.int64),
+            np.zeros((w, l), dtype=np.int64),
+            np.zeros((w, l), dtype=np.int64),
+            np.zeros((n, n), dtype=np.int64),
+        )
+
+    def __add__(self, other: "XtZoneCounts") -> "XtZoneCounts":
+        if (self.l, self.w) != (other.l, other.w):
+            raise ValueError(f"grid mismatch: (l={self.l}, w={self.w}) + (l={other.l}, w={other.w})")
+        return XtZoneCounts(
+            self.l,
+            self.w,
+            self.shot_counts + other.shot_counts,
+            self.goal_counts + other.goal_counts,
+            self.move_counts + other.move_counts,
+            self.transition_start_counts + other.transition_start_counts,
+            self.transition_counts + other.transition_counts,
+        )
+
+    def as_fit_kwargs(self) -> _ZoneCountKwargs:
+        """The kwargs :meth:`ExpectedThreat.fit_from_counts` accepts.
+
+        Examples
+        --------
+        Round-trip a counts object into a fitted grid::
+
+            xt = ExpectedThreat(l=16, w=12).fit_from_counts(**counts.as_fit_kwargs())
+        """
+        return _ZoneCountKwargs(
+            shot_counts=self.shot_counts,
+            goal_counts=self.goal_counts,
+            move_counts=self.move_counts,
+            transition_start_counts=self.transition_start_counts,
+            transition_counts=self.transition_counts,
+        )

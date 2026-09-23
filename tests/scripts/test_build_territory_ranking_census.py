@@ -458,14 +458,18 @@ def _fake_match(provider, match_id):
 
 
 def _install_broad_corpus_stubs(monkeypatch, tmp_path, *, competitions, matches_per_competition=2):
-    """Stub the manifest, the loader, the clean-tree guard, and for_each; return the capture handles.
+    """Stub the source factory, the clean-tree guard, and for_each; return the capture handles.
 
-    Returns ``(seen_keys, seen_tokens, loaded_competitions)`` -- the SCORED keys for_each iterated, the
-    shard-generation token, and the (competition, season) tuples the loader was called for (so a test
-    can prove EVERY competition was walked, independent of how the fit/score split lands). The fake
-    for_each WRITES one real parquet shard per item (from the driver's own `work`) so the reduce
-    (tier1 -> gate -> census.json) runs to completion off the network, pooling across every match.
+    Returns ``(seen_keys, seen_tokens, loaded_competitions)`` -- the SCORED keys the SCORE for_each
+    iterated, the SCORE shard-generation token, and the (competition, season) tuples ``open_data_source``
+    was called for (so a test can prove EVERY competition was listed, independent of how the fit/score
+    split lands). Task 8.5/13: the driver is a TWO-pass for_each -- a fit prepass (``dest/fit_shards``)
+    then a score pass (``dest/shards``) -- so the fake for_each distinguishes them by shard-root name,
+    applies ``load`` per item, and captures keys/token ONLY for the score pass. Each pass WRITES one real
+    parquet shard per item so the fit read-back + the reduce run to completion off the network.
     """
+    from _fake_corpus import make_ref
+
     import scripts._driver as driver_mod
     import scripts._provenance as prov_mod
     import scripts._sb_open_data as sbmod
@@ -475,12 +479,17 @@ def _install_broad_corpus_stubs(monkeypatch, tmp_path, *, competitions, matches_
 
     loaded_competitions: list[tuple[int, int]] = []
 
-    def _fake_loader(*, competition_id, season_id, match_ids=None, max_matches=None, preserve_native=()):
-        loaded_competitions.append((competition_id, season_id))
-        for j in range(matches_per_competition):
-            yield _fake_match("statsbomb", f"m-{competition_id}-{season_id}-{j}")
+    def _fake_source(comps, *, match_ids=None, max_matches=None, preserve_native=(), cache_dir=None):
+        loaded_competitions.extend(comps)
+        refs, by_id = [], {}
+        for competition_id, season_id in comps:
+            for j in range(matches_per_competition):
+                mid = f"m-{competition_id}-{season_id}-{j}"
+                refs.append(make_ref("statsbomb", mid))
+                by_id[mid] = _fake_match("statsbomb", mid)
+        return refs, lambda ref: by_id[ref.match_id]
 
-    monkeypatch.setattr(sbmod, "load_open_data_matches", _fake_loader)
+    monkeypatch.setattr(sbmod, "open_data_source", _fake_source)
 
     # Fit is stubbed (a real xt fit needs full SPADL columns); this test pins the CORPUS WIRING.
     monkeypatch.setattr(
@@ -490,7 +499,7 @@ def _install_broad_corpus_stubs(monkeypatch, tmp_path, *, competitions, matches_
 
     # Score each match into a tiny per-(defender, game, team) shard so the reduce has data to pool.
     def _fake_score(item, *, xt, completion_model):
-        _provider, match_id, _actions, _frames, _home = item
+        _provider, match_id, _actions, *_ = item
         return pd.DataFrame(
             {
                 "game_id": [str(match_id)],
@@ -516,15 +525,18 @@ def _install_broad_corpus_stubs(monkeypatch, tmp_path, *, competitions, matches_
         def manifest(self):
             return {"generation": "fake", "n_shards": len(seen_keys)}
 
-    def _fake_for_each(items, *, key, work, shard_root, token_inputs, label):
+    def _fake_for_each(items, *, key, work, shard_root, token_inputs, label, load=None):
         gen_dir = shard_root / "gen"
         gen_dir.mkdir(parents=True, exist_ok=True)
-        seen_tokens.update(token_inputs)
+        is_score = shard_root.name == "shards"  # the score pass; the fit prepass is "fit_shards"
+        if is_score:
+            seen_tokens.update(token_inputs)
         for it in items:
+            item = load(it) if load is not None else it
             k = key(it)
-            seen_keys.append(k)
-            frame = work(it)
-            frame.to_parquet(gen_dir / f"{k}.parquet", index=False)
+            work(item).to_parquet(gen_dir / f"{k}.parquet", index=False)
+            if is_score:
+                seen_keys.append(k)
         return _FakeRes(gen_dir)
 
     monkeypatch.setattr(driver_mod, "for_each", _fake_for_each)
@@ -731,3 +743,25 @@ def test_fit_disjoint_models_column_prune_is_byte_identical():
     assert cm_pruned._intercept == cm_full._intercept
     assert np.array_equal(meanp, meanf)
     assert np.array_equal(scalep, scalef)
+
+
+def test_fit_prepass_parquet_roundtrip_is_byte_identical(tmp_path):
+    """ADR-052 fit prepass (Task 13): sharding each fit match's pruned actions to parquet and reading
+    them back for ``_fit_disjoint_models`` must fit the SAME xt + completion as the pre-migration
+    in-memory raw-actions fit -- the parquet round trip is lossless for the SPADL columns both fits read.
+    """
+    from build_territory_ranking_census import _prune_actions_slice
+
+    acts = _fittable_actions()
+    xt_mem, cm_mem = _fit_disjoint_models([acts])  # in-memory (pre-migration) path
+
+    slice_path = tmp_path / "fit-0.parquet"
+    _prune_actions_slice(acts).to_parquet(slice_path, index=False)  # prepass shard
+    xt_rt, cm_rt = _fit_disjoint_models([pd.read_parquet(slice_path)])  # read-back fit
+
+    xtm, xtr = xt_mem.xT, xt_rt.xT
+    coefm, coefr = cm_mem._coef, cm_rt._coef
+    assert xtm is not None and xtr is not None and coefm is not None and coefr is not None
+    assert np.array_equal(xtm, xtr)
+    assert np.array_equal(coefm, coefr)
+    assert cm_mem._intercept == cm_rt._intercept

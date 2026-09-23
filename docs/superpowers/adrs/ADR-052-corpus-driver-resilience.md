@@ -483,3 +483,63 @@ of 179 items. Sharding bought back the 81 and nothing more. **If you hand-roll a
 you must re-implement failure ISOLATION too, not just sharding:** invert onto the id list and load
 one item per call inside try/except, writing a FAILURE shard so "absent" keeps meaning "not yet
 run".
+
+## Amendment (corpus-driver load seam) — D13/D14/D15: resume-BEFORE-load, deterministic exclusions, and the xT count pass
+
+D4 said `for_each` resumes WORK, never the PRODUCTION of its items — but until this amendment every
+adopter still PRODUCED its items by streaming `load_matches`, which downloads and parses a match
+INSIDE the generator before yielding it. So a resumed run re-downloaded and re-parsed the whole
+corpus in order to then skip a set of shard writes: resume that costs exactly what it saves. An audit
+of the 30+ corpus drivers found the class was systemic (many streamed the loader; several held the
+whole corpus's frames in memory to fit one xT surface), and a match that failed to load raised OUT of
+the generator, past `for_each`'s per-item `try`, killing the pass.
+
+**D13 — a deterministic exclusion is a MARKER, never an empty shard and never a failure.** A gate
+that a given artifact will always trip (the SkillCorner S1 geometry rate-gate; a velocity-less frame
+set a keeper-position trainer cannot use) is a DECIDED outcome. `scripts/_item_outcome.ItemExcluded`
+(subclassed by `MatchExcluded`) raised from `load` or `work` writes a `.excluded.json` marker beside
+the shards, counted in `CorpusPassResult.excluded`, replayed on resume, and it RESETS the
+consecutive-failure run (a decision is not bad luck). It is distinct from D2's empty shard ("ran,
+produced nothing") and from a failure ("could not run"); conflating the three either recomputes a
+decided exclusion forever or biases an aggregate toward the null. **Combine from
+`CorpusPassResult.shard_keys` (keys minus failures minus exclusions), never `keys`** — an excluded key
+has a marker and no parquet, so `read_parquet(shard_path(gen, k))` over `keys` `FileNotFoundError`s on
+the first exclusion.
+
+**D14 — `for_each(items, *, load=...)` makes items cheap REFERENCES and moves the load behind the
+resume check.** With `load` given, `key(ref)` and the resume/exclusion checks run on the ref BEFORE
+`item = load(ref)`, and `load` + `work` share ONE `try` — so a finished/excluded item is never loaded
+(resume-before-load), and an unloadable item is a recorded FAILURE rather than an exception escaping
+the generator. Each loader family splits into a cheap `Sized` ref lister (`list_match_refs` /
+`list_open_data_refs` / `list_gi_refs`) plus a per-ref `load_match` / `load_open_data_match` /
+`load_gi_match`; the streaming `load_matches` / `load_statsbomb_matches` / `load_open_data_matches`
+wrappers stay as thin, byte-identical shims for e2e tests and ad-hoc callers, and CI **Rule A** bans a
+DRIVER from calling them. The owner-ratified `pining_source` / `open_data_source` factories return
+`(refs, load)` in one call (the reused S-migration recipe). D4's exception — a driver whose `work` is
+trivial next to producing its items — stands: `train_ghost_gk` still holds its ref list, because there
+the load IS the work.
+
+**D15 — an xT fit is a corpus pass, not a whole-corpus materialization.** xT is event-only and its
+per-match zone counts are ADDITIVE (ADR-102), so `scripts/_xt_corpus.xt_count_pass` writes one sparse
+`XtZoneCounts` shard per match (an events-only `for_each`) and `fit_xt_from_count_pass` sums the shards
+and calls `ExpectedThreat.fit_from_counts` — byte-identical to a pooled `fit(actions)` (integer sums),
+so no retrain. It REFUSES on `res.failures` unless `allow_failed=True` (records them in
+`XtFitProvenance`), preserving the drivers' complete-or-nothing contract. The OOM class from holding
+every match's frames to fit one surface disappears; the fit and the scoring/arms pass each resume
+independently.
+
+**Policy lives at the edge (D14 corollary).** An events-only SkillCorner load cannot run the S1
+geometry gate (it needs built tracking), so `load_match(events_only=True)` stays a PURE loader that
+consults no artifact. Admitting an S1-excluded match into an events-only fit is a decision, made by
+`scripts/_events_admission.events_only_loader` against a committed, provenance-stamped verdict
+artifact — CI **Rule D** makes it the one sanctioned home for `load_match(events_only != False)`.
+Because the admitted fit corpus now DEPENDS on that artifact, its digest joins `token_inputs` (a
+deliberate generation move) whenever a SkillCorner ref is requested, and stays absent otherwise so a
+non-SkillCorner corpus keeps a byte-stable token.
+
+**Enforced, not documented.** Four static AST rules over EVERY `scripts/*.py` (private included) —
+Rule A (no stream loader in a driver), Rule B (`load_match` states `events_only=`), Rule C (no
+un-sharded LOADING loop), Rule D (unadmitted `events_only` only in the allowlisted edge) — with
+`_RULE_A_PENDING` / `_RULE_C_PENDING` ledgers seeded from the live violations at `4ac26d0` and drained
+to EMPTY as each driver migrated (`tests/scripts/_corpus_load_rules.py`). The population is DERIVED by
+enumeration over the loader modules, not a hand-maintained list (the ADR-056 completeness idiom).

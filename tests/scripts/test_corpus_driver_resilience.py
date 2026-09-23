@@ -36,16 +36,20 @@ import ast
 
 import pytest
 
+from tests.scripts import _corpus_load_rules as clr
 from tests.scripts._script_population import iter_scripts
 
-#: Calling any of these means the driver pulls a corpus.
-_CORPUS_CALLS = {
-    "load_matches",
-    "load_statsbomb_matches",  # SB360 corpus loader (train_receiver_model, validate_sb360_licensed_corpus)
-    "select_match_ids",
-    "load_xtgk_cohort",
-    "load_retention_cohort",
-}
+#: The (refs, load) source factories a MIGRATED driver calls instead of a stream loader (owner-ratified
+#: reuse, Task 8.5). They are `_LOADER_NON_CORPUS` (not a stream loader, not a loading loop -- see the
+#: gate in `_corpus_load_rules`), so they are absent from `corpus_functions()`; but calling one still
+#: means the module pulls a corpus, so detection must count them or a fully-migrated driver drops out of
+#: `_population()` and its adoption stops being checked.
+_SOURCE_FACTORIES = {"pining_source", "open_data_source", "events_only_loader"}
+#: Calling any of these means the driver pulls a corpus. Spec section 5.7: the hand-written set is
+#: REPLACED by the population derived from the loader modules (`_corpus_load_rules.corpus_functions`),
+#: so a new corpus loader named by the convention is picked up automatically; the source factories are
+#: unioned in because they are the post-migration seam (Task 8.5).
+_CORPUS_CALLS = set(clr.corpus_functions()) | _SOURCE_FACTORIES
 #: A corpus-shaped CLI surface. Paired with a per-item loop it means the same thing.
 _CORPUS_ARGS = {"--data-dir", "--match-ids-json", "--max-per-provider", "--providers"}
 #: The public surface of `scripts/_driver.py`. Calling any of them is adoption.
@@ -174,7 +178,12 @@ def _population() -> dict[str, ast.AST]:
 #: a new offender cannot join silently and a migrated one must be removed. EMPTY as of ADR-052 --
 #: every in-population driver adopts the seam. It stays as the mechanism, not as a list: a new
 #: unmigrated driver has somewhere to be recorded WITH a reason, and cannot arrive silently.
-_NOT_YET_MIGRATED: dict[str, str] = {}
+_NOT_YET_MIGRATED: dict[str, str] = {
+    # EMPTY: every in-population corpus driver adopts the seam. `train_match_outcome_dependence` (the
+    # last holdout -- 3,961 open-data matches held in memory, no shards) gained `for_each` resume in
+    # Task 13, so its entry was removed. The mechanism stays so a new unmigrated driver has somewhere
+    # to be recorded WITH a reason and cannot arrive silently.
+}
 
 
 @pytest.mark.parametrize("name", sorted(_population()))
@@ -322,3 +331,295 @@ def test_every_exempt_driver_really_has_no_shard_pass():
         called = _called_names(_population()[name])
         assert "cohort_cache" in called, f"{name} is exempt but does not even use the cohort cache"
         assert not (called & _SHARD_PRIMITIVES), f"{name} writes shards yet was exempted"
+
+
+# ==========================================================================================
+# Corpus-driver load-seam gate (spec section 5). Rules A-D + derived population + ledgers.
+# Landed RED (interpretation 6): the ledgers ARE the recorded 4ac26d0 violation set, so this
+# file PASSES with them populated; Tasks 9-15 drain them, Task 17 asserts both empty.
+# ==========================================================================================
+
+
+def _parse(src: str) -> ast.AST:
+    return ast.parse(src)
+
+
+# --- Step 1: derived population, both ways -------------------------------------------------
+
+
+def test_loader_population_is_classified_exactly_both_ways():
+    public = {n for names in clr.public_loader_functions().values() for n in names}
+    corpus = set(clr.corpus_functions())
+    non_corpus = public - corpus
+    assert non_corpus == set(clr._LOADER_NON_CORPUS), (
+        f"unclassified public loader functions: {sorted(non_corpus - set(clr._LOADER_NON_CORPUS))}; "
+        f"stale _LOADER_NON_CORPUS entries: {sorted(set(clr._LOADER_NON_CORPUS) - non_corpus)}"
+    )
+
+
+def test_corpus_set_contains_the_known_loaders_non_vacuous():
+    corpus = clr.corpus_functions()
+    for known in (
+        "load_matches",
+        "load_statsbomb_matches",
+        "load_open_data_matches",
+        "select_match_ids",
+        "list_match_refs",
+    ):
+        assert known in corpus, f"{known} vanished from the derived corpus set"
+
+
+# --- Step 2: scan every script, private included ------------------------------------------
+
+
+def test_all_script_trees_includes_private_scripts():
+    trees = clr.all_script_trees()
+    assert "_xtgk_comparability" in trees and "_loader_pining" in trees, "private scripts not scanned"
+    assert "_xtgk_comparability" not in iter_scripts(), "the public walker must still skip private"
+
+
+# --- Step 3: Rule A (ledgered, both ways) + plants ----------------------------------------
+
+
+def test_rule_a_ledger_is_exact_both_ways():
+    live = {v.module for v in clr.rule_a()}
+    assert live == set(clr._RULE_A_PENDING), (
+        f"newly streaming: {sorted(live - set(clr._RULE_A_PENDING))}; "
+        f"now migrated, drop from _RULE_A_PENDING: {sorted(set(clr._RULE_A_PENDING) - live)}"
+    )
+
+
+def test_rule_a_plants():
+    red = clr.rule_a_tree("plant", _parse("def main():\n    load_matches(providers=['p'])\n"))
+    assert red, "Rule A missed a bare stream-loader call"
+    green = clr.rule_a_tree(
+        "plant",
+        _parse(
+            "def main():\n"
+            "    for_each(list_match_refs(providers=['p']), key=k, work=w,\n"
+            "             load=lambda r: load_match(r, events_only=False), shard_root=d, token_inputs={'v': 1})\n"
+        ),
+    )
+    assert not green, "Rule A flagged a migrated for_each driver"
+
+
+# --- Step 4: Rule B (events_only always keyword) + plants ---------------------------------
+
+
+def test_rule_b_is_green_every_load_match_passes_events_only():
+    assert clr.rule_b() == [], f"load_match without events_only=: {clr.rule_b()}"
+
+
+def test_rule_b_plants():
+    red = clr.rule_b_tree("plant", _parse("def main():\n    load_match(r)\n"))
+    assert red, "Rule B missed a load_match without events_only="
+    green = clr.rule_b_tree("plant", _parse("def main():\n    load_match(r, events_only=False)\n"))
+    assert not green, "Rule B flagged a keyword events_only= call"
+
+
+# --- Step 5: Rule C (ledgered, both ways) + plants + green sites ---------------------------
+
+
+def test_rule_c_ledger_is_exact_both_ways():
+    live = {f"{v.module}.{v.func}" for v in clr.rule_c()}
+    assert live == set(clr._RULE_C_PENDING), (
+        f"newly un-sharded: {sorted(live - set(clr._RULE_C_PENDING))}; "
+        f"now migrated, drop from _RULE_C_PENDING: {sorted(set(clr._RULE_C_PENDING) - live)}"
+    )
+
+
+def test_rule_c_red_plants():
+    reds = {
+        "i_direct_stream": "def main():\n    for x in load_matches(providers=['p']):\n        pass\n",
+        "i_name_bound": "def main():\n    it = load_matches(providers=['p'])\n    for x in it:\n        pass\n",
+        "i_load_param": "def main(load_fn):\n    for x in load_fn():\n        pass\n",
+        "ii_body_load_match": "def main():\n    for r in refs:\n        m = load_match(r, events_only=False)\n",
+        "ii_map_lambda": "def main():\n    list(map(lambda r: load_match(r, events_only=False), refs))\n",
+        "ii_body_load_param": "def main(loader):\n    for r in refs:\n        loader(r)\n",
+    }
+    for name, src in reds.items():
+        assert clr.rule_c_tree("plant", _parse(src)), f"Rule C missed red shape {name}"
+
+
+def test_rule_c_green_plants():
+    rebind = "def main():\n    it = load_matches(providers=['p'])\n    it = other()\n    for x in it:\n        pass\n"
+    assert not clr.rule_c_tree("plant", _parse(rebind)), "Rule C flagged a rebound-before-loop iterable"
+    id_only = "def main():\n    for mid in select_match_ids(providers=['p']):\n        work(mid)\n"
+    assert not clr.rule_c_tree("plant", _parse(id_only)), "Rule C flagged an id-only loop over select_match_ids"
+
+
+def test_rule_c_named_green_sites_stay_green():
+    """Sites that iterate ids WITHOUT loading must not be flagged (spec section 5.5). These four are
+    green at 4ac26d0; `_loader_pining_to_cache.main` is flagged until Task 15 moves its load loop."""
+    live = {f"{v.module}.{v.func}" for v in clr.rule_c()}
+    for site in (
+        "train_gk_completion._corpus_taxonomy",
+        "train_gk_completion.main",
+        "train_xcross_attempt._corpus_fingerprint",
+        "train_xshot_occurrence._corpus_fingerprint",
+    ):
+        assert site not in live, f"{site} was wrongly flagged as a loading loop"
+
+
+# --- Step 6: Rule D (unadmitted events-only) + plants -------------------------------------
+
+
+def test_rule_d_is_green_all_events_only_loads_are_admitted():
+    assert clr.rule_d() == [], f"unadmitted events_only= load_match: {clr.rule_d()}"
+
+
+def test_rule_d_red_plants():
+    bare = clr.rule_d_tree("driver", _parse("def main():\n    load_match(r, events_only=True)\n"))
+    assert bare, "Rule D missed a bare events_only=True in a driver"
+    var = clr.rule_d_tree("driver", _parse("def main():\n    load_match(r, events_only=eo)\n"))
+    assert var, "Rule D missed a variable-valued events_only="
+    second = clr.rule_d_tree("_events_admission", _parse("def other():\n    load_match(r, events_only=True)\n"))
+    assert second, "Rule D missed a second un-admitted call in the admission module"
+
+
+def test_rule_d_green_plants():
+    twin = clr.rule_d_tree(
+        "_events_admission",
+        _parse(
+            "def events_only_loader(refs):\n"
+            "    def load(ref):\n"
+            "        return load_match(ref, events_only=True)\n"
+            "    return load\n"
+        ),
+    )
+    assert not twin, "Rule D flagged the admitted events_only_loader closure"
+    producer = clr.rule_d_tree(
+        "build_skillcorner_s1_event_validity",
+        _parse("def _events_pass(refs):\n    for_each(refs, load=lambda r: load_match(r, events_only=True))\n"),
+    )
+    assert not producer, "Rule D flagged the registered producer's _events_pass"
+
+
+# --- Step 7: key-pin scaffold + _KEY_EXCEPTIONS -------------------------------------------
+
+#: A migrated driver's `for_each(key=...)` must equal `ref.key` OR its entry here (spec section 5,
+#: interpretation: keys stay byte-identical to the pre-migration item key, so finished generations
+#: resume). Extended by Tasks 9-15 as they migrate.
+_KEY_EXCEPTIONS: dict[str, str] = {
+    "build_rq_pass_scores": "ref.match_id",
+    "measure_gs_shot_distribution": "f'{ref.provider}_{ref.match_id}'",
+    "_xt_corpus": "key",
+    # The two trainers key BOTH their sources (pining refs + --data-dir tuples) through a shared
+    # module-level `_source_key` (a MatchRef -> its .key, a tuple -> (provider, match_id)).
+    "train_xshot_occurrence": "_source_key",
+    "train_xcross_attempt": "_source_key",
+    "train_receiver_model": "ref.match_id",
+    "validate_sb360_licensed_corpus": "_item_key",
+    # BOTH sources keyed through a shared module-level `_item_key`: a StatsBomb MatchRef -> its
+    # match_id, a Wyscout (match_id, actions) tuple -> its match_id, prefixed by the provider.
+    "validate_team_kpi_reliability": "(args.provider, _item_key(item))",
+    # Score pass keys by str(ref.match_id) so the single-competition generation's shard filenames stay
+    # byte-identical to the pre-migration str(mid) keys (the fit prepass uses ref.key, a new generation).
+    "build_territory_ranking_census": "str(ref.match_id)",
+    # Keeps its pre-migration f"{comp}_{season}_{mid}" key (NOT ref.key -- which would be
+    # "statsbomb__<mid>"), so finished coverage-shard generations resume across the migration.
+    "build_sb360_coverage": "f'{ref.competition_id}_{ref.season_id}_{ref.match_id}'",
+}
+
+
+def test_ref_key_joins_exactly_like_the_old_item_key():
+    from _driver import join_key
+    from _loader_pining import MatchRef
+
+    for p, m in (("skillcorner", "1"), ("gradientsports", "10502"), ("statsbomb", "3986784")):
+        assert join_key(MatchRef(p, m).key) == join_key((str(p), str(m)))
+
+
+def _for_each_load_key_sources() -> dict[str, set[str]]:
+    """module -> set of `key=` source snippets for every `for_each(..., load=...)` call."""
+    out: dict[str, set[str]] = {}
+    for mod, tree in clr.all_script_trees().items():
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and clr._call_name(node) == "for_each"):
+                continue
+            kws = {kw.arg: kw.value for kw in node.keywords}
+            if "load" not in kws or kws.get("load") is None:
+                continue
+            key_node = kws.get("key")
+            if key_node is None:
+                continue
+            out.setdefault(mod, set()).add(ast.unparse(key_node))
+    return out
+
+
+def test_every_migrated_driver_keeps_its_pre_migration_key():
+    """A `for_each(..., load=...)` must key by `ref.key` (a lambda returning `<name>.key`) or be a
+    driver named in `_KEY_EXCEPTIONS`. Tasks 9-15 extend `_KEY_EXCEPTIONS` as they migrate."""
+    for mod, sources in _for_each_load_key_sources().items():
+        for src in sources:
+            keys_by_ref = src.endswith(".key")  # `lambda ref: ref.key`
+            allowed = mod in _KEY_EXCEPTIONS
+            assert keys_by_ref or allowed, (
+                f"{mod}: for_each(load=...) keys by {src!r}, not `ref.key`. Add a _KEY_EXCEPTIONS entry "
+                f"with its pre-migration key if that is intended."
+            )
+
+
+# --- Step 8: anti-rot meta-assertions -----------------------------------------------------
+
+
+def test_ledgers_are_subsets_of_the_derived_population():
+    """A ledger entry that no rule could ever produce is dead weight that hides a real omission."""
+    a_universe = set(clr.all_script_trees())
+    assert set(clr._RULE_A_PENDING) <= a_universe, sorted(set(clr._RULE_A_PENDING) - a_universe)
+    c_modules = {q.split(".")[0] for q in clr._RULE_C_PENDING}
+    assert c_modules <= a_universe, sorted(c_modules - a_universe)
+
+
+def test_exemptions_and_allowlist_name_functions_that_exist():
+    trees = clr.all_script_trees()
+
+    def _funcs(mod: str) -> set[str]:
+        tree = trees.get(mod)
+        return {".".join(s) for s in _all_func_paths(tree)} if tree is not None else set()
+
+    for mod, func in clr._STREAM_LOADER_EXEMPT:
+        assert func in {p.split(".")[-1] for p in _funcs(mod)} or mod not in trees, f"{mod}.{func} missing"
+    for qual in clr._UNSHARDED_LOOP_EXEMPT:
+        mod, _, func = qual.partition(".")
+        assert func in {p.split(".")[-1] for p in _funcs(mod)} or mod not in trees, f"{qual} missing"
+    for qual in clr._UNADMITTED_EVENTS_ONLY_ALLOWED:
+        mod, _, func = qual.rpartition(".")
+        assert mod in trees, f"{qual} module missing"
+
+
+def _all_func_paths(tree: ast.AST) -> set[tuple[str, ...]]:
+    out: set[tuple[str, ...]] = set()
+
+    def rec(node, stack):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                out.add((*stack, child.name))
+                rec(child, (*stack, child.name))
+            else:
+                rec(child, stack)
+
+    rec(tree, ())
+    return out
+
+
+def test_underivable_is_empty():
+    """ADR-056 third bucket: nothing is a genuinely-invisible corpus driver -- the rules are complete
+    by enumeration over the derived population. The one known residual is pinned as a plant below."""
+    assert clr._UNDERIVABLE == {}, f"a driver was parked as underivable: {clr._UNDERIVABLE}"
+
+
+def test_rule_c_residual_cross_function_indirection_is_uncaught():
+    """The stated LIMIT (spec section 4.6), pinned rather than implied: a load hidden behind a
+    cross-function call -- neither a load_* corpus function nor a `load*` parameter -- is NOT caught
+    by Rule C. If a future rule catches it, this assertion flips and the limit note is updated."""
+    residual = (
+        "def _load_one(r):\n"
+        "    return load_match(r, events_only=False)\n"
+        "def main():\n"
+        "    for r in refs:\n"
+        "        _load_one(r)\n"
+    )
+    assert not clr.rule_c_tree("plant", _parse(residual)), (
+        "Rule C now catches cross-function load indirection -- update the section 4.6 limit note."
+    )

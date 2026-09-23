@@ -99,24 +99,35 @@ def test_scores_per_game_does_not_leak_goal_across_game_boundary():
     assert y[0] == 0  # game A's pass is NOT credited with game B's goal (would be 1 if leaked)
 
 
-def test_load_corpus_pining_requests_minimal_tracking(monkeypatch, tmp_path):
-    # N8: the pining corpus load must pass tracking_limit=1 (NOT 0 - 0 is falsy and loads all frames).
+def test_load_corpus_pining_is_events_only(monkeypatch, tmp_path):
+    # xT bandwidth calibration consumes ACTIONS only, so the corpus loads EVENTS-ONLY (no tracking
+    # fetched/parsed) through the admitted events_only_loader, on match REFS (resume re-downloads
+    # nothing). The provider-qualified string game_id guards mixed-dtype + cross-provider collision.
+    import types
+
     import pandas as pd
 
+    import scripts._events_admission as adm
     import scripts._loader_pining as loader
     from scripts.calibrate_xt_bandwidth import _load_corpus
 
     captured = {}
     cols = ["game_id", "start_x", "start_y", "end_x", "end_y", "type_id", "result_id"]
 
-    def _fake_load_matches(*, providers, match_ids=None, tracking_limit=None, max_per_provider=None, cache_dir=None):
-        captured["tracking_limit"] = tracking_limit
+    def _fake_events_only_loader(refs, *, cache_dir=None, allow_unmeasured=False, artifact_path=None):
         captured["cache_dir"] = cache_dir
-        captured["match_ids"] = match_ids
-        yield "skillcorner", "m1", pd.DataFrame([[1, 50.0, 34.0, 60.0, 34.0, 0, 1]], columns=cols), None, None
+        captured["ref_keys"] = [r.key for r in refs]
 
-    monkeypatch.setattr(loader, "load_matches", _fake_load_matches)
-    monkeypatch.setattr(loader, "select_match_ids", lambda **kw: [("skillcorner", "m1")])
+        def _load(ref):
+            actions = pd.DataFrame([["ignored", 50.0, 34.0, 60.0, 34.0, 0, 1]], columns=cols)
+            return loader.LoadedMatch(ref.provider, ref.match_id, actions, None, "H", None, None)
+
+        return _load, types.SimpleNamespace(digest=None, unmeasured_admitted=())
+
+    monkeypatch.setattr(
+        loader, "list_match_refs", lambda *, providers, **kw: [loader.MatchRef("skillcorner", "m1", {})]
+    )
+    monkeypatch.setattr(adm, "events_only_loader", _fake_events_only_loader)
     args = _corpus_args(
         providers=["skillcorner"],
         max_matches_per_provider=None,
@@ -125,12 +136,8 @@ def test_load_corpus_pining_requests_minimal_tracking(monkeypatch, tmp_path):
         shard_dir=None,
     )
     actions, ids = _load_corpus(args)
-    assert captured["tracking_limit"] == 1
-    # The walk is INVERTED onto select_match_ids: load_matches is asked for one named match, which
-    # is what puts the download+parse behind the shard check rather than in front of it.
-    assert captured["match_ids"] == {"skillcorner": ["m1"]}
+    assert captured["ref_keys"] == [("skillcorner", "m1")]  # walked as refs, not streamed
     assert "skillcorner" in ids
-    # provider-qualified unique string game_id (guards mixed-dtype + cross-provider id collision)
     assert list(actions["game_id"].unique()) == ["skillcorner:m1"]
 
 
@@ -205,15 +212,20 @@ def test_assemble_corpus_canonicalizes_for_parquet(tmp_path, monkeypatch):
         ),
     }
 
-    def _fake_load(*, providers, match_ids=None, tracking_limit=None, max_per_provider=None, cache_dir=None):
-        (provider,) = providers
-        # `or {}` for the type checker, not for behaviour: the INVERTED walk always names its
-        # match, so an absent slice must KeyError rather than quietly load the whole manifest.
-        for mid in (match_ids or {})[provider]:
-            yield provider, mid, rows[(provider, mid)], None, None
+    import types
 
-    monkeypatch.setattr(loader, "load_matches", _fake_load)
-    monkeypatch.setattr(loader, "select_match_ids", lambda **kw: sorted(rows))
+    import scripts._events_admission as adm
+
+    def _fake_events_only_loader(refs, *, cache_dir=None, allow_unmeasured=False, artifact_path=None):
+        def _load(ref):
+            return loader.LoadedMatch(ref.provider, ref.match_id, rows[ref.key], None, "H", None, None)
+
+        return _load, types.SimpleNamespace(digest=None, unmeasured_admitted=())
+
+    monkeypatch.setattr(
+        loader, "list_match_refs", lambda *, providers, **kw: [loader.MatchRef(p, m, {}) for (p, m) in sorted(rows)]
+    )
+    monkeypatch.setattr(adm, "events_only_loader", _fake_events_only_loader)
     args = _corpus_args(
         providers=["skillcorner", "gradientsports"],
         max_matches_per_provider=None,
@@ -228,35 +240,46 @@ def test_assemble_corpus_canonicalizes_for_parquet(tmp_path, monkeypatch):
     df.to_parquet(tmp_path / "c.parquet")  # must NOT raise pyarrow ArrowTypeError
 
 
-def _shardable_corpus(monkeypatch, *, loaded, yields=None, raises=()):
-    """Patch the pining loader with a per-match fake that RECORDS every match it is asked to load.
+def _shardable_corpus(monkeypatch, *, loaded, raises=(), exclude=()):
+    """Patch the events-only seam with a per-ref fake that RECORDS every match it is asked to load.
 
-    ``yields`` names the matches that produce a row; anything absent yields nothing, which is how
-    `load_matches` reports an S1-geometry exclusion. ``raises`` names matches that blow up, which is
-    how a transient fetch failure arrives after `_build_match_with_retry` has given up.
+    Every listed ref loads (returns actions) unless it is in ``raises`` (a transient fetch failure
+    that arrives after `_build_match_with_retry` has given up -> a recorded failure) or ``exclude``
+    (the S1 admission gate refuses it -> a `MatchExcluded` marker, the events-only replacement for the
+    old "yields nothing" empty shard).
     """
+    import types
+
     import pandas as pd
 
+    import scripts._events_admission as adm
     import scripts._loader_pining as loader
 
     cols = ["game_id", "period_id", "time_seconds", "team_id", "player_id", "start_x", "type_id", "result_id"]
     pairs = [("skillcorner", "m1"), ("idsse", "M2")]
-    yields = set(pairs) if yields is None else set(yields)
     raises = set(raises)
+    exclude = set(exclude)
 
-    def _fake_load(*, providers, match_ids=None, tracking_limit=None, max_per_provider=None, cache_dir=None):
-        (provider,) = providers
-        # `or {}` for the type checker, not for behaviour: the INVERTED walk always names its
-        # match, so an absent slice must KeyError rather than quietly load the whole manifest.
-        for mid in (match_ids or {})[provider]:
-            loaded.append((provider, mid))
-            if (provider, mid) in raises:
-                raise OSError(f"transient fetch failure for {provider}/{mid}")
-            if (provider, mid) in yields:
-                yield provider, mid, pd.DataFrame([[1, 1, 0.0, 10, 100, 5.0, 0, 1]], columns=cols), None, None
+    def _fake_events_only_loader(refs, *, cache_dir=None, allow_unmeasured=False, artifact_path=None):
+        def _load(ref):
+            loaded.append(ref.key)
+            if ref.key in raises:
+                raise OSError(f"transient fetch failure for {ref.key}")
+            if ref.key in exclude:
+                raise loader.MatchExcluded(
+                    "S1 geometry", details={"player_off_pitch_rate": 0.0, "ball_off_pitch_rate": 0.0}
+                )
+            actions = pd.DataFrame([["x", 1, 0.0, 10, 100, 5.0, 0, 1]], columns=cols)
+            return loader.LoadedMatch(ref.provider, ref.match_id, actions, None, "H", None, None)
 
-    monkeypatch.setattr(loader, "load_matches", _fake_load)
-    monkeypatch.setattr(loader, "select_match_ids", lambda *, providers, **kw: [p for p in pairs if p[0] in providers])
+        return _load, types.SimpleNamespace(digest=None, unmeasured_admitted=())
+
+    monkeypatch.setattr(
+        loader,
+        "list_match_refs",
+        lambda *, providers, **kw: [loader.MatchRef(p, m, {}) for (p, m) in pairs if p in providers],
+    )
+    monkeypatch.setattr(adm, "events_only_loader", _fake_events_only_loader)
     return pairs
 
 
@@ -322,17 +345,17 @@ def test_a_CHANGED_declared_input_starts_a_NEW_generation_and_reloads(monkeypatc
     assert len(generations) == 2, f"expected two generation dirs side by side, found {generations}"
 
 
-def test_an_EXCLUDED_match_writes_an_EMPTY_shard_and_is_not_retried(monkeypatch, tmp_path):
-    """`load_matches` DROPS a geometrically-broken skillcorner match: it yields nothing for it.
+def test_an_EXCLUDED_match_writes_a_MARKER_and_is_not_retried(monkeypatch, tmp_path):
+    """The S1 admission gate REFUSES a match's events -> `MatchExcluded` -> a `.excluded.json` marker.
 
-    That decision is deterministic for a given artifact, so it is recorded as an empty shard --
-    "ran, produced nothing" -- rather than left absent, which would make every resume pay the
-    download and the parse again to reach the same verdict.
+    A decided outcome (deterministic for a given artifact + verdict), replayed on resume so the
+    download+parse is never paid again -- the events-only replacement for the old empty shard. The
+    excluded match is absent from the corpus but its marker records the decision (ADR-052 D13).
     """
     import scripts.calibrate_xt_bandwidth as cli
 
     loaded: list = []
-    _shardable_corpus(monkeypatch, loaded=loaded, yields=[("idsse", "M2")])
+    _shardable_corpus(monkeypatch, loaded=loaded, exclude=[("skillcorner", "m1")])
     args = _corpus_args(
         providers=["skillcorner", "idsse"],
         max_matches_per_provider=None,
@@ -345,7 +368,8 @@ def test_an_EXCLUDED_match_writes_an_EMPTY_shard_and_is_not_retried(monkeypatch,
     assert set(first["game_id"]) == {"idsse:M2"}
     shard_root = tmp_path / "r_corpus" / "shards"
     (generation,) = [p for p in shard_root.iterdir() if p.is_dir()]
-    assert (generation / "skillcorner__m1.parquet").is_file(), "the excluded match left no shard"
+    assert (generation / "skillcorner__m1.excluded.json").is_file(), "the excluded match left no marker"
+    assert not (generation / "skillcorner__m1.parquet").exists(), "an excluded match must not write a shard"
 
     loaded.clear()
     second = cli._assemble_corpus(args)

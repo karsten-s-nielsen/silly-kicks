@@ -134,3 +134,68 @@ def test_carrier_selection_refuses_dirty_upstream(tmp_path):
     f.write_text(json.dumps({"beta": 0.0, "gamma": 0.25, "run_commit": "abc", "run_tree_dirty": True}))
     with pytest.raises(ValueError, match="dirty"):
         C._load_carrier_selection(f)
+
+
+# ---------------------------------------------------------------------------
+# The held-out xT corpus is an EVENTS-ONLY, refs-based, resume-before-load pass
+# (ADR-052 D14 / spec section 7 generation move): it excludes calib_ids, routes
+# through the admitted events_only_loader, and an S1-excluded match is a marker.
+# ---------------------------------------------------------------------------
+
+
+def _xt_actions():
+    return pd.DataFrame({c: [1.0] for c in C._XT_COLS})
+
+
+def test_load_xt_corpus_pining_excludes_calib_and_loads_events_only(monkeypatch, tmp_path):
+    import scripts._events_admission as adm
+    import scripts._loader_pining as L
+
+    refs = [L.MatchRef("gradientsports", m, {}) for m in ("cal1", "h1", "h2")]
+    loaded: list = []
+
+    def _fake_eol(rs, *, cache_dir=None, allow_unmeasured=False, artifact_path=None):
+        def _load(ref):
+            loaded.append(ref.key)
+            return L.LoadedMatch(ref.provider, ref.match_id, _xt_actions(), None, "H", None, None)
+
+        return _load, types.SimpleNamespace(digest=None, unmeasured_admitted=())
+
+    monkeypatch.setattr(L, "list_match_refs", lambda *, providers, **kw: refs)
+    monkeypatch.setattr(adm, "events_only_loader", _fake_eol)
+    args = types.SimpleNamespace(
+        providers=["gradientsports"], report_out=str(tmp_path / "r"), cache_dir=None, allow_unmeasured=False
+    )
+
+    corpus, ids = C._load_xt_corpus_pining(args, calib_ids={"cal1"})
+    assert ("gradientsports", "cal1") not in loaded  # calib match excluded, never loaded
+    assert set(loaded) == {("gradientsports", "h1"), ("gradientsports", "h2")}
+    assert ids == {"h1", "h2"}
+    assert len(corpus) == 2
+
+
+def test_load_xt_corpus_pining_s1_excluded_match_is_a_marker_not_corpus(monkeypatch, tmp_path):
+    import scripts._events_admission as adm
+    import scripts._loader_pining as L
+
+    refs = [L.MatchRef("skillcorner", m, {}) for m in ("h1", "h2")]
+
+    def _fake_eol(rs, *, cache_dir=None, allow_unmeasured=False, artifact_path=None):
+        def _load(ref):
+            if ref.match_id == "h2":  # the S1 admission gate refuses it
+                raise L.MatchExcluded("S1 geometry", details={"player_off_pitch_rate": 0.0, "ball_off_pitch_rate": 0.0})
+            return L.LoadedMatch(ref.provider, ref.match_id, _xt_actions(), None, "H", None, None)
+
+        return _load, types.SimpleNamespace(digest="ADM", unmeasured_admitted=())
+
+    monkeypatch.setattr(L, "list_match_refs", lambda *, providers, **kw: refs)
+    monkeypatch.setattr(adm, "events_only_loader", _fake_eol)
+    args = types.SimpleNamespace(
+        providers=["skillcorner"], report_out=str(tmp_path / "r"), cache_dir=None, allow_unmeasured=False
+    )
+
+    corpus, ids = C._load_xt_corpus_pining(args, calib_ids=set())
+    assert ids == {"h1"}  # the excluded h2 is a marker, absent from the corpus
+    assert len(corpus) == 1
+    generation = next(p for p in (tmp_path / "r_xt_corpus_shards").iterdir() if p.is_dir())
+    assert (generation / "skillcorner__h2.excluded.json").is_file()

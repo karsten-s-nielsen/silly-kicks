@@ -50,8 +50,30 @@ def test_out_is_required_unless_listing_matches(monkeypatch, capsys):
     assert "--out is required" in str(e.value)
 
 
+def _install_spells_corpus(monkeypatch, keys=(("gradientsports", "m1"),), *, fail=(), exclude=None):
+    """Point the driver's loader seam at a fake corpus (spec section 4.5: refs + load_match)."""
+    import pandas as pd
+    from _fake_corpus import SpyLoader, install_fake_corpus, make_loaded, make_ref
+
+    import scripts._loader_pining as loader
+
+    spells = pd.DataFrame({"Z": [0, 1], "r": [1.0, 2.0], "theta": [0.1, 0.2]})
+    refs = [make_ref(p, m) for p, m in keys]
+    served = {(p, m): make_loaded(p, m, home_team_id="5") for p, m in keys}
+    spy = SpyLoader(served, fail=fail, exclude=exclude)
+    install_fake_corpus(monkeypatch, loader, refs=refs, loader=spy)
+
+    import silly_kicks.causal as causal
+    import silly_kicks.causal._confounders as conf
+
+    monkeypatch.setattr(causal, "build_opportunities", lambda *a, **k: spells.copy())
+    monkeypatch.setattr(causal, "layer2_config", lambda *a, **k: object())
+    monkeypatch.setattr(conf, "join_layer2_confounders", lambda sp, **k: sp)
+    return spy
+
+
 def test_main_walks_a_match_end_to_end_and_writes_its_shard(tmp_path, monkeypatch):
-    """Executes the real control flow with a stubbed loader.
+    """Executes the real control flow with the refs+load_match seam (spec section 4.5).
 
     This exists because a refactor moved the per-match shard write onto a `tag` bound AFTER the
     loop -- a NameError on the first match, invisible to compile checks, to lint, and to every
@@ -59,32 +81,33 @@ def test_main_walks_a_match_end_to_end_and_writes_its_shard(tmp_path, monkeypatc
     """
     import sys
 
-    import pandas as pd
-
-    import scripts._loader_pining as loader
-
-    spells = pd.DataFrame({"Z": [0, 1], "r": [1.0, 2.0], "theta": [0.1, 0.2]})
-    monkeypatch.setattr(loader, "load_matches", lambda **kw: iter([("gradientsports", "m1", object(), object(), "5")]))
+    _install_spells_corpus(monkeypatch)
     monkeypatch.setattr(mod, "_aggregate_manifests", lambda dest: {"n_matches": 1, "n_spells": 2, "n_treated": 1})
-    import silly_kicks.causal as causal
-
-    monkeypatch.setattr(causal, "build_opportunities", lambda *a, **k: spells.copy())
-    monkeypatch.setattr(causal, "layer2_config", lambda *a, **k: object())
-    import silly_kicks.causal._confounders as conf
-
-    monkeypatch.setattr(conf, "join_layer2_confounders", lambda sp, **k: sp)
     monkeypatch.setattr(sys, "argv", ["build_layer2_spells.py", "--out", str(tmp_path), "--allow-dirty"])
 
     mod.main()
 
     # `rglob`, not a hard-coded path: since the `_driver` migration the shard lives inside a
     # GENERATION directory (`shards/<token>/…`) whose name is a digest of the declared inputs.
-    # Pinning that token here would turn every future change to the declaration into a test edit,
-    # and the token's value is not what this test is about.
     shards = list((tmp_path / "shards").rglob("gradientsports__m1.parquet"))
     assert shards, "the per-match shard was never written"
     assert (tmp_path / "layer2_spells.parquet").is_file()
     assert not list(tmp_path.glob("**/*.tmp*")), "atomic temp file left behind"
+
+
+def test_resume_does_not_reload_a_finished_match(tmp_path, monkeypatch):
+    """resume-before-load (spec section 4.3): a match whose shard exists is never handed to `load`."""
+    import sys
+
+    spy = _install_spells_corpus(monkeypatch)
+    monkeypatch.setattr(mod, "_aggregate_manifests", lambda dest: {"n_matches": 1, "n_spells": 2, "n_treated": 1})
+    monkeypatch.setattr(sys, "argv", ["build_layer2_spells.py", "--out", str(tmp_path), "--allow-dirty"])
+
+    mod.main()
+    n_after_first = len(spy.calls)
+    assert n_after_first == 1
+    mod.main()
+    assert len(spy.calls) == n_after_first, "resume re-loaded a match whose shard already existed"
 
 
 # The ASCII contract for this driver is enforced at SOURCE level (stricter than docstrings alone)

@@ -183,6 +183,12 @@ ARTIFACT_DRIVERS = (
     # and writes docs/research/tf53_match_outcome_calibration/metrics.json (per-config Brier / calibration
     # slope / xPoints bias) -- a cited number over external data; owner-run, reported-not-gated.
     "validate_match_outcome_calibration",
+    # The corpus-driver load-seam cycle's Task 0 measurement. Runs the SkillCorner S1 event-validity
+    # check over the owner SkillCorner corpus (pining loader) and writes
+    # docs/research/skillcorner_s1_event_validity/verdicts.json + findings.md -- the artifact the
+    # events-only admission layer reads. Its per-cell / boundary numbers are cited, so the tree it ran
+    # on is recorded. Owner-run on the DGX from the clean commit-1 SHA (spec section 8/9).
+    "build_skillcorner_s1_event_validity",
 )
 
 

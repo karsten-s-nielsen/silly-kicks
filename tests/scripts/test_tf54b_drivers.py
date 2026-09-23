@@ -322,6 +322,18 @@ def _fake_match(provider, match_id):
     return (provider, match_id, actions, pd.DataFrame(), 10)
 
 
+def _install_fake_open_data_source(monkeypatch, sbmod):
+    """Fake ``open_data_source`` (Task 8.5): ONE ref per (competition, season), a loader yielding the
+    tagged ``_fake_match`` -- so a test can prove which competitions main() walked."""
+    from _fake_corpus import make_ref
+
+    def _source(comps, *, match_ids=None, max_matches=None, preserve_native=(), cache_dir=None):
+        refs = [make_ref("statsbomb", f"m-{c}-{s}") for c, s in comps]
+        return refs, lambda ref: _fake_match("statsbomb", ref.match_id)
+
+    monkeypatch.setattr(sbmod, "open_data_source", _source)
+
+
 def test_main_iterates_all_open_competitions_not_a_single_competition(monkeypatch, tmp_path, capsys):
     """The corpus repoint: with NO --competitions-json, main() draws from all_open_competitions()
     (a 2-tuple stub here) and chains EVERY (comp, season)'s matches into the for_each walk. A regression
@@ -338,10 +350,7 @@ def test_main_iterates_all_open_competitions_not_a_single_competition(monkeypatc
     monkeypatch.setattr(sbmod, "assert_statsbomb_open_data_mode", lambda: None)
 
     # One match per competition, ids tagged with the competition so we can prove BOTH were walked.
-    def _fake_loader(*, competition_id, season_id, match_ids=None, max_matches=None, preserve_native=()):
-        yield _fake_match("statsbomb", f"m-{competition_id}-{season_id}")
-
-    monkeypatch.setattr(sbmod, "load_open_data_matches", _fake_loader)
+    _install_fake_open_data_source(monkeypatch, sbmod)
 
     # Clean-tree guard + platform stubbed (no git needed for the offline smoke).
     import scripts._provenance as prov_mod
@@ -360,12 +369,12 @@ def test_main_iterates_all_open_competitions_not_a_single_competition(monkeypatc
         def manifest(self):
             return {"generation": "fake", "n_shards": 0}
 
-    def _fake_for_each(items, *, key, work, shard_root, token_inputs, label):
+    def _fake_for_each(items, *, key, work, shard_root, token_inputs, label, load=None):
         (tmp_path / "shards").mkdir(parents=True, exist_ok=True)
         seen_tokens.update(token_inputs)
         for it in items:
             seen_ids.append(key(it))
-            work(it)  # exercise the work fn (game_id stamping)
+            work(load(it) if load is not None else it)  # exercise the work fn (game_id stamping)
         return _FakeRes()
 
     monkeypatch.setattr(driver_mod, "for_each", _fake_for_each)
@@ -398,10 +407,7 @@ def test_main_narrows_with_competitions_json_and_keys_the_token_disjointly(monke
 
     monkeypatch.setattr(sbmod, "all_open_competitions", _must_not_call)
 
-    def _fake_loader(*, competition_id, season_id, match_ids=None, max_matches=None, preserve_native=()):
-        yield _fake_match("statsbomb", f"m-{competition_id}-{season_id}")
-
-    monkeypatch.setattr(sbmod, "load_open_data_matches", _fake_loader)
+    _install_fake_open_data_source(monkeypatch, sbmod)
 
     import scripts._provenance as prov_mod
 
@@ -417,7 +423,7 @@ def test_main_narrows_with_competitions_json_and_keys_the_token_disjointly(monke
         def manifest(self):
             return {"generation": "fake", "n_shards": 0}
 
-    def _fake_for_each(items, *, key, work, shard_root, token_inputs, label):
+    def _fake_for_each(items, *, key, work, shard_root, token_inputs, label, load=None):
         (tmp_path / "shards").mkdir(parents=True, exist_ok=True)
         seen_tokens.update(token_inputs)
         for it in items:

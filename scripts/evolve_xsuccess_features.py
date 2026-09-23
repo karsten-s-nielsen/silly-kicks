@@ -116,6 +116,9 @@ def main() -> None:
     )
     ap.add_argument("--max-per-provider", type=int, default=None, help="cap matches (tractable per-candidate eval)")
     ap.add_argument("--match-ids-json", default=None)
+    ap.add_argument(
+        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
+    )
     ap.add_argument("--iterations", type=int, default=120, help="OpenEvolve iterations (Task-12 run)")
     ap.add_argument("--population", type=int, default=40, help="OpenEvolve population (Task-12 run)")
     ap.add_argument("--candidate", default=None, help="score a single candidate features module and exit")
@@ -127,11 +130,10 @@ def main() -> None:
     prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
     from scripts._driver import for_each
-    from scripts._sb_open_data import load_open_data_matches
+    from scripts._sb_open_data import open_data_source
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
     dest = Path(args.out)
-    import itertools
 
     pairs = (
         [tuple(int(x) for x in p.split(":")) for p in args.competitions.split(",")]
@@ -139,14 +141,12 @@ def main() -> None:
         else [(args.competition_id, args.season_id)]
     )
     ids = (match_ids or {}).get("statsbomb")
-    matches_iter = itertools.chain.from_iterable(
-        load_open_data_matches(competition_id=c, season_id=s, match_ids=ids, max_matches=args.max_per_provider)
-        for c, s in pairs
-    )
+    refs, load = open_data_source(pairs, match_ids=ids, max_matches=args.max_per_provider, cache_dir=args.cache_dir)
 
     res = for_each(
-        matches_iter,
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=lambda item: onball_inputs_for_match(item[2], item[1]),
         shard_root=dest / "shards",
         token_inputs={

@@ -526,26 +526,35 @@ def main() -> None:
     )
 
     from scripts._driver import for_each
-    from scripts._loader_pining import load_statsbomb_matches
+    from scripts._loader_pining import pining_source, resolve_cache_dir
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
 
     if args.list_matches:
-        ids = [mid for _p, mid, *_ in load_statsbomb_matches(token=args.token, cache_dir=args.cache_dir)]
-        print(json.dumps(ids, indent=2))
+        # LIST the refs -- never build every match just to print its id (spec section 4.5).
+        refs, _ = pining_source(["statsbomb"], token=args.token)
+        print(json.dumps([ref.match_id for ref in refs], indent=2))
         return
 
     dest = Path(args.out)
+    cache_dir = resolve_cache_dir(args.cache_dir)
+    refs, base_load = pining_source(
+        ["statsbomb"],
+        match_ids={"statsbomb": match_ids} if match_ids else None,
+        token=args.token,
+        max_per_provider=args.max_matches,
+        cache_dir=cache_dir,
+    )
 
-    def _matches():
-        yield from load_statsbomb_matches(
-            match_ids=match_ids, token=args.token, max_matches=args.max_matches, cache_dir=args.cache_dir
-        )
+    def _load(ref):
+        lm = base_load(ref)
+        return (lm.provider, lm.match_id, lm.actions, lm.frames, lm.home_team_id, lm.visible_area)
 
     # Guard against a stale-shard reuse (4.77.1): the emitted columns MUST match the declaration.
     res = for_each(
-        _matches(),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=_load,
         work=_measure_match,
         shard_root=dest / "shards",
         token_inputs={

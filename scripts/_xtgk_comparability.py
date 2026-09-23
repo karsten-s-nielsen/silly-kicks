@@ -23,10 +23,12 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _loader_pining import load_matches
+from _driver import for_each, shard_path
+from _events_admission import events_only_loader
+from _loader_pining import pining_source, resolve_cache_dir
+from _xt_corpus import fit_xt_from_count_pass, xt_count_pass
 
 from silly_kicks.tracking.features import add_xt_gk
-from silly_kicks.xthreat import ExpectedThreat
 
 _BANDS = [(0.0, 15.0), (15.0, 30.0), (30.0, 45.0), (45.0, 120.0)]
 _OFFSET_TOL = 0.01  # |mean xt_gk offset| within a band considered "on the same scale"
@@ -76,37 +78,37 @@ def compare_xtgk_distributions(sc, gs, *, bands=_BANDS, offset_tol=_OFFSET_TOL, 
     return bands_out, verdict
 
 
-def _collect(providers, max_per_provider, tracking_limit, xt, cache_dir=None):
-    """Return a long df of (provider, dist, xt_gk) for in-scope scored GK distributions."""
-    rows = []
-    for prov, mid, actions, frames, _home in load_matches(
-        providers=providers, max_per_provider=max_per_provider, tracking_limit=tracking_limit, cache_dir=cache_dir
-    ):
-        try:
-            out = add_xt_gk(actions, frames, xt)  # type: ignore[reportArgumentType]
-        except Exception as exc:  # a single bad match shouldn't kill the gate
-            print(f"  {prov}/{mid}: add_xt_gk failed ({type(exc).__name__}: {exc})", flush=True)
-            continue
-        scored = out[out["xt_gk"].notna()].copy()
-        dist = np.hypot(
-            scored["end_x"].to_numpy(float) - scored["start_x"].to_numpy(float),
-            scored["end_y"].to_numpy(float) - scored["start_y"].to_numpy(float),
-        )
-        rows.append(
-            pd.DataFrame(
-                {
-                    "provider": prov,
-                    "dist": dist,
-                    "xt_gk": scored["xt_gk"].to_numpy(float),
-                    "variant": scored.get("xt_gk_completion_variant"),
-                }
-            )
-        )
-        print(f"  {prov}/{mid}: {len(scored)} scored GK distributions", flush=True)
-    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["provider", "dist", "xt_gk"])
+#: One score shard per match: (provider, dist, xt_gk, variant). Pinned to the token it travels with.
+_SCORE_SHARD_SCHEMA_VERSION = "xtgk-comparability-score-1"
+
+
+def _score_match(provider, actions, frames, xt) -> pd.DataFrame:
+    """One match's (provider, dist, xt_gk, variant) rows for its in-scope scored GK distributions.
+
+    The per-match body the streaming ``_collect`` loop used to inline. It is now the ``work`` of a
+    resume-before-load ``for_each`` pass (ADR-052 D14): a match that raises here is a RECORDED failure
+    (never fatal to the gate, the old ``try/except``'s intent), and its shard is simply absent.
+    ``add_xt_gk`` needs frames, so the scoring pass is a full load.
+    """
+    out = add_xt_gk(actions, frames, xt)  # type: ignore[reportArgumentType]
+    scored = out[out["xt_gk"].notna()].copy()
+    dist = np.hypot(
+        scored["end_x"].to_numpy(float) - scored["start_x"].to_numpy(float),
+        scored["end_y"].to_numpy(float) - scored["start_y"].to_numpy(float),
+    )
+    return pd.DataFrame(
+        {
+            "provider": provider,
+            "dist": dist,
+            "xt_gk": scored["xt_gk"].to_numpy(float),
+            "variant": scored.get("xt_gk_completion_variant"),
+        }
+    )
 
 
 def main() -> int:
+    import tempfile
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--gs-provider", default="gradientsports", help="a native-completion (gs-variant) provider")
     ap.add_argument("--max-per-provider", type=int, default=6)
@@ -114,30 +116,94 @@ def main() -> int:
     ap.add_argument(
         "--cache-dir",
         default=None,
-        help="ADR-068: persist each downloaded pining tracking artifact here and reuse it. Without "
-        "it, every match is fetched TWICE per run (once for the shared xT grid fit, once per "
-        "provider in the scoring pass); with it, the second fetch is a disk read.",
+        help="ADR-068: persist each downloaded pining artifact here and reuse it (else "
+        "$SILLY_KICKS_CORPUS_CACHE_DIR). The events-only fit pass and the full-load scoring pass "
+        "share the cache, so a match is fetched once, not twice.",
+    )
+    ap.add_argument(
+        "--shard-root",
+        default=None,
+        help="where the resumable per-match count/score shards live (default: a stable temp dir out "
+        "of the repo). Pass a persistent path to resume an interrupted owner run.",
+    )
+    ap.add_argument(
+        "--out-dir",
+        default=None,
+        help="where comparability_report.json is written (default docs/research/xtgk_comparability).",
+    )
+    ap.add_argument(
+        "--allow-failed",
+        action="store_true",
+        help="fit the shared xT surface without matches that FAILED the events-only count pass (recorded).",
+    )
+    ap.add_argument(
+        "--allow-unmeasured",
+        action="store_true",
+        help="admit unmeasured SkillCorner matches into the events-only xT fit (recorded).",
     )
     args = ap.parse_args()
 
-    # One shared, FROZEN xT grid fit on the combined corpus -> both providers scored on the SAME grid
-    # (a fair scale comparison; this diagnostic is not a leakage-sensitive model eval).
-    print("=== fitting a shared frozen xT grid on the combined corpus ===", flush=True)
-    combined = []
-    for _prov, _mid, actions, _frames, _home in load_matches(
-        providers=[args.gs_provider, "skillcorner"],
+    cache_dir = resolve_cache_dir(args.cache_dir)
+    shard_root = Path(args.shard_root) if args.shard_root else Path(tempfile.gettempdir()) / "xtgk_comparability_shards"
+    providers = [args.gs_provider, "skillcorner"]
+    refs, load = pining_source(
+        providers=providers,
         max_per_provider=args.max_per_provider,
-        tracking_limit=10,
-        cache_dir=args.cache_dir,
-    ):
-        combined.append(actions)
-    xt = ExpectedThreat(l=16, w=12)
-    xt.fit(pd.concat(combined, ignore_index=True))
+        tracking_limit=args.tracking_limit,
+        cache_dir=cache_dir,
+    )
+    if not refs:
+        print("no matches loaded", file=sys.stderr)
+        return 1
 
-    print("=== scoring SkillCorner ===", flush=True)
-    sc = _collect(["skillcorner"], args.max_per_provider, args.tracking_limit, xt, cache_dir=args.cache_dir)
-    print(f"=== scoring {args.gs_provider} ===", flush=True)
-    gs = _collect([args.gs_provider], args.max_per_provider, args.tracking_limit, xt, cache_dir=args.cache_dir)
+    # One shared, FROZEN xT grid fit on the combined corpus -> both providers scored on the SAME grid
+    # (a fair scale comparison; this diagnostic is not a leakage-sensitive model eval). xT is
+    # event-only and its per-match zone counts are additive (ADR-102), so the fit is a resumable
+    # EVENTS-ONLY count pass reduced by fit_from_counts (byte-identical to a pooled fit) -- no frames
+    # loaded, no OOM, no double fetch. The SkillCorner leg routes through the admission gate; its
+    # verdict artifact is REQUIRED here (this pass is owner-run after commit 2).
+    print("=== fitting a shared frozen xT grid (events-only count pass) ===", flush=True)
+    ev_load, admission = events_only_loader(refs, cache_dir=cache_dir, allow_unmeasured=args.allow_unmeasured)
+    fit_res = xt_count_pass(
+        refs,
+        key=lambda r: r.key,
+        load_actions=lambda r: ev_load(r).actions,
+        shard_root=shard_root / "xt_fit_shards",
+        token_inputs={"fit_corpus": sorted(f"{r.provider}__{r.match_id}" for r in refs)},
+        l=16,
+        w=12,
+    )
+    xt, xt_prov = fit_xt_from_count_pass(fit_res, l=16, w=12, allow_failed=args.allow_failed, admission=admission)
+
+    # Score BOTH providers in ONE resume-before-load pass; each shard carries its provider, so the
+    # combine splits SC/GS by the `provider` column. add_xt_gk needs frames -> full load.
+    print("=== scoring both providers (add_xt_gk) ===", flush=True)
+    res = for_each(
+        refs,
+        key=lambda r: r.key,
+        load=load,
+        work=lambda item: _score_match(item.provider, item.actions, item.frames, xt),
+        shard_root=shard_root / "score_shards",
+        token_inputs={
+            "fit_corpus": sorted(f"{r.provider}__{r.match_id}" for r in refs),
+            "counts_digest": xt_prov.counts_digest,
+            "tracking_limit": args.tracking_limit,
+            "score_schema": _SCORE_SHARD_SCHEMA_VERSION,
+        },
+        tag="xtgk_comparability",
+        label="match",
+    )
+    if res.failures:
+        # A single bad match must not kill the gate (the old try/except's intent): report, don't abort.
+        print(f"{len(res.failures)} match(es) failed add_xt_gk (reported, not fatal): {res.failures}", file=sys.stderr)
+
+    # Combined from THIS PASS'S shard keys (no partition surface; `shard_keys` skips excluded markers).
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
+    scored = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["provider", "dist", "xt_gk"])
+    from silly_kicks.id_compat import ids_match
+
+    sc = scored[ids_match(scored["provider"], "skillcorner")] if len(scored) else scored
+    gs = scored[ids_match(scored["provider"], args.gs_provider)] if len(scored) else scored
 
     print("\n=== per-band SC-vs-GS xt_gk comparison ===", flush=True)
     bands_out, verdict = compare_xtgk_distributions(sc, gs)
@@ -166,8 +232,17 @@ def main() -> int:
         "bands": bands_out,
         "n_sc_total": len(sc),
         "n_gs_total": len(gs),
+        # Fit provenance: the shared surface, the admission artifact it consulted, and any unmeasured
+        # SkillCorner matches admitted under --allow-unmeasured (spec sections 4.4 / 8).
+        "counts_digest": xt_prov.counts_digest,
+        "admission_digest": xt_prov.admission_digest,
+        "unmeasured_admitted": list(xt_prov.unmeasured_admitted),
+        "n_fit_matches": len(xt_prov.fit_keys),
+        "n_scored_matches": len(res.shard_keys),
+        "n_failed": len(res.failures),
     }
-    out_dir = Path(__file__).resolve().parent.parent / "docs" / "research" / "xtgk_comparability"
+    default_out = Path(__file__).resolve().parent.parent / "docs" / "research" / "xtgk_comparability"
+    out_dir = Path(args.out_dir) if args.out_dir else default_out
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "comparability_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\nwrote {out_dir / 'comparability_report.json'}\nDONE", flush=True)

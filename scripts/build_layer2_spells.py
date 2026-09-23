@@ -53,6 +53,11 @@ def main() -> None:
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
     ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
+    ap.add_argument(
         "--match-ids-json",
         default=None,
         help=(
@@ -88,7 +93,7 @@ def main() -> None:
         return
 
     from scripts._driver import for_each, reconcile
-    from scripts._loader_pining import load_matches
+    from scripts._loader_pining import pining_source, resolve_cache_dir
     from scripts._partition import providers_for_slice, worker_tag
     from silly_kicks.causal import build_opportunities, layer2_config
     from silly_kicks.causal._confounders import join_layer2_confounders
@@ -99,10 +104,11 @@ def main() -> None:
     providers = providers_for_slice(args.providers.split(","), match_ids)
     tag = worker_tag(args.match_ids_json)
     dest = Path(args.out)
+    cache_dir = resolve_cache_dir(args.cache_dir)
 
-    # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
+    # `load` hands `_work` a LoadedMatch (provider, match_id, ACTIONS, FRAMES, home_team_id, ...).
     def _work(item):
-        _provider, _match_id, actions, frames, home_team_id = item
+        _provider, _match_id, actions, frames, home_team_id, *_ = item
         sp = build_opportunities(
             frames, actions, home_team_id=home_team_id, model_metadata={}, config=layer2_config({})
         )
@@ -120,14 +126,17 @@ def main() -> None:
             "n_treated": int(frame["Z"].sum()) if len(frame) else 0,
         }
 
+    refs, load = pining_source(
+        providers,
+        match_ids=match_ids,
+        max_per_provider=args.max_per_provider,
+        tracking_limit=args.tracking_limit,
+        cache_dir=cache_dir,
+    )
     res = for_each(
-        load_matches(
-            providers=providers,
-            match_ids=match_ids,
-            max_per_provider=args.max_per_provider,
-            tracking_limit=args.tracking_limit,
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         counters=_counters,
         shard_root=dest / "shards",

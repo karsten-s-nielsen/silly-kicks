@@ -132,6 +132,11 @@ def main() -> None:
     ap.add_argument("--providers", default="gradientsports")
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--lock-commit", default=None, help="the commit the run was registered against")
@@ -180,13 +185,15 @@ def main() -> None:
         # Imported HERE, not at the top: the `--spells` path must not require the pining loader (or
         # its credentials) merely to re-run the cheap analysis on an already-built table.
         from scripts._driver import for_each, shard_path
-        from scripts._loader_pining import load_matches
+        from scripts._loader_pining import pining_source, resolve_cache_dir
         from silly_kicks.causal import build_opportunities, layer2_config
         from silly_kicks.causal._confounders import join_layer2_confounders
 
-        # load_matches yields (provider, match_id, ACTIONS, FRAMES, home_team_id) -- actions FIRST.
+        cache_dir = resolve_cache_dir(args.cache_dir)
+
+        # `load` hands `_work` a LoadedMatch (provider, match_id, ACTIONS, FRAMES, home_team_id, ...).
         def _work(item):
-            _provider, _match_id, actions, frames, home_team_id = item
+            _provider, _match_id, actions, frames, home_team_id, *_ = item
             sp = build_opportunities(
                 frames, actions, home_team_id=home_team_id, model_metadata={}, config=layer2_config({})
             )
@@ -198,13 +205,16 @@ def main() -> None:
         # the cheap analysis below, and lost every one of them. Sharding it means the SAME crash now
         # costs a re-read. `--spells` remains the preferred route -- that driver is also
         # partitionable -- but the fallback must not stay the trap it was.
+        refs, load = pining_source(
+            args.providers.split(","),
+            max_per_provider=args.max_per_provider,
+            tracking_limit=args.tracking_limit,
+            cache_dir=cache_dir,
+        )
         res = for_each(
-            load_matches(
-                providers=args.providers.split(","),
-                max_per_provider=args.max_per_provider,
-                tracking_limit=args.tracking_limit,
-            ),
-            key=lambda item: (str(item[0]), str(item[1])),
+            refs,
+            key=lambda ref: ref.key,
+            load=load,
             work=_work,
             shard_root=Path(args.out) / "shards",
             # Mirrors `build_layer2_spells`' declaration, because it is the same computation: the
@@ -225,7 +235,7 @@ def main() -> None:
         # Combined from THIS PASS'S keys, not `_driver.reconcile`: this driver has no partition
         # surface (no --match-ids-json, no worker tag), so a whole-generation read would fold in
         # matches from a wider earlier run over the same --out. See `reconcile`'s docstring.
-        parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+        parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
         spells = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     X = build_design_matrix(spells, LAYER2_CONFOUNDERS)
     Z = spells["Z"].to_numpy(dtype=int)

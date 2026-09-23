@@ -17,7 +17,7 @@ import pandas as pd
 
 from scripts import _rq_corpus as rqc
 from scripts._driver import for_each, reconcile
-from scripts._loader_pining import load_matches
+from scripts._loader_pining import pining_source, resolve_cache_dir
 from scripts._provenance import git_provenance, require_clean_tree
 from silly_kicks.id_compat import canonical_id
 from silly_kicks.tracking import (
@@ -155,10 +155,12 @@ def main() -> None:
         "geometry_version": GEOMETRY_VERSION,
         "receiver_model": args.receiver_model or "none",  # de-leak is a content input -> new generation
     }
-    items = load_matches(providers=["gradientsports"], cache_dir=args.cache_dir)
+    cache_dir = resolve_cache_dir(args.cache_dir)
+    refs, load = pining_source(["gradientsports"], cache_dir=cache_dir)
     res = for_each(
-        items,
-        key=lambda t: t[1],
+        refs,
+        key=lambda ref: ref.match_id,  # pre-migration key was t[1] (match_id); _KEY_EXCEPTIONS
+        load=load,
         work=lambda t: score_match(t[2], t[3], receiver_model=receiver_model),
         shard_root=args.shard_root,
         token_inputs=token_inputs,

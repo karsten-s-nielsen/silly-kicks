@@ -182,6 +182,9 @@ def main() -> None:
     ap.add_argument(
         "--match-ids-json", default=None, help='JSON {"statsbomb": ["3869685", ...]} pinning WHICH matches.'
     )
+    ap.add_argument(
+        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact marked dirty)")
     args = ap.parse_args()
 
@@ -192,13 +195,12 @@ def main() -> None:
     prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
     from scripts._driver import for_each
-    from scripts._sb_open_data import load_open_data_matches
+    from scripts._sb_open_data import open_data_source
     from silly_kicks.xsuccess import XSuccessModel
     from silly_kicks.xsuccess._features import FEATURE_NAMES
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
     dest = Path(args.out)
-    import itertools
 
     pairs = (
         [tuple(int(x) for x in p.split(":")) for p in args.competitions.split(",")]
@@ -207,18 +209,16 @@ def main() -> None:
     )
     corpus_label = "statsbomb-open " + ", ".join(f"(comp {c}, season {s})" for c, s in pairs)
     ids = (match_ids or {}).get("statsbomb")
-    matches_iter = itertools.chain.from_iterable(
-        load_open_data_matches(competition_id=c, season_id=s, match_ids=ids, max_matches=args.max_per_provider)
-        for c, s in pairs
-    )
+    refs, load = open_data_source(pairs, match_ids=ids, max_matches=args.max_per_provider, cache_dir=args.cache_dir)
 
     def _work(item):
-        _provider, match_id, actions, _frames, _home = item
+        _provider, match_id, actions, _frames, _home, *_ = item
         return onball_rows_for_match(actions, match_id)
 
     res = for_each(
-        matches_iter,
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=dest / "shards",
         token_inputs={

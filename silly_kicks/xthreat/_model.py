@@ -17,6 +17,7 @@ import silly_kicks.spadl.config as spadlconfig
 from silly_kicks.xthreat._grid import (
     M,
     N,
+    XtZoneCounts,
     _action_prob,
     _action_prob_from_counts,
     _get_cell_indexes,
@@ -155,6 +156,36 @@ class ExpectedThreat:
             eps=self.eps,
         )
         return self
+
+    def zone_counts(self, actions: pd.DataFrame) -> XtZoneCounts:
+        """The five per-zone integer count aggregates for ``actions`` on THIS model's grid (SK-XT-COUNTS).
+
+        Built from the SAME extractors ``fit()`` uses (shots/goals via ``_scoring_prob``; valid-start
+        moves via ``_action_prob``; valid start+end + successful transitions via
+        ``singh_transition_matrix``), so ``fit_from_counts(**zone_counts(a).as_fit_kwargs())`` is
+        byte-identical to ``fit(a)`` and the aggregates are additive across matches/competitions.
+
+        Examples
+        --------
+        Aggregate one match's counts, then reduce a corpus by summing (Singh-only)::
+
+            counts = ExpectedThreat(l=16, w=12).zone_counts(actions)
+            # sum XtZoneCounts across matches, then ExpectedThreat(...).fit_from_counts(**total.as_fit_kwargs())
+        """
+        from silly_kicks.xthreat._grid import _goal_zone_counts, _move_start_zone_counts, _shot_zone_counts
+        from silly_kicks.xthreat._transitions import _transition_zone_counts
+
+        l, w = self.l, self.w
+        transition_counts, transition_start_counts = _transition_zone_counts(actions, l, w)
+        return XtZoneCounts(
+            l=l,
+            w=w,
+            shot_counts=_shot_zone_counts(actions, l, w),
+            goal_counts=_goal_zone_counts(actions, l, w),
+            move_counts=_move_start_zone_counts(actions, l, w),
+            transition_start_counts=transition_start_counts,
+            transition_counts=transition_counts,
+        )
 
     def interpolator(
         self, kind: str = "linear"

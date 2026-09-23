@@ -68,7 +68,7 @@ def measure_match(item) -> pd.DataFrame:
     An empty result still writes a shard: absent means "not yet run", present-and-empty means
     "ran, produced nothing", and conflating them recomputes every barren match forever (ADR-052).
     """
-    provider, match_id, actions, _frames, _home = item
+    provider, match_id, actions, _frames, _home, *_ = item
     import silly_kicks.spadl.config as spadlcfg
 
     shot_ids = {spadlcfg.actiontype_id[t] for t in ("shot", "shot_penalty", "shot_freekick")}
@@ -132,7 +132,6 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="Output DIRECTORY: shards, combined table, metrics.json.")
     ap.add_argument("--providers", nargs="+", default=["gradientsports"])
     ap.add_argument("--max-per-provider", type=int, default=None)
-    ap.add_argument("--tracking-limit", type=int, default=1, help="Frames per match; this pass needs EVENTS only.")
     ap.add_argument("--cache-dir", default=None)
     ap.add_argument(
         "--allow-dirty",
@@ -144,40 +143,44 @@ def main() -> None:
     prov = git_provenance()
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
-    from _loader_pining import load_matches
+    from scripts._events_admission import events_only_loader
+    from scripts._loader_pining import list_match_refs, resolve_cache_dir
 
     out = Path(args.out)
+    cache_dir = resolve_cache_dir(args.cache_dir)
+    # EVENTS-ONLY (spec section 3, S->E): this pass reads actions only, never frames. The admitted
+    # events-only loader (Rule D) is the one sanctioned events_only=True consumer path.
+    refs = list_match_refs(providers=list(args.providers), max_per_provider=args.max_per_provider)
+    load, admission = events_only_loader(refs, cache_dir=cache_dir)
+    token_inputs = {
+        "providers": sorted(args.providers),
+        "thresholds": [_DEFAULT_HIGH, _DEFAULT_MEDIUM],
+        "schema": "gs-shot-distribution-1",
+    }
+    # The admission digest joins the token ONLY when a SkillCorner ref was requested (interp 8), so a
+    # GS-only pass keeps its generation byte-identical.
+    if admission.digest is not None:
+        token_inputs["admission_digest"] = admission.digest
     res = for_each(
-        load_matches(
-            providers=list(args.providers),
-            tracking_limit=args.tracking_limit,
-            max_per_provider=args.max_per_provider,
-            cache_dir=args.cache_dir,
-        ),
-        key=lambda m: f"{m[0]}_{m[1]}",
+        refs,
+        key=lambda ref: f"{ref.provider}_{ref.match_id}",  # pre-migration key; _KEY_EXCEPTIONS
+        load=load,
         work=measure_match,
         shard_root=out,
-        token_inputs={
-            "providers": sorted(args.providers),
-            "thresholds": [_DEFAULT_HIGH, _DEFAULT_MEDIUM],
-            "schema": "gs-shot-distribution-1",
-        },
+        token_inputs=token_inputs,
         label="match",
     )
     table = reconcile(res.shard_dir, out / "shot_distribution.parquet", tag="all")
     metrics = {
         **summarise(table),
-        # Record the SCOPE, not just the result. `measure_rc4_orientation`'s predecessor shipped a
-        # `tracking_limit=3000` cap recorded NOWHERE and halved a published headline; the artifact
-        # was cited, uncheckable and wrong. Verified for this driver: `tracking_limit` slices
-        # `frames_json` only (`_loader_pining._build_gradientsports`), so it caps FRAMES and leaves
-        # the action set -- which is why a shot-count pass can set it to 1. Recorded anyway, because
-        # "it does not affect this measurement" is exactly the claim a reader must be able to check.
+        # Record the SCOPE, not just the result. This pass is EVENTS-ONLY (no frames loaded), so the
+        # admission digest and any unmeasured-admitted matches are what a reader must be able to check.
         "scope": {
             "providers": sorted(args.providers),
             "max_per_provider": args.max_per_provider,
-            "tracking_limit": args.tracking_limit,
-            "tracking_limit_caps": "frames per match, NOT actions -- shot counts come from events",
+            "events_only": True,
+            "admission_digest": admission.digest,
+            "unmeasured_admitted": list(admission.unmeasured_admitted),
         },
         "input_contract": input_contract(),
         "run_commit": prov["commit"],

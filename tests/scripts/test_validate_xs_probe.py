@@ -20,6 +20,27 @@ import pytest
 import scripts.validate_xs_probe as mod
 
 
+def _install_fake_loader(monkeypatch, pairs):
+    """Swap in a fake `_loader_pining` exposing the refs+load seam (spec section 4.5), OFFLINE.
+
+    `_fake_corpus` is imported FIRST so its `import _loader_pining as lp` binds the REAL module
+    (for `make_ref`/`make_loaded`) before we shadow it with the fake the driver imports from.
+    """
+    import _fake_corpus as fc
+
+    fake = type(sys)("_loader_pining")
+    fake.list_match_refs = lambda **kw: [fc.make_ref(p, m) for p, m in pairs]
+    fake.load_match = lambda ref, **kw: fc.make_loaded(
+        ref.provider, ref.match_id, actions=pd.DataFrame(), frames=pd.DataFrame(), home_team_id=1
+    )
+    fake.resolve_cache_dir = lambda c=None: None
+    # The migrated driver builds its source through the factory (Task 8.5), which composes the two
+    # primitives above; mirror that here so the fake serves both the factory and any direct caller.
+    fake.pining_source = lambda *a, **kw: (fake.list_match_refs(), fake.load_match)
+    monkeypatch.setitem(sys.modules, "_loader_pining", fake)
+    return fake
+
+
 def _fake_probe(verdict="fail"):
     return {
         "verdict": verdict,
@@ -131,13 +152,7 @@ def test_run_pools_two_matches_and_scores_both_variants(monkeypatch, tmp_path):
     # (not the always-non-None targets arg) so pooling is observable per variant.
     _gids = iter((100, 101, 200, 201))
 
-    def fake_load_matches(**kwargs):
-        for mid in ("m0", "m1"):
-            yield ("gradientsports", mid, pd.DataFrame(), pd.DataFrame(), 1)
-
-    fake_loader = type(sys)("_loader_pining")
-    monkeypatch.setitem(sys.modules, "_loader_pining", fake_loader)
-    monkeypatch.setattr(fake_loader, "load_matches", fake_load_matches, raising=False)
+    _install_fake_loader(monkeypatch, [("gradientsports", "m0"), ("gradientsports", "m1")])
     monkeypatch.setattr(mod.GhostGkModel, "from_variant", staticmethod(lambda v="default": object()))
     monkeypatch.setattr(mod.XShotOccurrenceModel, "from_variant", staticmethod(lambda v="default": object()))
     monkeypatch.setattr(mod, "build_ghost_frames", lambda frames, **k: (None, pd.DataFrame(), _FakeReport()))
@@ -159,13 +174,7 @@ def test_run_single_variant_v1_only(monkeypatch, tmp_path):
     # --variant v1 runs one delta-compute per match and produces no v2 block (honest-framing guard).
     _gids = iter((100, 200))
 
-    def fake_load_matches(**kwargs):
-        for mid in ("m0", "m1"):
-            yield ("gradientsports", mid, pd.DataFrame(), pd.DataFrame(), 1)
-
-    fake_loader = type(sys)("_loader_pining")
-    monkeypatch.setitem(sys.modules, "_loader_pining", fake_loader)
-    monkeypatch.setattr(fake_loader, "load_matches", fake_load_matches, raising=False)
+    _install_fake_loader(monkeypatch, [("gradientsports", "m0"), ("gradientsports", "m1")])
     monkeypatch.setattr(mod.GhostGkModel, "from_variant", staticmethod(lambda v="default": object()))
     monkeypatch.setattr(mod.XShotOccurrenceModel, "from_variant", staticmethod(lambda v="default": object()))
     monkeypatch.setattr(mod, "build_ghost_frames", lambda frames, **k: (None, pd.DataFrame(), _FakeReport()))
@@ -179,9 +188,7 @@ def test_run_single_variant_v1_only(monkeypatch, tmp_path):
 
 
 def test_run_empty_corpus_raises_systemexit(monkeypatch, tmp_path):
-    fake_loader = type(sys)("_loader_pining")
-    monkeypatch.setitem(sys.modules, "_loader_pining", fake_loader)
-    monkeypatch.setattr(fake_loader, "load_matches", lambda **k: iter(()), raising=False)
+    _install_fake_loader(monkeypatch, [])
     monkeypatch.setattr(mod.GhostGkModel, "from_variant", staticmethod(lambda v="default": object()))
     monkeypatch.setattr(mod.XShotOccurrenceModel, "from_variant", staticmethod(lambda v="default": object()))
     with pytest.raises(SystemExit):
@@ -192,17 +199,11 @@ def _patch_probe_env(monkeypatch, *, calls):
     """The `run()` fixture above, with the loader RECORDING every match it is asked to build."""
     _gids = iter(range(100, 200))
 
-    def fake_load_matches(**kwargs):
-        for mid in ("m0", "m1"):
-            yield ("gradientsports", mid, pd.DataFrame(), pd.DataFrame(), 1)
-
     def fake_build(frames, **k):
         calls.append("build")
         return (None, pd.DataFrame(), _FakeReport())
 
-    fake_loader = type(sys)("_loader_pining")
-    monkeypatch.setitem(sys.modules, "_loader_pining", fake_loader)
-    monkeypatch.setattr(fake_loader, "load_matches", fake_load_matches, raising=False)
+    _install_fake_loader(monkeypatch, [("gradientsports", "m0"), ("gradientsports", "m1")])
     monkeypatch.setattr(mod.GhostGkModel, "from_variant", staticmethod(lambda v="default": object()))
     monkeypatch.setattr(mod.XShotOccurrenceModel, "from_variant", staticmethod(lambda v="default": object()))
     monkeypatch.setattr(mod, "build_ghost_frames", fake_build)

@@ -242,6 +242,7 @@ def build_shards(
     token=None,
     provenance=None,
     partition_tag: str = "all",
+    cache_dir=None,
 ) -> dict:
     """Per-match opportunity shards, written ON COMPLETION so a crash resumes.
 
@@ -254,7 +255,8 @@ def build_shards(
     absent means "not yet run", present-and-empty means "run, produced nothing". Conflating the two
     would make every resume silently recompute the barren matches forever.
     """
-    from _loader_pining import load_matches  # scripts/ on sys.path at runtime (mirrors the trainer)
+    # scripts/ on sys.path at runtime (mirrors the trainer)
+    from _loader_pining import pining_source, resolve_cache_dir
 
     from scripts._driver import for_each
     from scripts._partition import providers_for_slice
@@ -262,6 +264,7 @@ def build_shards(
     from silly_kicks.causal.opportunities import build_opportunities, shot_arm_config
 
     prov = provenance or git_provenance()
+    cd = resolve_cache_dir(cache_dir)
     # A provider with no ids in THIS slice belongs to another worker. Without this the loader reads
     # an empty/absent slice as "the whole manifest" -- so a run sliced on one provider would have
     # every worker load the others in full, writing the same shard paths concurrently.
@@ -271,7 +274,7 @@ def build_shards(
     dest = Path(out)
 
     def _work(item):
-        provider, match_id, actions, frames, home = item
+        provider, match_id, actions, frames, home, *_ = item
         o = build_opportunities(frames, actions, home_team_id=home, model_metadata=meta, config=cfg)
         o = o.copy()
         # The provider is what `coverage` is keyed on, so it must survive the round trip rather than
@@ -280,15 +283,18 @@ def build_shards(
         o["match_id"] = str(match_id)
         return o
 
+    refs, load = pining_source(
+        providers,
+        match_ids=match_ids,
+        max_per_provider=max_per_provider,
+        tracking_limit=tracking_limit,
+        token=token,
+        cache_dir=cd,
+    )
     res = for_each(
-        load_matches(
-            providers=providers,
-            match_ids=match_ids,
-            max_per_provider=max_per_provider,
-            tracking_limit=tracking_limit,
-            token=token,
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         counters=lambda _item, frame: {"n_matches": 1, "n_opportunities": len(frame)},
         shard_root=dest / "shards",
@@ -436,6 +442,7 @@ def run(
     provenance=None,
     build_only: bool = False,
     partition_tag: str = "all",
+    cache_dir=None,
 ) -> dict:
     """Build any missing shards, then analyse them.
 
@@ -459,6 +466,7 @@ def run(
         token=token,
         provenance=prov,
         partition_tag=partition_tag,
+        cache_dir=cache_dir,
     )
     if build_only:
         # A partitioned worker stops here: analysing its own slice would write a metrics.json that
@@ -529,6 +537,11 @@ def main() -> None:
         action="store_true",
         help="print the available match ids as JSON and exit (build the parallel split from this)",
     )
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     a = ap.parse_args()
 
@@ -558,6 +571,7 @@ def main() -> None:
         provenance=prov,
         build_only=a.build_only,
         partition_tag=worker_tag(a.match_ids_json),
+        cache_dir=a.cache_dir,
     )
     print(json.dumps({k: m.get(k) for k in ("status", "corpus", "entanglement_verdict")}, indent=2, default=str))
 

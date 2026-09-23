@@ -5,7 +5,7 @@ import numpy.typing as npt
 import pandas as pd
 
 import silly_kicks.spadl.config as spadlconfig
-from silly_kicks.xthreat._grid import _get_flat_indexes, _get_move_actions, _get_successful_move_actions
+from silly_kicks.xthreat._grid import _count, _get_flat_indexes, _get_move_actions, _get_successful_move_actions
 from silly_kicks.xthreat._params import GridSpec, KDEParams
 
 
@@ -27,24 +27,32 @@ def singh_transition_matrix(actions: pd.DataFrame, grid: GridSpec) -> npt.NDArra
         T = singh_transition_matrix(actions, GridSpec(16, 12))  # (192, 192), rows sub-stochastic
     """
     l, w = grid.n_zones_x, grid.n_zones_y
-    n = w * l
-    move_actions = _get_move_actions(actions)
-    move_actions = move_actions.dropna(subset=["start_x", "start_y", "end_x", "end_y"])
+    counts, start_counts = _transition_zone_counts(actions, l, w)
+    return _singh_from_counts(counts, start_counts.ravel())
 
+
+def _transition_zone_counts(
+    actions: pd.DataFrame, l: int, w: int
+) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int_]]:
+    """The Singh transition aggregates -- the extractor `singh_transition_matrix` and
+    ``ExpectedThreat.zone_counts`` both call, so the fit path and the counts path cannot diverge.
+
+    Returns ``(transition_counts (w*l, w*l), transition_start_counts (w, l))``: the SUCCESSFUL
+    from->to numerator, and the valid-START-and-END move count per start zone (the Singh row
+    denominator -- a DIFFERENT population from ``_move_start_zone_counts``'s valid-start-only). Both
+    are computed over ``_get_move_actions`` dropped of NaN start/end, so ``start_counts.ravel()``
+    equals the legacy flat ``np.add.at`` denominator by construction (``_count`` bins via the same
+    ``_get_flat_indexes``); ``fit()`` is byte-identical.
+    """
+    n = w * l
+    move_actions = _get_move_actions(actions).dropna(subset=["start_x", "start_y", "end_x", "end_y"])
     start_cell = _get_flat_indexes(move_actions.start_x, move_actions.start_y, l, w).to_numpy()
     end_cell = _get_flat_indexes(move_actions.end_x, move_actions.end_y, l, w).to_numpy()
     is_success = (move_actions.result_id == spadlconfig.result_id["success"]).to_numpy()
-
-    # Vectorized, byte-identical to the legacy per-zone boolean-mask loop (same integer
-    # operands -> same float64 division). O(n_actions + n_zones^2) instead of
-    # O(n_zones * n_actions). Denominator = ALL moves per start cell; numerator =
-    # successful moves per (start, end) cell.
-    start_counts = np.zeros(n)
-    np.add.at(start_counts, start_cell, 1.0)
-    counts = np.zeros((n, n))
-    np.add.at(counts, (start_cell[is_success], end_cell[is_success]), 1.0)
-
-    return _singh_from_counts(counts, start_counts)
+    counts = np.zeros((n, n), dtype=np.int64)
+    np.add.at(counts, (start_cell[is_success], end_cell[is_success]), 1)
+    start_counts = _count(move_actions.start_x, move_actions.start_y, l, w)  # (w, l); .ravel() == legacy denom
+    return counts, start_counts
 
 
 def _singh_from_counts(transition_counts: npt.ArrayLike, start_counts: npt.ArrayLike) -> npt.NDArray[np.float64]:

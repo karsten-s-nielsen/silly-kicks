@@ -118,14 +118,20 @@ def stub_sb(monkeypatch):
     monkeypatch.setattr(sbmod, "_base_url", lambda *_a, **_k: "http://stub")
     monkeypatch.setattr(sbmod, "_list_matches", lambda *_a, **_k: manifest)
 
-    def _load(**_kw):
-        return iter([("gradientsports", m["id"], enriched, frames, _HOME_TEAM) for m in manifest])
+    from _fake_corpus import make_loaded, make_ref
 
     def _add(actions, frames_arg, **_kw):
         entered.append("enrich")
         return enriched.copy()
 
-    monkeypatch.setattr(sbmod, "load_matches", _load)
+    # The refs+load source factory (Task 8.5): list refs OFFLINE, load one match at a time.
+    _refs = [make_ref("gradientsports", m["id"]) for m in manifest]
+
+    def _load(ref, **kw):
+        return make_loaded("gradientsports", ref.match_id, actions=enriched, frames=frames, home_team_id=_HOME_TEAM)
+
+    monkeypatch.setattr(sbmod, "pining_source", lambda *a, **kw: (_refs, _load))
+    monkeypatch.setattr(sbmod, "resolve_cache_dir", lambda c=None: c)
     monkeypatch.setattr(features, "add_shot_goalmouth", _add)
     # ADR-055: a GoalMap, not a plain dict -- and built through `goal_map_for`, which keys via
     # `GoalMap._key`. A hand-written `{("g", 1, _HOME_TEAM): 0.0}` would be keyed on RAW

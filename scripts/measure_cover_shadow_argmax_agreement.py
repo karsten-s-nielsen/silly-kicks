@@ -51,8 +51,10 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts._driver import for_each, shard_path
-from scripts._loader_pining import load_matches
+from scripts._events_admission import events_only_loader
+from scripts._loader_pining import pining_source, resolve_cache_dir
 from scripts._provenance import git_provenance, require_clean_tree
+from scripts._xt_corpus import fit_xt_from_count_pass, xt_count_pass
 from silly_kicks.tracking import link_actions_to_frames, resolve_defended_goals
 from silly_kicks.tracking._action_orientation import (
     FIELD_LENGTH,
@@ -64,7 +66,6 @@ from silly_kicks.tracking._cover_shadows import (
     _compute_cover_shadow_dict,
     compute_blocking_score,
 )
-from silly_kicks.xthreat import ExpectedThreat
 
 
 def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -291,6 +292,16 @@ def main() -> int:
         action="store_true",
         help="Permit a dev run from a modified tree. The artifact is still marked dirty.",
     )
+    ap.add_argument(
+        "--allow-failed",
+        action="store_true",
+        help="fit the xT surface without matches that FAILED the events-only count pass (recorded).",
+    )
+    ap.add_argument(
+        "--allow-unmeasured",
+        action="store_true",
+        help="admit unmeasured SkillCorner matches into the events-only xT fit (recorded).",
+    )
     args = ap.parse_args()
 
     # FIRST, before paying for any corpus work: `git rev-parse HEAD` returns the same SHA whether
@@ -299,52 +310,58 @@ def main() -> int:
     # `run()` that refuses on a dirty checkout cannot be tested without mocking git.
     prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
 
-    all_actions, loaded = [], []
-    for provider, match_id, actions, frames, home in load_matches(
+    cache_dir = resolve_cache_dir(args.cache_dir)
+    refs, load = pining_source(
         providers=[args.provider],
         max_per_provider=args.max_matches,
         tracking_limit=args.tracking_limit,
-        cache_dir=args.cache_dir,
-    ):
-        print(f"loaded {provider}/{match_id}: {len(actions)} actions", file=sys.stderr)
-        all_actions.append(actions)
-        loaded.append((match_id, actions, frames, home))
-
-    if not loaded:
+        cache_dir=cache_dir,
+    )
+    if not refs:
         print("no matches loaded", file=sys.stderr)
         return 1
 
-    # Fit xT on the whole loaded corpus -- one surface for every match, so the identity comparison
-    # is not confounded by a per-match threat surface.
-    xt = ExpectedThreat()
-    xt.fit(pd.concat(all_actions, ignore_index=True))
+    # Fit xT ONCE on the corpus -- one surface for every match, so the identity comparison is not
+    # confounded by a per-match threat surface. xT is event-only and its per-match zone counts are
+    # additive (ADR-102), so the fit is a resumable EVENTS-ONLY count pass reduced by fit_from_counts
+    # (byte-identical to a pooled fit), NOT a whole-corpus materialization -- the OOM class disappears
+    # and a resume re-reads no finished match. gradientsports needs no admission artifact; a
+    # SkillCorner slice routes through events_only_loader's admission gate (--allow-unmeasured records).
+    ev_load, admission = events_only_loader(refs, cache_dir=cache_dir, allow_unmeasured=args.allow_unmeasured)
+    xt_shard_root = (Path(args.out).parent / "xt_fit_shards") if args.out else Path("cover_shadow_argmax_xt_fit_shards")
+    fit_res = xt_count_pass(
+        refs,
+        key=lambda r: r.key,
+        load_actions=lambda r: ev_load(r).actions,
+        shard_root=xt_shard_root,
+        token_inputs={"fit_corpus": sorted(f"{r.provider}__{r.match_id}" for r in refs)},
+    )
+    xt, xt_prov = fit_xt_from_count_pass(fit_res, allow_failed=args.allow_failed, admission=admission)
 
-    # WHY THIS DRIVER CANNOT STREAM ITS CORPUS, unlike its neighbours. The xT surface is fit ONCE
-    # on every loaded match's actions -- deliberately, so the identity comparison is not confounded
-    # by a per-match threat surface -- which is a genuine cross-item barrier: no match can be
-    # measured until all of them have been read. So `loaded` stays materialised (today's memory
-    # profile, unchanged) and `for_each` walks it. The load is therefore re-paid on a resume; the
-    # per-match MEASUREMENT is what it skips, and that is where the time goes -- the exact path was
-    # measured at 98-125 ms per action over ~1000 actions a match.
+    # The ARMS pass: a resume-before-load for_each over the SAME match refs, with the fitted xT closed
+    # over. Each match's frames load only when its shard is missing, so a resume skips the per-match
+    # MEASUREMENT -- where the time goes (the exact path was measured at 98-125 ms per action over
+    # ~1000 actions a match).
     res = for_each(
-        loaded,
-        key=lambda item: (str(args.provider), str(item[0])),
-        work=lambda item: pd.DataFrame.from_records(measure_match(item[1], item[2], item[3], xt, match_id=item[0])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
+        work=lambda item: pd.DataFrame.from_records(
+            measure_match(item.actions, item.frames, item.home_team_id, xt, match_id=item.match_id)
+        ),
         shard_root=Path(args.out).parent / "shards" if args.out else Path("cover_shadow_argmax_shards"),
-        # Unlike every other driver in this cycle, the corpus SELECTORS belong in the token here,
-        # and the reason is specific: the xT surface above is fit on exactly this corpus and is an
-        # input to both scored paths. A `--max-matches 8` run reusing shards computed against a
-        # 4-match surface would silently mix two threat models in one agreement rate. The match ids
-        # are declared rather than the selector so the digest describes what was actually loaded
-        # (`--max-matches` picks the first N, and an excluded match changes the set).
-        #
-        # `passer_reprojected` is declared because ADR-028 RC1 changes the CHEAP path's nominee on
-        # away rows: shards written before this fix must not be reused after it.
+        # This driver's generation MOVES on migration (spec section 7): the token now declares the
+        # REQUESTED refs (a ref list precedes the load, so it cannot know S1 exclusions in advance)
+        # plus the fit's counts_digest. The surface is an input to both scored paths, so a run reusing
+        # shards computed against a different surface would silently mix two threat models in one
+        # agreement rate -- and counts_digest SUBSUMES which S1-excluded matches were admitted (the
+        # summed counts differ). `passer_reprojected` is declared because ADR-028 RC1 changes the
+        # CHEAP path's nominee on away rows: shards written before that fix must not be reused after it.
         token_inputs={
             "provider": args.provider,
-            "match_ids": sorted(str(m) for m, _a, _f, _h in loaded),
+            "requested_match_ids": sorted(r.match_id for r in refs),
+            "counts_digest": xt_prov.counts_digest,
             "tracking_limit": args.tracking_limit,
-            "xt_surface": "corpus-fit",
             "tol_attrib": TOL_ATTRIB,
             "passer_reprojected": "adr028-rc1",
         },
@@ -355,9 +372,10 @@ def main() -> int:
         print(f"{len(res.failures)} match(es) failed: {res.failures}", file=sys.stderr)
         return 1
 
-    # Combined from THIS PASS'S keys rather than `_driver.reconcile`: there is no partition surface
-    # here, so a whole-generation read would fold in matches from a wider earlier run.
-    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    # Combined from THIS PASS'S shard keys rather than `_driver.reconcile`: there is no partition
+    # surface here, so a whole-generation read would fold in matches from a wider earlier run.
+    # `shard_keys`, not `keys`: an S1-excluded key has a `.excluded.json` marker and no parquet.
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
     df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if df.empty:
         print("no scoreable actions", file=sys.stderr)
@@ -367,10 +385,17 @@ def main() -> int:
     report["run_commit"] = prov["commit"]
     report["run_tree_dirty"] = prov["dirty"]
     report["run_tree_state"] = prov["tree_state"]
+    # Fit and scored corpora can differ within an M-shape driver (S1 exclusion), so record BOTH sets
+    # plus the fit provenance (spec section 8).
     report["corpus"] = {
         "provider": args.provider,
-        "n_matches": len(loaded),
-        "match_ids": [m for m, _a, _f, _h in loaded],
+        "n_requested": len(refs),
+        "requested_match_ids": [r.match_id for r in refs],
+        "n_fit_matches": len(xt_prov.fit_keys),
+        "counts_digest": xt_prov.counts_digest,
+        "admission_digest": xt_prov.admission_digest,
+        "unmeasured_admitted": list(xt_prov.unmeasured_admitted),
+        "n_scored_matches": len(res.shard_keys),
         "tracking_limit": args.tracking_limit,
     }
     print(json.dumps(report, indent=2))

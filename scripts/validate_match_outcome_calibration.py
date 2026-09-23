@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -256,19 +256,70 @@ def _build_rows(game_id, *, stats: dict, rho: float | None) -> pd.DataFrame:
     return pd.DataFrame(rows).reindex(columns=_EMITTED_SHARD_COLUMNS)
 
 
-def _iter_open_matches(*, match_ids: list[str] | None, max_matches: int | None) -> Iterator[tuple[str, pd.DataFrame]]:
-    """Stream ``(match_id, actions)`` across ALL open-data competitions (fail-closed public-only)."""
-    from scripts._sb_open_data import all_open_competitions, load_open_data_matches
+#: The prepass shard: one match's per-team xG arrays + goals (the ADR-052 U-shape prepass, Task 13).
+_STATS_SHARD_SCHEMA_VERSION = "match-outcome-calibration-stats-1"
+_STATS_SHARD_COLUMNS = [
+    "game_id",
+    "team0_id",
+    "team1_id",
+    "team0_indep",
+    "team1_indep",
+    "team0_collapse",
+    "team1_collapse",
+    "team0_goals",
+    "team1_goals",
+]
 
-    seen = 0
-    for competition_id, season_id in all_open_competitions():
-        for _prov, mid, actions, _frames, _home in load_open_data_matches(
-            competition_id=competition_id, season_id=season_id, match_ids=match_ids
-        ):
-            yield str(mid), actions
-            seen += 1
-            if max_matches is not None and seen >= max_matches:
-                return
+
+def extract_stats_slice(match_id, actions: pd.DataFrame, *, gap: float) -> pd.DataFrame:
+    """One match's per-team xG arrays + goals as a shard (the corpus prepass; pure). An EMPTY frame is
+    a non-two-team match, dropped from the CV corpus ("ran, produced no scoreline"; ADR-052). The xG
+    arrays are stored as lists so the shard round-trips through parquet."""
+    stats = _team_stats(actions, "xg", gap=gap)
+    if stats is None:
+        return pd.DataFrame(columns=_STATS_SHARD_COLUMNS)
+    t0, t1 = list(stats.keys())
+    return pd.DataFrame(
+        [
+            {
+                "game_id": str(match_id),
+                "team0_id": t0,
+                "team1_id": t1,
+                "team0_indep": [float(x) for x in stats[t0]["indep"]],
+                "team1_indep": [float(x) for x in stats[t1]["indep"]],
+                "team0_collapse": [float(x) for x in stats[t0]["collapse"]],
+                "team1_collapse": [float(x) for x in stats[t1]["collapse"]],
+                "team0_goals": int(stats[t0]["goals"]),
+                "team1_goals": int(stats[t1]["goals"]),
+            }
+        ]
+    )
+
+
+def stats_from_shards(frames: Sequence[pd.DataFrame]) -> tuple[dict, list]:
+    """Rebuild ``(by_game, cv_matches)`` from the prepass shards (the whole-corpus barrier). Order does
+    NOT matter -- ``cv_rho_by_fold`` sorts the game ids, so a resumed/partitioned run fits the same
+    per-fold rho as the pre-migration in-memory pass."""
+    by_game: dict[str, dict] = {}
+    cv: list[tuple] = []
+    for f in frames:
+        for r in f.to_dict("records"):
+            mid, t0, t1 = str(r["game_id"]), r["team0_id"], r["team1_id"]
+            stats = {
+                t0: {
+                    "indep": np.asarray(r["team0_indep"], dtype="float64"),
+                    "collapse": np.asarray(r["team0_collapse"], dtype="float64"),
+                    "goals": int(r["team0_goals"]),
+                },
+                t1: {
+                    "indep": np.asarray(r["team1_indep"], dtype="float64"),
+                    "collapse": np.asarray(r["team1_collapse"], dtype="float64"),
+                    "goals": int(r["team1_goals"]),
+                },
+            }
+            by_game[mid] = stats
+            cv.append((mid, stats[t0]["indep"], stats[t1]["indep"], stats[t0]["goals"], stats[t1]["goals"]))
+    return by_game, cv
 
 
 def input_contract() -> dict:
@@ -295,6 +346,9 @@ def main() -> None:
     ap.add_argument(
         "--match-ids-json", default=None, help='JSON ["3857276", ...] pinning WHICH matches (parallel split).'
     )
+    ap.add_argument(
+        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--list-matches", action="store_true", help="print available match ids as JSON and exit")
     args = ap.parse_args()
@@ -312,41 +366,39 @@ def main() -> None:
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
 
-    if args.list_matches:
-        ids = [mid for mid, _actions in _iter_open_matches(match_ids=match_ids, max_matches=args.max_matches)]
-        print(json.dumps(ids, indent=2))
-        return
-
     from scripts._driver import for_each
+    from scripts._sb_open_data import all_open_competitions, open_data_source
 
     gap = MatchOutcomeParams().possession_max_gap_seconds
+    refs, load = open_data_source(
+        all_open_competitions(), match_ids=match_ids, max_matches=args.max_matches, cache_dir=args.cache_dir
+    )
 
-    # Phase 1: stream the corpus ONCE, keeping only compact per-team xG arrays + goals (never actions).
-    by_game: dict[str, dict] = {}
-    cv_matches: list[tuple] = []
-    for mid, actions in _iter_open_matches(match_ids=match_ids, max_matches=args.max_matches):
-        stats = _team_stats(actions, "xg", gap=gap)
-        if stats is None:
-            continue
-        by_game[mid] = stats
-        teams = list(stats.keys())
-        cv_matches.append(
-            (
-                mid,
-                stats[teams[0]]["indep"],
-                stats[teams[1]]["indep"],
-                stats[teams[0]]["goals"],
-                stats[teams[1]]["goals"],
-            )
-        )
+    if args.list_matches:
+        # LIST the refs -- never build every match just to print its id (spec section 4.5).
+        print(json.dumps([ref.match_id for ref in refs], indent=2))
+        return
+
+    dest = Path(args.out)
+    # Phase 1 (ADR-052 prepass): shard each match's per-team xG stats behind for_each's resume check --
+    # before this, a crash re-downloaded the whole open-data corpus. The reduce rebuilds the CV corpus.
+    stats_res = for_each(
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
+        work=lambda item: extract_stats_slice(item[1], item[2], gap=gap),
+        shard_root=dest / "stats_shards",
+        token_inputs={"metric": "match_outcome_calibration_stats", "schema": _STATS_SHARD_SCHEMA_VERSION},
+        label="match",
+    )
+    stats_shards = [pd.read_parquet(s) for s in sorted(stats_res.shard_dir.glob("*.parquet"))]
+    by_game, cv_matches = stats_from_shards(stats_shards)
 
     # Phase 2: per-fold rho (grouped by game_id, evaluated held-out; NEVER the bundled weights).
     folds_out = cv_rho_by_fold(cv_matches, args.folds)
     heldout_rho = {g: fo["rho"] for fo in folds_out for g in fo["test_game_ids"]}
 
     # Phase 3: for_each over the loaded match ids (work is trivial next to Phase-1's load).
-    dest = Path(args.out)
-
     def _work(mid: str) -> pd.DataFrame:
         return _build_rows(mid, stats=by_game[mid], rho=heldout_rho.get(mid))
 

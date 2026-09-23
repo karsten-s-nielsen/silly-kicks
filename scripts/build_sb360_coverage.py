@@ -22,6 +22,7 @@ import math
 import pathlib
 import sys
 import warnings
+from typing import cast
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -131,9 +132,13 @@ def _retry(fn, attempts: int = 4, base_sleep: float = 5.0):
     raise AssertionError("unreachable: the final attempt either returned or raised")
 
 
-def _values(payload):
-    """statsbombpy returns dict-keyed-by-id or a list depending on call and version."""
-    return list(payload.values()) if isinstance(payload, dict) else list(payload)
+def _values(payload) -> list[dict]:
+    """statsbombpy returns dict-keyed-by-id or a list depending on call and version.
+
+    Both shapes yield event/frame/match/competition DICTS at runtime; the cast states that contract
+    so consumers (``.get`` / ``[...]``) type-check, since statsbombpy models neither ``fmt`` in-type.
+    """
+    return cast("list[dict]", list(payload.values()) if isinstance(payload, dict) else list(payload))
 
 
 def resolve_competition(comp_id: int, season_id: int, *, catalogue, expect_name: str) -> dict:
@@ -172,28 +177,37 @@ def _load_catalogue() -> list[dict]:
     return _values(_retry(lambda: sb.competitions(fmt="dict")))
 
 
-def measure_match(match):
-    """One match -> tidy per-(SPADL action_type) coverage rows. Rates carry denominators."""
+def measure_match(item):
+    """One match -> tidy per-(SPADL action_type) coverage rows. Rates carry denominators.
+
+    ``item`` is ``(ref, events, frames_raw)`` from :func:`load_match_raw`: the events + 360
+    freeze-frames are fetched (and JSON-cached) by the LOAD step, BEHIND for_each's resume check, so
+    a resumed run never re-fetches a finished match (ADR-052 D14). ``measure_match`` itself does no
+    network I/O.
+    """
     import pandas as pd
-    from statsbombpy import sb  # type: ignore[import-not-found]
 
     from silly_kicks.spadl.statsbomb import convert_to_actions
 
-    comp_id, season_id, match_id, home_team_id = match
+    ref, events, frames_raw = item
+    comp_id, season_id, match_id, home_team_id = (
+        ref.competition_id,
+        ref.season_id,
+        int(ref.match_id),  # int, matching the pre-migration match_id dtype in the emitted rows
+        ref.home_team_id,
+    )
 
     # Frame records carry event_uuid, visible_area and freeze_frame -- NOT the event type.
     # The join runs through the REAL converter for two reasons: the spec asks for coverage
     # "per SPADL action type" and StatsBomb's taxonomy cannot express those types; and it
     # exercises the converter -- the path NWSL data will take -- for the same reason Leg A of
     # the synthetic fixture is built by the real producer.
-    events = _values(_retry(lambda: sb.events(match_id=match_id, fmt="dict")))
     actions, _report = convert_to_actions(flatten_events(events, match_id), home_team_id)
     # SPADL emits `type_id`, NOT `type_name` -- the name is a config-table lookup, and
     # `SPADL_COLUMNS` has no `type_name` at all. The synthetic Layer A fixture carries
     # `type_name` as a CONVENIENCE column alongside the schema, and writing this against that
     # shape raised `KeyError: 'type_name'` on the first real match. A fixture's convenience is
     # not a contract.
-    frames_raw = _values(_retry(lambda: sb.frames(match_id=match_id, fmt="dict")))
     id_to_name = _type_id_to_name()
     # statsbomb.py:235 sets original_event_id = events.event_id.astype(str).
     type_by_uuid = {
@@ -326,16 +340,21 @@ def measure_match(match):
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=list(_EMITTED_SHARD_COLUMNS))
 
 
-def _iter_matches(selected, args):
-    """STREAM, never list() -- the ADR-052 rule; a match pull is expensive per item.
+def _list_match_refs(selected, args):
+    """The matches this pass will ATTEMPT, as ``OpenDataRef``s -- WITHOUT fetching events or 360.
 
-    Yields ``(competition_id, season_id, match_id, home_team_id)``. The home team id rides along
-    because ``convert_to_actions`` requires it and re-fetching inside ``work`` would repeat a
-    network call per item.
+    A cheap manifest listing per cell (``sb.matches``), so ``for_each`` can key/skip a ref BEFORE the
+    expensive events+360 load (ADR-052 D14); the load happens in :func:`load_match_raw`. Selection
+    mirrors the streamed predecessor: per-cell ``matches_per_cell`` cap, and a partition naming no ids
+    for a cell DROPS it (an empty list and an absent key are both falsy -- `_ids_for_cell`
+    distinguishes them). ``home_team_id`` rides along from the manifest the listing already fetched.
     """
     from statsbombpy import sb  # type: ignore[import-not-found]
 
+    from scripts._sb_open_data import OpenDataRef
+
     override = json.loads(args.match_ids_json.read_text()) if args.match_ids_json else None
+    refs: list = []
     for row in selected:
         c, s = row["competition_id"], row["season_id"]
         drop, ids = _ids_for_cell(override, c, s)
@@ -350,7 +369,23 @@ def _iter_matches(selected, args):
         for mid in ids:
             home = matches[mid].get("home_team") or {}
             home_id = home.get("home_team_id", home.get("id")) if isinstance(home, dict) else home
-            yield (c, s, mid, home_id)
+            if home_id is None:
+                raise CompetitionMismatchError(f"match {mid} in {c}/{s}: manifest carries no home_team_id")
+            refs.append(OpenDataRef(int(c), int(s), str(mid), int(home_id)))
+    return refs
+
+
+def load_match_raw(ref, *, cache_dir):
+    """Fetch (and JSON-cache) ONE ref's events + 360 freeze-frames -> ``(ref, events, frames_raw)``.
+
+    The per-item load behind for_each's resume check: a resumed run whose shard exists never reaches
+    it, so the expensive events+360 pull is paid once (ADR-052 D14). ``--cache-dir`` persists the raw
+    JSON so even a first pass over the same corpus twice is a disk read.
+    """
+    from scripts._sb_open_data import fetch_open_360_raw
+
+    events, frames_raw = fetch_open_360_raw(ref.match_id, cache_dir=cache_dir)
+    return ref, events, frames_raw
 
 
 def main() -> None:
@@ -366,6 +401,12 @@ def main() -> None:
     ap.add_argument("--competitions", nargs="+", default=["72:107", "43:106", "44:107"])
     ap.add_argument("--matches-per-cell", type=int, default=8)
     ap.add_argument("--match-ids-json", type=pathlib.Path, default=None)
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="persist each match's raw events+360 JSON here (else $SILLY_KICKS_CORPUS_CACHE_DIR) so "
+        "a resume -- or a second pass over the same corpus -- is a disk read, not a re-fetch.",
+    )
     ap.add_argument("--list-matches", action="store_true")
     ap.add_argument("--tag", default="all")
     ap.add_argument("--allow-dirty", action="store_true")
@@ -382,12 +423,14 @@ def main() -> None:
     selected = [resolve_competition(c, s, catalogue=catalogue, expect_name=EXPECTED_NAMES[(c, s)]) for c, s in cells]
 
     if args.list_matches:
-        print(json.dumps([m[2] for m in _iter_matches(selected, args)]))
+        # Manifest-only (no events/360 fetch): the old path streamed the same listing to print ids.
+        print(json.dumps([r.match_id for r in _list_match_refs(selected, args)]))
         return
 
     res = for_each(
-        _iter_matches(selected, args),
-        key=lambda m: f"{m[0]}_{m[1]}_{m[2]}",
+        _list_match_refs(selected, args),
+        key=lambda r: f"{r.competition_id}_{r.season_id}_{r.match_id}",
+        load=lambda r: load_match_raw(r, cache_dir=args.cache_dir),
         work=measure_match,
         shard_root=args.out,
         token_inputs={
@@ -405,10 +448,11 @@ def main() -> None:
     (args.out / f"manifest_{args.tag}.json").write_text(
         json.dumps({**res.manifest(), **prov}, indent=2), encoding="utf-8"
     )
-    # CorpusPassResult (scripts/_driver.py:511-518) carries shard_dir, attempted, skipped,
-    # failed, failures, counters, keys, counters_unrecorded. There is NO `processed`.
+    # `processed` = shards written THIS run = (all keys with a shard) minus the ones skipped as
+    # already-done. NOT `attempted - skipped - failed`: `res.attempted` already EXCLUDES skips
+    # (_driver.py), so subtracting them again under-counts by the skip total.
     print(
-        f"attempted={res.attempted} processed={res.attempted - res.skipped - res.failed} "
+        f"attempted={res.attempted} processed={len(res.shard_keys) - res.skipped} "
         f"skipped={res.skipped} failed={res.failed}"
     )
 

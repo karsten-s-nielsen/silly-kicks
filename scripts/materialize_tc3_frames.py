@@ -108,7 +108,9 @@ def assert_frames_parity(produced: pd.DataFrame, reference: pd.DataFrame, *, mat
         )
 
 
-def preflight_reference_parity(reference_path: pathlib.Path, *, cache_dir: pathlib.Path, load_matches) -> str:
+def preflight_reference_parity(
+    reference_path: pathlib.Path, *, cache_dir: pathlib.Path | None, list_match_refs, load_match
+) -> str:
     """Assert parity against the ONE match the reference came from, BEFORE any corpus work.
 
     **This ran INSIDE the loop, on "the first match processed", and that was wrong twice over --
@@ -138,20 +140,28 @@ def preflight_reference_parity(reference_path: pathlib.Path, *, cache_dir: pathl
     want_games = {str(g) for g in reference["game_id"].dropna().unique()}
 
     print(f"pre-flight parity: {provider}/{match_id} vs {reference_path}", flush=True)
-    for _prov, got_id, _actions, frames, _home in load_matches(
-        providers=[provider], match_ids={provider: [match_id]}, cache_dir=cache_dir
-    ):
-        got_games = {str(g) for g in frames["game_id"].dropna().unique()}
-        if not (got_games & want_games):
-            raise SystemExit(
-                f"pre-flight loaded {provider}/{got_id} with game_ids {sorted(got_games)}, which do "
-                f"not intersect the reference's {sorted(want_games)}. Refusing to compare two "
-                f"different matches -- that is what made the in-loop check meaningless."
-            )
-        assert_frames_parity(frames, reference, match_id=str(got_id))
-        print(f"parity OK against {reference_path}", flush=True)
-        return str(got_id)
-    raise SystemExit(f"pre-flight: the loader yielded no match for {provider}/{match_id}")
+    # ONE direct load, not a loop (spec section 4.5): a single ref, loaded once. An unlisted or
+    # excluded reference is a hard STOP (SystemExit), the same intent the in-loop version had.
+    from scripts._loader_pining import MatchExcluded
+
+    refs = list_match_refs(providers=[provider], match_ids={provider: [match_id]})
+    if not refs:
+        raise SystemExit(f"pre-flight: no listed match for {provider}/{match_id}")
+    try:
+        loaded = load_match(refs[0], events_only=False, cache_dir=cache_dir)
+    except MatchExcluded as exc:
+        raise SystemExit(f"pre-flight: {provider}/{match_id} is excluded by the loader gate: {exc.reason}") from exc
+    frames, got_id = loaded.frames, loaded.match_id
+    got_games = {str(g) for g in frames["game_id"].dropna().unique()}
+    if not (got_games & want_games):
+        raise SystemExit(
+            f"pre-flight loaded {provider}/{got_id} with game_ids {sorted(got_games)}, which do "
+            f"not intersect the reference's {sorted(want_games)}. Refusing to compare two "
+            f"different matches -- that is what made the in-loop check meaningless."
+        )
+    assert_frames_parity(frames, reference, match_id=str(got_id))
+    print(f"parity OK against {reference_path}", flush=True)
+    return str(got_id)
 
 
 def collect_home_team_map(home_dir: pathlib.Path, keys) -> dict[str, str]:
@@ -237,13 +247,17 @@ def main() -> None:
     prov = git_provenance()
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
-    from scripts._loader_pining import load_matches
+    from scripts._loader_pining import list_match_refs, load_match, pining_source, resolve_cache_dir
+
+    cache_dir = resolve_cache_dir(args.cache_dir)
 
     # BEFORE the loop, and before any corpus work is paid for: a parity breach must STOP the pass,
     # and `for_each` would only record it as one failed item and carry on. See
     # `preflight_reference_parity` for the two measured failure modes of the in-loop version.
     checked_match = (
-        preflight_reference_parity(args.reference_parquet, cache_dir=args.cache_dir, load_matches=load_matches)
+        preflight_reference_parity(
+            args.reference_parquet, cache_dir=cache_dir, list_match_refs=list_match_refs, load_match=load_match
+        )
         if args.reference_parquet
         else None
     )
@@ -252,7 +266,7 @@ def main() -> None:
     actions_dir = args.out / "_actions"
 
     def _work(item):
-        provider, match_id, actions, frames, home = item
+        provider, match_id, actions, frames, home, *_ = item
         # Shift-left (ADR: detection-aware visibility guardrails, Layer 1): refuse a detection-aware
         # shard whose `visibility` was discarded BEFORE writing any sidecar, so a poisoned item leaves
         # nothing on disk (no orphan `_home`/`_actions`) and never becomes a shard the trainer aborts on.
@@ -291,13 +305,15 @@ def main() -> None:
     # exact failure that seam exists to prevent. The shards ARE the deliverable here: a `for_each`
     # generation directory holds only per-item parquets, and `train_ghost_gk.py:291` falls back to
     # a flat `*.parquet` glob, so the trainer reads the generation directory directly.
+    refs, load = pining_source(
+        args.providers,
+        max_per_provider=args.max_per_provider,
+        cache_dir=cache_dir,
+    )
     res = for_each(
-        load_matches(
-            providers=args.providers,
-            cache_dir=args.cache_dir,
-            max_per_provider=args.max_per_provider,
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=args.out / "shards",
         # What determines the CONTENT of a materialized frame set: which providers were requested
@@ -328,7 +344,7 @@ def main() -> None:
     # pre-`-2` generation, or a kill between the two writes) would otherwise silently drop that
     # game from the map, and the trainer would print `SKIP game <id>: no home_team_id` per game and
     # fit on a SHORTER corpus while reporting success. Fail here instead.
-    home_map = collect_home_team_map(home_dir, res.keys)
+    home_map = collect_home_team_map(home_dir, res.shard_keys)
     (args.out / "home_teams.json").write_text(json.dumps(home_map, indent=2, sort_keys=True), encoding="utf-8")
 
     (args.out / "manifest_all.json").write_text(
@@ -348,7 +364,7 @@ def main() -> None:
         ),
         encoding="utf-8",
     )
-    print(f"materialized {len(res.keys)} matches; shards at {res.shard_dir}")
+    print(f"materialized {len(res.shard_keys)} matches; shards at {res.shard_dir}")
     print(f"home map: {len(home_map)} games -> {args.out / 'home_teams.json'}")
     print("train_ghost_gk.py needs BOTH: --data-dir <generation> --home-teams <out>/home_teams.json")
     print(f"and --actions-dir {actions_dir} to reproduce the established pipeline inputs")

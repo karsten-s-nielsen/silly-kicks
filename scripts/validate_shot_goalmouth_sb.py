@@ -70,7 +70,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _loader_pining import _base_url, _list_matches, _resolve_token, load_matches
+from _loader_pining import _base_url, _list_matches, _resolve_token, pining_source, resolve_cache_dir
 
 from silly_kicks.id_compat import ids_match, same_id
 
@@ -553,6 +553,9 @@ def run(
     from silly_kicks.tracking._shot_goalmouth import ShotGoalmouthParams, ShotGoalmouthReport
     from silly_kicks.tracking.features import add_shot_goalmouth
 
+    # Resolve the cache root ONCE and share it with the loader AND `_smoothed_ball_z` (spec section 4.5).
+    cache_root = resolve_cache_dir(cache_dir)
+
     sb_matches = _retry(lambda: sb.matches(competition_id=_SB_COMPETITION_ID, season_id=_SB_SEASON_ID))
     if len(sb_matches) == 0:
         raise AssertionError("statsbombpy returned 0 WC2022 matches -- open data unavailable?")
@@ -589,7 +592,7 @@ def run(
         So the shard's tidy unit is the MATCH, and its payload is the bundle. Nothing here is lost
         on resume; the encoding is the one place that has to be exact, which is `_json_default`.
         """
-        _provider, match_id, actions, frames, home_id = item
+        _provider, match_id, actions, frames, home_id, *_ = item
         rows: list[dict] = []
         unmatched_all: list[dict] = []
         sweep_rows: list[dict] = []
@@ -731,8 +734,8 @@ def run(
                         setattr(sgm, name, orig)
                     sweep_rows.append({"match_id": match_id, "axis": f"{name}@10fps", "value": v, **rep.source_counts})
 
-        if z_compare and cache_dir:  # pilot-only: raw-z vs smoothed-z (spec sections 1/10.4)
-            sm = _smoothed_ball_z(Path(cache_dir), match_id, frames)
+        if z_compare and cache_root:  # pilot-only: raw-z vs smoothed-z (spec sections 1/10.4)
+            sm = _smoothed_ball_z(cache_root, match_id, frames)
             if sm is not None:
                 e2 = add_shot_goalmouth(actions, sm)
                 a = gs_shots.set_index("action_id")["shot_crossing_z"]
@@ -748,14 +751,16 @@ def run(
                 )
         return _bundle()
 
+    refs, load = pining_source(
+        ["gradientsports"],
+        match_ids={"gradientsports": list(wanted)},
+        tracking_limit=tracking_limit,
+        cache_dir=cache_root,
+    )
     res = for_each(
-        load_matches(
-            providers=["gradientsports"],
-            match_ids={"gradientsports": list(wanted)},
-            tracking_limit=tracking_limit,
-            cache_dir=cache_dir,
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=_shard_root(out_path),
         # What determines a bundle's CONTENT. The three optional passes are declared because each
@@ -777,7 +782,7 @@ def run(
             "clock_tol_s": _CLOCK_TOL_S,
             "ambiguity_gap_s": _AMBIGUITY_GAP_S,
             "sweep": bool(sweep),
-            "z_compare": bool(z_compare and cache_dir),
+            "z_compare": bool(z_compare and cache_root),
             "debug_shots": bool(debug_shots),
             "tracking_limit": tracking_limit,
         },
@@ -794,7 +799,7 @@ def run(
     sweep_rows, zcmp_rows = [], []
     debug_store: dict[tuple[str, int], dict] = {}
     seen_vocab: set = set()
-    for k in res.keys:
+    for k in res.shard_keys:
         shard = pd.read_parquet(shard_path(res.shard_dir, k))
         for rec in shard.to_dict("records"):
             bundle = json.loads(rec["payload"])

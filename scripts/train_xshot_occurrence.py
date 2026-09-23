@@ -75,16 +75,11 @@ def _iter_matches_from_dir(data_dir: Path):
         yield prov, game_dir.name, shots, frames, frames["team_id"].dropna().iloc[0]
 
 
-def _iter_matches_from_pining(providers, max_per_provider, match_ids=None, cache_dir=None):
-    sys.path.insert(0, "scripts")
-    from _loader_pining import load_matches
-
-    yield from load_matches(
-        providers=providers,
-        match_ids=match_ids,
-        max_per_provider=max_per_provider,
-        cache_dir=cache_dir,
-    )
+def _source_key(item):
+    """The `for_each` key for BOTH sources: a `MatchRef` (pining) -> its `.key`, a --data-dir tuple
+    -> `(provider, match_id)`. Module-level so the key-pin gate can see it (_KEY_EXCEPTIONS)."""
+    key = getattr(item, "key", None)
+    return key if key is not None else (str(item[0]), str(item[1]))
 
 
 #: The four per-row arrays `_extract` returns alongside the feature matrix, carried as COLUMNS so
@@ -94,7 +89,7 @@ _SIDE_COLS = ("_y", "_group", "_provider", "_match_id")
 
 
 def _extract(
-    source, horizon_seconds, *, shard_root, feature_set: XShotFeatureSet = "faithful"
+    source, horizon_seconds, *, shard_root, feature_set: XShotFeatureSet = "faithful", load=None
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     from scripts._driver import for_each, shard_path
     from silly_kicks.tracking._ball_carrier import DEFAULT_CARRIER_PARAMS
@@ -113,7 +108,7 @@ def _extract(
         raise ValueError(f"side columns {sorted(collision)} collide with feature names")
 
     def _work(item):
-        prov, mid, actions_or_shots, frames, home = item
+        prov, mid, actions_or_shots, frames, home, *_ = item
         X, y, groups = prepare_xshot_training_data(
             frames,
             actions_or_shots,
@@ -139,7 +134,8 @@ def _extract(
     # `calibrate_xt_bandwidth`). A crash at match 70 of 80 now costs 10 matches, not 80.
     res = for_each(
         source,
-        key=lambda item: (str(item[0]), str(item[1])),
+        key=_source_key,
+        load=load,
         work=_work,
         shard_root=shard_root,
         # What determines a shard's CONTENT: the extractor, the label horizon, the domain filter,
@@ -163,7 +159,7 @@ def _extract(
 
     # Combined from THIS PASS'S keys, not `_driver.reconcile`: no partition surface here, so a
     # whole-generation read would fold in matches from a wider earlier run. See its docstring.
-    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
     if not parts:
         raise SystemExit("No usable training data.")
     combined = pd.concat(parts, ignore_index=True)
@@ -452,16 +448,22 @@ def main(argv=None) -> None:
     else:
         if args.providers:
             allowlist = json.load(open(args.match_ids_json)) if args.match_ids_json else None
-            source = _iter_matches_from_pining(
-                args.providers.split(","), args.max_per_provider, allowlist, cache_dir=args.cache_dir
+            sys.path.insert(0, "scripts")
+            from _loader_pining import pining_source
+
+            source, load = pining_source(
+                args.providers.split(","),
+                max_per_provider=args.max_per_provider,
+                match_ids=allowlist,
+                cache_dir=args.cache_dir,
             )
         else:
-            source = _iter_matches_from_dir(Path(args.data_dir))
+            source, load = _iter_matches_from_dir(Path(args.data_dir)), None
         t0 = time.time()
         # Shards live BESIDE the feature cache, under the same per-corpus `--output-dir`, so the
         # "fresh --output-dir per corpus" discipline the fingerprint enforces covers them too.
         X, y, groups, providers, match_ids = _extract(
-            source, args.horizon_seconds, shard_root=art / "shards", feature_set=args.feature_set
+            source, args.horizon_seconds, shard_root=art / "shards", feature_set=args.feature_set, load=load
         )
         print(f"Extracted {len(X)} rows ({int(y.sum())} positives) in {time.time() - t0:.0f}s")
         cache.mkdir(parents=True, exist_ok=True)
