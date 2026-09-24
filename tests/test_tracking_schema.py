@@ -14,8 +14,9 @@ from silly_kicks.tracking.schema import (
 )
 
 
-def test_tracking_frames_columns_is_20_columns():
-    assert len(TRACKING_FRAMES_COLUMNS) == 20
+def test_tracking_frames_columns_is_19_columns():
+    # ADR-103: `confidence` dropped (all-null on every provider).
+    assert len(TRACKING_FRAMES_COLUMNS) == 19
 
 
 def test_tracking_frames_columns_required_keys():
@@ -36,12 +37,24 @@ def test_tracking_frames_columns_required_keys():
         "speed_source",
         "ball_state",
         "team_attacking_direction",
-        "confidence",
         "visibility",
         "source_provider",
         "is_goalkeeper_source",
     }
     assert set(TRACKING_FRAMES_COLUMNS) == expected
+    assert "confidence" not in TRACKING_FRAMES_COLUMNS
+
+
+def test_static_low_cardinality_columns_are_category():
+    # ADR-103: only STATIC set-once low-card columns are category (dynamic ones stay object --
+    # category is not transparent to setitem/fillna; see feedback_category_dtype_only_for_static_columns).
+    for col in ("ball_state", "source_provider", "is_goalkeeper_source"):
+        assert TRACKING_FRAMES_COLUMNS[col] == "category", col
+
+
+def test_dynamic_low_cardinality_columns_stay_object():
+    for col in ("team_attacking_direction", "speed_source", "visibility"):
+        assert TRACKING_FRAMES_COLUMNS[col] == "object", col
 
 
 def test_kloppy_variant_overrides_identifiers_to_object():

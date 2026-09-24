@@ -476,7 +476,7 @@ def link_actions_to_frames(
     per_provider: dict[str, float] = {}
     if n_linked > 0:
         provider_col = merged_all.loc[merged_all["frame_id"].notna(), "source_provider"]
-        for prov, count in provider_col.value_counts().items():
+        for prov, count in provider_col.astype("object").value_counts().items():
             per_provider[str(prov)] = float(count) / n_in
     max_off = float(time_offset.abs().max()) if n_linked > 0 else 0.0
 
@@ -830,7 +830,9 @@ def validate_velocity_regime(
     has_marker = "speed_source" in frames.columns
     counts: dict[str, int] = {}
     if has_marker:
-        counts = {str(k): int(v) for k, v in frames["speed_source"].value_counts(dropna=False).items()}
+        # .astype("object"): no-op now (speed_source is a dynamic object column, ADR-103), kept uniform
+        # with the category-guarded provider site (line ~479) against the value_counts zero-count trap.
+        counts = {str(k): int(v) for k, v in frames["speed_source"].astype("object").value_counts(dropna=False).items()}
     has_cols = "vx" in frames.columns and "vy" in frames.columns
 
     n = len(frames)

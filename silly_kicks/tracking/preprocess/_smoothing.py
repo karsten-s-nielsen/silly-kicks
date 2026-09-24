@@ -135,6 +135,10 @@ def smooth_frames(
     sorted_frames["y_smoothed"] = y_smoothed
 
     sorted_frames = sorted_frames.iloc[np.argsort(original_index)].reset_index(drop=True)
-    sorted_frames["_preprocessed_with"] = tag
+    # ADR-103 F1a: `category` -- a match-constant string across every row (the single biggest object
+    # column, ~210 MB on a GS half). Static/set-once (only re-stamped whole-column by an idempotent
+    # re-run; reflect leaves it as an "invariant" kind), so `category` is safe here (unlike the dynamic
+    # team_attacking_direction/speed_source/visibility). See feedback_category_dtype_only_for_static_columns.
+    sorted_frames["_preprocessed_with"] = pd.Categorical([tag] * len(sorted_frames))
     sorted_frames.attrs["preprocess"] = tag
     return sorted_frames

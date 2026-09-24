@@ -150,7 +150,6 @@ def convert_to_frames(
                     "speed_source": "native" if pdata.speed is not None else None,
                     "ball_state": ball_state_str,
                     "team_attacking_direction": "ltr" if is_home else "rtl",
-                    "confidence": None,
                     "visibility": None,
                     "source_provider": provider_name,
                 }
@@ -176,7 +175,6 @@ def convert_to_frames(
                     "speed_source": "native" if frame.ball_speed is not None else None,
                     "ball_state": ball_state_str,
                     "team_attacking_direction": None,
-                    "confidence": None,
                     "visibility": None,
                     "source_provider": provider_name,
                 }
@@ -218,6 +216,8 @@ def convert_to_frames(
             final[col] = final[col].astype("bool")
         elif dtype_str in {"int64", "float64"}:
             final[col] = pd.to_numeric(final[col], errors="coerce").astype(dtype_str)  # type: ignore[arg-type]
+        elif dtype_str == "category":
+            final[col] = final[col].astype("category")
         elif dtype_str == "object":
             final[col] = final[col].astype(object)
 

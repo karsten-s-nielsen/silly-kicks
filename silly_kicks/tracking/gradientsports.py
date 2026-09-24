@@ -139,7 +139,6 @@ def convert_to_frames(
     out["speed"] = out["speed_native"].astype("float64")
     speed_source: list[object] = ["native" if pd.notna(v) else None for v in out["speed"]]
     out["speed_source"] = pd.Series(speed_source, index=out.index, dtype="object")
-    out["confidence"] = None
     out["visibility"] = None
     out["source_provider"] = _PROVIDER_NAME
     out["is_goalkeeper_source"] = "native"
@@ -152,6 +151,8 @@ def convert_to_frames(
             final[col] = final[col].astype("Int64")
         elif dtype_str in {"int64", "float64"}:
             final[col] = pd.to_numeric(final[col], errors="coerce").astype(dtype_str)  # type: ignore[arg-type]
+        elif dtype_str == "category":
+            final[col] = final[col].astype("category")
         elif dtype_str == "object":
             final[col] = final[col].astype(object)
 

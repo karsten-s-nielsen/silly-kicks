@@ -62,7 +62,6 @@ def _empty_tracking_frames() -> pd.DataFrame:
         "speed_source",
         "ball_state",
         "team_attacking_direction",
-        "confidence",
         "visibility",
         "source_provider",
     ]
