@@ -178,7 +178,6 @@ def convert_to_frames(
     # frame. See tracking/skillcorner.py for the full rationale (same ADR-034 native-builder class).
     df["ball_state"] = "alive"
     df["team_attacking_direction"] = None
-    df["confidence"] = None
     df["speed"] = np.nan
     df["speed_source"] = None
     # CLOCK: Metrica sample games use MIXED raw clocks (continuous vs period-relative ---
@@ -220,6 +219,8 @@ def convert_to_frames(
             final[c] = final[c].astype("bool")
         elif dt in {"int64", "float64"}:
             final[c] = pd.to_numeric(final[c], errors="coerce").astype(dt)  # type: ignore[arg-type]
+        elif dt == "category":
+            final[c] = final[c].astype("category")
         else:
             final[c] = final[c].astype(object)
 

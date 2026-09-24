@@ -5,6 +5,26 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.125.0] — 2026-09-24
+
+### Changed — tracking-frame memory & pitch-control performance (PR-S197, ADR-103)
+
+Response to the lakehouse per-unit tracking-scorer OOM handoff. Value-neutral and parity-gated throughout: **no VAEP/tracking retrain, no re-materialize, C4-free** (no new subpackage/aggregator/model; the action-coupled aggregator count stays 33).
+
+- **F1a — `category` the STATIC low-cardinality frame columns + drop the dead `confidence` column (~2× frame memory).** `TRACKING_FRAMES_COLUMNS` sets the set-once low-card columns `ball_state`, `source_provider`, `is_goalkeeper_source` (and preprocess's `_preprocessed_with`) to `"category"`, and drops the all-null `confidence` column (20 → 19 columns). The three columns mutated after build — `team_attacking_direction` (orientation flips it), `speed_source` (velocity derivation sets it), `visibility` (`_truthy_bool` `fillna("")`) — deliberately stay `"object"`: `category` is not transparent to setitem or `.fillna(<new value>)` (it raises `TypeError: Cannot setitem on a Categorical with a new category`), so category on a dynamic column would be a live crash, not a size win. Value-neutrality is proven byte-identical, including the `value_counts` sites (`LinkReport.per_provider_link_rate`, the `speed_source` velocity-counts dict), which cast `.astype("object")` first so a category domain wider than observed cannot leak zero-count keys into the result. Per-column memory drops ≥5×; the per-frame total is ≈2× (ids, float coordinates and the three retained object columns dominate) — deliberately not the ~6× of a full-category/id/float32 rewrite, which would carry a retrain (deferred as F1b).
+- **F5 — `PitchControlCache(maxsize=N)` bounded LRU.** The cache gains an optional `maxsize` (default `None` = unbounded, byte-identical to prior behaviour); when set it evicts least-recently-used surfaces, so a long per-unit pass no longer grows the surface cache without bound.
+- **F6 — one shared `PitchControlCache` spans exactly the two pitch-control scorers.** Documented + contract-tested that `value_off_ball_runs` and `compute_rest_defense` both accept `pitch_control_cache=` (so one cache serves both), while `add_defensive_credit` takes no cache — it is pitch-control-free, correcting the handoff's "3–4× recompute" premise (there was nothing to thread).
+
+### Added — batched pitch-control API (PR-S197, ADR-103)
+
+- **`compute_pitch_control_batch(frames, requests, *, method, params)` + `PitchControlCache.warm(...)`.** A group-once/dedup batched entry point (`PitchControlRequest = ((game_id, period_id, frame_id), team, decompose)`), parity-gated **byte-identical** to the per-frame `compute_pitch_control` loop across both methods × `decompose` T/F. This is the seam a future vectorized cross-sample spearman kernel plugs into; it ships no such kernel (deferred with F4).
+
+### Deferred (owner-approved, not in this cycle)
+
+- **F3 (rest_defense layer-2 pitch-control batching) DROPPED** — its warm-routing was measured to be a memory regression with no CPU win.
+- **F4 (bounded-memory streaming) + the vectorized spearman kernel** — next cycle.
+- **F1b (float32 coordinates + id→category + off-frame provenance)** — carries a retrain; a later cycle.
+
 ## [4.124.0] — 2026-09-24
 
 ### Changed — corpus drivers RESUME BEFORE LOAD; every corpus-load loop is CI-gated (PR-S196, ADR-052 D13/D14/D15 + ADR-102 amendments)

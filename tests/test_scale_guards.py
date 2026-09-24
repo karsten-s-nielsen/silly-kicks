@@ -210,6 +210,93 @@ def test_compute_match_outcome_is_subquadratic():
     assert_subquadratic_growth(measure, sizes=(32, 64, 128), label="compute_match_outcome")
 
 
+# ============================ ADR-103 F2: batched pitch control ============================
+def _batch_pc_frames(n_frames):
+    # n DISTINCT frames (one game/period, frame_id 1..n) -> n distinct requests, one per frame, so the
+    # batch loop-iteration count == n. group_rows is built ONCE and `.get` per request is linear; a
+    # per-request `frames[frames.frame_id==fid]` rescan would be O(requests * frames) == quadratic.
+    rows = []
+    for fid in range(1, n_frames + 1):
+        rows += [
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                is_ball=False,
+                is_goalkeeper=False,
+                team_id=1,
+                player_id=10,
+                x=30.0,
+                y=34.0,
+                vx=0.0,
+                vy=0.0,
+            ),
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                is_ball=False,
+                is_goalkeeper=False,
+                team_id=2,
+                player_id=20,
+                x=70.0,
+                y=34.0,
+                vx=0.0,
+                vy=0.0,
+            ),
+            dict(
+                game_id=1,
+                period_id=1,
+                frame_id=fid,
+                is_ball=True,
+                is_goalkeeper=False,
+                team_id=np.nan,
+                player_id=np.nan,
+                x=50.0,
+                y=34.0,
+                vx=0.0,
+                vy=0.0,
+            ),
+        ]
+    return pd.DataFrame(rows)
+
+
+def test_compute_pitch_control_batch_is_subquadratic(monkeypatch):
+    from silly_kicks.tracking.pitch_control import _dispatch
+
+    # Isolate the group_rows request-loop lookup (the super-linear-suspect op): stub the per-frame
+    # surface compute to a no-op so the counter measures ONLY the frame lookup, not the grid math
+    # (ADR-073: a SCOPED counter isolating the suspect op).
+    monkeypatch.setattr(_dispatch, "compute_pitch_control", lambda *a, **k: object())
+
+    def measure(n):
+        frames = _batch_pc_frames(n)
+        reqs = [((1, 1, fid), 1, False) for fid in range(1, n + 1)]
+        with rows_scanned_counter() as c:
+            _dispatch.compute_pitch_control_batch(frames, reqs, method="spearman")
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="compute_pitch_control_batch")
+
+
+def test_cache_warm_is_subquadratic(monkeypatch):
+    from silly_kicks.tracking.pitch_control import _cache, _dispatch
+
+    # warm() calls compute_pitch_control_batch (group_rows once) AND does its own group_rows(frames)
+    # + .get per request. Stub the surface compute so the counter measures ONLY the frame lookups; a
+    # per-request rescan on either group_rows call would be O(requests*frames) == quadratic.
+    monkeypatch.setattr(_dispatch, "compute_pitch_control", lambda *a, **k: object())
+
+    def measure(n):
+        frames = _batch_pc_frames(n)
+        reqs = [((1, 1, fid), 1, False) for fid in range(1, n + 1)]
+        with rows_scanned_counter() as c:
+            _cache.PitchControlCache().warm(frames, reqs, method="spearman")
+        return c["n"]
+
+    assert_subquadratic_growth(measure, sizes=(256, 1024, 4096), label="cache_warm")
+
+
 # ============================ #9 turnover (counting-array, inner-j) ============================
 class _CountingArray:
     """1-D array wrapper counting element reads -- proxy for inner-scan work (spec Section 4.2)."""

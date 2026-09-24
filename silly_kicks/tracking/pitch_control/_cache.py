@@ -20,6 +20,8 @@ docs/superpowers/specs/2026-05-05-tf7-pitch-control-design.md.
 
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import pandas as pd
 
 from ._dispatch import compute_pitch_control
@@ -41,8 +43,15 @@ class PitchControlCache:
         s1 is s2  # -> True
     """
 
-    def __init__(self) -> None:
-        self._store: dict = {}
+    def __init__(self, maxsize: int | None = None) -> None:
+        """``maxsize=None`` (default) is unbounded — byte-identical to the historical cache. A positive
+        ``maxsize`` bounds retained surfaces with LRU eviction (ADR-103 F5): a whole-unit scorer can
+        thus cap peak memory instead of accumulating one surface per distinct frame. ``decompose=True``
+        surfaces are the per-surface memory driver (they retain per-player grids); pass
+        ``decompose=False`` for the aggregate-only surface when per-player decomposition is not needed.
+        """
+        self._store: OrderedDict = OrderedDict()
+        self._maxsize = maxsize
 
     def __len__(self) -> int:
         """Number of memoized surfaces (canonical frames only).
@@ -86,6 +95,7 @@ class PitchControlCache:
         """
         key = self._key(frame, attacking_team_id, method, params, decompose, ball_position)
         if key is not None and key in self._store:
+            self._store.move_to_end(key)  # LRU: most-recently-used
             return self._store[key]
         surface = compute_pitch_control(
             frame,
@@ -97,7 +107,50 @@ class PitchControlCache:
         )
         if key is not None:
             self._store[key] = surface
+            if self._maxsize is not None and len(self._store) > self._maxsize:
+                self._store.popitem(last=False)  # evict least-recently-used
         return surface
+
+    def warm(
+        self,
+        frames: pd.DataFrame,
+        requests: list,
+        *,
+        method: Method = "spearman",
+        params: PitchControlParams | None = None,
+    ) -> None:
+        """Batch-populate the cache for a whole unit (ADR-103 F2/F5).
+
+        ``requests`` is a list of ``((game_id, period_id, frame_id), attacking_team_id, decompose)``.
+        Computes them via :func:`compute_pitch_control_batch` (one grouping pass, duplicates once) and
+        stores each under its canonical key, so subsequent :meth:`surface` calls on those frames HIT.
+        Honours ``maxsize`` (LRU). A cache miss on a later ``surface`` call is still served correctly.
+
+        Examples
+        --------
+        Pre-populate a shared cache for a unit, then read surfaces back as hits::
+
+            cache = PitchControlCache()
+            cache.warm(frames, [((1, 1, 10), 1, True), ((1, 1, 11), 1, False)])
+            s = cache.surface(frame_10, attacking_team_id=1, decompose=True)  # cache hit
+        """
+        from silly_kicks._frame_index import group_rows
+
+        from ._dispatch import compute_pitch_control_batch
+
+        if not requests:
+            return
+        surfaces = compute_pitch_control_batch(frames, requests, method=method, params=params)
+        groups = group_rows(frames, ("game_id", "period_id", "frame_id"))
+        for (frame_key, attacking_team_id, decompose), surface in zip(requests, surfaces, strict=True):
+            frame = groups.get(*frame_key)
+            key = self._key(frame, attacking_team_id, method, params, bool(decompose), None)
+            if key is None:
+                continue
+            self._store[key] = surface
+            self._store.move_to_end(key)
+            if self._maxsize is not None and len(self._store) > self._maxsize:
+                self._store.popitem(last=False)
 
     @staticmethod
     def _key(

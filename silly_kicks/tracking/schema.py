@@ -30,14 +30,26 @@ TRACKING_FRAMES_COLUMNS: dict[str, str] = {
     "y": "float64",
     "z": "float64",
     "speed": "float64",
+    # ADR-103 F1a: only STATIC, set-once low-cardinality columns are `category` (int codes + tiny dict,
+    # ~30-50x smaller than object over a match's rows) -- value-transparent for ==/.dropna()/pd.unique/
+    # presence. DYNAMIC columns that are mutated post-build stay `object`, because `category` is NOT
+    # transparent to setitem OR `.fillna(new_value)` (assigning a non-existing category raises): so
+    # `team_attacking_direction` (orientation .loc + reflect swap), `speed_source` (velocity .loc
+    # "derived"), and `visibility` (`_truthy_bool` fillna("")) stay object. Forcing them to category
+    # would need full-domain CategoricalDtype + a category-preserving orient/velocity/reflect chain --
+    # broad + permanently fragile for ~23% more memory; declined. `confidence` is DROPPED (all-null on
+    # every provider). `value_counts` on a category enumerates zero-count categories, so the
+    # source_provider site (tracking/utils.py:479) casts to object first. Provenance stays per-row (not
+    # off-frame): source_provider is read per-row for xt_gk variant selection + keeper linking,
+    # is_goalkeeper_source is per-keeper -- off-frame is F1b (retrain). See
+    # feedback_category_dtype_only_for_static_columns.
     # Kinematics provenance: "native" | "derived" | SPEED_SOURCE_UNAVAILABLE (see below).
     "speed_source": "object",
-    "ball_state": "object",
+    "ball_state": "category",
     "team_attacking_direction": "object",
-    "confidence": "object",
     "visibility": "object",
-    "source_provider": "object",
-    "is_goalkeeper_source": "object",
+    "source_provider": "category",
+    "is_goalkeeper_source": "category",
 }
 
 KLOPPY_TRACKING_FRAMES_COLUMNS: dict[str, str] = {

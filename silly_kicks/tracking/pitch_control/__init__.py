@@ -14,7 +14,12 @@ and ADR-008 for architectural decisions.
 from __future__ import annotations
 
 from ._cache import PitchControlCache
-from ._dispatch import compute_pitch_control, compute_pitch_control_at_points
+from ._dispatch import (
+    PitchControlRequest,
+    compute_pitch_control,
+    compute_pitch_control_at_points,
+    compute_pitch_control_batch,
+)
 from ._params import (
     FernandezBornnParams,
     Method,
@@ -31,11 +36,13 @@ __all__ = [
     "Method",
     "PitchControlCache",
     "PitchControlParams",
+    "PitchControlRequest",
     "PitchControlSurface",
     "SpearmanParams",
     "VoronoiParams",
     "compute_pitch_control",
     "compute_pitch_control_at_points",
+    "compute_pitch_control_batch",
     "compute_tti",
     "validate_params_for_method",
 ]

@@ -137,7 +137,6 @@ _TRACKING_REFLECTION_KINDS: dict[str, ReflectionKind] = {
     "is_goalkeeper": "invariant",
     "speed_source": "invariant",
     "ball_state": "invariant",
-    "confidence": "invariant",
     "visibility": "invariant",
     "source_provider": "invariant",
     "is_goalkeeper_source": "invariant",

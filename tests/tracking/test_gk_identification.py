@@ -59,11 +59,12 @@ class TestSchemaGkSourceColumn:
 
     def test_tracking_frames_columns_has_is_goalkeeper_source(self):
         assert "is_goalkeeper_source" in TRACKING_FRAMES_COLUMNS
-        assert TRACKING_FRAMES_COLUMNS["is_goalkeeper_source"] == "object"
+        # ADR-103: static set-once column -> category.
+        assert TRACKING_FRAMES_COLUMNS["is_goalkeeper_source"] == "category"
 
     def test_kloppy_tracking_frames_columns_inherits_is_goalkeeper_source(self):
         assert "is_goalkeeper_source" in KLOPPY_TRACKING_FRAMES_COLUMNS
-        assert KLOPPY_TRACKING_FRAMES_COLUMNS["is_goalkeeper_source"] == "object"
+        assert KLOPPY_TRACKING_FRAMES_COLUMNS["is_goalkeeper_source"] == "category"
 
     def test_sportec_tracking_frames_columns_inherits_is_goalkeeper_source(self):
         assert "is_goalkeeper_source" in SPORTEC_TRACKING_FRAMES_COLUMNS
