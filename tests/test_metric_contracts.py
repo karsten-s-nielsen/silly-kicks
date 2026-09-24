@@ -40,6 +40,12 @@ _PKG: dict[str, tuple[str, str, str, str | None]] = {
     "territory": ("silly_kicks.territory", "TERRITORY_KEYS", "TERRITORY_METRIC_COLUMNS", "TERRITORY_COLUMNS"),
     "duels": ("silly_kicks.duels", "DUEL_KEYS", "DUEL_METRIC_COLUMNS", "DUEL_COLUMNS"),
     "restdefense": ("silly_kicks.restdefense", "RD_SAMPLE_KEYS", "RD_METRIC_COLUMNS", None),
+    "positioning": (
+        "silly_kicks.positioning",
+        "POSITIONING_KEYS",
+        "POSITIONING_METRIC_COLUMNS",
+        "POSITIONING_SAMPLE_COLUMNS",
+    ),
 }
 
 #: xsuccess is a VAEP rating method (TF-61) with no mart column-set -> deliberately not in the registry.

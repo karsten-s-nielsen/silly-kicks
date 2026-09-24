@@ -881,6 +881,16 @@ def _tracking_primitive_entries() -> list[IdScalarEntry]:
             "silly_kicks.tracking.pitch_control._dispatch.compute_pitch_control_at_points",
             lambda s: T.compute_pitch_control_at_points(single_frame(), np.array([[50.0, 34.0], [80.0, 40.0]]), s),
         ),
+        _e(
+            # TF-56: newly public (exported for positioning.PressureObjective). The id scalar is the
+            # TARGET player_id (2nd positional), resolved via `ids_match(players["player_id"], s)`;
+            # `andrienko_oval` needs no velocity, so a positions-only frame suffices. matched=10 is a
+            # real player in tracking_frames(), so 10 / "10" / 10.0 all select the same row -> identical.
+            "silly_kicks.tracking.features.pressure_on_target",
+            lambda s: T.pressure_on_target(tracking_frames(), s, method="andrienko_oval"),
+            matched=10,
+            mismatched=as_str(10),
+        ),
     ]
 
 

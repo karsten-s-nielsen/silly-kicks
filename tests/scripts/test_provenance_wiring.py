@@ -189,6 +189,12 @@ ARTIFACT_DRIVERS = (
     # events-only admission layer reads. Its per-cell / boundary numbers are cited, so the tree it ran
     # on is recorded. Owner-run on the DGX from the clean commit-1 SHA (spec section 8/9).
     "build_skillcorner_s1_event_validity",
+    # TF-56 prescriptive positioning-gap construct-validity / responsiveness battery. Walks a bounded
+    # velocity-bearing tracking corpus (`load_matches`) with a within-corpus-fit xT and writes
+    # docs/research/tf56_positioning/metrics.json (the pooled Layer-0/1 verdicts + discrimination /
+    # non-degeneracy + the GO/NO-GO composite that DECIDES the metric column's ship status) -- a cited
+    # number over external data; owner-run. No bundled weights (pure solver).
+    "build_tf56_positioning_validity",
 )
 
 
