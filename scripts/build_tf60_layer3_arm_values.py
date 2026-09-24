@@ -6,21 +6,21 @@ two Layer-1 anchor KPIs the pre-registered Spearman test correlates against (rd_
 rd_compactness_x), and the resolved keeper the keeper arm belongs to (keeper_key) -- exactly what the
 locked anchor needs (outfield arm vs superiority / -compactness; keeper arm named-set Mann-Whitney).
 
-xT is fit ONCE on the whole loaded corpus and injected, the ESTABLISHED convention for a
-reported-not-gated corpus measurement driver that needs an ExpectedThreat (see
-measure_cover_shadow_argmax_agreement.py: silly-kicks ships no xT model and ExpectedThreat has no
-save/load, so a one-surface corpus fit is how a metric like this obtains one). The one-surface fit is
-a genuine cross-item barrier -- no match can be scored until every match's actions have been read --
-so this driver materializes the loaded corpus and for_each walks the list (the load is re-paid on a
-resume; the per-match arm MEASUREMENT is what a resume skips, and that is the expensive part).
+xT is fit ONCE on the corpus and injected, the ESTABLISHED convention for a reported-not-gated corpus
+measurement driver that needs an ExpectedThreat. The fit is a cross-item barrier -- no match can be
+scored until every match's actions are read -- but xT is EVENT-ONLY and its per-match zone counts are
+ADDITIVE (ADR-102), so it is a resumable count pass (scripts/_xt_corpus.py): each match's sparse zone
+counts become a shard, the reduce sums them and calls fit_from_counts (byte-identical to a pooled
+fit). The arm MEASUREMENT is the expensive per-match step, and it runs as its own resume-before-load
+for_each pass over match refs, so neither the fit nor the arms re-load a finished match on a resume.
 
 The arm MEASUREMENT (DAS-bound, ~minutes/match) dominates, and a single process holding the whole
 corpus's frames does not fit in memory at corpus scale. So a parallel run is decoupled into a FIT step
-(--xt-out: stream the corpus, keep only actions, fit ONE ExpectedThreat, write it as npz) and N ARMS
-workers (--xt-in: each loads the shared surface + its own --match-ids-json slice's frames only). All
+(--xt-out: run the events-only count pass, reduce to ONE ExpectedThreat, write it as npz) and N ARMS
+workers (--xt-in: each loads the shared surface + only its own --match-ids-json slice's frames). All
 workers digest the SAME full-corpus token, so they write into ONE shard generation and combine (ADR-052).
 The npz keeps the surface pickle-free (ADR-011); singh_counts is deterministic so its grids are the
-whole model. A plain single-process run (no --xt-*) still fits xT inline, unchanged.
+whole model. A plain single-process run (no --xt-*) fits xT inline via the same count pass.
 
 Two correctness constraints inherited from the arms (both load-bearing):
 * No PitchControlCache: it keys on frame IDENTITY and excludes player positions, so a ghost frame --
@@ -333,14 +333,26 @@ def main() -> None:
             "shared generation and the shards combine."
         ),
     )
+    ap.add_argument("--cache-dir", default=None, help="raw-artifact cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)")
+    ap.add_argument(
+        "--allow-failed",
+        action="store_true",
+        help="fit the xT surface without matches that FAILED the count pass (recorded in provenance)",
+    )
+    ap.add_argument(
+        "--allow-unmeasured",
+        action="store_true",
+        help="admit unmeasured SkillCorner matches into the events-only xT fit (recorded)",
+    )
     args = ap.parse_args()
 
     import pandas as pd
 
-    from scripts._loader_pining import load_matches
+    from scripts._events_admission import events_only_loader
+    from scripts._loader_pining import list_match_refs, pining_source, resolve_cache_dir
     from scripts._provenance import git_provenance, require_clean_tree
+    from scripts._xt_corpus import fit_xt_from_count_pass, xt_count_pass
     from silly_kicks.tracking import GhostGkModel, GhostOutfieldModel
-    from silly_kicks.xthreat import ExpectedThreat
 
     if not args.list_matches and not args.out:
         raise SystemExit("--out is required unless --list-matches is given")
@@ -363,56 +375,57 @@ def main() -> None:
     from scripts._partition import providers_for_slice
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
+    providers = providers_for_slice(args.providers.split(","), match_ids)
+    cache_dir = resolve_cache_dir(args.cache_dir)
 
-    # --- FIT step (--xt-out): load actions ONLY, fit one xT, write {xt, corpus_ids} npz, exit. Frames are
-    # discarded per match (never accumulated), so the fit step does not carry the whole-corpus frame set
-    # in memory -- the OOM that a single-process arm run hits. ---
+    def _fit_xt_and_ids():
+        """Fit ONE ExpectedThreat via an EVENTS-ONLY count pass; return (xt, corpus match ids).
+
+        xT is event-only and its per-match zone counts are additive (ADR-102), so the fit is a
+        resumable, byte-identical-to-pooled count pass (scripts/_xt_corpus.py) rather than a
+        whole-corpus materialization. gradientsports needs no admission artifact; a SkillCorner slice
+        routes through events_only_loader's admission gate (--allow-unmeasured admits + records).
+        """
+        fit_refs = list_match_refs(providers=providers, match_ids=match_ids, max_per_provider=args.max_per_provider)
+        ev_load, admission = events_only_loader(fit_refs, cache_dir=cache_dir, allow_unmeasured=args.allow_unmeasured)
+        fit_res = xt_count_pass(
+            fit_refs,
+            key=lambda r: r.key,
+            load_actions=lambda r: ev_load(r).actions,
+            shard_root=Path(args.out) / "xt_fit_shards",
+            token_inputs={"fit_corpus": sorted(f"{r.provider}__{r.match_id}" for r in fit_refs)},
+        )
+        xt, prov_xt = fit_xt_from_count_pass(fit_res, allow_failed=args.allow_failed, admission=admission)
+        ids = sorted(k.split("__", 1)[1] for k in prov_xt.fit_keys)
+        return xt, ids
+
+    # --- FIT step (--xt-out): reduce the events-only count pass to ONE xT, write {xt, corpus_ids} npz,
+    # exit. No frames are ever loaded, so the fit step cannot OOM. ---
     if args.xt_out:
-        fit_actions: list = []
-        fit_ids: list = []
-        for _provider, match_id, actions, _frames, _home in load_matches(
-            providers=providers_for_slice(args.providers.split(","), match_ids),
-            match_ids=match_ids,
-            max_per_provider=args.max_per_provider,
-            tracking_limit=args.tracking_limit,
-        ):
-            fit_actions.append(actions)
-            fit_ids.append(str(match_id))
-        if not fit_actions:
-            raise SystemExit("no matches loaded for the xT fit")
-        xt = ExpectedThreat()
-        xt.fit(pd.concat(fit_actions, ignore_index=True))
+        xt, fit_ids = _fit_xt_and_ids()
         _dump_xt_npz(xt, fit_ids, Path(args.xt_out))
         print(f"fit xT on {len(fit_ids)} matches -> {args.xt_out}")
         return
 
-    # --- ARMS step: materialize the (possibly sliced) matches. The xT surface is fit ONCE on the whole
-    # corpus -- a cross-item barrier -- so a single process cannot stream it; --xt-in decouples that fit so
-    # N workers share ONE surface (each still loads only its own slice's frames -> no whole-corpus OOM). ---
-    all_actions: list = []
-    loaded: list = []
-    for _provider, match_id, actions, frames, home in load_matches(
-        providers=providers_for_slice(args.providers.split(","), match_ids),
+    # --- ARMS step: a resume-before-load for_each pass over match refs (each worker loads only its own
+    # --match-ids-json slice's frames -> no whole-corpus OOM). The xT surface is fit ONCE -- inline via
+    # the same count pass, or loaded from the shared --xt-in npz a --xt-out step already fit. ---
+    refs, load = pining_source(
+        providers=providers,
         match_ids=match_ids,
         max_per_provider=args.max_per_provider,
         tracking_limit=args.tracking_limit,
-    ):
-        all_actions.append(actions)
-        loaded.append((match_id, actions, frames, home))
-
-    if not loaded:
+        cache_dir=cache_dir,
+    )
+    if not refs:
         raise SystemExit("no matches loaded")
 
-    # The established convention (measure_cover_shadow_argmax_agreement.py): ONE ExpectedThreat serves every
-    # match. Fit it here, OR load the shared surface a --xt-out step already fit on the FULL corpus. The
-    # shared surface's corpus_ids -- not this worker's slice -- key the generation, so parallel workers all
-    # write into one shard generation and combine.
+    # The shared surface's corpus_ids -- not this worker's slice -- key the generation, so parallel
+    # workers all write into one shard generation and combine.
     if args.xt_in:
         xt, token_corpus_ids = _load_xt_npz(Path(args.xt_in))
     else:
-        xt = ExpectedThreat()
-        xt.fit(pd.concat(all_actions, ignore_index=True))
-        token_corpus_ids = sorted(str(m) for m, _a, _f, _h in loaded)
+        xt, token_corpus_ids = _fit_xt_and_ids()
 
     outfield_model = GhostOutfieldModel.from_variant("default")
     gk_model = GhostGkModel.from_variant("sweeper")
@@ -420,12 +433,11 @@ def main() -> None:
     _last_report: dict = {}
 
     def _work(item):
-        match_id, actions, frames, home = item
         shard = measure_match(
-            match_id,
-            actions,
-            frames,
-            home_team_id=home,
+            item.match_id,
+            item.actions,
+            item.frames,
+            home_team_id=item.home_team_id,
             xt=xt,
             ghost_outfield_model=outfield_model,
             ghost_gk_model=gk_model,
@@ -444,16 +456,17 @@ def main() -> None:
     worker_tag = _worker_tag(args.match_ids_json)
     dest = Path(args.out)
     res = for_each(
-        loaded,
-        key=lambda item: (str(args.providers.split(",")[0]), str(item[0])),
+        refs,
+        key=lambda ref: ref.key,
         work=_work,
+        load=load,
         counters=lambda _item, _frame: dict(_last_report),
         shard_root=dest / "shards",
         token_inputs={
-            # The xT surface is fit on exactly the LOADED corpus and feeds both arms, so the FULL corpus
-            # match ids belong in the token (a --max-per-provider run reusing a wider surface's shards
-            # would mix two threat models). Under a parallel run this is the SHARED --xt-in corpus, not
-            # this worker's slice -- so every worker digests the identical surface, resolves to ONE shard
+            # The xT surface is fit on exactly this corpus and feeds both arms, so the FULL corpus match
+            # ids belong in the token (a --max-per-provider run reusing a wider surface's shards would
+            # mix two threat models). Under a parallel run this is the SHARED --xt-in corpus, not this
+            # worker's slice -- so every worker digests the identical surface, resolves to ONE shard
             # generation, and their per-match shards combine (ADR-052: the token names the surface; the
             # per-worker slice is a selector outside it, making the generation a superset of any one run).
             "match_ids": sorted(token_corpus_ids),

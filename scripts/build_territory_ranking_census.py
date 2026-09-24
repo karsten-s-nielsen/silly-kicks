@@ -362,6 +362,8 @@ def input_contract() -> dict:
 #: only, so renaming a column while leaving the token reuses stale shards.
 _SHARD_SCHEMA_VERSION = "territory-ranking-census-1"
 _EMITTED_SHARD_COLUMNS = ["game_id", "player_id", "team_id", _METRIC_COL, _VOLUME_COL]
+#: The fit-prepass shard schema + generation token (its own generation, disjoint from the score shards).
+_FIT_SHARD_SCHEMA_VERSION = "territory-ranking-census-fit-1"
 
 
 def _lineup_team_map(match_id: str) -> dict:
@@ -443,7 +445,7 @@ def _score_match(item, *, xt, completion_model) -> pd.DataFrame:
     """
     from silly_kicks.territory import compute_territorial_dominance
 
-    _provider, match_id, actions, _frames, _home = item
+    _provider, match_id, actions, *_ = item
     samples, _report = compute_territorial_dominance(
         actions, xt=xt, method="counterfactual", completion_model=completion_model
     )
@@ -494,28 +496,13 @@ def _fit_disjoint_models(fit_actions: list[pd.DataFrame]):
     return xt, completion_model
 
 
-def _corpus_matches(competitions, *, match_ids, max_matches):
-    """Chain every ``(competition_id, season_id)``'s open-data matches into ONE ``(match_id, actions)``
-    stream (mirrors ``validate_territory_counterfactual._corpus_matches``).
-
-    ``competitions`` is ``all_open_competitions()`` (the FULL public open manifest) under
-    ``--all-competitions`` or the ``--competitions-json`` override; the counterfactual metric is
-    event-only, so only ``(match_id, actions)`` is kept. ``max_matches`` caps the GLOBAL count across
-    every competition (a broad census wants the whole corpus by default).
-    """
-    from scripts._sb_open_data import load_open_data_matches
-
-    seen = 0
-    for competition_id, season_id in competitions:
-        for _provider, match_id, actions, _frames, _home in load_open_data_matches(
-            competition_id=competition_id,
-            season_id=season_id,
-            match_ids=(match_ids or {}).get("statsbomb"),
-        ):
-            yield str(match_id), actions
-            seen += 1
-            if max_matches is not None and seen >= max_matches:
-                return
+def _prune_actions_slice(actions: pd.DataFrame) -> pd.DataFrame:
+    """One fit-corpus match's actions pruned to their ``SPADL_COLUMNS`` intersection -- the fit-prepass
+    shard (ADR-052 Task 13). ``_fit_disjoint_models`` reads only SPADL-canonical columns, so pruning at
+    shard time drops non-canonical extras (lower peak fit memory) and re-pruning in ``_fit_disjoint_models``
+    is a byte-identical no-op."""
+    keep = [c for c in SPADL_COLUMNS if c in actions.columns]
+    return actions[keep].reset_index(drop=True)
 
 
 def main() -> None:
@@ -549,6 +536,9 @@ def main() -> None:
     ap.add_argument(
         "--match-ids-json", default=None, help='JSON ["3857276", ...] pinning WHICH matches (parallel split).'
     )
+    ap.add_argument(
+        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     ap.add_argument("--list-matches", action="store_true", help="print available scored match ids as JSON and exit")
     args = ap.parse_args()
@@ -560,12 +550,9 @@ def main() -> None:
             "combined with the single-competition --competition-id / --season-id selectors."
         )
 
+    from scripts._driver import for_each
     from scripts._provenance import git_provenance, require_clean_tree
-    from scripts._sb_open_data import (
-        all_open_competitions,
-        assert_statsbomb_open_data_mode,
-        load_open_data_matches,
-    )
+    from scripts._sb_open_data import all_open_competitions, assert_statsbomb_open_data_mode, open_data_source
 
     if not args.list_matches and not args.out:
         raise SystemExit("--out is required unless --list-matches is given")
@@ -580,80 +567,91 @@ def main() -> None:
 
     match_ids = json.loads(Path(args.match_ids_json).read_text(encoding="utf-8")) if args.match_ids_json else None
 
-    # Resolve the corpus. BROAD mode (--all-competitions / --competitions-json) chains EVERY
-    # (competition, season)'s matches so the ONE leakage-disjoint xt/completion fit below pools across
-    # the whole corpus (a crossed defender+team ICC needs defenders on >=2 teams, which only exist
-    # ACROSS competitions -- a single competition can only ever return "not licensed"). SINGLE mode
-    # (the default) keeps the historical WC2022 path, byte-identical.
+    # Resolve the corpus competitions. BROAD mode (--all-competitions / --competitions-json) pools across
+    # every (competition, season) so the ONE leakage-disjoint xt/completion fit below spans the whole
+    # corpus (a crossed defender+team ICC needs defenders on >=2 teams, which only exist ACROSS
+    # competitions). SINGLE mode (the default) keeps the historical WC2022 path, byte-identical.
     if broad_corpus:
         competitions = (
             [tuple(c) for c in json.loads(Path(args.competitions_json).read_text(encoding="utf-8"))]
             if args.competitions_json
             else all_open_competitions()
         )
-        corpus_source = _corpus_matches(competitions, match_ids=match_ids, max_matches=args.max_matches)
     else:
         competition_id = 43 if args.competition_id is None else args.competition_id
         season_id = 106 if args.season_id is None else args.season_id
-        corpus_source = (
-            (str(match_id), actions)
-            for _provider, match_id, actions, _frames, _home in load_open_data_matches(
-                competition_id=competition_id,
-                season_id=season_id,
-                match_ids=match_ids,
-                max_matches=args.max_matches,
-            )
-        )
+        competitions = [(competition_id, season_id)]
 
-    # Stream the corpus ONCE, keeping compact per-match (id, actions) -- the counterfactual metric is
-    # event-only (frames unused). Materialized so the leakage-disjoint split is deterministic. An
-    # explicit per-match loop (not a comprehension) so the ADR-052 corpus-driver resilience gate sees
-    # this as a corpus walker and asserts the for_each adoption below.
-    corpus: list[tuple[str, pd.DataFrame]] = []
-    for match_id, actions in corpus_source:
-        corpus.append((str(match_id), actions))
-    # Leakage-disjoint split: the first `fit_fraction` of the (sorted) matches fit xt/completion; the
-    # rest are scored. Deterministic (sorted by id) so a resume/partition sees the same split.
-    corpus.sort(key=lambda mi: mi[0])
-    n_fit = max(1, round(len(corpus) * args.fit_fraction)) if corpus else 0
-    fit_matches, score_matches = corpus[:n_fit], corpus[n_fit:]
+    refs, load = open_data_source(
+        competitions,
+        match_ids=(match_ids or {}).get("statsbomb"),
+        max_matches=args.max_matches,
+        cache_dir=args.cache_dir,
+    )
+    # Leakage-disjoint split: the first `fit_fraction` of the (sorted-by-id) refs fit xt/completion; the
+    # rest are scored. Deterministic (sorted by match id) so a resume/partition sees the same split.
+    refs_sorted = sorted(refs, key=lambda r: str(r.match_id))
+    n_fit = max(1, round(len(refs_sorted) * args.fit_fraction)) if refs_sorted else 0
+    fit_refs, score_refs = refs_sorted[:n_fit], refs_sorted[n_fit:]
 
     if args.list_matches:
-        print(json.dumps([mid for mid, _ in score_matches], indent=2))
+        print(json.dumps([str(r.match_id) for r in score_refs], indent=2))
         return
 
-    from scripts._driver import for_each
+    # The broad-corpus marker (4.77.1 stale-shard rule): a broad / narrowed generation must not collide
+    # with the single-competition one. None on the single path -> byte-identical historical token.
+    source_marker = None
+    if broad_corpus:
+        source_marker = (
+            "open-data-all"
+            if not args.competitions_json
+            else {"open-data-narrowed": sorted(tuple(c) for c in competitions)}
+        )
 
     dest = Path(args.out)
-    xt, completion_model = _fit_disjoint_models([a for _mid, a in fit_matches])
-    score_by_id = dict(score_matches)
 
-    def _work(mid: str) -> pd.DataFrame:
-        actions = score_by_id[mid]
-        return _score_match(("statsbomb", mid, actions, pd.DataFrame(), None), xt=xt, completion_model=completion_model)
+    # Phase 1 (fit prepass, ADR-052): shard the fit-corpus actions behind for_each's resume check -- a
+    # crash re-downloaded the whole corpus before this -- then fit ONE leakage-disjoint xt + completion
+    # over the pooled fit corpus. Its OWN generation (disjoint schema + the corpus marker).
+    fit_res = for_each(
+        fit_refs,
+        key=lambda ref: ref.key,
+        load=load,
+        work=lambda item: _prune_actions_slice(item[2]),
+        shard_root=dest / "fit_shards",
+        token_inputs={
+            "metric": "territory_ranking_census_fit",
+            "schema": _FIT_SHARD_SCHEMA_VERSION,
+            "fit_fraction": args.fit_fraction,
+            **({"source": source_marker} if source_marker is not None else {}),
+        },
+        label="fit-match",
+    )
+    fit_actions = [pd.read_parquet(s) for s in sorted(fit_res.shard_dir.glob("*.parquet"))]
+    xt, completion_model = _fit_disjoint_models(fit_actions)
 
-    # The shard-generation token. The single-competition (default) path keeps its historical token
-    # BYTE-IDENTICAL, so its generation directory is unchanged. A broad-corpus run adds a "source"
-    # marker (the 4.77.1 stale-shard rule) so its generation digest cannot collide with the
-    # single-competition one, and a --competitions-json narrowing keys on its explicit competition list
-    # so two narrow runs also disjoin.
+    def _work(item) -> pd.DataFrame:
+        return _score_match(item, xt=xt, completion_model=completion_model)
+
+    # The SCORE shard-generation token (the reduce reads these). The single-competition (default) path
+    # keeps its historical token BYTE-IDENTICAL (no `source` key), so its generation directory is
+    # unchanged; a broad / narrowed run adds the corpus marker so its digest cannot collide.
     token_inputs: dict = {
         "metric": "territory_ranking_census",
         "schema": _SHARD_SCHEMA_VERSION,
         "xt": "leakage_disjoint_fit",
         "fit_fraction": args.fit_fraction,
     }
-    if broad_corpus:
-        token_inputs["source"] = (
-            "open-data-all"
-            if not args.competitions_json
-            else {"open-data-narrowed": sorted(tuple(c) for c in competitions)}
-        )
+    if source_marker is not None:
+        token_inputs["source"] = source_marker
 
+    # Phase 2 (score): for_each over the score refs, LOADING each match and scoring with the disjoint
+    # models. Keyed by str(match_id) so the single-competition generation's shard filenames are unchanged.
     res = for_each(
-        list(score_by_id.keys()),
-        key=lambda mid: str(mid),
+        score_refs,
+        key=lambda ref: str(ref.match_id),
         work=_work,
+        load=load,
         shard_root=dest / "shards",
         token_inputs=token_inputs,
         label="match",
@@ -683,8 +681,8 @@ def main() -> None:
     )
 
     out = {
-        "n_fit_matches": len(fit_matches),
-        "n_scored_matches": len(score_matches),
+        "n_fit_matches": len(fit_refs),
+        "n_scored_matches": len(score_refs),
         "census": census,
         "verdict": verdict,
         "ranking_licensed": verdict["ranking_licensed"],

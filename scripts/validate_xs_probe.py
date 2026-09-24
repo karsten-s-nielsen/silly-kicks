@@ -127,6 +127,7 @@ def run(
     token=None,
     lock_commit=None,
     provenance=None,
+    cache_dir=None,
 ):
     # ENFORCEMENT lives in main(); this records the truth. `run` is called directly by tests, and a
     # work function that refuses to execute on a dirty checkout cannot be tested without mocking
@@ -135,8 +136,10 @@ def run(
 
     prov_run = provenance or git_provenance()
 
-    from _loader_pining import load_matches  # scripts/ on sys.path at runtime (mirrors the trainer)
+    # scripts/ on sys.path at runtime (mirrors the trainer)
+    from _loader_pining import pining_source, resolve_cache_dir
 
+    cd = resolve_cache_dir(cache_dir)
     variants = ["v1", "v2"] if variant == "both" else [variant]
     ghost_model = GhostGkModel.from_variant("default")  # INSTANCE so build_ghost_frames honors carrier_params
     xs_model = XShotOccurrenceModel.from_variant("default")  # GS-free public weights
@@ -152,7 +155,7 @@ def run(
     _meta: dict = {}
 
     def _work(item):
-        _provider, match_id, _actions, frames, home_team_id = item
+        _provider, match_id, _actions, frames, home_team_id, *_ = item
         htid = cast("int | str", home_team_id)  # loader yields `object`; the engine wants int | str
         _cf, prov, report = build_ghost_frames(frames, model=ghost_model, home_team_id=htid)
         targets = provenance_to_targets(prov, frames=frames, home_team_id=htid)
@@ -189,9 +192,13 @@ def run(
         )
         return pd.concat(parts, ignore_index=True) if parts else None
 
+    refs, load = pining_source(
+        _PROVIDERS, match_ids=match_ids, tracking_limit=tracking_limit, token=token, cache_dir=cd
+    )
     res = for_each(
-        load_matches(providers=_PROVIDERS, match_ids=match_ids, token=token, tracking_limit=tracking_limit),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         counters=lambda _item, _frame: dict(_meta),
         shard_root=Path(out) / "shards",
@@ -223,7 +230,7 @@ def run(
     # requires a partition surface, and `--match-ids-json` here is a reproducibility PIN, not a
     # worker slice (no `providers_for_slice`, no `worker_tag`). A whole-generation read would fold
     # in matches from a wider earlier run over the same --out.
-    shards = [pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys]
+    shards = [pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys]
     combined = pd.concat([f for f in shards if len(f)], ignore_index=True)
     per_variant_deltas = {
         v: [combined[combined["variant"] == v].drop(columns="variant").reset_index(drop=True)] for v in variants
@@ -419,6 +426,11 @@ def main() -> None:
         help="the commit that froze the v2 pool+constants (auditable blindness; defaults to HEAD). "
         "Record it so the git DAG shows constants-locked-before-run.",
     )
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     args = ap.parse_args()
 
@@ -435,6 +447,7 @@ def main() -> None:
         entanglement=args.entanglement,
         seed=args.seed,
         lock_commit=args.lock_commit,
+        cache_dir=args.cache_dir,
         provenance=require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty),
     )
     v2 = m["variants"].get("v2") or next(iter(m["variants"].values()))

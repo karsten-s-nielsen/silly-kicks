@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from scripts._loader_pining import load_matches
+from scripts._loader_pining import pining_source, resolve_cache_dir
 from silly_kicks.tracking._structural_pass import _structural_pass_core
 from silly_kicks.tracking.utils import link_actions_to_frames
 
@@ -31,7 +31,7 @@ def _match_records(item) -> pd.DataFrame | None:
     ``None`` when the match contributes no scoreable pass -- which `write_shard` still records as
     an EMPTY shard ("ran, produced nothing"), so a resume does not re-derive the same verdict.
     """
-    _prov, _mid, actions, frames, home = item
+    _prov, _mid, actions, frames, home, *_ = item
     home_id = int(home)  # type: ignore[reportArgumentType]
     passes = actions[(actions["type_id"] == 0) & (actions["result_id"] == 1)].copy()
     if passes.empty:
@@ -88,9 +88,12 @@ def main(n_matches: int = 3, shard_dir: str | None = None) -> None:
     # STREAMED, not inverted onto `select_match_ids`: the per-item cost here is the linking plus a
     # seven-sigma sweep over every completed pass in the match, so the shard check already skips
     # the expensive half. See `derive_opengoal_range` for the same judgement and its reasoning.
+    cache_dir = resolve_cache_dir(None)
+    refs, load = pining_source(["gradientsports"], max_per_provider=n_matches, cache_dir=cache_dir)
     res = for_each(
-        load_matches(providers=["gradientsports"], max_per_provider=n_matches, tracking_limit=None),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_match_records,
         shard_root=Path(shard_dir or "tune_structural_pass_sigma_shards") / "shards",
         # What determines a shard's CONTENT: the sigma grid swept, the final-third boundary that
@@ -110,7 +113,7 @@ def main(n_matches: int = 3, shard_dir: str | None = None) -> None:
     # Combined from THIS PASS'S keys, not `_driver.reconcile`: that helper's whole-generation read
     # requires a partition surface (see its docstring), and this driver has none -- so it would
     # otherwise fold in matches from a wider earlier run over the same --shard-dir.
-    frames = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    frames = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
     if not frames:
         raise ValueError("no scoreable passes in the corpus -- refusing to print a sweep over nothing")
     report(pd.concat(frames, ignore_index=True))

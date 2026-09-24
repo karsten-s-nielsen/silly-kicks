@@ -9,6 +9,7 @@ from silly_kicks.xthreat._eval import (
     compute_holdout_nll_per_group,
     holdout_split,
 )
+from silly_kicks.xthreat._grid import XtZoneCounts
 from silly_kicks.xthreat._model import ExpectedThreat
 from silly_kicks.xthreat._params import (
     GridSpec,
@@ -36,6 +37,7 @@ __all__ = [
     "Method",
     "SinghParams",
     "XtParams",
+    "XtZoneCounts",
     "compute_holdout_nll",
     "compute_holdout_nll_per_group",
     "destination_profiles",

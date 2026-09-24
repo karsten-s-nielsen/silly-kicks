@@ -42,10 +42,16 @@ def test_main_writes_pass_scores_and_stamps_provenance(tmp_path, monkeypatch, mi
     import json
     import sys
 
-    def fake_load(**kw):  # one (provider, match_id, actions, frames, home) tuple
-        yield ("gradientsports", "m1", mini_actions, mini_frames, 1)
+    from _fake_corpus import SpyLoader, install_fake_corpus, make_loaded, make_ref
 
-    monkeypatch.setattr(B, "load_matches", fake_load)
+    install_fake_corpus(
+        monkeypatch,
+        B,
+        refs=[make_ref("gradientsports", "m1")],
+        loader=SpyLoader(
+            {("gradientsports", "m1"): make_loaded("gradientsports", "m1", actions=mini_actions, frames=mini_frames)}
+        ),
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -87,10 +93,16 @@ def test_main_deleak_wiring_runs_with_receiver_model(tmp_path, monkeypatch, mini
     )
     monkeypatch.setattr(ReceiverModel, "from_variant", classmethod(lambda cls, key: fitted))
 
-    def fake_load(**kw):
-        yield ("gradientsports", "m1", mini_actions, mini_frames, 1)
+    from _fake_corpus import SpyLoader, install_fake_corpus, make_loaded, make_ref
 
-    monkeypatch.setattr(B, "load_matches", fake_load)
+    install_fake_corpus(
+        monkeypatch,
+        B,
+        refs=[make_ref("gradientsports", "m1")],
+        loader=SpyLoader(
+            {("gradientsports", "m1"): make_loaded("gradientsports", "m1", actions=mini_actions, frames=mini_frames)}
+        ),
+    )
     monkeypatch.setattr(
         sys,
         "argv",

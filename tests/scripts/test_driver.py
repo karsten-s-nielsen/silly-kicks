@@ -381,10 +381,11 @@ def test_manifest_fields_carry_the_generation_token(tmp_path):
     makes the ambiguity visible rather than structural -- the way `commits_seen` already surfaces a
     multi-commit corpus."""
     gen = mod.generation_dir(tmp_path, token_inputs={"v": "v1"})
-    fields = mod.manifest_fields(gen, attempted=3, failed=1, counters_unrecorded=0)
+    fields = mod.manifest_fields(gen, attempted=3, failed=1, counters_unrecorded=0, excluded=2)
     assert fields["generation"] == gen.name
     assert fields["n_attempted"] == 3
     assert fields["n_failed"] == 1
+    assert fields["n_excluded"] == 2  # present on EVERY manifest (ADR-052 D13, interp 3)
 
 
 def test_manifest_fields_REFUSES_to_default_the_unrecorded_count():

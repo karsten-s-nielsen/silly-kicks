@@ -139,13 +139,18 @@ def test_driver_source_is_ascii():
     assert not non_ascii, f"non-ASCII in driver source (breaks --help on Windows): {non_ascii}"
 
 
-def test_driver_fits_xt_on_the_corpus_like_the_established_convention():
-    # The established convention for a reported-not-gated corpus measurement driver that needs xt:
-    # fit ExpectedThreat on the loaded corpus (measure_cover_shadow_argmax_agreement.py). Assert the
-    # fit is wired (not a refusal like the gkdv DAS-scoped physics driver).
+def test_driver_fits_xt_via_the_events_only_count_pass():
+    # The established convention for a reported-not-gated corpus measurement driver that needs xt is a
+    # corpus fit; the load-seam form (ADR-102) is a resumable EVENTS-ONLY count pass reduced by
+    # fit_from_counts, never a whole-corpus materialization + inline ExpectedThreat().fit(). Assert the
+    # count-pass fit is wired (not a refusal like the gkdv DAS-scoped physics driver, not a stream load).
     src = inspect.getsource(mod.main)
-    assert "ExpectedThreat(" in src
-    assert ".fit(" in src
+    assert "xt_count_pass(" in src
+    assert "fit_xt_from_count_pass(" in src
+    assert "events_only_loader(" in src
+    # The arms pass consumes match refs (resume-before-load), never the banned stream loader.
+    assert "pining_source(" in src
+    assert "load_matches(" not in src
 
 
 def test_driver_uses_no_pickle():

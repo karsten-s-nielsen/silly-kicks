@@ -47,8 +47,21 @@ Add `ExpectedThreat.fit_from_counts(*, shot_counts, goal_counts, move_counts, tr
 
 **y-inverted flat index (ADR-041).** `flat_indexes_of` = `(w-1 - zone_y)*l + zone_x` — the transition matrix's row/col ordering (row 0 = pitch top). A producer MUST index `transition_counts` with this exact formula.
 
+## Amendment (corpus-driver load seam) — `fit_from_counts` backs an in-repo resumable xT count pass
+
+The lakehouse Spark producer was the motivating consumer, but the same additive-counts property makes
+an xT fit a first-class corpus pass for the `scripts/` drivers too (ADR-052 D15). `scripts/_xt_corpus`
+adds `xt_count_pass` — an events-only `for_each` that writes one sparse `XtZoneCounts` shard per match
+(`counts_to_frame` / `counts_from_frames` are the sparse round-trip) — and `fit_xt_from_count_pass`,
+which sums the shards and calls `fit_from_counts`. Every xT-fitting driver
+(`build_tf60_layer3_arm_values`, `measure_cover_shadow_argmax_agreement`, `_xtgk_comparability`,
+`calibrate_xt_bandwidth`, `calibrate_tracking_defaults`) fits this way instead of materialising the
+whole corpus's actions in memory: the fit resumes, records failures, and is byte-identical to a pooled
+`fit(actions)` (the same SK-xT-1 oracle guarantee), so **no retrain**. No library change — this reuses
+`fit_from_counts` unchanged.
+
 ## Related
 
-- **Specs:** `docs/superpowers/specs/2026-09-22-expectedthreat-fit-from-counts-design.md`
-- **Plans:** `docs/superpowers/plans/2026-09-22-expectedthreat-fit-from-counts-plan.md`
-- **ADRs:** ADR-021 (xthreat package), ADR-100 (`to_dict`/`from_dict` seam — the counts round-trip reuses it), ADR-041 (raw-orientation / y-inverted storage). Consumer: lakehouse ADR-085 (single-canonical xT surface).
+- **Specs:** `docs/superpowers/specs/2026-09-22-expectedthreat-fit-from-counts-design.md`; `docs/superpowers/specs/2026-09-22-corpus-driver-load-seam-design.md` (the count-pass consumer)
+- **Plans:** `docs/superpowers/plans/2026-09-22-expectedthreat-fit-from-counts-plan.md`; `docs/superpowers/plans/2026-09-23-corpus-driver-load-seam.md`
+- **ADRs:** ADR-021 (xthreat package), ADR-100 (`to_dict`/`from_dict` seam — the counts round-trip reuses it), ADR-041 (raw-orientation / y-inverted storage), ADR-052 (the corpus-driver seam that consumes the count pass). Consumer: lakehouse ADR-085 (single-canonical xT surface).

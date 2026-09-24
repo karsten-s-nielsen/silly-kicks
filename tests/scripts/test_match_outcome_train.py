@@ -30,15 +30,20 @@ def _fake_corpus(n_games: int = 6):
 
 
 def _patch_open_corpus(monkeypatch, matches):
-    """Redirect the public open-data loader to a synthetic corpus (no network)."""
+    """Redirect the public open-data SOURCE (Task 8.5 refs+load factory) to a synthetic corpus (no
+    network): ``open_data_source`` returns one ref per synthetic match + a loader serving it."""
+    from _fake_corpus import make_ref
+
     import scripts._sb_open_data as sod
 
     monkeypatch.setattr(sod, "all_open_competitions", lambda: [(1, 1)])
 
-    def _fake_load(*, competition_id, season_id, match_ids=None, max_matches=None, preserve_native=()):
-        yield from matches
+    def _source(comps, *, match_ids=None, max_matches=None, preserve_native=(), cache_dir=None):
+        by_id = {m[1]: m for m in matches}
+        refs = [make_ref(m[0], m[1]) for m in matches]
+        return refs, lambda ref: by_id[ref.match_id]
 
-    monkeypatch.setattr(sod, "load_open_data_matches", _fake_load)
+    monkeypatch.setattr(sod, "open_data_source", _source)
 
 
 def _simulate(rho_true: float, *, n: int = 1000, seed: int = 0) -> list[tuple]:
@@ -86,9 +91,37 @@ def test_train_main_writes_loadable_artifact(tmp_path, monkeypatch):
 
     _patch_open_corpus(monkeypatch, _fake_corpus())
     out = tmp_path / "weights"
-    monkeypatch.setattr(sys, "argv", ["train_match_outcome_dependence.py", "--out", str(out), "--allow-dirty"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_match_outcome_dependence.py",
+            "--out",
+            str(out),
+            "--shard-root",
+            str(tmp_path / "shards"),
+            "--allow-dirty",
+        ],
+    )
     train.main()
 
     m = DependenceModel.load(out)  # fail-closed load must accept the freshly written artifact
     assert abs(m.rho) < 1.0 and m.training_commit
     assert (out / "model.json").exists() and (out / "SHA256SUMS").exists()
+
+
+def test_reduce_over_shards_equals_in_memory_fit():
+    """ADR-052 U-shape: the per-match slice + whole-corpus reduce fits the SAME rho as the
+    pre-migration in-memory pass, and the fit is order-independent (a resumed/partitioned run
+    reduces its shards in any order)."""
+    from scripts.train_match_outcome_dependence import extract_match_slice, matches_from_shards
+
+    corpus = _fake_corpus(8)
+    in_memory: list[tuple] = []
+    for _p, _m, actions, _f, _h in corpus:
+        in_memory.extend(_match_tuples(actions, "xg"))
+
+    shards = [extract_match_slice(actions, "xg") for _p, _m, actions, _f, _h in corpus]
+    assert abs(fit_rho(matches_from_shards(shards)) - fit_rho(in_memory)) < 1e-9
+    # order-independent: a reversed shard order fits the same rho
+    assert abs(fit_rho(matches_from_shards(list(reversed(shards)))) - fit_rho(in_memory)) < 1e-9

@@ -127,3 +127,40 @@ def test_calibration_main_writes_metrics(tmp_path, monkeypatch):
     assert configs == {"independent", "collapse", "dixon_coles", "both"}
     assert metrics["input_contract"]["driver"] == "validate_match_outcome_calibration"
     assert "run_commit" in metrics and len(metrics["cv_rho_by_fold"]) == 2
+
+
+def test_stats_prepass_reduce_equals_in_memory():
+    """ADR-052 U-shape: the per-match stats prepass + reduce rebuild the SAME CV corpus the
+    pre-migration in-memory pass built, so cv_rho_by_fold fits identical per-fold rho (order-independent
+    -- the reduce sorts game ids)."""
+    from scripts.validate_match_outcome_calibration import (
+        _team_stats,
+        extract_stats_slice,
+        stats_from_shards,
+    )
+    from silly_kicks.match_outcome import MatchOutcomeParams
+
+    gap = MatchOutcomeParams().possession_max_gap_seconds
+    corpus = _fake_corpus(6)
+
+    in_memory = []
+    for _p, mid, actions, _f, _h in corpus:
+        stats = _team_stats(actions, "xg", gap=gap)
+        if stats is None:
+            continue
+        teams = list(stats.keys())
+        in_memory.append(
+            (
+                mid,
+                stats[teams[0]]["indep"],
+                stats[teams[1]]["indep"],
+                stats[teams[0]]["goals"],
+                stats[teams[1]]["goals"],
+            )
+        )
+
+    shards = [extract_stats_slice(mid, actions, gap=gap) for _p, mid, actions, _f, _h in corpus]
+    by_game, cv = stats_from_shards(shards)
+    assert len(by_game) == len(in_memory)
+    assert [f["rho"] for f in cv_rho_by_fold(cv, 2)] == [f["rho"] for f in cv_rho_by_fold(in_memory, 2)]
+    assert [f["rho"] for f in cv_rho_by_fold(list(reversed(cv)), 2)] == [f["rho"] for f in cv_rho_by_fold(in_memory, 2)]

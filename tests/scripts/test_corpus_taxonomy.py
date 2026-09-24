@@ -162,11 +162,21 @@ def test_a_restricted_corpus_NEVER_ships_a_public_label(tmp_path, monkeypatch):
     KILL-LINE: restore `if provset <= _PUBLIC_PROVIDERS: shipped = "public"` and this MUST fail.
     """
     sys.path.insert(0, "scripts")
+    import _loader_pining as lp
     import train_xshot_occurrence as tr
+    from _fake_corpus import SpyLoader, install_fake_corpus, make_loaded, make_ref
 
-    monkeypatch.setattr(tr, "_iter_matches_from_pining", lambda *a, **k: iter(_synthetic_two_match_corpus()))
+    # The loader seam (spec section 4.5): listing, per-match load AND the fingerprint's
+    # `select_match_ids` all stay OFFLINE, so this test never reaches the live pining manifest.
+    refs, served = [], {}
+    for prov, mid, shots, frames, home in _synthetic_two_match_corpus():
+        refs.append(make_ref(prov, mid))
+        served[(prov, mid)] = make_loaded(prov, mid, actions=shots, frames=frames, home_team_id=home)
+    install_fake_corpus(monkeypatch, lp, refs=refs, loader=SpyLoader(served))
+    monkeypatch.setattr(lp, "select_match_ids", lambda **k: [r.key for r in refs])
     monkeypatch.setattr(
-        "_loader_pining.match_visibility",
+        lp,
+        "match_visibility",
         lambda providers, **k: {
             ("skillcorner", "1886347"): "public",
             ("skillcorner", "1021404"): "private",

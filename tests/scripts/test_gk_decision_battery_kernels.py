@@ -166,3 +166,36 @@ def test_reachability_sweep_threshold_grid_recommends_crossing():
     assert by[0.85]["decision_pct_mean"] > 0.5 and by[0.85]["n_decisions"] == 2  # pruned -> responsive
     assert by[0.9]["n_decisions"] == 0  # 0.90 prunes a near option -> < min_options -> dropped
     assert out["recommended_threshold"] == 0.85 and out["shipped_default"] == 0.85
+
+
+# --- list_gi_refs: GI-availability resolved from the manifest WITHOUT downloading (ADR-052 D14) -----
+
+_GI_MANIFEST = [
+    {"id": "m_full", "artifacts": {"a": "m_full_dynamic_events.csv", "b": "m_full_match.json"}},
+    {"id": "m_no_meta", "artifacts": {"a": "m_no_meta_dynamic_events.csv"}},  # events but no metadata
+    {"id": "m_role", "artifacts": {"events": "e.csv", "metadata": "md.json"}},  # 2026-07 role schema
+    {"id": "m_tracking_only", "artifacts": {"t": "tracking.jsonl"}},  # neither -> unavailable
+]
+
+
+def test_list_gi_refs_counts_unavailable_without_downloading(monkeypatch):
+    import scripts._loader_pining as lp
+
+    monkeypatch.setattr(lp, "_list_matches", lambda *_a, **_k: _GI_MANIFEST)
+    refs, unavailable = vgd.list_gi_refs(token=None, match_ids=None, max_matches=None)
+
+    # A match needs BOTH an events and a metadata artifact (either schema) to be GI-available.
+    assert [r.match_id for r in refs] == ["m_full", "m_role"]
+    assert unavailable == ["m_no_meta", "m_tracking_only"]  # counted, never silently dropped
+    assert all(r.provider == "skillcorner" for r in refs)
+    assert refs[0].key == ("skillcorner", "m_full")  # a MatchRef the native for_each keys on
+
+
+def test_list_gi_refs_respects_match_ids_and_max(monkeypatch):
+    import scripts._loader_pining as lp
+
+    monkeypatch.setattr(lp, "_list_matches", lambda *_a, **_k: _GI_MANIFEST)
+    refs, unavailable = vgd.list_gi_refs(token=None, match_ids=["m_role", "m_full"], max_matches=1)
+
+    assert [r.match_id for r in refs] == ["m_role"]  # match_ids order, then capped to 1
+    assert unavailable == []

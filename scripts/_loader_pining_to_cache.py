@@ -53,7 +53,9 @@ def _cached(out: Path, provider: str, match_id: str) -> bool:
 
 def main() -> None:
     sys.path.insert(0, str(Path(__file__).parent))
-    from _loader_pining import load_matches, select_match_ids
+    from _driver import for_each
+    from _item_outcome import ItemExcluded
+    from _loader_pining import pining_source, resolve_cache_dir
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--providers", nargs="+", required=True)
@@ -61,53 +63,87 @@ def main() -> None:
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
     ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR). Distinct from --out, which "
+        "is this driver's MATERIALIZED frames/actions cache; --cache-dir persists the raw downloads so "
+        "a re-fetch is a disk read.",
+    )
+    ap.add_argument(
         "--match-ids-json",
         type=Path,
         default=None,
-        help="JSON file mapping {provider: [match_id, ...]} -- a per-provider allowlist threaded to "
-        "load_matches(match_ids=). Default None (load every listed match).",
+        help="JSON file mapping {provider: [match_id, ...]} -- a per-provider allowlist. Default None "
+        "(cache every listed match).",
     )
     args = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
 
     match_ids = json.loads(args.match_ids_json.read_text()) if args.match_ids_json else None
+    cache_dir = resolve_cache_dir(args.cache_dir)
 
-    # ADR-052/ADR-068 resume: list the wanted (provider, match_id) pairs UP FRONT (a cheap manifest
-    # listing) and skip any already cached, so a crashed run re-fetches ONLY the missing matches --
-    # not the whole corpus (a GS match alone is a multi-hundred-MB download + ~74s parse). Then load
-    # ONLY the remaining ids, dropping providers with nothing left: an empty list in match_ids would
-    # otherwise EXPAND back to the full manifest (the `(match_ids.get(p) ...) or list(manifest_ids)`
-    # falsy trap in _wanted_for_provider).
-    wanted = select_match_ids(providers=args.providers, match_ids=match_ids, max_per_provider=args.max_per_provider)
-    todo: dict[str, list[str]] = {}
-    n_cached = 0
-    for provider, mid in wanted:
-        if _cached(args.out, provider, mid):
-            n_cached += 1
-            continue
-        todo.setdefault(provider, []).append(mid)
+    # ADR-052/ADR-068 resume: list the wanted refs UP FRONT (a cheap manifest listing) and skip any
+    # already MATERIALIZED, so a crashed run re-fetches ONLY the missing matches -- not the whole
+    # corpus (a GS match alone is a multi-hundred-MB download + ~74s parse). The `_cached` pre-filter
+    # iterates refs and performs NO load, so Rule C allows it; the load happens per surviving ref
+    # inside `for_each`, which itself skips a match whose marker shard already exists.
+    refs, load = pining_source(
+        providers=args.providers,
+        match_ids=match_ids,
+        max_per_provider=args.max_per_provider,
+        tracking_limit=args.tracking_limit,
+        cache_dir=cache_dir,
+    )
+    todo = [r for r in refs if not _cached(args.out, r.provider, r.match_id)]
+    n_cached = len(refs) - len(todo)
     if n_cached:
-        print(f"Resume: {n_cached}/{len(wanted)} matches already cached -- skipping their fetch")
+        print(f"Resume: {n_cached}/{len(refs)} matches already cached -- skipping their fetch")
     if not todo:
         print(f"Done: all {n_cached} wanted matches already cached at {args.out}")
         return
 
-    n = 0
-    for provider, match_id, actions, frames, home in load_matches(
-        providers=[p for p in args.providers if todo.get(p)],  # drop providers with no remaining ids
-        match_ids=todo,
-        max_per_provider=None,  # already applied by select_match_ids above
-        tracking_limit=args.tracking_limit,
-    ):
-        if "vx" not in frames.columns or "vy" not in frames.columns:
-            print(f"  SKIP {provider}/{match_id}: no vx/vy", file=sys.stderr)
-            continue
+    _last: dict = {}
+
+    def _work(item):
+        # A frame set with no velocity cannot serve train_ghost_gk, so it is a DETERMINISTIC exclusion
+        # (counted, replayed on resume; ADR-052 D13), NOT a fabricated cache entry nor a silent skip.
+        if item.frames is None or "vx" not in item.frames.columns or "vy" not in item.frames.columns:
+            raise ItemExcluded("no vx/vy", details={"provider": item.provider, "match_id": str(item.match_id)})
         write_match_cache(
-            args.out, provider=provider, match_id=match_id, frames=frames, actions=actions, home_team_id=home
+            args.out,
+            provider=item.provider,
+            match_id=item.match_id,
+            frames=item.frames,
+            actions=item.actions,
+            home_team_id=item.home_team_id,
         )
-        n += 1
-        print(f"  [{n}] cached {provider}/{match_id}: {len(frames)} rows")
-    print(f"Done: cached {n} new matches ({n_cached} already present) to {args.out}")
+        _last.clear()
+        _last.update({"n_rows": len(item.frames), "n_matches": 1})
+        # The materialized cache under --out IS the real output; this marker shard records that the
+        # write happened (so for_each's conservation + resume are honest about what ran).
+        return pd.DataFrame(
+            {"provider": [item.provider], "match_id": [str(item.match_id)], "n_rows": [len(item.frames)]}
+        )
+
+    res = for_each(
+        todo,
+        key=lambda r: r.key,
+        load=load,
+        work=_work,
+        counters=lambda _i, _f: dict(_last),
+        shard_root=args.out / "_prefetch_shards",
+        token_inputs={
+            "providers": sorted(args.providers),
+            "tracking_limit": args.tracking_limit,
+            "schema": "prefetch-cache-1",
+        },
+        tag="prefetch",
+        label="match",
+    )
+    print(
+        f"Done: cached {len(res.shard_keys)} new matches ({n_cached} already present, "
+        f"{res.excluded} skipped no-vx/vy) to {args.out}"
+    )
 
 
 if __name__ == "__main__":

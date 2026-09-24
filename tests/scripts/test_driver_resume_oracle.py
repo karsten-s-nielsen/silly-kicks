@@ -33,24 +33,23 @@ def stub_layer2(monkeypatch):
     """
     entered: list[str] = []
 
+    from _fake_corpus import make_loaded, make_ref
+
     import scripts._loader_pining as loader
     import silly_kicks.causal as causal
     import silly_kicks.causal._confounders as conf
 
-    def _load(**_kw):
-        return iter(
-            [
-                ("gradientsports", "m1", object(), object(), "5"),
-                ("gradientsports", "barren", object(), object(), "5"),
-            ]
-        )
+    refs = [make_ref("gradientsports", "m1"), make_ref("gradientsports", "barren")]
 
     def _build(frames, actions, **_kw):
         entered.append("build")
         # "barren" is the second item; return an EMPTY frame for it.
         return pd.DataFrame() if len(entered) == 2 else pd.DataFrame({"Z": [0, 1], "r": [1.0, 2.0]})
 
-    monkeypatch.setattr(loader, "load_matches", _load)
+    # The refs+load seam (spec section 4.5): list refs, load one match at a time.
+    monkeypatch.setattr(loader, "list_match_refs", lambda **kw: list(refs))
+    monkeypatch.setattr(loader, "load_match", lambda ref, **kw: make_loaded(ref.provider, ref.match_id))
+    monkeypatch.setattr(loader, "resolve_cache_dir", lambda c=None: c)
     monkeypatch.setattr(causal, "build_opportunities", _build)
     monkeypatch.setattr(causal, "layer2_config", lambda *a, **k: object())
     monkeypatch.setattr(conf, "join_layer2_confounders", lambda sp, **k: sp)

@@ -61,6 +61,11 @@ def main() -> None:
     ap.add_argument("--providers", default="gradientsports")
     ap.add_argument("--max-per-provider", type=int, default=None)
     ap.add_argument("--tracking-limit", type=int, default=None)
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     args = ap.parse_args()
 
@@ -80,11 +85,13 @@ def main() -> None:
     import pandas as pd
 
     from scripts._driver import for_each, shard_path
-    from scripts._loader_pining import load_matches
+    from scripts._loader_pining import pining_source, resolve_cache_dir
     from silly_kicks.tracking._xshot_occurrence import prepare_xshot_training_data
 
+    cache_dir = resolve_cache_dir(args.cache_dir)
+
     def _work(item):
-        _provider, _match_id, actions, frames, home_team_id = item
+        _provider, _match_id, actions, frames, home_team_id, *_ = item
         # Returns (features, labels, groups); only the FEATURES are read here -- this measures the
         # marginal distribution of a shipped feature, it does not train or probe anything.
         feats, _labels, _groups = prepare_xshot_training_data(
@@ -103,13 +110,16 @@ def main() -> None:
     # unmeasured ratio is what `measure-before-optimize` forbids. (`calibrate_xt_bandwidth` WAS
     # inverted because its work is an `.assign` plus a column projection -- unambiguously trivial
     # next to a download, no measurement needed to see it.)
+    refs, load = pining_source(
+        args.providers.split(","),
+        max_per_provider=args.max_per_provider,
+        tracking_limit=args.tracking_limit,
+        cache_dir=cache_dir,
+    )
     res = for_each(
-        load_matches(
-            providers=args.providers.split(","),
-            max_per_provider=args.max_per_provider,
-            tracking_limit=args.tracking_limit,
-        ),
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=Path(args.out) / "shards",
         # `--tracking-limit` DETERMINES content: it caps the frames the extractor sees, so a
@@ -135,7 +145,7 @@ def main() -> None:
     # whole-generation read needs a partition surface and this driver has none, so it would inherit
     # matches from a wider earlier run over the same --out.
     values: list[float] = []
-    for k in res.keys:
+    for k in res.shard_keys:  # shard_keys, not keys: an excluded key has a marker and no parquet
         shard = pd.read_parquet(shard_path(res.shard_dir, k))
         if len(shard):  # an empty shard has no columns to read
             values.extend(shard["open_goal"].tolist())

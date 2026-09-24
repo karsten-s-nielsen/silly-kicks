@@ -213,99 +213,84 @@ def _corpus_dir(args) -> Path:
     return Path(getattr(args, "shard_dir", None) or f"{args.report_out}_corpus")
 
 
-def _load_one_match(args, provider: str, match_id: str) -> pd.DataFrame | None:
-    """Load ONE match's actions, canonicalized. ``None`` when the loader yields nothing.
-
-    **Loading per match rather than streaming the whole corpus is what makes resume mean anything
-    here.** ``for_each`` skips ``work(item)`` when the item's shard exists; it cannot skip the
-    PRODUCTION of ``item``, and ``load_matches`` downloads and parses each match before it yields.
-    Streaming it would leave a resumed run re-downloading and re-parsing every match in order to
-    then skip a set of trivial writes -- resume that costs exactly what it saves. Inverting the walk
-    onto ``select_match_ids`` puts the expensive half inside ``work``, behind the shard check.
-
-    Cost of the inversion, stated because it is real: one manifest listing per match on a FRESH run
-    (``load_matches`` re-lists the provider to resolve the artifact map), against a download plus
-    parse of the tracking artifact for that match. On a RESUMED run there are none at all -- the
-    shard check fires before ``work`` is called.
-
-    A match the loader DROPS (the S1 geometry rate-gate) yields nothing, so this returns ``None``
-    and `write_shard` records an EMPTY shard: "ran, produced nothing", never "not yet run". The
-    exclusion is deterministic for a given artifact, so re-deciding it on every resume would be
-    pure cost.
-    """
-    import scripts._loader_pining as loader
-
-    for prov_name, mid, actions, _frames, _home in loader.load_matches(
-        providers=[provider],
-        match_ids={provider: [match_id]},
-        tracking_limit=1,  # NOT 0 -- falsy, and would load every frame
-        cache_dir=getattr(args, "cache_dir", None),  # persistent artifact cache on the run box
-    ):
-        # provider-qualified unique string game_id (mixed-dtype + cross-provider collision guard)
-        return _canonicalize_corpus(actions.assign(game_id=f"{prov_name}:{mid}"))
-    return None
+def _canon_loaded(item) -> pd.DataFrame:
+    """Canonicalize one loaded match's actions with a provider-qualified unique string ``game_id``
+    (mixed-dtype + cross-provider collision guard). The ``for_each`` ``work``: it takes the
+    events-only ``LoadedMatch`` and never touches frames."""
+    return _canonicalize_corpus(item.actions.assign(game_id=f"{item.provider}:{item.match_id}"))
 
 
 def _assemble_corpus(args) -> pd.DataFrame:
-    """Load SPADL actions (minimal tracking footprint) into one canonical provider-qualified corpus.
+    """Load SPADL actions into one canonical provider-qualified corpus.
 
-    The pining pass is per-match and resumable via `scripts._driver.for_each`. The databricks path
-    is a single query with no per-item loop, so there is nothing to shard and nothing to resume.
+    The pining pass is EVENTS-ONLY (no tracking is fetched or parsed -- xT bandwidth calibration
+    consumes actions alone) and resumable via `scripts._driver.for_each` on match REFS: the resume
+    check fires on the ref BEFORE the load, so a resumed run re-downloads nothing (ADR-052 D14). It
+    routes through the admitted `events_only_loader`, so a SkillCorner match the S1 geometry gate
+    excluded on the tracking side is admitted iff its EVENTS pass the Task-0 check -- which is why
+    the admission artifact's digest joins the token (spec section 7 generation move). The databricks
+    path is a single query with no per-item loop, so there is nothing to shard and nothing to resume.
     """
     if args.source == "pining":
         import scripts._loader_pining as loader
         from scripts._driver import for_each, shard_path
+        from scripts._events_admission import events_only_loader
 
         corpus_dir = _corpus_dir(args)
         # Cheap (one manifest listing per PROVIDER) and deliberately the REQUESTED corpus: a match
-        # the S1 gate later drops still gets a key, so its empty shard records the decision.
-        pairs = loader.select_match_ids(
-            providers=args.providers,
-            max_per_provider=args.max_matches_per_provider,
+        # the S1 gate excludes still gets a key, so its exclusion MARKER records the decision.
+        refs = loader.list_match_refs(providers=args.providers, max_per_provider=args.max_matches_per_provider)
+        load, admission = events_only_loader(
+            refs,
+            cache_dir=getattr(args, "cache_dir", None),
+            allow_unmeasured=getattr(args, "allow_unmeasured", False),
         )
+        token_inputs = {
+            # What determines a SHARD's CONTENT: the events-only loader that parses the match, the
+            # column projection, and the game_id scheme. NOT `--providers` or
+            # `--max-matches-per-provider`, which choose WHICH matches are walked (the key already
+            # separates one match's shard from another's), and NOT the sweep parameters or
+            # `--subsample-games`, which consume the corpus downstream.
+            "loader": "pining-events-only",
+            "corpus_cols": list(_CORPUS_COLS),
+            "game_id_scheme": "provider:match_id",
+        }
+        if admission.digest is not None:
+            # The events-only fit corpus now DEPENDS on the admission artifact -- it admits the sound
+            # S1-excluded SkillCorner matches the pre-migration streamed path dropped -- so its digest
+            # joins the token: a re-verdict starts a new generation (spec section 7). Omitted when None
+            # (no SkillCorner ref requested), so a non-SkillCorner corpus keeps a byte-stable token.
+            token_inputs["admission_digest"] = admission.digest
 
         res = for_each(
-            pairs,
-            key=lambda pm: (str(pm[0]), str(pm[1])),
-            work=lambda pm: _load_one_match(args, str(pm[0]), str(pm[1])),
+            refs,
+            key=lambda r: r.key,
+            load=load,
+            work=_canon_loaded,
             shard_root=corpus_dir / "shards",
-            # What determines a SHARD's CONTENT: the loader that parses the match, the frame depth
-            # the S1 geometry gate sees, the column projection, and the game_id scheme. NOT
-            # `--providers` or `--max-matches-per-provider`, which choose WHICH matches are walked
-            # (the key already separates one match's shard from another's), and NOT the sweep
-            # parameters or `--subsample-games`, which consume the corpus downstream.
-            token_inputs={
-                "loader": "pining",
-                "tracking_limit": 1,
-                "corpus_cols": list(_CORPUS_COLS),
-                "game_id_scheme": "provider:match_id",
-            },
+            token_inputs=token_inputs,
             tag="corpus",
             label="match",
         )
         if res.failures:
             # Loud, and AFTER every successful shard is on disk: re-running resumes and retries
             # only these. A calibration corpus that silently omitted matches would move the
-            # recommendation with nothing in the manifest to show for it.
+            # recommendation with nothing in the manifest to show for it. (An EXCLUDED match is a
+            # decided outcome, not a failure -- it carries a marker and never reaches here.)
             raise RuntimeError(
-                f"{len(res.failures)} of {len(pairs)} matches failed to load: {res.failures}. "
+                f"{len(res.failures)} of {len(refs)} matches failed to load: {res.failures}. "
                 f"Their shards were not written, so re-invoking retries only them."
             )
-        # Combined from THIS PASS'S keys -- `res.keys`, reported by the pass itself -- deliberately
-        # NOT `reconcile`, which reads the WHOLE generation. `--providers` and
-        # `--max-matches-per-provider` are corpus SELECTORS a maintainer varies between runs and are
-        # deliberately NOT in the token (narrowing the corpus must reuse the shards it can, not
-        # re-download them), so a whole-generation read inherits matches this run did not ask for.
-        # MEASURED before this was written: with `reconcile`, a `--providers skillcorner` run
-        # following a two-provider run over the same --shard-dir returned
-        # ['idsse:M2', 'skillcorner:m1'] and the sweep would have run on a corpus nobody requested.
-        # `reconcile` is correct for a PARTITIONED driver -- N workers, disjoint slices, one logical
-        # corpus -- and this driver has no partition surface at all.
-        #
-        # Every one of these shards EXISTS: `for_each` ran `assert_conservation` before returning,
-        # so present == len(keys) - failed, and the raise above establishes failed == 0. That is
-        # what makes an unguarded `read_parquet` here safe rather than optimistic.
-        shards = [shard_path(res.shard_dir, k) for k in res.keys]
+        # Combined from THIS PASS'S SHARD keys -- `res.shard_keys` (keys minus exclusions minus
+        # failures), reported by the pass itself -- deliberately NOT `reconcile`, which reads the
+        # WHOLE generation. `--providers` and `--max-matches-per-provider` are corpus SELECTORS a
+        # maintainer varies between runs and are deliberately NOT in the token (narrowing the corpus
+        # must reuse the shards it can, not re-download them), so a whole-generation read inherits
+        # matches this run did not ask for. MEASURED before this was written: with `reconcile`, a
+        # `--providers skillcorner` run following a two-provider run over the same --shard-dir
+        # returned ['idsse:M2', 'skillcorner:m1']. `shard_keys`, not `keys`: an excluded key has a
+        # `.excluded.json` marker and no parquet, so it would FileNotFoundError here.
+        shards = [shard_path(res.shard_dir, k) for k in res.shard_keys]
         frames = [f for f in (pd.read_parquet(s) for s in shards) if len(f)]
         combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         # Re-applied to the COMBINED frame. Per-match shards may carry different column subsets and
@@ -362,6 +347,11 @@ def main() -> None:
     ap.add_argument("--max-points-per-zone", type=int, default=None)
     ap.add_argument("--max-matches-per-provider", type=int, default=None)
     ap.add_argument("--cache-dir", default=None, help="persistent dir for cached pining artifact downloads")
+    ap.add_argument(
+        "--allow-unmeasured",
+        action="store_true",
+        help="admit unmeasured SkillCorner matches into the events-only corpus (recorded; else refused).",
+    )
     ap.add_argument("--corpus-cache", default=None, help="parquet cache of the assembled corpus (skip download+parse)")
     ap.add_argument(
         "--shard-dir",

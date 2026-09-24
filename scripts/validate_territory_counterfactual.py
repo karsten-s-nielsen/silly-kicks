@@ -677,29 +677,6 @@ def run_battery(
     return metrics, defender_table
 
 
-def _corpus_matches(competitions, *, match_ids, max_matches):
-    """Chain every ``(competition_id, season_id)``'s open-data matches into ONE 5-tuple stream.
-
-    ``all_open_competitions()`` (the default) is the FULL public open manifest; ``--competitions-json``
-    narrows it. Yields the same ``(provider, match_id, actions, frames, home_team_id)`` 5-tuple as the
-    single-competition path, so ``for_each`` consumes it unchanged. ``max_matches`` caps the GLOBAL
-    count across all competitions (the reliability study wants the whole corpus by default).
-    """
-    from scripts._sb_open_data import load_open_data_matches
-
-    seen = 0
-    for competition_id, season_id in competitions:
-        for item in load_open_data_matches(
-            competition_id=competition_id,
-            season_id=season_id,
-            match_ids=(match_ids or {}).get("statsbomb"),
-        ):
-            yield item
-            seen += 1
-            if max_matches is not None and seen >= max_matches:
-                return
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", required=True, help="output dir OUTSIDE the repo (shards + metrics.json + parquet)")
@@ -718,13 +695,16 @@ def main() -> None:
         default=None,
         help='JSON {"statsbomb": ["3869685", ...]} pinning WHICH matches this process handles.',
     )
+    ap.add_argument(
+        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="permit a dirty tree (dev only; artifact is marked)")
     args = ap.parse_args()
 
     # Clean-tree guard FIRST, before any corpus work: a cited construct-validity artifact must record
     # the code that produced it (ADR-037 / ADR-052).
     from scripts._provenance import git_provenance, require_clean_tree
-    from scripts._sb_open_data import all_open_competitions, assert_statsbomb_open_data_mode
+    from scripts._sb_open_data import all_open_competitions, assert_statsbomb_open_data_mode, open_data_source
 
     prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
     assert_statsbomb_open_data_mode()  # fail-closed: never pull the private API for a public artifact
@@ -742,7 +722,12 @@ def main() -> None:
         if args.competitions_json
         else all_open_competitions()
     )
-    matches_iter = _corpus_matches(competitions, match_ids=match_ids, max_matches=args.max_per_provider)
+    refs, load = open_data_source(
+        competitions,
+        match_ids=(match_ids or {}).get("statsbomb"),
+        max_matches=args.max_per_provider,
+        cache_dir=args.cache_dir,
+    )
     corpus_label = (
         f"statsbomb-open ({len(competitions)} competition-seasons)"
         if args.competitions_json
@@ -750,14 +735,15 @@ def main() -> None:
     )
 
     def _work(item):
-        _provider, match_id, actions, _frames, _home = item
+        _provider, match_id, actions, _frames, _home, *_ = item
         out = actions.copy()
         out["game_id"] = str(match_id)  # stable K-fold grouping key == the match id
         return out
 
     res = for_each(
-        matches_iter,
-        key=lambda item: (str(item[0]), str(item[1])),
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
         work=_work,
         shard_root=dest / "shards",
         token_inputs={

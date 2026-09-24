@@ -351,7 +351,10 @@ def main(argv=None):
     )
     if res.failures:
         print(f"WARN: {len(res.failures)} match(es) failed during extraction: {res.failures}")
-    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.keys) if len(f)]
+    # `res.shard_keys`, not `res.keys`: a failed match (this driver WARNs and continues rather than
+    # raising) has no shard, so reading `res.keys` would FileNotFoundError on it (ADR-052 D13 / the
+    # cycle's interp-11 combine contract). Byte-identical to `res.keys` when nothing failed.
+    parts = [f for f in (pd.read_parquet(shard_path(res.shard_dir, k)) for k in res.shard_keys) if len(f)]
     if not parts:
         print("ERROR: extractor produced no training rows across the corpus", file=sys.stderr)
         sys.exit(1)

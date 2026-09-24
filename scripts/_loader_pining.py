@@ -10,6 +10,7 @@ default; base URL from PINING_API_URL.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -17,10 +18,13 @@ import time
 import urllib.error
 import urllib.request
 import warnings
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
+from typing import Literal, NamedTuple, cast, overload
 
 import pandas as pd
+
+from scripts._item_outcome import ItemExcluded  # leaf module; MatchExcluded subclasses it
 
 
 def _apply_et_direction(frames: pd.DataFrame, et_value, *, label: str):
@@ -67,6 +71,24 @@ def _base_url() -> str:
 def _resolve_token(token: str | None) -> str:
     # Owner token enables GS; otherwise the public token (SkillCorner + IDSSE).
     return token or os.environ.get("PINING_FOR_THE_DATA_TOKEN") or _PUBLIC_TOKEN
+
+
+#: The one raw-artifact cache env var, in the repo's ``SILLY_KICKS_*`` convention (spec §4.1).
+CORPUS_CACHE_ENV = "SILLY_KICKS_CORPUS_CACHE_DIR"
+
+
+def resolve_cache_dir(cache_dir: str | Path | None) -> Path | None:
+    """The raw-artifact cache root: the ARGUMENT, else ``$SILLY_KICKS_CORPUS_CACHE_DIR``, else ``None``.
+
+    ``None`` is today's behaviour -- a temp dir per match, nothing persisted. Pining artifacts live
+    under ``<root>/<provider>/<match_id>/``, the layout ``cache_dir`` always had, so an existing cache
+    directory works unchanged when pointed at. A blank env value reads as unset: it is a typo, and
+    treating it as the working directory would scatter artifact trees wherever a driver ran.
+    """
+    if cache_dir is not None:
+        return Path(cache_dir)
+    env = os.environ.get(CORPUS_CACHE_ENV, "").strip()
+    return Path(env) if env else None
 
 
 def _list_matches(provider: str, token: str, base_url: str) -> list[dict]:
@@ -189,6 +211,51 @@ def _wanted_for_provider(
     return wanted[:max_per_provider] if max_per_provider is not None else wanted
 
 
+@dataclasses.dataclass(frozen=True)
+class MatchRef:
+    """A cheap, loadable reference to one corpus match (ADR-052 D14).
+
+    ``artifacts`` is the manifest entry's artifact map, already fetched by the listing, so loading a
+    ref needs no second manifest call. It is excluded from equality, hashing and repr: a ref IS its
+    key. ``for_each`` computes ``key(ref)`` and its resume/exclusion checks BEFORE ``load_match(ref)``,
+    which is what makes resume-before-load possible.
+    """
+
+    provider: str
+    match_id: str
+    artifacts: Mapping[str, str] = dataclasses.field(default_factory=dict, compare=False, hash=False, repr=False)
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.provider, self.match_id)
+
+
+def list_match_refs(
+    *,
+    providers: list[str],
+    match_ids: dict[str, list[str]] | None = None,
+    max_per_provider: int | None = None,
+    token: str | None = None,
+    base_url: str | None = None,
+) -> list[MatchRef]:
+    """The matches a pass will ATTEMPT, as references -- each provider's manifest listed ONCE.
+
+    Deliberately the *requested* corpus, not the *extracted* one: a match that ``load_match`` later
+    EXCLUDES (the S1 geometry gate) is still listed, which is what lets ``for_each`` key it, persist
+    its exclusion, and skip it on resume without loading it. Selection is ``_wanted_for_provider``, the
+    rule the stream wrappers and ``select_match_ids`` share, so a fingerprint and an extraction cannot
+    drift.
+    """
+    tok = _resolve_token(token)
+    base = base_url or _base_url()
+    refs: list[MatchRef] = []
+    for provider in providers:
+        manifest = {str(m["id"]): m for m in _list_matches(provider, tok, base)}
+        for mid in _wanted_for_provider(list(manifest), provider, match_ids, max_per_provider):
+            refs.append(MatchRef(provider, str(mid), dict(manifest[str(mid)]["artifacts"])))
+    return refs
+
+
 def select_match_ids(
     *,
     providers: list[str],
@@ -197,21 +264,127 @@ def select_match_ids(
     token: str | None = None,
     base_url: str | None = None,
 ) -> list[tuple[str, str]]:
-    """The ``(provider, match_id)`` pairs :func:`load_matches` will ATTEMPT, in order.
+    """The ``(provider, match_id)`` pairs a pass will ATTEMPT, in order -- ``list_match_refs``' keys.
 
-    Deliberately the *requested* corpus, not the *extracted* one: ``load_matches`` may drop a match
-    at runtime (the S1 geometry gate), and a fingerprint keyed on the extracted set would then never
-    match on a re-run -- a permanent cache miss for any corpus containing an excluded match.
+    Deliberately the *requested* corpus, not the *extracted* one: a match may be excluded at load time
+    (the S1 geometry gate), and a fingerprint keyed on the extracted set would then never match on a
+    re-run -- a permanent cache miss for any corpus containing an excluded match.
+    """
+    return [
+        r.key
+        for r in list_match_refs(
+            providers=providers, match_ids=match_ids, max_per_provider=max_per_provider, token=token, base_url=base_url
+        )
+    ]
+
+
+class LoadedMatch(NamedTuple):
+    """One loaded match. ``frames`` is ``None`` iff ``events_only`` (pining); an empty DataFrame for
+    open data. ``visible_area`` is the SB360 per-action polygon table (statsbomb full loads only), and
+    ``report`` is the SkillCorner ``TrackingConversionReport`` on a full load (it carries the S1 rates
+    Task 0 records), else ``None`` (interp 2)."""
+
+    provider: str
+    match_id: str
+    actions: pd.DataFrame
+    frames: pd.DataFrame | None
+    home_team_id: object
+    visible_area: pd.DataFrame | None
+    report: object | None
+
+
+class MatchExcluded(ItemExcluded):
+    """``load_match`` excluded this match by a deterministic gate (ADR-052 D13).
+
+    Raised for the SkillCorner S1 geometry gate on a TRACKING load (``details`` carries both measured
+    off-pitch rates), and by the events-only admission layer (``scripts/_events_admission.py``) for an
+    events-only SkillCorner load it does not admit.
+    """
+
+
+def load_match(
+    ref: MatchRef,
+    *,
+    events_only: bool,
+    tracking_limit: int | None = None,
+    cache_dir: str | Path | None = None,
+    token: str | None = None,
+    base_url: str | None = None,
+) -> LoadedMatch:
+    """Download (or read from the cache) and build ONE match (ADR-052 D14).
+
+    ``events_only`` is keyword-only with NO default: every call site states which it wants, and the CI
+    gate (Rule B) relies on it. ``events_only=True`` never requests the tracking artifact (nor the
+    SB360 ``freeze_frames``) and never builds frames; the actions are byte-identical to the full
+    build's, because each provider's actions half is the function its full builder calls.
+
+    A PURE loader: it consults no admission artifact. The S1 geometry gate is part of building
+    SkillCorner TRACKING, so a full SkillCorner load raises ``MatchExcluded`` (reason + both measured
+    rates in ``details``) instead of returning geometrically-broken frames. An events-only SkillCorner
+    load cannot run S1; admitting it is policy, and policy lives at the edge
+    (``scripts._events_admission.events_only_loader``, CI Rule D).
+
+    ``tracking_limit`` caps frames AFTER the provider's tracking parse (every native builder parses the
+    whole file first), so it bounds memory, never parse time.
     """
     tok = _resolve_token(token)
     base = base_url or _base_url()
-    out: list[tuple[str, str]] = []
-    for provider in providers:
-        manifest_ids = [str(m["id"]) for m in _list_matches(provider, tok, base)]
-        out.extend(
-            (provider, str(mid)) for mid in _wanted_for_provider(manifest_ids, provider, match_ids, max_per_provider)
+    actions, frames, home, visible_area, report = _build_match_with_retry(
+        ref.provider,
+        ref.match_id,
+        ref.artifacts,
+        tok,
+        base,
+        tracking_limit,
+        cache_dir=resolve_cache_dir(cache_dir),
+        events_only=events_only,
+    )
+    if not events_only and ref.provider == "skillcorner" and getattr(report, "geometry_excluded", False):
+        # S1 geometry rate-gate (spec 4.4): a geometrically-broken SkillCorner match's tracking is
+        # inadmissible. Rates go out as plain floats -- `ItemExcluded` requires JSON-safe details, and
+        # the native builder hands back numpy scalars (interp 1/2).
+        raise MatchExcluded(
+            str(getattr(report, "geometry_reason", "")) or "S1 geometry gate",
+            details={
+                "player_off_pitch_rate": float(getattr(report, "player_off_pitch_rate", float("nan"))),
+                "ball_off_pitch_rate": float(getattr(report, "ball_off_pitch_rate", float("nan"))),
+            },
         )
-    return out
+    return LoadedMatch(
+        ref.provider, ref.match_id, actions, frames, home, cast("pd.DataFrame | None", visible_area), report
+    )
+
+
+def pining_source(
+    providers: list[str],
+    *,
+    match_ids: dict[str, list[str]] | None = None,
+    max_per_provider: int | None = None,
+    tracking_limit: int | None = None,
+    cache_dir: str | Path | None = None,
+    token: str | None = None,
+    base_url: str | None = None,
+) -> tuple[list[MatchRef], Callable[[MatchRef], LoadedMatch]]:
+    """The tracking source factory: ``(refs, load)`` for ``for_each`` (ADR-052 D14, reuse of the
+    S-migration recipe's source step, owner-ratified 2026-09-23).
+
+    ``refs`` is exactly ``list_match_refs`` (the requested corpus); ``load(ref)`` is exactly
+    ``load_match(ref, events_only=False, …)`` with the cache dir resolved ONCE here (arg beats
+    ``$SILLY_KICKS_CORPUS_CACHE_DIR`` beats unset). Gate-clean: it lists refs and loads one full match,
+    so it is neither a stream loader (Rule A) nor a loading loop (Rule C). The events-only mode has its
+    own factory (``scripts._events_admission.events_only_loader``), so the surface is symmetric.
+    """
+    cd = resolve_cache_dir(cache_dir)
+    refs = list_match_refs(
+        providers=providers, match_ids=match_ids, max_per_provider=max_per_provider, token=token, base_url=base_url
+    )
+
+    def load(ref: MatchRef) -> LoadedMatch:
+        return load_match(
+            ref, events_only=False, tracking_limit=tracking_limit, cache_dir=cd, token=token, base_url=base_url
+        )
+
+    return refs, load
 
 
 def load_matches(
@@ -225,37 +398,29 @@ def load_matches(
 ) -> Iterator[tuple[str, str, pd.DataFrame, pd.DataFrame, object]]:
     """Yield (provider, match_id, actions, frames, home_team_id) for each requested match.
 
-    ``tracking_limit`` caps frames loaded per match (passed to the kloppy parser for SkillCorner;
-    applied post-parse to the first N frames for the IDSSE DFL parse-port path) — essential for the
-    ~419 MB IDSSE tracking file in dev/e2e loops. ``max_per_provider`` caps the NUMBER of
-    matches loaded per provider (after any ``match_ids`` selection) — bounds total memory for the
-    TF-24 sweep on a local machine (loading all matches at full depth can OOM; see calibrate CLI
-    ``--max-matches-per-provider``). ``cache_dir`` (when set) persists every downloaded artifact
-    under ``cache_dir/{provider}/{match_id}/`` and reuses it on subsequent runs over the same corpus
-    — the network is paid once, not per re-run (the large IDSSE/GS tracking files dominate the load).
+    A THIN, tracking-only wrapper over ``list_match_refs`` + ``load_match(events_only=False)`` (ADR-052
+    D14): it keeps its ``4ac26d0`` 5-tuple, the ``EXCLUDED ...`` stderr line and the ``excluded n/m``
+    summary, so e2e tests and ad-hoc callers are unchanged. Corpus DRIVERS must not call it (CI Rule
+    A): its stream re-downloads every finished match on resume, the defect this cycle removes. It
+    carries no ``events_only`` keyword (CDLS-SPEC-29) -- an events-only pass goes through the admitted
+    ``scripts._events_admission.events_only_loader``.
+
+    ``tracking_limit`` caps frames per match (bounds memory for the ~419 MB IDSSE file); ``cache_dir``
+    (or ``$SILLY_KICKS_CORPUS_CACHE_DIR``) persists raw artifacts under ``<root>/<provider>/<match_id>/``.
     """
-    tok, base_url = _resolve_token(token), _base_url()
-    n_total = 0
-    n_excluded = 0
-    for provider in providers:
-        manifest = {m["id"]: m for m in _list_matches(provider, tok, base_url)}
-        wanted = _wanted_for_provider(list(manifest), provider, match_ids, max_per_provider)
-        for match_id in wanted:
-            n_total += 1
-            artifacts = manifest[match_id]["artifacts"]
-            actions, frames, home, _visible_area, report = _build_match_with_retry(
-                provider, match_id, artifacts, tok, base_url, tracking_limit, cache_dir=cache_dir
-            )
-            # S1 geometry rate-gate (spec 4.4): DROP a geometrically-broken skillcorner match rather
-            # than average its garbage coords into the calibration corpus. LIVE -- the loader now
-            # builds skillcorner via the native builder, which returns a TrackingConversionReport.
-            # The getattr default False stays as a defensive guard for any path that yields report=None.
-            if provider == "skillcorner" and getattr(report, "geometry_excluded", False):
-                reason = getattr(report, "geometry_reason", "")  # duck-typed: report is None on kloppy path
-                print(f"  EXCLUDED {provider}/{match_id}: {reason}", file=sys.stderr)
-                n_excluded += 1
-                continue  # <-- the kill-line for the S1 exclusion guard (dormant on the kloppy path)
-            yield provider, match_id, actions, frames, home
+    refs = list_match_refs(providers=providers, match_ids=match_ids, max_per_provider=max_per_provider, token=token)
+    n_total = n_excluded = 0
+    for ref in refs:
+        n_total += 1
+        try:
+            m = load_match(ref, events_only=False, tracking_limit=tracking_limit, cache_dir=cache_dir, token=token)
+        except MatchExcluded as exc:
+            print(f"  EXCLUDED {ref.provider}/{ref.match_id}: {exc.reason}", file=sys.stderr)
+            n_excluded += 1
+            continue
+        # events_only=False always builds frames (tracking-only wrapper), so frames is never None;
+        # the cast keeps the 4ac26d0 non-optional 5-tuple its consumers were typed against.
+        yield m.provider, m.match_id, m.actions, cast("pd.DataFrame", m.frames), m.home_team_id
     print(f"excluded {n_excluded}/{n_total} matches", file=sys.stderr)
 
 
@@ -268,22 +433,51 @@ def load_statsbomb_matches(
 ) -> Iterator[tuple[str, str, pd.DataFrame, pd.DataFrame, object, object]]:
     """Yield ``(provider, match_id, actions, frames, home_team_id, visible_area)`` for SB360 matches.
 
-    The SB360-only sibling of :func:`load_matches`: it carries the extra per-action ``visible_area``
-    polygon table that the tracking-provider path has no analogue for, so the public 5-tuple contract
-    of :func:`load_matches` (and its every unpack site) stays untouched. Reuses
-    :func:`_build_match_with_retry` for download/retry/cache; ``provider`` is always ``"statsbomb"``.
+    The SB360 sibling of :func:`load_matches` -- a byte-identical, tracking-only wrapper over
+    ``list_match_refs`` + ``load_match`` that also carries the per-action ``visible_area`` polygon the
+    tracking providers have no analogue for. Corpus drivers must not call it (CI Rule A).
     """
-    tok, base_url = _resolve_token(token), _base_url()
-    manifest = {m["id"]: m for m in _list_matches("statsbomb", tok, base_url)}
-    wanted = _wanted_for_provider(
-        list(manifest), "statsbomb", {"statsbomb": match_ids} if match_ids else None, max_matches
+    refs = list_match_refs(
+        providers=["statsbomb"],
+        match_ids={"statsbomb": match_ids} if match_ids else None,
+        max_per_provider=max_matches,
+        token=token,
     )
-    for match_id in wanted:
-        artifacts = manifest[match_id]["artifacts"]
-        actions, frames, home, visible_area, _report = _build_match_with_retry(
-            "statsbomb", match_id, artifacts, tok, base_url, None, cache_dir=cache_dir
-        )
-        yield "statsbomb", match_id, actions, frames, home, visible_area
+    for ref in refs:
+        m = load_match(ref, events_only=False, cache_dir=cache_dir, token=token)
+        yield "statsbomb", m.match_id, m.actions, cast("pd.DataFrame", m.frames), m.home_team_id, m.visible_area
+
+
+@overload
+def _build_match_with_retry(
+    provider,
+    match_id,
+    artifacts,
+    tok,
+    base_url,
+    tracking_limit,
+    *,
+    cache_dir=None,
+    events_only: Literal[False] = False,
+    attempts: int = 3,
+    backoff: float = 3.0,
+) -> tuple[pd.DataFrame, pd.DataFrame, object, object, object]: ...
+
+
+@overload
+def _build_match_with_retry(
+    provider,
+    match_id,
+    artifacts,
+    tok,
+    base_url,
+    tracking_limit,
+    *,
+    cache_dir=None,
+    events_only: Literal[True],
+    attempts: int = 3,
+    backoff: float = 3.0,
+) -> tuple[pd.DataFrame, None, object, None, None]: ...
 
 
 def _build_match_with_retry(
@@ -295,9 +489,10 @@ def _build_match_with_retry(
     tracking_limit,
     *,
     cache_dir=None,
+    events_only: bool = False,
     attempts: int = 3,
     backoff: float = 3.0,
-):
+) -> tuple[pd.DataFrame, pd.DataFrame | None, object, object, object]:
     """Download + build one match, retrying transient network/IO failures with a fresh temp dir.
 
     The pining fetch (Bearer -> 302 -> presigned S3) and kloppy's subsequent file reads can blip
@@ -306,8 +501,17 @@ def _build_match_with_retry(
     fold-loads (2 phases x Stage 1 + Stage 2); a single un-retried blip would crash a whole stage,
     losing hours of Stage-2 enrichment. Retry with a fresh temp dir + linear backoff, then fail loud
     only if a match is genuinely unfetchable after ``attempts`` tries.
+
+    ``events_only`` downloads no tracking artifact and builds the actions alone (``frames``,
+    ``visible_area`` and ``report`` are ``None``); the full build is never reached.
     """
     import tempfile
+
+    def _build(paths):
+        if events_only:
+            actions, home = _build_match_actions(provider, match_id, paths)
+            return actions, None, home, None, None
+        return _build_match(provider, match_id, paths, tracking_limit)
 
     last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -318,12 +522,16 @@ def _build_match_with_retry(
                 # _download_to_temp). The kloppy/build parse still re-runs; only the network is saved.
                 dl_dir = Path(cache_dir) / provider / str(match_id)
                 dl_dir.mkdir(parents=True, exist_ok=True)
-                paths = _download_artifacts(provider, match_id, artifacts, tok, base_url, dl_dir, use_cache=True)
-                return _build_match(provider, match_id, paths, tracking_limit)
+                paths = _download_artifacts(
+                    provider, match_id, artifacts, tok, base_url, dl_dir, use_cache=True, events_only=events_only
+                )
+                return _build(paths)
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_dir = Path(tmp)
-                paths = _download_artifacts(provider, match_id, artifacts, tok, base_url, tmp_dir)
-                return _build_match(provider, match_id, paths, tracking_limit)
+                paths = _download_artifacts(
+                    provider, match_id, artifacts, tok, base_url, tmp_dir, events_only=events_only
+                )
+                return _build(paths)
         except Exception as exc:  # transient network/IO (any source) — retried, then re-raised loud
             last_exc = exc
             if attempt < attempts:
@@ -339,25 +547,42 @@ def _build_match_with_retry(
     ) from last_exc
 
 
-def _download_artifacts(
-    provider, match_id, artifacts, token, base_url, tmp_dir, *, use_cache: bool = False
-) -> dict[str, Path]:
-    """Download the artifacts each provider needs, keyed by a NORMALISED role name."""
+def _artifact_roles(provider: str, artifacts: dict, *, events_only: bool = False) -> dict[str, str]:
+    """``{normalised role: artifact key}`` a build of ``provider`` downloads.
+
+    ``events_only`` drops the tracking-side role -- and never RESOLVES its key, so a match whose
+    manifest lists no tracking artifact still yields its events. For StatsBomb the tracking-side role
+    is ``freeze_frames`` (its own artifact, which the actions never read), so an events-only StatsBomb
+    load drops it exactly as the tracking providers drop ``tracking`` (spec §4.1, CDLS-SPEC-03).
+    """
     if provider == "idsse":
         roles = {"events": "events", "metadata": "metadata", "tracking": "tracking"}
     elif provider == "statsbomb":
-        # SB360: freeze-frames replace continuous tracking; no `tracking` artifact exists.
-        roles = {"events": "events", "freeze_frames": "freeze_frames", "metadata": "metadata", "roster": "roster"}
+        # SB360: freeze-frames are the tracking-side artifact; the actions half never reads them.
+        roles = {"events": "events", "metadata": "metadata", "roster": "roster"}
+        if not events_only:
+            roles["freeze_frames"] = "freeze_frames"
     elif provider == "gradientsports":
         roles = {"events": "events", "metadata": "metadata", "roster": "roster", "tracking": "tracking"}
     elif provider == "skillcorner":
         roles = {
             "events": _artifact_key(artifacts, suffix="_dynamic_events.csv", role="events"),
             "metadata": _artifact_key(artifacts, suffix="_match.json", role="metadata"),
-            "tracking": _artifact_key(artifacts, suffix="_tracking_extrapolated.jsonl", role="tracking"),
         }
+        if not events_only:
+            roles["tracking"] = _artifact_key(artifacts, suffix="_tracking_extrapolated.jsonl", role="tracking")
     else:
         raise ValueError(f"unknown pining provider {provider!r}")
+    if events_only:
+        roles.pop("tracking", None)  # skillcorner never added it (its key is not even resolved)
+    return roles
+
+
+def _download_artifacts(
+    provider, match_id, artifacts, token, base_url, tmp_dir, *, use_cache: bool = False, events_only: bool = False
+) -> dict[str, Path]:
+    """Download the artifacts each provider needs, keyed by a NORMALISED role name."""
+    roles = _artifact_roles(provider, artifacts, events_only=events_only)
     out: dict[str, Path] = {}
     for role, key in roles.items():
         artifact_key = key if key in artifacts else role
@@ -400,6 +625,26 @@ def _build_match(provider, match_id, paths, tracking_limit):
     raise ValueError(f"unknown pining provider {provider!r}")
 
 
+def _build_match_actions(provider, match_id, paths):
+    """Events-only provider dispatch: ``(actions, home_team_id)`` without touching ``paths["tracking"]``.
+
+    Each provider's ACTIONS half is the same function its full builder calls, so the events-only
+    actions are the full build's actions by construction (and test-pinned byte-identical).
+    """
+    if provider == "idsse":
+        actions, match_info, _hsl, _hsl_et = _idsse_actions(paths, match_id)
+        return actions, match_info.home_team_id
+    if provider == "skillcorner":
+        return _skillcorner_actions(paths)
+    if provider == "gradientsports":
+        actions, match = _gradientsports_actions(paths)
+        return actions, str(match.home_team_id)
+    if provider == "statsbomb":
+        actions, home, _xy = _statsbomb_actions(paths, match_id)
+        return actions, home
+    raise ValueError(f"unknown pining provider {provider!r}")
+
+
 def _read_json(path):
     """Decode a pining JSON artifact, transparently gunzipping a ``.json.gz`` file."""
     import gzip
@@ -431,27 +676,16 @@ def _attach_roster_identity(actions: pd.DataFrame, roster: dict[int, dict]) -> p
     return out
 
 
-def build_statsbomb_match(paths, match_id):
-    """Build one SB360 match from its pining artifacts into the widened 5-tuple.
+def _statsbomb_actions(paths, match_id):
+    """The actions half of :func:`build_statsbomb_match` -- events + metadata + roster identity,
+    NEVER ``freeze_frames``.
 
-    ``paths`` maps the normalised roles ``events`` and ``freeze_frames`` (required) plus ``metadata``
-    and ``roster`` (optional) to files -- ``.json`` or ``.json.gz``. Metadata supplies
-    ``home_team_id`` and the fidelity versions (threaded into ``convert_to_actions`` and
-    ``shape_snapshots``); absent, ``home_team_id`` is derived from the events and fidelity is
-    inferred. Roster, when present, adds identity columns to ``actions``.
-
-    Returns ``(actions, frames, home_team_id, visible_area, report=None)``. ``_preprocess`` is NOT
-    run -- freeze-frames have no velocity to derive (``speed_source == "unavailable"``).
+    Single-sourced so an events-only StatsBomb load is byte-identical to the full build's returned
+    actions (the contract every provider's events-only path holds). Returns
+    ``(actions, home_team_id, xy_fidelity_version)`` -- the fidelity feeds the full build's snapshots.
     """
-    from scripts._sb_raw import (
-        flatten_events,
-        parse_freeze_frames,
-        parse_metadata,
-        parse_roster,
-    )
-    from silly_kicks.providers.statsbomb import shape_snapshots
+    from scripts._sb_raw import flatten_events, parse_metadata, parse_roster
     from silly_kicks.spadl.statsbomb import convert_to_actions
-    from silly_kicks.tracking import snapshot_to_tracking_frames
 
     events = _read_json(paths["events"])
     if isinstance(events, dict):
@@ -476,14 +710,31 @@ def build_statsbomb_match(paths, match_id):
         xy_fidelity_version=xy_fidelity,
         shot_fidelity_version=shot_fidelity,
     )
+    if paths.get("roster") is not None:
+        actions = _attach_roster_identity(actions, parse_roster(_read_json(paths["roster"])))
+    return actions, home, xy_fidelity
 
+
+def build_statsbomb_match(paths, match_id):
+    """Build one SB360 match from its pining artifacts into the widened 5-tuple.
+
+    ``paths`` maps the normalised roles ``events`` and ``freeze_frames`` (required) plus ``metadata``
+    and ``roster`` (optional) to files -- ``.json`` or ``.json.gz``. Metadata supplies
+    ``home_team_id`` and the fidelity versions (threaded into ``convert_to_actions`` and
+    ``shape_snapshots``); absent, ``home_team_id`` is derived from the events and fidelity is
+    inferred. Roster, when present, adds identity columns to ``actions``.
+
+    Returns ``(actions, frames, home_team_id, visible_area, report=None)``. ``_preprocess`` is NOT
+    run -- freeze-frames have no velocity to derive (``speed_source == "unavailable"``).
+    """
+    from scripts._sb_raw import parse_freeze_frames
+    from silly_kicks.providers.statsbomb import shape_snapshots
+    from silly_kicks.tracking import snapshot_to_tracking_frames
+
+    actions, home, xy_fidelity = _statsbomb_actions(paths, match_id)
     frames_raw = parse_freeze_frames(_read_json(paths["freeze_frames"]))
     snapshots, visible_area, _join = shape_snapshots(frames_raw, actions, fidelity_version=xy_fidelity or 1)
     frames, _links = snapshot_to_tracking_frames(snapshots, actions)
-
-    if paths.get("roster") is not None:
-        actions = _attach_roster_identity(actions, parse_roster(_read_json(paths["roster"])))
-
     return actions, frames, home, visible_area, None
 
 
@@ -678,19 +929,12 @@ def build_skillcorner_frames(paths, match_id, tracking_limit):
     return _preprocess(frames), report
 
 
-def _build_skillcorner(paths, match_id, tracking_limit):
-    """SkillCorner: NATIVE tracking builder + silly-kicks SkillCorner events converter.
+def _skillcorner_actions(paths):
+    """The ACTIONS half of :func:`_build_skillcorner`: ``(actions, home_team_id)``.
 
-    Returns ``(actions, frames, home_team_id, report)``. ``report`` is the tracking
-    ``TrackingConversionReport`` from the native ``tracking.skillcorner`` builder (which runs the S1
-    geometry rate-gate, spec 4.4); ``load_matches`` reads ``report.geometry_excluded`` to DROP a
-    geometrically-broken match. Task 7 rerouted the frame path off the kloppy gateway (which
-    hard-coded ``visibility=None``, discarded ``ball_z``, and used a pitch scale disagreeing with the
-    events converter) onto the native builder, so this report is now REAL (was ``None`` -- the
-    exclusion was DORMANT).
+    SkillCorner dynamic-events CSV (or parquet) + match.json -> the silly-kicks SkillCorner SPADL
+    converter. Reads no tracking, so the events-only load and the full build share it.
     """
-    frames, report = build_skillcorner_frames(paths, match_id, tracking_limit)
-    # Events: SkillCorner dynamic-events CSV + match.json -> silly-kicks SkillCorner SPADL converter.
     from silly_kicks.spadl import skillcorner as sk_spadl
 
     with open(paths["metadata"], encoding="utf-8") as fh:
@@ -701,31 +945,41 @@ def _build_skillcorner(paths, match_id, tracking_limit):
         pd.read_parquet(ev_path) if str(ev_path).endswith(".parquet") else pd.read_csv(ev_path, low_memory=False)
     )
     actions, _evt_report = sk_spadl.convert_to_actions(raw_events, meta)
+    return actions, home_team_id
+
+
+def _build_skillcorner(paths, match_id, tracking_limit):
+    """SkillCorner: NATIVE tracking builder + silly-kicks SkillCorner events converter.
+
+    Returns ``(actions, frames, home_team_id, report)``. ``report`` is the tracking
+    ``TrackingConversionReport`` from the native ``tracking.skillcorner`` builder (which runs the S1
+    geometry rate-gate, spec 4.4); ``load_matches`` reads ``report.geometry_excluded`` to DROP a
+    geometrically-broken match. Task 7 rerouted the frame path off the kloppy gateway (which
+    hard-coded ``visibility=None``, discarded ``ball_z``, and used a pitch scale disagreeing with the
+    events converter) onto the native builder, so this report is now REAL (was ``None`` -- the
+    exclusion was DORMANT). The actions come from :func:`_skillcorner_actions`, which the
+    events-only load shares.
+    """
+    frames, report = build_skillcorner_frames(paths, match_id, tracking_limit)
+    actions, home_team_id = _skillcorner_actions(paths)
     return actions, frames, home_team_id, report
 
 
-def _build_idsse(paths, match_id, tracking_limit):
-    """IDSSE (DFL/Sportec XML) via the silly-kicks DFL parse+shape port (ADR-031 T3).
+def _idsse_actions(paths, match_id):
+    """The ACTIONS half of :func:`_build_idsse`: ``(actions, match_info, hsl, hsl_et)``.
 
-    Single-sources the DFL parser: ``providers.sportec.parse_dfl_*`` (bytes -> RAW bronze) ->
-    ``shape_*_to_native`` -> the NATIVE silly-kicks ``spadl.sportec`` / ``tracking.sportec``
-    converters. This replaces the former kloppy event + loader-local kloppy tracking path
-    (``_kloppy_tracking_to_frames``), which produced y-INVERTED frames (ADR-031 / the
-    kloppy-tracking-y bug). ``home_team_start_left`` is derived from the DFL ``<KickOff>``
-    events (authoritative). Tracking frames are emitted ``absolute_frame`` (matching the prior
-    harness convention) then preprocessed (smooth + velocities) consumer-side.
+    Parses the DFL match info + events XML only (never the positions file) -> native SPADL, with
+    ``home_team_start_left`` (+ extra time) derived from the DFL ``<KickOff>`` events (authoritative)
+    and returned, so the frame build reuses the same direction of play.
     """
     from silly_kicks.providers.sportec import (
         derive_idsse_home_team_start_left,
         derive_idsse_home_team_start_left_extratime,
         parse_dfl_events,
         parse_dfl_match_info,
-        parse_dfl_tracking,
         shape_events_to_native,
-        shape_tracking_to_native,
     )
     from silly_kicks.spadl import sportec as sportec_spadl
-    from silly_kicks.tracking import sportec as sportec_tracking
 
     bare_id = str(match_id).removeprefix("DFL-MAT-")  # parser expects the bare DFL MatchId
     mi = parse_dfl_match_info(str(paths["metadata"]))
@@ -748,6 +1002,26 @@ def _build_idsse(paths, match_id, tracking_limit):
     actions["team_id"] = (
         actions["team_id"].map({"home": mi.home_team_id, "away": mi.away_team_id}).fillna(actions["team_id"])
     )
+    return actions, mi, hsl, hsl_et
+
+
+def _build_idsse(paths, match_id, tracking_limit):
+    """IDSSE (DFL/Sportec XML) via the silly-kicks DFL parse+shape port (ADR-031 T3).
+
+    Single-sources the DFL parser: ``providers.sportec.parse_dfl_*`` (bytes -> RAW bronze) ->
+    ``shape_*_to_native`` -> the NATIVE silly-kicks ``spadl.sportec`` / ``tracking.sportec``
+    converters. This replaces the former kloppy event + loader-local kloppy tracking path
+    (``_kloppy_tracking_to_frames``), which produced y-INVERTED frames (ADR-031 / the
+    kloppy-tracking-y bug). ``home_team_start_left`` is derived from the DFL ``<KickOff>``
+    events (authoritative). Tracking frames are emitted ``absolute_frame`` (matching the prior
+    harness convention) then preprocessed (smooth + velocities) consumer-side. The actions come
+    from :func:`_idsse_actions`, which the events-only load shares.
+    """
+    from silly_kicks.providers.sportec import parse_dfl_tracking, shape_tracking_to_native
+    from silly_kicks.tracking import sportec as sportec_tracking
+
+    actions, mi, hsl, hsl_et = _idsse_actions(paths, match_id)
+    bare_id = str(match_id).removeprefix("DFL-MAT-")  # parser expects the bare DFL MatchId
 
     # Tracking: parse -> shape -> native frames. The port parses the FULL positions XML; honour
     # the dev-loop ``tracking_limit`` by capping to the first N distinct frames AFTER parse (the
@@ -895,14 +1169,27 @@ def _dedupe_gs_frame_records(frames_json: list[dict]) -> list[dict]:
     return out
 
 
-def _build_gradientsports(paths, tracking_limit=None):
-    """Gradient Sports: flatten JSONL tracking + roster -> add_gradientsports_player_ids -> frames;
-    flatten gameEvents JSON -> SPADL via spadl.gradientsports. Ports the PR-A e2e + GS SPADL test.
-    """
-    import bz2
+class _GsMatch(NamedTuple):
+    """What the Gradient Sports frame build needs from the metadata / roster / events half."""
 
+    game_id: int
+    home_team_id: int
+    away_team_id: int
+    home_team_start_left: bool
+    home_team_start_left_extratime: bool | None  # as RESOLVED on the events (see _gradientsports_actions)
+    roster: pd.DataFrame
+
+
+def _gradientsports_actions(paths):
+    """The ACTIONS half of :func:`_build_gradientsports`: ``(actions, match)`` from the metadata,
+    roster and gameEvents JSON only -- never the tracking file.
+
+    The extra-time direction is resolved HERE, on the events, and handed to the frame build in
+    ``match``: ``_apply_et_direction`` is idempotent on a concrete flag, and on a missing one it drops
+    extra time from both tables, so actions and frames stay ET-consistent exactly as when the frame
+    block resolved it first.
+    """
     from silly_kicks.spadl import gradientsports as gs_spadl
-    from silly_kicks.tracking.gradientsports import add_gradientsports_player_ids, convert_to_frames
 
     with open(paths["metadata"], encoding="utf-8") as fh:
         meta = json.load(fh)
@@ -922,6 +1209,38 @@ def _build_gradientsports(paths, tracking_limit=None):
             "position_group_type": [r.get("positionGroupType") for r in roster_raw],
         }
     )
+    game_id = int(meta.get("id", meta.get("gameId", 0)) or 0)
+
+    with open(paths["events"], encoding="utf-8") as fh:
+        events_json = json.load(fh)
+    events_df = _gs_flatten_events(events_json, roster)
+    # Both converters are per-period-absolute (each raises on ET without the flag). Resolve the flag
+    # here and hand the SAME value to the frame build, so actions + frames stay ET-consistent.
+    events_df, home_start_left_et = _apply_et_direction(
+        events_df, home_start_left_et, label=f"gradientsports {game_id} events"
+    )
+    actions, _r2 = gs_spadl.convert_to_actions(
+        events_df,
+        home_team_id=home_team_id,
+        home_team_start_left=home_start_left,
+        home_team_start_left_extratime=home_start_left_et,
+    )
+    return actions, _GsMatch(game_id, home_team_id, away_team_id, home_start_left, home_start_left_et, roster)
+
+
+def _build_gradientsports(paths, tracking_limit=None):
+    """Gradient Sports: flatten JSONL tracking + roster -> add_gradientsports_player_ids -> frames;
+    flatten gameEvents JSON -> SPADL via spadl.gradientsports. Ports the PR-A e2e + GS SPADL test.
+
+    The actions and the resolved extra-time direction come from :func:`_gradientsports_actions`,
+    which the events-only load shares.
+    """
+    import bz2
+
+    from silly_kicks.tracking.gradientsports import add_gradientsports_player_ids, convert_to_frames
+
+    actions, match = _gradientsports_actions(paths)
+    game_id, home_team_id, away_team_id, home_start_left, home_start_left_et, roster = match
 
     raw = Path(paths["tracking"]).read_bytes()
     text = bz2.decompress(raw).decode("utf-8") if raw[:2] == b"BZ" else raw.decode("utf-8")
@@ -929,7 +1248,6 @@ def _build_gradientsports(paths, tracking_limit=None):
     frames_json = _dedupe_gs_frame_records(frames_json)  # GS ships some (period, frame) records 2-16x
     if tracking_limit:
         frames_json = frames_json[:tracking_limit]
-    game_id = int(meta.get("id", meta.get("gameId", 0)) or 0)
     rows = []
     for fr in frames_json:
         base = dict(
@@ -974,23 +1292,11 @@ def _build_gradientsports(paths, tracking_limit=None):
     resolved, _rep = add_gradientsports_player_ids(
         jersey_frames, roster, home_team_id=home_team_id, away_team_id=away_team_id
     )
-    # Extra time needs the ET start direction; the GS converter raises without it.
+    # Extra time needs the ET start direction; the GS converter raises without it. The flag was
+    # resolved on the events above (idempotent here); a missing one drops ET frames as it drops ET events.
     resolved, home_start_left_et = _apply_et_direction(resolved, home_start_left_et, label=f"gradientsports {game_id}")
     frames, _r = convert_to_frames(
         resolved,
-        home_team_id=home_team_id,
-        home_team_start_left=home_start_left,
-        home_team_start_left_extratime=home_start_left_et,
-    )
-
-    with open(paths["events"], encoding="utf-8") as fh:
-        events_json = json.load(fh)
-    events_df = _gs_flatten_events(events_json, roster)
-    # The events converter is per-period-absolute too (raises on ET without the flag).
-    # Apply the same resolution as tracking so actions + frames stay ET-consistent.
-    events_df, _ = _apply_et_direction(events_df, home_start_left_et, label=f"gradientsports {game_id} events")
-    actions, _r2 = gs_spadl.convert_to_actions(
-        events_df,
         home_team_id=home_team_id,
         home_team_start_left=home_start_left,
         home_team_start_left_extratime=home_start_left_et,

@@ -195,11 +195,26 @@ def _fixture_items():
     yield (3893795, actions, frames, visible_area, home)
 
 
-def _pining_items(match_ids, token):
-    from scripts._loader_pining import load_statsbomb_matches
+def _pining_source(match_ids, token, cache_dir):
+    """The licensed SB360 corpus as ``(refs, load)`` (spec section 4.5): a cheap ref list + a
+    single-match loader yielding the ``(mid, actions, frames, visible_area, home)`` tuple
+    ``measure_match`` consumes."""
+    from scripts._loader_pining import pining_source
 
-    for _prov, mid, actions, frames, home, visible_area in load_statsbomb_matches(match_ids=match_ids, token=token):
-        yield (mid, actions, frames, visible_area, home)
+    refs, base_load = pining_source(
+        ["statsbomb"], match_ids={"statsbomb": match_ids} if match_ids else None, token=token, cache_dir=cache_dir
+    )
+
+    def load(ref):
+        lm = base_load(ref)
+        return (lm.match_id, lm.actions, lm.frames, lm.visible_area, lm.home_team_id)
+
+    return refs, load
+
+
+def _item_key(x):
+    """Key BOTH the fixture tuples and the pining refs by match_id (the pre-migration key)."""
+    return x.match_id if hasattr(x, "match_id") else str(x[0])
 
 
 def main(argv=None) -> None:
@@ -209,6 +224,11 @@ def main(argv=None) -> None:
     ap.add_argument("--match-ids-json", type=pathlib.Path, default=None, help="JSON list of match ids to slice.")
     ap.add_argument("--fixture-only", action="store_true", help="Run the committed open-360 slice; no network.")
     ap.add_argument("--tag", default="all")
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        help="raw-artifact cache root (default: $SILLY_KICKS_CORPUS_CACHE_DIR, else no cache)",
+    )
     ap.add_argument("--allow-dirty", action="store_true")
     args = ap.parse_args(argv)
 
@@ -217,14 +237,15 @@ def main(argv=None) -> None:
     require_clean_tree(prov, allow_dirty=args.allow_dirty)
 
     if args.fixture_only:
-        items = _fixture_items()
+        items, load = _fixture_items(), None
     else:
         match_ids = json.loads(args.match_ids_json.read_text()) if args.match_ids_json else None
-        items = _pining_items(match_ids, token=None)
+        items, load = _pining_source(match_ids, token=None, cache_dir=args.cache_dir)
 
     res = for_each(
         items,
-        key=lambda it: str(it[0]),
+        key=_item_key,
+        load=load,
         work=measure_match,
         shard_root=args.shard_root,
         token_inputs={"schema": _SHARD_SCHEMA_VERSION},
@@ -249,8 +270,11 @@ def main(argv=None) -> None:
         ),
         encoding="utf-8",
     )
+    # `res.attempted` already EXCLUDES skips (a skipped item is never counted attempted), so the old
+    # `attempted - skipped - failed` subtracted skips twice. "processed this pass" = shard-bearing
+    # keys minus the ones skipped from a prior pass.
     print(
-        f"attempted={res.attempted} processed={res.attempted - res.skipped - res.failed} "
+        f"attempted={res.attempted} processed={len(res.shard_keys) - res.skipped} "
         f"skipped={res.skipped} failed={res.failed}"
     )
 

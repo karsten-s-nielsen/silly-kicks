@@ -29,8 +29,11 @@ import importlib.util
 import pathlib
 import re
 import time
+import warnings
 from collections.abc import Mapping, Sized
 from pathlib import PurePath, PurePosixPath
+
+from scripts._item_outcome import ItemExcluded  # leaf module (imports nothing from scripts/); no cycle
 
 # NOTE: `ruthless` and `pandas` are imported INSIDE the functions that need them, not here.
 # `ruthless-efficiency` ships only in the [calibration] / [test] / [train] extras, so a
@@ -287,6 +290,53 @@ def _read_counters(generation, key) -> dict | None:
         return None
 
 
+def exclusion_path(generation, key) -> pathlib.Path:
+    """The exclusion-marker path for ``key`` -- ``.excluded.json``, so it is invisible to every
+    ``*.parquet`` glob (`reconcile`, `assert_conservation` and the drivers' combines all stay
+    unaffected), exactly like the counters sidecar."""
+    return pathlib.Path(generation) / f"{join_key(key)}.excluded.json"
+
+
+def already_excluded(generation, key) -> bool:
+    """True when this item carries an exclusion marker in this generation."""
+    return exclusion_path(generation, key).is_file()
+
+
+def write_exclusion(generation, key, exc) -> None:
+    """Persist a deterministic exclusion as ``{"reason", "details"}``, atomically (spec §4.3).
+
+    Atomic (temp + ``os.replace``) because the marker is commit-relevant: one truncated by a kill
+    must never read back as a valid, differently-worded exclusion. No ``tag`` parameter -- a marker
+    is per-item, so (like the counters sidecar) it never enters the path.
+    """
+    import json
+    import os
+
+    path = exclusion_path(generation, key)
+    payload = {"reason": exc.reason, "details": dict(getattr(exc, "details", {}) or {})}
+    tmp = path.with_name(f"{path.name}.partial")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def read_exclusion(generation, key) -> dict | None:
+    """The marker payload (``{"reason", "details"}``), or ``None`` when absent or unreadable.
+
+    A truncated marker (killed mid-write) is UNKNOWN, never a valid exclusion: it warns and returns
+    ``None`` so `for_each` re-decides the item cleanly instead of skipping it on a corrupt reason.
+    """
+    import json
+
+    path = exclusion_path(generation, key)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        warnings.warn(f"unreadable exclusion marker {path}; re-deciding the item", stacklevel=2)
+        return None
+
+
 def progress(label: str, i: int, n: int | None, *, elapsed_s: float, note: str = "") -> None:
     """One line per item, FLUSHED.
 
@@ -341,13 +391,15 @@ def assert_conservation(generation, *, keys, failed: int) -> None:
     # expensive loop, which is precisely the failure this docstring's last line warns about.
     keys = list(keys)
     gen = pathlib.Path(generation)
-    present = sum(1 for k in keys if (gen / f"{k}.parquet").is_file())
+    # A key is ACCOUNTED if it has a shard OR an exclusion marker (ADR-052 D13): an excluded item is
+    # a decided outcome, persisted and skipped on resume, never an empty shard and never a failure.
+    present = sum(1 for k in keys if (gen / f"{k}.parquet").is_file() or (gen / f"{k}.excluded.json").is_file())
     expected = len(keys) - failed
     if present != expected:
         raise AssertionError(
             f"conservation violated in {gen}: {present} of this pass's {len(keys)} keys have "
-            f"shards, but keys-failed={len(keys)}-{failed}={expected}. A completed item did "
-            f"not write its shard, or the failure count is wrong."
+            f"shards or exclusion markers, but keys-failed={len(keys)}-{failed}={expected}. A "
+            f"completed item did not write its shard, or the failure count is wrong."
         )
 
 
@@ -385,7 +437,7 @@ def reconcile(generation, combined_path, *, tag: str):
     return combined
 
 
-def manifest_fields(generation, *, attempted: int, failed: int, counters_unrecorded: int) -> dict:
+def manifest_fields(generation, *, attempted: int, failed: int, counters_unrecorded: int, excluded: int) -> dict:
     """The fields every adopting driver merges into its ``manifest_<tag>.json``.
 
     ``generation`` is here so a reader can tell whether the combined table beside the shard root
@@ -417,6 +469,11 @@ def manifest_fields(generation, *, attempted: int, failed: int, counters_unrecor
         # UNDER-report the corpus, and says so in the artifact instead of leaving the reader to
         # infer it from a number that looks complete. `aggregate_manifests` sums it like any int.
         "n_counters_unrecorded": int(counters_unrecorded),
+        # Items excluded by a deterministic admission decision (ADR-052 D13). CORPUS-scoped, unlike
+        # `n_attempted`: an exclusion is replayed from its marker on resume, so it is never evidence
+        # that this pass built anything. `aggregate_manifests` sums it but must deny it a commit vote
+        # (interp 9 / Step 7). Present on EVERY manifest (interp 3), 0 on a no-`load` pass.
+        "n_excluded": int(excluded),
     }
 
 
@@ -516,6 +573,18 @@ class CorpusPassResult:
     counters: dict
     keys: tuple[str, ...] = ()
     counters_unrecorded: int = 0
+    excluded: int = 0
+    exclusions: dict = dataclasses.field(default_factory=dict)  # joined key -> reason (this pass + replayed)
+
+    @property
+    def shard_keys(self) -> tuple[str, ...]:
+        """The keys with a parquet shard, in pass order -- ``keys`` minus failures minus exclusions.
+
+        A combiner that reads ``shard_path(gen, k)`` per key MUST iterate this, not ``keys``: an
+        excluded key has a ``.excluded.json`` marker and no parquet, so it would `FileNotFoundError`
+        on the first S1 exclusion (spec §4.3, interp 11).
+        """
+        return tuple(k for k in self.keys if k not in self.failures and k not in self.exclusions)
 
     def manifest(self) -> dict:
         return manifest_fields(
@@ -523,6 +592,7 @@ class CorpusPassResult:
             attempted=self.attempted,
             failed=self.failed,
             counters_unrecorded=self.counters_unrecorded,
+            excluded=self.excluded,
         )
 
 
@@ -538,6 +608,7 @@ def for_each(
     tag: str = "all",
     label: str = "item",
     max_consecutive_failures: int = 3,
+    load=None,
 ) -> CorpusPassResult:
     """Walk ``items``, persisting each result so a crash resumes instead of restarting.
 
@@ -549,6 +620,14 @@ def for_each(
     A failing item is recorded and skipped, because one bad item must not cost a whole corpus pass.
     ``max_consecutive_failures`` in a row aborts, because that is a systematic bug rather than bad
     luck, and a short clean-looking table is worse than a crash.
+
+    **With ``load`` given (ADR-052 D14),** ``items`` are cheap REFERENCES: ``key(ref)`` is computed
+    from the ref and the resume/exclusion-marker checks run BEFORE ``item = load(ref)``, so a
+    finished or excluded item is never re-loaded (resume-before-load). ``load(ref)`` and
+    ``work(item)`` share ONE ``try``, so an unloadable item is a recorded failure rather than an
+    exception escaping the generator. An ``ItemExcluded`` from either -- a deterministic admission
+    decision -- writes a ``.excluded.json`` marker, is counted excluded (not failed, not an empty
+    shard), and resets the consecutive-failure run. Without ``load``, behaviour is exactly as before.
     """
     generation = generation_dir(shard_root, token_inputs=token_inputs, token_reason=token_reason)
     # STREAMED, never `list(items)`. `load_matches` is an Iterator that downloads and parses a match
@@ -562,11 +641,12 @@ def for_each(
     seen: set[str] = set()
     attempted = skipped = counters_unrecorded = 0
     failures: dict = {}
+    exclusions: dict = {}
     totals: dict = {}
     run = 0
 
-    for i, item in enumerate(items, start=1):
-        k = join_key(key(item))
+    for i, ref in enumerate(items, start=1):
+        k = join_key(key(ref))
         if k in seen:
             raise ValueError(
                 f"key() is not injective over this corpus: {k!r} appeared twice. Two items map to "
@@ -593,10 +673,33 @@ def for_each(
             progress(f"{label} {k}", i, n_total, elapsed_s=0.0, note=note)
             continue
 
+        # Exclusion marker present -> skip as excluded, replaying the recorded reason. CORPUS-scoped:
+        # counted in `excluded` only, never `skipped` or `attempted` (interp 10). Checked AFTER the
+        # shard, so a shard always wins.
+        marker = read_exclusion(generation, k)
+        if marker is not None:
+            exclusions[k] = marker["reason"]
+            progress(f"{label} {k}", i, n_total, elapsed_s=0.0, note=f"excluded (marker): {marker['reason']}")
+            continue
+        if already_excluded(generation, k):
+            # Present but unreadable (read_exclusion warned). Remove it so the item is re-decided
+            # cleanly -- a failure below must not leave a stale marker that conservation would count.
+            exclusion_path(generation, k).unlink()
+
         attempted += 1
         t0 = time.perf_counter()
         try:
+            # With `load`, `ref` is cheap and the expensive load happens HERE -- after the resume
+            # checks above, inside the same `try` as `work`, so an unloadable item is a recorded
+            # failure rather than an exception escaping the generator (ADR-052 D14).
+            item = ref if load is None else load(ref)
             frame = work(item)
+        except ItemExcluded as exc:
+            write_exclusion(generation, k, exc)
+            exclusions[k] = exc.reason
+            run = 0  # a decided outcome, not a failure: it breaks a consecutive-failure run
+            progress(f"{label} {k}", i, n_total, elapsed_s=time.perf_counter() - t0, note=f"EXCLUDED {exc.reason}")
+            continue
         except Exception as exc:  # broad BY DESIGN: recorded and counted, never swallowed silently
             failures[k] = f"{type(exc).__name__}: {exc}"
             run += 1
@@ -629,7 +732,16 @@ def for_each(
 
     assert_conservation(generation, keys=own_keys, failed=len(failures))
     return CorpusPassResult(
-        generation, attempted, skipped, len(failures), failures, totals, tuple(own_keys), counters_unrecorded
+        generation,
+        attempted,
+        skipped,
+        len(failures),
+        failures,
+        totals,
+        tuple(own_keys),
+        counters_unrecorded,
+        len(exclusions),
+        exclusions,
     )
 
 

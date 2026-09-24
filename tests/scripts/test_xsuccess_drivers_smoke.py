@@ -22,14 +22,15 @@ def test_train_and_evolve_have_parsers_and_provenance():
 
 
 def test_train_and_evolve_are_public_corpus_gated_by_the_open_data_loader():
-    # TF61-IMPL-01: the redistributability gate for these open-data-only trainers IS
-    # `load_open_data_matches` (open-data == public by construction — the train_pass_completion
+    # TF61-IMPL-01: the redistributability gate for these open-data-only trainers IS the open-data
+    # source (`open_data_source`, the Task 8.5 refs+load factory over `list_open_data_refs` /
+    # `load_open_data_match`; open-data == public by construction — the train_pass_completion
     # convention; `assert_public_corpus` is a pining-corpus visibility check, circular for open data).
     # The invariant restored here: the trainer loads ONLY open data and NEVER the pining loader,
     # so a bundled artifact cannot train on non-redistributable data.
     for name in ("train_xsuccess", "evolve_xsuccess_features"):
         s = _src(name)
-        assert "load_open_data_matches" in s, f"{name}: not sourced from the public open-data loader"
+        assert "open_data_source" in s, f"{name}: not sourced from the public open-data loader"
         assert "_loader_pining" not in s, f"{name}: imports the pining loader (non-redistributable)"
 
 

@@ -138,10 +138,15 @@ def aggregate_manifests(dest, *, defaults: tuple[str, ...] = ()) -> dict:
         # staleness token vote on whether this manifest contributed. A no-op today: a `str`
         # already fails both isinstance checks below.
         _meta = ("run_commit", "run_tree_dirty", "partition", "generation")
+        # `n_excluded` is corpus-scoped and REPLAYED on resume (ADR-052 D13): a fully resumed pass
+        # reports n_excluded>0 while genuinely building nothing. It is summed below like any int, but
+        # it must NOT count as contribution, or a resumed worker regains its commit vote and re-arms
+        # the false alarm `test_a_ZERO_CONTRIBUTION_manifest_does_not_vote...` prevents (interp 9).
+        _non_contributing = (*_meta, "n_excluded")
         countable = [
             v
             for k, v in m.items()
-            if k not in _meta and (isinstance(v, dict) or (isinstance(v, int) and not isinstance(v, bool)))
+            if k not in _non_contributing and (isinstance(v, dict) or (isinstance(v, int) and not isinstance(v, bool)))
         ]
         contributed = not countable or any((v > 0 if isinstance(v, int) else bool(v)) for v in countable)
         for k, v in m.items():

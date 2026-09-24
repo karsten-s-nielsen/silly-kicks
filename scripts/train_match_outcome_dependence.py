@@ -14,7 +14,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from collections.abc import Sequence
+import tempfile
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -70,16 +71,61 @@ def _match_tuples(actions: pd.DataFrame, xg_column: str) -> list[tuple]:
     return out
 
 
+def extract_match_slice(actions: pd.DataFrame, xg_column: str = "xg") -> pd.DataFrame:
+    """One match's per-game ``(home_xgs, away_xgs, home_goals, away_goals)`` rows as a shard (pure).
+
+    The xg arrays are stored as lists so the shard round-trips through parquet; the reduce
+    (``matches_from_shards``) rebuilds the ``fit_rho`` tuples. An empty frame (non-two-team match) is a
+    valid shard: "ran, produced no scoreline" (ADR-052)."""
+    rows = [
+        {
+            "home_xgs": [float(x) for x in hx],
+            "away_xgs": [float(x) for x in ax],
+            "home_goals": int(hg),
+            "away_goals": int(ag),
+        }
+        for hx, ax, hg, ag in _match_tuples(actions, xg_column)
+    ]
+    return pd.DataFrame(rows, columns=["home_xgs", "away_xgs", "home_goals", "away_goals"])
+
+
+def matches_from_shards(frames: Iterable[pd.DataFrame]) -> list[tuple]:
+    """Reconstruct the ``fit_rho`` tuple list from per-match shards (the whole-corpus reduce). Order
+    does not matter -- ``fit_rho`` sums the per-match NLL, so a resumed/partitioned run fits the same
+    rho as the pre-migration in-memory pass."""
+    out: list[tuple] = []
+    for f in frames:
+        for r in f.to_dict("records"):
+            out.append(
+                (
+                    np.asarray(r["home_xgs"], dtype="float64"),
+                    np.asarray(r["away_xgs"], dtype="float64"),
+                    int(r["home_goals"]),
+                    int(r["away_goals"]),
+                )
+            )
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default="silly_kicks/match_outcome/weights")
     ap.add_argument("--competitions-json", default=None, help="JSON [[competition_id, season_id], ...]")
     ap.add_argument("--max-matches", type=int, default=None)
+    ap.add_argument(
+        "--shard-root",
+        default=None,
+        help="per-match shard dir (default: a temp dir OUTSIDE the repo; resumable across runs).",
+    )
+    ap.add_argument(
+        "--cache-dir", default=None, help="raw open-data events cache root (else $SILLY_KICKS_CORPUS_CACHE_DIR)"
+    )
     ap.add_argument("--allow-dirty", action="store_true", help="dev only; artifact records dirty:true")
     args = ap.parse_args()
 
+    from scripts._driver import for_each
     from scripts._provenance import git_provenance, require_clean_tree
-    from scripts._sb_open_data import all_open_competitions, load_open_data_matches
+    from scripts._sb_open_data import all_open_competitions, open_data_source
 
     prov = require_clean_tree(git_provenance(), allow_dirty=args.allow_dirty)
     competitions = (
@@ -87,18 +133,23 @@ def main() -> None:
         if args.competitions_json
         else all_open_competitions()
     )
-    matches: list[tuple] = []
-    seen = 0
-    for competition_id, season_id in competitions:
-        for _prov, _mid, actions, _frames, _home in load_open_data_matches(
-            competition_id=competition_id, season_id=season_id
-        ):
-            matches.extend(_match_tuples(actions, "xg"))
-            seen += 1
-            if args.max_matches is not None and seen >= args.max_matches:
-                break
-        if args.max_matches is not None and seen >= args.max_matches:
-            break
+    # ADR-052 resume: shard each match's scoreline slice behind for_each's resume check (a 3,961-match
+    # load re-downloaded everything on a crash before this). The whole-corpus rho fit is the reduce.
+    refs, load = open_data_source(competitions, max_matches=args.max_matches, cache_dir=args.cache_dir)
+    shard_root = (
+        Path(args.shard_root) if args.shard_root else Path(tempfile.gettempdir()) / "sk_match_outcome_dependence_shards"
+    )
+    res = for_each(
+        refs,
+        key=lambda ref: ref.key,
+        load=load,
+        work=lambda item: extract_match_slice(item[2], "xg"),
+        shard_root=shard_root,
+        token_inputs={"model": "match_outcome_dependence", "competitions": sorted(tuple(c) for c in competitions)},
+        label="match",
+    )
+    shards = [pd.read_parquet(s) for s in sorted(res.shard_dir.glob("*.parquet"))]
+    matches = matches_from_shards(shards)
 
     rho = fit_rho(matches)
     out = Path(args.out)

@@ -1,13 +1,17 @@
 """The RC4 measurement driver's seam integration, exercised without pining access.
 
-`measure()` needs an owner token and a real match, so the driver's `run()` -- the ADR-052 `for_each`
-integration, the one-row-frame contract, the shard round-trip and the `distinct_labels` JSON
-encode/decode -- would otherwise ship having never executed. That is the gap this file closes: the
-provider measurement is stubbed, everything around it is real.
+`measure()` needs a real match, so the driver's `run()` -- the ADR-052 `for_each` integration, the
+one-row-frame contract, the shard round-trip and the `distinct_labels` JSON encode/decode -- would
+otherwise ship having never executed. That is the gap this file closes: the provider measurement is
+stubbed and the pining SOURCE is faked, everything around them is real.
 
 Why it matters here specifically: this driver exists BECAUSE the original RC4 measurement was an
 ad-hoc pass whose numbers could not be re-derived. A committed replacement that has never run would
 reproduce the same problem one level up.
+
+On the load seam (ADR-052 D14): `measure` no longer loads -- the load happens in `for_each` via the
+pining source's `load`, keyed on per-match REFS ((provider, match_id), a generation move). A load
+failure is therefore a for_each-recorded FAILURE that `run()` raises on, never a memoized error shard.
 """
 
 from __future__ import annotations
@@ -60,10 +64,32 @@ _FAKE = {
 _PROV = {"commit": "0" * 40, "dirty": False, "tree_state": "clean"}
 
 
+def _install_source(monkeypatch, *, load=None):
+    """Fake the pining SOURCE `run()` consumes: one REF per provider + a `load`. `load` defaults to
+    the identity (the ref carries `.provider`, which the stubbed `measure` reads); pass a raising
+    `load` to exercise the load-failure path. Replaces the `_loader_pining` module so `run()`'s
+    `from _loader_pining import pining_source` binds the fake."""
+    refs = [
+        types.SimpleNamespace(provider=p, match_id=_FAKE[p]["match_id"], key=(p, _FAKE[p]["match_id"]))
+        for p in ("skillcorner", "idsse")
+    ]
+    _load = load if load is not None else (lambda ref: ref)
+    fake = types.ModuleType("_loader_pining")
+    fake.pining_source = lambda **_kw: (list(refs), _load)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_loader_pining", fake)
+    return refs
+
+
+def _stub_measure(monkeypatch, mod, fn=None):
+    """Stub `measure(item)` -> a dict keyed by `item.provider` (the ref's provider)."""
+    monkeypatch.setattr(mod, "measure", fn or (lambda item, **_kw: dict(_FAKE[item.provider])))
+
+
 def test_run_round_trips_every_field_through_the_shard_seam(tmp_path, monkeypatch):
-    """The real `for_each` + parquet round trip, with only the provider measurement stubbed."""
+    """The real `for_each` + parquet round trip, with only the provider measurement + source stubbed."""
     mod = _load_driver()
-    monkeypatch.setattr(mod, "measure", lambda provider, **_kw: dict(_FAKE[provider]))
+    _install_source(monkeypatch)
+    _stub_measure(monkeypatch, mod)
 
     record = mod.run(
         label="prefix",
@@ -87,7 +113,8 @@ def test_distinct_labels_survives_as_a_LIST_not_a_json_string(tmp_path, monkeypa
     caught by asserting the type, not the presence.
     """
     mod = _load_driver()
-    monkeypatch.setattr(mod, "measure", lambda provider, **_kw: dict(_FAKE[provider]))
+    _install_source(monkeypatch)
+    _stub_measure(monkeypatch, mod)
 
     record = mod.run(
         label="postfix", tracking_limit=None, cache_dir=None, shard_dir=str(tmp_path / "s"), run_prov=_PROV
@@ -106,7 +133,8 @@ def test_provenance_block_carries_the_ADR052_vocabulary(tmp_path, monkeypatch):
     committing a producer was to converge on ADR-052's names, so assert them rather than assume.
     """
     mod = _load_driver()
-    monkeypatch.setattr(mod, "measure", lambda provider, **_kw: dict(_FAKE[provider]))
+    _install_source(monkeypatch)
+    _stub_measure(monkeypatch, mod)
 
     record = mod.run(label="prefix", tracking_limit=3000, cache_dir=None, shard_dir=str(tmp_path / "s"), run_prov=_PROV)
 
@@ -122,13 +150,10 @@ def test_provenance_block_carries_the_ADR052_vocabulary(tmp_path, monkeypatch):
 def test_a_second_run_RESUMES_from_the_shards_instead_of_re_measuring(tmp_path, monkeypatch):
     """The property adopting `for_each` was supposed to buy, asserted rather than assumed."""
     mod = _load_driver()
+    _install_source(monkeypatch)
     calls: list[str] = []
+    _stub_measure(monkeypatch, mod, lambda item, **_kw: (calls.append(item.provider), dict(_FAKE[item.provider]))[1])
 
-    def _counting(provider, **_kw):
-        calls.append(provider)
-        return dict(_FAKE[provider])
-
-    monkeypatch.setattr(mod, "measure", _counting)
     shard_dir = str(tmp_path / "shards")
     first = mod.run(label="prefix", tracking_limit=None, cache_dir=None, shard_dir=shard_dir, run_prov=_PROV)
     assert sorted(calls) == ["idsse", "skillcorner"]
@@ -142,11 +167,12 @@ def test_a_second_run_RESUMES_from_the_shards_instead_of_re_measuring(tmp_path, 
 def test_a_FAILING_provider_raises_rather_than_writing_a_partial_artifact(tmp_path, monkeypatch):
     """A half-measured artifact is worse than none: it looks complete and cites two providers."""
     mod = _load_driver()
+    _install_source(monkeypatch)
 
-    def _boom(provider, **_kw):
-        raise RuntimeError(f"{provider} exploded")
+    def _boom(item, **_kw):
+        raise RuntimeError(f"{item.provider} exploded")
 
-    monkeypatch.setattr(mod, "measure", _boom)
+    _stub_measure(monkeypatch, mod, _boom)
     with pytest.raises((RuntimeError, Exception)):
         mod.run(label="prefix", tracking_limit=None, cache_dir=None, shard_dir=str(tmp_path / "s"), run_prov=_PROV)
 
@@ -154,8 +180,9 @@ def test_a_FAILING_provider_raises_rather_than_writing_a_partial_artifact(tmp_pa
 def test_the_stub_is_not_secretly_doing_the_work(tmp_path, monkeypatch):
     """Non-vacuity: if `run()` ignored `measure` entirely, every test above would still pass."""
     mod = _load_driver()
+    _install_source(monkeypatch)
     sentinel = {**_FAKE["idsse"], "n_flip_true": 999999}
-    monkeypatch.setattr(mod, "measure", lambda provider, **_kw: dict(sentinel))
+    _stub_measure(monkeypatch, mod, lambda item, **_kw: dict(sentinel))
 
     record = mod.run(label="prefix", tracking_limit=None, cache_dir=None, shard_dir=str(tmp_path / "s"), run_prov=_PROV)
     assert record["skillcorner"]["n_flip_true"] == 999999
@@ -166,7 +193,8 @@ def test_the_shard_frame_is_ONE_ROW_per_provider(tmp_path, monkeypatch):
     """ADR-052 D7: the work -> tidy frame contract. A multi-row frame would silently drop rows,
     because `run()` reads `frame.iloc[0]`."""
     mod = _load_driver()
-    monkeypatch.setattr(mod, "measure", lambda provider, **_kw: dict(_FAKE[provider]))
+    _install_source(monkeypatch)
+    _stub_measure(monkeypatch, mod)
     shard_dir = tmp_path / "shards"
     mod.run(label="prefix", tracking_limit=None, cache_dir=None, shard_dir=str(shard_dir), run_prov=_PROV)
 
@@ -180,49 +208,42 @@ def test_the_artifact_serialises_to_json(tmp_path, monkeypatch):
     """`run()`'s output is written with `json.dumps`; a numpy scalar leaking through would raise
     there rather than here, at the end of a corpus pass."""
     mod = _load_driver()
-    monkeypatch.setattr(mod, "measure", lambda provider, **_kw: dict(_FAKE[provider]))
+    _install_source(monkeypatch)
+    _stub_measure(monkeypatch, mod)
     record = mod.run(label="prefix", tracking_limit=None, cache_dir=None, shard_dir=str(tmp_path / "s"), run_prov=_PROV)
     reparsed = json.loads(json.dumps(record))
     assert reparsed["idsse"]["flip_true_fraction"] == pytest.approx(0.5267791636096845)
 
 
 def test_a_LOAD_failure_RAISES_rather_than_becoming_artifact_DATA(tmp_path, monkeypatch):
-    """The failure that actually happens -- no token, no network -- through the REAL `measure()`.
+    """The failure that actually happens -- no token, no network -- through the load in `for_each`.
 
-    Its sibling above stubs `measure` itself, so it is STRUCTURALLY BLIND to a `measure` that
-    swallows its own load error. That is precisely what shipped, and it was measured: `measure`
-    caught `Exception` and returned an error dict, `_work` wrapped it in an ordinary one-row frame,
-    `for_each` wrote it as a healthy shard, `res.failures` stayed empty, `run()` returned normally,
-    and `main()` would have written `{"skillcorner": {"error": ...}}` over the committed artifact at
-    the DEFAULT `--out-dir` and exited 0.
-
-    Worse, the error shard made `already_done()` true forever: every resume reported
-    `skip (shard exists)` and re-published the memoized error, recoverable only by deleting a 16-hex
-    generation directory by hand.
+    On the load seam the load lives in `for_each` (via the source's `load`), not inside `measure`, so
+    a load failure is a RECORDED failure `run()` raises on. `measure` used to load itself and catch
+    `Exception`, returning an error dict that `for_each` wrote as a healthy shard: `res.failures`
+    stayed empty, `run()` returned normally, and `main()` would have written `{"skillcorner":
+    {"error": ...}}` over the committed artifact and exited 0. Moving the load out of `measure` is
+    what makes this raise.
     """
     mod = _load_driver()
 
-    def _boom(**_kw):
+    def _boom(_ref):
         raise RuntimeError("PINING_TOKEN not set")
 
-    fake = types.ModuleType("_loader_pining")
-    fake.load_matches = _boom  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "_loader_pining", fake)
+    _install_source(monkeypatch, load=_boom)
 
     with pytest.raises(RuntimeError, match=r"provider\(s\) failed"):
         mod.run(label="prefix", tracking_limit=None, cache_dir=None, shard_dir=str(tmp_path / "s"), run_prov=_PROV)
 
 
 def test_a_failed_provider_leaves_NO_shard_so_a_resume_REDOES_it(tmp_path, monkeypatch):
-    """The ADR-052 property the swallow inverted: a failure must not be memoized as done."""
+    """The ADR-052 property the old swallow inverted: a failure must not be memoized as done."""
     mod = _load_driver()
 
-    def _boom(**_kw):
+    def _boom(_ref):
         raise RuntimeError("transient network blip")
 
-    fake = types.ModuleType("_loader_pining")
-    fake.load_matches = _boom  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "_loader_pining", fake)
+    _install_source(monkeypatch, load=_boom)
 
     shard_dir = tmp_path / "s"
     with pytest.raises(RuntimeError):
@@ -244,13 +265,10 @@ def test_a_DIFFERENT_commit_does_not_reuse_the_previous_runs_shards(tmp_path, mo
     nothing), and a different commit must re-measure.
     """
     mod = _load_driver()
+    _install_source(monkeypatch)
     seen: list[str] = []
+    _stub_measure(monkeypatch, mod, lambda item, **_kw: (seen.append(item.provider), dict(_FAKE[item.provider]))[1])
 
-    def _counting(provider, **_kw):
-        seen.append(provider)
-        return dict(_FAKE[provider])
-
-    monkeypatch.setattr(mod, "measure", _counting)
     shard_dir = str(tmp_path / "s")
     at_a = {"commit": "a" * 40, "dirty": False, "tree_state": "clean"}
     at_b = {"commit": "b" * 40, "dirty": False, "tree_state": "clean"}
@@ -274,12 +292,11 @@ def test_a_CAPPED_run_REFUSES_to_overwrite_the_committed_artifacts(tmp_path, mon
     is about not silently overwriting the cited values with weaker ones.
 
     The refusal is asserted to happen BEFORE `measure()` is ever called: it originally sat after
-    `run()`, so an operator paid for the whole corpus pass and was refused afterwards, which is a
-    worse version of no refusal.
+    `run()`, so an operator paid for the whole corpus pass and was refused afterwards.
     """
     mod = _load_driver()
     called: list[str] = []
-    monkeypatch.setattr(mod, "measure", lambda provider, **_kw: called.append(provider) or dict(_FAKE[provider]))
+    _stub_measure(monkeypatch, mod, lambda item, **_kw: (called.append(item.provider), dict(_FAKE[item.provider]))[1])
     # `--allow-dirty` only gets PAST the provenance refusal, which correctly fires first on a
     # modified tree. That ordering is worth knowing in itself: provenance, then the cap, then any
     # corpus work -- both refusals land before the expensive part.
@@ -297,7 +314,8 @@ def test_a_CAPPED_run_REFUSES_to_overwrite_the_committed_artifacts(tmp_path, mon
 def test_an_UNCAPPED_run_is_not_refused(tmp_path, monkeypatch):
     """Non-vacuity: the guard must gate on the CAP, not on the output directory alone."""
     mod = _load_driver()
-    monkeypatch.setattr(mod, "measure", lambda provider, **_kw: dict(_FAKE[provider]))
+    _install_source(monkeypatch)
+    _stub_measure(monkeypatch, mod)
     monkeypatch.setattr(
         sys,
         "argv",

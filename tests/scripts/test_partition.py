@@ -100,6 +100,30 @@ def test_a_ZERO_CONTRIBUTION_manifest_does_not_vote_on_commit_consistency(tmp_pa
     assert got["commits_seen"] == ["6b242cf", "d1fc18d"]
 
 
+def test_a_REPLAYED_exclusion_count_does_not_give_a_resume_a_commit_vote(tmp_path):
+    """ADR-052 D13 / interp 9. `n_excluded` is corpus-scoped and REPLAYED on resume, so a fully
+    resumed worker reports `n_excluded > 0` while genuinely building nothing. It is still SUMMED, but
+    it must NOT count as contribution -- else the resume regains its commit vote and re-arms the
+    false alarm `test_a_ZERO_CONTRIBUTION_manifest_does_not_vote_on_commit_consistency` prevents."""
+    for i in range(8):
+        _write(
+            tmp_path,
+            f"p{i}",
+            {"n_attempted": 22, "n_excluded": 1, "run_commit": "6b242cf", "run_tree_dirty": False},
+        )
+    # A pure resume at a different commit: built nothing (n_attempted 0), only replayed exclusions.
+    _write(
+        tmp_path,
+        "all",
+        {"n_attempted": 0, "n_excluded": 3, "run_commit": "d1fc18d", "run_tree_dirty": False},
+    )
+    got = mod.aggregate_manifests(tmp_path, defaults=("n_attempted",))
+    assert got["commit_consistent"] is True, "a replayed exclusion count is not evidence of contribution"
+    assert got["run_commit"] == "6b242cf"
+    assert got["n_excluded"] == 8 + 3, "n_excluded is still summed across all manifests"
+    assert got["commits_seen"] == ["6b242cf", "d1fc18d"]
+
+
 def test_disagreeing_CONTRIBUTORS_are_still_caught(tmp_path):
     """The other side, and the whole reason the flag exists: two workers that BOTH built data at
     different commits must still fail. Narrowing the vote must not disarm it."""

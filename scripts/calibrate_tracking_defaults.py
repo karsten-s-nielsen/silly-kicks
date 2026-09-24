@@ -212,67 +212,70 @@ def _resolve_xt(args, fold, used_ids):
 def _load_xt_corpus_pining(args, calib_ids) -> tuple[pd.DataFrame, set[str]]:
     """Load actions from pining matches NOT in the calibration set (id-space-safe corpus, N1).
 
-    Walked as an ID LIST rather than as a stream, deliberately (ADR-052). `for_each` resumes
-    ``work``, never the PRODUCTION of its items -- and a streamed ``load_matches`` downloads and
-    parses a match INSIDE the generator, before yielding it. Here ``work`` is a column slice, i.e.
-    unambiguously trivial next to the load, so streaming would make a resumed run re-pay the whole
-    corpus in order to skip a handful of trivial writes. The manifest listing that yields the ids
-    already happens, so inverting costs nothing.
+    The xT grid consumes ACTIONS only, so this is an EVENTS-ONLY pass over match REFS (ADR-052 D14):
+    the resume check fires on the ref BEFORE the load, so a resumed run re-downloads nothing, and the
+    frame cap is gone because no tracking is fetched at all. It routes through the admitted
+    `events_only_loader`, so a SkillCorner match the S1 geometry gate excluded on the tracking side is
+    admitted iff its EVENTS pass the Task-0 check -- which is why the admission artifact's digest joins
+    the token (spec section 7 generation move).
     """
     from pathlib import Path
 
     import scripts._loader_pining as pining_loader
     from scripts._driver import for_each, shard_path
+    from scripts._events_admission import events_only_loader
 
-    token, base_url = pining_loader._resolve_token(None), pining_loader._base_url()
     per_provider_cap = 8  # bound the corpus; enough matches for a stable xT grid
-    items: list[tuple[str, str]] = []
-    for provider in args.providers:
-        manifest = pining_loader._list_matches(provider, token, base_url)
-        held_out = [m["id"] for m in manifest if str(m["id"]) not in calib_ids][:per_provider_cap]
-        items.extend((provider, str(mid)) for mid in held_out)
+    counts: dict[str, int] = {}
+    held_out_refs: list = []
+    for ref in pining_loader.list_match_refs(providers=args.providers):
+        if str(ref.match_id) in calib_ids or counts.get(ref.provider, 0) >= per_provider_cap:
+            continue
+        counts[ref.provider] = counts.get(ref.provider, 0) + 1
+        held_out_refs.append(ref)
+
+    load, admission = events_only_loader(
+        held_out_refs,
+        cache_dir=getattr(args, "cache_dir", None),
+        allow_unmeasured=getattr(args, "allow_unmeasured", False),
+    )
 
     def _work(item):
-        provider, mid = item
-        for _p, _mid, actions, _frames, _home in pining_loader.load_matches(
-            providers=[provider],
-            match_ids={provider: [mid]},
-            token=token,
-            tracking_limit=50,
-            cache_dir=getattr(args, "cache_dir", None),
-        ):
-            return actions[[c for c in _XT_COLS if c in actions.columns]]
-        # The loader yielded nothing -- a geometry-excluded skillcorner match. An EMPTY shard, so a
-        # resume records "walked, contributed nothing" instead of re-downloading it every time.
-        return None
+        return item.actions[[c for c in _XT_COLS if c in item.actions.columns]]
+
+    # What determines a shard's CONTENT: the columns kept. The held-out SELECTION is not declared --
+    # it is derived from the calibration set, so narrowing the calibration corpus widens this one, and
+    # re-downloading a match already on disk because a different match joined the set would be waste.
+    # The admission digest joins the token because the events-only corpus now DEPENDS on the artifact
+    # (it admits the sound S1-excluded SkillCorner matches); omitted when None (no SkillCorner ref).
+    token_inputs: dict[str, object] = {"xt_cols": list(_XT_COLS)}
+    if admission.digest is not None:
+        token_inputs["admission_digest"] = admission.digest
 
     res = for_each(
-        items,
-        key=lambda item: (str(item[0]), str(item[1])),
+        held_out_refs,
+        key=lambda r: r.key,
+        load=load,
         work=_work,
         shard_root=Path(f"{args.report_out}_xt_corpus_shards"),
-        # What determines a shard's CONTENT: the columns kept, and the frame cap the loader parses
-        # under. The held-out SELECTION is not declared -- it is derived from the calibration set,
-        # so narrowing the calibration corpus widens this one, and re-downloading a match that is
-        # already on disk purely because a different match joined the set would be pure waste.
-        token_inputs={"xt_cols": list(_XT_COLS), "tracking_limit": 50},
+        token_inputs=token_inputs,
         tag="xt_corpus",
         label="match",
     )
     if res.failures:
         raise RuntimeError(f"{len(res.failures)} xT-corpus match(es) failed: {res.failures}")
 
-    # Combined from THIS PASS'S keys (no partition surface here -- see `reconcile`'s precondition).
-    # `corpus_ids` counts matches that CONTRIBUTED ACTIONS, where it previously counted matches the
-    # loader yielded. The two differ only for a held-out match whose actions are empty, and the set
-    # feeds one disjointness assertion over ids that exclude `calib_ids` by construction -- a match
-    # contributing zero actions is not in the corpus in the sense that check is about.
+    # Combined from THIS PASS'S SHARD keys (no partition surface here -- see `reconcile`'s
+    # precondition). `shard_keys`, not `keys`: an S1-excluded key has a `.excluded.json` marker and no
+    # parquet. `corpus_ids` counts matches that CONTRIBUTED ACTIONS -- the set feeds one disjointness
+    # assertion over ids that exclude `calib_ids` by construction, so a match contributing zero
+    # actions is not in the corpus in the sense that check is about.
     parts, corpus_ids = [], set()
-    for k, (_provider, mid) in zip(res.keys, items, strict=True):
+    for k in res.shard_keys:
         frame = pd.read_parquet(shard_path(res.shard_dir, k))
         if len(frame):
             parts.append(frame)
-            corpus_ids.add(str(mid))
+            corpus_ids.add(k.split("__", 1)[1])
     if not parts:
         raise ValueError("the held-out xT corpus is empty -- no match contributed any actions")
     return pd.concat(parts, ignore_index=True), corpus_ids
@@ -362,6 +365,12 @@ def main() -> None:
         "calibration fold cannot be sharded (it IS the objective's input, see _load_fold), so "
         "this is the resilience that loop can have: a crashed sweep re-reads from disk instead "
         "of re-downloading the tracking corpus. Ignored for --source databricks.",
+    )
+    ap.add_argument(
+        "--allow-unmeasured",
+        action="store_true",
+        help="admit unmeasured SkillCorner matches into the events-only held-out xT corpus "
+        "(recorded; else the pass refuses, naming them).",
     )
     ap.add_argument(
         "--allow-dirty",

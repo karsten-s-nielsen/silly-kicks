@@ -189,12 +189,17 @@ def test_measure_match_against_real_open_360():
     row = mod.resolve_competition(44, 107, catalogue=catalogue, expect_name="Major League Soccer")
     assert row["competition_gender"] == "male"
 
+    from scripts._sb_open_data import OpenDataRef, fetch_open_360_raw
+
     matches = {m["match_id"]: m for m in mod._values(sb.matches(competition_id=44, season_id=107, fmt="dict"))}
     match_id = sorted(matches)[0]
     home = matches[match_id]["home_team"]
     home_id = home.get("home_team_id", home.get("id")) if isinstance(home, dict) else home
+    assert home_id is not None  # the SB manifest always carries a home team; narrows None for int()
 
-    out = mod.measure_match((44, 107, match_id, home_id))
+    ref = OpenDataRef(44, 107, str(match_id), int(home_id))
+    events, frames_raw = fetch_open_360_raw(ref.match_id)
+    out = mod.measure_match((ref, events, frames_raw))
     assert len(out) > 0, "no freeze-frames returned -- 360 may be absent for this match"
     assert {
         "n_events",

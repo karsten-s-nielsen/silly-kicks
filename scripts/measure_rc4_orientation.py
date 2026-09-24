@@ -54,46 +54,21 @@ _OUT_DIR = Path(__file__).resolve().parent.parent / "docs" / "research" / "adr02
 _PROVIDERS = ("skillcorner", "idsse")
 
 
-def measure(provider: str, *, tracking_limit: int | None, cache_dir: str | None) -> dict:
-    """One match's orientation state. A load failure PROPAGATES -- it is NOT a result.
+def measure(loaded) -> dict:
+    """One LOADED match's orientation state. Takes the `LoadedMatch`, never loads.
 
-    This used to catch `Exception` and return ``{"error": ...}``, which made the driver structurally
-    unable to fail, and MEASURED: a tokenless run returned normally, `_work` wrapped the error dict in
-    an ordinary one-row frame, `for_each` wrote it as a healthy shard, `res.failures` stayed empty so
-    `run()`'s guard never fired, and `main()` wrote the artifact into
-    ``docs/research/adr028_rc4_orientation`` -- the DEFAULT ``--out-dir``, home of the two committed,
-    cited artifacts -- and exited 0. A non-measurement published as the measurement, inside the driver
-    written to prevent exactly that.
-
-    It was worse than a one-off: because the error row was written as a shard, `already_done()` is
-    true forever, so every later run reported ``skip (shard exists)`` and re-published the memoized
-    error. Recovery would have needed an operator to delete a 16-hex generation directory by hand.
-    Raising instead is what lets `for_each` record a FAILURE and write NO shard, so a resume redoes
-    the item -- the property this driver adopted the ADR-052 seam to buy.
+    The load now happens in `for_each` via the pining source's `load` (ADR-052 D14): a load failure is
+    a RECORDED failure `run()` raises on, and an S1-excluded SkillCorner match is a `.excluded.json`
+    marker -- never a result, never a memoized error shard. `measure` used to load itself and catch
+    `Exception`, which made the driver structurally unable to fail: a tokenless run wrote the error
+    dict as a healthy shard, `res.failures` stayed empty, and `main()` published a non-measurement as
+    the measurement -- into the DEFAULT `--out-dir`, home of the two cited artifacts. Moving the load
+    to `for_each` and keeping `measure` pure is what makes a failure a failure again.
     """
-    from _loader_pining import load_matches
-
     from silly_kicks.tracking import OrientationUnresolvedWarning
     from silly_kicks.tracking._action_orientation import acting_team_attacks_rtl
 
-    loaded = next(
-        iter(
-            load_matches(
-                providers=[provider],
-                max_per_provider=1,
-                tracking_limit=tracking_limit,
-                cache_dir=cache_dir,
-            )
-        ),
-        None,
-    )
-    if loaded is None:
-        raise RuntimeError(
-            f"{provider}: load_matches yielded no match, so there is nothing to measure. "
-            "Recording an absence as a result would publish it as one."
-        )
-
-    _provider, match_id, actions, frames, _home = loaded
+    match_id, actions, frames = loaded.match_id, loaded.actions, loaded.frames
     players = frames[~frames["is_ball"].astype(bool)]
     label = players["team_attacking_direction"]
 
@@ -128,20 +103,33 @@ def run(*, label: str, tracking_limit: int | None, cache_dir: str | None, shard_
     """
     import pandas as pd
     from _driver import for_each, shard_path
+    from _loader_pining import pining_source
 
-    def _work(provider: str):
-        print(f"\n===== {provider} ({label}) =====", flush=True)
-        result = measure(provider, tracking_limit=tracking_limit, cache_dir=cache_dir)
+    # ONE match per provider, as REFS (ADR-052 D14): the resume check fires on the ref BEFORE the
+    # load, so a resumed run re-downloads nothing, and a load failure is a for_each-recorded failure
+    # rather than an exception escaping a streamed generator.
+    refs, load = pining_source(
+        providers=list(_PROVIDERS), max_per_provider=1, tracking_limit=tracking_limit, cache_dir=cache_dir
+    )
+
+    def _work(item):
+        print(f"\n===== {item.provider} ({label}) =====", flush=True)
+        result = measure(item)
         for k, v in result.items():
             print(f"  {k:22s} {v}", flush=True)
         # distinct_labels is a list; json-encode so the row stays scalar-valued and round-trips.
         row = {k: (json.dumps(v) if isinstance(v, list) else v) for k, v in result.items()}
-        row["provider"] = provider
+        row["provider"] = item.provider
         return pd.DataFrame([row])
 
     res = for_each(
-        list(_PROVIDERS),
-        key=lambda provider: (provider,),
+        refs,
+        # (provider, match_id), not (provider,): a generation move (spec section 7), free because
+        # `run_commit` is already in the token. It captures WHICH match was measured, so a manifest
+        # reorder that changes the "first match" for a provider lands a new key instead of silently
+        # overwriting the shard's content under the same name.
+        key=lambda r: r.key,
+        load=load,
         work=_work,
         shard_root=Path(shard_dir) / label,
         # What determines a shard's CONTENT -- and `run_commit` is LOAD-BEARING here, not decoration.
@@ -174,7 +162,7 @@ def run(*, label: str, tracking_limit: int | None, cache_dir: str | None, shard_
             "max_per_provider": 1,
         }
     }
-    for k in res.keys:
+    for k in res.shard_keys:  # shard_keys, not keys: an S1-excluded provider has a marker, no parquet
         frame = pd.read_parquet(shard_path(res.shard_dir, k))
         if not len(frame):
             raise RuntimeError(
