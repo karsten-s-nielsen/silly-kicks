@@ -35,7 +35,12 @@ class RowGroups:
     def __init__(self, df: pd.DataFrame, by: str | tuple[str, ...]) -> None:
         self._df = df
         self._by = (by,) if isinstance(by, str) else tuple(by)
-        gb = df.groupby(list(self._by), sort=False)
+        # observed=True (ADR-105 Task 5/6): on a categorical key, the pandas-2 default (observed=False)
+        # returns EVERY declared category as a group -- including zero-row ones -- and pandas 3 flips the
+        # default to True (ADR-057), so an un-parameterised groupby is pandas-major-DEPENDENT + injects
+        # phantom empty groups. Pinning True is deterministic across majors and byte-identical for the
+        # current (non-categorical) keys. Defensive: ADR-103 introduced category frame columns.
+        gb = df.groupby(list(self._by), sort=False, observed=True)
         self._indices = {self._canon(k): v for k, v in gb.indices.items()}
         # Collision guard: canonicalisation collapses 366/366.0/"366" -> "366", so a mixed-dtype
         # key column would silently overwrite a group and lose its rows (the raw `df[df[k]==v]`

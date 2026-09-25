@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from silly_kicks.tracking import pitch_control as pc
 from silly_kicks.tracking.pitch_control import (
     PitchControlCache,
     compute_pitch_control,
@@ -106,13 +105,24 @@ def test_batch_byte_identical_to_loop():
 
 
 def test_batch_dedups_repeated_requests(monkeypatch):
+    # ADR-105: spearman routes through the vectorized `compute_spearman_batch`, so the dedup is asserted
+    # on the DISTINCT requests the kernel receives (2), not a per-request `compute_pitch_control` count.
+    from silly_kicks.tracking.pitch_control import _spearman_batch
+
     frames = _frames((10, 11))
     # 4 requests but only 2 distinct (frame,team,decompose) keys
     reqs = [((1, 1, 10), 1, False), ((1, 1, 10), 1, False), ((1, 1, 11), 1, False), ((1, 1, 11), 1, False)]
-    calls = call_counter(monkeypatch, pc._dispatch, "compute_pitch_control")
+    seen: dict[str, int] = {}
+    orig = _spearman_batch.compute_spearman_batch
+
+    def _spy(frame_slices, *a, **k):
+        seen["n_distinct"] = len(frame_slices)
+        return orig(frame_slices, *a, **k)
+
+    monkeypatch.setattr(_spearman_batch, "compute_spearman_batch", _spy)
     out = compute_pitch_control_batch(frames, reqs, method="spearman")
     assert len(out) == 4
-    assert calls["n"] == 2  # each distinct surface computed ONCE (dedup)
+    assert seen["n_distinct"] == 2  # 4 requests, 2 distinct -> the kernel receives 2 (dedup)
 
 
 def test_cache_warm_makes_surface_calls_hit():
@@ -129,3 +139,18 @@ def test_cache_warm_makes_surface_calls_hit():
 
 def test_batch_empty_requests():
     assert compute_pitch_control_batch(_frames(), [], method="spearman") == []
+
+
+def test_warm_groups_frames_once(monkeypatch):
+    """ADR-105 Task 5: PitchControlCache.warm builds group_rows ONCE (was TWICE -- the ADR-103
+    double-group: compute_pitch_control_batch grouped, then warm re-grouped for _key)."""
+    import silly_kicks._frame_index as _fi
+
+    frames = _frames((10, 11))
+    calls = call_counter(monkeypatch, _fi, "group_rows")
+    cache = PitchControlCache()
+    cache.warm(frames, [((1, 1, 10), 1, True), ((1, 1, 11), 1, False)], method="spearman")
+    assert calls["n"] == 1
+    # and the warmed surfaces still HIT byte-identically
+    s = cache.surface(_slice(frames, 10), 1, method="spearman", decompose=True)
+    assert s is next(iter(cache._store.values())) or len(cache) == 2

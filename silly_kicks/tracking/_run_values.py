@@ -431,6 +431,13 @@ def action_level_context(actions: pd.DataFrame, xt: ExpectedThreat) -> tuple[pd.
     return receiver, on_domain, np.maximum(0.0, gain)
 
 
+#: Default off-ball chunk size (ADR-105 Task 3/4, VKS-PLAN-07): value runs in bounded action chunks so
+#: the per-action pitch control is batched (a warmed cache HIT per chunk) but peak stays O(chunk)
+#: surfaces. Bounded by default (the flip is gated on the batch-size byte-identity invariance test,
+#: VKS-PLAN-03); ``batch_size=None`` restores the whole-loop path.
+_DEFAULT_OFFBALL_BATCH = 64
+
+
 def value_off_ball_runs(
     runs: pd.DataFrame,
     actions: pd.DataFrame,
@@ -439,6 +446,7 @@ def value_off_ball_runs(
     *,
     links: pd.DataFrame | None = None,
     pitch_control_cache: PitchControlCache | None = None,
+    batch_size: int | None = _DEFAULT_OFFBALL_BATCH,
     params: RunValuationParams | None = None,
 ) -> pd.DataFrame:
     """Attach role + threat-weighted controlled-space value to detected runs.
@@ -488,7 +496,7 @@ def value_off_ball_runs(
         valued = value_off_ball_runs(runs, actions, frames, xt)
         valued[["player_id", "role", "run_value"]].head()
     """
-    from ..xthreat import physical_grid, require_fitted_xt
+    from ..xthreat import require_fitted_xt
     from . import _kernels
     from .pitch_control import PitchControlCache as _PitchControlCache
 
@@ -535,53 +543,52 @@ def value_off_ball_runs(
         runs_by_action.setdefault(key, []).append(out.index[pos])
     n_unvalued = 0
 
-    for i, (_idx, action_row) in enumerate(actions.iterrows()):
-        row_idx = runs_by_action.get((action_row["game_id"], action_row["action_id"]))
-        if row_idx is None or not on_domain[i]:
-            continue
-        row_idx = pd.Index(row_idx)
-        recv = receiver.iloc[i]
-        is_recv = ids_equal(out.loc[row_idx, "player_id"], pd.Series(recv, index=row_idx)).to_numpy()
-        out.loc[row_idx, "is_receiver"] = pd.array(is_recv, dtype="boolean")
-        out.loc[row_idx, "role"] = pd.array(np.where(is_recv, "target", "disruptive"), dtype="string")
-        out.loc[row_idx, "enabled_pass_credit"] = np.where(is_recv, np.nan, enabled_credit[i])
-
-        if np.isnan(fid_by_pos[i]) or pd.isna(flip_rtl.iloc[i]):
-            # Unresolved direction joins the unlinked-frame route: the run keeps its row with
-            # run_value NaN and is COUNTED (ADR-042), rather than being valued against a threat
-            # grid that may need reflecting. Valuing it would put a real number on a surface
-            # oriented by a guess -- the exact "coverage read as tactics" failure ADR-042 names.
-            n_unvalued += len(row_idx)
-            continue
-        group_key = (int(action_row["period_id"]), int(fid_by_pos[i]))
-        if has_game:
-            group_key = (canonical_id(action_row["game_id"]), *group_key)
-        try:
-            frame = frame_groups.get_group(group_key)
-        except KeyError:
-            n_unvalued += len(row_idx)
-            continue
-
-        pc = cache.surface(
-            frame,
-            action_row["team_id"],
-            method=params.pitch_control_method,  # type: ignore[arg-type]
-            decompose=True,
-        )
-        # Pitch control lives in FRAME coordinates; the threat grid is built in action-LTR,
-        # so it is POINT-reflected (both axes, ADR-028) for an RTL-attacking acting team.
-        threat = physical_grid(xt, pc.grid_x, pc.grid_y)
-        if flip_rtl.iloc[i]:
-            threat = threat[::-1, ::-1]
-        weighted = np.asarray(pc.surface) * threat
-
-        for ridx in row_idx:
-            pidx = _safe_index_of(pc.player_ids, out.at[ridx, "player_id"])
-            if pidx is None or pc.per_player_influence is None:
-                n_unvalued += 1
+    # ADR-105 Task 3/4: value runs in bounded action CHUNKS. Per chunk, warm the canonical @team
+    # decompose surfaces (batched via the vectorized kernel) so the per-action `cache.surface` below
+    # HITS byte-identically, then run the unchanged per-action body; the chunk's surfaces release before
+    # the next chunk (VKS-PLAN-07: peak = O(chunk), never O(all actions)). Byte-identical for any
+    # batch_size (the body is per-action independent given frame_groups + out).
+    action_rows = list(actions.iterrows())
+    n_actions = len(action_rows)
+    bs = batch_size if (batch_size and batch_size > 0) else (n_actions or 1)
+    for cstart in range(0, n_actions, bs):
+        chunk = range(cstart, min(cstart + bs, n_actions))
+        warm_reqs: list = []
+        for i in chunk:
+            _idx, action_row = action_rows[i]
+            if runs_by_action.get((action_row["game_id"], action_row["action_id"])) is None or not on_domain[i]:
                 continue
-            region = pc.per_player_influence[pidx] >= floor
-            out.at[ridx, "run_value"] = float(weighted[region].max()) if region.any() else 0.0
+            if np.isnan(fid_by_pos[i]) or pd.isna(flip_rtl.iloc[i]):
+                continue
+            warm_reqs.append(
+                (
+                    (action_row["game_id"], int(action_row["period_id"]), int(fid_by_pos[i])),
+                    action_row["team_id"],
+                    True,
+                )
+            )
+        if warm_reqs:
+            cache.warm(frames, warm_reqs, method=params.pitch_control_method)  # type: ignore[arg-type]
+        for i in chunk:
+            _idx, action_row = action_rows[i]
+            n_unvalued = _value_off_ball_action(
+                i,
+                action_row,
+                out,
+                runs_by_action,
+                on_domain,
+                fid_by_pos,
+                flip_rtl,
+                receiver,
+                enabled_credit,
+                has_game,
+                frame_groups,
+                cache,
+                params,
+                xt,
+                floor,
+                n_unvalued,
+            )
 
     if n_unvalued:
         warnings.warn(
@@ -592,3 +599,72 @@ def value_off_ball_runs(
             stacklevel=2,
         )
     return out
+
+
+def _value_off_ball_action(
+    i,
+    action_row,
+    out,
+    runs_by_action,
+    on_domain,
+    fid_by_pos,
+    flip_rtl,
+    receiver,
+    enabled_credit,
+    has_game,
+    frame_groups,
+    cache,
+    params,
+    xt,
+    floor,
+    n_unvalued,
+):
+    """One action's off-ball run valuation (extracted verbatim from the loop body, ADR-105 Task 3).
+    Returns the updated ``n_unvalued`` running total."""
+    from ..xthreat import physical_grid
+
+    row_idx = runs_by_action.get((action_row["game_id"], action_row["action_id"]))
+    if row_idx is None or not on_domain[i]:
+        return n_unvalued
+    row_idx = pd.Index(row_idx)
+    recv = receiver.iloc[i]
+    is_recv = ids_equal(out.loc[row_idx, "player_id"], pd.Series(recv, index=row_idx)).to_numpy()
+    out.loc[row_idx, "is_receiver"] = pd.array(is_recv, dtype="boolean")
+    out.loc[row_idx, "role"] = pd.array(np.where(is_recv, "target", "disruptive"), dtype="string")
+    out.loc[row_idx, "enabled_pass_credit"] = np.where(is_recv, np.nan, enabled_credit[i])
+
+    if np.isnan(fid_by_pos[i]) or pd.isna(flip_rtl.iloc[i]):
+        # Unresolved direction joins the unlinked-frame route: the run keeps its row with
+        # run_value NaN and is COUNTED (ADR-042), rather than being valued against a threat
+        # grid that may need reflecting. Valuing it would put a real number on a surface
+        # oriented by a guess -- the exact "coverage read as tactics" failure ADR-042 names.
+        return n_unvalued + len(row_idx)
+    group_key = (int(action_row["period_id"]), int(fid_by_pos[i]))
+    if has_game:
+        group_key = (canonical_id(action_row["game_id"]), *group_key)
+    try:
+        frame = frame_groups.get_group(group_key)
+    except KeyError:
+        return n_unvalued + len(row_idx)
+
+    pc = cache.surface(
+        frame,
+        action_row["team_id"],
+        method=params.pitch_control_method,  # type: ignore[arg-type]
+        decompose=True,
+    )
+    # Pitch control lives in FRAME coordinates; the threat grid is built in action-LTR,
+    # so it is POINT-reflected (both axes, ADR-028) for an RTL-attacking acting team.
+    threat = physical_grid(xt, pc.grid_x, pc.grid_y)
+    if flip_rtl.iloc[i]:
+        threat = threat[::-1, ::-1]
+    weighted = np.asarray(pc.surface) * threat
+
+    for ridx in row_idx:
+        pidx = _safe_index_of(pc.player_ids, out.at[ridx, "player_id"])
+        if pidx is None or pc.per_player_influence is None:
+            n_unvalued += 1
+            continue
+        region = pc.per_player_influence[pidx] >= floor
+        out.at[ridx, "run_value"] = float(weighted[region].max()) if region.any() else 0.0
+    return n_unvalued

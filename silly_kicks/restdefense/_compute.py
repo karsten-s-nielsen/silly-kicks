@@ -22,7 +22,9 @@ from silly_kicks.tracking import (
     compute_defensive_line,
     compute_team_shape,
     resolve_defended_goals,
+    zero_velocity_if_unavailable,
 )
+from silly_kicks.tracking.pitch_control import PitchControlCache
 
 from ._columns import (
     RD_ARM_COLUMNS,
@@ -36,7 +38,7 @@ from ._columns import (
     RD_ZONE_OCCUPANCY,
 )
 from ._config import RestDefenseParams
-from ._danger import layer2_metrics
+from ._danger import _resolve_a_keeper_id, _zone, batch_threat_values, layer2_metrics
 from ._fov import append_fov_companions
 from ._report import RestDefenseReport
 from ._structure import SampleContext, layer1_metrics
@@ -128,6 +130,27 @@ def _merge_engine_cols(keep: pd.DataFrame, dl, ts) -> pd.DataFrame:
     return out
 
 
+#: Default Layer-2 chunk size (ADR-105 Task 2/4, VKS-PLAN-07): score in bounded chunks so a unit's
+#: pitch control is batched but peak memory stays O(chunk) surfaces, never O(all ~250 samples). Bounded
+#: BY DEFAULT (the flip is gated on the batch-size byte-identity invariance test, VKS-PLAN-03);
+#: ``batch_size=None`` restores the whole-loop (all-at-once) path for a caller who wants it.
+_DEFAULT_LAYER2_BATCH = 64
+
+
+def _make_context(row, opp_map) -> SampleContext:
+    return SampleContext(
+        team_id=row.team_id,
+        opponent_id=opp_map.get((canonical_id(row.game_id), canonical_id(row.team_id)), pd.NA),
+        ball_x=_f(row.ball_x),
+        own_goal_x=_f(row.own_goal_x),
+        attacked_goal_x=_f(row.attacked_goal_x),
+        defensive_line_x=_f(row.defensive_line_x),
+        compactness_x=_f(row.compactness_x),
+        lateral_width=_f(row.lateral_width),
+        team_length=_f(row.team_length),
+    )
+
+
 def _score_samples(
     keep: pd.DataFrame,
     frames: pd.DataFrame,
@@ -139,45 +162,98 @@ def _score_samples(
     xt=None,
     goal_map=None,
     pitch_control_cache=None,
+    batch_size: int | None = _DEFAULT_LAYER2_BATCH,
 ) -> pd.DataFrame:
     """Per-sample Layer-1 + Layer-2 metrics (one ``group_rows`` pass; ADR-068/073). NaN row for
-    unresolved geometry. Layer 2 reuses the SAME per-sample ``frame_rows`` -- no new looping pass.
+    unresolved geometry.
+
+    Scored samples are processed in bounded CHUNKS of ``batch_size`` (ADR-105 Task 2): each chunk batches
+    its Layer-2 pitch control -- the two ``compute_threat_pc`` legs via :func:`compute_threat_pc_batch`,
+    and the canonical surf_a (@team) + gk_influence (@opponent) surfaces via a warmed
+    ``PitchControlCache`` -- and releases them before the next chunk (VKS-PLAN-07: peak = O(chunk), never
+    O(unit)). Output is BYTE-IDENTICAL for any ``batch_size`` (the loop body is per-sample independent);
+    ``batch_size=None`` scores every sample in one chunk (the whole-loop path).
 
     ``geom_src`` (from :func:`_geometry_source_by_key`) labels each scored row "resolved" vs "guessed"
-    (IMPL-02); absent -> "resolved" (the historical default; used by the scale guard). ``xt`` /
-    ``goal_map`` / ``pitch_control_cache`` feed Layer 2 (all NaN when ``xt`` is None; P2-02)."""
+    (IMPL-02); absent -> "resolved". ``xt`` / ``goal_map`` / ``pitch_control_cache`` feed Layer 2 (all
+    NaN when ``xt`` is None; P2-02)."""
     if groups is None:
         groups = group_rows(frames, tuple(RD_FRAME_KEYS))
     gsrc = geom_src or {}
-    rows: list[dict] = []
-    for row in keep.itertuples(index=False):
-        key = (canonical_id(row.game_id), canonical_id(row.period_id), canonical_id(row.team_id))
-        m: dict[str, object]
+    keep_list = list(keep.itertuples(index=False))
+    rows: list[dict | None] = [None] * len(keep_list)
+
+    scored_positions: list[int] = []
+    for i, row in enumerate(keep_list):
         if pd.isna(row.gate_drop_reason):  # scored (own goal resolved-or-guessed + committed forward)
-            frame_rows = groups.get(row.game_id, row.period_id, row.frame_id)
-            ctx = SampleContext(
-                team_id=row.team_id,
-                opponent_id=opp_map.get((canonical_id(row.game_id), canonical_id(row.team_id)), pd.NA),
-                ball_x=_f(row.ball_x),
-                own_goal_x=_f(row.own_goal_x),
-                attacked_goal_x=_f(row.attacked_goal_x),
-                defensive_line_x=_f(row.defensive_line_x),
-                compactness_x=_f(row.compactness_x),
-                lateral_width=_f(row.lateral_width),
-                team_length=_f(row.team_length),
-            )
-            m = layer1_metrics(frame_rows, ctx, params=params)
-            m.update(
-                layer2_metrics(
-                    frame_rows, ctx, xt=xt, goal_map=goal_map, params=params, pitch_control_cache=pitch_control_cache
-                )
-            )
-            m[RD_GEOMETRY_SOURCE] = gsrc.get(key, "resolved")  # "resolved" or "guessed" (IMPL-02)
+            scored_positions.append(i)
         else:  # goal_end_unresolved -> honest-NaN row (ADR-055)
-            m = {c: pd.NA for c in RD_METRIC_COLUMNS}
+            m: dict[str, object] = {c: pd.NA for c in RD_METRIC_COLUMNS}
             m[RD_GEOMETRY_SOURCE] = "unresolved"
-        rows.append(m)
+            rows[i] = m
+
+    bs = batch_size if (batch_size and batch_size > 0) else (len(scored_positions) or 1)
+    for start in range(0, len(scored_positions), bs):
+        chunk = scored_positions[start : start + bs]
+        _score_chunk(chunk, keep_list, rows, frames, groups, opp_map, params, xt, goal_map, pitch_control_cache, gsrc)
+
     return pd.DataFrame(rows, index=keep.index)
+
+
+def _score_chunk(chunk, keep_list, rows, frames, groups, opp_map, params, xt, goal_map, caller_cache, gsrc) -> None:
+    """Score one bounded chunk of already-identified SCORED samples (writes into ``rows`` by position).
+
+    Batches the chunk's pitch control: the two threat legs via :func:`batch_threat_values`, and surf_a
+    (@team) + gk_influence (@opponent, keeper samples only) via a warmed cache. All byte-identical to the
+    per-sample direct path (which is the fallback whenever ``batch_threat_values`` returns None)."""
+    prepared: list = []  # (i, key, ctx, frame_rows, frame_key)
+    for i in chunk:
+        row = keep_list[i]
+        key = (canonical_id(row.game_id), canonical_id(row.period_id), canonical_id(row.team_id))
+        frame_rows = groups.get(row.game_id, row.period_id, row.frame_id)
+        ctx = _make_context(row, opp_map)
+        prepared.append((i, key, ctx, frame_rows, (row.game_id, row.period_id, row.frame_id)))
+
+    chunk_cache = None
+    threat_by_pos = None
+    if xt is not None:
+        # A per-chunk cache (fresh, or the caller's if it owns the maxsize bound). Warm the canonical
+        # surf_a (@team) + gk_influence (@opponent, keeper samples) surfaces; these HIT byte-identically
+        # in layer2_metrics / compute_gk_influence (same frame_id key, same spearman surface).
+        chunk_cache = caller_cache if caller_cache is not None else PitchControlCache()
+        warm_reqs: list = []
+        for _i, _key, ctx, frame_rows, fkey in prepared:
+            if _zone(ctx, params) is None or pd.isna(ctx.opponent_id) or pd.isna(ctx.team_id):
+                continue
+            warm_reqs.append((fkey, ctx.team_id, True))
+            if _resolve_a_keeper_id(frame_rows, ctx.team_id) is not None:
+                warm_reqs.append((fkey, ctx.opponent_id, True))
+        if warm_reqs:
+            # Warm on the ZERO-VELOCITY frames (ADR-063): layer2_metrics / compute_gk_influence score on
+            # `zero_velocity_if_unavailable(frame_rows)`, so a velocity-less (declared-unavailable, SB360)
+            # frame set gets vx/vy=0 here too -- else the spearman vx/vy-required guard would raise where
+            # the direct path worked. Same object (no copy) on velocity-present providers -> byte-identical.
+            chunk_cache.warm(zero_velocity_if_unavailable(frames, method="spearman"), warm_reqs, method="spearman")
+        threat_by_pos = batch_threat_values(
+            [(fr, ctx) for _i, _key, ctx, fr, _fk in prepared], xt=xt, goal_map=goal_map, params=params
+        )
+
+    for pos, (i, key, ctx, frame_rows, _fkey) in enumerate(prepared):
+        m = layer1_metrics(frame_rows, ctx, params=params)
+        tv = threat_by_pos[pos] if threat_by_pos is not None else None
+        m.update(
+            layer2_metrics(
+                frame_rows,
+                ctx,
+                xt=xt,
+                goal_map=goal_map,
+                params=params,
+                pitch_control_cache=chunk_cache,
+                threat_values=tv,
+            )
+        )
+        m[RD_GEOMETRY_SOURCE] = gsrc.get(key, "resolved")  # "resolved" or "guessed" (IMPL-02)
+        rows[i] = m
 
 
 def _f(v) -> float:
@@ -194,6 +270,7 @@ def compute_rest_defense(
     links: pd.DataFrame | None = None,
     pitch_control_cache=None,
     visible_area: pd.DataFrame | None = None,
+    batch_size: int | None = _DEFAULT_LAYER2_BATCH,
     params: RestDefenseParams = _DEFAULT_PARAMS,
 ) -> tuple[pd.DataFrame, RestDefenseReport]:
     """Per-sample Layer-1 rest-defense structure metrics + a conserving report (spec §5.3 / §14).
@@ -258,6 +335,7 @@ def compute_rest_defense(
         xt=xt,
         goal_map=goal_map,
         pitch_control_cache=pitch_control_cache,
+        batch_size=batch_size,
     ).reset_index(drop=True)
 
     base = keep[[*RD_SAMPLE_KEYS, *_SAMPLE_META]].reset_index(drop=True)

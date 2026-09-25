@@ -55,6 +55,7 @@ __all__ = [
     "AndrienkoParams",
     "BekkersParams",
     "CoverShadowParams",
+    "DasCostWarning",
     "DasUnscoreableError",
     "DefensiveCreditParams",
     "ElasticSyncParams",
@@ -181,6 +182,7 @@ __all__ = [
     "compute_structural_pass_metrics",
     "compute_team_shape",
     "compute_threat_pc",
+    "compute_threat_pc_batch",
     "compute_tti",
     "compute_xcross_attempt",
     "compute_xshot_occurrence",
@@ -197,6 +199,7 @@ __all__ = [
     "detect_line_breaking",
     "detect_off_ball_runs",
     "elastic_sync_xfns",
+    "estimate_das_cost",
     "extract_ball_features",
     "extract_xcross_features",
     "extract_xshot_features",
@@ -327,6 +330,7 @@ from ._cover_shadows import (
     LaneControlResult,
     compute_blocking_score,
     compute_threat_pc,
+    compute_threat_pc_batch,
     lane_control,
 )
 from ._das import (
@@ -337,6 +341,7 @@ from ._das import (
     DAS_SOURCE_UNSCOREABLE_FRAME,
     DAS_SOURCE_VALUES,
     DasUnscoreableError,
+    estimate_das_cost,
     get_das,
     get_individual_das,
     get_xc,
@@ -407,6 +412,7 @@ from ._visibility import (
     region_observed_fraction,
 )
 from ._warnings import (
+    DasCostWarning,
     GoalkeeperClampWarning,
     IgnoredSurfaceInputsWarning,
     MissingFeatureContractWarning,

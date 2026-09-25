@@ -80,3 +80,21 @@ def test_keys_returns_canonical_keys_usable_in_get():
     got = gm.get(*("2", "10"))
     exp = df[(df["game_id"] == 2) & (df["frame_id"] == 10)]
     pd.testing.assert_frame_equal(got, exp)
+
+
+def test_group_rows_category_key_is_observed_only_no_phantom_groups():
+    """ADR-105 Task 6: a `category` key whose declared categories are WIDER than observed yields ONLY
+    the observed groups (no phantom zero-row category keys) and emits no FutureWarning -- observed=True
+    is pinned, so behaviour is deterministic across pandas majors (ADR-057). Defensive: ADR-103 made
+    frame columns category, and id->category is a deferred retrain-cycle candidate."""
+    import warnings
+
+    from silly_kicks._frame_index import group_rows
+
+    df = pd.DataFrame({"k": pd.Categorical(["a", "a", "b"], categories=["a", "b", "z"]), "v": [1, 2, 3]})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        g = group_rows(df, "k")
+    assert set(g._indices) == {"a", "b"}  # NOT "z" -- the zero-row category is not a phantom group
+    assert g.get("z").empty  # a genuinely-absent key still misses (empty frame)
+    assert len(g.get("a")) == 2
