@@ -40,8 +40,16 @@ def test_rt_only_output_value_identical_to_3_30_golden(case):
     # The TF-51-prereq block-detection columns (shot_blocked / cross_blocked) are ADDITIVE and
     # post-date the 3.30 golden; they are not part of this test's existing-value-invariance claim.
     current = current.drop(columns=["shot_blocked", "cross_blocked"], errors="ignore")
+    # ADR-103 (4.125.0) DROPPED the all-null `confidence` frame column; it is present in the 3.30
+    # golden and gone from current output. Removing a column that was uniformly null is not a value
+    # change, so it is carved out of the invariance claim (mirrors the additive carve-out above).
+    golden = golden.drop(columns=["confidence"], errors="ignore")
     pd.testing.assert_frame_equal(
         _norm_nulls(current.reset_index(drop=True)),
         _norm_nulls(golden.reset_index(drop=True)),
         check_dtype=False,
+        # ADR-103 set the low-card frame columns (ball_state / source_provider / is_goalkeeper_source)
+        # to `category`; the golden is parquet-roundtripped as `object`. Same rationale as check_dtype:
+        # backend/dtype identity is spurious here, this test asserts VALUE equality only.
+        check_categorical=False,
     )

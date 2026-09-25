@@ -144,7 +144,7 @@ def test_constant_columns(actions_3, snapshots_combined):
     # speed_source is NOT NaN (ADR-043): the value is still absent, but its absence is now
     # DECLARED structural rather than left indistinguishable from "not derived yet".
     assert (player_rows["speed_source"] == "unavailable").all()
-    assert player_rows["confidence"].isna().all()
+    # `confidence` dropped (ADR-103: all-null on every provider).
     assert player_rows["visibility"].isna().all()
     assert (player_rows["ball_state"] == "alive").all()
     assert (player_rows["team_attacking_direction"] == "ltr").all()

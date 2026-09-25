@@ -65,6 +65,15 @@ SCALE_GUARDED: dict[str, str] = {
     # TF-53 match-outcome: compute_match_outcome builds group_rows ONCE over game_id and .get per game;
     # the growth fixture scales the GAME dimension so a per-game full-table rescan would go O(games^2).
     "silly_kicks.match_outcome._compute.compute_match_outcome": "test_compute_match_outcome_is_subquadratic",
+    # ADR-103 F2: compute_pitch_control_batch groups the frames ONCE over (game_id,period_id,frame_id)
+    # and .get per request; the growth fixture scales the DISTINCT-frame (loop-iteration) dimension so a
+    # per-request `frames[frames.frame_id==fid]` rescan would be O(requests*frames) == quadratic.
+    "silly_kicks.tracking.pitch_control._dispatch.compute_pitch_control_batch": (
+        "test_compute_pitch_control_batch_is_subquadratic"
+    ),
+    # PitchControlCache.warm groups the frames ONCE (its own group_rows, on top of the batch it calls)
+    # and .get per request; same linear pattern, scaled on the distinct-frame (loop) dimension.
+    "silly_kicks.tracking.pitch_control._cache.warm": "test_cache_warm_is_subquadratic",
 }
 
 #: entries degenerate-by-design (zero counted work IS the guarantee) -> their MANDATORY companion.

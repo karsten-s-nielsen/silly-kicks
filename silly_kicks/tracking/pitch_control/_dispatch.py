@@ -9,6 +9,8 @@ See docs/superpowers/specs/2026-05-05-tf7-pitch-control-design.md section 7.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 
@@ -167,6 +169,60 @@ def compute_pitch_control_at_points(
         ball_position=ball_position,
     )
     return surface.at_points(targets)
+
+
+#: One batched request: ``((game_id, period_id, frame_id), attacking_team_id, decompose)``.
+PitchControlRequest = tuple[tuple, "int | str", bool]
+
+
+def compute_pitch_control_batch(
+    frames: pd.DataFrame,
+    requests: Sequence[PitchControlRequest],
+    *,
+    method: Method = "spearman",
+    params: PitchControlParams | None = None,
+) -> list[PitchControlSurface]:
+    """Compute N pitch-control surfaces in one call (ADR-103 F2).
+
+    ``frames`` is a whole-unit long-form frame set; ``requests`` names the
+    ``((game_id, period_id, frame_id), attacking_team_id, decompose)`` surfaces to compute. The frame
+    set is grouped ONCE (``_frame_index.group_rows``) and DUPLICATE requests are computed once, so a
+    scorer that would otherwise re-group + recompute per action pays each distinct surface a single
+    time. **Byte-identical** to calling :func:`compute_pitch_control` per request over the same
+    per-frame slice (parity-gated, ADR-076 precedent) — no value change, no retrain. A vectorised
+    across-frame kernel is an allowed later optimisation ONLY under that parity gate.
+
+    Returns surfaces aligned 1:1 with ``requests``.
+
+    Examples
+    --------
+    Compute a decomposed + aggregate surface for two frames in one call::
+
+        reqs = [((1, 1, 10), 1, True), ((1, 1, 11), 1, False)]
+        surfaces = compute_pitch_control_batch(frames, reqs, method="spearman")
+    """
+    from silly_kicks._frame_index import group_rows
+
+    if not requests:
+        return []
+    groups = group_rows(frames, ("game_id", "period_id", "frame_id"))
+    computed: dict[tuple, PitchControlSurface] = {}
+    out: list[PitchControlSurface] = []
+    for frame_key, attacking_team_id, decompose in requests:
+        dedup_key = (tuple(frame_key), str(attacking_team_id), bool(decompose))
+        surface = computed.get(dedup_key)
+        if surface is None:
+            frame = groups.get(*frame_key)
+            surface = compute_pitch_control(
+                frame,
+                attacking_team_id,
+                method=method,
+                params=params,
+                decompose=decompose,
+            )
+            computed[dedup_key] = surface
+        out.append(surface)
+    return out
 
 
 def _resolve_ball_position(
