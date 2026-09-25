@@ -347,7 +347,7 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
 - Territorial dominance ("Van Dijk" metric).
   Attribution: Sumpter, Soccermatics / Twelve.football 'Earpiece' (module 10.2).
   Used by: silly_kicks.territory._compute (TF-54);
-  silly_kicks.territory._counterfactual (TF-54b, method="counterfactual", ADR-NNN).
+  silly_kicks.territory._counterfactual (TF-54b, method="counterfactual", ADR-099).
   For a defender, the trimmed convex hull of their own-half defensive-action
   locations is their "territory"; opponent passes whose destination lands inside
   it are valued by an INJECTED fitted ExpectedThreat (silly-kicks ships NO xT
@@ -469,7 +469,7 @@ silly_kicks/tracking/features.py and silly_kicks/atomic/tracking/features.py
   features (distance, angle-to-goal, forward/lateral components, origin/target x/y +
   pitch thirds); no tracking, no teammate positions. Shipped as a REUSABLE SEAM with
   bundled default weights (public StatsBomb open-data, re-fit + re-bundled on the broad
-  open-data corpus for TF-54b, ADR-NNN). Consumed as the completion weight c in the
+  open-data corpus for TF-54b, ADR-099). Consumed as the completion weight c in the
   TF-54b territorial "threat prevented" counterfactual cone
   (silly_kicks.territory._counterfactual; see the Territorial dominance entry above) and
   as the xPass in the TF-62 GK build-up Decision-quality reconstruction tiers. Descriptive;
