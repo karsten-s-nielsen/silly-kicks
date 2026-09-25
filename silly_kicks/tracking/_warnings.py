@@ -12,6 +12,7 @@ synthetic-surface notice must not also silence a genuine misuse signal.
 from __future__ import annotations
 
 __all__ = [
+    "DasCostWarning",
     "GoalkeeperClampWarning",
     "IgnoredSurfaceInputsWarning",
     "MissingFeatureContractWarning",
@@ -180,4 +181,24 @@ class RunValueCoverageWarning(UserWarning):
         from silly_kicks.tracking import RunValueCoverageWarning
 
         warnings.filterwarnings("error", category=RunValueCoverageWarning)
+    """
+
+
+class DasCostWarning(UserWarning):
+    """A DAS call is about to score a LARGE frame set (a full unit) without frame sampling.
+
+    DAS runs a per-frame accessible-space simulation; over a whole match/half (tens of thousands of
+    frames) that is minutes-to-hours of CPU (all-frame DAS is ~394 h/season, documented-not-gated,
+    ADR-014). Emitted once per call with the frame count and a rough cost estimate so a consumer learns
+    the cost BEFORE paying it. Opt out with ``warn_cost=False``. Not a hard gate -- DAS values are
+    unchanged.
+
+    Examples
+    --------
+    Treat an unbudgeted full-unit DAS call as fatal in a batch job::
+
+        import warnings
+        from silly_kicks.tracking import DasCostWarning
+
+        warnings.filterwarnings("error", category=DasCostWarning)
     """

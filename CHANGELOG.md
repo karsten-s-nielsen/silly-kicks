@@ -5,6 +5,21 @@ All notable changes to silly-kicks will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.127.0] — 2026-09-25 — vectorized spearman kernel + scorer batching & bounded-memory streaming (PR-S199, ADR-105)
+
+### Changed — tracking pitch-control CPU + bounded-memory pass (PR-S199, ADR-105)
+
+The CPU + memory work ADR-103 (4.125.0) deferred, all no-retrain (the owner-set "every optimization that does not require retraining" cycle). Value-neutral / parity-gated byte-identical throughout — **no VAEP/tracking retrain, no re-materialize, C4-free** (aggregator count stays 33).
+
+- **Vectorized cross-frame spearman kernel** (`tracking/pitch_control/_spearman_batch.compute_spearman_batch`) behind the public `compute_pitch_control_batch`: the win is ONE `compute_tti` over all frames' players concatenated (TTI is per-(player,target) → bit-identical, same numba/numpy path), and the "after-TTI" combine is single-sourced (`_spearman._spearman_combine`, ADR-102 idiom). Byte-identical to the per-frame loop (`np.array_equal`, ragged/padded/unsorted fixtures + a permutation non-vacuity mutation). Load-bearing precondition: real per-frame valid-player counts < numpy's 128-element pairwise threshold → the influence sum is sequential → a masked-to-0.0 padding row is exact.
+- **The whole-unit scorers route their pitch control through the batch, in bounded chunks.** rest_defense layer-2 (4 surfaces/sample) — the two `compute_threat_pc` legs via a new `compute_threat_pc_batch` (over EXPLICIT frame slices, so the keeper-removed counterfactual frame is scored on its own content, never the frame-keyed cache — ADR-043), surf_a + gk_influence via a warmed per-chunk cache; `value_off_ball_runs` — its per-action canonical surface via a warmed per-chunk cache. Chunked from the start (never the ~1000-surface all-at-once regression ADR-103's F3-drop avoided). Byte-identical (goldens + the existing value tests).
+- **F4 = internal auto-batching** (NOT a consumer-driven scorer primitive — the global action→frame link forecloses sub-unit scoring). Each PC-consuming scorer (`compute_rest_defense`, `value_off_ball_runs`) gains keyword-only `batch_size` (default bounded 64; `None` = whole-loop); output byte-identical for any `batch_size` (invariance-gated — the merge prerequisite for the default flip). `defensive_credit` + `gk_decision` are pitch-control-free (audited) — not routed, no `batch_size`.
+- **Two ADR-103 shipped-code fixes:** `PitchControlCache.warm` groups the frames ONCE (`_dispatch.batch_from_groups` over a pre-built `RowGroups`), fixing the double-`group_rows`. The `_key` per-call scan is RETAINED (a discovered constraint: building the key from the request's frame-key instead of the frame's raw values risks a cross-dtype cache MISS — correctness, not perf).
+- **`_frame_index.group_rows(observed=True)`** — defensive (ADR-103 introduced category frame columns; on a categorical key the pandas-2 `observed=False` default injects phantom empty groups and is pandas-major-dependent, ADR-057). Byte-identical for the current non-categorical keys.
+- **DAS cost guardrail** — `estimate_das_cost` + a one-time opt-out `DasCostWarning` before a large all-frame `get_das` run (~394 h/season, ADR-014). Advisory; DAS values unchanged.
+
+**Deferred to the retrain cycle:** F1b float32 coordinates + id→category (value-neutral through `id_compat` but a perf regression + a `group_rows` behavior change) + off-frame provenance.
+
 ## [4.126.0] — 2026-09-24 — TF-56 prescriptive defensive-positioning optimiser (PR-S198, ADR-104)
 
 ### Added — `silly_kicks/positioning/` prescriptive positioning optimiser + measured `positioning_gap` (PR-S198, ADR-104)

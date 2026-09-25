@@ -145,58 +145,113 @@ def compute_spearman(
     # ADR-068: cached, read-only grid + targets (built once per (grid_cells_x, grid_cells_y)).
     grid_x, grid_y, targets = pitch_grid(params.grid_cells_x, params.grid_cells_y)
 
-    # Filter players (no ball rows, no NaN positions)
+    extracted = _extract_frame_players(frame)
+    if extracted is None:
+        return _empty_spearman_surface(grid_x, grid_y, params, attacking_team_id)
+    pos, vel, is_gk, player_ids_arr, team_id_series = extracted
+
+    is_attacking = ids_match(team_id_series, attacking_team_id).to_numpy()
+
+    # Stage 1: Compute TTI for all players to all targets
+    tti_all = compute_tti(pos, vel, targets, params.reaction_time, params.max_acceleration)
+
+    # Stages 1.5-3 + decomposition -- SINGLE-SOURCED so the batch kernel (`_spearman_batch`) is
+    # byte-identical (ADR-102 idiom: both paths call this one combine on the same `tti_all`).
+    return _spearman_combine(
+        tti_all,
+        is_attacking,
+        is_gk,
+        player_ids_arr,
+        team_id_series.to_numpy(),
+        ball_position,
+        params,
+        grid_x,
+        grid_y,
+        targets,
+        attacking_team_id,
+        decompose,
+    )
+
+
+def _empty_spearman_surface(
+    grid_x: np.ndarray,
+    grid_y: np.ndarray,
+    params: SpearmanParams,
+    attacking_team_id: int | str,
+) -> PitchControlSurface:
+    """The players-empty degenerate surface: a uniform 0.5 field (no attacker, no defender)."""
+    surface = np.full((params.grid_cells_y, params.grid_cells_x), 0.5)
+    return PitchControlSurface(
+        grid_x=grid_x,
+        grid_y=grid_y,
+        surface=surface,
+        method="spearman",
+        attacking_team_id=attacking_team_id,
+    )
+
+
+def _extract_frame_players(frame: pd.DataFrame):
+    """Team-INDEPENDENT per-frame extraction: drop ball + NaN-position rows (in frame order), then
+    return ``(pos, vel, is_gk, player_ids_arr, team_id_series)`` -- or ``None`` when no players survive.
+
+    Team-independent so the batch kernel extracts each distinct frame ONCE and derives the per-request
+    ``is_attacking`` from ``team_id_series``. The filter/order matches the historical inline code exactly.
+    """
     players = frame[~frame["is_ball"].astype(bool)].copy()
     players = players.dropna(subset=["x", "y"])
-
     if players.empty:
-        surface = np.full((params.grid_cells_y, params.grid_cells_x), 0.5)
-        return PitchControlSurface(
-            grid_x=grid_x,
-            grid_y=grid_y,
-            surface=surface,
-            method="spearman",
-            attacking_team_id=attacking_team_id,
-        )
-
-    n_targets = targets.shape[0]
-
-    # Extract player data
+        return None
     pos = players[["x", "y"]].to_numpy(dtype="float64")
     vel_cols = ["vx", "vy"] if "vx" in players.columns else []
     if vel_cols:
         vel = players[vel_cols].to_numpy(dtype="float64")
     else:
         vel = np.zeros_like(pos)
-    # Fill NaN velocities with zero
     vel = np.nan_to_num(vel, nan=0.0)
-
-    is_attacking = ids_match(players["team_id"], attacking_team_id).to_numpy()
     is_gk = players["is_goalkeeper"].astype(bool).to_numpy()
     player_ids_arr = players["player_id"].to_numpy()
+    return pos, vel, is_gk, player_ids_arr, players["team_id"]
 
-    # Stage 1: Compute TTI for all players to all targets
-    tti_all = compute_tti(pos, vel, targets, params.reaction_time, params.max_acceleration)
+
+def _spearman_combine(
+    tti_all: np.ndarray,
+    is_attacking: np.ndarray,
+    is_gk: np.ndarray,
+    player_ids_arr: np.ndarray,
+    team_ids_arr: np.ndarray,
+    ball_position: tuple[float, float] | None,
+    params: SpearmanParams,
+    grid_x: np.ndarray,
+    grid_y: np.ndarray,
+    targets: np.ndarray,
+    attacking_team_id: int | str,
+    decompose: bool,
+) -> PitchControlSurface:
+    """Stages 1.5-3 + decomposition over a precomputed ``tti_all`` (n_players, n_targets), in the players'
+    original (filtered-frame) row order.
+
+    Extracted VERBATIM from ``compute_spearman`` so the per-frame path and the vectorized batch kernel share
+    ONE implementation and are byte-identical. The influence ``.sum(axis=0)`` is order-dependent; the batch's
+    byte-identity rests on the players' row order being preserved and real per-frame counts staying below
+    numpy's 128-element pairwise-summation threshold (sequential sum -> a masked-to-0.0 padding row is exact).
+    """
+    n_targets = targets.shape[0]
 
     # Ball-travel-time filter (optional)
     if ball_position is not None:
         ball_pos = np.array(ball_position, dtype="float64")
         ball_dist = np.sqrt(((targets - ball_pos[np.newaxis, :]) ** 2).sum(axis=1))
         ball_travel_time = ball_dist / params.average_ball_speed
-        # Zero influence for players whose TTI > ball_travel_time
         too_slow = tti_all > ball_travel_time[np.newaxis, :]
     else:
         too_slow = None
 
-    # Stage 2: Per-player influence via logistic
-    # Compute minimum TTI per target for each team
     att_mask = is_attacking
     def_mask = ~is_attacking
 
     att_tti = tti_all[att_mask]  # (n_att, n_targets)
     def_tti = tti_all[def_mask]  # (n_def, n_targets)
 
-    # Minimum opponent TTI at each target
     if def_tti.shape[0] > 0:
         def_min_tti = def_tti.min(axis=0)  # (n_targets,)
     else:
@@ -207,26 +262,22 @@ def compute_spearman(
     else:
         att_min_tti = np.full(n_targets, np.inf)
 
-    # Compute influence for attackers (opponent = defenders)
     if att_tti.shape[0] > 0:
         att_influence = _compute_influence(att_tti, def_min_tti, params.sigma)
     else:
         att_influence = np.zeros((0, n_targets))
 
-    # Compute influence for defenders (opponent = attackers)
     if def_tti.shape[0] > 0:
         def_influence = _compute_influence(def_tti, att_min_tti, params.sigma)
     else:
         def_influence = np.zeros((0, n_targets))
 
-    # Apply ball-travel-time filter
     if too_slow is not None:
         if att_influence.shape[0] > 0:
             att_influence[too_slow[att_mask]] = 0.0
         if def_influence.shape[0] > 0:
             def_influence[too_slow[def_mask]] = 0.0
 
-    # GK weighting: scale GK rows by lambda_gk
     att_gk_mask = is_gk[att_mask]
     def_gk_mask = is_gk[def_mask]
     if att_gk_mask.any():
@@ -234,7 +285,6 @@ def compute_spearman(
     if def_gk_mask.any():
         def_influence[def_gk_mask] *= params.lambda_gk
 
-    # Stage 3: Ratio aggregation
     att_sum = att_influence.sum(axis=0)  # (n_targets,)
     def_sum = def_influence.sum(axis=0)
     total = att_sum + def_sum
@@ -242,24 +292,21 @@ def compute_spearman(
     surface_flat = np.where(total > 1e-10, att_sum / safe_total, 0.5)
     surface = surface_flat.reshape(params.grid_cells_y, params.grid_cells_x)
 
-    # Decomposition: store per-player influence in original player order
     per_player = None
     p_ids = None
     p_team_ids = None
     if decompose:
-        n_players = len(players)
+        n_players = tti_all.shape[0]
         per_player_flat = np.zeros((n_players, n_targets))
-        # Place attacking influences at their original indices
         att_indices = np.flatnonzero(att_mask)
         for local_i, global_i in enumerate(att_indices):
             per_player_flat[global_i] = att_influence[local_i]
-        # Place defending influences
         def_indices = np.flatnonzero(def_mask)
         for local_i, global_i in enumerate(def_indices):
             per_player_flat[global_i] = def_influence[local_i]
         per_player = per_player_flat.reshape(n_players, params.grid_cells_y, params.grid_cells_x)
         p_ids = player_ids_arr
-        p_team_ids = players["team_id"].to_numpy()
+        p_team_ids = team_ids_arr
 
     return PitchControlSurface(
         grid_x=grid_x,

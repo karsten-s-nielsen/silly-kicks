@@ -206,23 +206,63 @@ def compute_pitch_control_batch(
     if not requests:
         return []
     groups = group_rows(frames, ("game_id", "period_id", "frame_id"))
-    computed: dict[tuple, PitchControlSurface] = {}
-    out: list[PitchControlSurface] = []
+    return _batch_from_groups(groups, requests, method=method, params=params)
+
+
+def _batch_from_groups(
+    groups,
+    requests: Sequence[PitchControlRequest],
+    *,
+    method: Method = "spearman",
+    params: PitchControlParams | None = None,
+) -> list[PitchControlSurface]:
+    """The batched kernel over a PRE-BUILT ``group_rows`` grouping (ADR-105 Task 5).
+
+    Byte-identical to :func:`compute_pitch_control_batch`, but takes an already-built ``RowGroups`` so a
+    caller that grouped ``frames`` itself (``PitchControlCache.warm``) does not re-group -- the fix for
+    the ADR-103 ``warm`` double-``group_rows``.
+    """
+    from ._spearman_batch import compute_spearman_batch
+
+    if not requests:
+        return []
+
+    # Dedup DISTINCT (frame_key, team, decompose); preserve request order for the return.
+    order: list[tuple] = []
+    distinct: dict[tuple, tuple] = {}
     for frame_key, attacking_team_id, decompose in requests:
         dedup_key = (tuple(frame_key), str(attacking_team_id), bool(decompose))
-        surface = computed.get(dedup_key)
-        if surface is None:
+        order.append(dedup_key)
+        if dedup_key not in distinct:
+            distinct[dedup_key] = (tuple(frame_key), attacking_team_id, bool(decompose))
+
+    computed: dict[tuple, PitchControlSurface] = {}
+    if method == "spearman":
+        # Vectorized kernel (ADR-105 Task 1): byte-identical to the per-frame loop below.
+        validate_params_for_method(method, params)
+        sp = params if isinstance(params, SpearmanParams) else SpearmanParams()
+        keys = list(distinct)
+        frame_slices = [groups.get(*distinct[k][0]) for k in keys]
+        for fs in frame_slices:  # preserve compute_pitch_control's velocity-required raise
+            if "vx" not in fs.columns or "vy" not in fs.columns:
+                raise ValueError(
+                    "method='spearman' requires velocity columns ('vx', 'vy') in the tracking frame. "
+                    "Use derive_velocities() or smooth_frames() to add them, or use method='voronoi' "
+                    "for position-only pitch control."
+                )
+        teams = [distinct[k][1] for k in keys]
+        decs = [distinct[k][2] for k in keys]
+        balls = [_resolve_ball_position(fs, None) for fs in frame_slices]
+        surfaces = compute_spearman_batch(frame_slices, teams, decs, balls, params=sp)
+        computed = dict(zip(keys, surfaces, strict=True))
+    else:
+        for dedup_key, (frame_key, attacking_team_id, decompose) in distinct.items():
             frame = groups.get(*frame_key)
-            surface = compute_pitch_control(
-                frame,
-                attacking_team_id,
-                method=method,
-                params=params,
-                decompose=decompose,
+            computed[dedup_key] = compute_pitch_control(
+                frame, attacking_team_id, method=method, params=params, decompose=decompose
             )
-            computed[dedup_key] = surface
-        out.append(surface)
-    return out
+
+    return [computed[k] for k in order]
 
 
 def _resolve_ball_position(

@@ -35,6 +35,7 @@ import warnings
 import pandas as pd
 
 from ._velocity_availability import velocity_unavailable_by_design as _velocity_unavailable_by_design
+from ._warnings import DasCostWarning
 from .schema import SPEED_SOURCE_UNAVAILABLE
 
 #: Closed vocabulary for the ``das_source`` provenance column emitted by ``add_das``
@@ -440,11 +441,58 @@ def _check_das_output_alignment(values, prepared: pd.DataFrame, *, field: str, e
     )
 
 
+#: Rough DAS cost model (ADR-105 Task 7, reported-not-gated): the per-frame accessible-space simulation
+#: costs ~this many wall seconds/frame, derived from the documented ~394 h/season figure (ADR-014) over a
+#: ~64 M-frame season. Order-of-magnitude only -- it exists to warn, not to bill.
+_DAS_SECONDS_PER_FRAME = 0.02
+#: Warn once above this many distinct frames (a full match/half is ~tens of thousands).
+_DAS_COST_WARN_FRAMES = 5000
+
+
+def _n_distinct_frames(frames: pd.DataFrame) -> int:
+    keys = [c for c in ("game_id", "period_id", "frame_id") if c in frames.columns]
+    if not keys:
+        return len(frames)
+    return int(frames[keys].drop_duplicates().shape[0])
+
+
+def estimate_das_cost(frames: pd.DataFrame) -> float:
+    """Rough wall-time (seconds) to run DAS over ``frames`` -- distinct frames x a per-frame constant.
+
+    A pure, side-effect-free order-of-magnitude estimate (the ~394 h/season DAS cost is documented-not-
+    gated, ADR-014); the value is advisory, not a guarantee. Used by :func:`get_das` /
+    :func:`get_individual_das` to emit a :class:`DasCostWarning` before a large all-frame run.
+
+    Examples
+    --------
+    Estimate the cost before scoring a full half::
+
+        estimate_das_cost(frames)  # -> ~1700.0 seconds for an 84k-frame GS half
+    """
+    return _n_distinct_frames(frames) * _DAS_SECONDS_PER_FRAME
+
+
+def _maybe_warn_das_cost(frames: pd.DataFrame, *, warn_cost: bool) -> None:
+    if not warn_cost:
+        return
+    n = _n_distinct_frames(frames)
+    if n >= _DAS_COST_WARN_FRAMES:
+        est = n * _DAS_SECONDS_PER_FRAME
+        warnings.warn(
+            f"DAS over {n} distinct frames without sampling ~= {est:.0f} s of per-frame simulation "
+            f"(all-frame DAS is ~394 h/season, ADR-014). Sample frames, or pass warn_cost=False to "
+            f"silence. DAS values are unchanged.",
+            DasCostWarning,
+            stacklevel=3,
+        )
+
+
 def get_das(
     frames: pd.DataFrame,
     *,
     use_progress_bar: bool = False,
     player_in_possession_col: str | None = _DEFAULT_PLAYER_IN_POSSESSION_COL,
+    warn_cost: bool = True,
     **kwargs,
 ) -> pd.DataFrame:
     """Team-level Accessible Space and Dangerous Accessible Space per frame.
@@ -480,6 +528,7 @@ def get_das(
 
     See NOTICE for full bibliographic citations.
     """
+    _maybe_warn_das_cost(frames, warn_cost=warn_cost)  # ADR-105 Task 7: advisory cost warning (opt-out)
     asmod = _import_accessible_space()
     ppc = _resolve_player_in_possession_col(frames, player_in_possession_col)
     prepared = _prepare_frames(frames, player_in_possession_col=ppc)

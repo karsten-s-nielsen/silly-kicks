@@ -136,12 +136,14 @@ class PitchControlCache:
         """
         from silly_kicks._frame_index import group_rows
 
-        from ._dispatch import compute_pitch_control_batch
+        from ._dispatch import _batch_from_groups
 
         if not requests:
             return
-        surfaces = compute_pitch_control_batch(frames, requests, method=method, params=params)
+        # ADR-105 Task 5: group the frames ONCE and thread that grouping into the batched kernel, then
+        # reuse it below to fetch each frame for `_key` -- the fix for the ADR-103 warm double-group.
         groups = group_rows(frames, ("game_id", "period_id", "frame_id"))
+        surfaces = _batch_from_groups(groups, requests, method=method, params=params)
         for (frame_key, attacking_team_id, decompose), surface in zip(requests, surfaces, strict=True):
             frame = groups.get(*frame_key)
             key = self._key(frame, attacking_team_id, method, params, bool(decompose), None)

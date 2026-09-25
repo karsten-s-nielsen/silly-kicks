@@ -903,6 +903,61 @@ def compute_threat_pc(
     return float(threat)
 
 
+def compute_threat_pc_batch(
+    items: list[tuple[pd.DataFrame, int | str, GoalMap, Callable | None]],
+    *,
+    xt: ExpectedThreat,
+    method: Literal["spearman", "fernandez_bornn", "voronoi"] = "spearman",
+    params: PitchControlParams | None = None,
+) -> list[float]:
+    """Batched :func:`compute_threat_pc` -- byte-identical to calling it per item (ADR-105 Task 2).
+
+    ``items`` is a list of ``(frame, attacking_team_id, goal_map, field_weight)``; the frames may be
+    MODIFIED (e.g. a keeper removed) -- this batches over EXPLICIT frame slices via
+    :func:`compute_spearman_batch`, never a frame-id re-fetch, so a counterfactual frame is scored on its
+    own content (the ADR-043 landmine that forbids the frame-keyed cache/`compute_pitch_control_batch`).
+    The per-item ``_voronoi_threat`` reduction is unchanged. ``method != "spearman"`` falls back to the
+    per-item path (only spearman has a batched kernel).
+
+    Examples
+    --------
+    Score the GK-included and GK-blind danger legs of several samples in one call::
+
+        vals = compute_threat_pc_batch([(frame, opp, gmap, None), (frame_no_gk, opp, gmap, None)], xt=xt)
+    """
+    from silly_kicks.xthreat import require_fitted_xt
+
+    require_fitted_xt(xt, caller="compute_threat_pc_batch")
+    if not items:
+        return []
+    if method != "spearman":
+        return [
+            compute_threat_pc(f, attacking_team_id=t, xt=xt, goal_map=gm, method=method, params=params, field_weight=w)
+            for (f, t, gm, w) in items
+        ]
+
+    from .pitch_control._dispatch import _resolve_ball_position
+    from .pitch_control._params import SpearmanParams
+    from .pitch_control._spearman_batch import compute_spearman_batch
+
+    prepared: list[tuple[pd.DataFrame, int | str, GoalMap, Callable | None]] = []
+    for frame, team, goal_map, w in items:
+        _validate_ltr(frame, caller="compute_threat_pc_batch")
+        prepared.append((zero_velocity_if_unavailable(frame, method=method), team, goal_map, w))
+
+    sp = params if isinstance(params, SpearmanParams) else SpearmanParams()
+    frame_slices = [p[0] for p in prepared]
+    teams = [p[1] for p in prepared]
+    balls = [_resolve_ball_position(f, None) for f in frame_slices]
+    surfaces = compute_spearman_batch(frame_slices, teams, [False] * len(prepared), balls, params=sp)
+
+    out: list[float] = []
+    for (f, team, goal_map, w), surface in zip(prepared, surfaces, strict=True):
+        threat, _ = _voronoi_threat(surface, xt, f, attacking_team_id=team, goal_map=goal_map, field_weight=w)
+        out.append(float(threat))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Blocking score primitive
 # ---------------------------------------------------------------------------
